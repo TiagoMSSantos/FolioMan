@@ -1,0 +1,134 @@
+//! User-editable folioman config, loaded from `config/settings.yaml`.
+//! Language-agnostic YAML so any tool can read the same source of truth.
+
+use serde::Deserialize;
+use std::path::PathBuf;
+
+#[derive(Debug, Deserialize)]
+pub struct Settings {
+    pub tickers: Vec<String>,
+    pub dip_days: i64,
+    pub high_days: i64,
+    pub drawdown_pct: f64,
+    pub drop_pct: f64,
+    pub universe: Vec<String>,
+    pub euribor_3m: f64,
+    pub euribor_3m_date: String,
+    pub ntfy_topic: String,
+    #[serde(default = "default_top_picks")]
+    pub top_picks: usize, // how many buy candidates `check` lists after the table
+    #[serde(default)]
+    pub widths: Widths, // column truncate/pad widths for the tables
+    #[serde(default)]
+    pub buy_heuristic: BuyHeuristic, // tunable gates/weights/caps for the picks score
+    pub urls: Urls,
+}
+
+fn default_top_picks() -> usize {
+    5
+}
+
+/// Table column widths (chars): each value is truncated AND padded to this. Optional in
+/// YAML — omit the `widths:` block or any field for these defaults.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct Widths {
+    pub name: usize,     // NAME column (check/screen/picks)
+    pub ticker: usize,   // TICKER column
+    pub market: usize,   // MARKET column (check)
+    pub headline: usize, // HEADLINE column (check)
+}
+
+impl Default for Widths {
+    fn default() -> Self {
+        Widths { name: 26, ticker: 8, market: 11, headline: 31 }
+    }
+}
+
+/// Tunable knobs for the buy-candidate heuristic (`src/picks.rs`). Every field is optional
+/// in YAML — omit the whole `buy_heuristic:` block or any field to use these defaults.
+/// Caps stop one signal dominating; gates exclude candidates outright.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct BuyHeuristic {
+    pub min_1y_pct: f64,        // qualify only if 1Y % is above this (uptrend gate)
+    pub max_1m_drop_pct: f64,   // reject if 1M % <= this (falling-knife gate)
+    pub min_long_pct: f64,      // reject if long-term (>2Y) % <= this (structural-decline gate)
+    pub on_sale_weight: f64,    // weight on the pullback off the ~1Y high (the core "on sale" reward)
+    pub on_sale_cap: f64,       // cap on the % below the recent high fed into the score
+    pub y1_weight: f64,         // weight on 1Y momentum (kept small — momentum is a gate, not the prize)
+    pub y1_cap: f64,            // cap on the 1Y % fed into the score
+    pub long_weight: f64,       // weight on the long-term (>2Y) trend
+    pub long_cap: f64,          // cap on the long-term % fed into the score
+    pub decline_weight: f64,    // per-year bonus for how long it's been falling (1D<1W<..<1Y)
+}
+
+impl Default for BuyHeuristic {
+    fn default() -> Self {
+        BuyHeuristic {
+            min_1y_pct: 0.0,
+            max_1m_drop_pct: -15.0,
+            min_long_pct: 0.0,
+            on_sale_weight: 1.0, // a 30%-off pullback is worth ~30 pts — the dominant signal
+            on_sale_cap: 60.0,
+            y1_weight: 0.05,     // small: a +400% rocket no longer drowns out an on-sale quality name
+            y1_cap: 50.0,
+            long_weight: 0.05,
+            long_cap: 300.0,
+            decline_weight: 1.0,
+        }
+    }
+}
+
+/// Every data-source URL the tool hits. Templates use `{placeholder}` tokens replaced
+/// at fetch time (`{ticker}`, `{range}`, `{topic}`). Edit in settings.yaml.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Urls {
+    pub yahoo_chart: String,   // {ticker} {range}
+    pub yahoo_search: String,  // {ticker}
+    pub yahoo_quote: String,   // {ticker} (human quote page, for `perf`)
+    pub euribor: String,
+    pub us_cpi: String, // BLS CPI-U (no placeholder; seriesID is in the URL path)
+    pub pt_cpi: String,
+    pub eu_hicp: String,
+    pub ntfy: String,          // {topic}
+}
+
+/// Locate `config/settings.yaml` next to the exe or up the tree, mirroring the old
+/// Python "run from any cwd" behaviour. Falls back to `config/settings.yaml` relative
+/// to the current directory.
+fn settings_path() -> PathBuf {
+    // 1. next to / above the executable (installed binary layout)
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(|p| p.to_path_buf());
+        while let Some(d) = dir {
+            let cand = d.join("config/settings.yaml");
+            if cand.is_file() {
+                return cand;
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+    }
+    // 2. up from the current working directory
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut dir = Some(cwd);
+        while let Some(d) = dir {
+            let cand = d.join("config/settings.yaml");
+            if cand.is_file() {
+                return cand;
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+    }
+    PathBuf::from("config/settings.yaml")
+}
+
+/// Read + parse the settings file. Panics with a clear message if missing/invalid —
+/// config errors are a startup problem the user must fix, not something to fail soft on.
+pub fn load() -> Settings {
+    let path = settings_path();
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    serde_yaml::from_str(&text)
+        .unwrap_or_else(|e| panic!("invalid YAML in {}: {e}", path.display()))
+}

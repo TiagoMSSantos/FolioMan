@@ -1,0 +1,26 @@
+[package]
+name = "folioman"
+version = "0.1.0"
+edition = "2021"
+description = "Personal investment-review CLI (price/perf/screen/alert) + opt-in live trading (trade212/binance)."
+
+[[bin]]
+name = "folioman"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "rustls-tls", "cookies"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"   # archived upstream but stable; swap for serde_norway if it ever breaks
+regex = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+hmac = "0.12"        # Binance order signing (HMAC-SHA256)
+sha2 = "0.10"
+hex = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
