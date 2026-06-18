@@ -68,6 +68,7 @@ pub struct BuyHeuristic {
     pub max_1m_drop_pct: f64,   // reject if 1M % <= this (falling-knife gate)
     pub max_1m_drop_pct_crypto: f64, // knife gate for crypto/FX: looser, a -20%/month alt is normal not broken
     pub min_long_pct: f64,      // reject if long-term (>2Y) % <= this (structural-decline gate)
+    pub min_long_pct_crypto: f64, // crypto corpse gate + discount-scaling zero-point: a >2Y leg this deep (e.g. -95%) is a dead coin, not a pullback
     pub on_sale_weight: f64,    // weight on the pullback off the ~1Y high (the core "on sale" reward)
     pub on_sale_cap: f64,       // cap on the % below the recent high fed into the score
     pub y1_weight: f64,         // weight on 1Y momentum (kept small — momentum is a gate, not the prize)
@@ -89,6 +90,7 @@ impl Default for BuyHeuristic {
             max_1m_drop_pct: -15.0,
             max_1m_drop_pct_crypto: -35.0, // alts routinely shed -20..-30% in a month without breaking
             min_long_pct: 0.0,
+            min_long_pct_crypto: -70.0, // -EUR 5Y is peak-anchored, so allow deep pullbacks but cut true corpses (-70%+ over 5Y)
             on_sale_weight: 1.0, // a pullback is the dominant signal
             on_sale_cap: 35.0,   // a ~35%-off dip maxes it; a 60%+ collapse (likely broken) can't dominate
             y1_weight: 0.05,     // small: a +400% rocket no longer drowns out an on-sale quality name

@@ -13,6 +13,14 @@ fn long_term_pct(q: &Quote) -> Option<f64> {
     perf_pct(q, "20Y").or_else(|| perf_pct(q, "10Y")).or_else(|| perf_pct(q, "5Y"))
 }
 
+/// How intact the long-term trend is, 0..1 — used to scale the on-sale discount so a corpse's deep
+/// "discount" can't outrank a healthy name's modest pullback. `zero` (negative) is the long-% at
+/// which health hits 0; health reaches 1 at a flat (0%) or rising long trend. Equities clear the
+/// >30% structural gate, so this is ~1.0 for them (no-op) — it reshapes the crypto ranking.
+fn trend_health(long: f64, zero: f64) -> f64 {
+    ((long - zero) / -zero).clamp(0.0, 1.0)
+}
+
 /// Recovery signal: rewards a name that has **pulled back this month but is turning back up**
 /// — a bottoming setup, not a falling knife. Full `weight` if the week is green while the
 /// month is red (bounce confirmed), half if only today is green, 0 otherwise (still falling,
@@ -134,10 +142,19 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     if q.avg_turnover_eur.map_or(false, |v| v < t.min_avg_turnover_eur) {
         return None;
     }
+    // stablecoin filter: a peg (DAI/USDT/USDC) never leaves its high, so "on sale" is meaningless;
+    // it also covers any crypto sitting at its high (not a dip to buy). Crypto only.
+    if is_currency_quoted(&q.ticker) && q.drawdown_pct < 3.0 {
+        return None;
+    }
     // track-record gate: need a ≥5Y leg. Crypto is mostly <5yr old -> fall back to its 1Y leg
     // (else nearly every coin is rejected); equities still require the real 5Y+ record.
     let long = long_term_pct(q)
         .or_else(|| if is_currency_quoted(&q.ticker) { perf_pct(q, "1Y") } else { None })?;
+    // crypto corpse gate: a >2Y leg this deep (e.g. -95% over 5Y) is a dead coin, not a pullback.
+    if is_currency_quoted(&q.ticker) && long <= t.min_long_pct_crypto {
+        return None;
+    }
     let y1 = perf_pct(q, "1Y")?;
     // per-class 1Y floor: crypto/FX are far more volatile -> a looser floor (else every dip is a knife)
     let floor = if is_currency_quoted(&q.ticker) { t.min_1y_pct_crypto } else { t.min_1y_pct };
@@ -160,7 +177,10 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
             }
         }
     }
-    let on_sale = q.drawdown_pct.min(t.on_sale_cap); // % off the ~1Y high — the real discount
+    // trend-conditioned discount: scale the OFF-HI reward by how intact the long-term trend is, so
+    // a corpse's deep "discount" doesn't outrank a healthy name's modest pullback. Equities clear
+    // the >30% structural gate so health ≈ 1.0 (no-op); this reshapes the crypto ranking.
+    let on_sale = q.drawdown_pct.min(t.on_sale_cap) * trend_health(long, t.min_long_pct_crypto);
     let score = t.on_sale_weight * on_sale
         + t.y1_weight * y1.min(t.y1_cap)
         + t.long_weight * long.min(t.long_cap)
@@ -313,6 +333,24 @@ pub fn selftest() {
     let mut weak5y_crypto = q(5.0, &[("1Y", 20.0), ("5Y", -50.0)]);
     weak5y_crypto.ticker = "LTC-EUR".into();
     assert!(buy_score(&weak5y_crypto, &t).is_some());
+    // (A) trend_health: 0 at the corpse threshold, 1 at a flat/rising long trend, partial between
+    assert_eq!(trend_health(-70.0, -70.0), 0.0);
+    assert_eq!(trend_health(0.0, -70.0), 1.0);
+    assert!((trend_health(-21.0, -70.0) - 0.7).abs() < 1e-9);
+    // (A) crypto corpse gate: a -95% 5Y leg is a dead coin, excluded even though it clears the floor
+    let mut corpse = q(40.0, &[("1Y", -30.0), ("5Y", -95.0)]);
+    corpse.ticker = "FIL-EUR".into();
+    assert!(buy_score(&corpse, &t).is_none());
+    // (A) trend-conditioned discount: same 40% OFF-HI, but the intact coin outranks the bleeding one
+    let mut healthy = q(40.0, &[("1Y", -20.0), ("5Y", -20.0)]);
+    healthy.ticker = "ETH-EUR".into();
+    let mut bleeding = q(40.0, &[("1Y", -20.0), ("5Y", -65.0)]);
+    bleeding.ticker = "AAVE-EUR".into();
+    assert!(buy_score(&healthy, &t).unwrap() > buy_score(&bleeding, &t).unwrap());
+    // (B) stablecoin filter: a peg barely off its high (drawdown < 3%) is excluded
+    let mut peg = q(0.3, &[("1Y", 3.0), ("5Y", 3.0)]);
+    peg.ticker = "DAI-EUR".into();
+    assert!(buy_score(&peg, &t).is_none());
     // leveraged/inverse gate (F): name match excludes a 2x/short product outright
     assert!(is_leveraged("GraniteShares 2x Short NVD") && !is_leveraged("Apple Inc."));
     let mut lev = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
