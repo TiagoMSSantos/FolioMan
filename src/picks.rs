@@ -134,20 +134,30 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     if q.avg_turnover_eur.map_or(false, |v| v < t.min_avg_turnover_eur) {
         return None;
     }
-    let long = long_term_pct(q)?; // track-record gate: no ≥5Y leg -> not a "5Y+ uptrend"
+    // track-record gate: need a ≥5Y leg. Crypto is mostly <5yr old -> fall back to its 1Y leg
+    // (else nearly every coin is rejected); equities still require the real 5Y+ record.
+    let long = long_term_pct(q)
+        .or_else(|| if is_currency_quoted(&q.ticker) { perf_pct(q, "1Y") } else { None })?;
     let y1 = perf_pct(q, "1Y")?;
     // per-class 1Y floor: crypto/FX are far more volatile -> a looser floor (else every dip is a knife)
     let floor = if is_currency_quoted(&q.ticker) { t.min_1y_pct_crypto } else { t.min_1y_pct };
     if y1 <= floor {
         return None; // 1Y floor: a deep 1-year downtrend is not a pullback
     }
-    if perf_pct(q, "1M").unwrap_or(0.0) <= t.max_1m_drop_pct {
+    // per-class knife: crypto swings harder, so a looser monthly-drop floor (else every alt is a knife)
+    let knife = if is_currency_quoted(&q.ticker) { t.max_1m_drop_pct_crypto } else { t.max_1m_drop_pct };
+    if perf_pct(q, "1M").unwrap_or(0.0) <= knife {
         return None; // crashing this month -> falling knife, not "on sale"
     }
     // every long horizon it has must be up: a dip is only a buy if 5Y AND 10Y AND 20Y hold.
-    for label in ["5Y", "10Y", "20Y"] {
-        if perf_pct(q, label).map_or(false, |p| p <= t.min_long_pct) {
-            return None; // a negative multi-year leg -> structural loser, not a dip
+    // Equities only: Yahoo -EUR crypto pairs mostly start near the 2021 peak, so their "5Y" leg
+    // is peak-anchored and routinely negative even for healthy coins -> meaningless gate. Crypto
+    // relies on the 1Y floor + knife instead.
+    if !is_currency_quoted(&q.ticker) {
+        for label in ["5Y", "10Y", "20Y"] {
+            if perf_pct(q, label).map_or(false, |p| p <= t.min_long_pct) {
+                return None; // a negative multi-year leg -> structural loser, not a dip
+            }
         }
     }
     let on_sale = q.drawdown_pct.min(t.on_sale_cap); // % off the ~1Y high — the real discount
@@ -288,6 +298,21 @@ pub fn selftest() {
     assert!((fresh - base - 0.5).abs() < 1e-9);
     // track-record gate (A): no >2Y leg at all -> excluded (can't be a "5Y+ uptrend")
     assert!(buy_score(&q(5.0, &[("1Y", 20.0)]), &t).is_none());
+    // ...but a crypto ticker (currency-quoted) falls back to its 1Y leg -> admitted
+    let mut crypto = q(5.0, &[("1Y", 20.0)]);
+    crypto.ticker = "BTC-EUR".into();
+    assert!(buy_score(&crypto, &t).is_some());
+    // per-class knife: a -25% month sinks an equity (knife -15) but not crypto (knife -35)
+    assert!(buy_score(&q(5.0, &[("1Y", 20.0), ("5Y", 40.0), ("1M", -25.0)]), &t).is_none());
+    let mut knife_crypto = q(5.0, &[("1Y", 20.0), ("1M", -25.0)]);
+    knife_crypto.ticker = "ETH-EUR".into();
+    assert!(buy_score(&knife_crypto, &t).is_some());
+    // structural multi-year gate is equities-only: a negative 5Y leg sinks a stock but not crypto
+    // (its -EUR 5Y is peak-anchored, not a real downtrend)
+    assert!(buy_score(&q(5.0, &[("1Y", 20.0), ("5Y", -50.0)]), &t).is_none());
+    let mut weak5y_crypto = q(5.0, &[("1Y", 20.0), ("5Y", -50.0)]);
+    weak5y_crypto.ticker = "LTC-EUR".into();
+    assert!(buy_score(&weak5y_crypto, &t).is_some());
     // leveraged/inverse gate (F): name match excludes a 2x/short product outright
     assert!(is_leveraged("GraniteShares 2x Short NVD") && !is_leveraged("Apple Inc."));
     let mut lev = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
