@@ -1,0 +1,2 @@
+# FolioMan
+Portfolio manager
