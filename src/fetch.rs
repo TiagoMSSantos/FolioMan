@@ -122,6 +122,25 @@ fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     })
 }
 
+/// Intraday `(timestamp_secs, close)` bars from the configured intraday chart URL (~hourly,
+/// last couple of days). None on failure; nulls dropped. Used only for the 1h/6h/12h columns.
+async fn intraday_bars(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<i64>, Vec<f64>)> {
+    let url = urls.yahoo_intraday.replace("{ticker}", ticker);
+    let j = get_json(client, &url).await?;
+    let result = j.get("chart")?.get("result")?.get(0)?;
+    let ts = result.get("timestamp")?.as_array()?;
+    let closes = result.get("indicators")?.get("quote")?.get(0)?.get("close")?.as_array()?;
+    let mut out_ts = Vec::new();
+    let mut out_c = Vec::new();
+    for (t, c) in ts.iter().zip(closes) {
+        if let (Some(s), Some(cl)) = (t.as_i64(), c.as_f64()) {
+            out_ts.push(s);
+            out_c.push(cl);
+        }
+    }
+    Some((out_ts, out_c))
+}
+
 async fn fetch_news(client: &Client, urls: &Urls, ticker: &str) -> Vec<String> {
     let url = urls.yahoo_search.replace("{ticker}", ticker);
     let items: Vec<Value> = get_json(client, &url)
@@ -167,10 +186,11 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
-pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64) -> Quote {
-    let (chart_j, titles) = tokio::join!(
+pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool) -> Quote {
+    let (chart_j, titles, intra) = tokio::join!(
         chart_json(client, urls, ticker, "max"),
         fetch_news(client, urls, ticker),
+        async { if intraday { intraday_bars(client, urls, ticker).await } else { None } },
     );
 
     let chart = match chart_j.as_ref().and_then(|j| parse_chart(j, ticker)) {
@@ -222,12 +242,47 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         div_eur: core::dividend_sums(&chart.divs, &chart.dates, rate),
         price_eur: rate.map(|r| cur_close * r),
         drawdown_pct,
+        intraday: intra.map_or([None; 3], |(ts, cs)| core::intraday_changes(&ts, &cs)),
     }
 }
 
+/// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
+/// CoinGecko + the S&P 500 constituents CSV (stocks/ETFs), symbols normalised to Yahoo form
+/// (`btc` -> `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency follows
+/// `prefer_eur` (Yahoo has both legs); US stocks/ETFs have no EUR listing, so unaffected.
+/// Sorted + deduped; empty if both sources fail.
+pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool) -> Vec<String> {
+    let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
+    let (cg, csv) = tokio::join!(
+        get_json(client, &cg_url),
+        get_text(client, &urls.sp500_csv),
+    );
+    let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
+    let mut out: Vec<String> = Vec::new();
+    // crypto: CoinGecko market-cap-ranked array -> SYMBOL-<EUR|USD> (Yahoo crypto form)
+    if let Some(arr) = cg.as_ref().and_then(|v| v.as_array()) {
+        out.extend(arr.iter().take(cap).filter_map(|c| {
+            c.get("symbol").and_then(|s| s.as_str()).map(|s| format!("{}-{crypto_cur}", s.to_uppercase()))
+        }));
+    }
+    // stocks/ETFs: S&P 500 CSV, first column = Symbol; '.'->'-' for Yahoo (BRK.B -> BRK-B).
+    // ponytail: naive comma split — constituent symbols/CSV carry no embedded commas.
+    if let Some(text) = csv {
+        out.extend(
+            text.lines().skip(1).take(cap)
+                .filter_map(|l| l.split(',').next())
+                .map(|s| s.trim().replace('.', "-"))
+                .filter(|s| !s.is_empty()),
+        );
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// One Quote per ticker, all concurrent, input order preserved.
-pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64) -> Vec<Quote> {
-    let futs = tickers.iter().map(|tk| quote_one(client, urls, fx, tk, dip_days, high_days));
+pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool) -> Vec<Quote> {
+    let futs = tickers.iter().map(|tk| quote_one(client, urls, fx, tk, dip_days, high_days, intraday));
     join_all(futs).await
 }
 

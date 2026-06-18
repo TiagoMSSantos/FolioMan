@@ -1,9 +1,11 @@
-//! `screen [TICKERS]` — scan `settings.universe` (broader than tickers): all-time
-//! highs/lows, instruments falling over ~1M/3M/6M/1Y, and the top dividend payers.
+//! `screen [TICKERS]` — scan a LIVE universe (top-N crypto from CoinGecko + S&P 500
+//! constituents, see `fetch::fetch_universe`; `screen TICKER...` overrides): all-time
+//! highs/lows, instruments falling over ~1M/3M/6M/1Y, top dividend payers, and a
+//! buy-candidates ranking.
 
 use crate::commands::truncate;
 use crate::core::{Quote, DIV_HORIZONS};
-use crate::picks::perf_pct;
+use crate::picks::{perf_pct, render};
 use crate::{config, fetch};
 
 /// 1Y dividend yield (%) used to rank payers; 0 if no payout / no price / short history.
@@ -20,9 +22,14 @@ pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
     let fx = fetch::fx_cache();
-    let universe = if args.is_empty() { settings.universe.clone() } else { args }; // not bounded by tickers
+    // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it
+    let universe = if args.is_empty() {
+        fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur).await
+    } else {
+        args
+    };
 
-    let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days).await;
+    let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true).await; // intraday on: picks table shows 1h/6h/12h
 
     let w = &settings.widths;
     let (nw, tw) = (w.name, w.ticker);
@@ -113,4 +120,7 @@ pub async fn run(args: Vec<String>) {
             .join(" ");
         println!("  {:<nw$} {:<tw$} {cells}", truncate(&q.name, nw), truncate(&q.ticker, tw));
     }
+
+    // buy candidates among the SCANNED universe (not settings.tickers) — same heuristic as `check`
+    render(&qs, 20, &settings.buy_heuristic, w);
 }

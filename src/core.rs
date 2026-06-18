@@ -78,6 +78,7 @@ pub struct Quote {
     pub div_eur: Vec<Option<f64>>, // total dividends/share (EUR) per DIV_HORIZONS; None = short history
     pub price_eur: Option<f64>, // current close in EUR (None if FX unknown); for dividend yield
     pub drawdown_pct: f64, // % below the high of the last ~high_days (picks "on sale" signal)
+    pub intraday: [Option<f64>; 3], // % change over [1h, 6h, 12h]; None = no bar near that offset
 }
 
 impl Quote {
@@ -100,6 +101,7 @@ impl Quote {
             div_eur: Vec::new(),
             price_eur: None,
             drawdown_pct: 0.0,
+            intraday: [None; 3],
         }
     }
 }
@@ -324,6 +326,30 @@ pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>) -
         .collect()
 }
 
+/// % change vs `hours` ago from intraday `(timestamp_secs, close)` bars: takes the bar nearest
+/// `last_ts - hours*3600`, but only if within `tol_secs` — so a stock's overnight gap (no bar
+/// near 12h ago) yields None instead of a bogus cross-session number. A ratio, so FX-agnostic.
+pub fn intraday_pct(ts: &[i64], closes: &[f64], hours: i64, tol_secs: i64) -> Option<f64> {
+    let (&last_ts, &cur) = (ts.last()?, closes.last()?);
+    let target = last_ts - hours * 3600;
+    let (i, dist) = ts
+        .iter()
+        .enumerate()
+        .map(|(i, &t)| (i, (t - target).abs()))
+        .min_by_key(|(_, d)| *d)?;
+    let p = closes[i];
+    if dist > tol_secs || p == 0.0 {
+        return None;
+    }
+    Some((cur - p) / p * 100.0)
+}
+
+/// [1h, 6h, 12h] % changes from intraday bars. tol 1.5h covers 60m bars + slack; a window with
+/// no bar (market closed) -> None. Crypto (24/7) fills all three; stocks often n/a past a close.
+pub fn intraday_changes(ts: &[i64], closes: &[f64]) -> [Option<f64>; 3] {
+    [1, 6, 12].map(|h| intraday_pct(ts, closes, h, 5400))
+}
+
 /// Horizons over which `screen` totals dividends (label -> calendar days back).
 pub const DIV_HORIZONS: &[(&str, i64)] =
     &[("1Y", 365), ("5Y", 1825), ("10Y", 3650), ("20Y", 7300)];
@@ -448,6 +474,15 @@ pub fn selftest() {
     assert_eq!(asof(&ds, &cs, NaiveDate::from_ymd_opt(2019, 6, 1).unwrap()), None);
     assert_eq!(asof(&ds, &cs, NaiveDate::from_ymd_opt(2025, 1, 1).unwrap()), Some(30.0));
     assert_eq!(slice_since(&ds, &cs, 1), vec![20.0, 30.0]);
+
+    // intraday: hourly bars, last = "now". 1h ago = 100->110 = +10%; 6h ago bar exists = +20%.
+    let its: Vec<i64> = (0..7).map(|h| 1_000_000 + h * 3600).collect(); // 7 bars, 1h apart
+    let ics = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 110.0]; // last 110
+    assert!((intraday_pct(&its, &ics, 1, 5400).unwrap() - (110.0 - 105.0) / 105.0 * 100.0).abs() < 1e-9);
+    assert!((intraday_pct(&its, &ics, 6, 5400).unwrap() - (110.0 - 100.0) / 100.0 * 100.0).abs() < 1e-9);
+    assert_eq!(intraday_pct(&its, &ics, 12, 5400), None); // no bar near 12h ago (only 6h history)
+    assert_eq!(intraday_changes(&its, &ics)[2], None); // 12h slot n/a
+    assert!(intraday_changes(&its, &ics)[0].is_some()); // 1h slot present
 
     assert_eq!(pct_cell(Some(&("€10.00".to_string(), 5.0))), "+5.0%");
     assert_eq!(pct_cell(None), "n/a");

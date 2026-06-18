@@ -23,7 +23,7 @@ pub async fn run(args: Vec<String>) {
         truncate("NAME", nw), truncate("TICKER", tw), "PRICE(EUR)", truncate("MARKET", mw), "TREND"
     );
 
-    let qs = fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days).await;
+    let qs = fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false).await;
     for q in &qs {
         let cells = HORIZONS
             .iter()

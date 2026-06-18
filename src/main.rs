@@ -2,7 +2,7 @@
 //!
 //!   folioman check  [TICKERS...]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline
 //!   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
-//!   folioman screen [TICKERS...]   scan settings.universe: ATH/ATL / 1M-3M-6M-1Y fallers / dividends
+//!   folioman screen [TICKERS...]   scan live universe (CoinGecko + S&P500): ATH/ATL / fallers / dividends / buys
 //!   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
 //!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY>   LIVE order (real money, confirmed)
@@ -21,7 +21,7 @@ folioman — review ETF/stock/crypto holdings. Read-only, never trades.
 
   folioman check  [TICKERS...]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline
   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
-  folioman screen [TICKERS...]   scan settings.universe: ATH/ATL / 1M-3M-6M-1Y fallers / dividends
+  folioman screen [TICKERS...]   scan live universe (CoinGecko + S&P500): ATH/ATL / fallers / dividends / buys
   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
   folioman accounts              cash available + holdings per broker (read-only; env creds)
   folioman trade <broker> <buy|sell> <SYMBOL> <QTY>   LIVE order (real money; brokers:
@@ -53,4 +53,9 @@ async fn main() {
             std::process::exit(2);
         }
     }
+    // ponytail: work + output done; exit now instead of letting the tokio runtime drop block
+    // ~10s on idle blocking DNS threads (reqwest resolves via getaddrinfo/spawn_blocking, whose
+    // pool keep-alive is 10s). Read-only CLI, nothing buffered to flush. Drop this if we ever
+    // need destructors to run on a normal command path.
+    std::process::exit(0);
 }

@@ -11,7 +11,10 @@ pub struct Settings {
     pub high_days: i64,
     pub drawdown_pct: f64,
     pub drop_pct: f64,
-    pub universe: Vec<String>,
+    #[serde(default = "default_universe_size")]
+    pub universe_size: usize, // top-N per class (crypto + stocks/ETFs) `screen` pulls from the live sources
+    #[serde(default = "default_true")]
+    pub universe_prefer_eur: bool, // crypto in the live universe quoted in EUR (BTC-EUR) if true, else USD
     pub euribor_3m: f64,
     pub euribor_3m_date: String,
     pub ntfy_topic: String,
@@ -26,6 +29,14 @@ pub struct Settings {
 
 fn default_top_picks() -> usize {
     5
+}
+
+fn default_universe_size() -> usize {
+    100
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Table column widths (chars): each value is truncated AND padded to this. Optional in
@@ -62,6 +73,8 @@ pub struct BuyHeuristic {
     pub long_weight: f64,       // weight on the long-term (>2Y) trend
     pub long_cap: f64,          // cap on the long-term % fed into the score
     pub recovery_weight: f64,   // bonus when pulled back on the month but turning back up (bounce, not knife)
+    pub fresh_dip_weight: f64,  // bonus when falling THIS WEEK (recent dip ranks above a stale month-old one)
+    pub fresh_dip_cap: f64,     // cap on the 1W drop % fed into the fresh-dip bonus
     pub prefer_eur: bool,       // dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD
 }
 
@@ -79,6 +92,8 @@ impl Default for BuyHeuristic {
             long_weight: 0.05,
             long_cap: 300.0,
             recovery_weight: 1.0,
+            fresh_dip_weight: 0.3, // up to fresh_dip_cap×this nudge; lifts a this-week faller over a stale dip
+            fresh_dip_cap: 15.0,
             prefer_eur: true,
         }
     }
@@ -89,12 +104,15 @@ impl Default for BuyHeuristic {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Urls {
     pub yahoo_chart: String,   // {ticker} {range}
+    pub yahoo_intraday: String, // {ticker} — hourly bars (~2d) for the screen 1h/6h/12h columns
     pub yahoo_search: String,  // {ticker}
     pub yahoo_quote: String,   // {ticker} (human quote page, for `perf`)
     pub euribor: String,
     pub us_cpi: String, // BLS CPI-U (no placeholder; seriesID is in the URL path)
     pub pt_cpi: String,
     pub eu_hicp: String,
+    pub coingecko_markets: String, // {n} = top-N crypto by market cap -> screen universe
+    pub sp500_csv: String,         // S&P 500 constituents CSV -> screen stock/ETF universe
     pub ntfy: String,          // {topic}
 }
 

@@ -16,7 +16,7 @@ cargo run -- check              # default watchlist: price(EUR), % per horizon, 
                                 #   then a "buy candidates" ranking, Euribor, CdA, inflation
 cargo run -- check AAPL BTC-USD VWCE.DE
 cargo run -- perf NVDA          # past EUR price + % at each horizon, with source URL
-cargo run -- screen             # all-time highs/lows, fallers (1M/3M/6M/1Y), dividend payers
+cargo run -- screen             # all-time highs/lows, fallers, dividend payers, buy candidates
 cargo run -- alert              # ntfy push for dips (cron it)
 cargo run -- accounts           # cash + holdings per broker (read-only)
 cargo run -- trade binance buy BTCEUR 0.001   # LIVE order, real money, confirm-gated
@@ -25,9 +25,11 @@ cargo run -- trade binance buy BTCEUR 0.001   # LIVE order, real money, confirm-
 ./target/release/folioman check
 ```
 
-Edit `config/settings.yaml` for the watchlist, the broader `screen` universe, thresholds, table
-widths, the buy-heuristic knobs, and all data-source URLs. `n/a` in a column = history doesn't
-reach that far. Outputs are a transparent ranking of public data — **not investment advice**.
+Edit `config/settings.yaml` for the watchlist, thresholds, table widths, the buy-heuristic
+knobs, and all data-source URLs. `screen` builds its universe **live** (top-N crypto from
+CoinGecko + the S&P 500 constituents CSV — tune `universe_size`; `screen TICKER...` overrides),
+so there's no hand-kept list to maintain. `n/a` in a column = history doesn't reach that far.
+Outputs are a transparent ranking of public data — **not investment advice**.
 
 ### `trade` — live orders (real money, opt-in)
 

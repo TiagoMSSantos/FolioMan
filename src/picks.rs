@@ -31,6 +31,22 @@ fn recovery_bonus(q: &Quote, weight: f64) -> f64 {
     }
 }
 
+/// Fresh-dip signal: rewards a name **falling right now (this week)**, not one whose dip is a
+/// stale month-old move that already bottomed. Magnitude of the 1W drop (capped `cap`) ×
+/// `weight`, doubled when today is also red (drop still in progress = freshest entry) vs halved
+/// when today turned green (handled by `recovery_bonus` instead). 0 if up on the week. This
+/// surfaces names with a recent 1D/1W decline alongside the slower OFF-HI / 1M dips.
+/// ponytail: linear in the 1W drop; swap for a curve only if the ranking needs it.
+fn fresh_dip_bonus(q: &Quote, weight: f64, cap: f64) -> f64 {
+    let wk = perf_pct(q, "1W").unwrap_or(0.0);
+    if wk >= 0.0 {
+        return 0.0; // not falling this week -> no fresh dip (a bounce is recovery_bonus's job)
+    }
+    let mag = (-wk).min(cap); // steeper recent drop = fresher entry, capped so a crash can't run away
+    let accel = if perf_pct(q, "1D").unwrap_or(0.0) < 0.0 { 1.0 } else { 0.5 }; // still red today = freshest
+    weight * mag * accel
+}
+
 /// Substrings (lowercased) that mark a leveraged/inverse product — daily-reset decay vehicles
 /// that are never a long-term hold, so they can't be "quality on sale".
 /// ponytail: cheap name match; tighten the list if a legit name ever trips it.
@@ -104,7 +120,9 @@ pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
 /// dominate). Then a *small* 1Y-momentum term (`y1_weight × 1Y%`, capped low — momentum is a
 /// gate, not the prize) + proven multi-year trend (`long_weight × >2Y%`, capped `long_cap`) +
 /// a **recovery bonus** (`recovery_weight`, paid only when it's pulling back yet turning back
-/// up — a bottoming setup, not a knife). Finally the score is **halved if the asset has no 10Y
+/// up — a bottoming setup, not a knife) + a **fresh-dip bonus** (`fresh_dip_weight × 1W drop`,
+/// capped `fresh_dip_cap`, paid when it's falling *this week* so a recent dip ranks above a
+/// stale month-old one). Finally the score is **halved if the asset has no 10Y
 /// history**: the thesis is "intact long-term uptrend", untrustworthy without a decade of data.
 /// Higher = more interesting. **NOT advice** — a ranking of the table, not a forecast.
 pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
@@ -131,7 +149,8 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     let score = t.on_sale_weight * on_sale
         + t.y1_weight * y1.min(t.y1_cap)
         + t.long_weight * long.min(t.long_cap)
-        + recovery_bonus(q, t.recovery_weight);
+        + recovery_bonus(q, t.recovery_weight)
+        + fresh_dip_bonus(q, t.fresh_dip_weight, t.fresh_dip_cap);
     // no 10Y track record -> can't trust the "intact long-term uptrend" thesis -> halve.
     let penalty = if perf_pct(q, "10Y").is_none() { 0.5 } else { 1.0 };
     Some(score * penalty)
@@ -142,7 +161,7 @@ const DIFF_HORIZONS: &[&str] = &["1D", "1W", "1M", "1Y", "5Y", "10Y", "20Y"];
 
 /// Print the Top-N buy candidates derived from the already-fetched quotes (no network).
 pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths) {
-    let (nw, tw) = (w.name, w.ticker);
+    let (nw, tw, mw) = (w.name, w.ticker, w.market);
     let scored: Vec<(&Quote, f64)> =
         qs.iter().filter_map(|q| buy_score(q, t).map(|s| (q, s))).collect();
     let mut picks = dedup_currency_twins(scored, t.prefer_eur); // one row per asset (e.g. BTC, not BTC-EUR+BTC-USD)
@@ -160,9 +179,11 @@ pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths) {
         .map(|l| format!("{:>8}", l))
         .collect::<Vec<_>>()
         .join(" ");
+    let cell = |o: Option<f64>| o.map_or("n/a".to_string(), |v| format!("{:+.1}%", v));
     println!(
-        "  {:<4} {:<nw$} {:<tw$} {:>13} {diff_hdr} {:>7} {:>8}",
-        "RANK", truncate("NAME", nw), truncate("TICKER", tw), "PRICE(EUR)", "OFF-HI", "SCORE"
+        "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>13} {:>7} {:>7} {:>7} {diff_hdr} {:>7} {:>8}",
+        "RANK", truncate("NAME", nw), truncate("TICKER", tw), truncate("MARKET", mw), "PRICE(EUR)",
+        "1H", "6H", "12H", "OFF-HI", "SCORE"
     );
     for (i, (q, score)) in picks.iter().take(n).enumerate() {
         let diffs = DIFF_HORIZONS
@@ -171,11 +192,15 @@ pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths) {
             .collect::<Vec<_>>()
             .join(" ");
         println!(
-            "  {:<4} {:<nw$} {:<tw$} {:>13} {diffs} {:>7} {:>8.2}",
+            "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>13} {:>7} {:>7} {:>7} {diffs} {:>7} {:>8.2}",
             i + 1,
             truncate(&q.name, nw),
             truncate(&q.ticker, tw),
+            truncate(&q.market, mw),
             q.price,
+            cell(q.intraday[0]),
+            cell(q.intraday[1]),
+            cell(q.intraday[2]),
             format!("-{:.1}%", q.drawdown_pct), // % below the ~1Y high (real pullback, not 30d)
             score,
         );
@@ -195,7 +220,7 @@ pub fn selftest() {
             ticker: "T".into(), price: "€1.00".into(), dip: "-5.0%".into(), drop_pct: drawdown_pct,
             market: "USA".into(), head: String::new(), news_block: String::new(), perf,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
-            div_eur: Vec::new(), price_eur: None, drawdown_pct,
+            div_eur: Vec::new(), price_eur: None, drawdown_pct, intraday: [None; 3],
         }
     };
     let t = BuyHeuristic::default(); // on_sale_w 1.0/cap 35, y1_w .05/cap 50, long_w .05/cap 300, recovery_w 1.0
@@ -220,9 +245,17 @@ pub fn selftest() {
     // recovery bonus (weight 1.0): pulled back on the month + green week -> full +1.0
     let bounce = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1W", 2.0)]), &t).unwrap();
     assert!((bounce - base - 1.0).abs() < 1e-9);
-    // still falling on the week (no green) -> no recovery bonus (don't catch the knife)
+    // still falling on the week (no green) -> no recovery bonus, but a fresh-dip bonus instead:
+    // 1W -2.0 -> mag 2.0, today not red (1D n/a) -> accel 0.5 -> 0.3*2.0*0.5 = 0.3 over base
     let falling = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1W", -2.0)]), &t).unwrap();
-    assert!((falling - base).abs() < 1e-9);
+    assert!((falling - base - 0.3).abs() < 1e-9);
+    // fresh dip, still red today -> full accel: 1W -3 (mag 3) + 1D -1 -> 0.3*3*1.0 = 0.9 over base
+    let fresh_dip = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1W", -3.0), ("1D", -1.0)]), &t).unwrap();
+    assert!((fresh_dip - base - 0.9).abs() < 1e-9);
+    // green week -> no fresh-dip bonus (a bounce is recovery_bonus's job, not fresh-dip's)
+    assert_eq!(fresh_dip_bonus(&q(5.0, &[("1W", 2.0)]), 0.3, 15.0), 0.0);
+    // fresh-dip cap: a -50% week is capped at 15 -> 0.3*15*1.0 = 4.5, not 0.3*50
+    assert!((fresh_dip_bonus(&q(5.0, &[("1W", -50.0), ("1D", -1.0)]), 0.3, 15.0) - 4.5).abs() < 1e-9);
     // only today green off a monthly dip -> half credit
     let fresh = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1D", 1.0)]), &t).unwrap();
     assert!((fresh - base - 0.5).abs() < 1e-9);
