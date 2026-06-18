@@ -46,13 +46,14 @@ fn default_true() -> bool {
 pub struct Widths {
     pub name: usize,     // NAME column (check/screen/picks)
     pub ticker: usize,   // TICKER column
-    pub market: usize,   // MARKET column (check)
+    pub market: usize,   // MARKET column (check/picks)
+    pub price: usize,    // PRICE(EUR) column (check/screen/picks)
     pub headline: usize, // HEADLINE column (check)
 }
 
 impl Default for Widths {
     fn default() -> Self {
-        Widths { name: 26, ticker: 8, market: 11, headline: 31 }
+        Widths { name: 26, ticker: 8, market: 11, price: 13, headline: 31 }
     }
 }
 
@@ -75,6 +76,7 @@ pub struct BuyHeuristic {
     pub recovery_weight: f64,   // bonus when pulled back on the month but turning back up (bounce, not knife)
     pub fresh_dip_weight: f64,  // bonus when falling THIS WEEK (recent dip ranks above a stale month-old one)
     pub fresh_dip_cap: f64,     // cap on the 1W drop % fed into the fresh-dip bonus
+    pub min_avg_turnover_eur: f64, // liquidity gate: reject if avg daily turnover (EUR) < this (0 = off); drops thin/obscure names
     pub prefer_eur: bool,       // dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD
 }
 
@@ -94,6 +96,7 @@ impl Default for BuyHeuristic {
             recovery_weight: 1.0,
             fresh_dip_weight: 0.3, // up to fresh_dip_cap×this nudge; lifts a this-week faller over a stale dip
             fresh_dip_cap: 15.0,
+            min_avg_turnover_eur: 0.0, // off by default; settings.yaml sets a real floor to drop thin names
             prefer_eur: true,
         }
     }

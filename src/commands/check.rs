@@ -17,9 +17,9 @@ pub async fn run(args: Vec<String>) {
         .collect::<Vec<_>>()
         .join(" ");
     let w = &settings.widths;
-    let (nw, tw, mw) = (w.name, w.ticker, w.market);
+    let (nw, tw, mw, pw) = (w.name, w.ticker, w.market, w.price);
     println!(
-        "{:<nw$} {:<tw$} {:>13} {hdr}  {:<mw$} {:<8} HEADLINE",
+        "{:<nw$} {:<tw$} {:>pw$} {hdr}  {:<mw$} {:<8} HEADLINE",
         truncate("NAME", nw), truncate("TICKER", tw), "PRICE(EUR)", truncate("MARKET", mw), "TREND"
     );
 
@@ -32,7 +32,7 @@ pub async fn run(args: Vec<String>) {
             .collect::<Vec<_>>()
             .join(" ");
         println!(
-            "{:<nw$} {:<tw$} {:>13} {cells}  {:<mw$} {:<8} {}",
+            "{:<nw$} {:<tw$} {:>pw$} {cells}  {:<mw$} {:<8} {}",
             truncate(&q.name, nw),
             truncate(&q.ticker, tw),
             q.price,

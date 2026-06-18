@@ -78,7 +78,8 @@ pub struct Quote {
     pub div_eur: Vec<Option<f64>>, // total dividends/share (EUR) per DIV_HORIZONS; None = short history
     pub price_eur: Option<f64>, // current close in EUR (None if FX unknown); for dividend yield
     pub drawdown_pct: f64, // % below the high of the last ~high_days (picks "on sale" signal)
-    pub intraday: [Option<f64>; 3], // % change over [1h, 6h, 12h]; None = no bar near that offset
+    pub intraday: [Option<f64>; 3], // % change over [1h, 6h, 12h] = 1/6/12 hourly bars back; None if too few bars
+    pub avg_turnover_eur: Option<f64>, // avg daily turnover (close*volume, EUR) ~last 30 sessions; liquidity proxy
 }
 
 impl Quote {
@@ -102,6 +103,7 @@ impl Quote {
             price_eur: None,
             drawdown_pct: 0.0,
             intraday: [None; 3],
+            avg_turnover_eur: None,
         }
     }
 }
@@ -326,28 +328,40 @@ pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>) -
         .collect()
 }
 
-/// % change vs `hours` ago from intraday `(timestamp_secs, close)` bars: takes the bar nearest
-/// `last_ts - hours*3600`, but only if within `tol_secs` — so a stock's overnight gap (no bar
-/// near 12h ago) yields None instead of a bogus cross-session number. A ratio, so FX-agnostic.
-pub fn intraday_pct(ts: &[i64], closes: &[f64], hours: i64, tol_secs: i64) -> Option<f64> {
-    let (&last_ts, &cur) = (ts.last()?, closes.last()?);
-    let target = last_ts - hours * 3600;
-    let (i, dist) = ts
-        .iter()
-        .enumerate()
-        .map(|(i, &t)| (i, (t - target).abs()))
-        .min_by_key(|(_, d)| *d)?;
-    let p = closes[i];
-    if dist > tol_secs || p == 0.0 {
+/// % change vs `bars` hourly bars ago (index-based, NOT wall-clock). Counting trading bars
+/// ignores overnight/weekend gaps, so it always resolves when enough bars exist — for a stock
+/// "N bars ago" is the last N *trading* hours (may span a close); for 24/7 crypto it's real
+/// wall-clock hours. None if fewer than `bars`+1 closes. A ratio, so FX-agnostic.
+pub fn intraday_pct(closes: &[f64], bars: usize) -> Option<f64> {
+    let len = closes.len();
+    if len <= bars {
         return None;
     }
-    Some((cur - p) / p * 100.0)
+    let cur = *closes.last()?;
+    let past = closes[len - 1 - bars];
+    if past == 0.0 {
+        return None;
+    }
+    Some((cur - past) / past * 100.0)
 }
 
-/// [1h, 6h, 12h] % changes from intraday bars. tol 1.5h covers 60m bars + slack; a window with
-/// no bar (market closed) -> None. Crypto (24/7) fills all three; stocks often n/a past a close.
-pub fn intraday_changes(ts: &[i64], closes: &[f64]) -> [Option<f64>; 3] {
-    [1, 6, 12].map(|h| intraday_pct(ts, closes, h, 5400))
+/// [1h, 6h, 12h] % changes = 1/6/12 hourly bars back. With ~hourly bars over several days this
+/// fills for stocks too (was always n/a past a close when matched by wall-clock time).
+pub fn intraday_changes(closes: &[f64]) -> [Option<f64>; 3] {
+    [1, 6, 12].map(|b| intraday_pct(closes, b))
+}
+
+/// Average daily turnover (close × volume) over the last `n` sessions — a liquidity proxy.
+/// Skips zero-turnover days (no volume reported); None if none usable. A thin name (tiny
+/// turnover) is a riskier "opportunity" than a deep-liquid one, so picks can gate on it.
+pub fn avg_turnover(closes: &[f64], volumes: &[f64], n: usize) -> Option<f64> {
+    let len = closes.len().min(volumes.len());
+    let start = len.saturating_sub(n);
+    let vals: Vec<f64> = (start..len).map(|i| closes[i] * volumes[i]).filter(|x| *x > 0.0).collect();
+    if vals.is_empty() {
+        return None;
+    }
+    Some(vals.iter().sum::<f64>() / vals.len() as f64)
 }
 
 /// Horizons over which `screen` totals dividends (label -> calendar days back).
@@ -475,14 +489,19 @@ pub fn selftest() {
     assert_eq!(asof(&ds, &cs, NaiveDate::from_ymd_opt(2025, 1, 1).unwrap()), Some(30.0));
     assert_eq!(slice_since(&ds, &cs, 1), vec![20.0, 30.0]);
 
-    // intraday: hourly bars, last = "now". 1h ago = 100->110 = +10%; 6h ago bar exists = +20%.
-    let its: Vec<i64> = (0..7).map(|h| 1_000_000 + h * 3600).collect(); // 7 bars, 1h apart
-    let ics = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 110.0]; // last 110
-    assert!((intraday_pct(&its, &ics, 1, 5400).unwrap() - (110.0 - 105.0) / 105.0 * 100.0).abs() < 1e-9);
-    assert!((intraday_pct(&its, &ics, 6, 5400).unwrap() - (110.0 - 100.0) / 100.0 * 100.0).abs() < 1e-9);
-    assert_eq!(intraday_pct(&its, &ics, 12, 5400), None); // no bar near 12h ago (only 6h history)
-    assert_eq!(intraday_changes(&its, &ics)[2], None); // 12h slot n/a
-    assert!(intraday_changes(&its, &ics)[0].is_some()); // 1h slot present
+    // intraday: bar-count back. 7 bars, last=110. 1 bar back=105 -> +4.76%; 6 bars back=100 -> +10%
+    let ics = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 110.0];
+    assert!((intraday_pct(&ics, 1).unwrap() - (110.0 - 105.0) / 105.0 * 100.0).abs() < 1e-9);
+    assert!((intraday_pct(&ics, 6).unwrap() - 10.0).abs() < 1e-9);
+    assert_eq!(intraday_pct(&ics, 12), None); // only 7 bars -> 12 back unavailable
+    assert_eq!(intraday_changes(&ics)[2], None); // 12h slot n/a (short history)
+    assert!(intraday_changes(&ics)[0].is_some()); // 1h slot present
+
+    // turnover: avg of close*volume over last n, zero-volume days skipped; None if all zero/empty
+    assert_eq!(avg_turnover(&[10.0, 20.0], &[100.0, 200.0], 30), Some((1000.0 + 4000.0) / 2.0));
+    assert_eq!(avg_turnover(&[10.0, 20.0], &[0.0, 200.0], 30), Some(4000.0)); // zero-vol day skipped
+    assert_eq!(avg_turnover(&[], &[], 30), None);
+    assert_eq!(avg_turnover(&[10.0], &[0.0], 30), None); // no usable turnover
 
     assert_eq!(pct_cell(Some(&("€10.00".to_string(), 5.0))), "+5.0%");
     assert_eq!(pct_cell(None), "n/a");

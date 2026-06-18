@@ -32,18 +32,18 @@ pub async fn run(args: Vec<String>) {
     let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true).await; // intraday on: picks table shows 1h/6h/12h
 
     let w = &settings.widths;
-    let (nw, tw) = (w.name, w.ticker);
+    let (nw, tw, pw) = (w.name, w.ticker, w.price);
 
     // header row naming every column (NAME = instrument, % col label varies)
     let hdr = |pct_col: &str| {
         println!(
-            "  {:<nw$} {:<tw$} {:>13} {:>8}  {}",
+            "  {:<nw$} {:<tw$} {:>pw$} {:>8}  {}",
             truncate("NAME", nw), truncate("TICKER", tw), "PRICE(EUR)", pct_col, "TREND"
         );
     };
     let row = |q: &Quote, pct: String| {
         println!(
-            "  {:<nw$} {:<tw$} {:>13} {:>8}  {}",
+            "  {:<nw$} {:<tw$} {:>pw$} {:>8}  {}",
             truncate(&q.name, nw), truncate(&q.ticker, tw), q.price, pct, q.trend
         );
     };
@@ -60,28 +60,40 @@ pub async fn run(args: Vec<String>) {
         }
     };
 
-    // instruments down over `label`, biggest drop first; % column = that horizon
-    let falling = |title: &str, label: &str| {
-        let mut g: Vec<&Quote> =
-            qs.iter().filter(|q| perf_pct(q, label).map_or(false, |p| p < 0.0)).collect();
-        g.sort_by(|a, b| perf_pct(a, label).partial_cmp(&perf_pct(b, label)).unwrap());
-        println!("\n{} ({}):", title, g.len());
-        hdr(&format!("{label} %"));
-        for q in &g {
-            row(q, perf_pct(q, label).map_or("n/a".to_string(), |v| format!("{:+.1}%", v)));
-        }
-        if g.is_empty() {
-            println!("  (none)");
-        }
-    };
-
     println!("Scanned {} instruments.", qs.len());
     show("All-time highs", &qs.iter().filter(|q| q.at_ath).collect::<Vec<_>>());
     show("All-time lows", &qs.iter().filter(|q| q.at_atl).collect::<Vec<_>>());
-    falling("Falling over ~1 month", "1M");
-    falling("Falling over ~3 months", "3M");
-    falling("Falling over ~6 months", "6M");
-    falling("Falling over ~1 year", "1Y");
+
+    // single fallers table (was 4 per-horizon tables): in if down over ANY of 1M/3M/6M/1Y
+    // (union, so nothing the old tables showed is lost); columns 1D..1Y, biggest 1M drop first.
+    let fall_cols = ["1D", "1W", "1M", "3M", "6M", "1Y"];
+    let mut fallers: Vec<&Quote> = qs
+        .iter()
+        .filter(|q| ["1M", "3M", "6M", "1Y"].iter().any(|l| perf_pct(q, l).map_or(false, |p| p < 0.0)))
+        .collect();
+    fallers.sort_by(|a, b| {
+        perf_pct(a, "1M").unwrap_or(0.0).partial_cmp(&perf_pct(b, "1M").unwrap_or(0.0)).unwrap()
+    });
+    let fall_hdr = fall_cols.iter().map(|l| format!("{l:>8}")).collect::<Vec<_>>().join(" ");
+    println!("\nFalling (down over 1M/3M/6M/1Y), biggest 1-month drop first ({}):", fallers.len());
+    println!(
+        "  {:<nw$} {:<tw$} {:>pw$} {fall_hdr}  {}",
+        truncate("NAME", nw), truncate("TICKER", tw), "PRICE(EUR)", "TREND"
+    );
+    if fallers.is_empty() {
+        println!("  (none)");
+    }
+    for q in &fallers {
+        let cells = fall_cols
+            .iter()
+            .map(|l| format!("{:>8}", perf_pct(q, l).map_or("n/a".to_string(), |v| format!("{:+.1}%", v))))
+            .collect::<Vec<_>>()
+            .join(" ");
+        println!(
+            "  {:<nw$} {:<tw$} {:>pw$} {cells}  {}",
+            truncate(&q.name, nw), truncate(&q.ticker, tw), q.price, q.trend
+        );
+    }
 
     // top dividend payers: total per share (EUR) + yield per window, highest 1Y yield first
     let mut payers: Vec<&Quote> = qs.iter().filter(|q| yield_1y(q) > 0.0).collect();

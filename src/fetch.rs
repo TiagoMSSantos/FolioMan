@@ -59,6 +59,7 @@ async fn get_text(client: &Client, url: &str) -> Option<String> {
 struct Chart {
     dates: Vec<NaiveDate>,
     closes: Vec<f64>,
+    volumes: Vec<f64>, // parallel to closes (0.0 where no volume reported); liquidity proxy
     currency: String,
     name: String,
     divs: Vec<(NaiveDate, f64)>, // (ex-date, amount/share) from events.dividends
@@ -73,21 +74,21 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
 fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     let result = j.get("chart")?.get("result")?.get(0)?;
     let ts = result.get("timestamp")?.as_array()?;
-    let closes_arr = result
-        .get("indicators")?
-        .get("quote")?
-        .get(0)?
-        .get("close")?
-        .as_array()?;
+    let quote0 = result.get("indicators")?.get("quote")?.get(0)?;
+    let closes_arr = quote0.get("close")?.as_array()?;
+    let vols_arr = quote0.get("volume").and_then(|v| v.as_array());
     let meta = result.get("meta").cloned().unwrap_or(Value::Null);
 
     let mut dates = Vec::new();
     let mut closes = Vec::new();
-    for (t, c) in ts.iter().zip(closes_arr) {
+    let mut volumes = Vec::new();
+    for (i, (t, c)) in ts.iter().zip(closes_arr).enumerate() {
         if let (Some(secs), Some(close)) = (t.as_i64(), c.as_f64()) {
             if let Some(dt) = DateTime::from_timestamp(secs, 0) {
                 dates.push(dt.date_naive());
                 closes.push(close);
+                // volume parallel to closes; missing/null -> 0.0 (avg_turnover skips those days)
+                volumes.push(vols_arr.and_then(|a| a.get(i)).and_then(|v| v.as_f64()).unwrap_or(0.0));
             }
         }
     }
@@ -116,29 +117,22 @@ fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     Some(Chart {
         dates,
         closes,
+        volumes,
         currency,
         name: name_of(&meta, ticker),
         divs,
     })
 }
 
-/// Intraday `(timestamp_secs, close)` bars from the configured intraday chart URL (~hourly,
-/// last couple of days). None on failure; nulls dropped. Used only for the 1h/6h/12h columns.
-async fn intraday_bars(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<i64>, Vec<f64>)> {
+/// Intraday hourly closes (chronological) from the configured intraday chart URL. None on
+/// failure; null closes dropped. Used only for the 1h/6h/12h columns (bar-count, not time).
+async fn intraday_closes(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<f64>> {
     let url = urls.yahoo_intraday.replace("{ticker}", ticker);
     let j = get_json(client, &url).await?;
-    let result = j.get("chart")?.get("result")?.get(0)?;
-    let ts = result.get("timestamp")?.as_array()?;
-    let closes = result.get("indicators")?.get("quote")?.get(0)?.get("close")?.as_array()?;
-    let mut out_ts = Vec::new();
-    let mut out_c = Vec::new();
-    for (t, c) in ts.iter().zip(closes) {
-        if let (Some(s), Some(cl)) = (t.as_i64(), c.as_f64()) {
-            out_ts.push(s);
-            out_c.push(cl);
-        }
-    }
-    Some((out_ts, out_c))
+    let closes = j
+        .get("chart")?.get("result")?.get(0)?
+        .get("indicators")?.get("quote")?.get(0)?.get("close")?.as_array()?;
+    Some(closes.iter().filter_map(|c| c.as_f64()).collect())
 }
 
 async fn fetch_news(client: &Client, urls: &Urls, ticker: &str) -> Vec<String> {
@@ -190,7 +184,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
     let (chart_j, titles, intra) = tokio::join!(
         chart_json(client, urls, ticker, "max"),
         fetch_news(client, urls, ticker),
-        async { if intraday { intraday_bars(client, urls, ticker).await } else { None } },
+        async { if intraday { intraday_closes(client, urls, ticker).await } else { None } },
     );
 
     let chart = match chart_j.as_ref().and_then(|j| parse_chart(j, ticker)) {
@@ -242,7 +236,14 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         div_eur: core::dividend_sums(&chart.divs, &chart.dates, rate),
         price_eur: rate.map(|r| cur_close * r),
         drawdown_pct,
-        intraday: intra.map_or([None; 3], |(ts, cs)| core::intraday_changes(&ts, &cs)),
+        intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),
+        // turnover (close×volume) in native currency -> EUR (×rate). Equities only: Yahoo crypto
+        // "volume" is already a notional amount, so close×volume double-counts -> None (honest n/a).
+        avg_turnover_eur: if ticker.contains('-') {
+            None
+        } else {
+            core::avg_turnover(&chart.closes, &chart.volumes, 30).map(|v| v * rate.unwrap_or(1.0))
+        },
     }
 }
 

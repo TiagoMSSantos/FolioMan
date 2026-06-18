@@ -129,6 +129,11 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     if is_leveraged(&q.name) {
         return None; // leveraged/inverse decay product -> never a long-term hold
     }
+    // liquidity gate: a thin/obscure name (tiny daily turnover) is a risky "opportunity".
+    // Only gates when turnover is known; unknown (None) passes (don't punish missing volume data).
+    if q.avg_turnover_eur.map_or(false, |v| v < t.min_avg_turnover_eur) {
+        return None;
+    }
     let long = long_term_pct(q)?; // track-record gate: no ≥5Y leg -> not a "5Y+ uptrend"
     let y1 = perf_pct(q, "1Y")?;
     // per-class 1Y floor: crypto/FX are far more volatile -> a looser floor (else every dip is a knife)
@@ -159,31 +164,39 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
 /// Horizons whose Δ% is shown in the picks table (chronological).
 const DIFF_HORIZONS: &[&str] = &["1D", "1W", "1M", "1Y", "5Y", "10Y", "20Y"];
 
-/// Print the Top-N buy candidates derived from the already-fetched quotes (no network).
-pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths) {
-    let (nw, tw, mw) = (w.name, w.ticker, w.market);
+/// Score every quote, dedup currency twins, sort best-first. Shared by the per-class tables.
+fn ranked<'a>(qs: &'a [Quote], t: &BuyHeuristic) -> Vec<(&'a Quote, f64)> {
     let scored: Vec<(&Quote, f64)> =
         qs.iter().filter_map(|q| buy_score(q, t).map(|s| (q, s))).collect();
-    let mut picks = dedup_currency_twins(scored, t.prefer_eur); // one row per asset (e.g. BTC, not BTC-EUR+BTC-USD)
+    let mut picks = dedup_currency_twins(scored, t.prefer_eur); // one row per asset (BTC, not BTC-EUR+BTC-USD)
     picks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap()); // best score first
-    println!(
-        "\nTop {n} buy candidates — quality-on-sale heuristic: a recent low (most below its \
-         ~1Y high, OFF-HI) inside an intact long-term (5Y+) uptrend. NOT advice, just a ranking:"
-    );
+    picks
+}
+
+/// Compact EUR turnover for the table: €1.2B / €340M / €5K / n/a.
+fn turnover_cell(o: Option<f64>) -> String {
+    match o {
+        Some(v) if v >= 1e9 => format!("€{:.1}B", v / 1e9),
+        Some(v) if v >= 1e6 => format!("€{:.0}M", v / 1e6),
+        Some(v) => format!("€{:.0}K", v / 1e3),
+        None => "n/a".to_string(),
+    }
+}
+
+/// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks).
+fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
+    let (nw, tw, mw, pw) = (w.name, w.ticker, w.market, w.price);
+    println!("\n{title}");
     if picks.is_empty() {
         println!("  (none pass the gates)");
         return;
     }
-    let diff_hdr = DIFF_HORIZONS
-        .iter()
-        .map(|l| format!("{:>8}", l))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let diff_hdr = DIFF_HORIZONS.iter().map(|l| format!("{:>8}", l)).collect::<Vec<_>>().join(" ");
     let cell = |o: Option<f64>| o.map_or("n/a".to_string(), |v| format!("{:+.1}%", v));
     println!(
-        "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>13} {:>7} {:>7} {:>7} {diff_hdr} {:>7} {:>8}",
+        "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diff_hdr} {:>7} {:>10} {:>8}",
         "RANK", truncate("NAME", nw), truncate("TICKER", tw), truncate("MARKET", mw), "PRICE(EUR)",
-        "1H", "6H", "12H", "OFF-HI", "SCORE"
+        "1H", "6H", "12H", "OFF-HI", "TURNOVER", "SCORE"
     );
     for (i, (q, score)) in picks.iter().take(n).enumerate() {
         let diffs = DIFF_HORIZONS
@@ -192,7 +205,7 @@ pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths) {
             .collect::<Vec<_>>()
             .join(" ");
         println!(
-            "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>13} {:>7} {:>7} {:>7} {diffs} {:>7} {:>8.2}",
+            "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diffs} {:>7} {:>10} {:>8.2}",
             i + 1,
             truncate(&q.name, nw),
             truncate(&q.ticker, tw),
@@ -202,9 +215,22 @@ pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths) {
             cell(q.intraday[1]),
             cell(q.intraday[2]),
             format!("-{:.1}%", q.drawdown_pct), // % below the ~1Y high (real pullback, not 30d)
+            turnover_cell(q.avg_turnover_eur),
             score,
         );
     }
+}
+
+/// Print the Top-N buy candidates, SPLIT per asset class (stocks/ETFs vs crypto) so a +9400%
+/// crypto can't crowd out equities — the best in EACH class surfaces. Class = currency-quoted
+/// ticker (`-USD`/`-EUR`) → crypto, else stocks/ETFs. Currency twins already deduped in `ranked`.
+pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths) {
+    let (crypto, equity): (Vec<_>, Vec<_>) =
+        ranked(qs, t).into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
+    let desc = "quality-on-sale heuristic: a recent low (most below its ~1Y high, OFF-HI) inside \
+                an intact long-term (5Y+) uptrend. NOT advice, just a ranking:";
+    print_picks(&format!("Top {n} stocks/ETFs buy candidates — {desc}"), &equity, n, w);
+    print_picks(&format!("Top {n} crypto buy candidates — {desc}"), &crypto, n, w);
 }
 
 /// Buy-heuristic asserts (no network). Run by the `selftest` subcommand and the unit test.
@@ -221,6 +247,7 @@ pub fn selftest() {
             market: "USA".into(), head: String::new(), news_block: String::new(), perf,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, drawdown_pct, intraday: [None; 3],
+            avg_turnover_eur: None,
         }
     };
     let t = BuyHeuristic::default(); // on_sale_w 1.0/cap 35, y1_w .05/cap 50, long_w .05/cap 300, recovery_w 1.0
@@ -266,6 +293,15 @@ pub fn selftest() {
     let mut lev = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     lev.name = "GraniteShares 2x Short NVD".into();
     assert!(buy_score(&lev, &t).is_none());
+    // liquidity gate: known turnover below floor excluded; above floor or unknown (None) passes
+    let liq_t = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
+    let mut thin = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    thin.avg_turnover_eur = Some(1_000.0);
+    assert!(buy_score(&thin, &liq_t).is_none());
+    thin.avg_turnover_eur = Some(5_000_000.0);
+    assert!(buy_score(&thin, &liq_t).is_some());
+    thin.avg_turnover_eur = None; // unknown turnover not punished
+    assert!(buy_score(&thin, &liq_t).is_some());
     // knife gate: deep 1M crash excludes even with a positive year (5Y leg present so A passes)
     assert!(buy_score(&q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("1M", -30.0)]), &t).is_none());
     // structural-decline gate: negative >2Y trend excludes even with a positive year
