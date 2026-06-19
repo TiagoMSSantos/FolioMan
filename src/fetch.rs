@@ -213,9 +213,15 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
 
     let window = slice_since(&chart.dates, &chart.closes, dip_days);
     let d = if window.is_empty() { 0.0 } else { pct_from_high(&window) };
-    // drawdown off the high over a longer window (picks "on sale" signal — a real pullback,
-    // not the 30d dip which is ~0 for anything making new highs)
-    let hi_window = slice_since(&chart.dates, &chart.closes, high_days);
+    // OFF-HI: drawdown off the high (picks "on sale" signal — a real pullback, not the 30d dip
+    // which is ~0 for anything making new highs). high_days <= 0 -> anchor on the all-time high over
+    // the fetched ~10y history (best for a decades hold: discount vs the proven peak, not last year's);
+    // high_days > 0 -> trailing-N-day high.
+    let hi_window = if high_days <= 0 {
+        chart.closes.clone()
+    } else {
+        slice_since(&chart.dates, &chart.closes, high_days)
+    };
     let drawdown_pct = if hi_window.is_empty() { 0.0 } else { pct_from_high(&hi_window) };
 
     let (arrow, dur, _) = trend_streak(&chart.dates, &chart.closes);
