@@ -237,10 +237,10 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         price_eur: rate.map(|r| cur_close * r),
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),
-        // turnover (close×volume) in native currency -> EUR (×rate). Equities only: Yahoo crypto
-        // "volume" is already a notional amount, so close×volume double-counts -> None (honest n/a).
+        // avg daily turnover in native currency -> EUR (×rate). Crypto: Yahoo "volume" is already
+        // a notional amount, so use it raw (close×volume would double-count). Equities: close×volume.
         avg_turnover_eur: if ticker.contains('-') {
-            None
+            core::avg_volume(&chart.volumes, 30).map(|v| v * rate.unwrap_or(1.0))
         } else {
             core::avg_turnover(&chart.closes, &chart.volumes, 30).map(|v| v * rate.unwrap_or(1.0))
         },
@@ -286,6 +286,10 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
 
 /// One Quote per ticker, all concurrent, input order preserved.
 pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool) -> Vec<Quote> {
+    // Warm the USD rate once up front. Otherwise every US stock races its own USDEUR=X call in the
+    // join below; one gets rate-limited -> None cached -> all USD names print "USD?" instead of €.
+    // ponytail: USD only (dominant case); rare currencies (GBP/CHF) still race, fine at this scale.
+    let _ = eur_rate(client, urls, "USD", fx).await;
     let futs = tickers.iter().map(|tk| quote_one(client, urls, fx, tk, dip_days, high_days, intraday));
     join_all(futs).await
 }

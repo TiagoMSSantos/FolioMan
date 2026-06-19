@@ -366,6 +366,18 @@ pub fn avg_turnover(closes: &[f64], volumes: &[f64], n: usize) -> Option<f64> {
     Some(vals.iter().sum::<f64>() / vals.len() as f64)
 }
 
+/// Average daily volume over the last `n` sessions, zero days skipped. For crypto the Yahoo
+/// "volume" is ALREADY a notional currency amount (not a coin count), so this is turnover as-is
+/// — no ×close (that would double-count). None if no usable day.
+pub fn avg_volume(volumes: &[f64], n: usize) -> Option<f64> {
+    let start = volumes.len().saturating_sub(n);
+    let vals: Vec<f64> = volumes[start..].iter().copied().filter(|x| *x > 0.0).collect();
+    if vals.is_empty() {
+        return None;
+    }
+    Some(vals.iter().sum::<f64>() / vals.len() as f64)
+}
+
 /// Daily volatility: standard deviation of daily % returns over the last `n` sessions — the
 /// asset's "normal swing". Lets the picks score judge whether a drawdown is unusually deep for
 /// THIS asset (a real sale) or just its everyday noise. None if too few sessions. FX-agnostic.
@@ -522,6 +534,9 @@ pub fn selftest() {
     assert_eq!(avg_turnover(&[10.0, 20.0], &[0.0, 200.0], 30), Some(4000.0)); // zero-vol day skipped
     assert_eq!(avg_turnover(&[], &[], 30), None);
     assert_eq!(avg_turnover(&[10.0], &[0.0], 30), None); // no usable turnover
+// avg_volume: crypto notional volume used raw (no ×close), zero days skipped
+assert_eq!(avg_volume(&[100.0, 0.0, 300.0], 30), Some(200.0));
+assert_eq!(avg_volume(&[0.0], 30), None);
 
     // volatility: stdev of daily % returns. Steady +1%/day -> 0 stdev; alternating moves -> >0
     assert_eq!(volatility_pct(&[100.0, 101.0, 102.01, 103.0301], 30), Some(0.0));
