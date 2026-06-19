@@ -301,15 +301,17 @@ pub async fn fetch_tech_symbols(client: &Client, urls: &Urls) -> std::collection
 }
 
 /// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
-/// CoinGecko + the S&P 500 constituents CSV (single companies — the CSV carries NO ETFs), symbols
-/// normalised to Yahoo form (`btc` -> `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency
-/// follows `prefer_eur` (Yahoo has both legs); US stocks have no EUR listing, so unaffected. `etfs` is
-/// a hand-kept list appended verbatim (no free ETF source to scan). Sorted + deduped; empty if all fail.
-pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool, etfs: &[String]) -> Vec<String> {
+/// CoinGecko + the S&P 500 constituents CSV (single companies) + ALL US-listed ETFs from the two
+/// NASDAQ Trader symbol files. Symbols normalised to Yahoo form (`btc` -> `BTC-EUR`/`BTC-USD`,
+/// `BRK.B` -> `BRK-B`). Crypto quote currency follows `prefer_eur` (Yahoo has both legs); US stocks/
+/// ETFs have no EUR listing, so unaffected. Sorted + deduped; empty if all sources fail.
+pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool) -> Vec<String> {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
-    let (cg, csv) = tokio::join!(
+    let (cg, csv, nasdaq, other) = tokio::join!(
         get_json(client, &cg_url),
         get_text(client, &urls.sp500_csv),
+        get_text(client, &urls.nasdaq_listed),
+        get_text(client, &urls.other_listed),
     );
     let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
     let mut out: Vec<String> = Vec::new();
@@ -319,7 +321,7 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
             c.get("symbol").and_then(|s| s.as_str()).map(|s| format!("{}-{crypto_cur}", s.to_uppercase()))
         }));
     }
-    // stocks/ETFs: S&P 500 CSV, first column = Symbol; '.'->'-' for Yahoo (BRK.B -> BRK-B).
+    // stocks: S&P 500 CSV, first column = Symbol; '.'->'-' for Yahoo (BRK.B -> BRK-B).
     // ponytail: naive comma split — constituent symbols/CSV carry no embedded commas.
     if let Some(text) = csv {
         out.extend(
@@ -329,8 +331,13 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
                 .filter(|s| !s.is_empty()),
         );
     }
-    // ETFs: hand-kept (the S&P CSV has none); appended as-is, already Yahoo form (SPY, SXR8.DE).
-    out.extend(etfs.iter().cloned());
+    // ETFs: live from NASDAQ Trader (nasdaqlisted ETF col 6 + otherlisted ETF col 4, where SPY lives).
+    if let Some(text) = nasdaq {
+        out.extend(core::etf_symbols(&text, 6));
+    }
+    if let Some(text) = other {
+        out.extend(core::etf_symbols(&text, 4));
+    }
     out.sort();
     out.dedup();
     out
@@ -348,9 +355,25 @@ pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[Strin
     // fan-out; one gets rate-limited -> None cached -> all USD names print "USD?" instead of €.
     // ponytail: USD only (dominant case); rare currencies (GBP/CHF) still race, fine at this scale.
     let _ = eur_rate(client, urls, "USD", fx).await;
+    // progress to stderr (stdout stays a clean table): a big `screen` is minutes of silent network,
+    // so log every PROGRESS_EVERY completions + the final total. ponytail: atomic counter, no bar lib.
+    let total = tickers.len();
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    eprintln!("fetch: {total} quotes (≤{FETCH_CONCURRENCY} concurrent)…");
+    const PROGRESS_EVERY: usize = 50;
     // `buffered` (ordered) caps concurrency yet preserves input order (`check` prints in that order).
     stream::iter(tickers.iter())
-        .map(|tk| quote_one(client, urls, fx, tk, dip_days, high_days, intraday, windows, infl))
+        .map(|tk| {
+            let done = &done;
+            async move {
+                let q = quote_one(client, urls, fx, tk, dip_days, high_days, intraday, windows, infl).await;
+                let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n % PROGRESS_EVERY == 0 || n == total {
+                    eprintln!("fetch: {n}/{total} quotes fetched");
+                }
+                q
+            }
+        })
         .buffered(FETCH_CONCURRENCY)
         .collect()
         .await

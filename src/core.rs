@@ -226,6 +226,26 @@ pub fn tech_symbol(csv_line: &str) -> Option<String> {
     Some(sym.replace('.', "-")) // BRK.B -> BRK-B (Yahoo form)
 }
 
+/// Parse a NASDAQ Trader SymDir file (pipe-delimited) -> ETF symbols (Yahoo form): keep col-0 symbols
+/// whose `etf_col` flag is "Y". Skips the header row and the "File Creation Time" footer; drops
+/// `$`-bearing (preferred/test) tickers. ETFs span two files with different layouts, hence the
+/// column-index arg (nasdaqlisted = 6, otherlisted = 4). No free AUM rank exists, so this is ALL of
+/// them — the turnover gate culls the illiquid tail after fetch.
+pub fn etf_symbols(text: &str, etf_col: usize) -> Vec<String> {
+    text.lines()
+        .skip(1)
+        .filter(|l| !l.starts_with("File Creation Time"))
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('|').collect();
+            let sym = f.first()?.trim();
+            if f.get(etf_col)?.trim() != "Y" || sym.is_empty() || sym.contains('$') {
+                return None;
+            }
+            Some(sym.replace('.', "-"))
+        })
+        .collect()
+}
+
 /// Titles across yfinance/Yahoo schemas (flat `title`, nested `content.title`).
 pub fn headline_titles(news_items: &[Value]) -> Vec<String> {
     let nonempty = |v: &Value, key: &str| -> Option<String> {
@@ -644,6 +664,11 @@ assert_eq!(tech_symbol("GOOGL,Alphabet,Communication Services,x"), Some("GOOGL".
 assert_eq!(tech_symbol("BF.B,Brown-Forman,Information Technology,x"), Some("BF-B".to_string())); // '.'->'-'
 assert_eq!(tech_symbol("MMM,3M,Industrials,x"), None);
 assert_eq!(tech_symbol("AMZN,Amazon,Consumer Discretionary,x"), None); // GICS quirk: not tech
+// etf_symbols: keep ETF flag = Y at the given column, skip header/footer/$/non-ETF; '.'->'-'
+let nasdaq = "Symbol|Name|Cat|Test|Fin|Lot|ETF|NS\nQQQ|Invesco QQQ|Q|N|N|100|Y|N\nAAPL|Apple|Q|N|N|100|N|N\nFOO$|x|Q|N|N|100|Y|N\nFile Creation Time: now";
+assert_eq!(etf_symbols(nasdaq, 6), vec!["QQQ".to_string()]); // AAPL=N dropped, FOO$ dropped, footer skipped
+let other = "ACT Symbol|Name|Exch|CQS|ETF|Lot|Test|NASDAQ\nSPY|SPDR S&P 500|P|SPY|Y|100|N|SPY\nBRK.A|Berkshire|N|BRK.A|N|1|N|";
+assert_eq!(etf_symbols(other, 4), vec!["SPY".to_string()]); // BRK.A is ETF=N -> dropped
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"

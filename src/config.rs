@@ -16,8 +16,6 @@ pub struct Settings {
     pub universe_size: usize, // top-N per class (crypto + stocks/ETFs) `screen` pulls from the live sources
     #[serde(default = "default_true")]
     pub universe_prefer_eur: bool, // crypto in the live universe quoted in EUR (BTC-EUR) if true, else USD
-    #[serde(default)]
-    pub screen_etfs: Vec<String>, // ETFs appended to the `screen` universe (no free ETF source); empty = no ETF table on screen
     pub euribor_3m: f64,
     pub euribor_3m_date: String,
     pub ntfy_topic: String,
@@ -173,11 +171,28 @@ pub struct Urls {
     // equities when the env key is set (free tiers are rate-limited -> `check`-scale, not `screen`).
     #[serde(default = "default_fundamentals_url")]
     pub fundamentals: String,
+    // NASDAQ Trader SymDir symbol files (pipe-delimited, ETF flag column) -> screen ETF universe.
+    // No free AUM-ranked ETF source exists, so these dump ALL US-listed ETFs across both exchanges;
+    // the turnover gate culls the illiquid tail. Defaulted so an older settings.yaml still loads.
+    #[serde(default = "default_nasdaq_listed_url")]
+    pub nasdaq_listed: String,
+    #[serde(default = "default_other_listed_url")]
+    pub other_listed: String,
 }
 
 /// Default (E) fundamentals endpoint: Financial Modeling Prep's free `quote` (carries `pe`).
 fn default_fundamentals_url() -> String {
     "https://financialmodelingprep.com/api/v3/quote/{ticker}?apikey={key}".to_string()
+}
+
+/// Default NASDAQ-listed symbol file (ETF flag = column 6).
+fn default_nasdaq_listed_url() -> String {
+    "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt".to_string()
+}
+
+/// Default other-listed (NYSE/Arca/BATS) symbol file (ETF flag = column 4); where SPY etc. live.
+fn default_other_listed_url() -> String {
+    "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt".to_string()
 }
 
 /// Locate `config/settings.yaml` next to the exe or up the tree, mirroring the old

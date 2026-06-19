@@ -25,15 +25,18 @@ pub async fn run(args: Vec<String>) {
     // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it
     let (universe, tech) = if args.is_empty() {
         tokio::join!(
-            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &settings.screen_etfs),
+            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur),
             fetch::fetch_tech_symbols(&client, &settings.urls), // GICS sectors for the tech-only buy table
         )
     } else {
         (args, std::collections::HashSet::new()) // explicit tickers: no sector data -> no tech table
     };
 
+    eprintln!("screen: {} tickers in universe (crypto + S&P 500 + all US-listed ETFs)", universe.len());
+
     // live EU HICP series to inflation-adjust long-horizon returns, only when enabled
     let eu_infl = if settings.inflation_adjust.enabled {
+        eprintln!("screen: fetching EU HICP inflation series…");
         Some(fetch::fetch_eu_inflation(&client, &settings.urls).await)
     } else {
         None
