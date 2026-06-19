@@ -4,21 +4,57 @@
 
 use crate::commands::truncate;
 use crate::config::{BuyHeuristic, Widths};
-use crate::core::{Quote, HORIZONS};
+use crate::core::{self, Quote, HORIZONS};
 use std::collections::{HashMap, HashSet};
 
-/// Longest-available trend over a window longer than 2 years (5Y → 10Y → 20Y), i.e. the
-/// structural multi-year direction. None if the asset has no >2Y history.
-fn long_term_pct(q: &Quote) -> Option<f64> {
-    perf_pct(q, "20Y").or_else(|| perf_pct(q, "10Y")).or_else(|| perf_pct(q, "5Y"))
+/// The longest >2Y leg as (cumulative %, span years): 20Y, else 10Y, else 5Y. None if the asset
+/// has no >2Y history. The cumulative % feeds the corpse GATE; annualized (CAGR) it feeds the SCORE,
+/// so a 10Y and a 20Y leg are compared on the same %/yr footing.
+fn long_leg(q: &Quote) -> Option<(f64, f64)> {
+    for (label, years) in [("20Y", 20.0), ("10Y", 10.0), ("5Y", 5.0)] {
+        if let Some(p) = perf_pct(q, label) {
+            return Some((p, years));
+        }
+    }
+    None
 }
 
-/// How intact the long-term trend is, 0..1 — used to scale the on-sale discount so a corpse's deep
-/// "discount" can't outrank a healthy name's modest pullback. `zero` (negative) is the long-% at
-/// which health hits 0; health reaches 1 at a flat (0%) or rising long trend. Equities clear the
-/// >30% structural gate, so this is ~1.0 for them (no-op) — it reshapes the crypto ranking.
-fn trend_health(long: f64, zero: f64) -> f64 {
-    ((long - zero) / -zero).clamp(0.0, 1.0)
+/// How intact the long-term trend is, 0..1 — used to scale the on-sale discount so a decaying name's
+/// deep "discount" can't outrank a healthy compounder's modest pullback. `zero` (a negative %/yr
+/// CAGR) is where health hits 0; health reaches 1 at a flat/rising long trend.
+fn trend_health(long_cagr: f64, zero: f64) -> f64 {
+    ((long_cagr - zero) / -zero).clamp(0.0, 1.0)
+}
+
+/// (D) Trailing ~1Y dividend yield (%) for the dividend reward; 0 if it doesn't pay / no price /
+/// short history. Same per-horizon yield `screen` lists.
+fn dividend_yield_1y(q: &Quote) -> f64 {
+    core::dividend_yields(&q.div_eur, q.price_eur).first().and_then(|o| *o).unwrap_or(0.0)
+}
+
+/// (E) Valuation tilt from trailing P/E: cheap (PE < ref) lifts the score, rich dampens it, clamped
+/// to [VALUE_TILT_MIN, VALUE_TILT_MAX]. Unknown PE or non-earning (crypto/ETF/PE<=0) -> 1.0 (neutral
+/// — never punished for missing data).
+fn value_factor(q: &Quote, ref_pe: f64) -> f64 {
+    match q.pe_ratio {
+        Some(pe) if pe > 0.0 && ref_pe > 0.0 => {
+            (ref_pe / pe).clamp(crate::config::VALUE_TILT_MIN, crate::config::VALUE_TILT_MAX)
+        }
+        _ => 1.0,
+    }
+}
+
+/// (B) Value-trap dock: when a name's 1Y AND 5Y returns are BOTH <= `sustained_decline_pct` it has
+/// bled for years, not merely dipped — scale its score by `sustained_decline_penalty`. 1.0 (no dock)
+/// if either leg is absent or above the line (a recovering peak-anchored coin — bad 5Y, positive 1Y
+/// — is NOT docked).
+fn sustained_decline_factor(q: &Quote, t: &BuyHeuristic) -> f64 {
+    match (perf_pct(q, "1Y"), perf_pct(q, "5Y")) {
+        (Some(y1), Some(y5)) if y1 <= t.sustained_decline_pct && y5 <= t.sustained_decline_pct => {
+            t.sustained_decline_penalty
+        }
+        _ => 1.0,
+    }
 }
 
 /// #1 — Volatility-normalized dip: how deep the pullback is RELATIVE to this asset's normal daily
@@ -103,20 +139,26 @@ pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
     q.perf.get(i).and_then(|o| o.as_ref()).map(|(_, p)| *p)
 }
 
-/// Score a quote as a "quality on sale" buy candidate, or `None` if it fails a gate. The formula:
+/// Score a quote as a "quality on sale" buy candidate for a multi-DECADE hold, or `None` if it
+/// fails a gate. The formula:
 ///
 /// ```text
-///   score = discount × trend_health × momentum + long_reward,   then × trust
+///   base  = discount × trend_health × momentum + long_reward + cheap_reward + dividend_reward
+///   score = base × value × decline × trust
 /// ```
 ///
-/// - **discount**  — how far it's pulled back off its ~1Y high, normalized by the asset's OWN
-///   volatility (#1) and capped (`normal_volatility_pct`, `discount_cap`).
-/// - **trend_health** ∈ [0,1] — fades the discount as the multi-year trend weakens; kills corpses,
-///   ≈1.0 for equities (`min_long_pct_crypto` is the zero-point).
-/// - **momentum** — rewards a confirmed bounce, docks a still-falling knife (#2)
-///   (`momentum_bounce`, `momentum_knife`).
-/// - **long_reward** — a small bonus for a strong >2Y uptrend (`long_trend_weight`, `long_trend_cap`).
-/// - **trust** — halves anything without a 10Y record (less-proven uptrend).
+/// - **discount** — pullback off the ~1Y high, normalized by the asset's OWN volatility and capped
+///   (`normal_volatility_pct`, `discount_cap`).
+/// - **trend_health** ∈ [0,1] — fades the discount as the long trend's CAGR weakens (`health_zero_cagr`).
+/// - **momentum** — weekly bounce/knife multiplier (`momentum_bounce`/`knife`); 1.0 = off (default:
+///   weekly timing is noise at a decades horizon).
+/// - **long_reward** — (A) reward for the long leg's CAGR (annualized, comparable across spans;
+///   `long_trend_weight`, `long_trend_cap`).
+/// - **cheap_reward** — (C) reward for sitting below the ~200wk SMA (`cheap_weight`, `cheap_cap`).
+/// - **dividend_reward** — (D) reward for trailing yield (`dividend_weight`, `dividend_cap`).
+/// - **value** — (E) P/E tilt: cheap lifts, rich dampens, unknown neutral (`ref_pe`).
+/// - **decline** — (B) value-trap dock when 1Y & 5Y both deeply negative.
+/// - **trust** — halves anything without a 10Y record.
 ///
 /// Every knob lives in `BuyHeuristic` (settings.yaml `buy_heuristic:`). Higher = more interesting.
 /// GATES below exclude a candidate before scoring. **NOT advice** — a ranking, never a forecast.
@@ -133,9 +175,11 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     if crypto && q.drawdown_pct < 3.0 {
         return None; // stablecoin peg / crypto at its high -> nothing on sale
     }
-    // need a multi-year track record; crypto is younger, so fall back to its 1Y leg.
-    let long = long_term_pct(q).or_else(|| if crypto { perf_pct(q, "1Y") } else { None })?;
-    if crypto && long <= t.min_long_pct_crypto {
+    // longest >2Y leg (crypto is younger, so fall back to its 1Y leg): cumulative for the gate,
+    // annualized (CAGR) for the score.
+    let (long_cum, long_years) =
+        long_leg(q).or_else(|| if crypto { perf_pct(q, "1Y").map(|p| (p, 1.0)) } else { None })?;
+    if crypto && long_cum <= t.min_long_pct_crypto {
         return None; // crypto corpse: a >2Y leg this deep (e.g. -95%) is a dead coin, not a dip
     }
     let y1 = perf_pct(q, "1Y")?;
@@ -157,16 +201,21 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
         }
     }
 
-    // ---- SCORE: discount × trend_health × momentum + long_reward, then × trust ----
+    // ---- SCORE ----
+    let long_cagr = core::cagr(long_cum, long_years); // (A) annualized -> comparable across 5/10/20Y
     let discount =
         normalized_dip(q.drawdown_pct, q.volatility_pct, t.normal_volatility_pct).min(t.discount_cap);
-    let health = trend_health(long, t.min_long_pct_crypto);
+    let health = trend_health(long_cagr, t.health_zero_cagr);
     let momentum = momentum_factor(q, t.momentum_bounce, t.momentum_knife);
-    let long_reward = t.long_trend_weight * long.min(t.long_trend_cap);
+    let long_reward = t.long_trend_weight * long_cagr.min(t.long_trend_cap); // (A)
+    let cheap_reward = t.cheap_weight * q.below_ma_pct.min(t.cheap_cap); // (C)
+    let dividend_reward = t.dividend_weight * dividend_yield_1y(q).min(t.dividend_cap); // (D)
 
-    let score = discount * health * momentum + long_reward;
+    let base = discount * health * momentum + long_reward + cheap_reward + dividend_reward;
+    let value = value_factor(q, t.ref_pe); // (E) cheap lifts, rich dampens, unknown neutral
+    let decline = sustained_decline_factor(q, t); // (B) multi-year-bleed dock
     let trust = if perf_pct(q, "10Y").is_none() { 0.5 } else { 1.0 };
-    Some(score * trust)
+    Some(base * value * decline * trust)
 }
 
 /// Horizons whose Δ% is shown in the picks table (chronological).
@@ -274,113 +323,128 @@ pub fn selftest() {
             market: "USA".into(), head: String::new(), news_block: String::new(), perf,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, drawdown_pct, intraday: [None; 3],
-            avg_turnover_eur: None, volatility_pct: None,
+            avg_turnover_eur: None, volatility_pct: None, below_ma_pct: 0.0, pe_ratio: None,
         }
     };
-    let t = BuyHeuristic::default(); // normal_vol 2.0, discount_cap 35, momentum 1.3/0.6, long_trend .05/cap 300
+    let t = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on
+
+    // --- pure helpers ---
     assert_eq!(perf_pct(&q(5.0, &[("1Y", 20.0)]), "1Y"), Some(20.0));
     assert_eq!(perf_pct(&q(5.0, &[]), "1Y"), None);
+    // (A) CAGR annualizes a cumulative %: 0 stays 0, +100% over 1y = 100, +300% over 10y ≈ 14.9%/yr
+    assert!(core::cagr(0.0, 10.0).abs() < 1e-9);
+    assert!((core::cagr(100.0, 1.0) - 100.0).abs() < 1e-9);
+    assert!((core::cagr(300.0, 10.0) - 14.87).abs() < 0.1);
+    assert!(core::cagr(-100.0, 5.0).is_finite()); // near-total loss must not NaN the root
+    // (C) below-SMA %: last 50 vs mean 83.33 of [100,100,50] = 40%; window longer than history = 0
+    assert!((core::below_long_ma_pct(&[100.0, 100.0, 50.0], 3) - 40.0).abs() < 1e-9);
+    assert_eq!(core::below_long_ma_pct(&[1.0, 2.0], 5), 0.0);
     // #1 normalized dip: a calm asset's dip is amplified, a wild one's damped, unknown vol = raw
     assert!((normalized_dip(30.0, Some(1.0), 2.0) - 60.0).abs() < 1e-9);
     assert!((normalized_dip(30.0, Some(4.0), 2.0) - 15.0).abs() < 1e-9);
     assert_eq!(normalized_dip(30.0, None, 2.0), 30.0);
     assert_eq!(normalized_dip(30.0, Some(0.0), 2.0), 30.0); // div-by-zero guard
-    // base score (vol n/a -> discount = raw drawdown): discount 5 × health 1 × momentum 1 + 0.05*40 = 7
-    let base = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
-    assert!((base - 7.0).abs() < 1e-9);
-    // discount caps at 35: drawdown 80 -> 35; + 0.05*40 = 37
-    assert!((buy_score(&q(80.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap() - 37.0).abs() < 1e-9);
-    // no 10Y history halves the score (uptrend less proven)
+
+    // --- GATES (exclusion behaviour, unchanged) ---
+    assert!(buy_score(&q(5.0, &[("1Y", 20.0)]), &t).is_none()); // equity: no >2Y leg -> excluded
+    let mut crypto = q(5.0, &[("1Y", 20.0)]); // ...but crypto falls back to its 1Y leg -> admitted
+    crypto.ticker = "BTC-EUR".into();
+    assert!(buy_score(&crypto, &t).is_some());
+    assert!(buy_score(&q(5.0, &[("1Y", 20.0), ("5Y", 40.0), ("1M", -25.0)]), &t).is_none()); // equity knife
+    let mut knife_crypto = q(5.0, &[("1Y", 20.0), ("1M", -25.0)]); // crypto looser knife -> admitted
+    knife_crypto.ticker = "ETH-EUR".into();
+    assert!(buy_score(&knife_crypto, &t).is_some());
+    assert!(buy_score(&q(5.0, &[("1Y", 20.0), ("5Y", -50.0)]), &t).is_none()); // equity: neg 5Y leg
+    let mut corpse = q(40.0, &[("1Y", -30.0), ("5Y", -95.0)]); // crypto corpse (>2Y leg -95%) excluded
+    corpse.ticker = "FIL-EUR".into();
+    assert!(buy_score(&corpse, &t).is_none());
+    let mut peg = q(0.3, &[("1Y", 3.0), ("5Y", 3.0)]); // stablecoin: drawdown<3% -> nothing on sale
+    peg.ticker = "DAI-EUR".into();
+    assert!(buy_score(&peg, &t).is_none());
+    assert!(is_leveraged("GraniteShares 2x Short NVD") && !is_leveraged("Apple Inc."));
+    let mut lev = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    lev.name = "GraniteShares 2x Short NVD".into();
+    assert!(buy_score(&lev, &t).is_none()); // leveraged/inverse product excluded
+    let liq_t = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
+    let mut thin = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    thin.avg_turnover_eur = Some(1_000.0);
+    assert!(buy_score(&thin, &liq_t).is_none()); // below liquidity floor
+    thin.avg_turnover_eur = Some(5_000_000.0);
+    assert!(buy_score(&thin, &liq_t).is_some());
+    thin.avg_turnover_eur = None; // unknown turnover not punished
+    assert!(buy_score(&thin, &liq_t).is_some());
+    assert!(buy_score(&q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("1M", -30.0)]), &t).is_none()); // equity knife
+    assert!(buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", -3.0)]), &t).is_none()); // neg >2Y -> excluded
+    assert!(buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", -5.0)]), &t).is_none()); // every leg must hold
+    assert!(buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 80.0), ("20Y", 200.0)]), &t).is_some());
+    assert!(buy_score(&q(5.0, &[("1Y", -5.0), ("5Y", 40.0)]), &t).is_none()); // declining year
+    assert!(buy_score(&q(30.0, &[("1Y", -40.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).is_none()); // equity 1Y floor
+    let mut cr = q(30.0, &[("1Y", -40.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    cr.ticker = "BTC-USD".into();
+    assert!(buy_score(&cr, &t).is_some()); // crypto looser 1Y floor
+    assert!(buy_score(&q(5.0, &[("5Y", 40.0)]), &t).is_none()); // no 1Y data
+    assert!(buy_score(&Quote::stub("X", "err", "", "X"), &t).is_none()); // err row
+
+    // --- SCORE (relational, robust to knob tuning) ---
+    // trust: same inputs, the one missing a 10Y record scores lower (uptrend less proven)
+    let with10 = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
     let no10 = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0)]), &t).unwrap();
-    assert!((no10 - base / 2.0).abs() < 1e-9);
-    // a deep pullback (discount 35) outranks a rocket at new highs (discount 0) despite a huge 1Y
+    assert!(with10 > no10);
+    // discount caps: an 80% drawdown doesn't score below a 5% one, all else equal
+    let deep = buy_score(&q(80.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
+    let shallow = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
+    assert!(deep >= shallow);
+    // a deep pullback on a healthy long trend beats a rocket at new highs (discount 0)
     let pullback = buy_score(&q(40.0, &[("1Y", 30.0), ("5Y", 50.0), ("10Y", 50.0)]), &t).unwrap();
     let rocket = buy_score(&q(0.0, &[("1Y", 400.0), ("5Y", 500.0), ("10Y", 500.0)]), &t).unwrap();
     assert!(pullback > rocket, "on-sale name must beat the rocket: {pullback} vs {rocket}");
-    // #2 momentum: green week off a monthly dip -> bounce ×1.3: discount 5 × 1.3 = 6.5 + 2 = 8.5
-    let bounce = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1W", 2.0)]), &t).unwrap();
-    assert!((bounce - 8.5).abs() < 1e-9);
-    // still falling (red week & day) -> knife ×0.6: discount 5 × 0.6 = 3 + 2 = 5
-    let knife = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1W", -2.0), ("1D", -1.0)]), &t).unwrap();
-    assert!((knife - 5.0).abs() < 1e-9);
-    // only today green -> half the bounce premium (×1.15): discount 5 × 1.15 = 5.75 + 2 = 7.75
-    let half = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1D", 1.0)]), &t).unwrap();
-    assert!((half - 7.75).abs() < 1e-9);
     // #1 end-to-end: same 30% drawdown, the calm (low-vol) name outranks the wild one
     let mut calm = q(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     calm.volatility_pct = Some(1.0);
     let mut wild = q(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     wild.volatility_pct = Some(4.0);
     assert!(buy_score(&calm, &t).unwrap() > buy_score(&wild, &t).unwrap());
-    // track-record gate (A): no >2Y leg at all -> excluded (can't be a "5Y+ uptrend")
-    assert!(buy_score(&q(5.0, &[("1Y", 20.0)]), &t).is_none());
-    // ...but a crypto ticker (currency-quoted) falls back to its 1Y leg -> admitted
-    let mut crypto = q(5.0, &[("1Y", 20.0)]);
-    crypto.ticker = "BTC-EUR".into();
-    assert!(buy_score(&crypto, &t).is_some());
-    // per-class knife: a -25% month sinks an equity (knife -15) but not crypto (knife -35)
-    assert!(buy_score(&q(5.0, &[("1Y", 20.0), ("5Y", 40.0), ("1M", -25.0)]), &t).is_none());
-    let mut knife_crypto = q(5.0, &[("1Y", 20.0), ("1M", -25.0)]);
-    knife_crypto.ticker = "ETH-EUR".into();
-    assert!(buy_score(&knife_crypto, &t).is_some());
-    // structural multi-year gate is equities-only: a negative 5Y leg sinks a stock but not crypto
-    // (its -EUR 5Y is peak-anchored, not a real downtrend)
-    assert!(buy_score(&q(5.0, &[("1Y", 20.0), ("5Y", -50.0)]), &t).is_none());
-    let mut weak5y_crypto = q(5.0, &[("1Y", 20.0), ("5Y", -50.0)]);
-    weak5y_crypto.ticker = "LTC-EUR".into();
-    assert!(buy_score(&weak5y_crypto, &t).is_some());
+    // (A) a stronger long-term CAGR outranks a weaker one, all else equal
+    let strong = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 400.0)]), &t).unwrap();
+    let weak = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
+    assert!(strong > weak);
+    // (A) trend_health: 0 at the decay (zero) threshold, 1 at a flat/rising trend
+    assert_eq!(trend_health(t.health_zero_cagr, t.health_zero_cagr), 0.0);
+    assert_eq!(trend_health(0.0, t.health_zero_cagr), 1.0);
+    // (B) sustained-decline dock: 1Y & 5Y both deep-red is docked below an equal coin that's recovering
+    let mut bleeder = q(40.0, &[("1Y", -50.0), ("5Y", -60.0), ("10Y", 200.0)]);
+    bleeder.ticker = "LTC-EUR".into();
+    let mut recover = q(40.0, &[("1Y", 20.0), ("5Y", -60.0), ("10Y", 200.0)]);
+    recover.ticker = "XYZ-EUR".into();
+    assert!(buy_score(&bleeder, &t).unwrap() < buy_score(&recover, &t).unwrap());
+    assert!((sustained_decline_factor(&bleeder, &t) - t.sustained_decline_penalty).abs() < 1e-9);
+    assert_eq!(sustained_decline_factor(&recover, &t), 1.0); // positive 1Y -> not a value trap
+    // (C) sitting below the ~200wk SMA lifts the score
+    let mut cheap = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    cheap.below_ma_pct = 50.0;
+    let dear = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    assert!(buy_score(&cheap, &t).unwrap() > buy_score(&dear, &t).unwrap());
+    // (D) a dividend payer outranks an otherwise-equal non-payer
+    let mut payer = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    payer.price_eur = Some(100.0);
+    payer.div_eur = vec![Some(5.0)]; // ~5% trailing-1Y yield (DIV_HORIZONS[0] = 1Y)
+    let nonpayer = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    assert!(dividend_yield_1y(&payer) > 0.0);
+    assert!(buy_score(&payer, &t).unwrap() > buy_score(&nonpayer, &t).unwrap());
+    // (E) value tilt: a cheap P/E lifts, a rich one dampens, unknown is neutral (1.0)
+    let mut cheap_pe = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    cheap_pe.pe_ratio = Some(8.0);
+    let mut rich_pe = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    rich_pe.pe_ratio = Some(60.0);
+    let neutral_pe = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    assert!(value_factor(&cheap_pe, t.ref_pe) > 1.0 && value_factor(&rich_pe, t.ref_pe) < 1.0);
+    assert_eq!(value_factor(&neutral_pe, t.ref_pe), 1.0);
+    assert!(buy_score(&cheap_pe, &t).unwrap() > buy_score(&neutral_pe, &t).unwrap());
+    assert!(buy_score(&rich_pe, &t).unwrap() < buy_score(&neutral_pe, &t).unwrap());
     // upside to high: 50% off -> +100% to recover; at the high -> 0; near-total wipeout clamps
     assert!((upside_to_high(50.0) - 100.0).abs() < 1e-9);
     assert_eq!(upside_to_high(0.0), 0.0);
     assert_eq!(upside_to_high(99.5), 9900.0);
-    // (A) trend_health: 0 at the corpse threshold, 1 at a flat/rising long trend, partial between
-    assert_eq!(trend_health(-70.0, -70.0), 0.0);
-    assert_eq!(trend_health(0.0, -70.0), 1.0);
-    assert!((trend_health(-21.0, -70.0) - 0.7).abs() < 1e-9);
-    // (A) crypto corpse gate: a -95% 5Y leg is a dead coin, excluded even though it clears the floor
-    let mut corpse = q(40.0, &[("1Y", -30.0), ("5Y", -95.0)]);
-    corpse.ticker = "FIL-EUR".into();
-    assert!(buy_score(&corpse, &t).is_none());
-    // (A) trend-conditioned discount: same 40% OFF-HI, but the intact coin outranks the bleeding one
-    let mut healthy = q(40.0, &[("1Y", -20.0), ("5Y", -20.0)]);
-    healthy.ticker = "ETH-EUR".into();
-    let mut bleeding = q(40.0, &[("1Y", -20.0), ("5Y", -65.0)]);
-    bleeding.ticker = "AAVE-EUR".into();
-    assert!(buy_score(&healthy, &t).unwrap() > buy_score(&bleeding, &t).unwrap());
-    // (B) stablecoin filter: a peg barely off its high (drawdown < 3%) is excluded
-    let mut peg = q(0.3, &[("1Y", 3.0), ("5Y", 3.0)]);
-    peg.ticker = "DAI-EUR".into();
-    assert!(buy_score(&peg, &t).is_none());
-    // leveraged/inverse gate (F): name match excludes a 2x/short product outright
-    assert!(is_leveraged("GraniteShares 2x Short NVD") && !is_leveraged("Apple Inc."));
-    let mut lev = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
-    lev.name = "GraniteShares 2x Short NVD".into();
-    assert!(buy_score(&lev, &t).is_none());
-    // liquidity gate: known turnover below floor excluded; above floor or unknown (None) passes
-    let liq_t = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
-    let mut thin = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
-    thin.avg_turnover_eur = Some(1_000.0);
-    assert!(buy_score(&thin, &liq_t).is_none());
-    thin.avg_turnover_eur = Some(5_000_000.0);
-    assert!(buy_score(&thin, &liq_t).is_some());
-    thin.avg_turnover_eur = None; // unknown turnover not punished
-    assert!(buy_score(&thin, &liq_t).is_some());
-    // knife gate: deep 1M crash excludes even with a positive year (5Y leg present so A passes)
-    assert!(buy_score(&q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("1M", -30.0)]), &t).is_none());
-    // structural-decline gate: negative >2Y trend excludes even with a positive year
-    assert!(buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", -3.0)]), &t).is_none());
-    // ALL long horizons must hold: 5Y up but 10Y down still rejects
-    assert!(buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", -5.0)]), &t).is_none());
-    // healthy 5Y+ + positive year qualifies
-    assert!(buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 80.0), ("20Y", 200.0)]), &t).is_some());
-    assert!(buy_score(&q(5.0, &[("1Y", -5.0), ("5Y", 40.0)]), &t).is_none()); // declining year -> excluded
-    // per-class 1Y floor: a -40% year excludes an equity but NOT a crypto twin (looser floor)
-    assert!(buy_score(&q(30.0, &[("1Y", -40.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).is_none());
-    let mut cr = q(30.0, &[("1Y", -40.0), ("5Y", 40.0), ("10Y", 40.0)]);
-    cr.ticker = "BTC-USD".into();
-    assert!(buy_score(&cr, &t).is_some());
-    assert!(buy_score(&q(5.0, &[("5Y", 40.0)]), &t).is_none()); // no 1Y data -> excluded
-    assert!(buy_score(&Quote::stub("X", "err", "", "X"), &t).is_none()); // err row -> excluded
 
     // currency-twin dedup (E): keep the preferred leg, pass other tickers through
     let mut btc_e = q(10.0, &[("1Y", 5.0), ("5Y", 40.0), ("10Y", 40.0)]);

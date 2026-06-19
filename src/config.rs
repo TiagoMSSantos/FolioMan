@@ -75,9 +75,10 @@ impl Default for Widths {
 /// Tunable knobs for the buy-candidate heuristic (`src/picks.rs`). Every field is optional in
 /// YAML — omit the whole `buy_heuristic:` block or any field to use these defaults.
 ///
-/// The score is: `discount × trend_health × momentum + long-trend reward`, then halved if the
-/// asset has no 10Y history. Read `buy_score` in `src/picks.rs` alongside these — each knob below
-/// maps to one named step there. GATES exclude a candidate outright; SCORE knobs rank survivors.
+/// Tuned for a multi-DECADE buy-and-hold. Score (see `buy_score` in `src/picks.rs`, each knob = one
+/// named step): `base = discount × trend_health × momentum + long_reward(A) + cheap_reward(C) +
+/// dividend_reward(D)`, then `score = base × value(E) × decline(B) × trust`. GATES exclude a
+/// candidate outright; SCORE knobs rank the survivors.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct BuyHeuristic {
@@ -87,19 +88,36 @@ pub struct BuyHeuristic {
     pub max_1m_drop_pct: f64,        // equities: reject if 1M % <= this (a hard monthly crash = falling knife)
     pub max_1m_drop_pct_crypto: f64, // crypto/FX: looser knife — a -20%/month alt is normal, not broken
     pub min_long_pct: f64,           // equities: reject if any 5Y/10Y/20Y leg <= this (structural decline)
-    pub min_long_pct_crypto: f64,    // crypto/FX: reject if the >2Y leg <= this (a corpse, e.g. -70%+); also the trend_health zero-point
+    pub min_long_pct_crypto: f64,    // crypto/FX: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -70%+)
     pub min_avg_turnover_eur: f64,   // reject if avg daily turnover (EUR) < this (thin/illiquid name); 0 = off
 
     // --- SCORE: how the survivors are ranked (higher = more interesting) ---
     pub normal_volatility_pct: f64,  // a "typical" daily swing (%); the dip is scaled by normal/asset vol, so a calm name's dip counts for more than a wild one's
     pub discount_cap: f64,           // cap on that volatility-scaled dip (one very deep name can't run away with the ranking)
-    pub momentum_bounce: f64,        // discount ×this when a pulled-back name is turning UP (green week) — reward the bounce (>1)
-    pub momentum_knife: f64,         // discount ×this when it's still falling (red week & day) — dock the knife (<1)
-    pub long_trend_weight: f64,      // small reward added for a strong multi-year (>2Y) uptrend (momentum is a gate, not the prize)
-    pub long_trend_cap: f64,         // cap on the multi-year % fed into that reward
+    pub momentum_bounce: f64,        // discount ×this when a pulled-back name is turning UP (green week) — reward the bounce (>1; 1.0 = ignore weekly timing)
+    pub momentum_knife: f64,         // discount ×this when it's still falling (red week & day) — dock the knife (<1; 1.0 = ignore weekly timing)
+    pub long_trend_weight: f64,      // reward per %/yr of the long leg's CAGR (annualized >2Y trend) — proven-compounder bonus
+    pub long_trend_cap: f64,         // cap on that long-leg CAGR (%/yr) fed into the reward (a +50%/yr coin doesn't 5× a +10%/yr one)
+    pub health_zero_cagr: f64,       // long-leg CAGR (%/yr, negative) at which trend_health hits 0 (a decaying multi-year trend); health=1 at flat/rising
+    pub sustained_decline_pct: f64,  // (B) if BOTH 1Y and 5Y % are <= this, the name is bleeding for years (value trap) -> score ×penalty
+    pub sustained_decline_penalty: f64, // (B) multiplier applied when the sustained-decline condition holds (e.g. 0.4)
+    pub cheap_weight: f64,           // (C) reward per % the price sits below its ~200wk SMA (structural "cheap vs trend")
+    pub cheap_cap: f64,              // (C) cap on that below-SMA % fed into the cheap reward
+    pub dividend_weight: f64,        // (D) reward per % of trailing-1Y dividend yield (reinvested divs dominate long-run total return)
+    pub dividend_cap: f64,           // (D) cap on the yield % fed into the dividend reward
+    pub ref_pe: f64,                 // (E) "fair" trailing P/E: value tilt = ref_pe/PE, clamped — cheap (<ref) lifts, rich (>ref) dampens; no PE = neutral
 
     pub prefer_eur: bool,            // dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD
 }
+
+/// (E) Hard clamp bounds on the P/E value tilt, so one absurdly cheap/expensive P/E can't swamp the
+/// score. ponytail: fixed — these are guardrails, not a thing anyone tunes; widen here if ever needed.
+pub const VALUE_TILT_MIN: f64 = 0.5;
+pub const VALUE_TILT_MAX: f64 = 1.5;
+
+/// (C) Sessions in the long moving-average window (~200 weeks of trading days). ponytail: a const,
+/// not a knob — 200wk is the conventional long-trend line; change here if you disagree.
+pub const LONG_MA_SESSIONS: usize = 1000;
 
 impl Default for BuyHeuristic {
     fn default() -> Self {
@@ -117,8 +135,16 @@ impl Default for BuyHeuristic {
             discount_cap: 35.0,            // a ~35%-off (for its vol) dip maxes the discount
             momentum_bounce: 1.0,          // neutral: a weekly bounce is noise at a multi-decade hold horizon
             momentum_knife: 1.0,           // neutral: this-week direction shouldn't reorder a 40-year pick
-            long_trend_weight: 0.03,       // reward a proven long compounder, but stay below the discount term
-            long_trend_cap: 1000.0,        // let a +1000%+ multi-decade track record count (was 300, too flat)
+            long_trend_weight: 0.5,        // per %/yr CAGR: a +30%/yr compounder adds ~15, secondary to the discount (cap 35)
+            long_trend_cap: 30.0,          // cap the long-leg CAGR at 30%/yr (a +46%/yr coin doesn't dwarf a +14%/yr one)
+            health_zero_cagr: -10.0,       // a -10%/yr multi-year trend = dead -> trend_health 0
+            sustained_decline_pct: -40.0,  // (B) 1Y AND 5Y both <= -40% = multi-year bleed, not a dip
+            sustained_decline_penalty: 0.4, // (B) score ×0.4 when that holds (value-trap dock)
+            cheap_weight: 0.15,            // (C) ~+9 at the cap for a name 60% below its 200wk trend
+            cheap_cap: 60.0,               // (C) cap the below-SMA % fed into the cheap reward
+            dividend_weight: 1.5,          // (D) ~+9 at the cap for a 6% yielder
+            dividend_cap: 6.0,             // (D) cap the trailing yield % fed into the dividend reward
+            ref_pe: 20.0,                  // (E) "fair" P/E; PE 10 -> ×1.5 (capped cheap), PE 40 -> ×0.5 (capped rich)
             prefer_eur: true,
         }
     }
@@ -140,6 +166,16 @@ pub struct Urls {
     pub sp500_csv: String,         // S&P 500 constituents CSV -> screen stock/ETF universe
     pub nupl: String,          // latest Bitcoin NUPL (net unrealized profit/loss) -> screen sentiment line
     pub ntfy: String,          // {topic}
+    // (E) trailing P/E source for the valuation tilt. {ticker} + {key} (from FMP_API_KEY env, kept
+    // out of config). Defaulted so an older settings.yaml without it still loads; only hit for
+    // equities when the env key is set (free tiers are rate-limited -> `check`-scale, not `screen`).
+    #[serde(default = "default_fundamentals_url")]
+    pub fundamentals: String,
+}
+
+/// Default (E) fundamentals endpoint: Financial Modeling Prep's free `quote` (carries `pe`).
+fn default_fundamentals_url() -> String {
+    "https://financialmodelingprep.com/api/v3/quote/{ticker}?apikey={key}".to_string()
 }
 
 /// Locate `config/settings.yaml` next to the exe or up the tree, mirroring the old

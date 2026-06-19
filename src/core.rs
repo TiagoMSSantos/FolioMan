@@ -81,6 +81,8 @@ pub struct Quote {
     pub intraday: [Option<f64>; 3], // % change over [1h, 6h, 12h] = 1/6/12 hourly bars back; None if too few bars
     pub avg_turnover_eur: Option<f64>, // avg daily turnover (close*volume, EUR) ~last 30 sessions; liquidity proxy
     pub volatility_pct: Option<f64>,   // daily-return stdev (%) ~last year; the asset's "normal swing" for the picks score
+    pub below_ma_pct: f64,             // % below the ~200-week SMA (structural "cheap vs long trend"); 0 if at/above or history too short
+    pub pe_ratio: Option<f64>,         // trailing P/E for the valuation tilt; None for crypto/ETF/no-earnings/no source (-> neutral)
 }
 
 impl Quote {
@@ -106,8 +108,36 @@ impl Quote {
             intraday: [None; 3],
             avg_turnover_eur: None,
             volatility_pct: None,
+            below_ma_pct: 0.0,
+            pe_ratio: None,
         }
     }
+}
+
+/// Compound annual growth rate (%) implied by a cumulative % over `years`: +285% over 10y ≈
+/// 14.4%/yr. Annualizing makes returns over different spans comparable (a 5y vs a 10y vs a 20y
+/// leg). Clamps the growth factor just above 0 so a near-total loss can't NaN the fractional root.
+pub fn cagr(cumulative_pct: f64, years: f64) -> f64 {
+    if years <= 0.0 {
+        return cumulative_pct;
+    }
+    let factor = (1.0 + cumulative_pct / 100.0).max(1e-9);
+    (factor.powf(1.0 / years) - 1.0) * 100.0
+}
+
+/// % the latest close sits below the simple moving average of the last `n` sessions (~a long-term
+/// trend line; n≈1000 ≈ 200 weeks). 0 if at/above the average or history shorter than `n`. A
+/// structural "cheap vs its own long trend" entry signal, distinct from the recency-biased 1Y-high
+/// drawdown — buying below the multi-year trend, not just below last year's peak.
+pub fn below_long_ma_pct(closes: &[f64], n: usize) -> f64 {
+    if n == 0 || closes.len() < n {
+        return 0.0;
+    }
+    let ma = closes[closes.len() - n..].iter().sum::<f64>() / n as f64;
+    if ma <= 0.0 {
+        return 0.0;
+    }
+    f64::max(0.0, (ma - *closes.last().unwrap()) / ma * 100.0)
 }
 
 /// Format a number with comma thousands separators and 2 decimals (Python `{:,.2f}`).

@@ -184,13 +184,16 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
 pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
-    let (chart_j, titles, intra) = tokio::join!(
+    let (chart_j, titles, intra, pe) = tokio::join!(
         // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
         // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
         // (~3652) for 1D..10Y; the 20Y column goes n/a (the heuristic's long leg falls back to 10Y).
         chart_json(client, urls, ticker, "10y"),
         fetch_news(client, urls, ticker),
         async { if intraday { intraday_closes(client, urls, ticker).await } else { None } },
+        // (E) trailing P/E for the valuation tilt — equities only (crypto/FX have no earnings); a
+        // no-op (instant None) unless FMP_API_KEY is set, so the default path stays network-free here.
+        async { if ticker.contains('-') { None } else { fetch_pe(client, urls, ticker).await } },
     );
 
     let chart = match chart_j.as_ref().and_then(|j| parse_chart(j, ticker)) {
@@ -253,7 +256,24 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         // the asset's "normal" daily swing (~1 trading year) so picks can tell a deep-for-this-asset
         // dip from everyday noise; a ratio of returns, so no FX conversion needed.
         volatility_pct: core::volatility_pct(&chart.closes, 252),
+        // (C) % below the ~200wk SMA — structural "cheap vs long trend" entry signal (FX-agnostic ratio).
+        below_ma_pct: core::below_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
+        // (E) trailing P/E (equities w/ FMP_API_KEY only; None -> neutral value tilt).
+        pe_ratio: pe,
     }
+}
+
+/// (E) Trailing P/E from the configured fundamentals source (FMP `quote` by default). None unless
+/// `FMP_API_KEY` is set in the environment (kept out of config) AND the source returns a positive
+/// PE. ponytail: free fundamentals tiers are rate-limited, so expect this to populate at `check`
+/// scale and stay None across the ~750-ticker `screen` (where the value tilt then just stays 1.0).
+async fn fetch_pe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+    let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
+    let url = urls.fundamentals.replace("{ticker}", ticker).replace("{key}", &key);
+    let v = get_json(client, &url).await?;
+    // FMP /quote returns a single-element array: [{ "pe": 28.4, ... }]; fall back to a bare object.
+    let pe = v.get(0).unwrap_or(&v).get("pe")?.as_f64()?;
+    (pe > 0.0).then_some(pe)
 }
 
 /// Latest Bitcoin NUPL (net unrealized profit/loss) from bitcoin-data.com. None on failure.
