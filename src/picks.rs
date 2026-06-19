@@ -147,8 +147,9 @@ pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
 ///   score = base × value × decline × trust
 /// ```
 ///
-/// - **discount** — pullback off the ~1Y high, normalized by the asset's OWN volatility and capped
-///   (`normal_volatility_pct`, `discount_cap`).
+/// - **discount** — pullback off the OFF-HI high (anchor = `high_days`: 0 = all-time over the fetched
+///   ~10y history, default; >0 = trailing-N-day high), normalized by the asset's OWN volatility and
+///   capped (`normal_volatility_pct`, `discount_cap`).
 /// - **trend_health** ∈ [0,1] — fades the discount as the long trend's CAGR weakens (`health_zero_cagr`).
 /// - **momentum** — weekly bounce/knife multiplier (`momentum_bounce`/`knife`); 1.0 = off (default:
 ///   weekly timing is noise at a decades horizon).
@@ -231,9 +232,9 @@ fn ranked<'a>(qs: &'a [Quote], t: &BuyHeuristic) -> Vec<(&'a Quote, f64)> {
     picks
 }
 
-/// Upside to reclaim the ~1Y high, from the OFF-HI drawdown: a name 46% off its high needs +85%
-/// to get back there. NOT a forecast — just the room back to the high. Clamps the asymptote near a
-/// total wipeout (-99%+ off is a corpse anyway).
+/// Upside to reclaim the OFF-HI high, from the OFF-HI drawdown: a name 46% off its high needs +85%
+/// to get back there. NOT a forecast — just the room back to that high (anchor = `high_days`).
+/// Clamps the asymptote near a total wipeout (-99%+ off is a corpse anyway).
 fn upside_to_high(dd: f64) -> f64 {
     if dd >= 99.0 {
         return 9900.0;
@@ -282,7 +283,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
             cell(q.intraday[0]),
             cell(q.intraday[1]),
             cell(q.intraday[2]),
-            format!("-{:.1}%", q.drawdown_pct), // % below the ~1Y high (real pullback, not 30d)
+            format!("-{:.1}%", q.drawdown_pct), // % below the OFF-HI high (high_days anchor, default all-time)
             format!("+{:.1}%", upside_to_high(q.drawdown_pct)), // room back to that high (NOT a forecast)
             turnover_cell(q.avg_turnover_eur),
             score,
@@ -296,9 +297,10 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
 pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, tech: &HashSet<String>) {
     let (crypto, equity): (Vec<_>, Vec<_>) =
         ranked(qs, t).into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
-    let desc = "quality-on-sale heuristic: a recent low (most below its ~1Y high, OFF-HI) with a \
-                still-intact longer-term trend (5Y+ where the history exists — Yahoo's EUR crypto \
-                pairs are younger, so 1Y stands in). NOT advice, just a ranking:";
+    let desc = "quality-on-sale heuristic: most below its peak (OFF-HI; anchor = high_days, default \
+                all-time over the fetched ~10y) with a still-intact longer-term trend (5Y+ where the \
+                history exists — Yahoo's EUR crypto pairs are younger, so 1Y stands in). NOT advice, \
+                just a ranking:";
     print_picks(&format!("Top {n} stocks/ETFs buy candidates — {desc}"), &equity, n, w);
     // tech-only subset (S&P 500 GICS Information Technology + Communication Services); skipped when
     // no sector data (e.g. `screen TICKER...` or `check`, which pass an empty set).
@@ -312,7 +314,7 @@ pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, tech: &HashS
 /// Buy-heuristic asserts (no network). Run by the `selftest` subcommand and the unit test.
 pub fn selftest() {
     // build a Quote with chosen horizon %s set (others n/a), robust to HORIZONS order. First
-    // arg = drawdown_pct (% below the ~1Y high) — the on-sale signal the score is built on.
+    // arg = drawdown_pct (% below the OFF-HI high) — the on-sale signal the score is built on.
     let q = |drawdown_pct: f64, labels: &[(&str, f64)]| -> Quote {
         let perf = HORIZONS
             .iter()
