@@ -25,7 +25,7 @@ pub async fn run(args: Vec<String>) {
     // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it
     let (universe, tech) = if args.is_empty() {
         tokio::join!(
-            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur),
+            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &settings.screen_etfs),
             fetch::fetch_tech_symbols(&client, &settings.urls), // GICS sectors for the tech-only buy table
         )
     } else {

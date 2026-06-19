@@ -16,6 +16,8 @@ pub struct Settings {
     pub universe_size: usize, // top-N per class (crypto + stocks/ETFs) `screen` pulls from the live sources
     #[serde(default = "default_true")]
     pub universe_prefer_eur: bool, // crypto in the live universe quoted in EUR (BTC-EUR) if true, else USD
+    #[serde(default)]
+    pub screen_etfs: Vec<String>, // ETFs appended to the `screen` universe (no free ETF source); empty = no ETF table on screen
     pub euribor_3m: f64,
     pub euribor_3m_date: String,
     pub ntfy_topic: String,

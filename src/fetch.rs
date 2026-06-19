@@ -301,11 +301,11 @@ pub async fn fetch_tech_symbols(client: &Client, urls: &Urls) -> std::collection
 }
 
 /// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
-/// CoinGecko + the S&P 500 constituents CSV (stocks/ETFs), symbols normalised to Yahoo form
-/// (`btc` -> `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency follows
-/// `prefer_eur` (Yahoo has both legs); US stocks/ETFs have no EUR listing, so unaffected.
-/// Sorted + deduped; empty if both sources fail.
-pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool) -> Vec<String> {
+/// CoinGecko + the S&P 500 constituents CSV (single companies — the CSV carries NO ETFs), symbols
+/// normalised to Yahoo form (`btc` -> `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency
+/// follows `prefer_eur` (Yahoo has both legs); US stocks have no EUR listing, so unaffected. `etfs` is
+/// a hand-kept list appended verbatim (no free ETF source to scan). Sorted + deduped; empty if all fail.
+pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool, etfs: &[String]) -> Vec<String> {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
     let (cg, csv) = tokio::join!(
         get_json(client, &cg_url),
@@ -329,6 +329,8 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
                 .filter(|s| !s.is_empty()),
         );
     }
+    // ETFs: hand-kept (the S&P CSV has none); appended as-is, already Yahoo form (SPY, SXR8.DE).
+    out.extend(etfs.iter().cloned());
     out.sort();
     out.dedup();
     out
