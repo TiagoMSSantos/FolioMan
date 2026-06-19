@@ -146,6 +146,19 @@ pub fn market_of(ticker: &str) -> String {
     "USA".to_string()
 }
 
+/// NUPL (Bitcoin Net Unrealized Profit/Loss) market-sentiment zone. Standard bands: below 0 the
+/// market is underwater (capitulation); above ~0.75 it's historically frothy (euphoria). A whole-
+/// market gauge, not a per-coin signal.
+pub fn nupl_zone(nupl: f64) -> &'static str {
+    match nupl {
+        x if x < 0.0 => "Capitulation",
+        x if x < 0.25 => "Hope/Fear",
+        x if x < 0.5 => "Optimism/Anxiety",
+        x if x < 0.75 => "Belief/Denial",
+        _ => "Euphoria/Greed",
+    }
+}
+
 /// GICS sectors counted as "tech" for screen's tech-only buy table. Apple/MSFT/NVDA are
 /// Information Technology; Google/Meta/Netflix are Communication Services. (Amazon & Tesla are
 /// GICS Consumer Discretionary, so they DON'T appear — add that sector string here to include them.)
@@ -519,6 +532,11 @@ pub fn selftest() {
     assert_eq!(market_of("VWCE.DE"), "Germany");
     assert_eq!(market_of("AAPL"), "USA");
     assert_eq!(market_of("BTC-USD"), "Crypto (global)");
+// nupl_zone: band edges
+assert_eq!(nupl_zone(-0.1), "Capitulation");
+assert_eq!(nupl_zone(0.16), "Hope/Fear");
+assert_eq!(nupl_zone(0.6), "Belief/Denial");
+assert_eq!(nupl_zone(0.8), "Euphoria/Greed");
 // tech_symbol: keep tech sectors (Yahoo-normalized), drop the rest
 assert_eq!(tech_symbol("AAPL,Apple Inc.,Information Technology,Tech HW,x,y"), Some("AAPL".to_string()));
 assert_eq!(tech_symbol("GOOGL,Alphabet,Communication Services,x"), Some("GOOGL".to_string()));

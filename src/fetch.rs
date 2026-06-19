@@ -250,6 +250,11 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
     }
 }
 
+/// Latest Bitcoin NUPL (net unrealized profit/loss) from bitcoin-data.com. None on failure.
+pub async fn fetch_nupl(client: &Client, urls: &Urls) -> Option<f64> {
+    get_json(client, &urls.nupl).await?.get("nupl")?.as_f64()
+}
+
 /// Tech-sector S&P-500 symbols (Yahoo form) from the constituents CSV — for screen's tech table.
 /// Empty if the CSV fetch fails (tech table is then skipped). ponytail: re-fetches the CSV that
 /// fetch_universe already pulled; one cheap raw.githubusercontent GET, not worth threading a tuple.

@@ -138,4 +138,12 @@ pub async fn run(args: Vec<String>) {
 
     // buy candidates among the SCANNED universe (not settings.tickers) — same heuristic as `check`
     render(&qs, 20, &settings.buy_heuristic, w, &tech);
+
+    // Bitcoin NUPL: whole-market sentiment gauge, printed after the crypto table. Skipped on fetch fail.
+    if let Some(nupl) = fetch::fetch_nupl(&client, &settings.urls).await {
+        println!(
+            "\nBitcoin NUPL: {nupl:.3} ({}) — net unrealized profit/loss, whole-market sentiment. NOT advice.",
+            crate::core::nupl_zone(nupl)
+        );
+    }
 }

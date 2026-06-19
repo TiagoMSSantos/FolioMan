@@ -124,6 +124,7 @@ pub struct Urls {
     pub eu_hicp: String,
     pub coingecko_markets: String, // {n} = top-N crypto by market cap -> screen universe
     pub sp500_csv: String,         // S&P 500 constituents CSV -> screen stock/ETF universe
+    pub nupl: String,          // latest Bitcoin NUPL (net unrealized profit/loss) -> screen sentiment line
     pub ntfy: String,          // {topic}
 }
 
