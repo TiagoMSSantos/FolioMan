@@ -250,6 +250,16 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
     }
 }
 
+/// Tech-sector S&P-500 symbols (Yahoo form) from the constituents CSV — for screen's tech table.
+/// Empty if the CSV fetch fails (tech table is then skipped). ponytail: re-fetches the CSV that
+/// fetch_universe already pulled; one cheap raw.githubusercontent GET, not worth threading a tuple.
+pub async fn fetch_tech_symbols(client: &Client, urls: &Urls) -> std::collections::HashSet<String> {
+    match get_text(client, &urls.sp500_csv).await {
+        Some(text) => text.lines().skip(1).filter_map(|l| core::tech_symbol(l)).collect(),
+        None => std::collections::HashSet::new(),
+    }
+}
+
 /// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
 /// CoinGecko + the S&P 500 constituents CSV (stocks/ETFs), symbols normalised to Yahoo form
 /// (`btc` -> `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency follows

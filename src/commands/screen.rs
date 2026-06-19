@@ -23,10 +23,13 @@ pub async fn run(args: Vec<String>) {
     let client = fetch::client();
     let fx = fetch::fx_cache();
     // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it
-    let universe = if args.is_empty() {
-        fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur).await
+    let (universe, tech) = if args.is_empty() {
+        tokio::join!(
+            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur),
+            fetch::fetch_tech_symbols(&client, &settings.urls), // GICS sectors for the tech-only buy table
+        )
     } else {
-        args
+        (args, std::collections::HashSet::new()) // explicit tickers: no sector data -> no tech table
     };
 
     let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true).await; // intraday on: picks table shows 1h/6h/12h
@@ -134,5 +137,5 @@ pub async fn run(args: Vec<String>) {
     }
 
     // buy candidates among the SCANNED universe (not settings.tickers) — same heuristic as `check`
-    render(&qs, 20, &settings.buy_heuristic, w);
+    render(&qs, 20, &settings.buy_heuristic, w, &tech);
 }

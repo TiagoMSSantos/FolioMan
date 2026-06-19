@@ -146,6 +146,24 @@ pub fn market_of(ticker: &str) -> String {
     "USA".to_string()
 }
 
+/// GICS sectors counted as "tech" for screen's tech-only buy table. Apple/MSFT/NVDA are
+/// Information Technology; Google/Meta/Netflix are Communication Services. (Amazon & Tesla are
+/// GICS Consumer Discretionary, so they DON'T appear — add that sector string here to include them.)
+pub const TECH_SECTORS: &[&str] = &["Information Technology", "Communication Services"];
+
+/// Parse one S&P-500 constituents CSV row -> Yahoo symbol, but only if it's a TECH_SECTORS row;
+/// else None. Columns: Symbol, Security, "GICS Sector", ... — Symbol (0) and Sector (2) carry no
+/// commas in this dataset, so a naive split is enough (ponytail: same assumption as fetch_universe).
+pub fn tech_symbol(csv_line: &str) -> Option<String> {
+    let cols: Vec<&str> = csv_line.splitn(4, ',').collect();
+    let sym = cols.first()?.trim();
+    let sector = cols.get(2)?.trim();
+    if sym.is_empty() || !TECH_SECTORS.contains(&sector) {
+        return None;
+    }
+    Some(sym.replace('.', "-")) // BRK.B -> BRK-B (Yahoo form)
+}
+
 /// Titles across yfinance/Yahoo schemas (flat `title`, nested `content.title`).
 pub fn headline_titles(news_items: &[Value]) -> Vec<String> {
     let nonempty = |v: &Value, key: &str| -> Option<String> {
@@ -501,6 +519,12 @@ pub fn selftest() {
     assert_eq!(market_of("VWCE.DE"), "Germany");
     assert_eq!(market_of("AAPL"), "USA");
     assert_eq!(market_of("BTC-USD"), "Crypto (global)");
+// tech_symbol: keep tech sectors (Yahoo-normalized), drop the rest
+assert_eq!(tech_symbol("AAPL,Apple Inc.,Information Technology,Tech HW,x,y"), Some("AAPL".to_string()));
+assert_eq!(tech_symbol("GOOGL,Alphabet,Communication Services,x"), Some("GOOGL".to_string()));
+assert_eq!(tech_symbol("BF.B,Brown-Forman,Information Technology,x"), Some("BF-B".to_string())); // '.'->'-'
+assert_eq!(tech_symbol("MMM,3M,Industrials,x"), None);
+assert_eq!(tech_symbol("AMZN,Amazon,Consumer Discretionary,x"), None); // GICS quirk: not tech
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"

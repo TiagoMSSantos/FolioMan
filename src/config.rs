@@ -49,11 +49,12 @@ pub struct Widths {
     pub market: usize,   // MARKET column (check/picks)
     pub price: usize,    // PRICE(EUR) column (check/screen/picks)
     pub headline: usize, // HEADLINE column (check)
+    pub score: usize,    // SCORE column (picks) — shown to 1 decimal
 }
 
 impl Default for Widths {
     fn default() -> Self {
-        Widths { name: 26, ticker: 8, market: 11, price: 13, headline: 31 }
+        Widths { name: 26, ticker: 8, market: 11, price: 13, headline: 31, score: 5 }
     }
 }
 

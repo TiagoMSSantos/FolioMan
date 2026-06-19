@@ -5,7 +5,7 @@
 use crate::commands::truncate;
 use crate::config::{BuyHeuristic, Widths};
 use crate::core::{Quote, HORIZONS};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Longest-available trend over a window longer than 2 years (5Y → 10Y → 20Y), i.e. the
 /// structural multi-year direction. None if the asset has no >2Y history.
@@ -177,6 +177,7 @@ fn ranked<'a>(qs: &'a [Quote], t: &BuyHeuristic) -> Vec<(&'a Quote, f64)> {
     let scored: Vec<(&Quote, f64)> =
         qs.iter().filter_map(|q| buy_score(q, t).map(|s| (q, s))).collect();
     let mut picks = dedup_currency_twins(scored, t.prefer_eur); // one row per asset (BTC, not BTC-EUR+BTC-USD)
+    picks.retain(|(_, s)| *s > 0.0); // drop "cheap but still bleeding": score<=0 = long-term decline beats the discount, not a buy
     picks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap()); // best score first
     picks
 }
@@ -203,7 +204,7 @@ fn turnover_cell(o: Option<f64>) -> String {
 
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks).
 fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
-    let (nw, tw, mw, pw) = (w.name, w.ticker, w.market, w.price);
+    let (nw, tw, mw, pw, sw) = (w.name, w.ticker, w.market, w.price, w.score);
     println!("\n{title}");
     if picks.is_empty() {
         println!("  (none pass the gates)");
@@ -212,9 +213,9 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
     let diff_hdr = DIFF_HORIZONS.iter().map(|l| format!("{:>8}", l)).collect::<Vec<_>>().join(" ");
     let cell = |o: Option<f64>| o.map_or("n/a".to_string(), |v| format!("{:+.1}%", v));
     println!(
-        "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diff_hdr} {:>7} {:>8} {:>10} {:>8}",
+        "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diff_hdr} {:>7} {:>8} {:>10} {:>sw$}",
         "RANK", truncate("NAME", nw), truncate("TICKER", tw), truncate("MARKET", mw), "PRICE(EUR)",
-        "1H", "6H", "12H", "OFF-HI", "UPSIDE", "TURNOVER", "SCORE"
+        "1H", "6H", "12H", "OFF-HI", "UPSIDE", "TURNOVER", truncate("SCORE", sw)
     );
     for (i, (q, score)) in picks.iter().take(n).enumerate() {
         let diffs = DIFF_HORIZONS
@@ -223,7 +224,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
             .collect::<Vec<_>>()
             .join(" ");
         println!(
-            "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diffs} {:>7} {:>8} {:>10} {:>8.2}",
+            "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diffs} {:>7} {:>8} {:>10} {:>sw$.1}",
             i + 1,
             truncate(&q.name, nw),
             truncate(&q.ticker, tw),
@@ -243,12 +244,19 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
 /// Print the Top-N buy candidates, SPLIT per asset class (stocks/ETFs vs crypto) so a +9400%
 /// crypto can't crowd out equities — the best in EACH class surfaces. Class = currency-quoted
 /// ticker (`-USD`/`-EUR`) → crypto, else stocks/ETFs. Currency twins already deduped in `ranked`.
-pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths) {
+pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, tech: &HashSet<String>) {
     let (crypto, equity): (Vec<_>, Vec<_>) =
         ranked(qs, t).into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
-    let desc = "quality-on-sale heuristic: a recent low (most below its ~1Y high, OFF-HI) inside \
-                an intact long-term (5Y+) uptrend. NOT advice, just a ranking:";
+    let desc = "quality-on-sale heuristic: a recent low (most below its ~1Y high, OFF-HI) with a \
+                still-intact longer-term trend (5Y+ where the history exists — Yahoo's EUR crypto \
+                pairs are younger, so 1Y stands in). NOT advice, just a ranking:";
     print_picks(&format!("Top {n} stocks/ETFs buy candidates — {desc}"), &equity, n, w);
+    // tech-only subset (S&P 500 GICS Information Technology + Communication Services); skipped when
+    // no sector data (e.g. `screen TICKER...` or `check`, which pass an empty set).
+    if !tech.is_empty() {
+        let tech_picks: Vec<_> = equity.iter().filter(|(q, _)| tech.contains(&q.ticker)).cloned().collect();
+        print_picks(&format!("Top {n} tech stocks/ETFs buy candidates — {desc}"), &tech_picks, n, w);
+    }
     print_picks(&format!("Top {n} crypto buy candidates — {desc}"), &crypto, n, w);
 }
 

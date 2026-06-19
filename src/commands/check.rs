@@ -42,8 +42,9 @@ pub async fn run(args: Vec<String>) {
         );
     }
 
-    // best buy candidates (heuristic, derived from the table above — no extra fetch)
-    picks::render(&qs, settings.top_picks, &settings.buy_heuristic, w);
+    // best buy candidates (heuristic, derived from the table above — no extra fetch).
+    // Empty tech set: the watchlist carries no GICS sector data, so no tech-only table here.
+    picks::render(&qs, settings.top_picks, &settings.buy_heuristic, w, &std::collections::HashSet::new());
 
     // one concurrent batch: Euribor + the 3 inflation fetches
     let (euribor_res, inflations) = tokio::join!(
