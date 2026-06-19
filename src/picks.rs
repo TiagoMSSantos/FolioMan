@@ -96,6 +96,17 @@ fn is_leveraged(name: &str) -> bool {
     LEVERAGED_MARKERS.iter().any(|m| n.contains(m))
 }
 
+/// Substrings (lowercased) that mark a pooled fund (ETF / UCITS index fund) vs a single-company
+/// stock — plain index-fund longNames all carry one ("...S&P 500 UCITS ETF", "...ETF Trust"),
+/// company names ("Apple Inc.") don't. Used only to SPLIT the equity table, never to gate.
+/// ponytail: name match, no asset-type field exists; tighten the list if a stock ever trips it.
+const ETF_MARKERS: &[&str] = &["etf", "ucits", " index fund", " fund "];
+
+fn is_etf(name: &str) -> bool {
+    let n = name.to_lowercase();
+    ETF_MARKERS.iter().any(|m| n.contains(m))
+}
+
 /// Underlying of a currency-quoted ticker: strips a trailing `-EUR`/`-USD` (crypto twins like
 /// `BTC-EUR`/`BTC-USD`); anything else is its own underlying.
 fn underlying(ticker: &str) -> &str {
@@ -296,23 +307,27 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
     }
 }
 
-/// Print the Top-N buy candidates, SPLIT per asset class (stocks/ETFs vs crypto) so a +9400%
-/// crypto can't crowd out equities — the best in EACH class surfaces. Class = currency-quoted
-/// ticker (`-USD`/`-EUR`) → crypto, else stocks/ETFs. Currency twins already deduped in `ranked`.
+/// Print the Top-N buy candidates, SPLIT per asset class (stocks / ETFs / crypto) so a +9400% crypto
+/// can't crowd out equities and a basket fund isn't ranked head-to-head with a single company — the
+/// best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto, else fund
+/// name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, tech: &HashSet<String>) {
     let (crypto, equity): (Vec<_>, Vec<_>) =
         ranked(qs, t).into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
+    let (etf, stock): (Vec<_>, Vec<_>) = equity.into_iter().partition(|(q, _)| is_etf(&q.name));
     let desc = "quality-on-sale heuristic: most below its peak (OFF-HI; anchor = high_days, default \
                 all-time over the fetched ~10y) with a still-intact longer-term trend (5Y+ where the \
                 history exists — Yahoo's EUR crypto pairs are younger, so 1Y stands in). NOT advice, \
                 just a ranking:";
-    print_picks(&format!("Top {n} stocks/ETFs buy candidates — {desc}"), &equity, n, w);
+    print_picks(&format!("Top {n} stocks buy candidates — {desc}"), &stock, n, w);
     // tech-only subset (S&P 500 GICS Information Technology + Communication Services); skipped when
-    // no sector data (e.g. `screen TICKER...` or `check`, which pass an empty set).
+    // no sector data (e.g. `screen TICKER...` or `check`, which pass an empty set). ETFs aren't in the
+    // S&P constituent set, so this stays single-stock even drawing from the pre-split equity list.
     if !tech.is_empty() {
-        let tech_picks: Vec<_> = equity.iter().filter(|(q, _)| tech.contains(&q.ticker)).cloned().collect();
-        print_picks(&format!("Top {n} tech stocks/ETFs buy candidates — {desc}"), &tech_picks, n, w);
+        let tech_picks: Vec<_> = stock.iter().filter(|(q, _)| tech.contains(&q.ticker)).cloned().collect();
+        print_picks(&format!("Top {n} tech stocks buy candidates — {desc}"), &tech_picks, n, w);
     }
+    print_picks(&format!("Top {n} ETFs buy candidates — {desc}"), &etf, n, w);
     print_picks(&format!("Top {n} crypto buy candidates — {desc}"), &crypto, n, w);
 }
 
@@ -378,6 +393,9 @@ pub fn selftest() {
     peg.ticker = "DAI-EUR".into();
     assert!(buy_score(&peg, &t).is_none());
     assert!(is_leveraged("GraniteShares 2x Short NVD") && !is_leveraged("Apple Inc."));
+    // ETF classifier (splits the equity table only): funds match, single companies don't
+    assert!(is_etf("iShares Core S&P 500 UCITS ETF") && is_etf("SPDR S&P 500 ETF Trust"));
+    assert!(!is_etf("Apple Inc.") && !is_etf("NVIDIA Corporation"));
     let mut lev = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     lev.name = "GraniteShares 2x Short NVD".into();
     assert!(buy_score(&lev, &t).is_none()); // leveraged/inverse product excluded
