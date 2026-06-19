@@ -87,9 +87,12 @@ fn momentum_factor(q: &Quote, bounce: f64, knife: f64) -> f64 {
 }
 
 /// Substrings (lowercased) that mark a leveraged/inverse product — daily-reset decay vehicles
-/// that are never a long-term hold, so they can't be "quality on sale".
+/// that are never a long-term hold, so they can't be "quality on sale". `direxion` catches the
+/// Direxion Daily 3× family when Yahoo hands a SHORT name ("Direxion Daily Technology" with the
+/// "Bull 3X" dropped) that the `3x` marker would miss (e.g. TECL leaked into the stocks table).
 /// ponytail: cheap name match; tighten the list if a legit name ever trips it.
-const LEVERAGED_MARKERS: &[&str] = &["2x", "3x", " short", "inverse", "leverag", "bear ", "ultra"];
+const LEVERAGED_MARKERS: &[&str] =
+    &["2x", "3x", " short", "inverse", "leverag", "bear ", "ultra", "direxion"];
 
 fn is_leveraged(name: &str) -> bool {
     let n = name.to_lowercase();
@@ -118,6 +121,16 @@ fn underlying(ticker: &str) -> &str {
 /// signal: they get the looser `min_1y_pct_crypto` floor instead of the equity `min_1y_pct`.
 fn is_currency_quoted(ticker: &str) -> bool {
     underlying(ticker) != ticker
+}
+
+/// Dollar-pegged stablecoin underlyings — pegged to $1, so zero growth potential (never a "buy and
+/// hold for decades" candidate). On the EUR leg their price drifts with EUR/USD, faking a drawdown
+/// that slips past the `drawdown < 3%` peg gate — so exclude them by symbol instead.
+const STABLECOINS: &[&str] =
+    &["USDT", "USDC", "DAI", "TUSD", "FDUSD", "PYUSD", "USDE", "BUSD", "USDP", "GUSD", "USDD", "FRAX"];
+
+fn is_stablecoin(ticker: &str) -> bool {
+    STABLECOINS.contains(&underlying(ticker))
 }
 
 /// Collapse `<X>-EUR`/`<X>-USD` twins to ONE row (same asset, just a different quote currency),
@@ -154,7 +167,7 @@ pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
 /// fails a gate. The formula:
 ///
 /// ```text
-///   base  = discount × trend_health × momentum + long_reward + cheap_reward + dividend_reward
+///   base  = discount × trend_health × momentum + long_reward×discount_frac + cheap_reward + dividend_reward
 ///   score = base × value × decline × trust
 /// ```
 ///
@@ -165,7 +178,8 @@ pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
 /// - **momentum** — weekly bounce/knife multiplier (`momentum_bounce`/`knife`); 1.0 = off (default:
 ///   weekly timing is noise at a decades horizon).
 /// - **long_reward** — (A) reward for the long leg's CAGR (annualized, comparable across spans;
-///   `long_trend_weight`, `long_trend_cap`).
+///   `long_trend_weight`, `long_trend_cap`), scaled by **discount_frac** = discount/`discount_cap`
+///   so a proven compounder only earns it when actually pulled back — at its high the reward → 0.
 /// - **cheap_reward** — (C) reward for sitting below the ~200wk SMA (`cheap_weight`, `cheap_cap`).
 /// - **dividend_reward** — (D) reward for trailing yield (`dividend_weight`, `dividend_cap`).
 /// - **value** — (E) P/E tilt: cheap lifts, rich dampens, unknown neutral (`ref_pe`).
@@ -184,8 +198,11 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     if q.avg_turnover_eur.map_or(false, |v| v < t.min_avg_turnover_eur) {
         return None; // too thin/illiquid (unknown turnover passes — don't punish missing data)
     }
+    if crypto && is_stablecoin(&q.ticker) {
+        return None; // dollar-pegged stablecoin -> no growth; its EUR-leg FX drift fakes a drawdown
+    }
     if crypto && q.drawdown_pct < 3.0 {
-        return None; // stablecoin peg / crypto at its high -> nothing on sale
+        return None; // crypto at its high -> nothing on sale
     }
     // longest >2Y leg (crypto is younger, so fall back to its 1Y leg): cumulative for the gate,
     // annualized (CAGR) for the score.
@@ -224,7 +241,11 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
         normalized_dip(cheapness, q.volatility_pct, t.normal_volatility_pct).min(t.discount_cap);
     let health = trend_health(long_cagr, t.health_zero_cagr);
     let momentum = momentum_factor(q, t.momentum_bounce, t.momentum_knife);
-    let long_reward = t.long_trend_weight * long_cagr.min(t.long_trend_cap); // (A)
+    // (2a) scale the long-trend reward by how on-sale the name is (discount as a fraction of the cap):
+    // a proven compounder is only a BUY when it's actually pulled back. At its all-time high the
+    // discount is ~0, so the reward fades to ~0 and an at-the-high rocket stops ranking as "on sale".
+    let discount_frac = (discount / t.discount_cap).clamp(0.0, 1.0); // 0 = at its high, 1 = deeply discounted
+    let long_reward = t.long_trend_weight * long_cagr.min(t.long_trend_cap) * discount_frac; // (A)
     let cheap_reward = t.cheap_weight * q.below_ma_pct.min(t.cheap_cap); // (C)
     let dividend_reward = t.dividend_weight * dividend_yield_1y(q).min(t.dividend_cap); // (D)
 
@@ -389,10 +410,17 @@ pub fn selftest() {
     let mut corpse = q(40.0, &[("1Y", -30.0), ("5Y", -95.0)]); // crypto corpse (>2Y leg -95%) excluded
     corpse.ticker = "FIL-EUR".into();
     assert!(buy_score(&corpse, &t).is_none());
-    let mut peg = q(0.3, &[("1Y", 3.0), ("5Y", 3.0)]); // stablecoin: drawdown<3% -> nothing on sale
-    peg.ticker = "DAI-EUR".into();
+    let mut peg = q(0.3, &[("1Y", 3.0), ("5Y", 3.0)]); // crypto at its high: drawdown<3% -> nothing on sale
+    peg.ticker = "PEPE-EUR".into();
     assert!(buy_score(&peg, &t).is_none());
+    // stablecoin gate (3): excluded even with a fat EUR-leg "drawdown" that clears the 3% peg gate
+    assert!(is_stablecoin("USDC-EUR") && is_stablecoin("USDT-USD") && !is_stablecoin("BTC-EUR"));
+    let mut stable = q(16.0, &[("1Y", -20.0)]);
+    stable.ticker = "USDC-EUR".into();
+    assert!(buy_score(&stable, &t).is_none()); // pegged $1 -> no growth, FX drift faked the dip
     assert!(is_leveraged("GraniteShares 2x Short NVD") && !is_leveraged("Apple Inc."));
+    // (1) Direxion Daily 3x leaks a SHORT name without "3x" -> issuer marker still catches it (TECL)
+    assert!(is_leveraged("Direxion Daily Technology") && !is_leveraged("Technology Select Sector"));
     // ETF classifier (splits the equity table only): funds match, single companies don't
     assert!(is_etf("iShares Core S&P 500 UCITS ETF") && is_etf("SPDR S&P 500 ETF Trust"));
     assert!(!is_etf("Apple Inc.") && !is_etf("NVIDIA Corporation"));
@@ -445,6 +473,11 @@ pub fn selftest() {
     let mut wild = q(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     wild.volatility_pct = Some(4.0);
     assert!(buy_score(&calm, &t).unwrap() > buy_score(&wild, &t).unwrap());
+    // (2a) at its all-time high (discount ~0) a huge-CAGR name must NOT outrank an equal pulled-back
+    // one — the long-trend reward fades without an actual discount (kills the at-the-high "rocket")
+    let at_high = q(0.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 500.0)]); // range_pct 100 -> discount 0
+    let pulled = q(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 500.0)]); // same CAGR, real discount
+    assert!(buy_score(&pulled, &t).unwrap() > buy_score(&at_high, &t).unwrap());
     // (A) a stronger long-term CAGR outranks a weaker one, all else equal
     let strong = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 400.0)]), &t).unwrap();
     let weak = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
