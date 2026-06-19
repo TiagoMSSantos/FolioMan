@@ -8,7 +8,7 @@ pub async fn run(args: Vec<String>) {
     let fx = fetch::fx_cache();
     let tickers = if args.is_empty() { settings.tickers.clone() } else { args };
 
-    for q in fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, &settings.anchor_windows).await {
+    for q in fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, &settings.anchor_windows, None).await { // alert keys on price drop, not returns
         if q.drop_pct >= settings.drop_pct {
             fetch::push(
                 &client,

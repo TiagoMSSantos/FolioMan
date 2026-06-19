@@ -23,7 +23,14 @@ pub async fn run(args: Vec<String>) {
         truncate("NAME", nw), truncate("TICKER", tw), "PRICE(EUR)", truncate("MARKET", mw), "TREND"
     );
 
-    let qs = fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, &settings.anchor_windows).await;
+    // live EU HICP series for inflation-adjusting the long-horizon returns (only when enabled).
+    // ponytail: this refetches EU HICP that the footer also pulls below; one extra call, only when on.
+    let eu_infl = if settings.inflation_adjust.enabled {
+        Some(fetch::fetch_eu_inflation(&client, &settings.urls).await)
+    } else {
+        None
+    };
+    let qs = fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, &settings.anchor_windows, eu_infl.as_ref()).await;
     for q in &qs {
         let cells = HORIZONS
             .iter()

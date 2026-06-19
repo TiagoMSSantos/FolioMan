@@ -9,7 +9,12 @@ pub async fn run(args: Vec<String>) {
     let fx = fetch::fx_cache();
     let tickers = if args.is_empty() { settings.tickers.clone() } else { args };
 
-    for q in fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, &settings.anchor_windows).await {
+    let eu_infl = if settings.inflation_adjust.enabled {
+        Some(fetch::fetch_eu_inflation(&client, &settings.urls).await)
+    } else {
+        None
+    };
+    for q in fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, &settings.anchor_windows, eu_infl.as_ref()).await {
         println!(
             "\n{} [{}]  now {}  ({})  {}",
             q.name, q.ticker, q.price, q.market, core::source_url(&settings.urls.yahoo_quote, &q.ticker)

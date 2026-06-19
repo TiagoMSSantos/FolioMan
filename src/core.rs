@@ -364,9 +364,18 @@ pub fn default_anchor_half(days: i64) -> i64 {
     }
 }
 
+/// A nominal % gain converted to a REAL (inflation-adjusted) one: +50% over a span that saw +10%
+/// cumulative inflation is only ~+36% in purchasing power. `cum_infl_pct` = cumulative inflation %
+/// over the same span. real = (1+nominal) / (1+infl) − 1.
+pub fn real_pct(nominal_pct: f64, cum_infl_pct: f64) -> f64 {
+    ((1.0 + nominal_pct / 100.0) / (1.0 + cum_infl_pct / 100.0) - 1.0) * 100.0
+}
+
 /// (past_price_eur_str, pct_change) or None for each HORIZON, in HORIZONS order. `windows` maps a
 /// horizon label to a ±days averaging window, overriding `default_anchor_half`; missing = default.
-pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, windows: &BTreeMap<String, i64>) -> Vec<Option<(String, f64)>> {
+/// `infl` = Some(year->YoY% series, e.g. EU HICP) to show inflation-adjusted returns on horizons
+/// >=1Y (deflated by the real cumulative inflation over each horizon), or None for raw nominal %.
+pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Option<(String, f64)>> {
     let cur = *closes.last().unwrap();
     let last = *dates.last().unwrap();
     HORIZONS
@@ -387,7 +396,17 @@ pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, w
                         Some(r) => format!("€{}", fmt_money2(p * r)),
                         None => format!("{}?", fmt_money2(p)),
                     };
-                    Some((eur, (cur - p) / p * 100.0))
+                    let mut pct = (cur - p) / p * 100.0;
+                    // inflation-adjust the longer horizons only (>=1Y); short ones are noise. Deflate
+                    // by the ACTUAL cumulative inflation over that many years (compounded YoY series).
+                    if let Some(series) = infl {
+                        if *days >= 365 {
+                            if let Some(cum) = inflation_compounded(series, (*days / 365) as usize) {
+                                pct = real_pct(pct, cum);
+                            }
+                        }
+                    }
+                    Some((eur, pct))
                 }
             }
         })
@@ -603,6 +622,10 @@ assert_eq!(tech_symbol("AMZN,Amazon,Consumer Discretionary,x"), None); // GICS q
     assert_eq!(default_anchor_half(7), 7);
     assert_eq!(default_anchor_half(365), 90);
     assert_eq!(default_anchor_half(3650), 365);
+    // real_pct: 0% cumulative inflation = unchanged; flat nominal under +10% inflation = ~-9% real
+    assert_eq!(real_pct(100.0, 0.0), 100.0);
+    assert!((real_pct(0.0, 10.0) - (-9.0909091)).abs() < 1e-4);
+    assert!((real_pct(50.0, 10.0) - 36.3636363).abs() < 1e-4); // +50% nominal, +10% infl -> ~+36% real
     assert_eq!(slice_since(&ds, &cs, 1), vec![20.0, 30.0]);
 
     // intraday: bar-count back. 7 bars, last=110. 1 bar back=105 -> +4.76%; 6 bars back=100 -> +10%

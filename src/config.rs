@@ -27,7 +27,18 @@ pub struct Settings {
     pub buy_heuristic: BuyHeuristic, // tunable gates/weights/caps for the picks score
     #[serde(default)]
     pub anchor_windows: BTreeMap<String, i64>, // per-horizon ±days averaged around the anchor date; missing label = built-in default (see core::default_anchor_half)
+    #[serde(default)]
+    pub inflation_adjust: InflationAdjust, // show real (inflation-adjusted) returns on the 1Y+ columns
     pub urls: Urls,
+}
+
+/// Toggle for showing REAL (inflation-adjusted) returns on the 1Y/5Y/10Y/20Y % columns instead of
+/// nominal. Off by default. When on, deflates by the ACTUAL cumulative EU HICP inflation over each
+/// horizon (fetched live, same source as the `check` footer) — no rate to guess.
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct InflationAdjust {
+    pub enabled: bool, // false = raw nominal % (default); true = deflate long-horizon returns by live EU HICP
 }
 
 fn default_top_picks() -> usize {
@@ -104,10 +115,10 @@ impl Default for BuyHeuristic {
             // score
             normal_volatility_pct: 2.0,    // ~2%/day = a typical large-cap equity
             discount_cap: 35.0,            // a ~35%-off (for its vol) dip maxes the discount
-            momentum_bounce: 1.3,          // confirmed turn-up earns +30%
-            momentum_knife: 0.6,           // still-knifing loses 40%
-            long_trend_weight: 0.05,       // a +400% rocket adds at most long_trend_cap×this
-            long_trend_cap: 300.0,
+            momentum_bounce: 1.0,          // neutral: a weekly bounce is noise at a multi-decade hold horizon
+            momentum_knife: 1.0,           // neutral: this-week direction shouldn't reorder a 40-year pick
+            long_trend_weight: 0.03,       // reward a proven long compounder, but stay below the discount term
+            long_trend_cap: 1000.0,        // let a +1000%+ multi-decade track record count (was 300, too flat)
             prefer_eur: true,
         }
     }

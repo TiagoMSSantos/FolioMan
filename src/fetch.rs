@@ -1,6 +1,7 @@
 //! All network I/O for folioman. One shared `reqwest::Client` (keep-alive pool,
 //! HTTP/2, gzip) drives every request; fan-out is async via `join_all`. Every fetch
 //! fails soft — a bad ticker or a down API yields a fallback/err row, never a crash.
+//! Universe-scale fan-out is concurrency-bounded (`FETCH_CONCURRENCY`) so it can't 429-storm.
 //! All URLs come from config (`Urls`); templates use `{ticker}`/`{range}`/`{topic}`.
 
 use crate::config::Urls;
@@ -9,7 +10,7 @@ use crate::core::{
     pct_from_high, slice_since, trend_streak, Quote,
 };
 use chrono::{DateTime, NaiveDate};
-use futures::future::join_all;
+use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -24,7 +25,9 @@ pub type FxCache = Arc<Mutex<HashMap<String, Option<f64>>>>;
 pub fn client() -> Client {
     Client::builder()
         .user_agent("Mozilla/5.0")
-        .timeout(StdDuration::from_secs(3))
+        // 8s, not 3s: the 10y daily payload (~3652 pts) is ~25× the old monthly `max` body, and
+        // under the screen fan-out a tight 3s budget timed out big coins (BTC) into err stubs.
+        .timeout(StdDuration::from_secs(8))
         .connect_timeout(StdDuration::from_secs(2))
         .gzip(true)
         .build()
@@ -37,7 +40,7 @@ pub fn fx_cache() -> FxCache {
 
 /// Client for broker order APIs: longer timeout (orders aren't snappy quotes) and a cookie
 /// store (Trade Republic's login hands back a session cookie). Separate from `client()` so
-/// the read-only quote path stays on its tight 3s budget.
+/// the read-only quote path stays on its tighter 8s budget.
 pub fn client_long() -> Client {
     Client::builder()
         .user_agent("Mozilla/5.0")
@@ -180,7 +183,7 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
-pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>) -> Quote {
+pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
     let (chart_j, titles, intra) = tokio::join!(
         // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
         // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
@@ -230,7 +233,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         market: market_of(ticker),
         head: titles.first().cloned().unwrap_or_default(),
         news_block: titles.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n"),
-        perf: horizon_changes(&chart.dates, &chart.closes, rate, windows),
+        perf: horizon_changes(&chart.dates, &chart.closes, rate, windows, infl),
         name: chart.name,
         trend: format!("{arrow} {dur}"),
         at_ath,
@@ -302,14 +305,24 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
     out
 }
 
-/// One Quote per ticker, all concurrent, input order preserved.
-pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>) -> Vec<Quote> {
+/// At most this many quote fetches in flight at once. Unbounded `join_all` over the ~750-ticker
+/// screen universe stampeded Yahoo into 429s/timeouts (dropping random coins like BTC to err
+/// stubs); a bounded window keeps each request uncontended. ponytail: fixed cap, tune if the
+/// scan feels slow or Yahoo tightens limits.
+const FETCH_CONCURRENCY: usize = 16;
+
+/// One Quote per ticker, concurrent (≤`FETCH_CONCURRENCY` in flight), input order preserved.
+pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Quote> {
     // Warm the USD rate once up front. Otherwise every US stock races its own USDEUR=X call in the
-    // join below; one gets rate-limited -> None cached -> all USD names print "USD?" instead of €.
+    // fan-out; one gets rate-limited -> None cached -> all USD names print "USD?" instead of €.
     // ponytail: USD only (dominant case); rare currencies (GBP/CHF) still race, fine at this scale.
     let _ = eur_rate(client, urls, "USD", fx).await;
-    let futs = tickers.iter().map(|tk| quote_one(client, urls, fx, tk, dip_days, high_days, intraday, windows));
-    join_all(futs).await
+    // `buffered` (ordered) caps concurrency yet preserves input order (`check` prints in that order).
+    stream::iter(tickers.iter())
+        .map(|tk| quote_one(client, urls, fx, tk, dip_days, high_days, intraday, windows, infl))
+        .buffered(FETCH_CONCURRENCY)
+        .collect()
+        .await
 }
 
 /// Best-effort live 3-month Euribor (%). Returns (rate, is_live); falls back on failure.

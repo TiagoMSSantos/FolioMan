@@ -32,7 +32,13 @@ pub async fn run(args: Vec<String>) {
         (args, std::collections::HashSet::new()) // explicit tickers: no sector data -> no tech table
     };
 
-    let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true, &settings.anchor_windows).await; // intraday on: picks table shows 1h/6h/12h
+    // live EU HICP series to inflation-adjust long-horizon returns, only when enabled
+    let eu_infl = if settings.inflation_adjust.enabled {
+        Some(fetch::fetch_eu_inflation(&client, &settings.urls).await)
+    } else {
+        None
+    };
+    let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true, &settings.anchor_windows, eu_infl.as_ref()).await; // intraday on: picks table shows 1h/6h/12h
 
     let w = &settings.widths;
     let (nw, tw, pw) = (w.name, w.ticker, w.price);
