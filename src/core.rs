@@ -338,14 +338,47 @@ pub fn asof(dates: &[NaiveDate], closes: &[f64], target: NaiveDate) -> Option<f6
     res
 }
 
-/// (past_price_eur_str, pct_change) or None for each HORIZON, in HORIZONS order.
-pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>) -> Vec<Option<(String, f64)>> {
+/// Average close within ±`half` days of `target` — a smoothed anchor so one outlier day (a spike
+/// or gap landing exactly on the horizon date) doesn't skew a long-horizon % change. None if no
+/// close falls in the window.
+pub fn asof_avg(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i64) -> Option<f64> {
+    let (lo, hi) = (target - Duration::days(half), target + Duration::days(half));
+    let vals: Vec<f64> =
+        dates.iter().zip(closes).filter(|(d, _)| **d >= lo && **d <= hi).map(|(_, c)| *c).collect();
+    if vals.is_empty() {
+        return None;
+    }
+    Some(vals.iter().sum::<f64>() / vals.len() as f64)
+}
+
+/// Built-in ±days averaging window for a horizon, by its calendar length. Smoothing the anchor
+/// hides a single outlier day; the further back the horizon, the wider the window. 1D = exact (a
+/// 1-day move is a single point). Overridable per-label in settings.yaml `anchor_windows`.
+pub fn default_anchor_half(days: i64) -> i64 {
+    match days {
+        d if d >= 1825 => 365, // 5Y/10Y/20Y: ±12 months
+        d if d >= 182 => 90,   // 6M/1Y: ±3 months
+        d if d >= 30 => 30,    // 1M: ±30 days
+        d if d >= 7 => 7,      // 1W: ±7 days
+        _ => 0,                // 1D: exact day
+    }
+}
+
+/// (past_price_eur_str, pct_change) or None for each HORIZON, in HORIZONS order. `windows` maps a
+/// horizon label to a ±days averaging window, overriding `default_anchor_half`; missing = default.
+pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, windows: &BTreeMap<String, i64>) -> Vec<Option<(String, f64)>> {
     let cur = *closes.last().unwrap();
     let last = *dates.last().unwrap();
     HORIZONS
         .iter()
-        .map(|(_, days)| {
-            let past = asof(dates, closes, last - Duration::days(*days));
+        .map(|(label, days)| {
+            let target = last - Duration::days(*days);
+            let half = windows.get(*label).copied().unwrap_or_else(|| default_anchor_half(*days));
+            let past = if half > 0 {
+                asof_avg(dates, closes, target, half).or_else(|| asof(dates, closes, target))
+            } else {
+                asof(dates, closes, target)
+            };
             match past {
                 None => None,
                 Some(p) if p == 0.0 => None,
@@ -561,6 +594,15 @@ assert_eq!(tech_symbol("AMZN,Amazon,Consumer Discretionary,x"), None); // GICS q
     assert_eq!(asof(&ds, &cs, NaiveDate::from_ymd_opt(2020, 1, 2).unwrap()), Some(20.0));
     assert_eq!(asof(&ds, &cs, NaiveDate::from_ymd_opt(2019, 6, 1).unwrap()), None);
     assert_eq!(asof(&ds, &cs, NaiveDate::from_ymd_opt(2025, 1, 1).unwrap()), Some(30.0));
+    // asof_avg: ±2d window over Jan-2 averages all 3 days (smooths an outlier); window with no close = None
+    assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2020, 1, 2).unwrap(), 2), Some(20.0));
+    assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), 0), Some(10.0));
+    assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(), 5), None);
+    // default_anchor_half: window widens with horizon length; 1D exact
+    assert_eq!(default_anchor_half(1), 0);
+    assert_eq!(default_anchor_half(7), 7);
+    assert_eq!(default_anchor_half(365), 90);
+    assert_eq!(default_anchor_half(3650), 365);
     assert_eq!(slice_since(&ds, &cs, 1), vec![20.0, 30.0]);
 
     // intraday: bar-count back. 7 bars, last=110. 1 bar back=105 -> +4.76%; 6 bars back=100 -> +10%

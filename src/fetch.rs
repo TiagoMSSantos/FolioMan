@@ -180,9 +180,12 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
-pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool) -> Quote {
+pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>) -> Quote {
     let (chart_j, titles, intra) = tokio::join!(
-        chart_json(client, urls, ticker, "max"),
+        // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
+        // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
+        // (~3652) for 1D..10Y; the 20Y column goes n/a (the heuristic's long leg falls back to 10Y).
+        chart_json(client, urls, ticker, "10y"),
         fetch_news(client, urls, ticker),
         async { if intraday { intraday_closes(client, urls, ticker).await } else { None } },
     );
@@ -227,7 +230,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         market: market_of(ticker),
         head: titles.first().cloned().unwrap_or_default(),
         news_block: titles.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n"),
-        perf: horizon_changes(&chart.dates, &chart.closes, rate),
+        perf: horizon_changes(&chart.dates, &chart.closes, rate, windows),
         name: chart.name,
         trend: format!("{arrow} {dur}"),
         at_ath,
@@ -300,12 +303,12 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
 }
 
 /// One Quote per ticker, all concurrent, input order preserved.
-pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool) -> Vec<Quote> {
+pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>) -> Vec<Quote> {
     // Warm the USD rate once up front. Otherwise every US stock races its own USDEUR=X call in the
     // join below; one gets rate-limited -> None cached -> all USD names print "USD?" instead of €.
     // ponytail: USD only (dominant case); rare currencies (GBP/CHF) still race, fine at this scale.
     let _ = eur_rate(client, urls, "USD", fx).await;
-    let futs = tickers.iter().map(|tk| quote_one(client, urls, fx, tk, dip_days, high_days, intraday));
+    let futs = tickers.iter().map(|tk| quote_one(client, urls, fx, tk, dip_days, high_days, intraday, windows));
     join_all(futs).await
 }
 

@@ -32,7 +32,7 @@ pub async fn run(args: Vec<String>) {
         (args, std::collections::HashSet::new()) // explicit tickers: no sector data -> no tech table
     };
 
-    let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true).await; // intraday on: picks table shows 1h/6h/12h
+    let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true, &settings.anchor_windows).await; // intraday on: picks table shows 1h/6h/12h
 
     let w = &settings.widths;
     let (nw, tw, pw) = (w.name, w.ticker, w.price);

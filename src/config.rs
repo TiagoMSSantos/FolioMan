@@ -2,6 +2,7 @@
 //! Language-agnostic YAML so any tool can read the same source of truth.
 
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
@@ -24,6 +25,8 @@ pub struct Settings {
     pub widths: Widths, // column truncate/pad widths for the tables
     #[serde(default)]
     pub buy_heuristic: BuyHeuristic, // tunable gates/weights/caps for the picks score
+    #[serde(default)]
+    pub anchor_windows: BTreeMap<String, i64>, // per-horizon ±days averaged around the anchor date; missing label = built-in default (see core::default_anchor_half)
     pub urls: Urls,
 }
 
