@@ -147,9 +147,9 @@ pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
 ///   score = base × value × decline × trust
 /// ```
 ///
-/// - **discount** — pullback off the OFF-HI high (anchor = `high_days`: 0 = all-time over the fetched
-///   ~10y history, default; >0 = trailing-N-day high), normalized by the asset's OWN volatility and
-///   capped (`normal_volatility_pct`, `discount_cap`).
+/// - **discount** — how deep in its OWN ~10y range it trades (100 − percentile rank; self-normalizes
+///   amplitude across BTC vs a penny alt), then volatility-normalized and capped (`normal_volatility_pct`,
+///   `discount_cap`). The OFF-HI column (`drawdown_pct`, anchored by `high_days`) is the display only.
 /// - **trend_health** ∈ [0,1] — fades the discount as the long trend's CAGR weakens (`health_zero_cagr`).
 /// - **momentum** — weekly bounce/knife multiplier (`momentum_bounce`/`knife`); 1.0 = off (default:
 ///   weekly timing is noise at a decades horizon).
@@ -204,8 +204,13 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
 
     // ---- SCORE ----
     let long_cagr = core::cagr(long_cum, long_years); // (A) annualized -> comparable across 5/10/20Y
+    // (A) on-sale = how deep in its OWN ~10y range it trades (100−percentile rank), NOT raw distance
+    // below the high. Self-normalizes amplitude so volatile names that all sit far below ATH no longer
+    // peg the cap together — a coin at the 20th pct outranks one at the 70th. drawdown_pct stays the
+    // OFF-HI display only. Still vol-scaled + capped, so a calm name's cheapness counts for more.
+    let cheapness = 100.0 - q.range_pct;
     let discount =
-        normalized_dip(q.drawdown_pct, q.volatility_pct, t.normal_volatility_pct).min(t.discount_cap);
+        normalized_dip(cheapness, q.volatility_pct, t.normal_volatility_pct).min(t.discount_cap);
     let health = trend_health(long_cagr, t.health_zero_cagr);
     let momentum = momentum_factor(q, t.momentum_bounce, t.momentum_knife);
     let long_reward = t.long_trend_weight * long_cagr.min(t.long_trend_cap); // (A)
@@ -326,6 +331,9 @@ pub fn selftest() {
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, drawdown_pct, intraday: [None; 3],
             avg_turnover_eur: None, volatility_pct: None, below_ma_pct: 0.0, pe_ratio: None,
+            // for tests, mirror the on-sale magnitude: a deeper drawdown = deeper in its range.
+            // (real fetch computes range_pct independently; tying them keeps the score asserts honest.)
+            range_pct: 100.0 - drawdown_pct,
         }
     };
     let t = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on
@@ -341,6 +349,12 @@ pub fn selftest() {
     // (C) below-SMA %: last 50 vs mean 83.33 of [100,100,50] = 40%; window longer than history = 0
     assert!((core::below_long_ma_pct(&[100.0, 100.0, 50.0], 3) - 40.0).abs() < 1e-9);
     assert_eq!(core::below_long_ma_pct(&[1.0, 2.0], 5), 0.0);
+    // (A) price percentile rank: at the high -> 100, at the low -> 0, robust to a single spike
+    assert_eq!(core::price_pct_rank(&[10.0, 20.0, 30.0]), 100.0); // last = max
+    assert_eq!(core::price_pct_rank(&[30.0, 20.0, 10.0]), 0.0); // last = min
+    assert_eq!(core::price_pct_rank(&[10.0, 1000.0, 20.0]), 50.0); // mid: 1 of 2 others below, spike ignored
+    assert_eq!(core::price_pct_rank(&[]), 0.0);
+    assert_eq!(core::price_pct_rank(&[5.0]), 0.0); // too short
     // #1 normalized dip: a calm asset's dip is amplified, a wild one's damped, unknown vol = raw
     assert!((normalized_dip(30.0, Some(1.0), 2.0) - 60.0).abs() < 1e-9);
     assert!((normalized_dip(30.0, Some(4.0), 2.0) - 15.0).abs() < 1e-9);
@@ -396,6 +410,13 @@ pub fn selftest() {
     let deep = buy_score(&q(80.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
     let shallow = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
     assert!(deep >= shallow);
+    // (A) discount keys off range position: same drawdown, the one deeper in its own range
+    // (lower range_pct) outranks the one near its range high — the fix raw ATH-distance couldn't make
+    let mut deep_in_range = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    deep_in_range.range_pct = 20.0; // trades near its 10y low
+    let mut near_high = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    near_high.range_pct = 80.0; // trades near its 10y high
+    assert!(buy_score(&deep_in_range, &t).unwrap() > buy_score(&near_high, &t).unwrap());
     // a deep pullback on a healthy long trend beats a rocket at new highs (discount 0)
     let pullback = buy_score(&q(40.0, &[("1Y", 30.0), ("5Y", 50.0), ("10Y", 50.0)]), &t).unwrap();
     let rocket = buy_score(&q(0.0, &[("1Y", 400.0), ("5Y", 500.0), ("10Y", 500.0)]), &t).unwrap();

@@ -266,6 +266,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         below_ma_pct: core::below_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
         // (E) trailing P/E (equities w/ FMP_API_KEY only; None -> neutral value tilt).
         pe_ratio: pe,
+        // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
+        // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
+        range_pct: core::price_pct_rank(&chart.closes),
     }
 }
 

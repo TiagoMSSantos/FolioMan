@@ -83,6 +83,7 @@ pub struct Quote {
     pub volatility_pct: Option<f64>,   // daily-return stdev (%) ~last year; the asset's "normal swing" for the picks score
     pub below_ma_pct: f64,             // % below the ~200-week SMA (structural "cheap vs long trend"); 0 if at/above or history too short
     pub pe_ratio: Option<f64>,         // trailing P/E for the valuation tilt; None for crypto/ETF/no-earnings/no source (-> neutral)
+    pub range_pct: f64,                // percentile rank (0..100) of the last close in its own ~10y history; 100=at high. picks discount = 100-this
 }
 
 impl Quote {
@@ -110,6 +111,7 @@ impl Quote {
             volatility_pct: None,
             below_ma_pct: 0.0,
             pe_ratio: None,
+            range_pct: 0.0,
         }
     }
 }
@@ -155,6 +157,23 @@ pub fn fmt_money2(x: f64) -> String {
         grouped.push(*b as char);
     }
     format!("{}{}.{}", if neg { "-" } else { "" }, grouped, frac)
+}
+
+/// Percentile rank (0..100) of the LAST close within the asset's OWN fetched history: ~0 = at its
+/// all-time low, ~100 = at its all-time high. Self-normalizing across assets of wildly different
+/// amplitude (BTC vs a penny alt) and robust to a single blow-off top — it's a rank, not a linear
+/// (max−last)/(max−min) range one spike would distort. The buy "discount" uses 100−this (how deep in
+/// its own history it trades). 0 for empty/one-point history.
+pub fn price_pct_rank(closes: &[f64]) -> f64 {
+    let last = match closes.last() {
+        Some(&x) => x,
+        None => return 0.0,
+    };
+    if closes.len() < 2 {
+        return 0.0;
+    }
+    let below = closes.iter().filter(|&&c| c < last).count();
+    below as f64 / (closes.len() - 1) as f64 * 100.0
 }
 
 /// % latest price sits below the period high. 0 if at/above high.
