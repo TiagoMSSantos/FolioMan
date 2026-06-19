@@ -80,6 +80,7 @@ pub struct Quote {
     pub drawdown_pct: f64, // % below the high of the last ~high_days (picks "on sale" signal)
     pub intraday: [Option<f64>; 3], // % change over [1h, 6h, 12h] = 1/6/12 hourly bars back; None if too few bars
     pub avg_turnover_eur: Option<f64>, // avg daily turnover (close*volume, EUR) ~last 30 sessions; liquidity proxy
+    pub volatility_pct: Option<f64>,   // daily-return stdev (%) ~last year; the asset's "normal swing" for the picks score
 }
 
 impl Quote {
@@ -104,6 +105,7 @@ impl Quote {
             drawdown_pct: 0.0,
             intraday: [None; 3],
             avg_turnover_eur: None,
+            volatility_pct: None,
         }
     }
 }
@@ -364,6 +366,24 @@ pub fn avg_turnover(closes: &[f64], volumes: &[f64], n: usize) -> Option<f64> {
     Some(vals.iter().sum::<f64>() / vals.len() as f64)
 }
 
+/// Daily volatility: standard deviation of daily % returns over the last `n` sessions — the
+/// asset's "normal swing". Lets the picks score judge whether a drawdown is unusually deep for
+/// THIS asset (a real sale) or just its everyday noise. None if too few sessions. FX-agnostic.
+pub fn volatility_pct(closes: &[f64], n: usize) -> Option<f64> {
+    let len = closes.len();
+    let start = len.saturating_sub(n + 1); // n returns need n+1 closes
+    let rets: Vec<f64> = (start + 1..len)
+        .map(|i| (closes[i] - closes[i - 1]) / closes[i - 1] * 100.0)
+        .filter(|r| r.is_finite())
+        .collect();
+    if rets.len() < 2 {
+        return None;
+    }
+    let mean = rets.iter().sum::<f64>() / rets.len() as f64;
+    let var = rets.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / rets.len() as f64;
+    Some(var.sqrt())
+}
+
 /// Horizons over which `screen` totals dividends (label -> calendar days back).
 pub const DIV_HORIZONS: &[(&str, i64)] =
     &[("1Y", 365), ("5Y", 1825), ("10Y", 3650), ("20Y", 7300)];
@@ -502,6 +522,11 @@ pub fn selftest() {
     assert_eq!(avg_turnover(&[10.0, 20.0], &[0.0, 200.0], 30), Some(4000.0)); // zero-vol day skipped
     assert_eq!(avg_turnover(&[], &[], 30), None);
     assert_eq!(avg_turnover(&[10.0], &[0.0], 30), None); // no usable turnover
+
+    // volatility: stdev of daily % returns. Steady +1%/day -> 0 stdev; alternating moves -> >0
+    assert_eq!(volatility_pct(&[100.0, 101.0, 102.01, 103.0301], 30), Some(0.0));
+    assert!(volatility_pct(&[100.0, 110.0, 100.0, 110.0], 30).unwrap() > 0.0);
+    assert_eq!(volatility_pct(&[100.0], 30), None); // too few sessions
 
     assert_eq!(pct_cell(Some(&("€10.00".to_string(), 5.0))), "+5.0%");
     assert_eq!(pct_cell(None), "n/a");

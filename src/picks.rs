@@ -21,38 +21,33 @@ fn trend_health(long: f64, zero: f64) -> f64 {
     ((long - zero) / -zero).clamp(0.0, 1.0)
 }
 
-/// Recovery signal: rewards a name that has **pulled back this month but is turning back up**
-/// — a bottoming setup, not a falling knife. Full `weight` if the week is green while the
-/// month is red (bounce confirmed), half if only today is green, 0 otherwise (still falling,
-/// or never pulled back). Replaces the old decline-duration bonus, which perversely rewarded
-/// a name the *longer* it kept falling — the opposite of "about to grow".
-fn recovery_bonus(q: &Quote, weight: f64) -> f64 {
-    if perf_pct(q, "1M").unwrap_or(0.0) >= 0.0 {
-        return 0.0; // not pulled back on the month -> no recovery setup to reward
-    }
-    if perf_pct(q, "1W").unwrap_or(0.0) > 0.0 {
-        weight // up on the week off a monthly dip -> bounce confirmed
-    } else if perf_pct(q, "1D").unwrap_or(0.0) > 0.0 {
-        weight * 0.5 // only today green -> a fresh, unconfirmed turn
-    } else {
-        0.0 // still falling -> no reward (don't catch the knife)
+/// #1 — Volatility-normalized dip: how deep the pullback is RELATIVE to this asset's normal daily
+/// swing. A calm name (low vol) dropping 30% is a bigger event than a wild one dropping 30%, so we
+/// scale the raw drawdown by `normal / asset_vol`: calm names get their dip amplified, wild ones
+/// damped. Unknown/zero vol -> no scaling (use the raw drawdown). This is the "discount" the score
+/// is built on, before the cap.
+fn normalized_dip(drawdown: f64, vol: Option<f64>, normal: f64) -> f64 {
+    match vol {
+        Some(v) if v > 0.0 => drawdown * normal / v,
+        _ => drawdown,
     }
 }
 
-/// Fresh-dip signal: rewards a name **falling right now (this week)**, not one whose dip is a
-/// stale month-old move that already bottomed. Magnitude of the 1W drop (capped `cap`) ×
-/// `weight`, doubled when today is also red (drop still in progress = freshest entry) vs halved
-/// when today turned green (handled by `recovery_bonus` instead). 0 if up on the week. This
-/// surfaces names with a recent 1D/1W decline alongside the slower OFF-HI / 1M dips.
-/// ponytail: linear in the 1W drop; swap for a curve only if the ranking needs it.
-fn fresh_dip_bonus(q: &Quote, weight: f64, cap: f64) -> f64 {
-    let wk = perf_pct(q, "1W").unwrap_or(0.0);
-    if wk >= 0.0 {
-        return 0.0; // not falling this week -> no fresh dip (a bounce is recovery_bonus's job)
+/// #2 — Momentum factor: a multiplier on the discount based on what price is doing NOW, so a
+/// confirmed turn-up outranks a name still knifing down at the same drawdown. Neutral (1.0) if it
+/// hasn't pulled back this month; `bounce` (>1) on a green week off a monthly dip; half that
+/// premium if only today is green; `knife` (<1) while it's still falling.
+fn momentum_factor(q: &Quote, bounce: f64, knife: f64) -> f64 {
+    if perf_pct(q, "1M").unwrap_or(0.0) >= 0.0 {
+        return 1.0; // not pulled back -> nothing to time
     }
-    let mag = (-wk).min(cap); // steeper recent drop = fresher entry, capped so a crash can't run away
-    let accel = if perf_pct(q, "1D").unwrap_or(0.0) < 0.0 { 1.0 } else { 0.5 }; // still red today = freshest
-    weight * mag * accel
+    if perf_pct(q, "1W").unwrap_or(0.0) > 0.0 {
+        bounce // up on the week off a monthly dip -> turn confirmed
+    } else if perf_pct(q, "1D").unwrap_or(0.0) > 0.0 {
+        1.0 + (bounce - 1.0) * 0.5 // only today green -> half the bounce premium
+    } else {
+        knife // still falling -> dock it (don't catch the knife)
+    }
 }
 
 /// Substrings (lowercased) that mark a leveraged/inverse product — daily-reset decay vehicles
@@ -108,87 +103,70 @@ pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
     q.perf.get(i).and_then(|o| o.as_ref()).map(|(_, p)| *p)
 }
 
-/// Heuristic "quality on sale" buy score. `None` = excluded as a candidate. All gates and
-/// caps come from `BuyHeuristic` (settings.yaml `buy_heuristic:`) so they're tunable.
+/// Score a quote as a "quality on sale" buy candidate, or `None` if it fails a gate. The formula:
 ///
-/// Gates (all must pass): **not a leveraged/inverse product** (name match — those decay, never
-/// a long-term hold); has a **multi-year (≥5Y) track record** (no 5Y/10Y/20Y leg at all → it
-/// can't be a "5Y+ uptrend", so it's out — this kills brand-new tickers and 2x/short ETFs);
-/// has a 1-year history with 1Y % above its class floor (a **floor**: equities use `min_1y_pct`,
-/// crypto/FX the looser `min_1y_pct_crypto` since they're far more volatile — keep mildly
-/// negative to allow a real *pullback* but reject a name deep in a 1-year *downtrend*); **not crashing now**
-/// (1M % above `max_1m_drop_pct` — a fresh crater is a knife); and **structurally healthy** —
-/// *every* multi-year horizon it has (5Y, 10Y, 20Y) above `min_long_pct` (one weak long leg
-/// rejects it).
+/// ```text
+///   score = discount × trend_health × momentum + long_reward,   then × trust
+/// ```
 ///
-/// Score rewards a **recent low inside an intact long-term uptrend** — "quality on sale".
-/// The dominant term is the pullback off the recent high (`drawdown_pct`, the % below the
-/// high over `settings.high_days` ≈ 1Y, weighted `on_sale_weight`, capped `on_sale_cap` — keep
-/// the cap modest so a moderate pullback maxes it and a 60%+ collapse, likely broken, doesn't
-/// dominate). Then a *small* 1Y-momentum term (`y1_weight × 1Y%`, capped low — momentum is a
-/// gate, not the prize) + proven multi-year trend (`long_weight × >2Y%`, capped `long_cap`) +
-/// a **recovery bonus** (`recovery_weight`, paid only when it's pulling back yet turning back
-/// up — a bottoming setup, not a knife) + a **fresh-dip bonus** (`fresh_dip_weight × 1W drop`,
-/// capped `fresh_dip_cap`, paid when it's falling *this week* so a recent dip ranks above a
-/// stale month-old one). Finally the score is **halved if the asset has no 10Y
-/// history**: the thesis is "intact long-term uptrend", untrustworthy without a decade of data.
-/// Higher = more interesting. **NOT advice** — a ranking of the table, not a forecast.
+/// - **discount**  — how far it's pulled back off its ~1Y high, normalized by the asset's OWN
+///   volatility (#1) and capped (`normal_volatility_pct`, `discount_cap`).
+/// - **trend_health** ∈ [0,1] — fades the discount as the multi-year trend weakens; kills corpses,
+///   ≈1.0 for equities (`min_long_pct_crypto` is the zero-point).
+/// - **momentum** — rewards a confirmed bounce, docks a still-falling knife (#2)
+///   (`momentum_bounce`, `momentum_knife`).
+/// - **long_reward** — a small bonus for a strong >2Y uptrend (`long_trend_weight`, `long_trend_cap`).
+/// - **trust** — halves anything without a 10Y record (less-proven uptrend).
+///
+/// Every knob lives in `BuyHeuristic` (settings.yaml `buy_heuristic:`). Higher = more interesting.
+/// GATES below exclude a candidate before scoring. **NOT advice** — a ranking, never a forecast.
 pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
+    let crypto = is_currency_quoted(&q.ticker); // crypto/FX (-EUR/-USD): looser, peak-anchor-aware rules
+
+    // ---- GATES: drop anything that isn't a quality name on a real pullback ----
     if is_leveraged(&q.name) {
-        return None; // leveraged/inverse decay product -> never a long-term hold
+        return None; // leveraged/inverse product -> decays, never a long-term hold
     }
-    // liquidity gate: a thin/obscure name (tiny daily turnover) is a risky "opportunity".
-    // Only gates when turnover is known; unknown (None) passes (don't punish missing volume data).
     if q.avg_turnover_eur.map_or(false, |v| v < t.min_avg_turnover_eur) {
-        return None;
+        return None; // too thin/illiquid (unknown turnover passes — don't punish missing data)
     }
-    // stablecoin filter: a peg (DAI/USDT/USDC) never leaves its high, so "on sale" is meaningless;
-    // it also covers any crypto sitting at its high (not a dip to buy). Crypto only.
-    if is_currency_quoted(&q.ticker) && q.drawdown_pct < 3.0 {
-        return None;
+    if crypto && q.drawdown_pct < 3.0 {
+        return None; // stablecoin peg / crypto at its high -> nothing on sale
     }
-    // track-record gate: need a ≥5Y leg. Crypto is mostly <5yr old -> fall back to its 1Y leg
-    // (else nearly every coin is rejected); equities still require the real 5Y+ record.
-    let long = long_term_pct(q)
-        .or_else(|| if is_currency_quoted(&q.ticker) { perf_pct(q, "1Y") } else { None })?;
-    // crypto corpse gate: a >2Y leg this deep (e.g. -95% over 5Y) is a dead coin, not a pullback.
-    if is_currency_quoted(&q.ticker) && long <= t.min_long_pct_crypto {
-        return None;
+    // need a multi-year track record; crypto is younger, so fall back to its 1Y leg.
+    let long = long_term_pct(q).or_else(|| if crypto { perf_pct(q, "1Y") } else { None })?;
+    if crypto && long <= t.min_long_pct_crypto {
+        return None; // crypto corpse: a >2Y leg this deep (e.g. -95%) is a dead coin, not a dip
     }
     let y1 = perf_pct(q, "1Y")?;
-    // per-class 1Y floor: crypto/FX are far more volatile -> a looser floor (else every dip is a knife)
-    let floor = if is_currency_quoted(&q.ticker) { t.min_1y_pct_crypto } else { t.min_1y_pct };
+    let floor = if crypto { t.min_1y_pct_crypto } else { t.min_1y_pct };
     if y1 <= floor {
-        return None; // 1Y floor: a deep 1-year downtrend is not a pullback
+        return None; // deep 1-year downtrend -> not a pullback
     }
-    // per-class knife: crypto swings harder, so a looser monthly-drop floor (else every alt is a knife)
-    let knife = if is_currency_quoted(&q.ticker) { t.max_1m_drop_pct_crypto } else { t.max_1m_drop_pct };
+    let knife = if crypto { t.max_1m_drop_pct_crypto } else { t.max_1m_drop_pct };
     if perf_pct(q, "1M").unwrap_or(0.0) <= knife {
-        return None; // crashing this month -> falling knife, not "on sale"
+        return None; // crashing this month -> falling knife
     }
-    // every long horizon it has must be up: a dip is only a buy if 5Y AND 10Y AND 20Y hold.
-    // Equities only: Yahoo -EUR crypto pairs mostly start near the 2021 peak, so their "5Y" leg
-    // is peak-anchored and routinely negative even for healthy coins -> meaningless gate. Crypto
-    // relies on the 1Y floor + knife instead.
-    if !is_currency_quoted(&q.ticker) {
+    if !crypto {
+        // equities must be structurally up: EVERY multi-year leg must hold. (Crypto -EUR 5Y is
+        // peak-anchored and routinely negative even when healthy, so this gate is meaningless there.)
         for label in ["5Y", "10Y", "20Y"] {
             if perf_pct(q, label).map_or(false, |p| p <= t.min_long_pct) {
-                return None; // a negative multi-year leg -> structural loser, not a dip
+                return None;
             }
         }
     }
-    // trend-conditioned discount: scale the OFF-HI reward by how intact the long-term trend is, so
-    // a corpse's deep "discount" doesn't outrank a healthy name's modest pullback. Equities clear
-    // the >30% structural gate so health ≈ 1.0 (no-op); this reshapes the crypto ranking.
-    let on_sale = q.drawdown_pct.min(t.on_sale_cap) * trend_health(long, t.min_long_pct_crypto);
-    let score = t.on_sale_weight * on_sale
-        + t.y1_weight * y1.min(t.y1_cap)
-        + t.long_weight * long.min(t.long_cap)
-        + recovery_bonus(q, t.recovery_weight)
-        + fresh_dip_bonus(q, t.fresh_dip_weight, t.fresh_dip_cap);
-    // no 10Y track record -> can't trust the "intact long-term uptrend" thesis -> halve.
-    let penalty = if perf_pct(q, "10Y").is_none() { 0.5 } else { 1.0 };
-    Some(score * penalty)
+
+    // ---- SCORE: discount × trend_health × momentum + long_reward, then × trust ----
+    let discount =
+        normalized_dip(q.drawdown_pct, q.volatility_pct, t.normal_volatility_pct).min(t.discount_cap);
+    let health = trend_health(long, t.min_long_pct_crypto);
+    let momentum = momentum_factor(q, t.momentum_bounce, t.momentum_knife);
+    let long_reward = t.long_trend_weight * long.min(t.long_trend_cap);
+
+    let score = discount * health * momentum + long_reward;
+    let trust = if perf_pct(q, "10Y").is_none() { 0.5 } else { 1.0 };
+    Some(score * trust)
 }
 
 /// Horizons whose Δ% is shown in the picks table (chronological).
@@ -201,6 +179,16 @@ fn ranked<'a>(qs: &'a [Quote], t: &BuyHeuristic) -> Vec<(&'a Quote, f64)> {
     let mut picks = dedup_currency_twins(scored, t.prefer_eur); // one row per asset (BTC, not BTC-EUR+BTC-USD)
     picks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap()); // best score first
     picks
+}
+
+/// Upside to reclaim the ~1Y high, from the OFF-HI drawdown: a name 46% off its high needs +85%
+/// to get back there. NOT a forecast — just the room back to the high. Clamps the asymptote near a
+/// total wipeout (-99%+ off is a corpse anyway).
+fn upside_to_high(dd: f64) -> f64 {
+    if dd >= 99.0 {
+        return 9900.0;
+    }
+    dd * 100.0 / (100.0 - dd)
 }
 
 /// Compact EUR turnover for the table: €1.2B / €340M / €5K / n/a.
@@ -224,9 +212,9 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
     let diff_hdr = DIFF_HORIZONS.iter().map(|l| format!("{:>8}", l)).collect::<Vec<_>>().join(" ");
     let cell = |o: Option<f64>| o.map_or("n/a".to_string(), |v| format!("{:+.1}%", v));
     println!(
-        "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diff_hdr} {:>7} {:>10} {:>8}",
+        "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diff_hdr} {:>7} {:>8} {:>10} {:>8}",
         "RANK", truncate("NAME", nw), truncate("TICKER", tw), truncate("MARKET", mw), "PRICE(EUR)",
-        "1H", "6H", "12H", "OFF-HI", "TURNOVER", "SCORE"
+        "1H", "6H", "12H", "OFF-HI", "UPSIDE", "TURNOVER", "SCORE"
     );
     for (i, (q, score)) in picks.iter().take(n).enumerate() {
         let diffs = DIFF_HORIZONS
@@ -235,7 +223,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
             .collect::<Vec<_>>()
             .join(" ");
         println!(
-            "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diffs} {:>7} {:>10} {:>8.2}",
+            "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diffs} {:>7} {:>8} {:>10} {:>8.2}",
             i + 1,
             truncate(&q.name, nw),
             truncate(&q.ticker, tw),
@@ -245,6 +233,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
             cell(q.intraday[1]),
             cell(q.intraday[2]),
             format!("-{:.1}%", q.drawdown_pct), // % below the ~1Y high (real pullback, not 30d)
+            format!("+{:.1}%", upside_to_high(q.drawdown_pct)), // room back to that high (NOT a forecast)
             turnover_cell(q.avg_turnover_eur),
             score,
         );
@@ -277,45 +266,44 @@ pub fn selftest() {
             market: "USA".into(), head: String::new(), news_block: String::new(), perf,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, drawdown_pct, intraday: [None; 3],
-            avg_turnover_eur: None,
+            avg_turnover_eur: None, volatility_pct: None,
         }
     };
-    let t = BuyHeuristic::default(); // on_sale_w 1.0/cap 35, y1_w .05/cap 50, long_w .05/cap 300, recovery_w 1.0
+    let t = BuyHeuristic::default(); // normal_vol 2.0, discount_cap 35, momentum 1.3/0.6, long_trend .05/cap 300
     assert_eq!(perf_pct(&q(5.0, &[("1Y", 20.0)]), "1Y"), Some(20.0));
     assert_eq!(perf_pct(&q(5.0, &[]), "1Y"), None);
-    // score asserts carry a 10Y leg so the no-10Y halving penalty stays 1.0 (clean numbers).
-    // score = 1.0*off-hi(5) + 0.05*20(1Y) + 0.05*20(long=10Y) = 5 + 1 + 1 = 7
-    assert!((buy_score(&q(5.0, &[("1Y", 20.0), ("10Y", 20.0)]), &t).unwrap() - 7.0).abs() < 1e-9);
-    // off-hi caps at 35: drawdown 80 -> 35; + 0.05*10 + 0.05*10 = 35 + 0.5 + 0.5 = 36
-    assert!((buy_score(&q(80.0, &[("1Y", 10.0), ("10Y", 10.0)]), &t).unwrap() - 36.0).abs() < 1e-9);
-    // missing 10Y history halves the score (long-term uptrend unverifiable)
-    let with10 = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
-    let no10 = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0)]), &t).unwrap();
-    assert!((no10 - with10 / 2.0).abs() < 1e-9);
-    // a deep pullback (off-hi 40->cap 35) outranks a rocket at new highs (off-hi 0) despite weaker 1Y
-    let pullback = buy_score(&q(40.0, &[("1Y", 30.0), ("5Y", 50.0)]), &t).unwrap();
-    let rocket = buy_score(&q(0.0, &[("1Y", 400.0), ("5Y", 500.0)]), &t).unwrap();
-    assert!(pullback > rocket, "on-sale name must beat the rocket: {pullback} vs {rocket}");
-    // long-term term uses >2Y when present: off-hi(5) + 0.05*10 + 0.05*40(10Y) = 5+0.5+2 = 7.5
+    // #1 normalized dip: a calm asset's dip is amplified, a wild one's damped, unknown vol = raw
+    assert!((normalized_dip(30.0, Some(1.0), 2.0) - 60.0).abs() < 1e-9);
+    assert!((normalized_dip(30.0, Some(4.0), 2.0) - 15.0).abs() < 1e-9);
+    assert_eq!(normalized_dip(30.0, None, 2.0), 30.0);
+    assert_eq!(normalized_dip(30.0, Some(0.0), 2.0), 30.0); // div-by-zero guard
+    // base score (vol n/a -> discount = raw drawdown): discount 5 × health 1 × momentum 1 + 0.05*40 = 7
     let base = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
-    assert!((base - 7.5).abs() < 1e-9);
-    // recovery bonus (weight 1.0): pulled back on the month + green week -> full +1.0
+    assert!((base - 7.0).abs() < 1e-9);
+    // discount caps at 35: drawdown 80 -> 35; + 0.05*40 = 37
+    assert!((buy_score(&q(80.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap() - 37.0).abs() < 1e-9);
+    // no 10Y history halves the score (uptrend less proven)
+    let no10 = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0)]), &t).unwrap();
+    assert!((no10 - base / 2.0).abs() < 1e-9);
+    // a deep pullback (discount 35) outranks a rocket at new highs (discount 0) despite a huge 1Y
+    let pullback = buy_score(&q(40.0, &[("1Y", 30.0), ("5Y", 50.0), ("10Y", 50.0)]), &t).unwrap();
+    let rocket = buy_score(&q(0.0, &[("1Y", 400.0), ("5Y", 500.0), ("10Y", 500.0)]), &t).unwrap();
+    assert!(pullback > rocket, "on-sale name must beat the rocket: {pullback} vs {rocket}");
+    // #2 momentum: green week off a monthly dip -> bounce ×1.3: discount 5 × 1.3 = 6.5 + 2 = 8.5
     let bounce = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1W", 2.0)]), &t).unwrap();
-    assert!((bounce - base - 1.0).abs() < 1e-9);
-    // still falling on the week (no green) -> no recovery bonus, but a fresh-dip bonus instead:
-    // 1W -2.0 -> mag 2.0, today not red (1D n/a) -> accel 0.5 -> 0.3*2.0*0.5 = 0.3 over base
-    let falling = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1W", -2.0)]), &t).unwrap();
-    assert!((falling - base - 0.3).abs() < 1e-9);
-    // fresh dip, still red today -> full accel: 1W -3 (mag 3) + 1D -1 -> 0.3*3*1.0 = 0.9 over base
-    let fresh_dip = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1W", -3.0), ("1D", -1.0)]), &t).unwrap();
-    assert!((fresh_dip - base - 0.9).abs() < 1e-9);
-    // green week -> no fresh-dip bonus (a bounce is recovery_bonus's job, not fresh-dip's)
-    assert_eq!(fresh_dip_bonus(&q(5.0, &[("1W", 2.0)]), 0.3, 15.0), 0.0);
-    // fresh-dip cap: a -50% week is capped at 15 -> 0.3*15*1.0 = 4.5, not 0.3*50
-    assert!((fresh_dip_bonus(&q(5.0, &[("1W", -50.0), ("1D", -1.0)]), 0.3, 15.0) - 4.5).abs() < 1e-9);
-    // only today green off a monthly dip -> half credit
-    let fresh = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1D", 1.0)]), &t).unwrap();
-    assert!((fresh - base - 0.5).abs() < 1e-9);
+    assert!((bounce - 8.5).abs() < 1e-9);
+    // still falling (red week & day) -> knife ×0.6: discount 5 × 0.6 = 3 + 2 = 5
+    let knife = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1W", -2.0), ("1D", -1.0)]), &t).unwrap();
+    assert!((knife - 5.0).abs() < 1e-9);
+    // only today green -> half the bounce premium (×1.15): discount 5 × 1.15 = 5.75 + 2 = 7.75
+    let half = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0), ("1M", -5.0), ("1D", 1.0)]), &t).unwrap();
+    assert!((half - 7.75).abs() < 1e-9);
+    // #1 end-to-end: same 30% drawdown, the calm (low-vol) name outranks the wild one
+    let mut calm = q(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    calm.volatility_pct = Some(1.0);
+    let mut wild = q(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    wild.volatility_pct = Some(4.0);
+    assert!(buy_score(&calm, &t).unwrap() > buy_score(&wild, &t).unwrap());
     // track-record gate (A): no >2Y leg at all -> excluded (can't be a "5Y+ uptrend")
     assert!(buy_score(&q(5.0, &[("1Y", 20.0)]), &t).is_none());
     // ...but a crypto ticker (currency-quoted) falls back to its 1Y leg -> admitted
@@ -333,6 +321,10 @@ pub fn selftest() {
     let mut weak5y_crypto = q(5.0, &[("1Y", 20.0), ("5Y", -50.0)]);
     weak5y_crypto.ticker = "LTC-EUR".into();
     assert!(buy_score(&weak5y_crypto, &t).is_some());
+    // upside to high: 50% off -> +100% to recover; at the high -> 0; near-total wipeout clamps
+    assert!((upside_to_high(50.0) - 100.0).abs() < 1e-9);
+    assert_eq!(upside_to_high(0.0), 0.0);
+    assert_eq!(upside_to_high(99.5), 9900.0);
     // (A) trend_health: 0 at the corpse threshold, 1 at a flat/rising long trend, partial between
     assert_eq!(trend_health(-70.0, -70.0), 0.0);
     assert_eq!(trend_health(0.0, -70.0), 1.0);

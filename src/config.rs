@@ -57,50 +57,53 @@ impl Default for Widths {
     }
 }
 
-/// Tunable knobs for the buy-candidate heuristic (`src/picks.rs`). Every field is optional
-/// in YAML — omit the whole `buy_heuristic:` block or any field to use these defaults.
-/// Caps stop one signal dominating; gates exclude candidates outright.
+/// Tunable knobs for the buy-candidate heuristic (`src/picks.rs`). Every field is optional in
+/// YAML — omit the whole `buy_heuristic:` block or any field to use these defaults.
+///
+/// The score is: `discount × trend_health × momentum + long-trend reward`, then halved if the
+/// asset has no 10Y history. Read `buy_score` in `src/picks.rs` alongside these — each knob below
+/// maps to one named step there. GATES exclude a candidate outright; SCORE knobs rank survivors.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct BuyHeuristic {
-    pub min_1y_pct: f64,        // 1Y floor (equities): reject below this (mildly negative = allow a pullback, reject a downtrend)
-    pub min_1y_pct_crypto: f64, // 1Y floor for crypto/FX (-USD/-EUR tickers): looser, they're far more volatile
-    pub max_1m_drop_pct: f64,   // reject if 1M % <= this (falling-knife gate)
-    pub max_1m_drop_pct_crypto: f64, // knife gate for crypto/FX: looser, a -20%/month alt is normal not broken
-    pub min_long_pct: f64,      // reject if long-term (>2Y) % <= this (structural-decline gate)
-    pub min_long_pct_crypto: f64, // crypto corpse gate + discount-scaling zero-point: a >2Y leg this deep (e.g. -95%) is a dead coin, not a pullback
-    pub on_sale_weight: f64,    // weight on the pullback off the ~1Y high (the core "on sale" reward)
-    pub on_sale_cap: f64,       // cap on the % below the recent high fed into the score
-    pub y1_weight: f64,         // weight on 1Y momentum (kept small — momentum is a gate, not the prize)
-    pub y1_cap: f64,            // cap on the 1Y % fed into the score
-    pub long_weight: f64,       // weight on the long-term (>2Y) trend
-    pub long_cap: f64,          // cap on the long-term % fed into the score
-    pub recovery_weight: f64,   // bonus when pulled back on the month but turning back up (bounce, not knife)
-    pub fresh_dip_weight: f64,  // bonus when falling THIS WEEK (recent dip ranks above a stale month-old one)
-    pub fresh_dip_cap: f64,     // cap on the 1W drop % fed into the fresh-dip bonus
-    pub min_avg_turnover_eur: f64, // liquidity gate: reject if avg daily turnover (EUR) < this (0 = off); drops thin/obscure names
-    pub prefer_eur: bool,       // dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD
+    // --- GATES: a candidate failing ANY of these is dropped before scoring ---
+    pub min_1y_pct: f64,             // equities: reject if 1Y % <= this (a deep 1-year downtrend isn't a pullback)
+    pub min_1y_pct_crypto: f64,      // crypto/FX (-EUR/-USD): looser 1Y floor — they swing far harder
+    pub max_1m_drop_pct: f64,        // equities: reject if 1M % <= this (a hard monthly crash = falling knife)
+    pub max_1m_drop_pct_crypto: f64, // crypto/FX: looser knife — a -20%/month alt is normal, not broken
+    pub min_long_pct: f64,           // equities: reject if any 5Y/10Y/20Y leg <= this (structural decline)
+    pub min_long_pct_crypto: f64,    // crypto/FX: reject if the >2Y leg <= this (a corpse, e.g. -70%+); also the trend_health zero-point
+    pub min_avg_turnover_eur: f64,   // reject if avg daily turnover (EUR) < this (thin/illiquid name); 0 = off
+
+    // --- SCORE: how the survivors are ranked (higher = more interesting) ---
+    pub normal_volatility_pct: f64,  // a "typical" daily swing (%); the dip is scaled by normal/asset vol, so a calm name's dip counts for more than a wild one's
+    pub discount_cap: f64,           // cap on that volatility-scaled dip (one very deep name can't run away with the ranking)
+    pub momentum_bounce: f64,        // discount ×this when a pulled-back name is turning UP (green week) — reward the bounce (>1)
+    pub momentum_knife: f64,         // discount ×this when it's still falling (red week & day) — dock the knife (<1)
+    pub long_trend_weight: f64,      // small reward added for a strong multi-year (>2Y) uptrend (momentum is a gate, not the prize)
+    pub long_trend_cap: f64,         // cap on the multi-year % fed into that reward
+
+    pub prefer_eur: bool,            // dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD
 }
 
 impl Default for BuyHeuristic {
     fn default() -> Self {
         BuyHeuristic {
+            // gates
             min_1y_pct: 0.0,
-            min_1y_pct_crypto: -60.0, // crypto routinely swings -40% in a year without breaking
+            min_1y_pct_crypto: -60.0,      // crypto routinely swings -40% in a year without breaking
             max_1m_drop_pct: -15.0,
             max_1m_drop_pct_crypto: -35.0, // alts routinely shed -20..-30% in a month without breaking
             min_long_pct: 0.0,
-            min_long_pct_crypto: -70.0, // -EUR 5Y is peak-anchored, so allow deep pullbacks but cut true corpses (-70%+ over 5Y)
-            on_sale_weight: 1.0, // a pullback is the dominant signal
-            on_sale_cap: 35.0,   // a ~35%-off dip maxes it; a 60%+ collapse (likely broken) can't dominate
-            y1_weight: 0.05,     // small: a +400% rocket no longer drowns out an on-sale quality name
-            y1_cap: 50.0,
-            long_weight: 0.05,
-            long_cap: 300.0,
-            recovery_weight: 1.0,
-            fresh_dip_weight: 0.3, // up to fresh_dip_cap×this nudge; lifts a this-week faller over a stale dip
-            fresh_dip_cap: 15.0,
-            min_avg_turnover_eur: 0.0, // off by default; settings.yaml sets a real floor to drop thin names
+            min_long_pct_crypto: -70.0,    // -EUR 5Y is peak-anchored: allow deep pullbacks, cut true corpses (-70%+)
+            min_avg_turnover_eur: 0.0,     // off by default; settings.yaml sets a real floor to drop thin names
+            // score
+            normal_volatility_pct: 2.0,    // ~2%/day = a typical large-cap equity
+            discount_cap: 35.0,            // a ~35%-off (for its vol) dip maxes the discount
+            momentum_bounce: 1.3,          // confirmed turn-up earns +30%
+            momentum_knife: 0.6,           // still-knifing loses 40%
+            long_trend_weight: 0.05,       // a +400% rocket adds at most long_trend_cap×this
+            long_trend_cap: 300.0,
             prefer_eur: true,
         }
     }

@@ -244,6 +244,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         } else {
             core::avg_turnover(&chart.closes, &chart.volumes, 30).map(|v| v * rate.unwrap_or(1.0))
         },
+        // the asset's "normal" daily swing (~1 trading year) so picks can tell a deep-for-this-asset
+        // dip from everyday noise; a ratio of returns, so no FX conversion needed.
+        volatility_pct: core::volatility_pct(&chart.closes, 252),
     }
 }
 
