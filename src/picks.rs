@@ -169,6 +169,32 @@ pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
     q.perf.get(i).and_then(|o| o.as_ref()).map(|(_, p)| *p)
 }
 
+/// Confidence multiplier — halve a name without a long PROVEN record. Equities should carry a 10Y
+/// leg; crypto can't (Yahoo's EUR crypto pairs are too young to ever show 10Y), so for them a 5Y leg
+/// is "proven enough". Without this, BTC is halved for a history gap that's purely an artifact of the
+/// EUR quote, and vanishes from the growth lane despite a 15-year track record.
+fn trust_factor(q: &Quote, crypto: bool) -> f64 {
+    let needed = if crypto { "5Y" } else { "10Y" };
+    if perf_pct(q, needed).is_none() {
+        0.5
+    } else {
+        1.0
+    }
+}
+
+/// (#4) Combine the pure penalty multipliers (each ∈[0,1]) as a GEOMETRIC MEAN, not a raw product, so
+/// several mild damps can't compound multiplicatively toward ~0 and silently delete an otherwise
+/// strong pick — the bug that dropped BTC, where trust × overext × consistency stacked to near-zero.
+/// geomean(all 1.0) = 1.0; a lone 0.5 damp costs 0.5^(1/n), not 0.5; the combined penalty is bounded
+/// by the SOFTEST term instead of the product. Still monotone in every term (ranking order preserved).
+/// Empty -> 1.0 (no damp). Caps the stacked penalty, as #4 asked.
+fn combine_damps(damps: &[f64]) -> f64 {
+    if damps.is_empty() {
+        return 1.0;
+    }
+    damps.iter().product::<f64>().powf(1.0 / damps.len() as f64)
+}
+
 /// (A/B/C) Quality tilts shared by BOTH lanes, all derived from already-fetched closes (zero extra
 /// fetch). Returns `(consistency_mult, risk_reward)`:
 /// - **consistency_mult** (A) — `consistency_floor`..1 scaled by the log-price trend R²: a smooth
@@ -197,7 +223,7 @@ fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
 ///
 /// ```text
 ///   base  = discount × trend_health × momentum + long_reward×discount_frac + cheap_reward + dividend_reward + risk_reward
-///   score = base × value × decline × trust × consistency
+///   score = base × value × geomean(decline, trust, consistency)   // (#4) geomean caps stacked penalties
 /// ```
 ///
 /// - **discount** — how deep in its OWN ~10y range it trades (100 − percentile rank; self-normalizes
@@ -215,7 +241,7 @@ fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
 /// - **decline** — (B) value-trap dock when 1Y & 5Y both deeply negative.
 /// - **risk_reward** — (B/C) Sharpe-ish (CAGR/vol) + Calmar (CAGR/max-drawdown) bonus; return per unit of risk.
 /// - **consistency** — (A) multiplier from the log-price trend R²; a lumpy/lucky path is tapered toward `consistency_floor`.
-/// - **trust** — halves anything without a 10Y record.
+/// - **trust** — halves anything without a long record (10Y for equities, 5Y for young-EUR-pair crypto).
 ///
 /// Every knob lives in `BuyHeuristic` (settings.yaml `buy_heuristic:`). Higher = more interesting.
 /// GATES below exclude a candidate before scoring. **NOT advice** — a ranking, never a forecast.
@@ -285,8 +311,10 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
         discount * health * momentum + long_reward + cheap_reward + dividend_reward + risk_reward;
     let value = value_factor(q, t.ref_pe); // (E) cheap lifts, rich dampens, unknown neutral
     let decline = sustained_decline_factor(q, t); // (B) multi-year-bleed dock
-    let trust = if perf_pct(q, "10Y").is_none() { 0.5 } else { 1.0 };
-    Some(base * value * decline * trust * consistency) // (A) lumpy path tapered toward the floor
+    let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
+    // (#4) geomean the pure penalties so several mild damps can't compound to ~0; value (a tilt that
+    // can exceed 1.0) stays a direct multiplier.
+    Some(base * value * combine_damps(&[decline, trust, consistency]))
 }
 
 /// Score a quote as a MOMENTUM/GROWTH candidate — the MIRROR of `buy_score`. The on-sale lane fades
@@ -297,7 +325,7 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
 /// ```text
 ///   base  = growth_trend_weight × min(long_cagr, long_trend_cap)
 ///         + growth_accel_weight × clamp(1Y − long_cagr, 0, growth_accel_cap)   // recent outpaces long => accelerating
-///   score = base × proximity × value(E) × trust
+///   score = base × proximity × value(E) × geomean(trust, overext, consistency)   // (#4) geomean of the penalties
 /// ```
 ///
 /// Gated HARD so it can't degrade into top-chasing: must sit in the top `growth_min_range_pct` of its
@@ -348,7 +376,7 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     let (consistency, risk_reward) = quality_factors(q, long_cagr, t); // (A/B/C) zero-fetch quality tilts
     let base = t.growth_trend_weight * trend + t.growth_accel_weight * accel + risk_reward;
     let value = value_factor(q, t.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
-    let trust = if perf_pct(q, "10Y").is_none() { 0.5 } else { 1.0 };
+    let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
     // stretched/blow-off, so taper the score toward `growth_overext_floor` at the cap. This is the
     // generic brake the P/E tilt can't provide for crypto/ETFs (no earnings) — works on price alone.
@@ -358,7 +386,8 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     } else {
         1.0 // cap 0 = brake disabled
     };
-    Some(base * proximity * value * trust * overext_damp * consistency) // (A) taper a lumpy path
+    // (#4) geomean the pure penalties (trust/overext/consistency); proximity + value stay direct
+    Some(base * proximity * value * combine_damps(&[trust, overext_damp, consistency]))
 }
 
 /// (4) Whole-market crypto sentiment damp from Bitcoin NUPL (net unrealized profit/loss — already
@@ -786,4 +815,24 @@ pub fn selftest() {
     let mut lumpy_q = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     lumpy_q.trend_r2 = 0.10;
     assert!(buy_score(&steady_q, &t).unwrap() > buy_score(&lumpy_q, &t).unwrap());
+
+    // (A) crypto trust: a young EUR pair (5Y but no 10Y, like BTC-EUR) is NOT halved — 5Y is proven
+    // enough for crypto; an equity still needs a 10Y leg, a barely-listed coin (1Y only) is still cut.
+    assert!((trust_factor(&q(20.0, &[("1Y", 30.0), ("5Y", 200.0)]), true) - 1.0).abs() < 1e-9);
+    assert_eq!(trust_factor(&q(20.0, &[("1Y", 30.0)]), true), 0.5); // crypto, only 1Y -> unproven
+    assert_eq!(trust_factor(&q(5.0, &[("5Y", 40.0)]), false), 0.5); // equity, no 10Y -> halved
+    assert!((trust_factor(&q(5.0, &[("10Y", 40.0)]), false) - 1.0).abs() < 1e-9);
+    // end-to-end: a 5Y-only crypto (BTC-EUR shape) is admitted to the growth lane and NOT trust-halved
+    let mut btc_young = q(20.0, &[("1Y", 30.0), ("5Y", 200.0)]); // no 10Y leg, like the young EUR pair
+    btc_young.ticker = "BTC-EUR".into();
+    assert!((trust_factor(&btc_young, true) - 1.0).abs() < 1e-9);
+    assert!(growth_score(&btc_young, &t).is_some());
+
+    // (#4) combine_damps: empty/all-1.0 -> 1.0; a lone 0.5 softens to 0.5^(1/n) (bounded, NOT the raw
+    // product); the geomean of several mild damps stays well above their product (no silent nuke).
+    assert_eq!(combine_damps(&[]), 1.0);
+    assert_eq!(combine_damps(&[1.0, 1.0, 1.0]), 1.0);
+    assert!((combine_damps(&[0.5, 1.0, 1.0]) - 0.5_f64.powf(1.0 / 3.0)).abs() < 1e-9);
+    assert!(combine_damps(&[0.5, 0.4, 0.5]) > 0.5 * 0.4 * 0.5); // geomean bounded above the product
+    assert!(combine_damps(&[0.9, 0.5]) < combine_damps(&[0.9, 0.9])); // still monotone in each term
 }

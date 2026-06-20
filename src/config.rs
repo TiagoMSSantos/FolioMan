@@ -77,8 +77,9 @@ impl Default for Widths {
 ///
 /// Tuned for a multi-DECADE buy-and-hold. Score (see `buy_score` in `src/picks.rs`, each knob = one
 /// named step): `base = discount × trend_health × momentum + long_reward(A) + cheap_reward(C) +
-/// dividend_reward(D)`, then `score = base × value(E) × decline(B) × trust`. GATES exclude a
-/// candidate outright; SCORE knobs rank the survivors.
+/// dividend_reward(D)`, then `score = base × value(E) × geomean(decline(B), trust, consistency)` —
+/// the penalties combine as a geomean (#4) so several mild damps can't compound to ~0. GATES exclude
+/// a candidate outright; SCORE knobs rank the survivors.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct BuyHeuristic {
