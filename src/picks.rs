@@ -889,9 +889,11 @@ pub fn selftest() {
     // (C) max drawdown: worst peak-to-trough
     assert!((core::max_drawdown_pct(&[100.0, 50.0, 75.0]) - 50.0).abs() < 1e-9);
     assert_eq!(core::max_drawdown_pct(&[1.0, 2.0, 3.0]), 0.0); // monotone up -> never down
-    // (A) quality_factors: a smooth path (R²=1) keeps a higher consistency multiplier than a lumpy one
-    assert!(quality_factors(&{ let mut x = q(5.0, &[("10Y", 40.0)]); x.trend_r2 = 1.0; x }, 20.0, &t).0
-        > quality_factors(&{ let mut x = q(5.0, &[("10Y", 40.0)]); x.trend_r2 = 0.0; x }, 20.0, &t).0);
+    // (A) quality_factors: a smooth path (R²=1) keeps a higher consistency multiplier than a lumpy one.
+    // The damp is DISABLED by default (consistency_floor 1.0), so pin an explicit floor to test the mechanism.
+    let t_consist = BuyHeuristic { consistency_floor: 0.5, ..t.clone() };
+    assert!(quality_factors(&{ let mut x = q(5.0, &[("10Y", 40.0)]); x.trend_r2 = 1.0; x }, 20.0, &t_consist).0
+        > quality_factors(&{ let mut x = q(5.0, &[("10Y", 40.0)]); x.trend_r2 = 0.0; x }, 20.0, &t_consist).0);
     // (B) risk_reward: same CAGR, the lower-volatility name earns a bigger Sharpe-ish bonus
     assert!(quality_factors(&{ let mut x = q(5.0, &[]); x.volatility_pct = Some(1.0); x }, 20.0, &t).1
         > quality_factors(&{ let mut x = q(5.0, &[]); x.volatility_pct = Some(4.0); x }, 20.0, &t).1);
@@ -903,7 +905,7 @@ pub fn selftest() {
     steady_q.trend_r2 = 0.95;
     let mut lumpy_q = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     lumpy_q.trend_r2 = 0.10;
-    assert!(buy_score(&steady_q, &t).unwrap() > buy_score(&lumpy_q, &t).unwrap());
+    assert!(buy_score(&steady_q, &t_consist).unwrap() > buy_score(&lumpy_q, &t_consist).unwrap());
 
     // (A) crypto trust: a young EUR pair (5Y but no 10Y, like BTC-EUR) is NOT halved — 5Y is proven
     // enough for crypto; an equity still needs a 10Y leg, a barely-listed coin (1Y only) is still cut.

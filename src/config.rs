@@ -199,12 +199,12 @@ impl Default for BuyHeuristic {
             growth_accel_cap: 50.0,        // cap that acceleration term (a +200% year doesn't run away with it)
             growth_min_score: 5.0,         // hide growth rows scoring <= 5 (padding); 0 = show all top_picks
             growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
-            growth_overext_floor: 0.2,     // (1) ...and keeps only 20% of its growth score. Tightened 0.4->0.2: docking blow-off-top names harder lifted the wide-sample top/bottom edge +31.6->+43.7 pts (rho +0.24->+0.26, OOS +0.13/+0.15). 0.1 over-docks (edge falls to +41.2); 0.2 is the optimum. 1.0 = brake off
+            growth_overext_floor: 0.15,    // (1) ...and keeps only 15% of its growth score at full stretch. Tightened 0.2->0.15 once the consistency damp came off: a harder blow-off-top brake raised the wide edge (5y +107.3->+108.9, 3y +39.6->+41.1) — buying right after a parabolic run-up is a poor long-hold entry. 0.1 squeezed marginally more OOS-late durability but docked near-high compounders (e.g. NVDA) out of the table too aggressively; 0.15 keeps them visible while still braking. 1.0 = brake off
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
             // quality tilts (zero extra fetch)
-            consistency_floor: 0.5,        // (A) a maximally lumpy path (R²=0) keeps 50% of its score; a smooth compounder keeps 100%
-            sharpe_weight: 0.3,            // (B) CAGR/vol ~10 for a calm +20%/yr name -> ~+3 (modest tilt, secondary to the discount)
+            consistency_floor: 1.0,        // (A) DISABLED (1.0 = off). The R²-smoothness damp read pure edge-harm with no rho benefit: turning it off nearly DOUBLED the wide 5y profit edge (+50.5->+95.6) with rho flat (+0.26) and OOS both halves still positive. Among near-high proven compounders the lumpy/step-change paths held the high-upside winners; past path-smoothness doesn't predict future return, it just biased toward boring names. (Was 0.5: lumpy R²=0 kept 50% of score.)
+            sharpe_weight: 0.15,           // (B) halved 0.3->0.15 once consistency came off: the edge ablation showed sharpe dragging the profit spread; 0.15 is the peak (5y wide edge +95.6->+107.3, beats both 0.3 and 0.0; rho +0.24, OOS positive). CAGR/vol ~10 for a calm +20%/yr name -> ~+1.5
             sharpe_cap: 15.0,              // (B) cap the CAGR/volatility ratio (a low-vol freak can't run away with it)
             calmar_weight: 1.0,            // (C) cut further — the Calmar (CAGR/maxDD) tilt is mildly harmful in BOTH lanes on the wide sample too (Δ+0.02/+0.03); kept at 1.0 for a little long-hold drawdown-awareness. CAGR/maxDD ~0.4 for +20%/yr at -50% worst -> ~+0.4
             calmar_cap: 2.0,               // (C) cap the CAGR/max-drawdown ratio
