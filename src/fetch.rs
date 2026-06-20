@@ -188,7 +188,7 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
 pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
-    let (chart_j, titles, intra, pe) = tokio::join!(
+    let (chart_j, titles, intra, pe, roe) = tokio::join!(
         // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
         // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
         // (~3652) for 1D..10Y; the 20Y column goes n/a (the heuristic's long leg falls back to 10Y).
@@ -198,6 +198,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         // (E) trailing P/E for the valuation tilt — equities only (crypto/FX have no earnings); a
         // no-op (instant None) unless FMP_API_KEY is set, so the default path stays network-free here.
         async { if ticker.contains('-') { None } else { fetch_pe(client, urls, ticker).await } },
+        // (F) trailing ROE for the quality tilt — equities only; instant None unless FMP_API_KEY is set.
+        async { if ticker.contains('-') { None } else { fetch_roe(client, urls, ticker).await } },
     );
 
     let chart = match chart_j.as_ref().and_then(|j| parse_chart(j, ticker)) {
@@ -273,6 +275,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         above_ma_pct: core::above_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
         // (E) trailing P/E (equities w/ FMP_API_KEY only; None -> neutral value tilt).
         pe_ratio: pe,
+        // (F) trailing ROE % (equities w/ FMP_API_KEY only; None -> neutral quality tilt).
+        roe,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
         range_pct: core::price_pct_rank(&chart.closes),
@@ -294,6 +298,19 @@ async fn fetch_pe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
     // FMP /quote returns a single-element array: [{ "pe": 28.4, ... }]; fall back to a bare object.
     let pe = v.get(0).unwrap_or(&v).get("pe")?.as_f64()?;
     (pe > 0.0).then_some(pe)
+}
+
+/// (F) Trailing return-on-equity (%) from the configured quality source (FMP `ratios-ttm` by
+/// default). None unless `FMP_API_KEY` is set AND the source returns it. Same opt-in / rate-limit
+/// profile as `fetch_pe`: populates at `check` scale, stays None across `screen` (quality tilt = 1.0).
+/// FMP returns ROE as a FRACTION (0.42 = 42%), so ×100. ponytail: BACKTEST-BLIND — point-in-time, no
+/// as-of reconstruction, so the picks term is theory-weighted and kept small.
+async fn fetch_roe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+    let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
+    let url = urls.fundamentals_quality.replace("{ticker}", ticker).replace("{key}", &key);
+    let v = get_json(client, &url).await?;
+    let roe = v.get(0).unwrap_or(&v).get("returnOnEquityTTM")?.as_f64()?;
+    roe.is_finite().then_some(roe * 100.0)
 }
 
 /// Latest Bitcoin NUPL (net unrealized profit/loss) from bitcoin-data.com. None on failure.

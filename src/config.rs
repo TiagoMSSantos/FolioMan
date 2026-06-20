@@ -117,6 +117,8 @@ pub struct BuyHeuristic {
     pub dividend_weight: f64,        // (D) reward per % of trailing-1Y dividend yield (reinvested divs dominate long-run total return)
     pub dividend_cap: f64,           // (D) cap on the yield % fed into the dividend reward
     pub ref_pe: f64,                 // (E) "fair" trailing P/E: value tilt = ref_pe/PE, clamped — cheap (<ref) lifts, rich (>ref) dampens; no PE = neutral
+    pub quality_weight: f64,         // (F) reward per % of trailing ROE — the profitability/QUALITY factor (Novy-Marx: high-ROE firms out-compound). Applied to BOTH lanes. BACKTEST-BLIND (point-in-time ROE, no as-of), so kept small. 0 = off
+    pub quality_cap: f64,            // (F) cap the ROE % fed into the quality reward (one 200%-ROE outlier can't dominate)
     pub mom_12_1_weight: f64,        // (#3) reward per % of 12-1 momentum (return from ~12mo-ago to ~1mo-ago, skipping the last month) — the canonical cross-sectional trend factor; combats buying laggards. Applied to BOTH lanes. 0 = off
     pub mom_12_1_cap: f64,           // (#3) cap on that 12-1 momentum % fed into the reward
 
@@ -169,7 +171,7 @@ impl Default for BuyHeuristic {
             // score
             normal_volatility_pct: 2.0,    // ~2%/day = a typical large-cap equity
             discount_cap: 35.0,            // a ~35%-off (for its vol) dip maxes the discount
-            discount_weight: 0.35,         // (#4) demote the dip reward — walk-forward rho is NEGATIVE for on-sale across 3/5/7y (deepest-dip ranking selects losers among survivors); 0.35 shifts weight to the CAGR/sharpe terms that drive the working growth lane. 1.0 = old, 0 = off
+            discount_weight: 0.35,         // (#4) demote the dip reward — walk-forward rho is NEGATIVE for on-sale across 3/5/7y and ~0 on the 354-name wide sample (deepest-dip ranking carries no selection skill); 0.35 shifts weight to the CAGR/sharpe terms that drive the working growth lane WITHOUT gutting on-sale scores (0.15 dropped normal names below min_score for only a noise-level rho gain). 1.0 = old, 0 = off
             momentum_bounce: 1.0,          // neutral: a weekly bounce is noise at a multi-decade hold horizon
             momentum_knife: 1.0,           // neutral: this-week direction shouldn't reorder a 40-year pick
             long_trend_weight: 0.5,        // per %/yr CAGR: a +30%/yr compounder adds ~15, secondary to the discount (cap 35)
@@ -185,13 +187,15 @@ impl Default for BuyHeuristic {
             dividend_weight: 1.5,          // (D) ~+9 at the cap for a 6% yielder
             dividend_cap: 6.0,             // (D) cap the trailing yield % fed into the dividend reward
             ref_pe: 20.0,                  // (E) "fair" P/E; PE 10 -> ×1.5 (capped cheap), PE 40 -> ×0.5 (capped rich)
+            quality_weight: 0.15,          // (F) per % ROE: a 40% ROE adds ~+6 (capped) — secondary tilt, deliberately small since BACKTEST-BLIND
+            quality_cap: 40.0,             // (F) cap the ROE % at 40 (a buyback-levered 200% ROE doesn't dwarf a healthy 25%)
             mom_12_1_weight: 0.0,          // (#3) OFF by default — walk-forward ablation found 12-1 momentum is not robustly helpful (helps on-sale at 3y, hurts at 5y; removing it nets positive for the growth lane). Knob kept so a future regime can re-enable; raise to ~0.2 to test
             mom_12_1_cap: 50.0,            // (#3) cap the 12-1 momentum % fed into the reward
             // growth lane (near-high compounders still climbing)
             growth_min_range_pct: 70.0,    // must sit in the top 30% of its own ~10y range to count as "at/near the high"
             growth_min_cagr: 8.0,          // long-leg must compound >=8%/yr (beat a broad index) to be a "proven" grower
             growth_trend_weight: 0.35,     // trimmed — ablation shows raw long-CAGR is mildly HARMFUL to growth selection both windows (Δ+0.03/+0.10); weight shifted to acceleration. per %/yr CAGR
-            growth_accel_weight: 0.35,     // bumped — acceleration (1Y outpacing long CAGR) is the growth lane's strongest helper both windows (Δ-0.09/-0.04); per pt the last year outpaced the long CAGR -> momentum building
+            growth_accel_weight: 0.35,     // strongest signal in the heuristic — acceleration's ablation Δ is -0.11 on the 354-name wide sample (dominant). Held at 0.35: bumping to 0.5 left rho flat (Spearman is rank-based, scaling a dominant term doesn't reorder) and weakened OOS-early. per pt the last year outpaced the long CAGR -> momentum building
             growth_accel_cap: 50.0,        // cap that acceleration term (a +200% year doesn't run away with it)
             growth_min_score: 5.0,         // hide growth rows scoring <= 5 (padding); 0 = show all top_picks
             growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
@@ -202,7 +206,7 @@ impl Default for BuyHeuristic {
             consistency_floor: 0.5,        // (A) a maximally lumpy path (R²=0) keeps 50% of its score; a smooth compounder keeps 100%
             sharpe_weight: 0.3,            // (B) CAGR/vol ~10 for a calm +20%/yr name -> ~+3 (modest tilt, secondary to the discount)
             sharpe_cap: 15.0,              // (B) cap the CAGR/volatility ratio (a low-vol freak can't run away with it)
-            calmar_weight: 2.0,            // (C) halved — walk-forward ablation found the Calmar (CAGR/maxDD) tilt is harmful-to-neutral in BOTH lanes across 3/5y (zeroing it raised rho); kept at 2.0 to retain some drawdown-awareness for the long hold. CAGR/maxDD ~0.4 for +20%/yr at -50% worst -> ~+0.8
+            calmar_weight: 1.0,            // (C) cut further — the Calmar (CAGR/maxDD) tilt is mildly harmful in BOTH lanes on the wide sample too (Δ+0.02/+0.03); kept at 1.0 for a little long-hold drawdown-awareness. CAGR/maxDD ~0.4 for +20%/yr at -50% worst -> ~+0.4
             calmar_cap: 2.0,               // (C) cap the CAGR/max-drawdown ratio
             prefer_eur: true,
         }
@@ -230,6 +234,10 @@ pub struct Urls {
     // equities when the env key is set (free tiers are rate-limited -> `check`-scale, not `screen`).
     #[serde(default = "default_fundamentals_url")]
     pub fundamentals: String,
+    // (F) ROE/quality source for the profitability tilt. {ticker} + {key}; same opt-in/rate-limit
+    // profile as `fundamentals` above. Defaulted so an older settings.yaml without it still loads.
+    #[serde(default = "default_fundamentals_quality_url")]
+    pub fundamentals_quality: String,
     // NASDAQ Trader SymDir symbol files (pipe-delimited, ETF flag column) -> screen ETF universe.
     // No free AUM-ranked ETF source exists, so these dump ALL US-listed ETFs across both exchanges;
     // the turnover gate culls the illiquid tail. Defaulted so an older settings.yaml still loads.
@@ -250,6 +258,11 @@ pub struct Urls {
 /// Default (E) fundamentals endpoint: Financial Modeling Prep's free `quote` (carries `pe`).
 fn default_fundamentals_url() -> String {
     "https://financialmodelingprep.com/api/v3/quote/{ticker}?apikey={key}".to_string()
+}
+
+/// Default (F) quality endpoint: FMP's `ratios-ttm` (carries `returnOnEquityTTM`).
+fn default_fundamentals_quality_url() -> String {
+    "https://financialmodelingprep.com/api/v3/ratios-ttm/{ticker}?apikey={key}".to_string()
 }
 
 /// Default NASDAQ-listed symbol file (ETF flag = column 6).

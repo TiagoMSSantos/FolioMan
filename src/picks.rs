@@ -225,6 +225,14 @@ fn mom_12_1_reward(q: &Quote, t: &BuyHeuristic) -> f64 {
     t.mom_12_1_weight * mom_12_1_pct(q).unwrap_or(0.0).clamp(0.0, t.mom_12_1_cap)
 }
 
+/// (F) Profitability/QUALITY reward: trailing ROE, the canonical quality factor (high-ROE firms
+/// out-compound long-run). None (crypto/ETF/no FMP key) → 0 = neutral; negative ROE clamps to 0 (no
+/// bonus, the gates handle bleeders). Shared by both lanes. BACKTEST-BLIND: ROE is point-in-time so
+/// the price-only walk-forward can't score it — deliberately weighted small (`quality_weight`).
+fn quality_reward(q: &Quote, t: &BuyHeuristic) -> f64 {
+    t.quality_weight * q.roe.unwrap_or(0.0).clamp(0.0, t.quality_cap)
+}
+
 /// (A/B/C) Quality tilts shared by BOTH lanes, all derived from already-fetched closes (zero extra
 /// fetch). Returns `(consistency_mult, risk_reward)`:
 /// - **consistency_mult** (A) — `consistency_floor`..1 scaled by the log-price trend R²: a smooth
@@ -252,7 +260,7 @@ fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
 /// fails a gate. The formula:
 ///
 /// ```text
-///   base  = discount_weight×discount × trend_health × momentum + long_reward×discount_frac + cheap_reward + dividend_reward + risk_reward + mom_12_1_reward
+///   base  = discount_weight×discount × trend_health × momentum + long_reward×discount_frac + cheap_reward + dividend_reward + risk_reward + mom_12_1_reward + quality_reward
 ///   score = base × value × geomean(decline, trust, consistency)   // (#4) geomean caps stacked penalties
 /// ```
 ///
@@ -272,6 +280,8 @@ fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
 ///   the price-only backtest can't reconstruct as-of dividends, so this term is unvalidated — keep its weight small.
 /// - **value** — (E) P/E tilt: cheap lifts, rich dampens, unknown neutral (`ref_pe`). BACKTEST-BLIND:
 ///   no as-of P/E in the backtest, so this term is unvalidated there too — keep the tilt gentle.
+/// - **quality_reward** — (F) trailing-ROE profitability tilt (`quality_weight`/`quality_cap`); the
+///   canonical quality factor (high-ROE firms out-compound). BACKTEST-BLIND (point-in-time ROE), so small.
 /// - **decline** — (B) value-trap dock when 1Y & 5Y both deeply negative.
 /// - **risk_reward** — (B/C) Sharpe-ish (CAGR/vol) + Calmar (CAGR/max-drawdown) bonus; return per unit of risk.
 /// - **mom_12_1_reward** — (#3) reward for positive 12-1 momentum (12mo→1mo trailing trend); favours a pullback still in an uptrend over one in a dying trend.
@@ -347,7 +357,8 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
         + cheap_reward
         + dividend_reward
         + risk_reward
-        + mom_12_1_reward(q, t); // (#3) trailing-trend confirmation: prefer pullbacks still in an uptrend
+        + mom_12_1_reward(q, t) // (#3) trailing-trend confirmation: prefer pullbacks still in an uptrend
+        + quality_reward(q, t); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
     let value = value_factor(q, t.ref_pe); // (E) cheap lifts, rich dampens, unknown neutral
     let decline = sustained_decline_factor(q, t); // (B) multi-year-bleed dock
     let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
@@ -365,6 +376,7 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
 ///   base  = growth_trend_weight × min(long_cagr, long_trend_cap)
 ///         + growth_accel_weight × clamp(1Y − long_cagr, 0, growth_accel_cap)   // recent outpaces long => accelerating
 ///         + mom_12_1_reward                                                    // (#3) 12-1 trailing-trend persistence
+///         + quality_reward                                                     // (F) ROE profitability tilt (BACKTEST-BLIND, small)
 ///   score = base × proximity × value(E) × geomean(trust, overext, consistency)   // (#4) geomean of the penalties
 /// ```
 ///
@@ -417,7 +429,8 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     let base = t.growth_trend_weight * trend
         + t.growth_accel_weight * accel
         + risk_reward
-        + mom_12_1_reward(q, t); // (#3) 12-1 trend persistence — the growth lane's core signal
+        + mom_12_1_reward(q, t) // (#3) 12-1 trend persistence — the growth lane's core signal
+        + quality_reward(q, t); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
     let value = value_factor(q, t.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
@@ -635,6 +648,7 @@ pub fn selftest() {
             div_eur: Vec::new(), price_eur: None, drawdown_pct, intraday: [None; 3],
             avg_turnover_eur: None, volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
             pe_ratio: None,
+            roe: None,
             // for tests, mirror the on-sale magnitude: a deeper drawdown = deeper in its range.
             // (real fetch computes range_pct independently; tying them keeps the score asserts honest.)
             range_pct: 100.0 - drawdown_pct,
@@ -922,6 +936,16 @@ pub fn selftest() {
     // missing the 1M leg -> None -> 0 reward (never punished for absent data)
     let bare = q(20.0, &[("1Y", 50.0)]);
     assert!(mom_12_1_pct(&bare).is_none() && mom_12_1_reward(&bare, &t) == 0.0);
+
+    // (F) ROE quality reward: positive ROE -> weight×roe (capped); None/negative -> 0 (neutral)
+    let mut hi_roe = q(20.0, &[("1Y", 10.0)]);
+    hi_roe.roe = Some(30.0);
+    assert!((quality_reward(&hi_roe, &t) - t.quality_weight * 30.0).abs() < 1e-9);
+    hi_roe.roe = Some(t.quality_cap + 500.0); // a buyback-levered outlier is clamped at the cap
+    assert!((quality_reward(&hi_roe, &t) - t.quality_weight * t.quality_cap).abs() < 1e-9);
+    hi_roe.roe = Some(-50.0); // loss-making -> no quality bonus
+    assert_eq!(quality_reward(&hi_roe, &t), 0.0);
+    assert_eq!(quality_reward(&bare, &t), 0.0); // roe None -> 0
 
     // EU-buyability gate: crypto majors + UCITS ETFs + US/Canada/EU-listed stocks pass; a US-domiciled
     // ETF (no PRIIPs KID) and an Asian-only listing are dropped — EU retail can't buy them.

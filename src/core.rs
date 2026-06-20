@@ -85,6 +85,7 @@ pub struct Quote {
     pub below_ma_pct: f64,             // % below the ~200-week SMA (structural "cheap vs long trend"); 0 if at/above or history too short
     pub above_ma_pct: f64,             // % ABOVE the ~200-week SMA (overextension "how far it ran"); 0 if at/below or history too short. Growth-lane brake on blow-off tops
     pub pe_ratio: Option<f64>,         // trailing P/E for the valuation tilt; None for crypto/ETF/no-earnings/no source (-> neutral)
+    pub roe: Option<f64>,              // (F) trailing return-on-equity (%) — the core profitability/QUALITY factor; None for crypto/ETF/no-earnings/no source (-> neutral). BACKTEST-BLIND (point-in-time, can't reconstruct as-of)
     pub range_pct: f64,                // percentile rank (0..100) of the last close in its own ~10y history; 100=at high. picks discount = 100-this
     pub trend_r2: f64,                 // (A) R² (0..1) of the log-price trend — how steadily it compounds; damps CAGR endpoint-luck. 0 = no/short history
     pub max_drawdown_pct: f64,         // (C) worst peak-to-trough decline (%) in its history; feeds the Calmar (return-per-pain) reward. 0 = never down/no history
@@ -117,6 +118,7 @@ impl Quote {
             below_ma_pct: 0.0,
             above_ma_pct: 0.0,
             pe_ratio: None,
+            roe: None,
             range_pct: 0.0,
             trend_r2: 0.0,
             max_drawdown_pct: 0.0,
@@ -619,8 +621,8 @@ fn ranks(v: &[f64]) -> Vec<f64> {
 /// Build a Quote AS OF index `t` (inclusive) from the full history, filling ONLY the price-derived
 /// fields the buy score reads — reusing the exact same horizon/SMA/vol/R²/drawdown fns on the `[..=t]`
 /// slices, so the backtest scores a name exactly as the live tool would have on that day. ponytail:
-/// dividends / turnover / P/E are NOT reconstructed (no clean as-of source), so those score terms go
-/// neutral here; the backtest validates the PRICE-based heuristic, which is the bulk of it.
+/// dividends / turnover / P/E / ROE are NOT reconstructed (no clean as-of source), so those score
+/// terms go neutral here; the backtest validates the PRICE-based heuristic, which is the bulk of it.
 pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], t: usize) -> Quote {
     let (d, c) = (&dates[..=t], &closes[..=t]);
     let mut q = Quote::stub(ticker, "", "", ticker);
