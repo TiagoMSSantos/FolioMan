@@ -199,7 +199,7 @@ impl Default for BuyHeuristic {
             growth_accel_cap: 50.0,        // cap that acceleration term (a +200% year doesn't run away with it)
             growth_min_score: 5.0,         // hide growth rows scoring <= 5 (padding); 0 = show all top_picks
             growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
-            growth_overext_floor: 0.4,     // (1) ...and keeps only 40% of its growth score (brake on blow-off tops)
+            growth_overext_floor: 0.2,     // (1) ...and keeps only 20% of its growth score. Tightened 0.4->0.2: docking blow-off-top names harder lifted the wide-sample top/bottom edge +31.6->+43.7 pts (rho +0.24->+0.26, OOS +0.13/+0.15). 0.1 over-docks (edge falls to +41.2); 0.2 is the optimum. 1.0 = brake off
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
             // quality tilts (zero extra fetch)
