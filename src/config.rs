@@ -192,7 +192,7 @@ impl Default for BuyHeuristic {
             mom_12_1_weight: 0.0,          // (#3) OFF by default — walk-forward ablation found 12-1 momentum is not robustly helpful (helps on-sale at 3y, hurts at 5y; removing it nets positive for the growth lane). Knob kept so a future regime can re-enable; raise to ~0.2 to test
             mom_12_1_cap: 50.0,            // (#3) cap the 12-1 momentum % fed into the reward
             // growth lane (near-high compounders still climbing)
-            growth_min_range_pct: 70.0,    // must sit in the top 30% of its own ~10y range to count as "at/near the high"
+            growth_min_range_pct: 80.0,    // must sit in the top 20% of its own ~10y range. Tightened 70->80: the walk-forward shows the acceleration signal only works for genuine near-high names — at 80 the growth lane's rho rises (5y +0.24->+0.35 narrow, +0.21->+0.24 wide) AND the top/bottom-half edge flips POSITIVE (+31.6 pts wide, OOS +0.12/+0.12), i.e. top picks actually outperform. Loosening to 55 collapsed it (rho +0.10, OOS-early negative)
             growth_min_cagr: 8.0,          // long-leg must compound >=8%/yr (beat a broad index) to be a "proven" grower
             growth_trend_weight: 0.35,     // trimmed — ablation shows raw long-CAGR is mildly HARMFUL to growth selection both windows (Δ+0.03/+0.10); weight shifted to acceleration. per %/yr CAGR
             growth_accel_weight: 0.35,     // strongest signal in the heuristic — acceleration's ablation Δ is -0.11 on the 354-name wide sample (dominant). Held at 0.35: bumping to 0.5 left rho flat (Spearman is rank-based, scaling a dominant term doesn't reorder) and weakened OOS-early. per pt the last year outpaced the long CAGR -> momentum building
