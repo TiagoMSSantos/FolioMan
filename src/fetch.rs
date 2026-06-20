@@ -27,8 +27,8 @@ pub fn client() -> Client {
         .user_agent("Mozilla/5.0")
         // 8s, not 3s: the 10y daily payload (~3652 pts) is ~25× the old monthly `max` body, and
         // under the screen fan-out a tight 3s budget timed out big coins (BTC) into err stubs.
-        .timeout(StdDuration::from_secs(8))
-        .connect_timeout(StdDuration::from_secs(2))
+        .timeout(StdDuration::from_secs(15))
+        .connect_timeout(StdDuration::from_secs(3))
         .gzip(true)
         .build()
         .expect("failed to build HTTP client")
@@ -45,6 +45,7 @@ pub fn client_long() -> Client {
     Client::builder()
         .user_agent("Mozilla/5.0")
         .timeout(StdDuration::from_secs(15))
+        .connect_timeout(StdDuration::from_secs(3))
         .cookie_store(true)
         .gzip(true)
         .build()
@@ -71,6 +72,19 @@ struct Chart {
 
 async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Value> {
     let url = urls.yahoo_chart.replace("{ticker}", ticker).replace("{range}", range);
+    get_json(client, &url).await
+}
+
+/// Full-history chart at MONTHLY resolution. Yahoo coarsens interval=1d to ~monthly bars once the
+/// span passes ~10y anyway (which silently breaks 1D/1W/1M), so ask for 1mo explicitly and use this
+/// ONLY to back-fill horizons older than the ~10y daily window (the 20Y column / long dividend sums).
+/// Short/mid horizons, turnover, SMA, range and R² all stay on the precise daily series.
+async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Value> {
+    let url = urls
+        .yahoo_chart
+        .replace("{ticker}", ticker)
+        .replace("{range}", "max")
+        .replace("interval=1d", "interval=1mo");
     get_json(client, &url).await
 }
 
@@ -188,11 +202,14 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
 pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
-    let (chart_j, titles, intra, pe, roe) = tokio::join!(
+    let (chart_j, chart_long_j, titles, intra, pe, roe) = tokio::join!(
         // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
         // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
-        // (~3652) for 1D..10Y; the 20Y column goes n/a (the heuristic's long leg falls back to 10Y).
+        // (~3652) for 1D..10Y, plus turnover/SMA/range/R². The pre-10y span (the 20Y column) is
+        // back-filled from the separate monthly series below.
         chart_json(client, urls, ticker, "10y"),
+        // monthly full history, ONLY to back-fill the >10y horizons (20Y) without breaking the daily ones.
+        chart_json_long(client, urls, ticker),
         fetch_news(client, urls, ticker),
         async { if intraday { intraday_closes(client, urls, ticker).await } else { None } },
         // (E) trailing P/E for the valuation tilt — equities only (crypto/FX have no earnings); a
@@ -209,6 +226,28 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
     if chart.closes.is_empty() {
         return Quote::stub(ticker, "no data", "", &chart.name);
     }
+
+    // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
+    // long dividend sums populate for old names. Prepend only the monthly bars that predate the daily
+    // window (strictly < the first daily date) then the full daily tail — no overlap. Used ONLY for
+    // horizon_changes + dividend_sums; every other metric stays on the precise daily `chart`. Falls back
+    // to daily-only (20Y stays n/a) if the monthly fetch failed.
+    let cut = chart.dates[0];
+    let (long_dates, long_closes, long_divs) =
+        match chart_long_j.as_ref().and_then(|j| parse_chart(j, ticker)) {
+            Some(lc) => {
+                let keep = lc.dates.iter().take_while(|d| **d < cut).count();
+                let mut dates = lc.dates[..keep].to_vec();
+                let mut closes = lc.closes[..keep].to_vec();
+                dates.extend_from_slice(&chart.dates);
+                closes.extend_from_slice(&chart.closes);
+                let mut divs: Vec<(NaiveDate, f64)> =
+                    lc.divs.iter().filter(|(d, _)| *d < cut).cloned().collect();
+                divs.extend(chart.divs.iter().cloned());
+                (dates, closes, divs)
+            }
+            None => (chart.dates.clone(), chart.closes.clone(), chart.divs.clone()),
+        };
 
     let cur_close = *chart.closes.last().unwrap();
     let rate = eur_rate(client, urls, &chart.currency, fx).await;
@@ -249,13 +288,13 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         instrument_type: chart.instrument_type,
         head: titles.first().cloned().unwrap_or_default(),
         news_block: titles.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n"),
-        perf: horizon_changes(&chart.dates, &chart.closes, rate, windows, infl),
+        perf: horizon_changes(&long_dates, &long_closes, rate, windows, infl),
         name: chart.name,
         trend: format!("{arrow} {dur}"),
         at_ath,
         at_atl,
         mom_pct,
-        div_eur: core::dividend_sums(&chart.divs, &chart.dates, rate),
+        div_eur: core::dividend_sums(&long_divs, &long_dates, rate),
         price_eur: rate.map(|r| cur_close * r),
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),
