@@ -14,6 +14,8 @@ pub struct Settings {
     pub drop_pct: f64,
     #[serde(default = "default_universe_size")]
     pub universe_size: usize, // top-N per class (crypto + stocks/ETFs) `screen` pulls from the live sources
+    #[serde(default = "default_fetch_concurrency_multiplier")]
+    pub fetch_concurrency_multiplier: usize, // in-flight fetches = CPU cores × this (default 8); raise to scan faster, lower if Yahoo 429s
     #[serde(default = "default_true")]
     pub universe_prefer_eur: bool, // crypto in the live universe quoted in EUR (BTC-EUR) if true, else USD
     pub euribor_3m: f64,
@@ -47,6 +49,10 @@ fn default_top_picks() -> usize {
 
 fn default_universe_size() -> usize {
     100
+}
+
+fn default_fetch_concurrency_multiplier() -> usize {
+    8
 }
 
 fn default_true() -> bool {

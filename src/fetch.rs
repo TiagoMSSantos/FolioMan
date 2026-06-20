@@ -375,7 +375,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
                 .replace("newsCount=3", "newsCount=0");
             get_json(client, &url).await?.pointer("/quotes/0/symbol")?.as_str().map(String::from)
         })
-        .buffer_unordered(FETCH_CONCURRENCY)
+        .buffer_unordered(fetch_concurrency())
         .filter_map(|x| async move { x })
         .collect()
         .await;
@@ -438,13 +438,35 @@ pub fn selftest() {
     assert_eq!(h.len(), 3);
     assert_eq!([h[0].0, h[1].0, h[2].0], ["Client-Date", "X-Client-TraceId", "X-Security"]);
     assert_eq!(h[1].1, md5_hex(&format!("{}https://x/ysaltz", h[0].1))); // trace = md5(date+url+salt)
+
+    // concurrency = cores × multiplier, both floored at 1 (a 0 anywhere can't stall the fan-out)
+    assert_eq!(concurrency_for(8, 8), 64);
+    assert_eq!(concurrency_for(4, 0), 4); // multiplier 0 -> treated as 1
+    assert_eq!(concurrency_for(0, 8), 8); // cores 0 -> treated as 1
 }
 
 /// At most this many quote fetches in flight at once. Unbounded `join_all` over the ~750-ticker
 /// screen universe stampeded Yahoo into 429s/timeouts (dropping random coins like BTC to err
-/// stubs); a bounded window keeps each request uncontended. ponytail: fixed cap, tune if the
-/// scan feels slow or Yahoo tightens limits.
-pub const FETCH_CONCURRENCY: usize = 16;
+/// stubs); a bounded window keeps each request uncontended.
+///
+/// Value = CPU cores × `fetch_concurrency_multiplier` (settings.yaml, default 8). Read once from
+/// config and cached — the closure runs on the first fetch and never again, so all call sites stay
+/// signature-free. ponytail: lazy global, no threading; bump the multiplier to scan faster or drop it
+/// if Yahoo tightens limits.
+static FETCH_CONCURRENCY: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+/// Pure, testable core: cores × multiplier, each floored at 1 so a 0 in config (or no detectable
+/// cores) can't stall the fan-out to zero in-flight requests.
+fn concurrency_for(cores: usize, multiplier: usize) -> usize {
+    cores.max(1) * multiplier.max(1)
+}
+
+pub fn fetch_concurrency() -> usize {
+    *FETCH_CONCURRENCY.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        concurrency_for(cores, crate::config::load().fetch_concurrency_multiplier)
+    })
+}
 
 /// Raw (dates, closes) for one ticker — the 10y daily series, for the `backtest` command. Same single
 /// chart call the live path already makes (no EXTRA per-ticker fetch). None on fetch/parse fail or
@@ -468,7 +490,8 @@ pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[Strin
     // so log every PROGRESS_EVERY completions + the final total. ponytail: atomic counter, no bar lib.
     let total = tickers.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
-    eprintln!("fetch: {total} quotes (≤{FETCH_CONCURRENCY} concurrent)…");
+    let concurrency = fetch_concurrency();
+    eprintln!("fetch: {total} quotes (≤{concurrency} concurrent)…");
     const PROGRESS_EVERY: usize = 50;
     // `buffered` (ordered) caps concurrency yet preserves input order (`check` prints in that order).
     stream::iter(tickers.iter())
@@ -483,7 +506,7 @@ pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[Strin
                 q
             }
         })
-        .buffered(FETCH_CONCURRENCY)
+        .buffered(concurrency)
         .collect()
         .await
 }

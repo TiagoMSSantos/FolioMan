@@ -103,7 +103,7 @@ pub async fn run(args: Vec<String>) {
                 out
             }
         })
-        .buffer_unordered(fetch::FETCH_CONCURRENCY)
+        .buffer_unordered(fetch::fetch_concurrency())
         .collect()
         .await;
 
