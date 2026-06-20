@@ -155,7 +155,7 @@ pub async fn run(args: Vec<String>) {
     let nupl = fetch::fetch_nupl(&client, &settings.urls).await;
 
     // buy candidates among the SCANNED universe (not settings.tickers) — same heuristic as `check`
-    render(&qs, 20, &settings.buy_heuristic, w, &tech, nupl);
+    render(&qs, settings.top_picks, &settings.buy_heuristic, w, &tech, nupl);
 
     if let Some(n) = nupl {
         println!(
