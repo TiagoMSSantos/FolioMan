@@ -169,7 +169,7 @@ impl Default for BuyHeuristic {
             // score
             normal_volatility_pct: 2.0,    // ~2%/day = a typical large-cap equity
             discount_cap: 35.0,            // a ~35%-off (for its vol) dip maxes the discount
-            discount_weight: 0.5,          // (#4) demote the dip reward to HALF — backtest showed deepest-dip ranking underperforms same-period peers; set 1.0 to restore, 0 to drop it entirely
+            discount_weight: 0.35,         // (#4) demote the dip reward — walk-forward rho is NEGATIVE for on-sale across 3/5/7y (deepest-dip ranking selects losers among survivors); 0.35 shifts weight to the CAGR/sharpe terms that drive the working growth lane. 1.0 = old, 0 = off
             momentum_bounce: 1.0,          // neutral: a weekly bounce is noise at a multi-decade hold horizon
             momentum_knife: 1.0,           // neutral: this-week direction shouldn't reorder a 40-year pick
             long_trend_weight: 0.5,        // per %/yr CAGR: a +30%/yr compounder adds ~15, secondary to the discount (cap 35)
@@ -185,13 +185,13 @@ impl Default for BuyHeuristic {
             dividend_weight: 1.5,          // (D) ~+9 at the cap for a 6% yielder
             dividend_cap: 6.0,             // (D) cap the trailing yield % fed into the dividend reward
             ref_pe: 20.0,                  // (E) "fair" P/E; PE 10 -> ×1.5 (capped cheap), PE 40 -> ×0.5 (capped rich)
-            mom_12_1_weight: 0.2,          // (#3) per % of 12-1 momentum: a +50% trailing-trend name adds ~+10 (capped), comparable to the other rewards
+            mom_12_1_weight: 0.0,          // (#3) OFF by default — walk-forward ablation found 12-1 momentum is not robustly helpful (helps on-sale at 3y, hurts at 5y; removing it nets positive for the growth lane). Knob kept so a future regime can re-enable; raise to ~0.2 to test
             mom_12_1_cap: 50.0,            // (#3) cap the 12-1 momentum % fed into the reward
             // growth lane (near-high compounders still climbing)
             growth_min_range_pct: 70.0,    // must sit in the top 30% of its own ~10y range to count as "at/near the high"
             growth_min_cagr: 8.0,          // long-leg must compound >=8%/yr (beat a broad index) to be a "proven" grower
-            growth_trend_weight: 0.5,      // per %/yr CAGR: a +30%/yr compounder adds ~15 (mirror of the on-sale long_trend_weight)
-            growth_accel_weight: 0.2,      // per pt the last year outpaced the long CAGR -> momentum building
+            growth_trend_weight: 0.35,     // trimmed — ablation shows raw long-CAGR is mildly HARMFUL to growth selection both windows (Δ+0.03/+0.10); weight shifted to acceleration. per %/yr CAGR
+            growth_accel_weight: 0.35,     // bumped — acceleration (1Y outpacing long CAGR) is the growth lane's strongest helper both windows (Δ-0.09/-0.04); per pt the last year outpaced the long CAGR -> momentum building
             growth_accel_cap: 50.0,        // cap that acceleration term (a +200% year doesn't run away with it)
             growth_min_score: 5.0,         // hide growth rows scoring <= 5 (padding); 0 = show all top_picks
             growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
@@ -202,7 +202,7 @@ impl Default for BuyHeuristic {
             consistency_floor: 0.5,        // (A) a maximally lumpy path (R²=0) keeps 50% of its score; a smooth compounder keeps 100%
             sharpe_weight: 0.3,            // (B) CAGR/vol ~10 for a calm +20%/yr name -> ~+3 (modest tilt, secondary to the discount)
             sharpe_cap: 15.0,              // (B) cap the CAGR/volatility ratio (a low-vol freak can't run away with it)
-            calmar_weight: 4.0,            // (C) CAGR/maxDD ~0.4 for +20%/yr at -50% worst -> ~+1.6
+            calmar_weight: 2.0,            // (C) halved — walk-forward ablation found the Calmar (CAGR/maxDD) tilt is harmful-to-neutral in BOTH lanes across 3/5y (zeroing it raised rho); kept at 2.0 to retain some drawdown-awareness for the long hold. CAGR/maxDD ~0.4 for +20%/yr at -50% worst -> ~+0.8
             calmar_cap: 2.0,               // (C) cap the CAGR/max-drawdown ratio
             prefer_eur: true,
         }

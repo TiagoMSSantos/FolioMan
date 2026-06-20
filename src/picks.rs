@@ -258,7 +258,7 @@ fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
 ///
 /// - **discount** — how deep in its OWN ~10y range it trades (100 − percentile rank; self-normalizes
 ///   amplitude across BTC vs a penny alt), then volatility-normalized and capped (`normal_volatility_pct`,
-///   `discount_cap`), then scaled by **discount_weight** (#4, default 0.5): the walk-forward backtest found
+///   `discount_cap`), then scaled by **discount_weight** (#4, default 0.35): the walk-forward backtest found
 ///   deepest-dip ranking is BACKWARDS on peer-relative selection, so the direct dip reward is demoted toward
 ///   the trend/quality terms (set 1.0 to restore the old weight). The OFF-HI column (`drawdown_pct`) is display only.
 /// - **trend_health** ∈ [0,1] — fades the discount as the long trend's CAGR weakens (`health_zero_cagr`).
