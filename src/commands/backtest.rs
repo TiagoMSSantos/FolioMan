@@ -10,31 +10,37 @@
 //!   every pooled cutoff would otherwise share. Without it the score races calendar luck, not skill.
 //! - **(#2) out-of-sample split**: pooled rank-correlation on the EARLY half of cutoffs vs the LATE
 //!   half. Early ≈ late = a stable signal; late collapsing/flipping = in-sample overfit or a dead regime.
-//! - **(#1/#6) ablation**: switch each score weight OFF, recompute the pooled correlation, show the
-//!   change. A term whose removal barely moves the correlation carries no ranking signal here — a prune
-//!   candidate. dividend/PE read ~0 BY CONSTRUCTION (#6): `backtest_quote` can't reconstruct as-of
-//!   dividends or P/E, so those weights are inert in the backtest and CANNOT be validated by it.
+//! - **head-to-head lanes**: BOTH rankings are reported against the same peer-relative returns — the
+//!   on-sale lane (`buy_score`, buys pullbacks) and the growth lane (`growth_score`, buys near-high
+//!   compounders still climbing). The higher rho is the lane actually selecting winners on this data.
+//! - **(#1/#6) ablation**: per lane, switch each score weight OFF, recompute the pooled correlation,
+//!   show the change. A term whose removal barely moves the correlation carries no ranking signal here
+//!   — a prune candidate. dividend/PE read ~0 BY CONSTRUCTION (#6): `backtest_quote` can't reconstruct
+//!   as-of dividends or P/E, so those weights are inert in the backtest and CANNOT be validated by it.
 //! - **(#5) survivorship**: the universe is names that SURVIVED to today, so realized returns are
 //!   biased UP. Flagged in the footer — treat the edge as optimistic, never a forecast.
 //!
-//! Defaults to the settings.yaml watchlist (small, cheap). Pass tickers to test others.
+//! Defaults to the settings.yaml watchlist (small, cheap). Pass tickers to test others, or the keyword
+//! `universe` to test the whole live screen universe (#2 — a far wider, less single-name-lucky sample).
 
 use crate::config::BuyHeuristic;
-use crate::picks::buy_score;
+use crate::core::Quote;
+use crate::picks::{buy_score, growth_score};
 use crate::{config, core, fetch};
 use chrono::Datelike;
 use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 
-/// One scored observation: the cutoff date it was scored on, the score, and the realized forward
-/// return over the holdout. The Quote is kept so ablation can re-score it under a mutated knob set
-/// with ZERO re-fetch / re-math.
+/// One cutoff observation: the date it was scored on and the realized forward return over the holdout.
+/// The Quote is kept so EACH lane (on-sale + growth) can score it under its own gates/knobs — and
+/// ablation can re-score under a mutated knob set — with ZERO re-fetch / re-math. A sample is recorded
+/// for every cutoff that has a full forward window, even if it passes neither lane's gates, so the
+/// peer-mean (#1) is taken over the whole investable set of that period, not just the gated subset.
 struct Sample {
     date: chrono::NaiveDate,
-    score: f64,
     realized: f64, // raw forward return %
     relative: f64, // (#1) realized minus its cutoff-bucket peer mean -> SELECTION, not regime beta
-    q: core::Quote,
+    q: Quote,
 }
 
 /// (#1) Cross-sectional peer-group key: the ~6-month bucket a cutoff falls in (2 buckets/year). Names
@@ -55,16 +61,26 @@ pub async fn run(args: Vec<String>) {
     let client = fetch::client();
     let t = &settings.buy_heuristic;
 
-    // first purely-numeric arg = holdout years; everything else = tickers to test
+    // first purely-numeric arg = holdout years; the keyword `universe` = test the live screen universe
+    // (#2: a much wider sample than the ~50-name watchlist -> less single-name luck); everything else =
+    // explicit tickers to test.
     let mut years: i64 = 5;
+    let mut wide = false;
     let mut tickers: Vec<String> = Vec::new();
     for a in &args {
         match a.parse::<i64>() {
             Ok(y) if tickers.is_empty() && y > 0 => years = y,
+            _ if a.eq_ignore_ascii_case("universe") => wide = true,
             _ => tickers.push(a.clone()),
         }
     }
-    if tickers.is_empty() {
+    if wide && tickers.is_empty() {
+        // (#2) widen to the live screen universe (crypto + S&P 500 + Xetra UCITS ETFs) for a far bigger
+        // sample. Slower (one history fetch per name) but the only cure for 53-survivor-ticker noise.
+        eprintln!("backtest: fetching the live screen universe (this is the slow, wide-sample path)…");
+        tickers =
+            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur).await;
+    } else if tickers.is_empty() {
         tickers = settings.tickers.clone();
     }
     eprintln!(
@@ -90,11 +106,11 @@ pub async fn run(args: Vec<String>) {
                     match dates[i..].iter().position(|d| *d >= target) {
                         Some(off) => {
                             let fwd = i + off;
+                            // record EVERY cutoff with a forward window (not just gated ones) so the
+                            // peer-mean spans the whole period universe; each lane filters by its own gates.
                             let q = core::backtest_quote(tk, &dates, &closes, i);
-                            if let Some(score) = buy_score(&q, t) {
-                                let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
-                                out.push(Sample { date: dates[i], score, realized, relative: 0.0, q });
-                            }
+                            let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
+                            out.push(Sample { date: dates[i], realized, relative: 0.0, q });
                         }
                         None => break, // no full forward window left -> stop walking this ticker
                     }
@@ -110,7 +126,7 @@ pub async fn run(args: Vec<String>) {
     let mut samples: Vec<Sample> = per_ticker.into_iter().flatten().collect();
     if samples.len() < 4 {
         println!(
-            "backtest: only {} scored windows across the watchlist passed the gates — too few to correlate.",
+            "backtest: only {} cutoffs had a full {years}y forward window — too few to correlate.",
             samples.len()
         );
         return;
@@ -136,68 +152,33 @@ pub async fn run(args: Vec<String>) {
     let rel_sum: f64 = samples.iter().map(|s| s.relative).sum();
     assert!(rel_sum.abs() < 1e-3 * samples.len() as f64, "de-mean broken: relatives sum to {rel_sum}");
 
-    let scores: Vec<f64> = samples.iter().map(|s| s.score).collect();
-    let rels: Vec<f64> = samples.iter().map(|s| s.relative).collect();
-    let rho = core::spearman(&scores, &rels);
+    // HEAD-TO-HEAD: report both lanes against the SAME peer-relative returns. The on-sale lane buys
+    // pullbacks; the growth lane buys near-high compounders still climbing. Whichever has the higher
+    // (more positive) rho is the one actually selecting winners on this data.
+    println!("\nBacktest — WALK-FORWARD score vs {years}y-forward PEER-RELATIVE return (de-meaned per ~6mo cutoff):");
+    println!("  cutoffs with a forward window: {}   tickers: {}", samples.len(), tickers.len());
 
-    println!("\nBacktest — WALK-FORWARD buy score vs {years}y-forward PEER-RELATIVE return (de-meaned per ~6mo cutoff):");
-    println!("  windows scored: {}   tickers: {}", samples.len(), tickers.len());
-    match rho {
-        Some(v) => println!(
-            "  Spearman(score, peer-relative): {v:+.2}   [+1 ranks winners perfectly, 0 no signal, − backwards]"
-        ),
-        None => println!("  Spearman: n/a"),
-    }
-
-    // practical read: did the top-scored half beat its same-period peers more than the bottom half?
-    let mut by_score: Vec<&Sample> = samples.iter().collect();
-    by_score.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    let half = by_score.len() / 2;
-    let mean = |s: &[&Sample]| s.iter().map(|x| x.relative).sum::<f64>() / s.len().max(1) as f64;
-    let (top, bot) = (mean(&by_score[..half]), mean(&by_score[by_score.len() - half..]));
-    println!("  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {:+.1} pts", top - bot);
-
-    // (#2) OUT-OF-SAMPLE: rho on the early half of cutoffs vs the late half. Late ≪ early or a sign
-    // flip = the edge is in-sample overfit / a regime that already passed, not a durable signal.
-    let mid = samples.len() / 2;
-    let (early, late) = samples.split_at(mid);
-    let split_rho = |s: &[Sample]| {
-        core::spearman(
-            &s.iter().map(|x| x.score).collect::<Vec<_>>(),
-            &s.iter().map(|x| x.relative).collect::<Vec<_>>(),
-        )
-        .map_or("n/a".to_string(), |v| format!("{v:+.2}"))
-    };
-    println!(
-        "\nOut-of-sample (split at {}): early rho {}  |  late rho {}",
-        samples[mid].date,
-        split_rho(early),
-        split_rho(late)
-    );
-    println!("  (early ≈ late -> stable; late ≪ early or a sign flip -> overfit / regime-bound)");
-
-    // (#1 + #6) ABLATION: zero each SCORE weight in turn, recompute pooled rho, show the delta. Gates
-    // are untouched, so the SAME rows survive -> `abl` stays aligned with `rels`. A term whose removal
-    // barely moves rho carries no ranking signal on this data -> a prune candidate.
-    let base_rho = rho.unwrap_or(0.0);
-    println!("\nAblation — pooled rho with each score term OFF (Δ vs full {base_rho:+.2}):");
-    let knobs: &[(&str, fn(&mut BuyHeuristic))] = &[
+    let buy_knobs: &[(&str, fn(&mut BuyHeuristic))] = &[
         ("long_trend_weight", |t| t.long_trend_weight = 0.0),
+        ("discount_weight", |t| t.discount_weight = 0.0), // (#4) zero the dip reward — Δ>0 confirms dip-depth ranks backwards
         ("cheap_weight", |t| t.cheap_weight = 0.0),
         ("dividend_weight*", |t| t.dividend_weight = 0.0),
         ("sharpe_weight", |t| t.sharpe_weight = 0.0),
         ("calmar_weight", |t| t.calmar_weight = 0.0),
         ("consistency", |t| t.consistency_floor = 1.0),
+        ("mom_12_1_weight", |t| t.mom_12_1_weight = 0.0),
     ];
-    for (name, mutate) in knobs {
-        let mut t2 = t.clone();
-        mutate(&mut t2);
-        let abl: Vec<f64> = samples.iter().map(|s| buy_score(&s.q, &t2).unwrap_or(s.score)).collect();
-        match core::spearman(&abl, &rels) {
-            Some(v) => println!("  {:<20} rho {v:+.2}   Δ {:+.2}", name, v - base_rho),
-            None => println!("  {:<20} rho n/a", name),
-        }
-    }
+    let growth_knobs: &[(&str, fn(&mut BuyHeuristic))] = &[
+        ("growth_trend_weight", |t| t.growth_trend_weight = 0.0),
+        ("growth_accel_weight", |t| t.growth_accel_weight = 0.0),
+        ("sharpe_weight", |t| t.sharpe_weight = 0.0),
+        ("calmar_weight", |t| t.calmar_weight = 0.0),
+        ("consistency", |t| t.consistency_floor = 1.0),
+        ("mom_12_1_weight", |t| t.mom_12_1_weight = 0.0),
+        ("overext_brake", |t| t.growth_overext_cap = 0.0),
+    ];
+    report_lane("ON-SALE (buy_score)", &samples, buy_score, t, buy_knobs);
+    report_lane("GROWTH (growth_score)", &samples, growth_score, t, growth_knobs);
 
     println!("\nCaveats:");
     println!("  • Peer-relative (#1): returns are de-meaned per ~6mo cutoff, so rho is SELECTION vs same-period");
@@ -207,4 +188,70 @@ pub async fn run(args: Vec<String>) {
     println!("    so realized returns are biased UP. Treat the edge as optimistic.");
     println!("  • Price-only (#6): no as-of dividends or P/E reconstructed; the * term above is inert here.");
     println!("  • Overlapping 6-mo windows share price paths -> samples aren't independent; rho is directional.");
+}
+
+/// Report one lane: filter the samples to the cutoffs this lane's gates admit, score them, and print
+/// the peer-relative Spearman, the top/bottom-half edge, the out-of-sample (early-vs-late) split, and
+/// the per-term ablation. `samples` must already be in date order (for the OOS split). Mutating a
+/// score WEIGHT never changes a GATE, so the gated row set stays fixed across the ablation -> the rho
+/// is comparable term-to-term.
+fn report_lane(
+    label: &str,
+    samples: &[Sample],
+    scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
+    t: &BuyHeuristic,
+    knobs: &[(&str, fn(&mut BuyHeuristic))],
+) {
+    let scored: Vec<(&Sample, f64)> =
+        samples.iter().filter_map(|s| scorer(&s.q, t).map(|v| (s, v))).collect();
+    println!("\n── {label} ──");
+    if scored.len() < 4 {
+        println!("  only {} windows passed this lane's gates — too few to correlate.", scored.len());
+        return;
+    }
+    let sc: Vec<f64> = scored.iter().map(|(_, v)| *v).collect();
+    let rels: Vec<f64> = scored.iter().map(|(s, _)| s.relative).collect();
+    let rho = core::spearman(&sc, &rels);
+    println!("  windows scored: {}", scored.len());
+    match rho {
+        Some(v) => println!("  Spearman(score, peer-relative): {v:+.2}   [+1 winners-first, 0 none, − backwards]"),
+        None => println!("  Spearman: n/a"),
+    }
+
+    // top vs bottom scored half, by peer-relative realized
+    let mut by_score: Vec<&(&Sample, f64)> = scored.iter().collect();
+    by_score.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let half = by_score.len() / 2;
+    let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
+    let (top, bot) = (mean(&by_score[..half]), mean(&by_score[by_score.len() - half..]));
+    println!("  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {:+.1} pts", top - bot);
+
+    // out-of-sample early vs late (scored is date-ordered)
+    let mid = scored.len() / 2;
+    let split_rho = |s: &[(&Sample, f64)]| {
+        core::spearman(
+            &s.iter().map(|x| x.1).collect::<Vec<_>>(),
+            &s.iter().map(|x| x.0.relative).collect::<Vec<_>>(),
+        )
+        .map_or("n/a".to_string(), |v| format!("{v:+.2}"))
+    };
+    println!(
+        "  out-of-sample (split {}): early rho {}  |  late rho {}",
+        scored[mid].0.date,
+        split_rho(&scored[..mid]),
+        split_rho(&scored[mid..])
+    );
+
+    // ablation: zero each knob, re-score the SAME gated rows, recompute rho
+    let base_rho = rho.unwrap_or(0.0);
+    println!("  ablation (Δ vs full {base_rho:+.2}):");
+    for (name, mutate) in knobs {
+        let mut t2 = t.clone();
+        mutate(&mut t2);
+        let abl: Vec<f64> = scored.iter().map(|(s, v)| scorer(&s.q, &t2).unwrap_or(*v)).collect();
+        match core::spearman(&abl, &rels) {
+            Some(v) => println!("    {:<20} rho {v:+.2}   Δ {:+.2}", name, v - base_rho),
+            None => println!("    {:<20} rho n/a", name),
+        }
+    }
 }

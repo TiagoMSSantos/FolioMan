@@ -101,6 +101,7 @@ pub struct BuyHeuristic {
     // --- SCORE: how the survivors are ranked (higher = more interesting) ---
     pub normal_volatility_pct: f64,  // a "typical" daily swing (%); the dip is scaled by normal/asset vol, so a calm name's dip counts for more than a wild one's
     pub discount_cap: f64,           // cap on that volatility-scaled dip (one very deep name can't run away with the ranking)
+    pub discount_weight: f64,        // (#4) multiplier on the direct dip reward (discount×health×momentum). The walk-forward backtest found deepest-dip ranking is BACKWARDS on peer-relative selection, so default <1.0 demotes it toward the quality/trend terms; 1.0 = old behaviour, 0 = off. Does NOT touch discount_frac (the long_reward "must be pulled back" scaling stays on raw discount)
     pub momentum_bounce: f64,        // discount ×this when a pulled-back name is turning UP (green week) — reward the bounce (>1; 1.0 = ignore weekly timing)
     pub momentum_knife: f64,         // discount ×this when it's still falling (red week & day) — dock the knife (<1; 1.0 = ignore weekly timing)
     pub long_trend_weight: f64,      // reward per %/yr of the long leg's CAGR (annualized >2Y trend) — proven-compounder bonus
@@ -116,6 +117,8 @@ pub struct BuyHeuristic {
     pub dividend_weight: f64,        // (D) reward per % of trailing-1Y dividend yield (reinvested divs dominate long-run total return)
     pub dividend_cap: f64,           // (D) cap on the yield % fed into the dividend reward
     pub ref_pe: f64,                 // (E) "fair" trailing P/E: value tilt = ref_pe/PE, clamped — cheap (<ref) lifts, rich (>ref) dampens; no PE = neutral
+    pub mom_12_1_weight: f64,        // (#3) reward per % of 12-1 momentum (return from ~12mo-ago to ~1mo-ago, skipping the last month) — the canonical cross-sectional trend factor; combats buying laggards. Applied to BOTH lanes. 0 = off
+    pub mom_12_1_cap: f64,           // (#3) cap on that 12-1 momentum % fed into the reward
 
     // --- GROWTH LANE: a SECOND ranking (the mirror of the on-sale lane) for quality names AT/NEAR
     //     their high that are still climbing — proven compounders the on-sale score fades to ~0.
@@ -166,6 +169,7 @@ impl Default for BuyHeuristic {
             // score
             normal_volatility_pct: 2.0,    // ~2%/day = a typical large-cap equity
             discount_cap: 35.0,            // a ~35%-off (for its vol) dip maxes the discount
+            discount_weight: 0.5,          // (#4) demote the dip reward to HALF — backtest showed deepest-dip ranking underperforms same-period peers; set 1.0 to restore, 0 to drop it entirely
             momentum_bounce: 1.0,          // neutral: a weekly bounce is noise at a multi-decade hold horizon
             momentum_knife: 1.0,           // neutral: this-week direction shouldn't reorder a 40-year pick
             long_trend_weight: 0.5,        // per %/yr CAGR: a +30%/yr compounder adds ~15, secondary to the discount (cap 35)
@@ -176,11 +180,13 @@ impl Default for BuyHeuristic {
             deep_decline_pct: -70.0,       // (B/C) 5Y <= -70% = a 7y+ deep bleed (e.g. LTC -73%) riding an ancient 10Y pump
             deep_decline_penalty: 0.15,    // (B/C) score ×0.15 then — harsher than the -40% tier
             min_score: 5.0,                // (A) hide ranked rows scoring <= 5 (near-the-high padding); 0 = show all top_picks
-            cheap_weight: 0.15,            // (C) ~+9 at the cap for a name 60% below its 200wk trend
+            cheap_weight: 0.07,            // (#4) ~+4 at the cap (halved from 0.15) — "structural cheap" is another dip term the backtest doesn't reward; demoted toward the trend/quality factors
             cheap_cap: 60.0,               // (C) cap the below-SMA % fed into the cheap reward
             dividend_weight: 1.5,          // (D) ~+9 at the cap for a 6% yielder
             dividend_cap: 6.0,             // (D) cap the trailing yield % fed into the dividend reward
             ref_pe: 20.0,                  // (E) "fair" P/E; PE 10 -> ×1.5 (capped cheap), PE 40 -> ×0.5 (capped rich)
+            mom_12_1_weight: 0.2,          // (#3) per % of 12-1 momentum: a +50% trailing-trend name adds ~+10 (capped), comparable to the other rewards
+            mom_12_1_cap: 50.0,            // (#3) cap the 12-1 momentum % fed into the reward
             // growth lane (near-high compounders still climbing)
             growth_min_range_pct: 70.0,    // must sit in the top 30% of its own ~10y range to count as "at/near the high"
             growth_min_cagr: 8.0,          // long-leg must compound >=8%/yr (beat a broad index) to be a "proven" grower

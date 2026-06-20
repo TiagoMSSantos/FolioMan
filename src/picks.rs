@@ -202,6 +202,29 @@ fn combine_damps(damps: &[f64]) -> f64 {
     damps.iter().product::<f64>().powf(1.0 / damps.len() as f64)
 }
 
+/// (#3) 12-1 momentum (%): the return from ~12 months ago to ~1 month ago, SKIPPING the last month
+/// (the canonical academic momentum factor — the most recent month is short-term reversal noise, so
+/// it's excluded). Built from the already-fetched 1Y and 1M horizon returns, ZERO extra fetch: both
+/// share today's price, so price_1mo/price_12mo − 1 = (1 + r_1Y)/(1 + r_1M) − 1. None if either
+/// horizon is missing, or if the price a month ago was ~0 (ratio undefined).
+fn mom_12_1_pct(q: &Quote) -> Option<f64> {
+    let y1 = perf_pct(q, "1Y")?;
+    let m1 = perf_pct(q, "1M")?;
+    let denom = 1.0 + m1 / 100.0;
+    if denom <= 0.0 {
+        return None;
+    }
+    Some(((1.0 + y1 / 100.0) / denom - 1.0) * 100.0)
+}
+
+/// (#3) Reward for POSITIVE 12-1 momentum, capped. Negative momentum → 0 (no reward, no extra
+/// penalty — the gates already cut deep downtrends). Missing horizons → 0. Shared by both lanes: in
+/// the on-sale lane it combats buying laggards (a pullback still in a rising trailing trend beats one
+/// in a dying one); in the growth lane it's the trend-persistence core.
+fn mom_12_1_reward(q: &Quote, t: &BuyHeuristic) -> f64 {
+    t.mom_12_1_weight * mom_12_1_pct(q).unwrap_or(0.0).clamp(0.0, t.mom_12_1_cap)
+}
+
 /// (A/B/C) Quality tilts shared by BOTH lanes, all derived from already-fetched closes (zero extra
 /// fetch). Returns `(consistency_mult, risk_reward)`:
 /// - **consistency_mult** (A) — `consistency_floor`..1 scaled by the log-price trend R²: a smooth
@@ -229,13 +252,15 @@ fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
 /// fails a gate. The formula:
 ///
 /// ```text
-///   base  = discount × trend_health × momentum + long_reward×discount_frac + cheap_reward + dividend_reward + risk_reward
+///   base  = discount_weight×discount × trend_health × momentum + long_reward×discount_frac + cheap_reward + dividend_reward + risk_reward + mom_12_1_reward
 ///   score = base × value × geomean(decline, trust, consistency)   // (#4) geomean caps stacked penalties
 /// ```
 ///
 /// - **discount** — how deep in its OWN ~10y range it trades (100 − percentile rank; self-normalizes
 ///   amplitude across BTC vs a penny alt), then volatility-normalized and capped (`normal_volatility_pct`,
-///   `discount_cap`). The OFF-HI column (`drawdown_pct`, anchored by `high_days`) is the display only.
+///   `discount_cap`), then scaled by **discount_weight** (#4, default 0.5): the walk-forward backtest found
+///   deepest-dip ranking is BACKWARDS on peer-relative selection, so the direct dip reward is demoted toward
+///   the trend/quality terms (set 1.0 to restore the old weight). The OFF-HI column (`drawdown_pct`) is display only.
 /// - **trend_health** ∈ [0,1] — fades the discount as the long trend's CAGR weakens (`health_zero_cagr`).
 /// - **momentum** — weekly bounce/knife multiplier (`momentum_bounce`/`knife`); 1.0 = off (default:
 ///   weekly timing is noise at a decades horizon).
@@ -249,6 +274,7 @@ fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
 ///   no as-of P/E in the backtest, so this term is unvalidated there too — keep the tilt gentle.
 /// - **decline** — (B) value-trap dock when 1Y & 5Y both deeply negative.
 /// - **risk_reward** — (B/C) Sharpe-ish (CAGR/vol) + Calmar (CAGR/max-drawdown) bonus; return per unit of risk.
+/// - **mom_12_1_reward** — (#3) reward for positive 12-1 momentum (12mo→1mo trailing trend); favours a pullback still in an uptrend over one in a dying trend.
 /// - **consistency** — (A) multiplier from the log-price trend R²; a lumpy/lucky path is tapered toward `consistency_floor`.
 /// - **trust** — halves anything without a long record (10Y for equities, 5Y for young-EUR-pair crypto).
 ///
@@ -316,8 +342,12 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     let dividend_reward = t.dividend_weight * dividend_yield_1y(q).min(t.dividend_cap); // (D)
 
     let (consistency, risk_reward) = quality_factors(q, long_cagr, t); // (A/B/C) zero-fetch quality tilts
-    let base =
-        discount * health * momentum + long_reward + cheap_reward + dividend_reward + risk_reward;
+    let base = t.discount_weight * discount * health * momentum // (#4) demoted: dip-depth ranks backwards on peer-relative backtest
+        + long_reward
+        + cheap_reward
+        + dividend_reward
+        + risk_reward
+        + mom_12_1_reward(q, t); // (#3) trailing-trend confirmation: prefer pullbacks still in an uptrend
     let value = value_factor(q, t.ref_pe); // (E) cheap lifts, rich dampens, unknown neutral
     let decline = sustained_decline_factor(q, t); // (B) multi-year-bleed dock
     let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
@@ -334,6 +364,7 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
 /// ```text
 ///   base  = growth_trend_weight × min(long_cagr, long_trend_cap)
 ///         + growth_accel_weight × clamp(1Y − long_cagr, 0, growth_accel_cap)   // recent outpaces long => accelerating
+///         + mom_12_1_reward                                                    // (#3) 12-1 trailing-trend persistence
 ///   score = base × proximity × value(E) × geomean(trust, overext, consistency)   // (#4) geomean of the penalties
 /// ```
 ///
@@ -383,7 +414,10 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     let accel = (y1 - long_cagr).clamp(0.0, t.growth_accel_cap); // last year outpacing the long run = building
     let proximity = q.range_pct / 100.0; // 0.7..1.0 — closer to the high = stronger confirmation
     let (consistency, risk_reward) = quality_factors(q, long_cagr, t); // (A/B/C) zero-fetch quality tilts
-    let base = t.growth_trend_weight * trend + t.growth_accel_weight * accel + risk_reward;
+    let base = t.growth_trend_weight * trend
+        + t.growth_accel_weight * accel
+        + risk_reward
+        + mom_12_1_reward(q, t); // (#3) 12-1 trend persistence — the growth lane's core signal
     let value = value_factor(q, t.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
@@ -876,6 +910,18 @@ pub fn selftest() {
     assert!((combine_damps(&[0.5, 1.0, 1.0]) - 0.5_f64.powf(1.0 / 3.0)).abs() < 1e-9);
     assert!(combine_damps(&[0.5, 0.4, 0.5]) > 0.5 * 0.4 * 0.5); // geomean bounded above the product
     assert!(combine_damps(&[0.9, 0.5]) < combine_damps(&[0.9, 0.9])); // still monotone in each term
+
+    // (#3) 12-1 momentum: +50% over 1Y, +20% over 1M -> 1.5/1.2 - 1 = +25%; reward = weight × min(25, cap)
+    let mom = q(20.0, &[("1Y", 50.0), ("1M", 20.0)]);
+    assert!((mom_12_1_pct(&mom).unwrap() - 25.0).abs() < 1e-9);
+    assert!((mom_12_1_reward(&mom, &t) - t.mom_12_1_weight * 25.0).abs() < 1e-9);
+    // negative 12-1 momentum -> clamped to 0 reward (no reward, no extra penalty)
+    let down = q(20.0, &[("1Y", -30.0), ("1M", 10.0)]);
+    assert!(mom_12_1_pct(&down).unwrap() < 0.0);
+    assert_eq!(mom_12_1_reward(&down, &t), 0.0);
+    // missing the 1M leg -> None -> 0 reward (never punished for absent data)
+    let bare = q(20.0, &[("1Y", 50.0)]);
+    assert!(mom_12_1_pct(&bare).is_none() && mom_12_1_reward(&bare, &t) == 0.0);
 
     // EU-buyability gate: crypto majors + UCITS ETFs + US/Canada/EU-listed stocks pass; a US-domiciled
     // ETF (no PRIIPs KID) and an Asian-only listing are dropped — EU retail can't buy them.
