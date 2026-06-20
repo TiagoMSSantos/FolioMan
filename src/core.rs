@@ -785,7 +785,7 @@ pub fn selftest() {
     assert!((pearson(&[1.0, 2.0, 3.0], &[2.0, 4.0, 6.0]).unwrap() - 1.0).abs() < 1e-9);
     assert!((pearson(&[1.0, 2.0, 3.0], &[6.0, 4.0, 2.0]).unwrap() + 1.0).abs() < 1e-9);
     assert!(pearson(&[1.0, 1.0], &[1.0, 1.0]).is_none()); // zero variance
-    assert!((spearman(&[1.0, 2.0, 3.0, 4.0], &[10.0, 1000.0, 30.0, 99999.0]).unwrap() - 1.0).abs() < 1e-9); // monotone despite outliers
+    assert!((spearman(&[1.0, 2.0, 3.0, 4.0], &[10.0, 30.0, 1000.0, 99999.0]).unwrap() - 1.0).abs() < 1e-9); // monotone order -> +1, outlier magnitude ignored
     assert!((spearman(&[1.0, 2.0, 3.0], &[3.0, 2.0, 1.0]).unwrap() + 1.0).abs() < 1e-9);
     assert_eq!(ranks(&[10.0, 30.0, 20.0]), vec![1.0, 3.0, 2.0]);
     assert_eq!(ranks(&[5.0, 5.0, 9.0]), vec![1.5, 1.5, 3.0]); // ties share the average rank
@@ -859,7 +859,7 @@ assert_eq!(avg_volume(&[100.0, 0.0, 300.0], 30), Some(200.0));
 assert_eq!(avg_volume(&[0.0], 30), None);
 
     // volatility: stdev of daily % returns. Steady +1%/day -> 0 stdev; alternating moves -> >0
-    assert_eq!(volatility_pct(&[100.0, 101.0, 102.01, 103.0301], 30), Some(0.0));
+    assert!(volatility_pct(&[100.0, 101.0, 102.01, 103.0301], 30).unwrap() < 1e-9); // ~0 (float dust)
     assert!(volatility_pct(&[100.0, 110.0, 100.0, 110.0], 30).unwrap() > 0.0);
     assert_eq!(volatility_pct(&[100.0], 30), None); // too few sessions
 
