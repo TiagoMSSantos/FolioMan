@@ -19,6 +19,7 @@ regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 hmac = "0.12"        # Binance order signing (HMAC-SHA256)
 sha2 = "0.10"
+md-5 = "0.10"        # Börse Frankfurt API request signing (MD5 trace/security headers)
 hex = "0.4"
 
 [profile.release]

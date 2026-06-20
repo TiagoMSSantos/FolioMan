@@ -65,6 +65,7 @@ struct Chart {
     volumes: Vec<f64>, // parallel to closes (0.0 where no volume reported); liquidity proxy
     currency: String,
     name: String,
+    instrument_type: String, // Yahoo meta.instrumentType ("ETF"/"EQUITY"/...); "" if absent
     divs: Vec<(NaiveDate, f64)>, // (ex-date, amount/share) from events.dividends
 }
 
@@ -123,6 +124,9 @@ fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
         volumes,
         currency,
         name: name_of(&meta, ticker),
+        // Yahoo's own asset-class tag — reliable where the name string isn't (ETF shortNames like
+        // "ISHARES III PLC ISHRS CORE MSCI" carry no "ETF"/"UCITS" marker). Drives the ETF table split.
+        instrument_type: meta.get("instrumentType").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         divs,
     })
 }
@@ -240,6 +244,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         dip: format!("-{:.1}%", d),
         drop_pct: d,
         market: market_of(ticker),
+        instrument_type: chart.instrument_type,
         head: titles.first().cloned().unwrap_or_default(),
         news_block: titles.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n"),
         perf: horizon_changes(&chart.dates, &chart.closes, rate, windows, infl),
@@ -306,18 +311,95 @@ pub async fn fetch_tech_symbols(client: &Client, urls: &Urls) -> std::collection
     }
 }
 
+/// Sign one Börse Frankfurt API request the same way their web client does (reverse-engineered from
+/// the bundle): `Client-Date` = an ISO-8601 UTC instant we also hash; `X-Client-TraceId` =
+/// md5(ClientDate + full-url + salt); `X-Security` = md5(UTC `yyyyMMddHHmm`). The server re-hashes
+/// the Client-Date we send, so its timezone is free; only X-Security must match the server's minute
+/// (UTC, with skew tolerance). NB: send NO `Origin` header — their gateway 403s a browser origin.
+fn bf_sign(url: &str, salt: &str) -> [(&'static str, String); 3] {
+    use md5::{Digest, Md5};
+    let md5_hex = |s: &str| hex::encode(Md5::digest(s.as_bytes()));
+    let now = chrono::Utc::now();
+    let client_date = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let trace = md5_hex(&format!("{client_date}{url}{salt}"));
+    let security = md5_hex(&now.format("%Y%m%d%H%M").to_string());
+    [("Client-Date", client_date), ("X-Client-TraceId", trace), ("X-Security", security)]
+}
+
+/// Signed POST to a Börse Frankfurt endpoint -> JSON. None on any failure (the whole ETF leg then
+/// degrades to empty — never a crash; the rest of the universe still builds).
+async fn bf_post(client: &Client, url: &str, salt: &str, body: &Value) -> Option<Value> {
+    let mut req = client.post(url).header("Accept", "application/json, text/plain, */*").json(body);
+    for (k, v) in bf_sign(url, salt) {
+        req = req.header(k, v);
+    }
+    req.send().await.ok()?.json::<Value>().await.ok()
+}
+
+/// The EU-buyable UCITS ETF universe: ask Börse Frankfurt for the top-`cap` ETFs by turnover (real
+/// EU-listed, PRIIPs-compliant funds — unlike the US-domiciled NASDAQ-Trader ETFs an EU broker can't
+/// sell), then resolve each ISIN to a Yahoo symbol via Yahoo search (first hit = the liquid EU
+/// listing, e.g. `.MI`/`.L`/`.DE`). Concurrency-bounded. Empty (with a warning) if the signed API
+/// rejects us — salt rotated / endpoint moved; refresh `bf_salt`/`bf_etf_search` in settings.yaml.
+pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<String> {
+    let body = serde_json::json!({
+        "indices": [], "regions": [], "countries": [], "issuer": [], "types": [],
+        "benchmarks": [], "currency": [], "strategy": [], "replicationType": [], "distributionType": [],
+        "page": 0, "pageSize": cap, "sorting": "TURNOVER", "sortOrder": "DESC"
+    });
+    let isins: Vec<String> = match bf_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
+        Some(j) => j
+            .get("data")
+            .and_then(|d| d.as_array())
+            .map(|arr| arr.iter().filter_map(|r| r.get("isin")?.as_str().map(String::from)).collect())
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    if isins.is_empty() {
+        eprintln!("fetch: Börse Frankfurt ETF search returned nothing (salt rotated? refresh bf_salt) — ETF tables will be empty");
+        return Vec::new();
+    }
+    // BF ignores our pageSize and dumps the whole list (~3430); it's TURNOVER-DESC, so the top `cap`
+    // are the most-liquid ETFs — keep only those, both to match universe_size and to avoid firing
+    // thousands of Yahoo searches (which DO rate-limit).
+    let total = isins.len();
+    let isins: Vec<&String> = isins.iter().take(cap).collect();
+    // resolve ISIN -> Yahoo symbol (first quote = the liquid EU listing), bounded fan-out.
+    // yahoo_search is tuned for news (quotesCount=0) — flip it to quotes here, or every row is None.
+    let tickers: Vec<String> = stream::iter(isins.iter())
+        .map(|isin| async move {
+            let url = urls
+                .yahoo_search
+                .replace("{ticker}", isin.as_str())
+                .replace("quotesCount=0", "quotesCount=1")
+                .replace("newsCount=3", "newsCount=0");
+            get_json(client, &url).await?.pointer("/quotes/0/symbol")?.as_str().map(String::from)
+        })
+        .buffer_unordered(FETCH_CONCURRENCY)
+        .filter_map(|x| async move { x })
+        .collect()
+        .await;
+    // conclusive diagnostic: distinguishes "BF gave 0 ISINs" from "BF ok but Yahoo bridge resolved
+    // none" — the two ways the ETF tables silently empty.
+    eprintln!("fetch: Börse Frankfurt returned {total} ETF ISINs (kept top {} by turnover); {} resolved to Yahoo tickers", isins.len(), tickers.len());
+    if tickers.is_empty() {
+        eprintln!("fetch: ISIN->Yahoo resolution returned nothing (Yahoo search rate-limited?) — ETF tables will be empty");
+    }
+    tickers
+}
+
 /// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
-/// CoinGecko + the S&P 500 constituents CSV (single companies) + ALL US-listed ETFs from the two
-/// NASDAQ Trader symbol files. Symbols normalised to Yahoo form (`btc` -> `BTC-EUR`/`BTC-USD`,
-/// `BRK.B` -> `BRK-B`). Crypto quote currency follows `prefer_eur` (Yahoo has both legs); US stocks/
-/// ETFs have no EUR listing, so unaffected. Sorted + deduped; empty if all sources fail.
+/// CoinGecko + the S&P 500 constituents CSV (single companies) + the top-`cap` EU-buyable UCITS ETFs
+/// by turnover from Börse Frankfurt (`fetch_xetra_etfs`). Symbols normalised to Yahoo form (`btc` ->
+/// `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency follows `prefer_eur`. The old
+/// US-listed NASDAQ-Trader ETFs are dropped: none are EU-buyable, so they only wasted fetches.
+/// Sorted + deduped; empty if all sources fail.
 pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool) -> Vec<String> {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
-    let (cg, csv, nasdaq, other) = tokio::join!(
+    let (cg, csv, etfs) = tokio::join!(
         get_json(client, &cg_url),
         get_text(client, &urls.sp500_csv),
-        get_text(client, &urls.nasdaq_listed),
-        get_text(client, &urls.other_listed),
+        fetch_xetra_etfs(client, urls, cap),
     );
     let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
     let mut out: Vec<String> = Vec::new();
@@ -337,16 +419,25 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
                 .filter(|s| !s.is_empty()),
         );
     }
-    // ETFs: live from NASDAQ Trader (nasdaqlisted ETF col 6 + otherlisted ETF col 4, where SPY lives).
-    if let Some(text) = nasdaq {
-        out.extend(core::etf_symbols(&text, 6));
-    }
-    if let Some(text) = other {
-        out.extend(core::etf_symbols(&text, 4));
-    }
+    out.extend(etfs); // EU-buyable UCITS ETFs (Yahoo symbols)
     out.sort();
     out.dedup();
     out
+}
+
+/// Network-module asserts (no live calls): the pure, breakable bit of the Börse Frankfurt signer is
+/// the MD5 — pin it to known answers so a bad refactor is caught offline. (The concatenation order is
+/// verified against the live server, not here.)
+pub fn selftest() {
+    use md5::{Digest, Md5};
+    let md5_hex = |s: &str| hex::encode(Md5::digest(s.as_bytes()));
+    assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
+    assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
+    // signer emits exactly the three headers the gateway needs, TraceId folds in the url + salt
+    let h = bf_sign("https://x/y", "saltz");
+    assert_eq!(h.len(), 3);
+    assert_eq!([h[0].0, h[1].0, h[2].0], ["Client-Date", "X-Client-TraceId", "X-Security"]);
+    assert_eq!(h[1].1, md5_hex(&format!("{}https://x/ysaltz", h[0].1))); // trace = md5(date+url+salt)
 }
 
 /// At most this many quote fetches in flight at once. Unbounded `join_all` over the ~750-ticker

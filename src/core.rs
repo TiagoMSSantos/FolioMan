@@ -67,6 +67,7 @@ pub struct Quote {
     pub dip: String,     // "-3.2%"
     pub drop_pct: f64,   // numeric, for alert threshold
     pub market: String,
+    pub instrument_type: String, // Yahoo chart-meta instrumentType ("ETF"/"EQUITY"/"CRYPTOCURRENCY"/...); the reliable asset-class signal, vs the name-substring guess. "" if absent.
     pub head: String,        // first headline ("" if none)
     pub news_block: String,  // up to 3 headlines, "- ..\n- .." (alert body)
     pub perf: Vec<Option<(String, f64)>>, // aligned to HORIZONS: (past_eur_str, pct) or None
@@ -98,6 +99,7 @@ impl Quote {
             dip: String::new(),
             drop_pct: 0.0,
             market: market_of(ticker),
+            instrument_type: String::new(),
             head: head.to_string(),
             news_block: String::new(),
             perf: Vec::new(),
@@ -336,8 +338,11 @@ pub fn source_url(template: &str, ticker: &str) -> String {
 /// Human-readable name from a Yahoo info/meta value; ticker if absent.
 pub fn name_of(info: &Value, ticker: &str) -> String {
     let pick = |key: &str| info.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-    pick("shortName")
-        .or_else(|| pick("longName"))
+    // longName first: it carries the real fund name ("iShares Core MSCI World UCITS ETF") where the
+    // shortName is a truncated registrant blob ("ISHARES III PLC ISHRS CORE MSCI"). shortName is the
+    // fallback when meta omits longName (common for crypto/FX). Equities read the same either way.
+    pick("longName")
+        .or_else(|| pick("shortName"))
         .unwrap_or(ticker)
         .trim()
         .to_string()
@@ -890,6 +895,11 @@ assert_eq!(avg_volume(&[0.0], 30), None);
     assert_eq!(name_of(&serde_json::json!({"longName": "NVIDIA Corp"}), "NVDA"), "NVIDIA Corp");
     assert_eq!(name_of(&serde_json::json!({}), "BTC-USD"), "BTC-USD");
     assert_eq!(name_of(&Value::Null, "MSFT"), "MSFT");
+    // both present -> longName wins (the real ETF name, not the truncated registrant shortName)
+    assert_eq!(
+        name_of(&serde_json::json!({"shortName": "ISHARES III PLC", "longName": "iShares Core MSCI World UCITS ETF"}), "IWDA.L"),
+        "iShares Core MSCI World UCITS ETF"
+    );
 
     assert_eq!(ca_base_rate(2.1, 0.0, 2.5), 2.1); // Série F
     assert!((ca_base_rate(2.1, 1.0, 3.5) - 3.1).abs() < 1e-9); // Série E

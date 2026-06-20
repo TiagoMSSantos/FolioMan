@@ -5,7 +5,7 @@
 
 use crate::commands::truncate;
 use crate::core::{Quote, DIV_HORIZONS};
-use crate::picks::{perf_pct, render};
+use crate::picks::{eu_buyable, perf_pct, render};
 use crate::{config, fetch};
 
 /// 1Y dividend yield (%) used to rank payers; 0 if no payout / no price / short history.
@@ -32,7 +32,7 @@ pub async fn run(args: Vec<String>) {
         (args, std::collections::HashSet::new()) // explicit tickers: no sector data -> no tech table
     };
 
-    eprintln!("screen: {} tickers in universe (crypto + S&P 500 + all US-listed ETFs)", universe.len());
+    eprintln!("screen: {} tickers in universe (crypto + S&P 500 + Xetra UCITS ETFs)", universe.len());
 
     // live EU HICP series to inflation-adjust long-horizon returns, only when enabled
     let eu_infl = if settings.inflation_adjust.enabled {
@@ -42,6 +42,11 @@ pub async fn run(args: Vec<String>) {
         None
     };
     let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true, &settings.anchor_windows, eu_infl.as_ref()).await; // intraday on: picks table shows 1h/6h/12h
+    // keep only what an EU-retail investor can actually buy (drops any non-European-listed ETF,
+    // Asian-only stock listings) so EVERY table below — ATH/ATL/fallers/dividends/buys — is actionable.
+    let before = qs.len();
+    let qs: Vec<Quote> = qs.into_iter().filter(eu_buyable).collect();
+    eprintln!("screen: {} of {before} instruments are EU-buyable (rest filtered out)", qs.len());
 
     let w = &settings.widths;
     let (nw, tw, pw) = (w.name, w.ticker, w.price);

@@ -225,6 +225,14 @@ pub struct Urls {
     pub nasdaq_listed: String,
     #[serde(default = "default_other_listed_url")]
     pub other_listed: String,
+    // Börse Frankfurt / Xetra ETF search (POST) -> the EU-buyable UCITS ETF universe (the US-listed
+    // ETFs above aren't EU-buyable). Signed with `bf_salt` lifted from their web bundle; if the API
+    // moves or the salt rotates, refresh these two here — no recompile. Defaulted so older settings
+    // still load.
+    #[serde(default = "default_bf_etf_search_url")]
+    pub bf_etf_search: String,
+    #[serde(default = "default_bf_salt")]
+    pub bf_salt: String,
 }
 
 /// Default (E) fundamentals endpoint: Financial Modeling Prep's free `quote` (carries `pe`).
@@ -240,6 +248,18 @@ fn default_nasdaq_listed_url() -> String {
 /// Default other-listed (NYSE/Arca/BATS) symbol file (ETF flag = column 4); where SPY etc. live.
 fn default_other_listed_url() -> String {
     "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt".to_string()
+}
+
+/// Default Börse Frankfurt ETF search (POST, turnover-sorted UCITS list).
+fn default_bf_etf_search_url() -> String {
+    "https://api.boerse-frankfurt.de/v1/search/etp_search".to_string()
+}
+
+/// Default request-signing salt, lifted from the Börse Frankfurt web bundle (`tracing.salt`). Public
+/// (it ships in their client JS), rotates occasionally — refresh from the bundle if `screen`'s ETF
+/// table empties. ponytail: a value that lives in config so a rotation needs an edit, not a rebuild.
+fn default_bf_salt() -> String {
+    "af5a8d16eb5dc49f8a72b26fd9185475c7a".to_string()
 }
 
 /// Locate `config/settings.yaml` next to the exe or up the tree, mirroring the old

@@ -49,6 +49,7 @@ async fn main() {
             core::selftest();
             picks::selftest();
             broker::selftest();
+            folioman::fetch::selftest();
             println!("ok");
         }
         _ => {

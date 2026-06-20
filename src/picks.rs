@@ -116,6 +116,13 @@ fn is_etf(name: &str) -> bool {
     ETF_MARKERS.iter().any(|m| n.contains(m))
 }
 
+/// Is this quote a pooled fund? Prefer Yahoo's own `instrumentType` ("ETF"), which is present even
+/// when the name string isn't a giveaway (ETF shortNames like "ISHARES III PLC ISHRS CORE MSCI"
+/// carry no marker). Falls back to the name-substring guess for rows with no meta (backtest stubs).
+fn quote_is_etf(q: &Quote) -> bool {
+    q.instrument_type.eq_ignore_ascii_case("ETF") || is_etf(&q.name)
+}
+
 /// Underlying of a currency-quoted ticker: strips a trailing `-EUR`/`-USD` (crypto twins like
 /// `BTC-EUR`/`BTC-USD`); anything else is its own underlying.
 fn underlying(ticker: &str) -> &str {
@@ -408,9 +415,41 @@ fn nupl_damp(nupl: Option<f64>, t: &BuyHeuristic) -> f64 {
 /// Horizons whose Δ% is shown in the picks table (chronological).
 const DIFF_HORIZONS: &[&str] = &["1D", "1W", "1M", "1Y", "5Y", "10Y", "20Y"];
 
+/// Listing venues an EU-retail broker actually serves — US/Canada + the European exchanges
+/// `suffix_country` knows. Asian/AU/BR/IN listings (Hong Kong, Japan, China, South Korea, India,
+/// Australia, Brazil) are off most EU retail brokers, so names listed only there are dropped.
+const EU_BUYABLE_MARKETS: &[&str] = &[
+    "USA", "Canada", "Germany", "UK", "France", "Netherlands", "Italy", "Spain", "Switzerland",
+    "Austria", "Portugal", "Belgium", "Finland", "Sweden", "Norway", "Denmark", "Ireland",
+];
+
+/// Can an EU-retail investor actually BUY this? Filters the tables down to reachable names:
+/// - **crypto** (currency-quoted): majors trade on EU-regulated exchanges -> buyable. Stablecoins /
+///   corpses are already score-gated, and no free per-token EU-availability feed exists, so don't
+///   over-filter. ponytail: ceiling — a delisted alt could slip through; tighten if it ever bites.
+/// - **ETF**: only funds LISTED on a European exchange. A US-domiciled ETF (SPY/QQQ/VOO) trades on a
+///   US venue and has no PRIIPs KID, so EU brokers can't sell it to retail; a UCITS fund lists on
+///   Xetra/LSE/Borsa Italiana (market != USA/Canada). Venue is the robust UCITS proxy — the name
+///   string isn't (Yahoo gives ETF shortNames with no "UCITS" marker), so don't gate on it.
+/// - **stock**: only on a venue EU retail brokers serve (`EU_BUYABLE_MARKETS`); other listings drop.
+///
+/// `pub` so `screen` can filter its WHOLE universe once (every table — ATH/ATL/fallers/dividends/buys),
+/// not just the picks lanes.
+pub fn eu_buyable(q: &Quote) -> bool {
+    if is_currency_quoted(&q.ticker) {
+        return true; // crypto major
+    }
+    if quote_is_etf(q) {
+        // European-listed only: US/Canada listing = US-domiciled (no KID), barred for EU retail.
+        return q.market != "USA" && q.market != "Canada" && EU_BUYABLE_MARKETS.contains(&q.market.as_str());
+    }
+    EU_BUYABLE_MARKETS.contains(&q.market.as_str())
+}
+
 /// Score every quote with `score`, dedup currency twins, drop rows at/below `min_score`, sort
 /// best-first. Shared by both lanes (on-sale `buy_score`, growth `growth_score`) and all per-class
-/// tables — the lane is just which scorer + threshold the caller passes.
+/// tables — the lane is just which scorer + threshold the caller passes. Non-EU-buyable names
+/// (US-domiciled ETFs, Asian-only listings) are filtered out up front.
 fn ranked<'a>(
     qs: &'a [Quote],
     t: &BuyHeuristic,
@@ -418,7 +457,7 @@ fn ranked<'a>(
     min_score: f64,
 ) -> Vec<(&'a Quote, f64)> {
     let scored: Vec<(&Quote, f64)> =
-        qs.iter().filter_map(|q| score(q, t).map(|s| (q, s))).collect();
+        qs.iter().filter(|q| eu_buyable(q)).filter_map(|q| score(q, t).map(|s| (q, s))).collect();
     let mut picks = dedup_currency_twins(scored, t.prefer_eur); // one row per asset (BTC, not BTC-EUR+BTC-USD)
     // drop padding rows below the lane's floor, so the tables stop filling to top_picks with near-zero
     // names. (min_score 0 -> show everything > 0.)
@@ -505,7 +544,7 @@ fn print_lane(
 ) {
     let (crypto, equity): (Vec<_>, Vec<_>) =
         picks.into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
-    let (etf, stock): (Vec<_>, Vec<_>) = equity.into_iter().partition(|(q, _)| is_etf(&q.name));
+    let (etf, stock): (Vec<_>, Vec<_>) = equity.into_iter().partition(|(q, _)| quote_is_etf(q));
     print_picks(&format!("Top {n} stocks {kind} — {desc}"), &stock, n, w);
     // tech-only subset (S&P 500 GICS Information Technology + Communication Services); skipped when
     // no sector data (e.g. `screen TICKER...` or `check`, which pass an empty set). ETFs aren't in the
@@ -555,7 +594,7 @@ pub fn selftest() {
             .collect();
         Quote {
             ticker: "T".into(), price: "€1.00".into(), dip: "-5.0%".into(), drop_pct: drawdown_pct,
-            market: "USA".into(), head: String::new(), news_block: String::new(), perf,
+            market: "USA".into(), instrument_type: String::new(), head: String::new(), news_block: String::new(), perf,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, drawdown_pct, intraday: [None; 3],
             avg_turnover_eur: None, volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
@@ -835,4 +874,38 @@ pub fn selftest() {
     assert!((combine_damps(&[0.5, 1.0, 1.0]) - 0.5_f64.powf(1.0 / 3.0)).abs() < 1e-9);
     assert!(combine_damps(&[0.5, 0.4, 0.5]) > 0.5 * 0.4 * 0.5); // geomean bounded above the product
     assert!(combine_damps(&[0.9, 0.5]) < combine_damps(&[0.9, 0.9])); // still monotone in each term
+
+    // EU-buyability gate: crypto majors + UCITS ETFs + US/Canada/EU-listed stocks pass; a US-domiciled
+    // ETF (no PRIIPs KID) and an Asian-only listing are dropped — EU retail can't buy them.
+    let mut us_etf = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    us_etf.name = "SPDR S&P 500 ETF Trust".into();
+    us_etf.ticker = "SPY".into();
+    us_etf.market = "USA".into();
+    assert!(!eu_buyable(&us_etf)); // US-domiciled ETF -> not EU-buyable
+    let mut ucits = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    ucits.name = "iShares Core S&P 500 UCITS ETF".into();
+    ucits.market = "UK".into();
+    assert!(eu_buyable(&ucits)); // UCITS wrapper -> buyable
+    // the bug this fixes: a UCITS ETF whose Yahoo shortName carries NO "ETF"/"UCITS" marker still
+    // classifies as an ETF (via instrumentType) and stays buyable on its European listing.
+    let mut bare = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    bare.name = "ISHARES III PLC ISHRS CORE MSCI".into(); // real marker-less ETF shortName
+    bare.instrument_type = "ETF".into();
+    bare.market = "Ireland".into();
+    assert!(quote_is_etf(&bare) && !is_etf(&bare.name)); // typed as ETF, not name-matched
+    assert!(eu_buyable(&bare)); // EU venue -> buyable despite the marker-less name
+    let mut hk = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    hk.name = "Tencent Holdings".into();
+    hk.market = "Hong Kong".into();
+    assert!(!eu_buyable(&hk)); // HK-only listing off most EU retail brokers
+    let mut us_stk = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    us_stk.name = "Apple Inc.".into(); // market defaults to "USA"
+    assert!(eu_buyable(&us_stk));
+    let mut btc_b = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    btc_b.ticker = "BTC-EUR".into();
+    assert!(eu_buyable(&btc_b)); // crypto major
+    // end-to-end: `ranked` drops the US ETF even though it scores above min_score
+    assert!(buy_score(&us_etf, &t).unwrap() > t.min_score);
+    assert!(ranked(std::slice::from_ref(&us_etf), &t, buy_score, t.min_score).is_empty());
+    assert_eq!(ranked(std::slice::from_ref(&ucits), &t, buy_score, t.min_score).len(), 1);
 }
