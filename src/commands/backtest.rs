@@ -218,13 +218,19 @@ fn report_lane(
         None => println!("  Spearman: n/a"),
     }
 
-    // top vs bottom scored half, by peer-relative realized
-    let mut by_score: Vec<&(&Sample, f64)> = scored.iter().collect();
-    by_score.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    let half = by_score.len() / 2;
-    let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
-    let (top, bot) = (mean(&by_score[..half]), mean(&by_score[by_score.len() - half..]));
-    println!("  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {:+.1} pts", top - bot);
+    // top vs bottom scored half, by peer-relative realized. `edge_of` is reused by the ablation below
+    // so it reports the Δ of the PROFIT metric, not just rho — rho and edge can disagree (a term can
+    // read mildly rho-harmful yet be load-bearing for the actual top/bottom spread).
+    let edge_of = |pairs: &[(&Sample, f64)]| -> (f64, f64) {
+        let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
+        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        let half = v.len() / 2;
+        let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
+        (mean(&v[..half]), mean(&v[v.len() - half..]))
+    };
+    let (top, bot) = edge_of(&scored);
+    let base_edge = top - bot;
+    println!("  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {base_edge:+.1} pts");
 
     // out-of-sample early vs late (scored is date-ordered)
     let mid = scored.len() / 2;
@@ -242,16 +248,22 @@ fn report_lane(
         split_rho(&scored[mid..])
     );
 
-    // ablation: zero each knob, re-score the SAME gated rows, recompute rho
+    // ablation: zero each knob, re-score the SAME gated rows, recompute BOTH metrics. Δrho = rank
+    // selection change; Δedge = profit-spread change (the one that matters). +Δ ⇒ the knob HURT,
+    // −Δ ⇒ it HELPED. Watch for sign disagreement: a knob that's −Δedge (load-bearing for profit)
+    // but ~0/+Δrho is a trap — don't delete it on the rho reading alone.
     let base_rho = rho.unwrap_or(0.0);
-    println!("  ablation (Δ vs full {base_rho:+.2}):");
+    println!("  ablation (Δ vs full: rho {base_rho:+.2}, edge {base_edge:+.1}):");
     for (name, mutate) in knobs {
         let mut t2 = t.clone();
         mutate(&mut t2);
-        let abl: Vec<f64> = scored.iter().map(|(s, v)| scorer(&s.q, &t2).unwrap_or(*v)).collect();
-        match core::spearman(&abl, &rels) {
-            Some(v) => println!("    {:<20} rho {v:+.2}   Δ {:+.2}", name, v - base_rho),
-            None => println!("    {:<20} rho n/a", name),
+        let abl: Vec<(&Sample, f64)> =
+            scored.iter().map(|(s, v)| (*s, scorer(&s.q, &t2).unwrap_or(*v))).collect();
+        let (et, eb) = edge_of(&abl);
+        let dedge = (et - eb) - base_edge;
+        match core::spearman(&abl.iter().map(|(_, v)| *v).collect::<Vec<_>>(), &rels) {
+            Some(v) => println!("    {:<20} rho {v:+.2} Δ{:+.2}   edge {:+.1} Δ{dedge:+.1}", name, v - base_rho, et - eb),
+            None => println!("    {:<20} rho n/a   edge {:+.1} Δ{dedge:+.1}", name, et - eb),
         }
     }
 }
