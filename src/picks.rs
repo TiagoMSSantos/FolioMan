@@ -51,7 +51,13 @@ fn value_factor(q: &Quote, ref_pe: f64) -> f64 {
 fn sustained_decline_factor(q: &Quote, t: &BuyHeuristic) -> f64 {
     match (perf_pct(q, "1Y"), perf_pct(q, "5Y")) {
         (Some(y1), Some(y5)) if y1 <= t.sustained_decline_pct && y5 <= t.sustained_decline_pct => {
-            t.sustained_decline_penalty
+            // harsher tier: a 5Y this deep (e.g. LTC -73%) is a 7y+ bleed coasting on a stale old
+            // chart — dock it much harder than a "merely" -40% multi-year drift.
+            if y5 <= t.deep_decline_pct {
+                t.deep_decline_penalty
+            } else {
+                t.sustained_decline_penalty
+            }
         }
         _ => 1.0,
     }
@@ -163,12 +169,35 @@ pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
     q.perf.get(i).and_then(|o| o.as_ref()).map(|(_, p)| *p)
 }
 
+/// (A/B/C) Quality tilts shared by BOTH lanes, all derived from already-fetched closes (zero extra
+/// fetch). Returns `(consistency_mult, risk_reward)`:
+/// - **consistency_mult** (A) — `consistency_floor`..1 scaled by the log-price trend R²: a smooth
+///   compounder (R²→1) keeps full score, a lumpy/lucky path (R²→0) is tapered toward the floor. This
+///   is the rigorous fix for CAGR endpoint-luck — you hold the path, not the endpoints.
+/// - **risk_reward** (B+C) — additive bonus for return PER unit of risk: Sharpe-ish (CAGR/volatility,
+///   path noise) + Calmar (CAGR/max-drawdown, tail pain). Both reward the same thing from two angles —
+///   a name that compounds hard while staying calm and shallow-drawdown. Missing/zero risk inputs → 0
+///   (never punished for absent data).
+fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
+    let consistency = t.consistency_floor + (1.0 - t.consistency_floor) * q.trend_r2.clamp(0.0, 1.0);
+    let sharpe = match q.volatility_pct {
+        Some(v) if v > 0.0 => (long_cagr / v).clamp(0.0, t.sharpe_cap),
+        _ => 0.0,
+    };
+    let calmar = if q.max_drawdown_pct > 0.0 {
+        (long_cagr / q.max_drawdown_pct).clamp(0.0, t.calmar_cap)
+    } else {
+        0.0
+    };
+    (consistency, t.sharpe_weight * sharpe + t.calmar_weight * calmar)
+}
+
 /// Score a quote as a "quality on sale" buy candidate for a multi-DECADE hold, or `None` if it
 /// fails a gate. The formula:
 ///
 /// ```text
-///   base  = discount × trend_health × momentum + long_reward×discount_frac + cheap_reward + dividend_reward
-///   score = base × value × decline × trust
+///   base  = discount × trend_health × momentum + long_reward×discount_frac + cheap_reward + dividend_reward + risk_reward
+///   score = base × value × decline × trust × consistency
 /// ```
 ///
 /// - **discount** — how deep in its OWN ~10y range it trades (100 − percentile rank; self-normalizes
@@ -184,6 +213,8 @@ pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
 /// - **dividend_reward** — (D) reward for trailing yield (`dividend_weight`, `dividend_cap`).
 /// - **value** — (E) P/E tilt: cheap lifts, rich dampens, unknown neutral (`ref_pe`).
 /// - **decline** — (B) value-trap dock when 1Y & 5Y both deeply negative.
+/// - **risk_reward** — (B/C) Sharpe-ish (CAGR/vol) + Calmar (CAGR/max-drawdown) bonus; return per unit of risk.
+/// - **consistency** — (A) multiplier from the log-price trend R²; a lumpy/lucky path is tapered toward `consistency_floor`.
 /// - **trust** — halves anything without a 10Y record.
 ///
 /// Every knob lives in `BuyHeuristic` (settings.yaml `buy_heuristic:`). Higher = more interesting.
@@ -249,23 +280,125 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     let cheap_reward = t.cheap_weight * q.below_ma_pct.min(t.cheap_cap); // (C)
     let dividend_reward = t.dividend_weight * dividend_yield_1y(q).min(t.dividend_cap); // (D)
 
-    let base = discount * health * momentum + long_reward + cheap_reward + dividend_reward;
+    let (consistency, risk_reward) = quality_factors(q, long_cagr, t); // (A/B/C) zero-fetch quality tilts
+    let base =
+        discount * health * momentum + long_reward + cheap_reward + dividend_reward + risk_reward;
     let value = value_factor(q, t.ref_pe); // (E) cheap lifts, rich dampens, unknown neutral
     let decline = sustained_decline_factor(q, t); // (B) multi-year-bleed dock
     let trust = if perf_pct(q, "10Y").is_none() { 0.5 } else { 1.0 };
-    Some(base * value * decline * trust)
+    Some(base * value * decline * trust * consistency) // (A) lumpy path tapered toward the floor
+}
+
+/// Score a quote as a MOMENTUM/GROWTH candidate — the MIRROR of `buy_score`. The on-sale lane fades
+/// a name's score to ~0 as it nears its high (a proven compounder at a new high has no "discount"),
+/// so it never surfaces quality that's expensive *because* it keeps winning. This lane is exactly
+/// that set: a name AT/NEAR its own range high, with a strong proven long-term CAGR, still climbing.
+///
+/// ```text
+///   base  = growth_trend_weight × min(long_cagr, long_trend_cap)
+///         + growth_accel_weight × clamp(1Y − long_cagr, 0, growth_accel_cap)   // recent outpaces long => accelerating
+///   score = base × proximity × value(E) × trust
+/// ```
+///
+/// Gated HARD so it can't degrade into top-chasing: must sit in the top `growth_min_range_pct` of its
+/// own ~10y range, compound at least `growth_min_cagr` %/yr, have a POSITIVE 1Y (actually climbing),
+/// and not be crashing this month. The P/E value tilt (E) still damps a nosebleed valuation, so a
+/// blow-off top is penalised, not rewarded. `None` if it fails a gate. **NOT advice** — a ranking.
+pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
+    let crypto = is_currency_quoted(&q.ticker);
+
+    // ---- GATES (reuse the cheap exclusions; the rest are the on-sale lane's mirror) ----
+    if is_leveraged(&q.name) {
+        return None; // leveraged/inverse decays -> never a long-term hold
+    }
+    if crypto && is_stablecoin(&q.ticker) {
+        return None; // pegged $1 -> no growth
+    }
+    if q.avg_turnover_eur.map_or(false, |v| v < t.min_avg_turnover_eur) {
+        return None; // too thin (unknown turnover passes)
+    }
+    if q.range_pct < t.growth_min_range_pct {
+        return None; // NOT near its high -> that's the on-sale lane's job, not this one
+    }
+    let (long_cum, long_years) =
+        long_leg(q).or_else(|| if crypto { perf_pct(q, "1Y").map(|p| (p, 1.0)) } else { None })?;
+    let long_cagr = core::cagr(long_cum, long_years);
+    if long_cagr < t.growth_min_cagr {
+        return None; // weak long-run trend -> an expensive laggard, not a proven compounder
+    }
+    let y1 = perf_pct(q, "1Y")?;
+    if y1 <= 0.0 {
+        return None; // not actually climbing this year -> no momentum to ride
+    }
+    let knife = if crypto { t.max_1m_drop_pct_crypto } else { t.max_1m_drop_pct };
+    if perf_pct(q, "1M").unwrap_or(0.0) <= knife {
+        return None; // rolling over hard this month -> momentum broke
+    }
+    if !crypto && perf_pct(q, "5Y").map_or(false, |y5| y5 <= 0.0) {
+        // (3) consistency: a near-high name negative over 5Y mooned-then-bled — its great 10Y CAGR is a
+        // stale endpoint, not a durable trend. Require the mid leg to hold too. (Crypto 5Y is
+        // peak-anchored noise; the range gate already excludes bled coins there, so skip it.)
+        return None;
+    }
+
+    // ---- SCORE ----
+    let trend = long_cagr.min(t.long_trend_cap); // proven compounding, capped like the on-sale lane
+    let accel = (y1 - long_cagr).clamp(0.0, t.growth_accel_cap); // last year outpacing the long run = building
+    let proximity = q.range_pct / 100.0; // 0.7..1.0 — closer to the high = stronger confirmation
+    let (consistency, risk_reward) = quality_factors(q, long_cagr, t); // (A/B/C) zero-fetch quality tilts
+    let base = t.growth_trend_weight * trend + t.growth_accel_weight * accel + risk_reward;
+    let value = value_factor(q, t.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
+    let trust = if perf_pct(q, "10Y").is_none() { 0.5 } else { 1.0 };
+    // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
+    // stretched/blow-off, so taper the score toward `growth_overext_floor` at the cap. This is the
+    // generic brake the P/E tilt can't provide for crypto/ETFs (no earnings) — works on price alone.
+    let overext = q.above_ma_pct.min(t.growth_overext_cap);
+    let overext_damp = if t.growth_overext_cap > 0.0 {
+        1.0 - (overext / t.growth_overext_cap) * (1.0 - t.growth_overext_floor) // 1.0 at trend .. floor at the cap
+    } else {
+        1.0 // cap 0 = brake disabled
+    };
+    Some(base * proximity * value * trust * overext_damp * consistency) // (A) taper a lumpy path
+}
+
+/// (4) Whole-market crypto sentiment damp from Bitcoin NUPL (net unrealized profit/loss — already
+/// fetched for the screen footer). NUPL above `nupl_euphoria` is market greed/top territory, so scale
+/// crypto scores toward `nupl_damp_floor` (reached at NUPL 1.0, peak euphoria). 1.0 (no damp) when
+/// NUPL is unknown or below the euphoria line. Market-wide, so it scales the whole crypto lane
+/// uniformly — thinning the crypto buy/growth tables in a frothy top, fattening them after a flush.
+fn nupl_damp(nupl: Option<f64>, t: &BuyHeuristic) -> f64 {
+    match nupl {
+        Some(v) if v > t.nupl_euphoria && t.nupl_euphoria < 1.0 => {
+            let over = ((v - t.nupl_euphoria) / (1.0 - t.nupl_euphoria)).clamp(0.0, 1.0);
+            1.0 - over * (1.0 - t.nupl_damp_floor)
+        }
+        _ => 1.0,
+    }
 }
 
 /// Horizons whose Δ% is shown in the picks table (chronological).
 const DIFF_HORIZONS: &[&str] = &["1D", "1W", "1M", "1Y", "5Y", "10Y", "20Y"];
 
-/// Score every quote, dedup currency twins, sort best-first. Shared by the per-class tables.
-fn ranked<'a>(qs: &'a [Quote], t: &BuyHeuristic) -> Vec<(&'a Quote, f64)> {
+/// Score every quote with `score`, dedup currency twins, drop rows at/below `min_score`, sort
+/// best-first. Shared by both lanes (on-sale `buy_score`, growth `growth_score`) and all per-class
+/// tables — the lane is just which scorer + threshold the caller passes.
+fn ranked<'a>(
+    qs: &'a [Quote],
+    t: &BuyHeuristic,
+    score: impl Fn(&Quote, &BuyHeuristic) -> Option<f64>,
+    min_score: f64,
+) -> Vec<(&'a Quote, f64)> {
     let scored: Vec<(&Quote, f64)> =
-        qs.iter().filter_map(|q| buy_score(q, t).map(|s| (q, s))).collect();
+        qs.iter().filter_map(|q| score(q, t).map(|s| (q, s))).collect();
     let mut picks = dedup_currency_twins(scored, t.prefer_eur); // one row per asset (BTC, not BTC-EUR+BTC-USD)
-    picks.retain(|(_, s)| *s > 0.0); // drop "cheap but still bleeding": score<=0 = long-term decline beats the discount, not a buy
+    // drop padding rows below the lane's floor, so the tables stop filling to top_picks with near-zero
+    // names. (min_score 0 -> show everything > 0.)
+    picks.retain(|(_, s)| *s > min_score.max(0.0));
     picks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap()); // best score first
+    // (B) collapse dual-class share twins (GOOG/GOOGL, BRK.A/BRK.B): same company = identical Yahoo
+    // name; after the best-first sort, keep the first (higher-scoring/more-liquid) leg, drop the rest.
+    let mut seen: HashSet<&str> = HashSet::new();
+    picks.retain(|(q, _)| seen.insert(q.name.as_str()));
     picks
 }
 
@@ -328,28 +461,58 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
     }
 }
 
-/// Print the Top-N buy candidates, SPLIT per asset class (stocks / ETFs / crypto) so a +9400% crypto
-/// can't crowd out equities and a basket fund isn't ranked head-to-head with a single company — the
-/// best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto, else fund
-/// name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
-pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, tech: &HashSet<String>) {
+/// Print ONE lane's ranked picks SPLIT per asset class (stocks / [tech stocks] / ETFs / crypto) so a
+/// +9400% crypto can't crowd out equities and a basket fund isn't ranked head-to-head with a single
+/// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
+/// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
+/// `kind` names the lane in each title ("buy candidates" / "growth candidates").
+fn print_lane(
+    picks: Vec<(&Quote, f64)>,
+    n: usize,
+    w: &Widths,
+    tech: &HashSet<String>,
+    kind: &str,
+    desc: &str,
+) {
     let (crypto, equity): (Vec<_>, Vec<_>) =
-        ranked(qs, t).into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
+        picks.into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
     let (etf, stock): (Vec<_>, Vec<_>) = equity.into_iter().partition(|(q, _)| is_etf(&q.name));
-    let desc = "quality-on-sale heuristic: most below its peak (OFF-HI; anchor = high_days, default \
-                all-time over the fetched ~10y) with a still-intact longer-term trend (5Y+ where the \
-                history exists — Yahoo's EUR crypto pairs are younger, so 1Y stands in). NOT advice, \
-                just a ranking:";
-    print_picks(&format!("Top {n} stocks buy candidates — {desc}"), &stock, n, w);
+    print_picks(&format!("Top {n} stocks {kind} — {desc}"), &stock, n, w);
     // tech-only subset (S&P 500 GICS Information Technology + Communication Services); skipped when
     // no sector data (e.g. `screen TICKER...` or `check`, which pass an empty set). ETFs aren't in the
     // S&P constituent set, so this stays single-stock even drawing from the pre-split equity list.
     if !tech.is_empty() {
         let tech_picks: Vec<_> = stock.iter().filter(|(q, _)| tech.contains(&q.ticker)).cloned().collect();
-        print_picks(&format!("Top {n} tech stocks buy candidates — {desc}"), &tech_picks, n, w);
+        print_picks(&format!("Top {n} tech stocks {kind} — {desc}"), &tech_picks, n, w);
     }
-    print_picks(&format!("Top {n} ETFs buy candidates — {desc}"), &etf, n, w);
-    print_picks(&format!("Top {n} crypto buy candidates — {desc}"), &crypto, n, w);
+    print_picks(&format!("Top {n} ETFs {kind} — {desc}"), &etf, n, w);
+    print_picks(&format!("Top {n} crypto {kind} — {desc}"), &crypto, n, w);
+}
+
+/// Print the Top-N picks in TWO lanes: the on-sale "quality on sale" heuristic, then its mirror, the
+/// growth/momentum lane (proven compounders at/near their high still climbing — names the on-sale
+/// score fades to ~0 and would otherwise never surface). Each lane is split per asset class.
+/// `nupl` (Bitcoin net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or
+/// fetch fail) damps the crypto rows of BOTH lanes when the market is euphoric.
+pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, tech: &HashSet<String>, nupl: Option<f64>) {
+    // (4) market-greed damp, applied to crypto rows only (it's a whole-crypto-market gauge)
+    let cdamp = nupl_damp(nupl, t);
+    let crypto_damp = |q: &Quote, s: f64| if is_currency_quoted(&q.ticker) { s * cdamp } else { s };
+    let onsale_scorer = |q: &Quote, t: &BuyHeuristic| buy_score(q, t).map(|s| crypto_damp(q, s));
+    let growth_scorer = |q: &Quote, t: &BuyHeuristic| growth_score(q, t).map(|s| crypto_damp(q, s));
+
+    let onsale = "quality-on-sale heuristic: most below its peak (OFF-HI; anchor = high_days, default \
+                  all-time over the fetched ~10y) with a still-intact longer-term trend (5Y+ where the \
+                  history exists — Yahoo's EUR crypto pairs are younger, so 1Y stands in). NOT advice, \
+                  just a ranking:";
+    print_lane(ranked(qs, t, onsale_scorer, t.min_score), n, w, tech, "buy candidates", onsale);
+
+    // mirror lane: at/near the high but still expected to compound — the on-sale score can't surface
+    // these (no "discount"), so they get their own ranking. Gated to proven, still-climbing names.
+    let growth = "growth/momentum lane (mirror of on-sale): at/near its own ~10y high (OFF-HI ≈ 0) with \
+                  a strong proven long-term CAGR and an accelerating recent year, braked by how far it's \
+                  run above its 200wk trend — quality pricey *because* it keeps winning. NOT advice:";
+    print_lane(ranked(qs, t, growth_scorer, t.growth_min_score), n, w, tech, "growth candidates", growth);
 }
 
 /// Buy-heuristic asserts (no network). Run by the `selftest` subcommand and the unit test.
@@ -366,10 +529,13 @@ pub fn selftest() {
             market: "USA".into(), head: String::new(), news_block: String::new(), perf,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, drawdown_pct, intraday: [None; 3],
-            avg_turnover_eur: None, volatility_pct: None, below_ma_pct: 0.0, pe_ratio: None,
+            avg_turnover_eur: None, volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
+            pe_ratio: None,
             // for tests, mirror the on-sale magnitude: a deeper drawdown = deeper in its range.
             // (real fetch computes range_pct independently; tying them keeps the score asserts honest.)
             range_pct: 100.0 - drawdown_pct,
+            trend_r2: 0.0, // default lumpy -> consistency floor, UNIFORM across test quotes so relational asserts hold
+            max_drawdown_pct: 0.0, // default -> no calmar reward (additive 0)
         }
     };
     let t = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on
@@ -493,6 +659,10 @@ pub fn selftest() {
     assert!(buy_score(&bleeder, &t).unwrap() < buy_score(&recover, &t).unwrap());
     assert!((sustained_decline_factor(&bleeder, &t) - t.sustained_decline_penalty).abs() < 1e-9);
     assert_eq!(sustained_decline_factor(&recover, &t), 1.0); // positive 1Y -> not a value trap
+    // (C) harsher tier: a 5Y past deep_decline_pct (e.g. LTC -73%) docks below the -40% tier
+    let deep_bleeder = q(40.0, &[("1Y", -58.0), ("5Y", -73.0), ("10Y", 282.0)]); // LTC-shaped
+    assert!((sustained_decline_factor(&deep_bleeder, &t) - t.deep_decline_penalty).abs() < 1e-9);
+    assert!(t.deep_decline_penalty < t.sustained_decline_penalty); // tier 2 is harsher
     // (C) sitting below the ~200wk SMA lifts the score
     let mut cheap = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     cheap.below_ma_pct = 50.0;
@@ -536,4 +706,84 @@ pub fn selftest() {
     let usd = dedup_currency_twins(vec![(&btc_e, 8.0), (&btc_u, 9.0)], false);
     assert_eq!(usd.len(), 1);
     assert_eq!(usd[0].0.ticker, "BTC-USD");
+
+    // (B) ranked dedups dual-class share twins by identical company name (GOOG/GOOGL -> one row)
+    let mut goog = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // both name "n"
+    goog.ticker = "GOOG".into();
+    let mut googl = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    googl.ticker = "GOOGL".into();
+    assert_eq!(ranked(&[goog, googl], &t, buy_score, t.min_score).len(), 1);
+    // (A) ranked hides rows scoring at/below min_score (near-the-high padding), keeps real candidates
+    let shallow = q(2.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // tiny discount -> low score
+    assert!(buy_score(&shallow, &t).unwrap() < t.min_score);
+    assert!(ranked(std::slice::from_ref(&shallow), &t, buy_score, t.min_score).is_empty());
+    let strong_pick = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // real discount -> kept
+    assert_eq!(ranked(std::slice::from_ref(&strong_pick), &t, buy_score, t.min_score).len(), 1);
+
+    // --- GROWTH LANE (mirror of buy_score): near-high proven compounders the on-sale score drops ---
+    // an at-the-high rocket buy_score fades to ~0 (or trims) IS a growth candidate here
+    let rocket = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // range_pct 100, strong CAGR, climbing
+    assert!(growth_score(&rocket, &t).is_some());
+    // ...and ranked picks it up where the on-sale lane (min_score) would have trimmed an at-high name
+    assert_eq!(ranked(std::slice::from_ref(&rocket), &t, growth_score, t.growth_min_score).len(), 1);
+    // a deeply pulled-back name is NOT a growth candidate (that's the on-sale lane's job)
+    let dipped = q(40.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // range_pct 60 < growth_min_range_pct
+    assert!(growth_score(&dipped, &t).is_none());
+    // weak long trend -> an expensive laggard, not a proven compounder -> excluded
+    assert!(growth_score(&q(0.0, &[("1Y", 3.0), ("5Y", 6.0), ("10Y", 10.0)]), &t).is_none());
+    // not climbing this year (negative 1Y) -> no momentum -> excluded
+    assert!(growth_score(&q(0.0, &[("1Y", -5.0), ("5Y", 200.0), ("10Y", 500.0)]), &t).is_none());
+    // crashing this month -> momentum broke -> excluded
+    assert!(growth_score(&q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0), ("1M", -30.0)]), &t).is_none());
+    // leveraged/stablecoin still excluded in this lane too
+    let mut lev_g = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    lev_g.name = "Direxion Daily Technology".into();
+    assert!(growth_score(&lev_g, &t).is_none());
+    // acceleration: same long CAGR, the name whose recent year OUTPACES it scores higher (momentum)
+    let accel = growth_score(&q(0.0, &[("1Y", 80.0), ("5Y", 100.0), ("10Y", 150.0)]), &t).unwrap();
+    let steady = growth_score(&q(0.0, &[("1Y", 15.0), ("5Y", 100.0), ("10Y", 150.0)]), &t).unwrap();
+    assert!(accel > steady);
+    // (E) a nosebleed P/E damps the growth score (anti top-chase), an unknown PE stays neutral
+    let mut rich_g = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    rich_g.pe_ratio = Some(80.0);
+    assert!(growth_score(&rich_g, &t).unwrap() < growth_score(&rocket, &t).unwrap());
+    // (1) overextension brake: a name run far ABOVE its 200wk SMA scores below an at-trend twin
+    let mut stretched = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    stretched.above_ma_pct = 100.0; // maximally stretched
+    assert!(growth_score(&stretched, &t).unwrap() < growth_score(&rocket, &t).unwrap());
+    assert!((core::above_long_ma_pct(&[50.0, 50.0, 100.0], 3) - 50.0).abs() < 1e-9); // 100 vs mean 66.67
+    assert_eq!(core::above_long_ma_pct(&[100.0, 100.0, 50.0], 3), 0.0); // below the mean -> 0
+    // (3) consistency: a near-high equity negative over 5Y (mooned-then-bled) is rejected despite a fat 10Y
+    assert!(growth_score(&q(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]), &t).is_none());
+    let mut bled_crypto = q(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]); // ...but crypto 5Y is noise
+    bled_crypto.ticker = "ETH-EUR".into();
+    assert!(growth_score(&bled_crypto, &t).is_some());
+    // (4) NUPL damp: euphoric market (high NUPL) shrinks the multiplier; below the line / unknown = 1.0
+    assert_eq!(nupl_damp(None, &t), 1.0);
+    assert_eq!(nupl_damp(Some(0.0), &t), 1.0); // below euphoria line
+    assert!(nupl_damp(Some(0.75), &t) < 1.0 && nupl_damp(Some(0.75), &t) > t.nupl_damp_floor);
+    assert!((nupl_damp(Some(1.0), &t) - t.nupl_damp_floor).abs() < 1e-9); // peak euphoria -> floor
+
+    // --- (A) trend consistency: R² of the log-price line, damps CAGR endpoint-luck ---
+    assert!(core::trend_r2(&[1.0, 2.0, 4.0, 8.0, 16.0]) > 0.999); // perfect exponential -> R²≈1
+    assert!(core::trend_r2(&[1.0, 100.0, 2.0, 200.0, 3.0]) < 0.5); // zigzag -> lumpy
+    assert_eq!(core::trend_r2(&[5.0]), 0.0); // too short
+    // (C) max drawdown: worst peak-to-trough
+    assert!((core::max_drawdown_pct(&[100.0, 50.0, 75.0]) - 50.0).abs() < 1e-9);
+    assert_eq!(core::max_drawdown_pct(&[1.0, 2.0, 3.0]), 0.0); // monotone up -> never down
+    // (A) quality_factors: a smooth path (R²=1) keeps a higher consistency multiplier than a lumpy one
+    assert!(quality_factors(&{ let mut x = q(5.0, &[("10Y", 40.0)]); x.trend_r2 = 1.0; x }, 20.0, &t).0
+        > quality_factors(&{ let mut x = q(5.0, &[("10Y", 40.0)]); x.trend_r2 = 0.0; x }, 20.0, &t).0);
+    // (B) risk_reward: same CAGR, the lower-volatility name earns a bigger Sharpe-ish bonus
+    assert!(quality_factors(&{ let mut x = q(5.0, &[]); x.volatility_pct = Some(1.0); x }, 20.0, &t).1
+        > quality_factors(&{ let mut x = q(5.0, &[]); x.volatility_pct = Some(4.0); x }, 20.0, &t).1);
+    // (C) risk_reward: same CAGR, the SHALLOWER max-drawdown name earns a bigger Calmar bonus
+    assert!(quality_factors(&{ let mut x = q(5.0, &[]); x.max_drawdown_pct = 20.0; x }, 20.0, &t).1
+        > quality_factors(&{ let mut x = q(5.0, &[]); x.max_drawdown_pct = 90.0; x }, 20.0, &t).1);
+    // (A) end-to-end: a steady compounder outranks an otherwise-identical lumpy one in the on-sale lane
+    let mut steady_q = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    steady_q.trend_r2 = 0.95;
+    let mut lumpy_q = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    lumpy_q.trend_r2 = 0.10;
+    assert!(buy_score(&steady_q, &t).unwrap() > buy_score(&lumpy_q, &t).unwrap());
 }

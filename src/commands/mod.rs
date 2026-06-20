@@ -3,6 +3,7 @@
 
 pub mod accounts;
 pub mod alert;
+pub mod backtest;
 pub mod check;
 pub mod perf;
 pub mod screen;

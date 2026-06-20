@@ -3,6 +3,7 @@
 //!   folioman check  [TICKERS...]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline
 //!   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
 //!   folioman screen [TICKERS...]   scan live universe (CoinGecko + S&P500): ATH/ATL / fallers / dividends / buys
+//!   folioman backtest [YEARS] [TICKERS...]  score-as-of-N-years-ago vs realized return (heuristic sanity check)
 //!   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
 //!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY>   LIVE order (real money, confirmed)
@@ -22,6 +23,7 @@ folioman — review ETF/stock/crypto holdings. Read-only, never trades.
   folioman check  [TICKERS...]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline
   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
   folioman screen [TICKERS...]   scan live universe (CoinGecko + S&P500): ATH/ATL / fallers / dividends / buys
+  folioman backtest [YEARS] [TICKERS...]  score-as-of-N-years-ago vs realized return (heuristic sanity check)
   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
   folioman accounts              cash available + holdings per broker (read-only; env creds)
   folioman trade <broker> <buy|sell> <SYMBOL> <QTY>   LIVE order (real money; brokers:
@@ -39,6 +41,7 @@ async fn main() {
         "check" => commands::check::run(rest).await,
         "perf" => commands::perf::run(rest).await,
         "screen" => commands::screen::run(rest).await,
+        "backtest" => commands::backtest::run(rest).await,
         "alert" => commands::alert::run(rest).await,
         "accounts" => commands::accounts::run(rest).await,
         "trade" => commands::trade::run(rest).await,

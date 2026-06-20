@@ -264,11 +264,17 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         volatility_pct: core::volatility_pct(&chart.closes, 252),
         // (C) % below the ~200wk SMA — structural "cheap vs long trend" entry signal (FX-agnostic ratio).
         below_ma_pct: core::below_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
+        // (1) % ABOVE the ~200wk SMA — overextension brake for the growth lane (far above trend = stretched).
+        above_ma_pct: core::above_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
         // (E) trailing P/E (equities w/ FMP_API_KEY only; None -> neutral value tilt).
         pe_ratio: pe,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
         range_pct: core::price_pct_rank(&chart.closes),
+        // (A/C) zero-extra-fetch quality scalars from the SAME closes: log-trend R² (steadiness) and
+        // worst historical drawdown (pain). Feed the consistency multiplier + Calmar reward.
+        trend_r2: core::trend_r2(&chart.closes),
+        max_drawdown_pct: core::max_drawdown_pct(&chart.closes),
     }
 }
 
@@ -347,7 +353,19 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
 /// screen universe stampeded Yahoo into 429s/timeouts (dropping random coins like BTC to err
 /// stubs); a bounded window keeps each request uncontended. ponytail: fixed cap, tune if the
 /// scan feels slow or Yahoo tightens limits.
-const FETCH_CONCURRENCY: usize = 16;
+pub const FETCH_CONCURRENCY: usize = 16;
+
+/// Raw (dates, closes) for one ticker — the 10y daily series, for the `backtest` command. Same single
+/// chart call the live path already makes (no EXTRA per-ticker fetch). None on fetch/parse fail or
+/// empty history.
+pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<NaiveDate>, Vec<f64>)> {
+    let j = chart_json(client, urls, ticker, "10y").await?;
+    let chart = parse_chart(&j, ticker)?;
+    if chart.closes.is_empty() {
+        return None;
+    }
+    Some((chart.dates, chart.closes))
+}
 
 /// One Quote per ticker, concurrent (≤`FETCH_CONCURRENCY` in flight), input order preserved.
 pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Quote> {

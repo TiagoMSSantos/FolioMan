@@ -101,11 +101,37 @@ pub struct BuyHeuristic {
     pub health_zero_cagr: f64,       // long-leg CAGR (%/yr, negative) at which trend_health hits 0 (a decaying multi-year trend); health=1 at flat/rising
     pub sustained_decline_pct: f64,  // (B) if BOTH 1Y and 5Y % are <= this, the name is bleeding for years (value trap) -> score ×penalty
     pub sustained_decline_penalty: f64, // (B) multiplier applied when the sustained-decline condition holds (e.g. 0.4)
+    pub deep_decline_pct: f64,       // (B/C) a HARSHER tier: 5Y % <= this (e.g. -70%) = a 7y+ deep bleed riding a stale old chart -> deep penalty
+    pub deep_decline_penalty: f64,   // (B/C) multiplier when the deep-decline 5Y condition holds (lower than sustained_decline_penalty)
+    pub min_score: f64,              // (A) drop ranked rows scoring <= this (tables stop padding to top_picks with near-zero at-the-high names)
     pub cheap_weight: f64,           // (C) reward per % the price sits below its ~200wk SMA (structural "cheap vs trend")
     pub cheap_cap: f64,              // (C) cap on that below-SMA % fed into the cheap reward
     pub dividend_weight: f64,        // (D) reward per % of trailing-1Y dividend yield (reinvested divs dominate long-run total return)
     pub dividend_cap: f64,           // (D) cap on the yield % fed into the dividend reward
     pub ref_pe: f64,                 // (E) "fair" trailing P/E: value tilt = ref_pe/PE, clamped — cheap (<ref) lifts, rich (>ref) dampens; no PE = neutral
+
+    // --- GROWTH LANE: a SECOND ranking (the mirror of the on-sale lane) for quality names AT/NEAR
+    //     their high that are still climbing — proven compounders the on-sale score fades to ~0.
+    pub growth_min_range_pct: f64,   // growth GATE: must trade at/above this % of its own ~10y range (near the high); below = it's the on-sale lane's job
+    pub growth_min_cagr: f64,        // growth GATE: long-leg CAGR (%/yr) floor — below this it's not a proven compounder, just an expensive laggard
+    pub growth_trend_weight: f64,    // growth SCORE: reward per %/yr of the long-leg CAGR (capped at long_trend_cap)
+    pub growth_accel_weight: f64,    // growth SCORE: reward per pt the recent 1Y return outpaces the long CAGR (momentum building)
+    pub growth_accel_cap: f64,       // growth SCORE: cap on that 1Y-minus-CAGR acceleration term
+    pub growth_min_score: f64,       // growth SCORE: hide ranked growth rows scoring <= this (padding); 0 = show all
+    pub growth_overext_cap: f64,     // (1) % ABOVE the 200wk SMA at which the overextension brake maxes out
+    pub growth_overext_floor: f64,   // (1) growth-score multiplier at that cap (e.g. 0.4 = a fully-stretched name keeps 40% of its score); 1.0 = brake off
+
+    // --- CRYPTO market-sentiment damp (Bitcoin NUPL): a whole-market greed gauge already fetched for
+    //     the screen footer; high NUPL = euphoria/top -> shrink crypto scores in BOTH lanes. ---
+    pub nupl_euphoria: f64,          // (4) NUPL above this starts damping crypto scores (~0.5 = "belief/denial" greed zone)
+    pub nupl_damp_floor: f64,        // (4) crypto-score multiplier at NUPL=1.0 (full euphoria); 1.0 = damp off
+
+    // --- QUALITY tilts (A/B/C) — all from already-fetched closes, ZERO extra fetch; applied to BOTH lanes ---
+    pub consistency_floor: f64,      // (A) score multiplier at trend R²=0 (a lumpy/lucky path); R²=1 (smooth compounder) keeps full score. 1.0 = off
+    pub sharpe_weight: f64,          // (B) reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off
+    pub sharpe_cap: f64,             // (B) cap on that CAGR/volatility ratio fed into the reward
+    pub calmar_weight: f64,          // (C) reward per unit of CAGR/max-drawdown (return per worst historical pain). 0 = off
+    pub calmar_cap: f64,             // (C) cap on that CAGR/max-drawdown ratio fed into the reward
 
     pub prefer_eur: bool,            // dedup currency twins (BTC-EUR/BTC-USD): keep the EUR leg if true, else USD
 }
@@ -140,11 +166,31 @@ impl Default for BuyHeuristic {
             health_zero_cagr: -10.0,       // a -10%/yr multi-year trend = dead -> trend_health 0
             sustained_decline_pct: -40.0,  // (B) 1Y AND 5Y both <= -40% = multi-year bleed, not a dip
             sustained_decline_penalty: 0.4, // (B) score ×0.4 when that holds (value-trap dock)
+            deep_decline_pct: -70.0,       // (B/C) 5Y <= -70% = a 7y+ deep bleed (e.g. LTC -73%) riding an ancient 10Y pump
+            deep_decline_penalty: 0.15,    // (B/C) score ×0.15 then — harsher than the -40% tier
+            min_score: 5.0,                // (A) hide ranked rows scoring <= 5 (near-the-high padding); 0 = show all top_picks
             cheap_weight: 0.15,            // (C) ~+9 at the cap for a name 60% below its 200wk trend
             cheap_cap: 60.0,               // (C) cap the below-SMA % fed into the cheap reward
             dividend_weight: 1.5,          // (D) ~+9 at the cap for a 6% yielder
             dividend_cap: 6.0,             // (D) cap the trailing yield % fed into the dividend reward
             ref_pe: 20.0,                  // (E) "fair" P/E; PE 10 -> ×1.5 (capped cheap), PE 40 -> ×0.5 (capped rich)
+            // growth lane (near-high compounders still climbing)
+            growth_min_range_pct: 70.0,    // must sit in the top 30% of its own ~10y range to count as "at/near the high"
+            growth_min_cagr: 8.0,          // long-leg must compound >=8%/yr (beat a broad index) to be a "proven" grower
+            growth_trend_weight: 0.5,      // per %/yr CAGR: a +30%/yr compounder adds ~15 (mirror of the on-sale long_trend_weight)
+            growth_accel_weight: 0.2,      // per pt the last year outpaced the long CAGR -> momentum building
+            growth_accel_cap: 50.0,        // cap that acceleration term (a +200% year doesn't run away with it)
+            growth_min_score: 5.0,         // hide growth rows scoring <= 5 (padding); 0 = show all top_picks
+            growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
+            growth_overext_floor: 0.4,     // (1) ...and keeps only 40% of its growth score (brake on blow-off tops)
+            nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
+            nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
+            // quality tilts (zero extra fetch)
+            consistency_floor: 0.5,        // (A) a maximally lumpy path (R²=0) keeps 50% of its score; a smooth compounder keeps 100%
+            sharpe_weight: 0.3,            // (B) CAGR/vol ~10 for a calm +20%/yr name -> ~+3 (modest tilt, secondary to the discount)
+            sharpe_cap: 15.0,              // (B) cap the CAGR/volatility ratio (a low-vol freak can't run away with it)
+            calmar_weight: 4.0,            // (C) CAGR/maxDD ~0.4 for +20%/yr at -50% worst -> ~+1.6
+            calmar_cap: 2.0,               // (C) cap the CAGR/max-drawdown ratio
             prefer_eur: true,
         }
     }

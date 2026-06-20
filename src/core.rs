@@ -82,8 +82,11 @@ pub struct Quote {
     pub avg_turnover_eur: Option<f64>, // avg daily turnover (close*volume, EUR) ~last 30 sessions; liquidity proxy
     pub volatility_pct: Option<f64>,   // daily-return stdev (%) ~last year; the asset's "normal swing" for the picks score
     pub below_ma_pct: f64,             // % below the ~200-week SMA (structural "cheap vs long trend"); 0 if at/above or history too short
+    pub above_ma_pct: f64,             // % ABOVE the ~200-week SMA (overextension "how far it ran"); 0 if at/below or history too short. Growth-lane brake on blow-off tops
     pub pe_ratio: Option<f64>,         // trailing P/E for the valuation tilt; None for crypto/ETF/no-earnings/no source (-> neutral)
     pub range_pct: f64,                // percentile rank (0..100) of the last close in its own ~10y history; 100=at high. picks discount = 100-this
+    pub trend_r2: f64,                 // (A) R² (0..1) of the log-price trend — how steadily it compounds; damps CAGR endpoint-luck. 0 = no/short history
+    pub max_drawdown_pct: f64,         // (C) worst peak-to-trough decline (%) in its history; feeds the Calmar (return-per-pain) reward. 0 = never down/no history
 }
 
 impl Quote {
@@ -110,8 +113,11 @@ impl Quote {
             avg_turnover_eur: None,
             volatility_pct: None,
             below_ma_pct: 0.0,
+            above_ma_pct: 0.0,
             pe_ratio: None,
             range_pct: 0.0,
+            trend_r2: 0.0,
+            max_drawdown_pct: 0.0,
         }
     }
 }
@@ -140,6 +146,63 @@ pub fn below_long_ma_pct(closes: &[f64], n: usize) -> f64 {
         return 0.0;
     }
     f64::max(0.0, (ma - *closes.last().unwrap()) / ma * 100.0)
+}
+
+/// % the latest close sits ABOVE the moving average of the last `n` sessions — the mirror of
+/// `below_long_ma_pct`. How far a name has run past its own long-term trend line; an
+/// overextension/blow-off gauge for the growth lane (price 100% above its 200wk SMA = stretched).
+/// 0 if at/below the average or history shorter than `n`.
+pub fn above_long_ma_pct(closes: &[f64], n: usize) -> f64 {
+    if n == 0 || closes.len() < n {
+        return 0.0;
+    }
+    let ma = closes[closes.len() - n..].iter().sum::<f64>() / n as f64;
+    if ma <= 0.0 {
+        return 0.0;
+    }
+    f64::max(0.0, (*closes.last().unwrap() - ma) / ma * 100.0)
+}
+
+/// (A) R² (0..1) of a straight-line fit to LOG price over time — how STEADILY the asset compounds. A
+/// smooth exponential compounder → ~1; a lumpy path that mooned-then-chopped to the same endpoint →
+/// lower. Damps CAGR's endpoint-luck (a lucky start/end pair on a jagged path isn't a durable trend).
+/// 0 for <2 usable points; non-positive closes are skipped (log undefined). Flat = 1 (zero residual).
+pub fn trend_r2(closes: &[f64]) -> f64 {
+    let ys: Vec<f64> = closes.iter().filter(|&&c| c > 0.0).map(|c| c.ln()).collect();
+    let n = ys.len();
+    if n < 2 {
+        return 0.0;
+    }
+    let xmean = (n as f64 - 1.0) / 2.0; // x = 0..n-1
+    let ymean = ys.iter().sum::<f64>() / n as f64;
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for (i, &y) in ys.iter().enumerate() {
+        let dx = i as f64 - xmean;
+        let dy = y - ymean;
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+    }
+    if syy <= 0.0 || sxx <= 0.0 {
+        return 1.0; // flat log-price = zero residual variance = perfectly "consistent"
+    }
+    (sxy * sxy / (sxx * syy)).clamp(0.0, 1.0)
+}
+
+/// (C) Worst peak-to-trough decline (%) ever seen in the series — the deepest pain a holder endured.
+/// One forward pass tracking the running peak. 0 for empty / never-down. Feeds the Calmar
+/// (return-per-worst-pain) reward: a name that compounds hard with a SHALLOW max drawdown is durable.
+pub fn max_drawdown_pct(closes: &[f64]) -> f64 {
+    let (mut peak, mut worst) = (f64::MIN, 0.0_f64);
+    for &c in closes {
+        if c > peak {
+            peak = c;
+        }
+        if peak > 0.0 {
+            worst = worst.max((peak - c) / peak * 100.0);
+        }
+    }
+    worst
 }
 
 /// Format a number with comma thousands separators and 2 decimals (Python `{:,.2f}`).
@@ -499,6 +562,74 @@ pub fn intraday_pct(closes: &[f64], bars: usize) -> Option<f64> {
     Some((cur - past) / past * 100.0)
 }
 
+/// Pearson correlation of two equal-length series. None if <2 points, length mismatch, or either
+/// series has zero variance (a flat series has no correlation to anything).
+pub fn pearson(xs: &[f64], ys: &[f64]) -> Option<f64> {
+    let n = xs.len();
+    if n < 2 || n != ys.len() {
+        return None;
+    }
+    let nf = n as f64;
+    let (mx, my) = (xs.iter().sum::<f64>() / nf, ys.iter().sum::<f64>() / nf);
+    let (mut sxy, mut sxx, mut syy) = (0.0, 0.0, 0.0);
+    for (x, y) in xs.iter().zip(ys) {
+        let (dx, dy) = (x - mx, y - my);
+        sxy += dx * dy;
+        sxx += dx * dx;
+        syy += dy * dy;
+    }
+    if sxx <= 0.0 || syy <= 0.0 {
+        return None;
+    }
+    Some(sxy / (sxx * syy).sqrt())
+}
+
+/// Spearman rank correlation = Pearson on the fractional ranks. Robust to the wild magnitude outliers
+/// a few crypto names inject (it measures monotone agreement, not size). None if <2 points.
+pub fn spearman(xs: &[f64], ys: &[f64]) -> Option<f64> {
+    pearson(&ranks(xs), &ranks(ys))
+}
+
+/// Fractional ranks (1-based; tied values share the average of their ranks), in original order.
+/// ponytail: O(n log n) sort + linear tie-merge; fine for the backtest's handful-to-hundreds of names.
+fn ranks(v: &[f64]) -> Vec<f64> {
+    let mut idx: Vec<usize> = (0..v.len()).collect();
+    idx.sort_by(|&a, &b| v[a].partial_cmp(&v[b]).unwrap_or(std::cmp::Ordering::Equal));
+    let mut r = vec![0.0; v.len()];
+    let mut i = 0;
+    while i < idx.len() {
+        let mut j = i;
+        while j + 1 < idx.len() && v[idx[j + 1]] == v[idx[i]] {
+            j += 1; // group of ties [i..=j]
+        }
+        let avg = (i + j) as f64 / 2.0 + 1.0; // mean of the 1-based ranks (i+1)..=(j+1)
+        for k in i..=j {
+            r[idx[k]] = avg;
+        }
+        i = j + 1;
+    }
+    r
+}
+
+/// Build a Quote AS OF index `t` (inclusive) from the full history, filling ONLY the price-derived
+/// fields the buy score reads — reusing the exact same horizon/SMA/vol/R²/drawdown fns on the `[..=t]`
+/// slices, so the backtest scores a name exactly as the live tool would have on that day. ponytail:
+/// dividends / turnover / P/E are NOT reconstructed (no clean as-of source), so those score terms go
+/// neutral here; the backtest validates the PRICE-based heuristic, which is the bulk of it.
+pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], t: usize) -> Quote {
+    let (d, c) = (&dates[..=t], &closes[..=t]);
+    let mut q = Quote::stub(ticker, "", "", ticker);
+    q.perf = horizon_changes(d, c, None, &BTreeMap::new(), None);
+    q.drawdown_pct = pct_from_high(c); // all-time anchor as of t
+    q.range_pct = price_pct_rank(c);
+    q.volatility_pct = volatility_pct(c, 252);
+    q.below_ma_pct = below_long_ma_pct(c, crate::config::LONG_MA_SESSIONS);
+    q.above_ma_pct = above_long_ma_pct(c, crate::config::LONG_MA_SESSIONS);
+    q.trend_r2 = trend_r2(c);
+    q.max_drawdown_pct = max_drawdown_pct(c);
+    q
+}
+
 /// [1h, 6h, 12h] % changes = 1/6/12 hourly bars back. With ~hourly bars over several days this
 /// fills for stocks too (was always n/a past a close when matched by wall-clock time).
 pub fn intraday_changes(closes: &[f64]) -> [Option<f64>; 3] {
@@ -650,6 +781,14 @@ pub fn extreme_flags(closes: &[f64], tol: f64) -> (bool, bool) {
 pub fn selftest() {
     assert!((pct_from_high(&[100.0, 80.0, 95.0]) - 5.0).abs() < 1e-9);
     assert_eq!(pct_from_high(&[90.0, 100.0]), 0.0);
+    // backtest correlation helpers: perfect monotone -> +1, reversed -> -1, robust ranks
+    assert!((pearson(&[1.0, 2.0, 3.0], &[2.0, 4.0, 6.0]).unwrap() - 1.0).abs() < 1e-9);
+    assert!((pearson(&[1.0, 2.0, 3.0], &[6.0, 4.0, 2.0]).unwrap() + 1.0).abs() < 1e-9);
+    assert!(pearson(&[1.0, 1.0], &[1.0, 1.0]).is_none()); // zero variance
+    assert!((spearman(&[1.0, 2.0, 3.0, 4.0], &[10.0, 1000.0, 30.0, 99999.0]).unwrap() - 1.0).abs() < 1e-9); // monotone despite outliers
+    assert!((spearman(&[1.0, 2.0, 3.0], &[3.0, 2.0, 1.0]).unwrap() + 1.0).abs() < 1e-9);
+    assert_eq!(ranks(&[10.0, 30.0, 20.0]), vec![1.0, 3.0, 2.0]);
+    assert_eq!(ranks(&[5.0, 5.0, 9.0]), vec![1.5, 1.5, 3.0]); // ties share the average rank
     assert_eq!(market_of("VWCE.DE"), "Germany");
     assert_eq!(market_of("AAPL"), "USA");
     assert_eq!(market_of("BTC-USD"), "Crypto (global)");

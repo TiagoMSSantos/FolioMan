@@ -145,14 +145,17 @@ pub async fn run(args: Vec<String>) {
         println!("  {:<nw$} {:<tw$} {cells}", truncate(&q.name, nw), truncate(&q.ticker, tw));
     }
 
-    // buy candidates among the SCANNED universe (not settings.tickers) — same heuristic as `check`
-    render(&qs, 20, &settings.buy_heuristic, w, &tech);
+    // Bitcoin NUPL: whole-market crypto sentiment gauge. Fetched BEFORE render so it can damp the
+    // crypto rows of both lanes (high NUPL = euphoric top), then also printed as the footer line.
+    let nupl = fetch::fetch_nupl(&client, &settings.urls).await;
 
-    // Bitcoin NUPL: whole-market sentiment gauge, printed after the crypto table. Skipped on fetch fail.
-    if let Some(nupl) = fetch::fetch_nupl(&client, &settings.urls).await {
+    // buy candidates among the SCANNED universe (not settings.tickers) — same heuristic as `check`
+    render(&qs, 20, &settings.buy_heuristic, w, &tech, nupl);
+
+    if let Some(n) = nupl {
         println!(
-            "\nBitcoin NUPL: {nupl:.3} ({}) — net unrealized profit/loss, whole-market sentiment. NOT advice.",
-            crate::core::nupl_zone(nupl)
+            "\nBitcoin NUPL: {n:.3} ({}) — net unrealized profit/loss, whole-market sentiment (damps the crypto tables above). NOT advice.",
+            crate::core::nupl_zone(n)
         );
     }
 }
