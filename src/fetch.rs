@@ -486,7 +486,13 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
                 .replace("{ticker}", isin.as_str())
                 .replace("quotesCount=0", "quotesCount=1")
                 .replace("newsCount=3", "newsCount=0");
-            get_json(client, &url).await?.pointer("/quotes/0/symbol")?.as_str().map(String::from)
+            let sym = get_json(client, &url).await?.pointer("/quotes/0/symbol")?.as_str()?.to_string();
+            // Yahoo's fallback symbol for an ISIN whose only listing it indexes is Stuttgart is
+            // `<ISIN>.SG` — a chart-less venue, so EVERY such resolution is a guaranteed dead fetch
+            // (716 of the 783 old "no Yahoo data" gate-outs). A real liquid listing (.DE/.MI/.L/.AS…)
+            // would have ranked first, so there's nothing to rescue: drop it. ponytail: only .SG shows
+            // up in practice; add the suffix to this check if another chart-less regional venue appears.
+            (!sym.ends_with(".SG")).then_some(sym)
         })
         .buffer_unordered(fetch_concurrency())
         .filter_map(|x| async move { x })
