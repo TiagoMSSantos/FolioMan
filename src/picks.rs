@@ -436,14 +436,26 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
     // stretched/blow-off, so taper the score toward `growth_overext_floor` at the cap. This is the
     // generic brake the P/E tilt can't provide for crypto/ETFs (no earnings) — works on price alone.
+    // (Tried a CAGR-conditional floor — brake elite compounders less — but it CUT wide edge
+    //  +108.9->+80.5 and flipped OOS-late negative: high-CAGR stretched names revert too. Hard brake stays.)
     let overext = q.above_ma_pct.min(t.growth_overext_cap);
     let overext_damp = if t.growth_overext_cap > 0.0 {
         1.0 - (overext / t.growth_overext_cap) * (1.0 - t.growth_overext_floor) // 1.0 at trend .. floor at the cap
     } else {
         1.0 // cap 0 = brake disabled
     };
+    // (L) liquidity tilt, added OUTSIDE the brake so a parabolic stretch can't crush it: deep-liquid
+    // mega-caps are easier to hold/exit over decades and harder to manipulate, a real quality the
+    // brake-docked score ignores. Reward only turnover ABOVE €1B (ln ratio, 0 below) so it lifts proven
+    // liquid compounders (NVDA €32B) over the illiquid €200-500M names they trail on the docked score,
+    // not the whole field. BACKTEST-BLIND (backtest_quote has no turnover) -> the validated edge is untouched.
+    let liq_bonus = if t.growth_turnover_weight > 0.0 {
+        t.growth_turnover_weight * q.avg_turnover_eur.map_or(0.0, |v| (v / 1e9).max(1.0).ln())
+    } else {
+        0.0
+    };
     // (#4) geomean the pure penalties (trust/overext/consistency); proximity + value stay direct
-    Some(base * proximity * value * combine_damps(&[trust, overext_damp, consistency]))
+    Some(base * proximity * value * combine_damps(&[trust, overext_damp, consistency]) + liq_bonus)
 }
 
 /// (4) Whole-market crypto sentiment damp from Bitcoin NUPL (net unrealized profit/loss — already
@@ -511,7 +523,15 @@ fn ranked<'a>(
     // drop padding rows below the lane's floor, so the tables stop filling to top_picks with near-zero
     // names. (min_score 0 -> show everything > 0.)
     picks.retain(|(_, s)| *s > min_score.max(0.0));
-    picks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap()); // best score first
+    // best score first; ties broken by TURNOVER (most liquid first) not the incoming alphabetical order
+    // — score-equal names are otherwise ordered by ticker, which buried a deep-liquid compounder (NVDA,
+    // €32B) under a tiny-turnover twin (AMETEK, €244M) at the top-50 cutoff. Tie-break is edge-neutral
+    // (the backtest scores are unchanged; only the arbitrary intra-tie order moves).
+    picks.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap()
+            .then(b.0.avg_turnover_eur.unwrap_or(0.0).partial_cmp(&a.0.avg_turnover_eur.unwrap_or(0.0)).unwrap())
+    });
     // (B) collapse dual-class share twins (GOOG/GOOGL, BRK.A/BRK.B): same company = identical Yahoo
     // name; after the best-first sort, keep the first (higher-scoring/more-liquid) leg, drop the rest.
     let mut seen: HashSet<&str> = HashSet::new();
@@ -869,6 +889,13 @@ pub fn selftest() {
     let mut stretched = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
     stretched.above_ma_pct = 100.0; // maximally stretched
     assert!(growth_score(&stretched, &t).unwrap() < growth_score(&rocket, &t).unwrap());
+    // (L) liquidity tilt: a deep-liquid stretched compounder (NVDA case) outscores an illiquid twin —
+    // the bonus is added OUTSIDE the brake, so the parabolic stretch can't bury it under a thin name.
+    let mut liquid = stretched.clone();
+    liquid.avg_turnover_eur = Some(32e9); // €32B (NVDA-class)
+    let mut illiquid = stretched.clone();
+    illiquid.avg_turnover_eur = Some(2e8); // €200M, below the €1B floor -> no bonus
+    assert!(growth_score(&liquid, &t).unwrap() > growth_score(&illiquid, &t).unwrap());
     assert!((core::above_long_ma_pct(&[50.0, 50.0, 100.0], 3) - 50.0).abs() < 1e-9); // 100 vs mean 66.67
     assert_eq!(core::above_long_ma_pct(&[100.0, 100.0, 50.0], 3), 0.0); // below the mean -> 0
     // (3) consistency: a near-high equity negative over 5Y (mooned-then-bled) is rejected despite a fat 10Y

@@ -132,6 +132,7 @@ pub struct BuyHeuristic {
     pub growth_min_score: f64,       // growth SCORE: hide ranked growth rows scoring <= this (padding); 0 = show all
     pub growth_overext_cap: f64,     // (1) % ABOVE the 200wk SMA at which the overextension brake maxes out
     pub growth_overext_floor: f64,   // (1) growth-score multiplier at that cap (e.g. 0.4 = a fully-stretched name keeps 40% of its score); 1.0 = brake off
+    pub growth_turnover_weight: f64, // (L) liquidity tilt: bonus per ln(turnover/€1B), added OUTSIDE the brake. Rewards deep-liquid mega-caps (easy multi-decade exit, less manipulation) so a proven compounder like NVDA isn't ranked below an illiquid €200M twin on a score tie. BACKTEST-BLIND (backtest_quote has no turnover) so it never moves the validated edge; 0 = off
 
     // --- CRYPTO market-sentiment damp (Bitcoin NUPL): a whole-market greed gauge already fetched for
     //     the screen footer; high NUPL = euphoria/top -> shrink crypto scores in BOTH lanes. ---
@@ -200,6 +201,7 @@ impl Default for BuyHeuristic {
             growth_min_score: 5.0,         // hide growth rows scoring <= 5 (padding); 0 = show all top_picks
             growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
             growth_overext_floor: 0.15,    // (1) ...and keeps only 15% of its growth score at full stretch. Tightened 0.2->0.15 once the consistency damp came off: a harder blow-off-top brake raised the wide edge (5y +107.3->+108.9, 3y +39.6->+41.1) — buying right after a parabolic run-up is a poor long-hold entry. 0.1 squeezed marginally more OOS-late durability but docked near-high compounders (e.g. NVDA) out of the table too aggressively; 0.15 keeps them visible while still braking. 1.0 = brake off
+            growth_turnover_weight: 0.5,   // (L) liquidity tilt per ln(turnover/€1B), added after the brake. Lifts deep-liquid proven compounders (NVDA €32B -> +~1.0) over illiquid €200-500M names they tie/trail on the brake-docked score, without touching the validated edge (BACKTEST-BLIND)
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
             // quality tilts (zero extra fetch)

@@ -72,7 +72,21 @@ struct Chart {
 
 async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Value> {
     let url = urls.yahoo_chart.replace("{ticker}", ticker).replace("{range}", range);
-    get_json(client, &url).await
+    // One retry: under the wide screen fan-out Yahoo 429s/times-out random names — either no response
+    // (None) or a rate-limit body that parses to JSON but carries no chart.result. Both drop the name to
+    // an err stub that then vanishes from the universe (NVDA disappeared this way). A single backoff+retry
+    // recovers them. ponytail: fixed 400ms, one extra try — bump if drops persist under heavier load.
+    for attempt in 0..2 {
+        if let Some(v) = get_json(client, &url).await {
+            if v.pointer("/chart/result/0/timestamp").is_some() {
+                return Some(v);
+            }
+        }
+        if attempt == 0 {
+            tokio::time::sleep(StdDuration::from_millis(400)).await;
+        }
+    }
+    None
 }
 
 /// Full-history chart at MONTHLY resolution. Yahoo coarsens interval=1d to ~monthly bars once the
@@ -550,7 +564,7 @@ pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[Strin
     eprintln!("fetch: {total} quotes (≤{concurrency} concurrent)…");
     const PROGRESS_EVERY: usize = 50;
     // `buffered` (ordered) caps concurrency yet preserves input order (`check` prints in that order).
-    stream::iter(tickers.iter())
+    let mut out: Vec<Quote> = stream::iter(tickers.iter())
         .map(|tk| {
             let done = &done;
             async move {
@@ -564,7 +578,33 @@ pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[Strin
         })
         .buffered(concurrency)
         .collect()
-        .await
+        .await;
+    // Second pass: under the wide fan-out + the extra long-history call per name, Yahoo 429s a handful of
+    // names into "err"/"no data" stubs (empty perf -> gated out -> silently vanish from every table; NVDA
+    // hit this). Re-fetch ONLY those, at low concurrency so they don't contend, and splice the recoveries
+    // back. ponytail: one extra pass, no exponential schedule — the contention is gone once the stampede is.
+    let retry_idx: Vec<usize> = out
+        .iter()
+        .enumerate()
+        .filter(|(_, q)| q.price == "err" || q.price == "no data")
+        .map(|(i, _)| i)
+        .collect();
+    if !retry_idx.is_empty() {
+        eprintln!("fetch: re-fetching {} dropped name(s) at low concurrency…", retry_idx.len());
+        let recovered: Vec<(usize, Quote)> = stream::iter(retry_idx.into_iter())
+            .map(|i| async move {
+                (i, quote_one(client, urls, fx, &tickers[i], dip_days, high_days, intraday, windows, infl).await)
+            })
+            .buffered(4)
+            .collect()
+            .await;
+        for (i, q) in recovered {
+            if q.price != "err" && q.price != "no data" {
+                out[i] = q;
+            }
+        }
+    }
+    out
 }
 
 /// Best-effort live 3-month Euribor (%). Returns (rate, is_live); falls back on failure.
