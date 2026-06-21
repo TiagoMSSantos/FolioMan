@@ -286,13 +286,23 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         async { if ticker.contains('-') { None } else { fetch_roe(client, urls, ticker).await } },
     );
 
-    let chart = match chart_j.as_ref().and_then(|j| parse_chart(j, ticker)) {
-        Some(c) => c,
-        None => return Quote::stub(ticker, "err", "", ticker),
+    let parsed = chart_j.as_ref().and_then(|j| parse_chart(j, ticker));
+    let chart = match parsed {
+        Some(c) if !c.closes.is_empty() => c,
+        other => {
+            // Crypto -EUR with no Yahoo data: many alts (APT, SUI, NEAR…) only carry a -USD pair on
+            // Yahoo, not -EUR. Retry once in USD before gating it out — the price still renders in €
+            // via the USD->EUR fx rate, and dedup keys on the underlying so the -USD leg slots in
+            // cleanly. ponytail: boxed recursion for the single retry; -USD can't re-trigger this.
+            if let Some(base) = ticker.strip_suffix("-EUR") {
+                return Box::pin(quote_one(client, urls, fx, &format!("{base}-USD"), dip_days, high_days, intraday, news, windows, infl)).await;
+            }
+            return match other {
+                Some(c) => Quote::stub(ticker, "no data", "", &c.name),
+                None => Quote::stub(ticker, "err", "", ticker),
+            };
+        }
     };
-    if chart.closes.is_empty() {
-        return Quote::stub(ticker, "no data", "", &chart.name);
-    }
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
     // long dividend sums populate for old names. Prepend only the monthly bars that predate the daily
