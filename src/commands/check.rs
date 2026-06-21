@@ -1,7 +1,7 @@
 //! `check [TICKERS]` — price(EUR) + horizon % + market + trend + headline, then the
 //! buy-candidate ranking and the Euribor / Certificados / inflation footer.
 
-use crate::commands::{pct, truncate};
+use crate::commands::{print_macro_footer, truncate};
 use crate::core::HORIZONS;
 use crate::{config, core, fetch, picks};
 
@@ -49,59 +49,10 @@ pub async fn run(args: Vec<String>) {
         );
     }
 
-    // best buy candidates (heuristic, derived from the table above — no extra fetch).
-    // Empty tech set: the watchlist carries no GICS sector data, so no tech-only table here.
-    picks::render(&qs, settings.top_picks, &settings.buy_heuristic, w, &std::collections::HashSet::new(), None);
+    // best growth candidates (heuristic, derived from the table above — no extra fetch). Empty sector
+    // filter: the watchlist is hand-picked, never sector-culled.
+    picks::render(&qs, settings.top_picks, &settings.buy_heuristic, w, None, &[]);
 
-    // one concurrent batch: Euribor + the 3 inflation fetches
-    let (euribor_res, inflations) = tokio::join!(
-        fetch::fetch_euribor_3m(&client, &settings.urls, settings.euribor_3m),
-        fetch::inflation_all(&client, &settings.urls),
-    );
-    let (euribor, live) = euribor_res;
-    let tag = if live {
-        "live".to_string()
-    } else {
-        format!("⚠ FALLBACK — config value from {}", settings.euribor_3m_date)
-    };
-    println!("\nEuribor 3M: {:.3}%  ({tag})", euribor);
-    println!(
-        "Certificados de Aforro — base = min(Euribor + spread, cap), floored 0; \
-         premium added per holding year. Gains compound today's base (Euribor drifts):"
-    );
-    println!(
-        "  {:<6} {:>6} {:>6} {:>14} {:>8} {:>8} {:>8} {:>8}",
-        "SÉRIE", "BASE", "CAP", "PREMIUM 2-5/6+", "1Y", "5Y", "10Y", "20Y"
-    );
-    for s in core::CA_SERIES {
-        let base = core::ca_base_rate(euribor, s.spread, s.cap);
-        let gain = |y| format!("{:+.1}%", core::ca_cumulative_gain(base, s.premium_early, s.premium_late, y));
-        println!(
-            "  {:<6} {:>5.2}% {:>5.1}% {:>13} {:>8} {:>8} {:>8} {:>8}",
-            s.name,
-            base,
-            s.cap,
-            format!("+{:.2}/+{:.2}%", s.premium_early, s.premium_late),
-            gain(1),
-            gain(5),
-            gain(10),
-            gain(20),
-        );
-    }
-
-    println!("\nInflation — latest annual % + cumulative price rise (compounded) over last N years:");
-    println!("  {:<9} {:>9} {:>9} {:>9} {:>9}", "", "latest", "5Y", "10Y", "20Y");
-    for (label, series) in &inflations {
-        let (ly, lv, _, _) = core::inflation_summary(series);
-        let cum = |y| pct(core::inflation_compounded(series, y));
-        let note = if series.is_empty() {
-            "  (⚠ FALLBACK — live fetch failed, no data)".to_string()
-        } else {
-            match ly {
-                Some(y) => format!("  (latest {y})"),
-                None => String::new(),
-            }
-        };
-        println!("  {:<9} {:>9} {:>9} {:>9} {:>9}{note}", label, pct(lv), cum(5), cum(10), cum(20));
-    }
+    // Euribor / Certificados de Aforro / inflation — the macro backdrop, shared with `screen`
+    print_macro_footer(&client, &settings.urls).await;
 }

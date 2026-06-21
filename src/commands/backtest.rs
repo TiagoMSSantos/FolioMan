@@ -78,8 +78,9 @@ pub async fn run(args: Vec<String>) {
         // (#2) widen to the live screen universe (crypto + S&P 500 + Xetra UCITS ETFs) for a far bigger
         // sample. Slower (one history fetch per name) but the only cure for 53-survivor-ticker noise.
         eprintln!("backtest: fetching the live screen universe (this is the slow, wide-sample path)…");
+        // no sector filter (&[]): the backtest measures edge across the FULL sample, never a slice
         tickers =
-            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur).await;
+            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &[]).await.0;
     } else if tickers.is_empty() {
         tickers = settings.tickers.clone();
     }

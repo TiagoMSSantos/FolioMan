@@ -397,18 +397,23 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     if q.avg_turnover_eur.map_or(false, |v| v < t.min_avg_turnover_eur) {
         return None; // too thin (unknown turnover passes)
     }
-    if q.range_pct < t.growth_min_range_pct {
-        return None; // NOT near its high -> that's the on-sale lane's job, not this one
+    let min_range = if crypto { t.growth_min_range_pct_crypto } else { t.growth_min_range_pct };
+    if q.range_pct < min_range {
+        return None; // equities: NOT near its high -> the on-sale lane's job. crypto: looser floor (alts run below ATH)
     }
     let (long_cum, long_years) =
         long_leg(q).or_else(|| if crypto { perf_pct(q, "1Y").map(|p| (p, 1.0)) } else { None })?;
     let long_cagr = core::cagr(long_cum, long_years);
-    if long_cagr < t.growth_min_cagr {
-        return None; // weak long-run trend -> an expensive laggard, not a proven compounder
+    let min_cagr = if crypto { t.growth_min_cagr_crypto } else { t.growth_min_cagr };
+    if long_cagr < min_cagr {
+        return None; // equities: weak trend = expensive laggard. crypto: looser floor (show all growers vs BTC)
     }
     let y1 = perf_pct(q, "1Y")?;
-    if y1 <= 0.0 {
-        return None; // not actually climbing this year -> no momentum to ride
+    // equities must be climbing this year; crypto is allowed down to its looser 1Y floor so the market
+    // base (Bitcoin, often red year-on-year) and near-BTC coins still appear, ranked vs BTC.
+    let y1_floor = if crypto { t.min_1y_pct_crypto } else { 0.0 };
+    if y1 <= y1_floor {
+        return None; // not climbing (equities) / a corpse below the crypto floor -> no trend to ride
     }
     let knife = if crypto { t.max_1m_drop_pct_crypto } else { t.max_1m_drop_pct };
     if perf_pct(q, "1M").unwrap_or(0.0) <= knife {
@@ -603,53 +608,67 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
 /// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
 /// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
-fn print_lane(
-    picks: Vec<(&Quote, f64)>,
-    n: usize,
-    w: &Widths,
-    tech: &HashSet<String>,
-    kind: &str,
-    desc: &str,
-) {
+fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], min_score: f64) {
     let (crypto, equity): (Vec<_>, Vec<_>) =
         picks.into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
     let (etf, stock): (Vec<_>, Vec<_>) = equity.into_iter().partition(|(q, _)| quote_is_etf(q));
-    print_picks(&format!("Top {n} stocks {kind} — {desc}"), &stock, n, w);
-    // tech-only subset (S&P 500 GICS Information Technology + Communication Services); skipped when
-    // no sector data (e.g. `screen TICKER...` or `check`, which pass an empty set). ETFs aren't in the
-    // S&P constituent set, so this stays single-stock even drawing from the pre-split equity list.
-    if !tech.is_empty() {
-        let tech_picks: Vec<_> = stock.iter().filter(|(q, _)| tech.contains(&q.ticker)).cloned().collect();
-        print_picks(&format!("Top {n} tech stocks {kind} — {desc}"), &tech_picks, n, w);
-    }
-    print_picks(&format!("Top {n} ETFs {kind} — {desc}"), &etf, n, w);
-    print_picks(&format!("Top {n} crypto {kind} — {desc}"), &crypto, n, w);
+    // Equities: apply the growth_min_score trim HERE (the input list was ranked with no trim so the
+    // crypto lane below can stay full). ETFs carry no GICS sector, so the sector filter matches the
+    // configured keywords against the fund NAME; stocks were already sector-filtered before fetch.
+    let stock: Vec<_> = stock.into_iter().filter(|(_, s)| *s > min_score).collect();
+    let etf: Vec<_> =
+        etf.into_iter().filter(|(q, s)| *s > min_score && core::sector_matches(&q.name, sectors)).collect();
+    // Title carries the selected sector filter so the table says what it's showing ("all" = no filter).
+    // Count shown = how many actually qualified (capped at n); "of {n} max" explains a short table —
+    // it's not a quota, that's all that passed the gates + filter.
+    let secs = if sectors.is_empty() { "all".to_string() } else { sectors.join(", ") };
+    let head = |len: usize| if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") };
+    print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w);
+    print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w);
+    // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
+    // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
+    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w);
 }
 
-/// Print the Top-N picks in TWO lanes: the on-sale "quality on sale" heuristic, then its mirror, the
-/// growth/momentum lane (proven compounders at/near their high still climbing — names the on-sale
-/// score fades to ~0 and would otherwise never surface). Each lane is split per asset class.
-/// `nupl` (Bitcoin net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or
-/// fetch fail) damps the crypto rows of BOTH lanes when the market is euphoric.
-pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, tech: &HashSet<String>, nupl: Option<f64>) {
-    // (4) market-greed damp, applied to crypto rows only (it's a whole-crypto-market gauge)
+/// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
+/// = the coin's year minus BTC's, as a fraction; the score scales by (1 + w·edge), bounded 0.5x..2x so
+/// one moonshot can't run away and a laggard is docked, not zeroed. BTC vs itself = edge 0 = 1.0x (the
+/// neutral anchor every other coin is read against). Unknown BTC-or-coin 1Y, or w=0 -> unchanged.
+fn btc_relative(coin_1y: Option<f64>, btc_1y: Option<f64>, score: f64, w: f64) -> f64 {
+    match (coin_1y, btc_1y) {
+        (Some(c), Some(b)) if w > 0.0 => score * (1.0 + w * (c - b) / 100.0).clamp(0.5, 2.0),
+        _ => score,
+    }
+}
+
+/// Print the Top-N GROWTH picks split per asset class (stocks / ETFs / crypto). The growth lane —
+/// proven compounders at/near their own ~10y high still climbing — is the ONLY lane with a validated
+/// forward edge for a 20yr+ buy-and-hold (walk-forward rho +0.26, top-vs-bottom-half +108 pts). The
+/// old on-sale "buy the dip" lane was dropped: its walk-forward edge is NEGATIVE (-72 pts), i.e.
+/// deepest-dip ranking picks future LOSERS over a multi-decade hold. `nupl` (Bitcoin
+/// net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or fetch fail) damps
+/// the crypto rows when the market is euphoric.
+pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String]) {
+    // (4) market-greed damp, applied to crypto rows only (it's a whole-crypto-market gauge).
     let cdamp = nupl_damp(nupl, t);
-    let crypto_damp = |q: &Quote, s: f64| if is_currency_quoted(&q.ticker) { s * cdamp } else { s };
-    let onsale_scorer = |q: &Quote, t: &BuyHeuristic| buy_score(q, t).map(|s| crypto_damp(q, s));
-    let growth_scorer = |q: &Quote, t: &BuyHeuristic| growth_score(q, t).map(|s| crypto_damp(q, s));
+    // Bitcoin = the crypto market's base: tilt each alt by its 1Y return RELATIVE to BTC, so the looser
+    // crypto gate surfaces more coins without flooding the table with names that merely lag the base.
+    let btc_1y = qs.iter().find(|q| q.ticker.starts_with("BTC-")).and_then(|q| perf_pct(q, "1Y"));
+    let crypto_adj = |q: &Quote, s: f64| {
+        if !is_currency_quoted(&q.ticker) {
+            return s; // equities/ETFs: no crypto-market damp, no BTC base
+        }
+        btc_relative(perf_pct(q, "1Y"), btc_1y, s * cdamp, t.growth_btc_outperf_weight)
+    };
+    let growth_scorer = |q: &Quote, t: &BuyHeuristic| growth_score(q, t).map(|s| crypto_adj(q, s));
 
-    let onsale = "quality-on-sale heuristic: most below its peak (OFF-HI; anchor = high_days, default \
-                  all-time over the fetched ~10y) with a still-intact longer-term trend (5Y+ where the \
-                  history exists — Yahoo's EUR crypto pairs are younger, so 1Y stands in). NOT advice, \
-                  just a ranking:";
-    print_lane(ranked(qs, t, onsale_scorer, t.min_score), n, w, tech, "buy candidates", onsale);
-
-    // mirror lane: at/near the high but still expected to compound — the on-sale score can't surface
-    // these (no "discount"), so they get their own ranking. Gated to proven, still-climbing names.
-    let growth = "growth/momentum lane (mirror of on-sale): at/near its own ~10y high (OFF-HI ≈ 0) with \
-                  a strong proven long-term CAGR and an accelerating recent year, braked by how far it's \
-                  run above its 200wk trend — quality pricey *because* it keeps winning. NOT advice:";
-    print_lane(ranked(qs, t, growth_scorer, t.growth_min_score), n, w, tech, "growth candidates", growth);
+    let growth = "20yr+ growth ranking: at/near its own ~10y high (OFF-HI ≈ 0) with a strong proven \
+                  long-term CAGR and an accelerating recent year, braked by how far it's run above its \
+                  200wk trend — quality pricey *because* it keeps winning. Crypto ranked vs Bitcoin (the \
+                  market base). NOT advice:";
+    // rank with NO trim (0.0): print_lane trims equities by growth_min_score but keeps the crypto lane
+    // full (all growers up to Bitcoin). Gates inside growth_score still exclude non-growers.
+    print_lane(ranked(qs, t, growth_scorer, 0.0), n, w, "growth candidates", growth, sectors, t.growth_min_score);
 }
 
 /// Buy-heuristic asserts (no network). Run by the `selftest` subcommand and the unit test.
@@ -881,6 +900,12 @@ pub fn selftest() {
     let accel = growth_score(&q(0.0, &[("1Y", 80.0), ("5Y", 100.0), ("10Y", 150.0)]), &t).unwrap();
     let steady = growth_score(&q(0.0, &[("1Y", 15.0), ("5Y", 100.0), ("10Y", 150.0)]), &t).unwrap();
     assert!(accel > steady);
+    // BTC-relative crypto tilt: beat BTC -> boost, == BTC -> neutral 1.0x, lag -> dock (bounded 0.5x..2x)
+    assert!((btc_relative(Some(50.0), Some(20.0), 10.0, 0.3) - 10.9).abs() < 1e-9); // +30pp over BTC -> ×1.09
+    assert_eq!(btc_relative(Some(20.0), Some(20.0), 10.0, 0.3), 10.0); // == BTC -> base 1.0x
+    assert!(btc_relative(Some(-90.0), Some(60.0), 10.0, 0.3) >= 5.0); // big lag clamped at the 0.5x floor
+    assert_eq!(btc_relative(Some(50.0), None, 10.0, 0.3), 10.0); // no BTC base -> unchanged
+    assert_eq!(btc_relative(Some(50.0), Some(20.0), 10.0, 0.0), 10.0); // weight 0 -> tilt off
     // (E) a nosebleed P/E damps the growth score (anti top-chase), an unknown PE stays neutral
     let mut rich_g = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
     rich_g.pe_ratio = Some(80.0);

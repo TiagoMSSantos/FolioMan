@@ -20,8 +20,8 @@ pub struct Settings {
     pub fetch_requests_per_second: f64, // global outbound-request pacer (req/s); spaces launches so the fan-out can't burst-429 (default 10). 0 = no pacing
     #[serde(default = "default_true")]
     pub universe_prefer_eur: bool, // crypto in the live universe quoted in EUR (BTC-EUR) if true, else USD
-    pub euribor_3m: f64,
-    pub euribor_3m_date: String,
+    #[serde(default)]
+    pub sectors: Vec<String>, // `screen` sector filter (GICS keyword, case-insensitive substring): which company/ETF types to fetch. Empty = ALL sectors. e.g. [Technology, Communication, Semiconductor] = tech only. Stocks filtered before fetch (by GICS sector); ETFs filtered by fund name (no GICS for funds)
     pub ntfy_topic: String,
     #[serde(default = "default_top_picks")]
     pub top_picks: usize, // how many buy candidates `check` lists after the table
@@ -130,8 +130,11 @@ pub struct BuyHeuristic {
 
     // --- GROWTH LANE: a SECOND ranking (the mirror of the on-sale lane) for quality names AT/NEAR
     //     their high that are still climbing — proven compounders the on-sale score fades to ~0.
-    pub growth_min_range_pct: f64,   // growth GATE: must trade at/above this % of its own ~10y range (near the high); below = it's the on-sale lane's job
+    pub growth_min_range_pct: f64,   // growth GATE (equities): must trade at/above this % of its own ~10y range (near the high); below = it's the on-sale lane's job
+    pub growth_min_range_pct_crypto: f64, // growth GATE (crypto): looser range floor so more coins surface — most alts sit well below their ATH yet still out-compound; equities use the strict gate above
+    pub growth_btc_outperf_weight: f64, // crypto SCORE: tilt a coin's growth score by how its 1Y return compares to BITCOIN's (the market base) — beats BTC -> boost, lags -> mild dock. 0 = off. SCREEN/CHECK-only (backtest scores names independently, so it's backtest-blind -> validated edge untouched)
     pub growth_min_cagr: f64,        // growth GATE: long-leg CAGR (%/yr) floor — below this it's not a proven compounder, just an expensive laggard
+    pub growth_min_cagr_crypto: f64, // growth GATE (crypto): looser CAGR floor so ALL potential growers (not just >8%/yr) surface in the crypto table, ranked vs Bitcoin; equities keep the strict floor above
     pub growth_trend_weight: f64,    // growth SCORE: reward per %/yr of the long-leg CAGR (capped at long_trend_cap)
     pub growth_accel_weight: f64,    // growth SCORE: reward per pt the recent 1Y return outpaces the long CAGR (momentum building)
     pub growth_accel_cap: f64,       // growth SCORE: cap on that 1Y-minus-CAGR acceleration term
@@ -200,13 +203,16 @@ impl Default for BuyHeuristic {
             mom_12_1_cap: 50.0,            // (#3) cap the 12-1 momentum % fed into the reward
             // growth lane (near-high compounders still climbing)
             growth_min_range_pct: 80.0,    // must sit in the top 20% of its own ~10y range. Tightened 70->80: the walk-forward shows the acceleration signal only works for genuine near-high names — at 80 the growth lane's rho rises (5y +0.24->+0.35 narrow, +0.21->+0.24 wide) AND the top/bottom-half edge flips POSITIVE (+31.6 pts wide, OOS +0.12/+0.12), i.e. top picks actually outperform. Loosening to 55 collapsed it (rho +0.10, OOS-early negative)
+            growth_min_range_pct_crypto: 40.0, // crypto: looser range floor (top 60% of its own range) so more coins surface — alts spend most of their life far below ATH yet still out-compound. The BTC-relative tilt + nupl damp keep the wider crypto table honest. The strict equity gate (80) stays for stocks/ETFs
+            growth_btc_outperf_weight: 0.3, // crypto: ±30% score swing at a full year of BTC-relative out/under-performance (bounded 0.5x..2x). BTC itself nets 1.0x (the neutral base). 0 = rank crypto on absolute growth only
             growth_min_cagr: 8.0,          // long-leg must compound >=8%/yr (beat a broad index) to be a "proven" grower
+            growth_min_cagr_crypto: 0.0,   // crypto: any positive long trend qualifies (show ALL potential growers up to BTC); raise toward 8 to tighten the crypto table to proven compounders
             growth_trend_weight: 0.35,     // trimmed — ablation shows raw long-CAGR is mildly HARMFUL to growth selection both windows (Δ+0.03/+0.10); weight shifted to acceleration. per %/yr CAGR
             growth_accel_weight: 0.2,      // trimmed 0.35->0.2: rho RANKS accel as the dominant helper (wide Δ-0.13) but the EDGE ablation flips it — accel HURTS the profit spread (zeroing it lifts wide edge +43.7->+94.5). Recent 1Y-vs-CAGR pop is the noisiest, most mean-reverting growth signal (hot-streak chasing). 0.2 is the durable middle: wide edge +43.7->+50.5 (5y)/+24.3->+28.5 (3y), rho flat/up, OOS both halves positive. 0.0 maxes edge but flips OOS-late NEGATIVE (regime artifact). per pt the last year outpaced the long CAGR -> momentum building
             growth_accel_cap: 50.0,        // cap that acceleration term (a +200% year doesn't run away with it)
             growth_min_score: 5.0,         // hide growth rows scoring <= 5 (padding); 0 = show all top_picks
             growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
-            growth_overext_floor: 0.15,    // (1) ...and keeps only 15% of its growth score at full stretch. Tightened 0.2->0.15 once the consistency damp came off: a harder blow-off-top brake raised the wide edge (5y +107.3->+108.9, 3y +39.6->+41.1) — buying right after a parabolic run-up is a poor long-hold entry. 0.1 squeezed marginally more OOS-late durability but docked near-high compounders (e.g. NVDA) out of the table too aggressively; 0.15 keeps them visible while still braking. 1.0 = brake off
+            growth_overext_floor: 0.05,    // (1) ...and keeps only 5% of its growth score at full stretch. Tightened 0.2->0.15->0.05: each step a harder blow-off-top brake (buying right after a parabolic run-up is a poor long-hold entry). The walk-forward sweep ranks 0.05 the best generalizer — wide 5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability +55%) with the profit edge flat (+108.5->+106.8). A prior session rejected 0.1 for "docking NVDA out of the table," but that was regime-bound: at 0.05 today NVDA still scores 6.7 > growth_min_score 5 (it's -10.6% off-hi, not parabolic) and the displayed stocks order is unchanged. 1.0 = brake off
             growth_turnover_weight: 0.5,   // (L) liquidity tilt per ln(turnover/€1B), added after the brake. Lifts deep-liquid proven compounders (NVDA €32B -> +~1.0) over illiquid €200-500M names they tie/trail on the brake-docked score, without touching the validated edge (BACKTEST-BLIND)
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
@@ -230,7 +236,7 @@ pub struct Urls {
     pub yahoo_search: String,  // {ticker}
     pub yahoo_quote: String,   // {ticker} (human quote page, for `perf`)
     pub euribor: String,
-    pub us_cpi: String, // BLS CPI-U (no placeholder; seriesID is in the URL path)
+    pub us_cpi: String, // BLS CPI-U base /data/ URL; seriesID + year window POSTed by fetch_us_inflation
     pub pt_cpi: String,
     pub eu_hicp: String,
     pub coingecko_markets: String, // {n} = top-N crypto by market cap -> screen universe

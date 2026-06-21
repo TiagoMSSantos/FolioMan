@@ -63,6 +63,11 @@ async fn get_text(client: &Client, url: &str) -> Option<String> {
     client.get(url).send().await.ok()?.text().await.ok()
 }
 
+async fn post_json(client: &Client, url: &str, body: &Value) -> Option<Value> {
+    throttle().await;
+    client.post(url).json(body).send().await.ok()?.json::<Value>().await.ok()
+}
+
 /// Global outbound-request pacer. The concurrency cap bounds how many requests are *in flight*, but
 /// nothing stopped 64 of them launching in the same millisecond — that burst is what Yahoo 429s into
 /// err stubs (forcing the reactive re-fetch pass). This proactively spaces request *launches* ≥
@@ -419,16 +424,6 @@ pub async fn fetch_nupl(client: &Client, urls: &Urls) -> Option<f64> {
     get_json(client, &urls.nupl).await?.get("nupl")?.as_f64()
 }
 
-/// Tech-sector S&P-500 symbols (Yahoo form) from the constituents CSV — for screen's tech table.
-/// Empty if the CSV fetch fails (tech table is then skipped). ponytail: re-fetches the CSV that
-/// fetch_universe already pulled; one cheap raw.githubusercontent GET, not worth threading a tuple.
-pub async fn fetch_tech_symbols(client: &Client, urls: &Urls) -> std::collections::HashSet<String> {
-    match get_text(client, &urls.sp500_csv).await {
-        Some(text) => text.lines().skip(1).filter_map(|l| core::tech_symbol(l)).collect(),
-        None => std::collections::HashSet::new(),
-    }
-}
-
 /// Sign one Börse Frankfurt API request the same way their web client does (reverse-engineered from
 /// the bundle): `Client-Date` = an ISO-8601 UTC instant we also hash; `X-Client-TraceId` =
 /// md5(ClientDate + full-url + salt); `X-Security` = md5(UTC `yyyyMMddHHmm`). The server re-hashes
@@ -511,8 +506,10 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
 /// by turnover from Börse Frankfurt (`fetch_xetra_etfs`). Symbols normalised to Yahoo form (`btc` ->
 /// `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency follows `prefer_eur`. The old
 /// US-listed NASDAQ-Trader ETFs are dropped: none are EU-buyable, so they only wasted fetches.
-/// Sorted + deduped; empty if all sources fail.
-pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool) -> Vec<String> {
+/// Sorted + deduped; empty if all sources fail. Also returns the Xetra-ETF ticker set so the caller
+/// can force-classify them as ETF — Yahoo mislabels some (e.g. structured products) as `EQUITY`, which
+/// would otherwise leak them into the stocks table past the sector filter.
+pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool, sectors: &[String]) -> (Vec<String>, std::collections::HashSet<String>) {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
     let (cg, csv, etfs) = tokio::join!(
         get_json(client, &cg_url),
@@ -527,20 +524,17 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
             c.get("symbol").and_then(|s| s.as_str()).map(|s| format!("{}-{crypto_cur}", s.to_uppercase()))
         }));
     }
-    // stocks: S&P 500 CSV, first column = Symbol; '.'->'-' for Yahoo (BRK.B -> BRK-B).
-    // ponytail: naive comma split — constituent symbols/CSV carry no embedded commas.
+    // stocks: S&P 500 CSV -> Yahoo symbol, kept only if the row's GICS sector passes `sectors`
+    // (empty = all). Filtering HERE means a sector-restricted screen never even fetches the other
+    // sectors' companies. `.take(cap)` AFTER the filter so cap counts matching names, not raw rows.
     if let Some(text) = csv {
-        out.extend(
-            text.lines().skip(1).take(cap)
-                .filter_map(|l| l.split(',').next())
-                .map(|s| s.trim().replace('.', "-"))
-                .filter(|s| !s.is_empty()),
-        );
+        out.extend(text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).take(cap));
     }
+    let etf_set: std::collections::HashSet<String> = etfs.iter().cloned().collect();
     out.extend(etfs); // EU-buyable UCITS ETFs (Yahoo symbols)
     out.sort();
     out.dedup();
-    out
+    (out, etf_set)
 }
 
 /// Network-module asserts (no live calls): the pure, breakable bit of the Börse Frankfurt signer is
@@ -660,26 +654,35 @@ pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[Strin
 
 /// Best-effort live 3-month Euribor (%). Returns (rate, is_live); falls back on failure.
 /// ponytail: scrapes euribor-rates.eu HTML — fragile, hence the config fallback.
-pub async fn fetch_euribor_3m(client: &Client, urls: &Urls, fallback: f64) -> (f64, bool) {
-    if let Some(html) = get_text(client, &urls.euribor).await {
-        let re = regex::Regex::new(r"(-?\d+\.\d+)\s*%").unwrap();
-        if let Some(c) = re.captures(&html) {
-            if let Ok(v) = c[1].parse::<f64>() {
-                return (v, true);
-            }
-        }
-    }
-    (fallback, false)
+/// Live 3-month Euribor (%) scraped from euribor-rates.eu. `None` on any failure — NO config
+/// fallback: a stale hand-entered rate silently poisons the Certificados de Aforro table, so the
+/// caller must surface the error instead.
+pub async fn fetch_euribor_3m(client: &Client, urls: &Urls) -> Option<f64> {
+    let html = get_text(client, &urls.euribor).await?;
+    let re = regex::Regex::new(r"(-?\d+\.\d+)\s*%").unwrap();
+    re.captures(&html)?[1].parse::<f64>().ok()
 }
 
 /// {year -> annual CPI %} for the USA from the BLS public API (CPI-U index, converted to a
 /// YoY rate in `core::parse_bls_cpi`); empty on failure. Monthly source, so it reaches the
 /// current year — unlike the World Bank's ~1.5y-lagged annual series it replaced.
 pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
-    match get_json(client, &urls.us_cpi).await {
-        Some(d) => core::parse_bls_cpi(&d),
-        None => BTreeMap::new(),
+    use chrono::Datelike;
+    // BLS v1 path-GET ignores year params and returns only ~3 years; year windows are honored only via
+    // POST (seriesid in the body, base /data/ URL), capped at 10 years/call. parse_bls_cpi needs each
+    // year's predecessor in the SAME call, so the windows overlap by 1 year — 3 of them cover ~20y of
+    // YoY with no API key. ponytail: bump to BLS v2 + a free key for a single 20y call if quota bites.
+    let now = chrono::Utc::now().year();
+    let mut out = BTreeMap::new();
+    for (s, e) in [(now - 20, now - 11), (now - 11, now - 2), (now - 2, now)] {
+        let body = serde_json::json!({
+            "seriesid": ["CUUR0000SA0"], "startyear": s.to_string(), "endyear": e.to_string()
+        });
+        if let Some(d) = post_json(client, &urls.us_cpi, &body).await {
+            out.extend(core::parse_bls_cpi(&d));
+        }
     }
+    out
 }
 
 /// {year -> annual CPI %} for Portugal from Banco de Portugal (series 5721550), each

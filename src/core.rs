@@ -278,16 +278,24 @@ pub fn nupl_zone(nupl: f64) -> &'static str {
 /// GICS sectors counted as "tech" for screen's tech-only buy table. Apple/MSFT/NVDA are
 /// Information Technology; Google/Meta/Netflix are Communication Services. (Amazon & Tesla are
 /// GICS Consumer Discretionary, so they DON'T appear — add that sector string here to include them.)
-pub const TECH_SECTORS: &[&str] = &["Information Technology", "Communication Services"];
+/// Does `haystack` pass the configured `sectors` filter? Empty filter = keep everything (the default,
+/// "fetch all sectors"); otherwise a case-insensitive substring match against ANY keyword. Used on
+/// BOTH a stock's GICS sector string and an ETF's fund name (funds carry no GICS), so a single
+/// keyword like "Technology" catches the GICS "Information Technology" AND an ETF named
+/// "...Technology...". To fetch only tech, set `sectors: [Technology, Communication, Semiconductor]`.
+pub fn sector_matches(haystack: &str, sectors: &[String]) -> bool {
+    sectors.is_empty()
+        || sectors.iter().any(|s| haystack.to_lowercase().contains(&s.trim().to_lowercase()))
+}
 
-/// Parse one S&P-500 constituents CSV row -> Yahoo symbol, but only if it's a TECH_SECTORS row;
-/// else None. Columns: Symbol, Security, "GICS Sector", ... — Symbol (0) and Sector (2) carry no
-/// commas in this dataset, so a naive split is enough (ponytail: same assumption as fetch_universe).
-pub fn tech_symbol(csv_line: &str) -> Option<String> {
+/// Parse one S&P-500 constituents CSV row -> Yahoo symbol, keeping it only if its GICS sector (col 2)
+/// passes the `sectors` filter (empty = all sectors). Columns: Symbol, Security, "GICS Sector", ... —
+/// Symbol (0) and Sector (2) carry no commas in this dataset, so a naive split is enough.
+pub fn sector_symbol(csv_line: &str, sectors: &[String]) -> Option<String> {
     let cols: Vec<&str> = csv_line.splitn(4, ',').collect();
     let sym = cols.first()?.trim();
     let sector = cols.get(2)?.trim();
-    if sym.is_empty() || !TECH_SECTORS.contains(&sector) {
+    if sym.is_empty() || !sector_matches(sector, sectors) {
         return None;
     }
     Some(sym.replace('.', "-")) // BRK.B -> BRK-B (Yahoo form)
@@ -391,8 +399,8 @@ pub fn inflation_compounded(series: &BTreeMap<i32, f64>, years: usize) -> Option
 /// (its latest month with a prior-year same-month) / (that prior-year value) − 1. A complete
 /// year resolves to Dec-over-Dec; the current partial year to its newest month YoY — matching
 /// how the EU/PT series use "last month of the year". Empty on a malformed payload.
-/// ponytail: BLS v1 (no key) returns ~10 years only, so the 20Y column reflects ≤10y; add an
-/// API key + a multi-call window if a true 20-year US series is ever needed.
+/// Called once per POST year-window by `fetch_us_inflation`, results merged — so it only needs
+/// each year's predecessor present within the window it's handed (windows overlap by 1 year).
 pub fn parse_bls_cpi(d: &Value) -> BTreeMap<i32, f64> {
     let mut idx: BTreeMap<(i32, u32), f64> = BTreeMap::new(); // (year, month) -> index level
     let rows = d.pointer("/Results/series/0/data").and_then(|v| v.as_array());
@@ -804,12 +812,19 @@ assert_eq!(nupl_zone(-0.1), "Capitulation");
 assert_eq!(nupl_zone(0.16), "Hope/Fear");
 assert_eq!(nupl_zone(0.6), "Belief/Denial");
 assert_eq!(nupl_zone(0.8), "Euphoria/Greed");
-// tech_symbol: keep tech sectors (Yahoo-normalized), drop the rest
-assert_eq!(tech_symbol("AAPL,Apple Inc.,Information Technology,Tech HW,x,y"), Some("AAPL".to_string()));
-assert_eq!(tech_symbol("GOOGL,Alphabet,Communication Services,x"), Some("GOOGL".to_string()));
-assert_eq!(tech_symbol("BF.B,Brown-Forman,Information Technology,x"), Some("BF-B".to_string())); // '.'->'-'
-assert_eq!(tech_symbol("MMM,3M,Industrials,x"), None);
-assert_eq!(tech_symbol("AMZN,Amazon,Consumer Discretionary,x"), None); // GICS quirk: not tech
+// sector_matches: empty filter keeps all; else case-insensitive substring on ANY keyword
+let tech = vec!["Technology".to_string(), "Communication".to_string()];
+assert!(sector_matches("Industrials", &[])); // no filter -> keep everything
+assert!(sector_matches("Information Technology", &tech)); // "Technology" is a substring
+assert!(sector_matches("iShares Tech Sector Technology UCITS", &tech)); // ETF name path
+assert!(!sector_matches("Industrials", &tech));
+// sector_symbol: keep only filter-matching sectors (Yahoo-normalized), all when filter empty
+assert_eq!(sector_symbol("AAPL,Apple Inc.,Information Technology,Tech HW,x,y", &tech), Some("AAPL".to_string()));
+assert_eq!(sector_symbol("GOOGL,Alphabet,Communication Services,x", &tech), Some("GOOGL".to_string()));
+assert_eq!(sector_symbol("BF.B,Brown-Forman,Information Technology,x", &tech), Some("BF-B".to_string())); // '.'->'-'
+assert_eq!(sector_symbol("MMM,3M,Industrials,x", &tech), None);
+assert_eq!(sector_symbol("AMZN,Amazon,Consumer Discretionary,x", &tech), None); // GICS quirk: not tech
+assert_eq!(sector_symbol("MMM,3M,Industrials,x", &[]), Some("MMM".to_string())); // empty filter -> all sectors
 // etf_symbols: keep ETF flag = Y at the given column, skip header/footer/$/non-ETF; '.'->'-'
 let nasdaq = "Symbol|Name|Cat|Test|Fin|Lot|ETF|NS\nQQQ|Invesco QQQ|Q|N|N|100|Y|N\nAAPL|Apple|Q|N|N|100|N|N\nFOO$|x|Q|N|N|100|Y|N\nFile Creation Time: now";
 assert_eq!(etf_symbols(nasdaq, 6), vec!["QQQ".to_string()]); // AAPL=N dropped, FOO$ dropped, footer skipped

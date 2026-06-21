@@ -1,35 +1,24 @@
 //! `screen [TICKERS]` — scan a LIVE universe (top-N crypto from CoinGecko + S&P 500
-//! constituents, see `fetch::fetch_universe`; `screen TICKER...` overrides): all-time
-//! highs/lows, instruments falling over ~1M/3M/6M/1Y, top dividend payers, and a
-//! buy-candidates ranking.
+//! constituents, see `fetch::fetch_universe`; `screen TICKER...` overrides) and rank the
+//! 20yr+ buy-and-hold growth candidates per asset class (stocks / ETFs / crypto). The
+//! growth lane is the only one with a validated forward edge (walk-forward rho +0.26,
+//! top-vs-bottom-half +108 pts); the old on-sale / ATH-ATL / fallers / dividend tables
+//! were dropped — their selection edge was zero-to-negative for a multi-decade hold.
 
-use crate::commands::truncate;
-use crate::core::{Quote, DIV_HORIZONS};
-use crate::picks::{eu_buyable, perf_pct, render};
+use crate::core::Quote;
+use crate::picks::{eu_buyable, render};
 use crate::{config, fetch};
-
-/// 1Y dividend yield (%) used to rank payers; 0 if no payout / no price / short history.
-/// Ranking by yield (not absolute cash) so high-% low-price names surface over big-cash
-/// low-yield ones.
-fn yield_1y(q: &Quote) -> f64 {
-    crate::core::dividend_yields(&q.div_eur, q.price_eur)
-        .first()
-        .and_then(|o| *o)
-        .unwrap_or(0.0)
-}
 
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
     let fx = fetch::fx_cache();
-    // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it
-    let (universe, tech) = if args.is_empty() {
-        tokio::join!(
-            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur),
-            fetch::fetch_tech_symbols(&client, &settings.urls), // GICS sectors for the tech-only buy table
-        )
+    // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it.
+    // etf_tickers = Xetra-ETF source set, used below to fix Yahoo mislabeling them as EQUITY.
+    let (universe, etf_tickers) = if args.is_empty() {
+        fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &settings.sectors).await
     } else {
-        (args, std::collections::HashSet::new()) // explicit tickers: no sector data -> no tech table
+        (args, std::collections::HashSet::new())
     };
 
     eprintln!("screen: {} tickers in universe (crypto + S&P 500 + Xetra UCITS ETFs)", universe.len());
@@ -41,121 +30,28 @@ pub async fn run(args: Vec<String>) {
     } else {
         None
     };
-    let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true, false, &settings.anchor_windows, eu_infl.as_ref()).await; // intraday on (picks shows 1h/6h/12h), news off (screen never prints headlines)
+    let mut qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true, false, &settings.anchor_windows, eu_infl.as_ref()).await; // intraday on (picks shows 1h/6h/12h), news off (screen never prints headlines)
+    // anything from the Xetra ETF feed IS an ETF, even if Yahoo tags it EQUITY (structured products
+    // like BNP Paribas Issuance) — force it so it can't leak into the stocks table past the sector filter
+    for q in &mut qs {
+        if etf_tickers.contains(&q.ticker) {
+            q.instrument_type = "ETF".into();
+        }
+    }
     // keep only what an EU-retail investor can actually buy (drops any non-European-listed ETF,
-    // Asian-only stock listings) so EVERY table below — ATH/ATL/fallers/dividends/buys — is actionable.
+    // Asian-only stock listings) so the growth ranking below is actionable.
     let before = qs.len();
     let qs: Vec<Quote> = qs.into_iter().filter(eu_buyable).collect();
     eprintln!("screen: {} of {before} instruments are EU-buyable (rest filtered out)", qs.len());
-
-    let w = &settings.widths;
-    let (nw, tw, pw) = (w.name, w.ticker, w.price);
-
-    // header row naming every column (NAME = instrument, % col label varies)
-    let hdr = |pct_col: &str| {
-        println!(
-            "  {:<nw$} {:<tw$} {:>pw$} {:>8}  {}",
-            truncate("NAME", nw), truncate("TICKER", tw), "PRICE(EUR)", pct_col, "TREND"
-        );
-    };
-    let row = |q: &Quote, pct: String| {
-        println!(
-            "  {:<nw$} {:<tw$} {:>pw$} {:>8}  {}",
-            truncate(&q.name, nw), truncate(&q.ticker, tw), q.price, pct, q.trend
-        );
-    };
-
-    // ATH/ATL: % column = 1-month change (mom_pct)
-    let show = |title: &str, group: &[&Quote]| {
-        println!("\n{} ({}):", title, group.len());
-        hdr("1M %");
-        for q in group {
-            row(q, q.mom_pct.map_or("n/a".to_string(), |m| format!("{:+.1}%", m)));
-        }
-        if group.is_empty() {
-            println!("  (none)");
-        }
-    };
-
     println!("Scanned {} instruments.", qs.len());
-    show("All-time highs", &qs.iter().filter(|q| q.at_ath).collect::<Vec<_>>());
-    show("All-time lows", &qs.iter().filter(|q| q.at_atl).collect::<Vec<_>>());
-
-    // single fallers table (was 4 per-horizon tables): in if down over ANY of 1M/3M/6M/1Y
-    // (union, so nothing the old tables showed is lost); columns 1D..1Y, biggest 1M drop first.
-    let fall_cols = ["1D", "1W", "1M", "3M", "6M", "1Y"];
-    let mut fallers: Vec<&Quote> = qs
-        .iter()
-        .filter(|q| ["1M", "3M", "6M", "1Y"].iter().any(|l| perf_pct(q, l).map_or(false, |p| p < 0.0)))
-        .collect();
-    fallers.sort_by(|a, b| {
-        perf_pct(a, "1M").unwrap_or(0.0).partial_cmp(&perf_pct(b, "1M").unwrap_or(0.0)).unwrap()
-    });
-    let fall_hdr = fall_cols.iter().map(|l| format!("{l:>8}")).collect::<Vec<_>>().join(" ");
-    println!("\nFalling (down over 1M/3M/6M/1Y), biggest 1-month drop first ({}):", fallers.len());
-    println!(
-        "  {:<nw$} {:<tw$} {:>pw$} {fall_hdr}  {}",
-        truncate("NAME", nw), truncate("TICKER", tw), "PRICE(EUR)", "TREND"
-    );
-    if fallers.is_empty() {
-        println!("  (none)");
-    }
-    for q in &fallers {
-        let cells = fall_cols
-            .iter()
-            .map(|l| format!("{:>8}", perf_pct(q, l).map_or("n/a".to_string(), |v| format!("{:+.1}%", v))))
-            .collect::<Vec<_>>()
-            .join(" ");
-        println!(
-            "  {:<nw$} {:<tw$} {:>pw$} {cells}  {}",
-            truncate(&q.name, nw), truncate(&q.ticker, tw), q.price, q.trend
-        );
-    }
-
-    // top dividend payers: total per share (EUR) + yield per window, highest 1Y yield first
-    let mut payers: Vec<&Quote> = qs.iter().filter(|q| yield_1y(q) > 0.0).collect();
-    payers.sort_by(|a, b| yield_1y(b).partial_cmp(&yield_1y(a)).unwrap());
-    let div_hdr = DIV_HORIZONS
-        .iter()
-        .map(|(l, _)| format!("{:>17}", l))
-        .collect::<Vec<_>>()
-        .join(" ");
-    println!(
-        "\nTop dividend payers — total per share EUR + avg annual yield % over last \
-         1Y/5Y/10Y/20Y, highest 1Y yield first ({}):",
-        payers.len()
-    );
-    println!("  {:<nw$} {:<tw$} {div_hdr}", truncate("NAME", nw), truncate("TICKER", tw));
-    if payers.is_empty() {
-        println!("  (none paid dividends)");
-    }
-    for q in payers.iter().take(25) {
-        let yields = crate::core::dividend_yields(&q.div_eur, q.price_eur);
-        let cells = DIV_HORIZONS
-            .iter()
-            .enumerate()
-            .map(|(i, _)| {
-                let cell = match q.div_eur.get(i).and_then(|o| *o) {
-                    Some(v) => {
-                        let y = yields.get(i).and_then(|o| *o)
-                            .map_or("n/a".to_string(), |p| format!("{:.1}%", p));
-                        format!("€{} ({})", crate::core::fmt_money2(v), y)
-                    }
-                    None => "n/a".to_string(),
-                };
-                format!("{cell:>17}")
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        println!("  {:<nw$} {:<tw$} {cells}", truncate(&q.name, nw), truncate(&q.ticker, tw));
-    }
 
     // Bitcoin NUPL: whole-market crypto sentiment gauge. Fetched BEFORE render so it can damp the
-    // crypto rows of both lanes (high NUPL = euphoric top), then also printed as the footer line.
+    // crypto rows (high NUPL = euphoric top), then also printed as the footer line.
     let nupl = fetch::fetch_nupl(&client, &settings.urls).await;
 
-    // buy candidates among the SCANNED universe (not settings.tickers) — same heuristic as `check`
-    render(&qs, settings.top_picks, &settings.buy_heuristic, w, &tech, nupl);
+    // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
+    // by fund name (stocks were already sector-filtered before fetch)
+    render(&qs, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors);
 
     if let Some(n) = nupl {
         println!(
@@ -163,4 +59,8 @@ pub async fn run(args: Vec<String>) {
             crate::core::nupl_zone(n)
         );
     }
+
+    // Euribor / Certificados de Aforro / inflation — fixed-income + macro baselines to compare the
+    // asset tables against
+    crate::commands::print_macro_footer(&client, &settings.urls).await;
 }
