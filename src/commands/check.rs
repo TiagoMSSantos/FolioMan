@@ -51,7 +51,7 @@ pub async fn run(args: Vec<String>) {
 
     // best growth candidates (heuristic, derived from the table above — no extra fetch). Empty sector
     // filter: the watchlist is hand-picked, never sector-culled.
-    picks::render(&qs, settings.top_picks, &settings.buy_heuristic, w, None, &[]);
+    picks::render(&qs, settings.top_picks, &settings.buy_heuristic, w, None, &[], &[]);
 
     // Euribor / Certificados de Aforro / inflation — the macro backdrop, shared with `screen`
     print_macro_footer(&client, &settings.urls).await;

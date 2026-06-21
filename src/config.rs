@@ -22,6 +22,8 @@ pub struct Settings {
     pub universe_prefer_eur: bool, // crypto in the live universe quoted in EUR (BTC-EUR) if true, else USD
     #[serde(default)]
     pub sectors: Vec<String>, // `screen` sector filter (GICS keyword, case-insensitive substring): which company/ETF types to fetch. Empty = ALL sectors. e.g. [Technology, Communication, Semiconductor] = tech only. Stocks filtered before fetch (by GICS sector); ETFs filtered by fund name (no GICS for funds)
+    #[serde(default)]
+    pub pinned: Vec<String>, // `screen` always fetches these Yahoo tickers and shows them in their class table (marked PIN, exempt from the sector/score cut) so you can compare your holdings/watchlist against the top growth candidates. e.g. [NVDA, IWDA.AS, BTC-EUR]
     pub ntfy_topic: String,
     #[serde(default = "default_top_picks")]
     pub top_picks: usize, // how many buy candidates `check` lists after the table

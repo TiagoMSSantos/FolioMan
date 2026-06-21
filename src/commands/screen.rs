@@ -15,11 +15,15 @@ pub async fn run(args: Vec<String>) {
     let fx = fetch::fx_cache();
     // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it.
     // etf_tickers = Xetra-ETF source set, used below to fix Yahoo mislabeling them as EQUITY.
-    let (universe, etf_tickers) = if args.is_empty() {
+    let (mut universe, etf_tickers) = if args.is_empty() {
         fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &settings.sectors).await
     } else {
         (args, std::collections::HashSet::new())
     };
+    // pinned tickers are ALWAYS fetched so they show in their table for comparison (sector filter or not)
+    universe.extend(settings.pinned.iter().cloned());
+    universe.sort();
+    universe.dedup();
 
     eprintln!("screen: {} tickers in universe (crypto + S&P 500 + Xetra UCITS ETFs)", universe.len());
 
@@ -51,7 +55,7 @@ pub async fn run(args: Vec<String>) {
 
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
-    render(&qs, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors);
+    render(&qs, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &settings.pinned);
 
     if let Some(n) = nupl {
         println!(

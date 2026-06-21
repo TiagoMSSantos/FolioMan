@@ -521,6 +521,7 @@ fn ranked<'a>(
     t: &BuyHeuristic,
     score: impl Fn(&Quote, &BuyHeuristic) -> Option<f64>,
     min_score: f64,
+    pinned: &HashSet<&str>,
 ) -> Vec<(&'a Quote, f64)> {
     let scored: Vec<(&Quote, f64)> =
         qs.iter().filter(|q| eu_buyable(q)).filter_map(|q| score(q, t).map(|s| (q, s))).collect();
@@ -539,8 +540,14 @@ fn ranked<'a>(
     });
     // (B) collapse dual-class share twins (GOOG/GOOGL, BRK.A/BRK.B): same company = identical Yahoo
     // name; after the best-first sort, keep the first (higher-scoring/more-liquid) leg, drop the rest.
+    // A pinned ticker is NEVER deduped away — else a pinned ETF (VUAA.DE) vanishes behind a same-named
+    // higher-scored twin (VUAA.L) in the full universe. (insert() still runs so a non-pinned twin is
+    // dropped whether the pinned leg came before or after it.)
     let mut seen: HashSet<&str> = HashSet::new();
-    picks.retain(|(q, _)| seen.insert(q.name.as_str()));
+    picks.retain(|(q, _)| {
+        let fresh = seen.insert(q.name.as_str());
+        pinned.contains(q.ticker.as_str()) || fresh
+    });
     picks
 }
 
@@ -565,7 +572,7 @@ fn turnover_cell(o: Option<f64>) -> String {
 }
 
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks).
-fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
+fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>) {
     let (nw, tw, mw, pw, sw) = (w.name, w.ticker, w.market, w.price, w.score);
     println!("\n{title}");
     if picks.is_empty() {
@@ -579,7 +586,9 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
         "RANK", truncate("NAME", nw), truncate("TICKER", tw), truncate("MARKET", mw), "PRICE(EUR)",
         "1H", "6H", "12H", "OFF-HI", "UPSIDE", "TURNOVER", truncate("SCORE", sw)
     );
-    for (i, (q, score)) in picks.iter().take(n).enumerate() {
+    // one printed row; `rank` is the position number, with a "*" suffix when the name is pinned
+    // (e.g. "3*"). Marker on the rank column, not the name, so truncation can't eat it.
+    let row = |rank: &str, q: &Quote, score: f64| {
         let diffs = DIFF_HORIZONS
             .iter()
             .map(|l| format!("{:>8}", perf_pct(q, l).map_or("n/a".to_string(), |v| format!("{:+.1}%", v))))
@@ -587,7 +596,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
             .join(" ");
         println!(
             "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diffs} {:>7} {:>8} {:>10} {:>sw$.1}",
-            i + 1,
+            rank,
             truncate(&q.name, nw),
             truncate(&q.ticker, tw),
             truncate(&q.market, mw),
@@ -600,6 +609,15 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
             turnover_cell(q.avg_turnover_eur),
             score,
         );
+    };
+    let star = |q: &Quote| if pinned.contains(q.ticker.as_str()) { "*" } else { "" }; // * = a pinned (watchlist) name
+    for (i, (q, score)) in picks.iter().take(n).enumerate() {
+        row(&format!("{}{}", i + 1, star(q)), q, *score);
+    }
+    // pinned tickers that ranked BELOW the cut still print (with their real rank + "*") so you can
+    // compare a holding against the tops above even when it doesn't make the top-N.
+    for (i, (q, score)) in picks.iter().enumerate().skip(n).filter(|(_, (q, _))| pinned.contains(q.ticker.as_str())) {
+        row(&format!("{}{}", i + 1, star(q)), q, *score);
     }
 }
 
@@ -608,26 +626,28 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths) {
 /// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
 /// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
-fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], min_score: f64) {
+fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], min_score: f64, pinned: &HashSet<&str>) {
     let (crypto, equity): (Vec<_>, Vec<_>) =
         picks.into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
     let (etf, stock): (Vec<_>, Vec<_>) = equity.into_iter().partition(|(q, _)| quote_is_etf(q));
     // Equities: apply the growth_min_score trim HERE (the input list was ranked with no trim so the
     // crypto lane below can stay full). ETFs carry no GICS sector, so the sector filter matches the
     // configured keywords against the fund NAME; stocks were already sector-filtered before fetch.
-    let stock: Vec<_> = stock.into_iter().filter(|(_, s)| *s > min_score).collect();
+    // Pinned tickers bypass BOTH the score trim and the sector filter (`|| pinned`) — they're always shown.
+    let keep = |q: &Quote, s: f64, sector_ok: bool| (s > min_score && sector_ok) || pinned.contains(q.ticker.as_str());
+    let stock: Vec<_> = stock.into_iter().filter(|(q, s)| keep(q, *s, true)).collect();
     let etf: Vec<_> =
-        etf.into_iter().filter(|(q, s)| *s > min_score && core::sector_matches(&q.name, sectors)).collect();
+        etf.into_iter().filter(|(q, s)| keep(q, *s, core::sector_matches(&q.name, sectors))).collect();
     // Title carries the selected sector filter so the table says what it's showing ("all" = no filter).
     // Count shown = how many actually qualified (capped at n); "of {n} max" explains a short table —
     // it's not a quota, that's all that passed the gates + filter.
     let secs = if sectors.is_empty() { "all".to_string() } else { sectors.join(", ") };
     let head = |len: usize| if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") };
-    print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w);
-    print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w);
+    print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w, pinned);
+    print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w, pinned);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
-    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w);
+    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w, pinned);
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -648,7 +668,10 @@ fn btc_relative(coin_1y: Option<f64>, btc_1y: Option<f64>, score: f64, w: f64) -
 /// deepest-dip ranking picks future LOSERS over a multi-decade hold. `nupl` (Bitcoin
 /// net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or fetch fail) damps
 /// the crypto rows when the market is euphoric.
-pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String]) {
+pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], pinned: &[String]) {
+    // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
+    // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
+    let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
     // (4) market-greed damp, applied to crypto rows only (it's a whole-crypto-market gauge).
     let cdamp = nupl_damp(nupl, t);
     // Bitcoin = the crypto market's base: tilt each alt by its 1Y return RELATIVE to BTC, so the looser
@@ -660,7 +683,15 @@ pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, nupl: Option
         }
         btc_relative(perf_pct(q, "1Y"), btc_1y, s * cdamp, t.growth_btc_outperf_weight)
     };
-    let growth_scorer = |q: &Quote, t: &BuyHeuristic| growth_score(q, t).map(|s| crypto_adj(q, s));
+    // a gated pinned name returns None from growth_score; give it a tiny sentinel score so it survives
+    // ranked's `>0` trim and reaches print_lane (where pinned is exempt from the score/sector cut). Skip
+    // err/no-data quotes (a bad symbol like a suffix-less ETF) — nothing to compare, don't show a blank row.
+    let growth_scorer = |q: &Quote, t: &BuyHeuristic| {
+        growth_score(q, t).map(|s| crypto_adj(q, s)).or_else(|| {
+            let usable = q.price != "err" && q.price != "no data";
+            (usable && pinned_set.contains(q.ticker.as_str())).then_some(f64::MIN_POSITIVE)
+        })
+    };
 
     let growth = "20yr+ growth ranking: at/near its own ~10y high (OFF-HI ≈ 0) with a strong proven \
                   long-term CAGR and an accelerating recent year, braked by how far it's run above its \
@@ -668,7 +699,7 @@ pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, nupl: Option
                   market base). NOT advice:";
     // rank with NO trim (0.0): print_lane trims equities by growth_min_score but keeps the crypto lane
     // full (all growers up to Bitcoin). Gates inside growth_score still exclude non-growers.
-    print_lane(ranked(qs, t, growth_scorer, 0.0), n, w, "growth candidates", growth, sectors, t.growth_min_score);
+    print_lane(ranked(qs, t, growth_scorer, 0.0, &pinned_set), n, w, "growth candidates", growth, sectors, t.growth_min_score, &pinned_set);
 }
 
 /// Buy-heuristic asserts (no network). Run by the `selftest` subcommand and the unit test.
@@ -864,30 +895,45 @@ pub fn selftest() {
     assert_eq!(usd.len(), 1);
     assert_eq!(usd[0].0.ticker, "BTC-USD");
 
-    // (B) ranked dedups dual-class share twins by identical company name (GOOG/GOOGL -> one row)
+    let no_pin: HashSet<&str> = HashSet::new();
+    // (B) ranked dedups dual-class share twins by identical company name (GOOG/GOOGL -> one row).
+    // googl scores lower (shallower discount) so the higher-scored goog wins the dedup deterministically.
     let mut goog = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // both name "n"
     goog.ticker = "GOOG".into();
-    let mut googl = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut googl = q(38.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     googl.ticker = "GOOGL".into();
-    assert_eq!(ranked(&[goog, googl], &t, buy_score, t.min_score).len(), 1);
+    assert_eq!(ranked(&[goog.clone(), googl.clone()], &t, buy_score, t.min_score, &no_pin).len(), 1);
+    // ...but a PINNED twin is never deduped away (so a pinned ETF survives a same-named higher twin)
+    let pin_googl: HashSet<&str> = ["GOOGL"].into_iter().collect();
+    let twins = [goog, googl];
+    let kept = ranked(&twins, &t, buy_score, t.min_score, &pin_googl);
+    assert!(kept.iter().any(|(x, _)| x.ticker == "GOOGL")); // pinned lower-scored twin still present
     // (A) ranked hides rows scoring at/below min_score (near-the-high padding), keeps real candidates
     let shallow = q(2.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // tiny discount -> low score
     assert!(buy_score(&shallow, &t).unwrap() < t.min_score);
-    assert!(ranked(std::slice::from_ref(&shallow), &t, buy_score, t.min_score).is_empty());
+    assert!(ranked(std::slice::from_ref(&shallow), &t, buy_score, t.min_score, &no_pin).is_empty());
     let strong_pick = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // real discount -> kept
-    assert_eq!(ranked(std::slice::from_ref(&strong_pick), &t, buy_score, t.min_score).len(), 1);
+    assert_eq!(ranked(std::slice::from_ref(&strong_pick), &t, buy_score, t.min_score, &no_pin).len(), 1);
 
     // --- GROWTH LANE (mirror of buy_score): near-high proven compounders the on-sale score drops ---
     // an at-the-high rocket buy_score fades to ~0 (or trims) IS a growth candidate here
     let rocket = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // range_pct 100, strong CAGR, climbing
     assert!(growth_score(&rocket, &t).is_some());
     // ...and ranked picks it up where the on-sale lane (min_score) would have trimmed an at-high name
-    assert_eq!(ranked(std::slice::from_ref(&rocket), &t, growth_score, t.growth_min_score).len(), 1);
+    assert_eq!(ranked(std::slice::from_ref(&rocket), &t, growth_score, t.growth_min_score, &no_pin).len(), 1);
     // a deeply pulled-back name is NOT a growth candidate (that's the on-sale lane's job)
     let dipped = q(40.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // range_pct 60 < growth_min_range_pct
     assert!(growth_score(&dipped, &t).is_none());
     // weak long trend -> an expensive laggard, not a proven compounder -> excluded
-    assert!(growth_score(&q(0.0, &[("1Y", 3.0), ("5Y", 6.0), ("10Y", 10.0)]), &t).is_none());
+    let laggard = q(0.0, &[("1Y", 3.0), ("5Y", 6.0), ("10Y", 10.0)]);
+    assert!(growth_score(&laggard, &t).is_none());
+    // PINNED overlay (mirrors render's scorer): a gated name still scores (sentinel) when pinned, so it
+    // survives to the table; a non-pinned gated name stays excluded. (q() sets ticker "T".)
+    let pin_scored = |pinned: bool| {
+        growth_score(&laggard, &t).or_else(|| pinned.then_some(f64::MIN_POSITIVE))
+    };
+    assert!(pin_scored(true).is_some()); // pinned -> shown despite the gate
+    assert!(pin_scored(false).is_none()); // not pinned -> still excluded
     // not climbing this year (negative 1Y) -> no momentum -> excluded
     assert!(growth_score(&q(0.0, &[("1Y", -5.0), ("5Y", 200.0), ("10Y", 500.0)]), &t).is_none());
     // crashing this month -> momentum broke -> excluded
@@ -1032,6 +1078,6 @@ pub fn selftest() {
     assert!(eu_buyable(&btc_b)); // crypto major
     // end-to-end: `ranked` drops the US ETF even though it scores above min_score
     assert!(buy_score(&us_etf, &t).unwrap() > t.min_score);
-    assert!(ranked(std::slice::from_ref(&us_etf), &t, buy_score, t.min_score).is_empty());
-    assert_eq!(ranked(std::slice::from_ref(&ucits), &t, buy_score, t.min_score).len(), 1);
+    assert!(ranked(std::slice::from_ref(&us_etf), &t, buy_score, t.min_score, &no_pin).is_empty());
+    assert_eq!(ranked(std::slice::from_ref(&ucits), &t, buy_score, t.min_score, &no_pin).len(), 1);
 }
