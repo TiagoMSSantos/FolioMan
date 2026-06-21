@@ -30,7 +30,7 @@ pub async fn run(args: Vec<String>) {
     } else {
         None
     };
-    let qs = fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, &settings.anchor_windows, eu_infl.as_ref()).await;
+    let qs = fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, true, &settings.anchor_windows, eu_infl.as_ref()).await; // news on: check prints headlines
     for q in &qs {
         let cells = HORIZONS
             .iter()

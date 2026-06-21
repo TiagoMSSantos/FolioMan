@@ -41,7 +41,7 @@ pub async fn run(args: Vec<String>) {
     } else {
         None
     };
-    let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true, &settings.anchor_windows, eu_infl.as_ref()).await; // intraday on: picks table shows 1h/6h/12h
+    let qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true, false, &settings.anchor_windows, eu_infl.as_ref()).await; // intraday on (picks shows 1h/6h/12h), news off (screen never prints headlines)
     // keep only what an EU-retail investor can actually buy (drops any non-European-listed ETF,
     // Asian-only stock listings) so EVERY table below — ATH/ATL/fallers/dividends/buys — is actionable.
     let before = qs.len();

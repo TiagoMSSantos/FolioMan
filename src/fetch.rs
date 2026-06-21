@@ -1,7 +1,8 @@
 //! All network I/O for folioman. One shared `reqwest::Client` (keep-alive pool,
 //! HTTP/2, gzip) drives every request; fan-out is async via `join_all`. Every fetch
 //! fails soft — a bad ticker or a down API yields a fallback/err row, never a crash.
-//! Universe-scale fan-out is concurrency-bounded (`FETCH_CONCURRENCY`) so it can't 429-storm.
+//! Universe-scale fan-out is concurrency-bounded (`FETCH_CONCURRENCY`) AND rate-paced (`throttle`,
+//! `fetch_requests_per_second`) so launches stay spaced and it can't 429-storm.
 //! All URLs come from config (`Urls`); templates use `{ticker}`/`{range}`/`{topic}`.
 
 use crate::config::Urls;
@@ -15,7 +16,7 @@ use reqwest::Client;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, Instant};
 use tokio::sync::Mutex;
 
 /// Currency -> EUR rate cache (None = no FX pair found, cached to avoid re-hitting).
@@ -53,11 +54,55 @@ pub fn client_long() -> Client {
 }
 
 async fn get_json(client: &Client, url: &str) -> Option<Value> {
+    throttle().await;
     client.get(url).send().await.ok()?.json::<Value>().await.ok()
 }
 
 async fn get_text(client: &Client, url: &str) -> Option<String> {
+    throttle().await;
     client.get(url).send().await.ok()?.text().await.ok()
+}
+
+/// Global outbound-request pacer. The concurrency cap bounds how many requests are *in flight*, but
+/// nothing stopped 64 of them launching in the same millisecond — that burst is what Yahoo 429s into
+/// err stubs (forcing the reactive re-fetch pass). This proactively spaces request *launches* ≥
+/// `min_interval` apart: a single shared "next free slot" instant that each request claims-and-bumps
+/// under a short lock, then releases the lock and sleeps until its slot. N concurrent tasks therefore
+/// leave the gate evenly spaced at the configured rate instead of all at once. Rate from config
+/// (`fetch_requests_per_second`); 0 disables it. ponytail: one Mutex<Instant>, no token-bucket crate.
+static THROTTLE: std::sync::OnceLock<(Mutex<Instant>, StdDuration)> = std::sync::OnceLock::new();
+
+/// Pure slot math (testable, no clock/lock): claim the launch instant for a request arriving at `now`
+/// against gate `next`, returning (launch, new_next). Launch is never in the past, and successive
+/// claims are forced ≥ `interval` apart.
+fn claim_slot(next: Instant, now: Instant, interval: StdDuration) -> (Instant, Instant) {
+    let launch = next.max(now);
+    (launch, launch + interval)
+}
+
+async fn throttle() {
+    let (gate, interval) = THROTTLE.get_or_init(|| {
+        let rps = crate::config::load().fetch_requests_per_second;
+        let interval = if rps > 0.0 {
+            StdDuration::from_secs_f64(1.0 / rps)
+        } else {
+            StdDuration::ZERO
+        };
+        (Mutex::new(Instant::now()), interval)
+    });
+    if interval.is_zero() {
+        return;
+    }
+    let launch = {
+        let mut next = gate.lock().await;
+        let (launch, new_next) = claim_slot(*next, Instant::now(), *interval);
+        *next = new_next; // claim the slot, then drop the lock BEFORE sleeping (else fully serialized)
+        launch
+    };
+    let wait = launch.saturating_duration_since(Instant::now());
+    if !wait.is_zero() {
+        tokio::time::sleep(wait).await;
+    }
 }
 
 struct Chart {
@@ -72,10 +117,11 @@ struct Chart {
 
 async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Value> {
     let url = urls.yahoo_chart.replace("{ticker}", ticker).replace("{range}", range);
-    // One retry: under the wide screen fan-out Yahoo 429s/times-out random names — either no response
-    // (None) or a rate-limit body that parses to JSON but carries no chart.result. Both drop the name to
-    // an err stub that then vanishes from the universe (NVDA disappeared this way). A single backoff+retry
-    // recovers them. ponytail: fixed 400ms, one extra try — bump if drops persist under heavier load.
+    // Fallback retry. The global `throttle()` pacer now spaces launches so the fan-out shouldn't 429 in
+    // the first place; this stays as cheap insurance for an isolated timeout / transient rate-limit body
+    // (parses to JSON but carries no chart.result). Both drop the name to an err stub that then vanishes
+    // from the universe (NVDA disappeared this way). ponytail: fixed 400ms, one extra try — rarely fires
+    // now that requests are paced.
     for attempt in 0..2 {
         if let Some(v) = get_json(client, &url).await {
             if v.pointer("/chart/result/0/timestamp").is_some() {
@@ -215,7 +261,7 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
-pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
+pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
     let (chart_j, chart_long_j, titles, intra, pe, roe) = tokio::join!(
         // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
         // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
@@ -224,7 +270,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         chart_json(client, urls, ticker, "10y"),
         // monthly full history, ONLY to back-fill the >10y horizons (20Y) without breaking the daily ones.
         chart_json_long(client, urls, ticker),
-        fetch_news(client, urls, ticker),
+        // news headlines are displayed ONLY by `check`/`alert`; `screen`/`perf` ignore them, so skip the
+        // per-name Yahoo search there (~25% fewer requests across a 3800-name screen -> proportionally faster).
+        async { if news { fetch_news(client, urls, ticker).await } else { Vec::new() } },
         async { if intraday { intraday_closes(client, urls, ticker).await } else { None } },
         // (E) trailing P/E for the valuation tilt — equities only (crypto/FX have no earnings); a
         // no-op (instant None) unless FMP_API_KEY is set, so the default path stays network-free here.
@@ -513,6 +561,17 @@ pub fn selftest() {
     assert_eq!(concurrency_for(8, 8), 64);
     assert_eq!(concurrency_for(4, 0), 4); // multiplier 0 -> treated as 1
     assert_eq!(concurrency_for(0, 8), 8); // cores 0 -> treated as 1
+
+    // throttle slot math: a request never launches in the past, and back-to-back claims at the same
+    // instant come out ≥ interval apart (this is what turns a 64-wide burst into a paced stream).
+    let base = Instant::now();
+    let iv = StdDuration::from_millis(100);
+    let (l1, n1) = claim_slot(base, base + 2 * iv, iv); // gate behind `now` -> launch == now
+    assert_eq!(l1, base + 2 * iv);
+    assert_eq!(n1, base + 3 * iv);
+    let (l2, _) = claim_slot(n1, base + 2 * iv, iv); // next claim same `now` -> pushed to the slot
+    assert_eq!(l2, base + 3 * iv);
+    assert!(l2.duration_since(l1) >= iv);
 }
 
 /// At most this many quote fetches in flight at once. Unbounded `join_all` over the ~750-ticker
@@ -551,7 +610,7 @@ pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option
 }
 
 /// One Quote per ticker, concurrent (≤`FETCH_CONCURRENCY` in flight), input order preserved.
-pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Quote> {
+pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Quote> {
     // Warm the USD rate once up front. Otherwise every US stock races its own USDEUR=X call in the
     // fan-out; one gets rate-limited -> None cached -> all USD names print "USD?" instead of €.
     // ponytail: USD only (dominant case); rare currencies (GBP/CHF) still race, fine at this scale.
@@ -564,11 +623,11 @@ pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[Strin
     eprintln!("fetch: {total} quotes (≤{concurrency} concurrent)…");
     const PROGRESS_EVERY: usize = 50;
     // `buffered` (ordered) caps concurrency yet preserves input order (`check` prints in that order).
-    let mut out: Vec<Quote> = stream::iter(tickers.iter())
+    let out: Vec<Quote> = stream::iter(tickers.iter())
         .map(|tk| {
             let done = &done;
             async move {
-                let q = quote_one(client, urls, fx, tk, dip_days, high_days, intraday, windows, infl).await;
+                let q = quote_one(client, urls, fx, tk, dip_days, high_days, intraday, news, windows, infl).await;
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if n % PROGRESS_EVERY == 0 || n == total {
                     eprintln!("fetch: {n}/{total} quotes fetched");
@@ -579,30 +638,22 @@ pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[Strin
         .buffered(concurrency)
         .collect()
         .await;
-    // Second pass: under the wide fan-out + the extra long-history call per name, Yahoo 429s a handful of
-    // names into "err"/"no data" stubs (empty perf -> gated out -> silently vanish from every table; NVDA
-    // hit this). Re-fetch ONLY those, at low concurrency so they don't contend, and splice the recoveries
-    // back. ponytail: one extra pass, no exponential schedule — the contention is gone once the stampede is.
-    let retry_idx: Vec<usize> = out
+    // No second re-fetch pass. The `throttle()` pacer caps the GLOBAL request rate (default 10/s)
+    // independent of universe size, so the instantaneous load Yahoo sees is the same for 250 names or
+    // 4000 — it just runs longer. That removes the burst-429s that used to drop valid names like NVDA
+    // into err stubs (the reason the pass existed). The residual `err`/`no data` rows are structurally
+    // dead symbols — CoinGecko top-N coins with no Yahoo listing (stablecoins, brand-new tokens) and
+    // `.SG`/illiquid ETF listings Yahoo doesn't carry — which a retry can NEVER recover (measured:
+    // recovered 0/57 once paced). They gate out the same as before; we just don't waste a pass on them.
+    let dead: Vec<&str> = out
         .iter()
-        .enumerate()
-        .filter(|(_, q)| q.price == "err" || q.price == "no data")
-        .map(|(i, _)| i)
+        .filter(|q| q.price == "err" || q.price == "no data")
+        .map(|q| q.ticker.as_str())
         .collect();
-    if !retry_idx.is_empty() {
-        eprintln!("fetch: re-fetching {} dropped name(s) at low concurrency…", retry_idx.len());
-        let recovered: Vec<(usize, Quote)> = stream::iter(retry_idx.into_iter())
-            .map(|i| async move {
-                (i, quote_one(client, urls, fx, &tickers[i], dip_days, high_days, intraday, windows, infl).await)
-            })
-            .buffered(4)
-            .collect()
-            .await;
-        for (i, q) in recovered {
-            if q.price != "err" && q.price != "no data" {
-                out[i] = q;
-            }
-        }
+    if !dead.is_empty() {
+        let shown = dead.iter().take(20).cloned().collect::<Vec<_>>().join(" ");
+        let more = if dead.len() > 20 { format!(" …(+{} more)", dead.len() - 20) } else { String::new() };
+        eprintln!("fetch: {} symbol(s) returned no Yahoo data, gated out: {shown}{more}", dead.len());
     }
     out
 }

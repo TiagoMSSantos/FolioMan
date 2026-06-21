@@ -14,7 +14,7 @@ pub async fn run(args: Vec<String>) {
     } else {
         None
     };
-    for q in fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, &settings.anchor_windows, eu_infl.as_ref()).await {
+    for q in fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, eu_infl.as_ref()).await { // news off: perf prints only % columns
         println!(
             "\n{} [{}]  now {}  ({})  {}",
             q.name, q.ticker, q.price, q.market, core::source_url(&settings.urls.yahoo_quote, &q.ticker)
