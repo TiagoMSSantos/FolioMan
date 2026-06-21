@@ -668,21 +668,28 @@ pub async fn fetch_euribor_3m(client: &Client, urls: &Urls) -> Option<f64> {
 /// current year — unlike the World Bank's ~1.5y-lagged annual series it replaced.
 pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
     use chrono::Datelike;
-    // BLS v1 path-GET ignores year params and returns only ~3 years; year windows are honored only via
-    // POST (seriesid in the body, base /data/ URL), capped at 10 years/call. parse_bls_cpi needs each
-    // year's predecessor in the SAME call, so the windows overlap by 1 year — 3 of them cover ~20y of
-    // YoY with no API key. ponytail: bump to BLS v2 + a free key for a single 20y call if quota bites.
+    // BLS year windows are honored only via POST (seriesid in the body, base /data/ URL). The keyless v1
+    // API caps at 25 requests/DAY (shared per-IP) and 10 years/call, so we make ONE 10y call — enough
+    // for the 5Y/10Y columns; the 20Y column then mirrors ~10y. Set BLS_API_KEY (free, instant signup at
+    // data.bls.gov/registrationEngine) to use v2: 500 req/day and 20y/call, so a single call fills the
+    // full 20Y. ponytail: 1 call either way — the old 3-call keyless version exhausted the 25/day cap.
     let now = chrono::Utc::now().year();
-    let mut out = BTreeMap::new();
-    for (s, e) in [(now - 20, now - 11), (now - 11, now - 2), (now - 2, now)] {
-        let body = serde_json::json!({
-            "seriesid": ["CUUR0000SA0"], "startyear": s.to_string(), "endyear": e.to_string()
-        });
-        if let Some(d) = post_json(client, &urls.us_cpi, &body).await {
-            out.extend(core::parse_bls_cpi(&d));
+    let key = std::env::var("BLS_API_KEY").ok().filter(|k| !k.is_empty());
+    let (url, start, mut body) = match &key {
+        Some(k) => {
+            let mut b = serde_json::Map::new();
+            b.insert("registrationkey".into(), k.clone().into());
+            (urls.us_cpi.replace("/v1/", "/v2/"), now - 19, b) // v2: up to 20y/call
         }
+        None => (urls.us_cpi.clone(), now - 9, serde_json::Map::new()), // v1: max 10y/call
+    };
+    body.insert("seriesid".into(), serde_json::json!(["CUUR0000SA0"]));
+    body.insert("startyear".into(), start.to_string().into());
+    body.insert("endyear".into(), now.to_string().into());
+    match post_json(client, &url, &serde_json::Value::Object(body)).await {
+        Some(d) => core::parse_bls_cpi(&d),
+        None => BTreeMap::new(),
     }
-    out
 }
 
 /// {year -> annual CPI %} for Portugal from Banco de Portugal (series 5721550), each
