@@ -619,6 +619,18 @@ pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option
     Some((chart.dates, chart.closes))
 }
 
+/// Raw (dates, closes) from the MAX monthly history — the long-horizon `backtest` path. Decades of
+/// monthly bars (vs fetch_history's 10y daily), so forward windows of 10y+ exist for old names and a
+/// genuine multi-decade hold can be measured. Same single chart call quote_one already makes for the
+/// 20Y backfill (no new fetch type). None on fetch/parse fail or empty history.
+pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<NaiveDate>, Vec<f64>)> {
+    let chart = parse_chart(&chart_json_long(client, urls, ticker).await?, ticker)?;
+    if chart.closes.is_empty() {
+        return None;
+    }
+    Some((chart.dates, chart.closes))
+}
+
 /// One Quote per ticker, concurrent (≤`FETCH_CONCURRENCY` in flight), input order preserved.
 pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Quote> {
     // Warm the USD rate once up front. Otherwise every US stock races its own USDEUR=X call in the

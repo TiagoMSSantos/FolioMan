@@ -66,14 +66,23 @@ pub async fn run(args: Vec<String>) {
     // explicit tickers to test.
     let mut years: i64 = 5;
     let mut wide = false;
+    let mut long = false;
     let mut tickers: Vec<String> = Vec::new();
     for a in &args {
         match a.parse::<i64>() {
             Ok(y) if tickers.is_empty() && y > 0 => years = y,
             _ if a.eq_ignore_ascii_case("universe") => wide = true,
+            _ if a.eq_ignore_ascii_case("long") => long = true,
             _ => tickers.push(a.clone()),
         }
     }
+    // Daily 10y history caps the forward window at ~5y (the 3y warmup eats the rest of the 10y), so a
+    // hold of ~8y+ — or an explicit `long` — switches to the MAX MONTHLY series: decades of bars for
+    // old names, at the cost of monthly cadence (vol/MA are bar-approximations, see backtest_quote).
+    let monthly = long || years >= 8;
+    let cadence = if monthly { 12 } else { 252 }; // bars per year
+    let min_history = if monthly { 36 } else { MIN_HISTORY }; // ~3y of bars before a cutoff to form the long trend
+    let step = if monthly { 6 } else { STEP_SESSIONS }; // ~6 months between cutoffs
     if wide && tickers.is_empty() {
         // (#2) widen to the live screen universe (crypto + S&P 500 + Xetra UCITS ETFs) for a far bigger
         // sample. Slower (one history fetch per name) but the only cure for 53-survivor-ticker noise.
@@ -85,8 +94,9 @@ pub async fn run(args: Vec<String>) {
         tickers = settings.tickers.clone();
     }
     eprintln!(
-        "backtest: {} tickers, WALK-FORWARD scoring every ~6mo with a {years}y forward holdout each…",
-        tickers.len()
+        "backtest: {} tickers, WALK-FORWARD scoring every ~6mo with a {years}y forward holdout each ({} history)…",
+        tickers.len(),
+        if monthly { "MAX monthly" } else { "10y daily" }
     );
 
     // (#3) per ticker, score at many cutoffs and pair each with its YEARS-forward realized return.
@@ -95,12 +105,17 @@ pub async fn run(args: Vec<String>) {
             let client = &client;
             let urls = &settings.urls;
             async move {
-                let (dates, closes) = match fetch::fetch_history(client, urls, tk).await {
+                let fetched = if monthly {
+                    fetch::fetch_history_long(client, urls, tk).await
+                } else {
+                    fetch::fetch_history(client, urls, tk).await
+                };
+                let (dates, closes) = match fetched {
                     Some(x) => x,
                     None => return Vec::new(),
                 };
                 let mut out = Vec::new();
-                let mut i = MIN_HISTORY;
+                let mut i = min_history;
                 while i < dates.len() {
                     // forward index: first session at least `years` past the as-of date
                     let target = dates[i] + chrono::Duration::days(years * 365);
@@ -109,13 +124,13 @@ pub async fn run(args: Vec<String>) {
                             let fwd = i + off;
                             // record EVERY cutoff with a forward window (not just gated ones) so the
                             // peer-mean spans the whole period universe; each lane filters by its own gates.
-                            let q = core::backtest_quote(tk, &dates, &closes, i);
+                            let q = core::backtest_quote(tk, &dates, &closes, i, cadence);
                             let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
                             out.push(Sample { date: dates[i], realized, relative: 0.0, q });
                         }
                         None => break, // no full forward window left -> stop walking this ticker
                     }
-                    i += STEP_SESSIONS;
+                    i += step;
                 }
                 out
             }
@@ -189,6 +204,10 @@ pub async fn run(args: Vec<String>) {
     println!("    so realized returns are biased UP. Treat the edge as optimistic.");
     println!("  • Price-only (#6): no as-of dividends or P/E reconstructed; the * term above is inert here.");
     println!("  • Overlapping 6-mo windows share price paths -> samples aren't independent; rho is directional.");
+    if monthly {
+        println!("  • Long-horizon (MAX monthly): only names alive for the FULL {years}y window enter, so");
+        println!("    survivorship bias is WORSE than the daily path, and vol/MA are monthly-bar approximations.");
+    }
 }
 
 /// Report one lane: filter the samples to the cutoffs this lane's gates admit, score them, and print

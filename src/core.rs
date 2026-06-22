@@ -631,15 +631,20 @@ fn ranks(v: &[f64]) -> Vec<f64> {
 /// slices, so the backtest scores a name exactly as the live tool would have on that day. ponytail:
 /// dividends / turnover / P/E / ROE are NOT reconstructed (no clean as-of source), so those score
 /// terms go neutral here; the backtest validates the PRICE-based heuristic, which is the bulk of it.
-pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], t: usize) -> Quote {
+pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], t: usize, cadence: usize) -> Quote {
     let (d, c) = (&dates[..=t], &closes[..=t]);
     let mut q = Quote::stub(ticker, "", "", ticker);
-    q.perf = horizon_changes(d, c, None, &BTreeMap::new(), None);
+    q.perf = horizon_changes(d, c, None, &BTreeMap::new(), None); // calendar-based -> cadence-agnostic
     q.drawdown_pct = pct_from_high(c); // all-time anchor as of t
     q.range_pct = price_pct_rank(c);
-    q.volatility_pct = volatility_pct(c, 252);
-    q.below_ma_pct = below_long_ma_pct(c, crate::config::LONG_MA_SESSIONS);
-    q.above_ma_pct = above_long_ma_pct(c, crate::config::LONG_MA_SESSIONS);
+    // cadence = bars/year (252 daily, 12 monthly): vol over ~1y of bars; the long MA window scaled
+    // from its daily session count so the SAME ~4y/200wk span is used on either cadence (cadence=252
+    // reproduces the daily path exactly). ponytail: monthly bars APPROXIMATE the daily vol/MA, not
+    // equal them — fine, a backtest run is single-cadence so the cross-sectional ranks stay consistent.
+    q.volatility_pct = volatility_pct(c, cadence);
+    let long_ma = crate::config::LONG_MA_SESSIONS * cadence / 252;
+    q.below_ma_pct = below_long_ma_pct(c, long_ma);
+    q.above_ma_pct = above_long_ma_pct(c, long_ma);
     q.trend_r2 = trend_r2(c);
     q.max_drawdown_pct = max_drawdown_pct(c);
     q
@@ -852,6 +857,15 @@ assert_eq!(etf_symbols(other, 4), vec!["SPY".to_string()]); // BRK.A is ETF=N ->
     assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2020, 1, 2).unwrap(), 2), Some(20.0));
     assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), 0), Some(10.0));
     assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(), 5), None);
+    // backtest_quote on a synthetic rising MONTHLY series (cadence=12): the cadence window math must
+    // still populate volatility (from monthly returns) and put a monotone climber at the top of its
+    // range. Guards the long-horizon path against a zero/oversized window silently nulling the metrics.
+    let mdates: Vec<NaiveDate> =
+        (0..60).map(|m| NaiveDate::from_ymd_opt(2015, 1, 1).unwrap() + chrono::Duration::days(30 * m)).collect();
+    let mcloses: Vec<f64> = (0..60).map(|m| 100.0 * 1.01_f64.powi(m)).collect();
+    let mq = backtest_quote("X", &mdates, &mcloses, mdates.len() - 1, 12);
+    assert!(mq.volatility_pct.is_some());
+    assert!(mq.range_pct > 90.0); // rising every bar -> sits at its range high
     // default_anchor_half: window widens with horizon length; 1D exact
     assert_eq!(default_anchor_half(1), 0);
     assert_eq!(default_anchor_half(7), 7);
