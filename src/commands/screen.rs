@@ -20,8 +20,8 @@ pub async fn run(args: Vec<String>) {
     } else {
         (args, std::collections::HashSet::new())
     };
-    // pinned tickers are ALWAYS fetched so they show in their table for comparison (sector filter or not)
-    universe.extend(settings.pinned.iter().cloned());
+    // watchlist tickers are ALWAYS fetched so they show in their table for comparison (sector filter or not)
+    universe.extend(settings.tickers.iter().cloned());
     universe.sort();
     universe.dedup();
 
@@ -55,7 +55,7 @@ pub async fn run(args: Vec<String>) {
 
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
-    render(&qs, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &settings.pinned);
+    render(&qs, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &settings.tickers);
 
     if let Some(n) = nupl {
         println!(
