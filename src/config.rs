@@ -126,8 +126,6 @@ pub struct BuyHeuristic {
     pub ref_pe: f64,                 // (E) "fair" trailing P/E: value tilt = ref_pe/PE, clamped — cheap (<ref) lifts, rich (>ref) dampens; no PE = neutral
     pub quality_weight: f64,         // (F) reward per % of trailing ROE — the profitability/QUALITY factor (Novy-Marx: high-ROE firms out-compound). Applied to BOTH lanes. BACKTEST-BLIND (point-in-time ROE, no as-of), so kept small. 0 = off
     pub quality_cap: f64,            // (F) cap the ROE % fed into the quality reward (one 200%-ROE outlier can't dominate)
-    pub mom_12_1_weight: f64,        // (#3) reward per % of 12-1 momentum (return from ~12mo-ago to ~1mo-ago, skipping the last month) — the canonical cross-sectional trend factor; combats buying laggards. Applied to BOTH lanes. 0 = off
-    pub mom_12_1_cap: f64,           // (#3) cap on that 12-1 momentum % fed into the reward
 
     // --- GROWTH LANE: a SECOND ranking (the mirror of the on-sale lane) for quality names AT/NEAR
     //     their high that are still climbing — proven compounders the on-sale score fades to ~0.
@@ -149,9 +147,9 @@ pub struct BuyHeuristic {
     pub nupl_euphoria: f64,          // (4) NUPL above this starts damping crypto scores (~0.5 = "belief/denial" greed zone)
     pub nupl_damp_floor: f64,        // (4) crypto-score multiplier at NUPL=1.0 (full euphoria); 1.0 = damp off
 
-    // --- QUALITY tilts (A/B/C) — all from already-fetched closes, ZERO extra fetch; applied to BOTH lanes ---
-    pub consistency_floor: f64,      // (A) score multiplier at trend R²=0 (a lumpy/lucky path); R²=1 (smooth compounder) keeps full score. 1.0 = off
-    pub sharpe_weight: f64,          // (B) reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off
+    // --- QUALITY tilts (B/C) — all from already-fetched closes, ZERO extra fetch ---
+    pub sharpe_weight: f64,          // (B) GROWTH lane: reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off
+    pub onsale_sharpe_weight: f64,   // (B) ON-SALE lane's own Sharpe weight — split from the growth lane because the shared knob conflicts: ablation shows growth wants 0.15 but on-sale wants 0 (removing it lifts on-sale 12y edge +23.7). 0 = off
     pub sharpe_cap: f64,             // (B) cap on that CAGR/volatility ratio fed into the reward
     pub calmar_weight: f64,          // (C) reward per unit of CAGR/max-drawdown (return per worst historical pain). 0 = off
     pub calmar_cap: f64,             // (C) cap on that CAGR/max-drawdown ratio fed into the reward
@@ -200,8 +198,6 @@ impl Default for BuyHeuristic {
             ref_pe: 20.0,                  // (E) "fair" P/E; PE 10 -> ×1.5 (capped cheap), PE 40 -> ×0.5 (capped rich)
             quality_weight: 0.15,          // (F) per % ROE: a 40% ROE adds ~+6 (capped) — secondary tilt, deliberately small since BACKTEST-BLIND
             quality_cap: 40.0,             // (F) cap the ROE % at 40 (a buyback-levered 200% ROE doesn't dwarf a healthy 25%)
-            mom_12_1_weight: 0.0,          // (#3) OFF by default — walk-forward ablation found 12-1 momentum is not robustly helpful (helps on-sale at 3y, hurts at 5y; removing it nets positive for the growth lane). Knob kept so a future regime can re-enable; raise to ~0.2 to test
-            mom_12_1_cap: 50.0,            // (#3) cap the 12-1 momentum % fed into the reward
             // growth lane (near-high compounders still climbing)
             growth_min_range_pct: 80.0,    // must sit in the top 20% of its own ~10y range. Tightened 70->80: the walk-forward shows the acceleration signal only works for genuine near-high names — at 80 the growth lane's rho rises (5y +0.24->+0.35 narrow, +0.21->+0.24 wide) AND the top/bottom-half edge flips POSITIVE (+31.6 pts wide, OOS +0.12/+0.12), i.e. top picks actually outperform. Loosening to 55 collapsed it (rho +0.10, OOS-early negative)
             growth_min_range_pct_crypto: 40.0, // crypto: looser range floor (top 60% of its own range) so more coins surface — alts spend most of their life far below ATH yet still out-compound. The BTC-relative tilt + nupl damp keep the wider crypto table honest. The strict equity gate (80) stays for stocks/ETFs
@@ -218,8 +214,8 @@ impl Default for BuyHeuristic {
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
             // quality tilts (zero extra fetch)
-            consistency_floor: 1.0,        // (A) DISABLED (1.0 = off). The R²-smoothness damp read pure edge-harm with no rho benefit: turning it off nearly DOUBLED the wide 5y profit edge (+50.5->+95.6) with rho flat (+0.26) and OOS both halves still positive. Among near-high proven compounders the lumpy/step-change paths held the high-upside winners; past path-smoothness doesn't predict future return, it just biased toward boring names. (Was 0.5: lumpy R²=0 kept 50% of score.)
-            sharpe_weight: 0.15,           // (B) halved 0.3->0.15 once consistency came off: the edge ablation showed sharpe dragging the profit spread; 0.15 is the peak (5y wide edge +95.6->+107.3, beats both 0.3 and 0.0; rho +0.24, OOS positive). CAGR/vol ~10 for a calm +20%/yr name -> ~+1.5
+            sharpe_weight: 0.15,           // (B) GROWTH lane. Halved 0.3->0.15: the edge ablation showed sharpe dragging the profit spread; 0.15 is the peak (5y wide edge +95.6->+107.3, beats both 0.3 and 0.0; rho +0.24, OOS positive). CAGR/vol ~10 for a calm +20%/yr name -> ~+1.5
+            onsale_sharpe_weight: 0.0,     // (B) ON-SALE lane. ZEROED — split from growth because the shared knob conflicted: growth wants 0.15, on-sale wants 0. Validated: zeroing lifts on-sale 12y edge +39.2->+62.5 (Δ+23.3) while growth keeps 0.15. 0 = off
             sharpe_cap: 15.0,              // (B) cap the CAGR/volatility ratio (a low-vol freak can't run away with it)
             calmar_weight: 1.0,            // (C) cut further — the Calmar (CAGR/maxDD) tilt is mildly harmful in BOTH lanes on the wide sample too (Δ+0.02/+0.03); kept at 1.0 for a little long-hold drawdown-awareness. CAGR/maxDD ~0.4 for +20%/yr at -50% worst -> ~+0.4
             calmar_cap: 2.0,               // (C) cap the CAGR/max-drawdown ratio

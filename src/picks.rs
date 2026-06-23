@@ -202,29 +202,6 @@ fn combine_damps(damps: &[f64]) -> f64 {
     damps.iter().product::<f64>().powf(1.0 / damps.len() as f64)
 }
 
-/// (#3) 12-1 momentum (%): the return from ~12 months ago to ~1 month ago, SKIPPING the last month
-/// (the canonical academic momentum factor — the most recent month is short-term reversal noise, so
-/// it's excluded). Built from the already-fetched 1Y and 1M horizon returns, ZERO extra fetch: both
-/// share today's price, so price_1mo/price_12mo − 1 = (1 + r_1Y)/(1 + r_1M) − 1. None if either
-/// horizon is missing, or if the price a month ago was ~0 (ratio undefined).
-fn mom_12_1_pct(q: &Quote) -> Option<f64> {
-    let y1 = perf_pct(q, "1Y")?;
-    let m1 = perf_pct(q, "1M")?;
-    let denom = 1.0 + m1 / 100.0;
-    if denom <= 0.0 {
-        return None;
-    }
-    Some(((1.0 + y1 / 100.0) / denom - 1.0) * 100.0)
-}
-
-/// (#3) Reward for POSITIVE 12-1 momentum, capped. Negative momentum → 0 (no reward, no extra
-/// penalty — the gates already cut deep downtrends). Missing horizons → 0. Shared by both lanes: in
-/// the on-sale lane it combats buying laggards (a pullback still in a rising trailing trend beats one
-/// in a dying one); in the growth lane it's the trend-persistence core.
-fn mom_12_1_reward(q: &Quote, t: &BuyHeuristic) -> f64 {
-    t.mom_12_1_weight * mom_12_1_pct(q).unwrap_or(0.0).clamp(0.0, t.mom_12_1_cap)
-}
-
 /// (F) Profitability/QUALITY reward: trailing ROE, the canonical quality factor (high-ROE firms
 /// out-compound long-run). None (crypto/ETF/no FMP key) → 0 = neutral; negative ROE clamps to 0 (no
 /// bonus, the gates handle bleeders). Shared by both lanes. BACKTEST-BLIND: ROE is point-in-time so
@@ -233,17 +210,13 @@ fn quality_reward(q: &Quote, t: &BuyHeuristic) -> f64 {
     t.quality_weight * q.roe.unwrap_or(0.0).clamp(0.0, t.quality_cap)
 }
 
-/// (A/B/C) Quality tilts shared by BOTH lanes, all derived from already-fetched closes (zero extra
-/// fetch). Returns `(consistency_mult, risk_reward)`:
-/// - **consistency_mult** (A) — `consistency_floor`..1 scaled by the log-price trend R²: a smooth
-///   compounder (R²→1) keeps full score, a lumpy/lucky path (R²→0) is tapered toward the floor. This
-///   is the rigorous fix for CAGR endpoint-luck — you hold the path, not the endpoints.
-/// - **risk_reward** (B+C) — additive bonus for return PER unit of risk: Sharpe-ish (CAGR/volatility,
-///   path noise) + Calmar (CAGR/max-drawdown, tail pain). Both reward the same thing from two angles —
-///   a name that compounds hard while staying calm and shallow-drawdown. Missing/zero risk inputs → 0
-///   (never punished for absent data).
-fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
-    let consistency = t.consistency_floor + (1.0 - t.consistency_floor) * q.trend_r2.clamp(0.0, 1.0);
+/// (B/C) Risk-adjusted-return bonus from already-fetched closes (zero extra fetch): additive reward
+/// for return PER unit of risk — Sharpe-ish (CAGR/volatility, path noise) + Calmar (CAGR/max-drawdown,
+/// tail pain). Both reward the same thing from two angles: a name that compounds hard while staying
+/// calm and shallow-drawdown. Missing/zero risk inputs → 0 (never punished for absent data). The
+/// Sharpe/Calmar weights are passed in PER LANE — the growth and on-sale lanes want different Sharpe
+/// emphasis (growth 0.15, on-sale 0), so the caller supplies its own.
+fn risk_bonus(q: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: f64, t: &BuyHeuristic) -> f64 {
     let sharpe = match q.volatility_pct {
         Some(v) if v > 0.0 => (long_cagr / v).clamp(0.0, t.sharpe_cap),
         _ => 0.0,
@@ -253,15 +226,15 @@ fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
     } else {
         0.0
     };
-    (consistency, t.sharpe_weight * sharpe + t.calmar_weight * calmar)
+    sharpe_weight * sharpe + calmar_weight * calmar
 }
 
 /// Score a quote as a "quality on sale" buy candidate for a multi-DECADE hold, or `None` if it
 /// fails a gate. The formula:
 ///
 /// ```text
-///   base  = discount_weight×discount × trend_health × momentum + long_reward×discount_frac + cheap_reward + dividend_reward + risk_reward + mom_12_1_reward + quality_reward
-///   score = base × value × geomean(decline, trust, consistency)   // (#4) geomean caps stacked penalties
+///   base  = discount_weight×discount × trend_health × momentum + long_reward×discount_frac + cheap_reward + dividend_reward + risk_reward + quality_reward
+///   score = base × value × geomean(decline, trust)   // (#4) geomean caps stacked penalties
 /// ```
 ///
 /// - **discount** — how deep in its OWN ~10y range it trades (100 − percentile rank; self-normalizes
@@ -283,9 +256,7 @@ fn quality_factors(q: &Quote, long_cagr: f64, t: &BuyHeuristic) -> (f64, f64) {
 /// - **quality_reward** — (F) trailing-ROE profitability tilt (`quality_weight`/`quality_cap`); the
 ///   canonical quality factor (high-ROE firms out-compound). BACKTEST-BLIND (point-in-time ROE), so small.
 /// - **decline** — (B) value-trap dock when 1Y & 5Y both deeply negative.
-/// - **risk_reward** — (B/C) Sharpe-ish (CAGR/vol) + Calmar (CAGR/max-drawdown) bonus; return per unit of risk.
-/// - **mom_12_1_reward** — (#3) reward for positive 12-1 momentum (12mo→1mo trailing trend); favours a pullback still in an uptrend over one in a dying trend.
-/// - **consistency** — (A) multiplier from the log-price trend R²; a lumpy/lucky path is tapered toward `consistency_floor`.
+/// - **risk_reward** — (B/C) Sharpe-ish (CAGR/vol) + Calmar (CAGR/max-drawdown) bonus; return per unit of risk. On-sale lane uses its own `onsale_sharpe_weight`.
 /// - **trust** — halves anything without a long record (10Y for equities, 5Y for young-EUR-pair crypto).
 ///
 /// Every knob lives in `BuyHeuristic` (settings.yaml `buy_heuristic:`). Higher = more interesting.
@@ -351,20 +322,19 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     let cheap_reward = t.cheap_weight * q.below_ma_pct.min(t.cheap_cap); // (C)
     let dividend_reward = t.dividend_weight * dividend_yield_1y(q).min(t.dividend_cap); // (D)
 
-    let (consistency, risk_reward) = quality_factors(q, long_cagr, t); // (A/B/C) zero-fetch quality tilts
+    let risk_reward = risk_bonus(q, long_cagr, t.onsale_sharpe_weight, t.calmar_weight, t); // (B/C) on-sale lane's own Sharpe weight
     let base = t.discount_weight * discount * health * momentum // (#4) demoted: dip-depth ranks backwards on peer-relative backtest
         + long_reward
         + cheap_reward
         + dividend_reward
         + risk_reward
-        + mom_12_1_reward(q, t) // (#3) trailing-trend confirmation: prefer pullbacks still in an uptrend
         + quality_reward(q, t); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
     let value = value_factor(q, t.ref_pe); // (E) cheap lifts, rich dampens, unknown neutral
     let decline = sustained_decline_factor(q, t); // (B) multi-year-bleed dock
     let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (#4) geomean the pure penalties so several mild damps can't compound to ~0; value (a tilt that
     // can exceed 1.0) stays a direct multiplier.
-    Some(base * value * combine_damps(&[decline, trust, consistency]))
+    Some(base * value * combine_damps(&[decline, trust]))
 }
 
 /// Score a quote as a MOMENTUM/GROWTH candidate — the MIRROR of `buy_score`. The on-sale lane fades
@@ -375,9 +345,8 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
 /// ```text
 ///   base  = growth_trend_weight × min(long_cagr, long_trend_cap)
 ///         + growth_accel_weight × clamp(1Y − long_cagr, 0, growth_accel_cap)   // recent outpaces long => accelerating
-///         + mom_12_1_reward                                                    // (#3) 12-1 trailing-trend persistence
 ///         + quality_reward                                                     // (F) ROE profitability tilt (BACKTEST-BLIND, small)
-///   score = base × proximity × value(E) × geomean(trust, overext, consistency)   // (#4) geomean of the penalties
+///   score = base × proximity × value(E) × geomean(trust, overext)   // (#4) geomean of the penalties
 /// ```
 ///
 /// Gated HARD so it can't degrade into top-chasing: must sit in the top `growth_min_range_pct` of its
@@ -430,11 +399,10 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     let trend = long_cagr.min(t.long_trend_cap); // proven compounding, capped like the on-sale lane
     let accel = (y1 - long_cagr).clamp(0.0, t.growth_accel_cap); // last year outpacing the long run = building
     let proximity = q.range_pct / 100.0; // 0.7..1.0 — closer to the high = stronger confirmation
-    let (consistency, risk_reward) = quality_factors(q, long_cagr, t); // (A/B/C) zero-fetch quality tilts
+    let risk_reward = risk_bonus(q, long_cagr, t.sharpe_weight, t.calmar_weight, t); // (B/C) growth lane's Sharpe weight
     let base = t.growth_trend_weight * trend
         + t.growth_accel_weight * accel
         + risk_reward
-        + mom_12_1_reward(q, t) // (#3) 12-1 trend persistence — the growth lane's core signal
         + quality_reward(q, t); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
     let value = value_factor(q, t.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
@@ -459,8 +427,8 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     } else {
         0.0
     };
-    // (#4) geomean the pure penalties (trust/overext/consistency); proximity + value stay direct
-    Some(base * proximity * value * combine_damps(&[trust, overext_damp, consistency]) + liq_bonus)
+    // (#4) geomean the pure penalties (trust/overext); proximity + value stay direct
+    Some(base * proximity * value * combine_damps(&[trust, overext_damp]) + liq_bonus)
 }
 
 /// (4) Whole-market crypto sentiment damp from Bitcoin NUPL (net unrealized profit/loss — already
@@ -987,23 +955,17 @@ pub fn selftest() {
     // (C) max drawdown: worst peak-to-trough
     assert!((core::max_drawdown_pct(&[100.0, 50.0, 75.0]) - 50.0).abs() < 1e-9);
     assert_eq!(core::max_drawdown_pct(&[1.0, 2.0, 3.0]), 0.0); // monotone up -> never down
-    // (A) quality_factors: a smooth path (R²=1) keeps a higher consistency multiplier than a lumpy one.
-    // The damp is DISABLED by default (consistency_floor 1.0), so pin an explicit floor to test the mechanism.
-    let t_consist = BuyHeuristic { consistency_floor: 0.5, ..t.clone() };
-    assert!(quality_factors(&{ let mut x = q(5.0, &[("10Y", 40.0)]); x.trend_r2 = 1.0; x }, 20.0, &t_consist).0
-        > quality_factors(&{ let mut x = q(5.0, &[("10Y", 40.0)]); x.trend_r2 = 0.0; x }, 20.0, &t_consist).0);
-    // (B) risk_reward: same CAGR, the lower-volatility name earns a bigger Sharpe-ish bonus
-    assert!(quality_factors(&{ let mut x = q(5.0, &[]); x.volatility_pct = Some(1.0); x }, 20.0, &t).1
-        > quality_factors(&{ let mut x = q(5.0, &[]); x.volatility_pct = Some(4.0); x }, 20.0, &t).1);
-    // (C) risk_reward: same CAGR, the SHALLOWER max-drawdown name earns a bigger Calmar bonus
-    assert!(quality_factors(&{ let mut x = q(5.0, &[]); x.max_drawdown_pct = 20.0; x }, 20.0, &t).1
-        > quality_factors(&{ let mut x = q(5.0, &[]); x.max_drawdown_pct = 90.0; x }, 20.0, &t).1);
-    // (A) end-to-end: a steady compounder outranks an otherwise-identical lumpy one in the on-sale lane
-    let mut steady_q = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
-    steady_q.trend_r2 = 0.95;
-    let mut lumpy_q = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
-    lumpy_q.trend_r2 = 0.10;
-    assert!(buy_score(&steady_q, &t_consist).unwrap() > buy_score(&lumpy_q, &t_consist).unwrap());
+    // (B) risk_bonus: same CAGR, the lower-volatility name earns a bigger Sharpe-ish bonus
+    assert!(risk_bonus(&{ let mut x = q(5.0, &[]); x.volatility_pct = Some(1.0); x }, 20.0, t.sharpe_weight, t.calmar_weight, &t)
+        > risk_bonus(&{ let mut x = q(5.0, &[]); x.volatility_pct = Some(4.0); x }, 20.0, t.sharpe_weight, t.calmar_weight, &t));
+    // (C) risk_bonus: same CAGR, the SHALLOWER max-drawdown name earns a bigger Calmar bonus (calmar_weight default 1.0)
+    assert!(risk_bonus(&{ let mut x = q(5.0, &[]); x.max_drawdown_pct = 20.0; x }, 20.0, t.sharpe_weight, t.calmar_weight, &t)
+        > risk_bonus(&{ let mut x = q(5.0, &[]); x.max_drawdown_pct = 90.0; x }, 20.0, t.sharpe_weight, t.calmar_weight, &t));
+    // (B) per-lane Sharpe split: zeroing the on-sale weight drops the on-sale risk bonus to 0 while the
+    // growth weight still rewards the same name (the conflict the split exists to resolve).
+    let calm = { let mut x = q(5.0, &[]); x.volatility_pct = Some(1.0); x };
+    assert_eq!(risk_bonus(&calm, 20.0, 0.0, 0.0, &t), 0.0);
+    assert!(risk_bonus(&calm, 20.0, t.sharpe_weight, 0.0, &t) > 0.0);
 
     // (A) crypto trust: a young EUR pair (5Y but no 10Y, like BTC-EUR) is NOT halved — 5Y is proven
     // enough for crypto; an equity still needs a 10Y leg, a barely-listed coin (1Y only) is still cut.
@@ -1025,18 +987,6 @@ pub fn selftest() {
     assert!(combine_damps(&[0.5, 0.4, 0.5]) > 0.5 * 0.4 * 0.5); // geomean bounded above the product
     assert!(combine_damps(&[0.9, 0.5]) < combine_damps(&[0.9, 0.9])); // still monotone in each term
 
-    // (#3) 12-1 momentum: +50% over 1Y, +20% over 1M -> 1.5/1.2 - 1 = +25%; reward = weight × min(25, cap)
-    let mom = q(20.0, &[("1Y", 50.0), ("1M", 20.0)]);
-    assert!((mom_12_1_pct(&mom).unwrap() - 25.0).abs() < 1e-9);
-    assert!((mom_12_1_reward(&mom, &t) - t.mom_12_1_weight * 25.0).abs() < 1e-9);
-    // negative 12-1 momentum -> clamped to 0 reward (no reward, no extra penalty)
-    let down = q(20.0, &[("1Y", -30.0), ("1M", 10.0)]);
-    assert!(mom_12_1_pct(&down).unwrap() < 0.0);
-    assert_eq!(mom_12_1_reward(&down, &t), 0.0);
-    // missing the 1M leg -> None -> 0 reward (never punished for absent data)
-    let bare = q(20.0, &[("1Y", 50.0)]);
-    assert!(mom_12_1_pct(&bare).is_none() && mom_12_1_reward(&bare, &t) == 0.0);
-
     // (F) ROE quality reward: positive ROE -> weight×roe (capped); None/negative -> 0 (neutral)
     let mut hi_roe = q(20.0, &[("1Y", 10.0)]);
     hi_roe.roe = Some(30.0);
@@ -1045,7 +995,7 @@ pub fn selftest() {
     assert!((quality_reward(&hi_roe, &t) - t.quality_weight * t.quality_cap).abs() < 1e-9);
     hi_roe.roe = Some(-50.0); // loss-making -> no quality bonus
     assert_eq!(quality_reward(&hi_roe, &t), 0.0);
-    assert_eq!(quality_reward(&bare, &t), 0.0); // roe None -> 0
+    assert_eq!(quality_reward(&q(20.0, &[("1Y", 10.0)]), &t), 0.0); // roe None -> 0
 
     // EU-buyability gate: crypto majors + UCITS ETFs + US/Canada/EU-listed stocks pass; a US-domiciled
     // ETF (no PRIIPs KID) and an Asian-only listing are dropped — EU retail can't buy them.

@@ -189,18 +189,14 @@ pub async fn run(args: Vec<String>) {
         ("discount_weight", |t| t.discount_weight = 0.0), // (#4) zero the dip reward — Δ>0 confirms dip-depth ranks backwards
         ("cheap_weight", |t| t.cheap_weight = 0.0),
         ("dividend_weight*", |t| t.dividend_weight = 0.0),
-        ("sharpe_weight", |t| t.sharpe_weight = 0.0),
+        ("onsale_sharpe_weight", |t| t.onsale_sharpe_weight = 0.0),
         ("calmar_weight", |t| t.calmar_weight = 0.0),
-        ("consistency", |t| t.consistency_floor = 1.0),
-        ("mom_12_1_weight", |t| t.mom_12_1_weight = 0.0),
     ];
     let growth_knobs: &[(&str, fn(&mut BuyHeuristic))] = &[
         ("growth_trend_weight", |t| t.growth_trend_weight = 0.0),
         ("growth_accel_weight", |t| t.growth_accel_weight = 0.0),
         ("sharpe_weight", |t| t.sharpe_weight = 0.0),
         ("calmar_weight", |t| t.calmar_weight = 0.0),
-        ("consistency", |t| t.consistency_floor = 1.0),
-        ("mom_12_1_weight", |t| t.mom_12_1_weight = 0.0),
         ("overext_brake", |t| t.growth_overext_cap = 0.0),
     ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, t, buy_knobs);
