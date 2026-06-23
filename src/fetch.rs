@@ -619,7 +619,13 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
 /// Network-module asserts (no live calls): the pure, breakable bit of the Börse Frankfurt signer is
 /// the MD5 — pin it to known answers so a bad refactor is caught offline. (The concatenation order is
 /// verified against the live server, not here.)
-pub fn selftest() {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Signing + concurrency + throttle asserts (no live calls). White-box via `use super::*`.
+    #[test]
+    fn signing_and_pacing() {
     use md5::{Digest, Md5};
     let md5_hex = |s: &str| hex::encode(Md5::digest(s.as_bytes()));
     assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
@@ -645,6 +651,7 @@ pub fn selftest() {
     let (l2, _) = claim_slot(n1, base + 2 * iv, iv); // next claim same `now` -> pushed to the slot
     assert_eq!(l2, base + 3 * iv);
     assert!(l2.duration_since(l1) >= iv);
+    }
 }
 
 /// At most this many quote fetches in flight at once. Unbounded `join_all` over the ~750-ticker

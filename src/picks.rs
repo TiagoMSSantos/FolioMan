@@ -691,8 +691,13 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     print_lane(ranked(quotes, tuning, growth_scorer, 0.0, &pinned_set), n, w, "growth candidates", growth, sectors, tuning.growth_min_score, &pinned_set);
 }
 
-/// Buy-heuristic asserts (no network). Run by the `selftest` subcommand and the unit test.
-pub fn selftest() {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Buy-heuristic asserts (no network). White-box: reaches `picks` privates via `use super::*`.
+    #[test]
+    fn buy_heuristic() {
     // build a Quote with chosen horizon %s set (others n/a), robust to HORIZONS order. First
     // arg = drawdown_pct (% below the OFF-HI high) — the on-sale signal the score is built on.
     let quote = |drawdown_pct: f64, labels: &[(&str, f64)]| -> Quote {
@@ -1059,4 +1064,5 @@ pub fn selftest() {
     assert!(buy_score(&us_etf, &tuning).unwrap() > tuning.min_score);
     assert!(ranked(std::slice::from_ref(&us_etf), &tuning, buy_score, tuning.min_score, &no_pin).is_empty());
     assert_eq!(ranked(std::slice::from_ref(&ucits), &tuning, buy_score, tuning.min_score, &no_pin).len(), 1);
+    }
 }

@@ -874,9 +874,13 @@ pub fn extreme_flags(closes: &[f64], tol: f64) -> (bool, bool) {
     (last >= hi * (1.0 - tol), last <= lo * (1.0 + tol))
 }
 
-/// Pure-logic asserts (no network), mirroring the old Python `selftest`.
-/// Called by the `selftest` subcommand and by the unit test below.
-pub fn selftest() {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pure-logic asserts (no network). White-box: reaches `core` privates via `use super::*`.
+    #[test]
+    fn pure_logic() {
     assert!((pct_from_high(&[100.0, 80.0, 95.0]) - 5.0).abs() < 1e-9);
     assert_eq!(pct_from_high(&[90.0, 100.0]), 0.0);
     // backtest correlation helpers: perfect monotone -> +1, reversed -> -1, robust ranks
@@ -1101,4 +1105,5 @@ assert_eq!(avg_volume(&[0.0], 30), None);
     });
     assert_eq!(parse_pt_series(&pt_obj).get(&2024), Some(&2.4));
     assert!(parse_pt_series(&Value::Null).is_empty());
+    }
 }

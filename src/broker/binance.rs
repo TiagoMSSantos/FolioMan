@@ -97,10 +97,16 @@ pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64) -> Resul
     }
 }
 
-/// Signing self-check against a known HMAC-SHA256 test vector.
-pub fn selftest() {
-    assert_eq!(
-        sign("key", "The quick brown fox jumps over the lazy dog"),
-        "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
-    );
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Signing self-check against a known HMAC-SHA256 test vector.
+    #[test]
+    fn signing() {
+        assert_eq!(
+            sign("key", "The quick brown fox jumps over the lazy dog"),
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+        );
+    }
 }

@@ -15,9 +15,3 @@ use std::env;
 pub(crate) fn env_var(k: &str) -> Result<String, String> {
     env::var(k).map_err(|_| format!("missing env var {k} (broker credential)"))
 }
-
-/// Pure-logic self-check across brokers (currently just Binance's signing). Run by the
-/// `selftest` subcommand and `tests/broker.rs`.
-pub fn selftest() {
-    binance::selftest();
-}

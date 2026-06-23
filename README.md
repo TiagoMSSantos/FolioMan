@@ -9,8 +9,7 @@ live orders** (no auto-trading).
 ```sh
 # needs a Rust toolchain: https://rustup.rs
 cargo build --release
-cargo test                      # pure-logic asserts (one file per module)
-cargo run -- selftest           # same asserts, no network
+cargo test                      # unit tests (#[cfg(test)] mod tests per module) + tests/ integration
 
 cargo run -- check              # default watchlist: price(EUR), % per horizon, trend, headline,
                                 #   then the GROWTH ranking (buy candidates), Euribor, CdA, inflation
