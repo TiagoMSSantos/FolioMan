@@ -894,29 +894,29 @@ mod tests {
     assert_eq!(market_of("VWCE.DE"), "Germany");
     assert_eq!(market_of("AAPL"), "USA");
     assert_eq!(market_of("BTC-USD"), "Crypto (global)");
-// nupl_zone: band edges
-assert_eq!(nupl_zone(-0.1), "Capitulation");
-assert_eq!(nupl_zone(0.16), "Hope/Fear");
-assert_eq!(nupl_zone(0.6), "Belief/Denial");
-assert_eq!(nupl_zone(0.8), "Euphoria/Greed");
-// sector_matches: empty filter keeps all; else case-insensitive substring on ANY keyword
-let tech = vec!["Technology".to_string(), "Communication".to_string()];
-assert!(sector_matches("Industrials", &[])); // no filter -> keep everything
-assert!(sector_matches("Information Technology", &tech)); // "Technology" is a substring
-assert!(sector_matches("iShares Tech Sector Technology UCITS", &tech)); // ETF name path
-assert!(!sector_matches("Industrials", &tech));
-// sector_symbol: keep only filter-matching sectors (Yahoo-normalized), all when filter empty
-assert_eq!(sector_symbol("AAPL,Apple Inc.,Information Technology,Tech HW,x,y", &tech), Some("AAPL".to_string()));
-assert_eq!(sector_symbol("GOOGL,Alphabet,Communication Services,x", &tech), Some("GOOGL".to_string()));
-assert_eq!(sector_symbol("BF.B,Brown-Forman,Information Technology,x", &tech), Some("BF-B".to_string())); // '.'->'-'
-assert_eq!(sector_symbol("MMM,3M,Industrials,x", &tech), None);
-assert_eq!(sector_symbol("AMZN,Amazon,Consumer Discretionary,x", &tech), None); // GICS quirk: not tech
-assert_eq!(sector_symbol("MMM,3M,Industrials,x", &[]), Some("MMM".to_string())); // empty filter -> all sectors
-// etf_symbols: keep ETF flag = Y at the given column, skip header/footer/$/non-ETF; '.'->'-'
-let nasdaq = "Symbol|Name|Cat|Test|Fin|Lot|ETF|NS\nQQQ|Invesco QQQ|Q|N|N|100|Y|N\nAAPL|Apple|Q|N|N|100|N|N\nFOO$|x|Q|N|N|100|Y|N\nFile Creation Time: now";
-assert_eq!(etf_symbols(nasdaq, 6), vec!["QQQ".to_string()]); // AAPL=N dropped, FOO$ dropped, footer skipped
-let other = "ACT Symbol|Name|Exch|CQS|ETF|Lot|Test|NASDAQ\nSPY|SPDR S&P 500|P|SPY|Y|100|N|SPY\nBRK.A|Berkshire|N|BRK.A|N|1|N|";
-assert_eq!(etf_symbols(other, 4), vec!["SPY".to_string()]); // BRK.A is ETF=N -> dropped
+    // nupl_zone: band edges
+    assert_eq!(nupl_zone(-0.1), "Capitulation");
+    assert_eq!(nupl_zone(0.16), "Hope/Fear");
+    assert_eq!(nupl_zone(0.6), "Belief/Denial");
+    assert_eq!(nupl_zone(0.8), "Euphoria/Greed");
+    // sector_matches: empty filter keeps all; else case-insensitive substring on ANY keyword
+    let tech = vec!["Technology".to_string(), "Communication".to_string()];
+    assert!(sector_matches("Industrials", &[])); // no filter -> keep everything
+    assert!(sector_matches("Information Technology", &tech)); // "Technology" is a substring
+    assert!(sector_matches("iShares Tech Sector Technology UCITS", &tech)); // ETF name path
+    assert!(!sector_matches("Industrials", &tech));
+    // sector_symbol: keep only filter-matching sectors (Yahoo-normalized), all when filter empty
+    assert_eq!(sector_symbol("AAPL,Apple Inc.,Information Technology,Tech HW,x,y", &tech), Some("AAPL".to_string()));
+    assert_eq!(sector_symbol("GOOGL,Alphabet,Communication Services,x", &tech), Some("GOOGL".to_string()));
+    assert_eq!(sector_symbol("BF.B,Brown-Forman,Information Technology,x", &tech), Some("BF-B".to_string())); // '.'->'-'
+    assert_eq!(sector_symbol("MMM,3M,Industrials,x", &tech), None);
+    assert_eq!(sector_symbol("AMZN,Amazon,Consumer Discretionary,x", &tech), None); // GICS quirk: not tech
+    assert_eq!(sector_symbol("MMM,3M,Industrials,x", &[]), Some("MMM".to_string())); // empty filter -> all sectors
+    // etf_symbols: keep ETF flag = Y at the given column, skip header/footer/$/non-ETF; '.'->'-'
+    let nasdaq = "Symbol|Name|Cat|Test|Fin|Lot|ETF|NS\nQQQ|Invesco QQQ|Q|N|N|100|Y|N\nAAPL|Apple|Q|N|N|100|N|N\nFOO$|x|Q|N|N|100|Y|N\nFile Creation Time: now";
+    assert_eq!(etf_symbols(nasdaq, 6), vec!["QQQ".to_string()]); // AAPL=N dropped, FOO$ dropped, footer skipped
+    let other = "ACT Symbol|Name|Exch|CQS|ETF|Lot|Test|NASDAQ\nSPY|SPDR S&P 500|P|SPY|Y|100|N|SPY\nBRK.A|Berkshire|N|BRK.A|N|1|N|";
+    assert_eq!(etf_symbols(other, 4), vec!["SPY".to_string()]); // BRK.A is ETF=N -> dropped
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"
@@ -990,9 +990,9 @@ assert_eq!(etf_symbols(other, 4), vec!["SPY".to_string()]); // BRK.A is ETF=N ->
     assert_eq!(avg_turnover(&[10.0, 20.0], &[0.0, 200.0], 30), Some(4000.0)); // zero-vol day skipped
     assert_eq!(avg_turnover(&[], &[], 30), None);
     assert_eq!(avg_turnover(&[10.0], &[0.0], 30), None); // no usable turnover
-// avg_volume: crypto notional volume used raw (no ×close), zero days skipped
-assert_eq!(avg_volume(&[100.0, 0.0, 300.0], 30), Some(200.0));
-assert_eq!(avg_volume(&[0.0], 30), None);
+    // avg_volume: crypto notional volume used raw (no ×close), zero days skipped
+    assert_eq!(avg_volume(&[100.0, 0.0, 300.0], 30), Some(200.0));
+    assert_eq!(avg_volume(&[0.0], 30), None);
 
     // volatility: stdev of daily % returns. Steady +1%/day -> 0 stdev; alternating moves -> >0
     assert!(volatility_pct(&[100.0, 101.0, 102.01, 103.0301], 30).unwrap() < 1e-9); // ~0 (float dust)
