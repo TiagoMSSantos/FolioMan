@@ -431,16 +431,23 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     Some(base * proximity * value * combine_damps(&[trust, overext_damp]) + liq_bonus)
 }
 
-/// (4) Whole-market crypto sentiment damp from Bitcoin NUPL (net unrealized profit/loss — already
-/// fetched for the screen footer). NUPL above `nupl_euphoria` is market greed/top territory, so scale
-/// crypto scores toward `nupl_damp_floor` (reached at NUPL 1.0, peak euphoria). 1.0 (no damp) when
-/// NUPL is unknown or below the euphoria line. Market-wide, so it scales the whole crypto lane
-/// uniformly — thinning the crypto buy/growth tables in a frothy top, fattening them after a flush.
-fn nupl_damp(nupl: Option<f64>, t: &BuyHeuristic) -> f64 {
+/// (4) Whole-market crypto sentiment FACTOR from Bitcoin NUPL (net unrealized profit/loss — already
+/// fetched for the screen footer). SYMMETRIC: above `nupl_euphoria` is greed/top territory, so scale
+/// crypto scores DOWN toward `nupl_damp_floor` (reached at NUPL 1.0); below `nupl_capitulation` is
+/// fear/accumulation, so scale UP toward `nupl_boost_ceiling` (reached at NUPL 0, clamped for the
+/// negative deep-bear readings). 1.0 (neutral) in the band between, and when NUPL is unknown.
+/// Market-wide — scales the whole crypto lane uniformly: thins the tables in a frothy top, fattens
+/// them after a flush. BACKTEST-BLIND (NUPL isn't in backtest_quote): the boost is a judgment lever,
+/// not edge-validated — `nupl_boost_ceiling` is kept mild.
+fn nupl_factor(nupl: Option<f64>, t: &BuyHeuristic) -> f64 {
     match nupl {
         Some(v) if v > t.nupl_euphoria && t.nupl_euphoria < 1.0 => {
             let over = ((v - t.nupl_euphoria) / (1.0 - t.nupl_euphoria)).clamp(0.0, 1.0);
             1.0 - over * (1.0 - t.nupl_damp_floor)
+        }
+        Some(v) if v < t.nupl_capitulation && t.nupl_capitulation > 0.0 => {
+            let under = ((t.nupl_capitulation - v) / t.nupl_capitulation).clamp(0.0, 1.0);
+            1.0 + under * (t.nupl_boost_ceiling - 1.0)
         }
         _ => 1.0,
     }
@@ -644,8 +651,9 @@ pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, nupl: Option
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
     let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
-    // (4) market-greed damp, applied to crypto rows only (it's a whole-crypto-market gauge).
-    let cdamp = nupl_damp(nupl, t);
+    // (4) market-sentiment factor, applied to crypto rows only (it's a whole-crypto-market gauge):
+    // <1 in euphoria, >1 in capitulation, 1.0 in the neutral band / unknown.
+    let cfactor = nupl_factor(nupl, t);
     // Bitcoin = the crypto market's base: tilt each alt by its 1Y return RELATIVE to BTC, so the looser
     // crypto gate surfaces more coins without flooding the table with names that merely lag the base.
     let btc_1y = qs.iter().find(|q| q.ticker.starts_with("BTC-")).and_then(|q| perf_pct(q, "1Y"));
@@ -653,7 +661,7 @@ pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, nupl: Option
         if !is_currency_quoted(&q.ticker) {
             return s; // equities/ETFs: no crypto-market damp, no BTC base
         }
-        btc_relative(perf_pct(q, "1Y"), btc_1y, s * cdamp, t.growth_btc_outperf_weight)
+        btc_relative(perf_pct(q, "1Y"), btc_1y, s * cfactor, t.growth_btc_outperf_weight)
     };
     // a gated pinned name returns None from growth_score; give it a tiny sentinel score so it survives
     // ranked's `>0` trim and reaches print_lane (where pinned is exempt from the score/sector cut). Skip
@@ -946,11 +954,14 @@ pub fn selftest() {
     let mut bled_crypto = q(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]); // ...but crypto 5Y is noise
     bled_crypto.ticker = "ETH-EUR".into();
     assert!(growth_score(&bled_crypto, &t).is_some());
-    // (4) NUPL damp: euphoric market (high NUPL) shrinks the multiplier; below the line / unknown = 1.0
-    assert_eq!(nupl_damp(None, &t), 1.0);
-    assert_eq!(nupl_damp(Some(0.0), &t), 1.0); // below euphoria line
-    assert!(nupl_damp(Some(0.75), &t) < 1.0 && nupl_damp(Some(0.75), &t) > t.nupl_damp_floor);
-    assert!((nupl_damp(Some(1.0), &t) - t.nupl_damp_floor).abs() < 1e-9); // peak euphoria -> floor
+    // (4) NUPL factor: symmetric. euphoria (high NUPL) shrinks <1; capitulation (low NUPL) boosts >1;
+    // neutral band / unknown = exactly 1.0.
+    assert_eq!(nupl_factor(None, &t), 1.0);
+    assert!(nupl_factor(Some(0.40), &t) == 1.0); // between capitulation (0.25) and euphoria (0.5) -> neutral
+    assert!(nupl_factor(Some(0.75), &t) < 1.0 && nupl_factor(Some(0.75), &t) > t.nupl_damp_floor);
+    assert!((nupl_factor(Some(1.0), &t) - t.nupl_damp_floor).abs() < 1e-9); // peak euphoria -> floor
+    assert!(nupl_factor(Some(0.0), &t) > 1.0); // deep capitulation -> boost
+    assert!((nupl_factor(Some(0.0), &t) - t.nupl_boost_ceiling).abs() < 1e-9); // NUPL 0 -> ceiling
 
     // --- (A) trend consistency: R² of the log-price line, damps CAGR endpoint-luck ---
     assert!(core::trend_r2(&[1.0, 2.0, 4.0, 8.0, 16.0]) > 0.999); // perfect exponential -> R²≈1

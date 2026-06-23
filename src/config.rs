@@ -146,6 +146,8 @@ pub struct BuyHeuristic {
     //     the screen footer; high NUPL = euphoria/top -> shrink crypto scores in BOTH lanes. ---
     pub nupl_euphoria: f64,          // (4) NUPL above this starts damping crypto scores (~0.5 = "belief/denial" greed zone)
     pub nupl_damp_floor: f64,        // (4) crypto-score multiplier at NUPL=1.0 (full euphoria); 1.0 = damp off
+    pub nupl_capitulation: f64,      // (4) NUPL below this starts BOOSTING crypto scores (~0.25 = fear/accumulation zone); 0 = boost off
+    pub nupl_boost_ceiling: f64,     // (4) crypto-score multiplier at NUPL=0 (deep capitulation); 1.0 = boost off. BACKTEST-BLIND judgment lever — keep mild
 
     // --- QUALITY tilts (B/C) — all from already-fetched closes, ZERO extra fetch ---
     pub sharpe_weight: f64,          // (B) GROWTH lane: reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off
@@ -213,6 +215,8 @@ impl Default for BuyHeuristic {
             growth_turnover_weight: 0.5,   // (L) liquidity tilt per ln(turnover/€1B), added after the brake. Lifts deep-liquid proven compounders (NVDA €32B -> +~1.0) over illiquid €200-500M names they tie/trail on the brake-docked score, without touching the validated edge (BACKTEST-BLIND)
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
+            nupl_capitulation: 0.25,       // (4) NUPL < 0.25 = fear/accumulation -> start boosting crypto (buy-the-fear)
+            nupl_boost_ceiling: 1.3,       // (4) at NUPL 0 (deep capitulation) crypto scores ×1.3. BACKTEST-BLIND judgment, kept mild
             // quality tilts (zero extra fetch)
             sharpe_weight: 0.15,           // (B) GROWTH lane. Halved 0.3->0.15: the edge ablation showed sharpe dragging the profit spread; 0.15 is the peak (5y wide edge +95.6->+107.3, beats both 0.3 and 0.0; rho +0.24, OOS positive). CAGR/vol ~10 for a calm +20%/yr name -> ~+1.5
             onsale_sharpe_weight: 0.0,     // (B) ON-SALE lane. ZEROED — split from growth because the shared knob conflicted: growth wants 0.15, on-sale wants 0. Validated: zeroing lifts on-sale 12y edge +39.2->+62.5 (Δ+23.3) while growth keeps 0.15. 0 = off
