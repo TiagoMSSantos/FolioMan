@@ -1,6 +1,10 @@
-//! Buy-candidate algorithm: rank the `check` table for "quality on sale".
-//! Pure scoring + the table printer, kept together so the whole heuristic lives in one
-//! place. **NOT advice** — a transparent ranking of the table, never an auto-buy.
+//! Buy-candidate algorithm + table printer (the whole heuristic in one place). TWO lanes:
+//! - `growth_score` — proven compounders near their high, still climbing. THIS is what `check` and
+//!   `screen` print (via `render`); the only lane with a validated forward edge.
+//! - `buy_score` — "on-sale"/buy-the-dip. A BACKTEST FOIL ONLY (used by `backtest` to show dip-buying
+//!   loses over a multi-decade hold); never printed. Knobs feeding it are tagged `[FOIL]` in config.
+//! Acronyms (CAGR, ROE, P/E, NUPL, SMA, Sharpe, Calmar, …): see the Glossary in README.md.
+//! **NOT advice** — a transparent ranking of the table, never an auto-buy.
 
 use crate::commands::truncate;
 use crate::config::{BuyHeuristic, Widths};
@@ -10,9 +14,9 @@ use std::collections::{HashMap, HashSet};
 /// The longest >2Y leg as (cumulative %, span years): 20Y, else 10Y, else 5Y. None if the asset
 /// has no >2Y history. The cumulative % feeds the corpse GATE; annualized (CAGR) it feeds the SCORE,
 /// so a 10Y and a 20Y leg are compared on the same %/yr footing.
-fn long_leg(q: &Quote) -> Option<(f64, f64)> {
+fn long_leg(quote: &Quote) -> Option<(f64, f64)> {
     for (label, years) in [("20Y", 20.0), ("10Y", 10.0), ("5Y", 5.0)] {
-        if let Some(p) = perf_pct(q, label) {
+        if let Some(p) = perf_pct(quote, label) {
             return Some((p, years));
         }
     }
@@ -28,15 +32,15 @@ fn trend_health(long_cagr: f64, zero: f64) -> f64 {
 
 /// (D) Trailing ~1Y dividend yield (%) for the dividend reward; 0 if it doesn't pay / no price /
 /// short history. Same per-horizon yield `screen` lists.
-fn dividend_yield_1y(q: &Quote) -> f64 {
-    core::dividend_yields(&q.div_eur, q.price_eur).first().and_then(|o| *o).unwrap_or(0.0)
+fn dividend_yield_1y(quote: &Quote) -> f64 {
+    core::dividend_yields(&quote.div_eur, quote.price_eur).first().and_then(|o| *o).unwrap_or(0.0)
 }
 
 /// (E) Valuation tilt from trailing P/E: cheap (PE < ref) lifts the score, rich dampens it, clamped
 /// to [VALUE_TILT_MIN, VALUE_TILT_MAX]. Unknown PE or non-earning (crypto/ETF/PE<=0) -> 1.0 (neutral
 /// — never punished for missing data).
-fn value_factor(q: &Quote, ref_pe: f64) -> f64 {
-    match q.pe_ratio {
+fn value_factor(quote: &Quote, ref_pe: f64) -> f64 {
+    match quote.pe_ratio {
         Some(pe) if pe > 0.0 && ref_pe > 0.0 => {
             (ref_pe / pe).clamp(crate::config::VALUE_TILT_MIN, crate::config::VALUE_TILT_MAX)
         }
@@ -48,15 +52,15 @@ fn value_factor(q: &Quote, ref_pe: f64) -> f64 {
 /// bled for years, not merely dipped — scale its score by `sustained_decline_penalty`. 1.0 (no dock)
 /// if either leg is absent or above the line (a recovering peak-anchored coin — bad 5Y, positive 1Y
 /// — is NOT docked).
-fn sustained_decline_factor(q: &Quote, t: &BuyHeuristic) -> f64 {
-    match (perf_pct(q, "1Y"), perf_pct(q, "5Y")) {
-        (Some(y1), Some(y5)) if y1 <= t.sustained_decline_pct && y5 <= t.sustained_decline_pct => {
+fn sustained_decline_factor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
+    match (perf_pct(quote, "1Y"), perf_pct(quote, "5Y")) {
+        (Some(return_1y), Some(return_5y)) if return_1y <= tuning.sustained_decline_pct && return_5y <= tuning.sustained_decline_pct => {
             // harsher tier: a 5Y this deep (e.g. LTC -73%) is a 7y+ bleed coasting on a stale old
             // chart — dock it much harder than a "merely" -40% multi-year drift.
-            if y5 <= t.deep_decline_pct {
-                t.deep_decline_penalty
+            if return_5y <= tuning.deep_decline_pct {
+                tuning.deep_decline_penalty
             } else {
-                t.sustained_decline_penalty
+                tuning.sustained_decline_penalty
             }
         }
         _ => 1.0,
@@ -79,13 +83,13 @@ fn normalized_dip(drawdown: f64, vol: Option<f64>, normal: f64) -> f64 {
 /// confirmed turn-up outranks a name still knifing down at the same drawdown. Neutral (1.0) if it
 /// hasn't pulled back this month; `bounce` (>1) on a green week off a monthly dip; half that
 /// premium if only today is green; `knife` (<1) while it's still falling.
-fn momentum_factor(q: &Quote, bounce: f64, knife: f64) -> f64 {
-    if perf_pct(q, "1M").unwrap_or(0.0) >= 0.0 {
+fn momentum_factor(quote: &Quote, bounce: f64, knife: f64) -> f64 {
+    if perf_pct(quote, "1M").unwrap_or(0.0) >= 0.0 {
         return 1.0; // not pulled back -> nothing to time
     }
-    if perf_pct(q, "1W").unwrap_or(0.0) > 0.0 {
+    if perf_pct(quote, "1W").unwrap_or(0.0) > 0.0 {
         bounce // up on the week off a monthly dip -> turn confirmed
-    } else if perf_pct(q, "1D").unwrap_or(0.0) > 0.0 {
+    } else if perf_pct(quote, "1D").unwrap_or(0.0) > 0.0 {
         1.0 + (bounce - 1.0) * 0.5 // only today green -> half the bounce premium
     } else {
         knife // still falling -> dock it (don't catch the knife)
@@ -119,8 +123,8 @@ fn is_etf(name: &str) -> bool {
 /// Is this quote a pooled fund? Prefer Yahoo's own `instrumentType` ("ETF"), which is present even
 /// when the name string isn't a giveaway (ETF shortNames like "ISHARES III PLC ISHRS CORE MSCI"
 /// carry no marker). Falls back to the name-substring guess for rows with no meta (backtest stubs).
-fn quote_is_etf(q: &Quote) -> bool {
-    q.instrument_type.eq_ignore_ascii_case("ETF") || is_etf(&q.name)
+fn quote_is_etf(quote: &Quote) -> bool {
+    quote.instrument_type.eq_ignore_ascii_case("ETF") || is_etf(&quote.name)
 }
 
 /// Underlying of a currency-quoted ticker: strips a trailing `-EUR`/`-USD` (crypto twins like
@@ -155,15 +159,15 @@ fn dedup_currency_twins<'a>(
 ) -> Vec<(&'a Quote, f64)> {
     let pref = if prefer_eur { "-EUR" } else { "-USD" };
     let mut best: HashMap<&str, (&'a Quote, f64)> = HashMap::new();
-    for (q, s) in picks {
-        let base = underlying(&q.ticker);
+    for (quote, s) in picks {
+        let base = underlying(&quote.ticker);
         let take = match best.get(base) {
             None => true,
             // replace only if the newcomer is the preferred currency and the kept one isn't
-            Some((kept, _)) => q.ticker.ends_with(pref) && !kept.ticker.ends_with(pref),
+            Some((kept, _)) => quote.ticker.ends_with(pref) && !kept.ticker.ends_with(pref),
         };
         if take {
-            best.insert(base, (q, s));
+            best.insert(base, (quote, s));
         }
     }
     best.into_values().collect()
@@ -171,18 +175,18 @@ fn dedup_currency_twins<'a>(
 
 /// % change at a given horizon label (e.g. "1Y") from a Quote's perf, by label not index
 /// (robust to HORIZONS reordering). None if that horizon has no data.
-pub fn perf_pct(q: &Quote, label: &str) -> Option<f64> {
+pub fn perf_pct(quote: &Quote, label: &str) -> Option<f64> {
     let i = HORIZONS.iter().position(|(l, _)| *l == label)?;
-    q.perf.get(i).and_then(|o| o.as_ref()).map(|(_, p)| *p)
+    quote.perf.get(i).and_then(|o| o.as_ref()).map(|(_, p)| *p)
 }
 
 /// Confidence multiplier — halve a name without a long PROVEN record. Equities should carry a 10Y
 /// leg; crypto can't (Yahoo's EUR crypto pairs are too young to ever show 10Y), so for them a 5Y leg
 /// is "proven enough". Without this, BTC is halved for a history gap that's purely an artifact of the
 /// EUR quote, and vanishes from the growth lane despite a 15-year track record.
-fn trust_factor(q: &Quote, crypto: bool) -> f64 {
+fn trust_factor(quote: &Quote, crypto: bool) -> f64 {
     let needed = if crypto { "5Y" } else { "10Y" };
-    if perf_pct(q, needed).is_none() {
+    if perf_pct(quote, needed).is_none() {
         0.5
     } else {
         1.0
@@ -206,8 +210,8 @@ fn combine_damps(damps: &[f64]) -> f64 {
 /// out-compound long-run). None (crypto/ETF/no FMP key) → 0 = neutral; negative ROE clamps to 0 (no
 /// bonus, the gates handle bleeders). Shared by both lanes. BACKTEST-BLIND: ROE is point-in-time so
 /// the price-only walk-forward can't score it — deliberately weighted small (`quality_weight`).
-fn quality_reward(q: &Quote, t: &BuyHeuristic) -> f64 {
-    t.quality_weight * q.roe.unwrap_or(0.0).clamp(0.0, t.quality_cap)
+fn quality_reward(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
+    tuning.quality_weight * quote.roe.unwrap_or(0.0).clamp(0.0, tuning.quality_cap)
 }
 
 /// (B/C) Risk-adjusted-return bonus from already-fetched closes (zero extra fetch): additive reward
@@ -216,13 +220,13 @@ fn quality_reward(q: &Quote, t: &BuyHeuristic) -> f64 {
 /// calm and shallow-drawdown. Missing/zero risk inputs → 0 (never punished for absent data). The
 /// Sharpe/Calmar weights are passed in PER LANE — the growth and on-sale lanes want different Sharpe
 /// emphasis (growth 0.15, on-sale 0), so the caller supplies its own.
-fn risk_bonus(q: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: f64, t: &BuyHeuristic) -> f64 {
-    let sharpe = match q.volatility_pct {
-        Some(v) if v > 0.0 => (long_cagr / v).clamp(0.0, t.sharpe_cap),
+fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: f64, tuning: &BuyHeuristic) -> f64 {
+    let sharpe = match quote.volatility_pct {
+        Some(v) if v > 0.0 => (long_cagr / v).clamp(0.0, tuning.sharpe_cap),
         _ => 0.0,
     };
-    let calmar = if q.max_drawdown_pct > 0.0 {
-        (long_cagr / q.max_drawdown_pct).clamp(0.0, t.calmar_cap)
+    let calmar = if quote.max_drawdown_pct > 0.0 {
+        (long_cagr / quote.max_drawdown_pct).clamp(0.0, tuning.calmar_cap)
     } else {
         0.0
     };
@@ -261,43 +265,43 @@ fn risk_bonus(q: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: f64,
 ///
 /// Every knob lives in `BuyHeuristic` (settings.yaml `buy_heuristic:`). Higher = more interesting.
 /// GATES below exclude a candidate before scoring. **NOT advice** — a ranking, never a forecast.
-pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
-    let crypto = is_currency_quoted(&q.ticker); // crypto/FX (-EUR/-USD): looser, peak-anchor-aware rules
+pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
+    let crypto = is_currency_quoted(&quote.ticker); // crypto/FX (-EUR/-USD): looser, peak-anchor-aware rules
 
     // ---- GATES: drop anything that isn't a quality name on a real pullback ----
-    if is_leveraged(&q.name) {
+    if is_leveraged(&quote.name) {
         return None; // leveraged/inverse product -> decays, never a long-term hold
     }
-    if q.avg_turnover_eur.map_or(false, |v| v < t.min_avg_turnover_eur) {
+    if quote.avg_turnover_eur.map_or(false, |v| v < tuning.min_avg_turnover_eur) {
         return None; // too thin/illiquid (unknown turnover passes — don't punish missing data)
     }
-    if crypto && is_stablecoin(&q.ticker) {
+    if crypto && is_stablecoin(&quote.ticker) {
         return None; // dollar-pegged stablecoin -> no growth; its EUR-leg FX drift fakes a drawdown
     }
-    if crypto && q.drawdown_pct < 3.0 {
+    if crypto && quote.drawdown_pct < 3.0 {
         return None; // crypto at its high -> nothing on sale
     }
     // longest >2Y leg (crypto is younger, so fall back to its 1Y leg): cumulative for the gate,
     // annualized (CAGR) for the score.
     let (long_cum, long_years) =
-        long_leg(q).or_else(|| if crypto { perf_pct(q, "1Y").map(|p| (p, 1.0)) } else { None })?;
-    if crypto && long_cum <= t.min_long_pct_crypto {
+        long_leg(quote).or_else(|| if crypto { perf_pct(quote, "1Y").map(|p| (p, 1.0)) } else { None })?;
+    if crypto && long_cum <= tuning.min_long_pct_crypto {
         return None; // crypto corpse: a >2Y leg this deep (e.g. -95%) is a dead coin, not a dip
     }
-    let y1 = perf_pct(q, "1Y")?;
-    let floor = if crypto { t.min_1y_pct_crypto } else { t.min_1y_pct };
-    if y1 <= floor {
+    let return_1y = perf_pct(quote, "1Y")?;
+    let floor = if crypto { tuning.min_1y_pct_crypto } else { tuning.min_1y_pct };
+    if return_1y <= floor {
         return None; // deep 1-year downtrend -> not a pullback
     }
-    let knife = if crypto { t.max_1m_drop_pct_crypto } else { t.max_1m_drop_pct };
-    if perf_pct(q, "1M").unwrap_or(0.0) <= knife {
+    let knife = if crypto { tuning.max_1m_drop_pct_crypto } else { tuning.max_1m_drop_pct };
+    if perf_pct(quote, "1M").unwrap_or(0.0) <= knife {
         return None; // crashing this month -> falling knife
     }
     if !crypto {
         // equities must be structurally up: EVERY multi-year leg must hold. (Crypto -EUR 5Y is
         // peak-anchored and routinely negative even when healthy, so this gate is meaningless there.)
         for label in ["5Y", "10Y", "20Y"] {
-            if perf_pct(q, label).map_or(false, |p| p <= t.min_long_pct) {
+            if perf_pct(quote, label).map_or(false, |p| p <= tuning.min_long_pct) {
                 return None;
             }
         }
@@ -309,29 +313,29 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     // below the high. Self-normalizes amplitude so volatile names that all sit far below ATH no longer
     // peg the cap together — a coin at the 20th pct outranks one at the 70th. drawdown_pct stays the
     // OFF-HI display only. Still vol-scaled + capped, so a calm name's cheapness counts for more.
-    let cheapness = 100.0 - q.range_pct;
+    let cheapness = 100.0 - quote.range_pct;
     let discount =
-        normalized_dip(cheapness, q.volatility_pct, t.normal_volatility_pct).min(t.discount_cap);
-    let health = trend_health(long_cagr, t.health_zero_cagr);
-    let momentum = momentum_factor(q, t.momentum_bounce, t.momentum_knife);
+        normalized_dip(cheapness, quote.volatility_pct, tuning.normal_volatility_pct).min(tuning.discount_cap);
+    let health = trend_health(long_cagr, tuning.health_zero_cagr);
+    let momentum = momentum_factor(quote, tuning.momentum_bounce, tuning.momentum_knife);
     // (2a) scale the long-trend reward by how on-sale the name is (discount as a fraction of the cap):
     // a proven compounder is only a BUY when it's actually pulled back. At its all-time high the
     // discount is ~0, so the reward fades to ~0 and an at-the-high rocket stops ranking as "on sale".
-    let discount_frac = (discount / t.discount_cap).clamp(0.0, 1.0); // 0 = at its high, 1 = deeply discounted
-    let long_reward = t.long_trend_weight * long_cagr.min(t.long_trend_cap) * discount_frac; // (A)
-    let cheap_reward = t.cheap_weight * q.below_ma_pct.min(t.cheap_cap); // (C)
-    let dividend_reward = t.dividend_weight * dividend_yield_1y(q).min(t.dividend_cap); // (D)
+    let discount_frac = (discount / tuning.discount_cap).clamp(0.0, 1.0); // 0 = at its high, 1 = deeply discounted
+    let long_reward = tuning.long_trend_weight * long_cagr.min(tuning.long_trend_cap) * discount_frac; // (A)
+    let cheap_reward = tuning.cheap_weight * quote.below_ma_pct.min(tuning.cheap_cap); // (C)
+    let dividend_reward = tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap); // (D)
 
-    let risk_reward = risk_bonus(q, long_cagr, t.onsale_sharpe_weight, t.calmar_weight, t); // (B/C) on-sale lane's own Sharpe weight
-    let base = t.discount_weight * discount * health * momentum // (#4) demoted: dip-depth ranks backwards on peer-relative backtest
+    let risk_reward = risk_bonus(quote, long_cagr, tuning.onsale_sharpe_weight, tuning.calmar_weight, tuning); // (B/C) on-sale lane's own Sharpe weight
+    let base = tuning.discount_weight * discount * health * momentum // (#4) demoted: dip-depth ranks backwards on peer-relative backtest
         + long_reward
         + cheap_reward
         + dividend_reward
         + risk_reward
-        + quality_reward(q, t); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
-    let value = value_factor(q, t.ref_pe); // (E) cheap lifts, rich dampens, unknown neutral
-    let decline = sustained_decline_factor(q, t); // (B) multi-year-bleed dock
-    let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
+        + quality_reward(quote, tuning); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
+    let value = value_factor(quote, tuning.ref_pe); // (E) cheap lifts, rich dampens, unknown neutral
+    let decline = sustained_decline_factor(quote, tuning); // (B) multi-year-bleed dock
+    let trust = trust_factor(quote, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (#4) geomean the pure penalties so several mild damps can't compound to ~0; value (a tilt that
     // can exceed 1.0) stays a direct multiplier.
     Some(base * value * combine_damps(&[decline, trust]))
@@ -353,21 +357,21 @@ pub fn buy_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
 /// own ~10y range, compound at least `growth_min_cagr` %/yr, have a POSITIVE 1Y (actually climbing),
 /// and not be crashing this month. The P/E value tilt (E) still damps a nosebleed valuation, so a
 /// blow-off top is penalised, not rewarded. `None` if it fails a gate. **NOT advice** — a ranking.
-pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
-    let crypto = is_currency_quoted(&q.ticker);
+pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
+    let crypto = is_currency_quoted(&quote.ticker);
 
     // ---- GATES (reuse the cheap exclusions; the rest are the on-sale lane's mirror) ----
-    if is_leveraged(&q.name) {
+    if is_leveraged(&quote.name) {
         return None; // leveraged/inverse decays -> never a long-term hold
     }
-    if crypto && is_stablecoin(&q.ticker) {
+    if crypto && is_stablecoin(&quote.ticker) {
         return None; // pegged $1 -> no growth
     }
-    if q.avg_turnover_eur.map_or(false, |v| v < t.min_avg_turnover_eur) {
+    if quote.avg_turnover_eur.map_or(false, |v| v < tuning.min_avg_turnover_eur) {
         return None; // too thin (unknown turnover passes)
     }
-    let min_range = if crypto { t.growth_min_range_pct_crypto } else { t.growth_min_range_pct };
-    if q.range_pct < min_range {
+    let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
+    if quote.range_pct < min_range {
         return None; // equities: NOT near its high -> the on-sale lane's job. crypto: looser floor (alts run below ATH)
     }
     // a "20yr+ proven CAGR" candidate must HAVE a multi-year record. Crypto used to fall back to its
@@ -375,24 +379,24 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     // +100000% data-artifact year) into a lane that promises a proven long trend. Require a real >2Y
     // leg for crypto too: trust_factor already treats 5Y as "proven enough" for young EUR pairs, so
     // this just promotes that bar from a soft halving to a hard gate (BTC/ETH/XMR/… all have 5Y).
-    let (long_cum, long_years) = long_leg(q)?;
+    let (long_cum, long_years) = long_leg(quote)?;
     let long_cagr = core::cagr(long_cum, long_years);
-    let min_cagr = if crypto { t.growth_min_cagr_crypto } else { t.growth_min_cagr };
+    let min_cagr = if crypto { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
     if long_cagr < min_cagr {
         return None; // equities: weak trend = expensive laggard. crypto: looser floor (show all growers vs BTC)
     }
-    let y1 = perf_pct(q, "1Y")?;
+    let return_1y = perf_pct(quote, "1Y")?;
     // equities must be climbing this year; crypto is allowed down to its looser 1Y floor so the market
     // base (Bitcoin, often red year-on-year) and near-BTC coins still appear, ranked vs BTC.
-    let y1_floor = if crypto { t.min_1y_pct_crypto } else { 0.0 };
-    if y1 <= y1_floor {
+    let y1_floor = if crypto { tuning.min_1y_pct_crypto } else { 0.0 };
+    if return_1y <= y1_floor {
         return None; // not climbing (equities) / a corpse below the crypto floor -> no trend to ride
     }
-    let knife = if crypto { t.max_1m_drop_pct_crypto } else { t.max_1m_drop_pct };
-    if perf_pct(q, "1M").unwrap_or(0.0) <= knife {
+    let knife = if crypto { tuning.max_1m_drop_pct_crypto } else { tuning.max_1m_drop_pct };
+    if perf_pct(quote, "1M").unwrap_or(0.0) <= knife {
         return None; // rolling over hard this month -> momentum broke
     }
-    if !crypto && perf_pct(q, "5Y").map_or(false, |y5| y5 <= 0.0) {
+    if !crypto && perf_pct(quote, "5Y").map_or(false, |return_5y| return_5y <= 0.0) {
         // (3) consistency: a near-high name negative over 5Y mooned-then-bled — its great 10Y CAGR is a
         // stale endpoint, not a durable trend. Require the mid leg to hold too. (Crypto 5Y is
         // peak-anchored noise; the range gate already excludes bled coins there, so skip it.)
@@ -400,25 +404,25 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     }
 
     // ---- SCORE ----
-    let trend = long_cagr.min(t.long_trend_cap); // proven compounding, capped like the on-sale lane
-    let accel = (y1 - long_cagr).clamp(0.0, t.growth_accel_cap); // last year outpacing the long run = building
-    let proximity = q.range_pct / 100.0; // 0.7..1.0 — closer to the high = stronger confirmation
-    let risk_reward = risk_bonus(q, long_cagr, t.sharpe_weight, t.calmar_weight, t); // (B/C) growth lane's Sharpe weight
-    let base = t.growth_trend_weight * trend
-        + t.growth_accel_weight * accel
+    let trend = long_cagr.min(tuning.long_trend_cap); // proven compounding, capped like the on-sale lane
+    let accel = (return_1y - long_cagr).clamp(0.0, tuning.growth_accel_cap); // last year outpacing the long run = building
+    let proximity = quote.range_pct / 100.0; // 0.7..1.0 — closer to the high = stronger confirmation
+    let risk_reward = risk_bonus(quote, long_cagr, tuning.sharpe_weight, tuning.calmar_weight, tuning); // (B/C) growth lane's Sharpe weight
+    let base = tuning.growth_trend_weight * trend
+        + tuning.growth_accel_weight * accel
         + risk_reward
-        + quality_reward(q, t) // (F) ROE profitability tilt (BACKTEST-BLIND, small)
-        + t.dividend_weight * dividend_yield_1y(q).min(t.dividend_cap); // (D) total-return tilt: closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
-    let value = value_factor(q, t.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
-    let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
+        + quality_reward(quote, tuning) // (F) ROE profitability tilt (BACKTEST-BLIND, small)
+        + tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap); // (D) total-return tilt: closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
+    let value = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
+    let trust = trust_factor(quote, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
     // stretched/blow-off, so taper the score toward `growth_overext_floor` at the cap. This is the
     // generic brake the P/E tilt can't provide for crypto/ETFs (no earnings) — works on price alone.
     // (Tried a CAGR-conditional floor — brake elite compounders less — but it CUT wide edge
     //  +108.9->+80.5 and flipped OOS-late negative: high-CAGR stretched names revert too. Hard brake stays.)
-    let overext = q.above_ma_pct.min(t.growth_overext_cap);
-    let overext_damp = if t.growth_overext_cap > 0.0 {
-        1.0 - (overext / t.growth_overext_cap) * (1.0 - t.growth_overext_floor) // 1.0 at trend .. floor at the cap
+    let overext = quote.above_ma_pct.min(tuning.growth_overext_cap);
+    let overext_damp = if tuning.growth_overext_cap > 0.0 {
+        1.0 - (overext / tuning.growth_overext_cap) * (1.0 - tuning.growth_overext_floor) // 1.0 at trend .. floor at the cap
     } else {
         1.0 // cap 0 = brake disabled
     };
@@ -427,8 +431,8 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     // brake-docked score ignores. Reward only turnover ABOVE €1B (ln ratio, 0 below) so it lifts proven
     // liquid compounders (NVDA €32B) over the illiquid €200-500M names they trail on the docked score,
     // not the whole field. BACKTEST-BLIND (backtest_quote has no turnover) -> the validated edge is untouched.
-    let liq_bonus = if t.growth_turnover_weight > 0.0 {
-        t.growth_turnover_weight * q.avg_turnover_eur.map_or(0.0, |v| (v / 1e9).max(1.0).ln())
+    let liq_bonus = if tuning.growth_turnover_weight > 0.0 {
+        tuning.growth_turnover_weight * quote.avg_turnover_eur.map_or(0.0, |v| (v / 1e9).max(1.0).ln())
     } else {
         0.0
     };
@@ -444,15 +448,15 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
 /// Market-wide — scales the whole crypto lane uniformly: thins the tables in a frothy top, fattens
 /// them after a flush. BACKTEST-BLIND (NUPL isn't in backtest_quote): the boost is a judgment lever,
 /// not edge-validated — `nupl_boost_ceiling` is kept mild.
-fn nupl_factor(nupl: Option<f64>, t: &BuyHeuristic) -> f64 {
+fn nupl_factor(nupl: Option<f64>, tuning: &BuyHeuristic) -> f64 {
     match nupl {
-        Some(v) if v > t.nupl_euphoria && t.nupl_euphoria < 1.0 => {
-            let over = ((v - t.nupl_euphoria) / (1.0 - t.nupl_euphoria)).clamp(0.0, 1.0);
-            1.0 - over * (1.0 - t.nupl_damp_floor)
+        Some(v) if v > tuning.nupl_euphoria && tuning.nupl_euphoria < 1.0 => {
+            let over = ((v - tuning.nupl_euphoria) / (1.0 - tuning.nupl_euphoria)).clamp(0.0, 1.0);
+            1.0 - over * (1.0 - tuning.nupl_damp_floor)
         }
-        Some(v) if v < t.nupl_capitulation && t.nupl_capitulation > 0.0 => {
-            let under = ((t.nupl_capitulation - v) / t.nupl_capitulation).clamp(0.0, 1.0);
-            1.0 + under * (t.nupl_boost_ceiling - 1.0)
+        Some(v) if v < tuning.nupl_capitulation && tuning.nupl_capitulation > 0.0 => {
+            let under = ((tuning.nupl_capitulation - v) / tuning.nupl_capitulation).clamp(0.0, 1.0);
+            1.0 + under * (tuning.nupl_boost_ceiling - 1.0)
         }
         _ => 1.0,
     }
@@ -481,15 +485,15 @@ const EU_BUYABLE_MARKETS: &[&str] = &[
 ///
 /// `pub` so `screen` can filter its WHOLE universe once (every table — ATH/ATL/fallers/dividends/buys),
 /// not just the picks lanes.
-pub fn eu_buyable(q: &Quote) -> bool {
-    if is_currency_quoted(&q.ticker) {
+pub fn eu_buyable(quote: &Quote) -> bool {
+    if is_currency_quoted(&quote.ticker) {
         return true; // crypto major
     }
-    if quote_is_etf(q) {
+    if quote_is_etf(quote) {
         // European-listed only: US/Canada listing = US-domiciled (no KID), barred for EU retail.
-        return q.market != "USA" && q.market != "Canada" && EU_BUYABLE_MARKETS.contains(&q.market.as_str());
+        return quote.market != "USA" && quote.market != "Canada" && EU_BUYABLE_MARKETS.contains(&quote.market.as_str());
     }
-    EU_BUYABLE_MARKETS.contains(&q.market.as_str())
+    EU_BUYABLE_MARKETS.contains(&quote.market.as_str())
 }
 
 /// Score every quote with `score`, dedup currency twins, drop rows at/below `min_score`, sort
@@ -497,15 +501,15 @@ pub fn eu_buyable(q: &Quote) -> bool {
 /// tables — the lane is just which scorer + threshold the caller passes. Non-EU-buyable names
 /// (US-domiciled ETFs, Asian-only listings) are filtered out up front.
 fn ranked<'a>(
-    qs: &'a [Quote],
-    t: &BuyHeuristic,
+    quotes: &'a [Quote],
+    tuning: &BuyHeuristic,
     score: impl Fn(&Quote, &BuyHeuristic) -> Option<f64>,
     min_score: f64,
     pinned: &HashSet<&str>,
 ) -> Vec<(&'a Quote, f64)> {
     let scored: Vec<(&Quote, f64)> =
-        qs.iter().filter(|q| eu_buyable(q)).filter_map(|q| score(q, t).map(|s| (q, s))).collect();
-    let mut picks = dedup_currency_twins(scored, t.prefer_eur); // one row per asset (BTC, not BTC-EUR+BTC-USD)
+        quotes.iter().filter(|quote| eu_buyable(quote)).filter_map(|quote| score(quote, tuning).map(|s| (quote, s))).collect();
+    let mut picks = dedup_currency_twins(scored, tuning.prefer_eur); // one row per asset (BTC, not BTC-EUR+BTC-USD)
     // drop padding rows below the lane's floor, so the tables stop filling to top_picks with near-zero
     // names. (min_score 0 -> show everything > 0.)
     picks.retain(|(_, s)| *s > min_score.max(0.0));
@@ -524,9 +528,9 @@ fn ranked<'a>(
     // higher-scored twin (VUAA.L) in the full universe. (insert() still runs so a non-pinned twin is
     // dropped whether the pinned leg came before or after it.)
     let mut seen: HashSet<&str> = HashSet::new();
-    picks.retain(|(q, _)| {
-        let fresh = seen.insert(q.name.as_str());
-        pinned.contains(q.ticker.as_str()) || fresh
+    picks.retain(|(quote, _)| {
+        let fresh = seen.insert(quote.name.as_str());
+        pinned.contains(quote.ticker.as_str()) || fresh
     });
     picks
 }
@@ -534,11 +538,11 @@ fn ranked<'a>(
 /// Upside to reclaim the OFF-HI high, from the OFF-HI drawdown: a name 46% off its high needs +85%
 /// to get back there. NOT a forecast — just the room back to that high (anchor = `high_days`).
 /// Clamps the asymptote near a total wipeout (-99%+ off is a corpse anyway).
-fn upside_to_high(dd: f64) -> f64 {
-    if dd >= 99.0 {
+fn upside_to_high(drawdown: f64) -> f64 {
+    if drawdown >= 99.0 {
         return 9900.0;
     }
-    dd * 100.0 / (100.0 - dd)
+    drawdown * 100.0 / (100.0 - drawdown)
 }
 
 /// Compact EUR turnover for the table: €1.2B / €340M / €5K / n/a.
@@ -553,7 +557,7 @@ fn turnover_cell(o: Option<f64>) -> String {
 
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks).
 fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>) {
-    let (nw, tw, mw, pw, sw) = (w.name, w.ticker, w.market, w.price, w.score);
+    let (name_w, ticker_w, market_w, price_w, score_w) = (w.name, w.ticker, w.market, w.price, w.score);
     println!("\n{title}");
     if picks.is_empty() {
         println!("  (none pass the gates)");
@@ -562,46 +566,46 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     let diff_hdr = DIFF_HORIZONS.iter().map(|l| format!("{:>8}", l)).collect::<Vec<_>>().join(" ");
     let cell = |o: Option<f64>| o.map_or("n/a".to_string(), |v| format!("{:+.1}%", v));
     println!(
-        "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diff_hdr} {:>7} {:>8} {:>10} {:>sw$}",
-        "RANK", truncate("NAME", nw), truncate("TICKER", tw), truncate("MARKET", mw), "PRICE(EUR)",
-        "1H", "6H", "12H", "OFF-HI", "UPSIDE", "TURNOVER", truncate("SCORE", sw)
+        "  {:<4} {:<name_w$} {:<ticker_w$} {:<market_w$} {:>price_w$} {:>7} {:>7} {:>7} {diff_hdr} {:>7} {:>8} {:>10} {:>score_w$}",
+        "RANK", truncate("NAME", name_w), truncate("TICKER", ticker_w), truncate("MARKET", market_w), "PRICE(EUR)",
+        "1H", "6H", "12H", "OFF-HI", "UPSIDE", "TURNOVER", truncate("SCORE", score_w)
     );
     // one printed row; `rank` is the position number, with a "*" suffix when the name is pinned
     // (e.g. "3*"). Marker on the rank column, not the name, so truncation can't eat it.
-    let row = |rank: &str, q: &Quote, score: f64| {
+    let row = |rank: &str, quote: &Quote, score: f64| {
         let diffs = DIFF_HORIZONS
             .iter()
-            .map(|l| format!("{:>8}", perf_pct(q, l).map_or("n/a".to_string(), |v| format!("{:+.1}%", v))))
+            .map(|l| format!("{:>8}", perf_pct(quote, l).map_or("n/a".to_string(), |v| format!("{:+.1}%", v))))
             .collect::<Vec<_>>()
             .join(" ");
         println!(
-            "  {:<4} {:<nw$} {:<tw$} {:<mw$} {:>pw$} {:>7} {:>7} {:>7} {diffs} {:>7} {:>8} {:>10} {:>sw$.1}",
+            "  {:<4} {:<name_w$} {:<ticker_w$} {:<market_w$} {:>price_w$} {:>7} {:>7} {:>7} {diffs} {:>7} {:>8} {:>10} {:>score_w$.1}",
             rank,
-            truncate(&q.name, nw),
-            truncate(&q.ticker, tw),
-            truncate(&q.market, mw),
-            q.price,
-            cell(q.intraday[0]),
-            cell(q.intraday[1]),
-            cell(q.intraday[2]),
-            format!("-{:.1}%", q.drawdown_pct), // % below the OFF-HI high (high_days anchor, default all-time)
-            format!("+{:.1}%", upside_to_high(q.drawdown_pct)), // room back to that high (NOT a forecast)
-            turnover_cell(q.avg_turnover_eur),
+            truncate(&quote.name, name_w),
+            truncate(&quote.ticker, ticker_w),
+            truncate(&quote.market, market_w),
+            quote.price,
+            cell(quote.intraday[0]),
+            cell(quote.intraday[1]),
+            cell(quote.intraday[2]),
+            format!("-{:.1}%", quote.drawdown_pct), // % below the OFF-HI high (high_days anchor, default all-time)
+            format!("+{:.1}%", upside_to_high(quote.drawdown_pct)), // room back to that high (NOT a forecast)
+            turnover_cell(quote.avg_turnover_eur),
             score,
         );
     };
-    let star = |q: &Quote| if pinned.contains(q.ticker.as_str()) { "*" } else { "" }; // * = a pinned (watchlist) name
+    let star = |quote: &Quote| if pinned.contains(quote.ticker.as_str()) { "*" } else { "" }; // * = a pinned (watchlist) name
     // # = the score used LIVE fundamentals (trailing P/E and/or ROE), not price-only — only equities
     // with an FMP key populate these, so on the wide screen it flags the few enriched rows (the pins).
-    let enriched = |q: &Quote| if q.pe_ratio.is_some() || q.roe.is_some() { "#" } else { "" };
-    let mark = |q: &Quote, i: usize| format!("{}{}{}", i + 1, star(q), enriched(q));
-    for (i, (q, score)) in picks.iter().take(n).enumerate() {
-        row(&mark(q, i), q, *score);
+    let enriched = |quote: &Quote| if quote.pe_ratio.is_some() || quote.roe.is_some() { "#" } else { "" };
+    let mark = |quote: &Quote, i: usize| format!("{}{}{}", i + 1, star(quote), enriched(quote));
+    for (i, (quote, score)) in picks.iter().take(n).enumerate() {
+        row(&mark(quote, i), quote, *score);
     }
     // pinned tickers that ranked BELOW the cut still print (with their real rank + "*") so you can
     // compare a holding against the tops above even when it doesn't make the top-N.
-    for (i, (q, score)) in picks.iter().enumerate().skip(n).filter(|(_, (q, _))| pinned.contains(q.ticker.as_str())) {
-        row(&mark(q, i), q, *score);
+    for (i, (quote, score)) in picks.iter().enumerate().skip(n).filter(|(_, (quote, _))| pinned.contains(quote.ticker.as_str())) {
+        row(&mark(quote, i), quote, *score);
     }
 }
 
@@ -612,16 +616,16 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
 fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], min_score: f64, pinned: &HashSet<&str>) {
     let (crypto, equity): (Vec<_>, Vec<_>) =
-        picks.into_iter().partition(|(q, _)| is_currency_quoted(&q.ticker));
-    let (etf, stock): (Vec<_>, Vec<_>) = equity.into_iter().partition(|(q, _)| quote_is_etf(q));
+        picks.into_iter().partition(|(quote, _)| is_currency_quoted(&quote.ticker));
+    let (etf, stock): (Vec<_>, Vec<_>) = equity.into_iter().partition(|(quote, _)| quote_is_etf(quote));
     // Equities: apply the growth_min_score trim HERE (the input list was ranked with no trim so the
     // crypto lane below can stay full). ETFs carry no GICS sector, so the sector filter matches the
     // configured keywords against the fund NAME; stocks were already sector-filtered before fetch.
     // Pinned tickers bypass BOTH the score trim and the sector filter (`|| pinned`) — they're always shown.
-    let keep = |q: &Quote, s: f64, sector_ok: bool| (s > min_score && sector_ok) || pinned.contains(q.ticker.as_str());
-    let stock: Vec<_> = stock.into_iter().filter(|(q, s)| keep(q, *s, true)).collect();
+    let keep = |quote: &Quote, s: f64, sector_ok: bool| (s > min_score && sector_ok) || pinned.contains(quote.ticker.as_str());
+    let stock: Vec<_> = stock.into_iter().filter(|(quote, s)| keep(quote, *s, true)).collect();
     let etf: Vec<_> =
-        etf.into_iter().filter(|(q, s)| keep(q, *s, core::sector_matches(&q.name, sectors))).collect();
+        etf.into_iter().filter(|(quote, s)| keep(quote, *s, core::sector_matches(&quote.name, sectors))).collect();
     // Title carries the selected sector filter so the table says what it's showing ("all" = no filter).
     // Count shown = how many actually qualified (capped at n); "of {n} max" explains a short table —
     // it's not a quota, that's all that passed the gates + filter.
@@ -652,29 +656,29 @@ fn btc_relative(coin_1y: Option<f64>, btc_1y: Option<f64>, score: f64, w: f64) -
 /// deepest-dip ranking picks future LOSERS over a multi-decade hold. `nupl` (Bitcoin
 /// net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or fetch fail) damps
 /// the crypto rows when the market is euphoric.
-pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], pinned: &[String]) {
+pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], pinned: &[String]) {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
     let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
     // (4) market-sentiment factor, applied to crypto rows only (it's a whole-crypto-market gauge):
     // <1 in euphoria, >1 in capitulation, 1.0 in the neutral band / unknown.
-    let cfactor = nupl_factor(nupl, t);
+    let cfactor = nupl_factor(nupl, tuning);
     // Bitcoin = the crypto market's base: tilt each alt by its 1Y return RELATIVE to BTC, so the looser
     // crypto gate surfaces more coins without flooding the table with names that merely lag the base.
-    let btc_1y = qs.iter().find(|q| q.ticker.starts_with("BTC-")).and_then(|q| perf_pct(q, "1Y"));
-    let crypto_adj = |q: &Quote, s: f64| {
-        if !is_currency_quoted(&q.ticker) {
+    let btc_1y = quotes.iter().find(|quote| quote.ticker.starts_with("BTC-")).and_then(|quote| perf_pct(quote, "1Y"));
+    let crypto_adj = |quote: &Quote, s: f64| {
+        if !is_currency_quoted(&quote.ticker) {
             return s; // equities/ETFs: no crypto-market damp, no BTC base
         }
-        btc_relative(perf_pct(q, "1Y"), btc_1y, s * cfactor, t.growth_btc_outperf_weight)
+        btc_relative(perf_pct(quote, "1Y"), btc_1y, s * cfactor, tuning.growth_btc_outperf_weight)
     };
     // a gated pinned name returns None from growth_score; give it a tiny sentinel score so it survives
     // ranked's `>0` trim and reaches print_lane (where pinned is exempt from the score/sector cut). Skip
     // err/no-data quotes (a bad symbol like a suffix-less ETF) — nothing to compare, don't show a blank row.
-    let growth_scorer = |q: &Quote, t: &BuyHeuristic| {
-        growth_score(q, t).map(|s| crypto_adj(q, s)).or_else(|| {
-            let usable = q.price != "err" && q.price != "no data";
-            (usable && pinned_set.contains(q.ticker.as_str())).then_some(f64::MIN_POSITIVE)
+    let growth_scorer = |quote: &Quote, tuning: &BuyHeuristic| {
+        growth_score(quote, tuning).map(|s| crypto_adj(quote, s)).or_else(|| {
+            let usable = quote.price != "err" && quote.price != "no data";
+            (usable && pinned_set.contains(quote.ticker.as_str())).then_some(f64::MIN_POSITIVE)
         })
     };
 
@@ -684,14 +688,14 @@ pub fn render(qs: &[Quote], n: usize, t: &BuyHeuristic, w: &Widths, nupl: Option
                   market base). NOT advice:";
     // rank with NO trim (0.0): print_lane trims equities by growth_min_score but keeps the crypto lane
     // full (all growers up to Bitcoin). Gates inside growth_score still exclude non-growers.
-    print_lane(ranked(qs, t, growth_scorer, 0.0, &pinned_set), n, w, "growth candidates", growth, sectors, t.growth_min_score, &pinned_set);
+    print_lane(ranked(quotes, tuning, growth_scorer, 0.0, &pinned_set), n, w, "growth candidates", growth, sectors, tuning.growth_min_score, &pinned_set);
 }
 
 /// Buy-heuristic asserts (no network). Run by the `selftest` subcommand and the unit test.
 pub fn selftest() {
     // build a Quote with chosen horizon %s set (others n/a), robust to HORIZONS order. First
     // arg = drawdown_pct (% below the OFF-HI high) — the on-sale signal the score is built on.
-    let q = |drawdown_pct: f64, labels: &[(&str, f64)]| -> Quote {
+    let quote = |drawdown_pct: f64, labels: &[(&str, f64)]| -> Quote {
         let perf = HORIZONS
             .iter()
             .map(|(l, _)| labels.iter().find(|(pl, _)| pl == l).map(|(_, v)| ("x".to_string(), *v)))
@@ -711,11 +715,11 @@ pub fn selftest() {
             max_drawdown_pct: 0.0, // default -> no calmar reward (additive 0)
         }
     };
-    let t = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on
+    let tuning = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on
 
     // --- pure helpers ---
-    assert_eq!(perf_pct(&q(5.0, &[("1Y", 20.0)]), "1Y"), Some(20.0));
-    assert_eq!(perf_pct(&q(5.0, &[]), "1Y"), None);
+    assert_eq!(perf_pct(&quote(5.0, &[("1Y", 20.0)]), "1Y"), Some(20.0));
+    assert_eq!(perf_pct(&quote(5.0, &[]), "1Y"), None);
     // (A) CAGR annualizes a cumulative %: 0 stays 0, +100% over 1y = 100, +300% over 10y ≈ 14.9%/yr
     assert!(core::cagr(0.0, 10.0).abs() < 1e-9);
     assert!((core::cagr(100.0, 1.0) - 100.0).abs() < 1e-9);
@@ -737,138 +741,138 @@ pub fn selftest() {
     assert_eq!(normalized_dip(30.0, Some(0.0), 2.0), 30.0); // div-by-zero guard
 
     // --- GATES (exclusion behaviour, unchanged) ---
-    assert!(buy_score(&q(5.0, &[("1Y", 20.0)]), &t).is_none()); // equity: no >2Y leg -> excluded
-    let mut crypto = q(5.0, &[("1Y", 20.0)]); // ...but crypto falls back to its 1Y leg -> admitted
+    assert!(buy_score(&quote(5.0, &[("1Y", 20.0)]), &tuning).is_none()); // equity: no >2Y leg -> excluded
+    let mut crypto = quote(5.0, &[("1Y", 20.0)]); // ...but crypto falls back to its 1Y leg -> admitted
     crypto.ticker = "BTC-EUR".into();
-    assert!(buy_score(&crypto, &t).is_some());
-    assert!(buy_score(&q(5.0, &[("1Y", 20.0), ("5Y", 40.0), ("1M", -25.0)]), &t).is_none()); // equity knife
-    let mut knife_crypto = q(5.0, &[("1Y", 20.0), ("1M", -25.0)]); // crypto looser knife -> admitted
+    assert!(buy_score(&crypto, &tuning).is_some());
+    assert!(buy_score(&quote(5.0, &[("1Y", 20.0), ("5Y", 40.0), ("1M", -25.0)]), &tuning).is_none()); // equity knife
+    let mut knife_crypto = quote(5.0, &[("1Y", 20.0), ("1M", -25.0)]); // crypto looser knife -> admitted
     knife_crypto.ticker = "ETH-EUR".into();
-    assert!(buy_score(&knife_crypto, &t).is_some());
-    assert!(buy_score(&q(5.0, &[("1Y", 20.0), ("5Y", -50.0)]), &t).is_none()); // equity: neg 5Y leg
-    let mut corpse = q(40.0, &[("1Y", -30.0), ("5Y", -95.0)]); // crypto corpse (>2Y leg -95%) excluded
+    assert!(buy_score(&knife_crypto, &tuning).is_some());
+    assert!(buy_score(&quote(5.0, &[("1Y", 20.0), ("5Y", -50.0)]), &tuning).is_none()); // equity: neg 5Y leg
+    let mut corpse = quote(40.0, &[("1Y", -30.0), ("5Y", -95.0)]); // crypto corpse (>2Y leg -95%) excluded
     corpse.ticker = "FIL-EUR".into();
-    assert!(buy_score(&corpse, &t).is_none());
-    let mut peg = q(0.3, &[("1Y", 3.0), ("5Y", 3.0)]); // crypto at its high: drawdown<3% -> nothing on sale
+    assert!(buy_score(&corpse, &tuning).is_none());
+    let mut peg = quote(0.3, &[("1Y", 3.0), ("5Y", 3.0)]); // crypto at its high: drawdown<3% -> nothing on sale
     peg.ticker = "PEPE-EUR".into();
-    assert!(buy_score(&peg, &t).is_none());
+    assert!(buy_score(&peg, &tuning).is_none());
     // stablecoin gate (3): excluded even with a fat EUR-leg "drawdown" that clears the 3% peg gate
     assert!(is_stablecoin("USDC-EUR") && is_stablecoin("USDT-USD") && !is_stablecoin("BTC-EUR"));
-    let mut stable = q(16.0, &[("1Y", -20.0)]);
+    let mut stable = quote(16.0, &[("1Y", -20.0)]);
     stable.ticker = "USDC-EUR".into();
-    assert!(buy_score(&stable, &t).is_none()); // pegged $1 -> no growth, FX drift faked the dip
+    assert!(buy_score(&stable, &tuning).is_none()); // pegged $1 -> no growth, FX drift faked the dip
     assert!(is_leveraged("GraniteShares 2x Short NVD") && !is_leveraged("Apple Inc."));
     // (1) Direxion Daily 3x leaks a SHORT name without "3x" -> issuer marker still catches it (TECL)
     assert!(is_leveraged("Direxion Daily Technology") && !is_leveraged("Technology Select Sector"));
     // ETF classifier (splits the equity table only): funds match, single companies don't
     assert!(is_etf("iShares Core S&P 500 UCITS ETF") && is_etf("SPDR S&P 500 ETF Trust"));
     assert!(!is_etf("Apple Inc.") && !is_etf("NVIDIA Corporation"));
-    let mut lev = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut lev = quote(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     lev.name = "GraniteShares 2x Short NVD".into();
-    assert!(buy_score(&lev, &t).is_none()); // leveraged/inverse product excluded
+    assert!(buy_score(&lev, &tuning).is_none()); // leveraged/inverse product excluded
     let liq_t = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
-    let mut thin = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut thin = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     thin.avg_turnover_eur = Some(1_000.0);
     assert!(buy_score(&thin, &liq_t).is_none()); // below liquidity floor
     thin.avg_turnover_eur = Some(5_000_000.0);
     assert!(buy_score(&thin, &liq_t).is_some());
     thin.avg_turnover_eur = None; // unknown turnover not punished
     assert!(buy_score(&thin, &liq_t).is_some());
-    assert!(buy_score(&q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("1M", -30.0)]), &t).is_none()); // equity knife
-    assert!(buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", -3.0)]), &t).is_none()); // neg >2Y -> excluded
-    assert!(buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", -5.0)]), &t).is_none()); // every leg must hold
-    assert!(buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 80.0), ("20Y", 200.0)]), &t).is_some());
-    assert!(buy_score(&q(5.0, &[("1Y", -5.0), ("5Y", 40.0)]), &t).is_none()); // declining year
-    assert!(buy_score(&q(30.0, &[("1Y", -40.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).is_none()); // equity 1Y floor
-    let mut cr = q(30.0, &[("1Y", -40.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    assert!(buy_score(&quote(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("1M", -30.0)]), &tuning).is_none()); // equity knife
+    assert!(buy_score(&quote(5.0, &[("1Y", 10.0), ("5Y", -3.0)]), &tuning).is_none()); // neg >2Y -> excluded
+    assert!(buy_score(&quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", -5.0)]), &tuning).is_none()); // every leg must hold
+    assert!(buy_score(&quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 80.0), ("20Y", 200.0)]), &tuning).is_some());
+    assert!(buy_score(&quote(5.0, &[("1Y", -5.0), ("5Y", 40.0)]), &tuning).is_none()); // declining year
+    assert!(buy_score(&quote(30.0, &[("1Y", -40.0), ("5Y", 40.0), ("10Y", 40.0)]), &tuning).is_none()); // equity 1Y floor
+    let mut cr = quote(30.0, &[("1Y", -40.0), ("5Y", 40.0), ("10Y", 40.0)]);
     cr.ticker = "BTC-USD".into();
-    assert!(buy_score(&cr, &t).is_some()); // crypto looser 1Y floor
-    assert!(buy_score(&q(5.0, &[("5Y", 40.0)]), &t).is_none()); // no 1Y data
-    assert!(buy_score(&Quote::stub("X", "err", "", "X"), &t).is_none()); // err row
+    assert!(buy_score(&cr, &tuning).is_some()); // crypto looser 1Y floor
+    assert!(buy_score(&quote(5.0, &[("5Y", 40.0)]), &tuning).is_none()); // no 1Y data
+    assert!(buy_score(&Quote::stub("X", "err", "", "X"), &tuning).is_none()); // err row
 
     // --- SCORE (relational, robust to knob tuning) ---
     // trust: same inputs, the one missing a 10Y record scores lower (uptrend less proven)
-    let with10 = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
-    let no10 = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0)]), &t).unwrap();
+    let with10 = buy_score(&quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &tuning).unwrap();
+    let no10 = buy_score(&quote(5.0, &[("1Y", 10.0), ("5Y", 40.0)]), &tuning).unwrap();
     assert!(with10 > no10);
     // discount caps: an 80% drawdown doesn't score below a 5% one, all else equal
-    let deep = buy_score(&q(80.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
-    let shallow = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
+    let deep = buy_score(&quote(80.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &tuning).unwrap();
+    let shallow = buy_score(&quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &tuning).unwrap();
     assert!(deep >= shallow);
     // (A) discount keys off range position: same drawdown, the one deeper in its own range
     // (lower range_pct) outranks the one near its range high — the fix raw ATH-distance couldn't make
-    let mut deep_in_range = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut deep_in_range = quote(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     deep_in_range.range_pct = 20.0; // trades near its 10y low
-    let mut near_high = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut near_high = quote(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     near_high.range_pct = 80.0; // trades near its 10y high
-    assert!(buy_score(&deep_in_range, &t).unwrap() > buy_score(&near_high, &t).unwrap());
+    assert!(buy_score(&deep_in_range, &tuning).unwrap() > buy_score(&near_high, &tuning).unwrap());
     // a deep pullback on a healthy long trend beats a rocket at new highs (discount 0)
-    let pullback = buy_score(&q(40.0, &[("1Y", 30.0), ("5Y", 50.0), ("10Y", 50.0)]), &t).unwrap();
-    let rocket = buy_score(&q(0.0, &[("1Y", 400.0), ("5Y", 500.0), ("10Y", 500.0)]), &t).unwrap();
+    let pullback = buy_score(&quote(40.0, &[("1Y", 30.0), ("5Y", 50.0), ("10Y", 50.0)]), &tuning).unwrap();
+    let rocket = buy_score(&quote(0.0, &[("1Y", 400.0), ("5Y", 500.0), ("10Y", 500.0)]), &tuning).unwrap();
     assert!(pullback > rocket, "on-sale name must beat the rocket: {pullback} vs {rocket}");
     // #1 end-to-end: same 30% drawdown, the calm (low-vol) name outranks the wild one
-    let mut calm = q(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut calm = quote(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     calm.volatility_pct = Some(1.0);
-    let mut wild = q(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut wild = quote(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     wild.volatility_pct = Some(4.0);
-    assert!(buy_score(&calm, &t).unwrap() > buy_score(&wild, &t).unwrap());
+    assert!(buy_score(&calm, &tuning).unwrap() > buy_score(&wild, &tuning).unwrap());
     // (2a) at its all-time high (discount ~0) a huge-CAGR name must NOT outrank an equal pulled-back
     // one — the long-trend reward fades without an actual discount (kills the at-the-high "rocket")
-    let at_high = q(0.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 500.0)]); // range_pct 100 -> discount 0
-    let pulled = q(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 500.0)]); // same CAGR, real discount
-    assert!(buy_score(&pulled, &t).unwrap() > buy_score(&at_high, &t).unwrap());
+    let at_high = quote(0.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 500.0)]); // range_pct 100 -> discount 0
+    let pulled = quote(30.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 500.0)]); // same CAGR, real discount
+    assert!(buy_score(&pulled, &tuning).unwrap() > buy_score(&at_high, &tuning).unwrap());
     // (A) a stronger long-term CAGR outranks a weaker one, all else equal
-    let strong = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 400.0)]), &t).unwrap();
-    let weak = buy_score(&q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &t).unwrap();
+    let strong = buy_score(&quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 400.0)]), &tuning).unwrap();
+    let weak = buy_score(&quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &tuning).unwrap();
     assert!(strong > weak);
     // (A) trend_health: 0 at the decay (zero) threshold, 1 at a flat/rising trend
-    assert_eq!(trend_health(t.health_zero_cagr, t.health_zero_cagr), 0.0);
-    assert_eq!(trend_health(0.0, t.health_zero_cagr), 1.0);
+    assert_eq!(trend_health(tuning.health_zero_cagr, tuning.health_zero_cagr), 0.0);
+    assert_eq!(trend_health(0.0, tuning.health_zero_cagr), 1.0);
     // (B) sustained-decline dock: 1Y & 5Y both deep-red is docked below an equal coin that's recovering
-    let mut bleeder = q(40.0, &[("1Y", -50.0), ("5Y", -60.0), ("10Y", 200.0)]);
+    let mut bleeder = quote(40.0, &[("1Y", -50.0), ("5Y", -60.0), ("10Y", 200.0)]);
     bleeder.ticker = "LTC-EUR".into();
-    let mut recover = q(40.0, &[("1Y", 20.0), ("5Y", -60.0), ("10Y", 200.0)]);
+    let mut recover = quote(40.0, &[("1Y", 20.0), ("5Y", -60.0), ("10Y", 200.0)]);
     recover.ticker = "XYZ-EUR".into();
-    assert!(buy_score(&bleeder, &t).unwrap() < buy_score(&recover, &t).unwrap());
-    assert!((sustained_decline_factor(&bleeder, &t) - t.sustained_decline_penalty).abs() < 1e-9);
-    assert_eq!(sustained_decline_factor(&recover, &t), 1.0); // positive 1Y -> not a value trap
+    assert!(buy_score(&bleeder, &tuning).unwrap() < buy_score(&recover, &tuning).unwrap());
+    assert!((sustained_decline_factor(&bleeder, &tuning) - tuning.sustained_decline_penalty).abs() < 1e-9);
+    assert_eq!(sustained_decline_factor(&recover, &tuning), 1.0); // positive 1Y -> not a value trap
     // (C) harsher tier: a 5Y past deep_decline_pct (e.g. LTC -73%) docks below the -40% tier
-    let deep_bleeder = q(40.0, &[("1Y", -58.0), ("5Y", -73.0), ("10Y", 282.0)]); // LTC-shaped
-    assert!((sustained_decline_factor(&deep_bleeder, &t) - t.deep_decline_penalty).abs() < 1e-9);
-    assert!(t.deep_decline_penalty < t.sustained_decline_penalty); // tier 2 is harsher
+    let deep_bleeder = quote(40.0, &[("1Y", -58.0), ("5Y", -73.0), ("10Y", 282.0)]); // LTC-shaped
+    assert!((sustained_decline_factor(&deep_bleeder, &tuning) - tuning.deep_decline_penalty).abs() < 1e-9);
+    assert!(tuning.deep_decline_penalty < tuning.sustained_decline_penalty); // tier 2 is harsher
     // (C) sitting below the ~200wk SMA lifts the score
-    let mut cheap = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut cheap = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     cheap.below_ma_pct = 50.0;
-    let dear = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
-    assert!(buy_score(&cheap, &t).unwrap() > buy_score(&dear, &t).unwrap());
+    let dear = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    assert!(buy_score(&cheap, &tuning).unwrap() > buy_score(&dear, &tuning).unwrap());
     // (D) a dividend payer outranks an otherwise-equal non-payer
-    let mut payer = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut payer = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     payer.price_eur = Some(100.0);
     payer.div_eur = vec![Some(5.0)]; // ~5% trailing-1Y yield (DIV_HORIZONS[0] = 1Y)
-    let nonpayer = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let nonpayer = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     assert!(dividend_yield_1y(&payer) > 0.0);
-    assert!(buy_score(&payer, &t).unwrap() > buy_score(&nonpayer, &t).unwrap());
+    assert!(buy_score(&payer, &tuning).unwrap() > buy_score(&nonpayer, &tuning).unwrap());
     // (E) value tilt: a cheap P/E lifts, a rich one dampens, unknown is neutral (1.0)
-    let mut cheap_pe = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut cheap_pe = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     cheap_pe.pe_ratio = Some(8.0);
-    let mut rich_pe = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut rich_pe = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     rich_pe.pe_ratio = Some(60.0);
-    let neutral_pe = q(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
-    assert!(value_factor(&cheap_pe, t.ref_pe) > 1.0 && value_factor(&rich_pe, t.ref_pe) < 1.0);
-    assert_eq!(value_factor(&neutral_pe, t.ref_pe), 1.0);
-    assert!(buy_score(&cheap_pe, &t).unwrap() > buy_score(&neutral_pe, &t).unwrap());
-    assert!(buy_score(&rich_pe, &t).unwrap() < buy_score(&neutral_pe, &t).unwrap());
+    let neutral_pe = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    assert!(value_factor(&cheap_pe, tuning.ref_pe) > 1.0 && value_factor(&rich_pe, tuning.ref_pe) < 1.0);
+    assert_eq!(value_factor(&neutral_pe, tuning.ref_pe), 1.0);
+    assert!(buy_score(&cheap_pe, &tuning).unwrap() > buy_score(&neutral_pe, &tuning).unwrap());
+    assert!(buy_score(&rich_pe, &tuning).unwrap() < buy_score(&neutral_pe, &tuning).unwrap());
     // upside to high: 50% off -> +100% to recover; at the high -> 0; near-total wipeout clamps
     assert!((upside_to_high(50.0) - 100.0).abs() < 1e-9);
     assert_eq!(upside_to_high(0.0), 0.0);
     assert_eq!(upside_to_high(99.5), 9900.0);
 
     // currency-twin dedup (E): keep the preferred leg, pass other tickers through
-    let mut btc_e = q(10.0, &[("1Y", 5.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut btc_e = quote(10.0, &[("1Y", 5.0), ("5Y", 40.0), ("10Y", 40.0)]);
     btc_e.ticker = "BTC-EUR".into();
-    let mut btc_u = q(10.0, &[("1Y", 5.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut btc_u = quote(10.0, &[("1Y", 5.0), ("5Y", 40.0), ("10Y", 40.0)]);
     btc_u.ticker = "BTC-USD".into();
-    let mut aapl = q(5.0, &[("1Y", 5.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut aapl = quote(5.0, &[("1Y", 5.0), ("5Y", 40.0), ("10Y", 40.0)]);
     aapl.ticker = "AAPL".into();
     // USD listed first with the higher score, but EUR preferred -> EUR kept; AAPL untouched
     let kept = dedup_currency_twins(vec![(&btc_u, 9.0), (&btc_e, 8.0), (&aapl, 3.0)], true);
@@ -883,58 +887,58 @@ pub fn selftest() {
     let no_pin: HashSet<&str> = HashSet::new();
     // (B) ranked dedups dual-class share twins by identical company name (GOOG/GOOGL -> one row).
     // googl scores lower (shallower discount) so the higher-scored goog wins the dedup deterministically.
-    let mut goog = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // both name "n"
+    let mut goog = quote(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // both name "n"
     goog.ticker = "GOOG".into();
-    let mut googl = q(38.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut googl = quote(38.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     googl.ticker = "GOOGL".into();
-    assert_eq!(ranked(&[goog.clone(), googl.clone()], &t, buy_score, t.min_score, &no_pin).len(), 1);
+    assert_eq!(ranked(&[goog.clone(), googl.clone()], &tuning, buy_score, tuning.min_score, &no_pin).len(), 1);
     // ...but a PINNED twin is never deduped away (so a pinned ETF survives a same-named higher twin)
     let pin_googl: HashSet<&str> = ["GOOGL"].into_iter().collect();
     let twins = [goog, googl];
-    let kept = ranked(&twins, &t, buy_score, t.min_score, &pin_googl);
+    let kept = ranked(&twins, &tuning, buy_score, tuning.min_score, &pin_googl);
     assert!(kept.iter().any(|(x, _)| x.ticker == "GOOGL")); // pinned lower-scored twin still present
     // (A) ranked hides rows scoring at/below min_score (near-the-high padding), keeps real candidates
-    let shallow = q(2.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // tiny discount -> low score
-    assert!(buy_score(&shallow, &t).unwrap() < t.min_score);
-    assert!(ranked(std::slice::from_ref(&shallow), &t, buy_score, t.min_score, &no_pin).is_empty());
-    let strong_pick = q(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // real discount -> kept
-    assert_eq!(ranked(std::slice::from_ref(&strong_pick), &t, buy_score, t.min_score, &no_pin).len(), 1);
+    let shallow = quote(2.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // tiny discount -> low score
+    assert!(buy_score(&shallow, &tuning).unwrap() < tuning.min_score);
+    assert!(ranked(std::slice::from_ref(&shallow), &tuning, buy_score, tuning.min_score, &no_pin).is_empty());
+    let strong_pick = quote(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // real discount -> kept
+    assert_eq!(ranked(std::slice::from_ref(&strong_pick), &tuning, buy_score, tuning.min_score, &no_pin).len(), 1);
 
     // --- GROWTH LANE (mirror of buy_score): near-high proven compounders the on-sale score drops ---
     // an at-the-high rocket buy_score fades to ~0 (or trims) IS a growth candidate here
-    let rocket = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // range_pct 100, strong CAGR, climbing
-    assert!(growth_score(&rocket, &t).is_some());
+    let rocket = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // range_pct 100, strong CAGR, climbing
+    assert!(growth_score(&rocket, &tuning).is_some());
     // ...and ranked picks it up where the on-sale lane (min_score) would have trimmed an at-high name
-    assert_eq!(ranked(std::slice::from_ref(&rocket), &t, growth_score, t.growth_min_score, &no_pin).len(), 1);
+    assert_eq!(ranked(std::slice::from_ref(&rocket), &tuning, growth_score, tuning.growth_min_score, &no_pin).len(), 1);
     // a deeply pulled-back name is NOT a growth candidate (that's the on-sale lane's job)
-    let dipped = q(40.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // range_pct 60 < growth_min_range_pct
-    assert!(growth_score(&dipped, &t).is_none());
+    let dipped = quote(40.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // range_pct 60 < growth_min_range_pct
+    assert!(growth_score(&dipped, &tuning).is_none());
     // weak long trend -> an expensive laggard, not a proven compounder -> excluded
-    let laggard = q(0.0, &[("1Y", 3.0), ("5Y", 6.0), ("10Y", 10.0)]);
-    assert!(growth_score(&laggard, &t).is_none());
+    let laggard = quote(0.0, &[("1Y", 3.0), ("5Y", 6.0), ("10Y", 10.0)]);
+    assert!(growth_score(&laggard, &tuning).is_none());
     // PINNED overlay (mirrors render's scorer): a gated name still scores (sentinel) when pinned, so it
-    // survives to the table; a non-pinned gated name stays excluded. (q() sets ticker "T".)
+    // survives to the table; a non-pinned gated name stays excluded. (quote() sets ticker "T".)
     let pin_scored = |pinned: bool| {
-        growth_score(&laggard, &t).or_else(|| pinned.then_some(f64::MIN_POSITIVE))
+        growth_score(&laggard, &tuning).or_else(|| pinned.then_some(f64::MIN_POSITIVE))
     };
     assert!(pin_scored(true).is_some()); // pinned -> shown despite the gate
     assert!(pin_scored(false).is_none()); // not pinned -> still excluded
     // no real multi-year leg (1Y only) -> NOT a "proven long-term CAGR" candidate, even for crypto
     // (kills the no-history token junk: microNFT, freshly-listed +100000% data artifacts)
-    let mut nohist = q(0.0, &[("1Y", 700.0)]); // huge 1Y, but no 5Y/10Y/20Y leg
+    let mut nohist = quote(0.0, &[("1Y", 700.0)]); // huge 1Y, but no 5Y/10Y/20Y leg
     nohist.ticker = "MNT-USD".into();
-    assert!(growth_score(&nohist, &t).is_none());
+    assert!(growth_score(&nohist, &tuning).is_none());
     // not climbing this year (negative 1Y) -> no momentum -> excluded
-    assert!(growth_score(&q(0.0, &[("1Y", -5.0), ("5Y", 200.0), ("10Y", 500.0)]), &t).is_none());
+    assert!(growth_score(&quote(0.0, &[("1Y", -5.0), ("5Y", 200.0), ("10Y", 500.0)]), &tuning).is_none());
     // crashing this month -> momentum broke -> excluded
-    assert!(growth_score(&q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0), ("1M", -30.0)]), &t).is_none());
+    assert!(growth_score(&quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0), ("1M", -30.0)]), &tuning).is_none());
     // leveraged/stablecoin still excluded in this lane too
-    let mut lev_g = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    let mut lev_g = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
     lev_g.name = "Direxion Daily Technology".into();
-    assert!(growth_score(&lev_g, &t).is_none());
+    assert!(growth_score(&lev_g, &tuning).is_none());
     // acceleration: same long CAGR, the name whose recent year OUTPACES it scores higher (momentum)
-    let accel = growth_score(&q(0.0, &[("1Y", 80.0), ("5Y", 100.0), ("10Y", 150.0)]), &t).unwrap();
-    let steady = growth_score(&q(0.0, &[("1Y", 15.0), ("5Y", 100.0), ("10Y", 150.0)]), &t).unwrap();
+    let accel = growth_score(&quote(0.0, &[("1Y", 80.0), ("5Y", 100.0), ("10Y", 150.0)]), &tuning).unwrap();
+    let steady = growth_score(&quote(0.0, &[("1Y", 15.0), ("5Y", 100.0), ("10Y", 150.0)]), &tuning).unwrap();
     assert!(accel > steady);
     // BTC-relative crypto tilt: beat BTC -> boost, == BTC -> neutral 1.0x, lag -> dock (bounded 0.5x..2x)
     assert!((btc_relative(Some(50.0), Some(20.0), 10.0, 0.3) - 10.9).abs() < 1e-9); // +30pp over BTC -> ×1.09
@@ -943,35 +947,35 @@ pub fn selftest() {
     assert_eq!(btc_relative(Some(50.0), None, 10.0, 0.3), 10.0); // no BTC base -> unchanged
     assert_eq!(btc_relative(Some(50.0), Some(20.0), 10.0, 0.0), 10.0); // weight 0 -> tilt off
     // (E) a nosebleed P/E damps the growth score (anti top-chase), an unknown PE stays neutral
-    let mut rich_g = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    let mut rich_g = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
     rich_g.pe_ratio = Some(80.0);
-    assert!(growth_score(&rich_g, &t).unwrap() < growth_score(&rocket, &t).unwrap());
+    assert!(growth_score(&rich_g, &tuning).unwrap() < growth_score(&rocket, &tuning).unwrap());
     // (1) overextension brake: a name run far ABOVE its 200wk SMA scores below an at-trend twin
-    let mut stretched = q(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    let mut stretched = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
     stretched.above_ma_pct = 100.0; // maximally stretched
-    assert!(growth_score(&stretched, &t).unwrap() < growth_score(&rocket, &t).unwrap());
+    assert!(growth_score(&stretched, &tuning).unwrap() < growth_score(&rocket, &tuning).unwrap());
     // (L) liquidity tilt: a deep-liquid stretched compounder (NVDA case) outscores an illiquid twin —
     // the bonus is added OUTSIDE the brake, so the parabolic stretch can't bury it under a thin name.
     let mut liquid = stretched.clone();
     liquid.avg_turnover_eur = Some(32e9); // €32B (NVDA-class)
     let mut illiquid = stretched.clone();
     illiquid.avg_turnover_eur = Some(2e8); // €200M, below the €1B floor -> no bonus
-    assert!(growth_score(&liquid, &t).unwrap() > growth_score(&illiquid, &t).unwrap());
+    assert!(growth_score(&liquid, &tuning).unwrap() > growth_score(&illiquid, &tuning).unwrap());
     assert!((core::above_long_ma_pct(&[50.0, 50.0, 100.0], 3) - 50.0).abs() < 1e-9); // 100 vs mean 66.67
     assert_eq!(core::above_long_ma_pct(&[100.0, 100.0, 50.0], 3), 0.0); // below the mean -> 0
     // (3) consistency: a near-high equity negative over 5Y (mooned-then-bled) is rejected despite a fat 10Y
-    assert!(growth_score(&q(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]), &t).is_none());
-    let mut bled_crypto = q(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]); // ...but crypto 5Y is noise
+    assert!(growth_score(&quote(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]), &tuning).is_none());
+    let mut bled_crypto = quote(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]); // ...but crypto 5Y is noise
     bled_crypto.ticker = "ETH-EUR".into();
-    assert!(growth_score(&bled_crypto, &t).is_some());
+    assert!(growth_score(&bled_crypto, &tuning).is_some());
     // (4) NUPL factor: symmetric. euphoria (high NUPL) shrinks <1; capitulation (low NUPL) boosts >1;
     // neutral band / unknown = exactly 1.0.
-    assert_eq!(nupl_factor(None, &t), 1.0);
-    assert!(nupl_factor(Some(0.40), &t) == 1.0); // between capitulation (0.25) and euphoria (0.5) -> neutral
-    assert!(nupl_factor(Some(0.75), &t) < 1.0 && nupl_factor(Some(0.75), &t) > t.nupl_damp_floor);
-    assert!((nupl_factor(Some(1.0), &t) - t.nupl_damp_floor).abs() < 1e-9); // peak euphoria -> floor
-    assert!(nupl_factor(Some(0.0), &t) > 1.0); // deep capitulation -> boost
-    assert!((nupl_factor(Some(0.0), &t) - t.nupl_boost_ceiling).abs() < 1e-9); // NUPL 0 -> ceiling
+    assert_eq!(nupl_factor(None, &tuning), 1.0);
+    assert!(nupl_factor(Some(0.40), &tuning) == 1.0); // between capitulation (0.25) and euphoria (0.5) -> neutral
+    assert!(nupl_factor(Some(0.75), &tuning) < 1.0 && nupl_factor(Some(0.75), &tuning) > tuning.nupl_damp_floor);
+    assert!((nupl_factor(Some(1.0), &tuning) - tuning.nupl_damp_floor).abs() < 1e-9); // peak euphoria -> floor
+    assert!(nupl_factor(Some(0.0), &tuning) > 1.0); // deep capitulation -> boost
+    assert!((nupl_factor(Some(0.0), &tuning) - tuning.nupl_boost_ceiling).abs() < 1e-9); // NUPL 0 -> ceiling
 
     // --- (A) trend consistency: R² of the log-price line, damps CAGR endpoint-luck ---
     assert!(core::trend_r2(&[1.0, 2.0, 4.0, 8.0, 16.0]) > 0.999); // perfect exponential -> R²≈1
@@ -981,28 +985,28 @@ pub fn selftest() {
     assert!((core::max_drawdown_pct(&[100.0, 50.0, 75.0]) - 50.0).abs() < 1e-9);
     assert_eq!(core::max_drawdown_pct(&[1.0, 2.0, 3.0]), 0.0); // monotone up -> never down
     // (B) risk_bonus: same CAGR, the lower-volatility name earns a bigger Sharpe-ish bonus
-    assert!(risk_bonus(&{ let mut x = q(5.0, &[]); x.volatility_pct = Some(1.0); x }, 20.0, t.sharpe_weight, t.calmar_weight, &t)
-        > risk_bonus(&{ let mut x = q(5.0, &[]); x.volatility_pct = Some(4.0); x }, 20.0, t.sharpe_weight, t.calmar_weight, &t));
+    assert!(risk_bonus(&{ let mut x = quote(5.0, &[]); x.volatility_pct = Some(1.0); x }, 20.0, tuning.sharpe_weight, tuning.calmar_weight, &tuning)
+        > risk_bonus(&{ let mut x = quote(5.0, &[]); x.volatility_pct = Some(4.0); x }, 20.0, tuning.sharpe_weight, tuning.calmar_weight, &tuning));
     // (C) risk_bonus: same CAGR, the SHALLOWER max-drawdown name earns a bigger Calmar bonus (calmar_weight default 1.0)
-    assert!(risk_bonus(&{ let mut x = q(5.0, &[]); x.max_drawdown_pct = 20.0; x }, 20.0, t.sharpe_weight, t.calmar_weight, &t)
-        > risk_bonus(&{ let mut x = q(5.0, &[]); x.max_drawdown_pct = 90.0; x }, 20.0, t.sharpe_weight, t.calmar_weight, &t));
+    assert!(risk_bonus(&{ let mut x = quote(5.0, &[]); x.max_drawdown_pct = 20.0; x }, 20.0, tuning.sharpe_weight, tuning.calmar_weight, &tuning)
+        > risk_bonus(&{ let mut x = quote(5.0, &[]); x.max_drawdown_pct = 90.0; x }, 20.0, tuning.sharpe_weight, tuning.calmar_weight, &tuning));
     // (B) per-lane Sharpe split: zeroing the on-sale weight drops the on-sale risk bonus to 0 while the
     // growth weight still rewards the same name (the conflict the split exists to resolve).
-    let calm = { let mut x = q(5.0, &[]); x.volatility_pct = Some(1.0); x };
-    assert_eq!(risk_bonus(&calm, 20.0, 0.0, 0.0, &t), 0.0);
-    assert!(risk_bonus(&calm, 20.0, t.sharpe_weight, 0.0, &t) > 0.0);
+    let calm = { let mut x = quote(5.0, &[]); x.volatility_pct = Some(1.0); x };
+    assert_eq!(risk_bonus(&calm, 20.0, 0.0, 0.0, &tuning), 0.0);
+    assert!(risk_bonus(&calm, 20.0, tuning.sharpe_weight, 0.0, &tuning) > 0.0);
 
     // (A) crypto trust: a young EUR pair (5Y but no 10Y, like BTC-EUR) is NOT halved — 5Y is proven
     // enough for crypto; an equity still needs a 10Y leg, a barely-listed coin (1Y only) is still cut.
-    assert!((trust_factor(&q(20.0, &[("1Y", 30.0), ("5Y", 200.0)]), true) - 1.0).abs() < 1e-9);
-    assert_eq!(trust_factor(&q(20.0, &[("1Y", 30.0)]), true), 0.5); // crypto, only 1Y -> unproven
-    assert_eq!(trust_factor(&q(5.0, &[("5Y", 40.0)]), false), 0.5); // equity, no 10Y -> halved
-    assert!((trust_factor(&q(5.0, &[("10Y", 40.0)]), false) - 1.0).abs() < 1e-9);
+    assert!((trust_factor(&quote(20.0, &[("1Y", 30.0), ("5Y", 200.0)]), true) - 1.0).abs() < 1e-9);
+    assert_eq!(trust_factor(&quote(20.0, &[("1Y", 30.0)]), true), 0.5); // crypto, only 1Y -> unproven
+    assert_eq!(trust_factor(&quote(5.0, &[("5Y", 40.0)]), false), 0.5); // equity, no 10Y -> halved
+    assert!((trust_factor(&quote(5.0, &[("10Y", 40.0)]), false) - 1.0).abs() < 1e-9);
     // end-to-end: a 5Y-only crypto (BTC-EUR shape) is admitted to the growth lane and NOT trust-halved
-    let mut btc_young = q(20.0, &[("1Y", 30.0), ("5Y", 200.0)]); // no 10Y leg, like the young EUR pair
+    let mut btc_young = quote(20.0, &[("1Y", 30.0), ("5Y", 200.0)]); // no 10Y leg, like the young EUR pair
     btc_young.ticker = "BTC-EUR".into();
     assert!((trust_factor(&btc_young, true) - 1.0).abs() < 1e-9);
-    assert!(growth_score(&btc_young, &t).is_some());
+    assert!(growth_score(&btc_young, &tuning).is_some());
 
     // (#4) combine_damps: empty/all-1.0 -> 1.0; a lone 0.5 softens to 0.5^(1/n) (bounded, NOT the raw
     // product); the geomean of several mild damps stays well above their product (no silent nuke).
@@ -1013,46 +1017,46 @@ pub fn selftest() {
     assert!(combine_damps(&[0.9, 0.5]) < combine_damps(&[0.9, 0.9])); // still monotone in each term
 
     // (F) ROE quality reward: positive ROE -> weight×roe (capped); None/negative -> 0 (neutral)
-    let mut hi_roe = q(20.0, &[("1Y", 10.0)]);
+    let mut hi_roe = quote(20.0, &[("1Y", 10.0)]);
     hi_roe.roe = Some(30.0);
-    assert!((quality_reward(&hi_roe, &t) - t.quality_weight * 30.0).abs() < 1e-9);
-    hi_roe.roe = Some(t.quality_cap + 500.0); // a buyback-levered outlier is clamped at the cap
-    assert!((quality_reward(&hi_roe, &t) - t.quality_weight * t.quality_cap).abs() < 1e-9);
+    assert!((quality_reward(&hi_roe, &tuning) - tuning.quality_weight * 30.0).abs() < 1e-9);
+    hi_roe.roe = Some(tuning.quality_cap + 500.0); // a buyback-levered outlier is clamped at the cap
+    assert!((quality_reward(&hi_roe, &tuning) - tuning.quality_weight * tuning.quality_cap).abs() < 1e-9);
     hi_roe.roe = Some(-50.0); // loss-making -> no quality bonus
-    assert_eq!(quality_reward(&hi_roe, &t), 0.0);
-    assert_eq!(quality_reward(&q(20.0, &[("1Y", 10.0)]), &t), 0.0); // roe None -> 0
+    assert_eq!(quality_reward(&hi_roe, &tuning), 0.0);
+    assert_eq!(quality_reward(&quote(20.0, &[("1Y", 10.0)]), &tuning), 0.0); // roe None -> 0
 
     // EU-buyability gate: crypto majors + UCITS ETFs + US/Canada/EU-listed stocks pass; a US-domiciled
     // ETF (no PRIIPs KID) and an Asian-only listing are dropped — EU retail can't buy them.
-    let mut us_etf = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut us_etf = quote(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     us_etf.name = "SPDR S&P 500 ETF Trust".into();
     us_etf.ticker = "SPY".into();
     us_etf.market = "USA".into();
     assert!(!eu_buyable(&us_etf)); // US-domiciled ETF -> not EU-buyable
-    let mut ucits = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut ucits = quote(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     ucits.name = "iShares Core S&P 500 UCITS ETF".into();
     ucits.market = "UK".into();
     assert!(eu_buyable(&ucits)); // UCITS wrapper -> buyable
     // the bug this fixes: a UCITS ETF whose Yahoo shortName carries NO "ETF"/"UCITS" marker still
     // classifies as an ETF (via instrumentType) and stays buyable on its European listing.
-    let mut bare = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut bare = quote(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     bare.name = "ISHARES III PLC ISHRS CORE MSCI".into(); // real marker-less ETF shortName
     bare.instrument_type = "ETF".into();
     bare.market = "Ireland".into();
     assert!(quote_is_etf(&bare) && !is_etf(&bare.name)); // typed as ETF, not name-matched
     assert!(eu_buyable(&bare)); // EU venue -> buyable despite the marker-less name
-    let mut hk = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut hk = quote(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     hk.name = "Tencent Holdings".into();
     hk.market = "Hong Kong".into();
     assert!(!eu_buyable(&hk)); // HK-only listing off most EU retail brokers
-    let mut us_stk = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut us_stk = quote(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     us_stk.name = "Apple Inc.".into(); // market defaults to "USA"
     assert!(eu_buyable(&us_stk));
-    let mut btc_b = q(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    let mut btc_b = quote(20.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     btc_b.ticker = "BTC-EUR".into();
     assert!(eu_buyable(&btc_b)); // crypto major
     // end-to-end: `ranked` drops the US ETF even though it scores above min_score
-    assert!(buy_score(&us_etf, &t).unwrap() > t.min_score);
-    assert!(ranked(std::slice::from_ref(&us_etf), &t, buy_score, t.min_score, &no_pin).is_empty());
-    assert_eq!(ranked(std::slice::from_ref(&ucits), &t, buy_score, t.min_score, &no_pin).len(), 1);
+    assert!(buy_score(&us_etf, &tuning).unwrap() > tuning.min_score);
+    assert!(ranked(std::slice::from_ref(&us_etf), &tuning, buy_score, tuning.min_score, &no_pin).is_empty());
+    assert_eq!(ranked(std::slice::from_ref(&ucits), &tuning, buy_score, tuning.min_score, &no_pin).len(), 1);
 }

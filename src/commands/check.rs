@@ -8,7 +8,7 @@ use crate::{config, core, fetch, picks};
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
-    let fx = fetch::fx_cache();
+    let fx_cache = fetch::fx_cache();
     let tickers = if args.is_empty() { settings.tickers.clone() } else { args };
 
     let hdr = HORIZONS
@@ -16,11 +16,11 @@ pub async fn run(args: Vec<String>) {
         .map(|(l, _)| format!("{:>8}", l))
         .collect::<Vec<_>>()
         .join(" ");
-    let w = &settings.widths;
-    let (nw, tw, mw, pw) = (w.name, w.ticker, w.market, w.price);
+    let widths = &settings.widths;
+    let (name_w, ticker_w, market_w, price_w) = (widths.name, widths.ticker, widths.market, widths.price);
     println!(
-        "{:<nw$} {:<tw$} {:>pw$} {hdr}  {:<mw$} {:<8} HEADLINE",
-        truncate("NAME", nw), truncate("TICKER", tw), "PRICE(EUR)", truncate("MARKET", mw), "TREND"
+        "{:<name_w$} {:<ticker_w$} {:>price_w$} {hdr}  {:<market_w$} {:<8} HEADLINE",
+        truncate("NAME", name_w), truncate("TICKER", ticker_w), "PRICE(EUR)", truncate("MARKET", market_w), "TREND"
     );
 
     // live EU HICP series for inflation-adjusting the long-horizon returns (only when enabled).
@@ -30,28 +30,28 @@ pub async fn run(args: Vec<String>) {
     } else {
         None
     };
-    let qs = fetch::quotes(&client, &settings.urls, &fx, &tickers, settings.dip_days, settings.high_days, false, true, &settings.anchor_windows, eu_infl.as_ref()).await; // news on: check prints headlines
-    for q in &qs {
+    let quotes = fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, true, &settings.anchor_windows, eu_infl.as_ref()).await; // news on: check prints headlines
+    for quote in &quotes {
         let cells = HORIZONS
             .iter()
             .enumerate()
-            .map(|(i, _)| format!("{:>8}", core::pct_cell(q.perf.get(i).and_then(|o| o.as_ref()))))
+            .map(|(i, _)| format!("{:>8}", core::pct_cell(quote.perf.get(i).and_then(|o| o.as_ref()))))
             .collect::<Vec<_>>()
             .join(" ");
         println!(
-            "{:<nw$} {:<tw$} {:>pw$} {cells}  {:<mw$} {:<8} {}",
-            truncate(&q.name, nw),
-            truncate(&q.ticker, tw),
-            q.price,
-            truncate(&q.market, mw),
-            q.trend,
-            truncate(&q.head, w.headline),
+            "{:<name_w$} {:<ticker_w$} {:>price_w$} {cells}  {:<market_w$} {:<8} {}",
+            truncate(&quote.name, name_w),
+            truncate(&quote.ticker, ticker_w),
+            quote.price,
+            truncate(&quote.market, market_w),
+            quote.trend,
+            truncate(&quote.head, widths.headline),
         );
     }
 
     // best growth candidates (heuristic, derived from the table above — no extra fetch). Empty sector
     // filter: the watchlist is hand-picked, never sector-culled.
-    picks::render(&qs, settings.top_picks, &settings.buy_heuristic, w, None, &[], &[]);
+    picks::render(&quotes, settings.top_picks, &settings.buy_heuristic, widths, None, &[], &[]);
 
     // Euribor / Certificados de Aforro / inflation — the macro backdrop, shared with `screen`
     print_macro_footer(&client, &settings.urls).await;

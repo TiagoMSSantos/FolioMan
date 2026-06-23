@@ -1,5 +1,6 @@
 //! User-editable folioman config, loaded from `config/settings.yaml`.
 //! Language-agnostic YAML so any tool can read the same source of truth.
+//! Acronyms (CAGR, ROE, P/E, NUPL, SMA, …): see the Glossary in README.md.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -88,24 +89,31 @@ impl Default for Widths {
 /// Tunable knobs for the buy-candidate heuristic (`src/picks.rs`). Every field is optional in
 /// YAML — omit the whole `buy_heuristic:` block or any field to use these defaults.
 ///
-/// Tuned for a multi-DECADE buy-and-hold. Score (see `buy_score` in `src/picks.rs`, each knob = one
-/// named step): `base = discount × trend_health × momentum + long_reward(A) + cheap_reward(C) +
-/// dividend_reward(D)`, then `score = base × value(E) × geomean(decline(B), trust, consistency)` —
-/// the penalties combine as a geomean (#4) so several mild damps can't compound to ~0. GATES exclude
-/// a candidate outright; SCORE knobs rank the survivors.
+/// TWO scoring lanes share this struct, and `screen` prints ONLY the GROWTH lane:
+/// - **GROWTH lane** (`growth_score`) — what `screen` prints; the only lane with a validated edge.
+///   `base = growth_trend_weight·CAGR + growth_accel_weight·accel + risk + quality + dividend`,
+///   `score = base · proximity · value(P/E) · geomean(trust, overext) + liquidity`.
+///   (CAGR = Compound Annual Growth Rate.)
+/// - **ON-SALE lane** (`buy_score`) — a BACKTEST FOIL ONLY (not printed by `screen`); kept so
+///   `backtest` can show dip-buying has NEGATIVE multi-decade edge. Fields marked `[FOIL]` below feed
+///   ONLY this lane — changing them does nothing to `screen` output.
+/// Its score: `base = discount × trend_health × momentum + long_reward(A) + cheap_reward(C) +
+/// dividend_reward(D)`, then `score = base × value(E) × geomean(decline(B), trust)`.
+/// GATES exclude a candidate outright; SCORE knobs rank the survivors. Mirrors `config/settings.yaml`.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct BuyHeuristic {
     // --- GATES: a candidate failing ANY of these is dropped before scoring ---
-    pub min_1y_pct: f64,             // equities: reject if 1Y % <= this (a deep 1-year downtrend isn't a pullback)
+    pub min_1y_pct: f64,             // [FOIL] on-sale only: reject if equity 1Y % <= this (growth uses a hardcoded 0% floor, not this)
     pub min_1y_pct_crypto: f64,      // crypto/FX (-EUR/-USD): looser 1Y floor — they swing far harder
     pub max_1m_drop_pct: f64,        // equities: reject if 1M % <= this (a hard monthly crash = falling knife)
     pub max_1m_drop_pct_crypto: f64, // crypto/FX: looser knife — a -20%/month alt is normal, not broken
-    pub min_long_pct: f64,           // equities: reject if any 5Y/10Y/20Y leg <= this (structural decline)
-    pub min_long_pct_crypto: f64,    // crypto/FX: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -70%+)
+    pub min_long_pct: f64,           // [FOIL] on-sale only: reject if any 5Y/10Y/20Y leg <= this (growth uses a hardcoded >0% 5Y gate)
+    pub min_long_pct_crypto: f64,    // [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -70%+)
     pub min_avg_turnover_eur: f64,   // reject if avg daily turnover (EUR) < this (thin/illiquid name); 0 = off
 
-    // --- SCORE: how the survivors are ranked (higher = more interesting) ---
+    // --- SCORE — ON-SALE LANE (`buy_score`): EVERYTHING from here to "GROWTH LANE" below is [FOIL]
+    //     (backtest-only; `screen` ignores it), EXCEPT the shared tilts noted inline. ---
     pub normal_volatility_pct: f64,  // a "typical" daily swing (%); the dip is scaled by normal/asset vol, so a calm name's dip counts for more than a wild one's
     pub discount_cap: f64,           // cap on that volatility-scaled dip (one very deep name can't run away with the ranking)
     pub discount_weight: f64,        // (#4) multiplier on the direct dip reward (discount×health×momentum). The walk-forward backtest found deepest-dip ranking is BACKWARDS on peer-relative selection, so default <1.0 demotes it toward the quality/trend terms; 1.0 = old behaviour, 0 = off. Does NOT touch discount_frac (the long_reward "must be pulled back" scaling stays on raw discount)

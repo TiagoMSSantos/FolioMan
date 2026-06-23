@@ -13,10 +13,11 @@ cargo test                      # pure-logic asserts (one file per module)
 cargo run -- selftest           # same asserts, no network
 
 cargo run -- check              # default watchlist: price(EUR), % per horizon, trend, headline,
-                                #   then a "buy candidates" ranking, Euribor, CdA, inflation
+                                #   then the GROWTH ranking (buy candidates), Euribor, CdA, inflation
 cargo run -- check AAPL BTC-USD VWCE.DE
 cargo run -- perf NVDA          # past EUR price + % at each horizon, with source URL
-cargo run -- screen             # all-time highs/lows, fallers, dividend payers, buy candidates
+cargo run -- screen             # live universe -> GROWTH ranking per class (stocks/ETFs/crypto) + NUPL
+cargo run -- backtest           # walk-forward validation of the heuristic (rho, top/bottom edge, OOS)
 cargo run -- alert              # ntfy push for dips (cron it)
 cargo run -- accounts           # cash + holdings per broker (read-only)
 cargo run -- trade binance buy BTCEUR 0.001   # LIVE order, real money, confirm-gated
@@ -56,8 +57,82 @@ long random string. Cron hourly:
 0 * * * * /path/to/folioman/target/release/folioman alert >> /tmp/folioman.log 2>&1
 ```
 
+## How a buy candidate is computed
+
+`check` and `screen` both print the **growth ranking** — the proven-compounder lane. The pipeline
+(function names so you can jump into the source):
+
+```
+fetch::fetch_universe   live universe: top-N crypto (CoinGecko) + S&P 500 + Xetra UCITS ETFs  (screen only)
+        ↓
+fetch::quotes           one Quote per ticker (price, per-horizon %, volatility, SMA dist, P/E, ROE…)
+        ↓
+picks::eu_buyable       drop what EU retail can't buy (US-domiciled ETFs, Asia-only listings)
+        ↓
+picks::growth_score     GATE then SCORE each Quote (src/picks.rs) — the heuristic
+        ↓
+picks::ranked           dedup currency twins + dual-class shares, sort best-first, trim padding
+        ↓
+picks::print_lane       split per class (stocks / ETFs / crypto), print Top-N each
+        ↓
+NUPL + macro footer     Bitcoin sentiment + Euribor / Certificados de Aforro / inflation baselines
+```
+
+There is a SECOND lane, `picks::buy_score` ("on-sale", buy-the-dip). **It is a backtest foil only —
+neither `check` nor `screen` prints it.** It exists so `backtest` can show that dip-buying has
+*negative* edge over a multi-decade hold. See the `[FOIL]` tags in `settings.yaml` / `src/config.rs`.
+
+## Tuning the buy heuristic
+
+Goal: change what the `screen` growth ranking surfaces. Edit `buy_heuristic:` in
+`config/settings.yaml`, then **validate with `cargo run -- backtest`** (watch rho = rank
+correlation, the top-vs-bottom-half edge in points, and that both out-of-sample halves stay
+positive). Two rules:
+
+- **Only knobs NOT tagged `[FOIL]` affect `screen`.** The `[FOIL]` knobs (`discount_*`,
+  `momentum_*`, `min_score`, `cheap_*`, `sustained_*`, `min_1y_pct`, `min_long_pct*`, …) feed the
+  backtest-only on-sale lane. Tuning them changes nothing you see.
+- **Gates move the signal; weights barely do.** A gate reshapes the scored pool; additive/multiplier
+  weights only re-rank what's already in it. Tune gates first.
+
+| Want… | Turn this (LIVE knob) | Direction |
+|-------|-----------------------|-----------|
+| Fewer, higher-conviction stock picks | `growth_min_cagr`, `growth_min_range_pct` | raise |
+| Hide weak ranked rows | `growth_min_score` | raise |
+| More crypto coins in the table | `growth_min_range_pct_crypto`, `growth_min_cagr_crypto` | lower |
+| Punish blow-off-top / parabolic names harder | `growth_overext_floor` | lower |
+| Drop thin/illiquid junk | `min_avg_turnover_eur` | raise |
+| Favor deep-liquid mega-caps on ties | `growth_turnover_weight` | raise |
+| Damp crypto when the market is euphoric | `nupl_euphoria` / `nupl_damp_floor` | lower the floor |
+| Reward dividend payers more | `dividend_weight` (cap `dividend_cap`) | raise |
+| Tilt toward cheap-on-earnings (needs `FMP_API_KEY`) | `ref_pe` | raise = treat more names as cheap |
+
+## Glossary
+
+| Acronym | Meaning |
+|---------|---------|
+| ETF | Exchange-Traded Fund — a pooled basket traded like a stock (vs a single-company share) |
+| CAGR | Compound Annual Growth Rate (%/yr; annualizes a multi-year return so 5Y/10Y/20Y compare) |
+| ROE | Return On Equity — profitability/quality factor (needs `FMP_API_KEY`) |
+| P/E | Price-to-Earnings ratio — valuation tilt `value = ref_pe / P/E` (needs `FMP_API_KEY`) |
+| NUPL | Net Unrealized Profit/Loss — Bitcoin whole-market sentiment gauge (damps the crypto lane) |
+| SMA | Simple Moving Average; "200wk SMA" = the ~1000-session long-term trend line |
+| FX | Foreign exchange (currency-quoted tickers carry a `-EUR`/`-USD` suffix: crypto/FX) |
+| UCITS | EU-regulated pooled-fund wrapper; EU retail can buy these (vs US-domiciled ETFs) |
+| PRIIPs / KID | EU retail-disclosure document a fund needs to be sold to EU retail |
+| GICS | Global Industry Classification Standard — the sector taxonomy the sector filter uses |
+| Sharpe | Risk-adjusted return = CAGR ÷ volatility (reward per unit of daily swing) |
+| Calmar | Risk-adjusted return = CAGR ÷ worst peak-to-trough drawdown (reward per unit of pain) |
+| ATH / ATL | All-Time High / All-Time Low |
+| OFF-HI | How far below its high a name trades (the `screen` drawdown column) |
+| rho | Spearman rank correlation — the backtest's selection-skill metric |
+| OOS | Out-Of-Sample — the late-vs-early split that tests whether an edge generalizes |
+| FMP | Financial Modeling Prep — the fundamentals API behind P/E and ROE (`FMP_API_KEY` env) |
+| HICP | Harmonised Index of Consumer Prices — the EU inflation series for real-return adjustment |
+| CdA | Certificados de Aforro — Portuguese savings certificates (a fixed-income baseline) |
+
 ## Hard rules
 
 1. **No auto-trading** — `trade` is manual and confirm-gated; a signal never fires an order.
-2. **Raw headlines, no sentiment NLP.**
+2. **Raw headlines, no sentiment NLP** (NLP = Natural Language Processing).
 3. **Secrets in env, never in the repo** (broker keys + ntfy topic stay out of `settings.yaml`).

@@ -1,6 +1,8 @@
 //! `backtest [YEARS] [TICKERS...]` — zero-EXTRA-fetch sanity check of the buy heuristic. One chart
 //! fetch per ticker (the same single call `check` makes — no worse rate-limit pressure), then it all
-//! happens offline:
+//! happens offline. Metrics: rho = Spearman rank correlation (selection skill); edge = top-half minus
+//! bottom-half realized return, in points; OOS = Out-Of-Sample (early-vs-late split). Other acronyms
+//! (CAGR, P/E, …): see the Glossary in README.md.
 //!
 //! - **(#3) walk-forward**: score the name at MANY cutoffs (~every 6 months back through its history),
 //!   each measured against the realized return over the SAME `YEARS`-long forward window. Pools ~10×
@@ -40,7 +42,7 @@ struct Sample {
     date: chrono::NaiveDate,
     realized: f64, // raw forward return %
     relative: f64, // (#1) realized minus its cutoff-bucket peer mean -> SELECTION, not regime beta
-    q: Quote,
+    quote: Quote,
     fund: Option<core::FundFactors>, // (G) as-of fundamentals at this cutoff (None unless `fund` + FMP key + cached)
 }
 
@@ -60,7 +62,7 @@ const MIN_HISTORY: usize = 750;
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
-    let t = &settings.buy_heuristic;
+    let tuning = &settings.buy_heuristic;
 
     // first purely-numeric arg = holdout years; the keyword `universe` = test the live screen universe
     // (#2: a much wider sample than the ~50-name watchlist -> less single-name luck); everything else =
@@ -133,10 +135,10 @@ pub async fn run(args: Vec<String>) {
                             let fwd = i + off;
                             // record EVERY cutoff with a forward window (not just gated ones) so the
                             // peer-mean spans the whole period universe; each lane filters by its own gates.
-                            let q = core::backtest_quote(tk, &dates, &closes, i, cadence);
+                            let quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
                             let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
                             let fund = fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], years));
-                            out.push(Sample { date: dates[i], realized, relative: 0.0, q, fund });
+                            out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund });
                         }
                         None => break, // no full forward window left -> stop walking this ticker
                     }
@@ -185,22 +187,22 @@ pub async fn run(args: Vec<String>) {
     println!("  cutoffs with a forward window: {}   tickers: {}", samples.len(), tickers.len());
 
     let buy_knobs: &[(&str, fn(&mut BuyHeuristic))] = &[
-        ("long_trend_weight", |t| t.long_trend_weight = 0.0),
-        ("discount_weight", |t| t.discount_weight = 0.0), // (#4) zero the dip reward — Δ>0 confirms dip-depth ranks backwards
-        ("cheap_weight", |t| t.cheap_weight = 0.0),
-        ("dividend_weight*", |t| t.dividend_weight = 0.0),
-        ("onsale_sharpe_weight", |t| t.onsale_sharpe_weight = 0.0),
-        ("calmar_weight", |t| t.calmar_weight = 0.0),
+        ("long_trend_weight", |tuning| tuning.long_trend_weight = 0.0),
+        ("discount_weight", |tuning| tuning.discount_weight = 0.0), // (#4) zero the dip reward — Δ>0 confirms dip-depth ranks backwards
+        ("cheap_weight", |tuning| tuning.cheap_weight = 0.0),
+        ("dividend_weight*", |tuning| tuning.dividend_weight = 0.0),
+        ("onsale_sharpe_weight", |tuning| tuning.onsale_sharpe_weight = 0.0),
+        ("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
     ];
     let growth_knobs: &[(&str, fn(&mut BuyHeuristic))] = &[
-        ("growth_trend_weight", |t| t.growth_trend_weight = 0.0),
-        ("growth_accel_weight", |t| t.growth_accel_weight = 0.0),
-        ("sharpe_weight", |t| t.sharpe_weight = 0.0),
-        ("calmar_weight", |t| t.calmar_weight = 0.0),
-        ("overext_brake", |t| t.growth_overext_cap = 0.0),
+        ("growth_trend_weight", |tuning| tuning.growth_trend_weight = 0.0),
+        ("growth_accel_weight", |tuning| tuning.growth_accel_weight = 0.0),
+        ("sharpe_weight", |tuning| tuning.sharpe_weight = 0.0),
+        ("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
+        ("overext_brake", |tuning| tuning.growth_overext_cap = 0.0),
     ];
-    report_lane("ON-SALE (buy_score)", &samples, buy_score, t, buy_knobs);
-    report_lane("GROWTH (growth_score)", &samples, growth_score, t, growth_knobs);
+    report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, buy_knobs);
+    report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, growth_knobs);
     if fund {
         report_fund_lane(&samples);
     }
@@ -279,11 +281,11 @@ fn report_lane(
     label: &str,
     samples: &[Sample],
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
-    t: &BuyHeuristic,
+    tuning: &BuyHeuristic,
     knobs: &[(&str, fn(&mut BuyHeuristic))],
 ) {
     let scored: Vec<(&Sample, f64)> =
-        samples.iter().filter_map(|s| scorer(&s.q, t).map(|v| (s, v))).collect();
+        samples.iter().filter_map(|s| scorer(&s.quote, tuning).map(|v| (s, v))).collect();
     println!("\n── {label} ──");
     if scored.len() < 4 {
         println!("  only {} windows passed this lane's gates — too few to correlate.", scored.len());
@@ -335,10 +337,10 @@ fn report_lane(
     let base_rho = rho.unwrap_or(0.0);
     println!("  ablation (Δ vs full: rho {base_rho:+.2}, edge {base_edge:+.1}):");
     for (name, mutate) in knobs {
-        let mut t2 = t.clone();
+        let mut t2 = tuning.clone();
         mutate(&mut t2);
         let abl: Vec<(&Sample, f64)> =
-            scored.iter().map(|(s, v)| (*s, scorer(&s.q, &t2).unwrap_or(*v))).collect();
+            scored.iter().map(|(s, v)| (*s, scorer(&s.quote, &t2).unwrap_or(*v))).collect();
         let (et, eb) = edge_of(&abl);
         let dedge = (et - eb) - base_edge;
         match core::spearman(&abl.iter().map(|(_, v)| *v).collect::<Vec<_>>(), &rels) {

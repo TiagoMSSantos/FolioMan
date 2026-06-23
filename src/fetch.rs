@@ -266,7 +266,7 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
-pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
+pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
     let (chart_j, chart_long_j, titles, intra, pe, roe) = tokio::join!(
         // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
         // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
@@ -292,10 +292,10 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         other => {
             // Crypto -EUR with no Yahoo data: many alts (APT, SUI, NEAR…) only carry a -USD pair on
             // Yahoo, not -EUR. Retry once in USD before gating it out — the price still renders in €
-            // via the USD->EUR fx rate, and dedup keys on the underlying so the -USD leg slots in
+            // via the USD->EUR fx_cache rate, and dedup keys on the underlying so the -USD leg slots in
             // cleanly. ponytail: boxed recursion for the single retry; -USD can't re-trigger this.
             if let Some(base) = ticker.strip_suffix("-EUR") {
-                return Box::pin(quote_one(client, urls, fx, &format!("{base}-USD"), dip_days, high_days, intraday, news, windows, infl)).await;
+                return Box::pin(quote_one(client, urls, fx_cache, &format!("{base}-USD"), dip_days, high_days, intraday, news, windows, infl)).await;
             }
             return match other {
                 Some(c) => Quote::stub(ticker, "no data", "", &c.name),
@@ -327,7 +327,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx: &FxCache, ticker: &str,
         };
 
     let cur_close = *chart.closes.last().unwrap();
-    let rate = eur_rate(client, urls, &chart.currency, fx).await;
+    let rate = eur_rate(client, urls, &chart.currency, fx_cache).await;
     let price = match rate {
         Some(r) => format!("€{}", core::fmt_money2(cur_close * r)),
         None => format!("{} {}?", core::fmt_money2(cur_close), chart.currency),
@@ -695,11 +695,11 @@ pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> O
 }
 
 /// One Quote per ticker, concurrent (≤`FETCH_CONCURRENCY` in flight), input order preserved.
-pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Quote> {
+pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Quote> {
     // Warm the USD rate once up front. Otherwise every US stock races its own USDEUR=X call in the
     // fan-out; one gets rate-limited -> None cached -> all USD names print "USD?" instead of €.
     // ponytail: USD only (dominant case); rare currencies (GBP/CHF) still race, fine at this scale.
-    let _ = eur_rate(client, urls, "USD", fx).await;
+    let _ = eur_rate(client, urls, "USD", fx_cache).await;
     // progress to stderr (stdout stays a clean table): a big `screen` is minutes of silent network,
     // so log every PROGRESS_EVERY completions + the final total. ponytail: atomic counter, no bar lib.
     let total = tickers.len();
@@ -712,12 +712,12 @@ pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[Strin
         .map(|tk| {
             let done = &done;
             async move {
-                let q = quote_one(client, urls, fx, tk, dip_days, high_days, intraday, news, windows, infl).await;
+                let quote = quote_one(client, urls, fx_cache, tk, dip_days, high_days, intraday, news, windows, infl).await;
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if n % PROGRESS_EVERY == 0 || n == total {
                     eprintln!("fetch: {n}/{total} quotes fetched");
                 }
-                q
+                quote
             }
         })
         .buffered(concurrency)
@@ -732,8 +732,8 @@ pub async fn quotes(client: &Client, urls: &Urls, fx: &FxCache, tickers: &[Strin
     // recovered 0/57 once paced). They gate out the same as before; we just don't waste a pass on them.
     let dead: Vec<&str> = out
         .iter()
-        .filter(|q| q.price == "err" || q.price == "no data")
-        .map(|q| q.ticker.as_str())
+        .filter(|quote| quote.price == "err" || quote.price == "no data")
+        .map(|quote| quote.ticker.as_str())
         .collect();
     if !dead.is_empty() {
         let shown = dead.iter().take(20).cloned().collect::<Vec<_>>().join(" ");

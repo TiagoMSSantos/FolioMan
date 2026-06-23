@@ -1,5 +1,6 @@
 //! Pure logic for folioman: types, formatting, market/trend/inflation math.
 //! No network here — all I/O lives in `fetch.rs`. Read-only, never trades.
+//! Acronyms (CAGR, NUPL, SMA, GICS, R², CdA, …): see the Glossary in README.md.
 
 use chrono::{Duration, NaiveDate};
 use serde_json::Value;
@@ -703,28 +704,28 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     }
 }
 
-/// Build a Quote AS OF index `t` (inclusive) from the full history, filling ONLY the price-derived
-/// fields the buy score reads — reusing the exact same horizon/SMA/vol/R²/drawdown fns on the `[..=t]`
+/// Build a Quote AS OF index `as_of` (inclusive) from the full history, filling ONLY the price-derived
+/// fields the buy score reads — reusing the exact same horizon/SMA/vol/R²/drawdown fns on the `[..=as_of]`
 /// slices, so the backtest scores a name exactly as the live tool would have on that day. ponytail:
 /// dividends / turnover / P/E / ROE are NOT reconstructed (no clean as-of source), so those score
 /// terms go neutral here; the backtest validates the PRICE-based heuristic, which is the bulk of it.
-pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], t: usize, cadence: usize) -> Quote {
-    let (d, c) = (&dates[..=t], &closes[..=t]);
-    let mut q = Quote::stub(ticker, "", "", ticker);
-    q.perf = horizon_changes(d, c, None, &BTreeMap::new(), None); // calendar-based -> cadence-agnostic
-    q.drawdown_pct = pct_from_high(c); // all-time anchor as of t
-    q.range_pct = price_pct_rank(c);
+pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: usize, cadence: usize) -> Quote {
+    let (d, c) = (&dates[..=as_of], &closes[..=as_of]);
+    let mut quote = Quote::stub(ticker, "", "", ticker);
+    quote.perf = horizon_changes(d, c, None, &BTreeMap::new(), None); // calendar-based -> cadence-agnostic
+    quote.drawdown_pct = pct_from_high(c); // all-time anchor as of the `as_of` index
+    quote.range_pct = price_pct_rank(c);
     // cadence = bars/year (252 daily, 12 monthly): vol over ~1y of bars; the long MA window scaled
     // from its daily session count so the SAME ~4y/200wk span is used on either cadence (cadence=252
     // reproduces the daily path exactly). ponytail: monthly bars APPROXIMATE the daily vol/MA, not
     // equal them — fine, a backtest run is single-cadence so the cross-sectional ranks stay consistent.
-    q.volatility_pct = volatility_pct(c, cadence);
+    quote.volatility_pct = volatility_pct(c, cadence);
     let long_ma = crate::config::LONG_MA_SESSIONS * cadence / 252;
-    q.below_ma_pct = below_long_ma_pct(c, long_ma);
-    q.above_ma_pct = above_long_ma_pct(c, long_ma);
-    q.trend_r2 = trend_r2(c);
-    q.max_drawdown_pct = max_drawdown_pct(c);
-    q
+    quote.below_ma_pct = below_long_ma_pct(c, long_ma);
+    quote.above_ma_pct = above_long_ma_pct(c, long_ma);
+    quote.trend_r2 = trend_r2(c);
+    quote.max_drawdown_pct = max_drawdown_pct(c);
+    quote
 }
 
 /// [1h, 6h, 12h] % changes = 1/6/12 hourly bars back. With ~hourly bars over several days this

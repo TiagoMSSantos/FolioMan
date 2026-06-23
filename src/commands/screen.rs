@@ -12,7 +12,7 @@ use crate::{config, fetch};
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
-    let fx = fetch::fx_cache();
+    let fx_cache = fetch::fx_cache();
     // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it.
     // etf_tickers = Xetra-ETF source set, used below to fix Yahoo mislabeling them as EQUITY.
     let (mut universe, etf_tickers) = if args.is_empty() {
@@ -34,20 +34,20 @@ pub async fn run(args: Vec<String>) {
     } else {
         None
     };
-    let mut qs = fetch::quotes(&client, &settings.urls, &fx, &universe, settings.dip_days, settings.high_days, true, false, &settings.anchor_windows, eu_infl.as_ref()).await; // intraday on (picks shows 1h/6h/12h), news off (screen never prints headlines)
+    let mut quotes = fetch::quotes(&client, &settings.urls, &fx_cache, &universe, settings.dip_days, settings.high_days, true, false, &settings.anchor_windows, eu_infl.as_ref()).await; // intraday on (picks shows 1h/6h/12h), news off (screen never prints headlines)
     // anything from the Xetra ETF feed IS an ETF, even if Yahoo tags it EQUITY (structured products
     // like BNP Paribas Issuance) — force it so it can't leak into the stocks table past the sector filter
-    for q in &mut qs {
-        if etf_tickers.contains(&q.ticker) {
-            q.instrument_type = "ETF".into();
+    for quote in &mut quotes {
+        if etf_tickers.contains(&quote.ticker) {
+            quote.instrument_type = "ETF".into();
         }
     }
     // keep only what an EU-retail investor can actually buy (drops any non-European-listed ETF,
     // Asian-only stock listings) so the growth ranking below is actionable.
-    let before = qs.len();
-    let qs: Vec<Quote> = qs.into_iter().filter(eu_buyable).collect();
-    eprintln!("screen: {} of {before} instruments are EU-buyable (rest filtered out)", qs.len());
-    println!("Scanned {} instruments.", qs.len());
+    let before = quotes.len();
+    let quotes: Vec<Quote> = quotes.into_iter().filter(eu_buyable).collect();
+    eprintln!("screen: {} of {before} instruments are EU-buyable (rest filtered out)", quotes.len());
+    println!("Scanned {} instruments.", quotes.len());
 
     // Bitcoin NUPL: whole-market crypto sentiment gauge. Fetched BEFORE render so it can damp the
     // crypto rows (high NUPL = euphoric top), then also printed as the footer line.
@@ -55,7 +55,7 @@ pub async fn run(args: Vec<String>) {
 
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
-    render(&qs, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &settings.tickers);
+    render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &settings.tickers);
 
     if let Some(n) = nupl {
         println!(
