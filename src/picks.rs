@@ -420,9 +420,11 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     // generic brake the P/E tilt can't provide for crypto/ETFs (no earnings) — works on price alone.
     // (Tried a CAGR-conditional floor — brake elite compounders less — but it CUT wide edge
     //  +108.9->+80.5 and flipped OOS-late negative: high-CAGR stretched names revert too. Hard brake stays.)
-    let overext = quote.above_ma_pct.min(tuning.growth_overext_cap);
-    let overext_damp = if tuning.growth_overext_cap > 0.0 {
-        1.0 - (overext / tuning.growth_overext_cap) * (1.0 - tuning.growth_overext_floor) // 1.0 at trend .. floor at the cap
+    // (#4) per-class cap: crypto rides far above its long SMA normally, so it gets its own (looser) cap.
+    let overext_cap = if crypto { tuning.growth_overext_cap_crypto } else { tuning.growth_overext_cap };
+    let overext = quote.above_ma_pct.min(overext_cap);
+    let overext_damp = if overext_cap > 0.0 {
+        1.0 - (overext / overext_cap) * (1.0 - tuning.growth_overext_floor) // 1.0 at trend .. floor at the cap
     } else {
         1.0 // cap 0 = brake disabled
     };
@@ -436,7 +438,11 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     } else {
         0.0
     };
-    // (#4) geomean the pure penalties (trust/overext); proximity + value stay direct
+    // geomean the pure penalties (bounded — see combine_damps).
+    // (Tried (#1) an R²-trend-steadiness damp @0.5 and (#3) a 3M/6M momentum-confirm damp @0.3 here.
+    //  backtest universe ablation (467 win) said BOTH edge-negative: removing R² lifted edge +45.6->+68.0
+    //  & rho +0.18->+0.20; removing mom-confirm lifted edge +5.9. R² docks exactly the parabolic
+    //  compounders this lane exists to surface, and accel already encodes momentum -> dropped both.)
     Some(base * proximity * value * combine_damps(&[trust, overext_damp]) + liq_bonus)
 }
 

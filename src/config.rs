@@ -149,6 +149,7 @@ pub struct BuyHeuristic {
     pub growth_overext_cap: f64,     // (1) % ABOVE the 200wk SMA at which the overextension brake maxes out
     pub growth_overext_floor: f64,   // (1) growth-score multiplier at that cap (e.g. 0.4 = a fully-stretched name keeps 40% of its score); 1.0 = brake off
     pub growth_turnover_weight: f64, // (L) liquidity tilt: bonus per ln(turnover/€1B), added OUTSIDE the brake. Rewards deep-liquid mega-caps (easy multi-decade exit, less manipulation) so a proven compounder like NVDA isn't ranked below an illiquid €200M twin on a score tie. BACKTEST-BLIND (backtest_quote has no turnover) so it never moves the validated edge; 0 = off
+    pub growth_overext_cap_crypto: f64, // (#4) crypto's OWN overextension cap (% above the 200wk SMA at which the brake maxes). Crypto routinely rides far above its long SMA, so a separate looser cap avoids over-braking coins; equities/ETFs keep growth_overext_cap. 0 = crypto brake off
 
     // --- CRYPTO market-sentiment damp (Bitcoin NUPL): a whole-market greed gauge already fetched for
     //     the screen footer; high NUPL = euphoria/top -> shrink crypto scores in BOTH lanes. ---
@@ -221,6 +222,7 @@ impl Default for BuyHeuristic {
             growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
             growth_overext_floor: 0.05,    // (1) ...and keeps only 5% of its growth score at full stretch. Tightened 0.2->0.15->0.05: each step a harder blow-off-top brake (buying right after a parabolic run-up is a poor long-hold entry). The walk-forward sweep ranks 0.05 the best generalizer — wide 5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability +55%) with the profit edge flat (+108.5->+106.8). A prior session rejected 0.1 for "docking NVDA out of the table," but that was regime-bound: at 0.05 today NVDA still scores 6.7 > growth_min_score 5 (it's -10.6% off-hi, not parabolic) and the displayed stocks order is unchanged. 1.0 = brake off
             growth_turnover_weight: 0.5,   // (L) liquidity tilt per ln(turnover/€1B), added after the brake. Lifts deep-liquid proven compounders (NVDA €32B -> +~1.0) over illiquid €200-500M names they tie/trail on the brake-docked score, without touching the validated edge (BACKTEST-BLIND)
+            growth_overext_cap_crypto: 100.0, // (#4) defaults to the equity cap (NO behavior change until tuned). Raise (e.g. 200) so the brake lets crypto ride further above its SMA before docking
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
             nupl_capitulation: 0.25,       // (4) NUPL < 0.25 = fear/accumulation -> start boosting crypto (buy-the-fear)
