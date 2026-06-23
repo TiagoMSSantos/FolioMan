@@ -579,13 +579,17 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         );
     };
     let star = |q: &Quote| if pinned.contains(q.ticker.as_str()) { "*" } else { "" }; // * = a pinned (watchlist) name
+    // # = the score used LIVE fundamentals (trailing P/E and/or ROE), not price-only — only equities
+    // with an FMP key populate these, so on the wide screen it flags the few enriched rows (the pins).
+    let enriched = |q: &Quote| if q.pe_ratio.is_some() || q.roe.is_some() { "#" } else { "" };
+    let mark = |q: &Quote, i: usize| format!("{}{}{}", i + 1, star(q), enriched(q));
     for (i, (q, score)) in picks.iter().take(n).enumerate() {
-        row(&format!("{}{}", i + 1, star(q)), q, *score);
+        row(&mark(q, i), q, *score);
     }
     // pinned tickers that ranked BELOW the cut still print (with their real rank + "*") so you can
     // compare a holding against the tops above even when it doesn't make the top-N.
     for (i, (q, score)) in picks.iter().enumerate().skip(n).filter(|(_, (q, _))| pinned.contains(q.ticker.as_str())) {
-        row(&format!("{}{}", i + 1, star(q)), q, *score);
+        row(&mark(q, i), q, *score);
     }
 }
 
