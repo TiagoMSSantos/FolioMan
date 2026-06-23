@@ -370,8 +370,12 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     if q.range_pct < min_range {
         return None; // equities: NOT near its high -> the on-sale lane's job. crypto: looser floor (alts run below ATH)
     }
-    let (long_cum, long_years) =
-        long_leg(q).or_else(|| if crypto { perf_pct(q, "1Y").map(|p| (p, 1.0)) } else { None })?;
+    // a "20yr+ proven CAGR" candidate must HAVE a multi-year record. Crypto used to fall back to its
+    // 1Y leg here — but that admitted no-history tokens (microNFT, freshly-listed scams with a
+    // +100000% data-artifact year) into a lane that promises a proven long trend. Require a real >2Y
+    // leg for crypto too: trust_factor already treats 5Y as "proven enough" for young EUR pairs, so
+    // this just promotes that bar from a soft halving to a hard gate (BTC/ETH/XMR/… all have 5Y).
+    let (long_cum, long_years) = long_leg(q)?;
     let long_cagr = core::cagr(long_cum, long_years);
     let min_cagr = if crypto { t.growth_min_cagr_crypto } else { t.growth_min_cagr };
     if long_cagr < min_cagr {
@@ -915,6 +919,11 @@ pub fn selftest() {
     };
     assert!(pin_scored(true).is_some()); // pinned -> shown despite the gate
     assert!(pin_scored(false).is_none()); // not pinned -> still excluded
+    // no real multi-year leg (1Y only) -> NOT a "proven long-term CAGR" candidate, even for crypto
+    // (kills the no-history token junk: microNFT, freshly-listed +100000% data artifacts)
+    let mut nohist = q(0.0, &[("1Y", 700.0)]); // huge 1Y, but no 5Y/10Y/20Y leg
+    nohist.ticker = "MNT-USD".into();
+    assert!(growth_score(&nohist, &t).is_none());
     // not climbing this year (negative 1Y) -> no momentum -> excluded
     assert!(growth_score(&q(0.0, &[("1Y", -5.0), ("5Y", 200.0), ("10Y", 500.0)]), &t).is_none());
     // crashing this month -> momentum broke -> excluded
