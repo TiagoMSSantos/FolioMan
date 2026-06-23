@@ -272,14 +272,16 @@ pub struct Urls {
     pub bf_salt: String,
 }
 
-/// Default (E) fundamentals endpoint: Financial Modeling Prep's free `quote` (carries `pe`).
+/// Default (E) fundamentals endpoint: FMP's free `stable/quote` (carries `pe`). The old v3
+/// `/api/v3/quote/` legacy endpoint died 2025-08-31 for new keys; `stable` is the replacement.
 fn default_fundamentals_url() -> String {
-    "https://financialmodelingprep.com/api/v3/quote/{ticker}?apikey={key}".to_string()
+    "https://financialmodelingprep.com/stable/quote?symbol={ticker}&apikey={key}".to_string()
 }
 
-/// Default (F) quality endpoint: FMP's `ratios-ttm` (carries `returnOnEquityTTM`).
+/// Default (F) quality endpoint: FMP's `stable/ratios-ttm` (carries `returnOnEquityTTM`). v3 legacy
+/// `/api/v3/ratios-ttm/` died 2025-08-31 for new keys; `stable` replaces it.
 fn default_fundamentals_quality_url() -> String {
-    "https://financialmodelingprep.com/api/v3/ratios-ttm/{ticker}?apikey={key}".to_string()
+    "https://financialmodelingprep.com/stable/ratios-ttm?symbol={ticker}&apikey={key}".to_string()
 }
 
 /// Default (G) historical statements endpoint: FMP `stable/income-statement` quarterly. limit=48 =
