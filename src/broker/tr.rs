@@ -34,8 +34,8 @@ pub async fn order(client: &Client, side: &str, isin: &str, qty: f64) -> Result<
     if !login.status().is_success() {
         return Err(format!("TR login failed: {} {}", login.status(), login.text().await.unwrap_or_default()));
     }
-    let lj: Value = login.json().await.map_err(|e| e.to_string())?;
-    let process_id = lj
+    let login_json: Value = login.json().await.map_err(|e| e.to_string())?;
+    let process_id = login_json
         .get("processId")
         .and_then(|v| v.as_str())
         .ok_or("TR login: no processId in response (protocol changed?)")?
