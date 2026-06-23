@@ -502,7 +502,7 @@ pub async fn fetch_nupl(client: &Client, urls: &Urls) -> Option<f64> {
 /// md5(ClientDate + full-url + salt); `X-Security` = md5(UTC `yyyyMMddHHmm`). The server re-hashes
 /// the Client-Date we send, so its timezone is free; only X-Security must match the server's minute
 /// (UTC, with skew tolerance). NB: send NO `Origin` header — their gateway 403s a browser origin.
-fn bf_sign(url: &str, salt: &str) -> [(&'static str, String); 3] {
+fn borse_frankfurt_sign(url: &str, salt: &str) -> [(&'static str, String); 3] {
     use md5::{Digest, Md5};
     let md5_hex = |s: &str| hex::encode(Md5::digest(s.as_bytes()));
     let now = chrono::Utc::now();
@@ -514,9 +514,9 @@ fn bf_sign(url: &str, salt: &str) -> [(&'static str, String); 3] {
 
 /// Signed POST to a Börse Frankfurt endpoint -> JSON. None on any failure (the whole ETF leg then
 /// degrades to empty — never a crash; the rest of the universe still builds).
-async fn bf_post(client: &Client, url: &str, salt: &str, body: &Value) -> Option<Value> {
+async fn borse_frankfurt_post(client: &Client, url: &str, salt: &str, body: &Value) -> Option<Value> {
     let mut req = client.post(url).header("Accept", "application/json, text/plain, */*").json(body);
-    for (k, v) in bf_sign(url, salt) {
+    for (k, v) in borse_frankfurt_sign(url, salt) {
         req = req.header(k, v);
     }
     req.send().await.ok()?.json::<Value>().await.ok()
@@ -533,7 +533,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
         "benchmarks": [], "currency": [], "strategy": [], "replicationType": [], "distributionType": [],
         "page": 0, "pageSize": cap, "sorting": "TURNOVER", "sortOrder": "DESC"
     });
-    let isins: Vec<String> = match bf_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
+    let isins: Vec<String> = match borse_frankfurt_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
         Some(j) => j
             .get("data")
             .and_then(|d| d.as_array())
@@ -625,7 +625,7 @@ pub fn selftest() {
     assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
     assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
     // signer emits exactly the three headers the gateway needs, TraceId folds in the url + salt
-    let h = bf_sign("https://x/y", "saltz");
+    let h = borse_frankfurt_sign("https://x/y", "saltz");
     assert_eq!(h.len(), 3);
     assert_eq!([h[0].0, h[1].0, h[2].0], ["Client-Date", "X-Client-TraceId", "X-Security"]);
     assert_eq!(h[1].1, md5_hex(&format!("{}https://x/ysaltz", h[0].1))); // trace = md5(date+url+salt)

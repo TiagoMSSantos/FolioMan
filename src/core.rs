@@ -650,7 +650,7 @@ pub struct FundRow {
 /// THE look-ahead guard for the fundamentals backtest — at a given cutoff a strategy could only have
 /// seen filings public by then. `None` if nothing was filed yet. O(n), order-independent (FMP returns
 /// newest-first; don't assume it). Compose it twice (cutoff and cutoff−Ny) to get as-of growth/trend.
-pub fn fund_asof(rows: &[FundRow], cutoff: NaiveDate) -> Option<&FundRow> {
+pub fn fund_as_of(rows: &[FundRow], cutoff: NaiveDate) -> Option<&FundRow> {
     rows.iter().filter(|r| r.filed <= cutoff).max_by_key(|r| r.filed)
 }
 
@@ -669,13 +669,13 @@ pub struct FundFactors {
 }
 
 /// Derive the as-of fundamental factors at `cutoff` from filed statements, looking back ~`yrs`. Every
-/// read goes through `fund_asof` so NOTHING after the cutoff's filing leaks in (look-ahead guard). A
+/// read goes through `fund_as_of` so NOTHING after the cutoff's filing leaks in (look-ahead guard). A
 /// growth needs a positive base to be meaningful, so a non-positive denominator -> None, never a
 /// garbage ratio. ponytail: EPS CAGR only when both endpoints are positive (a sign flip isn't a CAGR).
 pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactors {
-    let now = fund_asof(rows, cutoff);
-    let long_ago = fund_asof(rows, cutoff - Duration::days(yrs * 365));
-    let yr_ago = fund_asof(rows, cutoff - Duration::days(365));
+    let now = fund_as_of(rows, cutoff);
+    let long_ago = fund_as_of(rows, cutoff - Duration::days(yrs * 365));
+    let yr_ago = fund_as_of(rows, cutoff - Duration::days(365));
     let grow = |a: Option<f64>, b: Option<f64>| match (a, b) {
         (Some(a), Some(b)) if b > 0.0 => Some((a / b - 1.0) * 100.0),
         _ => None,
@@ -944,7 +944,7 @@ assert_eq!(etf_symbols(other, 4), vec!["SPY".to_string()]); // BRK.A is ETF=N ->
     let mq = backtest_quote("X", &mdates, &mcloses, mdates.len() - 1, 12);
     assert!(mq.volatility_pct.is_some());
     assert!(mq.range_pct > 90.0); // rising every bar -> sits at its range high
-    // fund_asof point-in-time join: latest row FILED on/before the cutoff, NEVER a future filing
+    // fund_as_of point-in-time join: latest row FILED on/before the cutoff, NEVER a future filing
     // (the look-ahead guard). Rows out of order on purpose to prove order-independence.
     let frows = vec![
         FundRow { filed: NaiveDate::from_ymd_opt(2022, 2, 1).unwrap(), revenue: Some(200.0), ..Default::default() },
@@ -952,10 +952,10 @@ assert_eq!(etf_symbols(other, 4), vec!["SPY".to_string()]); // BRK.A is ETF=N ->
         FundRow { filed: NaiveDate::from_ymd_opt(2021, 2, 1).unwrap(), revenue: Some(150.0), ..Default::default() },
     ];
     // cutoff between the 2021 and 2022 filings -> sees 2021, NOT the unfiled 2022 (no look-ahead)
-    assert_eq!(fund_asof(&frows, NaiveDate::from_ymd_opt(2021, 6, 1).unwrap()).unwrap().revenue, Some(150.0));
-    assert_eq!(fund_asof(&frows, NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()).unwrap().revenue, Some(200.0)); // after all -> latest
-    assert!(fund_asof(&frows, NaiveDate::from_ymd_opt(2019, 1, 1).unwrap()).is_none()); // before any filing -> nothing public
-    assert_eq!(fund_asof(&frows, NaiveDate::from_ymd_opt(2021, 2, 1).unwrap()).unwrap().revenue, Some(150.0)); // exact filing date visible (<=)
+    assert_eq!(fund_as_of(&frows, NaiveDate::from_ymd_opt(2021, 6, 1).unwrap()).unwrap().revenue, Some(150.0));
+    assert_eq!(fund_as_of(&frows, NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()).unwrap().revenue, Some(200.0)); // after all -> latest
+    assert!(fund_as_of(&frows, NaiveDate::from_ymd_opt(2019, 1, 1).unwrap()).is_none()); // before any filing -> nothing public
+    assert_eq!(fund_as_of(&frows, NaiveDate::from_ymd_opt(2021, 2, 1).unwrap()).unwrap().revenue, Some(150.0)); // exact filing date visible (<=)
     // fund_factors: revenue 100 -> 200 over 2y (filed 2020 vs 2022) = ~41.4%/yr CAGR, all as-of (no
     // look-ahead). margin/eps None here (rows carry only revenue) -> a premium/absent field stays neutral.
     let ff = fund_factors(&frows, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap(), 2);
