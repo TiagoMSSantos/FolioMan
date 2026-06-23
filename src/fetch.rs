@@ -429,6 +429,69 @@ async fn fetch_roe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
     roe.is_finite().then_some(roe * 100.0)
 }
 
+// (G) Cold-fetch budget for the historical-fundamentals lane: FMP free tier = 250 calls/day, so cap
+// NEW network fetches per run and serve everything else from the disk cache. ponytail: process-wide
+// counter, no cross-run persistence — the disk cache is what actually amortizes the budget over days.
+static FUND_FETCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const FUND_FETCH_BUDGET: usize = 200; // leave headroom under 250/day for the live P/E/ROE calls
+
+fn fund_cache_path(ticker: &str) -> std::path::PathBuf {
+    std::path::Path::new(".fmp_cache").join(format!("{}.json", ticker.replace(['/', '\\'], "_")))
+}
+
+/// (G) One FMP income-statement row -> FundRow. Margins are derived (FMP's free tier doesn't serve the
+/// ratios endpoint), so gross/op/net margin = the matching income line / revenue. `filingDate` (when
+/// it went public) is the as-of key — NOT period-end `date`. None if the row lacks a parseable filing.
+fn parse_fund_row(v: &Value) -> Option<core::FundRow> {
+    let filed = NaiveDate::parse_from_str(v.get("filingDate")?.as_str()?, "%Y-%m-%d").ok()?;
+    let revenue = v.get("revenue").and_then(|x| x.as_f64()).filter(|r| *r != 0.0);
+    let margin = |field: &str| match (v.get(field).and_then(|x| x.as_f64()), revenue) {
+        (Some(n), Some(r)) => Some(n / r * 100.0),
+        _ => None,
+    };
+    Some(core::FundRow {
+        filed,
+        revenue,
+        gross_margin: margin("grossProfit"),
+        op_margin: margin("operatingIncome"),
+        net_margin: margin("netIncome"),
+        eps: v.get("eps").and_then(|x| x.as_f64()),
+        ..Default::default()
+    })
+}
+
+/// (G) Historical income statements -> as-of FundRows for the backtest's fundamental lane. Sources FMP
+/// `stable/income-statement` (free tier; quarterly w/ filingDate + revenue/grossProfit/operatingIncome/
+/// netIncome/eps). DISK-CACHED under `.fmp_cache/{ticker}.json`: financial history is append-only, so a
+/// cached file is reused forever (only the newest quarter goes stale, which old backtest cutoffs never
+/// see) — this + the per-run budget cap is what keeps a wide run under FMP's 250-calls/day free limit.
+/// None unless FMP_API_KEY is set AND real rows parse (an error/premium object caches nothing).
+/// ponytail: flat-file cache, no TTL; add expiry only if a stale newest-quarter ever matters.
+pub async fn fetch_fundamentals_history(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
+    use std::sync::atomic::Ordering;
+    let v = match std::fs::read_to_string(fund_cache_path(ticker)).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
+        Some(v) => v, // cache hit -> no network, no budget spend
+        None => {
+            let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
+            if FUND_FETCHES.fetch_add(1, Ordering::Relaxed) >= FUND_FETCH_BUDGET {
+                return None; // over the daily budget -> degrade to price-only for the rest of this run
+            }
+            let url = urls.fundamentals_history.replace("{ticker}", ticker).replace("{key}", &key);
+            let v = get_json(client, &url).await?;
+            if v.as_array().map_or(false, |a| !a.is_empty()) {
+                let p = fund_cache_path(ticker);
+                if let Some(dir) = p.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(&p, v.to_string()); // only cache a real array, never an error object
+            }
+            v
+        }
+    };
+    let rows: Vec<core::FundRow> = v.as_array()?.iter().filter_map(parse_fund_row).collect();
+    (!rows.is_empty()).then_some(rows)
+}
+
 /// Latest Bitcoin NUPL (net unrealized profit/loss) from bitcoin-data.com. None on failure.
 pub async fn fetch_nupl(client: &Client, urls: &Urls) -> Option<f64> {
     get_json(client, &urls.nupl).await?.get("nupl")?.as_f64()

@@ -626,6 +626,83 @@ fn ranks(v: &[f64]) -> Vec<f64> {
     r
 }
 
+/// One filed fundamentals statement, point-in-time. `filed` = FMP `filingDate` (when the numbers
+/// became PUBLIC), deliberately NOT the period-end `date` — joining on period-end would let the
+/// backtest read a quarter before it was reported (look-ahead bias). Every ratio is Option: a factor
+/// the free tier can't source (roic/debt = premium-gated) stays None and scores NEUTRAL, never zero.
+/// revenue/margins/eps come from the free `stable/income-statement`; the rest await a paid tier.
+#[derive(Clone, Debug, Default)]
+pub struct FundRow {
+    pub filed: NaiveDate,
+    pub revenue: Option<f64>,
+    pub gross_margin: Option<f64>,    // % = grossProfit/revenue
+    pub op_margin: Option<f64>,       // % = operatingIncome/revenue
+    pub net_margin: Option<f64>,      // % = netIncome/revenue
+    pub eps: Option<f64>,
+    pub roe: Option<f64>,             // % — PREMIUM (key-metrics/ratios), None on free tier
+    pub roic: Option<f64>,            // % — PREMIUM
+    pub net_debt_ebitda: Option<f64>, // ratio, lower=safer — PREMIUM
+    pub fcf_ps: Option<f64>,          // free cash flow / share — PREMIUM
+}
+
+/// As-of (point-in-time) join: the latest statement that was already FILED on or before `cutoff`.
+/// THE look-ahead guard for the fundamentals backtest — at a given cutoff a strategy could only have
+/// seen filings public by then. `None` if nothing was filed yet. O(n), order-independent (FMP returns
+/// newest-first; don't assume it). Compose it twice (cutoff and cutoff−Ny) to get as-of growth/trend.
+pub fn fund_asof(rows: &[FundRow], cutoff: NaiveDate) -> Option<&FundRow> {
+    rows.iter().filter(|r| r.filed <= cutoff).max_by_key(|r| r.filed)
+}
+
+/// As-of fundamental factors derived from filed statements at a cutoff — the backtest's fundamental
+/// lane scores each STANDALONE against the forward return. All Option: None when the as-of history is
+/// too short to span the lookback, or the source field is premium-gated (roic/debt never populate on
+/// the free tier). Growth in %/yr, margins in %, trend/accel in points.
+#[derive(Clone, Debug, Default)]
+pub struct FundFactors {
+    pub rev_cagr: Option<f64>,     // revenue CAGR over the lookback (proven top-line compounding)
+    pub rev_accel: Option<f64>,    // last-1y revenue growth minus that long CAGR (top-line accelerating)
+    pub gross_margin: Option<f64>, // current gross margin level (pricing power / moat)
+    pub op_margin: Option<f64>,    // current operating margin level (operating efficiency)
+    pub margin_trend: Option<f64>, // op-margin now minus ~1y ago (margin expanding = strengthening)
+    pub eps_growth: Option<f64>,   // EPS CAGR over the lookback (bottom-line compounding; both ends must be +)
+}
+
+/// Derive the as-of fundamental factors at `cutoff` from filed statements, looking back ~`yrs`. Every
+/// read goes through `fund_asof` so NOTHING after the cutoff's filing leaks in (look-ahead guard). A
+/// growth needs a positive base to be meaningful, so a non-positive denominator -> None, never a
+/// garbage ratio. ponytail: EPS CAGR only when both endpoints are positive (a sign flip isn't a CAGR).
+pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactors {
+    let now = fund_asof(rows, cutoff);
+    let long_ago = fund_asof(rows, cutoff - Duration::days(yrs * 365));
+    let yr_ago = fund_asof(rows, cutoff - Duration::days(365));
+    let grow = |a: Option<f64>, b: Option<f64>| match (a, b) {
+        (Some(a), Some(b)) if b > 0.0 => Some((a / b - 1.0) * 100.0),
+        _ => None,
+    };
+    let rev_cagr = grow(now.and_then(|r| r.revenue), long_ago.and_then(|r| r.revenue)).map(|c| cagr(c, yrs as f64));
+    let rev_1y = grow(now.and_then(|r| r.revenue), yr_ago.and_then(|r| r.revenue));
+    let rev_accel = match (rev_1y, rev_cagr) {
+        (Some(a), Some(c)) => Some(a - c),
+        _ => None,
+    };
+    let margin_trend = match (now.and_then(|r| r.op_margin), yr_ago.and_then(|r| r.op_margin)) {
+        (Some(a), Some(b)) => Some(a - b),
+        _ => None,
+    };
+    let eps_growth = match (now.and_then(|r| r.eps), long_ago.and_then(|r| r.eps)) {
+        (Some(a), Some(b)) if a > 0.0 && b > 0.0 => Some(cagr((a / b - 1.0) * 100.0, yrs as f64)),
+        _ => None,
+    };
+    FundFactors {
+        rev_cagr,
+        rev_accel,
+        gross_margin: now.and_then(|r| r.gross_margin),
+        op_margin: now.and_then(|r| r.op_margin),
+        margin_trend,
+        eps_growth,
+    }
+}
+
 /// Build a Quote AS OF index `t` (inclusive) from the full history, filling ONLY the price-derived
 /// fields the buy score reads — reusing the exact same horizon/SMA/vol/R²/drawdown fns on the `[..=t]`
 /// slices, so the backtest scores a name exactly as the live tool would have on that day. ponytail:
@@ -866,6 +943,24 @@ assert_eq!(etf_symbols(other, 4), vec!["SPY".to_string()]); // BRK.A is ETF=N ->
     let mq = backtest_quote("X", &mdates, &mcloses, mdates.len() - 1, 12);
     assert!(mq.volatility_pct.is_some());
     assert!(mq.range_pct > 90.0); // rising every bar -> sits at its range high
+    // fund_asof point-in-time join: latest row FILED on/before the cutoff, NEVER a future filing
+    // (the look-ahead guard). Rows out of order on purpose to prove order-independence.
+    let frows = vec![
+        FundRow { filed: NaiveDate::from_ymd_opt(2022, 2, 1).unwrap(), revenue: Some(200.0), ..Default::default() },
+        FundRow { filed: NaiveDate::from_ymd_opt(2020, 2, 1).unwrap(), revenue: Some(100.0), ..Default::default() },
+        FundRow { filed: NaiveDate::from_ymd_opt(2021, 2, 1).unwrap(), revenue: Some(150.0), ..Default::default() },
+    ];
+    // cutoff between the 2021 and 2022 filings -> sees 2021, NOT the unfiled 2022 (no look-ahead)
+    assert_eq!(fund_asof(&frows, NaiveDate::from_ymd_opt(2021, 6, 1).unwrap()).unwrap().revenue, Some(150.0));
+    assert_eq!(fund_asof(&frows, NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()).unwrap().revenue, Some(200.0)); // after all -> latest
+    assert!(fund_asof(&frows, NaiveDate::from_ymd_opt(2019, 1, 1).unwrap()).is_none()); // before any filing -> nothing public
+    assert_eq!(fund_asof(&frows, NaiveDate::from_ymd_opt(2021, 2, 1).unwrap()).unwrap().revenue, Some(150.0)); // exact filing date visible (<=)
+    // fund_factors: revenue 100 -> 200 over 2y (filed 2020 vs 2022) = ~41.4%/yr CAGR, all as-of (no
+    // look-ahead). margin/eps None here (rows carry only revenue) -> a premium/absent field stays neutral.
+    let ff = fund_factors(&frows, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap(), 2);
+    assert!((ff.rev_cagr.unwrap() - 41.42).abs() < 0.1); // sqrt(2)-1 ≈ 41.4%/yr
+    assert!(ff.op_margin.is_none() && ff.eps_growth.is_none()); // absent fields -> None, never a garbage value
+    assert!(fund_factors(&frows, NaiveDate::from_ymd_opt(2020, 6, 1).unwrap(), 2).rev_cagr.is_none()); // no row 2y before -> None
     // default_anchor_half: window widens with horizon length; 1D exact
     assert_eq!(default_anchor_half(1), 0);
     assert_eq!(default_anchor_half(7), 7);

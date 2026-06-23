@@ -254,6 +254,12 @@ pub struct Urls {
     // profile as `fundamentals` above. Defaulted so an older settings.yaml without it still loads.
     #[serde(default = "default_fundamentals_quality_url")]
     pub fundamentals_quality: String,
+    // (G) HISTORICAL date-stamped income statements for the backtest's as-of fundamentals lane. FMP
+    // `stable/income-statement` quarterly carries filingDate + revenue/grossProfit/operatingIncome/
+    // netIncome/eps and is free-tier reachable (key-metrics/ratios history are premium-gated). {ticker}
+    // + {key}; only hit (cached) under `backtest ... fund`. Defaulted so an older settings.yaml loads.
+    #[serde(default = "default_fundamentals_history_url")]
+    pub fundamentals_history: String,
     // NASDAQ Trader SymDir symbol files (pipe-delimited, ETF flag column) -> screen ETF universe.
     // No free AUM-ranked ETF source exists, so these dump ALL US-listed ETFs across both exchanges;
     // the turnover gate culls the illiquid tail. Defaulted so an older settings.yaml still loads.
@@ -279,6 +285,13 @@ fn default_fundamentals_url() -> String {
 /// Default (F) quality endpoint: FMP's `ratios-ttm` (carries `returnOnEquityTTM`).
 fn default_fundamentals_quality_url() -> String {
     "https://financialmodelingprep.com/api/v3/ratios-ttm/{ticker}?apikey={key}".to_string()
+}
+
+/// Default (G) historical statements endpoint: FMP `stable/income-statement` quarterly. limit=48 =
+/// ~12y of quarters in ONE call (cheap on the 250/day free budget; cached forever after). Free-tier
+/// reachable; `period=quarter` on key-metrics/ratios is premium, so only income-statement is sourced.
+fn default_fundamentals_history_url() -> String {
+    "https://financialmodelingprep.com/stable/income-statement?symbol={ticker}&period=quarter&limit=48&apikey={key}".to_string()
 }
 
 /// Default NASDAQ-listed symbol file (ETF flag = column 6).

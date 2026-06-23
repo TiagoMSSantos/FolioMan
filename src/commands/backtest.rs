@@ -41,6 +41,7 @@ struct Sample {
     realized: f64, // raw forward return %
     relative: f64, // (#1) realized minus its cutoff-bucket peer mean -> SELECTION, not regime beta
     q: Quote,
+    fund: Option<core::FundFactors>, // (G) as-of fundamentals at this cutoff (None unless `fund` + FMP key + cached)
 }
 
 /// (#1) Cross-sectional peer-group key: the ~6-month bucket a cutoff falls in (2 buckets/year). Names
@@ -67,14 +68,19 @@ pub async fn run(args: Vec<String>) {
     let mut years: i64 = 5;
     let mut wide = false;
     let mut long = false;
+    let mut fund = false;
     let mut tickers: Vec<String> = Vec::new();
     for a in &args {
         match a.parse::<i64>() {
             Ok(y) if tickers.is_empty() && y > 0 => years = y,
             _ if a.eq_ignore_ascii_case("universe") => wide = true,
             _ if a.eq_ignore_ascii_case("long") => long = true,
+            _ if a.eq_ignore_ascii_case("fund") => fund = true,
             _ => tickers.push(a.clone()),
         }
+    }
+    if fund && std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty()).is_none() {
+        eprintln!("backtest: `fund` set but FMP_API_KEY is empty — the fundamental lane will be empty (price lanes still run).");
     }
     // Daily 10y history caps the forward window at ~5y (the 3y warmup eats the rest of the 10y), so a
     // hold of ~8y+ — or an explicit `long` — switches to the MAX MONTHLY series: decades of bars for
@@ -114,6 +120,9 @@ pub async fn run(args: Vec<String>) {
                     Some(x) => x,
                     None => return Vec::new(),
                 };
+                // (G) one cached fundamentals fetch per ticker (only when `fund`); as-of factors are then
+                // derived per cutoff from these rows with no further network. None -> the fund lane skips it.
+                let fund_rows = if fund { fetch::fetch_fundamentals_history(client, urls, tk).await } else { None };
                 let mut out = Vec::new();
                 let mut i = min_history;
                 while i < dates.len() {
@@ -126,7 +135,8 @@ pub async fn run(args: Vec<String>) {
                             // peer-mean spans the whole period universe; each lane filters by its own gates.
                             let q = core::backtest_quote(tk, &dates, &closes, i, cadence);
                             let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
-                            out.push(Sample { date: dates[i], realized, relative: 0.0, q });
+                            let fund = fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], years));
+                            out.push(Sample { date: dates[i], realized, relative: 0.0, q, fund });
                         }
                         None => break, // no full forward window left -> stop walking this ticker
                     }
@@ -195,6 +205,9 @@ pub async fn run(args: Vec<String>) {
     ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, t, buy_knobs);
     report_lane("GROWTH (growth_score)", &samples, growth_score, t, growth_knobs);
+    if fund {
+        report_fund_lane(&samples);
+    }
 
     println!("\nCaveats:");
     println!("  • Peer-relative (#1): returns are de-meaned per ~6mo cutoff, so rho is SELECTION vs same-period");
@@ -207,6 +220,57 @@ pub async fn run(args: Vec<String>) {
     if monthly {
         println!("  • Long-horizon (MAX monthly): only names alive for the FULL {years}y window enter, so");
         println!("    survivorship bias is WORSE than the daily path, and vol/MA are monthly-bar approximations.");
+    }
+}
+
+/// (G) Probe each as-of fundamental factor STANDALONE against the same peer-relative forward return:
+/// rho (selection), top/bottom-half edge (profit spread), and the early-vs-late OOS split. No ablation
+/// — each factor IS its own column, so there's nothing to switch off. This is the validation gate: a
+/// factor earns a place in `growth_score` only if it shows real edge with both-positive OOS, the same
+/// bar the price knobs cleared. `samples` is date-ordered (the OOS split is early-vs-late in time).
+fn report_fund_lane(samples: &[Sample]) {
+    let factors: &[(&str, fn(&core::FundFactors) -> Option<f64>)] = &[
+        ("revenue_cagr", |f| f.rev_cagr),
+        ("revenue_accel", |f| f.rev_accel),
+        ("gross_margin", |f| f.gross_margin),
+        ("op_margin", |f| f.op_margin),
+        ("margin_trend", |f| f.margin_trend),
+        ("eps_growth", |f| f.eps_growth),
+    ];
+    let covered = samples.iter().filter(|s| s.fund.is_some()).count();
+    println!("\n── FUNDAMENTAL (as-of, standalone factor probes) ──");
+    println!("  cutoffs with as-of fundamentals: {} / {}", covered, samples.len());
+    if covered < 4 {
+        println!("  too few fundamental cutoffs (needs FMP_API_KEY + cached `stable/income-statement` history) — skipping.");
+        return;
+    }
+    let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
+    let split_rho = |s: &[(&Sample, f64)]| {
+        core::spearman(
+            &s.iter().map(|x| x.1).collect::<Vec<_>>(),
+            &s.iter().map(|x| x.0.relative).collect::<Vec<_>>(),
+        )
+        .map_or("n/a".to_string(), |v| format!("{v:+.2}"))
+    };
+    for (name, get) in factors {
+        let pairs: Vec<(&Sample, f64)> =
+            samples.iter().filter_map(|s| s.fund.as_ref().and_then(|f| get(f)).map(|v| (s, v))).collect();
+        if pairs.len() < 4 {
+            println!("  {:<14} n/a (only {} cutoffs carry this factor)", name, pairs.len());
+            continue;
+        }
+        let sc: Vec<f64> = pairs.iter().map(|(_, v)| *v).collect();
+        let rels: Vec<f64> = pairs.iter().map(|(s, _)| s.relative).collect();
+        let rho = core::spearman(&sc, &rels).map_or("n/a".to_string(), |v| format!("{v:+.2}"));
+        let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
+        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        let half = v.len() / 2;
+        let edge = mean(&v[..half]) - mean(&v[v.len() - half..]);
+        let mid = pairs.len() / 2; // pairs preserve the date order of `samples` -> early-vs-late OOS
+        println!(
+            "  {:<14} n={:<5} rho {}  edge {:+.1}  OOS {} | {}",
+            name, pairs.len(), rho, edge, split_rho(&pairs[..mid]), split_rho(&pairs[mid..])
+        );
     }
 }
 
