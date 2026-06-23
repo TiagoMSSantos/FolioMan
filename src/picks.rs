@@ -403,7 +403,8 @@ pub fn growth_score(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
     let base = t.growth_trend_weight * trend
         + t.growth_accel_weight * accel
         + risk_reward
-        + quality_reward(q, t); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
+        + quality_reward(q, t) // (F) ROE profitability tilt (BACKTEST-BLIND, small)
+        + t.dividend_weight * dividend_yield_1y(q).min(t.dividend_cap); // (D) total-return tilt: closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
     let value = value_factor(q, t.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     let trust = trust_factor(q, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
