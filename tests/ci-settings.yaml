@@ -1,0 +1,26 @@
+# CI-ONLY config for the live network smoke tests (tests/network.rs).
+# The real config/settings.yaml is gitignored (holds a private ntfy topic), so CI points
+# FOLIOMAN_CONFIG at this checked-in fixture. NO secrets here: ntfy_topic is a dummy (the
+# smoke tests never push), and every URL below is a public, unauthenticated endpoint.
+# Only `urls.yahoo_chart` is actually exercised; the rest exist so config::load() parses.
+tickers: []
+
+dip_days: 30
+high_days: 365
+drawdown_pct: 20.0
+drop_pct: 10.0
+ntfy_topic: "ci-smoke-tests-unused"
+
+urls:
+  yahoo_chart: "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={range}&interval=1d&events=div,split"
+  yahoo_intraday: "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=60m"
+  yahoo_search: "https://query1.finance.yahoo.com/v1/finance/search?q={ticker}&newsCount=3&quotesCount=0"
+  yahoo_quote: "https://finance.yahoo.com/quote/{ticker}"
+  euribor: "https://www.euribor-rates.eu/en/current-euribor-rates/2/euribor-rate-3-months/"
+  us_cpi: "https://api.bls.gov/publicAPI/v1/timeseries/data/"
+  pt_cpi: "https://bpstat.bportugal.pt/data/v1/domains/12/datasets/7f13efcd65fc6bd0c5adb0e8d29d9b44/?lang=EN&series_ids=5721550"
+  eu_hicp: "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_manr?format=JSON&lang=EN&coicop=CP00&geo=EU27_2020"
+  coingecko_markets: "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page={n}&page=1"
+  sp500_csv: "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
+  nupl: "https://bitcoin-data.com/v1/nupl/last"
+  ntfy: "https://ntfy.sh/{topic}"

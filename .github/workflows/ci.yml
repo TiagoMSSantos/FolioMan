@@ -40,16 +40,16 @@ jobs:
 
   # live API smoke tests — hit Yahoo/FX to catch the API changing shape under the parsers. The tests
   # self-classify (see tests/network.rs): a 429/5xx/transport hiccup SKIPS (green), only a 200-OK-but-
-  # -broken response FAILS. So no blanket failure-swallowing here — a red is real (API drift). Kept
-  # non-blocking via continue-on-error per the "don't gate merges on a flaky external API" call; flip
-  # to blocking by dropping that line if you'd rather drift block a merge.
+  # -broken response FAILS. BLOCKING (no continue-on-error): because a throttle just skips, the only way
+  # this job goes red is a real regression — API drift or broken code — which SHOULD fail the pipeline.
+  # config/settings.yaml is gitignored (private ntfy topic), so FOLIOMAN_CONFIG points config::load() at
+  # the checked-in, secret-free tests/ci-settings.yaml fixture.
   network-smoke:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-ci   # same warm cache as the other jobs
       - name: live API smoke tests (skip-on-throttle, fail-on-drift)
-        run: FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored
+        run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored

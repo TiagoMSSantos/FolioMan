@@ -335,6 +335,13 @@ fn default_bf_salt() -> String {
 /// Python "run from any cwd" behaviour. Falls back to `config/settings.yaml` relative
 /// to the current directory.
 fn settings_path() -> PathBuf {
+    // 0. explicit override: CI points this at a checked-in fixture (tests/ci-settings.yaml) because the
+    //    real config/settings.yaml is gitignored and absent there. Empty = ignore.
+    if let Ok(p) = std::env::var("FOLIOMAN_CONFIG") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
     // 1. next to / above the executable (installed binary layout)
     if let Ok(exe) = std::env::current_exe() {
         let mut dir = exe.parent().map(|p| p.to_path_buf());
