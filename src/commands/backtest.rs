@@ -358,6 +358,20 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
         ("growth_fund_weight", |t| t.growth_fund_weight, |t, v| t.growth_fund_weight = v, 0.0, 0.5),
     ];
 
+    // drop INERT dims: a weight the data can't move shouldn't get a meaningless searched value (e.g.
+    // growth_fund_weight on the universe, where every cutoff's fund_factor is None -> the term is always
+    // 0). Probe: perturb ONLY this weight to its band max; if every gated train score is byte-identical,
+    // the dim has no effect on this sample -> skip it (stays at the shipped default), and say so.
+    let train_scores = |t: &BuyHeuristic| -> Vec<f64> {
+        train.iter().filter_map(|s| growth_score(&s.quote, t)).collect()
+    };
+    let base_scores = train_scores(default);
+    let (active, inert): (Vec<_>, Vec<_>) = dims.iter().partition(|(_, _, set, _, hi)| {
+        let mut t = default.clone();
+        set(&mut t, *hi);
+        train_scores(&t) != base_scores // changed a score -> the dim is live on this sample
+    });
+
     // seeded xorshift64 -> uniform f64 in [0,1). Deterministic: same seed, same search, every run.
     let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
     let mut next = || {
@@ -373,7 +387,7 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     let mut best: Option<(f64, BuyHeuristic)> = None; // (train edge, config)
     for _ in 0..draws {
         let mut t = default.clone();
-        for (_, _, set, lo, hi) in dims {
+        for &(_, _, set, lo, hi) in &active {
             set(&mut t, lo + next() * (hi - lo));
         }
         let (rho, edge) = lane_metrics(train, growth_score, &t);
@@ -390,6 +404,14 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
         test.len()
     );
     println!("  shipped default      TEST: rho {}  edge {:+.1}", fmt(def_rho), def_edge);
+    if !inert.is_empty() {
+        let names: Vec<&str> = inert.iter().map(|(n, ..)| *n).collect();
+        println!("  inert on this sample (skipped, kept at default): {}", names.join(", "));
+    }
+    if active.is_empty() {
+        println!("  every searched weight is inert on this sample — nothing to tune. SHIP NOTHING.");
+        return;
+    }
 
     let Some((train_edge, won)) = best else {
         println!("  search found NO train config with positive rho — keep the shipped default.");
@@ -399,8 +421,8 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     let (won_test_rho, won_test_edge) = lane_metrics(test, growth_score, &won);
     println!("  search winner       TRAIN: rho {}  edge {:+.1}", fmt(won_train_rho), train_edge);
     println!("  search winner        TEST: rho {}  edge {:+.1}   (train ≫ test ⇒ overfit)", fmt(won_test_rho), won_test_edge);
-    println!("  weights:");
-    for (name, get, _, _, _) in dims {
+    println!("  weights (searched dims only):");
+    for &(name, get, _, _, _) in &active {
         println!("    {name:<22} {:.3}", get(&won));
     }
     if won_test_edge <= def_edge {
@@ -412,7 +434,7 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     // parsimony: force each weight to 0 on the winner, re-score TEST. A weight whose removal doesn't drop
     // (or even lifts) the TEST edge isn't earning its place out-of-sample -> a deletion candidate.
     println!("  parsimony (winner, each weight -> 0, TEST edge Δ vs {won_test_edge:+.1}):");
-    for (name, _, set, _, _) in dims {
+    for &(name, _, set, _, _) in &active {
         let mut t = won.clone();
         set(&mut t, 0.0);
         let (_, e) = lane_metrics(test, growth_score, &t);
