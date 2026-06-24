@@ -326,6 +326,25 @@ fn lane_metrics(
     (core::spearman(&sc, &rels), t - b)
 }
 
+/// Does perturbing ONLY this weight (to `probe`) change any gated score? Drives `tune`'s inert-dim skip:
+/// a weight the sample can't move (e.g. growth_fund_weight when every fund_factor is None -> the term is
+/// always 0) is dropped from the search so it can't get a meaningless searched value. Generic over the
+/// scorer so it's unit-testable without building quotes that clear growth_score's gates.
+fn dim_active(
+    samples: &[Sample],
+    scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
+    default: &BuyHeuristic,
+    set: fn(&mut BuyHeuristic, f64),
+    probe: f64,
+) -> bool {
+    let score = |t: &BuyHeuristic| -> Vec<f64> {
+        samples.iter().filter_map(|s| scorer(&s.quote, t)).collect()
+    };
+    let mut t = default.clone();
+    set(&mut t, probe);
+    score(&t) != score(default)
+}
+
 /// (honest OOS) The shipped growth knobs were hand-tuned on ALL the data, so their backtest edge is
 /// optimistic (the footer caveat says as much). This splits the cutoffs chronologically, SEARCHES the
 /// growth weights on the EARLY train half only, then scores the winner on the LATE test half it never
@@ -358,19 +377,10 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
         ("growth_fund_weight", |t| t.growth_fund_weight, |t, v| t.growth_fund_weight = v, 0.0, 0.5),
     ];
 
-    // drop INERT dims: a weight the data can't move shouldn't get a meaningless searched value (e.g.
-    // growth_fund_weight on the universe, where every cutoff's fund_factor is None -> the term is always
-    // 0). Probe: perturb ONLY this weight to its band max; if every gated train score is byte-identical,
-    // the dim has no effect on this sample -> skip it (stays at the shipped default), and say so.
-    let train_scores = |t: &BuyHeuristic| -> Vec<f64> {
-        train.iter().filter_map(|s| growth_score(&s.quote, t)).collect()
-    };
-    let base_scores = train_scores(default);
-    let (active, inert): (Vec<_>, Vec<_>) = dims.iter().partition(|(_, _, set, _, hi)| {
-        let mut t = default.clone();
-        set(&mut t, *hi);
-        train_scores(&t) != base_scores // changed a score -> the dim is live on this sample
-    });
+    // drop INERT dims (see dim_active): a weight the sample can't move (e.g. growth_fund_weight on the
+    // universe, where every fund_factor is None) is skipped so it can't get a meaningless searched value.
+    let (active, inert): (Vec<_>, Vec<_>) =
+        dims.iter().partition(|&&(_, _, set, _, hi)| dim_active(train, growth_score, default, set, hi));
 
     // seeded xorshift64 -> uniform f64 in [0,1). Deterministic: same seed, same search, every run.
     let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -584,6 +594,23 @@ mod tests {
         assert!(rho2.unwrap() < -0.9 && edge2 < 0.0, "reversed -> negative rho/edge, got {rho2:?}/{edge2}");
         // too few gated rows -> rho None (the <4 guard the search must tolerate)
         assert!(lane_metrics(&up[..3], dd_score, &BuyHeuristic::default()).0.is_none());
+    }
+
+    /// A scorer that READS one tuning field — so perturbing THAT field changes scores (the dim is live),
+    /// while perturbing a field it ignores leaves scores identical (inert). Pins `dim_active`, the probe
+    /// `tune` uses to drop no-effect weights like growth_fund_weight on a fund-less sample.
+    fn trend_dd(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
+        Some(t.growth_trend_weight * q.drawdown_pct)
+    }
+    #[test]
+    fn dim_active_detects_inert() {
+        let s: Vec<Sample> = [1.0, 2.0, 3.0, 4.0].iter().map(|&d| s_rel(0.0, d)).collect();
+        let def = BuyHeuristic::default();
+        // trend_dd reads growth_trend_weight -> perturbing it moves scores -> ACTIVE
+        assert!(dim_active(&s, trend_dd, &def, |t, v| t.growth_trend_weight = v, 1.0));
+        // trend_dd never reads growth_fund_weight -> perturbing it is a no-op -> INERT (the case that
+        // skips growth_fund_weight when no cutoff carries an as-of fundamental)
+        assert!(!dim_active(&s, trend_dd, &def, |t, v| t.growth_fund_weight = v, 0.5));
     }
 
     /// `tune` de-means each chronological split INDEPENDENTLY (`demean(&mut s[..cut])` / `s[cut..]`).
