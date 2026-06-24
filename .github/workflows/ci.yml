@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# Tame flaky crates.io fetches. The "[16] Error in the HTTP2 framing layer" curl failure is HTTP/2
+# multiplexing choking mid-download; CARGO_HTTP_MULTIPLEXING=false forces HTTP/1.1 and dodges it.
+# CARGO_NET_RETRY bumps cargo's own retry (default 3) so a transient blip self-heals instead of
+# failing the job. (Cargo.lock is untracked, so every job re-resolves + re-downloads — more exposure.)
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 # ponytail: ubuntu-latest ships a stable Rust toolchain, so no install step needed.
 # rust-cache with a shared key: all jobs restore ONE common warm cache from prior runs
 # (deps compiled once, not N×). Parallel jobs can't share THIS run's cache — GitHub saves it
