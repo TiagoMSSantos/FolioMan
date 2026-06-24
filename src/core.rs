@@ -90,6 +90,7 @@ pub struct Quote {
     pub range_pct: f64,                // percentile rank (0..100) of the last close in its own ~10y history; 100=at high. picks discount = 100-this
     pub trend_r2: f64,                 // (A) R² (0..1) of the log-price trend — how steadily it compounds; damps CAGR endpoint-luck. 0 = no/short history
     pub max_drawdown_pct: f64,         // (C) worst peak-to-trough decline (%) in its history; feeds the Calmar (return-per-pain) reward. 0 = never down/no history
+    pub fund_factor: Option<f64>,      // (G) the ONE as-of fundamental factor folded into growth_score (e.g. revenue accel). Set in the backtest (from fund_factors) so the term is ablatable, and live only on the small/check-scale path; None -> neutral (universe screen & price-only backtest)
 }
 
 impl Quote {
@@ -123,6 +124,7 @@ impl Quote {
             range_pct: 0.0,
             trend_r2: 0.0,
             max_drawdown_pct: 0.0,
+            fund_factor: None,
         }
     }
 }

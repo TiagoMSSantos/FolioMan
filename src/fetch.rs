@@ -400,6 +400,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // worst historical drawdown (pain). Feed the consistency multiplier + Calmar reward.
         trend_r2: core::trend_r2(&chart.closes),
         max_drawdown_pct: core::max_drawdown_pct(&chart.closes),
+        fund_factor: None, // (G) live screen leaves this None (neutral); only the small/check-scale path (A3) populates it
     }
 }
 

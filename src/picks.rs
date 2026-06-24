@@ -412,7 +412,12 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
         + tuning.growth_accel_weight * accel
         + risk_reward
         + quality_reward(quote, tuning) // (F) ROE profitability tilt (BACKTEST-BLIND, small)
-        + tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap); // (D) total-return tilt: closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
+        + tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap) // (D) total-return tilt: closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
+        // (G) as-of FUNDAMENTAL tilt. Unlike the BACKTEST-BLIND terms above, this one IS validatable: the
+        // backtest attaches the as-of factor to quote.fund_factor so `backtest <set> fund` can ablate it.
+        // Floor at 0 (only reward the factor, don't penalise a missing/negative one) and cap the artifact.
+        // weight 0 (default) -> this whole term is 0 -> growth_score is byte-identical to the pre-(G) lane.
+        + tuning.growth_fund_weight * quote.fund_factor.unwrap_or(0.0).clamp(0.0, tuning.growth_fund_cap);
     let value = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     let trust = trust_factor(quote, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
@@ -724,6 +729,7 @@ mod tests {
             range_pct: 100.0 - drawdown_pct,
             trend_r2: 0.0, // default lumpy -> consistency floor, UNIFORM across test quotes so relational asserts hold
             max_drawdown_pct: 0.0, // default -> no calmar reward (additive 0)
+            fund_factor: None,     // (G) default off; the fund-tilt asserts set it explicitly
         }
     };
     let tuning = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on
@@ -1079,5 +1085,19 @@ mod tests {
     stretched_crypto.above_ma_pct = 150.0; // beyond the 100 equity cap
     let loose = BuyHeuristic { growth_overext_cap_crypto: 200.0, ..BuyHeuristic::default() };
     assert!(growth_score(&stretched_crypto, &loose).unwrap() > growth_score(&stretched_crypto, &tuning).unwrap());
+
+    // (G) fund factor — NEUTRALITY: at the default growth_fund_weight 0 a populated fund_factor must NOT
+    // move the score (byte-identical to fund_factor None), so the validated price edge is untouched until
+    // the weight is deliberately raised. With a positive weight the factor lifts the score; a negative
+    // factor is floored at 0 (only rewarded, never penalised).
+    let mut with_fund = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    with_fund.fund_factor = Some(15.0); // e.g. +15pt revenue accel
+    let none_fund = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // fund_factor None
+    assert_eq!(growth_score(&with_fund, &tuning).unwrap(), growth_score(&none_fund, &tuning).unwrap()); // weight 0 -> inert
+    let weighted = BuyHeuristic { growth_fund_weight: 0.5, ..BuyHeuristic::default() };
+    assert!(growth_score(&with_fund, &weighted).unwrap() > growth_score(&none_fund, &weighted).unwrap()); // +factor lifts
+    let mut neg_fund = none_fund.clone();
+    neg_fund.fund_factor = Some(-40.0); // decelerating -> floored at 0, not a penalty
+    assert_eq!(growth_score(&neg_fund, &weighted).unwrap(), growth_score(&none_fund, &weighted).unwrap());
     }
 }

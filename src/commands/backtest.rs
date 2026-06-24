@@ -150,9 +150,14 @@ pub async fn run(args: Vec<String>) {
                             let fwd = i + off;
                             // record EVERY cutoff with a forward window (not just gated ones) so the
                             // peer-mean spans the whole period universe; each lane filters by its own gates.
-                            let quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
+                            let mut quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
                             let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
                             let fund = fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], years));
+                            // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
+                            // SWAP this getter to whichever factor report_fund_lane (below) shows +rho + both-half
+                            // OOS — rev_accel is the prior candidate, not a proven choice. Price-only backtest
+                            // (no `fund`/key) leaves this None -> growth_score neutral -> validated edge untouched.
+                            quote.fund_factor = fund.as_ref().and_then(|f| f.rev_accel);
                             out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund });
                         }
                         None => break, // no full forward window left -> stop walking this ticker
@@ -206,6 +211,7 @@ pub async fn run(args: Vec<String>) {
         ("sharpe_weight", |tuning| tuning.sharpe_weight = 0.0),
         ("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
         ("overext_brake", |tuning| tuning.growth_overext_cap = 0.0),
+        ("growth_fund_weight", |tuning| tuning.growth_fund_weight = 0.0), // (G) Δ shows the as-of fund factor's through-the-lane edge; ~0 when weight is already 0 (default) or no fund coverage
     ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, buy_knobs);
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, growth_knobs);
