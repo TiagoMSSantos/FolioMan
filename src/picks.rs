@@ -272,7 +272,7 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     if is_leveraged(&quote.name) {
         return None; // leveraged/inverse product -> decays, never a long-term hold
     }
-    if quote.avg_turnover_eur.map_or(false, |v| v < tuning.min_avg_turnover_eur) {
+    if quote.avg_turnover_eur.is_some_and(|v| v < tuning.min_avg_turnover_eur) {
         return None; // too thin/illiquid (unknown turnover passes — don't punish missing data)
     }
     if crypto && is_stablecoin(&quote.ticker) {
@@ -301,7 +301,7 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
         // equities must be structurally up: EVERY multi-year leg must hold. (Crypto -EUR 5Y is
         // peak-anchored and routinely negative even when healthy, so this gate is meaningless there.)
         for label in ["5Y", "10Y", "20Y"] {
-            if perf_pct(quote, label).map_or(false, |p| p <= tuning.min_long_pct) {
+            if perf_pct(quote, label).is_some_and(|p| p <= tuning.min_long_pct) {
                 return None;
             }
         }
@@ -367,7 +367,7 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     if crypto && is_stablecoin(&quote.ticker) {
         return None; // pegged $1 -> no growth
     }
-    if quote.avg_turnover_eur.map_or(false, |v| v < tuning.min_avg_turnover_eur) {
+    if quote.avg_turnover_eur.is_some_and(|v| v < tuning.min_avg_turnover_eur) {
         return None; // too thin (unknown turnover passes)
     }
     let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
@@ -396,7 +396,7 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     if perf_pct(quote, "1M").unwrap_or(0.0) <= knife {
         return None; // rolling over hard this month -> momentum broke
     }
-    if !crypto && perf_pct(quote, "5Y").map_or(false, |return_5y| return_5y <= 0.0) {
+    if !crypto && perf_pct(quote, "5Y").is_some_and(|return_5y| return_5y <= 0.0) {
         // (3) consistency: a near-high name negative over 5Y mooned-then-bled — its great 10Y CAGR is a
         // stale endpoint, not a durable trend. Require the mid leg to hold too. (Crypto 5Y is
         // peak-anchored noise; the range gate already excludes bled coins there, so skip it.)
@@ -625,6 +625,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
 /// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
+#[allow(clippy::too_many_arguments)] // ponytail: internal print fn; a params struct buys nothing
 fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], min_score: f64, pinned: &HashSet<&str>) {
     let (crypto, equity): (Vec<_>, Vec<_>) =
         picks.into_iter().partition(|(quote, _)| is_currency_quoted(&quote.ticker));

@@ -401,7 +401,7 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
             set(&mut t, lo + next() * (hi - lo));
         }
         let (rho, edge) = lane_metrics(train, growth_score, &t);
-        if rho.unwrap_or(0.0) > 0.0 && best.as_ref().map_or(true, |(e, _)| edge > *e) {
+        if rho.unwrap_or(0.0) > 0.0 && best.as_ref().is_none_or(|(e, _)| edge > *e) {
             best = Some((edge, t));
         }
     }
@@ -546,7 +546,7 @@ mod tests {
 
         // demean: two cutoffs in 2020-H1 (realized 10/30 -> mean 20 -> relatives -10/+10); singletons
         // in other buckets net to exactly 0. Each bucket's relatives must sum to ~0 (the run invariant).
-        let mut s = vec![
+        let mut s = [
             sample(ymd(2020, 2, 1), 10.0),
             sample(ymd(2020, 3, 1), 30.0),
             sample(ymd(2020, 9, 1), 5.0),   // alone in 2020-H2
@@ -619,7 +619,7 @@ mod tests {
     #[test]
     fn split_demean_keeps_invariant_per_half() {
         // 4 early cutoffs (2019) + 4 late (2022), each half spanning its own buckets with non-zero means
-        let mut s = vec![
+        let mut s = [
             sample(ymd(2019, 2, 1), 10.0),
             sample(ymd(2019, 3, 1), 30.0),
             sample(ymd(2019, 9, 1), 50.0),

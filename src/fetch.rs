@@ -479,7 +479,7 @@ pub async fn fetch_fundamentals_history(client: &Client, urls: &Urls, ticker: &s
             }
             let url = urls.fundamentals_history.replace("{ticker}", ticker).replace("{key}", &key);
             let v = get_json(client, &url).await?;
-            if v.as_array().map_or(false, |a| !a.is_empty()) {
+            if v.as_array().is_some_and(|a| !a.is_empty()) {
                 let p = fund_cache_path(ticker);
                 if let Some(dir) = p.parent() {
                     let _ = std::fs::create_dir_all(dir);
