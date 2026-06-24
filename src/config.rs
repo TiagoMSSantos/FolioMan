@@ -376,3 +376,37 @@ pub fn load() -> Settings {
     serde_yaml::from_str(&text)
         .unwrap_or_else(|e| panic!("invalid YAML in {}: {e}", path.display()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The CI network fixture must parse into Settings (else the network-smoke job panics for a non-API
+    /// reason — the exact bug this guards), AND serde defaults must fill the omitted fields (the contract
+    /// that lets a minimal / older settings.yaml load). Offline + deterministic.
+    #[test]
+    fn ci_fixture_parses_with_defaults() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
+        let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
+        let s: Settings = serde_yaml::from_str(&text).expect("parse tests/ci-settings.yaml");
+        // required fields present + the only URL the smoke tests exercise is a usable template
+        assert!(s.urls.yahoo_chart.contains("{ticker}") && s.urls.yahoo_chart.contains("{range}"));
+        assert_eq!(s.ntfy_topic, "ci-smoke-tests-unused"); // dummy, no secret
+        // omitted fields fall back to serde defaults
+        assert_eq!(s.universe_size, default_universe_size());
+        assert_eq!(s.top_picks, default_top_picks());
+        assert!(s.sectors.is_empty());
+        assert!(s.urls.fundamentals.contains("financialmodelingprep")); // defaulted Urls subfield
+    }
+
+    /// FOLIOMAN_CONFIG overrides the discovery walk (how CI points at the fixture). No other test reads
+    /// this var, so the set/remove is isolated.
+    #[test]
+    fn env_override_wins() {
+        std::env::set_var("FOLIOMAN_CONFIG", "tests/ci-settings.yaml");
+        assert_eq!(settings_path(), PathBuf::from("tests/ci-settings.yaml"));
+        std::env::set_var("FOLIOMAN_CONFIG", ""); // empty -> ignored, falls back to discovery
+        assert_ne!(settings_path(), PathBuf::from(""));
+        std::env::remove_var("FOLIOMAN_CONFIG");
+    }
+}

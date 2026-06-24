@@ -17,8 +17,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # one warm cache shared across all 3 jobs (across runs)
+          shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
       - run: cargo build --verbose
+
+  # format + lint gate. fmt --check fails on any unformatted code; clippy -D warnings turns every lint
+  # into an error (needless clone, dead code, unwrap-heavy footguns…). Components are preinstalled on
+  # the GitHub runner, but `rustup component add` is a cheap no-op insurance if the image changes.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup component add clippy rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: folioman-ci   # one warm cache shared across all jobs
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
 
   unit-tests:
     runs-on: ubuntu-latest
@@ -26,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # one warm cache shared across all 3 jobs (across runs)
+          shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
       - run: cargo test --lib   # in-module #[cfg(test)] unit tests
 
   integration-tests:
@@ -35,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # one warm cache shared across all 3 jobs (across runs)
+          shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
       - run: cargo test --test '*'   # everything under tests/ (tests/network.rs cases are #[ignore]d -> skipped here, stays offline)
 
   # live API smoke tests — hit Yahoo/FX to catch the API changing shape under the parsers. The tests
