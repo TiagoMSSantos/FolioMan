@@ -38,10 +38,11 @@ jobs:
           shared-key: folioman-ci   # one warm cache shared across all 3 jobs (across runs)
       - run: cargo test --test '*'   # everything under tests/ (tests/network.rs cases are #[ignore]d -> skipped here, stays offline)
 
-  # live API smoke tests — hit Yahoo/FX so they're flaky (rate-limits/downtime). NON-BLOCKING:
-  # continue-on-error keeps a failure from failing the workflow, and the `|| echo ::warning::`
-  # surfaces it as a visible annotation while the step still exits 0. Their job is to catch an API
-  # changing shape, not to gate merges. Real compile breaks are still caught by integration-tests.
+  # live API smoke tests — hit Yahoo/FX to catch the API changing shape under the parsers. The tests
+  # self-classify (see tests/network.rs): a 429/5xx/transport hiccup SKIPS (green), only a 200-OK-but-
+  # -broken response FAILS. So no blanket failure-swallowing here — a red is real (API drift). Kept
+  # non-blocking via continue-on-error per the "don't gate merges on a flaky external API" call; flip
+  # to blocking by dropping that line if you'd rather drift block a merge.
   network-smoke:
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -50,7 +51,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-ci   # same warm cache as the other jobs
-      - name: live API smoke tests (non-blocking)
-        run: |
-          FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored \
-            || echo "::warning::network smoke tests failed (likely API rate-limit/downtime) — not blocking"
+      - name: live API smoke tests (skip-on-throttle, fail-on-drift)
+        run: FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored
