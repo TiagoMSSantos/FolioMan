@@ -1070,5 +1070,14 @@ mod tests {
     assert!(buy_score(&us_etf, &tuning).unwrap() > tuning.min_score);
     assert!(ranked(std::slice::from_ref(&us_etf), &tuning, buy_score, tuning.min_score, &no_pin).is_empty());
     assert_eq!(ranked(std::slice::from_ref(&ucits), &tuning, buy_score, tuning.min_score, &no_pin).len(), 1);
+
+    // (#4) per-class crypto overextension cap: a crypto name stretched ABOVE the equity cap is braked
+    // LESS under its own looser cap. Same stretched crypto quote, two tunings -> the looser-cap score
+    // is higher (the brake docks it less). Guards the knob that shipped neutral-by-default.
+    let mut stretched_crypto = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    stretched_crypto.ticker = "BTC-USD".into();
+    stretched_crypto.above_ma_pct = 150.0; // beyond the 100 equity cap
+    let loose = BuyHeuristic { growth_overext_cap_crypto: 200.0, ..BuyHeuristic::default() };
+    assert!(growth_score(&stretched_crypto, &loose).unwrap() > growth_score(&stretched_crypto, &tuning).unwrap());
     }
 }

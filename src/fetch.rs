@@ -652,6 +652,66 @@ mod tests {
     assert_eq!(l2, base + 3 * iv);
     assert!(l2.duration_since(l1) >= iv);
     }
+
+    /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +
+    /// edge handling that silently breaks if Yahoo/FMP change shape.
+    #[test]
+    fn parsers() {
+        use serde_json::json;
+        // --- parse_chart: Yahoo chart -> Chart (dates/closes/volumes/currency/name/divs) ---
+        // ts in unix seconds: 2020-01-01, -02, -03. The middle close is null -> that bar is dropped
+        // entirely (date AND volume skip with it). Volume array is short (len 2) -> the 3rd bar's
+        // volume falls back to 0.0. Dividend events are out of date order -> must come out sorted.
+        let j = json!({"chart": {"result": [{
+            "timestamp": [1577836800, 1577923200, 1578009600],
+            "indicators": {"quote": [{"close": [10.0, null, 30.0], "volume": [100, 200]}]},
+            "meta": {"currency": "EUR", "instrumentType": "EQUITY"},
+            "events": {"dividends": {
+                "a": {"amount": 2.0, "date": 1593561600}, // 2020-07-01
+                "b": {"amount": 1.0, "date": 1585699200}  // 2020-04-01
+            }}
+        }]}});
+        let c = parse_chart(&j, "TST").unwrap();
+        assert_eq!(c.closes, vec![10.0, 30.0]); // null close bar dropped
+        assert_eq!(c.dates.len(), 2);
+        assert_eq!(c.dates[0], NaiveDate::from_ymd_opt(2020, 1, 1).unwrap());
+        assert_eq!(c.dates[1], NaiveDate::from_ymd_opt(2020, 1, 3).unwrap());
+        assert_eq!(c.volumes, vec![100.0, 0.0]); // 3rd bar has no volume entry -> 0.0
+        assert_eq!(c.currency, "EUR");
+        assert_eq!(c.name, "TST"); // meta carries no name -> falls back to the ticker
+        assert_eq!(c.instrument_type, "EQUITY");
+        assert_eq!(c.divs, vec![ // sorted ascending by date despite the out-of-order events object
+            (NaiveDate::from_ymd_opt(2020, 4, 1).unwrap(), 1.0),
+            (NaiveDate::from_ymd_opt(2020, 7, 1).unwrap(), 2.0),
+        ]);
+        // currency defaults to USD when meta omits it; malformed json -> None
+        let no_meta = json!({"chart": {"result": [{
+            "timestamp": [1577836800],
+            "indicators": {"quote": [{"close": [10.0]}]}
+        }]}});
+        assert_eq!(parse_chart(&no_meta, "X").unwrap().currency, "USD");
+        assert!(parse_chart(&json!({}), "X").is_none());
+
+        // --- parse_fund_row: FMP income-statement row -> FundRow ---
+        let row = json!({
+            "filingDate": "2022-02-01", "revenue": 200.0,
+            "grossProfit": 100.0, "operatingIncome": 50.0, "netIncome": 40.0, "eps": 2.5
+        });
+        let fr = parse_fund_row(&row).unwrap();
+        assert_eq!(fr.filed, NaiveDate::from_ymd_opt(2022, 2, 1).unwrap());
+        assert_eq!(fr.revenue, Some(200.0));
+        assert_eq!(fr.gross_margin, Some(50.0)); // 100/200*100
+        assert_eq!(fr.op_margin, Some(25.0));
+        assert_eq!(fr.net_margin, Some(20.0));
+        assert_eq!(fr.eps, Some(2.5));
+        // no filingDate -> None; bad date -> None
+        assert!(parse_fund_row(&json!({"revenue": 100.0})).is_none());
+        assert!(parse_fund_row(&json!({"filingDate": "nope"})).is_none());
+        // revenue 0 -> treated as absent, so margins go None (never a divide-by-zero garbage value)
+        let zero_rev = parse_fund_row(&json!({"filingDate": "2022-02-01", "revenue": 0.0, "grossProfit": 10.0})).unwrap();
+        assert_eq!(zero_rev.revenue, None);
+        assert_eq!(zero_rev.gross_margin, None);
+    }
 }
 
 /// At most this many quote fetches in flight at once. Unbounded `join_all` over the ~750-ticker

@@ -53,6 +53,21 @@ fn bucket(d: chrono::NaiveDate) -> i32 {
     d.year() * 2 + d.month0() as i32 / 6
 }
 
+/// (#1) De-mean each cutoff's realized return WITHIN its ~6-month bucket -> `relative` (the selection
+/// signal). Pure + testable; the runtime sum-to-~0 invariant check stays in `run`.
+fn demean(samples: &mut [Sample]) {
+    let mut sums: HashMap<i32, (f64, usize)> = HashMap::new();
+    for s in samples.iter() {
+        let e = sums.entry(bucket(s.date)).or_insert((0.0, 0));
+        e.0 += s.realized;
+        e.1 += 1;
+    }
+    for s in samples.iter_mut() {
+        let (sum, n) = sums[&bucket(s.date)];
+        s.relative = s.realized - sum / n as f64;
+    }
+}
+
 /// ~6 months between walk-forward cutoffs (trading sessions, ~252/yr). Overlapping forward windows —
 /// fine for a rank correlation, not an independent-sample t-test (flagged in the footer).
 const STEP_SESSIONS: usize = 126;
@@ -165,16 +180,7 @@ pub async fn run(args: Vec<String>) {
     // that span different regimes makes the score race CALENDAR LUCK (a 2016 cutoff that mooned vs a
     // 2021-top cutoff that crashed), not stock-picking. Subtracting the bucket's peer mean leaves only
     // "did this name beat the others scored the same half-year" = the selection signal we actually want.
-    let mut sums: HashMap<i32, (f64, usize)> = HashMap::new();
-    for s in &samples {
-        let e = sums.entry(bucket(s.date)).or_insert((0.0, 0));
-        e.0 += s.realized;
-        e.1 += 1;
-    }
-    for s in &mut samples {
-        let (sum, n) = sums[&bucket(s.date)];
-        s.relative = s.realized - sum / n as f64;
-    }
+    demean(&mut samples);
     // invariant: per-bucket de-meaning makes the relatives sum to ~0 (each bucket nets out). Fails loudly
     // if the bucket map and the fill ever drift apart. Cheap, runs in release.
     let rel_sum: f64 = samples.iter().map(|s| s.relative).sum();
@@ -347,5 +353,48 @@ fn report_lane(
             Some(v) => println!("    {:<20} rho {v:+.2} Δ{:+.2}   edge {:+.1} Δ{dedge:+.1}", name, v - base_rho, et - eb),
             None => println!("    {:<20} rho n/a   edge {:+.1} Δ{dedge:+.1}", name, et - eb),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+    fn sample(date: NaiveDate, realized: f64) -> Sample {
+        Sample { date, realized, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None }
+    }
+
+    /// Peer-bucket key + the de-meaning that turns realized returns into the SELECTION signal rho
+    /// measures. If `bucket` or `demean` drift, rho would race calendar luck instead of skill.
+    #[test]
+    fn peer_relative_math() {
+        // bucket: 2 per year (H1 = Jan-Jun, H2 = Jul-Dec), monotone across the year boundary
+        assert_eq!(bucket(ymd(2020, 1, 1)), bucket(ymd(2020, 6, 30))); // same half-year -> same bucket
+        assert_ne!(bucket(ymd(2020, 6, 30)), bucket(ymd(2020, 7, 1))); // H1 vs H2 split
+        assert!(bucket(ymd(2020, 12, 31)) < bucket(ymd(2021, 1, 1))); // strictly increases over years
+
+        // demean: two cutoffs in 2020-H1 (realized 10/30 -> mean 20 -> relatives -10/+10); singletons
+        // in other buckets net to exactly 0. Each bucket's relatives must sum to ~0 (the run invariant).
+        let mut s = vec![
+            sample(ymd(2020, 2, 1), 10.0),
+            sample(ymd(2020, 3, 1), 30.0),
+            sample(ymd(2020, 9, 1), 5.0),   // alone in 2020-H2
+            sample(ymd(2021, 2, 1), 100.0), // alone in 2021-H1
+        ];
+        demean(&mut s);
+        assert!((s[0].relative - -10.0).abs() < 1e-9);
+        assert!((s[1].relative - 10.0).abs() < 1e-9);
+        assert!(s[2].relative.abs() < 1e-9); // singleton bucket -> de-means to 0
+        assert!(s[3].relative.abs() < 1e-9);
+        // per-bucket sums net to ~0
+        let mut sums: HashMap<i32, f64> = HashMap::new();
+        for x in &s {
+            *sums.entry(bucket(x.date)).or_insert(0.0) += x.relative;
+        }
+        assert!(sums.values().all(|v| v.abs() < 1e-9));
     }
 }
