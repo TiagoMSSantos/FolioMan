@@ -16,7 +16,10 @@ cargo run -- check              # default watchlist: price(EUR), % per horizon, 
 cargo run -- check AAPL BTC-USD VWCE.DE
 cargo run -- perf NVDA          # past EUR price + % at each horizon, with source URL
 cargo run -- screen             # live universe -> GROWTH ranking per class (stocks/ETFs/crypto) + NUPL
-cargo run -- backtest           # walk-forward validation of the heuristic (rho, top/bottom edge, OOS)
+cargo run -- backtest           # walk-forward validation: rho, top/bottom edge, OOS split, ablation
+cargo run -- backtest 7 universe       # 7y-forward window, over the live screen universe (not the watchlist)
+cargo run -- backtest universe fund    # add the as-of fundamentals lane (needs FMP_API_KEY)
+cargo run -- backtest universe tune    # honest train/test weight search (ships nothing unless it beats defaults)
 cargo run -- alert              # ntfy push for dips (cron it)
 cargo run -- accounts           # cash + holdings per broker (read-only)
 cargo run -- trade binance buy BTCEUR 0.001   # LIVE order, real money, confirm-gated
@@ -30,6 +33,11 @@ knobs, and all data-source URLs. `screen` builds its universe **live** (top-N cr
 CoinGecko + the S&P 500 constituents CSV — tune `universe_size`; `screen TICKER...` overrides),
 so there's no hand-kept list to maintain. `n/a` in a column = history doesn't reach that far.
 Outputs are a transparent ranking of public data — **not investment advice**.
+
+Set `FOLIOMAN_CONFIG=/path/to/settings.yaml` to override where the config is loaded from (CI
+points it at a secret-free `tests/ci-settings.yaml` fixture this way). Fundamentals columns (P/E,
+ROE, and the `fund` backtest lane) need `FMP_API_KEY` in the environment; without it those terms
+stay neutral and everything else still works.
 
 ### `trade` — live orders (real money, opt-in)
 
@@ -94,6 +102,15 @@ positive). Two rules:
 - **Gates move the signal; weights barely do.** A gate reshapes the scored pool; additive/multiplier
   weights only re-rank what's already in it. Tune gates first.
 
+Hand-tuning while watching the full backtest is **in-sample** — you've peeked at all the data, so the
+reported edge is optimistic. `backtest <set> tune` is the honest check: it splits the samples
+chronologically (~70% early = train, 30% late = test), searches the LIVE growth weights on **train
+only**, then reports rho/edge on the held-out **test** split next to the current default's test
+numbers. Overfit shows up as train ≫ test. It **ships nothing** — if no searched config beats the
+default out-of-sample, the defaults already generalize (a clean null is a successful run). Copy a
+genuine winner into `settings.yaml` yourself; `tune` never writes. Inert knobs (e.g. the fund weight
+with no `FMP_API_KEY` coverage) are detected and skipped so the search doesn't waste draws on them.
+
 | Want… | Turn this (LIVE knob) | Direction |
 |-------|-----------------------|-----------|
 | Fewer, higher-conviction stock picks | `growth_min_cagr`, `growth_min_range_pct` | raise |
@@ -105,6 +122,7 @@ positive). Two rules:
 | Damp crypto when the market is euphoric | `nupl_euphoria` / `nupl_damp_floor` | lower the floor |
 | Reward dividend payers more | `dividend_weight` (cap `dividend_cap`) | raise |
 | Tilt toward cheap-on-earnings (needs `FMP_API_KEY`) | `ref_pe` | raise = treat more names as cheap |
+| Tilt toward strong fundamentals (needs `FMP_API_KEY`) | `growth_fund_weight` (cap `growth_fund_cap`) | raise from 0 |
 
 ## Glossary
 
