@@ -152,6 +152,8 @@ pub struct BuyHeuristic {
     pub growth_overext_cap_crypto: f64, // (#4) crypto's OWN overextension cap (% above the 200wk SMA at which the brake maxes). Crypto routinely rides far above its long SMA, so a separate looser cap avoids over-braking coins; equities/ETFs keep growth_overext_cap. 0 = crypto brake off
     pub growth_fund_weight: f64,     // (G) reward per pt of the as-of FUNDAMENTAL factor (see growth_score / fund_factor). The fund lane proves WHICH as-of factor predicts forward returns standalone; this folds it INTO growth_score so its through-the-lane edge is ablatable. 0 = off (DEFAULT, no behavior change). Validate via `backtest <set> fund` then set the weight only on +ablation-Δ + both-half-positive OOS
     pub growth_fund_cap: f64,        // (G) cap (in the factor's own pts) on the fund factor fed into that reward, so one data-artifact (+9000% rev) can't dominate the rank
+    pub growth_mom121_weight: f64,   // (M) reward per pt of 12-1 momentum (trailing 1Y return EX the last 1mo — Jegadeesh-Titman, skips the short-term-reversal month). Price-only, so unlike the BACKTEST-BLIND div/ROE/fund tilts this one IS validated end-to-end (backtest_quote reconstructs 1Y/1M). 0 = off (DEFAULT, no behavior change). Raise only on +ablation-Δ + both-half-positive OOS via `backtest <set>` / `tune`
+    pub growth_mom121_cap: f64,      // (M) cap (in pct pts) on the 12-1 momentum fed into that reward, so one moonshot can't dominate the rank
 
     // --- CRYPTO market-sentiment damp (Bitcoin NUPL): a whole-market greed gauge already fetched for
     //     the screen footer; high NUPL = euphoria/top -> shrink crypto scores in BOTH lanes. ---
@@ -227,6 +229,8 @@ impl Default for BuyHeuristic {
             growth_overext_cap_crypto: 100.0, // (#4) defaults to the equity cap (NO behavior change until tuned). Raise (e.g. 200) so the brake lets crypto ride further above its SMA before docking
             growth_fund_weight: 0.0,       // (G) OFF by default — the fund term is inert until validated. Wired through the growth lane so `backtest <set> fund` can ablate it; raise only on +Δ + both-half-positive OOS
             growth_fund_cap: 30.0,         // (G) clamp the fund factor to ±/+30 pts before weighting (irrelevant at weight 0); keeps a freshly-listed +9000% rev-accel artifact from running away with the rank
+            growth_mom121_weight: 0.0,     // (M) OFF by default — the 12-1 momentum term is wired + ablatable but inert until validated; raise only on +Δ + both-half-positive OOS
+            growth_mom121_cap: 50.0,       // (M) clamp 12-1 momentum to +50 pts before weighting (irrelevant at weight 0); a name up >50% over the year-ago-to-month-ago window is already maxed for this tilt
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
             nupl_capitulation: 0.25,       // (4) NUPL < 0.25 = fear/accumulation -> start boosting crypto (buy-the-fear)

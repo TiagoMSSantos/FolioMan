@@ -408,6 +408,12 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     let accel = (return_1y - long_cagr).clamp(0.0, tuning.growth_accel_cap); // last year outpacing the long run = building
     let proximity = quote.range_pct / 100.0; // 0.7..1.0 — closer to the high = stronger confirmation
     let risk_reward = risk_bonus(quote, long_cagr, tuning.sharpe_weight, tuning.calmar_weight, tuning); // (B/C) growth lane's Sharpe weight
+    // (M) 12-1 momentum: trailing-year return EXCLUDING the last month (skip the short-term-reversal
+    // month — Jegadeesh-Titman). Price-only, so it's validated end-to-end (backtest_quote has 1Y/1M),
+    // unlike the BACKTEST-BLIND div/ROE/fund tilts. Missing 1M -> skip-month = 0. Guard the denominator
+    // against a near-total-wipeout 1M (>= -99%) so the ratio can't blow up.
+    let r1m = perf_pct(quote, "1M").unwrap_or(0.0);
+    let mom121 = ((1.0 + return_1y / 100.0) / (1.0 + r1m / 100.0).max(0.01) - 1.0) * 100.0;
     let base = tuning.growth_trend_weight * trend
         + tuning.growth_accel_weight * accel
         + risk_reward
@@ -417,7 +423,10 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
         // backtest attaches the as-of factor to quote.fund_factor so `backtest <set> fund` can ablate it.
         // Floor at 0 (only reward the factor, don't penalise a missing/negative one) and cap the artifact.
         // weight 0 (default) -> this whole term is 0 -> growth_score is byte-identical to the pre-(G) lane.
-        + tuning.growth_fund_weight * quote.fund_factor.unwrap_or(0.0).clamp(0.0, tuning.growth_fund_cap);
+        + tuning.growth_fund_weight * quote.fund_factor.unwrap_or(0.0).clamp(0.0, tuning.growth_fund_cap)
+        // (M) 12-1 momentum tilt. Floor at 0: reward momentum, don't punish its absence (matches (G)/div).
+        // weight 0 (default) -> this term is 0 -> growth_score is byte-identical to the pre-(M) lane.
+        + tuning.growth_mom121_weight * mom121.clamp(0.0, tuning.growth_mom121_cap);
     let value = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     let trust = trust_factor(quote, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
@@ -1099,5 +1108,15 @@ mod tests {
     let mut neg_fund = none_fund.clone();
     neg_fund.fund_factor = Some(-40.0); // decelerating -> floored at 0, not a penalty
     assert_eq!(growth_score(&neg_fund, &weighted).unwrap(), growth_score(&none_fund, &weighted).unwrap());
+
+    // (M) 12-1 momentum — NEUTRALITY: two names identical but for last-month return (different 12-1)
+    // must score the SAME at the default growth_mom121_weight 0 — the price-validated lane is unchanged
+    // until the weight is tuned. Both 1M values clear the knife gate, so only the 12-1 term differs.
+    let hi_mom = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0), ("1M", 2.0)]);  // small recent month -> MORE of the year's gain is older -> higher 12-1
+    let lo_mom = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0), ("1M", 25.0)]); // big recent month -> lower 12-1 (ex the skip month)
+    assert_eq!(growth_score(&hi_mom, &tuning).unwrap(), growth_score(&lo_mom, &tuning).unwrap()); // weight 0 -> inert
+    // TILT: a positive weight rewards the higher 12-1 momentum.
+    let wmom = BuyHeuristic { growth_mom121_weight: 0.5, ..BuyHeuristic::default() };
+    assert!(growth_score(&hi_mom, &wmom).unwrap() > growth_score(&lo_mom, &wmom).unwrap());
     }
 }

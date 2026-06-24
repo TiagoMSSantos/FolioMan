@@ -224,6 +224,7 @@ pub async fn run(args: Vec<String>) {
         ("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
         ("overext_brake", |tuning| tuning.growth_overext_cap = 0.0),
         ("growth_fund_weight", |tuning| tuning.growth_fund_weight = 0.0), // (G) Δ shows the as-of fund factor's through-the-lane edge; ~0 when weight is already 0 (default) or no fund coverage
+        ("growth_mom121_weight", |tuning| tuning.growth_mom121_weight = 0.0), // (M) Δ shows the 12-1 momentum term's through-the-lane edge; ~0 when weight is 0 (default)
     ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, buy_knobs);
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, growth_knobs);
@@ -375,6 +376,7 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
         ("calmar_weight", |t| t.calmar_weight, |t, v| t.calmar_weight = v, 0.0, 3.0),
         ("growth_overext_floor", |t| t.growth_overext_floor, |t, v| t.growth_overext_floor = v, 0.01, 0.5),
         ("growth_fund_weight", |t| t.growth_fund_weight, |t, v| t.growth_fund_weight = v, 0.0, 0.5),
+        ("growth_mom121_weight", |t| t.growth_mom121_weight, |t, v| t.growth_mom121_weight = v, 0.0, 0.5),
     ];
 
     // drop INERT dims (see dim_active): a weight the sample can't move (e.g. growth_fund_weight on the
