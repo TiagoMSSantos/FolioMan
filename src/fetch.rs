@@ -782,7 +782,7 @@ pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &
             async move {
                 let quote = quote_one(client, urls, fx_cache, tk, dip_days, high_days, intraday, news, windows, infl).await;
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                if n % PROGRESS_EVERY == 0 || n == total {
+                if n.is_multiple_of(PROGRESS_EVERY) || n == total {
                     eprintln!("fetch: {n}/{total} quotes fetched");
                 }
                 quote

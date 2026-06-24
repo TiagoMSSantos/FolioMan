@@ -625,7 +625,6 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
 /// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
-#[allow(clippy::too_many_arguments)] // ponytail: internal print fn; a params struct buys nothing
 fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], min_score: f64, pinned: &HashSet<&str>) {
     let (crypto, equity): (Vec<_>, Vec<_>) =
         picks.into_iter().partition(|(quote, _)| is_currency_quoted(&quote.ticker));
