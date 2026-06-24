@@ -540,7 +540,7 @@ pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, w
             };
             match past {
                 None => None,
-                Some(p) if p == 0.0 => None,
+                Some(0.0) => None,
                 Some(p) => {
                     let eur = match rate {
                         Some(r) => format!("€{}", fmt_money2(p * r)),

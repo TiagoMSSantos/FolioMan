@@ -276,7 +276,7 @@ fn report_fund_lane(samples: &[Sample]) {
     };
     for (name, get) in factors {
         let pairs: Vec<(&Sample, f64)> =
-            samples.iter().filter_map(|s| s.fund.as_ref().and_then(|f| get(f)).map(|v| (s, v))).collect();
+            samples.iter().filter_map(|s| s.fund.as_ref().and_then(get).map(|v| (s, v))).collect();
         if pairs.len() < 4 {
             println!("  {:<14} n/a (only {} cutoffs carry this factor)", name, pairs.len());
             continue;
