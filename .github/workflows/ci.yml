@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 # ponytail: ubuntu-latest ships a stable Rust toolchain, so no install step needed.
-# rust-cache with a shared key: all 3 jobs restore ONE common warm cache from prior runs
-# (deps compiled once, not 3×). Parallel jobs can't share THIS run's cache — GitHub saves it
+# rust-cache with a shared key: all jobs restore ONE common warm cache from prior runs
+# (deps compiled once, not N×). Parallel jobs can't share THIS run's cache — GitHub saves it
 # at job end — so cross-run reuse is the win; within-run hand-off would require `needs: build`.
 jobs:
   build:
@@ -36,4 +36,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-ci   # one warm cache shared across all 3 jobs (across runs)
-      - run: cargo test --test '*'   # everything under tests/
+      - run: cargo test --test '*'   # everything under tests/ (tests/network.rs cases are #[ignore]d -> skipped here, stays offline)
+
+  # live API smoke tests — hit Yahoo/FX so they're flaky (rate-limits/downtime). NON-BLOCKING:
+  # continue-on-error keeps a failure from failing the workflow, and the `|| echo ::warning::`
+  # surfaces it as a visible annotation while the step still exits 0. Their job is to catch an API
+  # changing shape, not to gate merges. Real compile breaks are still caught by integration-tests.
+  network-smoke:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: folioman-ci   # same warm cache as the other jobs
+      - name: live API smoke tests (non-blocking)
+        run: |
+          FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored \
+            || echo "::warning::network smoke tests failed (likely API rate-limit/downtime) — not blocking"
