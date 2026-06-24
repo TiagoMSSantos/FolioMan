@@ -209,7 +209,7 @@ pub async fn run(args: Vec<String>) {
     println!("\nBacktest — WALK-FORWARD score vs {years}y-forward PEER-RELATIVE return (de-meaned per ~6mo cutoff):");
     println!("  cutoffs with a forward window: {}   tickers: {}", samples.len(), tickers.len());
 
-    let buy_knobs: &[(&str, fn(&mut BuyHeuristic))] = &[
+    let buy_knobs: &[Knob] = &[
         ("long_trend_weight", |tuning| tuning.long_trend_weight = 0.0),
         ("discount_weight", |tuning| tuning.discount_weight = 0.0), // (#4) zero the dip reward — Δ>0 confirms dip-depth ranks backwards
         ("cheap_weight", |tuning| tuning.cheap_weight = 0.0),
@@ -217,7 +217,7 @@ pub async fn run(args: Vec<String>) {
         ("onsale_sharpe_weight", |tuning| tuning.onsale_sharpe_weight = 0.0),
         ("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
     ];
-    let growth_knobs: &[(&str, fn(&mut BuyHeuristic))] = &[
+    let growth_knobs: &[Knob] = &[
         ("growth_trend_weight", |tuning| tuning.growth_trend_weight = 0.0),
         ("growth_accel_weight", |tuning| tuning.growth_accel_weight = 0.0),
         ("sharpe_weight", |tuning| tuning.sharpe_weight = 0.0),
@@ -457,12 +457,15 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
 /// the per-term ablation. `samples` must already be in date order (for the OOS split). Mutating a
 /// score WEIGHT never changes a GATE, so the gated row set stays fixed across the ablation -> the rho
 /// is comparable term-to-term.
+/// One ablation knob: a name + a fn that zeroes its weight in a `BuyHeuristic` copy.
+type Knob = (&'static str, fn(&mut BuyHeuristic));
+
 fn report_lane(
     label: &str,
     samples: &[Sample],
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
     tuning: &BuyHeuristic,
-    knobs: &[(&str, fn(&mut BuyHeuristic))],
+    knobs: &[Knob],
 ) {
     let scored: Vec<(&Sample, f64)> =
         samples.iter().filter_map(|s| scorer(&s.quote, tuning).map(|v| (s, v))).collect();
