@@ -10,6 +10,9 @@
 //! That's why CI doesn't swallow the failure: a rate-limit just skips (green), only genuine drift goes red.
 //! READ-ONLY endpoints only — never a broker/order call.
 
+// ponytail: separate test crate, so the lib's crate-root allow doesn't reach here. Same call: docs render fine.
+#![allow(clippy::doc_lazy_continuation)]
+
 use folioman::{config, fetch};
 use serde_json::Value;
 
@@ -48,11 +51,11 @@ async fn probe_yahoo(ticker: &str) -> Probe {
     let has_ts = body
         .pointer("/chart/result/0/timestamp")
         .and_then(|t| t.as_array())
-        .map_or(false, |a| !a.is_empty());
+        .is_some_and(|a| !a.is_empty());
     let has_close = body.pointer("/chart/result/0/indicators/quote/0/close").is_some();
     if has_ts && has_close {
         Probe::Healthy
-    } else if !body.pointer("/chart/error").map_or(true, |e| e.is_null()) {
+    } else if !body.pointer("/chart/error").is_none_or(|e| e.is_null()) {
         Probe::Skip(format!("Yahoo error envelope: {}", body.pointer("/chart/error").unwrap()))
     } else {
         Probe::Drift("HTTP 200 but chart.result[0].timestamp/close missing and no error envelope".into())
