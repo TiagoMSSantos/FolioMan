@@ -38,6 +38,7 @@ use std::collections::HashMap;
 /// ablation can re-score under a mutated knob set — with ZERO re-fetch / re-math. A sample is recorded
 /// for every cutoff that has a full forward window, even if it passes neither lane's gates, so the
 /// peer-mean (#1) is taken over the whole investable set of that period, not just the gated subset.
+#[derive(Clone)]
 struct Sample {
     date: chrono::NaiveDate,
     realized: f64, // raw forward return %
@@ -86,6 +87,7 @@ pub async fn run(args: Vec<String>) {
     let mut wide = false;
     let mut long = false;
     let mut fund = false;
+    let mut tune = false;
     let mut tickers: Vec<String> = Vec::new();
     for a in &args {
         match a.parse::<i64>() {
@@ -93,6 +95,7 @@ pub async fn run(args: Vec<String>) {
             _ if a.eq_ignore_ascii_case("universe") => wide = true,
             _ if a.eq_ignore_ascii_case("long") => long = true,
             _ if a.eq_ignore_ascii_case("fund") => fund = true,
+            _ if a.eq_ignore_ascii_case("tune") => tune = true,
             _ => tickers.push(a.clone()),
         }
     }
@@ -180,6 +183,15 @@ pub async fn run(args: Vec<String>) {
         return;
     }
     samples.sort_by_key(|s| s.date); // chronological -> the OOS split is early-vs-late in time
+
+    // `tune`: honest out-of-sample selection. Search the growth weights on an EARLY train split and
+    // report the winner on a LATE test split it never saw — the only way to a trustworthy number when
+    // the shipped knobs were hand-tuned on all the data. Does its own per-split de-mean, so branch here
+    // BEFORE the whole-sample de-mean below.
+    if tune {
+        tune_growth(&samples, tuning);
+        return;
+    }
 
     // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket. Pooling raw returns across cutoffs
     // that span different regimes makes the score race CALENDAR LUCK (a 2016 cutoff that mooned vs a
@@ -284,6 +296,130 @@ fn report_fund_lane(samples: &[Sample]) {
     }
 }
 
+/// Top/bottom scored-half mean peer-relative return. `pairs` = (sample, score); sorted by score desc,
+/// then (top-half mean relative, bottom-half mean relative). The edge is the difference. Shared by
+/// `report_lane`, the ablation, and `tune`.
+fn edge_halves(pairs: &[(&Sample, f64)]) -> (f64, f64) {
+    let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
+    v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let half = v.len() / 2;
+    let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
+    (mean(&v[..half]), mean(&v[v.len() - half..]))
+}
+
+/// Score `samples` through `scorer`/`tuning` (gates applied) -> (rho, edge) on the gated rows: rho =
+/// Spearman(score, peer-relative); edge = top-half minus bottom-half peer-relative. rho is None when
+/// fewer than 4 rows pass the gates. Pure -> the `tune` search calls it thousands of times cheaply.
+fn lane_metrics(
+    samples: &[Sample],
+    scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
+    tuning: &BuyHeuristic,
+) -> (Option<f64>, f64) {
+    let scored: Vec<(&Sample, f64)> =
+        samples.iter().filter_map(|s| scorer(&s.quote, tuning).map(|v| (s, v))).collect();
+    if scored.len() < 4 {
+        return (None, 0.0);
+    }
+    let sc: Vec<f64> = scored.iter().map(|(_, v)| *v).collect();
+    let rels: Vec<f64> = scored.iter().map(|(s, _)| s.relative).collect();
+    let (t, b) = edge_halves(&scored);
+    (core::spearman(&sc, &rels), t - b)
+}
+
+/// (honest OOS) The shipped growth knobs were hand-tuned on ALL the data, so their backtest edge is
+/// optimistic (the footer caveat says as much). This splits the cutoffs chronologically, SEARCHES the
+/// growth weights on the EARLY train half only, then scores the winner on the LATE test half it never
+/// saw — turning hand-tuning into out-of-sample selection. Seeded xorshift64 (no `rand` dep) so a re-run
+/// reproduces. Writes NOTHING: a winning config is printed for the human to paste into settings.yaml.
+fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
+    // chronological split (samples are date-sorted in `run`); de-mean WITHIN each split so neither leaks
+    // the other's bucket means (the peer-relative invariant must hold per split, not just globally).
+    let cut = samples.len() * 7 / 10;
+    let mut s = samples.to_vec();
+    demean(&mut s[..cut]);
+    demean(&mut s[cut..]);
+    let (train, test) = s.split_at(cut);
+    if train.len() < 8 || test.len() < 8 {
+        println!("\ntune: too few cutoffs to split ({} train / {} test) — run `universe` for a bigger sample.", train.len(), test.len());
+        return;
+    }
+
+    // the searched growth weights: (label, getter, setter, lo, hi). Bands bracket each shipped default.
+    // growth_fund_weight is included so A1's factor is searched too (0 in its band == off, so the search
+    // is free to reject it). Setters mirror the ablation knobs but assign rather than zero.
+    type Get = fn(&BuyHeuristic) -> f64;
+    type Set = fn(&mut BuyHeuristic, f64);
+    let dims: &[(&str, Get, Set, f64, f64)] = &[
+        ("growth_trend_weight", |t| t.growth_trend_weight, |t, v| t.growth_trend_weight = v, 0.0, 1.0),
+        ("growth_accel_weight", |t| t.growth_accel_weight, |t, v| t.growth_accel_weight = v, 0.0, 0.6),
+        ("sharpe_weight", |t| t.sharpe_weight, |t, v| t.sharpe_weight = v, 0.0, 4.0),
+        ("calmar_weight", |t| t.calmar_weight, |t, v| t.calmar_weight = v, 0.0, 3.0),
+        ("growth_overext_floor", |t| t.growth_overext_floor, |t, v| t.growth_overext_floor = v, 0.01, 0.5),
+        ("growth_fund_weight", |t| t.growth_fund_weight, |t, v| t.growth_fund_weight = v, 0.0, 0.5),
+    ];
+
+    // seeded xorshift64 -> uniform f64 in [0,1). Deterministic: same seed, same search, every run.
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+
+    // search on TRAIN: keep the draw with the best train edge among those that also rank right (rho>0) —
+    // the same "positive selection" bar the project keeps a knob by, but chosen WITHOUT seeing the test.
+    let draws = 500;
+    let mut best: Option<(f64, BuyHeuristic)> = None; // (train edge, config)
+    for _ in 0..draws {
+        let mut t = default.clone();
+        for (_, _, set, lo, hi) in dims {
+            set(&mut t, lo + next() * (hi - lo));
+        }
+        let (rho, edge) = lane_metrics(train, growth_score, &t);
+        if rho.unwrap_or(0.0) > 0.0 && best.as_ref().map_or(true, |(e, _)| edge > *e) {
+            best = Some((edge, t));
+        }
+    }
+
+    let (def_rho, def_edge) = lane_metrics(test, growth_score, default);
+    let fmt = |r: Option<f64>| r.map_or("n/a".to_string(), |v| format!("{v:+.2}"));
+    println!(
+        "\n══ TUNE — growth lane, honest out-of-sample ({} train / {} test cutoffs, {draws} draws) ══",
+        train.len(),
+        test.len()
+    );
+    println!("  shipped default      TEST: rho {}  edge {:+.1}", fmt(def_rho), def_edge);
+
+    let Some((train_edge, won)) = best else {
+        println!("  search found NO train config with positive rho — keep the shipped default.");
+        return;
+    };
+    let (won_train_rho, _) = lane_metrics(train, growth_score, &won);
+    let (won_test_rho, won_test_edge) = lane_metrics(test, growth_score, &won);
+    println!("  search winner       TRAIN: rho {}  edge {:+.1}", fmt(won_train_rho), train_edge);
+    println!("  search winner        TEST: rho {}  edge {:+.1}   (train ≫ test ⇒ overfit)", fmt(won_test_rho), won_test_edge);
+    println!("  weights:");
+    for (name, get, _, _, _) in dims {
+        println!("    {name:<22} {:.3}", get(&won));
+    }
+    if won_test_edge <= def_edge {
+        println!("  -> winner does NOT beat the default on the held-out TEST edge ({won_test_edge:+.1} vs {def_edge:+.1}); the shipped knobs already generalise. SHIP NOTHING.");
+        return;
+    }
+    println!("  -> winner BEATS the default on TEST ({won_test_edge:+.1} vs {def_edge:+.1}). Paste the weights into settings.yaml, then re-run plain `backtest universe` to confirm.");
+
+    // parsimony: force each weight to 0 on the winner, re-score TEST. A weight whose removal doesn't drop
+    // (or even lifts) the TEST edge isn't earning its place out-of-sample -> a deletion candidate.
+    println!("  parsimony (winner, each weight -> 0, TEST edge Δ vs {won_test_edge:+.1}):");
+    for (name, _, set, _, _) in dims {
+        let mut t = won.clone();
+        set(&mut t, 0.0);
+        let (_, e) = lane_metrics(test, growth_score, &t);
+        println!("    {name:<22} edge {e:+.1} Δ{:+.1}", e - won_test_edge);
+    }
+}
+
 /// Report one lane: filter the samples to the cutoffs this lane's gates admit, score them, and print
 /// the peer-relative Spearman, the top/bottom-half edge, the out-of-sample (early-vs-late) split, and
 /// the per-term ablation. `samples` must already be in date order (for the OOS split). Mutating a
@@ -312,17 +448,10 @@ fn report_lane(
         None => println!("  Spearman: n/a"),
     }
 
-    // top vs bottom scored half, by peer-relative realized. `edge_of` is reused by the ablation below
-    // so it reports the Δ of the PROFIT metric, not just rho — rho and edge can disagree (a term can
-    // read mildly rho-harmful yet be load-bearing for the actual top/bottom spread).
-    let edge_of = |pairs: &[(&Sample, f64)]| -> (f64, f64) {
-        let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
-        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        let half = v.len() / 2;
-        let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
-        (mean(&v[..half]), mean(&v[v.len() - half..]))
-    };
-    let (top, bot) = edge_of(&scored);
+    // top vs bottom scored half, by peer-relative realized. `edge_halves` is reused by the ablation
+    // below (and by `tune`) so it reports the Δ of the PROFIT metric, not just rho — rho and edge can
+    // disagree (a term can read mildly rho-harmful yet be load-bearing for the actual top/bottom spread).
+    let (top, bot) = edge_halves(&scored);
     let base_edge = top - bot;
     println!("  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {base_edge:+.1} pts");
 
@@ -353,7 +482,7 @@ fn report_lane(
         mutate(&mut t2);
         let abl: Vec<(&Sample, f64)> =
             scored.iter().map(|(s, v)| (*s, scorer(&s.quote, &t2).unwrap_or(*v))).collect();
-        let (et, eb) = edge_of(&abl);
+        let (et, eb) = edge_halves(&abl);
         let dedge = (et - eb) - base_edge;
         match core::spearman(&abl.iter().map(|(_, v)| *v).collect::<Vec<_>>(), &rels) {
             Some(v) => println!("    {:<20} rho {v:+.2} Δ{:+.2}   edge {:+.1} Δ{dedge:+.1}", name, v - base_rho, et - eb),
@@ -402,5 +531,61 @@ mod tests {
             *sums.entry(bucket(x.date)).or_insert(0.0) += x.relative;
         }
         assert!(sums.values().all(|v| v.abs() < 1e-9));
+    }
+
+    /// A synthetic scorer reading one quote field — lets us test `lane_metrics`/`edge_halves` (the
+    /// honest-OOS machinery the search drives) WITHOUT building quotes that pass growth_score's gate
+    /// maze (those gates are exercised in `picks`). Score = drawdown_pct, set per sample below.
+    fn dd_score(q: &Quote, _: &BuyHeuristic) -> Option<f64> {
+        Some(q.drawdown_pct)
+    }
+    fn s_rel(relative: f64, dd: f64) -> Sample {
+        let mut q = Quote::stub("X", "1", "", "X");
+        q.drawdown_pct = dd;
+        Sample { date: ymd(2020, 1, 1), realized: relative, relative, quote: q, fund: None }
+    }
+
+    /// `lane_metrics` is what the tune search ranks configs by, so its rho/edge must have the right SIGN:
+    /// a score that tracks the peer-relative return reads +rho / +edge; the reverse reads negative.
+    #[test]
+    fn lane_metrics_sign() {
+        // score (dd) rises with the peer-relative return -> perfect rank agreement
+        let up: Vec<Sample> = [(-3.0, 1.0), (-2.0, 2.0), (-1.0, 3.0), (1.0, 4.0), (2.0, 5.0), (3.0, 6.0)]
+            .iter().map(|&(r, d)| s_rel(r, d)).collect();
+        let (rho, edge) = lane_metrics(&up, dd_score, &BuyHeuristic::default());
+        assert!(rho.unwrap() > 0.9, "monotone agreement -> rho≈+1, got {rho:?}");
+        assert!(edge > 0.0, "winners-first -> positive top-minus-bottom edge, got {edge}");
+        // flip the score order against the returns -> selection goes backwards
+        let down: Vec<Sample> = [(-3.0, 6.0), (-2.0, 5.0), (-1.0, 4.0), (1.0, 3.0), (2.0, 2.0), (3.0, 1.0)]
+            .iter().map(|&(r, d)| s_rel(r, d)).collect();
+        let (rho2, edge2) = lane_metrics(&down, dd_score, &BuyHeuristic::default());
+        assert!(rho2.unwrap() < -0.9 && edge2 < 0.0, "reversed -> negative rho/edge, got {rho2:?}/{edge2}");
+        // too few gated rows -> rho None (the <4 guard the search must tolerate)
+        assert!(lane_metrics(&up[..3], dd_score, &BuyHeuristic::default()).0.is_none());
+    }
+
+    /// `tune` de-means each chronological split INDEPENDENTLY (`demean(&mut s[..cut])` / `s[cut..]`).
+    /// The peer-relative invariant must then hold WITHIN each half, not just globally — else the train
+    /// and test rho would race the other half's regime mean.
+    #[test]
+    fn split_demean_keeps_invariant_per_half() {
+        // 4 early cutoffs (2019) + 4 late (2022), each half spanning its own buckets with non-zero means
+        let mut s = vec![
+            sample(ymd(2019, 2, 1), 10.0),
+            sample(ymd(2019, 3, 1), 30.0),
+            sample(ymd(2019, 9, 1), 50.0),
+            sample(ymd(2019, 10, 1), 70.0),
+            sample(ymd(2022, 2, 1), -5.0),
+            sample(ymd(2022, 3, 1), 15.0),
+            sample(ymd(2022, 9, 1), 200.0),
+            sample(ymd(2022, 10, 1), 100.0),
+        ];
+        let cut = s.len() * 7 / 10; // 5
+        demean(&mut s[..cut]);
+        demean(&mut s[cut..]);
+        let (train, test) = s.split_at(cut);
+        // each half's relatives net to ~0 (every bucket within it de-meaned to its own peers)
+        assert!(train.iter().map(|x| x.relative).sum::<f64>().abs() < 1e-9);
+        assert!(test.iter().map(|x| x.relative).sum::<f64>().abs() < 1e-9);
     }
 }
