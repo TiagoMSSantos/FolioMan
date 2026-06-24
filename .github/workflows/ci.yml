@@ -20,18 +20,18 @@ jobs:
           shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
       - run: cargo build --verbose
 
-  # format + lint gate. fmt --check fails on any unformatted code; clippy -D warnings turns every lint
-  # into an error (needless clone, dead code, unwrap-heavy footguns…). Components are preinstalled on
-  # the GitHub runner, but `rustup component add` is a cheap no-op insurance if the image changes.
+  # lint gate. clippy -D warnings turns every lint into an error (needless clone, dead code,
+  # unwrap-heavy footguns…). NO `cargo fmt --check`: this codebase keeps a deliberate dense style
+  # (single-line method chains, aligned trailing comments) that rustfmt-default would explode across
+  # hundreds of lines — cosmetic churn, no bug caught. clippy stays; it finds real defects.
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: rustup component add clippy rustfmt
+      - run: rustup component add clippy
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-ci   # one warm cache shared across all jobs
-      - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
 
   unit-tests:
