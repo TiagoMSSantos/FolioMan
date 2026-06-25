@@ -581,6 +581,41 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
     tickers
 }
 
+/// Euronext Lisbon equities -> Yahoo `.LS` tickers for the screen universe (Portugal stocks). POSTs
+/// the live DataTables endpoint (`urls.euronext_lisbon`, MIC-scoped to XLIS) with the column
+/// datapoints the renderer needs — WITHOUT `args[display_datapoints]` the server returns the right
+/// row COUNT but empty cells. Symbol+`.LS` is the Yahoo form for the liquid Lisbon names; a wrong/
+/// thin one just returns no Yahoo data downstream and self-gates. Degrades to an empty Vec (with a
+/// diagnostic) on any failure, so the rest of the universe still builds.
+/// ponytail: symbol->`.LS` direct map (no ISIN->Yahoo-search bridge); add the bridge fetch_xetra_etfs
+/// already has only if coverage turns out poor.
+pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> {
+    // the table's columns, in order; index 2 (symbol) is what core::euronext_lisbon_symbols reads.
+    // Raw body (not reqwest `.form()`) so the `args[...]` key keeps its literal brackets, matching the
+    // request the page's JS sends.
+    let body = "args[display_datapoints]=name,isin,symbol,market,lastPrice,precentDayChange,lastTradeTime\
+                &draw=1&start=0&length=1000&iDisplayLength=1000&iDisplayStart=0";
+    let j = async {
+        client
+            .post(&urls.euronext_lisbon)
+            .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+            .header("X-Requested-With", "XMLHttpRequest")
+            .body(body)
+            .send()
+            .await
+            .ok()?
+            .json::<Value>()
+            .await
+            .ok()
+    }
+    .await;
+    let tickers = j.map(|v| core::euronext_lisbon_symbols(&v)).unwrap_or_default();
+    if tickers.is_empty() {
+        eprintln!("fetch: Euronext Lisbon returned no tickers (endpoint moved / datapoints changed?) — Lisbon stocks absent from the screen");
+    }
+    tickers
+}
+
 /// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
 /// CoinGecko + the S&P 500 constituents CSV (single companies) + the top-`cap` EU-buyable UCITS ETFs
 /// by turnover from Börse Frankfurt (`fetch_xetra_etfs`). Symbols normalised to Yahoo form (`btc` ->
@@ -591,10 +626,11 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
 /// would otherwise leak them into the stocks table past the sector filter.
 pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool, sectors: &[String]) -> (Vec<String>, std::collections::HashSet<String>) {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
-    let (cg, csv, etfs) = tokio::join!(
+    let (cg, csv, etfs, lisbon) = tokio::join!(
         get_json(client, &cg_url),
         get_text(client, &urls.sp500_csv),
         fetch_xetra_etfs(client, urls, cap),
+        fetch_euronext_lisbon(client, urls),
     );
     let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
     let mut out: Vec<String> = Vec::new();
@@ -610,6 +646,10 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
     if let Some(text) = csv {
         out.extend(text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).take(cap));
     }
+    // Euronext Lisbon equities (Yahoo `.LS`). ponytail: NOT sector-filtered — the set is ~33 names,
+    // so a sector-restricted screen could leak a few Lisbon stocks; tighten only if that ever bites
+    // (the payload doesn't carry GICS anyway).
+    out.extend(lisbon);
     let etf_set: std::collections::HashSet<String> = etfs.iter().cloned().collect();
     out.extend(etfs); // EU-buyable UCITS ETFs (Yahoo symbols)
     out.sort();

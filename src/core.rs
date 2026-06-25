@@ -324,6 +324,27 @@ pub fn etf_symbols(text: &str, etf_col: usize) -> Vec<String> {
         .collect()
 }
 
+/// Parse the Euronext Lisbon equities DataTables payload -> Yahoo `.LS` tickers. The request
+/// (`fetch_euronext_lisbon`) asks for columns `name,isin,symbol,market,...`, so each `aaData` row is
+/// an array with the bare symbol at index 2 (e.g. "GALP"); append `.LS` for the Yahoo form
+/// ("GALP.LS"). Keeps only plain A-Z0-9 symbols (drops empty/odd cells). Empty Vec on a missing or
+/// reshaped payload — the caller then degrades to an empty leg, never a crash.
+pub fn euronext_lisbon_symbols(payload: &Value) -> Vec<String> {
+    payload
+        .get("aaData")
+        .and_then(|d| d.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| {
+                    let sym = r.get(2)?.as_str()?.trim();
+                    (!sym.is_empty() && sym.chars().all(|c| c.is_ascii_alphanumeric()))
+                        .then(|| format!("{sym}.LS"))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Titles across yfinance/Yahoo schemas (flat `title`, nested `content.title`).
 pub fn headline_titles(news_items: &[Value]) -> Vec<String> {
     let nonempty = |v: &Value, key: &str| -> Option<String> {
@@ -919,6 +940,15 @@ mod tests {
     assert_eq!(etf_symbols(nasdaq, 6), vec!["QQQ".to_string()]); // AAPL=N dropped, FOO$ dropped, footer skipped
     let other = "ACT Symbol|Name|Exch|CQS|ETF|Lot|Test|NASDAQ\nSPY|SPDR S&P 500|P|SPY|Y|100|N|SPY\nBRK.A|Berkshire|N|BRK.A|N|1|N|";
     assert_eq!(etf_symbols(other, 4), vec!["SPY".to_string()]); // BRK.A is ETF=N -> dropped
+    // euronext_lisbon_symbols: symbol at row index 2 -> `<SYM>.LS`; odd/empty cells dropped; no aaData -> []
+    let es = serde_json::json!({"aaData": [
+        ["<a href=x>GALP ENERGIA</a>", "PTGAL0AM0009", "GALP", "<div>XLIS</div>", "EUR 18", "0.1%", "12:00"],
+        ["<a>EDP</a>", "PTEDP0AM0009", "EDP", "<div>XLIS</div>", "EUR 3", "-0.2%", "12:00"],
+        ["bad", "isin", "", "x", "y", "z", "w"],   // empty symbol -> dropped
+        ["bad", "isin", "FOO BAR", "x", "y", "z", "w"], // non-alnum symbol -> dropped
+    ]});
+    assert_eq!(euronext_lisbon_symbols(&es), vec!["GALP.LS".to_string(), "EDP.LS".to_string()]);
+    assert!(euronext_lisbon_symbols(&serde_json::json!({})).is_empty()); // no aaData -> empty leg, not a crash
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"

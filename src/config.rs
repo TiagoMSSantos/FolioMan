@@ -292,6 +292,17 @@ pub struct Urls {
     pub bf_etf_search: String,
     #[serde(default = "default_bf_salt")]
     pub bf_salt: String,
+    // Euronext Lisbon equities list (POST, DataTables JSON, `mics=XLIS` scopes it to Lisbon) -> the
+    // Portugal `.LS` stock leg of the screen universe. The column datapoints the renderer needs are
+    // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.
+    #[serde(default = "default_euronext_lisbon_url")]
+    pub euronext_lisbon: String,
+}
+
+/// Default Euronext Lisbon equities endpoint: the live DataTables JSON scoped to the Lisbon MIC
+/// (XLIS). POSTed (with the column datapoints) by `fetch_euronext_lisbon` -> Yahoo `.LS` tickers.
+fn default_euronext_lisbon_url() -> String {
+    "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS".to_string()
 }
 
 /// Default (E) fundamentals endpoint: FMP's free `stable/quote` (carries `pe`). The old v3

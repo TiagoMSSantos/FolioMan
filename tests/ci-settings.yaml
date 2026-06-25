@@ -22,5 +22,6 @@ urls:
   eu_hicp: "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_manr?format=JSON&lang=EN&coicop=CP00&geo=EU27_2020"
   coingecko_markets: "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page={n}&page=1"
   sp500_csv: "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
+  euronext_lisbon: "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS"
   nupl: "https://bitcoin-data.com/v1/nupl/last"
   ntfy: "https://ntfy.sh/{topic}"

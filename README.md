@@ -30,7 +30,8 @@ cargo run -- trade binance buy BTCEUR 0.001   # LIVE order, real money, confirm-
 
 Edit `config/settings.yaml` for the watchlist, thresholds, table widths, the buy-heuristic
 knobs, and all data-source URLs. `screen` builds its universe **live** (top-N crypto from
-CoinGecko + the S&P 500 constituents CSV — tune `universe_size`; `screen TICKER...` overrides),
+CoinGecko + the S&P 500 constituents CSV + the Euronext Lisbon equities + top-N EU UCITS ETFs from
+Börse Frankfurt — tune `universe_size`; `screen TICKER...` overrides),
 so there's no hand-kept list to maintain. `n/a` in a column = history doesn't reach that far.
 Outputs are a transparent ranking of public data — **not investment advice**.
 
@@ -70,7 +71,7 @@ long random string. Cron hourly:
 (function names so you can jump into the source):
 
 ```
-fetch::fetch_universe   live universe: top-N crypto (CoinGecko) + S&P 500 + Xetra UCITS ETFs  (screen only)
+fetch::fetch_universe   live universe: top-N crypto (CoinGecko) + S&P 500 + Euronext Lisbon + Xetra UCITS ETFs  (screen only)
         ↓
 fetch::quotes           one Quote per ticker (price, per-horizon %, volatility, SMA dist, P/E, ROE…)
         ↓
