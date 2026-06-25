@@ -406,15 +406,17 @@ pub fn inflation_summary(
 }
 
 /// Cumulative price rise over the last `years` years, compounding each year's annual CPI
-/// rate (the "true" erosion: +3%/yr for 10y ≈ +34%, not +30%). `None` if the series has FEWER
-/// than `years` years of data — we don't pass a shorter span off as the full horizon (that's
-/// what made the keyless 10y US window report an identical 10Y and 20Y); the caller prints n/a.
+/// rate (the "true" erosion: +3%/yr for 10y ≈ +34%, not +30%). `None` when the series can't
+/// reasonably cover the horizon — so we don't pass a much shorter span off as the full one (that's
+/// what made the keyless 10y US window report an identical 10Y and 20Y). One year of slack is
+/// allowed: a level→YoY series ALWAYS loses its earliest in-window year (no prior-year base to
+/// divide by), so a true N-year horizon yields N−1 rates at best; n/a only kicks in at ≥2 short.
 pub fn inflation_compounded(series: &BTreeMap<i32, f64>, years: usize) -> Option<f64> {
-    if series.len() < years {
+    if series.len() + 1 < years {
         return None;
     }
     let vals: Vec<f64> = series.values().cloned().collect(); // BTreeMap -> year-ascending
-    let tail = &vals[vals.len() - years..];
+    let tail = &vals[vals.len().saturating_sub(years)..]; // saturating: the 1yr-slack case has years == len+1
     let factor = tail.iter().fold(1.0, |f, r| f * (1.0 + r / 100.0));
     Some((factor - 1.0) * 100.0)
 }
@@ -1083,10 +1085,14 @@ mod tests {
     assert!((a10.unwrap() - 2.0).abs() < 1e-9 && (a30.unwrap() - 2.0).abs() < 1e-9);
     assert_eq!(inflation_summary(&BTreeMap::new()), (None, None, None, None));
 
-    // compounded: last 2 = (1.02)(1.03)-1 = 5.06%; exactly-len = full product; years>len -> None (don't fake a horizon)
+    // compounded: last 2 = (1.02)(1.03)-1 = 5.06%; exactly-len = full product
     assert!((inflation_compounded(&series, 2).unwrap() - 5.06).abs() < 1e-9);
     assert!((inflation_compounded(&series, 3).unwrap() - (1.01 * 1.02 * 1.03 - 1.0) * 100.0).abs() < 1e-9);
-    assert_eq!(inflation_compounded(&series, 10), None); // only 3 years of data -> no 10Y
+    // 1yr slack (level->YoY always loses the earliest in-window year): a 4Y ask off 3 rates renders;
+    // >=2 short -> None, so a far-too-long horizon isn't faked from a short span
+    assert!((inflation_compounded(&series, 4).unwrap() - (1.01 * 1.02 * 1.03 - 1.0) * 100.0).abs() < 1e-9);
+    assert_eq!(inflation_compounded(&series, 5), None); // 3 rates, ask 5 -> n/a
+    assert_eq!(inflation_compounded(&series, 10), None);
     assert_eq!(inflation_compounded(&BTreeMap::new(), 5), None);
 
     // BLS CPI-U parse: index level -> YoY %. 2025 = (103/100-1)*100 = 3%; 2024 has no 2023
