@@ -406,14 +406,15 @@ pub fn inflation_summary(
 }
 
 /// Cumulative price rise over the last `years` years, compounding each year's annual CPI
-/// rate (the "true" erosion: +3%/yr for 10y ≈ +34%, not +30%). Uses however many of the
-/// last `years` are present; `None` if the series is empty.
+/// rate (the "true" erosion: +3%/yr for 10y ≈ +34%, not +30%). `None` if the series has FEWER
+/// than `years` years of data — we don't pass a shorter span off as the full horizon (that's
+/// what made the keyless 10y US window report an identical 10Y and 20Y); the caller prints n/a.
 pub fn inflation_compounded(series: &BTreeMap<i32, f64>, years: usize) -> Option<f64> {
-    if series.is_empty() {
+    if series.len() < years {
         return None;
     }
     let vals: Vec<f64> = series.values().cloned().collect(); // BTreeMap -> year-ascending
-    let tail = &vals[vals.len().saturating_sub(years)..];
+    let tail = &vals[vals.len() - years..];
     let factor = tail.iter().fold(1.0, |f, r| f * (1.0 + r / 100.0));
     Some((factor - 1.0) * 100.0)
 }
@@ -1082,9 +1083,10 @@ mod tests {
     assert!((a10.unwrap() - 2.0).abs() < 1e-9 && (a30.unwrap() - 2.0).abs() < 1e-9);
     assert_eq!(inflation_summary(&BTreeMap::new()), (None, None, None, None));
 
-    // compounded: last 2 = (1.02)(1.03)-1 = 5.06%; years>len uses all 3
+    // compounded: last 2 = (1.02)(1.03)-1 = 5.06%; exactly-len = full product; years>len -> None (don't fake a horizon)
     assert!((inflation_compounded(&series, 2).unwrap() - 5.06).abs() < 1e-9);
-    assert!((inflation_compounded(&series, 10).unwrap() - (1.01 * 1.02 * 1.03 - 1.0) * 100.0).abs() < 1e-9);
+    assert!((inflation_compounded(&series, 3).unwrap() - (1.01 * 1.02 * 1.03 - 1.0) * 100.0).abs() < 1e-9);
+    assert_eq!(inflation_compounded(&series, 10), None); // only 3 years of data -> no 10Y
     assert_eq!(inflation_compounded(&BTreeMap::new(), 5), None);
 
     // BLS CPI-U parse: index level -> YoY %. 2025 = (103/100-1)*100 = 3%; 2024 has no 2023
