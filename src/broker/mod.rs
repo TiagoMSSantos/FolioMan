@@ -3,7 +3,7 @@
 //! live in a committed/shared config file). Each broker exposes a single `order(...)` placing
 //! one MARKET order; the `trade` command confirm-gates every call.
 //!
-//! ponytail: market orders only — no limit/stop. Add an order-type arg when actually needed.
+//! note: market orders only — no limit/stop. Add an order-type arg when actually needed.
 
 pub mod binance;
 pub mod tr;

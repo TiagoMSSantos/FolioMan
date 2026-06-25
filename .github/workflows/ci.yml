@@ -14,7 +14,7 @@ env:
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_MULTIPLEXING: "false"
 
-# ponytail: ubuntu-latest ships a stable Rust toolchain, so no install step needed.
+# note: ubuntu-latest ships a stable Rust toolchain, so no install step needed.
 # rust-cache with a shared key: all jobs restore ONE common warm cache from prior runs
 # (deps compiled once, not N×). Parallel jobs can't share THIS run's cache — GitHub saves it
 # at job end — so cross-run reuse is the win; within-run hand-off would require `needs: build`.

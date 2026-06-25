@@ -49,7 +49,7 @@ async fn main() {
             std::process::exit(2);
         }
     }
-    // ponytail: work + output done; exit now instead of letting the tokio runtime drop block
+    // note: work + output done; exit now instead of letting the tokio runtime drop block
     // ~10s on idle blocking DNS threads (reqwest resolves via getaddrinfo/spawn_blocking, whose
     // pool keep-alive is 10s). Read-only CLI, nothing buffered to flush. Drop this if we ever
     // need destructors to run on a normal command path.

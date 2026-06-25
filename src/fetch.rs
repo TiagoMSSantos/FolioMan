@@ -74,7 +74,7 @@ async fn post_json(client: &Client, url: &str, body: &Value) -> Option<Value> {
 /// `min_interval` apart: a single shared "next free slot" instant that each request claims-and-bumps
 /// under a short lock, then releases the lock and sleeps until its slot. N concurrent tasks therefore
 /// leave the gate evenly spaced at the configured rate instead of all at once. Rate from config
-/// (`fetch_requests_per_second`); 0 disables it. ponytail: one Mutex<Instant>, no token-bucket crate.
+/// (`fetch_requests_per_second`); 0 disables it. note: one Mutex<Instant>, no token-bucket crate.
 static THROTTLE: std::sync::OnceLock<(Mutex<Instant>, StdDuration)> = std::sync::OnceLock::new();
 
 /// Pure slot math (testable, no clock/lock): claim the launch instant for a request arriving at `now`
@@ -125,7 +125,7 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
     // Fallback retry. The global `throttle()` pacer now spaces launches so the fan-out shouldn't 429 in
     // the first place; this stays as cheap insurance for an isolated timeout / transient rate-limit body
     // (parses to JSON but carries no chart.result). Both drop the name to an err stub that then vanishes
-    // from the universe (NVDA disappeared this way). ponytail: fixed 400ms, one extra try — rarely fires
+    // from the universe (NVDA disappeared this way). note: fixed 400ms, one extra try — rarely fires
     // now that requests are paced.
     for attempt in 0..2 {
         if let Some(v) = get_json(client, &url).await {
@@ -293,7 +293,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             // Crypto -EUR with no Yahoo data: many alts (APT, SUI, NEAR…) only carry a -USD pair on
             // Yahoo, not -EUR. Retry once in USD before gating it out — the price still renders in €
             // via the USD->EUR fx_cache rate, and dedup keys on the underlying so the -USD leg slots in
-            // cleanly. ponytail: boxed recursion for the single retry; -USD can't re-trigger this.
+            // cleanly. note: boxed recursion for the single retry; -USD can't re-trigger this.
             if let Some(base) = ticker.strip_suffix("-EUR") {
                 return Box::pin(quote_one(client, urls, fx_cache, &format!("{base}-USD"), dip_days, high_days, intraday, news, windows, infl)).await;
             }
@@ -406,7 +406,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
 
 /// (E) Trailing P/E from the configured fundamentals source (FMP `quote` by default). None unless
 /// `FMP_API_KEY` is set in the environment (kept out of config) AND the source returns a positive
-/// PE. ponytail: free fundamentals tiers are rate-limited, so expect this to populate at `check`
+/// PE. note: free fundamentals tiers are rate-limited, so expect this to populate at `check`
 /// scale and stay None across the ~750-ticker `screen` (where the value tilt then just stays 1.0).
 async fn fetch_pe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
     let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
@@ -420,7 +420,7 @@ async fn fetch_pe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
 /// (F) Trailing return-on-equity (%) from the configured quality source (FMP `ratios-ttm` by
 /// default). None unless `FMP_API_KEY` is set AND the source returns it. Same opt-in / rate-limit
 /// profile as `fetch_pe`: populates at `check` scale, stays None across `screen` (quality tilt = 1.0).
-/// FMP returns ROE as a FRACTION (0.42 = 42%), so ×100. ponytail: BACKTEST-BLIND — point-in-time, no
+/// FMP returns ROE as a FRACTION (0.42 = 42%), so ×100. note: BACKTEST-BLIND — point-in-time, no
 /// as-of reconstruction, so the picks term is theory-weighted and kept small.
 async fn fetch_roe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
     let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
@@ -431,7 +431,7 @@ async fn fetch_roe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
 }
 
 // (G) Cold-fetch budget for the historical-fundamentals lane: FMP free tier = 250 calls/day, so cap
-// NEW network fetches per run and serve everything else from the disk cache. ponytail: process-wide
+// NEW network fetches per run and serve everything else from the disk cache. note: process-wide
 // counter, no cross-run persistence — the disk cache is what actually amortizes the budget over days.
 static FUND_FETCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 const FUND_FETCH_BUDGET: usize = 200; // leave headroom under 250/day for the live P/E/ROE calls
@@ -467,7 +467,7 @@ fn parse_fund_row(v: &Value) -> Option<core::FundRow> {
 /// cached file is reused forever (only the newest quarter goes stale, which old backtest cutoffs never
 /// see) — this + the per-run budget cap is what keeps a wide run under FMP's 250-calls/day free limit.
 /// None unless FMP_API_KEY is set AND real rows parse (an error/premium object caches nothing).
-/// ponytail: flat-file cache, no TTL; add expiry only if a stale newest-quarter ever matters.
+/// note: flat-file cache, no TTL; add expiry only if a stale newest-quarter ever matters.
 pub async fn fetch_fundamentals_history(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
     let v = match std::fs::read_to_string(fund_cache_path(ticker)).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
@@ -564,7 +564,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
             // Yahoo's fallback symbol for an ISIN whose only listing it indexes is Stuttgart is
             // `<ISIN>.SG` — a chart-less venue, so EVERY such resolution is a guaranteed dead fetch
             // (716 of the 783 old "no Yahoo data" gate-outs). A real liquid listing (.DE/.MI/.L/.AS…)
-            // would have ranked first, so there's nothing to rescue: drop it. ponytail: only .SG shows
+            // would have ranked first, so there's nothing to rescue: drop it. note: only .SG shows
             // up in practice; add the suffix to this check if another chart-less regional venue appears.
             (!sym.ends_with(".SG")).then_some(sym)
         })
@@ -587,7 +587,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
 /// row COUNT but empty cells. Symbol+`.LS` is the Yahoo form for the liquid Lisbon names; a wrong/
 /// thin one just returns no Yahoo data downstream and self-gates. Degrades to an empty Vec (with a
 /// diagnostic) on any failure, so the rest of the universe still builds.
-/// ponytail: symbol->`.LS` direct map (no ISIN->Yahoo-search bridge); add the bridge fetch_xetra_etfs
+/// note: symbol->`.LS` direct map (no ISIN->Yahoo-search bridge); add the bridge fetch_xetra_etfs
 /// already has only if coverage turns out poor.
 pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> {
     // the table's columns, in order; index 2 (symbol) is what core::euronext_lisbon_symbols reads.
@@ -646,7 +646,7 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
     if let Some(text) = csv {
         out.extend(text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).take(cap));
     }
-    // Euronext Lisbon equities (Yahoo `.LS`). ponytail: NOT sector-filtered — the set is ~33 names,
+    // Euronext Lisbon equities (Yahoo `.LS`). note: NOT sector-filtered — the set is ~33 names,
     // so a sector-restricted screen could leak a few Lisbon stocks; tighten only if that ever bites
     // (the payload doesn't carry GICS anyway).
     out.extend(lisbon);
@@ -761,7 +761,7 @@ mod tests {
 ///
 /// Value = CPU cores × `fetch_concurrency_multiplier` (settings.yaml, default 8). Read once from
 /// config and cached — the closure runs on the first fetch and never again, so all call sites stay
-/// signature-free. ponytail: lazy global, no threading; bump the multiplier to scan faster or drop it
+/// signature-free. note: lazy global, no threading; bump the multiplier to scan faster or drop it
 /// if Yahoo tightens limits.
 static FETCH_CONCURRENCY: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
 
@@ -806,10 +806,10 @@ pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> O
 pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Quote> {
     // Warm the USD rate once up front. Otherwise every US stock races its own USDEUR=X call in the
     // fan-out; one gets rate-limited -> None cached -> all USD names print "USD?" instead of €.
-    // ponytail: USD only (dominant case); rare currencies (GBP/CHF) still race, fine at this scale.
+    // note: USD only (dominant case); rare currencies (GBP/CHF) still race, fine at this scale.
     let _ = eur_rate(client, urls, "USD", fx_cache).await;
     // progress to stderr (stdout stays a clean table): a big `screen` is minutes of silent network,
-    // so log every PROGRESS_EVERY completions + the final total. ponytail: atomic counter, no bar lib.
+    // so log every PROGRESS_EVERY completions + the final total. note: atomic counter, no bar lib.
     let total = tickers.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
     let concurrency = fetch_concurrency();
@@ -852,7 +852,7 @@ pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &
 }
 
 /// Best-effort live 3-month Euribor (%). Returns (rate, is_live); falls back on failure.
-/// ponytail: scrapes euribor-rates.eu HTML — fragile, hence the config fallback.
+/// note: scrapes euribor-rates.eu HTML — fragile, hence the config fallback.
 /// Live 3-month Euribor (%) scraped from euribor-rates.eu. `None` on any failure — NO config
 /// fallback: a stale hand-entered rate silently poisons the Certificados de Aforro table, so the
 /// caller must surface the error instead.
@@ -871,7 +871,7 @@ pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f
     // API caps at 25 requests/DAY (shared per-IP) and 10 years/call, so we make ONE 10y call — enough
     // for the 5Y/10Y columns; the 20Y column then mirrors ~10y. Set BLS_API_KEY (free, instant signup at
     // data.bls.gov/registrationEngine) to use v2: 500 req/day and 20y/call, so a single call fills the
-    // full 20Y. ponytail: 1 call either way — the old 3-call keyless version exhausted the 25/day cap.
+    // full 20Y. note: 1 call either way — the old 3-call keyless version exhausted the 25/day cap.
     let now = chrono::Utc::now().year();
     let key = std::env::var("BLS_API_KEY").ok().filter(|k| !k.is_empty());
     let (url, start, mut body) = match &key {

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
-    pub tickers: Vec<String>, // single watchlist: `check`/`perf`/`alert` fetch it as their default list AND `screen` always fetches+pins it (marked PIN, exempt from the sector/score cut) so you can compare holdings against the top growth candidates. ponytail: one list, two roles
+    pub tickers: Vec<String>, // single watchlist: `check`/`perf`/`alert` fetch it as their default list AND `screen` always fetches+pins it (marked PIN, exempt from the sector/score cut) so you can compare holdings against the top growth candidates. note: one list, two roles
 
     pub dip_days: i64,
     pub high_days: i64,
@@ -173,11 +173,11 @@ pub struct BuyHeuristic {
 }
 
 /// (E) Hard clamp bounds on the P/E value tilt, so one absurdly cheap/expensive P/E can't swamp the
-/// score. ponytail: fixed — these are guardrails, not a thing anyone tunes; widen here if ever needed.
+/// score. note: fixed — these are guardrails, not a thing anyone tunes; widen here if ever needed.
 pub const VALUE_TILT_MIN: f64 = 0.5;
 pub const VALUE_TILT_MAX: f64 = 1.5;
 
-/// (C) Sessions in the long moving-average window (~200 weeks of trading days). ponytail: a const,
+/// (C) Sessions in the long moving-average window (~200 weeks of trading days). note: a const,
 /// not a knob — 200wk is the conventional long-trend line; change here if you disagree.
 pub const LONG_MA_SESSIONS: usize = 1000;
 
@@ -341,7 +341,7 @@ fn default_bf_etf_search_url() -> String {
 
 /// Default request-signing salt, lifted from the Börse Frankfurt web bundle (`tracing.salt`). Public
 /// (it ships in their client JS), rotates occasionally — refresh from the bundle if `screen`'s ETF
-/// table empties. ponytail: a value that lives in config so a rotation needs an edit, not a rebuild.
+/// table empties. note: a value that lives in config so a rotation needs an edit, not a rebuild.
 fn default_bf_salt() -> String {
     "af5a8d16eb5dc49f8a72b26fd9185475c7a".to_string()
 }

@@ -3,7 +3,7 @@
 //! keeps its asserts in a `#[cfg(test)] mod tests` (reaching privates via `use super::*`),
 //! compiled only under `cargo test`. `tests/` holds the few public-API integration tests.
 
-// ponytail: clippy's COSMETIC lints carved out crate-wide — they flag no bugs, only code shape, and
+// note: clippy's COSMETIC lints carved out crate-wide — they flag no bugs, only code shape, and
 // churn a deliberately dense, working codebase (same call as dropping `cargo fmt --check`). `-D warnings`
 // in CI still denies the real-defect groups (correctness/suspicious/perf). Upgrade path: if any of these
 // ever masks a genuine issue, drop the allow and fix the spot.

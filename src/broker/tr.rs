@@ -9,7 +9,7 @@ use std::io::Write;
 
 /// Run the unofficial TR login, then stop.
 ///
-/// ponytail: login is implemented and real; **order placement is NOT**. TR sends orders over
+/// note: login is implemented and real; **order placement is NOT**. TR sends orders over
 /// an undocumented websocket protocol that shifts between app releases — guessing it would be
 /// a bug farm that silently mis-trades real money, the one thing never to fake. So this
 /// authenticates, proves the session, and stops with a clear error. Upgrade path: vendor a

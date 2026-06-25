@@ -37,7 +37,7 @@ pub const CA_SERIES: &[CaSeries] = &[
 
 /// Cumulative % gain on €1 held for `years` whole years, compounding each holding year's
 /// rate = base + that year's permanence premium (yr1 none, yr2-5 early, yr6+ late).
-/// ponytail: annual compounding, ignores intra-year capitalisation — close enough for a
+/// note: annual compounding, ignores intra-year capitalisation — close enough for a
 /// footer estimate, and Euribor (so base) drifts anyway. Assumes today's base holds.
 pub fn ca_cumulative_gain(base: f64, premium_early: f64, premium_late: f64, years: i64) -> f64 {
     let mut factor = 1.0;
@@ -630,7 +630,7 @@ pub fn spearman(xs: &[f64], ys: &[f64]) -> Option<f64> {
 }
 
 /// Fractional ranks (1-based; tied values share the average of their ranks), in original order.
-/// ponytail: O(n log n) sort + linear tie-merge; fine for the backtest's handful-to-hundreds of names.
+/// note: O(n log n) sort + linear tie-merge; fine for the backtest's handful-to-hundreds of names.
 fn ranks(v: &[f64]) -> Vec<f64> {
     let mut idx: Vec<usize> = (0..v.len()).collect();
     idx.sort_by(|&a, &b| v[a].partial_cmp(&v[b]).unwrap_or(std::cmp::Ordering::Equal));
@@ -694,7 +694,7 @@ pub struct FundFactors {
 /// Derive the as-of fundamental factors at `cutoff` from filed statements, looking back ~`yrs`. Every
 /// read goes through `fund_as_of` so NOTHING after the cutoff's filing leaks in (look-ahead guard). A
 /// growth needs a positive base to be meaningful, so a non-positive denominator -> None, never a
-/// garbage ratio. ponytail: EPS CAGR only when both endpoints are positive (a sign flip isn't a CAGR).
+/// garbage ratio. note: EPS CAGR only when both endpoints are positive (a sign flip isn't a CAGR).
 pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactors {
     let now = fund_as_of(rows, cutoff);
     let long_ago = fund_as_of(rows, cutoff - Duration::days(yrs * 365));
@@ -729,7 +729,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
 
 /// Build a Quote AS OF index `as_of` (inclusive) from the full history, filling ONLY the price-derived
 /// fields the buy score reads — reusing the exact same horizon/SMA/vol/R²/drawdown fns on the `[..=as_of]`
-/// slices, so the backtest scores a name exactly as the live tool would have on that day. ponytail:
+/// slices, so the backtest scores a name exactly as the live tool would have on that day. note:
 /// dividends / turnover / P/E / ROE are NOT reconstructed (no clean as-of source), so those score
 /// terms go neutral here; the backtest validates the PRICE-based heuristic, which is the bulk of it.
 pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: usize, cadence: usize) -> Quote {
@@ -740,7 +740,7 @@ pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: 
     quote.range_pct = price_pct_rank(c);
     // cadence = bars/year (252 daily, 12 monthly): vol over ~1y of bars; the long MA window scaled
     // from its daily session count so the SAME ~4y/200wk span is used on either cadence (cadence=252
-    // reproduces the daily path exactly). ponytail: monthly bars APPROXIMATE the daily vol/MA, not
+    // reproduces the daily path exactly). note: monthly bars APPROXIMATE the daily vol/MA, not
     // equal them — fine, a backtest run is single-cadence so the cross-sectional ranks stay consistent.
     quote.volatility_pct = volatility_pct(c, cadence);
     let long_ma = crate::config::LONG_MA_SESSIONS * cadence / 252;

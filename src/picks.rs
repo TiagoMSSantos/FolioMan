@@ -100,7 +100,7 @@ fn momentum_factor(quote: &Quote, bounce: f64, knife: f64) -> f64 {
 /// that are never a long-term hold, so they can't be "quality on sale". `direxion` catches the
 /// Direxion Daily 3× family when Yahoo hands a SHORT name ("Direxion Daily Technology" with the
 /// "Bull 3X" dropped) that the `3x` marker would miss (e.g. TECL leaked into the stocks table).
-/// ponytail: cheap name match; tighten the list if a legit name ever trips it.
+/// note: cheap name match; tighten the list if a legit name ever trips it.
 const LEVERAGED_MARKERS: &[&str] =
     &["2x", "3x", " short", "inverse", "leverag", "bear ", "ultra", "direxion"];
 
@@ -112,7 +112,7 @@ fn is_leveraged(name: &str) -> bool {
 /// Substrings (lowercased) that mark a pooled fund (ETF / UCITS index fund) vs a single-company
 /// stock — plain index-fund longNames all carry one ("...S&P 500 UCITS ETF", "...ETF Trust"),
 /// company names ("Apple Inc.") don't. Used only to SPLIT the equity table, never to gate.
-/// ponytail: name match, no asset-type field exists; tighten the list if a stock ever trips it.
+/// note: name match, no asset-type field exists; tighten the list if a stock ever trips it.
 const ETF_MARKERS: &[&str] = &["etf", "ucits", " index fund", " fund "];
 
 fn is_etf(name: &str) -> bool {
@@ -496,7 +496,7 @@ const EU_BUYABLE_MARKETS: &[&str] = &[
 /// Can an EU-retail investor actually BUY this? Filters the tables down to reachable names:
 /// - **crypto** (currency-quoted): majors trade on EU-regulated exchanges -> buyable. Stablecoins /
 ///   corpses are already score-gated, and no free per-token EU-availability feed exists, so don't
-///   over-filter. ponytail: ceiling — a delisted alt could slip through; tighten if it ever bites.
+///   over-filter. note: ceiling — a delisted alt could slip through; tighten if it ever bites.
 /// - **ETF**: only funds LISTED on a European exchange. A US-domiciled ETF (SPY/QQQ/VOO) trades on a
 ///   US venue and has no PRIIPs KID, so EU brokers can't sell it to retail; a UCITS fund lists on
 ///   Xetra/LSE/Borsa Italiana (market != USA/Canada). Venue is the robust UCITS proxy — the name

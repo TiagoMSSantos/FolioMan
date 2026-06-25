@@ -10,7 +10,7 @@
 //! That's why CI doesn't swallow the failure: a rate-limit just skips (green), only genuine drift goes red.
 //! READ-ONLY endpoints only — never a broker/order call.
 
-// ponytail: separate test crate, so the lib's crate-root allow doesn't reach here. Same call: docs render fine.
+// note: separate test crate, so the lib's crate-root allow doesn't reach here. Same call: docs render fine.
 #![allow(clippy::doc_lazy_continuation)]
 
 use folioman::{config, fetch};

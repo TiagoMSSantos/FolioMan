@@ -24,7 +24,7 @@ pub async fn run(args: Vec<String>) {
     );
 
     // live EU HICP series for inflation-adjusting the long-horizon returns (only when enabled).
-    // ponytail: this refetches EU HICP that the footer also pulls below; one extra call, only when on.
+    // note: this refetches EU HICP that the footer also pulls below; one extra call, only when on.
     let eu_infl = if settings.inflation_adjust.enabled {
         Some(fetch::fetch_eu_inflation(&client, &settings.urls).await)
     } else {
