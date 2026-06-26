@@ -371,6 +371,7 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     type Set = fn(&mut BuyHeuristic, f64);
     let dims: &[(&str, Get, Set, f64, f64)] = &[
         ("growth_trend_weight", |t| t.growth_trend_weight, |t, v| t.growth_trend_weight = v, 0.0, 1.0),
+        ("long_trend_cap", |t| t.long_trend_cap, |t, v| t.long_trend_cap = v, 15.0, 60.0),
         ("growth_accel_weight", |t| t.growth_accel_weight, |t, v| t.growth_accel_weight = v, 0.0, 0.6),
         ("sharpe_weight", |t| t.sharpe_weight, |t, v| t.sharpe_weight = v, 0.0, 4.0),
         ("calmar_weight", |t| t.calmar_weight, |t, v| t.calmar_weight = v, 0.0, 3.0),
@@ -436,6 +437,14 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     println!("  weights (searched dims only):");
     for &(name, get, _, _, _) in &active {
         println!("    {name:<22} {:.3}", get(&won));
+    }
+    // NaN guard: a degenerate sample (e.g. the monthly path admits too few gated growth names per
+    // bucket to form a top/bottom-half spread) yields a NaN edge, and `NaN <= NaN` is false -> the
+    // old check fell through and wrongly printed "BEATS ... paste into settings.yaml". No finite edge
+    // to compare = no edge proven = keep the default.
+    if !won_test_edge.is_finite() || !def_edge.is_finite() {
+        println!("  -> TEST edge is undefined ({won_test_edge:+.1} vs {def_edge:+.1}) — too few gated names to form a spread on this sample. SHIP NOTHING.");
+        return;
     }
     if won_test_edge <= def_edge {
         println!("  -> winner does NOT beat the default on the held-out TEST edge ({won_test_edge:+.1} vs {def_edge:+.1}); the shipped knobs already generalise. SHIP NOTHING.");
