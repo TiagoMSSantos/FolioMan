@@ -308,6 +308,34 @@ fn edge_halves(pairs: &[(&Sample, f64)]) -> (f64, f64) {
     (mean(&v[..half]), mean(&v[v.len() - half..]))
 }
 
+/// Tercile means of peer-relative return, sorted by score desc: (top, mid, bottom). A config can post a
+/// strong top-vs-bottom `edge` while SCRAMBLING the middle (mid below bottom = the score only separates
+/// the extremes, fragile/regime-bound). Monotone terciles (top > mid > bottom) is the cheap robustness
+/// check the 2-bucket edge is blind to. note: terciles, not deciles — the gated growth sample is too
+/// small for 10 stable buckets. <3 rows -> all-NaN (no spread to read).
+fn edge_terciles(pairs: &[(&Sample, f64)]) -> (f64, f64, f64) {
+    let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
+    v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let n = v.len();
+    if n < 3 {
+        return (f64::NAN, f64::NAN, f64::NAN);
+    }
+    let k = n / 3; // outer terciles size k; the middle keeps the remainder
+    let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
+    (mean(&v[..k]), mean(&v[k..n - k]), mean(&v[n - k..]))
+}
+
+/// Tercile string for the tune report: `+top/+mid/+bot monotone|SCRAMBLED`. Scores `samples` through the
+/// growth lane under `t` (same gate set as lane_metrics) and reads its tercile gradient — a SCRAMBLED tag
+/// warns the human that a winning 2-bucket edge rests on extreme rows only, not a real ranking.
+fn mono_str(samples: &[Sample], t: &BuyHeuristic) -> String {
+    let scored: Vec<(&Sample, f64)> =
+        samples.iter().filter_map(|s| growth_score(&s.quote, t).map(|v| (s, v))).collect();
+    let (top, mid, bot) = edge_terciles(&scored);
+    let tag = if top > mid && mid > bot { "monotone" } else { "SCRAMBLED" };
+    format!("{top:+.1}/{mid:+.1}/{bot:+.1} {tag}")
+}
+
 /// Score `samples` through `scorer`/`tuning` (gates applied) -> (rho, edge) on the gated rows: rho =
 /// Spearman(score, peer-relative); edge = top-half minus bottom-half peer-relative. rho is None when
 /// fewer than 4 rows pass the gates. Pure -> the `tune` search calls it thousands of times cheaply.
@@ -416,7 +444,7 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
         train.len(),
         test.len()
     );
-    println!("  shipped default      TEST: rho {}  edge {:+.1}", fmt(def_rho), def_edge);
+    println!("  shipped default      TEST: rho {}  edge {:+.1}  terciles {}", fmt(def_rho), def_edge, mono_str(test, default));
     if !inert.is_empty() {
         let names: Vec<&str> = inert.iter().map(|(n, ..)| *n).collect();
         println!("  inert on this sample (skipped, kept at default): {}", names.join(", "));
@@ -433,7 +461,7 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     let (won_train_rho, _) = lane_metrics(train, growth_score, &won);
     let (won_test_rho, won_test_edge) = lane_metrics(test, growth_score, &won);
     println!("  search winner       TRAIN: rho {}  edge {:+.1}", fmt(won_train_rho), train_edge);
-    println!("  search winner        TEST: rho {}  edge {:+.1}   (train ≫ test ⇒ overfit)", fmt(won_test_rho), won_test_edge);
+    println!("  search winner        TEST: rho {}  edge {:+.1}  terciles {}   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)", fmt(won_test_rho), won_test_edge, mono_str(test, &won));
     println!("  weights (searched dims only):");
     for &(name, get, _, _, _) in &active {
         println!("    {name:<22} {:.3}", get(&won));
@@ -608,6 +636,30 @@ mod tests {
         assert!(rho2.unwrap() < -0.9 && edge2 < 0.0, "reversed -> negative rho/edge, got {rho2:?}/{edge2}");
         // too few gated rows -> rho None (the <4 guard the search must tolerate)
         assert!(lane_metrics(&up[..3], dd_score, &BuyHeuristic::default()).0.is_none());
+    }
+
+    /// `edge_terciles` must read the score-sorted gradient: a score that tracks the return reads a
+    /// monotone top>mid>bot; a score that only separates the EXTREMES (mid sags below bot) reads
+    /// SCRAMBLED — the fragility the 2-bucket edge hides.
+    #[test]
+    fn edge_terciles_catches_scramble() {
+        // score == relative -> perfect ranking -> top > mid > bot
+        let mono: Vec<Sample> = (1..=9).map(|i| s_rel(i as f64, 0.0)).collect();
+        let pairs: Vec<(&Sample, f64)> = mono.iter().map(|s| (s, s.relative)).collect();
+        let (t, m, b) = edge_terciles(&pairs);
+        assert!(t > m && m > b, "monotone score -> ordered terciles, got {t}/{m}/{b}");
+
+        // build a score that puts the LOWEST relatives in the MIDDLE tercile: top rows + a sagging middle.
+        // relatives by descending score: [9,8,7, 1,2,3, 4,5,6] -> top mean 8, mid mean 2, bot mean 5 -> mid<bot
+        let rels = [9.0, 8.0, 7.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let scr: Vec<Sample> = rels.iter().map(|&r| s_rel(r, 0.0)).collect();
+        let pairs: Vec<(&Sample, f64)> =
+            scr.iter().enumerate().map(|(i, s)| (s, (rels.len() - i) as f64)).collect(); // score desc
+        let (t, m, b) = edge_terciles(&pairs);
+        assert!(!(t > m && m > b) && m < b, "sagging middle -> SCRAMBLED (mid<bot), got {t}/{m}/{b}");
+
+        // <3 rows -> all NaN (no spread to read)
+        assert!(edge_terciles(&pairs[..2]).0.is_nan());
     }
 
     /// A scorer that READS one tuning field — so perturbing THAT field changes scores (the dim is live),
