@@ -711,9 +711,41 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     print_lane(ranked(quotes, tuning, growth_scorer, 0.0, &pinned_set), n, w, "growth candidates", growth, sectors, tuning.growth_min_score, &pinned_set);
 }
 
+/// Suggested basket weights (%, summing to 100) for an already-scored list: weight ∝ score ÷
+/// volatility, so two near-equal-score names don't get equal money when one swings twice as hard.
+/// Vol-target, NOT Kelly — Kelly needs a forward return distribution we don't have and overbets
+/// noise. A missing or near-zero vol is floored at `MIN_VOL` so a no-history name can't grab the
+/// whole basket; a non-positive score contributes 0. Empty in -> empty out; an all-zero pool -> all
+/// zeros (no NaN). `scored` = `(growth score, volatility_pct)`; the returned weights are aligned to it.
+pub fn size_weights(scored: &[(f64, Option<f64>)]) -> Vec<f64> {
+    const MIN_VOL: f64 = 5.0; // % daily-return stdev floor (≈ a calm large-cap); caps a low-vol name's grab
+    let raw: Vec<f64> = scored.iter().map(|(score, vol)| score.max(0.0) / vol.unwrap_or(MIN_VOL).max(MIN_VOL)).collect();
+    let total: f64 = raw.iter().sum();
+    if total <= 0.0 {
+        return vec![0.0; scored.len()]; // nothing positive to size -> zeros, never a divide-by-zero NaN
+    }
+    raw.iter().map(|r| r / total * 100.0).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `size_weights`: vol-target sizing — bigger slice for higher score / lower vol; sums to 100;
+    /// degenerate inputs (empty, all-zero score) stay finite. Pure, no network.
+    #[test]
+    fn size_weights_vol_target() {
+        // A: score 72, vol 1%. B: SAME score, DOUBLE vol. C: lower score, same vol as A.
+        let w = size_weights(&[(72.0, Some(1.0)), (72.0, Some(2.0)), (40.0, Some(1.0))]);
+        assert!((w.iter().sum::<f64>() - 100.0).abs() < 1e-9, "weights must sum to 100"); // normalised
+        assert!(w[0] > w[1], "same score, lower vol -> bigger slice");
+        assert!(w[0] > w[2], "same vol, higher score -> bigger slice");
+        assert!((w[0] - 2.0 * w[1]).abs() < 1e-9, "double the vol -> half the weight");
+        // degenerate: empty -> empty; all-zero score -> zeros (no NaN/panic); missing vol uses the floor.
+        assert!(size_weights(&[]).is_empty());
+        assert_eq!(size_weights(&[(0.0, Some(1.0))]), vec![0.0]);
+        assert!(size_weights(&[(50.0, None), (50.0, None)]).iter().all(|w| (w - 50.0).abs() < 1e-9));
+    }
 
     /// Buy-heuristic asserts (no network). White-box: reaches `picks` privates via `use super::*`.
     #[test]

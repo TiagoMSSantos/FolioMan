@@ -3,6 +3,7 @@
 //!   folioman check  [TICKERS...]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline
 //!   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
 //!   folioman screen [TICKERS...]   scan live universe (CoinGecko + S&P500): ATH/ATL / fallers / dividends / buys
+//!   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
 //!   folioman backtest [YEARS] [TICKERS...|universe] [fund] [tune]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search
 //!   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
@@ -23,6 +24,7 @@ folioman — review ETF/stock/crypto holdings. Read-only, never trades.
   folioman check  [TICKERS...]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline
   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
   folioman screen [TICKERS...]   scan live universe (CoinGecko + S&P500): ATH/ATL / fallers / dividends / buys
+  folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
   folioman backtest [YEARS] [TICKERS...|universe] [fund] [tune]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search
   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
   folioman accounts              cash available + holdings per broker (read-only; env creds)
@@ -40,6 +42,7 @@ async fn main() {
         "check" => commands::check::run(rest).await,
         "perf" => commands::perf::run(rest).await,
         "screen" => commands::screen::run(rest).await,
+        "size" => commands::size::run(rest).await,
         "backtest" => commands::backtest::run(rest).await,
         "alert" => commands::alert::run(rest).await,
         "accounts" => commands::accounts::run(rest).await,

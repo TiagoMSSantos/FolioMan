@@ -7,6 +7,7 @@ pub mod backtest;
 pub mod check;
 pub mod perf;
 pub mod screen;
+pub mod size;
 pub mod trade;
 
 /// First `n` chars (Python str slicing is by char, like Rust here).
