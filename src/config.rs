@@ -299,6 +299,34 @@ pub struct Urls {
     // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.
     #[serde(default = "default_euronext_lisbon_url")]
     pub euronext_lisbon: String,
+    // (Item 4) SEC EDGAR insider (Form 4) source for the `insider_net_buys_90d` factor — free, no key,
+    // but SEC requires a DESCRIPTIVE User-Agent or it 403s. Only hit (cached) under `backtest … insider`.
+    // {cik} = 10-digit zero-padded. Defaulted so an older settings.yaml still loads.
+    #[serde(default = "default_sec_ticker_cik_url")]
+    pub sec_ticker_cik: String,
+    #[serde(default = "default_sec_submissions_url")]
+    pub sec_submissions: String,
+    // SET THIS to a real "app contact@email" — SEC blocks generic/empty agents. Placeholder works in dev
+    // but be a good citizen before any wide run.
+    #[serde(default = "default_sec_user_agent")]
+    pub sec_user_agent: String,
+}
+
+/// (Item 4) Default SEC ticker→CIK map (one fetch, cached): a JSON object of {cik_str, ticker, title}.
+fn default_sec_ticker_cik_url() -> String {
+    "https://www.sec.gov/files/company_tickers.json".to_string()
+}
+
+/// (Item 4) Default SEC submissions endpoint: `filings.recent` carries parallel form/accessionNumber/
+/// primaryDocument/filingDate arrays; we filter form == "4". {cik} = 10-digit zero-padded.
+fn default_sec_submissions_url() -> String {
+    "https://data.sec.gov/submissions/CIK{cik}.json".to_string()
+}
+
+/// (Item 4) Default SEC User-Agent. SEC's fair-access policy needs a descriptive contact; replace the
+/// email with your own before running wide.
+fn default_sec_user_agent() -> String {
+    "folioman/0.1 (contact: set-your-email@example.com)".to_string()
 }
 
 /// Default Euronext Lisbon equities endpoint: the live DataTables JSON scoped to the Lisbon MIC

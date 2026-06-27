@@ -511,6 +511,155 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
     }
 }
 
+// ── (Item 4) SEC EDGAR insider (Form 4) lane ───────────────────────────────────────────────────────
+// Inert by default: only reached under `backtest … insider`, factor off unless `growth_fund_factor:
+// insider_net_buys_90d`. Free, no key, but SEC fair-access needs a descriptive User-Agent (config).
+static SEC_FETCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const SEC_FETCH_BUDGET: usize = 600; // per-run cap so one wide backtest can't hammer SEC's ~10 req/s
+const SEC_FORM4_CAP: usize = 40; // per ticker: only the N newest Form 4 XML docs (older cutoffs may miss)
+static CIK_MAP: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
+
+fn sec_cache_path(ticker: &str) -> std::path::PathBuf {
+    std::path::Path::new(".sec_cache").join(format!("{}.json", ticker.replace(['/', '\\'], "_")))
+}
+
+async fn sec_get_text(client: &Client, url: &str, ua: &str) -> Option<String> {
+    throttle().await;
+    client.get(url).header("User-Agent", ua).send().await.ok()?.text().await.ok()
+}
+async fn sec_get_json(client: &Client, url: &str, ua: &str) -> Option<Value> {
+    throttle().await;
+    client.get(url).header("User-Agent", ua).send().await.ok()?.json::<Value>().await.ok()
+}
+
+/// First `open`..`close` slice; `between_all` = every non-overlapping one in document order. Tiny manual
+/// scan so the Form-4 parse needs no XML/regex dependency. note: the tags in Form-4 primary XML are
+/// unprefixed (`<transactionCode>`), so a literal find is enough.
+fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = s.find(open)? + open.len();
+    let end = s[start..].find(close)? + start;
+    Some(&s[start..end])
+}
+fn between_all<'a>(s: &'a str, open: &str, close: &str) -> Vec<&'a str> {
+    let mut out = Vec::new();
+    let mut rest = s;
+    while let Some(start) = rest.find(open) {
+        let after = &rest[start + open.len()..];
+        match after.find(close) {
+            Some(end) => {
+                out.push(&after[..end]);
+                rest = &after[end + close.len()..];
+            }
+            None => break,
+        }
+    }
+    out
+}
+
+/// (Item 4) Parse a Form-4 ownership XML into open-market transactions. Pairs the i-th
+/// `<transactionDate><value>…</value>` with the i-th `<transactionCode>…</transactionCode>` (Form 4 emits
+/// one of each per transaction, in order); keeps only `P` (purchase) / `S` (sale). Pure -> unit-tested.
+/// ceiling: assumes well-formed ordering; a malformed filing yields fewer pairs, never a panic.
+fn parse_form4_txns(xml: &str) -> Vec<core::InsiderTx> {
+    let dates: Vec<NaiveDate> = between_all(xml, "<transactionDate>", "</transactionDate>")
+        .into_iter()
+        .filter_map(|seg| between(seg, "<value>", "</value>"))
+        .filter_map(|d| NaiveDate::parse_from_str(d.trim(), "%Y-%m-%d").ok())
+        .collect();
+    let codes = between_all(xml, "<transactionCode>", "</transactionCode>");
+    dates
+        .into_iter()
+        .zip(codes)
+        .filter_map(|(date, code)| match code.trim() {
+            "P" => Some(core::InsiderTx { date, buy: true }),
+            "S" => Some(core::InsiderTx { date, buy: false }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// (Item 4) ticker -> 10-digit zero-padded CIK from SEC's `company_tickers.json` (fetched once, disk-
+/// cached, then parsed into a process-wide map). A non-US ticker (".DE", "-USD") never appears -> None ->
+/// the insider factor simply skips it. An unreachable map caches empty for the run (degrades to no
+/// coverage, never panics).
+async fn sec_cik(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
+    let path = sec_cache_path("_tickers");
+    if !path.exists() {
+        if let Some(txt) = sec_get_text(client, &urls.sec_ticker_cik, &urls.sec_user_agent).await {
+            if txt.contains("cik_str") {
+                if let Some(dir) = path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(&path, txt);
+            }
+        }
+    }
+    let map = CIK_MAP.get_or_init(|| {
+        let mut m = HashMap::new();
+        let parsed = std::fs::read_to_string(sec_cache_path("_tickers")).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
+        if let Some(obj) = parsed.as_ref().and_then(|v| v.as_object()) {
+            for e in obj.values() {
+                if let (Some(t), Some(cik)) = (e.get("ticker").and_then(|x| x.as_str()), e.get("cik_str").and_then(|x| x.as_u64())) {
+                    m.insert(t.to_uppercase(), format!("{cik:010}"));
+                }
+            }
+        }
+        m
+    });
+    map.get(&ticker.to_uppercase()).cloned()
+}
+
+/// (Item 4) Open-market insider transactions for a US ticker, newest first, from SEC Form-4 filings.
+/// DISK-CACHED under `.sec_cache/{ticker}.json` (append-only history -> reuse forever). Flow: ticker→CIK,
+/// then `submissions/CIK….json` `filings.recent` filtered to form "4", then each Form-4 primary XML
+/// parsed for P/S transactions. Caps fetches per ticker (`SEC_FORM4_CAP`) and per run (`SEC_FETCH_BUDGET`)
+/// to respect SEC fair-access. None unless real transactions parse. ceiling: only the submissions
+/// `recent` block (~1000 newest filings) is read, so very old backtest cutoffs may get no coverage.
+pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::InsiderTx>> {
+    use std::sync::atomic::Ordering;
+    let cache = sec_cache_path(ticker);
+    if let Some(txns) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<(String, bool)>>(&s).ok()) {
+        return Some(
+            txns.iter()
+                .filter_map(|(d, b)| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok().map(|date| core::InsiderTx { date, buy: *b }))
+                .collect(),
+        ); // cache hit -> no network, no budget spend
+    }
+    let cik = sec_cik(client, urls, ticker).await?; // non-US / unknown ticker -> None
+    let v = sec_get_json(client, &urls.sec_submissions.replace("{cik}", &cik), &urls.sec_user_agent).await?;
+    let recent = v.get("filings")?.get("recent")?;
+    let forms = recent.get("form")?.as_array()?;
+    let accs = recent.get("accessionNumber")?.as_array()?;
+    let docs = recent.get("primaryDocument")?.as_array()?;
+    let cik_trim = cik.trim_start_matches('0');
+    let mut txns: Vec<core::InsiderTx> = Vec::new();
+    let mut fetched = 0;
+    for (i, form) in forms.iter().enumerate() {
+        if form.as_str() != Some("4") {
+            continue;
+        }
+        if fetched >= SEC_FORM4_CAP || SEC_FETCHES.fetch_add(1, Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+            break;
+        }
+        fetched += 1;
+        let (Some(acc), Some(doc)) = (accs.get(i).and_then(|x| x.as_str()), docs.get(i).and_then(|x| x.as_str())) else {
+            continue;
+        };
+        let url = format!("https://www.sec.gov/Archives/edgar/data/{cik_trim}/{}/{doc}", acc.replace('-', ""));
+        if let Some(xml) = sec_get_text(client, &url, &urls.sec_user_agent).await {
+            txns.extend(parse_form4_txns(&xml)); // an xsl-HTML primaryDocument yields nothing -> harmless
+        }
+    }
+    if !txns.is_empty() {
+        let serial: Vec<(String, bool)> = txns.iter().map(|t| (t.date.format("%Y-%m-%d").to_string(), t.buy)).collect();
+        if let Some(dir) = cache.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&cache, serde_json::to_string(&serial).unwrap_or_default());
+    }
+    (!txns.is_empty()).then_some(txns)
+}
+
 /// Latest Bitcoin NUPL (net unrealized profit/loss) from bitcoin-data.com. None on failure.
 pub async fn fetch_nupl(client: &Client, urls: &Urls) -> Option<f64> {
     get_json(client, &urls.nupl).await?.get("nupl")?.as_f64()
@@ -710,6 +859,31 @@ mod tests {
     let (l2, _) = claim_slot(n1, base + 2 * iv, iv); // next claim same `now` -> pushed to the slot
     assert_eq!(l2, base + 3 * iv);
     assert!(l2.duration_since(l1) >= iv);
+    }
+
+    /// (Item 4) `parse_form4_txns` pairs each transaction's date with its code and keeps only P/S. Two
+    /// transactions here: a purchase (P -> buy) and a sale (S -> sale); an option-grant code (A) is
+    /// dropped. Pins the manual XML scan that has no schema to lean on.
+    #[test]
+    fn form4_parse_keeps_open_market() {
+        let xml = "\
+            <nonDerivativeTransaction>\
+              <transactionDate><value>2021-03-04</value></transactionDate>\
+              <transactionCoding><transactionCode>P</transactionCode></transactionCoding>\
+            </nonDerivativeTransaction>\
+            <nonDerivativeTransaction>\
+              <transactionDate><value>2021-03-10</value></transactionDate>\
+              <transactionCoding><transactionCode>S</transactionCode></transactionCoding>\
+            </nonDerivativeTransaction>\
+            <nonDerivativeTransaction>\
+              <transactionDate><value>2021-04-01</value></transactionDate>\
+              <transactionCoding><transactionCode>A</transactionCode></transactionCoding>\
+            </nonDerivativeTransaction>";
+        let txns = parse_form4_txns(xml);
+        assert_eq!(txns.len(), 2); // the A (option grant) is dropped
+        assert!(txns[0].buy && txns[0].date == NaiveDate::from_ymd_opt(2021, 3, 4).unwrap());
+        assert!(!txns[1].buy && txns[1].date == NaiveDate::from_ymd_opt(2021, 3, 10).unwrap());
+        assert!(parse_form4_txns("<x/>").is_empty()); // no transactions -> empty, never panics
     }
 
     /// Pure JSON parsers against synthetic API payloads (no network). Guards the field extraction +

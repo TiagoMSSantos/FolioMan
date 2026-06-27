@@ -88,6 +88,7 @@ pub async fn run(args: Vec<String>) {
     let mut long = false;
     let mut fund = false;
     let mut tune = false;
+    let mut insider = false;
     let mut tickers: Vec<String> = Vec::new();
     for a in &args {
         match a.parse::<i64>() {
@@ -96,6 +97,7 @@ pub async fn run(args: Vec<String>) {
             _ if a.eq_ignore_ascii_case("long") => long = true,
             _ if a.eq_ignore_ascii_case("fund") => fund = true,
             _ if a.eq_ignore_ascii_case("tune") => tune = true,
+            _ if a.eq_ignore_ascii_case("insider") => insider = true, // (Item 4) also pull SEC Form-4 net buys
             _ => tickers.push(a.clone()),
         }
     }
@@ -144,6 +146,9 @@ pub async fn run(args: Vec<String>) {
                 // (G) one cached fundamentals fetch per ticker (only when `fund`); as-of factors are then
                 // derived per cutoff from these rows with no further network. None -> the fund lane skips it.
                 let fund_rows = if fund { fetch::fetch_fundamentals_history(client, urls, tk).await } else { None };
+                // (Item 4) one cached SEC Form-4 fetch per ticker (only when `insider`); net buys are then
+                // derived per cutoff from these transactions with no further network. None -> factor skips.
+                let insider_txns = if insider { fetch::fetch_insider_history(client, urls, tk).await } else { None };
                 let mut out = Vec::new();
                 let mut i = min_history;
                 while i < dates.len() {
@@ -156,7 +161,14 @@ pub async fn run(args: Vec<String>) {
                             // peer-mean spans the whole period universe; each lane filters by its own gates.
                             let mut quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
                             let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
-                            let fund = fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], years));
+                            let mut fund = fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], years));
+                            // (Item 4) attach the as-of net insider buys (90d before the cutoff, transaction-
+                            // date guarded) onto the SAME FundFactors; build one if the FMP lane is off so
+                            // `insider` works standalone (no FMP key needed).
+                            if let Some(txns) = insider_txns.as_ref() {
+                                fund.get_or_insert_with(Default::default).insider_net_buys_90d =
+                                    core::insider_net_buys(txns, dates[i], 90);
+                            }
                             // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                             // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
                             // in settings.yaml to whichever report_fund_lane (below) shows +rho + both-half OOS,
@@ -230,7 +242,7 @@ pub async fn run(args: Vec<String>) {
     ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, buy_knobs);
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, growth_knobs);
-    if fund {
+    if fund || insider {
         report_fund_lane(&samples);
         sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
     }
@@ -262,6 +274,8 @@ fn report_fund_lane(samples: &[Sample]) {
         ("op_margin", |f| f.op_margin),
         ("margin_trend", |f| f.margin_trend),
         ("eps_growth", |f| f.eps_growth),
+        ("insider_net90d", |f| f.insider_net_buys_90d), // (Item 4) only populated under `insider`
+        ("composite", |f| core::select_fund_factor(f, "composite")), // (Item 3) blend of the present factors
     ];
     let covered = samples.iter().filter(|s| s.fund.is_some()).count();
     println!("\n── FUNDAMENTAL (as-of, standalone factor probes) ──");
@@ -318,7 +332,11 @@ fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], b
 /// then prints the one to paste into settings.yaml. Ships nothing. Needs the `fund` path; with <8 cutoffs
 /// carrying fundamentals there's nothing to sweep. Same chronological split + seeded search as `tune`.
 fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
-    const FACTORS: [&str; 6] = ["rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth"];
+    const FACTORS: [&str; 8] = [
+        "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
+        "insider_net_buys_90d", // (Item 4) shows n/a unless `insider` populated it
+        "composite",            // (Item 3) shows n/a until ≥2 factors are present
+    ];
     if samples.iter().filter(|s| s.fund.is_some()).count() < 8 {
         return; // no as-of fundamentals (no FMP key / cold cache) -> report_fund_lane already said so
     }

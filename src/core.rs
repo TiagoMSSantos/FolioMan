@@ -692,6 +692,43 @@ pub struct FundFactors {
     pub op_margin: Option<f64>,    // current operating margin level (operating efficiency)
     pub margin_trend: Option<f64>, // op-margin now minus ~1y ago (margin expanding = strengthening)
     pub eps_growth: Option<f64>,   // EPS CAGR over the lookback (bottom-line compounding; both ends must be +)
+    pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
+}
+
+/// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date (the
+/// look-ahead guard) and its direction. Only `P` (purchase) and `S` (sale) are kept — option grants,
+/// gifts, tax-withholding (codes A/G/F/M…) are noise for a "conviction buying" signal.
+#[derive(Clone, Copy, Debug)]
+pub struct InsiderTx {
+    pub date: NaiveDate,
+    pub buy: bool, // true = open-market purchase (P), false = open-market sale (S)
+}
+
+/// (Item 4) Net open-market insider conviction in the `window_days` BEFORE `cutoff`: (#buys − #sales),
+/// counting each `InsiderTx` ±1. The transaction date is the look-ahead guard — a filing dated on/after
+/// the cutoff can't leak in. None when no transaction falls in the window (no coverage -> the factor stays
+/// neutral, never a fabricated 0). Pure -> unit-tested without touching SEC.
+pub fn insider_net_buys(txns: &[InsiderTx], cutoff: NaiveDate, window_days: i64) -> Option<f64> {
+    let start = cutoff - Duration::days(window_days);
+    let net: i64 = txns
+        .iter()
+        .filter(|t| t.date >= start && t.date < cutoff)
+        .map(|t| if t.buy { 1 } else { -1 })
+        .sum();
+    let any = txns.iter().any(|t| t.date >= start && t.date < cutoff);
+    any.then_some(net as f64)
+}
+
+/// (Item 3) A per-name blend of the available as-of factors for the `"composite"` `growth_fund_factor`.
+/// ponytail: a plain mean of the factors present — they're all growth-%/points of similar magnitude, so
+/// averaging is a defensible first cut. CEILING: a true cross-sectional rank-normalisation (0..1 across
+/// the cutoff's universe) would be scale-clean, but `select_fund_factor` sees ONE name with no peer
+/// context; lift it to a universe rank in the backtest layer IF the sweep shows the composite earns its
+/// place. None until ≥2 factors are present (a 1-factor "composite" IS that factor — route it directly).
+fn composite_factor(f: &FundFactors) -> Option<f64> {
+    let vals: Vec<f64> =
+        [f.rev_cagr, f.rev_accel, f.gross_margin, f.op_margin, f.margin_trend, f.eps_growth].into_iter().flatten().collect();
+    (vals.len() >= 2).then(|| vals.iter().sum::<f64>() / vals.len() as f64)
 }
 
 /// Derive the as-of fundamental factors at `cutoff` from filed statements, looking back ~`yrs`. Every
@@ -727,6 +764,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         op_margin: now.and_then(|r| r.op_margin),
         margin_trend,
         eps_growth,
+        insider_net_buys_90d: None, // (Item 4) SEC-sourced, set in the backtest loop, not from FMP rows
     }
 }
 
@@ -743,6 +781,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "op_margin" => f.op_margin,
         "margin_trend" => f.margin_trend,
         "eps_growth" => f.eps_growth,
+        "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
+        "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
 }
@@ -932,12 +972,44 @@ mod tests {
             op_margin: Some(4.0),
             margin_trend: Some(5.0),
             eps_growth: Some(6.0),
+            insider_net_buys_90d: Some(7.0),
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
         assert_eq!(select_fund_factor(&f, "margin_trend"), Some(5.0));
         assert_eq!(select_fund_factor(&f, "eps_growth"), Some(6.0));
         assert_eq!(select_fund_factor(&f, "rev_cagr"), Some(1.0));
+        assert_eq!(select_fund_factor(&f, "insider_net_buys_90d"), Some(7.0)); // (Item 4)
+        assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
+    }
+
+    /// (Item 3) `composite_factor` = mean of the factors that are `Some`; <2 present -> None (a 1-factor
+    /// composite would just be that factor, so route it directly instead). insider_net_buys is NOT in the
+    /// blend (different units / source), only the six FMP-derived growth factors.
+    #[test]
+    fn composite_factor_means_present() {
+        let two = FundFactors { rev_cagr: Some(10.0), op_margin: Some(20.0), ..Default::default() };
+        assert_eq!(composite_factor(&two), Some(15.0)); // mean(10,20)
+        let one = FundFactors { eps_growth: Some(9.0), ..Default::default() };
+        assert_eq!(composite_factor(&one), None); // only 1 factor -> None
+        assert_eq!(composite_factor(&FundFactors::default()), None); // nothing -> None
+    }
+
+    /// (Item 4) `insider_net_buys` counts P(+1)/S(−1) only in [cutoff−window, cutoff): a same-day or later
+    /// filing is excluded (look-ahead guard), and an empty window -> None (no coverage, never a fake 0).
+    #[test]
+    fn insider_net_buys_windows_and_guards() {
+        let d = |m, day| NaiveDate::from_ymd_opt(2020, m, day).unwrap();
+        let txns = vec![
+            InsiderTx { date: d(1, 10), buy: true },  // in window for a Mar cutoff
+            InsiderTx { date: d(2, 15), buy: true },  // in window
+            InsiderTx { date: d(2, 20), buy: false }, // in window (a sale, −1)
+            InsiderTx { date: d(3, 1), buy: true },   // ON the cutoff -> excluded (look-ahead)
+        ];
+        let cutoff = d(3, 1);
+        assert_eq!(insider_net_buys(&txns, cutoff, 90), Some(1.0)); // +1 +1 −1 = +1; the d(3,1) buy excluded
+        assert_eq!(insider_net_buys(&txns, cutoff, 5), None); // nothing in the 5d before -> no coverage
+        assert_eq!(insider_net_buys(&[], cutoff, 90), None); // no data -> None
     }
 
     /// Pure-logic asserts (no network). White-box: reaches `core` privates via `use super::*`.
