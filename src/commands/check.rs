@@ -30,7 +30,12 @@ pub async fn run(args: Vec<String>) {
     } else {
         None
     };
-    let quotes = fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, true, &settings.anchor_windows, eu_infl.as_ref()).await; // news on: check prints headlines
+    let mut quotes = fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, true, &settings.anchor_windows, eu_infl.as_ref()).await; // news on: check prints headlines
+    // (G) route the validated as-of fundamental onto the live quotes so the buy ranking weighs it — only
+    // when the tilt is on (weight 0 default = no fetch, no change). `check` scale keeps the FMP budget easy.
+    if settings.buy_heuristic.growth_fund_weight > 0.0 {
+        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic.growth_fund_factor).await;
+    }
     for quote in &quotes {
         let cells = HORIZONS
             .iter()

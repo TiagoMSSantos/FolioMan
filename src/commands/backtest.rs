@@ -232,6 +232,7 @@ pub async fn run(args: Vec<String>) {
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, growth_knobs);
     if fund {
         report_fund_lane(&samples);
+        sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
     }
 
     println!("\nCaveats:");
@@ -296,6 +297,82 @@ fn report_fund_lane(samples: &[Sample]) {
             "  {:<14} n={:<5} rho {}  edge {:+.1}  OOS {} | {}",
             name, pairs.len(), rho, edge, split_rho(&pairs[..mid]), split_rho(&pairs[mid..])
         );
+    }
+}
+
+/// (G) Pick the fund factor whose HELD-OUT TEST edge wins AND whose two OOS halves are both positive AND
+/// that beats the price-only baseline. None -> no factor earns the tilt (keep growth_fund_weight 0). Pure
+/// (tuples in, name out) so the sweep's verdict is unit-testable without building gate-clearing quotes.
+fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], baseline: f64) -> Option<&'a str> {
+    results
+        .iter()
+        .filter(|(_, edge, a, b)| *edge > baseline && a.is_some_and(|v| v > 0.0) && b.is_some_and(|v| v > 0.0))
+        .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+        .map(|(name, ..)| *name)
+}
+
+/// (G) Auto-select `growth_fund_factor`: for each candidate as-of factor, re-derive every sample's
+/// fund_factor IN MEMORY (no refetch — Sample.fund is already cached), search growth_fund_weight on the
+/// EARLY train half, and report the factor's edge on the LATE test half it never saw + its two OOS sub-
+/// halves. This judges each factor THROUGH the growth lane (report_fund_lane only probes them standalone),
+/// then prints the one to paste into settings.yaml. Ships nothing. Needs the `fund` path; with <8 cutoffs
+/// carrying fundamentals there's nothing to sweep. Same chronological split + seeded search as `tune`.
+fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
+    const FACTORS: [&str; 6] = ["rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth"];
+    if samples.iter().filter(|s| s.fund.is_some()).count() < 8 {
+        return; // no as-of fundamentals (no FMP key / cold cache) -> report_fund_lane already said so
+    }
+    let cut = samples.len() * 7 / 10;
+    // best held-out TEST (edge, OOS-early rho, OOS-late rho) when the growth fund tilt routes `factor`
+    // (None = price-only baseline). Re-derives relatives per split from raw realized, like tune_growth.
+    let eval = |factor: Option<&str>| -> (f64, Option<f64>, Option<f64>) {
+        let mut s = samples.to_vec();
+        for smp in &mut s {
+            smp.quote.fund_factor = factor.and_then(|n| smp.fund.as_ref().and_then(|f| core::select_fund_factor(f, n)));
+        }
+        demean(&mut s[..cut]);
+        demean(&mut s[cut..]);
+        let (train, test) = s.split_at(cut);
+        // 1-D search: growth_fund_weight in [0,0.5] on TRAIN; keep the best train edge with rho>0.
+        let mut state: u64 = 0x2545_F491_4F6C_DD1D;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut won = default.clone();
+        let mut best = f64::NEG_INFINITY;
+        for _ in 0..200 {
+            let mut t = default.clone();
+            t.growth_fund_weight = next() * 0.5;
+            let (rho, edge) = lane_metrics(train, growth_score, &t);
+            if rho.unwrap_or(0.0) > 0.0 && edge > best {
+                best = edge;
+                won = t;
+            }
+        }
+        let mid = test.len() / 2; // test keeps date order -> early-vs-late OOS sub-halves
+        (
+            lane_metrics(test, growth_score, &won).1,
+            lane_metrics(&test[..mid], growth_score, &won).0,
+            lane_metrics(&test[mid..], growth_score, &won).0,
+        )
+    };
+
+    let (baseline, _, _) = eval(None); // price-only TEST edge: the bar every factor must clear
+    let results: Vec<(&str, f64, Option<f64>, Option<f64>)> =
+        FACTORS.iter().map(|&n| { let (e, a, b) = eval(Some(n)); (n, e, a, b) }).collect();
+
+    let fmt = |r: Option<f64>| r.map_or("n/a".to_string(), |v| format!("{v:+.2}"));
+    println!("\n── FUND FACTOR SWEEP (growth_fund_weight searched per factor, held-out TEST) ──");
+    println!("  price-only baseline TEST edge {baseline:+.1} — a factor must beat this with both OOS halves +");
+    for (name, edge, a, b) in &results {
+        println!("  {name:<14} TEST edge {edge:+.1}  OOS {} | {}", fmt(*a), fmt(*b));
+    }
+    match pick_sweep_winner(&results, baseline) {
+        Some(w) => println!("  -> WINNER: {w}. Set `growth_fund_factor: {w}` + a non-zero `growth_fund_weight`, then `backtest universe tune` to confirm."),
+        None => println!("  -> no factor beats price-only with both OOS halves + — keep growth_fund_weight 0. SHIP NOTHING."),
     }
 }
 
@@ -638,6 +715,24 @@ mod tests {
         assert!(rho2.unwrap() < -0.9 && edge2 < 0.0, "reversed -> negative rho/edge, got {rho2:?}/{edge2}");
         // too few gated rows -> rho None (the <4 guard the search must tolerate)
         assert!(lane_metrics(&up[..3], dd_score, &BuyHeuristic::default()).0.is_none());
+    }
+
+    /// `pick_sweep_winner` is the sweep's verdict: it must take the BEST held-out edge among factors that
+    /// beat the price-only baseline AND keep both OOS halves positive, and return None when none qualify
+    /// (so the sweep ships nothing). One reject per disqualifier, plus the empty case.
+    #[test]
+    fn pick_sweep_winner_gates_on_oos_and_baseline() {
+        let baseline = 9.0;
+        let r = [
+            ("rev_accel", 9.4, Some(0.03), Some(0.01)),    // beats baseline, both OOS + -> candidate
+            ("margin_trend", 11.0, Some(0.07), Some(0.05)), // highest edge, both + -> WINNER
+            ("eps_growth", 12.0, Some(0.04), Some(-0.02)),  // higher edge but one OOS half negative -> reject
+            ("op_margin", 8.0, Some(0.02), Some(0.02)),     // below baseline -> reject
+        ];
+        assert_eq!(pick_sweep_winner(&r, baseline), Some("margin_trend"));
+        // nothing clears the bar (one below baseline, one missing an OOS half) -> None (ship nothing)
+        let none = [("x", 8.0, Some(0.1), Some(0.1)), ("y", 10.0, Some(0.1), None)];
+        assert_eq!(pick_sweep_winner(&none, 9.0), None);
     }
 
     /// `edge_terciles` must read the score-sorted gradient: a score that tracks the return reads a

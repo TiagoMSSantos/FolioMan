@@ -615,9 +615,11 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         );
     };
     let star = |quote: &Quote| if pinned.contains(quote.ticker.as_str()) { "*" } else { "" }; // * = a pinned (watchlist) name
-    // # = the score used LIVE fundamentals (trailing P/E and/or ROE), not price-only — only equities
-    // with an FMP key populate these, so on the wide screen it flags the few enriched rows (the pins).
-    let enriched = |quote: &Quote| if quote.pe_ratio.is_some() || quote.roe.is_some() { "#" } else { "" };
+    // # = the score used LIVE fundamentals (trailing P/E, ROE, and/or the as-of fund_factor when the
+    // growth_fund tilt is on), not price-only — only equities with an FMP key populate these, so on the
+    // wide screen it flags the few enriched rows (the pins).
+    let enriched =
+        |quote: &Quote| if quote.pe_ratio.is_some() || quote.roe.is_some() || quote.fund_factor.is_some() { "#" } else { "" };
     let mark = |quote: &Quote, i: usize| format!("{}{}{}", i + 1, star(quote), enriched(quote));
     for (i, (quote, score)) in picks.iter().take(n).enumerate() {
         row(&mark(quote, i), quote, *score);

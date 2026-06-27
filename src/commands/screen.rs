@@ -42,6 +42,12 @@ pub async fn run(args: Vec<String>) {
             quote.instrument_type = "ETF".into();
         }
     }
+    // (G) route the validated as-of fundamental onto the live quotes so the growth ranking weighs it —
+    // only when the tilt is on (weight 0 default = no fetch, no change). Across the ~750-name universe the
+    // FMP daily budget caps cold fetches; the rest serve from the disk cache, warming over runs.
+    if settings.buy_heuristic.growth_fund_weight > 0.0 {
+        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic.growth_fund_factor).await;
+    }
     // keep only what an EU-retail investor can actually buy (drops any non-European-listed ETF,
     // Asian-only stock listings) so the growth ranking below is actionable.
     let before = quotes.len();

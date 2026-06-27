@@ -493,6 +493,24 @@ pub async fn fetch_fundamentals_history(client: &Client, urls: &Urls, ticker: &s
     (!rows.is_empty()).then_some(rows)
 }
 
+/// (G) Populate the LIVE quotes' `fund_factor` from the config-selected as-of fundamental, so the
+/// validated fundamental tilt re-ranks `screen`/`check` — not just the backtest. Reuses the disk-cached
+/// `fetch_fundamentals_history` (+ its daily budget) and the SAME `fund_factors`/`select_fund_factor`
+/// path the backtest validates, so the live and tested signal can't drift. A '-' ticker (crypto/FX) or a
+/// name with no statements stays neutral (None). Caller gates on growth_fund_weight > 0, so the default
+/// config never pays the fetch. note: ~5y lookback to match the backtest's default forward `years`.
+pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core::Quote], factor: &str) {
+    let today = chrono::Local::now().date_naive();
+    for q in quotes.iter_mut() {
+        if q.ticker.contains('-') {
+            continue; // crypto/FX -> no income statement, don't spend a budget slot probing
+        }
+        if let Some(rows) = fetch_fundamentals_history(client, urls, &q.ticker).await {
+            q.fund_factor = core::select_fund_factor(&core::fund_factors(&rows, today, 5), factor);
+        }
+    }
+}
+
 /// Latest Bitcoin NUPL (net unrealized profit/loss) from bitcoin-data.com. None on failure.
 pub async fn fetch_nupl(client: &Client, urls: &Urls) -> Option<f64> {
     get_json(client, &urls.nupl).await?.get("nupl")?.as_f64()
