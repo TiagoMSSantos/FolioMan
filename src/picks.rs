@@ -428,6 +428,11 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
         // weight 0 (default) -> this term is 0 -> growth_score is byte-identical to the pre-(M) lane.
         + tuning.growth_mom121_weight * mom121.clamp(0.0, tuning.growth_mom121_cap);
     let value = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
+    // (Item 20) dial the BLIND P/E multiplier's authority toward neutral 1.0. weight 1.0 = full ×0.5..1.5
+    // swing (default, unchanged); 0.0 = off. The validated edge was measured with this term OFF (pe_ratio
+    // is None in the backtest), so this knob lets valuation move to the validated additive earnings_yield
+    // term (Item 19) once it probes +, without a recompile. On-sale `buy_score` keeps full value_factor.
+    let value = 1.0 + tuning.growth_value_weight * (value - 1.0);
     let trust = trust_factor(quote, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
     // stretched/blow-off, so taper the score toward `growth_overext_floor` at the cap. This is the
@@ -1014,6 +1019,12 @@ mod tests {
     assert!(value_factor(&cheap_pe, tuning.ref_pe) > 1.0 && value_factor(&rich_pe, tuning.ref_pe) < 1.0);
     assert_eq!(value_factor(&neutral_pe, tuning.ref_pe), 1.0);
     assert!(buy_score(&cheap_pe, &tuning).unwrap() > buy_score(&neutral_pe, &tuning).unwrap());
+    // (Item 20) the growth-lane P/E-authority dial: weight 1.0 keeps the raw multiplier, 0.0 neutralises it.
+    let raw = value_factor(&rich_pe, tuning.ref_pe); // < 1.0
+    let dial = |w: f64, v: f64| 1.0 + w * (v - 1.0);
+    assert_eq!(dial(1.0, raw), raw); // full authority (default) -> unchanged
+    assert_eq!(dial(0.0, raw), 1.0); // off -> neutral, the blind ±50% swing gone
+    assert!(dial(0.5, raw) > raw && dial(0.5, raw) < 1.0); // half authority -> between
     assert!(buy_score(&rich_pe, &tuning).unwrap() < buy_score(&neutral_pe, &tuning).unwrap());
     // upside to high: 50% off -> +100% to recover; at the high -> 0; near-total wipeout clamps
     assert!((upside_to_high(50.0) - 100.0).abs() < 1e-9);

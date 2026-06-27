@@ -155,6 +155,7 @@ pub struct BuyHeuristic {
     pub growth_fund_factor: String,  // (G) WHICH as-of FundFactors term the fund tilt weighs: rev_cagr | rev_accel | gross_margin | op_margin | margin_trend | eps_growth. Set to whichever the `backtest <set> fund` probe shows +rho + both-half-positive OOS — no recompile. Unknown name -> neutral. Default "rev_accel" preserves the prior hardcoded behavior
     pub growth_mom121_weight: f64,   // (M) reward per pt of 12-1 momentum (trailing 1Y return EX the last 1mo — Jegadeesh-Titman, skips the short-term-reversal month). Price-only, so unlike the BACKTEST-BLIND div/ROE/fund tilts this one IS validated end-to-end (backtest_quote reconstructs 1Y/1M). 0 = off (DEFAULT, no behavior change). Raise only on +ablation-Δ + both-half-positive OOS via `backtest <set>` / `tune`
     pub growth_mom121_cap: f64,      // (M) cap (in pct pts) on the 12-1 momentum fed into that reward, so one moonshot can't dominate the rank
+    pub growth_value_weight: f64,    // (Item 20) authority of the BACKTEST-BLIND P/E multiplier (value_factor) in the GROWTH lane only: 1.0 = full ×0.5..1.5 swing (DEFAULT, unchanged), 0.0 = neutral (off). The validated edge was measured with this term OFF (pe_ratio is None in backtest), so it's a ±50% reorder the OOS split never saw — dial it down/off once the validated additive earnings_yield term (Item 19) carries valuation instead. Defaulted so an older settings.yaml is unchanged.
 
     // --- CRYPTO market-sentiment damp (Bitcoin NUPL): a whole-market greed gauge already fetched for
     //     the screen footer; high NUPL = euphoria/top -> shrink crypto scores in BOTH lanes. ---
@@ -233,6 +234,7 @@ impl Default for BuyHeuristic {
             growth_fund_factor: "rev_accel".to_string(), // (G) the prior hardcoded factor — change in settings.yaml once the probe names a better one (irrelevant at weight 0)
             growth_mom121_weight: 0.0,     // (M) OFF by default — the 12-1 momentum term is wired + ablatable but inert until validated; raise only on +Δ + both-half-positive OOS
             growth_mom121_cap: 50.0,       // (M) clamp 12-1 momentum to +50 pts before weighting (irrelevant at weight 0); a name up >50% over the year-ago-to-month-ago window is already maxed for this tilt
+            growth_value_weight: 1.0,      // (Item 20) FULL P/E-multiplier authority by default (=current behavior, no change). The validated edge never saw this term (pe_ratio None in backtest); dial toward 0 once the additive earnings_yield term (Item 19) validates and carries valuation honestly
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
             nupl_capitulation: 0.25,       // (4) NUPL < 0.25 = fear/accumulation -> start boosting crypto (buy-the-fear)
