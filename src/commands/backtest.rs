@@ -74,6 +74,10 @@ fn demean(samples: &mut [Sample]) {
 const STEP_SESSIONS: usize = 126;
 /// Need ~3y of history BEFORE a cutoff to form/score the long trend fairly.
 const MIN_HISTORY: usize = 750;
+/// (Item 9) Conservative round-trip trading cost (bps) charged against the gross edge per unit of
+/// turnover. ponytail: a const, not a config knob — the backtest is a dev `cargo run` (already
+/// recompiles); promote to config only if a non-dev needs to tune cost without a build.
+const ROUND_TRIP_BPS: f64 = 20.0;
 
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
@@ -89,6 +93,7 @@ pub async fn run(args: Vec<String>) {
     let mut fund = false;
     let mut tune = false;
     let mut insider = false;
+    let mut halflife = false;
     let mut tickers: Vec<String> = Vec::new();
     for a in &args {
         match a.parse::<i64>() {
@@ -98,6 +103,7 @@ pub async fn run(args: Vec<String>) {
             _ if a.eq_ignore_ascii_case("fund") => fund = true,
             _ if a.eq_ignore_ascii_case("tune") => tune = true,
             _ if a.eq_ignore_ascii_case("insider") => insider = true, // (Item 4) also pull SEC Form-4 net buys
+            _ if a.eq_ignore_ascii_case("halflife") => halflife = true, // (Item 11) hold-period net-edge sweep
             _ => tickers.push(a.clone()),
         }
     }
@@ -126,6 +132,13 @@ pub async fn run(args: Vec<String>) {
         tickers.len(),
         if monthly { "MAX monthly" } else { "10y daily" }
     );
+
+    // (Item 11) hold-period / signal half-life sweep: which forward window gives the best NET edge?
+    // Self-contained (own price-only fetch, cached -> cheap) so the validated dispatch below is untouched.
+    if halflife {
+        hold_period_sweep(&client, &settings.urls, &tickers, monthly, cadence, min_history, step, tuning).await;
+        return;
+    }
 
     // (#3) per ticker, score at many cutoffs and pair each with its YEARS-forward realized return.
     let per_ticker: Vec<Vec<Sample>> = stream::iter(tickers.iter())
@@ -258,6 +271,85 @@ pub async fn run(args: Vec<String>) {
     if monthly {
         println!("  • Long-horizon (MAX monthly): only names alive for the FULL {years}y window enter, so");
         println!("    survivorship bias is WORSE than the daily path, and vol/MA are monthly-bar approximations.");
+    }
+}
+
+/// (Item 11) Hold-period / signal half-life sweep. Re-runs the price-only walk-forward over several
+/// forward windows from the SAME fetched history (fetched once per ticker, then sliced per window), and
+/// prints each window's gross edge, turnover, and NET edge (gross − turnover×ROUND_TRIP_BPS). The right
+/// rebalance cadence is the one that maximises NET — longer holds pay less turnover but may catch less
+/// signal, so there's an optimum. ponytail: duplicates ~20 lines of run's walk-forward on purpose, to keep
+/// this opt-in dev path from touching the validated default dispatch; the fetch is cached so the re-walk is
+/// cheap. Price-only (no fund/insider) — this measures the price signal's decay, not the fund tilt.
+#[allow(clippy::too_many_arguments)]
+async fn hold_period_sweep(
+    client: &reqwest::Client,
+    urls: &crate::config::Urls,
+    tickers: &[String],
+    monthly: bool,
+    cadence: usize,
+    min_history: usize,
+    step: usize,
+    tuning: &BuyHeuristic,
+) {
+    const HOLDS: [i64; 4] = [1, 2, 3, 5]; // forward windows (years) to compare
+    eprintln!("backtest: hold-period sweep over {HOLDS:?}y windows ({} tickers)…", tickers.len());
+    let per_ticker: Vec<Vec<(i64, Sample)>> = stream::iter(tickers.iter())
+        .map(|tk| async move {
+            let fetched = if monthly {
+                fetch::fetch_history_long(client, urls, tk).await
+            } else {
+                fetch::fetch_history(client, urls, tk).await
+            };
+            let (dates, closes) = match fetched {
+                Some(x) => x,
+                None => return Vec::new(),
+            };
+            let mut out = Vec::new();
+            for &h in &HOLDS {
+                let mut i = min_history;
+                while i < dates.len() {
+                    let target = dates[i] + chrono::Duration::days(h * 365);
+                    match dates[i..].iter().position(|d| *d >= target) {
+                        Some(off) => {
+                            let quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
+                            let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
+                            out.push((h, Sample { date: dates[i], realized, relative: 0.0, quote, fund: None }));
+                        }
+                        None => break,
+                    }
+                    i += step;
+                }
+            }
+            out
+        })
+        .buffer_unordered(fetch::fetch_concurrency())
+        .collect()
+        .await;
+    let all: Vec<(i64, Sample)> = per_ticker.into_iter().flatten().collect();
+
+    println!("\n── HOLD-PERIOD SWEEP (growth lane, net of cost) ──");
+    println!("  pick the hold with the highest NET edge; if they're flat, the longest (cheapest) wins.");
+    for &h in &HOLDS {
+        // own bucket (de-mean is per-window: a 1y and a 5y forward over the same cutoff aren't comparable)
+        let mut s: Vec<Sample> = all.iter().filter(|(w, _)| *w == h).map(|(_, smp)| smp.clone()).collect();
+        if s.len() < 4 {
+            println!("  {h}y hold  — only {} cutoffs, too few to read", s.len());
+            continue;
+        }
+        s.sort_by_key(|x| x.date);
+        demean(&mut s);
+        let scored: Vec<(&Sample, f64)> =
+            s.iter().filter_map(|x| growth_score(&x.quote, tuning).map(|v| (x, v))).collect();
+        if scored.len() < 4 {
+            println!("  {h}y hold  — only {} gated, too few to read", scored.len());
+            continue;
+        }
+        let (t, b) = edge_halves(&scored);
+        let edge = t - b;
+        let turn = turnover_frac(&scored);
+        let net = edge - turn * ROUND_TRIP_BPS / 100.0;
+        println!("  {h}y hold  edge {edge:+.1}  turnover {:.0}%  net {net:+.1} pts", turn * 100.0);
     }
 }
 
@@ -428,6 +520,25 @@ fn edge_halves(pairs: &[(&Sample, f64)]) -> (f64, f64) {
     let half = v.len() / 2;
     let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
     (mean(&v[..half]), mean(&v[v.len() - half..]))
+}
+
+/// (Item 12) top-minus-bottom edge AFTER winsorizing peer-relative returns at the 1st/99th percentile
+/// (clamp the tails, keep n). `edge_halves` is a MEAN, so one 10× crypto or a fraud blow-up in a half can
+/// BE the whole edge. A big gap vs the raw edge = the lane leans on a few extreme rows (fragile, likely a
+/// survivorship/fat-tail artifact). Pure; reuses `percentile`. <4 rows -> NaN (no spread to read).
+fn winsor_edge(pairs: &[(&Sample, f64)]) -> f64 {
+    if pairs.len() < 4 {
+        return f64::NAN;
+    }
+    let mut rels: Vec<f64> = pairs.iter().map(|x| x.0.relative).collect();
+    rels.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let (lo, hi) = (percentile(&rels, 1.0), percentile(&rels, 99.0));
+    // (score, clamped-relative), sorted by score desc -> same half split as edge_halves.
+    let mut v: Vec<(f64, f64)> = pairs.iter().map(|x| (x.1, x.0.relative.clamp(lo, hi))).collect();
+    v.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    let half = v.len() / 2;
+    let mean = |s: &[(f64, f64)]| s.iter().map(|x| x.1).sum::<f64>() / s.len().max(1) as f64;
+    mean(&v[..half]) - mean(&v[v.len() - half..])
 }
 
 /// Tercile means of peer-relative return, sorted by score desc: (top, mid, bottom). A config can post a
@@ -756,13 +867,15 @@ fn report_lane(
         println!("  90% bootstrap band on edge: [{lo:+.1} … {hi:+.1}] pts  ({verdict})");
     }
     // (Item 9) net of cost: a high-turnover edge can be NET-negative once you pay the spread to chase it
-    // each rebalance. cost(pts) = turnover_frac × round_trip_bps / 100 (1 pt = 100 bps).
-    // ponytail: a single conservative cost const; move to a config knob if a non-dev needs to tune it.
-    const ROUND_TRIP_BPS: f64 = 20.0;
+    // each rebalance. cost(pts) = turnover_frac × ROUND_TRIP_BPS / 100 (1 pt = 100 bps).
     let turn = turnover_frac(&scored);
     let net = base_edge - turn * ROUND_TRIP_BPS / 100.0;
     let tag = if net <= 0.0 { "  <- NET ≤ 0: too churny to trade" } else { "" };
     println!("  net of cost: edge {base_edge:+.1} − turnover {:.0}% × {ROUND_TRIP_BPS:.0}bps = net {net:+.1} pts{tag}", turn * 100.0);
+    // (Item 12) is that edge a broad spread or one lucky name? Winsorize the tails and re-read it.
+    let wedge = winsor_edge(&scored);
+    let wtag = if wedge <= 0.0 && base_edge > 0.0 { "  <- raw edge is an OUTLIER ARTIFACT (leans on extreme rows)" } else { "" };
+    println!("  winsorized edge (1/99 clamp): {wedge:+.1} pts{wtag}");
 
     // out-of-sample early vs late (scored is date-ordered)
     let mid = scored.len() / 2;
@@ -903,6 +1016,27 @@ mod tests {
             s.iter().enumerate().map(|(i, smp)| (smp, if i % 4 < 2 { 9.0 } else { 1.0 })).collect();
         assert!((turnover_frac(&scored) - 2.0 / 3.0).abs() < 1e-9, "got {}", turnover_frac(&scored));
         assert_eq!(turnover_frac(&scored[..4]), 0.0); // single bucket -> unmeasurable -> 0
+    }
+
+    /// (Item 12) `winsor_edge` clamps the 1/99 tails so one extreme row can't BE the edge. 100 modest rows
+    /// read a small spread; plant a 500-pt outlier in the top half and the RAW edge explodes while the
+    /// winsorized edge barely moves — exactly the fragility flag we want.
+    #[test]
+    fn winsor_edge_clamps_outlier() {
+        // relatives ~-2..+2, score == relative so the score-halves coincide with the relative-halves.
+        let mut samples: Vec<Sample> = (0..100)
+            .map(|i| {
+                let r = (i as f64 - 50.0) / 25.0;
+                Sample { date: ymd(2020, 1, 1), realized: r, relative: r, quote: Quote::stub("X", "1", "", "X"), fund: None }
+            })
+            .collect();
+        samples[99].relative = 500.0; // a 500-pt blow-up in the highest-scored row
+        let scored: Vec<(&Sample, f64)> = samples.iter().map(|s| (s, s.relative)).collect();
+        let (t, b) = edge_halves(&scored);
+        let raw = t - b;
+        let wins = winsor_edge(&scored);
+        assert!(raw > 5.0, "the planted outlier blows up the raw edge, got {raw}");
+        assert!(wins < raw - 4.0, "winsorizing the 1/99 tails kills most of the artifact, got {wins} vs raw {raw}");
     }
 
     /// `pick_sweep_winner` is the sweep's verdict: it must take the BEST held-out edge among factors that
