@@ -17,11 +17,17 @@ pub async fn run(args: Vec<String>) {
         None
     };
     // same fetch shape as `perf`/`screen`; intraday + news off (sizing needs neither).
-    let quotes = fetch::quotes(
+    let mut quotes = fetch::quotes(
         &client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, false,
         &settings.anchor_windows, eu_infl.as_ref(),
     )
     .await;
+
+    // (Item 15) same fund-tilt enrichment `screen`/`check` do, so sizing ranks the names the way `screen`
+    // shows them when the tilt is on. Inert when growth_fund_weight == 0 (default) -> no extra fetches.
+    if settings.buy_heuristic.growth_fund_weight > 0.0 {
+        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic.growth_fund_factor).await;
+    }
 
     // score with the SAME growth lane `screen` uses; None = the name failed the growth gate -> not sized.
     let mut scored: Vec<_> =

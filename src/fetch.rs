@@ -516,16 +516,18 @@ fn evict_if_stale(path: &std::path::Path, ttl: StdDuration) {
 /// name with no statements stays neutral (None). Caller gates on growth_fund_weight > 0, so the default
 /// config never pays the fetch. note: ~5y lookback to match the backtest's default forward `years`.
 ///
-/// (Item 13) When the selected factor needs SEC insider data (`insider_net_buys_90d`, or `composite` whose
-/// blend includes it), ALSO pull the shipped Form-4 lane and merge `insider_net_buys` onto the as-of
-/// factors before selecting — without this the live screen would score that factor `None` (the FMP path
-/// never touches SEC), so a backtest-validated insider tilt could never reach what you buy. Works even
-/// with no FMP key (insider stands alone). (Item 14) Both caches get a LIVE freshness gate so a screen run
-/// weeks later doesn't rank on stale pre-earnings fundamentals.
+/// (Item 13) When the selected factor IS the insider lane (`insider_net_buys_90d`), ALSO pull the shipped
+/// Form-4 data and merge `insider_net_buys` onto the as-of factors before selecting — without this the live
+/// screen would score that factor `None` (the FMP path never touches SEC), so a backtest-validated insider
+/// tilt could never reach what you buy. Works even with no FMP key (insider stands alone). (Item 16) The
+/// `composite` factor deliberately does NOT trigger the SEC pull here: the validated `backtest … fund`
+/// composite is FMP-only, so adding insider live would be a train-serve skew (score on a blend you never
+/// tested). Want insider in the composite? Validate it in the backtest first, then re-add here. (Item 14)
+/// Both caches get a LIVE freshness gate so a screen run weeks later doesn't rank on stale fundamentals.
 pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core::Quote], factor: &str) {
     const LIVE_TTL: StdDuration = StdDuration::from_secs(7 * 24 * 3600); // refetch weekly -> catches new filings
     let today = chrono::Local::now().date_naive();
-    let needs_insider = matches!(factor, "insider_net_buys_90d" | "composite");
+    let needs_insider = factor == "insider_net_buys_90d"; // (Item 16) composite stays FMP-only (no skew)
     for q in quotes.iter_mut() {
         if q.ticker.contains('-') {
             continue; // crypto/FX -> no income statement, don't spend a budget slot probing
