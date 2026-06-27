@@ -31,7 +31,7 @@ use crate::picks::{buy_score, growth_score};
 use crate::{config, core, fetch};
 use chrono::Datelike;
 use futures::stream::{self, StreamExt};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// One cutoff observation: the date it was scored on and the realized forward return over the holdout.
 /// The Quote is kept so EACH lane (on-sale + growth) can score it under its own gates/knobs — and
@@ -343,7 +343,9 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
     let cut = samples.len() * 7 / 10;
     // best held-out TEST (edge, OOS-early rho, OOS-late rho) when the growth fund tilt routes `factor`
     // (None = price-only baseline). Re-derives relatives per split from raw realized, like tune_growth.
-    let eval = |factor: Option<&str>| -> (f64, Option<f64>, Option<f64>) {
+    // returns (TEST edge, OOS-early, OOS-late, won growth_fund_weight) — the weight feeds Item 10's
+    // winner-bootstrap so the multiple-testing band re-scores the SAME tilt the sweep picked.
+    let eval = |factor: Option<&str>| -> (f64, Option<f64>, Option<f64>, f64) {
         let mut s = samples.to_vec();
         for smp in &mut s {
             smp.quote.fund_factor = factor.and_then(|n| smp.fund.as_ref().and_then(|f| core::select_fund_factor(f, n)));
@@ -375,12 +377,13 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
             lane_metrics(test, growth_score, &won).1,
             lane_metrics(&test[..mid], growth_score, &won).0,
             lane_metrics(&test[mid..], growth_score, &won).0,
+            won.growth_fund_weight,
         )
     };
 
-    let (baseline, _, _) = eval(None); // price-only TEST edge: the bar every factor must clear
+    let (baseline, ..) = eval(None); // price-only TEST edge: the bar every factor must clear
     let results: Vec<(&str, f64, Option<f64>, Option<f64>)> =
-        FACTORS.iter().map(|&n| { let (e, a, b) = eval(Some(n)); (n, e, a, b) }).collect();
+        FACTORS.iter().map(|&n| { let (e, a, b, _) = eval(Some(n)); (n, e, a, b) }).collect();
 
     let fmt = |r: Option<f64>| r.map_or("n/a".to_string(), |v| format!("{v:+.2}"));
     println!("\n── FUND FACTOR SWEEP (growth_fund_weight searched per factor, held-out TEST) ──");
@@ -389,7 +392,29 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
         println!("  {name:<14} TEST edge {edge:+.1}  OOS {} | {}", fmt(*a), fmt(*b));
     }
     match pick_sweep_winner(&results, baseline) {
-        Some(w) => println!("  -> WINNER: {w}. Set `growth_fund_factor: {w}` + a non-zero `growth_fund_weight`, then `backtest universe tune` to confirm."),
+        Some(w) => {
+            println!("  -> WINNER: {w}. Set `growth_fund_factor: {w}` + a non-zero `growth_fund_weight`, then `backtest universe tune` to confirm.");
+            // (Item 10) best-of-N haircut: the winner is the MAX of N tried factors, so its edge is inflated
+            // by selection. Re-bootstrap the winner's tilt but read a Šidák-tightened tail (5/N instead of
+            // 5) — if THAT band straddles 0 the "win" is within best-of-N luck, ship nothing anyway.
+            let weight = eval(Some(w)).3; // seeded search -> identical to the sweep's pick; re-derive the won weight
+            let mut s = samples.to_vec();
+            for smp in &mut s {
+                smp.quote.fund_factor = smp.fund.as_ref().and_then(|f| core::select_fund_factor(f, w));
+            }
+            demean(&mut s); // peer-relative is the bootstrap's metric; `relative` depends only on date+realized
+            let mut tun = default.clone();
+            tun.growth_fund_weight = weight;
+            let n = FACTORS.len() as f64;
+            if let Some((lo, hi)) = bootstrap_edge_ci(&s, growth_score, &tun, 1000, 5.0 / n, 100.0 - 5.0 / n) {
+                let verdict = if lo > 0.0 {
+                    "survives multiple testing -> trust the WINNER"
+                } else {
+                    "within best-of-N luck -> SHIP NOTHING despite the raw winner"
+                };
+                println!("  multiple-testing band (best of {} factors): [{lo:+.1} … {hi:+.1}] pts  ({verdict})", FACTORS.len());
+            }
+        }
         None => println!("  -> no factor beats price-only with both OOS halves + — keep growth_fund_weight 0. SHIP NOTHING."),
     }
 }
@@ -605,16 +630,20 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
     sorted[idx.min(sorted.len() - 1)]
 }
 
-/// (Item 5) 90% bootstrap band on a lane's top-minus-bottom edge. BLOCK bootstrap: resamples whole ~6mo
-/// cutoff buckets with replacement (overlapping windows inside a bucket aren't independent, so the bucket
-/// is the resample unit), rescoring the edge each draw. A band that straddles 0 = the point edge is within
-/// noise — ship nothing regardless of its sign. Seeded xorshift64 (no `rand` dep) -> reproducible. None
-/// when there are too few buckets (<4) to resample meaningfully.
+/// (Item 5) bootstrap band on a lane's top-minus-bottom edge between the `lo_p`/`hi_p` percentiles. BLOCK
+/// bootstrap: resamples whole ~6mo cutoff buckets with replacement (overlapping windows inside a bucket
+/// aren't independent, so the bucket is the resample unit), rescoring the edge each draw. A band that
+/// straddles 0 = the point edge is within noise — ship nothing regardless of its sign. Seeded xorshift64
+/// (no `rand` dep) -> reproducible. None when there are too few buckets (<4) to resample meaningfully.
+/// (Item 10) the percentiles are caller-set so the fund sweep can pass a Šidák-tightened tail (5/N) to
+/// charge the winner for being the best of N tried factors.
 fn bootstrap_edge_ci(
     samples: &[Sample],
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
     tuning: &BuyHeuristic,
     iters: usize,
+    lo_p: f64,
+    hi_p: f64,
 ) -> Option<(f64, f64)> {
     let mut buckets: HashMap<i32, Vec<usize>> = HashMap::new();
     for (i, s) in samples.iter().enumerate() {
@@ -651,7 +680,39 @@ fn bootstrap_edge_ci(
         return None; // too many draws gated out to too few rows -> no trustworthy band
     }
     edges.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    Some((percentile(&edges, 5.0), percentile(&edges, 95.0)))
+    Some((percentile(&edges, lo_p), percentile(&edges, hi_p)))
+}
+
+/// (Item 9) Per-rebalance turnover fraction of the lane's HELD set: 1 − mean Jaccard of the top-half
+/// tickers between consecutive ~6mo buckets. 1.0 = the whole book is replaced each period (max cost),
+/// 0.0 = the same names are held (free). <2 measurable buckets -> 0.0 (can't measure; charge nothing).
+/// Pure; feeds the net-of-cost line so a churny edge can't read positive once the spread is paid.
+fn turnover_frac(scored: &[(&Sample, f64)]) -> f64 {
+    let mut by_bucket: BTreeMap<i32, Vec<(&str, f64)>> = BTreeMap::new();
+    for (s, v) in scored {
+        by_bucket.entry(bucket(s.date)).or_default().push((s.quote.ticker.as_str(), *v));
+    }
+    // the top-half ticker set per bucket = the names you'd actually hold that period, score-sorted.
+    let tops: Vec<HashSet<&str>> = by_bucket
+        .into_values()
+        .map(|mut rows| {
+            rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            rows[..rows.len() / 2].iter().map(|(t, _)| *t).collect::<HashSet<&str>>()
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    if tops.len() < 2 {
+        return 0.0;
+    }
+    let pairs = tops.len() - 1;
+    let jac_sum: f64 = tops
+        .windows(2)
+        .map(|w| {
+            let u = w[0].union(&w[1]).count();
+            if u == 0 { 1.0 } else { w[0].intersection(&w[1]).count() as f64 / u as f64 }
+        })
+        .sum();
+    1.0 - jac_sum / pairs as f64
 }
 
 fn report_lane(
@@ -684,7 +745,7 @@ fn report_lane(
     let base_edge = top - bot;
     println!("  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {base_edge:+.1} pts");
     // (Item 5) bootstrap band: is that point edge distinguishable from 0 given overlapping-sample noise?
-    if let Some((lo, hi)) = bootstrap_edge_ci(samples, scorer, tuning, 1000) {
+    if let Some((lo, hi)) = bootstrap_edge_ci(samples, scorer, tuning, 1000, 5.0, 95.0) {
         let verdict = if lo > 0.0 {
             "clears 0 -> real"
         } else if hi < 0.0 {
@@ -694,6 +755,14 @@ fn report_lane(
         };
         println!("  90% bootstrap band on edge: [{lo:+.1} … {hi:+.1}] pts  ({verdict})");
     }
+    // (Item 9) net of cost: a high-turnover edge can be NET-negative once you pay the spread to chase it
+    // each rebalance. cost(pts) = turnover_frac × round_trip_bps / 100 (1 pt = 100 bps).
+    // ponytail: a single conservative cost const; move to a config knob if a non-dev needs to tune it.
+    const ROUND_TRIP_BPS: f64 = 20.0;
+    let turn = turnover_frac(&scored);
+    let net = base_edge - turn * ROUND_TRIP_BPS / 100.0;
+    let tag = if net <= 0.0 { "  <- NET ≤ 0: too churny to trade" } else { "" };
+    println!("  net of cost: edge {base_edge:+.1} − turnover {:.0}% × {ROUND_TRIP_BPS:.0}bps = net {net:+.1} pts{tag}", turn * 100.0);
 
     // out-of-sample early vs late (scored is date-ordered)
     let mid = scored.len() / 2;
@@ -815,6 +884,25 @@ mod tests {
         assert_eq!(percentile(&s, 5.0), 5.0);
         assert_eq!(percentile(&s, 95.0), 95.0);
         assert!(percentile(&[], 50.0).is_nan());
+    }
+
+    /// (Item 9) `turnover_frac` = 1 − mean Jaccard of consecutive buckets' top-half tickers. Two ~6mo
+    /// buckets holding {A,B} then {A,C} overlap 1/3 -> turnover 2/3; a single bucket can't be measured -> 0.
+    #[test]
+    fn turnover_frac_consecutive_buckets() {
+        let mk = |t: &str, m: u32| Sample {
+            date: ymd(2020, m, 1),
+            realized: 0.0,
+            relative: 0.0,
+            quote: Quote::stub(t, "1", "", t),
+            fund: None,
+        };
+        // bucket H1: A,B,C,D (top-half by score -> A,B). bucket H2: A,C,E,F (top-half -> A,C).
+        let s = vec![mk("A", 1), mk("B", 2), mk("C", 3), mk("D", 4), mk("A", 7), mk("C", 8), mk("E", 9), mk("F", 10)];
+        let scored: Vec<(&Sample, f64)> =
+            s.iter().enumerate().map(|(i, smp)| (smp, if i % 4 < 2 { 9.0 } else { 1.0 })).collect();
+        assert!((turnover_frac(&scored) - 2.0 / 3.0).abs() < 1e-9, "got {}", turnover_frac(&scored));
+        assert_eq!(turnover_frac(&scored[..4]), 0.0); // single bucket -> unmeasurable -> 0
     }
 
     /// `pick_sweep_winner` is the sweep's verdict: it must take the BEST held-out edge among factors that
