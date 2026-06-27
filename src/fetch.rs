@@ -16,7 +16,7 @@ use reqwest::Client;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::time::{Duration as StdDuration, Instant};
+use std::time::{Duration as StdDuration, Instant, SystemTime};
 use tokio::sync::Mutex;
 
 /// Currency -> EUR rate cache (None = no FX pair found, cached to avoid re-hitting).
@@ -493,21 +493,55 @@ pub async fn fetch_fundamentals_history(client: &Client, urls: &Urls, ticker: &s
     (!rows.is_empty()).then_some(rows)
 }
 
+/// (Item 14) Is a cached file older than `ttl`? Pure. A modified-time in the FUTURE (clock skew) reads
+/// NOT stale (`duration_since` errs -> false), so a skewed clock never forces an endless refetch loop.
+fn is_stale(modified: SystemTime, now: SystemTime, ttl: StdDuration) -> bool {
+    now.duration_since(modified).is_ok_and(|age| age > ttl)
+}
+
+/// (Item 14) LIVE-path freshness: delete a cached file older than `ttl` so the next read refetches. The
+/// backtest never calls this (its as-of historical quarters never go stale); only the live enrich does.
+fn evict_if_stale(path: &std::path::Path, ttl: StdDuration) {
+    if let Ok(modified) = std::fs::metadata(path).and_then(|m| m.modified()) {
+        if is_stale(modified, SystemTime::now(), ttl) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 /// (G) Populate the LIVE quotes' `fund_factor` from the config-selected as-of fundamental, so the
 /// validated fundamental tilt re-ranks `screen`/`check` — not just the backtest. Reuses the disk-cached
 /// `fetch_fundamentals_history` (+ its daily budget) and the SAME `fund_factors`/`select_fund_factor`
 /// path the backtest validates, so the live and tested signal can't drift. A '-' ticker (crypto/FX) or a
 /// name with no statements stays neutral (None). Caller gates on growth_fund_weight > 0, so the default
 /// config never pays the fetch. note: ~5y lookback to match the backtest's default forward `years`.
+///
+/// (Item 13) When the selected factor needs SEC insider data (`insider_net_buys_90d`, or `composite` whose
+/// blend includes it), ALSO pull the shipped Form-4 lane and merge `insider_net_buys` onto the as-of
+/// factors before selecting — without this the live screen would score that factor `None` (the FMP path
+/// never touches SEC), so a backtest-validated insider tilt could never reach what you buy. Works even
+/// with no FMP key (insider stands alone). (Item 14) Both caches get a LIVE freshness gate so a screen run
+/// weeks later doesn't rank on stale pre-earnings fundamentals.
 pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core::Quote], factor: &str) {
+    const LIVE_TTL: StdDuration = StdDuration::from_secs(7 * 24 * 3600); // refetch weekly -> catches new filings
     let today = chrono::Local::now().date_naive();
+    let needs_insider = matches!(factor, "insider_net_buys_90d" | "composite");
     for q in quotes.iter_mut() {
         if q.ticker.contains('-') {
             continue; // crypto/FX -> no income statement, don't spend a budget slot probing
         }
-        if let Some(rows) = fetch_fundamentals_history(client, urls, &q.ticker).await {
-            q.fund_factor = core::select_fund_factor(&core::fund_factors(&rows, today, 5), factor);
+        evict_if_stale(&fund_cache_path(&q.ticker), LIVE_TTL); // (Item 14) drop a stale newest-quarter
+        let mut ff = fetch_fundamentals_history(client, urls, &q.ticker)
+            .await
+            .map(|rows| core::fund_factors(&rows, today, 5))
+            .unwrap_or_default(); // no FMP rows/key -> empty factors; insider can still fill in below
+        if needs_insider {
+            evict_if_stale(&sec_cache_path(&q.ticker), LIVE_TTL);
+            if let Some(txns) = fetch_insider_history(client, urls, &q.ticker).await {
+                ff.insider_net_buys_90d = core::insider_net_buys(&txns, today, 90);
+            }
         }
+        q.fund_factor = core::select_fund_factor(&ff, factor);
     }
 }
 
@@ -859,6 +893,17 @@ mod tests {
     let (l2, _) = claim_slot(n1, base + 2 * iv, iv); // next claim same `now` -> pushed to the slot
     assert_eq!(l2, base + 3 * iv);
     assert!(l2.duration_since(l1) >= iv);
+    }
+
+    /// (Item 14) `is_stale`: a cache older than the TTL is stale; younger isn't; a FUTURE mtime (clock
+    /// skew) is NOT stale (never forces an endless refetch). This gates the live-enrich cache freshness.
+    #[test]
+    fn is_stale_ttl() {
+        let now = SystemTime::UNIX_EPOCH + StdDuration::from_secs(1_000_000);
+        let ttl = StdDuration::from_secs(100);
+        assert!(is_stale(now - StdDuration::from_secs(200), now, ttl)); // 200s old > 100s ttl
+        assert!(!is_stale(now - StdDuration::from_secs(50), now, ttl)); // 50s old < ttl
+        assert!(!is_stale(now + StdDuration::from_secs(50), now, ttl)); // future mtime -> skew-safe, not stale
     }
 
     /// (Item 4) `parse_form4_txns` pairs each transaction's date with its code and keeps only P/S. Two
