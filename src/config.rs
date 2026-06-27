@@ -156,6 +156,7 @@ pub struct BuyHeuristic {
     pub growth_mom121_weight: f64,   // (M) reward per pt of 12-1 momentum (trailing 1Y return EX the last 1mo — Jegadeesh-Titman, skips the short-term-reversal month). Price-only, so unlike the BACKTEST-BLIND div/ROE/fund tilts this one IS validated end-to-end (backtest_quote reconstructs 1Y/1M). 0 = off (DEFAULT, no behavior change). Raise only on +ablation-Δ + both-half-positive OOS via `backtest <set>` / `tune`
     pub growth_mom121_cap: f64,      // (M) cap (in pct pts) on the 12-1 momentum fed into that reward, so one moonshot can't dominate the rank
     pub growth_value_weight: f64,    // (Item 20) authority of the BACKTEST-BLIND P/E multiplier (value_factor) in the GROWTH lane only: 1.0 = full ×0.5..1.5 swing (DEFAULT, unchanged), 0.0 = neutral (off). The validated edge was measured with this term OFF (pe_ratio is None in backtest), so it's a ±50% reorder the OOS split never saw — dial it down/off once the validated additive earnings_yield term (Item 19) carries valuation instead. Defaulted so an older settings.yaml is unchanged.
+    pub use_adjusted_close: bool,    // (Item 21) PROBE switch: when true, parse_chart prefers Yahoo's adjclose (split+DIVIDEND adjusted) over raw close, so the long CAGR / range_pct near-high gate / drawdown / overext brake measure TOTAL return instead of price-only — fixes dividend-compounders that are mis-ranked (CAGR understates total return) or mis-EXCLUDED (nominal price below old high fails growth_min_range_pct). Flows to BOTH live + backtest (one parse site) so no train-serve skew. DEFAULT false = raw close, unchanged. Crypto/FX have no adjclose -> falls back to close (no effect). Adjusted close re-calibrates EVERY price threshold (range floor, overext, min_cagr, vol/SMA), so flip ONLY for a full `backtest universe` re-validation + gate re-sweep, then keep it only if both OOS halves still hold. Golden-rule-gated.
 
     // --- CRYPTO market-sentiment damp (Bitcoin NUPL): a whole-market greed gauge already fetched for
     //     the screen footer; high NUPL = euphoria/top -> shrink crypto scores in BOTH lanes. ---
@@ -235,6 +236,7 @@ impl Default for BuyHeuristic {
             growth_mom121_weight: 0.0,     // (M) OFF by default — the 12-1 momentum term is wired + ablatable but inert until validated; raise only on +Δ + both-half-positive OOS
             growth_mom121_cap: 50.0,       // (M) clamp 12-1 momentum to +50 pts before weighting (irrelevant at weight 0); a name up >50% over the year-ago-to-month-ago window is already maxed for this tilt
             growth_value_weight: 1.0,      // (Item 20) FULL P/E-multiplier authority by default (=current behavior, no change). The validated edge never saw this term (pe_ratio None in backtest); dial toward 0 once the additive earnings_yield term (Item 19) validates and carries valuation honestly
+            use_adjusted_close: false,     // (Item 21) raw price-only close by default (= current behavior, validated edge intact). Flip to true ONLY for a full backtest re-validation + gate re-sweep — adjusted close shifts every price-calibrated threshold
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
             nupl_capitulation: 0.25,       // (4) NUPL < 0.25 = fear/accumulation -> start boosting crypto (buy-the-fear)
@@ -430,6 +432,22 @@ pub fn load() -> Settings {
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
     serde_yaml::from_str(&text)
         .unwrap_or_else(|e| panic!("invalid YAML in {}: {e}", path.display()))
+}
+
+/// (Item 21) Process-once read of the adjusted-close probe flag. SOFT — a missing/invalid config
+/// yields false (the validated raw-close default), so it never panics in unit tests where the
+/// gitignored settings.yaml is absent. `parse_chart` reads this to prefer Yahoo adjclose; flipping it
+/// requires a full `backtest universe` re-validation + gate re-sweep (see `BuyHeuristic`).
+pub fn use_adjusted_close() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::fs::read_to_string(settings_path())
+            .ok()
+            .and_then(|t| serde_yaml::from_str::<Settings>(&t).ok())
+            .map(|s| s.buy_heuristic.use_adjusted_close)
+            .unwrap_or(false)
+    })
 }
 
 #[cfg(test)]

@@ -158,7 +158,17 @@ fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     let result = j.get("chart")?.get("result")?.get(0)?;
     let ts = result.get("timestamp")?.as_array()?;
     let quote0 = result.get("indicators")?.get("quote")?.get(0)?;
-    let closes_arr = quote0.get("close")?.as_array()?;
+    // (Item 21) PROBE: when the flag is on, prefer Yahoo's adjclose (split+DIVIDEND adjusted) so every
+    // price signal (long CAGR, range_pct near-high gate, drawdown, overext brake) measures TOTAL return,
+    // not price-only. Same parse site for live + backtest -> no train-serve skew. Crypto/FX have no
+    // adjclose -> falls back to raw close (no effect). Length parallels close; the ts.zip below truncates
+    // safely if Yahoo ever returns a short array.
+    let raw_closes = quote0.get("close")?.as_array()?;
+    let closes_arr = if crate::config::use_adjusted_close() {
+        result.pointer("/indicators/adjclose/0/adjclose").and_then(|v| v.as_array()).unwrap_or(raw_closes)
+    } else {
+        raw_closes
+    };
     let vols_arr = quote0.get("volume").and_then(|v| v.as_array());
     let meta = result.get("meta").cloned().unwrap_or(Value::Null);
 
@@ -947,9 +957,15 @@ mod tests {
         // ts in unix seconds: 2020-01-01, -02, -03. The middle close is null -> that bar is dropped
         // entirely (date AND volume skip with it). Volume array is short (len 2) -> the 3rd bar's
         // volume falls back to 0.0. Dividend events are out of date order -> must come out sorted.
+        // adjclose is PRESENT but differs from close: with use_adjusted_close defaulting false (no
+        // settings.yaml in CI -> false), parse_chart must IGNORE it and use raw close (Item 21 inert
+        // default — the validated edge is raw-close-calibrated; the flag is the only thing that flips it).
         let j = json!({"chart": {"result": [{
             "timestamp": [1577836800, 1577923200, 1578009600],
-            "indicators": {"quote": [{"close": [10.0, null, 30.0], "volume": [100, 200]}]},
+            "indicators": {
+                "quote": [{"close": [10.0, null, 30.0], "volume": [100, 200]}],
+                "adjclose": [{"adjclose": [9.0, null, 27.0]}]
+            },
             "meta": {"currency": "EUR", "instrumentType": "EQUITY"},
             "events": {"dividends": {
                 "a": {"amount": 2.0, "date": 1593561600}, // 2020-07-01
