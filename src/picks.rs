@@ -468,7 +468,7 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
 /// Market-wide — scales the whole crypto lane uniformly: thins the tables in a frothy top, fattens
 /// them after a flush. BACKTEST-BLIND (NUPL isn't in backtest_quote): the boost is a judgment lever,
 /// not edge-validated — `nupl_boost_ceiling` is kept mild.
-fn nupl_factor(nupl: Option<f64>, tuning: &BuyHeuristic) -> f64 {
+pub fn nupl_factor(nupl: Option<f64>, tuning: &BuyHeuristic) -> f64 {
     match nupl {
         Some(v) if v > tuning.nupl_euphoria && tuning.nupl_euphoria < 1.0 => {
             let over = ((v - tuning.nupl_euphoria) / (1.0 - tuning.nupl_euphoria)).clamp(0.0, 1.0);
@@ -671,6 +671,18 @@ fn btc_relative(coin_1y: Option<f64>, btc_1y: Option<f64>, score: f64, w: f64) -
     }
 }
 
+/// (Item 17) The crypto-only score adjustments `screen`/`check` apply at render time: scale by the
+/// whole-market NUPL factor (`cfactor`) then tilt vs Bitcoin's year. Equities/ETFs pass through
+/// unchanged. Shared so `size` ranks crypto identically to the tables it came from (not on the raw
+/// `growth_score`). Caller precomputes `cfactor` (`nupl_factor`) + `btc_1y` once — both are O(universe),
+/// don't recompute per call.
+pub fn crypto_adjust(quote: &Quote, base: f64, tuning: &BuyHeuristic, cfactor: f64, btc_1y: Option<f64>) -> f64 {
+    if !is_currency_quoted(&quote.ticker) {
+        return base; // equities/ETFs: no crypto-market damp, no BTC base
+    }
+    btc_relative(perf_pct(quote, "1Y"), btc_1y, base * cfactor, tuning.growth_btc_outperf_weight)
+}
+
 /// Print the Top-N GROWTH picks split per asset class (stocks / ETFs / crypto). The growth lane —
 /// proven compounders at/near their own ~10y high still climbing — is the ONLY lane with a validated
 /// forward edge for a 20yr+ buy-and-hold (walk-forward rho +0.26, top-vs-bottom-half +108 pts). The
@@ -688,12 +700,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     // Bitcoin = the crypto market's base: tilt each alt by its 1Y return RELATIVE to BTC, so the looser
     // crypto gate surfaces more coins without flooding the table with names that merely lag the base.
     let btc_1y = quotes.iter().find(|quote| quote.ticker.starts_with("BTC-")).and_then(|quote| perf_pct(quote, "1Y"));
-    let crypto_adj = |quote: &Quote, s: f64| {
-        if !is_currency_quoted(&quote.ticker) {
-            return s; // equities/ETFs: no crypto-market damp, no BTC base
-        }
-        btc_relative(perf_pct(quote, "1Y"), btc_1y, s * cfactor, tuning.growth_btc_outperf_weight)
-    };
+    let crypto_adj = |quote: &Quote, s: f64| crypto_adjust(quote, s, tuning, cfactor, btc_1y); // (Item 17) shared with `size`
     // a gated pinned name returns None from growth_score; give it a tiny sentinel score so it survives
     // ranked's `>0` trim and reaches print_lane (where pinned is exempt from the score/sector cut). Skip
     // err/no-data quotes (a bad symbol like a suffix-less ETF) — nothing to compare, don't show a blank row.
@@ -1122,6 +1129,14 @@ mod tests {
     assert!((nupl_factor(Some(1.0), &tuning) - tuning.nupl_damp_floor).abs() < 1e-9); // peak euphoria -> floor
     assert!(nupl_factor(Some(0.0), &tuning) > 1.0); // deep capitulation -> boost
     assert!((nupl_factor(Some(0.0), &tuning) - tuning.nupl_boost_ceiling).abs() < 1e-9); // NUPL 0 -> ceiling
+    // (Item 17) crypto_adjust: equities pass through untouched (cfactor ignored); crypto is scaled by the
+    // whole-market cfactor (btc_1y None -> btc_relative no-op, so the result isolates the NUPL scale). This
+    // is what `size` must apply too, or its crypto sizes diverge from the screen tables.
+    let equity = quote(5.0, &[("1Y", 20.0)]); // ticker "T" -> not currency-quoted
+    assert_eq!(crypto_adjust(&equity, 10.0, &tuning, 0.5, Some(20.0)), 10.0); // equity: cfactor has no effect
+    let mut coin = quote(5.0, &[("1Y", 20.0)]);
+    coin.ticker = "BTC-EUR".into();
+    assert!((crypto_adjust(&coin, 10.0, &tuning, 0.5, None) - 5.0).abs() < 1e-9); // crypto: 10 * cfactor 0.5
 
     // --- (A) trend consistency: R² of the log-price line, damps CAGR endpoint-luck ---
     assert!(core::trend_r2(&[1.0, 2.0, 4.0, 8.0, 16.0]) > 0.999); // perfect exponential -> R²≈1

@@ -2,7 +2,7 @@
 //! (vol-target). READ-ONLY, never trades — you still type the qty into `trade` yourself. No TICKERS
 //! -> the watchlist. Names that fail the growth gate are dropped (nothing to size). NOT advice.
 
-use crate::picks::{growth_score, size_weights};
+use crate::picks::{crypto_adjust, growth_score, nupl_factor, perf_pct, size_weights};
 use crate::{config, fetch};
 
 pub async fn run(args: Vec<String>) {
@@ -29,9 +29,21 @@ pub async fn run(args: Vec<String>) {
         fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic.growth_fund_factor).await;
     }
 
+    // (Item 17) apply the SAME crypto NUPL + BTC-relative adjustments `screen`/`check` do at render time,
+    // so crypto sizes rank the way the picks tables showed them, not on the raw price-only score. Whole-
+    // market NUPL fetched once; equities pass through crypto_adjust unchanged.
+    let nupl = fetch::fetch_nupl(&client, &settings.urls).await;
+    let cfactor = nupl_factor(nupl, &settings.buy_heuristic);
+    let btc_1y = quotes.iter().find(|q| q.ticker.starts_with("BTC-")).and_then(|q| perf_pct(q, "1Y"));
+
     // score with the SAME growth lane `screen` uses; None = the name failed the growth gate -> not sized.
-    let mut scored: Vec<_> =
-        quotes.iter().filter_map(|q| growth_score(q, &settings.buy_heuristic).map(|s| (q, s))).collect();
+    let mut scored: Vec<_> = quotes
+        .iter()
+        .filter_map(|q| {
+            growth_score(q, &settings.buy_heuristic)
+                .map(|s| (q, crypto_adjust(q, s, &settings.buy_heuristic, cfactor, btc_1y)))
+        })
+        .collect();
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap()); // best score first
 
     if scored.is_empty() {
