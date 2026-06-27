@@ -718,7 +718,9 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
 /// whole basket; a non-positive score contributes 0. Empty in -> empty out; an all-zero pool -> all
 /// zeros (no NaN). `scored` = `(growth score, volatility_pct)`; the returned weights are aligned to it.
 pub fn size_weights(scored: &[(f64, Option<f64>)]) -> Vec<f64> {
-    const MIN_VOL: f64 = 5.0; // % daily-return stdev floor (≈ a calm large-cap); caps a low-vol name's grab
+    const MIN_VOL: f64 = 0.5; // % daily-return stdev floor: only catches near-zero/no-history vol (a calm
+                              // large-cap already swings ~1%); a higher floor would flatten real equities
+                              // to one vol and silently turn this back into score-only sizing.
     let raw: Vec<f64> = scored.iter().map(|(score, vol)| score.max(0.0) / vol.unwrap_or(MIN_VOL).max(MIN_VOL)).collect();
     let total: f64 = raw.iter().sum();
     if total <= 0.0 {
