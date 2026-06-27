@@ -130,6 +130,7 @@ pub async fn run(args: Vec<String>) {
         .map(|tk| {
             let client = &client;
             let urls = &settings.urls;
+            let factor = settings.buy_heuristic.growth_fund_factor.as_str(); // (G) config-selected as-of factor
             async move {
                 let fetched = if monthly {
                     fetch::fetch_history_long(client, urls, tk).await
@@ -157,10 +158,11 @@ pub async fn run(args: Vec<String>) {
                             let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
                             let fund = fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], years));
                             // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
-                            // SWAP this getter to whichever factor report_fund_lane (below) shows +rho + both-half
-                            // OOS — rev_accel is the prior candidate, not a proven choice. Price-only backtest
-                            // (no `fund`/key) leaves this None -> growth_score neutral -> validated edge untouched.
-                            quote.fund_factor = fund.as_ref().and_then(|f| f.rev_accel);
+                            // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
+                            // in settings.yaml to whichever report_fund_lane (below) shows +rho + both-half OOS,
+                            // no recompile. Price-only backtest (no `fund`/key) leaves this None -> growth_score
+                            // neutral -> validated edge untouched.
+                            quote.fund_factor = fund.as_ref().and_then(|f| core::select_fund_factor(f, factor));
                             out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund });
                         }
                         None => break, // no full forward window left -> stop walking this ticker

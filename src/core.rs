@@ -730,6 +730,23 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     }
 }
 
+/// Pick ONE named as-of factor out of `FundFactors` for the growth lane's fund tilt. The name comes
+/// from config (`growth_fund_factor`), so the user can route whichever factor the `backtest … fund`
+/// probe shows predicts best WITHOUT a recompile. An unknown name -> None (neutral) so a typo degrades
+/// to the price-only score instead of panicking. Keep this match in sync with `FundFactors` and the
+/// `report_fund_lane` probe list so the backtest and the live screen always weigh the SAME factor.
+pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
+    match name {
+        "rev_cagr" => f.rev_cagr,
+        "rev_accel" => f.rev_accel,
+        "gross_margin" => f.gross_margin,
+        "op_margin" => f.op_margin,
+        "margin_trend" => f.margin_trend,
+        "eps_growth" => f.eps_growth,
+        _ => None,
+    }
+}
+
 /// Build a Quote AS OF index `as_of` (inclusive) from the full history, filling ONLY the price-derived
 /// fields the buy score reads — reusing the exact same horizon/SMA/vol/R²/drawdown fns on the `[..=as_of]`
 /// slices, so the backtest scores a name exactly as the live tool would have on that day. note:
@@ -903,6 +920,25 @@ pub fn extreme_flags(closes: &[f64], tol: f64) -> (bool, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `select_fund_factor`: each config name maps to its FundFactors field; an unknown name -> None
+    /// (neutral) so a typo'd config can never panic the score. Pure, no network.
+    #[test]
+    fn select_fund_factor_maps_names() {
+        let f = FundFactors {
+            rev_cagr: Some(1.0),
+            rev_accel: Some(2.0),
+            gross_margin: Some(3.0),
+            op_margin: Some(4.0),
+            margin_trend: Some(5.0),
+            eps_growth: Some(6.0),
+        };
+        assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
+        assert_eq!(select_fund_factor(&f, "margin_trend"), Some(5.0));
+        assert_eq!(select_fund_factor(&f, "eps_growth"), Some(6.0));
+        assert_eq!(select_fund_factor(&f, "rev_cagr"), Some(1.0));
+        assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
+    }
 
     /// Pure-logic asserts (no network). White-box: reaches `core` privates via `use super::*`.
     #[test]
