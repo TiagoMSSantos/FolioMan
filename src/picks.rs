@@ -710,7 +710,15 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
                   market base). NOT advice:";
     // rank with NO trim (0.0): print_lane trims equities by growth_min_score but keeps the crypto lane
     // full (all growers up to Bitcoin). Gates inside growth_score still exclude non-growers.
-    print_lane(ranked(quotes, tuning, growth_scorer, 0.0, &pinned_set), n, w, "growth candidates", growth, sectors, tuning.growth_min_score, &pinned_set);
+    let picks = ranked(quotes, tuning, growth_scorer, 0.0, &pinned_set);
+    // (Item 8) churn warning: compare this run's top-N against the last. Separate cache for the wide
+    // `screen` universe vs the small `check`/watch set (keyed by size) so their overlaps don't mix.
+    let cache = std::path::PathBuf::from(if quotes.len() > 200 { ".folioman_turnover_screen.txt" } else { ".folioman_turnover_watch.txt" });
+    let tickers: Vec<String> = picks.iter().map(|(q, _)| q.ticker.clone()).collect();
+    if let Some(note) = turnover_note(&tickers, n, &cache) {
+        println!("{note}");
+    }
+    print_lane(picks, n, w, "growth candidates", growth, sectors, tuning.growth_min_score, &pinned_set);
 }
 
 /// Suggested basket weights (%, summing to 100) for an already-scored list: weight ∝ score ÷
@@ -718,17 +726,69 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
 /// Vol-target, NOT Kelly — Kelly needs a forward return distribution we don't have and overbets
 /// noise. A missing or near-zero vol is floored at `MIN_VOL` so a no-history name can't grab the
 /// whole basket; a non-positive score contributes 0. Empty in -> empty out; an all-zero pool -> all
-/// zeros (no NaN). `scored` = `(growth score, volatility_pct)`; the returned weights are aligned to it.
-pub fn size_weights(scored: &[(f64, Option<f64>)]) -> Vec<f64> {
+/// zeros (no NaN). `scored` = `(growth score, volatility_pct, cluster)`; weights are aligned to it.
+///
+/// (Item 6) CORRELATION-AWARE: each distinct `cluster` (the asset class — crypto/ETF/stock) is one risk
+/// bucket that gets an EQUAL share of gross; vol-target only splits WITHIN a bucket. So five names that
+/// move together don't draw 5× the money of one independent name — the correlated block is capped at one
+/// bucket's budget. ceiling: asset class is a crude correlation proxy; swap in a pairwise price-correlation
+/// matrix (the history `size` already fetched) if the class split underdelivers.
+pub fn size_weights(scored: &[(f64, Option<f64>, &str)]) -> Vec<f64> {
     const MIN_VOL: f64 = 0.5; // % daily-return stdev floor: only catches near-zero/no-history vol (a calm
                               // large-cap already swings ~1%); a higher floor would flatten real equities
                               // to one vol and silently turn this back into score-only sizing.
-    let raw: Vec<f64> = scored.iter().map(|(score, vol)| score.max(0.0) / vol.unwrap_or(MIN_VOL).max(MIN_VOL)).collect();
-    let total: f64 = raw.iter().sum();
-    if total <= 0.0 {
+    let raw: Vec<f64> = scored.iter().map(|(score, vol, _)| score.max(0.0) / vol.unwrap_or(MIN_VOL).max(MIN_VOL)).collect();
+    // sum the vol-target weight per cluster; only clusters with positive weight count toward the split.
+    let mut cluster_tot: HashMap<&str, f64> = HashMap::new();
+    for ((_, _, c), r) in scored.iter().zip(&raw) {
+        *cluster_tot.entry(*c).or_insert(0.0) += *r;
+    }
+    let k = cluster_tot.values().filter(|t| **t > 0.0).count();
+    if k == 0 {
         return vec![0.0; scored.len()]; // nothing positive to size -> zeros, never a divide-by-zero NaN
     }
-    raw.iter().map(|r| r / total * 100.0).collect()
+    let budget = 100.0 / k as f64; // each risk bucket gets an equal share of gross
+    scored
+        .iter()
+        .zip(&raw)
+        .map(|((_, _, c), r)| {
+            let ct = cluster_tot[*c];
+            if ct > 0.0 { r / ct * budget } else { 0.0 }
+        })
+        .collect()
+}
+
+/// (Item 8) Jaccard overlap of the top-`n` tickers of two ranked lists: |∩| / |∪| in [0,1]. 1.0 = the
+/// same names (stable); low = churn — paid in spread+fees, and a sign a knob change reshuffled the picks
+/// (overfit smell). Both empty -> 1.0 (nothing changed). Pure.
+fn rank_jaccard(prev: &[String], now: &[String], n: usize) -> f64 {
+    let a: HashSet<&str> = prev.iter().take(n).map(String::as_str).collect();
+    let b: HashSet<&str> = now.iter().take(n).map(String::as_str).collect();
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    a.intersection(&b).count() as f64 / a.union(&b).count() as f64
+}
+
+/// (Item 8) Compare this run's top-`n` tickers against the previous run cached at `path`; return a one-line
+/// turnover note and rewrite the cache. None on the first ever run (no baseline). Plain-text cache (one
+/// ticker per line) — no serde needed. ceiling: one cache file per `path`; the caller passes a different
+/// path for `screen` vs `check` so their different universes don't cross-contaminate the overlap.
+fn turnover_note(now: &[String], n: usize, path: &std::path::Path) -> Option<String> {
+    let prev: Vec<String> =
+        std::fs::read_to_string(path).ok().map(|s| s.lines().map(String::from).collect()).unwrap_or_default();
+    let top: Vec<String> = now.iter().take(n).cloned().collect();
+    let _ = std::fs::write(path, top.join("\n"));
+    if prev.is_empty() {
+        return None; // first run -> nothing to compare against yet
+    }
+    let j = rank_jaccard(&prev, now, n);
+    let moved = top.iter().filter(|t| !prev.iter().take(n).any(|p| p == *t)).count();
+    Some(format!(
+        "Rank stability vs last run: {:.0}% top-{n} overlap ({moved} new name{}). Low overlap = churn (spread/fee cost) or an over-sensitive knob.",
+        j * 100.0,
+        if moved == 1 { "" } else { "s" }
+    ))
 }
 
 #[cfg(test)]
@@ -736,19 +796,43 @@ mod tests {
     use super::*;
 
     /// `size_weights`: vol-target sizing — bigger slice for higher score / lower vol; sums to 100;
-    /// degenerate inputs (empty, all-zero score) stay finite. Pure, no network.
+    /// degenerate inputs (empty, all-zero score) stay finite. Pure, no network. (Item 6) within ONE
+    /// cluster it's plain vol-target (the original behaviour); across clusters each is an equal bucket.
     #[test]
     fn size_weights_vol_target() {
-        // A: score 72, vol 1%. B: SAME score, DOUBLE vol. C: lower score, same vol as A.
-        let w = size_weights(&[(72.0, Some(1.0)), (72.0, Some(2.0)), (40.0, Some(1.0))]);
+        // A: score 72, vol 1%. B: SAME score, DOUBLE vol. C: lower score, same vol as A. All one cluster.
+        let w = size_weights(&[(72.0, Some(1.0), "x"), (72.0, Some(2.0), "x"), (40.0, Some(1.0), "x")]);
         assert!((w.iter().sum::<f64>() - 100.0).abs() < 1e-9, "weights must sum to 100"); // normalised
         assert!(w[0] > w[1], "same score, lower vol -> bigger slice");
         assert!(w[0] > w[2], "same vol, higher score -> bigger slice");
         assert!((w[0] - 2.0 * w[1]).abs() < 1e-9, "double the vol -> half the weight");
         // degenerate: empty -> empty; all-zero score -> zeros (no NaN/panic); missing vol uses the floor.
         assert!(size_weights(&[]).is_empty());
-        assert_eq!(size_weights(&[(0.0, Some(1.0))]), vec![0.0]);
-        assert!(size_weights(&[(50.0, None), (50.0, None)]).iter().all(|w| (w - 50.0).abs() < 1e-9));
+        assert_eq!(size_weights(&[(0.0, Some(1.0), "x")]), vec![0.0]);
+        assert!(size_weights(&[(50.0, None, "x"), (50.0, None, "x")]).iter().all(|w| (w - 50.0).abs() < 1e-9));
+    }
+
+    /// (Item 6) correlation-aware: two identical "crypto" names + one "stock". Plain vol-target would
+    /// give the crypto BLOCK ~2/3 of the basket (3 equal names); cluster-budgeting caps it at ONE bucket,
+    /// so crypto-block ≈ stock ≈ 50%, and the lone stock outweighs either correlated crypto name.
+    #[test]
+    fn size_weights_caps_correlated_cluster() {
+        let w = size_weights(&[(60.0, Some(1.0), "crypto"), (60.0, Some(1.0), "crypto"), (60.0, Some(1.0), "stock")]);
+        assert!((w.iter().sum::<f64>() - 100.0).abs() < 1e-9);
+        assert!((w[0] + w[1] - w[2]).abs() < 1e-9, "crypto block == stock bucket (equal risk buckets)");
+        assert!(w[2] > w[0] && w[2] > w[1], "the lone stock outweighs each correlated crypto name");
+    }
+
+    /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5
+    /// ({A,B} shared of {A,B,C,D}), disjoint -> 0, both empty -> 1.0. Pure.
+    #[test]
+    fn rank_jaccard_overlap() {
+        let a = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        assert!((rank_jaccard(&a, &a.clone(), 3) - 1.0).abs() < 1e-9);
+        let b = vec!["A".to_string(), "B".to_string(), "D".to_string()];
+        assert!((rank_jaccard(&a, &b, 3) - 0.5).abs() < 1e-9); // {A,B}/{A,B,C,D}
+        assert_eq!(rank_jaccard(&a, &["X".to_string()], 3), 0.0); // disjoint
+        assert!((rank_jaccard(&[], &[], 3) - 1.0).abs() < 1e-9); // both empty -> stable
     }
 
     /// Buy-heuristic asserts (no network). White-box: reaches `picks` privates via `use super::*`.

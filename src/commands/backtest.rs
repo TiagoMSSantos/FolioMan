@@ -596,6 +596,64 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
 /// One ablation knob: a name + a fn that zeroes its weight in a `BuyHeuristic` copy.
 type Knob = (&'static str, fn(&mut BuyHeuristic));
 
+/// (Item 5) p-th percentile of an already-sorted slice (nearest-rank). NaN on empty.
+fn percentile(sorted: &[f64], p: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    let idx = ((p / 100.0) * (sorted.len() - 1) as f64).round() as usize;
+    sorted[idx.min(sorted.len() - 1)]
+}
+
+/// (Item 5) 90% bootstrap band on a lane's top-minus-bottom edge. BLOCK bootstrap: resamples whole ~6mo
+/// cutoff buckets with replacement (overlapping windows inside a bucket aren't independent, so the bucket
+/// is the resample unit), rescoring the edge each draw. A band that straddles 0 = the point edge is within
+/// noise — ship nothing regardless of its sign. Seeded xorshift64 (no `rand` dep) -> reproducible. None
+/// when there are too few buckets (<4) to resample meaningfully.
+fn bootstrap_edge_ci(
+    samples: &[Sample],
+    scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
+    tuning: &BuyHeuristic,
+    iters: usize,
+) -> Option<(f64, f64)> {
+    let mut buckets: HashMap<i32, Vec<usize>> = HashMap::new();
+    for (i, s) in samples.iter().enumerate() {
+        buckets.entry(bucket(s.date)).or_default().push(i);
+    }
+    let keys: Vec<i32> = buckets.keys().copied().collect();
+    if keys.len() < 4 {
+        return None;
+    }
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut edges: Vec<f64> = Vec::with_capacity(iters);
+    for _ in 0..iters {
+        let mut pool: Vec<(&Sample, f64)> = Vec::new();
+        for _ in 0..keys.len() {
+            let k = keys[(next() % keys.len() as u64) as usize];
+            for &i in &buckets[&k] {
+                if let Some(v) = scorer(&samples[i].quote, tuning) {
+                    pool.push((&samples[i], v));
+                }
+            }
+        }
+        if pool.len() >= 4 {
+            let (t, b) = edge_halves(&pool);
+            edges.push(t - b);
+        }
+    }
+    if edges.len() < iters / 2 {
+        return None; // too many draws gated out to too few rows -> no trustworthy band
+    }
+    edges.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    Some((percentile(&edges, 5.0), percentile(&edges, 95.0)))
+}
+
 fn report_lane(
     label: &str,
     samples: &[Sample],
@@ -625,6 +683,17 @@ fn report_lane(
     let (top, bot) = edge_halves(&scored);
     let base_edge = top - bot;
     println!("  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {base_edge:+.1} pts");
+    // (Item 5) bootstrap band: is that point edge distinguishable from 0 given overlapping-sample noise?
+    if let Some((lo, hi)) = bootstrap_edge_ci(samples, scorer, tuning, 1000) {
+        let verdict = if lo > 0.0 {
+            "clears 0 -> real"
+        } else if hi < 0.0 {
+            "below 0 -> backwards"
+        } else {
+            "STRADDLES 0 -> noise"
+        };
+        println!("  90% bootstrap band on edge: [{lo:+.1} … {hi:+.1}] pts  ({verdict})");
+    }
 
     // out-of-sample early vs late (scored is date-ordered)
     let mid = scored.len() / 2;
@@ -733,6 +802,19 @@ mod tests {
         assert!(rho2.unwrap() < -0.9 && edge2 < 0.0, "reversed -> negative rho/edge, got {rho2:?}/{edge2}");
         // too few gated rows -> rho None (the <4 guard the search must tolerate)
         assert!(lane_metrics(&up[..3], dd_score, &BuyHeuristic::default()).0.is_none());
+    }
+
+    /// (Item 5) `percentile` is nearest-rank on a sorted slice: p5/p95 land near the ends, p50 mid, and
+    /// an empty slice is NaN (never panics). This is what turns the bootstrap edge distribution into a band.
+    #[test]
+    fn percentile_nearest_rank() {
+        let s: Vec<f64> = (0..=100).map(|i| i as f64).collect(); // 0..100 sorted
+        assert_eq!(percentile(&s, 0.0), 0.0);
+        assert_eq!(percentile(&s, 100.0), 100.0);
+        assert_eq!(percentile(&s, 50.0), 50.0);
+        assert_eq!(percentile(&s, 5.0), 5.0);
+        assert_eq!(percentile(&s, 95.0), 95.0);
+        assert!(percentile(&[], 50.0).is_nan());
     }
 
     /// `pick_sweep_winner` is the sweep's verdict: it must take the BEST held-out edge among factors that
