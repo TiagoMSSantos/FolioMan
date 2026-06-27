@@ -182,6 +182,12 @@ pub async fn run(args: Vec<String>) {
                                 fund.get_or_insert_with(Default::default).insider_net_buys_90d =
                                     core::insider_net_buys(txns, dates[i], 90);
                             }
+                            // (Item 19) as-of earnings yield from the NATIVE close (currency-consistent with
+                            // native EPS). The live path leaves this None (EUR price vs USD EPS would skew),
+                            // so the factor is PROBE-ONLY until a native live price exists and it validates.
+                            if let Some(f) = fund.as_mut() {
+                                f.earnings_yield = core::earnings_yield(f.eps_ttm, closes[i]);
+                            }
                             // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                             // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
                             // in settings.yaml to whichever report_fund_lane (below) shows +rho + both-half OOS,
@@ -367,6 +373,7 @@ fn report_fund_lane(samples: &[Sample]) {
         ("margin_trend", |f| f.margin_trend),
         ("eps_growth", |f| f.eps_growth),
         ("insider_net90d", |f| f.insider_net_buys_90d), // (Item 4) only populated under `insider`
+        ("earnings_yield", |f| f.earnings_yield),       // (Item 19) as-of valuation (high = cheap); native-currency probe
         ("composite", |f| core::select_fund_factor(f, "composite")), // (Item 3) blend of the present factors
     ];
     let covered = samples.iter().filter(|s| s.fund.is_some()).count();
@@ -424,9 +431,10 @@ fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], b
 /// then prints the one to paste into settings.yaml. Ships nothing. Needs the `fund` path; with <8 cutoffs
 /// carrying fundamentals there's nothing to sweep. Same chronological split + seeded search as `tune`.
 fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
-    const FACTORS: [&str; 8] = [
+    const FACTORS: [&str; 9] = [
         "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
         "insider_net_buys_90d", // (Item 4) shows n/a unless `insider` populated it
+        "earnings_yield",       // (Item 19) as-of valuation; native-currency probe (n/a unless `fund`)
         "composite",            // (Item 3) shows n/a until ≥2 factors are present
     ];
     if samples.iter().filter(|s| s.fund.is_some()).count() < 8 {

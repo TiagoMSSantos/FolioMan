@@ -693,6 +693,8 @@ pub struct FundFactors {
     pub margin_trend: Option<f64>, // op-margin now minus ~1y ago (margin expanding = strengthening)
     pub eps_growth: Option<f64>,   // EPS CAGR over the lookback (bottom-line compounding; both ends must be +)
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
+    pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
+    pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). PROBE-ONLY: set in the backtest loop from the native as-of close; left None by the live path (currency skew — see `earnings_yield` fn)
 }
 
 /// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date (the
@@ -765,6 +767,22 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         margin_trend,
         eps_growth,
         insider_net_buys_90d: None, // (Item 4) SEC-sourced, set in the backtest loop, not from FMP rows
+        eps_ttm: now.and_then(|r| r.eps), // (Item 19) as-of EPS level; earnings_yield needs price, set by caller
+        earnings_yield: None,             // (Item 19) needs the as-of price -> filled in the backtest loop, not here
+    }
+}
+
+/// (Item 19) As-of earnings yield = EPS ÷ price, in % — a VALIDATABLE valuation level (high = cheap), the
+/// honest counterpart to the live-only `pe_ratio` damp (which is backtest-blind). PROBE-ONLY: computed in
+/// the backtest from the native as-of close + native EPS (same currency, so the ratio is clean). NOT wired
+/// into the live screen — live `price_eur` is EUR while FMP EPS is USD, so a live computation would be a
+/// currency train-serve skew (the Item 16 trap); wire live only once a native live price exists AND the
+/// backtest probe shows both OOS halves +. None on a missing EPS or a non-positive price (no div-by-zero,
+/// no garbage ratio).
+pub fn earnings_yield(eps: Option<f64>, price: f64) -> Option<f64> {
+    match eps {
+        Some(e) if price > 0.0 => Some(e / price * 100.0),
+        _ => None,
     }
 }
 
@@ -782,6 +800,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "margin_trend" => f.margin_trend,
         "eps_growth" => f.eps_growth,
         "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
+        "earnings_yield" => f.earnings_yield,             // (Item 19) as-of valuation; PROBE-ONLY (None live)
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -973,14 +992,22 @@ mod tests {
             margin_trend: Some(5.0),
             eps_growth: Some(6.0),
             insider_net_buys_90d: Some(7.0),
+            eps_ttm: Some(8.0),
+            earnings_yield: Some(9.0),
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
         assert_eq!(select_fund_factor(&f, "margin_trend"), Some(5.0));
         assert_eq!(select_fund_factor(&f, "eps_growth"), Some(6.0));
         assert_eq!(select_fund_factor(&f, "rev_cagr"), Some(1.0));
         assert_eq!(select_fund_factor(&f, "insider_net_buys_90d"), Some(7.0)); // (Item 4)
-        assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6
+        assert_eq!(select_fund_factor(&f, "earnings_yield"), Some(9.0)); // (Item 19)
+        assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
+        // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
+        assert_eq!(earnings_yield(Some(5.0), 100.0), Some(5.0)); // 5/100 = 5%
+        assert_eq!(earnings_yield(Some(-2.0), 50.0), Some(-4.0)); // loss-maker -> negative yield (floored later in score)
+        assert_eq!(earnings_yield(Some(5.0), 0.0), None); // non-positive price -> None, no div-by-zero
+        assert_eq!(earnings_yield(None, 100.0), None); // no EPS -> None
     }
 
     /// (Item 3) `composite_factor` = mean of the factors that are `Some`; <2 present -> None (a 1-factor

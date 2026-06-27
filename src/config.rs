@@ -261,7 +261,15 @@ pub struct Urls {
     pub pt_cpi: String,
     pub eu_hicp: String,
     pub coingecko_markets: String, // {n} = top-N crypto by market cap -> screen universe
-    pub sp500_csv: String,         // S&P 500 constituents CSV -> screen stock/ETF universe
+    pub sp500_csv: String,         // S&P 500 constituents CSV -> screen stock/ETF universe (the base equity pond)
+    // (Item 18) EXTRA equity constituent CSVs in the SAME column layout (Symbol, _, GICS Sector, …) —
+    // e.g. an S&P MidCap 400 or European-index CSV — APPENDED to the S&P 500 pond so the proven growth
+    // ranking draws from more candidates (selection ⊆ universe; the heuristic is unchanged, so no
+    // re-validation). Defaulted empty so an older settings.yaml is unchanged. Each added URL must be
+    // VERIFIED-reachable and same-format (parsed by `core::sector_symbol`), else its pond silently stays
+    // empty. note: no GICS-sector column -> the sector filter drops every row, so the layout matters.
+    #[serde(default)]
+    pub constituents_csv: Vec<String>,
     pub nupl: String,          // latest Bitcoin NUPL (net unrealized profit/loss) -> screen sentiment line
     pub ntfy: String,          // {topic}
     // (E) trailing P/E source for the valuation tilt. {ticker} + {key} (from FMP_API_KEY env, kept

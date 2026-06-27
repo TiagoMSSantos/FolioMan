@@ -829,12 +829,17 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
 /// would otherwise leak them into the stocks table past the sector filter.
 pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool, sectors: &[String]) -> (Vec<String>, std::collections::HashSet<String>) {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
-    let (cg, csv, etfs, lisbon) = tokio::join!(
+    let (cg, etfs, lisbon) = tokio::join!(
         get_json(client, &cg_url),
-        get_text(client, &urls.sp500_csv),
         fetch_xetra_etfs(client, urls, cap),
         fetch_euronext_lisbon(client, urls),
     );
+    // (Item 18) equity ponds = S&P 500 + any extra same-format constituent CSVs from config. Sequential
+    // (1–3 URLs, negligible vs the universe fan-out); a failed/empty CSV just drops its pond, never crashes.
+    let mut csv_texts = Vec::new();
+    for url in std::iter::once(&urls.sp500_csv).chain(urls.constituents_csv.iter()) {
+        csv_texts.push(get_text(client, url).await);
+    }
     let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
     let mut out: Vec<String> = Vec::new();
     // crypto: CoinGecko market-cap-ranked array -> SYMBOL-<EUR|USD> (Yahoo crypto form)
@@ -843,10 +848,10 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
             c.get("symbol").and_then(|s| s.as_str()).map(|s| format!("{}-{crypto_cur}", s.to_uppercase()))
         }));
     }
-    // stocks: S&P 500 CSV -> Yahoo symbol, kept only if the row's GICS sector passes `sectors`
+    // stocks: each constituent CSV -> Yahoo symbol, kept only if the row's GICS sector passes `sectors`
     // (empty = all). Filtering HERE means a sector-restricted screen never even fetches the other
-    // sectors' companies. `.take(cap)` AFTER the filter so cap counts matching names, not raw rows.
-    if let Some(text) = csv {
+    // sectors' companies. `.take(cap)` AFTER the filter so cap counts matching names per pond, not raw rows.
+    for text in csv_texts.into_iter().flatten() {
         out.extend(text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).take(cap));
     }
     // Euronext Lisbon equities (Yahoo `.LS`). note: NOT sector-filtered — the set is ~33 names,
