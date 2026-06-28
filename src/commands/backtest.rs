@@ -1280,10 +1280,8 @@ mod tests {
     }
     #[test]
     fn newly_admitted_mean_isolates_the_loosened_set() {
-        let mut base = BuyHeuristic::default();
-        base.growth_min_cagr = 5.0; // base admits dd>5
-        let mut relaxed = base.clone();
-        relaxed.growth_min_cagr = 0.0; // loosened: admits dd>0
+        let base = BuyHeuristic { growth_min_cagr: 5.0, ..Default::default() }; // base admits dd>5
+        let relaxed = BuyHeuristic { growth_min_cagr: 0.0, ..base.clone() }; // loosened: admits dd>0
         // dd 1/2/3 are NEWLY admitted (rejected at >5, accepted at >0); dd6 was already in under base
         // (not "newly"); dd-1 stays rejected. relative == the first tuple field (s_rel).
         let s: Vec<Sample> = [(10.0, 1.0), (20.0, 2.0), (30.0, 3.0), (99.0, 6.0), (-5.0, -1.0)]
