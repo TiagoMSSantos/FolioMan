@@ -6,6 +6,7 @@ pub mod alert;
 pub mod backtest;
 pub mod check;
 pub mod perf;
+pub mod report;
 pub mod screen;
 pub mod size;
 pub mod trade;

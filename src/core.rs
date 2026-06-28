@@ -2,7 +2,7 @@
 //! No network here — all I/O lives in `fetch.rs`. Read-only, never trades.
 //! Acronyms (CAGR, NUPL, SMA, GICS, R², CdA, …): see the Glossary in README.md.
 
-use chrono::{Duration, NaiveDate};
+use chrono::{Datelike, Duration, NaiveDate};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -661,6 +661,7 @@ fn ranks(v: &[f64]) -> Vec<f64> {
 #[derive(Clone, Debug, Default)]
 pub struct FundRow {
     pub filed: NaiveDate,
+    pub period_end: NaiveDate,         // FMP period-end `date` — DISPLAY-ONLY (groups quarters by fiscal year in `report`). The as-of join (`fund_as_of`) keys on `filed`, never this, so it can't leak look-ahead into the backtest
     pub revenue: Option<f64>,
     pub gross_margin: Option<f64>,    // % = grossProfit/revenue
     pub op_margin: Option<f64>,       // % = operatingIncome/revenue
@@ -784,6 +785,60 @@ pub fn earnings_yield(eps: Option<f64>, price: f64) -> Option<f64> {
         Some(e) if price > 0.0 => Some(e / price * 100.0),
         _ => None,
     }
+}
+
+/// One fiscal year of an income statement, rolled up from the quarterly `FundRow`s — the `report`
+/// command's display row. Margins are %, revenue/eps in native units. `quarters` < 4 = an incomplete
+/// fiscal year (most-recent partial, or a non-December fiscal-year-end straddling the calendar split);
+/// the print layer flags it so a half-year isn't misread as a revenue cliff.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnnualReport {
+    pub year: i32,
+    pub revenue: f64,
+    pub gross_margin: Option<f64>,
+    pub op_margin: Option<f64>,
+    pub net_margin: Option<f64>,
+    pub eps: Option<f64>,
+    pub quarters: usize,
+}
+
+/// Roll the quarterly `FundRow`s up to one row per fiscal year for the `report` view. Newest year
+/// first. Annual revenue = Σ quarter revenue; annual EPS = Σ quarter eps (None if no quarter reports
+/// it); each annual margin = the REVENUE-WEIGHTED mean of the quarter margins, which equals
+/// Σ(profit)/Σ(revenue) exactly (a quarter's margin% is profit/revenue), so no absolute profit line is
+/// needed. A quarter missing a margin (or revenue) just drops out of that margin's weighting, never
+/// fabricating a 0. ponytail: groups by `period_end.year()` — a non-Dec fiscal year can straddle the
+/// calendar split; the `quarters` count exposes it, true fiscal-period grouping deferred until it bites.
+pub fn annual_rollup(rows: &[FundRow]) -> Vec<AnnualReport> {
+    let mut by_year: BTreeMap<i32, Vec<&FundRow>> = BTreeMap::new();
+    for r in rows {
+        by_year.entry(r.period_end.year()).or_default().push(r);
+    }
+    by_year
+        .into_iter()
+        .rev() // newest year first
+        .map(|(year, qs)| {
+            let revenue: f64 = qs.iter().filter_map(|r| r.revenue).sum();
+            // revenue-weighted margin: Σ(margin·rev)/Σ(rev) over quarters that carry BOTH
+            let wmargin = |pick: fn(&FundRow) -> Option<f64>| {
+                let (num, den) = qs.iter().copied().fold((0.0, 0.0), |(n, d), r| match (pick(r), r.revenue) {
+                    (Some(m), Some(rev)) => (n + m * rev, d + rev),
+                    _ => (n, d),
+                });
+                (den > 0.0).then(|| num / den)
+            };
+            let eps_vals: Vec<f64> = qs.iter().filter_map(|r| r.eps).collect();
+            AnnualReport {
+                year,
+                revenue,
+                gross_margin: wmargin(|r| r.gross_margin),
+                op_margin: wmargin(|r| r.op_margin),
+                net_margin: wmargin(|r| r.net_margin),
+                eps: (!eps_vals.is_empty()).then(|| eps_vals.iter().sum::<f64>()),
+                quarters: qs.len(),
+            }
+        })
+        .collect()
 }
 
 /// Pick ONE named as-of factor out of `FundFactors` for the growth lane's fund tilt. The name comes
@@ -1020,6 +1075,49 @@ mod tests {
         let one = FundFactors { eps_growth: Some(9.0), ..Default::default() };
         assert_eq!(composite_factor(&one), None); // only 1 factor -> None
         assert_eq!(composite_factor(&FundFactors::default()), None); // nothing -> None
+    }
+
+    /// `annual_rollup`: quarters group by period_end YEAR (newest first), revenue + eps SUM, margins are
+    /// revenue-weighted, and an incomplete year reports its real `quarters` count so the print layer flags it.
+    #[test]
+    fn annual_rollup_groups_and_weights() {
+        let q = |y: i32, m: u32, rev: f64, gm: f64, eps: f64| FundRow {
+            period_end: NaiveDate::from_ymd_opt(y, m, 28).unwrap(),
+            revenue: Some(rev),
+            gross_margin: Some(gm),
+            eps: Some(eps),
+            ..Default::default()
+        };
+        // 2022: 4 quarters; 2023: 3 quarters (partial). Out of order on purpose.
+        let rows = vec![
+            q(2022, 3, 100.0, 40.0, 1.0),
+            q(2023, 9, 200.0, 60.0, 4.0),
+            q(2022, 6, 100.0, 50.0, 2.0),
+            q(2023, 3, 200.0, 50.0, 3.0),
+            q(2022, 9, 200.0, 50.0, 1.5),
+            q(2022, 12, 100.0, 50.0, 1.5),
+            q(2023, 6, 200.0, 55.0, 3.5),
+        ];
+        let out = annual_rollup(&rows);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].year, 2023); // newest first
+        assert_eq!(out[1].year, 2022);
+        // 2022 revenue = 100+100+200+100 = 500; eps summed = 6.0; 4 quarters
+        assert_eq!(out[1].revenue, 500.0);
+        assert_eq!(out[1].eps, Some(6.0));
+        assert_eq!(out[1].quarters, 4);
+        // 2022 gross margin = Σ(gm·rev)/Σrev = (40·100+50·100+50·200+50·100)/500 = 24000/500 = 48.0
+        assert!((out[1].gross_margin.unwrap() - 48.0).abs() < 1e-9);
+        // 2023 is the partial year: 3 quarters, revenue 600, eps 10.5
+        assert_eq!(out[0].quarters, 3);
+        assert_eq!(out[0].revenue, 600.0);
+        assert_eq!(out[0].eps, Some(10.5));
+        // a missing margin/eps drops out, never fabricates 0
+        let sparse = vec![FundRow { period_end: NaiveDate::from_ymd_opt(2024, 3, 28).unwrap(), revenue: Some(10.0), ..Default::default() }];
+        let s = annual_rollup(&sparse);
+        assert_eq!(s[0].gross_margin, None);
+        assert_eq!(s[0].eps, None);
+        assert_eq!(s[0].revenue, 10.0);
     }
 
     /// (Item 4) `insider_net_buys` counts P(+1)/S(−1) only in [cutoff−window, cutoff): a same-day or later

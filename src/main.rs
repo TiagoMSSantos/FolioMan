@@ -4,6 +4,7 @@
 //!   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
 //!   folioman screen [TICKERS...]   scan live universe (CoinGecko + S&P500): ATH/ATL / fallers / dividends / buys
 //!   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
+//!   folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower verdict
 //!   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep
 //!   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
@@ -25,6 +26,7 @@ folioman — review ETF/stock/crypto holdings. Read-only, never trades.
   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
   folioman screen [TICKERS...]   scan live universe (CoinGecko + S&P500): ATH/ATL / fallers / dividends / buys
   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
+  folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower verdict (FMP key)
   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep
   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
   folioman accounts              cash available + holdings per broker (read-only; env creds)
@@ -43,6 +45,7 @@ async fn main() {
         "perf" => commands::perf::run(rest).await,
         "screen" => commands::screen::run(rest).await,
         "size" => commands::size::run(rest).await,
+        "report" => commands::report::run(rest).await,
         "backtest" => commands::backtest::run(rest).await,
         "alert" => commands::alert::run(rest).await,
         "accounts" => commands::accounts::run(rest).await,

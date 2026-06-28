@@ -460,8 +460,16 @@ fn parse_fund_row(v: &Value) -> Option<core::FundRow> {
         (Some(n), Some(r)) => Some(n / r * 100.0),
         _ => None,
     };
+    // period-end `date` is DISPLAY-ONLY (report's fiscal-year grouping); fall back to `filed` if FMP
+    // ever omits it. The as-of join keys on `filed`, so this never affects the backtest.
+    let period_end = v
+        .get("date")
+        .and_then(|x| x.as_str())
+        .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        .unwrap_or(filed);
     Some(core::FundRow {
         filed,
+        period_end,
         revenue,
         gross_margin: margin("grossProfit"),
         op_margin: margin("operatingIncome"),
@@ -995,11 +1003,17 @@ mod tests {
 
         // --- parse_fund_row: FMP income-statement row -> FundRow ---
         let row = json!({
-            "filingDate": "2022-02-01", "revenue": 200.0,
+            "filingDate": "2022-02-01", "date": "2021-12-31", "revenue": 200.0,
             "grossProfit": 100.0, "operatingIncome": 50.0, "netIncome": 40.0, "eps": 2.5
         });
         let fr = parse_fund_row(&row).unwrap();
         assert_eq!(fr.filed, NaiveDate::from_ymd_opt(2022, 2, 1).unwrap());
+        assert_eq!(fr.period_end, NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()); // period-end `date`, not filing
+        // `date` absent -> period_end falls back to `filed` (never fails the row)
+        assert_eq!(
+            parse_fund_row(&json!({"filingDate": "2022-02-01", "revenue": 5.0})).unwrap().period_end,
+            NaiveDate::from_ymd_opt(2022, 2, 1).unwrap()
+        );
         assert_eq!(fr.revenue, Some(200.0));
         assert_eq!(fr.gross_margin, Some(50.0)); // 100/200*100
         assert_eq!(fr.op_margin, Some(25.0));
