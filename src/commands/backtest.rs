@@ -293,6 +293,7 @@ pub async fn run(args: Vec<String>) {
     ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, buy_knobs);
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, growth_knobs);
+    gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
     if fund || insider {
         report_fund_lane(&samples);
         sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
@@ -872,6 +873,41 @@ fn turnover_frac(scored: &[(&Sample, f64)]) -> f64 {
     1.0 - jac_sum / pairs as f64
 }
 
+/// (#9) Do the hard growth GATES actually select winners? Every rho/edge the lanes print is computed
+/// over GATED-IN names only (`report_lane` drops the `None`s), so a gate that quietly discards future
+/// winners is invisible. This partitions the FULL de-meaned sample by whether `scorer` admits it
+/// (Some = passed the gates, None = rejected) and compares the two groups' mean forward peer-relative
+/// return. ACCEPTED mean ≫ REJECTED mean = the gates pick winners; gap ≈ 0 or negative = the gates are
+/// shrinking the pool for no edge (e.g. the 80% range gate dropping a great compounder that's merely in a
+/// 20% correction). Pure measurement — no ranking change. Returns the gap (accepted − rejected) for the
+/// test; None when either side has too few rows to mean. Generic over the scorer so it's unit-testable
+/// without building quotes that clear growth_score's gate maze (same pattern as `lane_metrics`).
+fn gate_audit(
+    samples: &[Sample],
+    scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
+    tuning: &BuyHeuristic,
+) -> Option<f64> {
+    let (accepted, rejected): (Vec<&Sample>, Vec<&Sample>) =
+        samples.iter().partition(|s| scorer(&s.quote, tuning).is_some());
+    println!("\n── GATE AUDIT (growth gates: do the names they EXCLUDE actually underperform?) ──");
+    if accepted.len() < 4 || rejected.len() < 4 {
+        println!("  {} accepted / {} rejected — too few on one side to compare.", accepted.len(), rejected.len());
+        return None;
+    }
+    let mean = |g: &[&Sample]| g.iter().map(|s| s.relative).sum::<f64>() / g.len() as f64;
+    let (a, r) = (mean(&accepted), mean(&rejected));
+    let gap = a - r;
+    println!("  accepted (passed gates): n={:<5} mean fwd peer-relative {a:+.1} pts", accepted.len());
+    println!("  rejected (failed gates): n={:<5} mean fwd peer-relative {r:+.1} pts", rejected.len());
+    let verdict = if gap > 0.0 {
+        "gates SELECT winners (accepted beat the rejected pool)"
+    } else {
+        "gates ADD NOTHING — the rejected names did as well or better; consider loosening them"
+    };
+    println!("  gap {gap:+.1} pts  ->  {verdict}");
+    Some(gap)
+}
+
 fn report_lane(
     label: &str,
     samples: &[Sample],
@@ -1161,6 +1197,27 @@ mod tests {
         assert_eq!(uniq.len(), tickers.len(), "injection duplicated a ticker");
         assert!(STRESS_TICKERS.iter().all(|t| uniq.contains(*t)), "a loser is missing from the pool");
         assert!(uniq.contains("AAPL")); // the unrelated universe name survives
+    }
+
+    /// (#9) gate_audit reports a POSITIVE accepted−rejected gap when the gate KEEPS the high-return names
+    /// and drops the low ones (gates select winners), and a NEGATIVE gap when it admits the losers (the
+    /// "loosen me" signal). Synthetic gate admits dd>0; `s_rel` sets relative == the value passed.
+    fn dd_gate(q: &Quote, _: &BuyHeuristic) -> Option<f64> {
+        (q.drawdown_pct > 0.0).then_some(1.0)
+    }
+    #[test]
+    fn gate_audit_flags_good_and_bad_gates() {
+        let def = BuyHeuristic::default();
+        // winners (relative +) pass the gate; losers (relative −) fail -> accepted mean ≫ rejected -> +gap
+        let good: Vec<Sample> = [(5.0, 1.0), (6.0, 1.0), (7.0, 1.0), (8.0, 1.0), (-5.0, -1.0), (-6.0, -1.0), (-7.0, -1.0), (-8.0, -1.0)]
+            .iter().map(|&(r, d)| s_rel(r, d)).collect();
+        assert!(gate_audit(&good, dd_gate, &def).unwrap() > 0.0, "gate keeps winners -> positive gap");
+        // flip: the dd>0 (accepted) names now carry the LOW returns -> gate admits losers -> negative gap
+        let bad: Vec<Sample> = [(-5.0, 1.0), (-6.0, 1.0), (-7.0, 1.0), (-8.0, 1.0), (5.0, -1.0), (6.0, -1.0), (7.0, -1.0), (8.0, -1.0)]
+            .iter().map(|&(r, d)| s_rel(r, d)).collect();
+        assert!(gate_audit(&bad, dd_gate, &def).unwrap() < 0.0, "gate admits losers -> negative gap");
+        // <4 on one side (4 accepted / 1 rejected) -> None (the too-few guard)
+        assert!(gate_audit(&good[..5], dd_gate, &def).is_none());
     }
 
     /// `tune` de-means each chronological split INDEPENDENTLY (`demean(&mut s[..cut])` / `s[cut..]`).
