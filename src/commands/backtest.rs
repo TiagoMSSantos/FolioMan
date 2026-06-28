@@ -291,9 +291,18 @@ pub async fn run(args: Vec<String>) {
         ("growth_fund_weight", |tuning| tuning.growth_fund_weight = 0.0), // (G) Δ shows the as-of fund factor's through-the-lane edge; ~0 when weight is already 0 (default) or no fund coverage
         ("growth_mom121_weight", |tuning| tuning.growth_mom121_weight = 0.0), // (M) Δ shows the 12-1 momentum term's through-the-lane edge; ~0 when weight is 0 (default)
     ];
+    // (#10) loosen each numeric growth GATE one notch, relative to the loaded tuning (respects settings.yaml
+    // overrides). The sweep reports the mean forward return of the names each loosening newly admits.
+    let gate_loosen: &[Knob] = &[
+        ("growth_min_range_pct -10", |t| t.growth_min_range_pct -= 10.0),
+        ("growth_min_cagr -4", |t| t.growth_min_cagr -= 4.0),
+        ("max_1m_drop_pct -10 (deeper)", |t| t.max_1m_drop_pct -= 10.0),
+        ("min_avg_turnover_eur ->0", |t| t.min_avg_turnover_eur = 0.0),
+    ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, buy_knobs);
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, growth_knobs);
     gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
+    gate_sweep(&samples, tuning, gate_loosen); // (#10) which specific gate is too tight?
     if fund || insider {
         report_fund_lane(&samples);
         sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
@@ -908,6 +917,49 @@ fn gate_audit(
     Some(gap)
 }
 
+/// (#10 helper) Mean forward peer-relative return of the names REJECTED under `base` tuning but ACCEPTED
+/// once loosened to `relaxed` (the set a looser gate NEWLY admits). `(count, mean)`, or None when
+/// loosening admits nobody. Pure + scorer-generic so the per-gate sweep is unit-testable without building
+/// quotes that clear growth_score's gate maze (same trick as `gate_audit`/`lane_metrics`).
+fn newly_admitted_mean(
+    samples: &[Sample],
+    scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
+    base: &BuyHeuristic,
+    relaxed: &BuyHeuristic,
+) -> Option<(usize, f64)> {
+    let newly: Vec<&Sample> = samples
+        .iter()
+        .filter(|s| scorer(&s.quote, base).is_none() && scorer(&s.quote, relaxed).is_some())
+        .collect();
+    if newly.is_empty() {
+        return None;
+    }
+    let mean = newly.iter().map(|s| s.relative).sum::<f64>() / newly.len() as f64;
+    Some((newly.len(), mean))
+}
+
+/// (#10) WHICH growth gate is too tight? #9 gives the aggregate verdict; this breaks it down per gate.
+/// For each numeric gate, loosen its threshold one notch (relative to the loaded tuning, so a settings.yaml
+/// override is respected) and report the mean forward peer-relative return of the names that loosening
+/// NEWLY admits. A POSITIVE mean = that gate was discarding winners -> loosen it in settings.yaml and
+/// re-validate (the lane OOS + #9's aggregate must still hold); ≤0 = the gate is correctly keeping junk
+/// out, leave it. Pure measurement, no ranking change; reuses the ablation `Knob` pattern + `growth_score`.
+fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob]) {
+    println!("\n── GATE SWEEP (loosen each gate one notch -> mean fwd return of the names it NEWLY admits) ──");
+    println!("  positive = the gate was too tight (newly-admitted beat the field); ≤0 = it's keeping junk out.");
+    for (name, loosen) in gates {
+        let mut t = tuning.clone();
+        loosen(&mut t);
+        match newly_admitted_mean(samples, growth_score, tuning, &t) {
+            Some((n, mean)) => {
+                let tag = if mean > 0.0 { "  <- TOO TIGHT (loosen this gate)" } else { "" };
+                println!("  {name:<26} n={n:<4} mean fwd peer-relative {mean:+.1} pts{tag}");
+            }
+            None => println!("  {name:<26} admits 0 new names (gate not binding on this sample)"),
+        }
+    }
+}
+
 fn report_lane(
     label: &str,
     samples: &[Sample],
@@ -1218,6 +1270,29 @@ mod tests {
         assert!(gate_audit(&bad, dd_gate, &def).unwrap() < 0.0, "gate admits losers -> negative gap");
         // <4 on one side (4 accepted / 1 rejected) -> None (the too-few guard)
         assert!(gate_audit(&good[..5], dd_gate, &def).is_none());
+    }
+
+    /// (#10) `newly_admitted_mean` must isolate exactly the names a LOOSER gate newly admits (rejected
+    /// under `base`, accepted under `relaxed`) and average their forward return — the signal that a gate
+    /// is too tight. Synthetic gate: admit dd > growth_min_cagr, so lowering that threshold admits more.
+    fn cagr_gate(q: &Quote, t: &BuyHeuristic) -> Option<f64> {
+        (q.drawdown_pct > t.growth_min_cagr).then_some(1.0)
+    }
+    #[test]
+    fn newly_admitted_mean_isolates_the_loosened_set() {
+        let mut base = BuyHeuristic::default();
+        base.growth_min_cagr = 5.0; // base admits dd>5
+        let mut relaxed = base.clone();
+        relaxed.growth_min_cagr = 0.0; // loosened: admits dd>0
+        // dd 1/2/3 are NEWLY admitted (rejected at >5, accepted at >0); dd6 was already in under base
+        // (not "newly"); dd-1 stays rejected. relative == the first tuple field (s_rel).
+        let s: Vec<Sample> = [(10.0, 1.0), (20.0, 2.0), (30.0, 3.0), (99.0, 6.0), (-5.0, -1.0)]
+            .iter().map(|&(r, d)| s_rel(r, d)).collect();
+        let (n, mean) = newly_admitted_mean(&s, cagr_gate, &base, &relaxed).unwrap();
+        assert_eq!(n, 3, "only dd 1/2/3 are newly admitted (dd6 was already in)");
+        assert!((mean - 20.0).abs() < 1e-9, "their relatives 10/20/30 -> mean 20, got {mean}");
+        // loosening that admits nobody (relaxed == base) -> None
+        assert!(newly_admitted_mean(&s, cagr_gate, &base, &base).is_none());
     }
 
     /// `tune` de-means each chronological split INDEPENDENTLY (`demean(&mut s[..cut])` / `s[cut..]`).
