@@ -156,6 +156,19 @@ fn is_currency_quoted(ticker: &str) -> bool {
     underlying(ticker) != ticker
 }
 
+/// Coarse asset class for peer-grouping: 0 = crypto (`-USD`/`-EUR`), 1 = ETF/fund, 2 = single stock.
+/// Same split `print_lane` shows. The backtest de-means WITHIN class so a +9400% crypto's huge return
+/// can't swamp the equity peer-mean and flatten every growth-knob's edge to noise.
+pub fn asset_class(quote: &Quote) -> u8 {
+    if is_currency_quoted(&quote.ticker) {
+        0
+    } else if quote_is_etf(quote) {
+        1
+    } else {
+        2
+    }
+}
+
 /// Dollar-pegged stablecoin underlyings — pegged to $1, so zero growth potential (never a "buy and
 /// hold for decades" candidate). On the EUR leg their price drifts with EUR/USD, faking a drawdown
 /// that slips past the `drawdown < 3%` peg gate — so exclude them by symbol instead.

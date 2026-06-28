@@ -30,7 +30,7 @@
 use crate::config::BuyHeuristic;
 use crate::core::Quote;
 use crate::picks::{buy_score, growth_score};
-use crate::{config, core, fetch};
+use crate::{config, core, fetch, picks};
 use chrono::Datelike;
 use futures::stream::{self, StreamExt};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -56,17 +56,21 @@ fn bucket(d: chrono::NaiveDate) -> i32 {
     d.year() * 2 + d.month0() as i32 / 6
 }
 
-/// (#1) De-mean each cutoff's realized return WITHIN its ~6-month bucket -> `relative` (the selection
-/// signal). Pure + testable; the runtime sum-to-~0 invariant check stays in `run`.
+/// (#1) De-mean each cutoff's realized return WITHIN its ~6-month bucket AND asset class -> `relative`
+/// (the selection signal). Class-split because crypto's ~1e9-scale peer-relative returns otherwise share
+/// a pool with equities and swamp the de-meaned mean, pinning every growth-knob variant at the same edge
+/// (band straddles 0 = the GROWTH lane can't discriminate). Per-(bucket, class) groups compare like with
+/// like. Pure + testable; the runtime sum-to-~0 invariant check stays in `run`.
 fn demean(samples: &mut [Sample]) {
-    let mut sums: HashMap<i32, (f64, usize)> = HashMap::new();
+    let key = |s: &Sample| (bucket(s.date), picks::asset_class(&s.quote));
+    let mut sums: HashMap<(i32, u8), (f64, usize)> = HashMap::new();
     for s in samples.iter() {
-        let e = sums.entry(bucket(s.date)).or_insert((0.0, 0));
+        let e = sums.entry(key(s)).or_insert((0.0, 0));
         e.0 += s.realized;
         e.1 += 1;
     }
     for s in samples.iter_mut() {
-        let (sum, n) = sums[&bucket(s.date)];
+        let (sum, n) = sums[&key(s)];
         s.relative = s.realized - sum / n as f64;
     }
 }
@@ -258,7 +262,7 @@ pub async fn run(args: Vec<String>) {
         return;
     }
 
-    // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket. Pooling raw returns across cutoffs
+    // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket AND asset class. Pooling raw returns across cutoffs
     // that span different regimes makes the score race CALENDAR LUCK (a 2016 cutoff that mooned vs a
     // 2021-top cutoff that crashed), not stock-picking. Subtracting the bucket's peer mean leaves only
     // "did this name beat the others scored the same half-year" = the selection signal we actually want.
@@ -1087,6 +1091,19 @@ mod tests {
             *sums.entry(bucket(x.date)).or_insert(0.0) += x.relative;
         }
         assert!(sums.values().all(|v| v.abs() < 1e-9));
+    }
+
+    /// (#1 class split) De-mean groups by (bucket, asset class): a +1e9 crypto in the SAME bucket as two
+    /// stocks must NOT move the stocks' peer-mean — else crypto's scale swamps the equity edge to noise.
+    #[test]
+    fn demean_splits_by_asset_class() {
+        let stock = |r: f64| Sample { date: ymd(2020, 2, 1), realized: r, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None };
+        let crypto = |r: f64| Sample { date: ymd(2020, 2, 1), realized: r, relative: 0.0, quote: Quote::stub("BTC-USD", "1", "", "Bitcoin"), fund: None };
+        let mut s = [stock(10.0), stock(30.0), crypto(1e9)];
+        demean(&mut s);
+        assert!((s[0].relative - -10.0).abs() < 1e-9); // stock peer-mean = 20, unmoved by the crypto
+        assert!((s[1].relative - 10.0).abs() < 1e-9);
+        assert!(s[2].relative.abs() < 1e-9); // crypto alone in its class -> de-means to 0
     }
 
     /// A synthetic scorer reading one quote field — lets us test `lane_metrics`/`edge_halves` (the
