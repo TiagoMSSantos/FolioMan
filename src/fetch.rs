@@ -315,7 +315,17 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // `screen` can't blow the limit and a daily `check` of your holdings reads free from cache.
     let is_etf = chart.instrument_type.eq_ignore_ascii_case("ETF");
     let is_equity = chart.instrument_type.eq_ignore_ascii_case("EQUITY");
-    let (pe, roe) = if is_equity { fetch_ratios(client, urls, ticker).await } else { (None, None) };
+    let (pe, roe) = if is_equity {
+        // SEC EDGAR first: free, no key, no daily cap — the reliable P/E+ROE source for US filers (FMP's
+        // 250/day US-centric free tier is what left these columns n/a). A non-US filer has no CIK -> SEC
+        // None -> fall back to FMP (covers ADRs / foreign listings SEC doesn't).
+        match fetch_ratios_sec(client, urls, ticker, *chart.closes.last().unwrap()).await {
+            (None, None) => fetch_ratios(client, urls, ticker).await,
+            got => got,
+        }
+    } else {
+        (None, None)
+    };
     let ter = if is_etf { fetch_expense(client, urls, ticker).await } else { None };
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
@@ -469,6 +479,21 @@ async fn fetch_ratios(client: &Client, urls: &Urls, ticker: &str) -> (Option<f64
     let pe = o.get("priceToEarningsRatioTTM").and_then(|x| x.as_f64()).filter(|p| p.is_finite() && *p > 0.0);
     let roe = o.get("returnOnEquityTTM").and_then(|x| x.as_f64()).filter(|r| r.is_finite()).map(|r| r * 100.0);
     (pe, roe)
+}
+
+/// (E/F) Trailing P/E + ROE for a US EQUITY from SEC EDGAR — free, no key, no daily cap (unlike FMP).
+/// P/E = native-currency close ÷ latest annual diluted EPS (US filers report & trade in USD, so it's
+/// currency-consistent); ROE is read straight off the SEC-derived `FundRow`. None for a non-US filer
+/// (no CIK) so the caller can fall back to FMP. Filling `pe_ratio` also un-blanks the PEG column, which
+/// derives from it downstream. The SEC fetch is itself disk-cached + budget-capped (see
+/// `fetch_fundamentals_sec`), so a wide `screen` cold-fetches once then reads free forever.
+async fn fetch_ratios_sec(client: &Client, urls: &Urls, ticker: &str, close_native: f64) -> (Option<f64>, Option<f64>) {
+    let rows = fetch_fundamentals_sec(client, urls, ticker).await.unwrap_or_default();
+    let Some(latest) = rows.last() else {
+        return (None, None); // rows are BTreeMap-ordered by period_end -> last = newest fiscal year
+    };
+    let pe = latest.eps.filter(|e| *e > 0.0).map(|e| close_native / e);
+    (pe, latest.roe)
 }
 
 /// (TER) ETF annual expense ratio (%) from FMP `stable/etf/info` (`expenseRatio`, a FRACTION -> ×100).
@@ -768,7 +793,10 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
 // and de-dupes each fiscal period to its EARLIEST filing so a later 10-K's restated comparative can't
 // post-date the as-of `filed`. US filers only (a non-US ticker has no CIK -> None).
 
-type SecCacheRow = (String, String, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>);
+// (filed, period_end, revenue, gross_margin, op_margin, net_margin, eps, roe). Adding roe bumped the
+// arity: a pre-roe 7-tuple cache file fails to deserialize -> treated as a miss -> refetched + rewritten
+// (SEC is uncapped, so a one-time rebuild is free).
+type SecCacheRow = (String, String, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>);
 
 /// Parse a SEC `companyfacts` payload into ANNUAL `FundRow`s (one per fiscal year). Pure -> unit-tested.
 /// Revenue is merged across the concepts different eras/filers use; each annual line is joined to the
@@ -818,11 +846,44 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
         }
         m
     };
+    // Balance-sheet items (equity) are INSTANT (as-of period_end, no 12-month duration), so the
+    // 350-380 day filter in `collect` drops them — a separate point-in-time collector keyed on `end`,
+    // 10-K only, earliest-filed wins (matches `collect`).
+    let collect_instant = |tags: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> {
+        let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> = std::collections::BTreeMap::new();
+        for tag in tags {
+            let arr = match g.get(tag).and_then(|t| t.get("units")).and_then(|u| u.get(unit)).and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => continue,
+            };
+            for x in arr {
+                if !x.get("form").and_then(|v| v.as_str()).is_some_and(|f| f.starts_with("10-K")) {
+                    continue;
+                }
+                let Some(ed) = x.get("end").and_then(|v| v.as_str()).and_then(|e| NaiveDate::parse_from_str(e, "%Y-%m-%d").ok()) else {
+                    continue;
+                };
+                let (Some(filed), Some(val)) = (
+                    x.get("filed").and_then(|v| v.as_str()).and_then(|f| NaiveDate::parse_from_str(f, "%Y-%m-%d").ok()),
+                    x.get("val").and_then(|v| v.as_f64()),
+                ) else {
+                    continue;
+                };
+                m.entry(ed).and_modify(|cur| {
+                    if filed < cur.0 {
+                        *cur = (filed, val);
+                    }
+                }).or_insert((filed, val));
+            }
+        }
+        m
+    };
     let rev = collect(&["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"], "USD");
     let gp = collect(&["GrossProfit"], "USD");
     let op = collect(&["OperatingIncomeLoss"], "USD");
     let ni = collect(&["NetIncomeLoss"], "USD");
     let eps = collect(&["EarningsPerShareDiluted"], "USD/shares");
+    let eq = collect_instant(&["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "USD");
     rev.into_iter()
         .map(|(end, (filed, revenue))| {
             let at = |m: &std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)>| m.get(&end).map(|(_, v)| *v);
@@ -838,6 +899,9 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 op_margin: margin(at(&op)),
                 net_margin: margin(at(&ni)),
                 eps: at(&eps),
+                // ROE = net income ÷ shareholders' equity (%), both as-of this period end. Free from
+                // SEC — no premium ratios endpoint needed.
+                roe: at(&ni).zip(at(&eq)).and_then(|(n, e)| (e != 0.0).then_some(n / e * 100.0)),
                 ..Default::default()
             }
         })
@@ -853,7 +917,7 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
-            .filter_map(|(f, e, rev, gm, op, net, eps)| {
+            .filter_map(|(f, e, rev, gm, op, net, eps, roe)| {
                 Some(core::FundRow {
                     filed: NaiveDate::parse_from_str(&f, "%Y-%m-%d").ok()?,
                     period_end: NaiveDate::parse_from_str(&e, "%Y-%m-%d").ok()?,
@@ -862,6 +926,7 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
                     op_margin: op,
                     net_margin: net,
                     eps,
+                    roe,
                     ..Default::default()
                 })
             })
@@ -879,7 +944,7 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
             .iter()
             .map(|r| {
                 (r.filed.format("%Y-%m-%d").to_string(), r.period_end.format("%Y-%m-%d").to_string(),
-                 r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps)
+                 r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps, r.roe)
             })
             .collect();
         if let Some(dir) = cache.parent() {
@@ -1154,6 +1219,13 @@ mod tests {
             ]}},
             "EarningsPerShareDiluted": {"units": {"USD/shares": [
                 {"start": "2020-10-01", "end": "2021-09-30", "val": 3.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
+            "NetIncomeLoss": {"units": {"USD": [
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 150.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
+            // INSTANT balance item (only `end`, no 12-month duration) -> exercises collect_instant for ROE
+            "StockholdersEquity": {"units": {"USD": [
+                {"end": "2021-09-30", "val": 1000.0, "form": "10-K", "filed": "2021-11-01"}
             ]}}
         }}});
         let mut rows = parse_sec_facts(&j);
@@ -1165,10 +1237,12 @@ mod tests {
         assert_eq!(rows[0].revenue, Some(1000.0));
         assert_eq!(rows[0].gross_margin, Some(40.0)); // 400/1000
         assert_eq!(rows[0].eps, Some(3.0));
-        // FY2022: no EPS line -> None (neutral, never a fake 0)
+        assert_eq!(rows[0].roe, Some(15.0)); // NetIncome 150 ÷ StockholdersEquity 1000 (instant)
+        // FY2022: no EPS / NI / equity line -> None (neutral, never a fake 0)
         assert_eq!(rows[1].revenue, Some(1200.0));
         assert_eq!(rows[1].gross_margin, Some(50.0)); // 600/1200
         assert_eq!(rows[1].eps, None);
+        assert_eq!(rows[1].roe, None);
         assert!(parse_sec_facts(&json!({})).is_empty()); // no facts -> empty, never panics
     }
 
