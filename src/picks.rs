@@ -763,6 +763,10 @@ fn fmt_cell(s: &str, width: usize, right: bool) -> String {
 
 /// The effective width of a column: its fixed `ColSpec.width`, or the data-sized `Widths` value when 0.
 fn col_width(spec: &ColSpec, w: &Widths) -> usize {
+    // explicit settings.yaml override wins for any column; still floored at the header so it never clips it.
+    if let Some(&n) = w.column_widths.get(spec.key) {
+        return n.max(spec.hdr.chars().count());
+    }
     match (spec.width, spec.key) {
         (0, "name") => w.name,
         (0, "ticker") => w.ticker,
@@ -1152,6 +1156,14 @@ mod tests {
         assert_eq!(fmt_cell("AB", 5, true), "   AB");
         assert_eq!(fmt_cell("AB", 5, false), "AB   ");
         assert_eq!(fmt_cell("ABCDEF", 3, true).chars().count(), 3);
+        // col_width: a settings.yaml override wins over the built-in width, but never narrower than the header.
+        let cagr = COLUMNS.iter().find(|c| c.key == "cagr").unwrap();
+        let mut wd = Widths::default();
+        assert_eq!(col_width(cagr, &wd), 8); // no override -> built-in fixed width
+        wd.column_widths.insert("cagr".into(), 12);
+        assert_eq!(col_width(cagr, &wd), 12); // override wins
+        wd.column_widths.insert("cagr".into(), 1);
+        assert_eq!(col_width(cagr, &wd), "CAGR".chars().count()); // floored at the header
         // col_cell: rank passes the mark through; score -> 1dp; cagr with no history -> n/a (stub has no legs)
         let q = Quote::stub("T", "€1", "", "Name");
         assert_eq!(col_cell("rank", &q, 9.4, "3*"), "3*");

@@ -84,11 +84,15 @@ pub struct Widths {
     // `picks::COLUMNS`: rank name ticker market price cagr 1h 6h 12h 1d 1w 1m 1y 5y 10y 20y vol maxdd r2
     // abv-ma pe peg roe div ter off-hi upside turnover score. Unknown keys are ignored. Display-only — no scoring.
     pub columns: Vec<String>,
+    // (screen/picks) Per-column width override, keyed by the SAME column key as `columns`. Wins over both
+    // the fixed `picks::COLUMNS` width and the data-sized name/ticker/market/price/score values. Omitted /
+    // missing key = the built-in width. e.g. `column_widths: { name: 34, ticker: 10 }`. Unknown keys ignored.
+    pub column_widths: BTreeMap<String, usize>,
 }
 
 impl Default for Widths {
     fn default() -> Self {
-        Widths { name: 26, ticker: 8, market: 11, price: 13, headline: 31, score: 5, columns: Vec::new() }
+        Widths { name: 26, ticker: 8, market: 11, price: 13, headline: 31, score: 5, columns: Vec::new(), column_widths: BTreeMap::new() }
     }
 }
 
