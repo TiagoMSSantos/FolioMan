@@ -502,6 +502,11 @@ async fn fetch_ratios_sec(client: &Client, urls: &Urls, ticker: &str, close_nati
 /// return nothing and the column stays n/a for them.
 /// ponytail: scale is the FMP convention; if a known US ETF prints 100× off, drop the ×100 here.
 async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+    // Börse Frankfurt TER (captured for free during the universe build) first — it covers the EU UCITS
+    // ETFs FMP's US-centric free tier leaves n/a. FMP fallback for US-listed ETFs not in the BF list.
+    if let Some(t) = BF_TER.get().and_then(|m| m.get(ticker)).copied() {
+        return Some(t);
+    }
     let v = cached_fund_json(client, &urls.fund_expense, ticker, "etf").await?;
     let ter = v.get(0).unwrap_or(&v).get("expenseRatio")?.as_f64()?;
     (ter.is_finite() && ter > 0.0).then_some(ter * 100.0)
@@ -1009,6 +1014,22 @@ async fn borse_frankfurt_post(client: &Client, url: &str, salt: &str, body: &Val
     req.send().await.ok()?.json::<Value>().await.ok()
 }
 
+/// Resolved-Yahoo-symbol -> total expense ratio (%), captured from the Börse Frankfurt ETF search (the
+/// SAME call that builds the universe — no extra request). Set ONCE per process in `fetch_xetra_etfs`;
+/// `fetch_expense` reads it to fill TER for EU UCITS ETFs that FMP's US-centric free tier never covers.
+static BF_TER: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
+
+/// Pull the expense ratio out of one BF `etp_search` row. Tries the known key names (their schema drifts
+/// over time); the value is taken as a PERCENT (BF reports e.g. 0.2 = 0.20%). None if absent / nonsense.
+/// ponytail: if a known ETF (VUAA.DE = 0.07%) prints 100× off, BF sent a fraction -> multiply by 100 here.
+fn bf_row_ter(row: &Value) -> Option<f64> {
+    const KEYS: &[&str] = &["ter", "totalExpenseRatio", "ongoingCharges", "ongoingCharge", "totalExpenseRatioInPercent"];
+    let obj = row.as_object()?;
+    KEYS.iter()
+        .find_map(|k| obj.iter().find(|(rk, _)| rk.eq_ignore_ascii_case(k)).and_then(|(_, v)| v.as_f64()))
+        .filter(|t| t.is_finite() && *t > 0.0 && *t < 5.0)
+}
+
 /// The EU-buyable UCITS ETF universe: ask Börse Frankfurt for the top-`cap` ETFs by turnover (real
 /// EU-listed, PRIIPs-compliant funds — unlike the US-domiciled NASDAQ-Trader ETFs an EU broker can't
 /// sell), then resolve each ISIN to a Yahoo symbol via Yahoo search (first hit = the liquid EU
@@ -1020,27 +1041,35 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
         "benchmarks": [], "currency": [], "strategy": [], "replicationType": [], "distributionType": [],
         "page": 0, "pageSize": cap, "sorting": "TURNOVER", "sortOrder": "DESC"
     });
-    let isins: Vec<String> = match borse_frankfurt_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
-        Some(j) => j
-            .get("data")
-            .and_then(|d| d.as_array())
-            .map(|arr| arr.iter().filter_map(|r| r.get("isin")?.as_str().map(String::from)).collect())
-            .unwrap_or_default(),
+    // Capture (isin, TER) per row — the TER is on the SAME search response, so EU UCITS expense ratios
+    // come free here (no per-name FMP call, which doesn't cover them anyway). first_keys = the first
+    // row's field names, logged ONLY if zero TERs parse, so a renamed BF field self-diagnoses in one run.
+    let mut first_keys = String::new();
+    let rows: Vec<(String, Option<f64>)> = match borse_frankfurt_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
+        Some(j) => match j.get("data").and_then(|d| d.as_array()) {
+            Some(arr) => {
+                if let Some(o) = arr.first().and_then(|r| r.as_object()) {
+                    first_keys = o.keys().cloned().collect::<Vec<_>>().join(",");
+                }
+                arr.iter().filter_map(|r| Some((r.get("isin")?.as_str()?.to_string(), bf_row_ter(r)))).collect()
+            }
+            None => Vec::new(),
+        },
         None => Vec::new(),
     };
-    if isins.is_empty() {
+    if rows.is_empty() {
         eprintln!("fetch: Börse Frankfurt ETF search returned nothing (salt rotated? refresh bf_salt) — ETF tables will be empty");
         return Vec::new();
     }
     // BF ignores our pageSize and dumps the whole list (~3430); it's TURNOVER-DESC, so the top `cap`
     // are the most-liquid ETFs — keep only those, both to match universe_size and to avoid firing
     // thousands of Yahoo searches (which DO rate-limit).
-    let total = isins.len();
-    let isins: Vec<&String> = isins.iter().take(cap).collect();
-    // resolve ISIN -> Yahoo symbol (first quote = the liquid EU listing), bounded fan-out.
-    // yahoo_search is tuned for news (quotesCount=0) — flip it to quotes here, or every row is None.
-    let tickers: Vec<String> = stream::iter(isins.iter())
-        .map(|isin| async move {
+    let total = rows.len();
+    let top: Vec<(String, Option<f64>)> = rows.into_iter().take(cap).collect();
+    // resolve ISIN -> Yahoo symbol (first quote = the liquid EU listing), bounded fan-out, carrying the
+    // captured TER alongside. yahoo_search is tuned for news (quotesCount=0) — flip it to quotes here.
+    let resolved: Vec<(String, Option<f64>)> = stream::iter(top.into_iter())
+        .map(|(isin, ter)| async move {
             let url = urls
                 .yahoo_search
                 .replace("{ticker}", isin.as_str())
@@ -1052,15 +1081,31 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
             // (716 of the 783 old "no Yahoo data" gate-outs). A real liquid listing (.DE/.MI/.L/.AS…)
             // would have ranked first, so there's nothing to rescue: drop it. note: only .SG shows
             // up in practice; add the suffix to this check if another chart-less regional venue appears.
-            (!sym.ends_with(".SG")).then_some(sym)
+            (!sym.ends_with(".SG")).then_some((sym, ter))
         })
         .buffer_unordered(fetch_concurrency())
         .filter_map(|x| async move { x })
         .collect()
         .await;
+    // split into the ticker list + the symbol->TER map (stored once for fetch_expense to read).
+    let mut ter_map: HashMap<String, f64> = HashMap::new();
+    let tickers: Vec<String> = resolved
+        .into_iter()
+        .map(|(sym, ter)| {
+            if let Some(t) = ter {
+                ter_map.insert(sym.clone(), t);
+            }
+            sym
+        })
+        .collect();
+    let ter_n = ter_map.len();
+    let _ = BF_TER.set(ter_map);
     // conclusive diagnostic: distinguishes "BF gave 0 ISINs" from "BF ok but Yahoo bridge resolved
     // none" — the two ways the ETF tables silently empty.
-    eprintln!("fetch: Börse Frankfurt returned {total} ETF ISINs (kept top {} by turnover); {} resolved to Yahoo tickers", isins.len(), tickers.len());
+    eprintln!("fetch: Börse Frankfurt returned {total} ETF ISINs (kept top {} by turnover); {} resolved to Yahoo tickers (TER for {ter_n})", total.min(cap), tickers.len());
+    if ter_n == 0 && !first_keys.is_empty() {
+        eprintln!("fetch: no TER parsed from BF rows — add the right key to bf_row_ter. First-row fields: {first_keys}");
+    }
     if tickers.is_empty() {
         eprintln!("fetch: ISIN->Yahoo resolution returned nothing (Yahoo search rate-limited?) — ETF tables will be empty");
     }
@@ -1156,6 +1201,16 @@ mod tests {
     use super::*;
 
     /// Signing + concurrency + throttle asserts (no live calls). White-box via `use super::*`.
+    #[test]
+    fn bf_ter_parse() {
+    use serde_json::json;
+    assert_eq!(bf_row_ter(&json!({"isin": "X", "ter": 0.07})), Some(0.07)); // primary key, % as-is
+    assert_eq!(bf_row_ter(&json!({"totalExpenseRatio": 0.20})), Some(0.20)); // fallback key
+    assert_eq!(bf_row_ter(&json!({"name": "fund"})), None); // no fee field -> None
+    assert_eq!(bf_row_ter(&json!({"ter": 12.0})), None); // out of sane TER range -> rejected
+    assert_eq!(bf_row_ter(&json!({"ter": 0.0})), None); // zero -> None, never a fake 0%
+    }
+
     #[test]
     fn signing_and_pacing() {
     use md5::{Digest, Md5};
