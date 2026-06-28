@@ -601,9 +601,6 @@ pub fn nupl_factor(nupl: Option<f64>, tuning: &BuyHeuristic) -> f64 {
     }
 }
 
-/// Horizons whose Δ% is shown in the picks table (chronological).
-const DIFF_HORIZONS: &[&str] = &["1D", "1W", "1M", "1Y", "5Y", "10Y", "20Y"];
-
 /// Listing venues an EU-retail broker actually serves — US/Canada + the European exchanges
 /// `suffix_country` knows. Asian/AU/BR/IN listings (Hong Kong, Japan, China, South Korea, India,
 /// Australia, Brazil) are off most EU retail brokers, so names listed only there are dropped.
@@ -694,44 +691,157 @@ fn turnover_cell(o: Option<f64>) -> String {
     }
 }
 
-/// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks).
+/// One screen/picks table column: its `settings.yaml` key, header text, min width, and right-align
+/// (numbers right, text left). `width 0` -> use the data-sized value from `Widths` (name/ticker/market/
+/// price/score). Toggle/reorder columns via `widths.columns` (see [`active_columns`]).
+struct ColSpec {
+    key: &'static str,
+    hdr: &'static str,
+    width: usize,
+    right: bool,
+}
+
+/// Every available column, canonical order. `widths.columns` picks a subset/order by key; the analytics
+/// columns past the price/perf block (vol/maxdd/r2/abv-ma/pe/roe/div) are OFF unless listed. All are
+/// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
+const COLUMNS: &[ColSpec] = &[
+    ColSpec { key: "rank", hdr: "RANK", width: 4, right: false },
+    ColSpec { key: "name", hdr: "NAME", width: 0, right: false },
+    ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false },
+    ColSpec { key: "market", hdr: "MARKET", width: 0, right: false },
+    ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true },
+    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true }, // proven long-term %/yr — the headline a compounder screen needs
+    ColSpec { key: "1h", hdr: "1H", width: 7, right: true },
+    ColSpec { key: "6h", hdr: "6H", width: 7, right: true },
+    ColSpec { key: "12h", hdr: "12H", width: 7, right: true },
+    ColSpec { key: "1d", hdr: "1D", width: 8, right: true },
+    ColSpec { key: "1w", hdr: "1W", width: 8, right: true },
+    ColSpec { key: "1m", hdr: "1M", width: 8, right: true },
+    ColSpec { key: "1y", hdr: "1Y", width: 8, right: true },
+    ColSpec { key: "5y", hdr: "5Y", width: 8, right: true },
+    ColSpec { key: "10y", hdr: "10Y", width: 8, right: true },
+    ColSpec { key: "20y", hdr: "20Y", width: 8, right: true },
+    ColSpec { key: "vol", hdr: "VOL", width: 7, right: true },       // daily-return stdev (risk)
+    ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true },   // worst peak-to-trough drop ever (pain)
+    ColSpec { key: "r2", hdr: "R2", width: 6, right: true },         // log-trend steadiness 0..1 (smoothness)
+    ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true }, // % above the 200wk SMA (overextension)
+    ColSpec { key: "pe", hdr: "P/E", width: 7, right: true },        // trailing P/E (FMP key only)
+    ColSpec { key: "roe", hdr: "ROE", width: 7, right: true },       // trailing return-on-equity (quality)
+    ColSpec { key: "div", hdr: "DIV", width: 7, right: true },       // trailing-1Y dividend yield
+    ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true },
+    ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true },
+    ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true },
+    ColSpec { key: "score", hdr: "SCORE", width: 0, right: true },
+];
+
+/// Canonical default layout when `widths.columns` is empty: the historical table PLUS `cagr` and
+/// `maxdd` (return + worst-pain — what a 20yr buy-and-hold screen was missing). Users add vol/r2/pe/roe/
+/// div/abv-ma by listing them in `widths.columns`.
+const DEFAULT_COLUMNS: &[&str] = &[
+    "rank", "name", "ticker", "market", "price", "cagr", "1h", "6h", "12h", "1d", "1w", "1m", "1y", "5y",
+    "10y", "20y", "maxdd", "off-hi", "upside", "turnover", "score",
+];
+
+/// Resolve `widths.columns` (config) to the ordered `ColSpec`s to print. Empty config -> `DEFAULT_COLUMNS`;
+/// otherwise the listed keys in order. Unknown keys are skipped (a typo drops that column, never panics).
+fn active_columns(cfg: &[String]) -> Vec<&'static ColSpec> {
+    let keys: Vec<&str> = if cfg.is_empty() { DEFAULT_COLUMNS.to_vec() } else { cfg.iter().map(String::as_str).collect() };
+    keys.iter().filter_map(|k| COLUMNS.iter().find(|c| c.key.eq_ignore_ascii_case(k))).collect()
+}
+
+/// Pad/truncate one cell to `width`, right- or left-aligned.
+fn fmt_cell(s: &str, width: usize, right: bool) -> String {
+    let t = truncate(s, width);
+    if right {
+        format!("{t:>width$}")
+    } else {
+        format!("{t:<width$}")
+    }
+}
+
+/// The effective width of a column: its fixed `ColSpec.width`, or the data-sized `Widths` value when 0.
+fn col_width(spec: &ColSpec, w: &Widths) -> usize {
+    match (spec.width, spec.key) {
+        (0, "name") => w.name,
+        (0, "ticker") => w.ticker,
+        (0, "market") => w.market,
+        (0, "price") => w.price,
+        (0, "score") => w.score,
+        (fixed, _) => fixed.max(spec.hdr.chars().count()), // never narrower than the header
+    }
+}
+
+/// Render ONE cell's text for column `key`. `mark` is the rank label (number + `*`/`#` flags). All values
+/// come from already-fetched `Quote` fields — pure formatting, no scoring. Unknown key -> "?".
+fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
+    let pct1 = |o: Option<f64>| o.map_or("n/a".to_string(), |v| format!("{v:+.1}%"));
+    match key {
+        "rank" => mark.to_string(),
+        "name" => quote.name.clone(),
+        "ticker" => quote.ticker.clone(),
+        "market" => quote.market.clone(),
+        "price" => quote.price.clone(),
+        // proven long-term CAGR (%/yr) from the longest available leg — the annualized trend the ranking
+        // rewards, shown so a reader sees "+27%/yr for 10y" not just a +900% cumulative blob.
+        "cagr" => long_leg(quote).map(|(c, y)| core::cagr(c, y)).map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        "1h" => pct1(quote.intraday[0]),
+        "6h" => pct1(quote.intraday[1]),
+        "12h" => pct1(quote.intraday[2]),
+        "1d" | "1w" | "1m" | "1y" | "5y" | "10y" | "20y" => pct1(perf_pct(quote, &key.to_uppercase())),
+        "vol" => quote.volatility_pct.map_or("n/a".to_string(), |v| format!("{v:.1}%")),
+        "maxdd" => {
+            if quote.max_drawdown_pct > 0.0 {
+                format!("-{:.0}%", quote.max_drawdown_pct)
+            } else {
+                "n/a".to_string()
+            }
+        }
+        "r2" => format!("{:.2}", quote.trend_r2),
+        "abv-ma" => {
+            if quote.above_ma_pct > 0.0 {
+                format!("+{:.0}%", quote.above_ma_pct)
+            } else {
+                "0%".to_string()
+            }
+        }
+        "pe" => quote.pe_ratio.map_or("n/a".to_string(), |v| format!("{v:.1}")),
+        "roe" => quote.roe.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        "div" => {
+            let d = dividend_yield_1y(quote);
+            if d > 0.0 {
+                format!("{d:.1}%")
+            } else {
+                "n/a".to_string()
+            }
+        }
+        "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
+        "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
+        "turnover" => turnover_cell(quote.avg_turnover_eur),
+        "score" => format!("{score:.1}"),
+        _ => "?".to_string(),
+    }
+}
+
+/// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks). Columns +
+/// order come from `widths.columns` via [`active_columns`] (default = [`DEFAULT_COLUMNS`]).
 fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>) {
-    let (name_w, ticker_w, market_w, price_w, score_w) = (w.name, w.ticker, w.market, w.price, w.score);
     println!("\n{title}");
     if picks.is_empty() {
         println!("  (none pass the gates)");
         return;
     }
-    let diff_hdr = DIFF_HORIZONS.iter().map(|l| format!("{:>8}", l)).collect::<Vec<_>>().join(" ");
-    let cell = |o: Option<f64>| o.map_or("n/a".to_string(), |v| format!("{:+.1}%", v));
-    println!(
-        "  {:<4} {:<name_w$} {:<ticker_w$} {:<market_w$} {:>price_w$} {:>7} {:>7} {:>7} {diff_hdr} {:>7} {:>8} {:>10} {:>score_w$}",
-        "RANK", truncate("NAME", name_w), truncate("TICKER", ticker_w), truncate("MARKET", market_w), "PRICE(EUR)",
-        "1H", "6H", "12H", "OFF-HI", "UPSIDE", "TURNOVER", truncate("SCORE", score_w)
-    );
-    // one printed row; `rank` is the position number, with a "*" suffix when the name is pinned
-    // (e.g. "3*"). Marker on the rank column, not the name, so truncation can't eat it.
-    let row = |rank: &str, quote: &Quote, score: f64| {
-        let diffs = DIFF_HORIZONS
+    let cols = active_columns(&w.columns);
+    let header = cols.iter().map(|c| fmt_cell(c.hdr, col_width(c, w), c.right)).collect::<Vec<_>>().join(" ");
+    println!("  {header}");
+    // one printed row; `mark` is the rank label (number + "*" pinned / "#" fundamentals flags). Flags on
+    // the rank cell, not the name, so name truncation can't eat them.
+    let row = |mark: &str, quote: &Quote, score: f64| {
+        let line = cols
             .iter()
-            .map(|l| format!("{:>8}", perf_pct(quote, l).map_or("n/a".to_string(), |v| format!("{:+.1}%", v))))
+            .map(|c| fmt_cell(&col_cell(c.key, quote, score, mark), col_width(c, w), c.right))
             .collect::<Vec<_>>()
             .join(" ");
-        println!(
-            "  {:<4} {:<name_w$} {:<ticker_w$} {:<market_w$} {:>price_w$} {:>7} {:>7} {:>7} {diffs} {:>7} {:>8} {:>10} {:>score_w$.1}",
-            rank,
-            truncate(&quote.name, name_w),
-            truncate(&quote.ticker, ticker_w),
-            truncate(&quote.market, market_w),
-            quote.price,
-            cell(quote.intraday[0]),
-            cell(quote.intraday[1]),
-            cell(quote.intraday[2]),
-            format!("-{:.1}%", quote.drawdown_pct), // % below the OFF-HI high (high_days anchor, default all-time)
-            format!("+{:.1}%", upside_to_high(quote.drawdown_pct)), // room back to that high (NOT a forecast)
-            turnover_cell(quote.avg_turnover_eur),
-            score,
-        );
+        println!("  {line}");
     };
     let star = |quote: &Quote| if pinned.contains(quote.ticker.as_str()) { "*" } else { "" }; // * = a pinned (watchlist) name
     // # = the score used LIVE fundamentals (trailing P/E, ROE, and/or the as-of fund_factor when the
@@ -992,6 +1102,33 @@ mod tests {
         assert_eq!(long_leg_fixed(&q, 10), Some((200.0, 10.0))); // pinned -> the 10Y leg
         q.perf[HORIZONS.iter().position(|(l, _)| *l == "10Y").unwrap()] = None; // drop 10Y
         assert_eq!(long_leg_fixed(&q, 10), Some((900.0, 20.0))); // pinned leg absent -> longest leg fallback
+    }
+
+    /// (screen columns) `active_columns` resolves config -> ordered ColSpecs (empty = default layout;
+    /// whitelist = those keys in order; unknown keys dropped), `fmt_cell` pads+aligns, `col_cell` formats.
+    #[test]
+    fn screen_columns_config() {
+        // empty config -> the canonical default layout (rank..score), and cagr/maxdd are shown by default
+        let def = active_columns(&[]);
+        assert_eq!(def.first().unwrap().key, "rank");
+        assert_eq!(def.last().unwrap().key, "score");
+        assert_eq!(def.len(), DEFAULT_COLUMNS.len());
+        assert!(def.iter().any(|c| c.key == "cagr") && def.iter().any(|c| c.key == "maxdd"));
+        // every default key resolves to a real ColSpec (guards a typo in DEFAULT_COLUMNS)
+        let all_default: Vec<String> = DEFAULT_COLUMNS.iter().map(|s| s.to_string()).collect();
+        assert_eq!(active_columns(&all_default).len(), DEFAULT_COLUMNS.len());
+        // explicit whitelist -> exactly those keys IN ORDER; an unknown key is silently dropped
+        let custom: Vec<String> = ["score", "cagr", "bogus", "vol"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(active_columns(&custom).iter().map(|c| c.key).collect::<Vec<_>>(), ["score", "cagr", "vol"]);
+        // fmt_cell: right-align pads left, left-align pads right; truncate never over-runs the width
+        assert_eq!(fmt_cell("AB", 5, true), "   AB");
+        assert_eq!(fmt_cell("AB", 5, false), "AB   ");
+        assert_eq!(fmt_cell("ABCDEF", 3, true).chars().count(), 3);
+        // col_cell: rank passes the mark through; score -> 1dp; cagr with no history -> n/a (stub has no legs)
+        let q = Quote::stub("T", "€1", "", "Name");
+        assert_eq!(col_cell("rank", &q, 9.4, "3*"), "3*");
+        assert_eq!(col_cell("score", &q, 7.0, ""), "7.0");
+        assert_eq!(col_cell("cagr", &q, 0.0, ""), "n/a");
     }
 
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5

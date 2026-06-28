@@ -78,11 +78,17 @@ pub struct Widths {
     pub price: usize,    // PRICE(EUR) column (check/screen/picks)
     pub headline: usize, // HEADLINE column (check)
     pub score: usize,    // SCORE column (picks) — shown to 1 decimal
+    // (screen) WHICH columns the screen/picks tables show + their order. Empty (default) = the canonical
+    // layout (`picks::DEFAULT_COLUMNS`). List keys to pick your own set / order — e.g.
+    // `columns: [rank, name, ticker, price, cagr, vol, maxdd, 1y, 5y, off-hi, score]`. All keys live in
+    // `picks::COLUMNS`: rank name ticker market price cagr 1h 6h 12h 1d 1w 1m 1y 5y 10y 20y vol maxdd r2
+    // abv-ma pe roe div off-hi upside turnover score. Unknown keys are ignored. Display-only — no scoring.
+    pub columns: Vec<String>,
 }
 
 impl Default for Widths {
     fn default() -> Self {
-        Widths { name: 26, ticker: 8, market: 11, price: 13, headline: 31, score: 5 }
+        Widths { name: 26, ticker: 8, market: 11, price: 13, headline: 31, score: 5, columns: Vec::new() }
     }
 }
 
