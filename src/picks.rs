@@ -777,6 +777,14 @@ fn col_width(spec: &ColSpec, w: &Widths) -> usize {
 /// come from already-fetched `Quote` fields — pure formatting, no scoring. Unknown key -> "?".
 fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
     let pct1 = |o: Option<f64>| o.map_or("n/a".to_string(), |v| format!("{v:+.1}%"));
+    // asset class -> which fundamental columns even APPLY. "—" = not applicable to this class (an equity
+    // has no expense ratio; an ETF/crypto has no P/E/ROE); "n/a" stays reserved for applies-but-no-data.
+    // Unknown class ("" instrument_type) falls through to the value so a real name is never wrongly blanked.
+    let is_crypto = quote.ticker.contains('-') || quote.instrument_type.eq_ignore_ascii_case("CRYPTOCURRENCY");
+    let is_etf = quote.instrument_type.eq_ignore_ascii_case("ETF");
+    let is_equity = quote.instrument_type.eq_ignore_ascii_case("EQUITY");
+    let stock_only_na = is_etf || is_crypto; // P/E, PEG, ROE don't apply here
+    let etf_only_na = is_equity || is_crypto; // TER doesn't apply here
     match key {
         "rank" => mark.to_string(),
         "name" => quote.name.clone(),
@@ -806,13 +814,16 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
                 "0%".to_string()
             }
         }
+        "pe" if stock_only_na => "—".to_string(),
         "pe" => quote.pe_ratio.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // PEG = trailing P/E ÷ long-term CAGR (%/yr). Needs both (P/E is FMP-key-only) AND positive growth.
         // <1 = cheap for its growth, >2 = pricey. Price-CAGR proxy for earnings growth — display-only.
+        "peg" if stock_only_na => "—".to_string(),
         "peg" => match (quote.pe_ratio, long_leg(quote).map(|(c, y)| core::cagr(c, y))) {
             (Some(pe), Some(g)) if g > 0.0 => format!("{:.2}", pe / g),
             _ => "n/a".to_string(),
         },
+        "roe" if stock_only_na => "—".to_string(),
         "roe" => quote.roe.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         "div" => {
             let d = dividend_yield_1y(quote);
@@ -823,7 +834,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
             }
         }
         // ETF expense ratio (%/yr). Low is good — a 0.07% index ETF vs a 0.50% active fund is ~18% more
-        // wealth over 40y. n/a for stocks/crypto and when no FMP key populated it.
+        // wealth over 40y. "—" for stocks/crypto (no expense ratio); "n/a" for an ETF FMP didn't cover.
+        "ter" if etf_only_na => "—".to_string(),
         "ter" => quote.expense_ratio.map_or("n/a".to_string(), |v| format!("{v:.2}%")),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
@@ -1144,6 +1156,11 @@ mod tests {
         assert_eq!(col_cell("peg", &q, 0.0, ""), "n/a");
         // ter is None on a stub (no expense ratio fetched) -> n/a
         assert_eq!(col_cell("ter", &q, 0.0, ""), "n/a");
+        // per-class gating: a crypto ('-' ticker) has neither P/E nor expense ratio -> "—" (not applicable),
+        // distinct from "n/a" (applies but unfetched).
+        let cq = Quote::stub("X-EUR", "€1", "", "Coin");
+        assert_eq!(col_cell("pe", &cq, 0.0, ""), "—");
+        assert_eq!(col_cell("ter", &cq, 0.0, ""), "—");
     }
 
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5

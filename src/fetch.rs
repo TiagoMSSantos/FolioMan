@@ -277,7 +277,7 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
 pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
-    let (chart_j, chart_long_j, titles, intra, pe, roe, ter) = tokio::join!(
+    let (chart_j, chart_long_j, titles, intra) = tokio::join!(
         // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
         // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
         // (~3652) for 1D..10Y, plus turnover/SMA/range/R². The pre-10y span (the 20Y column) is
@@ -289,14 +289,6 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // per-name Yahoo search there (~25% fewer requests across a 3800-name screen -> proportionally faster).
         async { if news { fetch_news(client, urls, ticker).await } else { Vec::new() } },
         async { if intraday { intraday_closes(client, urls, ticker).await } else { None } },
-        // (E) trailing P/E for the valuation tilt — equities only (crypto/FX have no earnings); a
-        // no-op (instant None) unless FMP_API_KEY is set, so the default path stays network-free here.
-        async { if ticker.contains('-') { None } else { fetch_pe(client, urls, ticker).await } },
-        // (F) trailing ROE for the quality tilt — equities only; instant None unless FMP_API_KEY is set.
-        async { if ticker.contains('-') { None } else { fetch_roe(client, urls, ticker).await } },
-        // (TER) ETF expense ratio — non-crypto only; instant None unless FMP_API_KEY is set. Stocks
-        // return no expenseRatio, so this naturally populates only for ETFs.
-        async { if ticker.contains('-') { None } else { fetch_expense(client, urls, ticker).await } },
     );
 
     let parsed = chart_j.as_ref().and_then(|j| parse_chart(j, ticker));
@@ -316,6 +308,15 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             };
         }
     };
+
+    // Live fundamentals, gated by ASSET CLASS so a column only fetches where it applies (and we don't
+    // waste FMP's 250/day free budget on no-op calls): P/E + ROE for EQUITIES only, expense ratio for
+    // ETFs only, nothing for crypto/FX. Each is disk-cached (weekly TTL) + budget-capped, so a wide
+    // `screen` can't blow the limit and a daily `check` of your holdings reads free from cache.
+    let is_etf = chart.instrument_type.eq_ignore_ascii_case("ETF");
+    let is_equity = chart.instrument_type.eq_ignore_ascii_case("EQUITY");
+    let (pe, roe) = if is_equity { fetch_ratios(client, urls, ticker).await } else { (None, None) };
+    let ter = if is_etf { fetch_expense(client, urls, ticker).await } else { None };
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
     // long dividend sums populate for old names. Prepend only the monthly bars that predate the daily
@@ -423,40 +424,60 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     }
 }
 
-/// (E) Trailing P/E from the configured fundamentals source (FMP `quote` by default). None unless
-/// `FMP_API_KEY` is set in the environment (kept out of config) AND the source returns a positive
-/// PE. note: free fundamentals tiers are rate-limited, so expect this to populate at `check`
-/// scale and stay None across the ~750-ticker `screen` (where the value tilt then just stays 1.0).
-async fn fetch_pe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+// LIVE fundamentals (P/E, ROE, expense ratio) are quarterly-ish, so a 1-week cache is plenty fresh and
+// keeps the daily `check`/`screen` from re-spending FMP's 250/day free budget on data that rarely moves.
+const LIVE_FUND_TTL: StdDuration = StdDuration::from_secs(7 * 24 * 3600);
+
+/// Disk-cached, budget-capped GET of one live-fundamentals JSON object. Serves a <1wk-old cache file for
+/// free; on a miss it spends ONE unit of the shared FMP daily budget, fetches, and caches a REAL payload
+/// (never an FMP "Limit Reach"/error object — that must not poison the cache). None on no key / over
+/// budget / error. This is what stops a wide `screen` (hundreds of names × P/E+ROE+TER) from blowing the
+/// 250/day limit — the exact failure that left every column n/a. `tag` namespaces the cache per endpoint.
+async fn cached_fund_json(client: &Client, url_tmpl: &str, ticker: &str, tag: &str) -> Option<Value> {
+    use std::sync::atomic::Ordering;
+    let path = std::path::Path::new(".fmp_cache").join(format!("live_{tag}_{}.json", ticker.replace(['/', '\\'], "_")));
+    evict_if_stale(&path, LIVE_FUND_TTL);
+    if let Some(v) = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
+        return Some(v); // cache hit -> no network, no budget spend
+    }
     let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
-    let url = urls.fundamentals.replace("{ticker}", ticker).replace("{key}", &key);
+    if FUND_FETCHES.fetch_add(1, Ordering::Relaxed) >= FUND_FETCH_BUDGET {
+        return None; // over the daily budget -> degrade to n/a for the rest of this run
+    }
+    let url = url_tmpl.replace("{ticker}", ticker).replace("{key}", &key);
     let v = get_json(client, &url).await?;
-    // FMP /quote returns a single-element array: [{ "pe": 28.4, ... }]; fall back to a bare object.
-    let pe = v.get(0).unwrap_or(&v).get("pe")?.as_f64()?;
-    (pe > 0.0).then_some(pe)
+    let real = v.get(0).unwrap_or(&v).get("Error Message").is_none() && !v.is_null();
+    if real {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, v.to_string());
+    }
+    real.then_some(v)
 }
 
-/// (F) Trailing return-on-equity (%) from the configured quality source (FMP `ratios-ttm` by
-/// default). None unless `FMP_API_KEY` is set AND the source returns it. Same opt-in / rate-limit
-/// profile as `fetch_pe`: populates at `check` scale, stays None across `screen` (quality tilt = 1.0).
-/// FMP returns ROE as a FRACTION (0.42 = 42%), so ×100. note: BACKTEST-BLIND — point-in-time, no
-/// as-of reconstruction, so the picks term is theory-weighted and kept small.
-async fn fetch_roe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
-    let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
-    let url = urls.fundamentals_quality.replace("{ticker}", ticker).replace("{key}", &key);
-    let v = get_json(client, &url).await?;
-    let roe = v.get(0).unwrap_or(&v).get("returnOnEquityTTM")?.as_f64()?;
-    roe.is_finite().then_some(roe * 100.0)
+/// (E/F) Trailing P/E + ROE for an EQUITY from FMP `stable/ratios-ttm` — ONE cached call serves both.
+/// P/E = `priceToEarningsRatioTTM`: the old `stable/quote` source did NOT carry a `pe` field (P/E was
+/// always n/a because of it); ratios-ttm does. ROE = `returnOnEquityTTM`, a FRACTION (0.42 -> 42%), ×100.
+/// Both None unless FMP_API_KEY is set AND the free-tier endpoint returns them.
+/// note: UNVERIFIED field name `priceToEarningsRatioTTM` — confirm once the daily FMP budget resets.
+async fn fetch_ratios(client: &Client, urls: &Urls, ticker: &str) -> (Option<f64>, Option<f64>) {
+    let Some(v) = cached_fund_json(client, &urls.fundamentals_quality, ticker, "ratios").await else {
+        return (None, None);
+    };
+    let o = v.get(0).unwrap_or(&v);
+    let pe = o.get("priceToEarningsRatioTTM").and_then(|x| x.as_f64()).filter(|p| p.is_finite() && *p > 0.0);
+    let roe = o.get("returnOnEquityTTM").and_then(|x| x.as_f64()).filter(|r| r.is_finite()).map(|r| r * 100.0);
+    (pe, roe)
 }
 
-/// (TER) ETF annual expense ratio (%) from FMP `stable/etf/info`. None unless `FMP_API_KEY` is set AND
-/// the symbol is an ETF (stocks/crypto carry no `expenseRatio`). Same opt-in/rate-limit profile as
-/// `fetch_pe`. FMP returns the ratio as a FRACTION (0.0003 = 0.03%), so ×100 for a percent.
-/// ponytail: scale is the FMP convention; if a known-ETF prints 100× off, drop the ×100 here.
+/// (TER) ETF annual expense ratio (%) from FMP `stable/etf/info` (`expenseRatio`, a FRACTION -> ×100).
+/// Disk-cached + budget-capped via [`cached_fund_json`]. None unless FMP_API_KEY is set AND the symbol is
+/// an FMP-covered ETF — FMP's free tier is US-centric, so EU-listed UCITS ETFs (e.g. VUAA.DE) often
+/// return nothing and the column stays n/a for them.
+/// ponytail: scale is the FMP convention; if a known US ETF prints 100× off, drop the ×100 here.
 async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
-    let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
-    let url = urls.fund_expense.replace("{ticker}", ticker).replace("{key}", &key);
-    let v = get_json(client, &url).await?;
+    let v = cached_fund_json(client, &urls.fund_expense, ticker, "etf").await?;
     let ter = v.get(0).unwrap_or(&v).get("expenseRatio")?.as_f64()?;
     (ter.is_finite() && ter > 0.0).then_some(ter * 100.0)
 }
