@@ -726,6 +726,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true },         // log-trend steadiness 0..1 (smoothness)
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true }, // % above the 200wk SMA (overextension)
     ColSpec { key: "pe", hdr: "P/E", width: 7, right: true },        // trailing P/E (FMP key only)
+    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true },       // P/E ÷ long CAGR — valuation vs growth (<1 = cheap for its growth)
     ColSpec { key: "roe", hdr: "ROE", width: 7, right: true },       // trailing return-on-equity (quality)
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true },       // trailing-1Y dividend yield
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true },
@@ -805,6 +806,12 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
             }
         }
         "pe" => quote.pe_ratio.map_or("n/a".to_string(), |v| format!("{v:.1}")),
+        // PEG = trailing P/E ÷ long-term CAGR (%/yr). Needs both (P/E is FMP-key-only) AND positive growth.
+        // <1 = cheap for its growth, >2 = pricey. Price-CAGR proxy for earnings growth — display-only.
+        "peg" => match (quote.pe_ratio, long_leg(quote).map(|(c, y)| core::cagr(c, y))) {
+            (Some(pe), Some(g)) if g > 0.0 => format!("{:.2}", pe / g),
+            _ => "n/a".to_string(),
+        },
         "roe" => quote.roe.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         "div" => {
             let d = dividend_yield_1y(quote);
@@ -1129,6 +1136,8 @@ mod tests {
         assert_eq!(col_cell("rank", &q, 9.4, "3*"), "3*");
         assert_eq!(col_cell("score", &q, 7.0, ""), "7.0");
         assert_eq!(col_cell("cagr", &q, 0.0, ""), "n/a");
+        // peg needs BOTH a P/E and positive growth; stub has neither -> n/a (never panics on the guard)
+        assert_eq!(col_cell("peg", &q, 0.0, ""), "n/a");
     }
 
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5

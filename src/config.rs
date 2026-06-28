@@ -82,7 +82,7 @@ pub struct Widths {
     // layout (`picks::DEFAULT_COLUMNS`). List keys to pick your own set / order — e.g.
     // `columns: [rank, name, ticker, price, cagr, vol, maxdd, 1y, 5y, off-hi, score]`. All keys live in
     // `picks::COLUMNS`: rank name ticker market price cagr 1h 6h 12h 1d 1w 1m 1y 5y 10y 20y vol maxdd r2
-    // abv-ma pe roe div off-hi upside turnover score. Unknown keys are ignored. Display-only — no scoring.
+    // abv-ma pe peg roe div off-hi upside turnover score. Unknown keys are ignored. Display-only — no scoring.
     pub columns: Vec<String>,
 }
 
