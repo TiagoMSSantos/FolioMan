@@ -158,7 +158,7 @@ pub async fn run(args: Vec<String>) {
                 };
                 // (G) one cached fundamentals fetch per ticker (only when `fund`); as-of factors are then
                 // derived per cutoff from these rows with no further network. None -> the fund lane skips it.
-                let fund_rows = if fund { fetch::fetch_fundamentals_history(client, urls, tk).await } else { None };
+                let fund_rows = if fund { fetch::fetch_fundamentals_ranked(client, urls, tk).await } else { None };
                 // (Item 4) one cached SEC Form-4 fetch per ticker (only when `insider`); net buys are then
                 // derived per cutoff from these transactions with no further network. None -> factor skips.
                 let insider_txns = if insider { fetch::fetch_insider_history(client, urls, tk).await } else { None };

@@ -153,6 +153,7 @@ pub struct BuyHeuristic {
     pub growth_fund_weight: f64,     // (G) reward per pt of the as-of FUNDAMENTAL factor (see growth_score / fund_factor). The fund lane proves WHICH as-of factor predicts forward returns standalone; this folds it INTO growth_score so its through-the-lane edge is ablatable. 0 = off (DEFAULT, no behavior change). Validate via `backtest <set> fund` then set the weight only on +ablation-Δ + both-half-positive OOS
     pub growth_fund_cap: f64,        // (G) cap (in the factor's own pts) on the fund factor fed into that reward, so one data-artifact (+9000% rev) can't dominate the rank
     pub growth_fund_factor: String,  // (G) WHICH as-of FundFactors term the fund tilt weighs: rev_cagr | rev_accel | gross_margin | op_margin | margin_trend | eps_growth. Set to whichever the `backtest <set> fund` probe shows +rho + both-half-positive OOS — no recompile. Unknown name -> neutral. Default "rev_accel" preserves the prior hardcoded behavior
+    pub fund_source: String,         // (Item 22) WHICH fundamentals feed BOTH the `backtest <set> fund` lane AND the live `screen`/`check` fund tilt: "fmp" (DEFAULT, unchanged — global coverage, quarterly, 250-call/day cap, needs FMP_API_KEY) | "sec" (SEC EDGAR XBRL — free, no key, no daily cap, ~19y annual history, US filers only). The SAME source feeds backtest + live (one router) so the validated and served signal can't drift (train-serve skew). Switching to "sec" is a DATA-SOURCE change: re-run `backtest <set> fund` to re-validate the factor on SEC's annual rows BEFORE raising growth_fund_weight — the FMP-validated weight does NOT carry over. Unknown value -> "fmp". With weight 0 (default) this is inert either way.
     pub growth_mom121_weight: f64,   // (M) reward per pt of 12-1 momentum (trailing 1Y return EX the last 1mo — Jegadeesh-Titman, skips the short-term-reversal month). Price-only, so unlike the BACKTEST-BLIND div/ROE/fund tilts this one IS validated end-to-end (backtest_quote reconstructs 1Y/1M). 0 = off (DEFAULT, no behavior change). Raise only on +ablation-Δ + both-half-positive OOS via `backtest <set>` / `tune`
     pub growth_mom121_cap: f64,      // (M) cap (in pct pts) on the 12-1 momentum fed into that reward, so one moonshot can't dominate the rank
     pub growth_value_weight: f64,    // (Item 20) authority of the BACKTEST-BLIND P/E multiplier (value_factor) in the GROWTH lane only: 1.0 = full ×0.5..1.5 swing (DEFAULT, unchanged), 0.0 = neutral (off). The validated edge was measured with this term OFF (pe_ratio is None in backtest), so it's a ±50% reorder the OOS split never saw — dial it down/off once the validated additive earnings_yield term (Item 19) carries valuation instead. Defaulted so an older settings.yaml is unchanged.
@@ -233,6 +234,7 @@ impl Default for BuyHeuristic {
             growth_fund_weight: 0.0,       // (G) OFF by default — the fund term is inert until validated. Wired through the growth lane so `backtest <set> fund` can ablate it; raise only on +Δ + both-half-positive OOS
             growth_fund_cap: 30.0,         // (G) clamp the fund factor to ±/+30 pts before weighting (irrelevant at weight 0); keeps a freshly-listed +9000% rev-accel artifact from running away with the rank
             growth_fund_factor: "rev_accel".to_string(), // (G) the prior hardcoded factor — change in settings.yaml once the probe names a better one (irrelevant at weight 0)
+            fund_source: "fmp".to_string(), // (Item 22) FMP feed by default (= current behavior). Set "sec" for free/uncapped US annual fundamentals, then re-validate via `backtest <set> fund` before raising growth_fund_weight (irrelevant at weight 0)
             growth_mom121_weight: 0.0,     // (M) OFF by default — the 12-1 momentum term is wired + ablatable but inert until validated; raise only on +Δ + both-half-positive OOS
             growth_mom121_cap: 50.0,       // (M) clamp 12-1 momentum to +50 pts before weighting (irrelevant at weight 0); a name up >50% over the year-ago-to-month-ago window is already maxed for this tilt
             growth_value_weight: 1.0,      // (Item 20) FULL P/E-multiplier authority by default (=current behavior, no change). The validated edge never saw this term (pe_ratio None in backtest); dial toward 0 once the additive earnings_yield term (Item 19) validates and carries valuation honestly
@@ -458,6 +460,24 @@ pub fn use_adjusted_close() -> bool {
             .map(|s| s.buy_heuristic.use_adjusted_close)
             .unwrap_or(false)
     })
+}
+
+/// (Item 22) Process-once read of the fundamentals source ("fmp" | "sec") for the ranking fund lane.
+/// SOFT — a missing/invalid config yields "fmp" (the validated default), so it never panics in unit
+/// tests where the gitignored settings.yaml is absent. `fetch_fundamentals_ranked` reads this to route
+/// BOTH the backtest and the live enrich through one source (no train-serve skew); switching to "sec"
+/// is a data-source change that needs a `backtest <set> fund` re-validation (see `BuyHeuristic`).
+pub fn fund_source() -> String {
+    use std::sync::OnceLock;
+    static SRC: OnceLock<String> = OnceLock::new();
+    SRC.get_or_init(|| {
+        std::fs::read_to_string(settings_path())
+            .ok()
+            .and_then(|t| serde_yaml::from_str::<Settings>(&t).ok())
+            .map(|s| s.buy_heuristic.fund_source)
+            .unwrap_or_else(|| "fmp".to_string())
+    })
+    .clone()
 }
 
 #[cfg(test)]

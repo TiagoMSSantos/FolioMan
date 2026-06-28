@@ -529,8 +529,8 @@ fn evict_if_stale(path: &std::path::Path, ttl: StdDuration) {
 
 /// (G) Populate the LIVE quotes' `fund_factor` from the config-selected as-of fundamental, so the
 /// validated fundamental tilt re-ranks `screen`/`check` — not just the backtest. Reuses the disk-cached
-/// `fetch_fundamentals_history` (+ its daily budget) and the SAME `fund_factors`/`select_fund_factor`
-/// path the backtest validates, so the live and tested signal can't drift. A '-' ticker (crypto/FX) or a
+/// `fetch_fundamentals_ranked` (Item 22: same `fund_source` the backtest uses — FMP or SEC) and the SAME
+/// `fund_factors`/`select_fund_factor` path the backtest validates, so the live and tested signal can't drift. A '-' ticker (crypto/FX) or a
 /// name with no statements stays neutral (None). Caller gates on growth_fund_weight > 0, so the default
 /// config never pays the fetch. note: ~5y lookback to match the backtest's default forward `years`.
 ///
@@ -551,10 +551,10 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
             continue; // crypto/FX -> no income statement, don't spend a budget slot probing
         }
         evict_if_stale(&fund_cache_path(&q.ticker), LIVE_TTL); // (Item 14) drop a stale newest-quarter
-        let mut ff = fetch_fundamentals_history(client, urls, &q.ticker)
+        let mut ff = fetch_fundamentals_ranked(client, urls, &q.ticker)
             .await
             .map(|rows| core::fund_factors(&rows, today, 5))
-            .unwrap_or_default(); // no FMP rows/key -> empty factors; insider can still fill in below
+            .unwrap_or_default(); // no rows/key -> empty factors; insider can still fill in below
         if needs_insider {
             evict_if_stale(&sec_cache_path(&q.ticker), LIVE_TTL);
             if let Some(txns) = fetch_insider_history(client, urls, &q.ticker).await {
@@ -851,6 +851,19 @@ pub async fn fetch_fundamentals_report(client: &Client, urls: &Urls, ticker: &st
         return Some(rows);
     }
     fetch_fundamentals_sec(client, urls, ticker).await
+}
+
+/// (Item 22) The fundamentals feed the RANKING fund lane reads — routed by `buy_heuristic.fund_source`
+/// so the SAME source backs the `backtest <set> fund` validation AND the live `screen`/`check` enrich
+/// (no train-serve skew). "sec" = SEC EDGAR XBRL (free, no key, no daily cap, ~19y annual, US filers);
+/// anything else (default "fmp") = the FMP quarterly path, unchanged. UNLIKE `fetch_fundamentals_report`
+/// this does NOT mix the two per-ticker (a per-name source flip would skew the rank) — one source, whole
+/// run. Switching sources demands a fresh `backtest <set> fund` re-validation before the tilt is trusted.
+pub async fn fetch_fundamentals_ranked(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
+    match crate::config::fund_source().as_str() {
+        "sec" => fetch_fundamentals_sec(client, urls, ticker).await,
+        _ => fetch_fundamentals_history(client, urls, ticker).await,
+    }
 }
 
 /// Latest Bitcoin NUPL (net unrealized profit/loss) from bitcoin-data.com. None on failure.
