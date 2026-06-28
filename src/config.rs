@@ -82,7 +82,7 @@ pub struct Widths {
     // layout (`picks::DEFAULT_COLUMNS`). List keys to pick your own set / order — e.g.
     // `columns: [rank, name, ticker, price, cagr, vol, maxdd, 1y, 5y, off-hi, score]`. All keys live in
     // `picks::COLUMNS`: rank name ticker market price cagr 1h 6h 12h 1d 1w 1m 1y 5y 10y 20y vol maxdd r2
-    // abv-ma pe peg roe div off-hi upside turnover score. Unknown keys are ignored. Display-only — no scoring.
+    // abv-ma pe peg roe div ter off-hi upside turnover score. Unknown keys are ignored. Display-only — no scoring.
     pub columns: Vec<String>,
 }
 
@@ -303,6 +303,11 @@ pub struct Urls {
     // + {key}; only hit (cached) under `backtest ... fund`. Defaulted so an older settings.yaml loads.
     #[serde(default = "default_fundamentals_history_url")]
     pub fundamentals_history: String,
+    // (TER) ETF expense-ratio source for the `ter` column. {ticker} + {key}; same opt-in/rate-limit
+    // profile as `fundamentals` (FMP key only, populates at `check` scale). Stocks/crypto return no
+    // expenseRatio -> column stays n/a. Defaulted so an older settings.yaml without it still loads.
+    #[serde(default = "default_fund_expense_url")]
+    pub fund_expense: String,
     // NASDAQ Trader SymDir symbol files (pipe-delimited, ETF flag column) -> screen ETF universe.
     // No free AUM-ranked ETF source exists, so these dump ALL US-listed ETFs across both exchanges;
     // the turnover gate culls the illiquid tail. Defaulted so an older settings.yaml still loads.
@@ -386,6 +391,12 @@ fn default_fundamentals_quality_url() -> String {
 /// reachable; `period=quarter` on key-metrics/ratios is premium, so only income-statement is sourced.
 fn default_fundamentals_history_url() -> String {
     "https://financialmodelingprep.com/stable/income-statement?symbol={ticker}&period=quarter&limit=48&apikey={key}".to_string()
+}
+
+/// Default (TER) ETF expense-ratio endpoint: FMP `stable/etf/info` (carries `expenseRatio` as a
+/// FRACTION, e.g. 0.0003 = 0.03%). Free-tier reachable; returns nothing for stocks/crypto.
+fn default_fund_expense_url() -> String {
+    "https://financialmodelingprep.com/stable/etf/info?symbol={ticker}&apikey={key}".to_string()
 }
 
 /// Default NASDAQ-listed symbol file (ETF flag = column 6).

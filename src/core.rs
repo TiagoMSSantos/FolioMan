@@ -88,6 +88,7 @@ pub struct Quote {
     pub above_ma_pct: f64,             // % ABOVE the ~200-week SMA (overextension "how far it ran"); 0 if at/below or history too short. Growth-lane brake on blow-off tops
     pub pe_ratio: Option<f64>,         // trailing P/E for the valuation tilt; None for crypto/ETF/no-earnings/no source (-> neutral)
     pub roe: Option<f64>,              // (F) trailing return-on-equity (%) — the core profitability/QUALITY factor; None for crypto/ETF/no-earnings/no source (-> neutral). BACKTEST-BLIND (point-in-time, can't reconstruct as-of)
+    pub expense_ratio: Option<f64>,    // (TER) ETF annual expense ratio (%); None for stocks/crypto/no source. DISPLAY-ONLY (`ter` column) — the one cost that compounds against a decades hold
     pub range_pct: f64,                // percentile rank (0..100) of the last close in its own ~10y history; 100=at high. picks discount = 100-this
     pub trend_r2: f64,                 // (A) R² (0..1) of the log-price trend — how steadily it compounds; damps CAGR endpoint-luck. 0 = no/short history
     pub trend_cagr: Option<f64>,       // (#14) annualized CAGR from the log-price trend SLOPE (endpoint-robust); precomputed at build, ranked on only when `use_trend_cagr`. None = <2 points
@@ -124,6 +125,7 @@ impl Quote {
             above_ma_pct: 0.0,
             pe_ratio: None,
             roe: None,
+            expense_ratio: None,
             range_pct: 0.0,
             trend_r2: 0.0,
             trend_cagr: None,

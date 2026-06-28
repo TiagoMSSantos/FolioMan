@@ -277,7 +277,7 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
 pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
-    let (chart_j, chart_long_j, titles, intra, pe, roe) = tokio::join!(
+    let (chart_j, chart_long_j, titles, intra, pe, roe, ter) = tokio::join!(
         // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
         // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
         // (~3652) for 1D..10Y, plus turnover/SMA/range/R². The pre-10y span (the 20Y column) is
@@ -294,6 +294,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         async { if ticker.contains('-') { None } else { fetch_pe(client, urls, ticker).await } },
         // (F) trailing ROE for the quality tilt — equities only; instant None unless FMP_API_KEY is set.
         async { if ticker.contains('-') { None } else { fetch_roe(client, urls, ticker).await } },
+        // (TER) ETF expense ratio — non-crypto only; instant None unless FMP_API_KEY is set. Stocks
+        // return no expenseRatio, so this naturally populates only for ETFs.
+        async { if ticker.contains('-') { None } else { fetch_expense(client, urls, ticker).await } },
     );
 
     let parsed = chart_j.as_ref().and_then(|j| parse_chart(j, ticker));
@@ -404,6 +407,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         pe_ratio: pe,
         // (F) trailing ROE % (equities w/ FMP_API_KEY only; None -> neutral quality tilt).
         roe,
+        // (TER) ETF annual expense ratio % (ETFs w/ FMP_API_KEY only; None -> n/a column).
+        expense_ratio: ter,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
         range_pct: core::price_pct_rank(&chart.closes),
@@ -442,6 +447,18 @@ async fn fetch_roe(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
     let v = get_json(client, &url).await?;
     let roe = v.get(0).unwrap_or(&v).get("returnOnEquityTTM")?.as_f64()?;
     roe.is_finite().then_some(roe * 100.0)
+}
+
+/// (TER) ETF annual expense ratio (%) from FMP `stable/etf/info`. None unless `FMP_API_KEY` is set AND
+/// the symbol is an ETF (stocks/crypto carry no `expenseRatio`). Same opt-in/rate-limit profile as
+/// `fetch_pe`. FMP returns the ratio as a FRACTION (0.0003 = 0.03%), so ×100 for a percent.
+/// ponytail: scale is the FMP convention; if a known-ETF prints 100× off, drop the ×100 here.
+async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+    let key = std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty())?;
+    let url = urls.fund_expense.replace("{ticker}", ticker).replace("{key}", &key);
+    let v = get_json(client, &url).await?;
+    let ter = v.get(0).unwrap_or(&v).get("expenseRatio")?.as_f64()?;
+    (ter.is_finite() && ter > 0.0).then_some(ter * 100.0)
 }
 
 // (G) Cold-fetch budget for the historical-fundamentals lane: FMP free tier = 250 calls/day, so cap

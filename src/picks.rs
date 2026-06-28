@@ -729,6 +729,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "peg", hdr: "PEG", width: 6, right: true },       // P/E ÷ long CAGR — valuation vs growth (<1 = cheap for its growth)
     ColSpec { key: "roe", hdr: "ROE", width: 7, right: true },       // trailing return-on-equity (quality)
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true },       // trailing-1Y dividend yield
+    ColSpec { key: "ter", hdr: "TER", width: 6, right: true },       // ETF annual expense ratio % — the one cost that compounds against a decades hold (FMP key, ETFs only)
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true },
@@ -821,6 +822,9 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
                 "n/a".to_string()
             }
         }
+        // ETF expense ratio (%/yr). Low is good — a 0.07% index ETF vs a 0.50% active fund is ~18% more
+        // wealth over 40y. n/a for stocks/crypto and when no FMP key populated it.
+        "ter" => quote.expense_ratio.map_or("n/a".to_string(), |v| format!("{v:.2}%")),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
         "turnover" => turnover_cell(quote.avg_turnover_eur),
@@ -855,7 +859,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     // growth_fund tilt is on), not price-only — only equities with an FMP key populate these, so on the
     // wide screen it flags the few enriched rows (the pins).
     let enriched =
-        |quote: &Quote| if quote.pe_ratio.is_some() || quote.roe.is_some() || quote.fund_factor.is_some() { "#" } else { "" };
+        |quote: &Quote| if quote.pe_ratio.is_some() || quote.roe.is_some() || quote.expense_ratio.is_some() || quote.fund_factor.is_some() { "#" } else { "" };
     let mark = |quote: &Quote, i: usize| format!("{}{}{}", i + 1, star(quote), enriched(quote));
     for (i, (quote, score)) in picks.iter().take(n).enumerate() {
         row(&mark(quote, i), quote, *score);
@@ -1138,6 +1142,8 @@ mod tests {
         assert_eq!(col_cell("cagr", &q, 0.0, ""), "n/a");
         // peg needs BOTH a P/E and positive growth; stub has neither -> n/a (never panics on the guard)
         assert_eq!(col_cell("peg", &q, 0.0, ""), "n/a");
+        // ter is None on a stub (no expense ratio fetched) -> n/a
+        assert_eq!(col_cell("ter", &q, 0.0, ""), "n/a");
     }
 
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5
@@ -1170,6 +1176,7 @@ mod tests {
             avg_turnover_eur: None, volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
             pe_ratio: None,
             roe: None,
+            expense_ratio: None, // (TER) display-only, never scored; tests don't exercise it
             // for tests, mirror the on-sale magnitude: a deeper drawdown = deeper in its range.
             // (real fetch computes range_pct independently; tying them keeps the score asserts honest.)
             range_pct: 100.0 - drawdown_pct,
