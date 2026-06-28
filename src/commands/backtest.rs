@@ -24,6 +24,8 @@
 //!
 //! Defaults to the settings.yaml watchlist (small, cheap). Pass tickers to test others, or the keyword
 //! `universe` to test the whole live screen universe (#2 — a far wider, less single-name-lucky sample).
+//! Add `stress` to inject known crashed/delisted losers into whatever pool is tested (#6) — compare the
+//! rho/edge against the same run without it to see how much of the edge is survivorship bias.
 
 use crate::config::BuyHeuristic;
 use crate::core::Quote;
@@ -79,6 +81,22 @@ const MIN_HISTORY: usize = 750;
 /// recompiles); promote to config only if a non-dev needs to tune cost without a build.
 const ROUND_TRIP_BPS: f64 = 20.0;
 
+/// (#6 survivorship stress) Once-large names that since CRATERED or went bankrupt — the kind the live
+/// `universe` (today's index members) silently drops. The `stress` keyword injects these into the pool so
+/// the edge is graded against a sample that includes the losers, not just the survivors. Mixed on purpose:
+/// crashed-and-alive mega/large-caps with deep Yahoo history (score at many cutoffs, then bleed forward)
+/// plus a few bankrupt/failed tickers whose truncated series ends near ZERO (the strongest correction —
+/// each is a cutoff with a ~−100% forward window). Any that Yahoo no longer serves return None and are
+/// harmlessly skipped, so the list can over-include. ponytail: a hand-picked loser set, NOT point-in-time
+/// index reconstruction (a data-vendor problem) — enough to tell "edge is real" from "edge is survivorship".
+const STRESS_TICKERS: &[&str] = &[
+    // crashed-and-alive, long history, once-large
+    "GE", "INTC", "WBA", "T", "KHC", "MMM", "BA", "PARA", "VFC", "GPS", "M", "NWL", "HBI", "FL",
+    "C", "AIG", "NOK", "BIIB", "CCL", "NCLH", "F", "WBD",
+    // bankrupt / failed -> series ends near 0 (the gold correction; skipped if Yahoo drops them)
+    "BBBYQ", "FRCB", "SIVBQ", "SBNY", "WEWKQ",
+];
+
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
@@ -94,6 +112,7 @@ pub async fn run(args: Vec<String>) {
     let mut tune = false;
     let mut insider = false;
     let mut halflife = false;
+    let mut stress = false;
     let mut tickers: Vec<String> = Vec::new();
     for a in &args {
         match a.parse::<i64>() {
@@ -104,6 +123,7 @@ pub async fn run(args: Vec<String>) {
             _ if a.eq_ignore_ascii_case("tune") => tune = true,
             _ if a.eq_ignore_ascii_case("insider") => insider = true, // (Item 4) also pull SEC Form-4 net buys
             _ if a.eq_ignore_ascii_case("halflife") => halflife = true, // (Item 11) hold-period net-edge sweep
+            _ if a.eq_ignore_ascii_case("stress") => stress = true,   // (#6) inject crashed/delisted losers
             _ => tickers.push(a.clone()),
         }
     }
@@ -126,6 +146,18 @@ pub async fn run(args: Vec<String>) {
             fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &[]).await.0;
     } else if tickers.is_empty() {
         tickers = settings.tickers.clone();
+    }
+    // (#6) survivorship stress: fold the crashed/delisted losers into the pool so the edge is graded
+    // against a sample that INCLUDES the names the live universe drops. Dedup so a loser already in the
+    // universe isn't double-counted. Compare rho/edge vs the same run WITHOUT `stress`: if the edge
+    // survives the loser-inclusive pool (both OOS halves still +), it's real; if it collapses, the
+    // engine was largely survivorship — stop tuning terms and shrink the claim.
+    if stress {
+        let have: HashSet<&str> = tickers.iter().map(String::as_str).collect();
+        let added: Vec<String> =
+            STRESS_TICKERS.iter().filter(|t| !have.contains(**t)).map(|t| (*t).to_string()).collect();
+        eprintln!("backtest: STRESS — injecting {} crashed/delisted losers (any Yahoo no longer serves are skipped)", added.len());
+        tickers.extend(added);
     }
     eprintln!(
         "backtest: {} tickers, WALK-FORWARD scoring every ~6mo with a {years}y forward holdout each ({} history)…",
@@ -270,8 +302,14 @@ pub async fn run(args: Vec<String>) {
     println!("  • Peer-relative (#1): returns are de-meaned per ~6mo cutoff, so rho is SELECTION vs same-period");
     println!("    peers (regime beta removed). A near-empty bucket has a weak peer set -> its rows count for less.");
     println!("  • In-sample: knobs were hand-tuned on today's data; even the OOS split shares the regime.");
-    println!("  • Survivorship (#5): the universe is names that SURVIVED to today — dead tickers never enter,");
-    println!("    so realized returns are biased UP. Treat the edge as optimistic.");
+    if stress {
+        println!("  • Survivorship (#6 STRESS ON): crashed/delisted losers were INJECTED into the pool, so this");
+        println!("    run partly corrects the upward bias. Compare its rho/edge to a plain run: a big drop = the");
+        println!("    edge leaned on survivors; holding up (both OOS halves still +) = the edge is real.");
+    } else {
+        println!("  • Survivorship (#5): the universe is names that SURVIVED to today — dead tickers never enter,");
+        println!("    so realized returns are biased UP. Treat the edge as optimistic. Re-run with `stress` to inject losers.");
+    }
     println!("  • Price-only (#6): no as-of dividends or P/E reconstructed; the * term above is inert here.");
     println!("  • Overlapping 6-mo windows share price paths -> samples aren't independent; rho is directional.");
     if monthly {
@@ -1104,6 +1142,25 @@ mod tests {
         // trend_dd never reads growth_fund_weight -> perturbing it is a no-op -> INERT (the case that
         // skips growth_fund_weight when no cutoff carries an as-of fundamental)
         assert!(!dim_active(&s, trend_dd, &def, |t, v| t.growth_fund_weight = v, 0.5));
+    }
+
+    /// (#6) the `stress` injection must ADD every loser the pool lacks and DUPLICATE none already in it —
+    /// else a loser that's also a current index member gets scored twice, skewing the peer buckets. Pins
+    /// the dedup-filter in `run` (kept identical here: filter STRESS_TICKERS by a set of what's present).
+    #[test]
+    fn stress_injection_dedups() {
+        assert_eq!(STRESS_TICKERS.iter().collect::<HashSet<_>>().len(), STRESS_TICKERS.len(), "STRESS list has a dup");
+        // a universe that already holds GE + INTC (two of the losers) plus an unrelated name
+        let mut tickers: Vec<String> = ["AAPL", "GE", "INTC"].iter().map(|s| s.to_string()).collect();
+        let have: HashSet<&str> = tickers.iter().map(String::as_str).collect();
+        let added: Vec<String> =
+            STRESS_TICKERS.iter().filter(|t| !have.contains(**t)).map(|t| (*t).to_string()).collect();
+        tickers.extend(added);
+        // every loser is present exactly once; the pre-existing GE/INTC weren't re-added
+        let uniq: HashSet<&str> = tickers.iter().map(String::as_str).collect();
+        assert_eq!(uniq.len(), tickers.len(), "injection duplicated a ticker");
+        assert!(STRESS_TICKERS.iter().all(|t| uniq.contains(*t)), "a loser is missing from the pool");
+        assert!(uniq.contains("AAPL")); // the unrelated universe name survives
     }
 
     /// `tune` de-means each chronological split INDEPENDENTLY (`demean(&mut s[..cut])` / `s[cut..]`).

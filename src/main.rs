@@ -5,7 +5,7 @@
 //!   folioman screen [TICKERS...] [--explain [TICKER]]   scan live universe (CoinGecko + S&P500) growth ranking; --explain prints the SCORE arithmetic for TICKER (or the #1 row)
 //!   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
 //!   folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower verdict
-//!   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep
+//!   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife] [stress]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep, `stress` = inject crashed/delisted losers (survivorship check)
 //!   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
 //!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY>   LIVE order (real money, confirmed)
@@ -27,7 +27,7 @@ folioman — review ETF/stock/crypto holdings. Read-only, never trades.
   folioman screen [TICKERS...] [--explain [TICKER]]   scan live universe (CoinGecko + S&P500) growth ranking; --explain prints the SCORE arithmetic for TICKER (or the #1 row)
   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
   folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower verdict (FMP key)
-  folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep
+  folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife] [stress]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep, `stress` = inject crashed/delisted losers (survivorship check)
   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
   folioman accounts              cash available + holdings per broker (read-only; env creds)
   folioman trade <broker> <buy|sell> <SYMBOL> <QTY>   LIVE order (real money; brokers:
