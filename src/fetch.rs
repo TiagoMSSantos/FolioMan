@@ -1068,7 +1068,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
     let top: Vec<(String, Option<f64>)> = rows.into_iter().take(cap).collect();
     // resolve ISIN -> Yahoo symbol (first quote = the liquid EU listing), bounded fan-out, carrying the
     // captured TER alongside. yahoo_search is tuned for news (quotesCount=0) — flip it to quotes here.
-    let resolved: Vec<(String, Option<f64>)> = stream::iter(top.into_iter())
+    let resolved: Vec<(String, Option<f64>)> = stream::iter(top)
         .map(|(isin, ter)| async move {
             let url = urls
                 .yahoo_search
