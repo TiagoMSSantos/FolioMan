@@ -847,13 +847,16 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
 
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks). Columns +
 /// order come from `widths.columns` via [`active_columns`] (default = [`DEFAULT_COLUMNS`]).
-fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>) {
+fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, hide: &[&str]) {
     println!("\n{title}");
     if picks.is_empty() {
         println!("  (none pass the gates)");
         return;
     }
-    let cols = active_columns(&w.columns);
+    // `hide`: column keys to drop for THIS table — a class never has these fundamentals (P/E/PEG/ROE
+    // don't exist for ETFs or crypto), so they'd just print "—" every row. Dropped, not blanked.
+    let mut cols = active_columns(&w.columns);
+    cols.retain(|c| !hide.contains(&c.key));
     let header = cols.iter().map(|c| fmt_cell(c.hdr, col_width(c, w), c.right)).collect::<Vec<_>>().join(" ");
     println!("  {header}");
     // one printed row; `mark` is the rank label (number + "*" pinned / "#" fundamentals flags). Flags on
@@ -905,11 +908,13 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // it's not a quota, that's all that passed the gates + filter.
     let secs = if sectors.is_empty() { "all".to_string() } else { sectors.join(", ") };
     let head = |len: usize| if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") };
-    print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w, pinned);
-    print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w, pinned);
+    // P/E, PEG, ROE are equity-only fundamentals -> hide them in the ETF + crypto tables (always "—" there).
+    const NO_EQUITY_FUNDS: &[&str] = &["pe", "peg", "roe"];
+    print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w, pinned, &[]);
+    print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w, pinned, NO_EQUITY_FUNDS);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
-    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w, pinned);
+    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w, pinned, NO_EQUITY_FUNDS);
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
