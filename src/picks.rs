@@ -341,6 +341,35 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     Some(base * value * combine_damps(&[decline, trust]))
 }
 
+/// Per-term breakdown of a growth SCORE, so `screen` can print the exact arithmetic that ranked the #1
+/// row (transparency / "validate it yourself"). SINGLE SOURCE: `growth_score` is literally
+/// `score_parts(..).map(|p| p.score)`, so the explained terms can never drift from the ranked number.
+/// All fields are the post-cap/clamp values actually summed/multiplied — nothing recomputed downstream.
+struct ScoreParts {
+    long_cagr: f64,    // raw long-leg CAGR (%/yr) before the trend cap
+    return_1y: f64,    // raw 1Y return (%) — accel input
+    trend: f64,        // min(long_cagr, long_trend_cap)
+    accel: f64,        // clamp(return_1y − long_cagr, 0, growth_accel_cap)
+    trend_term: f64,   // growth_trend_weight × trend
+    accel_term: f64,   // growth_accel_weight × accel
+    risk_reward: f64,  // (B/C) Sharpe+Calmar bonus
+    quality: f64,      // (F) quality_weight × ROE
+    dividend: f64,     // (D) dividend_weight × min(yield, cap)
+    fund: f64,         // (G) growth_fund_weight × clamp(fund_factor, 0, cap)
+    mom121: f64,       // (M) growth_mom121_weight × clamp(12-1 mom, 0, cap)
+    base: f64,         // sum of the seven terms above
+    proximity: f64,    // range_pct / 100
+    value_raw: f64,    // (E) raw P/E value_factor (ref_pe/PE clamped)
+    value: f64,        // 1 + growth_value_weight × (value_raw − 1)
+    trust: f64,        // (A) history-completeness damp
+    overext: f64,      // min(above_ma_pct, overext_cap)
+    overext_cap: f64,  // the class's overextension cap
+    overext_damp: f64, // 1 − (overext/cap)×(1−floor)
+    damp: f64,         // geomean(trust, overext_damp)
+    liq_bonus: f64,    // (L) turnover_weight × ln(max(turnover/1e9, 1))
+    score: f64,        // base × proximity × value × damp + liq_bonus
+}
+
 /// Score a quote as a MOMENTUM/GROWTH candidate — the MIRROR of `buy_score`. The on-sale lane fades
 /// a name's score to ~0 as it nears its high (a proven compounder at a new high has no "discount"),
 /// so it never surfaces quality that's expensive *because* it keeps winning. This lane is exactly
@@ -357,7 +386,8 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
 /// own ~10y range, compound at least `growth_min_cagr` %/yr, have a POSITIVE 1Y (actually climbing),
 /// and not be crashing this month. The P/E value tilt (E) still damps a nosebleed valuation, so a
 /// blow-off top is penalised, not rewarded. `None` if it fails a gate. **NOT advice** — a ranking.
-pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
+/// Returns the full per-term [`ScoreParts`]; [`growth_score`] is the scalar wrapper most callers use.
+fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let crypto = is_currency_quoted(&quote.ticker);
 
     // ---- GATES (reuse the cheap exclusions; the rest are the on-sale lane's mirror) ----
@@ -414,25 +444,27 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     // against a near-total-wipeout 1M (>= -99%) so the ratio can't blow up.
     let r1m = perf_pct(quote, "1M").unwrap_or(0.0);
     let mom121 = ((1.0 + return_1y / 100.0) / (1.0 + r1m / 100.0).max(0.01) - 1.0) * 100.0;
-    let base = tuning.growth_trend_weight * trend
-        + tuning.growth_accel_weight * accel
-        + risk_reward
-        + quality_reward(quote, tuning) // (F) ROE profitability tilt (BACKTEST-BLIND, small)
-        + tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap) // (D) total-return tilt: closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
-        // (G) as-of FUNDAMENTAL tilt. Unlike the BACKTEST-BLIND terms above, this one IS validatable: the
-        // backtest attaches the as-of factor to quote.fund_factor so `backtest <set> fund` can ablate it.
-        // Floor at 0 (only reward the factor, don't penalise a missing/negative one) and cap the artifact.
-        // weight 0 (default) -> this whole term is 0 -> growth_score is byte-identical to the pre-(G) lane.
-        + tuning.growth_fund_weight * quote.fund_factor.unwrap_or(0.0).clamp(0.0, tuning.growth_fund_cap)
-        // (M) 12-1 momentum tilt. Floor at 0: reward momentum, don't punish its absence (matches (G)/div).
-        // weight 0 (default) -> this term is 0 -> growth_score is byte-identical to the pre-(M) lane.
-        + tuning.growth_mom121_weight * mom121.clamp(0.0, tuning.growth_mom121_cap);
-    let value = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
+    // each term broken into its own local so `ScoreParts`/`explain_growth_score` can show the arithmetic
+    // without recomputing (single source). Summed in the SAME order as before -> byte-identical base.
+    let trend_term = tuning.growth_trend_weight * trend;
+    let accel_term = tuning.growth_accel_weight * accel;
+    let quality = quality_reward(quote, tuning); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
+    let dividend = tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap); // (D) total-return tilt: closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
+    // (G) as-of FUNDAMENTAL tilt. Unlike the BACKTEST-BLIND terms above, this one IS validatable: the
+    // backtest attaches the as-of factor to quote.fund_factor so `backtest <set> fund` can ablate it.
+    // Floor at 0 (only reward the factor, don't penalise a missing/negative one) and cap the artifact.
+    // weight 0 (default) -> this whole term is 0 -> growth_score is byte-identical to the pre-(G) lane.
+    let fund = tuning.growth_fund_weight * quote.fund_factor.unwrap_or(0.0).clamp(0.0, tuning.growth_fund_cap);
+    // (M) 12-1 momentum tilt. Floor at 0: reward momentum, don't punish its absence (matches (G)/div).
+    // weight 0 (default) -> this term is 0 -> growth_score is byte-identical to the pre-(M) lane.
+    let mom_term = tuning.growth_mom121_weight * mom121.clamp(0.0, tuning.growth_mom121_cap);
+    let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term;
+    let value_raw = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     // (Item 20) dial the BLIND P/E multiplier's authority toward neutral 1.0. weight 1.0 = full ×0.5..1.5
     // swing (default, unchanged); 0.0 = off. The validated edge was measured with this term OFF (pe_ratio
     // is None in the backtest), so this knob lets valuation move to the validated additive earnings_yield
     // term (Item 19) once it probes +, without a recompile. On-sale `buy_score` keeps full value_factor.
-    let value = 1.0 + tuning.growth_value_weight * (value - 1.0);
+    let value = 1.0 + tuning.growth_value_weight * (value_raw - 1.0);
     let trust = trust_factor(quote, crypto); // (A) equities need a 10Y leg; crypto's young EUR pairs need only 5Y
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
     // stretched/blow-off, so taper the score toward `growth_overext_floor` at the cap. This is the
@@ -462,7 +494,66 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     //  backtest universe ablation (467 win) said BOTH edge-negative: removing R² lifted edge +45.6->+68.0
     //  & rho +0.18->+0.20; removing mom-confirm lifted edge +5.9. R² docks exactly the parabolic
     //  compounders this lane exists to surface, and accel already encodes momentum -> dropped both.)
-    Some(base * proximity * value * combine_damps(&[trust, overext_damp]) + liq_bonus)
+    let damp = combine_damps(&[trust, overext_damp]);
+    let score = base * proximity * value * damp + liq_bonus;
+    Some(ScoreParts {
+        long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
+        fund, mom121: mom_term, base, proximity, value_raw, value, trust, overext, overext_cap,
+        overext_damp, damp, liq_bonus, score,
+    })
+}
+
+/// Scalar growth score — the number `screen`/`size`/`backtest` rank on. Thin wrapper over
+/// `score_parts` so the ranked value and the `explain_growth_score` breakdown share one computation.
+pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
+    score_parts(quote, tuning).map(|p| p.score)
+}
+
+/// Human-readable derivation of a growth SCORE: the formula then every term filled in with this quote's
+/// real numbers, ending in the score itself. Lets a `screen` reader hand-verify why the #1 row ranked
+/// where it did. `displayed` is the score AS SHOWN in the table (crypto rows carry a NUPL + BTC-relative
+/// adjustment on top of the base formula); when it differs from the base `score`, the extra step is noted
+/// so the math still reconciles to the table. `None` if the quote fails a growth gate (nothing to explain).
+pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64) -> Option<String> {
+    let p = score_parts(quote, tuning)?;
+    let mut s = String::new();
+    let name = if quote.name.is_empty() { quote.ticker.as_str() } else { quote.name.as_str() };
+    s.push_str(&format!(
+        "\n─── how the #1 SCORE was computed — {name} ({}), score {displayed:.2}. Verify it yourself ───\n",
+        quote.ticker
+    ));
+    s.push_str("  growth_score = base × proximity × value × geomean(trust, overext_damp) + liq_bonus\n\n");
+    s.push_str("  base = trend + accel + risk + quality + dividend + fund + mom121\n");
+    s.push_str(&format!("    trend    = growth_trend_weight × min(CAGR, cap)        = {:.2} × {:.2} = {:.2}\n",
+        tuning.growth_trend_weight, p.trend, p.trend_term));
+    s.push_str(&format!("    accel    = growth_accel_weight × clamp(1Y−CAGR,0,cap)  = {:.2} × {:.2} = {:.2}   (1Y {:.1} − CAGR {:.1})\n",
+        tuning.growth_accel_weight, p.accel, p.accel_term, p.return_1y, p.long_cagr));
+    s.push_str(&format!("    risk     = Sharpe+Calmar bonus                        = {:.2}\n", p.risk_reward));
+    s.push_str(&format!("    quality  = quality_weight × ROE                       = {:.2}\n", p.quality));
+    s.push_str(&format!("    dividend = dividend_weight × min(1Y yield, cap)       = {:.2}\n", p.dividend));
+    s.push_str(&format!("    fund     = growth_fund_weight × clamp(fund_factor)    = {:.2}\n", p.fund));
+    s.push_str(&format!("    mom121   = growth_mom121_weight × clamp(12-1 mom)     = {:.2}\n", p.mom121));
+    s.push_str(&format!("    base (sum)                                            = {:.2}\n", p.base));
+    s.push_str(&format!("  proximity    = range_pct / 100                          = {:.1} / 100 = {:.3}\n",
+        p.proximity * 100.0, p.proximity));
+    s.push_str(&format!("  value        = 1 + growth_value_weight × (P/E factor−1) = 1 + {:.2} × ({:.2}−1) = {:.3}\n",
+        tuning.growth_value_weight, p.value_raw, p.value));
+    s.push_str(&format!("  trust        = history-completeness damp                = {:.3}\n", p.trust));
+    if p.overext_cap > 0.0 {
+        s.push_str(&format!("  overext_damp = 1 − (min(above_MA,cap)/cap)×(1−floor)    = 1 − ({:.1}/{:.0})×(1−{:.2}) = {:.3}\n",
+            p.overext, p.overext_cap, tuning.growth_overext_floor, p.overext_damp));
+    } else {
+        s.push_str("  overext_damp = (brake off, cap 0)                       = 1.000\n");
+    }
+    s.push_str(&format!("  geomean(trust, overext_damp) = √({:.3} × {:.3})         = {:.3}\n", p.trust, p.overext_damp, p.damp));
+    s.push_str(&format!("  liq_bonus    = growth_turnover_weight × ln(max(turn/1e9,1)) = {:.2}\n", p.liq_bonus));
+    s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3} + {:.2} = {:.2}\n",
+        p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
+    if (displayed - p.score).abs() > 1e-6 {
+        s.push_str(&format!("  crypto NUPL + BTC-relative adjustment: {:.2} → {displayed:.2} (the table value)\n", p.score));
+    }
+    s.push_str("  (BACKTEST-BLIND terms — quality/dividend/fund(if FMP-only)/value — were never in the\n   walk-forward; the validated edge is the price-only trend/accel/risk path. NOT advice.)\n");
+    Some(s)
 }
 
 /// (4) Whole-market crypto sentiment FACTOR from Bitcoin NUPL (net unrealized profit/loss — already
@@ -730,7 +821,13 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     if let Some(note) = turnover_note(&tickers, n, &cache) {
         println!("{note}");
     }
+    // worked example: derive the #1 (highest-scoring) row's SCORE term-by-term so a reader can hand-verify
+    // the ranking. Captured before print_lane consumes `picks`. crypto_adj is folded into the displayed score.
+    let explain = picks.first().and_then(|&(q, s)| explain_growth_score(q, tuning, s));
     print_lane(picks, n, w, "growth candidates", growth, sectors, tuning.growth_min_score, &pinned_set);
+    if let Some(text) = explain {
+        println!("{text}");
+    }
 }
 
 /// Suggested basket weights (%, summing to 100) for an already-scored list: weight ∝ score ÷
@@ -1072,6 +1169,16 @@ mod tests {
     // an at-the-high rocket buy_score fades to ~0 (or trims) IS a growth candidate here
     let rocket = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // range_pct 100, strong CAGR, climbing
     assert!(growth_score(&rocket, &tuning).is_some());
+    // SINGLE-SOURCE check: the per-term ScoreParts must reconcile to the scalar growth_score exactly,
+    // so the `explain_growth_score` worked example can never drift from the ranked number.
+    let parts = score_parts(&rocket, &tuning).unwrap();
+    let term_sum = parts.trend_term + parts.accel_term + parts.risk_reward + parts.quality
+        + parts.dividend + parts.fund + parts.mom121;
+    assert!((term_sum - parts.base).abs() < 1e-9, "terms must sum to base");
+    let recomposed = parts.base * parts.proximity * parts.value * parts.damp + parts.liq_bonus;
+    assert!((recomposed - parts.score).abs() < 1e-9, "formula must reproduce score");
+    assert_eq!(parts.score, growth_score(&rocket, &tuning).unwrap(), "ScoreParts.score == growth_score");
+    assert!(explain_growth_score(&rocket, &tuning, parts.score).is_some());
     // ...and ranked picks it up where the on-sale lane (min_score) would have trimmed an at-high name
     assert_eq!(ranked(std::slice::from_ref(&rocket), &tuning, growth_score, tuning.growth_min_score, &no_pin).len(), 1);
     // a deeply pulled-back name is NOT a growth candidate (that's the on-sale lane's job)
