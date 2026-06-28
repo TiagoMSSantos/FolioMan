@@ -12,6 +12,13 @@ pub async fn run(args: Vec<String>) {
     let client = fetch::client();
     let tickers = if args.is_empty() { settings.tickers.clone() } else { args };
     let today = chrono::Local::now().date_naive();
+    // tailor the empty-data line: a missing key is a different fix than FMP's daily 250-call cap (429)
+    // or an uncovered ticker. Without this, the message tells you to set a key you already have.
+    let no_data = if std::env::var("FMP_API_KEY").is_ok_and(|k| !k.is_empty()) {
+        "no statements (FMP daily limit reached, or ticker not covered on the free tier)"
+    } else {
+        "no statements (set FMP_API_KEY — the free tier sources income statements)"
+    };
 
     for ticker in &tickers {
         // crypto/FX carry no income statement -> don't waste an FMP budget slot probing
@@ -22,7 +29,7 @@ pub async fn run(args: Vec<String>) {
         let rows = match fetch::fetch_fundamentals_history(&client, &settings.urls, ticker).await {
             Some(r) => r,
             None => {
-                println!("\n{ticker}: no fundamentals (set FMP_API_KEY, over daily budget, or not covered)");
+                println!("\n{ticker}: {no_data}");
                 continue;
             }
         };
