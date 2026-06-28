@@ -23,6 +23,22 @@ fn long_leg(quote: &Quote) -> Option<(f64, f64)> {
     None
 }
 
+/// (#15) Like `long_leg` but PIN the horizon to `fixed_years` (e.g. 10 -> always the 10Y leg) so every
+/// name's long CAGR is measured over the SAME window — otherwise an old name gets its full-cycle 20Y
+/// CAGR (dragged through every crash) while a young name gets a flattering 5Y bull-only CAGR, and the
+/// two are ranked head-to-head. `fixed_years` = 0 -> off (longest available leg, today's behaviour).
+/// If the pinned leg is missing (short-history name) we fall back to the longest available leg; that
+/// name is a `trust_factor` 0.5 anyway, so it can't out-rank a genuinely proven compounder on this.
+fn long_leg_fixed(quote: &Quote, fixed_years: u32) -> Option<(f64, f64)> {
+    if fixed_years == 0 {
+        return long_leg(quote);
+    }
+    match perf_pct(quote, &format!("{fixed_years}Y")) {
+        Some(p) => Some((p, fixed_years as f64)),
+        None => long_leg(quote), // pinned leg absent -> longest leg, docked by trust_factor
+    }
+}
+
 /// How intact the long-term trend is, 0..1 — used to scale the on-sale discount so a decaying name's
 /// deep "discount" can't outrank a healthy compounder's modest pullback. `zero` (a negative %/yr
 /// CAGR) is where health hits 0; health reaches 1 at a flat/rising long trend.
@@ -409,8 +425,15 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // +100000% data-artifact year) into a lane that promises a proven long trend. Require a real >2Y
     // leg for crypto too: trust_factor already treats 5Y as "proven enough" for young EUR pairs, so
     // this just promotes that bar from a soft halving to a hard gate (BTC/ETH/XMR/… all have 5Y).
-    let (long_cum, long_years) = long_leg(quote)?;
-    let long_cagr = core::cagr(long_cum, long_years);
+    let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years)?; // (#15) pin the CAGR window
+    // (#14) rank the long trend on the endpoint-robust log-slope CAGR (precomputed on the quote at
+    // fetch/backtest build) when enabled; else the two-point endpoint CAGR. Both knobs default off ->
+    // long_cagr is byte-identical to before, so the validated edge is untouched until a flip is validated.
+    let long_cagr = if tuning.use_trend_cagr {
+        quote.trend_cagr.unwrap_or_else(|| core::cagr(long_cum, long_years))
+    } else {
+        core::cagr(long_cum, long_years)
+    };
     let min_cagr = if crypto { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
     if long_cagr < min_cagr {
         return None; // equities: weak trend = expensive laggard. crypto: looser floor (show all growers vs BTC)
@@ -942,6 +965,35 @@ mod tests {
         assert!(w[2] > w[0] && w[2] > w[1], "the lone stock outweighs each correlated crypto name");
     }
 
+    /// (#14/#15) the long-CAGR pipeline: `core::trend_cagr` fits the log-price SLOPE (perfectly
+    /// log-linear data -> exact CAGR, regardless of endpoint noise; <2 pts / non-positive -> None), and
+    /// `long_leg_fixed` pins the ranking window (0 = longest leg; N = the NY leg; falls back when absent).
+    #[test]
+    fn long_cagr_pipeline() {
+        // perfectly log-linear closes (×2 per bar), cadence 1 -> annual factor 2 -> CAGR 100%.
+        assert!((core::trend_cagr(&[1.0, 2.0, 4.0, 8.0], 1).unwrap() - 100.0).abs() < 1e-6);
+        // monthly cadence 12 on ×2-per-bar -> 2^12 - 1 ~ huge; just assert it annualizes UP from per-bar.
+        assert!(core::trend_cagr(&[1.0, 2.0, 4.0, 8.0], 12).unwrap() > 100.0);
+        assert_eq!(core::trend_cagr(&[5.0], 1), None); // <2 usable points
+        assert_eq!(core::trend_cagr(&[0.0, -1.0], 1), None); // non-positive skipped -> <2 left
+        // long_leg_fixed: build a quote carrying 20Y/10Y/5Y legs via the buy_heuristic test's builder shape.
+        let perf: Vec<Option<(String, f64)>> = HORIZONS
+            .iter()
+            .map(|(l, _)| match *l {
+                "20Y" => Some(("x".into(), 900.0)),
+                "10Y" => Some(("x".into(), 200.0)),
+                "5Y" => Some(("x".into(), 60.0)),
+                _ => None,
+            })
+            .collect();
+        let mut q = Quote::stub("T", "", "", "n");
+        q.perf = perf;
+        assert_eq!(long_leg_fixed(&q, 0), Some((900.0, 20.0))); // off -> longest leg (20Y)
+        assert_eq!(long_leg_fixed(&q, 10), Some((200.0, 10.0))); // pinned -> the 10Y leg
+        q.perf[HORIZONS.iter().position(|(l, _)| *l == "10Y").unwrap()] = None; // drop 10Y
+        assert_eq!(long_leg_fixed(&q, 10), Some((900.0, 20.0))); // pinned leg absent -> longest leg fallback
+    }
+
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5
     /// ({A,B} shared of {A,B,C,D}), disjoint -> 0, both empty -> 1.0. Pure.
     #[test]
@@ -976,6 +1028,7 @@ mod tests {
             // (real fetch computes range_pct independently; tying them keeps the score asserts honest.)
             range_pct: 100.0 - drawdown_pct,
             trend_r2: 0.0, // default lumpy -> consistency floor, UNIFORM across test quotes so relational asserts hold
+            trend_cagr: None, // (#14) default off; ranking uses endpoint cagr unless use_trend_cagr is set
             max_drawdown_pct: 0.0, // default -> no calmar reward (additive 0)
             fund_factor: None,     // (G) default off; the fund-tilt asserts set it explicitly
         }

@@ -121,6 +121,8 @@ pub struct BuyHeuristic {
     pub momentum_knife: f64,         // discount ×this when it's still falling (red week & day) — dock the knife (<1; 1.0 = ignore weekly timing)
     pub long_trend_weight: f64,      // reward per %/yr of the long leg's CAGR (annualized >2Y trend) — proven-compounder bonus
     pub long_trend_cap: f64,         // cap on that long-leg CAGR (%/yr) fed into the reward (a +50%/yr coin doesn't 5× a +10%/yr one)
+    pub fixed_cagr_years: u32,       // (#15) GROWTH: pin the long-CAGR window to THIS many years (e.g. 10 -> always the 10Y leg) so every name's CAGR is measured over the SAME span; 0 = off (longest available leg, today's behaviour). Short-history names fall back to their longest leg (trust_factor docks them). Edge-affecting -> validate `backtest universe` before flipping
+    pub use_trend_cagr: bool,        // (#14) GROWTH: rank the long trend on the least-squares log-price SLOPE (endpoint-robust) instead of the two-point CAGR; false = off (today's endpoint CAGR). Edge-affecting -> validate `backtest universe` before flipping
     pub health_zero_cagr: f64,       // long-leg CAGR (%/yr, negative) at which trend_health hits 0 (a decaying multi-year trend); health=1 at flat/rising
     pub sustained_decline_pct: f64,  // (B) if BOTH 1Y and 5Y % are <= this, the name is bleeding for years (value trap) -> score ×penalty
     pub sustained_decline_penalty: f64, // (B) multiplier applied when the sustained-decline condition holds (e.g. 0.4)
@@ -204,6 +206,8 @@ impl Default for BuyHeuristic {
             momentum_knife: 1.0,           // neutral: this-week direction shouldn't reorder a 40-year pick
             long_trend_weight: 0.5,        // per %/yr CAGR: a +30%/yr compounder adds ~15, secondary to the discount (cap 35)
             long_trend_cap: 30.0,          // cap the long-leg CAGR at 30%/yr (a +46%/yr coin doesn't dwarf a +14%/yr one)
+            fixed_cagr_years: 0,           // (#15) off: rank on the longest available leg (today's behaviour). Set 10 to pin every name's CAGR to its 10Y window
+            use_trend_cagr: false,         // (#14) off: two-point endpoint CAGR (today's behaviour). true = least-squares log-slope CAGR (endpoint-robust)
             health_zero_cagr: -10.0,       // a -10%/yr multi-year trend = dead -> trend_health 0
             sustained_decline_pct: -40.0,  // (B) 1Y AND 5Y both <= -40% = multi-year bleed, not a dip
             sustained_decline_penalty: 0.4, // (B) score ×0.4 when that holds (value-trap dock)

@@ -90,6 +90,7 @@ pub struct Quote {
     pub roe: Option<f64>,              // (F) trailing return-on-equity (%) — the core profitability/QUALITY factor; None for crypto/ETF/no-earnings/no source (-> neutral). BACKTEST-BLIND (point-in-time, can't reconstruct as-of)
     pub range_pct: f64,                // percentile rank (0..100) of the last close in its own ~10y history; 100=at high. picks discount = 100-this
     pub trend_r2: f64,                 // (A) R² (0..1) of the log-price trend — how steadily it compounds; damps CAGR endpoint-luck. 0 = no/short history
+    pub trend_cagr: Option<f64>,       // (#14) annualized CAGR from the log-price trend SLOPE (endpoint-robust); precomputed at build, ranked on only when `use_trend_cagr`. None = <2 points
     pub max_drawdown_pct: f64,         // (C) worst peak-to-trough decline (%) in its history; feeds the Calmar (return-per-pain) reward. 0 = never down/no history
     pub fund_factor: Option<f64>,      // (G) the ONE as-of fundamental factor folded into growth_score (e.g. revenue accel). Set in the backtest (from fund_factors) so the term is ablatable, and live only on the small/check-scale path; None -> neutral (universe screen & price-only backtest)
 }
@@ -125,6 +126,7 @@ impl Quote {
             roe: None,
             range_pct: 0.0,
             trend_r2: 0.0,
+            trend_cagr: None,
             max_drawdown_pct: 0.0,
             fund_factor: None,
         }
@@ -196,6 +198,33 @@ pub fn trend_r2(closes: &[f64]) -> f64 {
         return 1.0; // flat log-price = zero residual variance = perfectly "consistent"
     }
     (sxy * sxy / (sxx * syy)).clamp(0.0, 1.0)
+}
+
+/// (#14) Annualized CAGR (%) from the SLOPE of the least-squares log-price line — the same fit
+/// `trend_r2` makes, returning the trend itself instead of its R². Robust to endpoint luck: one freak
+/// start/end close barely moves a fitted line, unlike `cagr`, which is pure endpoint-to-endpoint and
+/// so hostage to the exact first/last day. `cadence` = bars/year (252 daily, 12 monthly) annualizes
+/// the per-bar log slope: CAGR = exp(slope × cadence) − 1. None for <2 usable points (log undefined /
+/// degenerate fit); non-positive closes are skipped. Mirrors `trend_r2`'s loop so the two stay aligned.
+pub fn trend_cagr(closes: &[f64], cadence: usize) -> Option<f64> {
+    let ys: Vec<f64> = closes.iter().filter(|&&c| c > 0.0).map(|c| c.ln()).collect();
+    let n = ys.len();
+    if n < 2 {
+        return None;
+    }
+    let xmean = (n as f64 - 1.0) / 2.0; // x = 0..n-1
+    let ymean = ys.iter().sum::<f64>() / n as f64;
+    let (mut sxx, mut sxy) = (0.0, 0.0);
+    for (i, &y) in ys.iter().enumerate() {
+        let dx = i as f64 - xmean;
+        sxx += dx * dx;
+        sxy += dx * (y - ymean);
+    }
+    if sxx <= 0.0 {
+        return None; // all x identical (n<2 already handled) -> no slope
+    }
+    let slope = sxy / sxx; // log-price per bar
+    Some(((slope * cadence as f64).exp() - 1.0) * 100.0)
 }
 
 /// (C) Worst peak-to-trough decline (%) ever seen in the series — the deepest pain a holder endured.
@@ -883,6 +912,7 @@ pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: 
     quote.below_ma_pct = below_long_ma_pct(c, long_ma);
     quote.above_ma_pct = above_long_ma_pct(c, long_ma);
     quote.trend_r2 = trend_r2(c);
+    quote.trend_cagr = trend_cagr(c, cadence); // (#14) same fit, annualized by the run's cadence -> train==serve
     quote.max_drawdown_pct = max_drawdown_pct(c);
     quote
 }

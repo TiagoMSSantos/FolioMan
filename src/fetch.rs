@@ -410,6 +410,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // (A/C) zero-extra-fetch quality scalars from the SAME closes: log-trend R² (steadiness) and
         // worst historical drawdown (pain). Feed the consistency multiplier + Calmar reward.
         trend_r2: core::trend_r2(&chart.closes),
+        // (#14) annualized log-trend slope CAGR (endpoint-robust); daily live bars -> cadence 252,
+        // matching backtest_quote's per-cadence call so the live rank and the validation agree.
+        trend_cagr: core::trend_cagr(&chart.closes, 252),
         max_drawdown_pct: core::max_drawdown_pct(&chart.closes),
         fund_factor: None, // (G) live screen leaves this None (neutral); only the small/check-scale path (A3) populates it
     }
