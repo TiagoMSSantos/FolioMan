@@ -26,3 +26,4 @@ target
 config/settings.yaml
 .fmp_cache/
 .folioman_turnover_*.txt
+.sec_cache

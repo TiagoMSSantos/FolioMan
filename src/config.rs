@@ -318,6 +318,10 @@ pub struct Urls {
     pub sec_ticker_cik: String,
     #[serde(default = "default_sec_submissions_url")]
     pub sec_submissions: String,
+    // (report) SEC XBRL company-facts: every us-gaap concept (revenue/grossProfit/operatingIncome/
+    // netIncome/EPS) with filingDate — the FREE, no-key, no-daily-cap fallback when FMP is throttled.
+    #[serde(default = "default_sec_companyfacts_url")]
+    pub sec_companyfacts: String,
     // SET THIS to a real "app contact@email" — SEC blocks generic/empty agents. Placeholder works in dev
     // but be a good citizen before any wide run.
     #[serde(default = "default_sec_user_agent")]
@@ -333,6 +337,12 @@ fn default_sec_ticker_cik_url() -> String {
 /// primaryDocument/filingDate arrays; we filter form == "4". {cik} = 10-digit zero-padded.
 fn default_sec_submissions_url() -> String {
     "https://data.sec.gov/submissions/CIK{cik}.json".to_string()
+}
+
+/// (report) Default SEC XBRL company-facts endpoint: one JSON with every reported us-gaap concept's
+/// full history (val + period end + filingDate). {cik} = 10-digit zero-padded.
+fn default_sec_companyfacts_url() -> String {
+    "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json".to_string()
 }
 
 /// (Item 4) Default SEC User-Agent. SEC's fair-access policy needs a descriptive contact; replace the

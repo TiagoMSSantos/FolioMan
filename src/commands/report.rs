@@ -1,9 +1,9 @@
 //! `report [TICKERS]` — inspect a company's ANNUAL income-statement trajectory (revenue, margins,
 //! EPS, year-over-year growth) plus the SAME fundamental "grower verdict" the buy heuristic ranks on.
 //! Workflow: run `screen` to surface the best growers, then `report AAPL` to drill into one before
-//! betting. Reuses the disk-cached FMP `stable/income-statement` pipeline — no extra fetch type, and
-//! the verdict comes straight from `core::fund_factors`, so the inspection can't drift from what
-//! `screen`/`check` actually weigh. Needs FMP_API_KEY (free tier); without it, a graceful line, no crash.
+//! betting. Sources the FMP `stable/income-statement` pipeline first, falling back to SEC EDGAR XBRL
+//! (free, no key, no daily cap; US filers) when FMP is throttled/keyless. The verdict comes straight
+//! from `core::fund_factors`, so the inspection can't drift from what `screen`/`check` actually weigh.
 
 use crate::{config, core, fetch};
 
@@ -14,10 +14,12 @@ pub async fn run(args: Vec<String>) {
     let today = chrono::Local::now().date_naive();
     // tailor the empty-data line: a missing key is a different fix than FMP's daily 250-call cap (429)
     // or an uncovered ticker. Without this, the message tells you to set a key you already have.
+    // FMP feeds the global path; SEC EDGAR (no key) covers US filers as fallback. So an empty line means
+    // a foreign/ETF name with no US XBRL (and FMP throttled/keyless), not necessarily a missing key.
     let no_data = if std::env::var("FMP_API_KEY").is_ok_and(|k| !k.is_empty()) {
-        "no statements (FMP daily limit reached, or ticker not covered on the free tier)"
+        "no statements (US filers fall back to SEC EDGAR; this is likely a non-US/ETF name, or FMP is throttled)"
     } else {
-        "no statements (set FMP_API_KEY — the free tier sources income statements)"
+        "no statements (set FMP_API_KEY for global coverage; US filers still resolve via SEC EDGAR)"
     };
 
     for ticker in &tickers {
@@ -26,7 +28,7 @@ pub async fn run(args: Vec<String>) {
             println!("\n{ticker}: no income statement (crypto/FX)");
             continue;
         }
-        let rows = match fetch::fetch_fundamentals_history(&client, &settings.urls, ticker).await {
+        let rows = match fetch::fetch_fundamentals_report(&client, &settings.urls, ticker).await {
             Some(r) => r,
             None => {
                 println!("\n{ticker}: {no_data}");
@@ -44,7 +46,10 @@ pub async fn run(args: Vec<String>) {
                 (Some(c), Some(p)) if p != 0.0 => Some((c / p - 1.0) * 100.0),
                 _ => None,
             };
-            let mark = if a.quarters < 4 { "*" } else { "" }; // incomplete fiscal year
+            // 2-3 quarters = a genuinely partial quarterly (FMP) year; mark it. 1 = an annual filing
+            // (SEC EDGAR rolls a fiscal year into one row) OR the rare newest-FMP-year-with-only-Q1, which
+            // we don't flag. 4+ = a full quarterly year. ponytail: can't tell source per-row, this is close.
+            let mark = if (2..4).contains(&a.quarters) { "*" } else { "" };
             println!(
                 "{:>5}{} {:>10} {:>8} {:>7} {:>7} {:>7} {:>9} {:>8}",
                 a.year, mark, humanize(a.revenue), yoy(rev_yoy),

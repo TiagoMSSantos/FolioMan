@@ -714,6 +714,145 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
     (!txns.is_empty()).then_some(txns)
 }
 
+// ── (report) SEC XBRL company-facts — FREE, no key, no daily cap fundamentals fallback ──────────────
+// The income-statement source for `report` when FMP is throttled/keyless. Pulls one `companyfacts`
+// JSON (every us-gaap concept's full history with filingDate), keeps ANNUAL (10-K, ~12-month) figures,
+// and de-dupes each fiscal period to its EARLIEST filing so a later 10-K's restated comparative can't
+// post-date the as-of `filed`. US filers only (a non-US ticker has no CIK -> None).
+
+type SecCacheRow = (String, String, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>);
+
+/// Parse a SEC `companyfacts` payload into ANNUAL `FundRow`s (one per fiscal year). Pure -> unit-tested.
+/// Revenue is merged across the concepts different eras/filers use; each annual line is joined to the
+/// others by exact period-end date (a 10-K's income lines all share one period end). Margins derived
+/// (line / revenue), matching `parse_fund_row`. A missing line -> None (neutral), never a fake 0.
+fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
+    let g = match j.pointer("/facts/us-gaap") {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+    // annual datapoints for a set of equivalent concept names: period-end -> (earliest filed, value)
+    let collect = |tags: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> {
+        let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> = std::collections::BTreeMap::new();
+        for tag in tags {
+            // chained get (NOT json pointer): the "USD/shares" unit key contains a '/', which a JSON
+            // pointer would mis-split into two tokens -> EPS silently lost.
+            let arr = match g.get(tag).and_then(|t| t.get("units")).and_then(|u| u.get(unit)).and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => continue,
+            };
+            for x in arr {
+                if !x.get("form").and_then(|v| v.as_str()).is_some_and(|f| f.starts_with("10-K")) {
+                    continue; // annual filing only
+                }
+                let (Some(s), Some(e)) = (x.get("start").and_then(|v| v.as_str()), x.get("end").and_then(|v| v.as_str())) else {
+                    continue;
+                };
+                let (Ok(sd), Ok(ed)) = (NaiveDate::parse_from_str(s, "%Y-%m-%d"), NaiveDate::parse_from_str(e, "%Y-%m-%d")) else {
+                    continue;
+                };
+                if !(350..=380).contains(&(ed - sd).num_days()) {
+                    continue; // ~12-month period (skips quarterly/YTD slices that share the tag)
+                }
+                let (Some(filed), Some(val)) = (
+                    x.get("filed").and_then(|v| v.as_str()).and_then(|f| NaiveDate::parse_from_str(f, "%Y-%m-%d").ok()),
+                    x.get("val").and_then(|v| v.as_f64()),
+                ) else {
+                    continue;
+                };
+                // keep the ORIGINAL report (lowest filed) for this period end, not a later restatement
+                m.entry(ed).and_modify(|cur| {
+                    if filed < cur.0 {
+                        *cur = (filed, val);
+                    }
+                }).or_insert((filed, val));
+            }
+        }
+        m
+    };
+    let rev = collect(&["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"], "USD");
+    let gp = collect(&["GrossProfit"], "USD");
+    let op = collect(&["OperatingIncomeLoss"], "USD");
+    let ni = collect(&["NetIncomeLoss"], "USD");
+    let eps = collect(&["EarningsPerShareDiluted"], "USD/shares");
+    rev.into_iter()
+        .map(|(end, (filed, revenue))| {
+            let at = |m: &std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)>| m.get(&end).map(|(_, v)| *v);
+            let margin = |line: Option<f64>| match line {
+                Some(l) if revenue != 0.0 => Some(l / revenue * 100.0),
+                _ => None,
+            };
+            core::FundRow {
+                filed,
+                period_end: end,
+                revenue: Some(revenue),
+                gross_margin: margin(at(&gp)),
+                op_margin: margin(at(&op)),
+                net_margin: margin(at(&ni)),
+                eps: at(&eps),
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
+/// Annual `FundRow`s for a US ticker from SEC XBRL company-facts. DISK-CACHED as compact parsed rows
+/// (`.sec_cache/{ticker}_facts.json`) — NOT the multi-MB raw payload — append-only history reused
+/// forever. Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
+pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
+    use std::sync::atomic::Ordering;
+    let cache = sec_cache_path(&format!("{ticker}_facts"));
+    if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
+        let rows: Vec<core::FundRow> = cached
+            .into_iter()
+            .filter_map(|(f, e, rev, gm, op, net, eps)| {
+                Some(core::FundRow {
+                    filed: NaiveDate::parse_from_str(&f, "%Y-%m-%d").ok()?,
+                    period_end: NaiveDate::parse_from_str(&e, "%Y-%m-%d").ok()?,
+                    revenue: rev,
+                    gross_margin: gm,
+                    op_margin: op,
+                    net_margin: net,
+                    eps,
+                    ..Default::default()
+                })
+            })
+            .collect();
+        return (!rows.is_empty()).then_some(rows); // cache hit -> no network, no budget spend
+    }
+    let cik = sec_cik(client, urls, ticker).await?; // non-US / unknown -> None
+    if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+        return None;
+    }
+    let v = sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", &cik), &urls.sec_user_agent).await?;
+    let rows = parse_sec_facts(&v);
+    if !rows.is_empty() {
+        let serial: Vec<SecCacheRow> = rows
+            .iter()
+            .map(|r| {
+                (r.filed.format("%Y-%m-%d").to_string(), r.period_end.format("%Y-%m-%d").to_string(),
+                 r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps)
+            })
+            .collect();
+        if let Some(dir) = cache.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&cache, serde_json::to_string(&serial).unwrap_or_default());
+    }
+    (!rows.is_empty()).then_some(rows)
+}
+
+/// (report) Fundamentals for the `report` view: FMP first (global coverage / ADRs), SEC EDGAR fallback
+/// when FMP yields nothing (429 daily cap, no key, or not covered). Kept SEPARATE from
+/// `fetch_fundamentals_history` so the validated backtest/live-enrich data source stays FMP-only (no
+/// silent train-serve drift). SEC covers US filers; a foreign ADR with no US XBRL still degrades to None.
+pub async fn fetch_fundamentals_report(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
+    if let Some(rows) = fetch_fundamentals_history(client, urls, ticker).await {
+        return Some(rows);
+    }
+    fetch_fundamentals_sec(client, urls, ticker).await
+}
+
 /// Latest Bitcoin NUPL (net unrealized profit/loss) from bitcoin-data.com. None on failure.
 pub async fn fetch_nupl(client: &Client, urls: &Urls) -> Option<f64> {
     get_json(client, &urls.nupl).await?.get("nupl")?.as_f64()
@@ -929,6 +1068,47 @@ mod tests {
         assert!(is_stale(now - StdDuration::from_secs(200), now, ttl)); // 200s old > 100s ttl
         assert!(!is_stale(now - StdDuration::from_secs(50), now, ttl)); // 50s old < ttl
         assert!(!is_stale(now + StdDuration::from_secs(50), now, ttl)); // future mtime -> skew-safe, not stale
+    }
+
+    /// (report) `parse_sec_facts`: keeps ANNUAL (10-K, ~12mo) lines only, de-dupes a fiscal period to its
+    /// EARLIEST filing (a later restated comparative can't post-date `filed`), merges revenue across
+    /// concepts, and derives margins. Quarterly slices and a non-10-K form are dropped.
+    #[test]
+    fn sec_facts_parse_annual_dedup() {
+        use serde_json::json;
+        let j = json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [
+                // FY2021 original 10-K (filed 2021-11)
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 1000.0, "form": "10-K", "filed": "2021-11-01"},
+                // SAME FY2021 period RESTATED as a comparative in the 2023 10-K -> later filed, must be ignored
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 1234.0, "form": "10-K", "filed": "2023-11-01"},
+                // a quarterly slice (~3mo) on the same tag -> dropped (not annual)
+                {"start": "2021-07-01", "end": "2021-09-30", "val": 250.0, "form": "10-Q", "filed": "2021-11-01"},
+                // FY2022
+                {"start": "2021-10-01", "end": "2022-09-30", "val": 1200.0, "form": "10-K", "filed": "2022-11-01"}
+            ]}},
+            "GrossProfit": {"units": {"USD": [
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 400.0, "form": "10-K", "filed": "2021-11-01"},
+                {"start": "2021-10-01", "end": "2022-09-30", "val": 600.0, "form": "10-K", "filed": "2022-11-01"}
+            ]}},
+            "EarningsPerShareDiluted": {"units": {"USD/shares": [
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 3.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}}
+        }}});
+        let mut rows = parse_sec_facts(&j);
+        rows.sort_by_key(|r| r.period_end);
+        assert_eq!(rows.len(), 2); // two fiscal years
+        // FY2021: original value kept (1000, not the 1234 restatement), original filing date
+        assert_eq!(rows[0].period_end, NaiveDate::from_ymd_opt(2021, 9, 30).unwrap());
+        assert_eq!(rows[0].filed, NaiveDate::from_ymd_opt(2021, 11, 1).unwrap());
+        assert_eq!(rows[0].revenue, Some(1000.0));
+        assert_eq!(rows[0].gross_margin, Some(40.0)); // 400/1000
+        assert_eq!(rows[0].eps, Some(3.0));
+        // FY2022: no EPS line -> None (neutral, never a fake 0)
+        assert_eq!(rows[1].revenue, Some(1200.0));
+        assert_eq!(rows[1].gross_margin, Some(50.0)); // 600/1200
+        assert_eq!(rows[1].eps, None);
+        assert!(parse_sec_facts(&json!({})).is_empty()); // no facts -> empty, never panics
     }
 
     /// (Item 4) `parse_form4_txns` pairs each transaction's date with its code and keeps only P/S. Two
