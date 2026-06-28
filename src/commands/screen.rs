@@ -10,6 +10,26 @@ use crate::picks::{eu_buyable, render};
 use crate::{config, fetch};
 
 pub async fn run(args: Vec<String>) {
+    // `--explain [TICKER]`: after the tables, print the SCORE arithmetic for TICKER (a flag with no
+    // ticker, or no flag at all, still explains the #1 row — that footer is always on). The named ticker
+    // is also added to the scan, so `screen --explain NVDA` ranks + explains just NVDA. Strip the flag
+    // out of the positional tickers first, else it gets fetched as a junk symbol.
+    let mut explain: Option<String> = None;
+    let mut positional: Vec<String> = Vec::new();
+    let mut it = args.into_iter().peekable();
+    while let Some(a) = it.next() {
+        if a == "--explain" {
+            if it.peek().is_some_and(|t| !t.starts_with('-')) {
+                let t = it.next().unwrap();
+                positional.push(t.clone()); // ensure the target is fetched/scanned
+                explain = Some(t);
+            } // a bare `--explain` falls through: the default #1 footer covers it
+        } else {
+            positional.push(a);
+        }
+    }
+    let args = positional;
+
     let settings = config::load();
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
@@ -61,7 +81,7 @@ pub async fn run(args: Vec<String>) {
 
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
-    render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &settings.tickers);
+    render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &settings.tickers, explain.as_deref());
 
     if let Some(n) = nupl {
         println!(

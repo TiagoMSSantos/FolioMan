@@ -2,7 +2,7 @@
 //!
 //!   folioman check  [TICKERS...]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline
 //!   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
-//!   folioman screen [TICKERS...]   scan live universe (CoinGecko + S&P500): ATH/ATL / fallers / dividends / buys
+//!   folioman screen [TICKERS...] [--explain [TICKER]]   scan live universe (CoinGecko + S&P500) growth ranking; --explain prints the SCORE arithmetic for TICKER (or the #1 row)
 //!   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
 //!   folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower verdict
 //!   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep
@@ -24,7 +24,7 @@ folioman — review ETF/stock/crypto holdings. Read-only, never trades.
 
   folioman check  [TICKERS...]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline
   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
-  folioman screen [TICKERS...]   scan live universe (CoinGecko + S&P500): ATH/ATL / fallers / dividends / buys
+  folioman screen [TICKERS...] [--explain [TICKER]]   scan live universe (CoinGecko + S&P500) growth ranking; --explain prints the SCORE arithmetic for TICKER (or the #1 row)
   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
   folioman report [TICKERS...]   annual income-statement trajectory (revenue/margins/EPS/YoY) + grower verdict (FMP key)
   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep

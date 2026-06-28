@@ -786,7 +786,7 @@ pub fn crypto_adjust(quote: &Quote, base: f64, tuning: &BuyHeuristic, cfactor: f
 /// deepest-dip ranking picks future LOSERS over a multi-decade hold. `nupl` (Bitcoin
 /// net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or fetch fail) damps
 /// the crypto rows when the market is euphoric.
-pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], pinned: &[String]) {
+pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], pinned: &[String], explain: Option<&str>) {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
     let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
@@ -821,12 +821,22 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     if let Some(note) = turnover_note(&tickers, n, &cache) {
         println!("{note}");
     }
-    // worked example: derive the #1 (highest-scoring) row's SCORE term-by-term so a reader can hand-verify
-    // the ranking. Captured before print_lane consumes `picks`. crypto_adj is folded into the displayed score.
-    let explain = picks.first().and_then(|&(q, s)| explain_growth_score(q, tuning, s));
+    // worked example: derive a row's SCORE term-by-term so a reader can hand-verify the ranking. Default
+    // is the #1 (highest-scoring) row; `--explain TICKER` targets that ticker instead. Captured before
+    // print_lane consumes `picks`. crypto_adj is folded into the displayed score.
+    let target = match explain {
+        Some(t) => picks.iter().find(|(q, _)| q.ticker.eq_ignore_ascii_case(t)),
+        None => picks.first(),
+    };
+    let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
     print_lane(picks, n, w, "growth candidates", growth, sectors, tuning.growth_min_score, &pinned_set);
-    if let Some(text) = explain {
-        println!("{text}");
+    match (explain_text, explain) {
+        (Some(text), _) => println!("{text}"),
+        // an explicit --explain TICKER that didn't land a row: say why instead of silently printing nothing
+        (None, Some(t)) if !t.is_empty() => println!(
+            "\n--explain: {t} is not in the growth ranking (fails a growth gate, isn't EU-buyable, or wasn't scanned)."
+        ),
+        _ => {}
     }
 }
 
