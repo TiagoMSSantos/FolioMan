@@ -968,7 +968,7 @@ mod tests {
             ticker: "T".into(), price: "€1.00".into(), dip: "-5.0%".into(), drop_pct: drawdown_pct,
             market: "USA".into(), instrument_type: String::new(), head: String::new(), news_block: String::new(), perf,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
-            div_eur: Vec::new(), price_eur: None, drawdown_pct, intraday: [None; 3],
+            div_eur: Vec::new(), price_eur: None, close_native: None, drawdown_pct, intraday: [None; 3],
             avg_turnover_eur: None, volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
             pe_ratio: None,
             roe: None,

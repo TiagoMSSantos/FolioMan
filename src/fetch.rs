@@ -383,6 +383,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         mom_pct,
         div_eur: core::dividend_sums(&long_divs, &long_dates, rate),
         price_eur: rate.map(|r| cur_close * r),
+        close_native: Some(cur_close), // (Item 19) native-currency close for a currency-consistent earnings_yield
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),
         // avg daily turnover in native currency -> EUR (×rate). Crypto: Yahoo "volume" is already
@@ -561,6 +562,12 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
                 ff.insider_net_buys_90d = core::insider_net_buys(&txns, today, 90);
             }
         }
+        // (Item 19) as-of earnings yield from the NATIVE close (currency-consistent with native EPS),
+        // mirroring the backtest's `f.earnings_yield = earnings_yield(eps_ttm, closes[i])` so the live
+        // and validated valuation share one definition. None when there's no EPS (crypto/ETF/no source)
+        // or no native price -> select_fund_factor("earnings_yield") then stays neutral. Inert unless
+        // `growth_fund_factor: earnings_yield` is set; the caller already gates on growth_fund_weight > 0.
+        ff.earnings_yield = q.close_native.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
         q.fund_factor = core::select_fund_factor(&ff, factor);
     }
 }

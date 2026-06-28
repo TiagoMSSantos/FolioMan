@@ -79,6 +79,7 @@ pub struct Quote {
     pub mom_pct: Option<f64>, // % change vs ~1 month ago (None if no data); <0 = falling
     pub div_eur: Vec<Option<f64>>, // total dividends/share (EUR) per DIV_HORIZONS; None = short history
     pub price_eur: Option<f64>, // current close in EUR (None if FX unknown); for dividend yield
+    pub close_native: Option<f64>, // (Item 19) latest close in the listing's OWN currency (NOT FX-converted) — paired with native EPS for a currency-consistent earnings_yield, same number the backtest scores on
     pub drawdown_pct: f64, // % below the high of the last ~high_days (picks "on sale" signal)
     pub intraday: [Option<f64>; 3], // % change over [1h, 6h, 12h] = 1/6/12 hourly bars back; None if too few bars
     pub avg_turnover_eur: Option<f64>, // avg daily turnover (close*volume, EUR) ~last 30 sessions; liquidity proxy
@@ -113,6 +114,7 @@ impl Quote {
             mom_pct: None,
             div_eur: Vec::new(),
             price_eur: None,
+            close_native: None,
             drawdown_pct: 0.0,
             intraday: [None; 3],
             avg_turnover_eur: None,
