@@ -916,6 +916,12 @@ pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: 
     quote.trend_r2 = trend_r2(c);
     quote.trend_cagr = trend_cagr(c, cadence); // (#14) same fit, annualized by the run's cadence -> train==serve
     quote.max_drawdown_pct = max_drawdown_pct(c);
+    // (#20) the LIVE growth lane now excludes a name whose turnover is UNKNOWN when a liquidity floor is
+    // set (an untradeable/dead listing like 0Y72.L). backtest_quote can't reconstruct turnover, but that
+    // absence is NOT a liquidity signal — mark it "liquid enough" so the floor stays a LIVE-ONLY gate
+    // (its prior behaviour: None always passed). Uniform across every backtest name -> the additive
+    // liq_bonus is a constant offset -> cross-sectional rank unchanged, validated edge untouched.
+    quote.avg_turnover_eur = Some(1e15);
     quote
 }
 

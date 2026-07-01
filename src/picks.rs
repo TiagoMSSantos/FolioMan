@@ -169,14 +169,20 @@ pub fn asset_class(quote: &Quote) -> u8 {
     }
 }
 
-/// Dollar-pegged stablecoin underlyings — pegged to $1, so zero growth potential (never a "buy and
-/// hold for decades" candidate). On the EUR leg their price drifts with EUR/USD, faking a drawdown
-/// that slips past the `drawdown < 3%` peg gate — so exclude them by symbol instead.
-const STABLECOINS: &[&str] =
-    &["USDT", "USDC", "DAI", "TUSD", "FDUSD", "PYUSD", "USDE", "BUSD", "USDP", "GUSD", "USDD", "FRAX"];
+/// (#21) PEGGED underlyings excluded from the growth lane — each tracks an external peg, so its long
+/// "CAGR" is the peg drifting, NOT compounding, and it's never a "buy and hold for decades" grower:
+///   - dollar stablecoins (USDT…USDF): pegged to $1. On the EUR leg the price drifts with EUR/USD,
+///     faking a drawdown that slips past the `drawdown < 3%` peg gate — so exclude by symbol instead.
+///   - metal tokens (XAUT Tether Gold, PAXG PAX Gold): track a gram of gold, not a growing business.
+///     They ranked in the crypto GROWTH table (a +11% "CAGR" that's just the gold price) — not growth.
+const PEGGED: &[&str] = &[
+    "USDT", "USDC", "DAI", "TUSD", "FDUSD", "PYUSD", "USDE", "BUSD", "USDP", "GUSD", "USDD", "FRAX",
+    "USDF", // FolgoryUSD — dollar token (VOL ~0), surfaced #11 crypto
+    "XAUT", "PAXG", // gold-backed — a metal peg, not a compounding asset
+];
 
 fn is_stablecoin(ticker: &str) -> bool {
-    STABLECOINS.contains(&underlying(ticker))
+    PEGGED.contains(&underlying(ticker))
 }
 
 /// Collapse `<X>-EUR`/`<X>-USD` twins to ONE row (same asset, just a different quote currency),
@@ -426,8 +432,16 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if crypto && is_stablecoin(&quote.ticker) {
         return None; // pegged $1 -> no growth
     }
-    if quote.avg_turnover_eur.is_some_and(|v| v < tuning.min_avg_turnover_eur) {
-        return None; // too thin (unknown turnover passes)
+    // (#20) with a liquidity floor set, an UNKNOWN turnover can't be assumed to clear it. The growth
+    // lane's whole thesis is a deep-liquid, multi-decade-holdable compounder (it even pays a liquidity
+    // BONUS), so a name whose turnover Yahoo never served (a thin/dead listing like 0Y72.L, which rode a
+    // +212% data-artifact print to #1) is exactly the untradeable junk to exclude. floor 0 = off (unknown
+    // still passes). The backtest stays unaffected: backtest_quote sets a sentinel turnover (#20) that
+    // clears any floor, so this remains a LIVE-only gate and the validated edge is untouched.
+    if tuning.min_avg_turnover_eur > 0.0
+        && quote.avg_turnover_eur.is_none_or(|v| v < tuning.min_avg_turnover_eur)
+    {
+        return None; // too thin, or turnover unknown while a floor is required
     }
     let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
     if quote.range_pct < min_range {
@@ -519,7 +533,9 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // mega-caps are easier to hold/exit over decades and harder to manipulate, a real quality the
     // brake-docked score ignores. Reward only turnover ABOVE €1B (ln ratio, 0 below) so it lifts proven
     // liquid compounders (NVDA €32B) over the illiquid €200-500M names they trail on the docked score,
-    // not the whole field. BACKTEST-BLIND (backtest_quote has no turnover) -> the validated edge is untouched.
+    // not the whole field. RANK-NEUTRAL in the backtest: backtest_quote sets a uniform sentinel turnover
+    // (#20), so this liq_bonus is the SAME constant offset on every backtest name -> cross-sectional order
+    // (and the validated edge) is untouched.
     let liq_bonus = if tuning.growth_turnover_weight > 0.0 {
         tuning.growth_turnover_weight * quote.avg_turnover_eur.map_or(0.0, |v| (v / 1e9).max(1.0).ln())
     } else {
@@ -1276,6 +1292,8 @@ mod tests {
     assert!(buy_score(&peg, &tuning).is_none());
     // stablecoin gate (3): excluded even with a fat EUR-leg "drawdown" that clears the 3% peg gate
     assert!(is_stablecoin("USDC-EUR") && is_stablecoin("USDT-USD") && !is_stablecoin("BTC-EUR"));
+    // (#21) pegged list also covers the dollar token USDF and the gold tokens (metal peg, not growth)
+    assert!(is_stablecoin("USDF-USD") && is_stablecoin("XAUT-USD") && is_stablecoin("PAXG-USD"));
     let mut stable = quote(16.0, &[("1Y", -20.0)]);
     stable.ticker = "USDC-EUR".into();
     assert!(buy_score(&stable, &tuning).is_none()); // pegged $1 -> no growth, FX drift faked the dip
@@ -1470,6 +1488,15 @@ mod tests {
     let mut lev_g = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
     lev_g.name = "Direxion Daily Technology".into();
     assert!(growth_score(&lev_g, &tuning).is_none());
+    // (#20) with a liquidity floor set, an UNKNOWN turnover fails (untradeable artifact like 0Y72.L);
+    // a known-liquid one passes; with NO floor (default) unknown still passes -> backtest edge untouched
+    let liq_g = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
+    let mut noturn = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    noturn.avg_turnover_eur = None;
+    assert!(growth_score(&noturn, &liq_g).is_none()); // floor set + turnover unknown -> excluded
+    assert!(growth_score(&noturn, &tuning).is_some()); // no floor (default) -> unknown still admitted
+    noturn.avg_turnover_eur = Some(5_000_000.0);
+    assert!(growth_score(&noturn, &liq_g).is_some()); // known-liquid clears the floor
     // acceleration: same long CAGR, the name whose recent year OUTPACES it scores higher (momentum)
     let accel = growth_score(&quote(0.0, &[("1Y", 80.0), ("5Y", 100.0), ("10Y", 150.0)]), &tuning).unwrap();
     let steady = growth_score(&quote(0.0, &[("1Y", 15.0), ("5Y", 100.0), ("10Y", 150.0)]), &tuning).unwrap();
