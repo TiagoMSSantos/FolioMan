@@ -721,6 +721,15 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // and validated valuation share one definition. None when there's no EPS (crypto/ETF/no source)
         // or no native price -> select_fund_factor("earnings_yield") then stays neutral. Inert unless
         // `growth_fund_factor: earnings_yield` is set; the caller already gates on growth_fund_weight > 0.
+        // (#1) prefer the SEC roll-forward TTM EPS — the SAME number behind the fixed live P/E — over the
+        // annual-only `eps_ttm` fund_factors derives from SEC 10-K rows (which is stale for a mid-ramp
+        // grower: LITE FY 0.37 vs TTM 5.7). Only when this factor is selected, so other factors pay no
+        // fetch; US filers only (non-US keeps the derived value); the sidecar cache makes it near-free.
+        if factor == "earnings_yield" {
+            if let Some(ttm) = sec_ttm_eps(client, urls, &q.ticker).await {
+                ff.eps_ttm = Some(ttm);
+            }
+        }
         ff.earnings_yield = q.close_native.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
         q.fund_factor = core::select_fund_factor(&ff, factor);
     }
