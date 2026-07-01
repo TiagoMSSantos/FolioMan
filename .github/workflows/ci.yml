@@ -79,16 +79,15 @@ jobs:
       - name: live API smoke tests (skip-on-throttle, fail-on-drift)
         run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored
 
-  # Nightly walk-forward gate. Runs the REAL `backtest 12 universe` over the live universe and checks
-  # the committed default tuning still yields a POSITIVE validated edge. NOT on push/PR: the wide fetch
-  # is slow, Yahoo-heavy, and drifts by the day, so a per-PR gate would go red on the market, not the
-  # code. Same skip-vs-fail contract as network-smoke: a throttle (nonzero exit / <500 tickers resolved)
-  # SKIPS green, only a genuine COLLAPSE (GROWTH edge <= 0, or both out-of-sample halves negative) FAILS.
-  # ci-settings.yaml mirrors the real settings.yaml `buy_heuristic`, so the gate scores with the tuning
-  # actually shipped — a red means a scoring-code change or a knob edit broke the edge. Its own
-  # FOLIOMAN_BACKTEST_GATE opt-in keeps the multi-minute backtest out of the per-PR network-smoke sweep.
+  # Walk-forward gate. Runs the REAL `backtest 12 universe` over the live universe and checks the shipped
+  # tuning still yields a POSITIVE validated edge. Runs on push/PR + nightly cron + manual dispatch. The
+  # wide fetch is slow and drifts by the day, so this is NON-blocking by design: same skip-vs-fail
+  # contract as network-smoke — a throttle (nonzero exit / <500 tickers resolved) SKIPS green, only a
+  # genuine COLLAPSE (GROWTH edge <= 0, or both out-of-sample halves negative) FAILS. So a red is never
+  # the market, only broken code/tuning. ci-settings.yaml mirrors the real settings.yaml `buy_heuristic`,
+  # so the gate scores with the tuning actually shipped. Its own FOLIOMAN_BACKTEST_GATE opt-in keeps the
+  # multi-minute backtest out of the per-PR network-smoke sweep (which runs every ignored test).
   backtest-gate:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45   # cold release build + the wide-universe walk-forward fetch
     steps:

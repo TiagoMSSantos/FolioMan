@@ -520,8 +520,9 @@ mod tests {
         // required fields present + the only URL the smoke tests exercise is a usable template
         assert!(s.urls.yahoo_chart.contains("{ticker}") && s.urls.yahoo_chart.contains("{range}"));
         assert_eq!(s.ntfy_topic, "ci-smoke-tests-unused"); // dummy, no secret
-        // omitted fields fall back to serde defaults
-        assert_eq!(s.universe_size, default_universe_size());
+        // universe_size is set EXPLICITLY (wide pool so the backtest-gate clears its <500-ticker throttle guard)
+        assert_eq!(s.universe_size, 1_234_000);
+        // omitted fields still fall back to serde defaults
         assert_eq!(s.top_picks, default_top_picks());
         assert!(s.sectors.is_empty());
         assert!(s.urls.fundamentals.contains("financialmodelingprep")); // defaulted Urls subfield
