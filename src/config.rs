@@ -27,6 +27,8 @@ pub struct Settings {
     pub ntfy_topic: String,
     #[serde(default = "default_top_picks")]
     pub top_picks: usize, // how many buy candidates `check` lists after the table
+    #[serde(default = "default_stale_days")]
+    pub stale_days: i64, // (D) `screen` drops a name whose newest close bar is older than this many CALENDAR days (halted/dead listing frozen at a stale price -> a fake near-high). Default 7 tolerates a long weekend/holiday. 0 = off (keep everything)
     #[serde(default)]
     pub widths: Widths, // column truncate/pad widths for the tables
     #[serde(default)]
@@ -49,6 +51,10 @@ pub struct InflationAdjust {
 
 fn default_top_picks() -> usize {
     5
+}
+
+fn default_stale_days() -> i64 {
+    7
 }
 
 fn default_universe_size() -> usize {

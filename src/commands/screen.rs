@@ -6,7 +6,7 @@
 //! were dropped — their selection edge was zero-to-negative for a multi-decade hold.
 
 use crate::core::Quote;
-use crate::picks::{eu_buyable, render};
+use crate::picks::{eu_buyable, growth_near_miss, render};
 use crate::{config, fetch};
 
 pub async fn run(args: Vec<String>) {
@@ -73,7 +73,37 @@ pub async fn run(args: Vec<String>) {
     let before = quotes.len();
     let quotes: Vec<Quote> = quotes.into_iter().filter(eu_buyable).collect();
     eprintln!("screen: {} of {before} instruments are EU-buyable (rest filtered out)", quotes.len());
+
+    // (D) drop STALE listings — a name whose newest close bar is older than `stale_days` CALENDAR days is a
+    // halted/dead listing frozen at an old price, so its "near-high" range_pct is fake. 0 = off (keep all).
+    let fresh_before = quotes.len();
+    let (quotes, stale): (Vec<Quote>, Vec<Quote>) = if settings.stale_days > 0 {
+        let today = chrono::Local::now().date_naive();
+        quotes.into_iter().partition(|q| match q.last_close_date {
+            Some(d) => (today - d).num_days() <= settings.stale_days,
+            None => true, // no date (shouldn't happen live) -> keep, don't silently drop
+        })
+    } else {
+        (quotes, Vec::new())
+    };
+    if !stale.is_empty() {
+        let today = chrono::Local::now().date_naive();
+        let names: Vec<String> = stale.iter()
+            .map(|q| format!("{} ({}d)", q.ticker, q.last_close_date.map_or(-1, |d| (today - d).num_days())))
+            .collect();
+        eprintln!("screen: dropped {} stale listing(s) (>{}d since last close): {}", stale.len(), settings.stale_days, names.join(", "));
+    }
     println!("Scanned {} instruments.", quotes.len());
+
+    // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
+    // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER
+    // is visible at a glance.
+    let stocks_no_pe = quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY") && q.pe_ratio.is_none()).count();
+    let etfs_no_ter = quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("ETF") && q.expense_ratio.is_none()).count();
+    println!(
+        "Data quality: {} names | {stocks_no_pe} stocks missing P/E | {etfs_no_ter} ETFs missing TER | {} stale dropped (>{}d)",
+        quotes.len(), fresh_before - quotes.len(), settings.stale_days
+    );
 
     // Bitcoin NUPL: whole-market crypto sentiment gauge. Fetched BEFORE render so it can damp the
     // crypto rows (high NUPL = euphoric top), then also printed as the footer line.
@@ -82,6 +112,23 @@ pub async fn run(args: Vec<String>) {
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
     render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &settings.tickers, explain.as_deref());
+
+    // (B) NEAR-MISS tail: names the growth lane rejected on EXACTLY one gate — a compounder one notch
+    // outside the fence (e.g. a great name 25% off its high failing only the range gate). Makes the silent
+    // exclusions visible so a dropped winner can be eyeballed, without loosening any gate. Empty -> nothing.
+    let mut near: Vec<(&Quote, &'static str, String)> = quotes.iter()
+        .filter_map(|q| growth_near_miss(q, &settings.buy_heuristic).map(|(g, why)| (q, g, why)))
+        .collect();
+    if !near.is_empty() {
+        near.sort_by(|a, b| a.1.cmp(b.1).then_with(|| a.0.ticker.cmp(&b.0.ticker)));
+        println!("\nNear-miss — rejected on ONE growth gate (not ranked above), loosen intentionally if wanted:");
+        for (q, gate, why) in near.iter().take(20) {
+            println!("  {:<8} {:<24.24} {:<10} {why}", q.ticker, q.name, gate);
+        }
+        if near.len() > 20 {
+            println!("  … +{} more", near.len() - 20);
+        }
+    }
 
     if let Some(n) = nupl {
         println!(

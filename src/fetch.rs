@@ -398,6 +398,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         div_eur: core::dividend_sums(&long_divs, &long_dates, rate),
         price_eur: rate.map(|r| cur_close * r),
         close_native: Some(cur_close), // (Item 19) native-currency close for a currency-consistent earnings_yield
+        last_close_date: Some(last_date), // (D) newest bar's date -> screen flags/drops stale (halted/dead) listings
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),
         // avg daily turnover in native currency -> EUR (×rate). Crypto: Yahoo "volume" is already

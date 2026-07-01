@@ -578,6 +578,63 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     score_parts(quote, tuning).map(|p| p.score)
 }
 
+/// (B) DIAGNOSTIC — read-only, never scored. For a name the growth lane REJECTED, return the ONE gate it
+/// fails IF it fails EXACTLY one of the actionable numeric gates: a "near miss" — a compounder one notch
+/// outside the fence (e.g. a great name 25% off its high failing only the range gate, or one whose long
+/// CAGR is a hair under the floor). `None` = not a candidate (leveraged / stablecoin / no multi-year
+/// history / no 1Y data — nothing to "almost pass"), OR it clears every gate (would be ranked), OR it
+/// fails ≥2 (not a near miss). Returns (gate_name, human "why" string) for the printed tail in `screen`.
+///
+/// ponytail: MIRRORS the gates in `score_parts` instead of sharing them — this is cosmetic (a printed
+/// tail), so duplicating the checks keeps the load-bearing, edge-validated scorer untouched. Drift only
+/// mislabels the tail, never the rank. Keep in sync if a `score_parts` gate changes.
+pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'static str, String)> {
+    let crypto = is_currency_quoted(&quote.ticker);
+    // not a near-miss CANDIDATE: structural rejects / missing data have nothing to "almost pass"
+    if is_leveraged(&quote.name) || (crypto && is_stablecoin(&quote.ticker)) {
+        return None;
+    }
+    let turnover = quote.avg_turnover_eur?; // unknown turnover -> not assessable as a compounder
+    let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years)?; // no >2Y record
+    let return_1y = perf_pct(quote, "1Y")?; // no 1Y data
+    let long_cagr = if tuning.use_trend_cagr {
+        quote.trend_cagr.unwrap_or_else(|| core::cagr(long_cum, long_years))
+    } else {
+        core::cagr(long_cum, long_years)
+    };
+    let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
+    let min_cagr = if crypto { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
+    let y1_floor = if crypto { tuning.min_1y_pct_crypto } else { 0.0 };
+    let knife = if crypto { tuning.max_1m_drop_pct_crypto } else { tuning.max_1m_drop_pct };
+    let r1m = perf_pct(quote, "1M").unwrap_or(0.0);
+
+    let mut misses: Vec<(&'static str, String)> = Vec::new();
+    if quote.range_pct < min_range {
+        misses.push(("range", format!("{:.0}% in range (need ≥{:.0}%)", quote.range_pct, min_range)));
+    }
+    if long_cagr < min_cagr {
+        misses.push(("cagr", format!("{long_cagr:.1}%/yr (need ≥{min_cagr:.1}%)")));
+    }
+    if return_1y <= y1_floor {
+        misses.push(("1Y+", format!("1Y {return_1y:+.1}% (need >{y1_floor:.1}%)")));
+    }
+    if r1m <= knife {
+        misses.push(("1M-knife", format!("1M {r1m:+.1}% (floor {knife:.1}%)")));
+    }
+    if !crypto {
+        if let Some(r5) = perf_pct(quote, "5Y") {
+            if r5 <= 0.0 {
+                misses.push(("5Y+", format!("5Y {r5:+.1}% (need >0)")));
+            }
+        }
+    }
+    if tuning.min_avg_turnover_eur > 0.0 && turnover < tuning.min_avg_turnover_eur {
+        misses.push(("liquidity", format!("€{:.0}K/day (floor €{:.0}K)", turnover / 1e3, tuning.min_avg_turnover_eur / 1e3)));
+    }
+    // exactly one actionable gate failed -> a genuine near-miss worth surfacing
+    if misses.len() == 1 { misses.pop() } else { None }
+}
+
 /// Human-readable derivation of a growth SCORE: the formula then every term filled in with this quote's
 /// real numbers, ending in the score itself. Lets a `screen` reader hand-verify why the #1 row ranked
 /// where it did. `displayed` is the score AS SHOWN in the table (crypto rows carry a NUPL + BTC-relative
@@ -1252,7 +1309,7 @@ mod tests {
             ticker: "T".into(), price: "€1.00".into(), dip: "-5.0%".into(), drop_pct: drawdown_pct,
             market: "USA".into(), instrument_type: String::new(), head: String::new(), news_block: String::new(), perf,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
-            div_eur: Vec::new(), price_eur: None, close_native: None, drawdown_pct, intraday: [None; 3],
+            div_eur: Vec::new(), price_eur: None, close_native: None, last_close_date: None, drawdown_pct, intraday: [None; 3],
             // (#20) default a KNOWN turnover so the growth lane's unknown-turnover gate admits test
             // quotes; tests exercising that gate set avg_turnover_eur = None explicitly. €1B -> liq_bonus
             // ln(1e9/1e9)=0, so it stays rank-neutral for the relational score asserts.
@@ -1345,6 +1402,12 @@ mod tests {
     assert!(buy_score(&cr, &tuning).is_some()); // crypto looser 1Y floor
     assert!(buy_score(&quote(5.0, &[("5Y", 40.0)]), &tuning).is_none()); // no 1Y data
     assert!(buy_score(&Quote::stub("X", "err", "", "X"), &tuning).is_none()); // err row
+
+    // (B) near-miss diagnostic: a name rejected on EXACTLY one growth gate is surfaced; 0 or ≥2 -> None.
+    // cagr(200%,10y)≈11.6%/yr (>8 floor); cagr(40%,10y)≈3.4%/yr (<floor). range_pct = 100-drawdown.
+    assert!(growth_near_miss(&quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]), &tuning).is_none()); // clears every gate
+    assert_eq!(growth_near_miss(&quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]), &tuning).map(|(g, _)| g), Some("range")); // only range fails (75<80)
+    assert!(growth_near_miss(&quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &tuning).is_none()); // range AND cagr -> two gates, not a near-miss
 
     // --- SCORE (relational, robust to knob tuning) ---
     // trust: same inputs, the one missing a 10Y record scores lower (uptrend less proven)
