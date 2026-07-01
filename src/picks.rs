@@ -434,11 +434,12 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     }
     // (#20) UNKNOWN turnover -> excluded from the growth lane, full stop (independent of any floor). The
     // lane's thesis is a deep-liquid, multi-decade-holdable compounder (it even pays a liquidity BONUS),
-    // and a name whose turnover Yahoo never served — a thin/dead listing like 0Y72.L, which rode a +212%
-    // identical-across-horizons (1D=1W=1M=1Y) data artifact to #1 — can't be assessed as one. The
-    // backtest stays unaffected: backtest_quote sets a SENTINEL turnover (never None there), so this is a
-    // LIVE-only gate and the validated edge is untouched. A KNOWN-but-thin turnover is dropped only when
-    // a floor is configured (settings.yaml `min_avg_turnover_eur`; 0 = off).
+    // and a name whose turnover Yahoo never served can't be assessed as one. The backtest stays
+    // unaffected: backtest_quote sets a SENTINEL turnover (never None there), so this is a LIVE-only gate
+    // and the validated edge is untouched. A KNOWN-but-thin turnover is dropped only when a floor is
+    // configured (settings.yaml `min_avg_turnover_eur`; 0 = off). NOTE: a thin listing can still report a
+    // tiny NONZERO turnover (0Y72.L = €0K rounded, i.e. Some(~0), not None) and slip past this gate with a
+    // 0 floor -> the identical-horizon artifact those listings ride is caught downstream by #23.
     match quote.avg_turnover_eur {
         None => return None, // untradeable / turnover unknown -> not a deep-liquid compounder
         Some(v) if tuning.min_avg_turnover_eur > 0.0 && v < tuning.min_avg_turnover_eur => return None,
@@ -476,6 +477,21 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let knife = if crypto { tuning.max_1m_drop_pct_crypto } else { tuning.max_1m_drop_pct };
     if perf_pct(quote, "1M").unwrap_or(0.0) <= knife {
         return None; // rolling over hard this month -> momentum broke
+    }
+    // (#23) DEGENERATE-SERIES gate: a real, continuously-traded name CANNOT show identical cumulative
+    // returns at 1D, 1W AND 1M — that requires exactly ONE bar to have moved in a whole month. It's the
+    // signature of a thin/dead listing that repriced once (0Y72.L printed +212.9% identically at every
+    // horizon and rode it to #1 via accel). The turnover gate (#20) misses it because Yahoo reports a
+    // tiny NONZERO volume (Some(~0), not None). accel = 1Y − CAGR then treats that single jump as a
+    // "building trend". Reject the artifact directly. Backtest-safe: backtest_quote builds perf from a
+    // continuous close series (1D≠1W≠1M), and the |1D|>0.5 guard skips a genuinely flat span, so this
+    // never fires on real history -> the validated edge is untouched.
+    if let (Some(d1), Some(w1), Some(m1)) =
+        (perf_pct(quote, "1D"), perf_pct(quote, "1W"), perf_pct(quote, "1M"))
+    {
+        if d1.abs() > 0.5 && (d1 - w1).abs() < 1e-6 && (d1 - m1).abs() < 1e-6 {
+            return None; // single-bar repricing artifact -> not a tradeable price history
+        }
     }
     if !crypto && perf_pct(quote, "5Y").is_some_and(|return_5y| return_5y <= 0.0) {
         // (3) consistency: a near-high name negative over 5Y mooned-then-bled — its great 10Y CAGR is a
@@ -1501,6 +1517,13 @@ mod tests {
     assert!(growth_score(&noturn, &tuning).is_some()); // known turnover, no floor -> admitted
     let liq_g = BuyHeuristic { min_avg_turnover_eur: 10_000_000.0, ..BuyHeuristic::default() };
     assert!(growth_score(&noturn, &liq_g).is_none()); // known €5M but below the €10M floor -> excluded
+    // (#23) degenerate single-bar series: identical 1D=1W=1M cumulative returns = a listing that
+    // repriced once (0Y72.L's +212.9%), not a trend -> excluded even with good turnover + CAGR.
+    let artifact = quote(0.0, &[("1D", 212.9), ("1W", 212.9), ("1M", 212.9), ("1Y", 205.9), ("5Y", 147.0), ("10Y", 300.0)]);
+    assert!(growth_score(&artifact, &tuning).is_none());
+    // a real continuous series with the SAME long trend but distinct near-term legs -> still admitted.
+    let real = quote(0.0, &[("1D", 1.4), ("1W", 2.3), ("1M", 8.0), ("1Y", 205.9), ("5Y", 147.0), ("10Y", 300.0)]);
+    assert!(growth_score(&real, &tuning).is_some());
     // acceleration: same long CAGR, the name whose recent year OUTPACES it scores higher (momentum)
     let accel = growth_score(&quote(0.0, &[("1Y", 80.0), ("5Y", 100.0), ("10Y", 150.0)]), &tuning).unwrap();
     let steady = growth_score(&quote(0.0, &[("1Y", 15.0), ("5Y", 100.0), ("10Y", 150.0)]), &tuning).unwrap();
