@@ -343,6 +343,11 @@ pub struct Urls {
     // netIncome/EPS) with filingDate — the FREE, no-key, no-daily-cap fallback when FMP is throttled.
     #[serde(default = "default_sec_companyfacts_url")]
     pub sec_companyfacts: String,
+    // (ratios) SEC XBRL single-concept endpoint — one us-gaap concept's full history, TINY vs companyfacts.
+    // Used to roll a TRAILING-TWELVE-MONTH diluted EPS for the live P/E (the last 10-K annual EPS goes
+    // stale the moment a fast grower reports a quarter). {cik} 10-digit zero-padded, {concept} = us-gaap tag.
+    #[serde(default = "default_sec_companyconcept_url")]
+    pub sec_companyconcept: String,
     // SET THIS to a real "app contact@email" — SEC blocks generic/empty agents. Placeholder works in dev
     // but be a good citizen before any wide run.
     #[serde(default = "default_sec_user_agent")]
@@ -364,6 +369,12 @@ fn default_sec_submissions_url() -> String {
 /// full history (val + period end + filingDate). {cik} = 10-digit zero-padded.
 fn default_sec_companyfacts_url() -> String {
     "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json".to_string()
+}
+
+/// (ratios) Default SEC XBRL single-concept endpoint: one us-gaap concept's full period history — used
+/// to compute a trailing-twelve-month EPS for the live P/E. {cik} = 10-digit zero-padded, {concept} tag.
+fn default_sec_companyconcept_url() -> String {
+    "https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/us-gaap/{concept}.json".to_string()
 }
 
 /// (Item 4) Default SEC User-Agent. SEC's fair-access policy needs a descriptive contact; replace the

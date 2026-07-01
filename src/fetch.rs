@@ -492,8 +492,91 @@ async fn fetch_ratios_sec(client: &Client, urls: &Urls, ticker: &str, close_nati
     let Some(latest) = rows.last() else {
         return (None, None); // rows are BTreeMap-ordered by period_end -> last = newest fiscal year
     };
-    let pe = latest.eps.filter(|e| *e > 0.0).map(|e| close_native / e);
+    // TRAILING-TWELVE-MONTH EPS, not the latest ANNUAL EPS: a fast grower's last 10-K goes stale the
+    // moment it reports a quarter (e.g. LITE FY EPS $0.37 vs TTM ~$5.7 mid-ramp -> P/E 2319 vs the real
+    // ~150). Roll TTM from the quarterly concept; fall back to the annual EPS when there's no newer
+    // quarter (just-filed 10-K / annual-only filer) so it's never worse than before, never a fake value.
+    let eps = sec_ttm_eps(client, urls, ticker).await.or(latest.eps);
+    let pe = eps.filter(|e| *e > 0.0).map(|e| close_native / e);
     (pe, latest.roe)
+}
+
+/// Trailing-twelve-month diluted EPS for a US filer from SEC XBRL's single-concept `companyconcept`
+/// endpoint (tiny vs the multi-MB companyfacts). Disk-cached as one float, budget-capped. None for a
+/// non-US/unknown ticker or when TTM can't be rolled (caller then falls back to the annual EPS).
+async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+    use std::sync::atomic::Ordering;
+    let cache = sec_cache_path(&format!("{ticker}_ttmeps"));
+    if let Some(v) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<f64>(&s).ok()) {
+        return Some(v); // cache hit -> no network, no budget spend
+    }
+    let cik = sec_cik(client, urls, ticker).await?; // non-US / unknown -> None
+    if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+        return None;
+    }
+    let url = urls
+        .sec_companyconcept
+        .replace("{cik}", &cik)
+        .replace("{concept}", "EarningsPerShareDiluted");
+    let j = sec_get_json(client, &url, &urls.sec_user_agent).await?;
+    let ttm = ttm_eps_from_concept(&j)?;
+    let _ = std::fs::write(&cache, serde_json::to_string(&ttm).ok()?);
+    Some(ttm)
+}
+
+/// Roll a trailing-twelve-month EPS from a SEC `companyconcept` (EarningsPerShareDiluted) payload:
+///   TTM = latest full-year EPS + current fiscal YTD − prior-year same-length YTD
+/// the standard cumulative roll-forward (SEC reports quarters as YTD cumulatives, not standalone). When
+/// there's no YTD reported past the latest 10-K (a just-filed annual, or an annual-only filer) it returns
+/// that annual EPS unchanged. Pure -> unit-tested. None if not even an annual EPS is present.
+fn ttm_eps_from_concept(j: &Value) -> Option<f64> {
+    // the "USD/shares" unit key contains a '/', which a JSON pointer would mis-split -> chained get.
+    let arr = j.get("units")?.get("USD/shares")?.as_array()?;
+    // (start, end) -> (earliest filed, val); de-dupes a period's restatements to its FIRST filing.
+    let mut periods: std::collections::HashMap<(NaiveDate, NaiveDate), (NaiveDate, f64)> = std::collections::HashMap::new();
+    for x in arr {
+        let d = |k| x.get(k).and_then(|v| v.as_str()).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+        let (Some(sd), Some(ed), Some(filed)) = (d("start"), d("end"), d("filed")) else { continue };
+        let Some(val) = x.get("val").and_then(|v| v.as_f64()) else { continue };
+        periods
+            .entry((sd, ed))
+            .and_modify(|cur| {
+                if filed < cur.0 {
+                    *cur = (filed, val);
+                }
+            })
+            .or_insert((filed, val));
+    }
+    // split into full years vs sub-year YTD cumulatives, each carrying (end, val[, span])
+    let mut annual: Vec<(NaiveDate, f64)> = Vec::new();
+    let mut ytd: Vec<(NaiveDate, f64, i64)> = Vec::new();
+    for ((sd, ed), (_, val)) in &periods {
+        let span = (*ed - *sd).num_days();
+        if (350..=380).contains(&span) {
+            annual.push((*ed, *val));
+        } else if span < 350 {
+            ytd.push((*ed, *val, span));
+        }
+    }
+    annual.sort_by_key(|(e, _)| *e);
+    let (fy_end, fy_eps) = *annual.last()?; // latest full year — the base + the fallback
+    // current YTD = the longest cumulative period that ends AFTER the latest 10-K (into the new fiscal year)
+    let current = ytd
+        .iter()
+        .filter(|(e, _, _)| *e > fy_end)
+        .max_by_key(|(_, _, span)| *span);
+    let Some(&(cur_end, cur_val, cur_span)) = current else {
+        return Some(fy_eps); // no newer quarter -> the annual EPS IS the trailing year
+    };
+    // prior-year YTD of the SAME length: end ≈ current end − 1y, span ≈ current span
+    let prior = ytd.iter().find(|(e, _, span)| {
+        let dy = (cur_end - *e).num_days();
+        (350..=380).contains(&dy) && (*span - cur_span).abs() <= 20
+    });
+    match prior {
+        Some(&(_, prior_val, _)) => Some(fy_eps + cur_val - prior_val),
+        None => Some(fy_eps), // can't de-cumulate without the prior-year YTD -> honest annual fallback
+    }
 }
 
 /// (TER) ETF annual expense ratio (%) from FMP `stable/etf/info` (`expenseRatio`, a FRACTION -> ×100).
@@ -1233,6 +1316,31 @@ mod tests {
     assert_eq!(bf_row_ter(&json!({"isin": "X", "keyData": {"ter": 0.07}})), Some(0.07));
     // string value with EU decimal comma + percent sign
     assert_eq!(bf_row_ter(&json!({"overview": {"ongoingCharges": "0,20%"}})), Some(0.20));
+    }
+
+    /// TTM roll-forward off REAL LITE (Lumentum) SEC data: FY 0.37 + current 9mo-YTD 2.59 − prior 9mo-YTD
+    /// −2.72 = 5.68 (vs the stale annual 0.37 that produced the bogus P/E 2319). Restatement duplicates
+    /// de-dupe to the first filing; standalone quarters are ignored (YTD cumulatives drive the roll).
+    #[test]
+    fn ttm_eps_rollforward() {
+        use serde_json::json;
+        let facts = |start: &str, end: &str, val: f64, filed: &str| {
+            json!({"start": start, "end": end, "val": val, "filed": filed, "form": "10-Q"})
+        };
+        let j = json!({"units": {"USD/shares": [
+            facts("2023-06-25", "2024-06-29", -8.12, "2024-08-20"), // FY2024 (ignored, older)
+            facts("2024-06-30", "2025-06-28", 0.37, "2025-08-20"),  // FY2025 = base
+            facts("2024-07-01", "2025-03-29", -2.72, "2025-05-06"), // prior-year 9mo YTD
+            facts("2025-06-29", "2026-03-28", 2.59, "2026-05-06"),  // current 9mo YTD
+            facts("2025-06-29", "2026-03-28", 2.59, "2026-06-01"),  // restatement dup -> deduped
+            facts("2025-12-28", "2026-03-28", 1.50, "2026-05-06"),  // standalone quarter -> ignored
+        ]}});
+        assert_eq!(ttm_eps_from_concept(&j), Some(0.37 + 2.59 - (-2.72)));
+        // no YTD past the latest 10-K -> falls back to the annual EPS unchanged (never n/a, never a guess)
+        let annual_only = json!({"units": {"USD/shares": [
+            facts("2024-06-30", "2025-06-28", 0.37, "2025-08-20"),
+        ]}});
+        assert_eq!(ttm_eps_from_concept(&annual_only), Some(0.37));
     }
 
     #[test]
