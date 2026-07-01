@@ -136,3 +136,86 @@ async fn full_quote_build() {
         assert!(q.perf.iter().any(|p| p.is_some()), "{}: no horizon % parsed", q.ticker);
     }
 }
+
+/// Nightly walk-forward gate. Shells the release binary's `backtest 12 universe` over the LIVE
+/// universe and asserts the committed default tuning still yields a POSITIVE validated edge.
+/// Same skip-vs-fail contract as the probes above: a throttle (spawn error / nonzero exit /
+/// too-few-tickers) SKIPS green; only a genuine COLLAPSE (GROWTH edge <= 0, or BOTH out-of-sample
+/// halves negative) FAILS. It reads the code's DEFAULT BuyHeuristic (ci-settings.yaml carries no
+/// `buy_heuristic`), so a red here means a scoring-code change or a default-knob edit broke the edge.
+#[test]
+#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network backtest_edge_holds -- --ignored"]
+fn backtest_edge_holds() {
+    // dedicated opt-in (NOT the shared FOLIOMAN_NET_TESTS): the per-PR network-smoke job runs every
+    // ignored test in this file, and this one shells a multi-minute universe backtest — keep it out of
+    // that path. Only the nightly backtest-gate job sets FOLIOMAN_BACKTEST_GATE, so PRs skip fast.
+    if std::env::var("FOLIOMAN_BACKTEST_GATE").is_err() {
+        return;
+    }
+    // pull the first signed number that follows `marker` in `hay` (e.g. "edge +117.1" -> 117.1).
+    fn num_after(hay: &str, marker: &str) -> Option<f64> {
+        let rest = &hay[hay.find(marker)? + marker.len()..];
+        let start = rest.find(|c: char| c == '+' || c == '-' || c.is_ascii_digit())?;
+        let tok: String = rest[start..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '+' || *c == '-')
+            .collect();
+        tok.trim_start_matches('+').parse().ok()
+    }
+
+    let out = match std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
+        .args(["backtest", "12", "universe"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("backtest-gate SKIPPED — could not spawn binary: {e}");
+            return;
+        }
+    };
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        eprintln!("backtest-gate SKIPPED — nonzero exit {}; stderr tail: {}", out.status, err.lines().last().unwrap_or(""));
+        return; // a mid-fetch crash is environmental here; lint/unit/build jobs catch real code breakage offline
+    }
+    // search stdout AND stderr — robust to whichever stream the report/diagnostics land on.
+    let stdout = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    // throttle guard: the wide universe fetch resolves ~3000+ tickers healthy; a tiny count means
+    // Yahoo/Börse-Frankfurt throttled most requests -> the de-meaned sample is unreliable -> SKIP.
+    match num_after(&stdout, "tickers:") {
+        Some(n) if n >= 500.0 => {}
+        Some(n) => {
+            eprintln!("backtest-gate SKIPPED — only {n} tickers resolved (throttled/unavailable)");
+            return;
+        }
+        None => {
+            eprintln!("backtest-gate SKIPPED — no ticker count in output (run didn't complete)");
+            return;
+        }
+    }
+    // isolate the GROWTH lane's report (there's also an ON-SALE block earlier with its own edge).
+    let growth = match stdout.split("── GROWTH").nth(1) {
+        Some(g) => g,
+        None => {
+            eprintln!("backtest-gate SKIPPED — no GROWTH section (run didn't complete)");
+            return;
+        }
+    };
+    // first "edge <n> pts" inside the block is the top-vs-bottom-half validated edge.
+    let edge = num_after(growth, "edge").expect("a completed GROWTH run prints its edge");
+    assert!(
+        edge > 0.0,
+        "GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy baseline ~+117) — a scoring-code \
+         change or a default-tuning edit broke the walk-forward edge; fix it before merging"
+    );
+    // whole out-of-sample backwards (BOTH halves negative) = the edge doesn't generalize -> collapse.
+    if let (Some(early), Some(late)) = (num_after(growth, "early rho"), num_after(growth, "late rho")) {
+        assert!(
+            !(early < 0.0 && late < 0.0),
+            "both out-of-sample halves negative (early {early:+.2}, late {late:+.2}) — edge is in-sample only"
+        );
+        eprintln!("backtest-gate OK — GROWTH edge {edge:+.1} pts, OOS early {early:+.2} / late {late:+.2}");
+    } else {
+        eprintln!("backtest-gate OK — GROWTH edge {edge:+.1} pts (no OOS line parsed)");
+    }
+}

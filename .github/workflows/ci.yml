@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "0 4 * * *"   # nightly 04:00 UTC — drives the backtest-gate job below (guarded by `if:`)
+  workflow_dispatch: {}    # let it be run on demand from the Actions tab
 
 # Tame flaky crates.io fetches. The "[16] Error in the HTTP2 framing layer" curl failure is HTTP/2
 # multiplexing choking mid-download; CARGO_HTTP_MULTIPLEXING=false forces HTTP/1.1 and dodges it.
@@ -75,3 +78,23 @@ jobs:
           shared-key: folioman-ci   # same warm cache as the other jobs
       - name: live API smoke tests (skip-on-throttle, fail-on-drift)
         run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored
+
+  # Nightly walk-forward gate. Runs the REAL `backtest 12 universe` over the live universe and checks
+  # the committed default tuning still yields a POSITIVE validated edge. NOT on push/PR: the wide fetch
+  # is slow, Yahoo-heavy, and drifts by the day, so a per-PR gate would go red on the market, not the
+  # code. Same skip-vs-fail contract as network-smoke: a throttle (nonzero exit / <500 tickers resolved)
+  # SKIPS green, only a genuine COLLAPSE (GROWTH edge <= 0, or both out-of-sample halves negative) FAILS.
+  # ci-settings.yaml carries no `buy_heuristic`, so the run reads the code's DEFAULT BuyHeuristic — a red
+  # means a scoring-code change or a default-knob edit broke the edge. Its own FOLIOMAN_BACKTEST_GATE
+  # opt-in keeps the multi-minute backtest out of the per-PR network-smoke sweep.
+  backtest-gate:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45   # cold release build + the wide-universe walk-forward fetch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: folioman-ci   # same warm cache as the other jobs
+      - name: walk-forward edge gate (skip-on-throttle, fail-on-collapse)
+        run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --ignored --nocapture
