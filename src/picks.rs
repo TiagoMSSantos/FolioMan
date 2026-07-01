@@ -579,9 +579,10 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
 }
 
 /// (B) DIAGNOSTIC — read-only, never scored. For a name the growth lane REJECTED, return the ONE gate it
-/// fails IF it fails EXACTLY one of the actionable numeric gates: a "near miss" — a compounder one notch
-/// outside the fence (e.g. a great name 25% off its high failing only the range gate, or one whose long
-/// CAGR is a hair under the floor). `None` = not a candidate (leveraged / stablecoin / no multi-year
+/// fails IF it fails EXACTLY one of the actionable numeric gates AND fails it by only a small margin: a
+/// "near miss" — a compounder one notch outside the fence (e.g. a great name 25% off its high failing only
+/// the range gate, or one whose long CAGR is a hair under the floor). A gross miss (down 34% over 1Y) is a
+/// hard reject, not a near miss, so it's dropped. `None` = not a candidate (leveraged / stablecoin / no multi-year
 /// history / no 1Y data — nothing to "almost pass"), OR it clears every gate (would be ranked), OR it
 /// fails ≥2 (not a near miss). Returns (gate_name, human "why" string) for the printed tail in `screen`.
 ///
@@ -608,31 +609,40 @@ pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'stati
     let knife = if crypto { tuning.max_1m_drop_pct_crypto } else { tuning.max_1m_drop_pct };
     let r1m = perf_pct(quote, "1M").unwrap_or(0.0);
 
-    let mut misses: Vec<(&'static str, String)> = Vec::new();
+    // Collect (gate, why, is_close): a gate FAILS at any magnitude, but only a fail WITHIN a margin of the
+    // threshold is a genuine "near miss" worth printing (a name 34% down over 1Y is a hard reject, not a
+    // near miss). Margins are hardcoded — this is a cosmetic tail, not a tuned knob.
+    let mut fails: Vec<(&'static str, String, bool)> = Vec::new();
     if quote.range_pct < min_range {
-        misses.push(("range", format!("{:.0}% in range (need ≥{:.0}%)", quote.range_pct, min_range)));
+        fails.push(("range", format!("{:.0}% in range (need ≥{:.0}%)", quote.range_pct, min_range), quote.range_pct >= min_range - 10.0));
     }
     if long_cagr < min_cagr {
-        misses.push(("cagr", format!("{long_cagr:.1}%/yr (need ≥{min_cagr:.1}%)")));
+        fails.push(("cagr", format!("{long_cagr:.1}%/yr (need ≥{min_cagr:.1}%)"), long_cagr >= min_cagr - 4.0));
     }
     if return_1y <= y1_floor {
-        misses.push(("1Y+", format!("1Y {return_1y:+.1}% (need >{y1_floor:.1}%)")));
+        fails.push(("1Y+", format!("1Y {return_1y:+.1}% (need >{y1_floor:.1}%)"), return_1y > y1_floor - 10.0));
     }
     if r1m <= knife {
-        misses.push(("1M-knife", format!("1M {r1m:+.1}% (floor {knife:.1}%)")));
+        fails.push(("1M-knife", format!("1M {r1m:+.1}% (floor {knife:.1}%)"), r1m > knife - 8.0));
     }
     if !crypto {
         if let Some(r5) = perf_pct(quote, "5Y") {
             if r5 <= 0.0 {
-                misses.push(("5Y+", format!("5Y {r5:+.1}% (need >0)")));
+                fails.push(("5Y+", format!("5Y {r5:+.1}% (need >0)"), r5 > -15.0));
             }
         }
     }
     if tuning.min_avg_turnover_eur > 0.0 && turnover < tuning.min_avg_turnover_eur {
-        misses.push(("liquidity", format!("€{:.0}K/day (floor €{:.0}K)", turnover / 1e3, tuning.min_avg_turnover_eur / 1e3)));
+        fails.push(("liquidity", format!("€{:.0}K/day (floor €{:.0}K)", turnover / 1e3, tuning.min_avg_turnover_eur / 1e3), turnover >= tuning.min_avg_turnover_eur * 0.5));
     }
-    // exactly one actionable gate failed -> a genuine near-miss worth surfacing
-    if misses.len() == 1 { misses.pop() } else { None }
+    // exactly one gate failed AND it's a CLOSE miss -> a genuine near-miss worth surfacing
+    match fails.len() {
+        1 if fails[0].2 => {
+            let (gate, why, _) = fails.pop().unwrap();
+            Some((gate, why))
+        }
+        _ => None,
+    }
 }
 
 /// Human-readable derivation of a growth SCORE: the formula then every term filled in with this quote's
@@ -1408,6 +1418,7 @@ mod tests {
     assert!(growth_near_miss(&quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]), &tuning).is_none()); // clears every gate
     assert_eq!(growth_near_miss(&quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]), &tuning).map(|(g, _)| g), Some("range")); // only range fails (75<80)
     assert!(growth_near_miss(&quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &tuning).is_none()); // range AND cagr -> two gates, not a near-miss
+    assert!(growth_near_miss(&quote(5.0, &[("1Y", -50.0), ("5Y", 40.0), ("10Y", 200.0)]), &tuning).is_none()); // fails ONLY 1Y+ but by 50pts -> gross reject, not a near-miss
 
     // --- SCORE (relational, robust to knob tuning) ---
     // trust: same inputs, the one missing a 10Y record scores lower (uptrend less proven)
