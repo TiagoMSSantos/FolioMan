@@ -4,7 +4,7 @@
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
@@ -461,14 +461,85 @@ fn settings_path() -> PathBuf {
     PathBuf::from("config/settings.yaml")
 }
 
-/// Read + parse the settings file. Panics with a clear message if missing/invalid —
+/// Locate the committed canonical base `tests/ci-settings.yaml` — the shared tuning that BOTH the CI gate
+/// and the private `config/settings.yaml` inherit, so neither has to duplicate `buy_heuristic`. Walk the
+/// exe dir then the cwd, like `settings_path`. Empty PathBuf if absent (installed layout has no tests/ dir)
+/// -> `load` then uses the overlay alone (identical to the pre-merge behaviour).
+fn ci_settings_path() -> PathBuf {
+    let starts = [
+        std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)),
+        std::env::current_dir().ok(),
+    ];
+    for start in starts.into_iter().flatten() {
+        let mut dir = Some(start);
+        while let Some(d) = dir {
+            let cand = d.join("tests/ci-settings.yaml");
+            if cand.is_file() {
+                return cand;
+            }
+            dir = d.parent().map(Path::to_path_buf);
+        }
+    }
+    PathBuf::new()
+}
+
+/// Deep-merge `over` INTO `base`: for two mappings, recurse key-by-key (so a partial `buy_heuristic:`
+/// override only replaces the knobs it names); for anything else, `over` wins outright.
+fn merge_yaml(base: &mut serde_yaml::Value, over: serde_yaml::Value) {
+    match (base, over) {
+        (serde_yaml::Value::Mapping(b), serde_yaml::Value::Mapping(o)) => {
+            for (k, v) in o {
+                match b.get_mut(&k) {
+                    Some(bv) => merge_yaml(bv, v),
+                    None => {
+                        b.insert(k, v);
+                    }
+                }
+            }
+        }
+        (b, o) => *b = o,
+    }
+}
+
+/// The canonical base mapping to overlay onto. Empty when the overlay IS the fixture (CI sets
+/// `FOLIOMAN_CONFIG=tests/ci-settings.yaml` -> pure fixture, no self-merge) or when no base file exists.
+fn ci_base_yaml(overlay: &Path) -> serde_yaml::Value {
+    let empty = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    if overlay.ends_with("ci-settings.yaml") {
+        return empty;
+    }
+    let base = ci_settings_path();
+    if base.as_os_str().is_empty() {
+        return empty;
+    }
+    std::fs::read_to_string(&base)
+        .ok()
+        .and_then(|t| serde_yaml::from_str(&t).ok())
+        .unwrap_or(empty)
+}
+
+/// Overlay the discovered config file ON TOP of the committed canonical base (`tests/ci-settings.yaml`),
+/// overlay winning field-by-field. So `config/settings.yaml` only needs to carry what it CHANGES —
+/// secrets (`ntfy_topic`), the watchlist, CI-specific values it must override (`universe_size`), and any
+/// knob under test — instead of duplicating the whole `buy_heuristic`. `None` if the overlay is
+/// absent/invalid (soft callers fall back to defaults; `load` turns `None` into a panic).
+fn merged_config() -> Option<serde_yaml::Value> {
+    let overlay_path = settings_path();
+    let text = std::fs::read_to_string(&overlay_path).ok()?;
+    let overlay: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    let mut merged = ci_base_yaml(&overlay_path);
+    merge_yaml(&mut merged, overlay);
+    Some(merged)
+}
+
+/// Read + parse the settings (base + overlay). Panics with a clear message if missing/invalid —
 /// config errors are a startup problem the user must fix, not something to fail soft on.
 pub fn load() -> Settings {
     let path = settings_path();
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    serde_yaml::from_str(&text)
-        .unwrap_or_else(|e| panic!("invalid YAML in {}: {e}", path.display()))
+    let merged =
+        merged_config().unwrap_or_else(|| panic!("cannot read/parse config {}", path.display()));
+    serde_yaml::from_value(merged)
+        .unwrap_or_else(|e| panic!("invalid config ({} over tests/ci-settings.yaml): {e}", path.display()))
 }
 
 /// (Item 21) Process-once read of the adjusted-close probe flag. SOFT — a missing/invalid config
@@ -479,9 +550,8 @@ pub fn use_adjusted_close() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::fs::read_to_string(settings_path())
-            .ok()
-            .and_then(|t| serde_yaml::from_str::<Settings>(&t).ok())
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
             .map(|s| s.buy_heuristic.use_adjusted_close)
             .unwrap_or(false)
     })
@@ -496,9 +566,8 @@ pub fn fund_source() -> String {
     use std::sync::OnceLock;
     static SRC: OnceLock<String> = OnceLock::new();
     SRC.get_or_init(|| {
-        std::fs::read_to_string(settings_path())
-            .ok()
-            .and_then(|t| serde_yaml::from_str::<Settings>(&t).ok())
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
             .map(|s| s.buy_heuristic.fund_source)
             .unwrap_or_else(|| "fmp".to_string())
     })
@@ -537,5 +606,20 @@ mod tests {
         std::env::set_var("FOLIOMAN_CONFIG", ""); // empty -> ignored, falls back to discovery
         assert_ne!(settings_path(), PathBuf::from(""));
         std::env::remove_var("FOLIOMAN_CONFIG");
+    }
+
+    /// The overlay wins field-by-field over the base, mappings merge DEEP (a partial `buy_heuristic:` only
+    /// replaces the knobs it names), new keys are added, and untouched base keys survive. This is the whole
+    /// contract that lets `config/settings.yaml` carry only overrides instead of a full `buy_heuristic` copy.
+    #[test]
+    fn overlay_merges_deep_over_base() {
+        let mut base: serde_yaml::Value =
+            serde_yaml::from_str("a: 1\nb:\n  x: 10\n  y: 20\n").expect("base");
+        let over: serde_yaml::Value = serde_yaml::from_str("b:\n  y: 99\nc: 3\n").expect("over");
+        merge_yaml(&mut base, over);
+        assert_eq!(base["a"].as_u64(), Some(1)); // untouched base key kept
+        assert_eq!(base["b"]["x"].as_u64(), Some(10)); // sibling under a merged mapping kept
+        assert_eq!(base["b"]["y"].as_u64(), Some(99)); // overlay scalar wins
+        assert_eq!(base["c"].as_u64(), Some(3)); // new overlay key added
     }
 }

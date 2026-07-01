@@ -1,8 +1,11 @@
-# CI-ONLY config for the live network tests (tests/network.rs).
-# NO secrets: ntfy_topic is a dummy (the tests never push), and every URL below is a public,
-# unauthenticated endpoint. Two consumers:
+# CANONICAL BASE config. NO secrets: ntfy_topic is a dummy (the tests never push), every URL below is a
+# public, unauthenticated endpoint. THREE consumers:
 #   - network-smoke (per-PR): only urls.yahoo_chart is exercised.
-#   - backtest-gate (nightly): runs `backtest 12 universe`, which scores with buy_heuristic below
+#   - backtest-gate (nightly + push/PR): runs `backtest 12 universe`, scoring with buy_heuristic below.
+#   - the private config/settings.yaml INHERITS this file (config::load deep-merges it as the base), so the
+#     gitignored local config only needs to OVERRIDE what it changes (ntfy_topic secret, tickers watchlist,
+#     universe_size, any knob under test) instead of duplicating the whole buy_heuristic. Overlay wins
+#     field-by-field. Edit shared tuning HERE; put local-only/secret overrides in config/settings.yaml.
 # Omitted knobs fall back to the code's #[serde(default)] (== the shipped defaults).
 tickers: []
 
