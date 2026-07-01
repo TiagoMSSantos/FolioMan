@@ -1019,14 +1019,26 @@ async fn borse_frankfurt_post(client: &Client, url: &str, salt: &str, body: &Val
 /// `fetch_expense` reads it to fill TER for EU UCITS ETFs that FMP's US-centric free tier never covers.
 static BF_TER: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
 
+const BF_TER_KEYS: &[&str] = &["ter", "totalExpenseRatio", "ongoingCharges", "ongoingCharge", "totalExpenseRatioInPercent"];
+
 /// Pull the expense ratio out of one BF `etp_search` row. Tries the known key names (their schema drifts
 /// over time); the value is taken as a PERCENT (BF reports e.g. 0.2 = 0.20%). None if absent / nonsense.
+/// BF nests the fund detail ONE level down (keyData / overview / performance sub-objects), so scan the
+/// row's own keys AND one level into any sub-object. Value may arrive as a number OR a string ("0,20%").
 /// ponytail: if a known ETF (VUAA.DE = 0.07%) prints 100× off, BF sent a fraction -> multiply by 100 here.
 fn bf_row_ter(row: &Value) -> Option<f64> {
-    const KEYS: &[&str] = &["ter", "totalExpenseRatio", "ongoingCharges", "ongoingCharge", "totalExpenseRatioInPercent"];
+    fn num(v: &Value) -> Option<f64> {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().trim_end_matches('%').trim().replace(',', ".").parse().ok()))
+    }
+    fn hit(obj: &serde_json::Map<String, Value>) -> Option<f64> {
+        BF_TER_KEYS
+            .iter()
+            .find_map(|k| obj.iter().find(|(rk, _)| rk.eq_ignore_ascii_case(k)).and_then(|(_, v)| num(v)))
+    }
     let obj = row.as_object()?;
-    KEYS.iter()
-        .find_map(|k| obj.iter().find(|(rk, _)| rk.eq_ignore_ascii_case(k)).and_then(|(_, v)| v.as_f64()))
+    hit(obj)
+        .or_else(|| obj.values().filter_map(|v| v.as_object()).find_map(hit))
         .filter(|t| t.is_finite() && *t > 0.0 && *t < 5.0)
 }
 
@@ -1049,7 +1061,15 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
         Some(j) => match j.get("data").and_then(|d| d.as_array()) {
             Some(arr) => {
                 if let Some(o) = arr.first().and_then(|r| r.as_object()) {
-                    first_keys = o.keys().cloned().collect::<Vec<_>>().join(",");
+                    // top-level keys PLUS one level into each sub-object (TER nests under keyData/overview/
+                    // performance), so a renamed field anywhere self-diagnoses in one run.
+                    let mut fields: Vec<String> = o.keys().cloned().collect();
+                    for (k, v) in o {
+                        if let Some(sub) = v.as_object() {
+                            fields.extend(sub.keys().map(|sk| format!("{k}.{sk}")));
+                        }
+                    }
+                    first_keys = fields.join(",");
                 }
                 arr.iter().filter_map(|r| Some((r.get("isin")?.as_str()?.to_string(), bf_row_ter(r)))).collect()
             }
@@ -1209,6 +1229,10 @@ mod tests {
     assert_eq!(bf_row_ter(&json!({"name": "fund"})), None); // no fee field -> None
     assert_eq!(bf_row_ter(&json!({"ter": 12.0})), None); // out of sane TER range -> rejected
     assert_eq!(bf_row_ter(&json!({"ter": 0.0})), None); // zero -> None, never a fake 0%
+    // real BF shape: TER nested one level under keyData, not top-level
+    assert_eq!(bf_row_ter(&json!({"isin": "X", "keyData": {"ter": 0.07}})), Some(0.07));
+    // string value with EU decimal comma + percent sign
+    assert_eq!(bf_row_ter(&json!({"overview": {"ongoingCharges": "0,20%"}})), Some(0.20));
     }
 
     #[test]
