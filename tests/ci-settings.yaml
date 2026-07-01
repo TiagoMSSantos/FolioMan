@@ -1,14 +1,97 @@
-# CI-ONLY config for the live network smoke tests (tests/network.rs).
-# The real config/settings.yaml is gitignored (holds a private ntfy topic), so CI points
-# FOLIOMAN_CONFIG at this checked-in fixture. NO secrets here: ntfy_topic is a dummy (the
-# smoke tests never push), and every URL below is a public, unauthenticated endpoint.
-# Only `urls.yahoo_chart` is actually exercised; the rest exist so config::load() parses.
+# CI-ONLY config for the live network tests (tests/network.rs).
+# NO secrets: ntfy_topic is a dummy (the tests never push), and every URL below is a public,
+# unauthenticated endpoint. Two consumers:
+#   - network-smoke (per-PR): only urls.yahoo_chart is exercised.
+#   - backtest-gate (nightly): runs `backtest 12 universe`, which scores with buy_heuristic below
+# Omitted knobs fall back to the code's #[serde(default)] (== the shipped defaults).
 tickers: []
 
 dip_days: 30
 high_days: 365
 drawdown_pct: 20.0
 drop_pct: 10.0
+
+anchor_windows:
+  1D: 0
+  1W: 3
+  1M: 15
+  6M: 91
+  1Y: 182
+  5Y: 365
+  10Y: 365
+  20Y: 365
+
+# --- Configs used for the backtest-gate scores ---
+buy_heuristic:
+  # gates
+  min_1y_pct: -25.0
+  min_1y_pct_crypto: -75.0
+  max_1m_drop_pct: -20.0
+  max_1m_drop_pct_crypto: -35.0
+  min_long_pct: 30.0
+  min_long_pct_crypto: -70.0
+  min_avg_turnover_eur: 0
+  # on-sale lane (buy_score)
+  normal_volatility_pct: 2.0
+  discount_cap: 35.0
+  discount_weight: 0.35
+  momentum_bounce: 1.0
+  momentum_knife: 1.0
+  long_trend_weight: 0.5
+  long_trend_cap: 30.0
+  health_zero_cagr: -10.0
+  # total-return / endpoint-robust CAGR flags (both REVERTED to false = validated baseline)
+  use_adjusted_close: false
+  use_trend_cagr: false
+  # value-trap docks
+  sustained_decline_pct: -40.0
+  sustained_decline_penalty: 0.4
+  deep_decline_pct: -70.0
+  deep_decline_penalty: 0.15
+  min_score: -20.0
+  cheap_weight: 0.07
+  cheap_cap: 60.0
+  # shared tilts
+  dividend_weight: 1.5
+  dividend_cap: 6.0
+  ref_pe: 20.0
+  quality_weight: 0.15
+  quality_cap: 40.0
+  # GROWTH lane — what `screen` prints and the gate validates
+  growth_min_range_pct: 80.0
+  growth_min_range_pct_crypto: 40.0
+  growth_btc_outperf_weight: 0.3
+  growth_min_cagr: 14.0
+  growth_min_cagr_crypto: 0.0
+  growth_trend_weight: 0.35
+  growth_accel_weight: 0.5
+  growth_accel_cap: 50.0
+  growth_min_score: 5.0
+  growth_value_weight: 0.0
+  growth_overext_cap: 100.0
+  growth_overext_floor: 0.05
+  growth_turnover_weight: 0.5
+  growth_overext_cap_crypto: 100.0
+  # crypto NUPL greed damp / fear boost
+  nupl_euphoria: 0.5
+  nupl_damp_floor: 0.5
+  nupl_capitulation: 0.25
+  nupl_boost_ceiling: 1.3
+  # risk-adjusted tilts (Sharpe / Calmar)
+  sharpe_weight: 0.15
+  onsale_sharpe_weight: 0.0
+  sharpe_cap: 15.0
+  calmar_weight: 0.0
+  calmar_cap: 2.0
+  prefer_eur: true
+
+# universe fetch breadth + pacing (so the gate scans the same wide pool the real screen does)
+universe_size: 1234000
+fetch_concurrency_multiplier: 8
+fetch_requests_per_second: 60.0
+universe_prefer_eur: true
+sectors: []
+
 ntfy_topic: "ci-smoke-tests-unused"
 
 urls:

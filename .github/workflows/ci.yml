@@ -84,9 +84,9 @@ jobs:
   # is slow, Yahoo-heavy, and drifts by the day, so a per-PR gate would go red on the market, not the
   # code. Same skip-vs-fail contract as network-smoke: a throttle (nonzero exit / <500 tickers resolved)
   # SKIPS green, only a genuine COLLAPSE (GROWTH edge <= 0, or both out-of-sample halves negative) FAILS.
-  # ci-settings.yaml carries no `buy_heuristic`, so the run reads the code's DEFAULT BuyHeuristic — a red
-  # means a scoring-code change or a default-knob edit broke the edge. Its own FOLIOMAN_BACKTEST_GATE
-  # opt-in keeps the multi-minute backtest out of the per-PR network-smoke sweep.
+  # ci-settings.yaml mirrors the real settings.yaml `buy_heuristic`, so the gate scores with the tuning
+  # actually shipped — a red means a scoring-code change or a knob edit broke the edge. Its own
+  # FOLIOMAN_BACKTEST_GATE opt-in keeps the multi-minute backtest out of the per-PR network-smoke sweep.
   backtest-gate:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest

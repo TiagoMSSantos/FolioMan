@@ -141,8 +141,8 @@ async fn full_quote_build() {
 /// universe and asserts the committed default tuning still yields a POSITIVE validated edge.
 /// Same skip-vs-fail contract as the probes above: a throttle (spawn error / nonzero exit /
 /// too-few-tickers) SKIPS green; only a genuine COLLAPSE (GROWTH edge <= 0, or BOTH out-of-sample
-/// halves negative) FAILS. It reads the code's DEFAULT BuyHeuristic (ci-settings.yaml carries no
-/// `buy_heuristic`), so a red here means a scoring-code change or a default-knob edit broke the edge.
+/// halves negative) FAILS. It scores with the real tuning mirrored into ci-settings.yaml's
+/// `buy_heuristic`, so a red here means a scoring-code change or a knob edit broke the validated edge.
 #[test]
 #[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network backtest_edge_holds -- --ignored"]
 fn backtest_edge_holds() {
