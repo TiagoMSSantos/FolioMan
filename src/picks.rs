@@ -432,16 +432,17 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if crypto && is_stablecoin(&quote.ticker) {
         return None; // pegged $1 -> no growth
     }
-    // (#20) with a liquidity floor set, an UNKNOWN turnover can't be assumed to clear it. The growth
-    // lane's whole thesis is a deep-liquid, multi-decade-holdable compounder (it even pays a liquidity
-    // BONUS), so a name whose turnover Yahoo never served (a thin/dead listing like 0Y72.L, which rode a
-    // +212% data-artifact print to #1) is exactly the untradeable junk to exclude. floor 0 = off (unknown
-    // still passes). The backtest stays unaffected: backtest_quote sets a sentinel turnover (#20) that
-    // clears any floor, so this remains a LIVE-only gate and the validated edge is untouched.
-    if tuning.min_avg_turnover_eur > 0.0
-        && quote.avg_turnover_eur.is_none_or(|v| v < tuning.min_avg_turnover_eur)
-    {
-        return None; // too thin, or turnover unknown while a floor is required
+    // (#20) UNKNOWN turnover -> excluded from the growth lane, full stop (independent of any floor). The
+    // lane's thesis is a deep-liquid, multi-decade-holdable compounder (it even pays a liquidity BONUS),
+    // and a name whose turnover Yahoo never served — a thin/dead listing like 0Y72.L, which rode a +212%
+    // identical-across-horizons (1D=1W=1M=1Y) data artifact to #1 — can't be assessed as one. The
+    // backtest stays unaffected: backtest_quote sets a SENTINEL turnover (never None there), so this is a
+    // LIVE-only gate and the validated edge is untouched. A KNOWN-but-thin turnover is dropped only when
+    // a floor is configured (settings.yaml `min_avg_turnover_eur`; 0 = off).
+    match quote.avg_turnover_eur {
+        None => return None, // untradeable / turnover unknown -> not a deep-liquid compounder
+        Some(v) if tuning.min_avg_turnover_eur > 0.0 && v < tuning.min_avg_turnover_eur => return None,
+        _ => {}
     }
     let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
     if quote.range_pct < min_range {
@@ -1488,15 +1489,15 @@ mod tests {
     let mut lev_g = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
     lev_g.name = "Direxion Daily Technology".into();
     assert!(growth_score(&lev_g, &tuning).is_none());
-    // (#20) with a liquidity floor set, an UNKNOWN turnover fails (untradeable artifact like 0Y72.L);
-    // a known-liquid one passes; with NO floor (default) unknown still passes -> backtest edge untouched
-    let liq_g = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
+    // (#20) UNKNOWN turnover -> excluded from the growth lane even with NO floor (untradeable artifact
+    // like 0Y72.L); a known turnover is admitted, and dropped only when it's below a configured floor.
     let mut noturn = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
     noturn.avg_turnover_eur = None;
-    assert!(growth_score(&noturn, &liq_g).is_none()); // floor set + turnover unknown -> excluded
-    assert!(growth_score(&noturn, &tuning).is_some()); // no floor (default) -> unknown still admitted
+    assert!(growth_score(&noturn, &tuning).is_none()); // unknown turnover, no floor -> still excluded
     noturn.avg_turnover_eur = Some(5_000_000.0);
-    assert!(growth_score(&noturn, &liq_g).is_some()); // known-liquid clears the floor
+    assert!(growth_score(&noturn, &tuning).is_some()); // known turnover, no floor -> admitted
+    let liq_g = BuyHeuristic { min_avg_turnover_eur: 10_000_000.0, ..BuyHeuristic::default() };
+    assert!(growth_score(&noturn, &liq_g).is_none()); // known €5M but below the €10M floor -> excluded
     // acceleration: same long CAGR, the name whose recent year OUTPACES it scores higher (momentum)
     let accel = growth_score(&quote(0.0, &[("1Y", 80.0), ("5Y", 100.0), ("10Y", 150.0)]), &tuning).unwrap();
     let steady = growth_score(&quote(0.0, &[("1Y", 15.0), ("5Y", 100.0), ("10Y", 150.0)]), &tuning).unwrap();
