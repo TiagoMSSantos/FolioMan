@@ -80,6 +80,15 @@ buy_heuristic:
                                  #   not fund AUM, so don't raise this aggressively). Pinned watchlist names bypass all
                                  #   gates (sentinel score). BACKTEST-BLIND (backtest quotes carry no turnover) — the
                                  #   validated edge and CI gate are untouched. 0 = off
+  endpoint_smooth_days: 5        # LIVE+BACKTEST: the "current price" used by every MEASUREMENT (perf %, long CAGR,
+                                 #   range position, drawdown — and so the hard 1M-knife/range gates) = mean of the
+                                 #   last N closes. 5 = last week's average, so ONE bad print on screen day can't
+                                 #   exclude a good name or swing its rank; the DISPLAYED price stays the true last
+                                 #   close. One core helper feeds both the live fetch and backtest_quote -> no
+                                 #   train-serve skew. VALIDATED 2026-07-02 (same-day A/B, `backtest 12 universe`):
+                                 #   5 -> GROWTH edge +120.2 / rho +0.11 / winsorized +93.5, OOS +0.11|+0.07 both +;
+                                 #   1 -> +109.7 / +0.09 / +86.6. Smoothing HELPS (less endpoint luck in train too).
+                                 #   1 = raw last close (the old behaviour). Changing it is edge-affecting: re-validate.
 
   # --- SCORE — ON-SALE LANE (`buy_score`) — [FOIL] ALL of this section is backtest-only; `screen` ignores it ---
   normal_volatility_pct: 2.0     # [FOIL] a "typical" daily swing %; the dip is scaled by normal/asset vol,

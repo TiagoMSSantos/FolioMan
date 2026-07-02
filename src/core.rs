@@ -264,19 +264,34 @@ pub fn fmt_money2(x: f64) -> String {
     format!("{}{}.{}", if neg { "-" } else { "" }, grouped, frac)
 }
 
+/// (#17/Step 4) The MEASUREMENT endpoint: mean of the last `endpoint_smooth_days` closes (config,
+/// default 1 = the raw last close, byte-identical to the validated behaviour). Every endpoint-anchored
+/// input — perf % / long CAGR (`horizon_changes`), the range position (`price_pct_rank`), the drawdown
+/// (`pct_from_high`) — reads its "current price" here, so ONE bad print on screen day can't flip the
+/// hard 1M-knife/range gates or swing a rank. The DISPLAYED price stays the true last close (this is
+/// for measurement only). Both build sites (live fetch and `backtest_quote`) flow through these same
+/// fns -> train == serve automatically. Panics on empty input, same as the `.last().unwrap()` it replaces.
+pub fn measure_endpoint(closes: &[f64]) -> f64 {
+    endpoint_avg(closes, crate::config::endpoint_smooth_days())
+}
+
+/// Mean of the last `n` closes (n clamped to [1, len]). Split from `measure_endpoint` so the math is
+/// unit-testable without the process-wide config read.
+fn endpoint_avg(closes: &[f64], n: usize) -> f64 {
+    let n = n.clamp(1, closes.len());
+    closes[closes.len() - n..].iter().sum::<f64>() / n as f64
+}
+
 /// Percentile rank (0..100) of the LAST close within the asset's OWN fetched history: ~0 = at its
 /// all-time low, ~100 = at its all-time high. Self-normalizing across assets of wildly different
 /// amplitude (BTC vs a penny alt) and robust to a single blow-off top — it's a rank, not a linear
 /// (max−last)/(max−min) range one spike would distort. The buy "discount" uses 100−this (how deep in
 /// its own history it trades). 0 for empty/one-point history.
 pub fn price_pct_rank(closes: &[f64]) -> f64 {
-    let last = match closes.last() {
-        Some(&x) => x,
-        None => return 0.0,
-    };
     if closes.len() < 2 {
         return 0.0;
     }
+    let last = measure_endpoint(closes);
     let below = closes.iter().filter(|&&c| c < last).count();
     below as f64 / (closes.len() - 1) as f64 * 100.0
 }
@@ -284,7 +299,7 @@ pub fn price_pct_rank(closes: &[f64]) -> f64 {
 /// % latest price sits below the period high. 0 if at/above high.
 pub fn pct_from_high(prices: &[f64]) -> f64 {
     let high = prices.iter().cloned().fold(f64::MIN, f64::max);
-    let last = *prices.last().unwrap();
+    let last = measure_endpoint(prices);
     f64::max(0.0, (high - last) / high * 100.0)
 }
 
@@ -585,7 +600,7 @@ pub fn real_pct(nominal_pct: f64, cum_infl_pct: f64) -> f64 {
 /// `infl` = Some(year->YoY% series, e.g. EU HICP) to show inflation-adjusted returns on horizons
 /// >=1Y (deflated by the real cumulative inflation over each horizon), or None for raw nominal %.
 pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Option<(String, f64)>> {
-    let cur = *closes.last().unwrap();
+    let cur = measure_endpoint(closes); // (#17) smoothed measurement endpoint; = raw last close at the default 1
     let last = *dates.last().unwrap();
     HORIZONS
         .iter()
@@ -1076,6 +1091,17 @@ pub fn extreme_flags(closes: &[f64], tol: f64) -> (bool, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#17/Step 4) `endpoint_avg`: n=1 = the raw last close (the inert default must be byte-identical);
+    /// n>1 averages the last n; n beyond the history clamps to the whole series. Pure math, no config.
+    #[test]
+    fn endpoint_avg_smooths_last_n() {
+        let closes = [10.0, 20.0, 30.0, 40.0];
+        assert_eq!(endpoint_avg(&closes, 1), 40.0); // default: raw last close
+        assert_eq!(endpoint_avg(&closes, 2), 35.0); // mean of last 2
+        assert_eq!(endpoint_avg(&closes, 0), 40.0); // 0 clamps up to 1
+        assert_eq!(endpoint_avg(&closes, 99), 25.0); // clamps down to the full series
+    }
 
     /// `select_fund_factor`: each config name maps to its FundFactors field; an unknown name -> None
     /// (neutral) so a typo'd config can never panic the score. Pure, no network.

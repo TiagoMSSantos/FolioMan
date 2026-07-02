@@ -127,6 +127,7 @@ pub struct BuyHeuristic {
     pub min_long_pct: f64,           // [FOIL] on-sale only: reject if any 5Y/10Y/20Y leg <= this (growth uses a hardcoded >0% 5Y gate)
     pub min_long_pct_crypto: f64,    // [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -70%+)
     pub min_avg_turnover_eur: f64,   // reject if avg daily turnover (EUR) < this (thin/illiquid name); 0 = off
+    pub endpoint_smooth_days: usize, // (#17/Step 4) MEASUREMENT endpoint = mean of the last N closes (1 = raw last close, today's behaviour). De-noises every endpoint-anchored input — the 1M knife gate, the range/drawdown position, every perf % — so ONE bad print on screen day can't exclude a good name or swing its rank. Displayed price stays the true last close. Flows to BOTH live + backtest (one core helper) -> no train-serve skew. Edge-affecting when >1 -> validate `backtest 12 universe` (both OOS halves +) before flipping
 
     // --- SCORE — ON-SALE LANE (`buy_score`): EVERYTHING from here to "GROWTH LANE" below is [FOIL]
     //     (backtest-only; `screen` ignores it), EXCEPT the shared tilts noted inline. ---
@@ -215,6 +216,7 @@ impl Default for BuyHeuristic {
             min_long_pct: 0.0,
             min_long_pct_crypto: -70.0,    // -EUR 5Y is peak-anchored: allow deep pullbacks, cut true corpses (-70%+)
             min_avg_turnover_eur: 0.0,     // off by default; settings.yaml sets a real floor to drop thin names
+            endpoint_smooth_days: 1,       // (#17/Step 4) 1 = raw last close (byte-identical, validated edge intact); e.g. 5 averages the last week's closes for measurement endpoints
             // score
             normal_volatility_pct: 2.0,    // ~2%/day = a typical large-cap equity
             discount_cap: 35.0,            // a ~35%-off (for its vol) dip maxes the discount
@@ -591,6 +593,29 @@ pub fn fund_source() -> String {
             .unwrap_or_else(|| "fmp".to_string())
     })
     .clone()
+}
+
+/// (#17/Step 4) Process-once read of the measurement-endpoint smoothing window (closes averaged for
+/// the "current price" used by perf %/CAGR/range/drawdown and the hard gates). SOFT — a missing/invalid
+/// config yields 1 (the raw last close, today's validated behaviour), so it never panics in unit tests
+/// where the gitignored settings.yaml is absent. `core::measure_endpoint` reads this at the ONE helper
+/// both the live fetch and `backtest_quote` flow through (no train-serve skew); flipping it >1 is
+/// edge-affecting and needs a `backtest universe` re-validation (see `BuyHeuristic`).
+pub fn endpoint_smooth_days() -> usize {
+    // Unit tests assert the pure endpoint math (pct_from_high(&[100, 80, 95]) == 5 etc.) on tiny
+    // synthetic arrays; the committed ci-settings value would silently average them. Tests pin the
+    // inert 1; the smoothing itself is exercised by `endpoint_avg`'s own test + the backtest A/B.
+    if cfg!(test) {
+        return 1;
+    }
+    use std::sync::OnceLock;
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| {
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+            .map(|s| s.buy_heuristic.endpoint_smooth_days)
+            .unwrap_or(1)
+    })
 }
 
 #[cfg(test)]
