@@ -160,6 +160,9 @@ pub fn below_long_ma_pct(closes: &[f64], n: usize) -> f64 {
     if ma <= 0.0 {
         return 0.0;
     }
+    // (#19) deliberately the RAW last close, NOT measure_endpoint: smoothing this endpoint was
+    // measured WORSE (backtest A/B at the 5-bar window: edge +115.7 smoothed vs +120.2 raw) — a
+    // smoothed endpoint under-reads a fresh spike, so the overext brake docks parabolic names less.
     f64::max(0.0, (ma - *closes.last().unwrap()) / ma * 100.0)
 }
 
@@ -175,6 +178,7 @@ pub fn above_long_ma_pct(closes: &[f64], n: usize) -> f64 {
     if ma <= 0.0 {
         return 0.0;
     }
+    // (#19) raw last close on purpose — see below_long_ma_pct; the brake must see the spike.
     f64::max(0.0, (*closes.last().unwrap() - ma) / ma * 100.0)
 }
 
@@ -264,15 +268,36 @@ pub fn fmt_money2(x: f64) -> String {
     format!("{}{}.{}", if neg { "-" } else { "" }, grouped, frac)
 }
 
-/// (#17/Step 4) The MEASUREMENT endpoint: mean of the last `endpoint_smooth_days` closes (config,
-/// default 1 = the raw last close, byte-identical to the validated behaviour). Every endpoint-anchored
-/// input — perf % / long CAGR (`horizon_changes`), the range position (`price_pct_rank`), the drawdown
-/// (`pct_from_high`) — reads its "current price" here, so ONE bad print on screen day can't flip the
-/// hard 1M-knife/range gates or swing a rank. The DISPLAYED price stays the true last close (this is
-/// for measurement only). Both build sites (live fetch and `backtest_quote`) flow through these same
-/// fns -> train == serve automatically. Panics on empty input, same as the `.last().unwrap()` it replaces.
+/// (#18) Bars-per-year of the series the measurement fns are currently fed: 252 (daily, the live
+/// screen — the default) or 12 (the long-horizon backtest's monthly bars). The backtest sets it once
+/// per run so `measure_endpoint` can convert the config's TRADING-DAYS span into the same calendar
+/// span in bars — the validated smoothing window means the same amount of TIME on either cadence
+/// (train == serve). ponytail: process-wide atomic, fine because one backtest run = one cadence.
+static MEASURE_CADENCE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(252);
+
+/// Called by the backtest before scoring cutoffs built on non-daily bars (12 = monthly).
+pub fn set_measure_cadence(bars_per_year: usize) {
+    MEASURE_CADENCE.store(bars_per_year, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// (#17/#18) The MEASUREMENT endpoint: mean of the closes in the last `endpoint_smooth_days`
+/// TRADING DAYS (config; 1 = the raw last close). The span converts to bars by the current cadence
+/// (`span × cadence / 252`, min 1 — e.g. 105 trading days ≈ 5 months = 105 daily closes live, 5
+/// monthly bars in the 12y backtest), so the smoothing covers the same calendar time on both sides
+/// -> train == serve. Long-horizon measurements — ≥1Y perf/CAGR legs (`horizon_changes`), the range
+/// position (`price_pct_rank`), the drawdown (`pct_from_high`) — read their "current price" here, so
+/// ONE bad print (or one hot week) on screen day can't flip the range gate or swing a rank. The
+/// DISPLAYED price and the short legs (1D/1W/1M, incl. the 1M knife) stay the true last close, and
+/// the overext brake deliberately reads raw too (see `above_long_ma_pct`). Panics on empty input,
+/// same as the `.last().unwrap()` it replaces.
 pub fn measure_endpoint(closes: &[f64]) -> f64 {
-    endpoint_avg(closes, crate::config::endpoint_smooth_days())
+    let cadence = MEASURE_CADENCE.load(std::sync::atomic::Ordering::Relaxed);
+    endpoint_avg(closes, span_to_bars(crate::config::endpoint_smooth_days(), cadence))
+}
+
+/// Trading-days span -> bar count at `cadence` bars/year (252 = daily -> identity), min 1.
+fn span_to_bars(span_days: usize, cadence: usize) -> usize {
+    (span_days * cadence / 252).max(1)
 }
 
 /// Mean of the last `n` closes (n clamped to [1, len]). Split from `measure_endpoint` so the math is
@@ -600,11 +625,16 @@ pub fn real_pct(nominal_pct: f64, cum_infl_pct: f64) -> f64 {
 /// `infl` = Some(year->YoY% series, e.g. EU HICP) to show inflation-adjusted returns on horizons
 /// >=1Y (deflated by the real cumulative inflation over each horizon), or None for raw nominal %.
 pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Option<(String, f64)>> {
-    let cur = measure_endpoint(closes); // (#17) smoothed measurement endpoint; = raw last close at the default 1
+    // (#18) two endpoints: the LONG legs (>=1Y — the CAGR/rank inputs) use the smoothed measurement
+    // endpoint; the SHORT legs (1D/1W/1M, incl. the 1M-knife gate) keep the true last close — a
+    // months-wide average would make "this month's move" meaningless as both a gate and a display.
+    let cur_smooth = measure_endpoint(closes);
+    let cur_raw = *closes.last().unwrap();
     let last = *dates.last().unwrap();
     HORIZONS
         .iter()
         .map(|(label, days)| {
+            let cur = if *days >= 365 { cur_smooth } else { cur_raw };
             let target = last - Duration::days(*days);
             let half = windows.get(*label).copied().unwrap_or_else(|| default_anchor_half(*days));
             let past = if half > 0 {
@@ -1101,6 +1131,16 @@ mod tests {
         assert_eq!(endpoint_avg(&closes, 2), 35.0); // mean of last 2
         assert_eq!(endpoint_avg(&closes, 0), 40.0); // 0 clamps up to 1
         assert_eq!(endpoint_avg(&closes, 99), 25.0); // clamps down to the full series
+    }
+
+    /// (#18) `span_to_bars`: a trading-days span means the same calendar time on any cadence —
+    /// identity on daily bars, ÷21 on monthly bars, never 0.
+    #[test]
+    fn span_to_bars_converts_by_cadence() {
+        assert_eq!(span_to_bars(105, 252), 105); // live daily: identity
+        assert_eq!(span_to_bars(105, 12), 5); // 12y backtest monthly: ~5 months = 5 bars
+        assert_eq!(span_to_bars(1, 252), 1); // inert default stays raw…
+        assert_eq!(span_to_bars(1, 12), 1); // …on both cadences (min 1)
     }
 
     /// `select_fund_factor`: each config name maps to its FundFactors field; an unknown name -> None

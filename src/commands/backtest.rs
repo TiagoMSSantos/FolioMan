@@ -139,6 +139,9 @@ pub async fn run(args: Vec<String>) {
     // old names, at the cost of monthly cadence (vol/MA are bar-approximations, see backtest_quote).
     let monthly = long || years >= 8;
     let cadence = if monthly { 12 } else { 252 }; // bars per year
+    // (#18) so measure_endpoint's trading-days smoothing span covers the same calendar time on
+    // monthly bars as it does on the live daily closes (train == serve).
+    core::set_measure_cadence(cadence);
     let min_history = if monthly { 36 } else { MIN_HISTORY }; // ~3y of bars before a cutoff to form the long trend
     let step = if monthly { 6 } else { STEP_SESSIONS }; // ~6 months between cutoffs
     if wide && tickers.is_empty() {

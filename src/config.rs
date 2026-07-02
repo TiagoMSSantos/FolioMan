@@ -127,7 +127,7 @@ pub struct BuyHeuristic {
     pub min_long_pct: f64,           // [FOIL] on-sale only: reject if any 5Y/10Y/20Y leg <= this (growth uses a hardcoded >0% 5Y gate)
     pub min_long_pct_crypto: f64,    // [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -70%+)
     pub min_avg_turnover_eur: f64,   // reject if avg daily turnover (EUR) < this (thin/illiquid name); 0 = off
-    pub endpoint_smooth_days: usize, // (#17/Step 4) MEASUREMENT endpoint = mean of the last N closes (1 = raw last close, today's behaviour). De-noises every endpoint-anchored input — the 1M knife gate, the range/drawdown position, every perf % — so ONE bad print on screen day can't exclude a good name or swing its rank. Displayed price stays the true last close. Flows to BOTH live + backtest (one core helper) -> no train-serve skew. Edge-affecting when >1 -> validate `backtest 12 universe` (both OOS halves +) before flipping
+    pub endpoint_smooth_days: usize, // (#17/#18) MEASUREMENT endpoint for the LONG-horizon inputs (>=1Y perf/CAGR legs, range position, drawdown) = mean of the closes in the last N TRADING DAYS (1 = raw last close). Converted to bars by the run's cadence (core::measure_endpoint) so the span means the same calendar time live (daily) and in the monthly backtest -> train == serve. Short legs (1D/1W/1M knife), the displayed price and the overext brake stay RAW by design (brake smoothing measured worse). Edge-affecting -> validate `backtest 12 universe` (both OOS halves +) before changing
 
     // --- SCORE — ON-SALE LANE (`buy_score`): EVERYTHING from here to "GROWTH LANE" below is [FOIL]
     //     (backtest-only; `screen` ignores it), EXCEPT the shared tilts noted inline. ---
