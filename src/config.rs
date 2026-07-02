@@ -610,8 +610,8 @@ mod tests {
         assert_eq!(s.ntfy_topic, "ci-smoke-tests-unused"); // dummy, no secret
         // universe_size is set EXPLICITLY (wide pool so the backtest-gate clears its <500-ticker throttle guard)
         assert_eq!(s.universe_size, 1_234_000);
-        // omitted fields still fall back to serde defaults
-        assert_eq!(s.top_picks, default_top_picks());
+        // omitted fields still fall back to serde defaults (stale_days is not set in the fixture)
+        assert_eq!(s.stale_days, default_stale_days());
         assert!(s.sectors.is_empty());
         assert!(s.urls.fundamentals.contains("financialmodelingprep")); // defaulted Urls subfield
     }
