@@ -24,69 +24,193 @@ anchor_windows:
   10Y: 365
   20Y: 365
 
-# --- Configs used for the backtest-gate scores ---
+# ============================================================================================
+# BUY HEURISTIC (src/picks.rs). Acronyms (CAGR, ROE, P/E, NUPL, SMA, FX, ...): see Glossary in README.md.
+#
+# This is the COMMITTED, canonical base. BOTH the backtest-gate scores AND the live `screen` read it:
+# the gitignored config/settings.yaml deep-merges OVER this file field-by-field, so the local overlay
+# only needs to carry what it OVERRIDES (a secret, the watchlist, or a knob under test). Edit a value
+# here to move the validated default for everyone; the rich "why" comments below are the shared record.
+#
+# There are TWO scoring lanes, and `screen` prints ONLY ONE of them:
+#
+#   • GROWTH lane (`growth_score`)  --> THIS is what `screen` prints. Proven compounders at/near
+#       their own ~10y high, still climbing — the only lane with a validated forward edge. Live score:
+#         base  = growth_trend_weight·CAGR + growth_accel_weight·accel + risk + quality + dividend
+#         score = base · proximity · value(P/E tilt) · geomean(trust, overext_brake) + liquidity
+#       (CAGR = Compound Annual Growth Rate; accel = how much the last 1Y outpaced that CAGR.)
+#
+#   • ON-SALE lane (`buy_score`)    --> BACKTEST FOIL ONLY. `screen` does NOT print this. It exists so
+#       `cargo run -- backtest` can demonstrate that dip-buying has NEGATIVE edge over a 20yr+ hold.
+#       Every knob tagged "[FOIL]" feeds ONLY this lane: changing it does NOT change `screen` output.
+#
+# So to tune what `screen` shows, touch ONLY the knobs NOT tagged "[FOIL]". GATES drop a candidate
+# outright (and reshape the ranking the most — tune these first); SCORE knobs only re-rank the
+# survivors. All knobs optional (omit any -> built-in default). See README.md "Tuning the buy heuristic".
+# ============================================================================================
 buy_heuristic:
-  # gates
-  min_1y_pct: -25.0
-  min_1y_pct_crypto: -75.0
-  max_1m_drop_pct: -20.0
-  max_1m_drop_pct_crypto: -35.0
-  min_long_pct: 30.0
-  min_long_pct_crypto: -70.0
-  min_avg_turnover_eur: 0
-  # on-sale lane (buy_score)
-  normal_volatility_pct: 2.0
-  discount_cap: 35.0
-  discount_weight: 0.35
-  momentum_bounce: 1.0
-  momentum_knife: 1.0
-  long_trend_weight: 0.5
-  long_trend_cap: 30.0
-  health_zero_cagr: -10.0
-  # total-return / endpoint-robust CAGR flags (both REVERTED to false = validated baseline)
-  use_adjusted_close: false
-  use_trend_cagr: false
-  # value-trap docks
-  sustained_decline_pct: -40.0
-  sustained_decline_penalty: 0.4
-  deep_decline_pct: -70.0
-  deep_decline_penalty: 0.15
-  min_score: -20.0
-  cheap_weight: 0.07
-  cheap_cap: 60.0
-  # shared tilts
-  dividend_weight: 1.5
-  dividend_cap: 6.0
-  ref_pe: 20.0
-  quality_weight: 0.15
-  quality_cap: 40.0
-  # GROWTH lane — what `screen` prints and the gate validates
-  growth_min_range_pct: 80.0
-  growth_min_range_pct_crypto: 40.0
-  growth_btc_outperf_weight: 0.3
-  growth_min_cagr: 14.0
-  growth_min_cagr_crypto: 0.0
-  growth_trend_weight: 0.35
-  growth_accel_weight: 0.5
-  growth_accel_cap: 50.0
-  growth_min_score: 5.0
-  growth_value_weight: 0.0
-  growth_overext_cap: 100.0
-  growth_overext_floor: 0.05
-  growth_turnover_weight: 0.5
-  growth_overext_cap_crypto: 100.0
-  # crypto NUPL greed damp / fear boost
-  nupl_euphoria: 0.5
-  nupl_damp_floor: 0.5
-  nupl_capitulation: 0.25
-  nupl_boost_ceiling: 1.3
-  # risk-adjusted tilts (Sharpe / Calmar)
-  sharpe_weight: 0.15
-  onsale_sharpe_weight: 0.0
-  sharpe_cap: 15.0
-  calmar_weight: 0.0
-  calmar_cap: 2.0
-  prefer_eur: true
+  # --- GATES (fail any one -> excluded before scoring) ---
+  min_1y_pct: -25.0              # [FOIL] on-sale only: reject if 1Y % <= this (growth uses a hardcoded 0% floor for equities, not this)
+  min_1y_pct_crypto: -75.0       # LIVE (crypto/FX -EUR/-USD): 1Y floor for the crypto growth lane — coins swing far harder than stocks
+  max_1m_drop_pct: -20.0         # LIVE: reject if 1M % <= this (a hard monthly crash = falling knife) — both lanes
+  max_1m_drop_pct_crypto: -35.0  # LIVE (crypto/FX): looser knife — a -20%/month alt is normal — both lanes
+  min_long_pct: 30.0             # [FOIL] on-sale only: reject unless EVERY 5Y/10Y/20Y leg is > this (growth uses a hardcoded >0% 5Y consistency gate instead)
+  min_long_pct_crypto: -70.0     # [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -95%)
+  min_avg_turnover_eur: 0        # LIVE: reject names with < this avg daily turnover (EUR) — thin/obscure; 0 = off — both lanes
+
+  # --- SCORE — ON-SALE LANE (`buy_score`) — [FOIL] ALL of this section is backtest-only; `screen` ignores it ---
+  normal_volatility_pct: 2.0     # [FOIL] a "typical" daily swing %; the dip is scaled by normal/asset vol,
+                                 #   so a calm name's pullback counts for more than a wild one's
+  discount_cap: 35.0             # [FOIL] cap on that volatility-scaled dip (one very deep name can't dominate)
+  discount_weight: 0.35          # [FOIL] (#4) multiplier on the dip reward — on-sale dip-depth carries no selection skill (rho
+                                 #   negative on 53 names, ~0 on the 354-name wide sample), so 0.35 shifts weight to the
+                                 #   CAGR/sharpe terms WITHOUT gutting on-sale scores (0.15 dropped normal names below
+                                 #   min_score for only a noise-level rho gain). 1.0 = old behaviour, 0 = drop it entirely.
+  # Goal = multi-decade buy-and-hold, so momentum is NEUTRAL (1.0/1.0): a green/red WEEK is noise
+  # over a 10-50y hold and must not reorder the ranking. Want a short-term timing view (e.g. for
+  # `check`)? Set bounce ~1.3 / knife ~0.6 to reward a confirmed turn and dock a falling knife.
+  momentum_bounce: 1.0           # [FOIL] discount ×this on a green week off a dip — 1.0 = ignore weekly timing
+  momentum_knife: 1.0            # [FOIL] discount ×this while still falling — 1.0 = ignore weekly timing
+  # (A) Long-trend reward = the proven-compounder signal for a decades hold, now on the long leg's
+  # CAGR (Compound Annual Growth Rate, %/yr — annualized so a 10Y and a 20Y leg compare fairly).
+  long_trend_weight: 0.5         # [FOIL] on-sale reward per %/yr of long-leg CAGR (×cap below = max bonus, ~15)
+  long_trend_cap: 30.0           # LIVE+FOIL (SHARED): cap the CAGR fed in (%/yr) for BOTH lanes — a +46%/yr coin doesn't dwarf a +14%/yr one
+                                 #   #16 sweep 2026-06-28: 20/30/40/50/1000 all edge ≈ -100337360 (flat) → cap inert on that run; 2026-07-02 re-test 30→50 on `backtest 12 universe` DROPPED growth edge +103.2→+87.7 → 30 is protective (parabolic names mean-revert), kept 30
+  health_zero_cagr: -10.0        # [FOIL] long-leg CAGR (%/yr) where on-sale trend_health hits 0; health=1 at flat/rising
+
+  # --- (B) total-return inputs + (E) endpoint-robust CAGR + (#8) geomean shape — EDGE-AFFECTING, validate before trusting ---
+  # All flow to LIVE screen AND the backtest (train==serve), so a `backtest 12 universe` measures them
+  # honestly. UNVALIDATED at flip time — run .claude/run_me.sh steps B/E and REVERT any that drops rho/edge
+  # or pushes an OOS half negative. Reversible (set back to false).
+  growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code
+  use_adjusted_close: false      # (B) REVERTED 2026-06-28: backtest 12 universe edge unchanged (raw
+                                 #   -100337371.5 vs adj -100337372.0), OOS halves identical (+0.09/-0.05).
+                                 #   No improvement → golden rule reverts. Flip true only if a re-run lifts edge.
+  use_trend_cagr: false          # (E,#14) REVERTED 2026-06-28: slope CAGR edge -100337434.4 vs endpoint
+                                 #   -100337336.3 (WORSE), OOS halves identical. Crypto's 1e9-scale peer-rel
+                                 #   swamps this sample → knob inert + edge straddles 0 (noise). Keep endpoint.
+  # fixed_cagr_years left at default 0: when use_trend_cagr is on it uses the whole-series slope (overrides
+  # a pinned window), so #15 is redundant here. #16: sweep long_trend_cap (above) per run_me.sh, no flag.
+
+  # (B) Value-trap dock: a name bleeding for YEARS (1Y AND 5Y both deep red) is not a dip — dock it.
+  sustained_decline_pct: -40.0   # [FOIL] both 1Y and 5Y must be <= this to count as a multi-year bleed
+  sustained_decline_penalty: 0.4 # [FOIL] score ×this when that holds (0..1; lower = harsher)
+  # Harsher tier for a 7y+ deep bleed (e.g. LTC: 5Y -73% riding an ancient 10Y pump): if the 5Y is
+  # past deep_decline_pct, use the steeper deep_decline_penalty instead of the -40% one.
+  deep_decline_pct: -70.0        # [FOIL] 5Y <= this = a years-deep bleed, not a recoverable dip
+  deep_decline_penalty: 0.15     # [FOIL] score ×this then (lower than sustained_decline_penalty)
+
+  # (A) Hide ranked rows scoring <= this so the per-class tables stop padding to top_picks with
+  # near-the-high names (score ~1-2 = not really "on sale"). Fewer rows when few names qualify.
+  min_score: -20.0               # [FOIL] on-sale trim. (The LIVE growth equivalent is growth_min_score below.) 0 = show all
+
+  # (C) Structural-cheap reward: how far below the ~200wk trend line (SMA = Simple Moving Average) the
+  # price sits. Complements the OFF-HI drawdown (distance below the peak) with "cheap vs the long trend".
+  cheap_weight: 0.07             # [FOIL] (#4) reward per % below the 200wk SMA — halved from 0.15: "structural cheap"
+                                 #   is another dip term the backtest doesn't reward; demoted toward trend/quality.
+  cheap_cap: 60.0                # [FOIL] cap the below-SMA % fed in
+
+  # --- SCORE — SHARED / LIVE tilts (read by the growth lane `screen` prints) ---
+  # (D) Dividend reward: reinvested dividends are a big slice of long-run total return. Read by BOTH lanes.
+  dividend_weight: 1.5           # LIVE: reward per % of trailing-1Y yield (×cap = max bonus, ~9)
+  dividend_cap: 6.0              # LIVE: cap the yield % fed in
+
+  # (E) Valuation tilt: cheap on EARNINGS, not just recently dropped. value = ref_pe / P/E, clamped
+  # [0.5,1.5] (P/E = Price-to-Earnings ratio). Needs a trailing P/E -> set FMP_API_KEY (Financial
+  # Modeling Prep) in the ENV (never here); free tiers are rate-limited so it populates at `check`
+  # scale, stays neutral (×1.0) across the big `screen`. Read by BOTH lanes.
+  ref_pe: 20.0                   # LIVE: "fair" trailing P/E; P/E 10 -> ×1.5 (cheap), P/E 40 -> ×0.5 (rich)
+
+  # (F) Profitability/QUALITY tilt: reward trailing ROE (Return On Equity — the canonical quality
+  # factor; high-ROE firms out-compound long-run). Same FMP_API_KEY opt-in as ref_pe (populates at
+  # `check` scale). BACKTEST-BLIND: ROE is point-in-time, so the price-only backtest can't validate it
+  # — kept deliberately small so it tilts but never dominates the price signal. Read by BOTH lanes. 0 = off.
+  quality_weight: 0.15           # LIVE: reward per % ROE (×cap = max bonus, ~6 at a 40% ROE)
+  quality_cap: 40.0              # LIVE: cap the ROE % fed in (a buyback-levered 200% ROE doesn't dominate)
+
+  # === GROWTH LANE — THIS is the ranking `screen` actually prints. =============================
+  # Proven compounders the on-sale lane can't surface: a name AT/NEAR its own ~10y high, with a
+  # strong proven long-term CAGR, still climbing. Gated hard (near-high + proven CAGR + positive 1Y +
+  # not crashing) and P/E-tilted so it isn't just top-chasing. Every knob below is LIVE. ===========
+  growth_min_range_pct: 80.0     # GATE: must sit in the top 20% of its own ~10y range. SETTLED 2026-07-02:
+                                 #   A/B'd 70 vs 80 on `backtest 12 universe` — 80 WINS: edge +109.8 vs +103.2
+                                 #   AND better on both OOS halves (+0.07/+0.09 vs +0.06/+0.08). 70 fell short of
+                                 #   its own ">=117 both-OOS+" keep-rule; the gate-sweep "70 too tight" flag was a
+                                 #   small-sample mirage. 80 is the validated base.
+  growth_min_range_pct_crypto: 40.0 # GATE (crypto only): looser range floor (top 60% of its own range) so MORE coins
+                                 #   surface — alts spend most of their life far below ATH yet still out-compound. The
+                                 #   BTC-relative tilt below + the NUPL damp keep the wider crypto table honest. Stocks/ETFs
+                                 #   keep the strict 80 gate above. Lower toward 0 for even more coins, raise toward 80 to tighten.
+  growth_btc_outperf_weight: 0.3 # SCORE (crypto only): tilt a coin by its 1Y return vs BITCOIN's (the market base) — beats
+                                 #   BTC -> boost, lags -> mild dock, bounded 0.5x..2x. BTC itself = 1.0x (the neutral anchor
+                                 #   you read the others against). SCREEN/CHECK-only (backtest-blind, validated edge untouched). 0 = off.
+  growth_min_cagr: 14.0          # GATE: long leg must compound >=14%/yr to count as a proven grower. The gate, not a
+                                 #   weight, is what moves the signal (additive/multiplier knobs are inert; gates reshape the scored pool).
+                                 #   12y MAX-monthly knee (the real 20y-hold horizon): 12->14 lifts GROWTH edge +91.1->+92.7 AND
+                                 #   flips top-half peer-relative -5.2->+4.6 (the bought basket now BEATS its peers, not just loses less);
+                                 #   16 overshoots (edge +86.3, top-half flat, pool thins 1987->1609). OOS both-positive. 5y proxy preferred
+                                 #   12 (rho +0.15 sym) but the 12y horizon — what the 20y goal actually targets — peaks at 14.
+  growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
+                                 #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
+  growth_trend_weight: 0.35      # SCORE: reward per %/yr CAGR (capped at long_trend_cap) — trimmed: raw long-CAGR mildly hurts growth selection (ablation Δ+); weight shifted to acceleration. Raising 0.35->0.55 cut edge +1.9->-0.6 (ablation-Δ predicts removal, not weight scaling)
+  growth_accel_weight: 0.5       # SCORE: reward per pt the last year outpaced the long CAGR. accel INVERTS with horizon —
+                                 #   the 5y proxy wanted it trimmed (mean-reverts: removing it +41.7 edge), but the 12y MAX-monthly
+                                 #   horizon (the 20y-hold target) makes it a STRONG helper: removing it costs -55.5..-65.9 edge.
+                                 #   Hill-climbed at 12y: 0.2->0.35->0.5 edge +65.8->+84.5->+91.1; 0.65 regresses (+87.0, OOS-early
+                                 #   +0.02), so the knee is 0.5. Persistent compounding (last year still beating the long CAGR) PREDICTS
+                                 #   over a decade where it merely chased a hot streak over 5y. ORIG 5y note below:
+                                 #   rho LIKES accel (rank helper) but the 5y EDGE ablation showed it HURTS the 5y profit
+                                 #   spread — recent 1Y-vs-CAGR pop is the noisiest, most mean-reverting growth signal at 5y
+                                 #   (hot-streak chasing). 0.2 lifts wide 5y edge +43.7->+50.5 / 3y +24.3->+28.5.
+  growth_accel_cap: 50.0         # SCORE: cap that 1Y-minus-CAGR acceleration term
+  growth_min_score: 5.0          # hide growth rows scoring <= this; 0 = show all top_picks
+  growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
+  # (#2) VALUATION BRAKE experiment — the additive, backtest-VALIDATABLE valuation term that replaces the
+  #   blind P/E multiplier above. earnings_yield = E/P from the SEC TTM EPS (#1). Reward-only (clamp 0..cap):
+  #   lifts cheap high-E/P names, gives nosebleeds (LITE E/P ~0.7%) near-zero -> a gentle de-rank, not a
+  #   hard gate. OPEN EXPERIMENT: validate `backtest 12 universe fund` (FUND FACTOR SWEEP) — KEEP only if
+  #   earnings_yield beats price-only on the TEST half with BOTH OOS sub-halves positive; else leave
+  #   growth_fund_weight at 0.0. INERT at weight 0 (factor is only read when the weight is raised).
+  growth_fund_factor: "earnings_yield"
+  growth_fund_weight: 0.0   # OFF by default (fund term inert). REVERTED from a 0.3 experiment — backtest 2026-07-01 (`backtest 12 universe fund`) reported "cutoffs with as-of fundamentals: 0 / 10936" (FUND FACTOR SWEEP skipped, cache empty); growth_fund_weight ablation Δ+0.0 confirms the fund term is inert in the backtest without cached fundamentals, so 0.3 rode BLIND. To validate: populate the FMP `stable/income-statement` cache first, re-run the sweep, KEEP 0.3 (tune to peak) only if earnings_yield beats price-only on TEST + both OOS halves +.
+  # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
+  # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
+  # floor as price stretches above trend, killing blow-off-top chasing.
+  growth_overext_cap: 100.0      # % above the 200wk SMA where the brake maxes out. Biting harder (100->60) cut edge +1.9->-9.5: over-penalizes good compounders that keep running above trend. Keep 100
+  growth_overext_floor: 0.05     # growth-score multiplier at full stretch. Tightened 0.2->0.15->0.05, each step a harder blow-off-top brake:
+                                 #   buying right after a parabola = poor long-hold entry. The walk-forward sweep ranks 0.05 best: wide
+                                 #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).
+                                 #   The old "0.1 docks NVDA out" worry was regime-bound — at 0.05 today NVDA still scores 6.7 > min_score
+                                 #   5 (it's -10.6% off-hi, not parabolic) and the displayed order is unchanged. 1.0 = brake off.
+  growth_turnover_weight: 0.5    # (L) liquidity tilt per ln(turnover/€1B), added after the brake; lifts deep-liquid compounders (NVDA) over illiquid twins. BACKTEST-BLIND, edge untouched. 0 = off
+  growth_overext_cap_crypto: 100.0 # (#4) crypto's own brake cap; =equity (no change). Raise (e.g. 200) to brake crypto later — unvalidated (crypto windows too sparse to isolate)
+
+  # (4) Crypto market-greed damp from Bitcoin NUPL (already fetched for the screen footer). High NUPL
+  # = whole-market euphoria/top -> shrink ALL crypto scores (thins the crypto tables in a frothy top,
+  # fattens them after a flush). Applies to both lanes, crypto rows only.
+  nupl_euphoria: 0.5             # NUPL above this starts damping crypto (~0.5 = greed/"belief" zone)
+  nupl_damp_floor: 0.5           # crypto-score multiplier at NUPL 1.0 (peak euphoria); 1.0 = damp off
+  nupl_capitulation: 0.25        # NUPL below this starts BOOSTING crypto (~0.25 = fear/accumulation); 0 = boost off
+  nupl_boost_ceiling: 1.3        # crypto-score multiplier at NUPL 0 (deep capitulation); 1.0 = boost off. BACKTEST-BLIND judgment lever — keep mild
+
+  # RISK-ADJUSTED-RETURN tilts (B/C) — Sharpe ratio (return ÷ volatility) and Calmar ratio (return ÷
+  # worst peak-to-trough drawdown), from the SAME closes already fetched, ZERO extra network cost.
+  # Reward a calm, shallow-drawdown compounder over a knife-y one with the same headline CAGR.
+  # (The old R²-smoothness "consistency" damp was deleted: it read pure edge-harm with no rho gain —
+  # disabling it had nearly DOUBLED wide 5y edge +50.5->+95.6. Past path-smoothness doesn't predict return.)
+  sharpe_weight: 0.15            # (B) GROWTH lane: reward per unit CAGR/volatility. Halved 0.3->0.15 (peak edge): 5y wide +95.6->+107.3,
+                                 #   beats both 0.3 and 0.0, rho +0.24, OOS positive. Zeroing WITH calmar cut edge +1.9->-1.6. 0 = off
+  onsale_sharpe_weight: 0.0      # [FOIL] (B) ON-SALE lane's own Sharpe weight, split from growth because the shared knob conflicted:
+                                 #   ablation showed growth wants 0.15 but on-sale wants 0 — zeroing it lifts the on-sale 12y edge
+                                 #   +39.2->+62.9 (Δ+23.7) while growth keeps 0.15. 0 = off (the swept on-sale optimum)
+  sharpe_cap: 15.0               # (B) cap that CAGR/volatility ratio
+  calmar_weight: 0.0             # (C) ZEROED. Calmar (CAGR/max-drawdown) is harmful at the 12y horizon: 1.0->0 lifts GROWTH
+                                 #   edge +92.7->+98.0, rho +0.06->+0.07, top-half +4.6->+7.3 — all three improve. Over a 20y hold the
+                                 #   deepest-drawdown names are often the biggest compounders; penalizing path-pain deselects them.
+                                 #   sharpe (0.15) stays — removing it COSTS edge (Δ-3.1), so volatility-awareness still helps. 0 = off
+  calmar_cap: 2.0                # (C) cap that CAGR/max-drawdown ratio
+
+  prefer_eur: true               # dedup currency twins (BTC-EUR/BTC-USD): keep EUR leg if true, else USD
 
 # universe fetch breadth + pacing (so the gate scans the same wide pool the real screen does)
 universe_size: 1234000
