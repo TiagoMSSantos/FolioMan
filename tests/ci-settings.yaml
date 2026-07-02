@@ -1,19 +1,28 @@
-# CANONICAL BASE config. NO secrets: ntfy_topic is a dummy (the tests never push), every URL below is a
-# public, unauthenticated endpoint. THREE consumers:
+# CANONICAL BASE config — the full, documented, shared configuration. NO secrets: ntfy_topic is a dummy
+# (the tests never push), every URL below is a public, unauthenticated endpoint. THREE consumers:
 #   - network-smoke (per-PR): only urls.yahoo_chart is exercised.
 #   - backtest-gate (nightly + push/PR): runs `backtest 12 universe`, scoring with buy_heuristic below.
 #   - the private config/settings.yaml INHERITS this file (config::load deep-merges it as the base), so the
-#     gitignored local config only needs to OVERRIDE what it changes (ntfy_topic secret, tickers watchlist,
-#     universe_size, any knob under test) instead of duplicating the whole buy_heuristic. Overlay wins
-#     field-by-field. Edit shared tuning HERE; put local-only/secret overrides in config/settings.yaml.
+#     gitignored local overlay only OVERRIDES what it changes. By convention it now carries ONLY the
+#     watchlist (tickers), the table column layout (widths), and any local secret (a real ntfy_topic) or
+#     knob under test — EVERYTHING ELSE lives HERE. Overlay wins field-by-field. Edit shared config HERE.
 # Omitted knobs fall back to the code's #[serde(default)] (== the shipped defaults).
 tickers: []
 
-dip_days: 30
-high_days: 365
-drawdown_pct: 20.0
-drop_pct: 10.0
+# --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
+# OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a
+# decades buy-and-hold: "on sale vs the proven peak", pairs with the below-200wk-SMA cheap reward).
+# Or set N days for a trailing-N-day high (365 = last year only, recency-biased; 1825 = ~5y cycle).
+high_days: 0
+drawdown_pct: 1000.0
+dip_days: 30       # trailing window (days) for the vs-high dip
+drop_pct: 5.0      # `alert` fires when a name is >= this % below that window high
+top_picks: 25      # how many "buy candidate" rows `check` lists after the table
 
+# Per-horizon ±days averaged around each horizon's anchor date when computing 1D/1W/.../20Y %
+# changes (smooths a single outlier day; 0 = exact day). All optional — omit the block or any
+# label to use the built-in defaults (core::default_anchor_half): 1D 0, 1W 7, 1M 30, 6M/1Y 90,
+# 5Y/10Y/20Y 365. Override only the labels you want to change.
 anchor_windows:
   1D: 0
   1W: 3
@@ -23,6 +32,13 @@ anchor_windows:
   5Y: 365
   10Y: 365
   20Y: 365
+
+# Show REAL (inflation-adjusted) returns on the 1Y/5Y/10Y/20Y % columns instead of nominal. A
+# coin/stock up +50% over a span that saw +10% inflation is really only ~+36% in purchasing power.
+# Deflates by the ACTUAL cumulative EU HICP inflation over each horizon, fetched live (same source
+# as the check footer) — no rate to guess. Shorter horizons (1D/1W/1M/6M) are never adjusted.
+inflation_adjust:
+  enabled: true       # true = deflate long-horizon returns by live EU HICP; false = raw nominal %
 
 # ============================================================================================
 # BUY HEURISTIC (src/picks.rs). Acronyms (CAGR, ROE, P/E, NUPL, SMA, FX, ...): see Glossary in README.md.
@@ -212,26 +228,84 @@ buy_heuristic:
 
   prefer_eur: true               # dedup currency twins (BTC-EUR/BTC-USD): keep EUR leg if true, else USD
 
-# universe fetch breadth + pacing (so the gate scans the same wide pool the real screen does)
+# --- live-universe fetch breadth + pacing (so the backtest gate scans the same wide pool `screen` does) ---
+# How many symbols PER CLASS (crypto + stocks/ETFs) `screen` pulls from the live sources
+# (coingecko_markets + sp500_csv URLs below). Bigger = more to scan = slower (one history
+# fetch per ticker, in parallel) + more rate-limit risk. `screen TICKER...` overrides everything.
 universe_size: 1234000
+
+# Max fetches in flight = CPU cores × this multiplier. In-flight memory holds the large 10y + monthly
+# chart payloads, so this is the MEMORY/stability knob, not the speed knob (the pacer below sets speed).
+# 8 cores × 8 = 64 was stable across full 3847-name screens; conc=128 (mult 16) got SIGKILLed mid-run.
+# Keep cores×mult ≈ 64: on a 16-core box use mult 4, on 4-core use 16. 0 is treated as 1.
 fetch_concurrency_multiplier: 8
+
+# Global outbound-request pacer (requests/second) — THE speed knob. Spaces request LAUNCHES so the
+# fan-out can't burst-429 (concurrency bounds in-flight count but not the launch burst). Yahoo's limit
+# is undocumented. Measured at full universe (3847 names, ~3 Yahoo calls/name): rps 60 = 0 valid names
+# lost in 4m27s; rps 40 = 0 lost in 6m37s. 60 nearly saturates conc 64, so higher rps needs more
+# concurrency (which risks the memory kill above) for little gain. Lower if you see real names drop,
+# 0 disables pacing (a 64-wide burst then drops valid names — e.g. NVDA — so don't).
 fetch_requests_per_second: 60.0
+
+# Quote the live-universe crypto in EUR (BTC-EUR) if true, else USD (BTC-USD). Mirrors
+# buy_heuristic.prefer_eur but for what `screen` fetches. US stocks/ETFs have no EUR listing.
 universe_prefer_eur: true
+
+# `screen` SECTOR FILTER — which type of companies/ETFs to fetch. Case-insensitive substring
+# keywords matched against a stock's GICS sector AND an ETF's fund name. Empty list (or omitted) =
+# fetch ALL sectors (the default). Stocks are filtered BEFORE fetch (by their GICS sector, so other
+# sectors are never even pulled); ETFs carry no GICS, so they're filtered by fund name. Crypto is
+# never sector-filtered. `screen TICKER...` (explicit tickers) ignores this. Examples:
+#   tech only:  [Technology, Communication, Semiconductor]   ("Technology" catches GICS "Information Technology")
+#   healthcare: [Health]                                     energy: [Energy]   financials: [Financ]
+#   ALL sectors: []   (empty list — or comment out the `sectors:` line below entirely)
 sectors: []
 
+# ntfy.sh topic for `alert`. Anyone who knows it can read your alerts (= your watchlist), so treat it
+# like a password: this COMMITTED base carries a DUMMY only. Put a real, long, random private topic in
+# the gitignored config/settings.yaml overlay (NEVER here — this file is committed + pushed).
 ntfy_topic: "ci-smoke-tests-unused"
 
+# Data-source URLs. Templates use {placeholder} tokens filled at fetch time: {ticker} {range} {n}
+# {topic} {key}. Swap a source by editing the URL here, no rebuild of logic needed (only the response
+# shape must match what the parser expects). The keys with a built-in code default (constituents_csv,
+# euronext_lisbon, nasdaq_listed/other_listed, fundamentals*) are listed here for documentation — omit
+# any and it falls back to the SAME URL, so the backtest gate already fetches them either way.
 urls:
   yahoo_chart: "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={range}&interval=1d&events=div,split"
+  # hourly bars over ~5 days -> screen 1h/6h/12h columns (counted as 1/6/12 bars back, not wall-clock,
+  # so stocks fill too despite overnight gaps; 5d ensures >=13 bars even for a 6.5h trading day).
   yahoo_intraday: "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=60m"
   yahoo_search: "https://query1.finance.yahoo.com/v1/finance/search?q={ticker}&newsCount=3&quotesCount=0"
   yahoo_quote: "https://finance.yahoo.com/quote/{ticker}"
   euribor: "https://www.euribor-rates.eu/en/current-euribor-rates/2/euribor-rate-3-months/"
-  us_cpi: "https://api.bls.gov/publicAPI/v1/timeseries/data/"
+  us_cpi: "https://api.bls.gov/publicAPI/v1/timeseries/data/"  # BLS CPI-U index (monthly); seriesid + year window POSTed by fetch (path-GET ignores years). v1 = no key, 10y/call
   pt_cpi: "https://bpstat.bportugal.pt/data/v1/domains/12/datasets/7f13efcd65fc6bd0c5adb0e8d29d9b44/?lang=EN&series_ids=5721550"
   eu_hicp: "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_manr?format=JSON&lang=EN&coicop=CP00&geo=EU27_2020"
+  # {n} = top-N crypto by market cap; `screen` maps each .symbol to SYMBOL-USD (Yahoo form)
   coingecko_markets: "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page={n}&page=1"
+  # S&P 500 constituents CSV (first column = Symbol); `screen` maps '.'->'-' for Yahoo
   sp500_csv: "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
+  # (Item 18) extra equity ponds APPENDED to the S&P 500 set, to widen the grower pool the proven ranking
+  # draws from. Each must be a VERIFIED-reachable CSV in the SAME layout (col0=Symbol, col2=GICS Sector) —
+  # e.g. an S&P MidCap 400 CSV (US mid-caps the index admits only after they're already large) or a
+  # European-index CSV (EU-buyable names beyond the Lisbon set). Empty = S&P 500 only (default, unchanged).
+  constituents_csv: []
+  # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
   euronext_lisbon: "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS"
+  # NASDAQ Trader symbol files (pipe-delimited, ETF flag column) -> screen ETF universe. No free
+  # AUM-ranked ETF list exists, so these dump ALL US-listed ETFs; the turnover gate culls the tail.
+  # ETF flag: nasdaqlisted col 6, otherlisted col 4 (where SPY/Arca funds live).
+  nasdaq_listed: "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
+  other_listed: "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
+  # latest Bitcoin NUPL (net unrealized profit/loss), free on-chain sentiment gauge; `screen` prints it after the crypto table
   nupl: "https://bitcoin-data.com/v1/nupl/last"
+  # (E) trailing-P/E source for the valuation tilt. {ticker} + {key} (key from FMP_API_KEY env, NOT
+  # here). Equities only, and only when the env key is set — free tiers are rate-limited, so use it
+  # for `check` (~55 tickers), not the ~750-ticker `screen` (where P/E stays None -> neutral tilt).
+  fundamentals: "https://financialmodelingprep.com/stable/quote?symbol={ticker}&apikey={key}"
+  # (F) ROE/quality source for the profitability tilt — FMP stable ratios-ttm (carries returnOnEquityTTM).
+  # Same FMP_API_KEY opt-in / `check`-scale profile as `fundamentals` above. (v3 legacy died 2025-08-31.)
+  fundamentals_quality: "https://financialmodelingprep.com/stable/ratios-ttm?symbol={ticker}&apikey={key}"
   ntfy: "https://ntfy.sh/{topic}"
