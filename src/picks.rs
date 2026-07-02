@@ -402,7 +402,7 @@ struct ScoreParts {
     overext_damp: f64, // 1 − (overext/cap)×(1−floor)
     damp: f64,         // geomean(trust, overext_damp)
     liq_bonus: f64,    // (L) turnover_weight × ln(max(turnover/1e9, 1))
-    score: f64,        // base × proximity × value × damp + liq_bonus
+    score: f64,        // base × proximity × value × damp + liq_bonus  (or base × geomean(trust,overext,prox,value) + liq_bonus when #8 growth_geomean_fold)
 }
 
 /// Score a quote as a MOMENTUM/GROWTH candidate — the MIRROR of `buy_score`. The on-sale lane fades
@@ -564,7 +564,16 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     //  & rho +0.18->+0.20; removing mom-confirm lifted edge +5.9. R² docks exactly the parabolic
     //  compounders this lane exists to surface, and accel already encodes momentum -> dropped both.)
     let damp = combine_damps(&[trust, overext_damp]);
-    let score = base * proximity * value * damp + liq_bonus;
+    // (#8) PROBE: fold proximity + value INTO the geomean so three soft multipliers can't compound to
+    // ~0 (a name at prox 0.7 × value 0.8 × damp 0.85 keeps only 0.48 of base). The geomean bounds the
+    // stack by the SOFTEST term instead of the raw product. Edge-affecting — it also changes the geomean
+    // SLOT COUNT (trust/overext exponent ½ -> ¼), which alone can move the edge (a past constant-1.0 slot
+    // deletion shifted it +98->+109) -> knob-gated, default off = the raw-multiply formula, edge intact.
+    let score = if tuning.growth_geomean_fold {
+        base * combine_damps(&[trust, overext_damp, proximity, value]) + liq_bonus
+    } else {
+        base * proximity * value * damp + liq_bonus
+    };
     Some(ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, base, proximity, value_raw, value, trust, overext, overext_cap,
@@ -658,7 +667,11 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         "\n─── how the #1 SCORE was computed — {name} ({}), score {displayed:.2}. Verify it yourself ───\n",
         quote.ticker
     ));
-    s.push_str("  growth_score = base × proximity × value × geomean(trust, overext_damp) + liq_bonus\n\n");
+    if tuning.growth_geomean_fold {
+        s.push_str("  growth_score = base × geomean(trust, overext_damp, proximity, value) + liq_bonus   (#8 fold ON)\n\n");
+    } else {
+        s.push_str("  growth_score = base × proximity × value × geomean(trust, overext_damp) + liq_bonus\n\n");
+    }
     s.push_str("  base = trend + accel + risk + quality + dividend + fund + mom121\n");
     s.push_str(&format!("    trend    = growth_trend_weight × min(CAGR, cap)        = {:.2} × {:.2} = {:.2}\n",
         tuning.growth_trend_weight, p.trend, p.trend_term));
@@ -683,8 +696,13 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     }
     s.push_str(&format!("  geomean(trust, overext_damp) = √({:.3} × {:.3})         = {:.3}\n", p.trust, p.overext_damp, p.damp));
     s.push_str(&format!("  liq_bonus    = growth_turnover_weight × ln(max(turn/1e9,1)) = {:.2}\n", p.liq_bonus));
-    s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3} + {:.2} = {:.2}\n",
-        p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
+    if tuning.growth_geomean_fold {
+        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}) + {:.2} = {:.2}\n",
+            p.base, p.trust, p.overext_damp, p.proximity, p.value, p.liq_bonus, p.score));
+    } else {
+        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3} + {:.2} = {:.2}\n",
+            p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
+    }
     if (displayed - p.score).abs() > 1e-6 {
         s.push_str(&format!("  crypto NUPL + BTC-relative adjustment: {:.2} → {displayed:.2} (the table value)\n", p.score));
     }
@@ -1552,6 +1570,12 @@ mod tests {
     assert!((term_sum - parts.base).abs() < 1e-9, "terms must sum to base");
     let recomposed = parts.base * parts.proximity * parts.value * parts.damp + parts.liq_bonus;
     assert!((recomposed - parts.score).abs() < 1e-9, "formula must reproduce score");
+    // (#8) fold path: score must equal base × geomean(trust, overext, proximity, value) + liq_bonus.
+    let mut folded = tuning.clone();
+    folded.growth_geomean_fold = true;
+    let fp = score_parts(&rocket, &folded).unwrap();
+    let expect = fp.base * combine_damps(&[fp.trust, fp.overext_damp, fp.proximity, fp.value]) + fp.liq_bonus;
+    assert!((fp.score - expect).abs() < 1e-9, "#8 fold formula must reproduce score");
     assert_eq!(parts.score, growth_score(&rocket, &tuning).unwrap(), "ScoreParts.score == growth_score");
     assert!(explain_growth_score(&rocket, &tuning, parts.score).is_some());
     // ...and ranked picks it up where the on-sale lane (min_score) would have trimmed an at-high name
