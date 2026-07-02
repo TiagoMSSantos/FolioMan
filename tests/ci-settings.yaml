@@ -181,14 +181,16 @@ buy_heuristic:
   growth_accel_cap: 50.0         # SCORE: cap that 1Y-minus-CAGR acceleration term
   growth_min_score: 5.0          # hide growth rows scoring <= this; 0 = show all top_picks
   growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
-  # (#2) VALUATION BRAKE experiment — the additive, backtest-VALIDATABLE valuation term that replaces the
-  #   blind P/E multiplier above. earnings_yield = E/P from the SEC TTM EPS (#1). Reward-only (clamp 0..cap):
-  #   lifts cheap high-E/P names, gives nosebleeds (LITE E/P ~0.7%) near-zero -> a gentle de-rank, not a
-  #   hard gate. OPEN EXPERIMENT: validate `backtest 12 universe fund` (FUND FACTOR SWEEP) — KEEP only if
-  #   earnings_yield beats price-only on the TEST half with BOTH OOS sub-halves positive; else leave
-  #   growth_fund_weight at 0.0. INERT at weight 0 (factor is only read when the weight is raised).
-  growth_fund_factor: "earnings_yield"
-  growth_fund_weight: 0.0   # OFF by default (fund term inert). REVERTED from a 0.3 experiment — backtest 2026-07-01 (`backtest 12 universe fund`) reported "cutoffs with as-of fundamentals: 0 / 10936" (FUND FACTOR SWEEP skipped, cache empty); growth_fund_weight ablation Δ+0.0 confirms the fund term is inert in the backtest without cached fundamentals, so 0.3 rode BLIND. To validate: populate the FMP `stable/income-statement` cache first, re-run the sweep, KEEP 0.3 (tune to peak) only if earnings_yield beats price-only on TEST + both OOS halves +.
+  # (#2) VALUATION BRAKE experiment — CLOSED 2026-07-02: SHIP NOTHING. Validated at scale via SEC EDGAR
+  #   (`fund_source: "sec"`, free/uncapped — FMP's 250/day cap is burned by one full `screen`, so wide fund
+  #   runs must use SEC): full S&P 500, 12y, 8175/8380 cutoffs with as-of fundamentals. Standalone
+  #   earnings_yield is real but modest (n=1562, rho +0.11, both OOS +); through the lane it LOSES to
+  #   price-only (TEST edge +140.4 vs +151.2 baseline) — the price terms already carry the information.
+  #   Every other factor (margins, rev growth, eps growth, composite) also fails the both-OOS+ keep-rule.
+  #   Re-open only with a NEW factor idea + a wide SEC-sourced `backtest 12 fund <stocks>` that beats
+  #   price-only on TEST with both OOS halves +.
+  growth_fund_factor: "earnings_yield"  # best standalone factor (kept staged for future re-tests); INERT at weight 0
+  growth_fund_weight: 0.0   # OFF — validated verdict above, not a placeholder. The lane is price-only by measurement.
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
@@ -198,7 +200,13 @@ buy_heuristic:
                                  #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).
                                  #   The old "0.1 docks NVDA out" worry was regime-bound — at 0.05 today NVDA still scores 6.7 > min_score
                                  #   5 (it's -10.6% off-hi, not parabolic) and the displayed order is unchanged. 1.0 = brake off.
-  growth_turnover_weight: 0.5    # (L) liquidity tilt per ln(turnover/€1B), added after the brake; lifts deep-liquid compounders (NVDA) over illiquid twins. BACKTEST-BLIND, edge untouched. 0 = off
+  growth_turnover_weight: 0.0    # (L) ZEROED 2026-07-02 after a live A/B (screen at 0.5 vs 0.0): the ln(turnover/€1B) tilt is
+                                 #   BACKTEST-BLIND (backtest quotes carry no turnover) and the A/B showed it does NOT do its
+                                 #   claimed job — it's reward-only, so illiquid junk (ROX.DE €11K/day) sat in the ETF table
+                                 #   WITH the tilt on; all it did was float mega-caps (AAPL/AMZN/TSLA) a few rows and swap
+                                 #   AMD in over FTNT at the tail on turnover alone. A blind term that reorders with no
+                                 #   validated edge gets neutralized (same rule as growth_value_weight). Thin listings are a
+                                 #   GATE problem: use min_avg_turnover_eur (e.g. 1000000) to drop them outright. 0.5 = old tilt
   growth_overext_cap_crypto: 100.0 # (#4) crypto's own brake cap; =equity (no change). Raise (e.g. 200) to brake crypto later — unvalidated (crypto windows too sparse to isolate)
 
   # (4) Crypto market-greed damp from Bitcoin NUPL (already fetched for the screen footer). High NUPL
