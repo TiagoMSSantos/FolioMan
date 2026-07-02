@@ -72,7 +72,14 @@ buy_heuristic:
   max_1m_drop_pct_crypto: -35.0  # LIVE (crypto/FX): looser knife — a -20%/month alt is normal — both lanes
   min_long_pct: 30.0             # [FOIL] on-sale only: reject unless EVERY 5Y/10Y/20Y leg is > this (growth uses a hardcoded >0% 5Y consistency gate instead)
   min_long_pct_crypto: -70.0     # [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -95%)
-  min_avg_turnover_eur: 0        # LIVE: reject names with < this avg daily turnover (EUR) — thin/obscure; 0 = off — both lanes
+  min_avg_turnover_eur: 100000   # LIVE: reject names with < this avg daily turnover (EUR) on THIS listing — both lanes.
+                                 #   Set 2026-07-02 after zeroing the turnover SCORE tilt (which never docked junk): a
+                                 #   hard gate is the honest tool for untradeable listings. 100K kills the real junk
+                                 #   (Expat Romania €11K/day, Expat Greece €0K, GraniteShares FAANG €0K) while sparing
+                                 #   legit-but-thin side listings of big funds (XSLR.MI €125K — turnover is PER LISTING,
+                                 #   not fund AUM, so don't raise this aggressively). Pinned watchlist names bypass all
+                                 #   gates (sentinel score). BACKTEST-BLIND (backtest quotes carry no turnover) — the
+                                 #   validated edge and CI gate are untouched. 0 = off
 
   # --- SCORE — ON-SALE LANE (`buy_score`) — [FOIL] ALL of this section is backtest-only; `screen` ignores it ---
   normal_volatility_pct: 2.0     # [FOIL] a "typical" daily swing %; the dip is scaled by normal/asset vol,
