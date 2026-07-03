@@ -1128,10 +1128,12 @@ static BF_TER: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::
 const BF_TER_KEYS: &[&str] = &["ter", "totalExpenseRatio", "ongoingCharges", "ongoingCharge", "totalExpenseRatioInPercent"];
 
 /// Pull the expense ratio out of one BF `etp_search` row. Tries the known key names (their schema drifts
-/// over time); the value is taken as a PERCENT (BF reports e.g. 0.2 = 0.20%). None if absent / nonsense.
+/// over time); BF sends the value as a FRACTION (0.002 = 0.20% — verified live 2026-07: all 3468 rows,
+/// VUAA = 0.0007 = its known 0.07%), so ×100 to percent. None if absent / nonsense.
 /// BF nests the fund detail ONE level down (keyData / overview / performance sub-objects), so scan the
 /// row's own keys AND one level into any sub-object. Value may arrive as a number OR a string ("0,20%").
-/// ponytail: if a known ETF (VUAA.DE = 0.07%) prints 100× off, BF sent a fraction -> multiply by 100 here.
+/// ponytail: if BF ever flips back to percent, ×100 blows past the <5 sanity filter -> ter_n=0 -> the
+/// first-row-fields diagnostic fires; drop the ×100 then.
 fn bf_row_ter(row: &Value) -> Option<f64> {
     fn num(v: &Value) -> Option<f64> {
         v.as_f64()
@@ -1145,6 +1147,7 @@ fn bf_row_ter(row: &Value) -> Option<f64> {
     let obj = row.as_object()?;
     hit(obj)
         .or_else(|| obj.values().filter_map(|v| v.as_object()).find_map(hit))
+        .map(|t| t * 100.0)
         .filter(|t| t.is_finite() && *t > 0.0 && *t < 5.0)
 }
 
@@ -1350,15 +1353,17 @@ mod tests {
     #[test]
     fn bf_ter_parse() {
     use serde_json::json;
-    assert_eq!(bf_row_ter(&json!({"isin": "X", "ter": 0.07})), Some(0.07)); // primary key, % as-is
-    assert_eq!(bf_row_ter(&json!({"totalExpenseRatio": 0.20})), Some(0.20)); // fallback key
+    // BF sends fractions: 0.0007 = VUAA's known 0.07%. bf_row_ter converts to percent.
+    let near = |v: Option<f64>, want: f64| (v.unwrap() - want).abs() < 1e-9;
+    assert!(near(bf_row_ter(&json!({"isin": "X", "ter": 0.0007})), 0.07)); // primary key
+    assert!(near(bf_row_ter(&json!({"totalExpenseRatio": 0.002})), 0.2)); // fallback key
     assert_eq!(bf_row_ter(&json!({"name": "fund"})), None); // no fee field -> None
-    assert_eq!(bf_row_ter(&json!({"ter": 12.0})), None); // out of sane TER range -> rejected
+    assert_eq!(bf_row_ter(&json!({"ter": 0.12})), None); // 12% after ×100 -> out of sane range, rejected
     assert_eq!(bf_row_ter(&json!({"ter": 0.0})), None); // zero -> None, never a fake 0%
-    // real BF shape: TER nested one level under keyData, not top-level
-    assert_eq!(bf_row_ter(&json!({"isin": "X", "keyData": {"ter": 0.07}})), Some(0.07));
-    // string value with EU decimal comma + percent sign
-    assert_eq!(bf_row_ter(&json!({"overview": {"ongoingCharges": "0,20%"}})), Some(0.20));
+    // real BF shape: TER nested one level under overview, not top-level
+    assert!(near(bf_row_ter(&json!({"isin": "X", "overview": {"totalExpenseRatio": 0.0007}})), 0.07));
+    // string value with EU decimal comma
+    assert!(near(bf_row_ter(&json!({"overview": {"ongoingCharges": "0,002"}})), 0.2));
     }
 
     /// TTM roll-forward off REAL LITE (Lumentum) SEC data: FY 0.37 + current 9mo-YTD 2.59 − prior 9mo-YTD
