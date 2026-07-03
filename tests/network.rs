@@ -218,4 +218,22 @@ fn backtest_edge_holds() {
     } else {
         eprintln!("backtest-gate OK — GROWTH edge {edge:+.1} pts (no OOS line parsed)");
     }
+    // (#29) re-probe WARNING for the shipped hard gates: each GATE SWEEP row prints the mean forward
+    // peer-relative return of the cohort that gate excludes. All three shipped NEGATIVE-or-noise
+    // (stretch −125.1 n=267, maxdd −16.5 n=171, lifetime +30.2 on a noise-level n=10) — a strongly
+    // POSITIVE flip with a real sample means the gate is discarding winners in the current regime and
+    // its threshold should be re-probed (same-batch pair). WARN only, never assert: loosening a gate
+    // is a measured human decision, not a red build.
+    for gate in ["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"] {
+        if let Some(line) = growth.lines().find(|l| l.contains(gate)) {
+            if let (Some(n), Some(mean)) = (num_after(line, "n="), num_after(line, "peer-relative")) {
+                if n >= 30.0 && mean > 20.0 {
+                    eprintln!(
+                        "backtest-gate WARNING — `{gate}` excluded cohort now averages {mean:+.1} pts fwd (n={n:.0}); \
+                         the gate may be discarding winners in this regime — re-probe its threshold before trusting it"
+                    );
+                }
+            }
+        }
+    }
 }

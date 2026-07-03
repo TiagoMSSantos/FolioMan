@@ -958,7 +958,10 @@ fn col_width(spec: &ColSpec, w: &Widths) -> usize {
 /// Render ONE cell's text for column `key`. `mark` is the rank label (number + `*`/`#` flags). All values
 /// come from already-fetched `Quote` fields — pure formatting, no scoring. Unknown key -> "?".
 fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
-    let pct1 = |o: Option<f64>| o.map_or("n/a".to_string(), |v| format!("{v:+.1}%"));
+    // ≥1000% drops the decimal so a +26522% 20Y cell still fits its 8-char column instead of overflowing.
+    let pct1 = |o: Option<f64>| {
+        o.map_or("n/a".to_string(), |v| if v.abs() >= 1000.0 { format!("{v:+.0}%") } else { format!("{v:+.1}%") })
+    };
     // asset class -> which fundamental columns even APPLY. "—" = not applicable to this class (an equity
     // has no expense ratio; an ETF/crypto has no P/E/ROE); "n/a" stays reserved for applies-but-no-data.
     // Unknown class ("" instrument_type) falls through to the value so a real name is never wrongly blanked.
@@ -1006,7 +1009,10 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
             _ => "n/a".to_string(),
         },
         "roe" if stock_only_na => "—".to_string(),
-        "roe" => quote.roe.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        // |ROE| > 100% is almost always a buyback-shrunk or negative-equity DENOMINATOR (AAPL "+152%",
+        // HCA "-113%"), not operating quality -> n/m (not meaningful). The score side is unaffected:
+        // the quality term already clamps ROE to quality_cap.
+        "roe" => quote.roe.map_or("n/a".to_string(), |v| if v.abs() > 100.0 { "n/m".to_string() } else { format!("{v:+.0}%") }),
         "div" => {
             let d = dividend_yield_1y(quote);
             if d > 0.0 {

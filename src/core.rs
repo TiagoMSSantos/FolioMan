@@ -1069,9 +1069,11 @@ pub fn dividend_yields(div_eur: &[Option<f64>], price_eur: Option<f64>) -> Vec<O
         .collect()
 }
 
-/// Signed % from a horizon entry; "n/a" if missing.
+/// Signed % from a horizon entry; "n/a" if missing. ≥1000% drops the decimal so a +26522% 20Y cell
+/// still fits the 8-char horizon column instead of overflowing it.
 pub fn pct_cell(entry: Option<&(String, f64)>) -> String {
     match entry {
+        Some((_, pct)) if pct.abs() >= 1000.0 => format!("{:+.0}%", pct),
         Some((_, pct)) => format!("{:+.1}%", pct),
         None => "n/a".to_string(),
     }
