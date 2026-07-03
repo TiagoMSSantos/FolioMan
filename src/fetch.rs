@@ -326,7 +326,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     } else {
         (None, None)
     };
-    let ter = if is_etf { fetch_expense(client, urls, ticker).await } else { None };
+    // Yahoo labels physical ETCs (gold etc.) EQUITY, but an exact hit in the BF map proves ETP — fill
+    // the TER anyway (map-only: no FMP etf/info call wasted on true equities).
+    let ter = if is_etf { fetch_expense(client, urls, ticker).await } else { bf_ter_exact(ticker) };
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
     // long dividend sums populate for old names. Prepend only the monthly bars that predate the daily
@@ -601,12 +603,27 @@ fn ttm_eps_from_concept(j: &Value) -> Option<f64> {
 async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
     // Börse Frankfurt TER (captured for free during the universe build) first — it covers the EU UCITS
     // ETFs FMP's US-centric free tier leaves n/a. FMP fallback for US-listed ETFs not in the BF list.
-    if let Some(t) = BF_TER.get().and_then(|m| m.get(ticker)).copied() {
+    if let Some(t) = bf_ter_exact(ticker) {
+        return Some(t);
+    }
+    // A pinned EU listing often sits on a different venue than the map's ISIN-resolved one (SPYL.DE
+    // pinned, map holds SPYL.L): issuers keep one mnemonic per fund across venues, so a same-stem hit
+    // is the same fund's TER. ETF-classified quotes only — an equity ticker could stem-collide.
+    if let Some(t) = ticker.split_once('.').and_then(|(stem, _)| {
+        BF_TER.get()?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, t)| *t)
+    }) {
         return Some(t);
     }
     let v = cached_fund_json(client, &urls.fund_expense, ticker, "etf").await?;
     let ter = v.get(0).unwrap_or(&v).get("expenseRatio")?.as_f64()?;
     (ter.is_finite() && ter > 0.0).then_some(ter * 100.0)
+}
+
+/// Exact Börse-Frankfurt TER map hit. Safe for ANY quote type: presence under the exact resolved
+/// symbol proves the listing is an ETP, so Yahoo mislabeling an ETC as EQUITY (physical-gold ETCs)
+/// can't hide its TER.
+fn bf_ter_exact(ticker: &str) -> Option<f64> {
+    BF_TER.get().and_then(|m| m.get(ticker)).copied()
 }
 
 // (G) Cold-fetch budget for the historical-fundamentals lane: FMP free tier = 250 calls/day, so cap
