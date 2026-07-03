@@ -624,6 +624,23 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
 /// tail), so duplicating the checks keeps the load-bearing, edge-validated scorer untouched. Drift only
 /// mislabels the tail, never the rank. Keep in sync if a `score_parts` gate changes.
 pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'static str, String)> {
+    let mut fails = gate_failures(quote, tuning)?;
+    // exactly one gate failed AND it's a CLOSE miss -> a genuine near-miss worth surfacing
+    match fails.len() {
+        1 if fails[0].2 => {
+            let (gate, why, _) = fails.pop().unwrap();
+            Some((gate, why))
+        }
+        _ => None,
+    }
+}
+
+/// Every growth gate this quote FAILS, in gate order: (gate_name, human "why", is_close_miss).
+/// `None` = not assessable as a growth candidate at all (leveraged / stablecoin / unknown turnover /
+/// <2Y history / no 1Y data); empty vec = clears every gate. Shared by the near-miss tail above and
+/// `check`'s held-name gate review, so a held name that would no longer rank gets flagged with the
+/// same wording the screen tail uses.
+pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'static str, String, bool)>> {
     let crypto = is_currency_quoted(&quote.ticker);
     // not a near-miss CANDIDATE: structural rejects / missing data have nothing to "almost pass"
     if is_leveraged(&quote.name) || (crypto && is_stablecoin(&quote.ticker)) {
@@ -681,14 +698,7 @@ pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'stati
     if maxdd_cap > 0.0 && quote.max_drawdown_pct > maxdd_cap {
         fails.push(("maxdd", format!("-{:.0}% worst drawdown (cap -{:.0}%)", quote.max_drawdown_pct, maxdd_cap), quote.max_drawdown_pct <= maxdd_cap + 5.0));
     }
-    // exactly one gate failed AND it's a CLOSE miss -> a genuine near-miss worth surfacing
-    match fails.len() {
-        1 if fails[0].2 => {
-            let (gate, why, _) = fails.pop().unwrap();
-            Some((gate, why))
-        }
-        _ => None,
-    }
+    Some(fails)
 }
 
 /// Human-readable derivation of a growth SCORE: the formula then every term filled in with this quote's

@@ -58,6 +58,27 @@ pub async fn run(args: Vec<String>) {
     // filter: the watchlist is hand-picked, never sector-culled.
     picks::render(&quotes, settings.top_picks, &settings.buy_heuristic, widths, None, &[], &[], None);
 
+    // held-name gate review: a watchlist name that would no longer clear today's growth gates is an
+    // exit-review candidate — the screen would never surface it again, so `check` has to say so.
+    // Not-assessable names (leveraged / stablecoin / missing data) are skipped, not flagged.
+    let flagged: Vec<String> = quotes
+        .iter()
+        .filter_map(|q| {
+            let fails = picks::gate_failures(q, &settings.buy_heuristic)?;
+            if fails.is_empty() {
+                return None;
+            }
+            let why = fails.iter().map(|(gate, why, _)| format!("{gate}: {why}")).collect::<Vec<_>>().join("; ");
+            Some(format!("  {:<ticker_w$} {}", q.ticker, why))
+        })
+        .collect();
+    if !flagged.is_empty() {
+        println!("\ngate review — these would NOT rank in today's screen (review, not auto-sell):");
+        for line in &flagged {
+            println!("{line}");
+        }
+    }
+
     // Euribor / Certificados de Aforro / inflation — the macro backdrop, shared with `screen`
     print_macro_footer(&client, &settings.urls).await;
 }
