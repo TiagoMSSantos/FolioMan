@@ -227,6 +227,14 @@ buy_heuristic:
                                  #   names near a high BEAT the field +61/+64): an ugly PAST is fine, an extreme PRESENT
                                  #   stretch is a measured loser. 150 > brake cap on purpose — the 100..150 band stays in the
                                  #   table (marked `!`), only the blow-off tail is cut. 0 = off.
+  growth_require_lifetime_uptrend: true # (#25) reject equities whose WHOLE-LIFE log-trend CAGR is <= 0: moon-crash-partial-recovery
+                                 #   names whose 10Y leg looks great but never reclaimed their long-run trend (the ranked CAGR uses
+                                 #   the longest 20Y/10Y/5Y leg, so it can't see this). Same-batch pair 2026-07-03: off +115.7
+                                 #   (wins +87.9) / on +119.4 (wins +91.5), OOS +0.13|+0.08 both + either way. CAVEAT: barely binds
+                                 #   in the backtest (n=10 excluded, mean fwd +30.2 -> sweep prints TOO TIGHT) because the 12y pool
+                                 #   is survivors-only — the dot-com-wreck cohort this targets is mostly delisted and never enters.
+                                 #   Shipped on live-table semantics + measured-harmless; a strongly POSITIVE sweep row on a future
+                                 #   maintenance run is the signal to re-question it. Crypto exempt. false = off.
   growth_overext_floor: 0.05     # growth-score multiplier at full stretch. Tightened 0.2->0.15->0.05, each step a harder blow-off-top brake:
                                  #   buying right after a parabola = poor long-hold entry. The walk-forward sweep ranks 0.05 best: wide
                                  #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).

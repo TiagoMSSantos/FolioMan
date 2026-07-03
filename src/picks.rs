@@ -509,6 +509,13 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
         return None;
     }
+    // (#25) LIFETIME-UPTREND gate: the ranked CAGR uses the longest 20Y/10Y/5Y leg, so a name that
+    // mooned at IPO, crashed, and partially recovered can show a healthy 10Y CAGR while its WHOLE-LIFE
+    // trend is still negative. quote.trend_cagr is the full-history log-slope fit (endpoint-robust,
+    // same fn live and in backtest_quote -> train==serve); reject when it never turned positive.
+    if !crypto && tuning.growth_require_lifetime_uptrend && quote.trend_cagr.is_some_and(|t| t <= 0.0) {
+        return None;
+    }
 
     // ---- SCORE ----
     let trend = long_cagr.min(tuning.long_trend_cap); // proven compounding, capped like the on-sale lane
@@ -656,6 +663,11 @@ pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'stati
     }
     if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
         fails.push(("stretch", format!("+{:.0}% above 200wk SMA (ceiling +{:.0}%)", quote.above_ma_pct, tuning.growth_max_above_ma), quote.above_ma_pct <= tuning.growth_max_above_ma + 25.0));
+    }
+    if !crypto && tuning.growth_require_lifetime_uptrend {
+        if let Some(t) = quote.trend_cagr.filter(|&t| t <= 0.0) {
+            fails.push(("lifetime", format!("{t:+.1}%/yr whole-life trend (need >0)"), t > -3.0));
+        }
     }
     // exactly one gate failed AND it's a CLOSE miss -> a genuine near-miss worth surfacing
     match fails.len() {
