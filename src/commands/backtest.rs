@@ -211,8 +211,13 @@ pub async fn run(args: Vec<String>) {
                             let fwd = i + off;
                             // record EVERY cutoff with a forward window (not just gated ones) so the
                             // peer-mean spans the whole period universe; each lane filters by its own gates.
-                            let mut quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
                             let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
+                            if !realized.is_finite() {
+                                // zero/garbage close -> ±inf poisons the demeaned bucket; skip the cutoff
+                                i += step;
+                                continue;
+                            }
+                            let mut quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
                             let mut fund = fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], years));
                             // (Item 4) attach the as-of net insider buys (90d before the cutoff, transaction-
                             // date guarded) onto the SAME FundFactors; build one if the FMP lane is off so
@@ -376,9 +381,13 @@ async fn hold_period_sweep(
                     let target = dates[i] + chrono::Duration::days(h * 365);
                     match dates[i..].iter().position(|d| *d >= target) {
                         Some(off) => {
-                            let quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
                             let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
-                            out.push((h, Sample { date: dates[i], realized, relative: 0.0, quote, fund: None }));
+                            // a zero/garbage close makes realized ±inf; one poisoned cutoff drags the
+                            // whole demeaned bucket to -inf (short holds reach data the 12y path never walks)
+                            if realized.is_finite() {
+                                let quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
+                                out.push((h, Sample { date: dates[i], realized, relative: 0.0, quote, fund: None }));
+                            }
                         }
                         None => break,
                     }
