@@ -35,10 +35,10 @@ pub async fn run(args: Vec<String>) {
     let fx_cache = fetch::fx_cache();
     // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it.
     // etf_tickers = Xetra-ETF source set, used below to fix Yahoo mislabeling them as EQUITY.
-    let (mut universe, etf_tickers) = if args.is_empty() {
+    let (mut universe, etf_tickers, sector_of) = if args.is_empty() {
         fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &settings.sectors).await
     } else {
-        (args, std::collections::HashSet::new())
+        (args, std::collections::HashSet::new(), std::collections::HashMap::new())
     };
     // watchlist tickers are ALWAYS fetched so they show in their table for comparison (sector filter or not)
     universe.extend(settings.tickers.iter().cloned());
@@ -111,7 +111,7 @@ pub async fn run(args: Vec<String>) {
 
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
-    render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &settings.tickers, explain.as_deref());
+    render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, explain.as_deref());
 
     // (B) NEAR-MISS tail: names the growth lane rejected on EXACTLY one gate — a compounder one notch
     // outside the fence (e.g. a great name 25% off its high failing only the range gate). Makes the silent

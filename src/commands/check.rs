@@ -56,7 +56,7 @@ pub async fn run(args: Vec<String>) {
 
     // best growth candidates (heuristic, derived from the table above — no extra fetch). Empty sector
     // filter: the watchlist is hand-picked, never sector-culled.
-    picks::render(&quotes, settings.top_picks, &settings.buy_heuristic, widths, None, &[], &[], None);
+    picks::render(&quotes, settings.top_picks, &settings.buy_heuristic, widths, None, &[], &std::collections::HashMap::new(), &[], None);
 
     // held-name gate review: a watchlist name that would no longer clear today's growth gates is an
     // exit-review candidate — the screen would never surface it again, so `check` has to say so.

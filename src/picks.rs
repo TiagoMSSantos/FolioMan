@@ -1099,7 +1099,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
 /// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
-fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>) {
+fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>) {
     let min_score = tuning.growth_min_score;
     let (crypto, equity): (Vec<_>, Vec<_>) =
         picks.into_iter().partition(|(quote, _)| is_currency_quoted(&quote.ticker));
@@ -1120,6 +1120,32 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // P/E, PEG, ROE are equity-only; TER is ETF-only. Hide the always-"—" columns per class: stocks drop
     // TER, ETFs drop the equity fundamentals, crypto drops both.
     print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w, pinned, &["ter"], tuning);
+    // (#27) cluster concentration: a top-20 stock table is usually ~3 correlated trades, not 20
+    // independent bets — count the SHOWN rows per GICS sector so "semis-heavy" is a number, not a
+    // vibe. Display-only; empty map (`check`, explicit-args screen) skips the sector line. Names
+    // outside the constituent CSVs (Lisbon pond, watchlist pins) count under "other".
+    // (#28) same for LISTING MARKET (currency/country exposure): 20/20 USA = one FX bet on the dollar.
+    let mix_line = |label: &str, counts: HashMap<&str, usize>, hint: &str| {
+        let mut counts: Vec<_> = counts.into_iter().collect();
+        counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        let mix = counts.iter().map(|(k, c)| format!("{k} {c}")).collect::<Vec<_>>().join(", ");
+        println!("  ({label}: {mix} — {hint})");
+    };
+    let shown: Vec<&Quote> = stock.iter().take(n).map(|(quote, _)| *quote).collect();
+    if !shown.is_empty() {
+        if !sector_of.is_empty() {
+            let mut counts: HashMap<&str, usize> = HashMap::new();
+            for quote in &shown {
+                *counts.entry(sector_of.get(&quote.ticker).map_or("other", String::as_str)).or_insert(0) += 1;
+            }
+            mix_line("sector mix", counts, "names in one sector move together; treat each sector as ONE bet when sizing");
+        }
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        for quote in &shown {
+            *counts.entry(quote.market.as_str()).or_insert(0) += 1;
+        }
+        mix_line("market mix", counts, "listing country ~ currency exposure; all-USA = one bet on the dollar too");
+    }
     print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe"], tuning);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
@@ -1156,7 +1182,7 @@ pub fn crypto_adjust(quote: &Quote, base: f64, tuning: &BuyHeuristic, cfactor: f
 /// deepest-dip ranking picks future LOSERS over a multi-decade hold. `nupl` (Bitcoin
 /// net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or fetch fail) damps
 /// the crypto rows when the market is euphoric.
-pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], pinned: &[String], explain: Option<&str>) {
+pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], explain: Option<&str>) {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
     let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
@@ -1199,7 +1225,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
         None => picks.first(),
     };
     let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
-    print_lane(picks, n, w, "growth candidates", growth, sectors, tuning, &pinned_set);
+    print_lane(picks, n, w, "growth candidates", growth, sectors, sector_of, tuning, &pinned_set);
     match (explain_text, explain) {
         (Some(text), _) => println!("{text}"),
         // an explicit --explain TICKER that didn't land a row: say why instead of silently printing nothing

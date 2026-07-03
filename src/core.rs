@@ -366,17 +366,23 @@ pub fn sector_matches(haystack: &str, sectors: &[String]) -> bool {
         || sectors.iter().any(|s| haystack.to_lowercase().contains(&s.trim().to_lowercase()))
 }
 
-/// Parse one S&P-500 constituents CSV row -> Yahoo symbol, keeping it only if its GICS sector (col 2)
-/// passes the `sectors` filter (empty = all sectors). Columns: Symbol, Security, "GICS Sector", ... —
-/// Symbol (0) and Sector (2) carry no commas in this dataset, so a naive split is enough.
-pub fn sector_symbol(csv_line: &str, sectors: &[String]) -> Option<String> {
-    let cols: Vec<&str> = csv_line.splitn(4, ',').collect();
+/// Parse one S&P-500 constituents CSV row -> (Yahoo symbol, GICS sector), keeping it only if the
+/// sector passes the `sectors` filter (empty = all sectors). Columns: Symbol, Security,
+/// "GICS Sector", ... — Symbol and Sector carry no commas in this dataset, but the Security NAME
+/// can (quoted, e.g. `"Casey's General Stores, Inc."`), which shifts the sector one column right
+/// under a naive split. The sector rides along so the screen can print the top table's sector mix.
+pub fn sector_symbol(csv_line: &str, sectors: &[String]) -> Option<(String, String)> {
+    let cols: Vec<&str> = csv_line.splitn(5, ',').collect();
     let sym = cols.first()?.trim();
-    let sector = cols.get(2)?.trim();
+    // ponytail: only the ONE quoted comma seen in this dataset is handled; a two-comma name would
+    // need a real CSV parser — add one only if the sector mix ever prints another garbage label.
+    let name = cols.get(1)?.trim();
+    let shifted = name.starts_with('"') && !name.ends_with('"');
+    let sector = cols.get(if shifted { 3 } else { 2 })?.trim();
     if sym.is_empty() || !sector_matches(sector, sectors) {
         return None;
     }
-    Some(sym.replace('.', "-")) // BRK.B -> BRK-B (Yahoo form)
+    Some((sym.replace('.', "-"), sector.to_string())) // BRK.B -> BRK-B (Yahoo form)
 }
 
 /// Parse a NASDAQ Trader SymDir file (pipe-delimited) -> ETF symbols (Yahoo form): keep col-0 symbols
@@ -1273,12 +1279,20 @@ mod tests {
     assert!(sector_matches("iShares Tech Sector Technology UCITS", &tech)); // ETF name path
     assert!(!sector_matches("Industrials", &tech));
     // sector_symbol: keep only filter-matching sectors (Yahoo-normalized), all when filter empty
-    assert_eq!(sector_symbol("AAPL,Apple Inc.,Information Technology,Tech HW,x,y", &tech), Some("AAPL".to_string()));
-    assert_eq!(sector_symbol("GOOGL,Alphabet,Communication Services,x", &tech), Some("GOOGL".to_string()));
-    assert_eq!(sector_symbol("BF.B,Brown-Forman,Information Technology,x", &tech), Some("BF-B".to_string())); // '.'->'-'
+    assert_eq!(
+        sector_symbol("AAPL,Apple Inc.,Information Technology,Tech HW,x,y", &tech),
+        Some(("AAPL".to_string(), "Information Technology".to_string()))
+    );
+    assert_eq!(sector_symbol("GOOGL,Alphabet,Communication Services,x", &tech).map(|(s, _)| s), Some("GOOGL".to_string()));
+    assert_eq!(sector_symbol("BF.B,Brown-Forman,Information Technology,x", &tech).map(|(s, _)| s), Some("BF-B".to_string())); // '.'->'-'
     assert_eq!(sector_symbol("MMM,3M,Industrials,x", &tech), None);
     assert_eq!(sector_symbol("AMZN,Amazon,Consumer Discretionary,x", &tech), None); // GICS quirk: not tech
-    assert_eq!(sector_symbol("MMM,3M,Industrials,x", &[]), Some("MMM".to_string())); // empty filter -> all sectors
+    assert_eq!(sector_symbol("MMM,3M,Industrials,x", &[]).map(|(s, _)| s), Some("MMM".to_string())); // empty filter -> all sectors
+    // quoted comma in the Security NAME shifts the sector one column right — must still read the sector
+    assert_eq!(
+        sector_symbol("CASY,\"Casey's General Stores, Inc.\",Consumer Staples,x", &[]),
+        Some(("CASY".to_string(), "Consumer Staples".to_string()))
+    );
     // etf_symbols: keep ETF flag = Y at the given column, skip header/footer/$/non-ETF; '.'->'-'
     let nasdaq = "Symbol|Name|Cat|Test|Fin|Lot|ETF|NS\nQQQ|Invesco QQQ|Q|N|N|100|Y|N\nAAPL|Apple|Q|N|N|100|N|N\nFOO$|x|Q|N|N|100|Y|N\nFile Creation Time: now";
     assert_eq!(etf_symbols(nasdaq, 6), vec!["QQQ".to_string()]); // AAPL=N dropped, FOO$ dropped, footer skipped

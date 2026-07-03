@@ -1267,8 +1267,15 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
 /// US-listed NASDAQ-Trader ETFs are dropped: none are EU-buyable, so they only wasted fetches.
 /// Sorted + deduped; empty if all sources fail. Also returns the Xetra-ETF ticker set so the caller
 /// can force-classify them as ETF — Yahoo mislabels some (e.g. structured products) as `EQUITY`, which
-/// would otherwise leak them into the stocks table past the sector filter.
-pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur: bool, sectors: &[String]) -> (Vec<String>, std::collections::HashSet<String>) {
+/// would otherwise leak them into the stocks table past the sector filter — and the ticker -> GICS
+/// sector map (constituent-CSV stocks only) so the stocks table can print its sector mix.
+pub async fn fetch_universe(
+    client: &Client,
+    urls: &Urls,
+    cap: usize,
+    prefer_eur: bool,
+    sectors: &[String],
+) -> (Vec<String>, std::collections::HashSet<String>, std::collections::HashMap<String, String>) {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
     let (cg, etfs, lisbon) = tokio::join!(
         get_json(client, &cg_url),
@@ -1292,8 +1299,12 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
     // stocks: each constituent CSV -> Yahoo symbol, kept only if the row's GICS sector passes `sectors`
     // (empty = all). Filtering HERE means a sector-restricted screen never even fetches the other
     // sectors' companies. `.take(cap)` AFTER the filter so cap counts matching names per pond, not raw rows.
+    let mut sector_of = std::collections::HashMap::new();
     for text in csv_texts.into_iter().flatten() {
-        out.extend(text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).take(cap));
+        for (sym, sector) in text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).take(cap) {
+            out.push(sym.clone());
+            sector_of.insert(sym, sector);
+        }
     }
     // Euronext Lisbon equities (Yahoo `.LS`). note: NOT sector-filtered — the set is ~33 names,
     // so a sector-restricted screen could leak a few Lisbon stocks; tighten only if that ever bites
@@ -1303,7 +1314,7 @@ pub async fn fetch_universe(client: &Client, urls: &Urls, cap: usize, prefer_eur
     out.extend(etfs); // EU-buyable UCITS ETFs (Yahoo symbols)
     out.sort();
     out.dedup();
-    (out, etf_set)
+    (out, etf_set, sector_of)
 }
 
 /// Network-module asserts (no live calls): the pure, breakable bit of the Börse Frankfurt signer is
