@@ -328,7 +328,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     };
     // Yahoo labels physical ETCs (gold etc.) EQUITY, but an exact hit in the BF map proves ETP — fill
     // the TER anyway (map-only: no FMP etf/info call wasted on true equities).
-    let ter = if is_etf { fetch_expense(client, urls, ticker).await } else { bf_ter_exact(ticker) };
+    let ter = if is_etf { fetch_expense(client, urls, ticker, &chart.name).await } else { bf_ter_exact(ticker) };
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
     // long dividend sums populate for old names. Prepend only the monthly bars that predate the daily
@@ -600,7 +600,7 @@ fn ttm_eps_from_concept(j: &Value) -> Option<f64> {
 /// an FMP-covered ETF — FMP's free tier is US-centric, so EU-listed UCITS ETFs (e.g. VUAA.DE) often
 /// return nothing and the column stays n/a for them.
 /// ponytail: scale is the FMP convention; if a known US ETF prints 100× off, drop the ×100 here.
-async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
+async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str, name: &str) -> Option<f64> {
     // Börse Frankfurt TER (captured for free during the universe build) first — it covers the EU UCITS
     // ETFs FMP's US-centric free tier leaves n/a. FMP fallback for US-listed ETFs not in the BF list.
     if let Some(t) = bf_ter_exact(ticker) {
@@ -612,6 +612,10 @@ async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str) -> Option<f64
     if let Some(t) = ticker.split_once('.').and_then(|(stem, _)| {
         BF_TER.get()?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, t)| *t)
     }) {
+        return Some(t);
+    }
+    // Last BF resort: unique fund-name prefix (rescues VVSM.DE, whose venue the symbol map can't reach).
+    if let Some(t) = bf_ter_by_name(name) {
         return Some(t);
     }
     let v = cached_fund_json(client, &urls.fund_expense, ticker, "etf").await?;
@@ -1157,6 +1161,27 @@ async fn borse_frankfurt_post(client: &Client, url: &str, salt: &str, body: &Val
 /// `fetch_expense` reads it to fill TER for EU UCITS ETFs that FMP's US-centric free tier never covers.
 static BF_TER: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
 
+/// (lowercased BF fund name, TER %) for ALL BF rows — the name-keyed fallback for pinned listings whose
+/// symbol/venue never appears in `BF_TER` (VVSM.DE: its ISIN resolves only to the chart-less .SG venue,
+/// so the symbol map can't carry it). Consulted by unique-PREFIX match only: the live list had ~25
+/// "Amundi STOXX Europe 600 …" share classes sharing a prefix, so a non-unique match means "not sure",
+/// never a guess.
+static BF_TER_NAMES: std::sync::OnceLock<Vec<(String, f64)>> = std::sync::OnceLock::new();
+
+/// Yahoo-name -> BF TER via unique prefix (Yahoo drops BF's share-class suffix: "VanEck Semiconductor
+/// UCITS ETF" vs BF's "… - USD Acc"). None unless EXACTLY one BF fund name starts with the quote's name.
+fn bf_ter_by_name(name: &str) -> Option<f64> {
+    let n = name.trim().to_lowercase();
+    if n.len() < 10 {
+        return None; // too short to identify one fund
+    }
+    let mut hits = BF_TER_NAMES.get()?.iter().filter(|(bf, _)| bf.starts_with(&n));
+    match (hits.next(), hits.next()) {
+        (Some((_, t)), None) => Some(*t),
+        _ => None,
+    }
+}
+
 const BF_TER_KEYS: &[&str] = &["ter", "totalExpenseRatio", "ongoingCharges", "ongoingCharge", "totalExpenseRatioInPercent"];
 
 /// Pull the expense ratio out of one BF `etp_search` row. Tries the known key names (their schema drifts
@@ -1201,6 +1226,15 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
     let rows: Vec<(String, Option<f64>)> = match borse_frankfurt_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
         Some(j) => match j.get("data").and_then(|d| d.as_array()) {
             Some(arr) => {
+                // name-keyed TER list from ALL rows (not just the top-cap): a pinned name's fund can
+                // sit below the turnover cutoff and still deserve its TER.
+                let _ = BF_TER_NAMES.set(
+                    arr.iter()
+                        .filter_map(|r| {
+                            Some((r.pointer("/name/originalValue")?.as_str()?.trim().to_lowercase(), bf_row_ter(r)?))
+                        })
+                        .collect(),
+                );
                 if let Some(o) = arr.first().and_then(|r| r.as_object()) {
                     // top-level keys PLUS one level into each sub-object (TER nests under keyData/overview/
                     // performance), so a renamed field anywhere self-diagnoses in one run.
@@ -1396,6 +1430,22 @@ mod tests {
     assert!(near(bf_row_ter(&json!({"isin": "X", "overview": {"totalExpenseRatio": 0.0007}})), 0.07));
     // string value with EU decimal comma
     assert!(near(bf_row_ter(&json!({"overview": {"ongoingCharges": "0,002"}})), 0.2));
+    }
+
+    /// Name-keyed TER fallback: unique fund-name prefix hits, ambiguous share-class prefixes and
+    /// too-short names never guess.
+    #[test]
+    fn bf_ter_name_lookup() {
+        let _ = BF_TER_NAMES.set(vec![
+            ("vaneck semiconductor ucits etf - usd acc".into(), 0.35),
+            ("amundi stoxx europe 600 banks ucits etf acc".into(), 0.30),
+            ("amundi stoxx europe 600 banks ucits etf dist".into(), 0.30),
+        ]);
+        assert_eq!(bf_ter_by_name("VanEck Semiconductor UCITS ETF"), Some(0.35)); // unique prefix
+        assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF"), None); // 2 share classes -> ambiguous
+        assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF Dist"), Some(0.30)); // exact class
+        assert_eq!(bf_ter_by_name("vaneck"), None); // too short
+        assert_eq!(bf_ter_by_name("iShares Physical Gold ETC"), None); // not in list
     }
 
     /// TTM roll-forward off REAL LITE (Lumentum) SEC data: FY 0.37 + current 9mo-YTD 2.59 − prior 9mo-YTD
