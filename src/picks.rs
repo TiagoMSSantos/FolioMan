@@ -942,18 +942,21 @@ fn fmt_cell(s: &str, width: usize, right: bool) -> String {
 
 /// The effective width of a column: its fixed `ColSpec.width`, or the data-sized `Widths` value when 0.
 fn col_width(spec: &ColSpec, w: &Widths) -> usize {
-    // explicit settings.yaml override wins for any column; still floored at the header so it never clips it.
-    if let Some(&n) = w.column_widths.get(spec.key) {
-        return n.max(spec.hdr.chars().count());
-    }
-    match (spec.width, spec.key) {
-        (0, "name") => w.name,
-        (0, "ticker") => w.ticker,
-        (0, "market") => w.market,
-        (0, "price") => w.price,
-        (0, "score") => w.score,
-        (fixed, _) => fixed.max(spec.hdr.chars().count()), // never narrower than the header
-    }
+    // explicit settings.yaml override wins for any column; EVERY path is floored at the header so a
+    // too-tight width setting can clip data but never the header itself (price: 9 printed "PRICE(EUR").
+    let base = if let Some(&n) = w.column_widths.get(spec.key) {
+        n
+    } else {
+        match (spec.width, spec.key) {
+            (0, "name") => w.name,
+            (0, "ticker") => w.ticker,
+            (0, "market") => w.market,
+            (0, "price") => w.price,
+            (0, "score") => w.score,
+            (fixed, _) => fixed,
+        }
+    };
+    base.max(spec.hdr.chars().count()) // never narrower than the header
 }
 
 /// Render ONE cell's text for column `key`. `mark` is the rank label (number + `*`/`#` flags). All values
