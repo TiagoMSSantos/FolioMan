@@ -227,6 +227,13 @@ buy_heuristic:
                                  #   names near a high BEAT the field +61/+64): an ugly PAST is fine, an extreme PRESENT
                                  #   stretch is a measured loser. 150 > brake cap on purpose — the 100..150 band stays in the
                                  #   table (marked `!`), only the blow-off tail is cut. 0 = off.
+  growth_maxdd_cap: 83.0         # (#26) reject equities whose worst-EVER peak-to-trough loss exceeds 83% (magnitude; crypto
+                                 #   exempt — BTC itself is -83%). A >83% wipeout survivor is a lottery ticket, not a compounder.
+                                 #   Same-batch pair 2026-07-03: off +119.5 (wins +91.5, OOS +0.13|+0.08) / on +128.4 (wins
+                                 #   +98.3, OOS +0.14|+0.11 — BOTH halves up); the n=171 names it excludes average -16.5 pts
+                                 #   fwd vs peers. Second gate-beats-damp case (after #24): Calmar as a continuous damp was
+                                 #   measured harmful, yet the hard tail cut pays — damp-verdicts don't transfer to gates.
+                                 #   0 = off.
   growth_require_lifetime_uptrend: true # (#25) reject equities whose WHOLE-LIFE log-trend CAGR is <= 0: moon-crash-partial-recovery
                                  #   names whose 10Y leg looks great but never reclaimed their long-run trend (the ranked CAGR uses
                                  #   the longest 20Y/10Y/5Y leg, so it can't see this). Same-batch pair 2026-07-03: off +115.7

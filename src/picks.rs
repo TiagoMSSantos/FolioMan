@@ -516,6 +516,12 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if !crypto && tuning.growth_require_lifetime_uptrend && quote.trend_cagr.is_some_and(|t| t <= 0.0) {
         return None;
     }
+    // (#26) MAXDD gate: reject names whose worst-ever peak-to-trough loss exceeds the cap — the
+    // continuous pain signals (Sharpe/Calmar) were measured near-inert here, but a hard tail cut is a
+    // different lever (round 7 precedent: damp-verdicts don't transfer to gates). Crypto exempt.
+    if !crypto && tuning.growth_maxdd_cap > 0.0 && quote.max_drawdown_pct > tuning.growth_maxdd_cap {
+        return None;
+    }
 
     // ---- SCORE ----
     let trend = long_cagr.min(tuning.long_trend_cap); // proven compounding, capped like the on-sale lane
@@ -668,6 +674,9 @@ pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'stati
         if let Some(t) = quote.trend_cagr.filter(|&t| t <= 0.0) {
             fails.push(("lifetime", format!("{t:+.1}%/yr whole-life trend (need >0)"), t > -3.0));
         }
+    }
+    if !crypto && tuning.growth_maxdd_cap > 0.0 && quote.max_drawdown_pct > tuning.growth_maxdd_cap {
+        fails.push(("maxdd", format!("-{:.0}% worst drawdown (cap -{:.0}%)", quote.max_drawdown_pct, tuning.growth_maxdd_cap), quote.max_drawdown_pct <= tuning.growth_maxdd_cap + 5.0));
     }
     // exactly one gate failed AND it's a CLOSE miss -> a genuine near-miss worth surfacing
     match fails.len() {

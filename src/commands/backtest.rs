@@ -307,6 +307,7 @@ pub async fn run(args: Vec<String>) {
         ("min_avg_turnover_eur ->0", |t| t.min_avg_turnover_eur = 0.0),
         ("growth_max_above_ma ->off", |t| t.growth_max_above_ma = 0.0), // (#24) fwd return of the extreme-stretch names the gate excludes — validated -125.1 (n=267) at ship time; a POSITIVE flip here says re-probe the ceiling
         ("growth_require_lifetime_uptrend ->off", |t| t.growth_require_lifetime_uptrend = false), // (#25) fwd return of the lifetime-downtrend names the gate excludes; n=0 while the gate is off
+        ("growth_maxdd_cap ->off", |t| t.growth_maxdd_cap = 0.0), // (#26) fwd return of the deep-drawdown names the gate excludes; n=0 while the gate is off
     ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, buy_knobs);
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, growth_knobs);
