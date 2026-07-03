@@ -72,13 +72,17 @@ buy_heuristic:
   max_1m_drop_pct_crypto: -35.0  # LIVE (crypto/FX): looser knife — a -20%/month alt is normal — both lanes
   min_long_pct: 30.0             # [FOIL] on-sale only: reject unless EVERY 5Y/10Y/20Y leg is > this (growth uses a hardcoded >0% 5Y consistency gate instead)
   min_long_pct_crypto: -70.0     # [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -95%)
-  min_avg_turnover_eur: 100000   # LIVE: reject names with < this avg daily turnover (EUR) on THIS listing — both lanes.
-                                 #   Set 2026-07-02 after zeroing the turnover SCORE tilt (which never docked junk): a
-                                 #   hard gate is the honest tool for untradeable listings. 100K kills the real junk
-                                 #   (Expat Romania €11K/day, Expat Greece €0K, GraniteShares FAANG €0K) while sparing
-                                 #   legit-but-thin side listings of big funds (XSLR.MI €125K — turnover is PER LISTING,
-                                 #   not fund AUM, so don't raise this aggressively). Pinned watchlist names bypass all
-                                 #   gates (sentinel score). BACKTEST-BLIND (backtest quotes carry no turnover) — the
+  min_avg_turnover_eur: 500000   # LIVE: reject names with < this avg daily turnover (EUR) on THIS listing — both lanes.
+                                 #   Set 2026-07-02 at 100K after zeroing the turnover SCORE tilt (which never docked
+                                 #   junk): a hard gate is the honest tool for untradeable listings. 100K killed the real
+                                 #   junk (Expat Romania €11K/day, Expat Greece €0K, GraniteShares FAANG €0K).
+                                 #   Raised to 500K 2026-07-03 (live full-screen A/B vs 100K): drops exactly 4 thin ETF
+                                 #   listings — both silver ETCs (XSLE.DE €327K, XSLR.MI €125K, commodity spikes ranked
+                                 #   #1-2 on sub-5y history) + CHIP.SW €266K + WTEC.SW €164K (side listings; semis/tech
+                                 #   coverage kept via VVSM.DE €38M, SEMI.AS €6M, XDWT.L €3M). Stocks + crypto tables
+                                 #   byte-identical. Turnover is PER LISTING, not fund AUM — 500K still spares any
+                                 #   listing a retail order can actually exit. Pinned watchlist names bypass all gates
+                                 #   (sentinel score). BACKTEST-BLIND (backtest quotes carry no turnover) — the
                                  #   validated edge and CI gate are untouched. 0 = off
   endpoint_smooth_days: 105      # LIVE+BACKTEST: the "current price" used by the LONG-horizon MEASUREMENTS (>=1Y
                                  #   perf %/long CAGR legs, range position, drawdown — so the hard range gate) = mean
