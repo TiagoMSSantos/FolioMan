@@ -989,7 +989,16 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
         }
         m
     };
-    let rev = collect(&["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"], "USD");
+    // ExcludingAssessedTax listed before Including: when a filer reports both for a period (values
+    // differ by the assessed taxes) the first-inserted wins on a filed-date tie, and Excluding is the
+    // cleaner revenue line. ServicesNet/GoodsNet = the pre-2018 (pre-ASC-606) era of service/goods
+    // filers (e.g. ODFL) whose whole history was invisible without them.
+    let rev = collect(
+        &["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
+          "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "SalesRevenueServicesNet",
+          "SalesRevenueGoodsNet"],
+        "USD",
+    );
     let gp = collect(&["GrossProfit"], "USD");
     let op = collect(&["OperatingIncomeLoss"], "USD");
     let ni = collect(&["NetIncomeLoss"], "USD");
