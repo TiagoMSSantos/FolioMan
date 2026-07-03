@@ -1323,7 +1323,9 @@ pub async fn fetch_universe(
     for pond in ponds {
         for (sym, sector) in pond.into_iter().take(cap) {
             out.push(sym.clone());
-            sector_of.insert(sym, sector);
+            // first pond wins: a dual-member (e.g. AAPL in S&P 500 AND Nasdaq-100) keeps its real
+            // GICS sector — the sector-less pond's "other" must not overwrite it
+            sector_of.entry(sym).or_insert(sector);
         }
     }
     // Euronext Lisbon equities (Yahoo `.LS`). note: NOT sector-filtered — the set is ~33 names,
