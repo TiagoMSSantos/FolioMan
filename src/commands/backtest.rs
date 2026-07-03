@@ -318,6 +318,7 @@ pub async fn run(args: Vec<String>) {
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, growth_knobs);
     gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
     gate_sweep(&samples, tuning, gate_loosen); // (#10) which specific gate is too tight?
+    exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
     if fund || insider {
         report_fund_lane(&samples);
         sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
@@ -361,7 +362,7 @@ async fn hold_period_sweep(
     step: usize,
     tuning: &BuyHeuristic,
 ) {
-    const HOLDS: [i64; 4] = [1, 2, 3, 5]; // forward windows (years) to compare
+    const HOLDS: [i64; 6] = [1, 2, 3, 5, 8, 10]; // forward windows (years) to compare
     eprintln!("backtest: hold-period sweep over {HOLDS:?}y windows ({} tickers)…", tickers.len());
     let per_ticker: Vec<Vec<(i64, Sample)>> = stream::iter(tickers.iter())
         .map(|tk| async move {
@@ -1046,6 +1047,21 @@ fn report_lane(
         split_rho(&scored[mid..])
     );
 
+    // (Item 30) regime slices: the edge within each chronological quarter of the scored sample.
+    // Guards against "the whole edge is one bull regime" — a real selection signal should show up
+    // (not necessarily equally) across eras. Returns are already peer-relative per ~6mo bucket, so
+    // each era's edge reads selection within that era, not the era's beta.
+    println!("  edge by era (chronological quarters):");
+    for q in 0..4 {
+        let (lo, hi) = (scored.len() * q / 4, scored.len() * (q + 1) / 4);
+        let era = &scored[lo..hi];
+        if era.len() < 4 {
+            continue;
+        }
+        let (t, b) = edge_halves(era);
+        println!("    {} .. {}  n={:<6} edge {:+.1} pts", era[0].0.date, era[era.len() - 1].0.date, era.len(), t - b);
+    }
+
     // ablation: zero each knob, re-score the SAME gated rows, recompute BOTH metrics. Δrho = rank
     // selection change; Δedge = profit-spread change (the one that matters). +Δ ⇒ the knob HURT,
     // −Δ ⇒ it HELPED. Watch for sign disagreement: a knob that's −Δedge (load-bearing for profit)
@@ -1066,6 +1082,54 @@ fn report_lane(
     }
 }
 
+/// (Item 31) Split each ticker's consecutive-cutoff pairs where the EARLIER cutoff passed the lane's
+/// gates: did the later cutoff keep passing, or newly fail? Returns the two cohorts' forward
+/// peer-relative returns (taken AT the later cutoff = the moment a holder would see the flip).
+/// Pure so the split is unit-testable; consecutive cutoffs are ~6mo apart by construction.
+fn exit_cohorts(
+    samples: &[Sample],
+    scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
+    tuning: &BuyHeuristic,
+) -> (Vec<f64>, Vec<f64>) {
+    let mut by_ticker: HashMap<&str, Vec<&Sample>> = HashMap::new();
+    for s in samples {
+        by_ticker.entry(s.quote.ticker.as_str()).or_default().push(s);
+    }
+    let (mut kept, mut failed) = (Vec::new(), Vec::new());
+    for series in by_ticker.values_mut() {
+        series.sort_by_key(|s| s.date);
+        for w in series.windows(2) {
+            if scorer(&w[0].quote, tuning).is_some() {
+                if scorer(&w[1].quote, tuning).is_some() {
+                    kept.push(w[1].relative);
+                } else {
+                    failed.push(w[1].relative);
+                }
+            }
+        }
+    }
+    (kept, failed)
+}
+
+/// (Item 31) The buy-and-hold plan's missing half: after a name is BOUGHT (passed the growth gates),
+/// is a later gate failure a sell signal or a wobble to hold through? Compares the forward
+/// peer-relative return of names that newly FAILED a gate vs names that kept passing, both measured
+/// from the flip cutoff. A strongly negative gap = the gate review in `check` is an evidence-backed
+/// exit trigger; a flat gap = hold through it.
+fn exit_probe(samples: &[Sample], scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>, tuning: &BuyHeuristic) {
+    let (kept, failed) = exit_cohorts(samples, scorer, tuning);
+    println!("\n── EXIT PROBE (growth lane: passed gates ~6mo ago -> what next?) ──");
+    if kept.len() < 4 || failed.len() < 4 {
+        println!("  too few flips to read (kept {} / newly-failed {}).", kept.len(), failed.len());
+        return;
+    }
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    let (mk, mf) = (mean(&kept), mean(&failed));
+    println!("  kept passing   n={:<6} mean fwd peer-relative {mk:+.1} pts", kept.len());
+    println!("  newly FAILED   n={:<6} mean fwd peer-relative {mf:+.1} pts", failed.len());
+    println!("  gap {:+.1} pts  (strongly negative = gate failure is a SELL signal; ~0 = hold through)", mf - mk);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1076,6 +1140,32 @@ mod tests {
     }
     fn sample(date: NaiveDate, realized: f64) -> Sample {
         Sample { date, realized, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None }
+    }
+
+    /// (Item 31) `exit_cohorts`: pairs where the earlier cutoff passes split on the later one —
+    /// pass->pass lands in `kept`, pass->fail in `failed`; fail->anything and other tickers are
+    /// ignored. Scorer keyed on drop_pct so the split logic is tested without building gated quotes.
+    #[test]
+    fn exit_cohorts_split() {
+        let scorer: fn(&Quote, &BuyHeuristic) -> Option<f64> =
+            |q, _| if q.drop_pct < 50.0 { Some(1.0) } else { None };
+        let mk = |tk: &str, m: u32, drop: f64, rel: f64| {
+            let mut s = sample(ymd(2020, m, 1), 0.0);
+            s.quote = Quote::stub(tk, "1", "", tk);
+            s.quote.drop_pct = drop;
+            s.relative = rel;
+            s
+        };
+        let samples = vec![
+            mk("A", 1, 0.0, 1.0),  // passes
+            mk("A", 7, 0.0, 2.0),  // pass -> pass: kept (rel 2.0)
+            mk("A", 12, 99.0, 3.0), // pass -> FAIL: failed (rel 3.0)
+            mk("B", 1, 99.0, 4.0), // never passes -> no pair counted
+            mk("B", 7, 0.0, 5.0),
+        ];
+        let (kept, failed) = exit_cohorts(&samples, scorer, &BuyHeuristic::default());
+        assert_eq!(kept, vec![2.0]);
+        assert_eq!(failed, vec![3.0]);
     }
 
     /// Peer-bucket key + the de-meaning that turns realized returns into the SELECTION signal rho

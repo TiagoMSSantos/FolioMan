@@ -1297,9 +1297,16 @@ pub async fn fetch_universe(
     );
     // (Item 18) equity ponds = S&P 500 + any extra same-format constituent CSVs from config. Sequential
     // (1–3 URLs, negligible vs the universe fan-out); a failed/empty CSV just drops its pond, never crashes.
-    let mut csv_texts = Vec::new();
+    // (Item 32) each pond is a CSV (Symbol first, sector col 3) OR a Wikipedia constituents page
+    // (the only maintained source for e.g. the S&P MidCap 400) — the URL's host picks the parser.
+    let mut ponds: Vec<Vec<(String, String)>> = Vec::new();
     for url in std::iter::once(&urls.sp500_csv).chain(urls.constituents_csv.iter()) {
-        csv_texts.push(get_text(client, url).await);
+        let Some(text) = get_text(client, url).await else { continue };
+        ponds.push(if url.contains("wikipedia.org") {
+            core::wiki_constituents(&text, sectors)
+        } else {
+            text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).collect()
+        });
     }
     let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
     let mut out: Vec<String> = Vec::new();
@@ -1313,8 +1320,8 @@ pub async fn fetch_universe(
     // (empty = all). Filtering HERE means a sector-restricted screen never even fetches the other
     // sectors' companies. `.take(cap)` AFTER the filter so cap counts matching names per pond, not raw rows.
     let mut sector_of = std::collections::HashMap::new();
-    for text in csv_texts.into_iter().flatten() {
-        for (sym, sector) in text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).take(cap) {
+    for pond in ponds {
+        for (sym, sector) in pond.into_iter().take(cap) {
             out.push(sym.clone());
             sector_of.insert(sym, sector);
         }

@@ -382,11 +382,52 @@ pub fn sector_symbol(csv_line: &str, sectors: &[String]) -> Option<(String, Stri
     // need a real CSV parser — add one only if the sector mix ever prints another garbage label.
     let name = cols.get(1)?.trim();
     let shifted = name.starts_with('"') && !name.ends_with('"');
-    let sector = cols.get(if shifted { 3 } else { 2 })?.trim();
+    // a 2-column list (Symbol,Name — e.g. the nasdaq-100 CSV) carries no sector: keep the row
+    // under "other" instead of dropping it (a sector-restricted screen still excludes it).
+    let sector = match cols.get(if shifted { 3 } else { 2 }).map(|s| s.trim()) {
+        Some(s) if !s.is_empty() => s,
+        _ => "other",
+    };
     if sym.is_empty() || !sector_matches(sector, sectors) {
         return None;
     }
     Some((sym.replace('.', "-"), sector.to_string())) // BRK.B -> BRK-B (Yahoo form)
+}
+
+/// (Item 32) Extract (Yahoo symbol, GICS sector) rows from a Wikipedia "List of S&P N companies"
+/// page (the maintained source for the MidCap 400 — no living CSV exists). Anchors on the
+/// `id="constituents"` table; per row, cell 0's text = ticker, cell 2's = sector. The tag-strip is
+/// a dumb <...>-skipper — plenty for wiki cells. Malformed rows are skipped; an unrecognizable
+/// page yields an empty vec, so the pond just drops like a failed CSV fetch (never crashes).
+pub fn wiki_constituents(html: &str, sectors: &[String]) -> Vec<(String, String)> {
+    let Some((_, rest)) = html.split_once("id=\"constituents\"") else { return Vec::new() };
+    let table = rest.split("</table>").next().unwrap_or("");
+    let strip = |cell: &str| {
+        let mut out = String::new();
+        let mut in_tag = false;
+        for c in cell.chars() {
+            match c {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                c if !in_tag => out.push(c),
+                _ => {}
+            }
+        }
+        out.trim().to_string()
+    };
+    table
+        .split("<tr")
+        .skip(2) // fragment before the first <tr> + the header row
+        .filter_map(|row| {
+            let cells: Vec<String> =
+                row.split("<td").skip(1).filter_map(|c| c.split_once('>')).map(|(_, body)| strip(body)).collect();
+            let (sym, sector) = (cells.first()?.as_str(), cells.get(2)?.as_str());
+            if sym.is_empty() || sector.is_empty() || !sector_matches(sector, sectors) {
+                return None;
+            }
+            Some((sym.replace('.', "-"), sector.to_string()))
+        })
+        .collect()
 }
 
 /// Parse a NASDAQ Trader SymDir file (pipe-delimited) -> ETF symbols (Yahoo form): keep col-0 symbols
@@ -1299,6 +1340,23 @@ mod tests {
         sector_symbol("CASY,\"Casey's General Stores, Inc.\",Consumer Staples,x", &[]),
         Some(("CASY".to_string(), "Consumer Staples".to_string()))
     );
+    // (Item 32) a 2-column list (Symbol,Name) has no sector -> kept under "other" (not dropped),
+    // but a sector-restricted filter still excludes it
+    assert_eq!(sector_symbol("PDD,PDD Holdings", &[]), Some(("PDD".to_string(), "other".to_string())));
+    assert_eq!(sector_symbol("PDD,PDD Holdings", &tech), None);
+    // (Item 32) wiki_constituents: real shape of the Wikipedia constituents table — symbol anchor in
+    // cell 0, sector text in cell 2; header row skipped; no table id -> empty (pond drops, no crash)
+    let wiki = r#"<table class="wikitable sortable" id="constituents">
+<tbody><tr><th>Symbol</th><th>Security</th><th>GICS Sector</th></tr>
+<tr><td style="x"><a href="y" data-mw='{"params":{"1":{"wt":"AA"}}}'>AA</a></td>
+<td><a href="//w/Alcoa">Alcoa</a></td><td>Materials</td><td>Aluminum</td></tr>
+<tr><td><a>BRK.B</a></td><td><a>Berkshire</a></td><td>Financials</td><td>x</td></tr></tbody></table>"#;
+    assert_eq!(
+        wiki_constituents(wiki, &[]),
+        vec![("AA".to_string(), "Materials".to_string()), ("BRK-B".to_string(), "Financials".to_string())]
+    );
+    assert_eq!(wiki_constituents(wiki, &["Financials".to_string()]).len(), 1); // sector filter applies
+    assert!(wiki_constituents("<html>no table here</html>", &[]).is_empty());
     // etf_symbols: keep ETF flag = Y at the given column, skip header/footer/$/non-ETF; '.'->'-'
     let nasdaq = "Symbol|Name|Cat|Test|Fin|Lot|ETF|NS\nQQQ|Invesco QQQ|Q|N|N|100|Y|N\nAAPL|Apple|Q|N|N|100|N|N\nFOO$|x|Q|N|N|100|Y|N\nFile Creation Time: now";
     assert_eq!(etf_symbols(nasdaq, 6), vec!["QQQ".to_string()]); // AAPL=N dropped, FOO$ dropped, footer skipped
