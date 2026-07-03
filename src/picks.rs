@@ -899,6 +899,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "5y", hdr: "5Y", width: 8, right: true },
     ColSpec { key: "10y", hdr: "10Y", width: 8, right: true },
     ColSpec { key: "20y", hdr: "20Y", width: 8, right: true },
+    ColSpec { key: "yrs", hdr: "YRS", width: 4, right: true },       // years the CAGR leg spans (20/10/5) — how much record backs the headline number
     ColSpec { key: "vol", hdr: "VOL", width: 7, right: true },       // daily-return stdev (risk)
     ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true },   // worst peak-to-trough drop ever (pain)
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true },         // log-trend steadiness 0..1 (smoothness)
@@ -918,8 +919,8 @@ const COLUMNS: &[ColSpec] = &[
 /// `maxdd` (return + worst-pain — what a 20yr buy-and-hold screen was missing). Users add vol/r2/pe/roe/
 /// div/abv-ma by listing them in `widths.columns`.
 const DEFAULT_COLUMNS: &[&str] = &[
-    "rank", "name", "ticker", "market", "price", "cagr", "1h", "6h", "12h", "1d", "1w", "1m", "1y", "5y",
-    "10y", "20y", "maxdd", "off-hi", "upside", "turnover", "score",
+    "rank", "name", "ticker", "market", "price", "cagr", "yrs", "1h", "6h", "12h", "1d", "1w", "1m", "1y",
+    "5y", "10y", "20y", "maxdd", "off-hi", "upside", "turnover", "score",
 ];
 
 /// Resolve `widths.columns` (config) to the ordered `ColSpec`s to print. Empty config -> `DEFAULT_COLUMNS`;
@@ -979,6 +980,9 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
         // proven long-term CAGR (%/yr) from the longest available leg — the annualized trend the ranking
         // rewards, shown so a reader sees "+27%/yr for 10y" not just a +900% cumulative blob.
         "cagr" => long_leg(quote).map(|(c, y)| core::cagr(c, y)).map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        // span of the CAGR leg (20/10/5) — a "+16% over 20" and a "+16% over 5" are NOT the same
+        // conviction; this makes the record length behind the headline number visible per row.
+        "yrs" => long_leg(quote).map_or("n/a".to_string(), |(_, y)| format!("{y:.0}")),
         "1h" => pct1(quote.intraday[0]),
         "6h" => pct1(quote.intraday[1]),
         "12h" => pct1(quote.intraday[2]),
