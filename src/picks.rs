@@ -836,7 +836,7 @@ struct ColSpec {
 /// columns past the price/perf block (vol/maxdd/r2/abv-ma/pe/roe/div) are OFF unless listed. All are
 /// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
 const COLUMNS: &[ColSpec] = &[
-    ColSpec { key: "rank", hdr: "RANK", width: 4, right: false },
+    ColSpec { key: "rank", hdr: "RANK", width: 6, right: false },
     ColSpec { key: "name", hdr: "NAME", width: 0, right: false },
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false },
@@ -982,7 +982,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
 
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks). Columns +
 /// order come from `widths.columns` via [`active_columns`] (default = [`DEFAULT_COLUMNS`]).
-fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, hide: &[&str]) {
+fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, hide: &[&str], tuning: &BuyHeuristic) {
     println!("\n{title}");
     if picks.is_empty() {
         println!("  (none pass the gates)");
@@ -1010,7 +1010,15 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     // wide screen it flags the few enriched rows (the pins).
     let enriched =
         |quote: &Quote| if quote.pe_ratio.is_some() || quote.roe.is_some() || quote.expense_ratio.is_some() || quote.fund_factor.is_some() { "#" } else { "" };
-    let mark = |quote: &Quote, i: usize| format!("{}{}{}", i + 1, star(quote), enriched(quote));
+    // ! = LATE-CYCLE: the overextension brake is FLOORED for this row (price >= growth_overext_cap %
+    // above its 200wk SMA — e.g. WDC at +486% vs cap 100). The score is already maximally docked, but
+    // past the cap the column can't dock MORE, so a 5x-above-trend name prints like a 1x one without
+    // this flag. Display-only: read it as "rank earned on a cycle blow-off, conviction is the SCORE".
+    let braked = |quote: &Quote| {
+        let cap = if is_currency_quoted(&quote.ticker) { tuning.growth_overext_cap_crypto } else { tuning.growth_overext_cap };
+        if cap > 0.0 && quote.above_ma_pct >= cap { "!" } else { "" }
+    };
+    let mark = |quote: &Quote, i: usize| format!("{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote));
     for (i, (quote, score)) in picks.iter().take(n).enumerate() {
         row(&mark(quote, i), quote, *score);
     }
@@ -1026,7 +1034,8 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
 /// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
-fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], min_score: f64, pinned: &HashSet<&str>) {
+fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>) {
+    let min_score = tuning.growth_min_score;
     let (crypto, equity): (Vec<_>, Vec<_>) =
         picks.into_iter().partition(|(quote, _)| is_currency_quoted(&quote.ticker));
     let (etf, stock): (Vec<_>, Vec<_>) = equity.into_iter().partition(|(quote, _)| quote_is_etf(quote));
@@ -1045,11 +1054,11 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     let head = |len: usize| if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") };
     // P/E, PEG, ROE are equity-only; TER is ETF-only. Hide the always-"—" columns per class: stocks drop
     // TER, ETFs drop the equity fundamentals, crypto drops both.
-    print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w, pinned, &["ter"]);
-    print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe"]);
+    print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w, pinned, &["ter"], tuning);
+    print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe"], tuning);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
-    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "ter"]);
+    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "ter"], tuning);
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -1125,7 +1134,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
         None => picks.first(),
     };
     let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
-    print_lane(picks, n, w, "growth candidates", growth, sectors, tuning.growth_min_score, &pinned_set);
+    print_lane(picks, n, w, "growth candidates", growth, sectors, tuning, &pinned_set);
     match (explain_text, explain) {
         (Some(text), _) => println!("{text}"),
         // an explicit --explain TICKER that didn't land a row: say why instead of silently printing nothing
