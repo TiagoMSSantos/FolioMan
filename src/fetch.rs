@@ -350,6 +350,17 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             None => (chart.dates.clone(), chart.closes.clone(), chart.divs.clone()),
         };
 
+    // Whole-life age + endpoint CAGR from the SAME merged series (display-only `yrs`/`cagr` columns;
+    // ranking/gates stay on the fixed-horizon ladder the backtest validated). Guard: >=6mo of history
+    // and a positive first close, else an IPO week or a bad first bar prints a silly annualized number.
+    let age_years = Some((*long_dates.last().unwrap() - long_dates[0]).num_days() as f64 / 365.25);
+    let life_cagr = match (long_closes.first(), long_closes.last(), age_years) {
+        (Some(&first), Some(&last), Some(age)) if first > 0.0 && age >= 0.5 => {
+            Some(((last / first).powf(1.0 / age) - 1.0) * 100.0)
+        }
+        _ => None,
+    };
+
     let cur_close = *chart.closes.last().unwrap();
     let rate = eur_rate(client, urls, &chart.currency, fx_cache).await;
     let price = match rate {
@@ -432,6 +443,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         trend_cagr: core::trend_cagr(&chart.closes, 252),
         max_drawdown_pct: core::max_drawdown_pct(&chart.closes),
         fund_factor: None, // (G) live screen leaves this None (neutral); only the small/check-scale path (A3) populates it
+        age_years,
+        life_cagr,
     }
 }
 

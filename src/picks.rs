@@ -888,7 +888,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false },
     ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true },
-    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true }, // proven long-term %/yr — the headline a compounder screen needs
+    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true }, // whole-life %/yr since listing (display; ranking uses the fixed-horizon ladder)
     ColSpec { key: "1h", hdr: "1H", width: 7, right: true },
     ColSpec { key: "6h", hdr: "6H", width: 7, right: true },
     ColSpec { key: "12h", hdr: "12H", width: 7, right: true },
@@ -899,7 +899,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "5y", hdr: "5Y", width: 8, right: true },
     ColSpec { key: "10y", hdr: "10Y", width: 8, right: true },
     ColSpec { key: "20y", hdr: "20Y", width: 8, right: true },
-    ColSpec { key: "yrs", hdr: "YRS", width: 4, right: true },       // years the CAGR leg spans (20/10/5) — how much record backs the headline number
+    ColSpec { key: "yrs", hdr: "YRS", width: 4, right: true },       // real listing age in years — how much record backs the CAGR headline
     ColSpec { key: "vol", hdr: "VOL", width: 7, right: true },       // daily-return stdev (risk)
     ColSpec { key: "maxdd", hdr: "MAXDD", width: 8, right: true },   // worst peak-to-trough drop ever (pain)
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true },         // log-trend steadiness 0..1 (smoothness)
@@ -979,10 +979,13 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
         "price" => quote.price.clone(),
         // proven long-term CAGR (%/yr) from the longest available leg — the annualized trend the ranking
         // rewards, shown so a reader sees "+27%/yr for 10y" not just a +900% cumulative blob.
-        "cagr" => long_leg(quote).map(|(c, y)| core::cagr(c, y)).map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        // whole-life endpoint CAGR over the FULL (monthly-backfilled) history — the honest "what did
+        // this compound at since listing" headline. Ranking/gates still use the fixed 20/10/5Y ladder,
+        // so this cell can differ from the CAGR a gate message quotes.
+        "cagr" => quote.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         // span of the CAGR leg (20/10/5) — a "+16% over 20" and a "+16% over 5" are NOT the same
         // conviction; this makes the record length behind the headline number visible per row.
-        "yrs" => long_leg(quote).map_or("n/a".to_string(), |(_, y)| format!("{y:.0}")),
+        "yrs" => quote.age_years.map_or("n/a".to_string(), |y| format!("{y:.0}")),
         "1h" => pct1(quote.intraday[0]),
         "6h" => pct1(quote.intraday[1]),
         "12h" => pct1(quote.intraday[2]),
@@ -1462,6 +1465,8 @@ mod tests {
             trend_cagr: None, // (#14) default off; ranking uses endpoint cagr unless use_trend_cagr is set
             max_drawdown_pct: 0.0, // default -> no calmar reward (additive 0)
             fund_factor: None,     // (G) default off; the fund-tilt asserts set it explicitly
+            age_years: None,       // display-only pair; never scored
+            life_cagr: None,
         }
     };
     let tuning = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on
