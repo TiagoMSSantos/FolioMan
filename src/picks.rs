@@ -499,6 +499,16 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
         // peak-anchored noise; the range gate already excludes bled coins there, so skip it.)
         return None;
     }
+    // (#24) EXTREME-STRETCH gate: reject names too far above their 200wk SMA — past the brake cap the
+    // damp saturates, so the brake alone can't remove a 5x-above-trend blow-off. Same-batch triple:
+    // ceiling 150 lifts edge +106.6 -> +115.9 (winsorized +84.1 -> +88.1, OOS +0.13|+0.08 both +) and
+    // the excluded names average -125.1 pts forward vs peers (n=267) — unlike the low-R² cohort, which
+    // BEAT the field (round 4). Distinct signals: an ugly past (low R²) is fine; an extreme present
+    // stretch is not. 100 measured edge-flat (+106.9), so the ceiling sits at 150, ABOVE the brake cap:
+    // moderately-stretched names stay (flagged `!`), only the blow-off tail is cut. 0 = off.
+    if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
+        return None;
+    }
 
     // ---- SCORE ----
     let trend = long_cagr.min(tuning.long_trend_cap); // proven compounding, capped like the on-sale lane
@@ -643,6 +653,9 @@ pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'stati
     }
     if tuning.min_avg_turnover_eur > 0.0 && turnover < tuning.min_avg_turnover_eur {
         fails.push(("liquidity", format!("€{:.0}K/day (floor €{:.0}K)", turnover / 1e3, tuning.min_avg_turnover_eur / 1e3), turnover >= tuning.min_avg_turnover_eur * 0.5));
+    }
+    if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
+        fails.push(("stretch", format!("+{:.0}% above 200wk SMA (ceiling +{:.0}%)", quote.above_ma_pct, tuning.growth_max_above_ma), quote.above_ma_pct <= tuning.growth_max_above_ma + 25.0));
     }
     // exactly one gate failed AND it's a CLOSE miss -> a genuine near-miss worth surfacing
     match fails.len() {

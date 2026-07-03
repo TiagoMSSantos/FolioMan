@@ -218,6 +218,15 @@ buy_heuristic:
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
   growth_overext_cap: 100.0      # % above the 200wk SMA where the brake maxes out. Biting harder (100->60) cut edge +1.9->-9.5: over-penalizes good compounders that keep running above trend. Keep 100
+  growth_max_above_ma: 150.0     # (#24) HARD gate above the brake: reject equities >150% above the 200wk SMA (crypto exempt).
+                                 #   Past the brake cap the damp saturates, so a +486% blow-off (WDC 2026-07) scored like a +100%
+                                 #   name; the brake can floor it but never remove it. Same-batch triple 2026-07-03:
+                                 #   off +106.6 (wins +84.1, OOS +0.11|+0.06) / 100 +106.9 (edge-flat) / 150 +115.9
+                                 #   (wins +88.1, OOS +0.13|+0.08) — and the names the 150 gate excludes average -125.1 pts
+                                 #   forward vs peers (n=267). NOT the same cohort as the rejected R² gate (round 4: low-R²
+                                 #   names near a high BEAT the field +61/+64): an ugly PAST is fine, an extreme PRESENT
+                                 #   stretch is a measured loser. 150 > brake cap on purpose — the 100..150 band stays in the
+                                 #   table (marked `!`), only the blow-off tail is cut. 0 = off.
   growth_overext_floor: 0.05     # growth-score multiplier at full stretch. Tightened 0.2->0.15->0.05, each step a harder blow-off-top brake:
                                  #   buying right after a parabola = poor long-hold entry. The walk-forward sweep ranks 0.05 best: wide
                                  #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).
