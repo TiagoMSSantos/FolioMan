@@ -514,7 +514,16 @@ async fn fetch_ratios_sec(client: &Client, urls: &Urls, ticker: &str, close_nati
     // quarter (just-filed 10-K / annual-only filer) so it's never worse than before, never a fake value.
     let eps = sec_ttm_eps(client, urls, ticker).await.or(latest.eps);
     let pe = eps.filter(|e| *e > 0.0).map(|e| close_native / e);
-    (pe, latest.roe)
+    (pe, latest.roe.filter(|r| roe_sign_consistent(*r, latest.net_margin)))
+}
+
+/// ROE is only meaningful when stockholders' equity is positive; buyback-heavy filers like HLT run
+/// NEGATIVE equity, turning a profitable year into a fake "-27%" (NI +$1.5B ÷ equity -$4B) that slips
+/// under the |ROE|>100 n/m display rule. Equity's sign isn't in the cached rows, but net income's is
+/// (net margin), and NI÷equity flips sign exactly when equity < 0 — so a meaningful ROE must share
+/// net income's sign. Also catches the double-negative fake (loss year + negative equity => ROE > 0).
+fn roe_sign_consistent(roe: f64, net_margin: Option<f64>) -> bool {
+    net_margin.map_or(true, |nm| (roe >= 0.0) == (nm >= 0.0))
 }
 
 /// Trailing-twelve-month diluted EPS for a US filer from SEC XBRL's single-concept `companyconcept`
@@ -1446,6 +1455,17 @@ mod tests {
         assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF Dist"), Some(0.30)); // exact class
         assert_eq!(bf_ter_by_name("vaneck"), None); // too short
         assert_eq!(bf_ter_by_name("iShares Physical Gold ETC"), None); // not in list
+    }
+
+    /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but
+    /// ROE -27% => equity < 0 => not meaningful). Genuine loss-makers and normal filers pass through.
+    #[test]
+    fn roe_negative_equity_guard() {
+        assert!(!roe_sign_consistent(-27.0, Some(12.1))); // HLT: profit ÷ negative equity
+        assert!(!roe_sign_consistent(40.0, Some(-3.0))); // double negative: loss ÷ negative equity
+        assert!(roe_sign_consistent(-5.0, Some(-3.0))); // genuine loss-maker: real negative ROE
+        assert!(roe_sign_consistent(30.1, Some(15.0))); // normal profitable filer
+        assert!(roe_sign_consistent(-27.0, None)); // no margin data -> can't judge, keep
     }
 
     /// TTM roll-forward off REAL LITE (Lumentum) SEC data: FY 0.37 + current 9mo-YTD 2.59 − prior 9mo-YTD
