@@ -1019,13 +1019,31 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         if cap > 0.0 && quote.above_ma_pct >= cap { "!" } else { "" }
     };
     let mark = |quote: &Quote, i: usize| format!("{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote));
-    for (i, (quote, score)) in picks.iter().take(n).enumerate() {
-        row(&mark(quote, i), quote, *score);
-    }
     // pinned tickers that ranked BELOW the cut still print (with their real rank + "*") so you can
     // compare a holding against the tops above even when it doesn't make the top-N.
-    for (i, (quote, score)) in picks.iter().enumerate().skip(n).filter(|(_, (quote, _))| pinned.contains(quote.ticker.as_str())) {
-        row(&mark(quote, i), quote, *score);
+    let below_cut = picks.iter().enumerate().skip(n).filter(|(_, (quote, _))| pinned.contains(quote.ticker.as_str()));
+    let mut seen = String::new(); // rank-flag chars that actually printed, drives the legend line
+    for (i, (quote, score)) in picks.iter().enumerate().take(n).chain(below_cut) {
+        let m = mark(quote, i);
+        for flag in ['*', '#', '!'] {
+            if m.contains(flag) && !seen.contains(flag) {
+                seen.push(flag);
+            }
+        }
+        row(&m, quote, *score);
+    }
+    // Legend: explain only the flags THIS table used, so clean tables stay clean.
+    let legend: Vec<String> = [
+        ("*", "pinned watchlist name"),
+        ("#", "score used live fundamentals, not price-only"),
+        ("!", "late-cycle: price >= cap above 200wk trend, brake floored — conviction is the SCORE, not the rank"),
+    ]
+    .iter()
+    .filter(|(flag, _)| seen.contains(flag))
+    .map(|(flag, what)| format!("{flag} = {what}"))
+    .collect();
+    if !legend.is_empty() {
+        println!("  ({})", legend.join("; "));
     }
 }
 
