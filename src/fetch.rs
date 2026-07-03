@@ -1018,7 +1018,10 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     );
     let gp = collect(&["GrossProfit"], "USD");
     let op = collect(&["OperatingIncomeLoss"], "USD");
-    let ni = collect(&["NetIncomeLoss"], "USD");
+    // NetIncomeLoss first (parent-company net income, the standard tag); some filers stopped filing it
+    // years ago (CF in 2011, MNST) and carry only the available-to-common / ProfitLoss variants — their
+    // net margin AND ROE were silently None without the fallbacks.
+    let ni = collect(&["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss"], "USD");
     let eps = collect(&["EarningsPerShareDiluted"], "USD/shares");
     let eq = collect_instant(&["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "USD");
     rev.into_iter()
@@ -1050,7 +1053,10 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
 /// forever. Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
 pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
-    let cache = sec_cache_path(&format!("{ticker}_facts"));
+    // "_facts2": cache-key bump when the parse gains concepts (revenue Including/pre-606 tags, net-income
+    // fallbacks) — old rows were parsed WITHOUT them and would pin the gaps forever. Old *_facts.json
+    // files are orphaned (few KB each); refetch amortizes over runs under SEC_FETCH_BUDGET.
+    let cache = sec_cache_path(&format!("{ticker}_facts2"));
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
