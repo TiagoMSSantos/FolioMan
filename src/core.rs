@@ -339,7 +339,8 @@ pub fn market_of(ticker: &str) -> String {
         return suffix_country(&suf).unwrap_or(&suf).to_string();
     }
     if ticker.contains('-') {
-        return "Crypto (global)".to_string();
+        // just "Crypto": "(global)" added nothing and a tight MARKET column clipped it to "Crypto ("
+        return "Crypto".to_string();
     }
     "USA".to_string()
 }
@@ -1313,7 +1314,7 @@ mod tests {
     assert_eq!(ranks(&[5.0, 5.0, 9.0]), vec![1.5, 1.5, 3.0]); // ties share the average rank
     assert_eq!(market_of("VWCE.DE"), "Germany");
     assert_eq!(market_of("AAPL"), "USA");
-    assert_eq!(market_of("BTC-USD"), "Crypto (global)");
+    assert_eq!(market_of("BTC-USD"), "Crypto");
     // nupl_zone: band edges
     assert_eq!(nupl_zone(-0.1), "Capitulation");
     assert_eq!(nupl_zone(0.16), "Hope/Fear");

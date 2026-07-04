@@ -997,7 +997,16 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
     let etf_only_na = is_equity || is_crypto; // TER doesn't apply here
     match key {
         "rank" => mark.to_string(),
-        "name" => display_name(&quote.name),
+        // crypto: Yahoo names are currency pairs ("Bitcoin EUR", "OKB USD"); the ticker column already
+        // carries -EUR/-USD, so the quote-currency word is pure noise in a tight NAME column.
+        "name" => {
+            let n = display_name(&quote.name);
+            if is_crypto {
+                n.strip_suffix(" USD").or_else(|| n.strip_suffix(" EUR")).map(str::to_string).unwrap_or(n)
+            } else {
+                n
+            }
+        }
         "ticker" => quote.ticker.clone(),
         "market" => quote.market.clone(),
         "price" => quote.price.clone(),
