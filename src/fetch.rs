@@ -1804,6 +1804,25 @@ pub async fn fetch_euribor_3m(client: &Client, urls: &Urls) -> Option<f64> {
 /// current year — unlike the World Bank's ~1.5y-lagged annual series it replaced.
 pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
     use chrono::Datelike;
+    // CPI is a MONTHLY series and the keyless BLS cap is 25 req/day per shared IP, so repeated screen
+    // runs exhausted it and reddened the inflation footer. Same-day disk cache skips the network
+    // entirely; on a live failure (throttle/outage) any older cached copy still beats an ERROR row.
+    let cache = std::path::Path::new(".fmp_cache").join("us_cpi.json");
+    let read_cache = || {
+        std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    };
+    let fresh = std::fs::metadata(&cache)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .is_some_and(|t| t.elapsed().is_ok_and(|e| e < std::time::Duration::from_secs(24 * 3600)));
+    if fresh {
+        if let Some(d) = read_cache() {
+            let parsed = core::parse_bls_cpi(&d);
+            if !parsed.is_empty() {
+                return parsed;
+            }
+        }
+    }
     // BLS year windows are honored only via POST (seriesid in the body, base /data/ URL). The keyless v1
     // API caps at 25 requests/DAY (shared per-IP) and 10 years/call, so we make ONE 10y call — enough
     // for the 5Y/10Y columns; the 20Y column then mirrors ~10y. Set BLS_API_KEY (free, instant signup at
@@ -1822,10 +1841,17 @@ pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f
     body.insert("seriesid".into(), serde_json::json!(["CUUR0000SA0"]));
     body.insert("startyear".into(), start.to_string().into());
     body.insert("endyear".into(), now.to_string().into());
-    match post_json(client, &url, &serde_json::Value::Object(body)).await {
-        Some(d) => core::parse_bls_cpi(&d),
-        None => BTreeMap::new(),
+    // a throttled BLS reply is still valid JSON with empty Results, so "parsed non-empty" is the
+    // success test — never cache a dud, and fall back to the stale copy instead of an empty map.
+    if let Some(d) = post_json(client, &url, &serde_json::Value::Object(body)).await {
+        let parsed = core::parse_bls_cpi(&d);
+        if !parsed.is_empty() {
+            let _ = std::fs::create_dir_all(".fmp_cache");
+            let _ = std::fs::write(&cache, d.to_string());
+            return parsed;
+        }
     }
+    read_cache().map(|d| core::parse_bls_cpi(&d)).unwrap_or_default()
 }
 
 /// {year -> annual CPI %} for Portugal from Banco de Portugal (series 5721550), each
