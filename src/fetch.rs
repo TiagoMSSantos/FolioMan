@@ -1802,25 +1802,52 @@ pub async fn fetch_euribor_3m(client: &Client, urls: &Urls) -> Option<f64> {
 /// {year -> annual CPI %} for the USA from the BLS public API (CPI-U index, converted to a
 /// YoY rate in `core::parse_bls_cpi`); empty on failure. Monthly source, so it reaches the
 /// current year — unlike the World Bank's ~1.5y-lagged annual series it replaced.
-pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
-    use chrono::Datelike;
-    // CPI is a MONTHLY series and the keyless BLS cap is 25 req/day per shared IP, so repeated screen
-    // runs exhausted it and reddened the inflation footer. Same-day disk cache skips the network
-    // entirely; on a live failure (throttle/outage) any older cached copy still beats an ERROR row.
-    let cache = std::path::Path::new(".fmp_cache").join("us_cpi.json");
-    let read_cache = || {
-        std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-    };
-    let fresh = std::fs::metadata(&cache)
+/// Disk cache for slow-moving macro series (monthly CPI/HICP): a same-day copy skips the network,
+/// and on a live failure (throttle/outage) any older copy still beats an ERROR row in the footer.
+/// Born from BLS: its keyless cap is 25 req/day per SHARED IP, so repeated screen runs redden USA.
+const MACRO_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+fn macro_cache_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(".fmp_cache").join(format!("{name}.json"))
+}
+fn macro_cache_read(name: &str) -> Option<Value> {
+    std::fs::read_to_string(macro_cache_path(name)).ok().and_then(|s| serde_json::from_str(&s).ok())
+}
+fn macro_cache_fresh(name: &str) -> bool {
+    std::fs::metadata(macro_cache_path(name))
         .ok()
         .and_then(|m| m.modified().ok())
-        .is_some_and(|t| t.elapsed().is_ok_and(|e| e < std::time::Duration::from_secs(24 * 3600)));
-    if fresh {
-        if let Some(d) = read_cache() {
-            let parsed = core::parse_bls_cpi(&d);
-            if !parsed.is_empty() {
-                return parsed;
-            }
+        .is_some_and(|t| t.elapsed().is_ok_and(|e| e < MACRO_TTL))
+}
+fn macro_cache_write(name: &str, v: &Value) {
+    let _ = std::fs::create_dir_all(".fmp_cache");
+    let _ = std::fs::write(macro_cache_path(name), v.to_string());
+}
+
+/// GET + parse a macro series through the day-fresh cache; "parsed non-empty" is the success test
+/// (a throttled reply can be valid JSON with empty results), so a dud is never cached and falls
+/// back to the stale copy.
+async fn cached_macro<F: Fn(&Value) -> BTreeMap<i32, f64>>(client: &Client, url: &str, name: &str, parse: F) -> BTreeMap<i32, f64> {
+    if macro_cache_fresh(name) {
+        if let Some(m) = macro_cache_read(name).map(|d| parse(&d)).filter(|m| !m.is_empty()) {
+            return m;
+        }
+    }
+    if let Some(d) = get_json(client, url).await {
+        let m = parse(&d);
+        if !m.is_empty() {
+            macro_cache_write(name, &d);
+            return m;
+        }
+    }
+    macro_cache_read(name).map(|d| parse(&d)).unwrap_or_default()
+}
+
+pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
+    use chrono::Datelike;
+    // POST-based (year window in the body), so it drives the macro cache by hand instead of cached_macro.
+    if macro_cache_fresh("us_cpi") {
+        if let Some(m) = macro_cache_read("us_cpi").map(|d| core::parse_bls_cpi(&d)).filter(|m| !m.is_empty()) {
+            return m;
         }
     }
     // BLS year windows are honored only via POST (seriesid in the body, base /data/ URL). The keyless v1
@@ -1846,43 +1873,42 @@ pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f
     if let Some(d) = post_json(client, &url, &serde_json::Value::Object(body)).await {
         let parsed = core::parse_bls_cpi(&d);
         if !parsed.is_empty() {
-            let _ = std::fs::create_dir_all(".fmp_cache");
-            let _ = std::fs::write(&cache, d.to_string());
+            macro_cache_write("us_cpi", &d);
             return parsed;
         }
     }
-    read_cache().map(|d| core::parse_bls_cpi(&d)).unwrap_or_default()
+    macro_cache_read("us_cpi").map(|d| core::parse_bls_cpi(&d)).unwrap_or_default()
 }
 
 /// {year -> annual CPI %} for Portugal from Banco de Portugal (series 5721550), each
 /// year = its last available month. JSON-stat: value list parallels the date index.
 pub async fn fetch_pt_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
-    match get_json(client, &urls.pt_cpi).await {
-        Some(d) => core::parse_pt_series(&d), // index is a JSON array; parse lives in core (tested)
-        None => BTreeMap::new(),
-    }
+    // index is a JSON array; parse lives in core (tested)
+    cached_macro(client, &urls.pt_cpi, "pt_cpi", core::parse_pt_series).await
 }
 
 /// {year -> annual HICP %} for the EU27 from Eurostat, each year = its last month.
 /// JSON-stat: value is a sparse {position: rate} map keyed off the time {time: position} index.
 pub async fn fetch_eu_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
-    let mut out = BTreeMap::new();
-    let Some(d) = get_json(client, &urls.eu_hicp).await else { return out; };
-    let idx = d.pointer("/dimension/time/category/index").and_then(|v| v.as_object());
-    let val = d.get("value");
-    if let (Some(idx), Some(val)) = (idx, val) {
-        let mut pairs: Vec<(&String, i64)> =
-            idx.iter().map(|(k, v)| (k, v.as_i64().unwrap_or(0))).collect();
-        pairs.sort_by_key(|(_, p)| *p);
-        for (tm, pos) in pairs {
-            if let (Ok(year), Some(rate)) =
-                (tm[..4].parse::<i32>(), val.get(pos.to_string()).and_then(|v| v.as_f64()))
-            {
-                out.insert(year, rate); // last month of a year wins
+    cached_macro(client, &urls.eu_hicp, "eu_hicp", |d| {
+        let mut out = BTreeMap::new();
+        let idx = d.pointer("/dimension/time/category/index").and_then(|v| v.as_object());
+        let val = d.get("value");
+        if let (Some(idx), Some(val)) = (idx, val) {
+            let mut pairs: Vec<(&String, i64)> =
+                idx.iter().map(|(k, v)| (k, v.as_i64().unwrap_or(0))).collect();
+            pairs.sort_by_key(|(_, p)| *p);
+            for (tm, pos) in pairs {
+                if let (Ok(year), Some(rate)) =
+                    (tm[..4].parse::<i32>(), val.get(pos.to_string()).and_then(|v| v.as_f64()))
+                {
+                    out.insert(year, rate); // last month of a year wins
+                }
             }
         }
-    }
-    out
+        out
+    })
+    .await
 }
 
 /// (label, series) — Portugal (BPstat), USA (BLS CPI-U), EU (Eurostat). Async fetched.
