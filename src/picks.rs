@@ -432,7 +432,8 @@ struct ScoreParts {
     dividend: f64,     // (D) dividend_weight × min(yield, cap)
     fund: f64,         // (G) growth_fund_weight × clamp(fund_factor, 0, cap)
     mom121: f64,       // (M) growth_mom121_weight × clamp(12-1 mom, 0, cap)
-    base: f64,         // sum of the seven terms above
+    smooth: f64,       // (E) growth_smoothness_weight × trend_r2
+    base: f64,         // sum of the eight terms above
     proximity: f64,    // range_pct / 100
     value_raw: f64,    // (E) raw P/E value_factor (ref_pe/PE clamped)
     value: f64,        // 1 + growth_value_weight × (value_raw − 1)
@@ -686,7 +687,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     };
     Some(ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
-        fund, mom121: mom_term, base, proximity, value_raw, value, trust, overext, overext_cap,
+        fund, mom121: mom_term, smooth, base, proximity, value_raw, value, trust, overext, overext_cap,
         overext_damp, damp, liq_bonus, ter_damp, score,
     })
 }
@@ -854,7 +855,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     } else {
         s.push_str("  growth_score = base × proximity × value × geomean(trust, overext_damp) + liq_bonus\n\n");
     }
-    s.push_str("  base = trend + accel + risk + quality + dividend + fund + mom121\n");
+    s.push_str("  base = trend + accel + risk + quality + dividend + fund + mom121 + smooth\n");
     s.push_str(&format!("    trend    = growth_trend_weight × min(CAGR, cap)        = {:.2} × {:.2} = {:.2}\n",
         tuning.growth_trend_weight, p.trend, p.trend_term));
     s.push_str(&format!("    accel    = growth_accel_weight × clamp(1Y−CAGR,0,cap)  = {:.2} × {:.2} = {:.2}   (1Y {:.1} − CAGR {:.1})\n",
@@ -864,6 +865,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     s.push_str(&format!("    dividend = dividend_weight × min(1Y yield, cap)       = {:.2}\n", p.dividend));
     s.push_str(&format!("    fund     = growth_fund_weight × clamp(fund_factor)    = {:.2}\n", p.fund));
     s.push_str(&format!("    mom121   = growth_mom121_weight × clamp(12-1 mom)     = {:.2}\n", p.mom121));
+    s.push_str(&format!("    smooth   = growth_smoothness_weight × trend_r2 (R²)   = {:.2}\n", p.smooth));
     s.push_str(&format!("    base (sum)                                            = {:.2}\n", p.base));
     s.push_str(&format!("  proximity    = range_pct / 100                          = {:.1} / 100 = {:.3}\n",
         p.proximity * 100.0, p.proximity));
@@ -2016,8 +2018,18 @@ mod tests {
     // so the `explain_growth_score` worked example can never drift from the ranked number.
     let parts = score_parts(&rocket, &tuning).unwrap();
     let term_sum = parts.trend_term + parts.accel_term + parts.risk_reward + parts.quality
-        + parts.dividend + parts.fund + parts.mom121;
+        + parts.dividend + parts.fund + parts.mom121 + parts.smooth;
     assert!((term_sum - parts.base).abs() < 1e-9, "terms must sum to base");
+    // Re-run the reconcile with the smoothness term ACTIVE so a term added to base but
+    // forgotten in ScoreParts/explain can never pass again (that exact drift shipped once).
+    let mut smooth_rocket = rocket.clone();
+    smooth_rocket.trend_r2 = 0.9;
+    let st = BuyHeuristic { growth_smoothness_weight: 5.0, ..tuning.clone() };
+    let sp = score_parts(&smooth_rocket, &st).unwrap();
+    let ssum = sp.trend_term + sp.accel_term + sp.risk_reward + sp.quality
+        + sp.dividend + sp.fund + sp.mom121 + sp.smooth;
+    assert!((ssum - sp.base).abs() < 1e-9, "terms must sum to base with smoothness on");
+    assert!((sp.smooth - 4.5).abs() < 1e-9, "smooth part must carry the E term");
     let recomposed = parts.base * parts.proximity * parts.value * parts.damp + parts.liq_bonus;
     assert!((recomposed - parts.score).abs() < 1e-9, "formula must reproduce score");
     // (#8) fold path: score must equal base × geomean(trust, overext, proximity, value) + liq_bonus.
