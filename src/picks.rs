@@ -546,7 +546,15 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // mooned at IPO, crashed, and partially recovered can show a healthy 10Y CAGR while its WHOLE-LIFE
     // trend is still negative. quote.trend_cagr is the full-history log-slope fit (endpoint-robust,
     // same fn live and in backtest_quote -> train==serve); reject when it never turned positive.
-    if !crypto && tuning.growth_require_lifetime_uptrend && quote.trend_cagr.is_some_and(|t| t <= 0.0) {
+    // Second leg: trend_cagr is fit on the FETCHED daily window (~10y), so a name that collapsed
+    // BEFORE that window and recovered inside it slips through (MSCI Greece: -95% by 2012, positive
+    // window trend, yet whole-life CAGR -8%/18y). quote.life_cagr is the true listing-to-date CAGR
+    // from the merged monthly-max series; None in backtest (display-era field), so this leg is
+    // live-only and edge-blind by construction.
+    if !crypto
+        && tuning.growth_require_lifetime_uptrend
+        && (quote.trend_cagr.is_some_and(|t| t <= 0.0) || quote.life_cagr.is_some_and(|l| l <= 0.0))
+    {
         return None;
     }
     // (#26) MAXDD gate: reject names whose worst-ever peak-to-trough loss exceeds the cap — the
@@ -758,6 +766,10 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     if !crypto && tuning.growth_require_lifetime_uptrend {
         if let Some(t) = quote.trend_cagr.filter(|&t| t <= 0.0) {
             fails.push(("lifetime", format!("{t:+.1}%/yr whole-life trend (need >0)"), t > -3.0));
+        } else if let Some(l) = quote.life_cagr.filter(|&l| l <= 0.0) {
+            // window trend positive but true listing-to-date CAGR negative: collapsed before the
+            // fetched window, recovered inside it (MSCI Greece pattern) — still a lifetime loser.
+            fails.push(("lifetime", format!("{l:+.1}%/yr since listing (need >0)"), l > -3.0));
         }
     }
     let maxdd_cap = if crypto { tuning.growth_maxdd_cap_crypto } else { tuning.growth_maxdd_cap };
@@ -1718,6 +1730,17 @@ mod tests {
     let mut fetch = quote(2.0, strong);
     fetch.name = "Fetchr Growth ETCetera Fund UCITS ETF".into(); // token match: substrings can't trip it
     assert!(!is_commodity_etf(&fetch));
+    // (#25) lifetime-uptrend second leg: trend_cagr is fit on the fetched window, so a name that
+    // collapsed BEFORE the window and recovered inside it slips through (MSCI Greece pattern) —
+    // life_cagr (listing-to-date) catches it. None (backtest) stays exempt -> edge-blind.
+    let lt = BuyHeuristic { growth_require_lifetime_uptrend: true, ..BuyHeuristic::default() };
+    let mut greece = quote(2.0, strong);
+    greece.life_cagr = Some(-8.0);
+    assert!(growth_score(&greece, &lt).is_none()); // lifetime loser despite strong window legs
+    greece.life_cagr = Some(12.0);
+    assert!(growth_score(&greece, &lt).is_some()); // whole life positive -> passes
+    greece.life_cagr = None; // backtest shape: field absent -> gate leg inert
+    assert!(growth_score(&greece, &lt).is_some());
     let liq_t = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
     let mut thin = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     thin.avg_turnover_eur = Some(1_000.0);
