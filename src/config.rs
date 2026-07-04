@@ -165,6 +165,7 @@ pub struct BuyHeuristic {
     pub growth_accel_weight: f64,    // growth SCORE: reward per pt the recent 1Y return outpaces the long CAGR (momentum building)
     pub growth_accel_cap: f64,       // growth SCORE: cap on that 1Y-minus-CAGR acceleration term
     pub growth_min_score: f64,       // growth SCORE: hide ranked growth rows scoring <= this (padding); 0 = show all
+    pub growth_min_score_etf: f64,   // growth SCORE: ETF-only display floor. ETFs structurally cap ~5.6 (accel/quality/liq/fund terms all ~0 for a diversified basket) vs stocks ~19, so the shared growth_min_score sits at ~89% of the ETF ceiling and guillotines them. Separate, lower floor = ETF lane trimmed proportional to ITS score distribution. DISPLAY-only (print_lane, not the backtest) -> edge-blind by construction. 0 = show all
     pub growth_overext_cap: f64,     // (1) % ABOVE the 200wk SMA at which the overextension brake maxes out
     pub growth_max_above_ma: f64,    // hard gate: reject equities more than this % above the 200wk SMA — the extreme blow-off cohort the overext brake can only floor, not remove. VALIDATED at 150 (see ci-settings.yaml); 0 = off. Crypto exempt (rides far above its SMA normally; its brake cap handles it)
     pub growth_require_lifetime_uptrend: bool, // (#25) hard gate: reject equities whose WHOLE-LIFE log-trend CAGR (quote.trend_cagr, full history) is <= 0 — moon-crash-partial-recovery names whose 5Y/10Y legs look great but never reclaimed their long-run trend. false = off (default). Crypto exempt (young coins; the range gate handles bled ones)
@@ -256,6 +257,7 @@ impl Default for BuyHeuristic {
             growth_accel_weight: 0.2,      // trimmed 0.35->0.2: rho RANKS accel as the dominant helper (wide Δ-0.13) but the EDGE ablation flips it — accel HURTS the profit spread (zeroing it lifts wide edge +43.7->+94.5). Recent 1Y-vs-CAGR pop is the noisiest, most mean-reverting growth signal (hot-streak chasing). 0.2 is the durable middle: wide edge +43.7->+50.5 (5y)/+24.3->+28.5 (3y), rho flat/up, OOS both halves positive. 0.0 maxes edge but flips OOS-late NEGATIVE (regime artifact). per pt the last year outpaced the long CAGR -> momentum building
             growth_accel_cap: 50.0,        // cap that acceleration term (a +200% year doesn't run away with it)
             growth_min_score: 5.0,         // hide growth rows scoring <= 5 (padding); 0 = show all top_picks
+            growth_min_score_etf: 5.0,     // code default = growth_min_score (no behavior change out-of-box); ci-settings.yaml ships the lower ETF-calibrated floor
             growth_overext_cap: 100.0,     // (1) a name 100%+ above its 200wk SMA is maximally stretched
             growth_max_above_ma: 0.0,      // code default off; ci-settings.yaml ships the validated 150
             growth_require_lifetime_uptrend: false, // (#25) off until a probe validates it

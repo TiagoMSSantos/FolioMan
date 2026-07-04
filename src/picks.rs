@@ -1245,17 +1245,24 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
 fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>) {
     let min_score = tuning.growth_min_score;
+    // ETFs get their OWN, lower floor: 4 of the 7 score terms (accel/quality/liq/fund) are ~0 for a
+    // diversified basket, so ETF scores structurally cap ~5.6 vs stocks ~19 — the shared growth_min_score
+    // sits at ~89% of the ETF ceiling and shows only a sliver. Trim the ETF lane proportional to ITS
+    // distribution instead. DISPLAY-only (never touches the ranked/backtest edge).
+    let etf_min_score = tuning.growth_min_score_etf;
     let (crypto, equity): (Vec<_>, Vec<_>) =
         picks.into_iter().partition(|(quote, _)| is_currency_quoted(&quote.ticker));
     let (etf, stock): (Vec<_>, Vec<_>) = equity.into_iter().partition(|(quote, _)| quote_is_etf(quote));
-    // Equities: apply the growth_min_score trim HERE (the input list was ranked with no trim so the
-    // crypto lane below can stay full). ETFs carry no GICS sector, so the sector filter matches the
-    // configured keywords against the fund NAME; stocks were already sector-filtered before fetch.
-    // Pinned tickers bypass BOTH the score trim and the sector filter (`|| pinned`) — they're always shown.
-    let keep = |quote: &Quote, s: f64, sector_ok: bool| (s > min_score && sector_ok) || pinned.contains(quote.ticker.as_str());
-    let stock: Vec<_> = stock.into_iter().filter(|(quote, s)| keep(quote, *s, true)).collect();
-    let etf: Vec<_> =
-        etf.into_iter().filter(|(quote, s)| keep(quote, *s, core::sector_matches(&quote.name, sectors))).collect();
+    // Equities: apply the score trim HERE (the input list was ranked with no trim so the crypto lane
+    // below can stay full). ETFs carry no GICS sector, so the sector filter matches the configured
+    // keywords against the fund NAME; stocks were already sector-filtered before fetch. Pinned tickers
+    // bypass BOTH the score trim and the sector filter (`|| pinned`) — they're always shown.
+    let keep = |quote: &Quote, s: f64, floor: f64, sector_ok: bool| (s > floor && sector_ok) || pinned.contains(quote.ticker.as_str());
+    let stock: Vec<_> = stock.into_iter().filter(|(quote, s)| keep(quote, *s, min_score, true)).collect();
+    let etf: Vec<_> = etf
+        .into_iter()
+        .filter(|(quote, s)| keep(quote, *s, etf_min_score, core::sector_matches(&quote.name, sectors)))
+        .collect();
     // Title carries the selected sector filter so the table says what it's showing ("all" = no filter).
     // Count shown = how many actually qualified (capped at n); "of {n} max" explains a short table —
     // it's not a quota, that's all that passed the gates + filter.
