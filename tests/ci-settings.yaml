@@ -358,6 +358,11 @@ urls:
   # S&P MidCap 400 (Wikipedia page) MEASURED-REJECTED same batch: +400 mid-caps CUT the edge to +85.0
   # and halved rho (+0.13 -> +0.07) — the persistence signal the lane rides is weaker in mid-caps
   # (they mean-revert more). Do NOT re-add without a new same-batch run that clears the bar.
+  # FTSE 100 + DAX (yfiua CSVs, the free STOXX-600 proxy) MEASURED-REJECTED 2026-07-04, same-batch
+  # 12y: baseline edge +127.6 (rho +0.13, OOS +0.14|+0.10) -> with 140 EU large-caps +117.0
+  # (rho +0.11, OOS +0.11|+0.09, winsorized 97.7 -> 89.1) — every dial moved down, same direction
+  # as the MidCap rejection: the US-momentum persistence the lane rides is weaker in EU large-caps.
+  # Do NOT re-add without a new same-batch run that clears the bar.
   constituents_csv:
     - "https://yfiua.github.io/index-constituents/constituents-nasdaq100.csv"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
