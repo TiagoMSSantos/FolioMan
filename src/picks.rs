@@ -1003,6 +1003,14 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
             let n = display_name(&quote.name);
             if is_crypto {
                 n.strip_suffix(" USD").or_else(|| n.strip_suffix(" EUR")).map(str::to_string).unwrap_or(n)
+            } else if is_etf {
+                // umbrella-company prefixes ("iShares VII PLC - iShares NASDAQ 100 UCITS ETF") waste
+                // the tight column on legal wrapper noise; keep the fund name after " - " when that's
+                // what it is (has ETF/UCITS in it) — share-class tails like "- USD Acc" never match.
+                match n.split_once(" - ") {
+                    Some((_, fund)) if fund.contains("ETF") || fund.contains("UCITS") => fund.to_string(),
+                    _ => n,
+                }
             } else {
                 n
             }
