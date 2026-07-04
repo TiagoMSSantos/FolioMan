@@ -198,6 +198,7 @@ pub struct BuyHeuristic {
     pub sharpe_weight: f64,          // (B) GROWTH lane: reward per unit of CAGR/volatility (return per unit of daily swing). 0 = off
     pub onsale_sharpe_weight: f64,   // (B) ON-SALE lane's own Sharpe weight — split from the growth lane because the shared knob conflicts: ablation shows growth wants 0.15 but on-sale wants 0 (removing it lifts on-sale 12y edge +23.7). 0 = off
     pub sharpe_cap: f64,             // (B) cap on that CAGR/volatility ratio fed into the reward
+    pub sharpe_cap_etf: f64,         // (#37) ETF-only Sharpe cap, LOWER than sharpe_cap: cross-listed lines of the same fund print different daily stdev (thin-line prints + FX conversion), so ETF CAGR/vol above ~9 is listing-line noise, not fund risk — uncapped it reorders identical index wrappers against their real TER cost. Backtest pool holds stock constituents only -> edge byte-identical. 0 = off (ETFs use sharpe_cap)
     pub calmar_weight: f64,          // (C) reward per unit of CAGR/max-drawdown (return per worst historical pain). 0 = off
     pub calmar_cap: f64,             // (C) cap on that CAGR/max-drawdown ratio fed into the reward
 
@@ -287,6 +288,7 @@ impl Default for BuyHeuristic {
             sharpe_weight: 0.15,           // (B) GROWTH lane. Halved 0.3->0.15: the edge ablation showed sharpe dragging the profit spread; 0.15 is the peak (5y wide edge +95.6->+107.3, beats both 0.3 and 0.0; rho +0.24, OOS positive). CAGR/vol ~10 for a calm +20%/yr name -> ~+1.5
             onsale_sharpe_weight: 0.0,     // (B) ON-SALE lane. ZEROED — split from growth because the shared knob conflicted: growth wants 0.15, on-sale wants 0. Validated: zeroing lifts on-sale 12y edge +39.2->+62.5 (Δ+23.3) while growth keeps 0.15. 0 = off
             sharpe_cap: 15.0,              // (B) cap the CAGR/volatility ratio (a low-vol freak can't run away with it)
+            sharpe_cap_etf: 0.0,           // (#37) off by default; ci-settings ships 9.0 (line-noise ceiling for cross-listed wrappers)
             calmar_weight: 1.0,            // (C) cut further — the Calmar (CAGR/maxDD) tilt is mildly harmful in BOTH lanes on the wide sample too (Δ+0.02/+0.03); kept at 1.0 for a little long-hold drawdown-awareness. CAGR/maxDD ~0.4 for +20%/yr at -50% worst -> ~+0.4
             calmar_cap: 2.0,               // (C) cap the CAGR/max-drawdown ratio
             prefer_eur: true,

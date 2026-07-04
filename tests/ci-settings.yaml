@@ -303,6 +303,13 @@ buy_heuristic:
                                  #   ablation showed growth wants 0.15 but on-sale wants 0 — zeroing it lifts the on-sale 12y edge
                                  #   +39.2->+62.9 (Δ+23.7) while growth keeps 0.15. 0 = off (the swept on-sale optimum)
   sharpe_cap: 15.0               # (B) cap that CAGR/volatility ratio
+  sharpe_cap_etf: 9.0            # (#37) ETF-only Sharpe cap: cross-listed lines of the SAME fund print different daily
+                                 #   stdev (NASD.L 1.8%/day vs CSNDX.SW 1.1% for identical Nasdaq-100 holdings — thin-line
+                                 #   prints + FX conversion), so ETF CAGR/vol above ~9 measures listing-line noise, not
+                                 #   fund risk. Uncapped, that noise (0.15×Δsharpe ≈ 0.7 score) outvotes the real TER
+                                 #   difference (2.2% over 20y) and ranks the COSTLIER identical wrapper higher. 9.0 ≈ the
+                                 #   noise floor observed across same-index wrapper trios. Stocks keep sharpe_cap; the
+                                 #   backtest pool holds stock constituents only -> validated edge byte-identical. 0 = off
   calmar_weight: 0.0             # (C) ZEROED. Calmar (CAGR/max-drawdown) is harmful at the 12y horizon: 1.0->0 lifts GROWTH
                                  #   edge +92.7->+98.0, rho +0.06->+0.07, top-half +4.6->+7.3 — all three improve. Over a 20y hold the
                                  #   deepest-drawdown names are often the biggest compounders; penalizing path-pain deselects them.

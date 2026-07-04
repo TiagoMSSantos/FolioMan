@@ -287,8 +287,17 @@ fn quality_reward(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
 /// Sharpe/Calmar weights are passed in PER LANE — the growth and on-sale lanes want different Sharpe
 /// emphasis (growth 0.15, on-sale 0), so the caller supplies its own.
 fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: f64, tuning: &BuyHeuristic) -> f64 {
+    // (#37) ETFs get their own (lower) Sharpe cap: cross-listed lines of the SAME fund print
+    // different daily stdev (thin-line prints + FX conversion; NASD.L 1.8%/day vs CSNDX.SW 1.1%
+    // for the identical Nasdaq-100 holdings), so a high ETF CAGR/vol ratio measures listing-line
+    // noise, not fund risk — uncapped it outvotes a real 0.11%/yr TER difference between wrappers.
+    let sharpe_cap = if tuning.sharpe_cap_etf > 0.0 && quote_is_etf(quote) {
+        tuning.sharpe_cap_etf
+    } else {
+        tuning.sharpe_cap
+    };
     let sharpe = match quote.volatility_pct {
-        Some(v) if v > 0.0 => (long_cagr / v).clamp(0.0, tuning.sharpe_cap),
+        Some(v) if v > 0.0 => (long_cagr / v).clamp(0.0, sharpe_cap),
         _ => 0.0,
     };
     let calmar = if quote.max_drawdown_pct > 0.0 {
@@ -1774,6 +1783,17 @@ mod tests {
     assert!(growth_score(&wild, &vt).is_some()); // BTC-like swing passes
     wild.volatility_pct = None; // missing series not punished
     assert!(growth_score(&wild, &vt).is_some());
+    // (#37) ETF Sharpe cap: a calm-line wrapper's CAGR/vol (15/1.0 = 15) caps at 9 for ETFs, at
+    // sharpe_cap (15) for stocks — listing-line vol noise can't outvote real cost between wrappers.
+    let sc = BuyHeuristic { sharpe_cap_etf: 9.0, ..BuyHeuristic::default() };
+    let mut line = quote(2.0, strong);
+    line.volatility_pct = Some(1.0);
+    let stock_risk = risk_bonus(&line, 15.0, 0.15, 0.0, &sc);
+    line.name = "iShares Core S&P 500 UCITS ETF".into();
+    let etf_risk = risk_bonus(&line, 15.0, 0.15, 0.0, &sc);
+    assert!((stock_risk - 0.15 * 15.0).abs() < 1e-9 && (etf_risk - 0.15 * 9.0).abs() < 1e-9);
+    let off = BuyHeuristic { sharpe_cap_etf: 0.0, ..BuyHeuristic::default() };
+    assert!((risk_bonus(&line, 15.0, 0.15, 0.0, &off) - 0.15 * 15.0).abs() < 1e-9); // 0 = off
     // (#25) lifetime-uptrend second leg: trend_cagr is fit on the fetched window, so a name that
     // collapsed BEFORE the window and recovered inside it slips through (MSCI Greece pattern) —
     // life_cagr (listing-to-date) catches it. None (backtest) stays exempt -> edge-blind.
