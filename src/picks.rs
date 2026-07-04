@@ -980,6 +980,27 @@ fn display_name(name: &str) -> String {
     n.to_string()
 }
 
+/// Display name for any quote — the raw Yahoo name minus per-class noise. Crypto: drop the quote-currency
+/// word ("Bitcoin EUR" -> "Bitcoin"; the ticker column already carries -EUR/-USD). ETF: drop the
+/// umbrella-company prefix ("iShares VII PLC - iShares NASDAQ 100 UCITS ETF" -> the fund part) — only
+/// when what follows " - " is the fund name (has ETF/UCITS), so share-class tails like "- USD Acc" never
+/// match. Everything else: strip one corporate legal suffix. Used by the picks table AND `check`'s
+/// summary line; lookups (BF TER name match) keep the full name.
+pub fn clean_name(quote: &Quote) -> String {
+    let n = display_name(&quote.name);
+    let is_crypto = quote.ticker.contains('-') || quote.instrument_type.eq_ignore_ascii_case("CRYPTOCURRENCY");
+    if is_crypto {
+        n.strip_suffix(" USD").or_else(|| n.strip_suffix(" EUR")).map(str::to_string).unwrap_or(n)
+    } else if quote.instrument_type.eq_ignore_ascii_case("ETF") {
+        match n.split_once(" - ") {
+            Some((_, fund)) if fund.contains("ETF") || fund.contains("UCITS") => fund.to_string(),
+            _ => n,
+        }
+    } else {
+        n
+    }
+}
+
 /// Render ONE cell's text for column `key`. `mark` is the rank label (number + `*`/`#` flags). All values
 /// come from already-fetched `Quote` fields — pure formatting, no scoring. Unknown key -> "?".
 fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
@@ -997,24 +1018,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
     let etf_only_na = is_equity || is_crypto; // TER doesn't apply here
     match key {
         "rank" => mark.to_string(),
-        // crypto: Yahoo names are currency pairs ("Bitcoin EUR", "OKB USD"); the ticker column already
-        // carries -EUR/-USD, so the quote-currency word is pure noise in a tight NAME column.
-        "name" => {
-            let n = display_name(&quote.name);
-            if is_crypto {
-                n.strip_suffix(" USD").or_else(|| n.strip_suffix(" EUR")).map(str::to_string).unwrap_or(n)
-            } else if is_etf {
-                // umbrella-company prefixes ("iShares VII PLC - iShares NASDAQ 100 UCITS ETF") waste
-                // the tight column on legal wrapper noise; keep the fund name after " - " when that's
-                // what it is (has ETF/UCITS in it) — share-class tails like "- USD Acc" never match.
-                match n.split_once(" - ") {
-                    Some((_, fund)) if fund.contains("ETF") || fund.contains("UCITS") => fund.to_string(),
-                    _ => n,
-                }
-            } else {
-                n
-            }
-        }
+        "name" => clean_name(quote),
         "ticker" => quote.ticker.clone(),
         "market" => quote.market.clone(),
         "price" => quote.price.clone(),

@@ -45,7 +45,7 @@ pub async fn run(args: Vec<String>) {
             .join(" ");
         println!(
             "{:<name_w$} {:<ticker_w$} {:>price_w$} {cells}  {:<market_w$} {:<8} {}",
-            truncate(&quote.name, name_w),
+            truncate(&picks::clean_name(quote), name_w),
             truncate(&quote.ticker, ticker_w),
             quote.price,
             truncate(&quote.market, market_w),
