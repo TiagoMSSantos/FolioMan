@@ -624,7 +624,11 @@ async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str, name: &str) -
         return Some(t);
     }
     // Last BF resort: unique fund-name prefix (rescues VVSM.DE, whose venue the symbol map can't reach).
-    if let Some(t) = bf_ter_by_name(name) {
+    // Retry without Yahoo's umbrella-company prefix: "Amundi Index Solutions - Amundi S&P 500 Swap UCITS
+    // ETF EUR Acc" — BF lists only the part after " - " (rescues AUM5.DE, TER 0.15%).
+    if let Some(t) =
+        bf_ter_by_name(name).or_else(|| name.split_once(" - ").and_then(|(_, fund)| bf_ter_by_name(fund)))
+    {
         return Some(t);
     }
     let v = cached_fund_json(client, &urls.fund_expense, ticker, "etf").await?;
@@ -1449,7 +1453,14 @@ mod tests {
             ("vaneck semiconductor ucits etf - usd acc".into(), 0.35),
             ("amundi stoxx europe 600 banks ucits etf acc".into(), 0.30),
             ("amundi stoxx europe 600 banks ucits etf dist".into(), 0.30),
+            ("amundi s&p 500 swap ucits etf eur acc".into(), 0.15),
+            ("amundi s&p 500 swap ucits etf eur hedged acc".into(), 0.28),
         ]);
+        // Yahoo umbrella prefix ("Amundi Index Solutions - …") never prefixes a BF name; fetch_expense
+        // retries with the part after " - ", which must hit its share class uniquely (AUM5.DE rescue).
+        let yahoo = "Amundi Index Solutions - Amundi S&P 500 Swap UCITS ETF EUR Acc";
+        assert_eq!(bf_ter_by_name(yahoo), None);
+        assert_eq!(bf_ter_by_name(yahoo.split_once(" - ").unwrap().1), Some(0.15));
         assert_eq!(bf_ter_by_name("VanEck Semiconductor UCITS ETF"), Some(0.35)); // unique prefix
         assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF"), None); // 2 share classes -> ambiguous
         assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF Dist"), Some(0.30)); // exact class
