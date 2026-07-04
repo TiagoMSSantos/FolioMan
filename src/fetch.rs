@@ -254,14 +254,23 @@ async fn last_close(client: &Client, urls: &Urls, symbol: &str) -> Option<f64> {
     arr.iter().rev().find_map(|v| v.as_f64())
 }
 
-/// EUR per 1 unit of `cur`. 1.0 for EUR; None if Yahoo has no FX pair. Cached.
+/// Pence-quote scale: Yahoo reports LSE listings in pence ("GBp", sometimes "GBX"), so the pound
+/// FX rate must be divided by 100. Uppercasing alone would silently apply the pound rate to a
+/// pence price — 100× EUR inflation on every `.L` name's price and turnover.
+fn fx_scale(cur: &str) -> f64 {
+    if cur == "GBp" || cur == "GBX" { 0.01 } else { 1.0 }
+}
+
+/// EUR per 1 unit of `cur`. 1.0 for EUR; None if Yahoo has no FX pair. Cached — the cache holds
+/// the plain pound rate under "GBP"; the pence scale is applied on read, never stored.
 pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) -> Option<f64> {
+    let scale = fx_scale(cur);
     let cur = if cur.is_empty() { "EUR".to_string() } else { cur.to_uppercase() };
     if cur == "EUR" {
         return Some(1.0);
     }
     if let Some(v) = cache.lock().await.get(&cur) {
-        return *v;
+        return v.map(|r| r * scale);
     }
     let mut rate = None;
     for (sym, invert) in [(format!("{cur}EUR=X"), false), (format!("EUR{cur}=X"), true)] {
@@ -271,7 +280,7 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
         }
     }
     cache.lock().await.insert(cur, rate); // cache misses too
-    rate
+    rate.map(|r| r * scale)
 }
 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
@@ -1477,6 +1486,17 @@ mod tests {
         assert!(roe_sign_consistent(-5.0, Some(-3.0))); // genuine loss-maker: real negative ROE
         assert!(roe_sign_consistent(30.1, Some(15.0))); // normal profitable filer
         assert!(roe_sign_consistent(-27.0, None)); // no margin data -> can't judge, keep
+    }
+
+    /// Pence-quote FX scale: LSE "GBp"/"GBX" divide the pound rate by 100; real ISO codes (and the
+    /// already-uppercase "GBP") pass through untouched.
+    #[test]
+    fn pence_fx_scale() {
+        assert_eq!(fx_scale("GBp"), 0.01);
+        assert_eq!(fx_scale("GBX"), 0.01);
+        assert_eq!(fx_scale("GBP"), 1.0); // already pounds
+        assert_eq!(fx_scale("USD"), 1.0);
+        assert_eq!(fx_scale(""), 1.0);
     }
 
     /// TTM roll-forward off REAL LITE (Lumentum) SEC data: FY 0.37 + current 9mo-YTD 2.59 − prior 9mo-YTD
