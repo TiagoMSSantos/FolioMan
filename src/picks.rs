@@ -959,6 +959,27 @@ fn col_width(spec: &ColSpec, w: &Widths) -> usize {
     base.max(spec.hdr.chars().count()) // never narrower than the header
 }
 
+/// Strip ONE trailing corporate legal suffix for display, so a tight NAME column truncates to a whole
+/// name ("Monolithic Power Systems") instead of a dangling fragment ("Monolithic Power Systems, In").
+/// Longest-first so ", Inc." wins over " Inc". ETF/crypto names end in "ETF"/"Acc"/"Dist"/coin names and
+/// pass through untouched. Display-only — TER name matching and every lookup keep the full name.
+fn display_name(name: &str) -> String {
+    const SUFFIXES: [&str; 16] = [
+        ", Incorporated", " Incorporated", " Corporation", ", Inc.", ", Inc", " Inc.", " Inc",
+        ", Corp.", " Corp.", " Corp", " Limited", ", Ltd.", " Ltd.", ", LLC", " PLC", " plc",
+    ];
+    let n = name.trim_end();
+    for s in SUFFIXES {
+        if let Some(stem) = n.strip_suffix(s) {
+            let stem = stem.trim_end_matches([',', ' ']);
+            if stem.chars().count() >= 4 {
+                return stem.to_string(); // guard: never strip a name down to almost nothing
+            }
+        }
+    }
+    n.to_string()
+}
+
 /// Render ONE cell's text for column `key`. `mark` is the rank label (number + `*`/`#` flags). All values
 /// come from already-fetched `Quote` fields — pure formatting, no scoring. Unknown key -> "?".
 fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
@@ -976,7 +997,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
     let etf_only_na = is_equity || is_crypto; // TER doesn't apply here
     match key {
         "rank" => mark.to_string(),
-        "name" => quote.name.clone(),
+        "name" => display_name(&quote.name),
         "ticker" => quote.ticker.clone(),
         "market" => quote.market.clone(),
         "price" => quote.price.clone(),
@@ -1325,6 +1346,20 @@ fn turnover_note(now: &[String], n: usize, path: &std::path::Path) -> Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Legal-suffix strip: whole names fit the tight NAME column instead of clipping to dangling
+    /// fragments; ETF/crypto names and short names pass through untouched.
+    #[test]
+    fn display_name_strips_legal_suffixes() {
+        assert_eq!(display_name("Monolithic Power Systems, Inc."), "Monolithic Power Systems");
+        assert_eq!(display_name("Marathon Petroleum Corporation"), "Marathon Petroleum");
+        assert_eq!(display_name("Old Dominion Freight Line, Inc."), "Old Dominion Freight Line");
+        assert_eq!(display_name("Apple Inc."), "Apple");
+        assert_eq!(display_name("Amazon.com, Inc."), "Amazon.com");
+        assert_eq!(display_name("VanEck Semiconductor UCITS ETF - USD Acc"), "VanEck Semiconductor UCITS ETF - USD Acc");
+        assert_eq!(display_name("Bitcoin"), "Bitcoin"); // no suffix -> unchanged
+        assert_eq!(display_name("Inc"), "Inc"); // guard: never strip to almost nothing
+    }
 
     /// `size_weights`: vol-target sizing — bigger slice for higher score / lower vol; sums to 100;
     /// degenerate inputs (empty, all-zero score) stay finite. Pure, no network. (Item 6) within ONE
