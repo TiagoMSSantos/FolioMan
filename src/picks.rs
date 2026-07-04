@@ -402,7 +402,8 @@ struct ScoreParts {
     overext_damp: f64, // 1 − (overext/cap)×(1−floor)
     damp: f64,         // geomean(trust, overext_damp)
     liq_bonus: f64,    // (L) turnover_weight × ln(max(turnover/1e9, 1))
-    score: f64,        // base × proximity × value × damp + liq_bonus  (or base × geomean(trust,overext,prox,value) + liq_bonus when #8 growth_geomean_fold)
+    ter_damp: f64,     // (T) ETF cost drag (1−TER)^20; 1.0 for stocks/crypto/None or when growth_ter_drag off
+    score: f64,        // base × proximity × value × damp × ter_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp + liq_bonus when #8 growth_geomean_fold)
 }
 
 /// Score a quote as a MOMENTUM/GROWTH candidate — the MIRROR of `buy_score`. The on-sale lane fades
@@ -600,15 +601,26 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // stack by the SOFTEST term instead of the raw product. Edge-affecting — it also changes the geomean
     // SLOT COUNT (trust/overext exponent ½ -> ¼), which alone can move the edge (a past constant-1.0 slot
     // deletion shifted it +98->+109) -> knob-gated, default off = the raw-multiply formula, edge intact.
-    let score = if tuning.growth_geomean_fold {
-        base * combine_damps(&[trust, overext_damp, proximity, value]) + liq_bonus
+    // (T) TER cost drag — ETF-only, BACKTEST-BLIND. The expense ratio is the ONE cost certain to
+    // compound against a decades hold, so dock the score by the actual 20-year wealth multiple it eats:
+    // (1 − TER)^20 (20 = the lane's stated hold horizon). Tiebreaks near-identical index ETFs (two
+    // Nasdaq-100 -> the cheaper NET-return wins) that momentum alone ranks arbitrarily. expense_ratio is
+    // None for stocks/crypto/no-source AND in the backtest pool -> ×1.0 there -> edge byte-identical.
+    // Knob-gated: off (default) = byte-identical to the pre-(T) lane.
+    let ter_damp = if tuning.growth_ter_drag {
+        quote.expense_ratio.map_or(1.0, |t| (1.0 - t / 100.0).max(0.0).powi(20))
     } else {
-        base * proximity * value * damp + liq_bonus
+        1.0
+    };
+    let score = if tuning.growth_geomean_fold {
+        base * combine_damps(&[trust, overext_damp, proximity, value]) * ter_damp + liq_bonus
+    } else {
+        base * proximity * value * damp * ter_damp + liq_bonus
     };
     Some(ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, base, proximity, value_raw, value, trust, overext, overext_cap,
-        overext_damp, damp, liq_bonus, score,
+        overext_damp, damp, liq_bonus, ter_damp, score,
     })
 }
 
@@ -778,11 +790,19 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     }
     s.push_str(&format!("  geomean(trust, overext_damp) = √({:.3} × {:.3})         = {:.3}\n", p.trust, p.overext_damp, p.damp));
     s.push_str(&format!("  liq_bonus    = growth_turnover_weight × ln(max(turn/1e9,1)) = {:.2}\n", p.liq_bonus));
+    // (T) TER cost drag only prints when it bites (an ETF with a TER, drag on) — stocks/crypto are ×1.0.
+    let ter_frag = if p.ter_damp < 1.0 {
+        s.push_str(&format!("  ter_damp     = (1 − TER)^20                             = (1 − {:.2}%)^20 = {:.3}\n",
+            quote.expense_ratio.unwrap_or(0.0), p.ter_damp));
+        format!(" × {:.3}", p.ter_damp)
+    } else {
+        String::new()
+    };
     if tuning.growth_geomean_fold {
-        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}) + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag} + {:.2} = {:.2}\n",
             p.base, p.trust, p.overext_damp, p.proximity, p.value, p.liq_bonus, p.score));
     } else {
-        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3}{ter_frag} + {:.2} = {:.2}\n",
             p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
     }
     if (displayed - p.score).abs() > 1e-6 {
@@ -1678,6 +1698,16 @@ mod tests {
     assert_eq!(review.len(), 1);
     assert!(review[0].contains("young"));
     assert!(gate_review_lines(&[&aged(Some(9.0))], &tuning, 8).is_empty());
+
+    // --- (#34) TER cost drag (ETF-only via expense_ratio; backtest-blind: None -> ×1.0) ---
+    let ter_t = BuyHeuristic { growth_ter_drag: true, ..BuyHeuristic::default() };
+    let etf = |ter: Option<f64>| { let mut q = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]); q.expense_ratio = ter; q };
+    let undamped = growth_score(&etf(None), &ter_t).unwrap(); // no TER -> ×1.0 even with drag on
+    assert_eq!(growth_score(&etf(Some(0.65)), &tuning).unwrap(), undamped); // drag OFF -> TER ignored, byte-identical
+    let cheap = growth_score(&etf(Some(0.10)), &ter_t).unwrap();
+    let dear = growth_score(&etf(Some(0.65)), &ter_t).unwrap();
+    assert!(undamped > cheap && cheap > dear, "higher TER docks the score more: {undamped} / {cheap} / {dear}");
+    assert!((cheap / undamped - 0.999_f64.powi(20)).abs() < 1e-9); // 0.10% TER over 20y ≈ ×0.980
 
     // --- SCORE (relational, robust to knob tuning) ---
     // trust: same inputs, the one missing a 10Y record scores lower (uptrend less proven)

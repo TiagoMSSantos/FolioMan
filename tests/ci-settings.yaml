@@ -255,6 +255,13 @@ buy_heuristic:
                                  #   proven compounders, not hidden. BACKTEST-BLIND either way: age_years is None in the backtest pool, so
                                  #   the gate never touches the validated edge; it only shapes the LIVE screen. Set >0 (e.g. 3) for a hard
                                  #   floor that trims the freshest listings entirely; pins always bypass (shown with a gate-review reason).
+  growth_ter_drag: true          # (#34) ETF cost drag: dock the growth score by the ACTUAL 20-year wealth multiple the expense
+                                 #   ratio eats, (1 - TER)^20. The TER is the one cost certain to compound against a decades hold, so
+                                 #   two near-identical index ETFs (e.g. iShares vs Amundi Nasdaq-100) rank by NET return instead of
+                                 #   momentum noise, and a 0.65% thematic ETF loses ground to a 0.10% broad one it only led on a
+                                 #   reverting recent year. ETF-ONLY (expense_ratio is None for stocks/crypto -> x1.0). BACKTEST-BLIND:
+                                 #   expense_ratio is None in the backtest pool -> x1.0 there, so the validated edge is byte-identical;
+                                 #   this shapes only the LIVE ETF lane. false = off. (Magnitude: 0.10% TER -> x0.980, 0.65% -> x0.878.)
   growth_overext_floor: 0.05     # growth-score multiplier at full stretch. Tightened 0.2->0.15->0.05, each step a harder blow-off-top brake:
                                  #   buying right after a parabola = poor long-hold entry. The walk-forward sweep ranks 0.05 best: wide
                                  #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).
