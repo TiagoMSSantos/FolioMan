@@ -523,7 +523,7 @@ async fn fetch_ratios_sec(client: &Client, urls: &Urls, ticker: &str, close_nati
 /// (net margin), and NI÷equity flips sign exactly when equity < 0 — so a meaningful ROE must share
 /// net income's sign. Also catches the double-negative fake (loss year + negative equity => ROE > 0).
 fn roe_sign_consistent(roe: f64, net_margin: Option<f64>) -> bool {
-    net_margin.map_or(true, |nm| (roe >= 0.0) == (nm >= 0.0))
+    net_margin.is_none_or(|nm| (roe >= 0.0) == (nm >= 0.0))
 }
 
 /// Trailing-twelve-month diluted EPS for a US filer from SEC XBRL's single-concept `companyconcept`
