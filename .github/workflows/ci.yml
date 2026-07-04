@@ -17,6 +17,12 @@ env:
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_MULTIPLEXING: "false"
 
+# A newer run of the same ref supersedes an in-flight one — cancel it instead of finishing a stale
+# commit's 45-min backtest-gate. Per-ref group: a PR only cancels its own previous run, never main's.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # note: ubuntu-latest ships a stable Rust toolchain, so no install step needed.
 # rust-cache with a shared key: all jobs restore ONE common warm cache from prior runs
 # (deps compiled once, not N×). Parallel jobs can't share THIS run's cache — GitHub saves it
