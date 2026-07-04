@@ -97,3 +97,21 @@ jobs:
           shared-key: folioman-ci   # same warm cache as the other jobs
       - name: walk-forward edge gate (skip-on-throttle, fail-on-collapse)
         run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --ignored --nocapture
+
+  # Actions housekeeping: each main run supersedes the history, so delete this workflow's older
+  # COMPLETED runs (logs + artifacts go with them). Main-only by the `if`: a PR ref is the merge ref
+  # (refs/pull/…), so PR runs neither trigger the cleanup nor lose their own history while iterating.
+  # --status completed keeps any still-running run (including this one) untouched; per-id `|| true`
+  # so one undeletable run never reddens the pipeline.
+  cleanup-runs:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write   # gh run delete; other jobs keep the default read-only token
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status completed --limit 200 --json databaseId -q '.[].databaseId'); do
+            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          done
