@@ -302,8 +302,12 @@ buy_heuristic:
   # Reward a calm, shallow-drawdown compounder over a knife-y one with the same headline CAGR.
   # (The old R²-smoothness "consistency" damp was deleted: it read pure edge-harm with no rho gain —
   # disabling it had nearly DOUBLED wide 5y edge +50.5->+95.6. Past path-smoothness doesn't predict return.)
-  sharpe_weight: 0.15            # (B) GROWTH lane: reward per unit CAGR/volatility. Halved 0.3->0.15 (peak edge): 5y wide +95.6->+107.3,
-                                 #   beats both 0.3 and 0.0, rho +0.24, OOS positive. Zeroing WITH calmar cut edge +1.9->-1.6. 0 = off
+  sharpe_weight: 0.05            # (B) GROWTH lane: reward per unit CAGR/volatility. History: 0.3->0.15 halving was peak edge
+                                 #   PRE-smoothness. Re-swept 2026-07-04 AFTER growth_smoothness_weight shipped: trend_r2 carries
+                                 #   the same calm-compounder signal, so Sharpe's marginal value shrank — 0.05/0/0.10 plateau at
+                                 #   edge +148.0/+147.0/+145.8 vs +137.2 at 0.15 (same batch, rho +0.13 flat). 0.05 = measured max;
+                                 #   kept NON-zero deliberately: the ETF lane (absent from backtest) leans on the Sharpe leg for its
+                                 #   risk reward and the sharpe_cap_etf fix, so zeroing would be an unmeasured live ETF regression. 0 = off
   onsale_sharpe_weight: 0.0      # [FOIL] (B) ON-SALE lane's own Sharpe weight, split from growth because the shared knob conflicted:
                                  #   ablation showed growth wants 0.15 but on-sale wants 0 — zeroing it lifts the on-sale 12y edge
                                  #   +39.2->+62.9 (Δ+23.7) while growth keeps 0.15. 0 = off (the swept on-sale optimum)
