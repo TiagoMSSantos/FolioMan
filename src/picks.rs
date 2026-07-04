@@ -655,7 +655,8 @@ pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'stati
 
 /// Every growth gate this quote FAILS, in gate order: (gate_name, human "why", is_close_miss).
 /// `None` = not assessable as a growth candidate at all (leveraged / stablecoin / unknown turnover /
-/// <2Y history / no 1Y data); empty vec = clears every gate. Shared by the near-miss tail above and
+/// no 1Y data); a name with no 5y+ leg returns a single "history" fail (so a pinned young ETF explains
+/// its 0.0 rather than vanishing); empty vec = clears every gate. Shared by the near-miss tail above and
 /// `check`'s held-name gate review, so a held name that would no longer rank gets flagged with the
 /// same wording the screen tail uses.
 pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'static str, String, bool)>> {
@@ -671,7 +672,18 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     let young_fail = |a: f64| ("young", format!("{a:.0}y listed (need ≥{:.0}y)", tuning.growth_min_age_years), a >= tuning.growth_min_age_years - 1.0);
     let too_young = tuning.growth_min_age_years > 0.0 && quote.age_years.is_some_and(|a| a < tuning.growth_min_age_years);
     let Some((long_cum, long_years)) = long_leg_fixed(quote, tuning.fixed_cagr_years) else {
-        return too_young.then(|| vec![young_fail(quote.age_years.unwrap())]); // young name w/o CAGR leg -> explain, not a silent 0.0
+        // No 5y+ leg -> the name can't be ranked at all (score_parts `?`-bails here too -> a silent 0.0).
+        // ALWAYS explain it, so a pinned young ETF (VUAA 2y, SPYL 3y) prints a reason instead of a mystery
+        // 0.0 in the screen's gate-review footer. Prefer the actionable "young" wording when the age gate
+        // is the floor that fired; otherwise a plain "history" note (nothing to tune, it just needs more time).
+        if too_young {
+            return Some(vec![young_fail(quote.age_years.unwrap())]);
+        }
+        let why = match quote.age_years {
+            Some(a) => format!("{a:.0}y listed, no 5y+ record to rank"),
+            None => "no 5y+ record to rank".to_string(),
+        };
+        return Some(vec![("history", why, false)]);
     };
     let return_1y = perf_pct(quote, "1Y")?; // no 1Y data
     let long_cagr = if tuning.use_trend_cagr {
@@ -1688,11 +1700,21 @@ mod tests {
     assert!(gate_failures(&young, &age_t).unwrap().iter().any(|(g, _, _)| *g == "young")); // ...with an explicit reason
     assert!(growth_score(&aged(Some(9.0)), &age_t).is_some()); // old enough -> scored
     assert!(growth_score(&aged(None), &age_t).is_some()); // unknown age -> can't judge -> pass (backtest quotes)
-    // young name WITHOUT a CAGR leg: the silent long_leg_fixed None becomes an explicit "young" reason
+    // young name WITHOUT a CAGR leg: the silent long_leg_fixed None becomes an explicit reason.
     let mut young_noleg = quote(5.0, &[("1Y", 10.0)]);
     young_noleg.age_years = Some(2.0);
     assert!(growth_score(&young_noleg, &age_t).is_none());
-    assert!(gate_failures(&young_noleg, &age_t).unwrap().iter().any(|(g, _, _)| *g == "young"));
+    assert!(gate_failures(&young_noleg, &age_t).unwrap().iter().any(|(g, _, _)| *g == "young")); // age gate ON -> "young"
+    // age gate OFF (default): the no-leg name is still explained, now as "history" (not a silent None ->
+    // a pinned young ETF like VUAA/SPYL prints a reason instead of a mystery 0.0)
+    let hist = gate_failures(&young_noleg, &tuning).unwrap();
+    assert_eq!(hist.len(), 1);
+    assert_eq!(hist[0].0, "history");
+    assert!(hist[0].1.contains("2y listed"));
+    // a no-leg name with unknown age (backtest-style, but such quotes usually HAVE legs) -> still explained
+    let mut noage_noleg = quote(5.0, &[("1Y", 10.0)]);
+    noage_noleg.age_years = None;
+    assert_eq!(gate_failures(&noage_noleg, &tuning).unwrap()[0].0, "history");
     // gate_review_lines: a failing name yields one TICKER row, a clean name yields nothing
     let review = gate_review_lines(&[&young], &age_t, 8);
     assert_eq!(review.len(), 1);
