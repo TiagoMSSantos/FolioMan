@@ -143,12 +143,19 @@ fn is_etf(name: &str) -> bool {
 /// bearing) is untouched — it carries neither marker. `physical` catches the metal ETCs (all Yahoo
 /// names carry it: "…IE Physical Gold"), `commodit` the broad commodity funds. Tighten if a legit
 /// fund ever trips it (an equity sector fund named "…Energy"/"…Materials" has no marker, stays in).
+/// Third net: a standalone "ETC" NAME TOKEN. ETC = Exchange Traded Commodity — the European legal
+/// wrapper that BY DEFINITION holds a commodity, so the wrapper token itself is a marker. Catches
+/// issuer-legal-name rows the substring markers miss ("XTrackers ETC PLC" = physical gold, no
+/// "physical" in the name). Token match (split on non-alphanumeric), not substring, so equity fund
+/// names containing the letters ("...Fetch...", "ETCetera") can never trip it; miner/producer
+/// equity baskets are "UCITS ETF" — no ETC token.
 const COMMODITY_MARKERS: &[&str] = &["physical", "commodit"];
 
 fn is_commodity_etf(quote: &Quote) -> bool {
     quote_is_etf(quote) && {
         let n = quote.name.to_lowercase();
         COMMODITY_MARKERS.iter().any(|m| n.contains(m))
+            || n.split(|c: char| !c.is_ascii_alphanumeric()).any(|t| t == "etc")
     }
 }
 
@@ -1702,6 +1709,15 @@ mod tests {
     let mut broad = quote(2.0, strong);
     broad.name = "iShares Core S&P 500 UCITS ETF".into();
     assert!(!is_commodity_etf(&broad)); // a plain index ETF is never commodity-gated
+    // ETC legal-wrapper token: an issuer-legal-name row carries neither "physical" nor "commodit"
+    // (XGDE.DE = "XTrackers ETC PLC", physical gold) — the standalone ETC token itself is the marker.
+    let mut wrapper = quote(2.0, strong);
+    wrapper.name = "XTrackers ETC PLC".into();
+    wrapper.instrument_type = "ETF".into();
+    assert!(is_commodity_etf(&wrapper) && growth_score(&wrapper, &tuning).is_none()); // ETC wrapper -> gated
+    let mut fetch = quote(2.0, strong);
+    fetch.name = "Fetchr Growth ETCetera Fund UCITS ETF".into(); // token match: substrings can't trip it
+    assert!(!is_commodity_etf(&fetch));
     let liq_t = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
     let mut thin = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     thin.avg_turnover_eur = Some(1_000.0);
