@@ -67,7 +67,9 @@ inflation_adjust:
 buy_heuristic:
   # --- GATES (fail any one -> excluded before scoring) ---
   min_1y_pct: -25.0              # [FOIL] on-sale only: reject if 1Y % <= this (growth uses a hardcoded 0% floor for equities, not this)
-  min_1y_pct_crypto: -75.0       # LIVE (crypto/FX -EUR/-USD): 1Y floor for the crypto growth lane — coins swing far harder than stocks
+  min_1y_pct_crypto: -50.0       # LIVE (crypto/FX -EUR/-USD): 1Y floor for the crypto growth lane — coins swing far harder than
+                                 #   stocks, but a coin down worse than -50% on the year is a crash, not a swing (BTC's own bad
+                                 #   year is -33.5%, comfortably inside; GT -62 / BGB -60 out). Was -75, which let deep crashers rank
   max_1m_drop_pct: -20.0         # LIVE: reject if 1M % <= this (a hard monthly crash = falling knife) — both lanes
   max_1m_drop_pct_crypto: -35.0  # LIVE (crypto/FX): looser knife — a -20%/month alt is normal — both lanes
   min_long_pct: 30.0             # [FOIL] on-sale only: reject unless EVERY 5Y/10Y/20Y leg is > this (growth uses a hardcoded >0% 5Y consistency gate instead)
@@ -241,6 +243,11 @@ buy_heuristic:
                                  #   BACKTEST-BLIND in practice (almost no coin has the full 12y window, so the pool carries
                                  #   ~none) -> judgment gate like the turnover floor, validated by live-screen eyeball.
                                  #   If a future bear drags BTC below -84, raise this just above BTC's new mark. 0 = off.
+  growth_max_vol_crypto: 3.0     # (#36) crypto-only VOL cap = "reject coins swinging WILDER than Bitcoin day-to-day" — same
+                                 #   philosophy as the maxdd bar, applied to daily-return stdev (the VOL column) instead of the
+                                 #   worst-ever tail. BTC ~2.4%/day, so 3.0 keeps the base with headroom and cuts the wild alts
+                                 #   (OKB 3.4, LEO 3.1). Crypto absent from the backtest pool -> edge-blind by construction;
+                                 #   judgment gate validated by live-screen eyeball. 0 = off.
   growth_require_lifetime_uptrend: true # (#25) reject equities whose WHOLE-LIFE log-trend CAGR is <= 0: moon-crash-partial-recovery
                                  #   names whose 10Y leg looks great but never reclaimed their long-run trend (the ranked CAGR uses
                                  #   the longest 20Y/10Y/5Y leg, so it can't see this). Same-batch pair 2026-07-03: off +115.7

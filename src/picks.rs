@@ -150,12 +150,20 @@ fn is_etf(name: &str) -> bool {
 /// names containing the letters ("...Fetch...", "ETCetera") can never trip it; miner/producer
 /// equity baskets are "UCITS ETF" — no ETC token.
 const COMMODITY_MARKERS: &[&str] = &["physical", "commodit"];
+// Physical metal trackers that carry neither marker nor the ETC wrapper token surface as plain
+// metal names ("Xetra-Gold", "Gold Bullion Securities"). A bare metal token is a commodity marker
+// too — unless the name also says the fund holds miner EQUITIES (Gold Miners / Gold Producers /
+// Silver Mining), earnings-bearing baskets the lane keeps. Token match, so "Goldman" can't trip.
+const METAL_TOKENS: &[&str] = &["gold", "silver", "platinum", "palladium", "bullion"];
+const MINER_TOKENS: &[&str] = &["miner", "miners", "mining", "producer", "producers"];
 
 fn is_commodity_etf(quote: &Quote) -> bool {
     quote_is_etf(quote) && {
         let n = quote.name.to_lowercase();
+        let token = |t: &str| n.split(|c: char| !c.is_ascii_alphanumeric()).any(|x| x == t);
         COMMODITY_MARKERS.iter().any(|m| n.contains(m))
-            || n.split(|c: char| !c.is_ascii_alphanumeric()).any(|t| t == "etc")
+            || token("etc")
+            || (METAL_TOKENS.iter().any(|m| token(m)) && !MINER_TOKENS.iter().any(|m| token(m)))
     }
 }
 
@@ -565,6 +573,16 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if maxdd_cap > 0.0 && quote.max_drawdown_pct > maxdd_cap {
         return None;
     }
+    // (#36) crypto VOL cap: reject coins whose daily swing runs wilder than the base — same
+    // philosophy as the crypto maxdd bar ("no worse than Bitcoin"), applied to day-to-day stdev
+    // instead of the worst-ever tail. Crypto-only (absent from the backtest pool -> edge-blind);
+    // equities never reach multi-% daily stdev. None (missing series) passes, like every data gate.
+    if crypto
+        && tuning.growth_max_vol_crypto > 0.0
+        && quote.volatility_pct.is_some_and(|v| v > tuning.growth_max_vol_crypto)
+    {
+        return None;
+    }
 
     // ---- SCORE ----
     let trend = long_cagr.min(tuning.long_trend_cap); // proven compounding, capped like the on-sale lane
@@ -770,6 +788,11 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
             // window trend positive but true listing-to-date CAGR negative: collapsed before the
             // fetched window, recovered inside it (MSCI Greece pattern) — still a lifetime loser.
             fails.push(("lifetime", format!("{l:+.1}%/yr since listing (need >0)"), l > -3.0));
+        }
+    }
+    if crypto && tuning.growth_max_vol_crypto > 0.0 {
+        if let Some(v) = quote.volatility_pct.filter(|&v| v > tuning.growth_max_vol_crypto) {
+            fails.push(("volatile", format!("{v:.1}%/day swing (cap {:.1}%)", tuning.growth_max_vol_crypto), v <= tuning.growth_max_vol_crypto + 0.5));
         }
     }
     let maxdd_cap = if crypto { tuning.growth_maxdd_cap_crypto } else { tuning.growth_maxdd_cap };
@@ -1730,6 +1753,27 @@ mod tests {
     let mut fetch = quote(2.0, strong);
     fetch.name = "Fetchr Growth ETCetera Fund UCITS ETF".into(); // token match: substrings can't trip it
     assert!(!is_commodity_etf(&fetch));
+    // (#36) bare-metal hole: physical trackers named by metal only (no "physical"/"commodit"/ETC)
+    let mut xetra = quote(2.0, strong);
+    xetra.name = "Xetra-Gold".into();
+    xetra.instrument_type = "ETF".into();
+    assert!(is_commodity_etf(&xetra)); // metal token -> commodity
+    xetra.name = "Gold Bullion Securities Ltd".into();
+    assert!(is_commodity_etf(&xetra)); // "bullion" too
+    xetra.name = "Global X Silver Miners UCITS ETF".into();
+    assert!(!is_commodity_etf(&xetra)); // miner-word exemption: equity basket keeps ranking
+    xetra.name = "Goldman Sachs Access UCITS ETF".into();
+    assert!(!is_commodity_etf(&xetra)); // token boundary: "goldman" != "gold"
+    // (#36) crypto VOL cap: daily swing wilder than the base -> out; at/below cap or unknown -> in
+    let vt = BuyHeuristic { growth_max_vol_crypto: 3.0, ..BuyHeuristic::default() };
+    let mut wild = quote(2.0, strong);
+    wild.ticker = "OKB-USD".into();
+    wild.volatility_pct = Some(3.4);
+    assert!(growth_score(&wild, &vt).is_none()); // wilder than Bitcoin -> gated
+    wild.volatility_pct = Some(2.4);
+    assert!(growth_score(&wild, &vt).is_some()); // BTC-like swing passes
+    wild.volatility_pct = None; // missing series not punished
+    assert!(growth_score(&wild, &vt).is_some());
     // (#25) lifetime-uptrend second leg: trend_cagr is fit on the fetched window, so a name that
     // collapsed BEFORE the window and recovered inside it slips through (MSCI Greece pattern) —
     // life_cagr (listing-to-date) catches it. None (backtest) stays exempt -> edge-blind.
