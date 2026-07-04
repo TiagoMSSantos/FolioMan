@@ -302,6 +302,7 @@ pub async fn run(args: Vec<String>) {
         ("overext_brake", |tuning| tuning.growth_overext_cap = 0.0),
         ("growth_fund_weight", |tuning| tuning.growth_fund_weight = 0.0), // (G) Δ shows the as-of fund factor's through-the-lane edge; ~0 when weight is already 0 (default) or no fund coverage
         ("growth_mom121_weight", |tuning| tuning.growth_mom121_weight = 0.0), // (M) Δ shows the 12-1 momentum term's through-the-lane edge; ~0 when weight is 0 (default)
+        ("growth_smoothness_weight", |tuning| tuning.growth_smoothness_weight = 0.0), // (E) Δ shows the trend-smoothness reward's through-the-lane edge; ~0 when weight is 0 (default)
     ];
     // (#10) loosen each numeric growth GATE one notch, relative to the loaded tuning (respects settings.yaml
     // overrides). The sweep reports the mean forward return of the names each loosening newly admits.

@@ -618,7 +618,13 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // (M) 12-1 momentum tilt. Floor at 0: reward momentum, don't punish its absence (matches (G)/div).
     // weight 0 (default) -> this term is 0 -> growth_score is byte-identical to the pre-(M) lane.
     let mom_term = tuning.growth_mom121_weight * mom121.clamp(0.0, tuning.growth_mom121_cap);
-    let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term;
+    // (E) trend-smoothness reward: pays names whose long climb is a straight line (high R² of the
+    // log-price trend fit) over equal-CAGR rollercoasters. trend_r2 is rebuilt in backtest_quote, so
+    // unlike the BACKTEST-BLIND tilts this term is validated end-to-end — the weight-2/5/10/20 sweep
+    // peaked at 5 (Δedge +13.2 same-batch, rho intact; 20 collapsed -38). Weight 0 = term inert.
+    // A 6M-momentum twin (F) was swept in the same run and came back null — not wired.
+    let smooth = tuning.growth_smoothness_weight * quote.trend_r2;
+    let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term + smooth;
     let value_raw = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     // (Item 20) dial the BLIND P/E multiplier's authority toward neutral 1.0. weight 1.0 = full ×0.5..1.5
     // swing (default, unchanged); 0.0 = off. The validated edge was measured with this term OFF (pe_ratio
@@ -1794,6 +1800,15 @@ mod tests {
     assert!((stock_risk - 0.15 * 15.0).abs() < 1e-9 && (etf_risk - 0.15 * 9.0).abs() < 1e-9);
     let off = BuyHeuristic { sharpe_cap_etf: 0.0, ..BuyHeuristic::default() };
     assert!((risk_bonus(&line, 15.0, 0.15, 0.0, &off) - 0.15 * 15.0).abs() < 1e-9); // 0 = off
+    // (E) trend-smoothness reward: same quote, straighter climb (higher trend_r2) -> higher score;
+    // weight 0 (default) leaves the score untouched by trend_r2.
+    let sm = BuyHeuristic { growth_smoothness_weight: 5.0, ..BuyHeuristic::default() };
+    let mut lumpy = quote(2.0, strong);
+    let mut straight = lumpy.clone();
+    straight.trend_r2 = 0.9;
+    assert!(growth_score(&straight, &sm).unwrap() > growth_score(&lumpy, &sm).unwrap());
+    lumpy.trend_r2 = 0.9; // weight 0: r2 inert
+    assert_eq!(growth_score(&lumpy, &BuyHeuristic::default()), growth_score(&quote(2.0, strong), &BuyHeuristic::default()));
     // (#25) lifetime-uptrend second leg: trend_cagr is fit on the fetched window, so a name that
     // collapsed BEFORE the window and recovered inside it slips through (MSCI Greece pattern) —
     // life_cagr (listing-to-date) catches it. None (backtest) stays exempt -> edge-blind.

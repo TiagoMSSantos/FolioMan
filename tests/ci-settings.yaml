@@ -204,6 +204,11 @@ buy_heuristic:
                                  #   spread — recent 1Y-vs-CAGR pop is the noisiest, most mean-reverting growth signal at 5y
                                  #   (hot-streak chasing). 0.2 lifts wide 5y edge +43.7->+50.5 / 3y +24.3->+28.5.
   growth_accel_cap: 50.0         # SCORE: cap that 1Y-minus-CAGR acceleration term
+  growth_smoothness_weight: 5.0  # (E) SCORE: reward per unit of trend_r2 (R² of the log-price trend fit, 0..1) — pays the
+                                 #   straight-line compounder over the equal-CAGR rollercoaster. Reconstructed in backtest_quote,
+                                 #   so validated END-TO-END (not backtest-blind): 2/5/10/20 sweep gave Δedge +5.4/+13.2/+10.3/-38.0
+                                 #   same-batch, rho intact at +0.13 — clean hump, knee at 5. A 6M-momentum twin swept in the same
+                                 #   run was null at every weight and was NOT wired. 0 = off.
   growth_min_score: 5.0          # hide growth rows scoring <= this; 0 = show all top_picks
   growth_min_score_etf: 4.0      # ETF-only floor. ETF scores structurally cap ~5.6 (accel~0: a diversified basket doesn't accelerate; quality/liq/fund all 0) so the stock-calibrated 5.0 floor (fine at 26% of the ~19 stock ceiling) sits at ~89% of the ETF ceiling and shows only a sliver. 4.0 = surface the diversified broad-tech tier (Nasdaq-100 / World-IT / S&P-IT wrappers score 4.5-5.6; TER column lets you pick the cheapest wrapper) while still trimming the young single-sector padding (Europe-Financials 3.2, 6y). DISPLAY-only -> validated edge untouched. Does NOT surface broad S&P500 core (VUAA/SPYL young=no 5y leg, AUM5 ~8% CAGR=market-beta<growth_min_cagr) — history/thesis wall, not this floor
   growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
