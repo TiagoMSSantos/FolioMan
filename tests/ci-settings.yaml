@@ -248,6 +248,11 @@ buy_heuristic:
                                  #   is survivors-only — the dot-com-wreck cohort this targets is mostly delisted and never enters.
                                  #   Shipped on live-table semantics + measured-harmless; a strongly POSITIVE sweep row on a future
                                  #   maintenance run is the signal to re-question it. Crypto exempt. false = off.
+  growth_min_age_years: 3.0      # (#33) reject a name younger than 3y (quote.age_years = whole-life listing age, the YRS column).
+                                 #   A "20yr+ proven CAGR" candidate must actually have a multi-year record; 3y ~ one full survive-a-
+                                 #   drawdown cycle. BACKTEST-BLIND: age_years is None in the backtest pool, so the gate is inert there
+                                 #   (validated edge untouched — confirmed edge unchanged on `backtest 12 universe`); it only trims the
+                                 #   LIVE screen. Pins bypass it (shown with a "young" gate-review reason). All classes. Bump to 5 for stricter.
   growth_overext_floor: 0.05     # growth-score multiplier at full stretch. Tightened 0.2->0.15->0.05, each step a harder blow-off-top brake:
                                  #   buying right after a parabola = poor long-hold entry. The walk-forward sweep ranks 0.05 best: wide
                                  #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).

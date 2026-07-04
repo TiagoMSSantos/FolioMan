@@ -445,6 +445,12 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
         Some(v) if tuning.min_avg_turnover_eur > 0.0 && v < tuning.min_avg_turnover_eur => return None,
         _ => {}
     }
+    // (#33) minimum listing age. Checked EARLY so a too-young name rejects with an explicit reason
+    // (mirrored in gate_failures) instead of silently `?`-bailing at long_leg_fixed below. age_years
+    // is None in the backtest pool -> gate inert there (edge untouched); it only bites the live screen.
+    if tuning.growth_min_age_years > 0.0 && quote.age_years.is_some_and(|a| a < tuning.growth_min_age_years) {
+        return None; // too young -> no multi-year record to trust as a proven compounder
+    }
     let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
     if quote.range_pct < min_range {
         return None; // equities: NOT near its high -> the on-sale lane's job. crypto: looser floor (alts run below ATH)
@@ -647,7 +653,14 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
         return None;
     }
     let turnover = quote.avg_turnover_eur?; // unknown turnover -> not assessable as a compounder
-    let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years)?; // no >2Y record
+    // (#33) minimum-age gate. Reported as an explicit "young" reason. A name too young for the fixed
+    // CAGR leg would `?`-bail the next line to a SILENT None (0.0 in the table, no reason) — so when
+    // the leg is missing AND the age gate fires, return the young reason alone instead of dropping it.
+    let young_fail = |a: f64| ("young", format!("{a:.0}y listed (need ≥{:.0}y)", tuning.growth_min_age_years), a >= tuning.growth_min_age_years - 1.0);
+    let too_young = tuning.growth_min_age_years > 0.0 && quote.age_years.is_some_and(|a| a < tuning.growth_min_age_years);
+    let Some((long_cum, long_years)) = long_leg_fixed(quote, tuning.fixed_cagr_years) else {
+        return too_young.then(|| vec![young_fail(quote.age_years.unwrap())]); // young name w/o CAGR leg -> explain, not a silent 0.0
+    };
     let return_1y = perf_pct(quote, "1Y")?; // no 1Y data
     let long_cagr = if tuning.use_trend_cagr {
         quote.trend_cagr.unwrap_or_else(|| core::cagr(long_cum, long_years))
@@ -664,6 +677,9 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     // threshold is a genuine "near miss" worth printing (a name 34% down over 1Y is a hard reject, not a
     // near miss). Margins are hardcoded — this is a cosmetic tail, not a tuned knob.
     let mut fails: Vec<(&'static str, String, bool)> = Vec::new();
+    if too_young {
+        fails.push(young_fail(quote.age_years.unwrap())); // has the CAGR leg but still under the age floor
+    }
     if quote.range_pct < min_range {
         fails.push(("range", format!("{:.0}% in range (need ≥{:.0}%)", quote.range_pct, min_range), quote.range_pct >= min_range - 10.0));
     }
@@ -699,6 +715,25 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
         fails.push(("maxdd", format!("-{:.0}% worst drawdown (cap -{:.0}%)", quote.max_drawdown_pct, maxdd_cap), quote.max_drawdown_pct <= maxdd_cap + 5.0));
     }
     Some(fails)
+}
+
+/// Per-name "TICKER  gate: why; gate: why" lines for a gate-review footer: every name in `quotes`
+/// that FAILS at least one growth gate (not-assessable names — leveraged/stablecoin/missing data —
+/// are skipped). Shared by `check` (the whole watchlist) and `screen` (its pinned names, which
+/// bypass the score trim and print as 0.0 — this says which gate they tripped). Empty vec -> the
+/// caller prints no block, so clean tables stay clean.
+pub fn gate_review_lines(quotes: &[&Quote], tuning: &BuyHeuristic, ticker_w: usize) -> Vec<String> {
+    quotes
+        .iter()
+        .filter_map(|q| {
+            let fails = gate_failures(q, tuning)?;
+            if fails.is_empty() {
+                return None;
+            }
+            let why = fails.iter().map(|(gate, why, _)| format!("{gate}: {why}")).collect::<Vec<_>>().join("; ");
+            Some(format!("  {:<ticker_w$} {}", q.ticker, why))
+        })
+        .collect()
 }
 
 /// Human-readable derivation of a growth SCORE: the formula then every term filled in with this quote's
@@ -1284,6 +1319,17 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     };
     let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
     print_lane(picks, n, w, "growth candidates", growth, sectors, sector_of, tuning, &pinned_set);
+    // gate review: pinned names are shown in their table even when a gate rejects them (score 0.0).
+    // Say WHICH gate, so a 0.0 next to strong metrics isn't mistaken for a bug (VVSM stretch, VUAA/
+    // SPYL young, …). Same footer `check` prints, scoped here to the pinned rows that bypassed the cut.
+    let pinned_q: Vec<&Quote> = quotes.iter().filter(|q| pinned_set.contains(q.ticker.as_str())).collect();
+    let review = gate_review_lines(&pinned_q, tuning, w.ticker);
+    if !review.is_empty() {
+        println!("\ngate review — why these pinned names scored 0.0 (review, not auto-sell):");
+        for line in &review {
+            println!("{line}");
+        }
+    }
     match (explain_text, explain) {
         (Some(text), _) => println!("{text}"),
         // an explicit --explain TICKER that didn't land a row: say why instead of silently printing nothing
@@ -1611,6 +1657,27 @@ mod tests {
     assert_eq!(growth_near_miss(&quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]), &tuning).map(|(g, _)| g), Some("range")); // only range fails (75<80)
     assert!(growth_near_miss(&quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &tuning).is_none()); // range AND cagr -> two gates, not a near-miss
     assert!(growth_near_miss(&quote(5.0, &[("1Y", -50.0), ("5Y", 40.0), ("10Y", 200.0)]), &tuning).is_none()); // fails ONLY 1Y+ but by 50pts -> gross reject, not a near-miss
+
+    // --- (#33) minimum-age gate (backtest-blind: age_years None -> pass; live -> gate) ---
+    let age_t = BuyHeuristic { growth_min_age_years: 5.0, ..BuyHeuristic::default() };
+    // clears every other gate; only age varies
+    let aged = |age: Option<f64>| { let mut q = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]); q.age_years = age; q };
+    assert!(growth_score(&aged(Some(2.0)), &tuning).is_some()); // gate OFF (default 0) -> young name still scored
+    let young = aged(Some(2.0));
+    assert!(growth_score(&young, &age_t).is_none()); // gate ON -> under floor -> excluded
+    assert!(gate_failures(&young, &age_t).unwrap().iter().any(|(g, _, _)| *g == "young")); // ...with an explicit reason
+    assert!(growth_score(&aged(Some(9.0)), &age_t).is_some()); // old enough -> scored
+    assert!(growth_score(&aged(None), &age_t).is_some()); // unknown age -> can't judge -> pass (backtest quotes)
+    // young name WITHOUT a CAGR leg: the silent long_leg_fixed None becomes an explicit "young" reason
+    let mut young_noleg = quote(5.0, &[("1Y", 10.0)]);
+    young_noleg.age_years = Some(2.0);
+    assert!(growth_score(&young_noleg, &age_t).is_none());
+    assert!(gate_failures(&young_noleg, &age_t).unwrap().iter().any(|(g, _, _)| *g == "young"));
+    // gate_review_lines: a failing name yields one TICKER row, a clean name yields nothing
+    let review = gate_review_lines(&[&young], &age_t, 8);
+    assert_eq!(review.len(), 1);
+    assert!(review[0].contains("young"));
+    assert!(gate_review_lines(&[&aged(Some(9.0))], &tuning, 8).is_empty());
 
     // --- SCORE (relational, robust to knob tuning) ---
     // trust: same inputs, the one missing a 10Y record scores lower (uptrend less proven)
