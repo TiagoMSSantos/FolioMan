@@ -392,7 +392,19 @@ pub fn sector_symbol(csv_line: &str, sectors: &[String]) -> Option<(String, Stri
     if sym.is_empty() || !sector_matches(sector, sectors) {
         return None;
     }
-    Some((sym.replace('.', "-"), sector.to_string())) // BRK.B -> BRK-B (Yahoo form)
+    Some((yahoo_equity_symbol(sym), sector.to_string()))
+}
+
+/// Yahoo symbol form for a constituent-CSV ticker. US class-share dots become dashes
+/// (BRK.B -> BRK-B), but a recognized European venue suffix is ALREADY Yahoo form and must keep
+/// its dot — blanket replacement turned every FTSE/DAX pond name (AAF.L, ADS.DE) into a dead
+/// symbol that fetched nothing. US class letters (A/B/C) don't collide with this venue list.
+fn yahoo_equity_symbol(sym: &str) -> String {
+    const VENUES: [&str; 12] = ["L", "DE", "PA", "AS", "MI", "MC", "SW", "ST", "CO", "OL", "HE", "LS"];
+    match sym.rsplit_once('.') {
+        Some((_, suffix)) if VENUES.contains(&suffix) => sym.to_string(),
+        _ => sym.replace('.', "-"),
+    }
 }
 
 /// (Item 32) Extract (Yahoo symbol, GICS sector) rows from a Wikipedia "List of S&P N companies"
@@ -1333,6 +1345,9 @@ mod tests {
     );
     assert_eq!(sector_symbol("GOOGL,Alphabet,Communication Services,x", &tech).map(|(s, _)| s), Some("GOOGL".to_string()));
     assert_eq!(sector_symbol("BF.B,Brown-Forman,Information Technology,x", &tech).map(|(s, _)| s), Some("BF-B".to_string())); // '.'->'-'
+    // European venue suffixes are already Yahoo form — the class-share dash rewrite must NOT touch them
+    assert_eq!(sector_symbol("AAF.L,Airtel Africa PLC", &[]).map(|(s, _)| s), Some("AAF.L".to_string()));
+    assert_eq!(sector_symbol("ADS.DE,adidas AG", &[]).map(|(s, _)| s), Some("ADS.DE".to_string()));
     assert_eq!(sector_symbol("MMM,3M,Industrials,x", &tech), None);
     assert_eq!(sector_symbol("AMZN,Amazon,Consumer Discretionary,x", &tech), None); // GICS quirk: not tech
     assert_eq!(sector_symbol("MMM,3M,Industrials,x", &[]).map(|(s, _)| s), Some("MMM".to_string())); // empty filter -> all sectors
