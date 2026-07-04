@@ -136,6 +136,22 @@ fn is_etf(name: &str) -> bool {
     ETF_MARKERS.iter().any(|m| n.contains(m))
 }
 
+/// Substrings marking a PHYSICAL-commodity / precious-metal ETC (checked ETF-scoped only): a
+/// store-of-value with no earnings or cashflow, so it cannot COMPOUND — a momentum spike (gold +99%
+/// over 5Y) ranks it #1 in a "proven 20yr+ compounder" lane, a category error like the leveraged
+/// decay vehicles above. ETF-scoped so a gold-MINER equity basket ("VanEck Gold Miners", earnings-
+/// bearing) is untouched — it carries neither marker. `physical` catches the metal ETCs (all Yahoo
+/// names carry it: "…IE Physical Gold"), `commodit` the broad commodity funds. Tighten if a legit
+/// fund ever trips it (an equity sector fund named "…Energy"/"…Materials" has no marker, stays in).
+const COMMODITY_MARKERS: &[&str] = &["physical", "commodit"];
+
+fn is_commodity_etf(quote: &Quote) -> bool {
+    quote_is_etf(quote) && {
+        let n = quote.name.to_lowercase();
+        COMMODITY_MARKERS.iter().any(|m| n.contains(m))
+    }
+}
+
 /// Is this quote a pooled fund? Prefer Yahoo's own `instrumentType` ("ETF"), which is present even
 /// when the name string isn't a giveaway (ETF shortNames like "ISHARES III PLC ISHRS CORE MSCI"
 /// carry no marker). Falls back to the name-substring guess for rows with no meta (backtest stubs).
@@ -430,6 +446,9 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if is_leveraged(&quote.name) {
         return None; // leveraged/inverse decays -> never a long-term hold
     }
+    if is_commodity_etf(quote) {
+        return None; // physical commodity/metal ETC -> no cashflow, doesn't compound (not this lane's thesis)
+    }
     if crypto && is_stablecoin(&quote.ticker) {
         return None; // pegged $1 -> no growth
     }
@@ -662,7 +681,7 @@ pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'stati
 pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'static str, String, bool)>> {
     let crypto = is_currency_quoted(&quote.ticker);
     // not a near-miss CANDIDATE: structural rejects / missing data have nothing to "almost pass"
-    if is_leveraged(&quote.name) || (crypto && is_stablecoin(&quote.ticker)) {
+    if is_leveraged(&quote.name) || is_commodity_etf(quote) || (crypto && is_stablecoin(&quote.ticker)) {
         return None;
     }
     let turnover = quote.avg_turnover_eur?; // unknown turnover -> not assessable as a compounder
@@ -1663,6 +1682,19 @@ mod tests {
     let mut lev = quote(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     lev.name = "GraniteShares 2x Short NVD".into();
     assert!(buy_score(&lev, &tuning).is_none()); // leveraged/inverse product excluded
+    // (#35) physical-commodity ETC: no cashflow -> not a compounder -> excluded from the growth lane.
+    // ETF-scoped, so a gold-MINER equity basket (earnings-bearing) survives.
+    let strong = &[("1Y", 30.0), ("5Y", 99.0), ("10Y", 200.0)]; // a name that WOULD rank on momentum
+    let mut gold = quote(2.0, strong);
+    gold.name = "Xtrackers IE Physical Gold ETC".into();
+    gold.instrument_type = "ETF".into(); // Yahoo classifies the ETC as ETF (it lands in the ETF table live)
+    assert!(is_commodity_etf(&gold) && growth_score(&gold, &tuning).is_none()); // gold ETC -> gated
+    let mut miners = quote(2.0, strong);
+    miners.name = "VanEck Gold Miners UCITS ETF".into(); // equity basket (holds miner STOCKS) -> NOT commodity
+    assert!(!is_commodity_etf(&miners) && growth_score(&miners, &tuning).is_some()); // miners survive
+    let mut broad = quote(2.0, strong);
+    broad.name = "iShares Core S&P 500 UCITS ETF".into();
+    assert!(!is_commodity_etf(&broad)); // a plain index ETF is never commodity-gated
     let liq_t = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
     let mut thin = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     thin.avg_turnover_eur = Some(1_000.0);
