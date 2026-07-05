@@ -1384,9 +1384,9 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // it's not a quota, that's all that passed the gates + filter.
     let secs = if sectors.is_empty() { "all".to_string() } else { sectors.join(", ") };
     let head = |len: usize| if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") };
-    // P/E, PEG, ROE are equity-only; TER is ETF-only. Hide the always-"—" columns per class: stocks drop
-    // TER, ETFs drop the equity fundamentals, crypto drops both.
-    print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w, pinned, &["ter"], tuning);
+    // P/E, PEG, ROE are equity-only; TER/AUM/USE/REPL are ETF-only. Hide the always-"—" columns per
+    // class: stocks drop the fund columns, ETFs drop the equity fundamentals, crypto drops both.
+    print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w, pinned, &["ter", "aum", "use", "repl"], tuning);
     // (#27) cluster concentration: a top-20 stock table is usually ~3 correlated trades, not 20
     // independent bets — count the SHOWN rows per GICS sector so "semis-heavy" is a number, not a
     // vibe. Display-only; empty map (`check`, explicit-args screen) skips the sector line. Names
@@ -1416,7 +1416,7 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe"], tuning);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
-    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "ter"], tuning);
+    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "ter", "aum", "use", "repl"], tuning);
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
