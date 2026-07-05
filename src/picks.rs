@@ -1095,6 +1095,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true },       // trailing-1Y dividend yield
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true },       // ETF annual expense ratio % — the one cost that compounds against a decades hold (FMP key, ETFs only)
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true },       // ETF fund size (BF etp_search, EUR-approximate) — sub-scale funds get liquidated/merged mid-hold
+    ColSpec { key: "use", hdr: "USE", width: 4, right: false },      // ETF share class: Acc(umulating)/Dist(ributing) — Dist pays out (taxed yearly); Acc compounds tax-deferred
+    ColSpec { key: "repl", hdr: "REPL", width: 4, right: false },    // ETF replication: Swap/Full/Opt(imised)/Hybr(id)/Samp(le) — counterparty structure over a decades hold
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true },
@@ -1267,6 +1269,12 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
         // mid-hold. "—" for stocks/crypto (not funds); "n/a" for an ETF BF's payload didn't cover.
         "aum" if etf_only_na => "—".to_string(),
         "aum" => turnover_cell(quote.aum_eur),
+        // ETF share class + replication tokens (BF keyData). Display-only — the price-only CAGR already
+        // prices the Dist payout drag, so these inform the BUY (which listing), never the ranking.
+        "use" if etf_only_na => "—".to_string(),
+        "use" => quote.use_of_profits.map_or("n/a".to_string(), str::to_string),
+        "repl" if etf_only_na => "—".to_string(),
+        "repl" => quote.replication.map_or("n/a".to_string(), str::to_string),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
         "turnover" => turnover_cell(quote.avg_turnover_eur),
@@ -1693,6 +1701,17 @@ mod tests {
         let cq = Quote::stub("X-EUR", "€1", "", "Coin");
         assert_eq!(col_cell("pe", &cq, 0.0, ""), "—");
         assert_eq!(col_cell("ter", &cq, 0.0, ""), "—");
+        // (USE/REPL) ETF prints its BF tokens; None (off-BF fund) -> n/a; crypto/equity -> — (not a fund)
+        let mut eq = Quote::stub("E.DE", "€1", "", "Fund");
+        eq.instrument_type = "ETF".to_string();
+        assert_eq!(col_cell("use", &eq, 0.0, ""), "n/a");
+        assert_eq!(col_cell("repl", &eq, 0.0, ""), "n/a");
+        eq.use_of_profits = Some("Acc");
+        eq.replication = Some("Swap");
+        assert_eq!(col_cell("use", &eq, 0.0, ""), "Acc");
+        assert_eq!(col_cell("repl", &eq, 0.0, ""), "Swap");
+        assert_eq!(col_cell("use", &cq, 0.0, ""), "—");
+        assert_eq!(col_cell("repl", &cq, 0.0, ""), "—");
     }
 
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5
@@ -1740,6 +1759,8 @@ mod tests {
             life_cagr: None,
             history_proxied: false, // display-only marker; never scored
             aum_eur: None,          // (AUM) fund-size gate inert by default; its tests set it explicitly
+            use_of_profits: None,   // (USE) display-only token; never scored
+            replication: None,      // (REPL) display-only token; never scored
         }
     };
     let tuning = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on

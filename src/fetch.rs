@@ -366,6 +366,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     let ter = if is_etf { fetch_expense(client, urls, ticker, &chart.name).await } else { bf_ter_exact(ticker) };
     // (AUM) fund size, same BF payload + same proof-of-ETP stance for mislabeled ETCs.
     let aum_eur = if is_etf { bf_aum(ticker, &chart.name) } else { bf_aum_exact(ticker) };
+    // (USE/REPL) share-class + replication tokens, same BF payload — display-only columns.
+    let (use_of_profits, replication) = if is_etf { bf_meta(ticker, &chart.name) } else { (None, None) };
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
     // long dividend sums populate for old names. Prepend only the monthly bars that predate the daily
@@ -473,6 +475,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         expense_ratio: ter,
         // (AUM) fund size from the BF universe payload (ETFs/ETPs only; None -> gate inert, n/a column).
         aum_eur,
+        use_of_profits,
+        replication,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
         range_pct: core::price_pct_rank(&chart.closes),
@@ -1230,9 +1234,20 @@ static BF_AUM: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::
 /// (lowercased BF fund name, AUM) for ALL BF rows — same name-keyed fallback role as `BF_TER_NAMES`.
 static BF_AUM_NAMES: std::sync::OnceLock<Vec<(String, f64)>> = std::sync::OnceLock::new();
 
+/// (use-of-profits, replication) tokens per row: ("Acc"/"Dist", "Swap"/"Full"/"Opt"/"Hybr"/"Samp").
+type BfMeta = (Option<&'static str>, Option<&'static str>);
+
+/// Resolved-Yahoo-symbol -> share-class/replication tokens, captured from the SAME etp_search row as
+/// TER/AUM — no extra request. Display-only (USE/REPL columns), never scored: the ranking's price-only
+/// CAGR already prices the Dist payout drag (payouts leave the NAV), so Acc twins win by construction.
+static BF_META: std::sync::OnceLock<HashMap<String, BfMeta>> = std::sync::OnceLock::new();
+
+/// (lowercased BF fund name, meta) for ALL BF rows — same name-keyed fallback role as `BF_TER_NAMES`.
+static BF_META_NAMES: std::sync::OnceLock<Vec<(String, BfMeta)>> = std::sync::OnceLock::new();
+
 /// Yahoo-name -> BF value via unique prefix (Yahoo drops BF's share-class suffix: "VanEck Semiconductor
 /// UCITS ETF" vs BF's "… - USD Acc"). None unless EXACTLY one BF fund name starts with the quote's name.
-fn bf_by_name(list: &std::sync::OnceLock<Vec<(String, f64)>>, name: &str) -> Option<f64> {
+fn bf_by_name<T: Copy>(list: &std::sync::OnceLock<Vec<(String, T)>>, name: &str) -> Option<T> {
     let n = name.trim().to_lowercase();
     if n.len() < 10 {
         return None; // too short to identify one fund
@@ -1269,6 +1284,21 @@ fn bf_aum_exact(ticker: &str) -> Option<f64> {
     BF_AUM.get().and_then(|m| m.get(ticker)).copied()
 }
 
+/// (USE/REPL) the same 3-tier BF lookup TER/AUM use — the tokens ride the same etp_search row.
+fn bf_meta(ticker: &str, name: &str) -> BfMeta {
+    if let Some(m) = BF_META.get().and_then(|m| m.get(ticker)).copied() {
+        return m;
+    }
+    if let Some(m) = ticker.split_once('.').and_then(|(stem, _)| {
+        BF_META.get()?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, m)| *m)
+    }) {
+        return m;
+    }
+    bf_by_name(&BF_META_NAMES, name)
+        .or_else(|| name.split_once(" - ").and_then(|(_, fund)| bf_by_name(&BF_META_NAMES, fund)))
+        .unwrap_or((None, None))
+}
+
 const BF_TER_KEYS: &[&str] = &["ter", "totalExpenseRatio", "ongoingCharges", "ongoingCharge", "totalExpenseRatioInPercent"];
 
 /// Pull the expense ratio out of one BF `etp_search` row. Tries the known key names (their schema drifts
@@ -1301,6 +1331,33 @@ fn bf_row_aum(row: &Value) -> Option<f64> {
     row.pointer("/overview/assetsUnderManagement")?.as_f64().filter(|v| v.is_finite() && *v > 0.0)
 }
 
+/// One BF keyData string field, English translation preferred over the original value.
+fn bf_row_keydata<'a>(row: &'a Value, field: &str) -> Option<&'a str> {
+    row.pointer(&format!("/keyData/{field}/translations/en"))
+        .or_else(|| row.pointer(&format!("/keyData/{field}/originalValue")))?
+        .as_str()
+}
+
+/// (USE/REPL) share-class + replication tokens from one BF row (`keyData.useOfProfits` on 85% of
+/// rows, `keyData.replicationMethod` on 70% — verified live 2026-07). Unknown wording -> None, so a
+/// BF vocabulary drift blanks the cell ("n/a") instead of printing something wrong.
+fn bf_row_meta(row: &Value) -> BfMeta {
+    let use_of = bf_row_keydata(row, "useOfProfits").and_then(|s| match s {
+        "Accumulating" => Some("Acc"),
+        "Distributing" => Some("Dist"),
+        _ => None,
+    });
+    let repl = bf_row_keydata(row, "replicationMethod").and_then(|s| match s {
+        "Swap-based" => Some("Swap"),
+        "Full replication" => Some("Full"),
+        "Optimised" => Some("Opt"),
+        "Hybrid" => Some("Hybr"),
+        "Sample" => Some("Samp"),
+        _ => None,
+    });
+    (use_of, repl)
+}
+
 /// The EU-buyable UCITS ETF universe: ask Börse Frankfurt for the top-`cap` ETFs by turnover (real
 /// EU-listed, PRIIPs-compliant funds — unlike the US-domiciled NASDAQ-Trader ETFs an EU broker can't
 /// sell), then resolve each ISIN to a Yahoo symbol via Yahoo search (first hit = the liquid EU
@@ -1316,7 +1373,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
     // come free here (no per-name FMP call, which doesn't cover them anyway). first_keys = the first
     // row's field names, logged ONLY if zero TERs parse, so a renamed BF field self-diagnoses in one run.
     let mut first_keys = String::new();
-    let rows: Vec<(String, Option<f64>, Option<f64>)> = match borse_frankfurt_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
+    let rows: Vec<(String, Option<f64>, Option<f64>, BfMeta)> = match borse_frankfurt_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
         Some(j) => match j.get("data").and_then(|d| d.as_array()) {
             Some(arr) => {
                 // name-keyed TER + AUM lists from ALL rows (not just the top-cap): a pinned name's fund
@@ -1335,6 +1392,15 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
                         })
                         .collect(),
                 );
+                let _ = BF_META_NAMES.set(
+                    arr.iter()
+                        .filter_map(|r| {
+                            let m = bf_row_meta(r);
+                            (m != (None, None))
+                                .then_some((r.pointer("/name/originalValue")?.as_str()?.trim().to_lowercase(), m))
+                        })
+                        .collect(),
+                );
                 if let Some(o) = arr.first().and_then(|r| r.as_object()) {
                     // top-level keys PLUS one level into each sub-object (TER nests under keyData/overview/
                     // performance), so a renamed field anywhere self-diagnoses in one run.
@@ -1346,7 +1412,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
                     }
                     first_keys = fields.join(",");
                 }
-                arr.iter().filter_map(|r| Some((r.get("isin")?.as_str()?.to_string(), bf_row_ter(r), bf_row_aum(r)))).collect()
+                arr.iter().filter_map(|r| Some((r.get("isin")?.as_str()?.to_string(), bf_row_ter(r), bf_row_aum(r), bf_row_meta(r)))).collect()
             }
             None => Vec::new(),
         },
@@ -1360,11 +1426,11 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
     // are the most-liquid ETFs — keep only those, both to match universe_size and to avoid firing
     // thousands of Yahoo searches (which DO rate-limit).
     let total = rows.len();
-    let top: Vec<(String, Option<f64>, Option<f64>)> = rows.into_iter().take(cap).collect();
+    let top: Vec<(String, Option<f64>, Option<f64>, BfMeta)> = rows.into_iter().take(cap).collect();
     // resolve ISIN -> Yahoo symbol (first quote = the liquid EU listing), bounded fan-out, carrying the
-    // captured TER + AUM alongside. yahoo_search is tuned for news (quotesCount=0) — flip it to quotes here.
-    let resolved: Vec<(String, Option<f64>, Option<f64>)> = stream::iter(top)
-        .map(|(isin, ter, aum)| async move {
+    // captured TER + AUM + meta alongside. yahoo_search is tuned for news (quotesCount=0) — flip it to quotes here.
+    let resolved: Vec<(String, Option<f64>, Option<f64>, BfMeta)> = stream::iter(top)
+        .map(|(isin, ter, aum, meta)| async move {
             let url = urls
                 .yahoo_search
                 .replace("{ticker}", isin.as_str())
@@ -1376,7 +1442,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
             // (716 of the 783 old "no Yahoo data" gate-outs). A real liquid listing (.DE/.MI/.L/.AS…)
             // would have ranked first, so there's nothing to rescue: drop it. note: only .SG shows
             // up in practice; add the suffix to this check if another chart-less regional venue appears.
-            (!sym.ends_with(".SG")).then_some((sym, ter, aum))
+            (!sym.ends_with(".SG")).then_some((sym, ter, aum, meta))
         })
         .buffer_unordered(fetch_concurrency())
         .filter_map(|x| async move { x })
@@ -1386,14 +1452,18 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
     // fetch_expense / bf_aum read them).
     let mut ter_map: HashMap<String, f64> = HashMap::new();
     let mut aum_map: HashMap<String, f64> = HashMap::new();
+    let mut meta_map: HashMap<String, BfMeta> = HashMap::new();
     let tickers: Vec<String> = resolved
         .into_iter()
-        .map(|(sym, ter, aum)| {
+        .map(|(sym, ter, aum, meta)| {
             if let Some(t) = ter {
                 ter_map.insert(sym.clone(), t);
             }
             if let Some(a) = aum {
                 aum_map.insert(sym.clone(), a);
+            }
+            if meta != (None, None) {
+                meta_map.insert(sym.clone(), meta);
             }
             sym
         })
@@ -1401,6 +1471,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
     let ter_n = ter_map.len();
     let _ = BF_TER.set(ter_map);
     let _ = BF_AUM.set(aum_map);
+    let _ = BF_META.set(meta_map);
     // conclusive diagnostic: distinguishes "BF gave 0 ISINs" from "BF ok but Yahoo bridge resolved
     // none" — the two ways the ETF tables silently empty.
     eprintln!("fetch: Börse Frankfurt returned {total} ETF ISINs (kept top {} by turnover); {} resolved to Yahoo tickers (TER for {ter_n})", total.min(cap), tickers.len());
@@ -1567,6 +1638,22 @@ mod tests {
         assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF Dist"), Some(0.30)); // exact class
         assert_eq!(bf_ter_by_name("vaneck"), None); // too short
         assert_eq!(bf_ter_by_name("iShares Physical Gold ETC"), None); // not in list
+    }
+
+    /// (USE/REPL) BF keyData token parse: English translation preferred, originalValue fallback,
+    /// unknown vocabulary -> None (a BF wording drift blanks the cell, never mislabels it).
+    #[test]
+    fn bf_row_meta_tokens() {
+        let row = serde_json::json!({"keyData": {
+            "useOfProfits": {"originalValue": "Thesaurierend", "translations": {"en": "Accumulating"}},
+            "replicationMethod": {"originalValue": "Swap-based"}
+        }});
+        assert_eq!(bf_row_meta(&row), (Some("Acc"), Some("Swap")));
+        let dist = serde_json::json!({"keyData": {"useOfProfits": {"translations": {"en": "Distributing"}}}});
+        assert_eq!(bf_row_meta(&dist), (Some("Dist"), None));
+        let drift = serde_json::json!({"keyData": {"useOfProfits": {"translations": {"en": "Reinvesting"}}}});
+        assert_eq!(bf_row_meta(&drift), (None, None)); // unknown wording -> blank, not a guess
+        assert_eq!(bf_row_meta(&serde_json::json!({})), (None, None)); // no keyData at all
     }
 
     /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but
