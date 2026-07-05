@@ -36,6 +36,8 @@ pub struct Settings {
     #[serde(default)]
     pub anchor_windows: BTreeMap<String, i64>, // per-horizon ±days averaged around the anchor date; missing label = built-in default (see core::default_anchor_half)
     #[serde(default)]
+    pub history_proxy: BTreeMap<String, String>, // young listing -> older SAME-strategy, SAME-currency twin (e.g. VUAA.DE: SXR8.DE); the twin's closes are rebased+prepended so the young wrapper is scored on the strategy's proven history (marked ~ in the table). User-curated only — a wrong twin silently corrupts CAGR
+    #[serde(default)]
     pub inflation_adjust: InflationAdjust, // show real (inflation-adjusted) returns on the 1Y+ columns
     pub urls: Urls,
 }

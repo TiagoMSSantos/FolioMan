@@ -164,11 +164,8 @@ pub async fn run(args: Vec<String>) {
     if !near.is_empty() {
         near.sort_by(|a, b| a.1.cmp(b.1).then_with(|| a.0.ticker.cmp(&b.0.ticker)));
         println!("\nNear-miss — rejected on ONE growth gate (not ranked above), loosen intentionally if wanted:");
-        for (q, gate, why) in near.iter().take(20) {
+        for (q, gate, why) in near.iter() {
             println!("  {:<8} {:<24.24} {:<10} {why}", q.ticker, q.name, gate);
-        }
-        if near.len() > 20 {
-            println!("  … +{} more", near.len() - 20);
         }
     }
 

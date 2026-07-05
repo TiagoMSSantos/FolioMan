@@ -664,6 +664,34 @@ pub fn asof_avg(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i6
     Some(vals.iter().sum::<f64>() / vals.len() as f64)
 }
 
+/// Extend a young listing's series with a configured older twin's history (`history_proxy`):
+/// rebase the proxy so its close as-of the listing's first bar equals the listing's first close,
+/// prepend only proxy bars strictly BEFORE that first bar, then the listing's own series
+/// unchanged. None when the proxy doesn't overlap the listing's start or a rebase anchor is
+/// non-positive — a splice with no common bar would fabricate a level jump.
+pub fn splice_history(
+    own_dates: &[NaiveDate],
+    own_closes: &[f64],
+    proxy_dates: &[NaiveDate],
+    proxy_closes: &[f64],
+) -> Option<(Vec<NaiveDate>, Vec<f64>)> {
+    let (&own_first_date, &own_first_close) = (own_dates.first()?, own_closes.first()?);
+    let proxy_at_start = asof(proxy_dates, proxy_closes, own_first_date)?;
+    if own_first_close <= 0.0 || proxy_at_start <= 0.0 {
+        return None;
+    }
+    let factor = own_first_close / proxy_at_start;
+    let keep = proxy_dates.iter().take_while(|d| **d < own_first_date).count();
+    if keep == 0 {
+        return None; // proxy adds nothing older -> caller keeps the plain series
+    }
+    let mut dates = proxy_dates[..keep].to_vec();
+    let mut closes: Vec<f64> = proxy_closes[..keep].iter().map(|c| c * factor).collect();
+    dates.extend_from_slice(own_dates);
+    closes.extend_from_slice(own_closes);
+    Some((dates, closes))
+}
+
 /// Built-in ±days averaging window for a horizon, by its calendar length. Smoothing the anchor
 /// hides a single outlier day; the further back the horizon, the wider the window. 1D = exact (a
 /// 1-day move is a single point). Overridable per-label in settings.yaml `anchor_windows`.
@@ -1407,6 +1435,24 @@ mod tests {
     assert_eq!(asof(&ds, &cs, NaiveDate::from_ymd_opt(2025, 1, 1).unwrap()), Some(30.0));
     // asof_avg: ±2d window over Jan-2 averages all 3 days (smooths an outlier); window with no close = None
     assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2020, 1, 2).unwrap(), 2), Some(20.0));
+    // splice_history: proxy bars before the listing's start are rebased so the chain is continuous
+    // at the boundary (proxy 50 as-of own-first 10 -> factor 0.2), own series unchanged after it
+    let pd = vec![
+        NaiveDate::from_ymd_opt(2019, 12, 30).unwrap(),
+        NaiveDate::from_ymd_opt(2019, 12, 31).unwrap(),
+        NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+    ];
+    let pc = vec![40.0, 45.0, 50.0];
+    let (sd, sc) = splice_history(&ds, &cs, &pd, &pc).unwrap();
+    assert_eq!(sd.len(), 5); // 2 prepended proxy bars (strictly < 2020-01-01) + 3 own
+    assert_eq!(sc, vec![8.0, 9.0, 10.0, 20.0, 30.0]); // 40*0.2, 45*0.2, then own untouched
+    assert_eq!(sd[0], pd[0]);
+    assert_eq!(sd[2..], ds[..]);
+    // proxy with nothing older than the listing -> None (splice adds nothing)
+    assert!(splice_history(&ds, &cs, &ds, &cs).is_none());
+    // proxy that doesn't reach the listing's start -> None (no rebase anchor)
+    let late = vec![NaiveDate::from_ymd_opt(2020, 6, 1).unwrap()];
+    assert!(splice_history(&ds, &cs, &late, &[99.0]).is_none());
     assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), 0), Some(10.0));
     assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(), 5), None);
     // backtest_quote on a synthetic rising MONTHLY series (cadence=12): the cadence window math must
