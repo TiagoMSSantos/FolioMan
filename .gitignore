@@ -27,3 +27,6 @@ config/settings.yaml
 .fmp_cache/
 .folioman_turnover_*.txt
 .sec_cache
+
+# screen run-to-run gate state (EXIT-review footer)
+.screen_state.json

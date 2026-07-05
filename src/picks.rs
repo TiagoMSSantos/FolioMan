@@ -837,6 +837,27 @@ pub fn gate_review_lines(quotes: &[&Quote], tuning: &BuyHeuristic, ticker_w: usi
         .collect()
 }
 
+/// Per-name lines for `screen`'s EXIT-review footer: names in `prior_passing` (cleared every growth
+/// gate on the PREVIOUS screen run) that fail at least one gate NOW — the transition the backtest's
+/// exit probe measures as a mild forward-underperformance signal (newly-failing names lag names that
+/// keep passing). A prior-passing name that turned structurally unassessable (gate_failures None:
+/// unknown turnover = dead/halted listing) is exit-worthy too, so it gets a line instead of vanishing.
+/// Still-passing and not-previously-passing names are skipped. Empty vec -> caller prints no block.
+pub fn exit_review_lines(prior_passing: &[String], quotes: &[&Quote], tuning: &BuyHeuristic, ticker_w: usize) -> Vec<String> {
+    quotes
+        .iter()
+        .filter(|q| prior_passing.contains(&q.ticker))
+        .filter_map(|q| {
+            let why = match gate_failures(q, tuning) {
+                Some(fails) if fails.is_empty() => return None, // still passing
+                Some(fails) => fails.iter().map(|(gate, why, _)| format!("{gate}: {why}")).collect::<Vec<_>>().join("; "),
+                None => "no longer assessable (unknown turnover / structural exclusion)".to_string(),
+            };
+            Some(format!("  {:<ticker_w$} {}", q.ticker, why))
+        })
+        .collect()
+}
+
 /// Human-readable derivation of a growth SCORE: the formula then every term filled in with this quote's
 /// real numbers, ending in the score itself. Lets a `screen` reader hand-verify why the #1 row ranked
 /// where it did. `displayed` is the score AS SHOWN in the table (crypto rows carry a NUPL + BTC-relative
@@ -1811,6 +1832,23 @@ mod tests {
     assert!(growth_score(&straight, &sm).unwrap() > growth_score(&lumpy, &sm).unwrap());
     lumpy.trend_r2 = 0.9; // weight 0: r2 inert
     assert_eq!(growth_score(&lumpy, &BuyHeuristic::default()), growth_score(&quote(2.0, strong), &BuyHeuristic::default()));
+
+    // (X) EXIT-review diff: only PRIOR-PASSING names that fail NOW get a line — still-passing and
+    // never-passing names are skipped; a structurally unassessable one (unknown turnover) is flagged.
+    let mut keep = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // clears every gate
+    keep.ticker = "KEEP".into();
+    let mut gone = quote(40.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]); // fails the range gate
+    gone.ticker = "GONE".into();
+    let mut dead = keep.clone();
+    dead.ticker = "DEAD".into();
+    dead.avg_turnover_eur = None; // unknown turnover -> gate_failures None
+    let prior = vec!["KEEP".to_string(), "GONE".to_string(), "DEAD".to_string()];
+    let watch = [&keep, &gone, &dead];
+    let lines = exit_review_lines(&prior, &watch, &tuning, 8);
+    assert_eq!(lines.len(), 2, "GONE + DEAD flagged, KEEP silent");
+    assert!(lines.iter().any(|l| l.contains("GONE") && l.contains("range")));
+    assert!(lines.iter().any(|l| l.contains("DEAD") && l.contains("assessable")));
+    assert!(exit_review_lines(&[], &watch, &tuning, 8).is_empty()); // nothing previously passing -> no block
     // (#25) lifetime-uptrend second leg: trend_cagr is fit on the fetched window, so a name that
     // collapsed BEFORE the window and recovered inside it slips through (MSCI Greece pattern) —
     // life_cagr (listing-to-date) catches it. None (backtest) stays exempt -> edge-blind.

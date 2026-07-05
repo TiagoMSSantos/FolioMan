@@ -6,8 +6,20 @@
 //! were dropped — their selection edge was zero-to-negative for a multi-decade hold.
 
 use crate::core::Quote;
-use crate::picks::{eu_buyable, growth_near_miss, render};
+use crate::picks::{eu_buyable, exit_review_lines, gate_failures, growth_near_miss, render};
 use crate::{config, fetch};
+
+/// (X) Watchlist gate-state persisted between `screen` runs so the EXIT-review footer can flag a
+/// holding that PASSED every growth gate last run but fails now — the transition the backtest's
+/// exit probe measures (newly-failing names lag kept-passing names by ~14 pts forward). Lives in
+/// `.screen_state.json` in the working dir (same local-file pattern as `.fmp_cache`), gitignored.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ScreenState {
+    date: String,         // YYYY-MM-DD of the run that wrote it
+    passing: Vec<String>, // watchlist tickers that cleared every growth gate on that run
+}
+
+const SCREEN_STATE_FILE: &str = ".screen_state.json";
 
 pub async fn run(args: Vec<String>) {
     // `--explain [TICKER]`: after the tables, print the SCORE arithmetic for TICKER (a flag with no
@@ -112,6 +124,36 @@ pub async fn run(args: Vec<String>) {
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
     render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, explain.as_deref());
+
+    // (X) EXIT review — WATCHLIST names that cleared every growth gate on the previous screen run
+    // but fail one now. The backtest's exit probe measures this exact transition: newly-failing
+    // names lag kept-passing names by ~14 pts forward — a mild REVIEW signal, not an auto-sell.
+    // Watchlist only (the holdings — actionable); universe names churn with fetch batches and
+    // would spam. First run (no state file) prints nothing and just seeds the state.
+    let watch: Vec<&Quote> = quotes.iter().filter(|q| settings.tickers.contains(&q.ticker)).collect();
+    let prior: Option<ScreenState> =
+        std::fs::read_to_string(SCREEN_STATE_FILE).ok().and_then(|s| serde_json::from_str(&s).ok());
+    if let Some(prev) = &prior {
+        let lines = exit_review_lines(&prev.passing, &watch, &settings.buy_heuristic, settings.widths.ticker);
+        if !lines.is_empty() {
+            println!(
+                "\nExit review — watchlist names that PASSED all growth gates on {} but fail now\n(measured: newly-failing names lag kept-passing by ~14 pts fwd — review, not auto-sell):",
+                prev.date
+            );
+            for l in &lines {
+                println!("{l}");
+            }
+        }
+    }
+    let state = ScreenState {
+        date: chrono::Local::now().date_naive().to_string(),
+        passing: watch
+            .iter()
+            .filter(|q| gate_failures(q, &settings.buy_heuristic).is_some_and(|f| f.is_empty()))
+            .map(|q| q.ticker.clone())
+            .collect(),
+    };
+    let _ = std::fs::write(SCREEN_STATE_FILE, serde_json::to_string(&state).unwrap_or_default());
 
     // (B) NEAR-MISS tail: names the growth lane rejected on EXACTLY one gate — a compounder one notch
     // outside the fence (e.g. a great name 25% off its high failing only the range gate). Makes the silent
