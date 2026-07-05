@@ -837,6 +837,42 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     Some(fails)
 }
 
+/// (history_proxy hints) For subject ETFs that failed the history/young gate, say when an older fund
+/// tracking the IDENTICAL BF benchmark index exists in the scanned pool — exactly the case the
+/// `history_proxy` config bridges, which the user must curate by hand and can't discover from the
+/// table. Suggest-only BY DESIGN: auto-applying a twin was rejected (a wrong twin silently corrupts
+/// CAGR), so the user stays the curator; the hint tells them to verify the currency too (splice
+/// refuses a currency mismatch at apply time anyway). Benchmark strings are lowercased at capture
+/// and BF-normalized (hedged share classes carry a DIFFERENT string), so exact `==` is the match.
+pub fn bridge_hint_lines(subjects: &[&Quote], pool: &[Quote], tuning: &BuyHeuristic) -> Vec<String> {
+    subjects
+        .iter()
+        .filter_map(|q| {
+            if !quote_is_etf(q) || q.history_proxied || crate::config::history_proxy().contains_key(&q.ticker) {
+                return None; // not bridgeable / already bridged / already configured
+            }
+            let bench = q.benchmark.as_deref()?;
+            let fails = gate_failures(q, tuning)?;
+            if !fails.iter().any(|(g, _, _)| *g == "history" || *g == "young") {
+                return None; // only a missing long record is what a twin can repair
+            }
+            let twin = pool
+                .iter()
+                .filter(|t| {
+                    t.ticker != q.ticker
+                        && quote_is_etf(t)
+                        && t.benchmark.as_deref() == Some(bench)
+                        && long_leg_fixed(t, tuning.fixed_cagr_years).is_some() // twin must HAVE the record
+                })
+                .max_by(|a, b| a.age_years.unwrap_or(0.0).total_cmp(&b.age_years.unwrap_or(0.0)))?;
+            Some(format!(
+                "  hint: {} tracks the same index as {} ({}, {:.0}y) — consider settings.yaml history_proxy: {}: {} (verify same currency first)",
+                q.ticker, twin.ticker, bench, twin.age_years.unwrap_or(0.0), q.ticker, twin.ticker
+            ))
+        })
+        .collect()
+}
+
 /// Per-name "TICKER  gate: why; gate: why" lines for a gate-review footer: every name in `quotes`
 /// that FAILS at least one growth gate (not-assessable names — leveraged/stablecoin/missing data —
 /// are skipped). Shared by `check` (the whole watchlist) and `screen` (its pinned names, which
@@ -1504,6 +1540,12 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
             println!("{line}");
         }
     }
+    // history_proxy discovery: a young pinned ETF whose exact benchmark index an older scanned fund
+    // already tracks is one settings.yaml line away from a real long-term CAGR — say so here, where
+    // the "young/history" gate line above just explained the 0.0. Suggest-only; user curates.
+    for h in &bridge_hint_lines(&pinned_q, quotes, tuning) {
+        println!("{h}");
+    }
     match (explain_text, explain) {
         (Some(text), _) => println!("{text}"),
         // an explicit --explain TICKER that didn't land a row: say why instead of silently printing nothing
@@ -1761,6 +1803,7 @@ mod tests {
             aum_eur: None,          // (AUM) fund-size gate inert by default; its tests set it explicitly
             use_of_profits: None,   // (USE) display-only token; never scored
             replication: None,      // (REPL) display-only token; never scored
+            benchmark: None,        // twin-hint key only; the hint tests set it explicitly
         }
     };
     let tuning = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on
@@ -1968,6 +2011,33 @@ mod tests {
     assert_eq!(review.len(), 1);
     assert!(review[0].contains("young"));
     assert!(gate_review_lines(&[&aged(Some(9.0))], &tuning, 8).is_empty());
+
+    // --- (history_proxy hints) young ETF + older fund on the IDENTICAL benchmark -> one suggest-only line ---
+    let mut yng = quote(5.0, &[("1Y", 10.0)]); // no 5y+ leg -> the "history" fail a twin can repair
+    yng.ticker = "YNG.DE".into();
+    yng.instrument_type = "ETF".to_string();
+    yng.age_years = Some(2.0);
+    yng.benchmark = Some("x index".to_string());
+    let mut old = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]); // real long record
+    old.ticker = "OLD.DE".into();
+    old.instrument_type = "ETF".to_string();
+    old.age_years = Some(15.0);
+    old.benchmark = Some("x index".to_string());
+    let hints = bridge_hint_lines(&[&yng], std::slice::from_ref(&old), &tuning);
+    assert_eq!(hints.len(), 1);
+    assert!(hints[0].contains("YNG.DE") && hints[0].contains("OLD.DE") && hints[0].contains("x index"));
+    // already bridged -> silent (the hint's job is done)
+    let mut proxied = yng.clone();
+    proxied.history_proxied = true;
+    assert!(bridge_hint_lines(&[&proxied], std::slice::from_ref(&old), &tuning).is_empty());
+    // twin tracks a DIFFERENT index -> no true twin -> silent (hedged share classes land here)
+    let mut other_idx = old.clone();
+    other_idx.benchmark = Some("y index".to_string());
+    assert!(bridge_hint_lines(&[&yng], &[other_idx], &tuning).is_empty());
+    // twin without its own long record can't lend one -> silent
+    let mut recordless = old.clone();
+    recordless.perf = yng.perf.clone();
+    assert!(bridge_hint_lines(&[&yng], &[recordless], &tuning).is_empty());
 
     // --- (AUM) ETF minimum fund-size gate (backtest-blind: aum_eur None -> pass; ETF-only) ---
     let aum_t = BuyHeuristic { growth_min_aum_etf: 100e6, ..BuyHeuristic::default() };

@@ -366,8 +366,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     let ter = if is_etf { fetch_expense(client, urls, ticker, &chart.name).await } else { bf_ter_exact(ticker) };
     // (AUM) fund size, same BF payload + same proof-of-ETP stance for mislabeled ETCs.
     let aum_eur = if is_etf { bf_aum(ticker, &chart.name) } else { bf_aum_exact(ticker) };
-    // (USE/REPL) share-class + replication tokens, same BF payload — display-only columns.
-    let (use_of_profits, replication) = if is_etf { bf_meta(ticker, &chart.name) } else { (None, None) };
+    // (USE/REPL/bench) share-class + replication tokens + benchmark index, same BF payload —
+    // display columns + history_proxy twin hints, never scored.
+    let meta = if is_etf { bf_meta(ticker, &chart.name) } else { BfMeta::default() };
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
     // long dividend sums populate for old names. Prepend only the monthly bars that predate the daily
@@ -475,8 +476,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         expense_ratio: ter,
         // (AUM) fund size from the BF universe payload (ETFs/ETPs only; None -> gate inert, n/a column).
         aum_eur,
-        use_of_profits,
-        replication,
+        use_of_profits: meta.use_of,
+        replication: meta.repl,
+        benchmark: meta.bench,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
         range_pct: core::price_pct_rank(&chart.closes),
@@ -1234,8 +1236,15 @@ static BF_AUM: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::
 /// (lowercased BF fund name, AUM) for ALL BF rows — same name-keyed fallback role as `BF_TER_NAMES`.
 static BF_AUM_NAMES: std::sync::OnceLock<Vec<(String, f64)>> = std::sync::OnceLock::new();
 
-/// (use-of-profits, replication) tokens per row: ("Acc"/"Dist", "Swap"/"Full"/"Opt"/"Hybr"/"Samp").
-type BfMeta = (Option<&'static str>, Option<&'static str>);
+/// Per-row BF keyData facts: share-class + replication tokens ("Acc"/"Dist"; "Swap"/"Full"/"Opt"/
+/// "Hybr"/"Samp") and the benchmark-index name (lowercased at capture so twin matching is one `==`;
+/// BF normalizes it — same-index funds carry the literal same string, hedged classes differ).
+#[derive(Clone, PartialEq, Default, Debug)]
+pub struct BfMeta {
+    pub use_of: Option<&'static str>,
+    pub repl: Option<&'static str>,
+    pub bench: Option<String>,
+}
 
 /// Resolved-Yahoo-symbol -> share-class/replication tokens, captured from the SAME etp_search row as
 /// TER/AUM — no extra request. Display-only (USE/REPL columns), never scored: the ranking's price-only
@@ -1247,14 +1256,14 @@ static BF_META_NAMES: std::sync::OnceLock<Vec<(String, BfMeta)>> = std::sync::On
 
 /// Yahoo-name -> BF value via unique prefix (Yahoo drops BF's share-class suffix: "VanEck Semiconductor
 /// UCITS ETF" vs BF's "… - USD Acc"). None unless EXACTLY one BF fund name starts with the quote's name.
-fn bf_by_name<T: Copy>(list: &std::sync::OnceLock<Vec<(String, T)>>, name: &str) -> Option<T> {
+fn bf_by_name<T: Clone>(list: &std::sync::OnceLock<Vec<(String, T)>>, name: &str) -> Option<T> {
     let n = name.trim().to_lowercase();
     if n.len() < 10 {
         return None; // too short to identify one fund
     }
     let mut hits = list.get()?.iter().filter(|(bf, _)| bf.starts_with(&n));
     match (hits.next(), hits.next()) {
-        (Some((_, v)), None) => Some(*v),
+        (Some((_, v)), None) => Some(v.clone()),
         _ => None,
     }
 }
@@ -1284,19 +1293,19 @@ fn bf_aum_exact(ticker: &str) -> Option<f64> {
     BF_AUM.get().and_then(|m| m.get(ticker)).copied()
 }
 
-/// (USE/REPL) the same 3-tier BF lookup TER/AUM use — the tokens ride the same etp_search row.
+/// (USE/REPL/bench) the same 3-tier BF lookup TER/AUM use — the facts ride the same etp_search row.
 fn bf_meta(ticker: &str, name: &str) -> BfMeta {
-    if let Some(m) = BF_META.get().and_then(|m| m.get(ticker)).copied() {
+    if let Some(m) = BF_META.get().and_then(|m| m.get(ticker)).cloned() {
         return m;
     }
     if let Some(m) = ticker.split_once('.').and_then(|(stem, _)| {
-        BF_META.get()?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, m)| *m)
+        BF_META.get()?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, m)| m.clone())
     }) {
         return m;
     }
     bf_by_name(&BF_META_NAMES, name)
         .or_else(|| name.split_once(" - ").and_then(|(_, fund)| bf_by_name(&BF_META_NAMES, fund)))
-        .unwrap_or((None, None))
+        .unwrap_or_default()
 }
 
 const BF_TER_KEYS: &[&str] = &["ter", "totalExpenseRatio", "ongoingCharges", "ongoingCharge", "totalExpenseRatioInPercent"];
@@ -1355,7 +1364,9 @@ fn bf_row_meta(row: &Value) -> BfMeta {
         "Sample" => Some("Samp"),
         _ => None,
     });
-    (use_of, repl)
+    // benchmark: free-text index name, kept as-is (lowercased) — used for same-index twin hints only
+    let bench = bf_row_keydata(row, "benchmark").map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
+    BfMeta { use_of, repl, bench }
 }
 
 /// The EU-buyable UCITS ETF universe: ask Börse Frankfurt for the top-`cap` ETFs by turnover (real
@@ -1396,7 +1407,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
                     arr.iter()
                         .filter_map(|r| {
                             let m = bf_row_meta(r);
-                            (m != (None, None))
+                            (m != BfMeta::default())
                                 .then_some((r.pointer("/name/originalValue")?.as_str()?.trim().to_lowercase(), m))
                         })
                         .collect(),
@@ -1462,7 +1473,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
             if let Some(a) = aum {
                 aum_map.insert(sym.clone(), a);
             }
-            if meta != (None, None) {
+            if meta != BfMeta::default() {
                 meta_map.insert(sym.clone(), meta);
             }
             sym
@@ -1646,14 +1657,17 @@ mod tests {
     fn bf_row_meta_tokens() {
         let row = serde_json::json!({"keyData": {
             "useOfProfits": {"originalValue": "Thesaurierend", "translations": {"en": "Accumulating"}},
-            "replicationMethod": {"originalValue": "Swap-based"}
+            "replicationMethod": {"originalValue": "Swap-based"},
+            "benchmark": {"originalValue": "S&P 500 Index"}
         }});
-        assert_eq!(bf_row_meta(&row), (Some("Acc"), Some("Swap")));
+        let m = bf_row_meta(&row);
+        assert_eq!((m.use_of, m.repl), (Some("Acc"), Some("Swap")));
+        assert_eq!(m.bench.as_deref(), Some("s&p 500 index")); // lowercased at capture for `==` twin match
         let dist = serde_json::json!({"keyData": {"useOfProfits": {"translations": {"en": "Distributing"}}}});
-        assert_eq!(bf_row_meta(&dist), (Some("Dist"), None));
+        assert_eq!(bf_row_meta(&dist), BfMeta { use_of: Some("Dist"), ..BfMeta::default() });
         let drift = serde_json::json!({"keyData": {"useOfProfits": {"translations": {"en": "Reinvesting"}}}});
-        assert_eq!(bf_row_meta(&drift), (None, None)); // unknown wording -> blank, not a guess
-        assert_eq!(bf_row_meta(&serde_json::json!({})), (None, None)); // no keyData at all
+        assert_eq!(bf_row_meta(&drift), BfMeta::default()); // unknown wording -> blank, not a guess
+        assert_eq!(bf_row_meta(&serde_json::json!({})), BfMeta::default()); // no keyData at all
     }
 
     /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but
