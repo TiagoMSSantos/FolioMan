@@ -268,6 +268,14 @@ buy_heuristic:
                                  #   proven compounders, not hidden. BACKTEST-BLIND either way: age_years is None in the backtest pool, so
                                  #   the gate never touches the validated edge; it only shapes the LIVE screen. Set >0 (e.g. 3) for a hard
                                  #   floor that trims the freshest listings entirely; pins always bypass (shown with a gate-review reason).
+  growth_min_aum_etf: 100000000  # (AUM) ETF-only hard fund-size floor in EUR (quote.aum_eur, BF etp_search AUM, EUR-approximate —
+                                 #   fund currency is EUR/USD mixed; ±10% FX is immaterial vs an order-of-magnitude line): reject a
+                                 #   fund smaller than €100M, the industry viability line under which issuers liquidate/merge — the
+                                 #   one way a 20y hold ends WITHOUT the strategy failing (a forced taxable exit + re-buy). Measured
+                                 #   2026-07-05: median pond AUM €82M, 1791/3391 funds (53%) under this line. None-AUM names are NOT
+                                 #   gated (missing data is not a small fund; BF only covers its venue — same stance as #33 age).
+                                 #   BACKTEST-BLIND: aum_eur is None in the backtest pool -> gate inert there, validated edge
+                                 #   untouched; live-only. 0 = off. Opt-in `aum` column (widths.columns) shows the number per row.
   growth_ter_drag: true          # (#34) ETF cost drag: dock the growth score by the ACTUAL 20-year wealth multiple the expense
                                  #   ratio eats, (1 - TER)^20. The TER is the one cost certain to compound against a decades hold, so
                                  #   two near-identical index ETFs (e.g. iShares vs Amundi Nasdaq-100) rank by NET return instead of

@@ -496,6 +496,14 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if tuning.growth_min_age_years > 0.0 && quote.age_years.is_some_and(|a| a < tuning.growth_min_age_years) {
         return None; // too young -> no multi-year record to trust as a proven compounder
     }
+    // (AUM) ETF minimum fund size (EUR-approximate, from the BF etp_search payload). A sub-scale
+    // fund is the one instrument a 20y hold can lose WITHOUT the strategy failing: issuers liquidate/
+    // merge small funds, forcing a taxable exit mid-hold. ETF-only (companies aren't funds; crypto has
+    // no issuer); aum_eur is None for stocks/crypto/backtest/off-BF names -> gate inert (missing data
+    // is not a small fund — same stance as the age gate above).
+    if !crypto && tuning.growth_min_aum_etf > 0.0 && quote_is_etf(quote) && quote.aum_eur.is_some_and(|a| a < tuning.growth_min_aum_etf) {
+        return None; // sub-scale fund -> liquidation/merge risk over a decades hold
+    }
     let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
     if quote.range_pct < min_range {
         return None; // equities: NOT near its high -> the on-sale lane's job. crypto: looser floor (alts run below ATH)
@@ -771,6 +779,17 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     let mut fails: Vec<(&'static str, String, bool)> = Vec::new();
     if too_young {
         fails.push(young_fail(quote.age_years.unwrap())); // has the CAGR leg but still under the age floor
+    }
+    // (AUM) ETF fund-size gate, same scoping as score_parts: None AUM never fails. Close = within
+    // half the floor (a €60M fund vs a €100M line is a "watch it grow" case, €5M is a hard reject).
+    if !crypto && tuning.growth_min_aum_etf > 0.0 && quote_is_etf(quote) {
+        if let Some(a) = quote.aum_eur.filter(|&a| a < tuning.growth_min_aum_etf) {
+            fails.push((
+                "aum",
+                format!("{} fund — liquidation/merge risk over a decades hold (need ≥ {})", turnover_cell(Some(a)), turnover_cell(Some(tuning.growth_min_aum_etf))),
+                a >= tuning.growth_min_aum_etf * 0.5,
+            ));
+        }
     }
     if quote.range_pct < min_range {
         fails.push(("range", format!("{:.0}% in range (need ≥{:.0}%)", quote.range_pct, min_range), quote.range_pct >= min_range - 10.0));
@@ -1075,6 +1094,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "roe", hdr: "ROE", width: 7, right: true },       // trailing return-on-equity (quality)
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true },       // trailing-1Y dividend yield
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true },       // ETF annual expense ratio % — the one cost that compounds against a decades hold (FMP key, ETFs only)
+    ColSpec { key: "aum", hdr: "AUM", width: 6, right: true },       // ETF fund size (BF etp_search, EUR-approximate) — sub-scale funds get liquidated/merged mid-hold
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true },
@@ -1243,6 +1263,10 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
         // wealth over 40y. "—" for stocks/crypto (no expense ratio); "n/a" for an ETF FMP didn't cover.
         "ter" if etf_only_na => "—".to_string(),
         "ter" => quote.expense_ratio.map_or("n/a".to_string(), |v| format!("{v:.2}%")),
+        // ETF fund size (EUR-approximate). Small funds get liquidated/merged — a forced taxable exit
+        // mid-hold. "—" for stocks/crypto (not funds); "n/a" for an ETF BF's payload didn't cover.
+        "aum" if etf_only_na => "—".to_string(),
+        "aum" => turnover_cell(quote.aum_eur),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
         "turnover" => turnover_cell(quote.avg_turnover_eur),
@@ -1715,6 +1739,7 @@ mod tests {
             age_years: None,       // display-only pair; never scored
             life_cagr: None,
             history_proxied: false, // display-only marker; never scored
+            aum_eur: None,          // (AUM) fund-size gate inert by default; its tests set it explicitly
         }
     };
     let tuning = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on
@@ -1922,6 +1947,27 @@ mod tests {
     assert_eq!(review.len(), 1);
     assert!(review[0].contains("young"));
     assert!(gate_review_lines(&[&aged(Some(9.0))], &tuning, 8).is_empty());
+
+    // --- (AUM) ETF minimum fund-size gate (backtest-blind: aum_eur None -> pass; ETF-only) ---
+    let aum_t = BuyHeuristic { growth_min_aum_etf: 100e6, ..BuyHeuristic::default() };
+    // clears every other gate; only class + AUM vary
+    let fund = |aum: Option<f64>, etf: bool| {
+        let mut q = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]);
+        q.aum_eur = aum;
+        if etf { q.instrument_type = "ETF".to_string(); }
+        q
+    };
+    assert!(growth_score(&fund(Some(45e6), true), &tuning).is_some()); // gate OFF (default 0) -> tiny fund still scored
+    let tiny = fund(Some(45e6), true);
+    assert!(growth_score(&tiny, &aum_t).is_none()); // gate ON -> sub-scale ETF excluded
+    let aum_fail = gate_failures(&tiny, &aum_t).unwrap();
+    let (_, why, close) = aum_fail.iter().find(|(g, _, _)| *g == "aum").unwrap();
+    assert!(why.contains("€45M") && why.contains("€100M") && why.contains("liquidation")); // human why with both sides
+    assert!(!close); // €45M vs a €100M floor is under half -> a hard reject, not a near miss
+    assert!(gate_failures(&fund(Some(60e6), true), &aum_t).unwrap().iter().any(|(g, _, c)| *g == "aum" && *c)); // ≥ half the floor -> close miss
+    assert!(growth_score(&fund(Some(8e9), true), &aum_t).is_some()); // big fund passes
+    assert!(growth_score(&fund(None, true), &aum_t).is_some()); // unknown AUM -> can't judge -> pass (backtest + off-BF names)
+    assert!(growth_score(&fund(Some(45e6), false), &aum_t).is_some()); // non-ETF never gated on AUM
 
     // --- (#34) TER cost drag (ETF-only via expense_ratio; backtest-blind: None -> ×1.0) ---
     let ter_t = BuyHeuristic { growth_ter_drag: true, ..BuyHeuristic::default() };

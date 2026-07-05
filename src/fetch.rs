@@ -364,6 +364,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // Yahoo labels physical ETCs (gold etc.) EQUITY, but an exact hit in the BF map proves ETP — fill
     // the TER anyway (map-only: no FMP etf/info call wasted on true equities).
     let ter = if is_etf { fetch_expense(client, urls, ticker, &chart.name).await } else { bf_ter_exact(ticker) };
+    // (AUM) fund size, same BF payload + same proof-of-ETP stance for mislabeled ETCs.
+    let aum_eur = if is_etf { bf_aum(ticker, &chart.name) } else { bf_aum_exact(ticker) };
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
     // long dividend sums populate for old names. Prepend only the monthly bars that predate the daily
@@ -469,6 +471,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         roe,
         // (TER) ETF annual expense ratio % (ETFs w/ FMP_API_KEY only; None -> n/a column).
         expense_ratio: ter,
+        // (AUM) fund size from the BF universe payload (ETFs/ETPs only; None -> gate inert, n/a column).
+        aum_eur,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
         range_pct: core::price_pct_rank(&chart.closes),
@@ -1217,18 +1221,52 @@ static BF_TER: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::
 /// never a guess.
 static BF_TER_NAMES: std::sync::OnceLock<Vec<(String, f64)>> = std::sync::OnceLock::new();
 
-/// Yahoo-name -> BF TER via unique prefix (Yahoo drops BF's share-class suffix: "VanEck Semiconductor
+/// Resolved-Yahoo-symbol -> fund AUM (assets under management), captured from the SAME etp_search row
+/// as the TER — no extra request. Feeds the ETF closure-risk gate + AUM column. BF mixes fund
+/// currencies (EUR/USD); treated as EUR-approximate — ±10% FX error is immaterial against the
+/// order-of-magnitude gate threshold.
+static BF_AUM: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
+
+/// (lowercased BF fund name, AUM) for ALL BF rows — same name-keyed fallback role as `BF_TER_NAMES`.
+static BF_AUM_NAMES: std::sync::OnceLock<Vec<(String, f64)>> = std::sync::OnceLock::new();
+
+/// Yahoo-name -> BF value via unique prefix (Yahoo drops BF's share-class suffix: "VanEck Semiconductor
 /// UCITS ETF" vs BF's "… - USD Acc"). None unless EXACTLY one BF fund name starts with the quote's name.
-fn bf_ter_by_name(name: &str) -> Option<f64> {
+fn bf_by_name(list: &std::sync::OnceLock<Vec<(String, f64)>>, name: &str) -> Option<f64> {
     let n = name.trim().to_lowercase();
     if n.len() < 10 {
         return None; // too short to identify one fund
     }
-    let mut hits = BF_TER_NAMES.get()?.iter().filter(|(bf, _)| bf.starts_with(&n));
+    let mut hits = list.get()?.iter().filter(|(bf, _)| bf.starts_with(&n));
     match (hits.next(), hits.next()) {
-        (Some((_, t)), None) => Some(*t),
+        (Some((_, v)), None) => Some(*v),
         _ => None,
     }
+}
+
+fn bf_ter_by_name(name: &str) -> Option<f64> {
+    bf_by_name(&BF_TER_NAMES, name)
+}
+
+/// (AUM) the same 3-tier BF lookup the TER uses (exact resolved symbol -> same-stem cross-venue ->
+/// unique fund-name prefix, retried without Yahoo's umbrella-company prefix) — both values ride the
+/// same etp_search row. No FMP fallback: its free tier doesn't serve fund size.
+fn bf_aum(ticker: &str, name: &str) -> Option<f64> {
+    if let Some(v) = bf_aum_exact(ticker) {
+        return Some(v);
+    }
+    if let Some(v) = ticker.split_once('.').and_then(|(stem, _)| {
+        BF_AUM.get()?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, v)| *v)
+    }) {
+        return Some(v);
+    }
+    bf_by_name(&BF_AUM_NAMES, name)
+        .or_else(|| name.split_once(" - ").and_then(|(_, fund)| bf_by_name(&BF_AUM_NAMES, fund)))
+}
+
+/// Exact Börse-Frankfurt AUM map hit — same "presence proves ETP" semantics as `bf_ter_exact`.
+fn bf_aum_exact(ticker: &str) -> Option<f64> {
+    BF_AUM.get().and_then(|m| m.get(ticker)).copied()
 }
 
 const BF_TER_KEYS: &[&str] = &["ter", "totalExpenseRatio", "ongoingCharges", "ongoingCharge", "totalExpenseRatioInPercent"];
@@ -1257,6 +1295,12 @@ fn bf_row_ter(row: &Value) -> Option<f64> {
         .filter(|t| t.is_finite() && *t > 0.0 && *t < 5.0)
 }
 
+/// Pull the fund size out of one BF `etp_search` row (`overview.assetsUnderManagement`, absolute
+/// fund-currency units — verified live 2026-07: 3391 of 3468 rows carry it). None if absent/nonsense.
+fn bf_row_aum(row: &Value) -> Option<f64> {
+    row.pointer("/overview/assetsUnderManagement")?.as_f64().filter(|v| v.is_finite() && *v > 0.0)
+}
+
 /// The EU-buyable UCITS ETF universe: ask Börse Frankfurt for the top-`cap` ETFs by turnover (real
 /// EU-listed, PRIIPs-compliant funds — unlike the US-domiciled NASDAQ-Trader ETFs an EU broker can't
 /// sell), then resolve each ISIN to a Yahoo symbol via Yahoo search (first hit = the liquid EU
@@ -1272,15 +1316,22 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
     // come free here (no per-name FMP call, which doesn't cover them anyway). first_keys = the first
     // row's field names, logged ONLY if zero TERs parse, so a renamed BF field self-diagnoses in one run.
     let mut first_keys = String::new();
-    let rows: Vec<(String, Option<f64>)> = match borse_frankfurt_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
+    let rows: Vec<(String, Option<f64>, Option<f64>)> = match borse_frankfurt_post(client, &urls.bf_etf_search, &urls.bf_salt, &body).await {
         Some(j) => match j.get("data").and_then(|d| d.as_array()) {
             Some(arr) => {
-                // name-keyed TER list from ALL rows (not just the top-cap): a pinned name's fund can
-                // sit below the turnover cutoff and still deserve its TER.
+                // name-keyed TER + AUM lists from ALL rows (not just the top-cap): a pinned name's fund
+                // can sit below the turnover cutoff and still deserve its TER / fund size.
                 let _ = BF_TER_NAMES.set(
                     arr.iter()
                         .filter_map(|r| {
                             Some((r.pointer("/name/originalValue")?.as_str()?.trim().to_lowercase(), bf_row_ter(r)?))
+                        })
+                        .collect(),
+                );
+                let _ = BF_AUM_NAMES.set(
+                    arr.iter()
+                        .filter_map(|r| {
+                            Some((r.pointer("/name/originalValue")?.as_str()?.trim().to_lowercase(), bf_row_aum(r)?))
                         })
                         .collect(),
                 );
@@ -1295,7 +1346,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
                     }
                     first_keys = fields.join(",");
                 }
-                arr.iter().filter_map(|r| Some((r.get("isin")?.as_str()?.to_string(), bf_row_ter(r)))).collect()
+                arr.iter().filter_map(|r| Some((r.get("isin")?.as_str()?.to_string(), bf_row_ter(r), bf_row_aum(r)))).collect()
             }
             None => Vec::new(),
         },
@@ -1309,11 +1360,11 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
     // are the most-liquid ETFs — keep only those, both to match universe_size and to avoid firing
     // thousands of Yahoo searches (which DO rate-limit).
     let total = rows.len();
-    let top: Vec<(String, Option<f64>)> = rows.into_iter().take(cap).collect();
+    let top: Vec<(String, Option<f64>, Option<f64>)> = rows.into_iter().take(cap).collect();
     // resolve ISIN -> Yahoo symbol (first quote = the liquid EU listing), bounded fan-out, carrying the
-    // captured TER alongside. yahoo_search is tuned for news (quotesCount=0) — flip it to quotes here.
-    let resolved: Vec<(String, Option<f64>)> = stream::iter(top)
-        .map(|(isin, ter)| async move {
+    // captured TER + AUM alongside. yahoo_search is tuned for news (quotesCount=0) — flip it to quotes here.
+    let resolved: Vec<(String, Option<f64>, Option<f64>)> = stream::iter(top)
+        .map(|(isin, ter, aum)| async move {
             let url = urls
                 .yahoo_search
                 .replace("{ticker}", isin.as_str())
@@ -1325,25 +1376,31 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
             // (716 of the 783 old "no Yahoo data" gate-outs). A real liquid listing (.DE/.MI/.L/.AS…)
             // would have ranked first, so there's nothing to rescue: drop it. note: only .SG shows
             // up in practice; add the suffix to this check if another chart-less regional venue appears.
-            (!sym.ends_with(".SG")).then_some((sym, ter))
+            (!sym.ends_with(".SG")).then_some((sym, ter, aum))
         })
         .buffer_unordered(fetch_concurrency())
         .filter_map(|x| async move { x })
         .collect()
         .await;
-    // split into the ticker list + the symbol->TER map (stored once for fetch_expense to read).
+    // split into the ticker list + the symbol->TER and symbol->AUM maps (each stored once;
+    // fetch_expense / bf_aum read them).
     let mut ter_map: HashMap<String, f64> = HashMap::new();
+    let mut aum_map: HashMap<String, f64> = HashMap::new();
     let tickers: Vec<String> = resolved
         .into_iter()
-        .map(|(sym, ter)| {
+        .map(|(sym, ter, aum)| {
             if let Some(t) = ter {
                 ter_map.insert(sym.clone(), t);
+            }
+            if let Some(a) = aum {
+                aum_map.insert(sym.clone(), a);
             }
             sym
         })
         .collect();
     let ter_n = ter_map.len();
     let _ = BF_TER.set(ter_map);
+    let _ = BF_AUM.set(aum_map);
     // conclusive diagnostic: distinguishes "BF gave 0 ISINs" from "BF ok but Yahoo bridge resolved
     // none" — the two ways the ETF tables silently empty.
     eprintln!("fetch: Börse Frankfurt returned {total} ETF ISINs (kept top {} by turnover); {} resolved to Yahoo tickers (TER for {ter_n})", total.min(cap), tickers.len());
