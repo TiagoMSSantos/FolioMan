@@ -14,7 +14,7 @@ use chrono::{DateTime, NaiveDate};
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant, SystemTime};
 use tokio::sync::Mutex;
@@ -479,6 +479,10 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         use_of_profits: meta.use_of,
         replication: meta.repl,
         benchmark: meta.bench,
+        // (REV-YoY/EPS-YoY/NET%) filled later by enrich_income_stmt for the DISPLAYED stock rows only
+        rev_yoy: None,
+        eps_yoy: None,
+        net_margin_fy: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
         range_pct: core::price_pct_rank(&chart.closes),
@@ -826,6 +830,31 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         }
         ff.earnings_yield = q.close_native.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
         q.fund_factor = core::select_fund_factor(&ff, factor);
+    }
+}
+
+/// Fill the DISPLAY-ONLY income-statement snapshot (rev_yoy / eps_yoy / net_margin_fy) on the quotes
+/// named in `targets` — the screen's ranked top stocks + pinned stocks, NOT the whole universe: the
+/// columns only print for displayed rows, and enriching ~500 S&P names cold would burn the FMP daily
+/// budget that P/E-ROE and the fund tilt share. Same pipeline `report` prints (report fetch — FMP
+/// first, SEC EDGAR fallback for US filers when FMP is capped — → annual_rollup → newest complete FY),
+/// cache-first, so warm runs cost zero requests. The per-ticker source mix is fine HERE because these
+/// cells are never ranked (the skew rule guards the fund tilt, not display columns). Never scored —
+/// the fund-factor family measured null for ranking; this is legibility for the human.
+pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core::Quote], targets: &HashSet<String>) {
+    const LIVE_TTL: StdDuration = StdDuration::from_secs(7 * 24 * 3600); // weekly refetch, like the fund tilt
+    for q in quotes.iter_mut() {
+        // crypto/FX ('-' tickers) and funds carry no income statement -> don't spend a budget slot
+        if !targets.contains(&q.ticker) || q.ticker.contains('-') || q.instrument_type.eq_ignore_ascii_case("ETF") {
+            continue;
+        }
+        evict_if_stale(&fund_cache_path(&q.ticker), LIVE_TTL);
+        if let Some(snap) = fetch_fundamentals_report(client, urls, &q.ticker)
+            .await
+            .and_then(|rows| core::income_snapshot(&core::annual_rollup(&rows)))
+        {
+            (q.rev_yoy, q.eps_yoy, q.net_margin_fy) = snap;
+        }
     }
 }
 

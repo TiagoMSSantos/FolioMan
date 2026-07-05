@@ -6,7 +6,7 @@
 //! were dropped — their selection edge was zero-to-negative for a multi-decade hold.
 
 use crate::core::Quote;
-use crate::picks::{eu_buyable, exit_review_lines, gate_failures, growth_near_miss, render};
+use crate::picks::{eu_buyable, exit_review_lines, gate_failures, growth_near_miss, growth_score, render};
 use crate::{config, fetch};
 
 /// (X) Watchlist gate-state persisted between `screen` runs so the EXIT-review footer can flag a
@@ -106,6 +106,23 @@ pub async fn run(args: Vec<String>) {
         eprintln!("screen: dropped {} stale listing(s) (>{}d since last close): {}", stale.len(), settings.stale_days, names.join(", "));
     }
     println!("Scanned {} instruments.", quotes.len());
+
+    // Income-statement snapshot (REV-YoY / EPS-YoY / NET%) for the DISPLAYED stock rows only: the
+    // ranked top-N plus pinned stocks — enriching all ~500 S&P names cold would burn the shared FMP
+    // daily budget for columns nobody sees. Display-only fields, so pre-ranking here to learn WHICH
+    // tickers will print cannot change the ranking render() computes. Cache-first: warm runs are free.
+    let mut quotes = quotes;
+    let targets: std::collections::HashSet<String> = {
+        let is_stock = |q: &&Quote| !q.ticker.contains('-') && !crate::picks::quote_is_etf(q);
+        let mut ranked: Vec<(&Quote, f64)> = quotes.iter().filter(is_stock)
+            .filter_map(|q| growth_score(q, &settings.buy_heuristic).map(|s| (q, s)))
+            .collect();
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+        ranked.iter().take(settings.top_picks).map(|(q, _)| q.ticker.clone())
+            .chain(quotes.iter().filter(is_stock).filter(|q| settings.tickers.contains(&q.ticker)).map(|q| q.ticker.clone()))
+            .collect()
+    };
+    fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &targets).await;
 
     // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
     // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER

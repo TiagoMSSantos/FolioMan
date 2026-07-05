@@ -170,7 +170,7 @@ fn is_commodity_etf(quote: &Quote) -> bool {
 /// Is this quote a pooled fund? Prefer Yahoo's own `instrumentType` ("ETF"), which is present even
 /// when the name string isn't a giveaway (ETF shortNames like "ISHARES III PLC ISHRS CORE MSCI"
 /// carry no marker). Falls back to the name-substring guess for rows with no meta (backtest stubs).
-fn quote_is_etf(quote: &Quote) -> bool {
+pub(crate) fn quote_is_etf(quote: &Quote) -> bool {
     quote.instrument_type.eq_ignore_ascii_case("ETF") || is_etf(&quote.name)
 }
 
@@ -1133,6 +1133,9 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true },       // ETF fund size (BF etp_search, EUR-approximate) — sub-scale funds get liquidated/merged mid-hold
     ColSpec { key: "use", hdr: "USE", width: 4, right: false },      // ETF share class: Acc(umulating)/Dist(ributing) — Dist pays out (taxed yearly); Acc compounds tax-deferred
     ColSpec { key: "repl", hdr: "REPL", width: 4, right: false },    // ETF replication: Swap/Full/Opt(imised)/Hybr(id)/Samp(le) — counterparty structure over a decades hold
+    ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true }, // newest complete-FY revenue growth vs prior FY (stocks only; report pipeline) — "still growing?"
+    ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true }, // newest complete-FY EPS growth vs prior FY (stocks only) — profit follow-through
+    ColSpec { key: "net", hdr: "NET%", width: 6, right: true },      // newest complete-FY net margin level (stocks only) — profitability quality
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true },
@@ -1311,6 +1314,14 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
         "use" => quote.use_of_profits.map_or("n/a".to_string(), str::to_string),
         "repl" if etf_only_na => "—".to_string(),
         "repl" => quote.replication.map_or("n/a".to_string(), str::to_string),
+        // newest complete-FY income-statement snapshot (report pipeline; enriched only for displayed
+        // stock rows). "—" for ETF/crypto (no income statement); "n/a" = not enriched / no data.
+        "rev-yoy" if stock_only_na => "—".to_string(),
+        "rev-yoy" => quote.rev_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
+        "eps-yoy" if stock_only_na => "—".to_string(),
+        "eps-yoy" => quote.eps_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
+        "net" if stock_only_na => "—".to_string(),
+        "net" => quote.net_margin_fy.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
         "turnover" => turnover_cell(quote.avg_turnover_eur),
@@ -1420,8 +1431,9 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // it's not a quota, that's all that passed the gates + filter.
     let secs = if sectors.is_empty() { "all".to_string() } else { sectors.join(", ") };
     let head = |len: usize| if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") };
-    // P/E, PEG, ROE are equity-only; TER/AUM/USE/REPL are ETF-only. Hide the always-"—" columns per
-    // class: stocks drop the fund columns, ETFs drop the equity fundamentals, crypto drops both.
+    // P/E, PEG, ROE, REV-YoY, EPS-YoY, NET% are equity-only; TER/AUM/USE/REPL are ETF-only. Hide the
+    // always-"—" columns per class: stocks drop the fund columns, ETFs drop the equity fundamentals,
+    // crypto drops both.
     print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w, pinned, &["ter", "aum", "use", "repl"], tuning);
     // (#27) cluster concentration: a top-20 stock table is usually ~3 correlated trades, not 20
     // independent bets — count the SHOWN rows per GICS sector so "semis-heavy" is a number, not a
@@ -1449,10 +1461,10 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
         }
         mix_line("market mix", counts, "listing country ~ currency exposure; all-USA = one bet on the dollar too");
     }
-    print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe"], tuning);
+    print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net"], tuning);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
-    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "ter", "aum", "use", "repl"], tuning);
+    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl"], tuning);
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -1754,6 +1766,18 @@ mod tests {
         assert_eq!(col_cell("repl", &eq, 0.0, ""), "Swap");
         assert_eq!(col_cell("use", &cq, 0.0, ""), "—");
         assert_eq!(col_cell("repl", &cq, 0.0, ""), "—");
+        // (REV-YoY/EPS-YoY/NET%) stock-only FY snapshot: stock prints signed %s / margin level, an
+        // un-enriched stock -> n/a, ETF/crypto -> — (no income statement)
+        let mut st = Quote::stub("S", "€1", "", "Co");
+        assert_eq!(col_cell("rev-yoy", &st, 0.0, ""), "n/a");
+        st.rev_yoy = Some(65.5);
+        st.eps_yoy = Some(-12.3);
+        st.net_margin_fy = Some(55.6);
+        assert_eq!(col_cell("rev-yoy", &st, 0.0, ""), "+65.5%");
+        assert_eq!(col_cell("eps-yoy", &st, 0.0, ""), "-12.3%");
+        assert_eq!(col_cell("net", &st, 0.0, ""), "55.6");
+        assert_eq!(col_cell("rev-yoy", &eq, 0.0, ""), "—"); // ETF
+        assert_eq!(col_cell("net", &cq, 0.0, ""), "—"); // crypto
     }
 
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5
@@ -1804,6 +1828,9 @@ mod tests {
             use_of_profits: None,   // (USE) display-only token; never scored
             replication: None,      // (REPL) display-only token; never scored
             benchmark: None,        // twin-hint key only; the hint tests set it explicitly
+            rev_yoy: None,          // display-only FY snapshot; cell tests set them explicitly
+            eps_yoy: None,
+            net_margin_fy: None,
         }
     };
     let tuning = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on

@@ -102,6 +102,9 @@ pub struct Quote {
     pub use_of_profits: Option<&'static str>, // (USE) share class from the same BF row: "Acc"/"Dist". DISPLAY-ONLY — never scored: the price-only CAGR already prices the Dist payout drag (payouts leave the NAV), so Acc twins win by construction
     pub replication: Option<&'static str>,    // (REPL) replication method, same BF row: "Swap"/"Full"/"Opt"/"Hybr"/"Samp". DISPLAY-ONLY counterparty-structure legibility (swap-based US-index funds also legally dodge dividend withholding — why they track so well)
     pub benchmark: Option<String>,     // BF benchmark-index name, lowercased at capture (BF normalizes it: same-index funds share the literal string, hedged classes differ). Used ONLY for history_proxy twin HINTS — never scored, never a match key beyond exact `==`
+    pub rev_yoy: Option<f64>,          // newest COMPLETE-fiscal-year revenue growth (%) vs the prior FY, from the same income-statement pipeline `report` prints. DISPLAY-ONLY (stocks) — the fund-factor family measured null for ranking; enriched only for the displayed top rows, None otherwise/backtest
+    pub eps_yoy: Option<f64>,          // newest complete-FY EPS growth (%) vs the prior FY. DISPLAY-ONLY, same scoping as rev_yoy
+    pub net_margin_fy: Option<f64>,    // newest complete-FY net margin (%). DISPLAY-ONLY, same scoping as rev_yoy
 }
 
 impl Quote {
@@ -147,6 +150,9 @@ impl Quote {
             use_of_profits: None,
             replication: None,
             benchmark: None,
+            rev_yoy: None,
+            eps_yoy: None,
+            net_margin_fy: None,
         }
     }
 }
@@ -1023,6 +1029,24 @@ pub fn annual_rollup(rows: &[FundRow]) -> Vec<AnnualReport> {
         .collect()
 }
 
+/// The screen table's income-statement snapshot: (rev_yoy %, eps_yoy %, net_margin %) of the newest
+/// COMPLETE fiscal year, each vs the next-older year — the same math the `report` rows print, so the
+/// two views can't disagree. "Complete" mirrors report's `*` mark: 1 quarter = an annual filing (SEC
+/// rolls a fiscal year into one row), 4+ = a full quarterly year; 2-3 = genuinely partial, skipped so
+/// a half-year isn't misread as a revenue cliff. YoY needs the older row too: last year in the data
+/// has nothing to compare against -> that component is None, never 0.
+pub fn income_snapshot(annual: &[AnnualReport]) -> Option<(Option<f64>, Option<f64>, Option<f64>)> {
+    let idx = annual.iter().position(|a| a.quarters == 1 || a.quarters >= 4)?;
+    let a = &annual[idx];
+    let older = annual.get(idx + 1);
+    let rev_yoy = older.filter(|o| o.revenue > 0.0).map(|o| (a.revenue / o.revenue - 1.0) * 100.0);
+    let eps_yoy = match (a.eps, older.and_then(|o| o.eps)) {
+        (Some(c), Some(p)) if p != 0.0 => Some((c / p - 1.0) * 100.0),
+        _ => None,
+    };
+    Some((rev_yoy, eps_yoy, a.net_margin))
+}
+
 /// Pick ONE named as-of factor out of `FundFactors` for the growth lane's fund tilt. The name comes
 /// from config (`growth_fund_factor`), so the user can route whichever factor the `backtest … fund`
 /// probe shows predicts best WITHOUT a recompile. An unknown name -> None (neutral) so a typo degrades
@@ -1330,6 +1354,34 @@ mod tests {
         assert_eq!(s[0].gross_margin, None);
         assert_eq!(s[0].eps, None);
         assert_eq!(s[0].revenue, 10.0);
+    }
+
+    /// `income_snapshot`: picks the newest COMPLETE year (1 = annual filing, 4+ = full quarterly year;
+    /// 2-3 = partial, skipped), YoY vs the next-older row with report's exact math, and refuses to
+    /// fabricate a number: no older row / zero prior EPS -> that component None; no complete year -> None.
+    #[test]
+    fn income_snapshot_complete_year_and_yoy() {
+        let a = |year: i32, revenue: f64, eps: Option<f64>, quarters: usize| AnnualReport {
+            year, revenue, gross_margin: None, op_margin: None, net_margin: Some(50.0), eps, quarters,
+        };
+        // newest year partial (3 quarters) -> skipped; snapshot = 2023 vs 2022
+        let rows = vec![a(2024, 900.0, Some(9.0), 3), a(2023, 600.0, Some(6.0), 4), a(2022, 500.0, Some(4.0), 4)];
+        let (rev, eps, net) = income_snapshot(&rows).unwrap();
+        assert!((rev.unwrap() - 20.0).abs() < 1e-9); // 600/500
+        assert!((eps.unwrap() - 50.0).abs() < 1e-9); // 6/4
+        assert_eq!(net, Some(50.0));
+        // SEC-style annual filing (quarters == 1) counts as complete
+        let sec = vec![a(2023, 600.0, Some(6.0), 1), a(2022, 500.0, Some(6.0), 1)];
+        assert!((income_snapshot(&sec).unwrap().0.unwrap() - 20.0).abs() < 1e-9);
+        // oldest year in the data: nothing older to compare -> YoY components None, margin still real
+        let lone = vec![a(2023, 600.0, Some(6.0), 4)];
+        assert_eq!(income_snapshot(&lone).unwrap(), (None, None, Some(50.0)));
+        // zero prior EPS -> eps_yoy None (never a divide blow-up); prior zero revenue -> rev_yoy None
+        let zeroes = vec![a(2023, 600.0, Some(6.0), 4), a(2022, 0.0, Some(0.0), 4)];
+        assert_eq!(income_snapshot(&zeroes).unwrap(), (None, None, Some(50.0)));
+        // only partial years -> no snapshot at all
+        assert_eq!(income_snapshot(&[a(2024, 900.0, None, 2)]), None);
+        assert_eq!(income_snapshot(&[]), None);
     }
 
     /// (Item 4) `insider_net_buys` counts P(+1)/S(−1) only in [cutoff−window, cutoff): a same-day or later
