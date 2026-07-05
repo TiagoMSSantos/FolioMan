@@ -1333,8 +1333,10 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
 /// the live DataTables endpoint (`urls.euronext_lisbon`, MIC-scoped to XLIS) with the column
 /// datapoints the renderer needs — WITHOUT `args[display_datapoints]` the server returns the right
 /// row COUNT but empty cells. Symbol+`.LS` is the Yahoo form for the liquid Lisbon names; a wrong/
-/// thin one just returns no Yahoo data downstream and self-gates. Degrades to an empty Vec (with a
-/// diagnostic) on any failure, so the rest of the universe still builds.
+/// thin one just returns no Yahoo data downstream and self-gates. Retries once (chart_json's
+/// fallback-retry shape: 2 attempts, 400ms apart) — a transient blip/throttle emptied the whole
+/// Lisbon leg on 2026-07-04 — then degrades to an empty Vec with a diagnostic that carries the last
+/// HTTP status, so the rest of the universe still builds.
 /// note: symbol->`.LS` direct map (no ISIN->Yahoo-search bridge); add the bridge fetch_xetra_etfs
 /// already has only if coverage turns out poor.
 pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> {
@@ -1343,25 +1345,31 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
     // request the page's JS sends.
     let body = "args[display_datapoints]=name,isin,symbol,market,lastPrice,precentDayChange,lastTradeTime\
                 &draw=1&start=0&length=1000&iDisplayLength=1000&iDisplayStart=0";
-    let j = async {
-        client
+    let mut last_status = String::from("no response");
+    for attempt in 0..2 {
+        let resp = client
             .post(&urls.euronext_lisbon)
             .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
             .header("X-Requested-With", "XMLHttpRequest")
             .body(body)
             .send()
-            .await
-            .ok()?
-            .json::<Value>()
-            .await
-            .ok()
+            .await;
+        if let Ok(r) = resp {
+            last_status = r.status().to_string();
+            // success = non-empty tickers, so a 200 with empty/missing aaData retries too
+            if let Ok(v) = r.json::<Value>().await {
+                let tickers = core::euronext_lisbon_symbols(&v);
+                if !tickers.is_empty() {
+                    return tickers;
+                }
+            }
+        }
+        if attempt == 0 {
+            tokio::time::sleep(StdDuration::from_millis(400)).await;
+        }
     }
-    .await;
-    let tickers = j.map(|v| core::euronext_lisbon_symbols(&v)).unwrap_or_default();
-    if tickers.is_empty() {
-        eprintln!("fetch: Euronext Lisbon returned no tickers (endpoint moved / datapoints changed?) — Lisbon stocks absent from the screen");
-    }
-    tickers
+    eprintln!("fetch: Euronext Lisbon failed after 2 attempts (last status: {last_status}) — Lisbon stocks absent from the screen");
+    Vec::new()
 }
 
 /// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
