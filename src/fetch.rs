@@ -301,7 +301,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     );
 
     let parsed = chart_j.as_ref().and_then(|j| parse_chart(j, ticker));
-    let chart = match parsed {
+    let mut chart = match parsed {
         Some(c) if !c.closes.is_empty() => c,
         other => {
             // Crypto -EUR with no Yahoo data: many alts (APT, SUI, NEAR…) only carry a -USD pair on
@@ -317,6 +317,32 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             };
         }
     };
+
+    // (history_proxy) young listing of an old strategy: splice the configured older twin's closes
+    // (rebased at the listing's first bar) UNDER the listing's own series, so every downstream metric
+    // (5Y/10Y legs, range, SMA, R², age) reads the strategy's proven history while price/TER/turnover
+    // stay the listing's own (turnover reads a 30-bar TRAILING window, untouched by a prepend).
+    // Same-currency twins only — a cross-currency splice would bake FX drift into the CAGR.
+    let mut history_proxied = false;
+    if let Some(proxy) = crate::config::history_proxy().get(ticker) {
+        match chart_json(client, urls, proxy, "10y").await.as_ref().and_then(|j| parse_chart(j, proxy)) {
+            Some(p) if p.currency == chart.currency => {
+                if let Some((dates, closes)) =
+                    core::splice_history(&chart.dates, &chart.closes, &p.dates, &p.closes)
+                {
+                    let added = dates.len() - chart.dates.len();
+                    let mut volumes = vec![0.0; added]; // proxy liquidity is NOT this listing's
+                    volumes.extend_from_slice(&chart.volumes);
+                    (chart.dates, chart.closes, chart.volumes) = (dates, closes, volumes);
+                    history_proxied = true;
+                } else {
+                    eprintln!("fetch: history_proxy {proxy} for {ticker} has no bars predating the listing (or no overlap) — splice skipped");
+                }
+            }
+            Some(p) => eprintln!("fetch: history_proxy {proxy} ({}) and {ticker} ({}) trade in different currencies — splice skipped (pick a same-currency twin)", p.currency, chart.currency),
+            None => eprintln!("fetch: history_proxy {proxy} for {ticker} returned no chart — splice skipped"),
+        }
+    }
 
     // Live fundamentals, gated by ASSET CLASS so a column only fetches where it applies (and we don't
     // waste FMP's 250/day free budget on no-op calls): P/E + ROE for EQUITIES only, expense ratio for
@@ -456,6 +482,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         fund_factor: None, // (G) live screen leaves this None (neutral); only the small/check-scale path (A3) populates it
         age_years,
         life_cagr,
+        history_proxied,
     }
 }
 

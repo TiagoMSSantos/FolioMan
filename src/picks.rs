@@ -1289,14 +1289,17 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         let cap = if is_currency_quoted(&quote.ticker) { tuning.growth_overext_cap_crypto } else { tuning.growth_overext_cap };
         if cap > 0.0 && quote.above_ma_pct >= cap { "!" } else { "" }
     };
-    let mark = |quote: &Quote, i: usize| format!("{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote));
+    // ~ = the score ran on BRIDGED history (config `history_proxy`: a young listing spliced onto its
+    // configured older same-strategy twin). CAGR/YRS describe the strategy's record, not this listing's.
+    let bridged = |quote: &Quote| if quote.history_proxied { "~" } else { "" };
+    let mark = |quote: &Quote, i: usize| format!("{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), bridged(quote));
     // pinned tickers that ranked BELOW the cut still print (with their real rank + "*") so you can
     // compare a holding against the tops above even when it doesn't make the top-N.
     let below_cut = picks.iter().enumerate().skip(n).filter(|(_, (quote, _))| pinned.contains(quote.ticker.as_str()));
     let mut seen = String::new(); // rank-flag chars that actually printed, drives the legend line
     for (i, (quote, score)) in picks.iter().enumerate().take(n).chain(below_cut) {
         let m = mark(quote, i);
-        for flag in ['*', '#', '!'] {
+        for flag in ['*', '#', '!', '~'] {
             if m.contains(flag) && !seen.contains(flag) {
                 seen.push(flag);
             }
@@ -1308,6 +1311,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         ("*", "pinned watchlist name"),
         ("#", "score used live fundamentals, not price-only"),
         ("!", "late-cycle: price >= cap above 200wk trend, brake floored — conviction is the SCORE, not the rank"),
+        ("~", "history bridged from configured older twin (history_proxy) — CAGR/YRS describe the strategy, not this listing"),
     ]
     .iter()
     .filter(|(flag, _)| seen.contains(flag))
@@ -1710,6 +1714,7 @@ mod tests {
             fund_factor: None,     // (G) default off; the fund-tilt asserts set it explicitly
             age_years: None,       // display-only pair; never scored
             life_cagr: None,
+            history_proxied: false, // display-only marker; never scored
         }
     };
     let tuning = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on

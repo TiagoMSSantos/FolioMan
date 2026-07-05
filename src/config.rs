@@ -600,6 +600,21 @@ pub fn use_adjusted_close() -> bool {
     })
 }
 
+/// (history_proxy) Process-once read of the young-listing -> older-twin map. Read once per quote in
+/// the screen fan-out, so parse the config ONCE, not thousands of times. SOFT — a missing/invalid
+/// config yields an empty map (no splices), so it never panics in unit tests where the gitignored
+/// settings.yaml is absent.
+pub fn history_proxy() -> &'static BTreeMap<String, String> {
+    use std::sync::OnceLock;
+    static MAP: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+            .map(|s| s.history_proxy)
+            .unwrap_or_default()
+    })
+}
+
 /// (Item 22) Process-once read of the fundamentals source ("fmp" | "sec") for the ranking fund lane.
 /// SOFT — a missing/invalid config yields "fmp" (the validated default), so it never panics in unit
 /// tests where the gitignored settings.yaml is absent. `fetch_fundamentals_ranked` reads this to route
