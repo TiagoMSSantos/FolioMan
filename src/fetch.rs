@@ -1403,7 +1403,10 @@ fn bf_row_meta(row: &Value) -> BfMeta {
 /// sell), then resolve each ISIN to a Yahoo symbol via Yahoo search (first hit = the liquid EU
 /// listing, e.g. `.MI`/`.L`/`.DE`). Concurrency-bounded. Empty (with a warning) if the signed API
 /// rejects us — salt rotated / endpoint moved; refresh `bf_salt`/`bf_etf_search` in settings.yaml.
-pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<String> {
+/// `extra_isins` = ISINs from other venue lists (Euronext) merged in AFTER the BF top-`cap` cut —
+/// they ride the same ISIN->Yahoo bridge but carry no BF facts (TER/AUM/USE/REPL/benchmark all
+/// None -> honest n/a cells; the AUM gate never gates None by design).
+pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize, extra_isins: Vec<String>) -> Vec<String> {
     let body = serde_json::json!({
         "indices": [], "regions": [], "countries": [], "issuer": [], "types": [],
         "benchmarks": [], "currency": [], "strategy": [], "replicationType": [], "distributionType": [],
@@ -1459,14 +1462,25 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
         None => Vec::new(),
     };
     if rows.is_empty() {
-        eprintln!("fetch: Börse Frankfurt ETF search returned nothing (salt rotated? refresh bf_salt) — ETF tables will be empty");
-        return Vec::new();
+        eprintln!("fetch: Börse Frankfurt ETF search returned nothing (salt rotated? refresh bf_salt) — falling back to the Euronext ISINs alone");
     }
     // BF ignores our pageSize and dumps the whole list (~3430); it's TURNOVER-DESC, so the top `cap`
     // are the most-liquid ETFs — keep only those, both to match universe_size and to avoid firing
-    // thousands of Yahoo searches (which DO rate-limit).
+    // thousands of Yahoo searches (which DO rate-limit). Euronext-only ISINs append after the cut so
+    // BF's turnover ranking (and the cap semantics) stay untouched.
     let total = rows.len();
-    let top: Vec<(String, Option<f64>, Option<f64>, BfMeta)> = rows.into_iter().take(cap).collect();
+    let bf_isins: std::collections::HashSet<String> = rows.iter().map(|(isin, ..)| isin.clone()).collect();
+    let mut top: Vec<(String, Option<f64>, Option<f64>, BfMeta)> = rows.into_iter().take(cap).collect();
+    top.extend(
+        extra_isins
+            .into_iter()
+            .filter(|isin| !bf_isins.contains(isin))
+            .map(|isin| (isin, None, None, BfMeta::default())),
+    );
+    let extra_n = top.len() - total.min(cap);
+    if top.is_empty() {
+        return Vec::new();
+    }
     // resolve ISIN -> Yahoo symbol (first quote = the liquid EU listing), bounded fan-out, carrying the
     // captured TER + AUM + meta alongside. yahoo_search is tuned for news (quotesCount=0) — flip it to quotes here.
     let resolved: Vec<(String, Option<f64>, Option<f64>, BfMeta)> = stream::iter(top)
@@ -1514,7 +1528,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize) -> Vec<S
     let _ = BF_META.set(meta_map);
     // conclusive diagnostic: distinguishes "BF gave 0 ISINs" from "BF ok but Yahoo bridge resolved
     // none" — the two ways the ETF tables silently empty.
-    eprintln!("fetch: Börse Frankfurt returned {total} ETF ISINs (kept top {} by turnover); {} resolved to Yahoo tickers (TER for {ter_n})", total.min(cap), tickers.len());
+    eprintln!("fetch: Börse Frankfurt returned {total} ETF ISINs (kept top {} by turnover) + {extra_n} Euronext-only; {} resolved to Yahoo tickers (TER for {ter_n})", total.min(cap), tickers.len());
     if ter_n == 0 && !first_keys.is_empty() {
         eprintln!("fetch: no TER parsed from BF rows — add the right key to bf_row_ter. First-row fields: {first_keys}");
     }
@@ -1567,9 +1581,70 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
     Vec::new()
 }
 
+/// Euronext ETF list ("track") -> ISINs for the ETF universe. Second venue source beside Börse
+/// Frankfurt: Paris/Amsterdam/Milan/Brussels/Dublin/Oslo carry ~660 UCITS funds BF never lists
+/// (measured 2026-07-05: 2580 unique ISINs, 659 not in BF's 3468). Same DataTables POST as
+/// `fetch_euronext_lisbon`, but paged: the server answers with the right row COUNT and EMPTY
+/// `aaData` above ~1000 rows per request, so ask 1000 at a time until a short page. Per-page
+/// retry mirrors Lisbon's 2-attempt shape (a transient blip emptied that leg once). Degrades to
+/// whatever pages arrived (or empty, with a diagnostic) — the BF leg still builds the universe.
+pub async fn fetch_euronext_etf_isins(client: &Client, urls: &Urls) -> Vec<String> {
+    const PAGE: usize = 1000;
+    let mut isins: Vec<String> = Vec::new();
+    let mut last_status = String::from("no response");
+    // ponytail: hard stop at 10 pages (~10k rows) — the list is ~3.3k; a runaway server can't loop us
+    'pages: for page in 0..10 {
+        let start = page * PAGE;
+        // raw body (not `.form()`) so the `args[...]` key keeps its literal brackets; WITHOUT
+        // `display_datapoints` the server returns the right count but empty cells (Lisbon lesson).
+        let body = format!(
+            "args[display_datapoints]=name,isin,symbol,market&draw=1&start={start}&length={PAGE}&iDisplayLength={PAGE}&iDisplayStart={start}"
+        );
+        for attempt in 0..2 {
+            let resp = client
+                .post(&urls.euronext_track)
+                // a 1000-row page takes ~18s server-side — the client's 15s default timed the
+                // whole leg out; per-request override, scoped here so quote fetches stay snappy
+                .timeout(StdDuration::from_secs(60))
+                .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                .header("X-Requested-With", "XMLHttpRequest")
+                .body(body.clone())
+                .send()
+                .await;
+            if let Ok(r) = resp {
+                last_status = r.status().to_string();
+                if let Ok(v) = r.json::<Value>().await {
+                    // page length judged on RAW aaData rows (not parsed ISINs): a malformed row must
+                    // not make a full page look short and truncate the walk.
+                    let rows_n = v.get("aaData").and_then(|d| d.as_array()).map_or(0, |a| a.len());
+                    if rows_n > 0 {
+                        isins.extend(core::euronext_track_isins(&v));
+                        if rows_n < PAGE {
+                            break 'pages; // short page = end of list
+                        }
+                        continue 'pages;
+                    }
+                }
+            }
+            if attempt == 0 {
+                tokio::time::sleep(StdDuration::from_millis(400)).await;
+            }
+        }
+        // both attempts empty: on page 0 the leg failed; on a later page it's just the end of the list
+        if start == 0 {
+            eprintln!("fetch: Euronext ETF list failed after 2 attempts (last status: {last_status}) — Euronext-only ETFs absent from the screen");
+        }
+        break;
+    }
+    isins.sort();
+    isins.dedup(); // cross-listed funds repeat per venue row
+    isins
+}
+
 /// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
 /// CoinGecko + the S&P 500 constituents CSV (single companies) + the top-`cap` EU-buyable UCITS ETFs
-/// by turnover from Börse Frankfurt (`fetch_xetra_etfs`). Symbols normalised to Yahoo form (`btc` ->
+/// by turnover from Börse Frankfurt plus the Euronext-only funds BF doesn't list
+/// (`fetch_xetra_etfs` + `fetch_euronext_etf_isins`). Symbols normalised to Yahoo form (`btc` ->
 /// `BTC-EUR`/`BTC-USD`, `BRK.B` -> `BRK-B`). Crypto quote currency follows `prefer_eur`. The old
 /// US-listed NASDAQ-Trader ETFs are dropped: none are EU-buyable, so they only wasted fetches.
 /// Sorted + deduped; empty if all sources fail. Also returns the Xetra-ETF ticker set so the caller
@@ -1584,9 +1659,11 @@ pub async fn fetch_universe(
     sectors: &[String],
 ) -> (Vec<String>, std::collections::HashSet<String>, std::collections::HashMap<String, String>) {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
+    // Euronext ETF ISINs first (a few cheap POSTs) — they merge into the BF leg's ISIN->Yahoo bridge
+    let euronext_isins = fetch_euronext_etf_isins(client, urls).await;
     let (cg, etfs, lisbon) = tokio::join!(
         get_json(client, &cg_url),
-        fetch_xetra_etfs(client, urls, cap),
+        fetch_xetra_etfs(client, urls, cap, euronext_isins),
         fetch_euronext_lisbon(client, urls),
     );
     // (Item 18) equity ponds = S&P 500 + any extra same-format constituent CSVs from config. Sequential

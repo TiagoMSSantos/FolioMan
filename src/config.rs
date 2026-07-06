@@ -366,6 +366,11 @@ pub struct Urls {
     // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.
     #[serde(default = "default_euronext_lisbon_url")]
     pub euronext_lisbon: String,
+    // Euronext ETF list (POST, same DataTables shape as euronext_lisbon, all Euronext venues:
+    // Paris/Amsterdam/Milan/Brussels/Dublin/Oslo) -> extra UCITS ISINs the Börse Frankfurt search
+    // doesn't list (~660 funds). Defaulted so an older settings.yaml loads.
+    #[serde(default = "default_euronext_track_url")]
+    pub euronext_track: String,
     // (Item 4) SEC EDGAR insider (Form 4) source for the `insider_net_buys_90d` factor — free, no key,
     // but SEC requires a DESCRIPTIVE User-Agent or it 403s. Only hit (cached) under `backtest … insider`.
     // {cik} = 10-digit zero-padded. Defaulted so an older settings.yaml still loads.
@@ -421,6 +426,12 @@ fn default_sec_user_agent() -> String {
 /// (XLIS). POSTed (with the column datapoints) by `fetch_euronext_lisbon` -> Yahoo `.LS` tickers.
 fn default_euronext_lisbon_url() -> String {
     "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS".to_string()
+}
+
+/// Default Euronext ETF-list endpoint ("track" = their name for ETFs/ETPs), all Euronext MICs.
+/// POSTed page-by-page by `fetch_euronext_etf_isins` -> extra ISINs for the ETF universe.
+fn default_euronext_track_url() -> String {
+    "https://live.euronext.com/en/pd_es/data/track".to_string()
 }
 
 /// Default (E) fundamentals endpoint: FMP's free `stable/quote` (carries `pe`). The old v3

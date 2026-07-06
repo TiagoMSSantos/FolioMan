@@ -500,6 +500,32 @@ pub fn euronext_lisbon_symbols(payload: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Parse the Euronext ETF-list ("track") DataTables payload -> ISINs. Same request shape as
+/// `euronext_lisbon_symbols` (columns `name,isin,symbol,market`), but here the useful cell is the
+/// ISIN at index 1 — the symbol is venue-local and useless to Yahoo, so the caller bridges
+/// ISIN -> Yahoo symbol exactly like the Börse Frankfurt rows. Keeps only ISIN-shaped cells
+/// (2 letters + 9 alphanumerics + check digit). Empty Vec on a missing/reshaped payload.
+pub fn euronext_track_isins(payload: &Value) -> Vec<String> {
+    let is_isin = |s: &str| {
+        s.len() == 12
+            && s.chars().take(2).all(|c| c.is_ascii_uppercase())
+            && s.chars().skip(2).take(9).all(|c| c.is_ascii_alphanumeric())
+            && s.chars().nth(11).is_some_and(|c| c.is_ascii_digit())
+    };
+    payload
+        .get("aaData")
+        .and_then(|d| d.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| {
+                    let isin = r.get(1)?.as_str()?.trim();
+                    is_isin(isin).then(|| isin.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Titles across yfinance/Yahoo schemas (flat `title`, nested `content.title`).
 pub fn headline_titles(news_items: &[Value]) -> Vec<String> {
     let nonempty = |v: &Value, key: &str| -> Option<String> {
@@ -1477,6 +1503,15 @@ mod tests {
     ]});
     assert_eq!(euronext_lisbon_symbols(&es), vec!["GALP.LS".to_string(), "EDP.LS".to_string()]);
     assert!(euronext_lisbon_symbols(&serde_json::json!({})).is_empty()); // no aaData -> empty leg, not a crash
+    // euronext_track_isins: ISIN at row index 1; non-ISIN-shaped cells dropped; no aaData -> []
+    let et = serde_json::json!({"aaData": [
+        ["<a data-title-hover=\"iShares X\">X</a>", "IE0007G78AC4", "ASIG", "<div>XAMC</div>"],
+        ["<a>Y</a>", "LU2870272650", "DXUSH", "<div>ETFP</div>"],
+        ["bad", "not-an-isin", "Z", "x"],       // wrong shape -> dropped
+        ["bad", "ie0007g78ac4", "Z", "x"],      // lowercase prefix -> dropped
+    ]});
+    assert_eq!(euronext_track_isins(&et), vec!["IE0007G78AC4".to_string(), "LU2870272650".to_string()]);
+    assert!(euronext_track_isins(&serde_json::json!({})).is_empty()); // no aaData -> empty leg, not a crash
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"
