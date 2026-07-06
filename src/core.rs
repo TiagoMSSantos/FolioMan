@@ -560,12 +560,31 @@ pub fn euronext_track_isins(payload: &Value) -> Vec<String> {
 fn is_broad_index_name(name: &str) -> bool {
     let n = name.to_lowercase();
     const BROAD: [&str; 5] = ["s&p 500", "msci world", "ftse all-world", "all-country", "acwi"];
-    // sector/thematic tokens that disqualify (Nasdaq-100 is a tech concentration, not broad)
-    const NARROW: [&str; 14] = [
+    // sector/thematic/tilt tokens that disqualify a plain broad core: single sectors (Nasdaq-100 is a
+    // tech concentration), regional exclusions ("World ex USA" is a bet, not the whole market), ESG/SRI
+    // screens (a filtered subset), and factor tilts (value/momentum/quality/min-vol/equal-weight).
+    const NARROW: [&str; 30] = [
         "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
         "sector", "select", "nasdaq", "small", "mid cap", "communicat", "biotech",
+        "world ex", "acwi ex", "ex-usa", "esg", "sri ", "socially responsible", "screened",
+        "sustainab", "paris", "climate", "islamic", "value", "momentum", "quality", "equal weight",
+        "min vol",
     ];
     BROAD.iter().any(|t| n.contains(t)) && !NARROW.iter().any(|t| n.contains(t))
+}
+
+/// Diversification tier of a broad-index fund, for ranking a single buy-and-hold-forever CORE (broader
+/// = one fund covers more of the world = better default). 0 = all-world / ACWI (whole planet, DM+EM),
+/// 1 = MSCI World (developed only), 2 = S&P 500 (US only). Assumes `is_broad_index_name` already held.
+pub fn hold_breadth_tier(name: &str) -> u8 {
+    let n = name.to_lowercase();
+    if n.contains("all-world") || n.contains("all-country") || n.contains("acwi") {
+        0
+    } else if n.contains("msci world") {
+        1
+    } else {
+        2 // s&p 500
+    }
 }
 
 /// Is this quote a genuine buy-and-hold-20yr CORE holding — independent of the momentum SCORE, which
@@ -579,7 +598,7 @@ fn is_broad_index_name(name: &str) -> bool {
 pub fn hold_suitable(q: &Quote) -> bool {
     is_broad_index_name(&q.name)
         && q.name.to_lowercase().contains("ucits")
-        && q.expense_ratio.is_some_and(|t| t <= 0.20)
+        && q.expense_ratio.is_some_and(|t| t <= 0.25) // 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the canonical one-fund hold — qualifies; below that is S&P/World territory (0.03–0.20%)
         && q.replication == Some("Full")
         && q.use_of_profits == Some("Acc")
         && q.aum_eur.is_some_and(|a| a >= 1e9)
@@ -1675,6 +1694,14 @@ mod tests {
     assert!(!hold("Amundi Nasdaq-100 UCITS ETF", Some(0.22), Some("Full"), Some("Acc"), Some(5.8e9))); // nasdaq = not broad
     assert!(!hold("Vanguard S&P 500 UCITS ETF", None, Some("Full"), Some("Acc"), Some(28.8e9))); // no TER (venue fund) -> not vouched cheap
     assert!(!hold("Apple", None, None, None, None)); // a stock -> false
+    assert!(hold("Vanguard FTSE All-World UCITS ETF USD Acc", Some(0.22), Some("Full"), Some("Acc"), Some(15e9))); // VWCE: 0.22% all-world under the 0.25 cap
+    assert!(!hold("Vanguard FTSE All-World UCITS ETF USD Acc", Some(0.30), Some("Full"), Some("Acc"), Some(15e9))); // 0.30% too dear for a core
+
+    // hold_breadth_tier: broadest (all-world/ACWI) sorts first, S&P 500 last
+    assert_eq!(hold_breadth_tier("Vanguard FTSE All-World UCITS ETF"), 0);
+    assert_eq!(hold_breadth_tier("SPDR MSCI ACWI UCITS ETF"), 0);
+    assert_eq!(hold_breadth_tier("iShares Core MSCI World UCITS ETF"), 1);
+    assert_eq!(hold_breadth_tier("Vanguard S&P 500 UCITS ETF"), 2);
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"

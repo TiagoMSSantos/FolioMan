@@ -1496,6 +1496,58 @@ pub fn crypto_adjust(quote: &Quote, base: f64, tuning: &BuyHeuristic, cfactor: f
     btc_relative(perf_pct(quote, "1Y"), btc_1y, base * cfactor, tuning.growth_btc_outperf_weight)
 }
 
+/// Buy-and-hold CORE shortlist — the one-fund-forever holds the momentum SCORE buries at 0.0 (the
+/// overext brake floors a broad index fund that has simply run for years). Built straight from the full
+/// universe, bypassing `growth_score` entirely: keep every `hold_suitable` fund (broad + cheap +
+/// physical + accumulating + large + UCITS), collapse currency/listing twins by name, and rank by what
+/// a decades hold actually cares about — broadest diversification first (one fund = the whole world),
+/// then cheapest TER, then largest AUM (least closure risk). Pure display; touches no score, no gate,
+/// no backtest. Scoped to the wide `screen` universe (empty on the small `check` watchlist anyway).
+fn print_hold_core(quotes: &[Quote], n: usize) {
+    let mut cores: Vec<&Quote> = quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)).collect();
+    cores.sort_by(|a, b| {
+        core::hold_breadth_tier(&a.name)
+            .cmp(&core::hold_breadth_tier(&b.name))
+            .then(a.expense_ratio.unwrap_or(9.9).partial_cmp(&b.expense_ratio.unwrap_or(9.9)).unwrap())
+            .then(b.aum_eur.unwrap_or(0.0).partial_cmp(&a.aum_eur.unwrap_or(0.0)).unwrap())
+    });
+    let mut seen: HashSet<&str> = HashSet::new();
+    cores.retain(|q| seen.insert(q.name.as_str())); // one row per fund (VUAA.DE vs VUAA.L), best-ranked kept
+    // cap each breadth tier so all three index families show — else the many MSCI World trackers crowd
+    // out the S&P 500 and all-world cores. Sort is breadth-major, so a per-tier counter suffices.
+    let mut per_tier = [0u8; 3];
+    cores.retain(|q| {
+        let t = core::hold_breadth_tier(&q.name) as usize;
+        per_tier[t] += 1;
+        per_tier[t] <= 3
+    });
+    if cores.is_empty() {
+        return;
+    }
+    println!(
+        "\nbuy-and-hold CORE — broad one-fund-forever holds (the momentum ranking buries these at 0.0; \
+         ranked by breadth → cheapest TER → largest AUM, NOT advice):"
+    );
+    println!("  {:<38} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4}", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL");
+    for q in cores.iter().take(n) {
+        let cagr = q.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%"));
+        let yrs = q.age_years.map_or("—".to_string(), |a| format!("{a:.0}"));
+        let ter = q.expense_ratio.map_or("n/a".to_string(), |t| format!("{t:.2}%"));
+        println!(
+            "  {:<38} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4}",
+            truncate(&q.name, 38),
+            truncate(&q.ticker, 9),
+            truncate(&q.market, 9),
+            cagr,
+            yrs,
+            ter,
+            turnover_cell(q.aum_eur),
+            q.use_of_profits.unwrap_or("—"),
+            q.replication.unwrap_or("—"),
+        );
+    }
+}
+
 /// Print the Top-N GROWTH picks split per asset class (stocks / ETFs / crypto). The growth lane —
 /// proven compounders at/near their own ~10y high still climbing — is the ONLY lane with a validated
 /// forward edge for a 20yr+ buy-and-hold (walk-forward rho +0.26, top-vs-bottom-half +108 pts). The
@@ -1547,6 +1599,11 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     };
     let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
     print_lane(picks, n, w, "growth candidates", growth, sectors, sector_of, tuning, &pinned_set);
+    // buy-and-hold CORE shortlist: momentum floors broad index funds at 0.0, so surface the
+    // one-fund-forever holds from the full universe here (display-only). Only on the wide `screen`.
+    if quotes.len() > 200 {
+        print_hold_core(quotes, 9); // up to 3 per breadth tier (all-world / world / S&P 500)
+    }
     // gate review: pinned names are shown in their table even when a gate rejects them (score 0.0).
     // Say WHICH gate, so a 0.0 next to strong metrics isn't mistaken for a bug (VVSM stretch, VUAA/
     // SPYL young, …). Same footer `check` prints, scoped here to the pinned rows that bypassed the cut.
