@@ -35,3 +35,7 @@ config/settings.yaml
 .isin_cache.json
 # last-good venue ISIN lists (fallback across venue outages)
 .venue_isins.json
+# weekly ESMA+FCA FIRDS ETF-ISIN scan (regulatory universe source)
+.regulatory_isins.json
+# definitive Yahoo "no such ISIN" answers for regulatory-sourced ISINs (30-day TTL)
+.isin_negative_cache.json

@@ -21,6 +21,7 @@ hmac = "0.12"        # Binance order signing (HMAC-SHA256)
 sha2 = "0.10"
 md-5 = "0.10"        # Börse Frankfurt API request signing (MD5 trace/security headers)
 hex = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }  # FIRDS FULINS_C weekly zips (ESMA/FCA ETF universe)
 
 [profile.release]
 opt-level = 3

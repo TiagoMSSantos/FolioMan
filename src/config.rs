@@ -376,6 +376,15 @@ pub struct Urls {
     // ETF/UCITS-named rows. Defaulted so an older settings.yaml loads.
     #[serde(default = "default_six_funds_url")]
     pub six_funds: String,
+    // ESMA + FCA FIRDS registries (GET, plain JSON, no auth): the EU/UK regulators' full instrument
+    // reference dumps. Each query returns the download links of the weekly FULINS_C (fund-class)
+    // zip files; fetch_regulatory_etf_isins downloads the newest, scans the XML for CFI CE* rows
+    // with an ETF/UCITS name, and feeds the ISINs into the ETF universe. Defaulted so an older
+    // settings.yaml loads.
+    #[serde(default = "default_esma_firds_url")]
+    pub esma_firds: String,
+    #[serde(default = "default_fca_firds_url")]
+    pub fca_firds: String,
     // (Item 4) SEC EDGAR insider (Form 4) source for the `insider_net_buys_90d` factor — free, no key,
     // but SEC requires a DESCRIPTIVE User-Agent or it 403s. Only hit (cached) under `backtest … insider`.
     // {cik} = 10-digit zero-padded. Defaulted so an older settings.yaml still loads.
@@ -443,6 +452,18 @@ fn default_euronext_track_url() -> String {
 /// covers the whole list (3120 rows < 5000). Fetched by `fetch_six_etf_isins`.
 fn default_six_funds_url() -> String {
     "https://www.six-group.com/fqs/snap.json?select=ISIN,ShortName&where=PortalSegment=FU&pagesize=5000".to_string()
+}
+
+/// Default ESMA FIRDS registry query: newest FULINS_C (fund-class) full-instrument files, sorted
+/// by publication date. Solr JSON; docs[].download_link points at the ~3MB weekly zip.
+fn default_esma_firds_url() -> String {
+    "https://registers.esma.europa.eu/solr/esma_registers_firds_files/select?q=file_name:FULINS_C_*&rows=5&sort=publication_date%20desc&wt=json".to_string()
+}
+
+/// Default FCA (UK) FIRDS registry query: same FULINS_C files for UK venues post-Brexit —
+/// this is what covers LSE-only funds. Elasticsearch JSON; hits.hits[]._source.download_link.
+fn default_fca_firds_url() -> String {
+    "https://api.data.fca.org.uk/fca_data_firds_files?q=FULINS_C&from=0&size=100".to_string()
 }
 
 /// Default (E) fundamentals endpoint: FMP's free `stable/quote` (carries `pe`). The old v3

@@ -552,6 +552,60 @@ pub fn euronext_track_isins(payload: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Pick the newest FULINS_C download link out of a FIRDS registry payload. Handles both registry
+/// shapes: ESMA's Solr (`response.docs[].{file_name,download_link}`) and the FCA's Elasticsearch
+/// (`hits.hits[]._source.{file_name,download_link}`). Newest = max file_name — the date is
+/// embedded (`FULINS_C_YYYYMMDD_…`) so lexicographic order IS date order, no date parsing needed.
+/// None on a missing/reshaped/empty payload — the caller then degrades to the cached list.
+pub fn firds_latest_fulins_link(payload: &Value) -> Option<String> {
+    let docs = payload
+        .pointer("/response/docs")
+        .or_else(|| payload.pointer("/hits/hits"))?
+        .as_array()?;
+    docs.iter()
+        .filter_map(|d| {
+            let d = d.get("_source").unwrap_or(d);
+            let name = d.get("file_name")?.as_str()?;
+            let link = d.get("download_link")?.as_str()?;
+            name.starts_with("FULINS_C_")
+                .then(|| (name.to_string(), link.to_string()))
+        })
+        .max()
+        .map(|(_, link)| link)
+}
+
+/// Scan a FIRDS FULINS_C reference-data XML (ESMA or FCA weekly full dump) for exchange-traded
+/// fund ISINs. Each `FinInstrmGnlAttrbts` record carries Id (ISIN) / FullNm / optional ShrtNm /
+/// ClssfctnTp (CFI). Kept rows need ALL of: CFI class `CE*` (exchange-traded collective
+/// investment vehicles — the class also covers Danish/Swiss listed mutual funds, same pollution
+/// as the SIX FU segment, hence the same "etf"/"ucits" name funnel), an ETF/UCITS name token,
+/// and a domicile prefix outside the non-EU blocklist (the dumps carry thousands of US/CA/Asia
+/// funds traded on EU MTFs that an EU retail account can't buy — PRIIPs). Read as plain text
+/// (ESMA is single-line, the FCA file pretty-printed — hence `\s*`); a real XML parser buys
+/// nothing here. Sorted + deduped (an ISIN appears once per trading venue).
+pub fn firds_etf_isins(xml: &str) -> Vec<String> {
+    const NON_EU: [&str; 17] = [
+        "US", "CA", "HK", "JP", "SG", "KY", "AU", "IL", "ZA", "TW", "KR", "IN", "TH", "MY",
+        "CN", "BM", "VG",
+    ];
+    let re = regex::Regex::new(
+        r"<FinInstrmGnlAttrbts>\s*<Id>([A-Z]{2}[0-9A-Z]{9}[0-9])</Id>\s*<FullNm>([^<]*)</FullNm>\s*(?:<ShrtNm>[^<]*</ShrtNm>\s*)?<ClssfctnTp>CE",
+    )
+    .unwrap();
+    let mut out: Vec<String> = re
+        .captures_iter(xml)
+        .filter_map(|c| {
+            let isin = c.get(1)?.as_str();
+            let name = c.get(2)?.as_str().to_lowercase();
+            ((name.contains("etf") || name.contains("ucits")) && !NON_EU.contains(&&isin[..2]))
+                .then(|| isin.to_string())
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Titles across yfinance/Yahoo schemas (flat `title`, nested `content.title`).
 pub fn headline_titles(news_items: &[Value]) -> Vec<String> {
     let nonempty = |v: &Value, key: &str| -> Option<String> {
@@ -1547,6 +1601,31 @@ mod tests {
     ]});
     assert_eq!(six_fund_isins(&six), vec!["IE00B5BMR087".to_string(), "LU2870272650".to_string()]);
     assert!(six_fund_isins(&serde_json::json!({})).is_empty()); // no rowData -> empty leg, not a crash
+    // firds_latest_fulins_link: both registry shapes, newest FULINS_C wins, non-C files ignored
+    let esma = serde_json::json!({"response": {"docs": [
+        {"file_name": "FULINS_C_20260627_01of01.zip", "download_link": "https://x/old.zip"},
+        {"file_name": "FULINS_C_20260704_01of01.zip", "download_link": "https://x/new.zip"},
+        {"file_name": "FULINS_D_20260711_01of01.zip", "download_link": "https://x/wrong-class.zip"},
+    ]}});
+    assert_eq!(firds_latest_fulins_link(&esma).as_deref(), Some("https://x/new.zip"));
+    let fca = serde_json::json!({"hits": {"hits": [
+        {"_source": {"file_name": "FULINS_C_20260606_01of01.zip", "download_link": "https://y/old.zip"}},
+        {"_source": {"file_name": "FULINS_C_20260620_01of01.zip", "download_link": "https://y/new.zip"}},
+    ]}});
+    assert_eq!(firds_latest_fulins_link(&fca).as_deref(), Some("https://y/new.zip"));
+    assert!(firds_latest_fulins_link(&serde_json::json!({})).is_none()); // reshaped -> None, not a crash
+    // firds_etf_isins: CFI CE* + ETF/UCITS name + EU domicile kept; mutual funds (CI*), US funds,
+    // non-ETF names dropped; single-line (ESMA) and pretty-printed (FCA) records both parse
+    let xml = "<FinInstrmGnlAttrbts><Id>IE000HN2PIB9</Id><FullNm>AXA IM Nasdaq 100 UCITS ETF</FullNm><ShrtNm>AXA/NDX</ShrtNm><ClssfctnTp>CEOGBS</ClssfctnTp></FinInstrmGnlAttrbts>\
+         <FinInstrmGnlAttrbts><Id>LU0334293981</Id><FullNm>Acatis Champions UCITS</FullNm><ShrtNm>ACATIS</ShrtNm><ClssfctnTp>CIOIES</ClssfctnTp></FinInstrmGnlAttrbts>\
+         <FinInstrmGnlAttrbts><Id>US46437F1027</Id><FullNm>iShares ESG Aware ETF</FullNm><ClssfctnTp>CEOGBS</ClssfctnTp></FinInstrmGnlAttrbts>\
+         <FinInstrmGnlAttrbts><Id>DK0060749877</Id><FullNm>Sydinvest Formue Akk A</FullNm><ClssfctnTp>CEOGBS</ClssfctnTp></FinInstrmGnlAttrbts>\n\
+         <FinInstrmGnlAttrbts>\n  <Id>LU2523866023</Id>\n  <FullNm>Xtrackers Global Bond UCITS ETF</FullNm>\n  <ShrtNm>XGLB</ShrtNm>\n  <ClssfctnTp>CEOGBS</ClssfctnTp>\n</FinInstrmGnlAttrbts>";
+    assert_eq!(
+        firds_etf_isins(xml),
+        vec!["IE000HN2PIB9".to_string(), "LU2523866023".to_string()]
+    );
+    assert!(firds_etf_isins("").is_empty()); // empty/garbage file -> empty leg, not a crash
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"
