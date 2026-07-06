@@ -500,18 +500,44 @@ pub fn euronext_lisbon_symbols(payload: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// ISIN shape check (2-letter country + 9 alphanumerics + check digit) — the venue-list parsers
+/// use it to drop header junk / reshaped cells without a regex dependency.
+fn is_isin(s: &str) -> bool {
+    s.len() == 12
+        && s.chars().take(2).all(|c| c.is_ascii_uppercase())
+        && s.chars().skip(2).take(9).all(|c| c.is_ascii_alphanumeric())
+        && s.chars().nth(11).is_some_and(|c| c.is_ascii_digit())
+}
+
+/// Parse the SIX fund-list payload (`fqs/snap.json`, `rowData` = `[ISIN, ShortName]` arrays) ->
+/// ISINs of rows that LOOK like exchange-traded funds. The FU segment mixes real ETFs with Swiss
+/// mutual funds (LGT PB / Robeco share classes) and CHF-hedged clones; resolvable mutual funds
+/// would be force-classified as ETFs downstream, so keep only names carrying an "etf" or "ucits"
+/// token. Misses short-named clones ("X GL GOV 3D CHF") — CHF classes of strategies whose main
+/// line the pond already has. Empty Vec on a missing/reshaped payload.
+pub fn six_fund_isins(payload: &Value) -> Vec<String> {
+    payload
+        .get("rowData")
+        .and_then(|d| d.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| {
+                    let isin = r.get(0)?.as_str()?.trim();
+                    let name = r.get(1)?.as_str()?.to_lowercase();
+                    (is_isin(isin) && (name.contains("etf") || name.contains("ucits")))
+                        .then(|| isin.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Parse the Euronext ETF-list ("track") DataTables payload -> ISINs. Same request shape as
 /// `euronext_lisbon_symbols` (columns `name,isin,symbol,market`), but here the useful cell is the
 /// ISIN at index 1 — the symbol is venue-local and useless to Yahoo, so the caller bridges
 /// ISIN -> Yahoo symbol exactly like the Börse Frankfurt rows. Keeps only ISIN-shaped cells
 /// (2 letters + 9 alphanumerics + check digit). Empty Vec on a missing/reshaped payload.
 pub fn euronext_track_isins(payload: &Value) -> Vec<String> {
-    let is_isin = |s: &str| {
-        s.len() == 12
-            && s.chars().take(2).all(|c| c.is_ascii_uppercase())
-            && s.chars().skip(2).take(9).all(|c| c.is_ascii_alphanumeric())
-            && s.chars().nth(11).is_some_and(|c| c.is_ascii_digit())
-    };
     payload
         .get("aaData")
         .and_then(|d| d.as_array())
@@ -1512,6 +1538,15 @@ mod tests {
     ]});
     assert_eq!(euronext_track_isins(&et), vec!["IE0007G78AC4".to_string(), "LU2870272650".to_string()]);
     assert!(euronext_track_isins(&serde_json::json!({})).is_empty()); // no aaData -> empty leg, not a crash
+    // six_fund_isins: [ISIN, ShortName] rows; ETF/UCITS-named kept, mutual funds + bad ISINs dropped
+    let six = serde_json::json!({"rowData": [
+        ["IE00B5BMR087", "iShares Core S&P 500 ETF"],
+        ["LU2870272650", "D-X MSCI USA Screened UCITS"],
+        ["AT0000A255C8", "LGT PB Conservative USD R"],  // mutual fund -> dropped
+        ["not-an-isin", "Some ETF"],                     // bad ISIN -> dropped
+    ]});
+    assert_eq!(six_fund_isins(&six), vec!["IE00B5BMR087".to_string(), "LU2870272650".to_string()]);
+    assert!(six_fund_isins(&serde_json::json!({})).is_empty()); // no rowData -> empty leg, not a crash
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"

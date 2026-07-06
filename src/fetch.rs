@@ -703,6 +703,14 @@ fn fund_cache_path(ticker: &str) -> std::path::PathBuf {
     std::path::Path::new(".fmp_cache").join(format!("{}.json", ticker.replace(['/', '\\'], "_")))
 }
 
+/// Persistent ISIN -> Yahoo-symbol map (one flat JSON object, gitignored like `.fmp_cache`).
+/// Only POSITIVE resolutions live here — see the cache block in `fetch_xetra_etfs`.
+const ISIN_CACHE_PATH: &str = ".isin_cache.json";
+
+/// Last-good venue ISIN lists (`{"euronext": [...], "six": [...]}`), the fallback when a venue
+/// endpoint has an outage — see the store block in `fetch_universe`.
+const VENUE_ISINS_PATH: &str = ".venue_isins.json";
+
 /// (G) One FMP income-statement row -> FundRow. Margins are derived (FMP's free tier doesn't serve the
 /// ratios endpoint), so gross/op/net margin = the matching income line / revenue. `filingDate` (when
 /// it went public) is the as-of key — NOT period-end `date`. None if the row lacks a parseable filing.
@@ -1483,8 +1491,21 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize, extra_is
     }
     // resolve ISIN -> Yahoo symbol (first quote = the liquid EU listing), bounded fan-out, carrying the
     // captured TER + AUM + meta alongside. yahoo_search is tuned for news (quotesCount=0) — flip it to quotes here.
-    let resolved: Vec<(String, Option<f64>, Option<f64>, BfMeta)> = stream::iter(top)
+    // A persistent ISIN->symbol cache fronts the Yahoo search: resolution is FLAKY per run (a fund
+    // found once can silently vanish the next screen when its search hiccups), and ISIN->symbol is
+    // stable, so positive resolutions are remembered forever. Negative results are NOT cached
+    // (retried next run); a delisted cached symbol self-gates downstream via the no-chart path.
+    let isin_cache: HashMap<String, String> = std::fs::read_to_string(ISIN_CACHE_PATH)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let cache_ref = &isin_cache;
+    // (sym, ter, aum, meta, Some(isin) when freshly resolved -> write-back)
+    let resolved: Vec<(String, Option<f64>, Option<f64>, BfMeta, Option<String>)> = stream::iter(top)
         .map(|(isin, ter, aum, meta)| async move {
+            if let Some(sym) = cache_ref.get(&isin) {
+                return Some((sym.clone(), ter, aum, meta, None));
+            }
             let url = urls
                 .yahoo_search
                 .replace("{ticker}", isin.as_str())
@@ -1496,12 +1517,25 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize, extra_is
             // (716 of the 783 old "no Yahoo data" gate-outs). A real liquid listing (.DE/.MI/.L/.AS…)
             // would have ranked first, so there's nothing to rescue: drop it. note: only .SG shows
             // up in practice; add the suffix to this check if another chart-less regional venue appears.
-            (!sym.ends_with(".SG")).then_some((sym, ter, aum, meta))
+            (!sym.ends_with(".SG")).then_some((sym, ter, aum, meta, Some(isin)))
         })
         .buffer_unordered(fetch_concurrency())
         .filter_map(|x| async move { x })
         .collect()
         .await;
+    // write fresh resolutions back (best-effort — a read-only dir just costs next run's re-search)
+    let fresh: Vec<(String, String)> = resolved
+        .iter()
+        .filter_map(|(sym, _, _, _, src)| src.as_ref().map(|isin| (isin.clone(), sym.clone())))
+        .collect();
+    let fresh_n = fresh.len();
+    if !fresh.is_empty() {
+        let mut isin_cache = isin_cache;
+        isin_cache.extend(fresh);
+        if let Ok(json) = serde_json::to_string(&isin_cache) {
+            let _ = std::fs::write(ISIN_CACHE_PATH, json);
+        }
+    }
     // split into the ticker list + the symbol->TER and symbol->AUM maps (each stored once;
     // fetch_expense / bf_aum read them).
     let mut ter_map: HashMap<String, f64> = HashMap::new();
@@ -1509,7 +1543,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize, extra_is
     let mut meta_map: HashMap<String, BfMeta> = HashMap::new();
     let tickers: Vec<String> = resolved
         .into_iter()
-        .map(|(sym, ter, aum, meta)| {
+        .map(|(sym, ter, aum, meta, _)| {
             if let Some(t) = ter {
                 ter_map.insert(sym.clone(), t);
             }
@@ -1528,7 +1562,7 @@ pub async fn fetch_xetra_etfs(client: &Client, urls: &Urls, cap: usize, extra_is
     let _ = BF_META.set(meta_map);
     // conclusive diagnostic: distinguishes "BF gave 0 ISINs" from "BF ok but Yahoo bridge resolved
     // none" — the two ways the ETF tables silently empty.
-    eprintln!("fetch: Börse Frankfurt returned {total} ETF ISINs (kept top {} by turnover) + {extra_n} Euronext-only; {} resolved to Yahoo tickers (TER for {ter_n})", total.min(cap), tickers.len());
+    eprintln!("fetch: Börse Frankfurt returned {total} ETF ISINs (kept top {} by turnover) + {extra_n} venue-list extras; {} resolved to Yahoo tickers ({} from cache, TER for {ter_n})", total.min(cap), tickers.len(), tickers.len() - fresh_n);
     if ter_n == 0 && !first_keys.is_empty() {
         eprintln!("fetch: no TER parsed from BF rows — add the right key to bf_row_ter. First-row fields: {first_keys}");
     }
@@ -1641,6 +1675,25 @@ pub async fn fetch_euronext_etf_isins(client: &Client, urls: &Urls) -> Vec<Strin
     isins
 }
 
+/// SIX Swiss Exchange fund list -> ETF/UCITS-named ISINs for the ETF universe (third venue source;
+/// SIX-only funds measured 2026-07-06: ~258 after the name funnel — the FU segment also carries
+/// Swiss MUTUAL funds, which `core::six_fund_isins` drops so they can't reach the ETF table
+/// mislabeled). One plain unsigned GET, whole list in one page. Degrades to empty + a diagnostic.
+pub async fn fetch_six_etf_isins(client: &Client, urls: &Urls) -> Vec<String> {
+    // 60s per-request override, same lesson as the Euronext pages (client default is 15s total)
+    let payload = match client.get(&urls.six_funds).timeout(StdDuration::from_secs(60)).send().await {
+        Ok(r) => r.json::<Value>().await.ok(),
+        Err(_) => None,
+    };
+    let mut isins = payload.as_ref().map(core::six_fund_isins).unwrap_or_default();
+    if isins.is_empty() {
+        eprintln!("fetch: SIX fund list returned nothing — SIX-only ETFs absent from the screen");
+    }
+    isins.sort();
+    isins.dedup();
+    isins
+}
+
 /// Build the `screen` universe LIVE (no hand-kept list): top-`cap` crypto by market cap from
 /// CoinGecko + the S&P 500 constituents CSV (single companies) + the top-`cap` EU-buyable UCITS ETFs
 /// by turnover from Börse Frankfurt plus the Euronext-only funds BF doesn't list
@@ -1659,11 +1712,43 @@ pub async fn fetch_universe(
     sectors: &[String],
 ) -> (Vec<String>, std::collections::HashSet<String>, std::collections::HashMap<String, String>) {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
-    // Euronext ETF ISINs first (a few cheap POSTs) — they merge into the BF leg's ISIN->Yahoo bridge
-    let euronext_isins = fetch_euronext_etf_isins(client, urls).await;
+    // Euronext + SIX ETF ISINs first (a few cheap requests) — deduped against each other here,
+    // against BF's list inside fetch_xetra_etfs, then merged into the same ISIN->Yahoo bridge.
+    // Each list is backed by its last-good copy on disk: a transient venue outage (Euronext 503'd
+    // a whole run) must not silently shrink the universe — membership stays stable, the list
+    // refreshes whenever the venue answers again.
+    let (euronext_isins, six_isins) =
+        tokio::join!(fetch_euronext_etf_isins(client, urls), fetch_six_etf_isins(client, urls));
+    let mut store: HashMap<String, Vec<String>> = std::fs::read_to_string(VENUE_ISINS_PATH)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let mut dirty = false;
+    let mut lists = [("euronext", euronext_isins), ("six", six_isins)];
+    for (venue, list) in &mut lists {
+        if list.is_empty() {
+            *list = store.get(*venue).cloned().unwrap_or_default();
+            if !list.is_empty() {
+                eprintln!("fetch: {venue} venue list unavailable — using last-good copy ({} ISINs)", list.len());
+            }
+        } else if store.get(*venue) != Some(list) {
+            store.insert(venue.to_string(), list.clone());
+            dirty = true;
+        }
+    }
+    if dirty {
+        if let Ok(json) = serde_json::to_string(&store) {
+            let _ = std::fs::write(VENUE_ISINS_PATH, json);
+        }
+    }
+    let [(_, euronext_isins), (_, six_isins)] = lists;
+    let mut extra_isins = euronext_isins;
+    extra_isins.extend(six_isins);
+    extra_isins.sort();
+    extra_isins.dedup();
     let (cg, etfs, lisbon) = tokio::join!(
         get_json(client, &cg_url),
-        fetch_xetra_etfs(client, urls, cap, euronext_isins),
+        fetch_xetra_etfs(client, urls, cap, extra_isins),
         fetch_euronext_lisbon(client, urls),
     );
     // (Item 18) equity ponds = S&P 500 + any extra same-format constituent CSVs from config. Sequential

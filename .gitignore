@@ -30,3 +30,8 @@ config/settings.yaml
 
 # screen run-to-run gate state (EXIT-review footer)
 .screen_state.json
+
+# persistent ISIN -> Yahoo-symbol resolutions (positive-only; stabilizes the ETF universe)
+.isin_cache.json
+# last-good venue ISIN lists (fallback across venue outages)
+.venue_isins.json

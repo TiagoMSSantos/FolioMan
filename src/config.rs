@@ -371,6 +371,11 @@ pub struct Urls {
     // doesn't list (~660 funds). Defaulted so an older settings.yaml loads.
     #[serde(default = "default_euronext_track_url")]
     pub euronext_track: String,
+    // SIX Swiss Exchange fund list (GET, plain unsigned JSON, PortalSegment=FU) -> ISINs of
+    // SIX-listed funds. The segment mixes ETFs with Swiss mutual funds, so the parser keeps only
+    // ETF/UCITS-named rows. Defaulted so an older settings.yaml loads.
+    #[serde(default = "default_six_funds_url")]
+    pub six_funds: String,
     // (Item 4) SEC EDGAR insider (Form 4) source for the `insider_net_buys_90d` factor — free, no key,
     // but SEC requires a DESCRIPTIVE User-Agent or it 403s. Only hit (cached) under `backtest … insider`.
     // {cik} = 10-digit zero-padded. Defaulted so an older settings.yaml still loads.
@@ -432,6 +437,12 @@ fn default_euronext_lisbon_url() -> String {
 /// POSTed page-by-page by `fetch_euronext_etf_isins` -> extra ISINs for the ETF universe.
 fn default_euronext_track_url() -> String {
     "https://live.euronext.com/en/pd_es/data/track".to_string()
+}
+
+/// Default SIX fund-list endpoint: the delayed-quotes JSON scoped to the fund segment, one page
+/// covers the whole list (3120 rows < 5000). Fetched by `fetch_six_etf_isins`.
+fn default_six_funds_url() -> String {
+    "https://www.six-group.com/fqs/snap.json?select=ISIN,ShortName&where=PortalSegment=FU&pagesize=5000".to_string()
 }
 
 /// Default (E) fundamentals endpoint: FMP's free `stable/quote` (carries `pe`). The old v3
