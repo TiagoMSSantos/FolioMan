@@ -552,6 +552,39 @@ pub fn euronext_track_isins(payload: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Is this ETF name a BROAD market index (the kind you anchor a 20-year hold on), as opposed to a
+/// single-sector / thematic tilt? True = carries a broad-index token AND no sector/thematic token,
+/// so "S&P 500 Information Technology" (has "s&p 500" but also "information"/"technolog") is
+/// correctly NOT broad, while "Vanguard S&P 500 UCITS ETF" is. Name-token heuristic — lowercased,
+/// substring match, same style as the venue-list funnels above.
+fn is_broad_index_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    const BROAD: [&str; 5] = ["s&p 500", "msci world", "ftse all-world", "all-country", "acwi"];
+    // sector/thematic tokens that disqualify (Nasdaq-100 is a tech concentration, not broad)
+    const NARROW: [&str; 14] = [
+        "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
+        "sector", "select", "nasdaq", "small", "mid cap", "communicat", "biotech",
+    ];
+    BROAD.iter().any(|t| n.contains(t)) && !NARROW.iter().any(|t| n.contains(t))
+}
+
+/// Is this quote a genuine buy-and-hold-20yr CORE holding — independent of the momentum SCORE, which
+/// ranks recent runners and buries broad index funds at 0.0? Display-only `H` flag driver: broad
+/// index + cheap + physical + accumulating + large + EU-domiciled, all read from facts already on the
+/// row (no fetch, no scoring). The numeric legs (Acc / Full / AUM Some) only hold on BF-fund rows, so
+/// stocks/crypto and factless venue funds return false naturally.
+/// ponytail: name-based heuristic; "ucits" stands in for EU domicile (no ISIN on Quote to read the
+/// real country). Add an ISIN domicile leg only if a non-UCITS or non-IE/LU broad fund ever
+/// leaks/misses the flag.
+pub fn hold_suitable(q: &Quote) -> bool {
+    is_broad_index_name(&q.name)
+        && q.name.to_lowercase().contains("ucits")
+        && q.expense_ratio.is_some_and(|t| t <= 0.20)
+        && q.replication == Some("Full")
+        && q.use_of_profits == Some("Acc")
+        && q.aum_eur.is_some_and(|a| a >= 1e9)
+}
+
 /// Pick the newest FULINS_C download link out of a FIRDS registry payload. Handles both registry
 /// shapes: ESMA's Solr (`response.docs[].{file_name,download_link}`) and the FCA's Elasticsearch
 /// (`hits.hits[]._source.{file_name,download_link}`). Newest = max file_name — the date is
@@ -1626,6 +1659,22 @@ mod tests {
         vec!["IE000HN2PIB9".to_string(), "LU2523866023".to_string()]
     );
     assert!(firds_etf_isins("").is_empty()); // empty/garbage file -> empty leg, not a crash
+    // hold_suitable: broad + cheap + physical + Acc + large + UCITS -> H; any leg failing -> no H
+    let hold = |name: &str, ter: Option<f64>, repl: Option<&'static str>, use_: Option<&'static str>, aum: Option<f64>| {
+        let mut q = Quote::stub("X", "", "", name);
+        q.expense_ratio = ter;
+        q.replication = repl;
+        q.use_of_profits = use_;
+        q.aum_eur = aum;
+        hold_suitable(&q)
+    };
+    assert!(hold("Vanguard S&P 500 UCITS ETF USD Acc", Some(0.07), Some("Full"), Some("Acc"), Some(28.8e9))); // VUAA
+    assert!(hold("State Street SPDR S&P 500 UCITS ETF", Some(0.03), Some("Full"), Some("Acc"), Some(15.0e9))); // SPYL
+    assert!(!hold("Amundi S&P 500 Swap UCITS ETF", Some(0.15), Some("Swap"), Some("Acc"), Some(2.6e9))); // AUM5: swap
+    assert!(!hold("iShares S&P 500 Information Technology UCITS", Some(0.15), Some("Full"), Some("Acc"), Some(16.1e9))); // sector
+    assert!(!hold("Amundi Nasdaq-100 UCITS ETF", Some(0.22), Some("Full"), Some("Acc"), Some(5.8e9))); // nasdaq = not broad
+    assert!(!hold("Vanguard S&P 500 UCITS ETF", None, Some("Full"), Some("Acc"), Some(28.8e9))); // no TER (venue fund) -> not vouched cheap
+    assert!(!hold("Apple", None, None, None, None)); // a stock -> false
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"

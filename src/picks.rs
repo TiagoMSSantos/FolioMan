@@ -1371,14 +1371,19 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     // ~ = the score ran on BRIDGED history (config `history_proxy`: a young listing spliced onto its
     // configured older same-strategy twin). CAGR/YRS describe the strategy's record, not this listing's.
     let bridged = |quote: &Quote| if quote.history_proxied { "~" } else { "" };
-    let mark = |quote: &Quote, i: usize| format!("{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), bridged(quote));
+    // H = a buy-and-hold-20yr CORE (broad + cheap + physical + Acc + large + UCITS), flagged
+    // INDEPENDENTLY of the momentum score — the broad index funds it marks are floored to 0.0 by the
+    // late-cycle brake, so without this the table reads them as the WORST rows. Display-only.
+    let holdable = |quote: &Quote| if core::hold_suitable(quote) { "H" } else { "" };
+    let mark =
+        |quote: &Quote, i: usize| format!("{}{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), bridged(quote), holdable(quote));
     // pinned tickers that ranked BELOW the cut still print (with their real rank + "*") so you can
     // compare a holding against the tops above even when it doesn't make the top-N.
     let below_cut = picks.iter().enumerate().skip(n).filter(|(_, (quote, _))| pinned.contains(quote.ticker.as_str()));
     let mut seen = String::new(); // rank-flag chars that actually printed, drives the legend line
     for (i, (quote, score)) in picks.iter().enumerate().take(n).chain(below_cut) {
         let m = mark(quote, i);
-        for flag in ['*', '#', '!', '~'] {
+        for flag in ['*', '#', '!', '~', 'H'] {
             if m.contains(flag) && !seen.contains(flag) {
                 seen.push(flag);
             }
@@ -1391,6 +1396,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         ("#", "score used live fundamentals, not price-only"),
         ("!", "late-cycle: price >= cap above 200wk trend, brake floored — conviction is the SCORE, not the rank"),
         ("~", "history bridged from configured older twin (history_proxy) — CAGR/YRS describe the strategy, not this listing"),
+        ("H", "hold-suitable: broad + cheap + physical + accumulating + large — a buy-and-hold-20yr core, independent of the momentum rank"),
     ]
     .iter()
     .filter(|(flag, _)| seen.contains(flag))
