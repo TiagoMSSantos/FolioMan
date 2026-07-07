@@ -649,7 +649,9 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     }
     println!("\n── vs S&P500 (ABSOLUTE goal metric: top-N growth picks, equal-weight, held {years}y vs ^GSPC) ──");
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
-    for n in [5usize, 10, 15, 20] {
+    // (#41 Phase A) sweep hard concentration too (top-1/2/3): Buffett-style few-names. Mean excess
+    // should RISE as N shrinks, worst-window should WORSEN — the return↔variance tradeoff, made visible.
+    for n in [1usize, 2, 3, 5, 10, 15, 20] {
         let (mut pick, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
         for v in by_bucket.values() {
             let mut vv = v.clone();
