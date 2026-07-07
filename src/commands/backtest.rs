@@ -333,6 +333,10 @@ pub async fn run(args: Vec<String>) {
     }
     .unwrap_or_default();
     report_vs_benchmark(&samples, &bench, years, tuning);
+    if fund || insider {
+        // (#44 Phase C) grade the FREE fundamental factors on the ABSOLUTE held-book, not peer-relative.
+        report_book_by_factor(&samples, &bench, years, tuning);
+    }
 
     println!("\nCaveats:");
     println!("  • Peer-relative (#1): returns are de-meaned per ~6mo cutoff, so rho is SELECTION vs same-period");
@@ -687,6 +691,133 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     }
     println!("  (BOOK = equal-weight terminal wealth annualized (winners carry it, a zero costs its 1/N weight); >0 beats S&P500.");
     println!("   NON-stress: picks are today's survivors (biased UP) vs the true index — run `stress` for the honest excess.)");
+}
+
+/// (#43) Equal-weight held-book stats for a given ranking key. `by_bucket`: 6mo-bucket ->
+/// Vec<(rank_key, realized%, bench%)>. Per bucket: top-N by rank_key desc, held equal-weight -> book =
+/// ann(mean terminal multiple), SPY = same on the bench leg, excess = book − SPY. Returns
+/// (book, spy, excess_mean, win%, worst, oos_early, oos_late). `None` if no bucket yields a pick.
+fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>, n: usize, years: i64) -> Option<(f64, f64, f64, f64, f64, f64, f64)> {
+    let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
+    let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
+    for v in by_bucket.values() {
+        let mut vv = v.clone();
+        vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // rank_key desc
+        let take = n.min(vv.len());
+        if take == 0 {
+            continue;
+        }
+        let p = &vv[..take];
+        let bcum = mean(&p.iter().map(|x| 1.0 + x.1 / 100.0).collect::<Vec<_>>());
+        let scum = mean(&p.iter().map(|x| 1.0 + x.2 / 100.0).collect::<Vec<_>>());
+        book.push(ann((bcum - 1.0) * 100.0, years));
+        spy.push(ann((scum - 1.0) * 100.0, years));
+        excess.push(*book.last().unwrap() - *spy.last().unwrap());
+    }
+    let m = excess.len();
+    if m == 0 {
+        return None;
+    }
+    let win = excess.iter().filter(|e| **e > 0.0).count() as f64 / m as f64 * 100.0;
+    let worst = excess.iter().cloned().fold(f64::INFINITY, f64::min);
+    let cut = m / 2;
+    Some((mean(&book), mean(&spy), mean(&excess), win, worst, mean(&excess[..cut]), mean(&excess[cut..])))
+}
+
+/// (#44 Phase C) Grade each FREE as-of fundamental factor on the HELD-BOOK metric: within the
+/// growth-gated universe, rank by the factor (not the score), hold the top-N, and compare its held-book
+/// excess-vs-S&P500 to ranking by `growth_score`. A factor whose held-book excess BEATS the score with
+/// both OOS halves + is a better selector for a 15y no-sell book — a ship candidate for the fund tilt.
+/// Only the free SEC/income-statement factors are listed (roe/roic/net-debt/fcf are premium-blocked;
+/// compute-from-SEC is the free follow-up). Runs only under `fund` (else `s.fund` is None everywhere).
+fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let (bd, bc) = bench;
+    if bd.len() < 2 {
+        return;
+    }
+    let n = 10; // the measured held-book optimum
+    // baseline: rank the FUND-COVERED gated picks by growth_score. Restricting to fund-covered rows
+    // (same universe the factors see) makes the excess head-to-head fair — otherwise the score baseline
+    // spans ETF/foreign buckets the SEC factors can't reach and the SPY leg differs.
+    let mut base: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+    for s in samples {
+        if picks::asset_class(&s.quote) == 0 || s.fund.is_none() {
+            continue;
+        }
+        let Some(score) = growth_score(&s.quote, tuning) else { continue };
+        let Some(br) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+        base.entry(bucket(s.date)).or_default().push((score, s.realized, br));
+    }
+    println!("\n── held-book by FACTOR (rank FUND-COVERED gated picks by each FREE factor, top-{n} held {years}y, vs growth_score) ──");
+    if let Some((b, _, e, w, wo, el, la)) = book_stats(&base, n, years) {
+        let rows: usize = base.values().map(Vec::len).sum();
+        println!("  growth_score   book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   [baseline, n={rows}]");
+    }
+    let factors: &[(&str, fn(&core::FundFactors) -> Option<f64>)] = &[
+        ("gross_margin", |f| f.gross_margin), // moat / pricing power
+        ("op_margin", |f| f.op_margin),       // operating quality
+        ("margin_trend", |f| f.margin_trend), // strengthening
+        ("rev_cagr", |f| f.rev_cagr),         // top-line compounding
+        ("rev_accel", |f| f.rev_accel),
+        ("eps_growth", |f| f.eps_growth),          // bottom-line compounding
+        ("earnings_yield", |f| f.earnings_yield),  // VALUE (anti-overpay — the near-high gate lacks one)
+        ("buyback_yield", |f| f.buyback_yield),    // capital return
+    ];
+    let mut any = false;
+    for (name, get) in factors {
+        let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+        for s in samples {
+            if picks::asset_class(&s.quote) == 0 || growth_score(&s.quote, tuning).is_none() {
+                continue;
+            }
+            let Some(fv) = s.fund.as_ref().and_then(get) else { continue };
+            let Some(br) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+            by.entry(bucket(s.date)).or_default().push((fv, s.realized, br));
+        }
+        let rows: usize = by.values().map(|v| v.len()).sum();
+        if let Some((b, _, e, w, wo, el, la)) = book_stats(&by, n, years) {
+            any = true;
+            println!("  {name:<14} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (n={rows})");
+        }
+    }
+    if !any {
+        println!("  no fundamental coverage — needs `fund` + fund_source sec (free EDGAR) or an FMP key.");
+    }
+    println!("  (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.");
+    println!("   roe/roic/net-debt/fcf are FMP-premium (None here) — the free path is to compute them from SEC concepts.)");
+
+    // BLEND sweep: pure-value beat pure-score standalone — but pure-value alone risks value-traps the
+    // gates miss, so find the growth_fund_weight KNEE where tilting growth_score toward the baked
+    // fund_factor (= growth_fund_factor, `earnings_yield` on the SEC feed) peaks the held book. Only
+    // growth_fund_weight varies; quote.fund_factor is fixed at sample-build to the configured factor.
+    let mut have_ff = false;
+    for s in samples {
+        if s.quote.fund_factor.is_some() && s.fund.is_some() {
+            have_ff = true;
+            break;
+        }
+    }
+    if have_ff {
+        println!("\n── held-book vs growth_fund_weight (tilt growth_score toward `{}`, top-{n} held {years}y) ──", tuning.growth_fund_factor);
+        for w in [0.0_f64, 0.1, 0.25, 0.5, 1.0, 2.0] {
+            let mut t = tuning.clone();
+            t.growth_fund_weight = w;
+            let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+            for s in samples {
+                if picks::asset_class(&s.quote) == 0 || s.fund.is_none() {
+                    continue;
+                }
+                let Some(score) = growth_score(&s.quote, &t) else { continue };
+                let Some(br) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+                by.entry(bucket(s.date)).or_default().push((score, s.realized, br));
+            }
+            if let Some((b, _, e, wr, wo, el, la)) = book_stats(&by, n, years) {
+                let tag = if w == 0.0 { "  [pure score]" } else { "" };
+                println!("  weight {w:<4} book {b:+.1}%/yr  excess {e:+.1}  win {wr:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{tag}");
+            }
+        }
+        println!("  (knee = highest book with OOS both + and worst not deeper than pure-score -> the value weight to ship.)");
+    }
 }
 
 /// Top/bottom scored-half mean peer-relative return. `pairs` = (sample, score); sorted by score desc,
@@ -1257,6 +1388,23 @@ mod tests {
         let r = benchmark_fwd(&dates, &closes, ymd(2000, 1, 1), 12).unwrap();
         assert!((ann(r, 12) - 8.0).abs() < 0.1); // 12y forward from 2000 -> ~+8%/yr
         assert!(benchmark_fwd(&dates, &closes, ymd(2010, 1, 1), 12).is_none()); // no 12y window left
+    }
+
+    #[test]
+    fn book_stats_topn_held_book() {
+        // top-1 by rank_key desc, held 1y. Bucket A: key 5 wins (real +100 -> 2x, bench 0). Bucket B:
+        // one row (real 0 -> flat, bench +50). Book = mean(ann(multiple)) = (100+0)/2 = 50; SPY = (0+50)/2
+        // = 25; excess = (100 + -50)/2 = 25; win 50%; worst -50; OOS early +100 / late -50.
+        let mut m: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+        m.insert(0, vec![(5.0, 100.0, 0.0), (1.0, -50.0, 0.0)]);
+        m.insert(1, vec![(3.0, 0.0, 50.0)]);
+        let (book, spy, excess, win, worst, early, late) = book_stats(&m, 1, 1).unwrap();
+        assert!((book - 50.0).abs() < 1e-6, "book {book}");
+        assert!((spy - 25.0).abs() < 1e-6, "spy {spy}");
+        assert!((excess - 25.0).abs() < 1e-6, "excess {excess}");
+        assert!((win - 50.0).abs() < 1e-6 && (worst + 50.0).abs() < 1e-6);
+        assert!((early - 100.0).abs() < 1e-6 && (late + 50.0).abs() < 1e-6);
+        assert!(book_stats(&std::collections::BTreeMap::new(), 1, 1).is_none()); // empty -> None
     }
 
     /// (Item 31) `exit_cohorts`: pairs where the earlier cutoff passes split on the later one —
