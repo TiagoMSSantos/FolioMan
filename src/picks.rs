@@ -1136,6 +1136,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true }, // newest complete-FY revenue growth vs prior FY (stocks only; report pipeline) — "still growing?"
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true }, // newest complete-FY EPS growth vs prior FY (stocks only) — profit follow-through
     ColSpec { key: "net", hdr: "NET%", width: 6, right: true },      // newest complete-FY net margin level (stocks only) — profitability quality
+    ColSpec { key: "buyback", hdr: "BUYBK", width: 8, right: true }, // newest complete-FY net share-count change, sign-flipped (stocks only): + = buying back (tax-deferred capital return), − = diluting
     ColSpec { key: "off-hi", hdr: "OFF-HI", width: 7, right: true },
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true },
@@ -1322,6 +1323,8 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
         "eps-yoy" => quote.eps_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "net" if stock_only_na => "—".to_string(),
         "net" => quote.net_margin_fy.map_or("n/a".to_string(), |v| format!("{v:.1}")),
+        "buyback" if stock_only_na => "—".to_string(),
+        "buyback" => quote.buyback_yoy.map_or("n/a".to_string(), |v| format!("{v:+.1}%")),
         "off-hi" => format!("-{:.1}%", quote.drawdown_pct),
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
         "turnover" => turnover_cell(quote.avg_turnover_eur),
@@ -1894,6 +1897,7 @@ mod tests {
             rev_yoy: None,          // display-only FY snapshot; cell tests set them explicitly
             eps_yoy: None,
             net_margin_fy: None,
+            buyback_yoy: None,
         }
     };
     let tuning = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on

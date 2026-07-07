@@ -479,10 +479,11 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         use_of_profits: meta.use_of,
         replication: meta.repl,
         benchmark: meta.bench,
-        // (REV-YoY/EPS-YoY/NET%) filled later by enrich_income_stmt for the DISPLAYED stock rows only
+        // (REV-YoY/EPS-YoY/NET%/BUYBK) filled later by enrich_income_stmt for the DISPLAYED stock rows only
         rev_yoy: None,
         eps_yoy: None,
         net_margin_fy: None,
+        buyback_yoy: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
         range_pct: core::price_pct_rank(&chart.closes),
@@ -746,6 +747,7 @@ fn parse_fund_row(v: &Value) -> Option<core::FundRow> {
         op_margin: margin("operatingIncome"),
         net_margin: margin("netIncome"),
         eps: v.get("eps").and_then(|x| x.as_f64()),
+        shares: v.get("weightedAverageShsOutDil").and_then(|x| x.as_f64()).filter(|s| *s > 0.0),
         ..Default::default()
     })
 }
@@ -871,7 +873,7 @@ pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core
             .await
             .and_then(|rows| core::income_snapshot(&core::annual_rollup(&rows)))
         {
-            (q.rev_yoy, q.eps_yoy, q.net_margin_fy) = snap;
+            (q.rev_yoy, q.eps_yoy, q.net_margin_fy, q.buyback_yoy) = snap;
         }
     }
 }
@@ -1034,7 +1036,7 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
 // (filed, period_end, revenue, gross_margin, op_margin, net_margin, eps, roe). Adding roe bumped the
 // arity: a pre-roe 7-tuple cache file fails to deserialize -> treated as a miss -> refetched + rewritten
 // (SEC is uncapped, so a one-time rebuild is free).
-type SecCacheRow = (String, String, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>);
+type SecCacheRow = (String, String, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>);
 
 /// Parse a SEC `companyfacts` payload into ANNUAL `FundRow`s (one per fiscal year). Pure -> unit-tested.
 /// Revenue is merged across the concepts different eras/filers use; each annual line is joined to the
@@ -1133,6 +1135,9 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     // net margin AND ROE were silently None without the fallbacks.
     let ni = collect(&["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss"], "USD");
     let eps = collect(&["EarningsPerShareDiluted"], "USD/shares");
+    // diluted weighted-avg shares — a 12-month DURATION concept (unit "shares") -> `collect`, not
+    // `collect_instant`. Basic fallback for the rare filer that never reports diluted. Feeds the buyback column.
+    let shares = collect(&["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"], "shares");
     let eq = collect_instant(&["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "USD");
     rev.into_iter()
         .map(|(end, (filed, revenue))| {
@@ -1149,6 +1154,7 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 op_margin: margin(at(&op)),
                 net_margin: margin(at(&ni)),
                 eps: at(&eps),
+                shares: at(&shares),
                 // ROE = net income ÷ shareholders' equity (%), both as-of this period end. Free from
                 // SEC — no premium ratios endpoint needed.
                 roe: at(&ni).zip(at(&eq)).and_then(|(n, e)| (e != 0.0).then_some(n / e * 100.0)),
@@ -1163,14 +1169,15 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
 /// forever. Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
 pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
-    // "_facts2": cache-key bump when the parse gains concepts (revenue Including/pre-606 tags, net-income
-    // fallbacks) — old rows were parsed WITHOUT them and would pin the gaps forever. Old *_facts.json
-    // files are orphaned (few KB each); refetch amortizes over runs under SEC_FETCH_BUDGET.
-    let cache = sec_cache_path(&format!("{ticker}_facts2"));
+    // "_facts3": cache-key bump when the parse gains concepts (revenue Including/pre-606 tags, net-income
+    // fallbacks, now diluted-shares for the buyback column) — old rows were parsed WITHOUT them and would
+    // pin the gaps forever. Old *_facts2.json files are orphaned (few KB each); refetch amortizes over runs
+    // under SEC_FETCH_BUDGET.
+    let cache = sec_cache_path(&format!("{ticker}_facts3"));
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
-            .filter_map(|(f, e, rev, gm, op, net, eps, roe)| {
+            .filter_map(|(f, e, rev, gm, op, net, eps, roe, shares)| {
                 Some(core::FundRow {
                     filed: NaiveDate::parse_from_str(&f, "%Y-%m-%d").ok()?,
                     period_end: NaiveDate::parse_from_str(&e, "%Y-%m-%d").ok()?,
@@ -1179,6 +1186,7 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
                     op_margin: op,
                     net_margin: net,
                     eps,
+                    shares,
                     roe,
                     ..Default::default()
                 })
@@ -1197,7 +1205,7 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
             .iter()
             .map(|r| {
                 (r.filed.format("%Y-%m-%d").to_string(), r.period_end.format("%Y-%m-%d").to_string(),
-                 r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps, r.roe)
+                 r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps, r.roe, r.shares)
             })
             .collect();
         if let Some(dir) = cache.parent() {

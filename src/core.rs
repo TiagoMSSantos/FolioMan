@@ -105,6 +105,7 @@ pub struct Quote {
     pub rev_yoy: Option<f64>,          // newest COMPLETE-fiscal-year revenue growth (%) vs the prior FY, from the same income-statement pipeline `report` prints. DISPLAY-ONLY (stocks) — the fund-factor family measured null for ranking; enriched only for the displayed top rows, None otherwise/backtest
     pub eps_yoy: Option<f64>,          // newest complete-FY EPS growth (%) vs the prior FY. DISPLAY-ONLY, same scoping as rev_yoy
     pub net_margin_fy: Option<f64>,    // newest complete-FY net margin (%). DISPLAY-ONLY, same scoping as rev_yoy
+    pub buyback_yoy: Option<f64>,      // newest complete-FY net share-count change, sign-flipped (+ = buying back, − = diluting). DISPLAY-ONLY (stocks), same scoping as rev_yoy
 }
 
 impl Quote {
@@ -153,6 +154,7 @@ impl Quote {
             rev_yoy: None,
             eps_yoy: None,
             net_margin_fy: None,
+            buyback_yoy: None,
         }
     }
 }
@@ -1013,6 +1015,7 @@ pub struct FundRow {
     pub op_margin: Option<f64>,       // % = operatingIncome/revenue
     pub net_margin: Option<f64>,      // % = netIncome/revenue
     pub eps: Option<f64>,
+    pub shares: Option<f64>,          // diluted weighted-avg shares outstanding — DISPLAY-ONLY (buyback column); None on the free tier / when the source omits it
     pub roe: Option<f64>,             // % — PREMIUM (key-metrics/ratios), None on free tier
     pub roic: Option<f64>,            // % — PREMIUM
     pub net_debt_ebitda: Option<f64>, // ratio, lower=safer — PREMIUM
@@ -1145,6 +1148,7 @@ pub struct AnnualReport {
     pub op_margin: Option<f64>,
     pub net_margin: Option<f64>,
     pub eps: Option<f64>,
+    pub shares: Option<f64>,          // diluted weighted-avg shares outstanding for the FY (mean of the year's rows) — feeds the buyback column
     pub quarters: usize,
 }
 
@@ -1174,6 +1178,10 @@ pub fn annual_rollup(rows: &[FundRow]) -> Vec<AnnualReport> {
                 (den > 0.0).then(|| num / den)
             };
             let eps_vals: Vec<f64> = qs.iter().filter_map(|r| r.eps).collect();
+            // shares is a LEVEL, not a flow: MEAN the year's rows (don't sum). SEC gives 1 annual row/yr
+            // -> mean = that value; FMP gives ~4 quarters of per-quarter weighted-avg diluted -> their mean
+            // approximates the annual weighted-avg diluted share count. Good enough for a display column.
+            let share_vals: Vec<f64> = qs.iter().filter_map(|r| r.shares).collect();
             AnnualReport {
                 year,
                 revenue,
@@ -1181,19 +1189,21 @@ pub fn annual_rollup(rows: &[FundRow]) -> Vec<AnnualReport> {
                 op_margin: wmargin(|r| r.op_margin),
                 net_margin: wmargin(|r| r.net_margin),
                 eps: (!eps_vals.is_empty()).then(|| eps_vals.iter().sum::<f64>()),
+                shares: (!share_vals.is_empty()).then(|| share_vals.iter().sum::<f64>() / share_vals.len() as f64),
                 quarters: qs.len(),
             }
         })
         .collect()
 }
 
-/// The screen table's income-statement snapshot: (rev_yoy %, eps_yoy %, net_margin %) of the newest
-/// COMPLETE fiscal year, each vs the next-older year — the same math the `report` rows print, so the
-/// two views can't disagree. "Complete" mirrors report's `*` mark: 1 quarter = an annual filing (SEC
+/// The screen table's income-statement snapshot: (rev_yoy %, eps_yoy %, net_margin %, buyback %) of the
+/// newest COMPLETE fiscal year, each vs the next-older year — the same math the `report` rows print, so
+/// the two views can't disagree. "Complete" mirrors report's `*` mark: 1 quarter = an annual filing (SEC
 /// rolls a fiscal year into one row), 4+ = a full quarterly year; 2-3 = genuinely partial, skipped so
 /// a half-year isn't misread as a revenue cliff. YoY needs the older row too: last year in the data
-/// has nothing to compare against -> that component is None, never 0.
-pub fn income_snapshot(annual: &[AnnualReport]) -> Option<(Option<f64>, Option<f64>, Option<f64>)> {
+/// has nothing to compare against -> that component is None, never 0. `buyback` is the net share-count
+/// change sign-flipped (shares SHRANK -> positive = buying back = tax-deferred capital return).
+pub fn income_snapshot(annual: &[AnnualReport]) -> Option<(Option<f64>, Option<f64>, Option<f64>, Option<f64>)> {
     let idx = annual.iter().position(|a| a.quarters == 1 || a.quarters >= 4)?;
     let a = &annual[idx];
     let older = annual.get(idx + 1);
@@ -1202,7 +1212,16 @@ pub fn income_snapshot(annual: &[AnnualReport]) -> Option<(Option<f64>, Option<f
         (Some(c), Some(p)) if p != 0.0 => Some((c / p - 1.0) * 100.0),
         _ => None,
     };
-    Some((rev_yoy, eps_yoy, a.net_margin))
+    let buyback = match (a.shares, older.and_then(|o| o.shares)) {
+        (Some(c), Some(p)) if p > 0.0 => {
+            let shares_yoy = (c / p - 1.0) * 100.0;
+            // ponytail: as-reported shares aren't split-adjusted; |Δ|>40%/yr is a split or M&A/secondary,
+            // never an organic buyback -> None (matches the repo's existing as-reported tolerance on eps_yoy).
+            (shares_yoy.abs() <= 40.0).then_some(-shares_yoy)
+        }
+        _ => None,
+    };
+    Some((rev_yoy, eps_yoy, a.net_margin, buyback))
 }
 
 /// Pick ONE named as-of factor out of `FundFactors` for the growth lane's fund tilt. The name comes
@@ -1520,23 +1539,33 @@ mod tests {
     #[test]
     fn income_snapshot_complete_year_and_yoy() {
         let a = |year: i32, revenue: f64, eps: Option<f64>, quarters: usize| AnnualReport {
-            year, revenue, gross_margin: None, op_margin: None, net_margin: Some(50.0), eps, quarters,
+            year, revenue, gross_margin: None, op_margin: None, net_margin: Some(50.0), eps, shares: None, quarters,
+        };
+        // shares-carrying variant for the buyback leg
+        let s = |year: i32, revenue: f64, eps: Option<f64>, shares: Option<f64>, quarters: usize| AnnualReport {
+            year, revenue, gross_margin: None, op_margin: None, net_margin: Some(50.0), eps, shares, quarters,
         };
         // newest year partial (3 quarters) -> skipped; snapshot = 2023 vs 2022
         let rows = vec![a(2024, 900.0, Some(9.0), 3), a(2023, 600.0, Some(6.0), 4), a(2022, 500.0, Some(4.0), 4)];
-        let (rev, eps, net) = income_snapshot(&rows).unwrap();
+        let (rev, eps, net, bb) = income_snapshot(&rows).unwrap();
         assert!((rev.unwrap() - 20.0).abs() < 1e-9); // 600/500
         assert!((eps.unwrap() - 50.0).abs() < 1e-9); // 6/4
         assert_eq!(net, Some(50.0));
+        assert_eq!(bb, None); // no shares on these rows
         // SEC-style annual filing (quarters == 1) counts as complete
         let sec = vec![a(2023, 600.0, Some(6.0), 1), a(2022, 500.0, Some(6.0), 1)];
         assert!((income_snapshot(&sec).unwrap().0.unwrap() - 20.0).abs() < 1e-9);
+        // buyback: shares shrank 100->95 -> −(−5%) = +5% (buying back); split-size jump -> None
+        let buy = vec![s(2023, 600.0, Some(6.0), Some(95.0), 1), s(2022, 500.0, Some(6.0), Some(100.0), 1)];
+        assert!((income_snapshot(&buy).unwrap().3.unwrap() - 5.0).abs() < 1e-9);
+        let split = vec![s(2023, 600.0, Some(6.0), Some(200.0), 1), s(2022, 500.0, Some(6.0), Some(100.0), 1)];
+        assert_eq!(income_snapshot(&split).unwrap().3, None); // +100% shares = split, not dilution signal
         // oldest year in the data: nothing older to compare -> YoY components None, margin still real
         let lone = vec![a(2023, 600.0, Some(6.0), 4)];
-        assert_eq!(income_snapshot(&lone).unwrap(), (None, None, Some(50.0)));
+        assert_eq!(income_snapshot(&lone).unwrap(), (None, None, Some(50.0), None));
         // zero prior EPS -> eps_yoy None (never a divide blow-up); prior zero revenue -> rev_yoy None
         let zeroes = vec![a(2023, 600.0, Some(6.0), 4), a(2022, 0.0, Some(0.0), 4)];
-        assert_eq!(income_snapshot(&zeroes).unwrap(), (None, None, Some(50.0)));
+        assert_eq!(income_snapshot(&zeroes).unwrap(), (None, None, Some(50.0), None));
         // only partial years -> no snapshot at all
         assert_eq!(income_snapshot(&[a(2024, 900.0, None, 2)]), None);
         assert_eq!(income_snapshot(&[]), None);
