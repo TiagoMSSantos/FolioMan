@@ -636,7 +636,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         }
         let Some(score) = growth_score(&s.quote, tuning) else { continue };
         let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
-        rows.push((bucket(s.date), score, ann(s.realized, years), ann(bench_r, years)));
+        rows.push((bucket(s.date), score, s.realized, bench_r)); // RAW cumulative % (annualize the BOOK, not per-name)
     }
     if rows.len() < 8 {
         println!("\n── vs S&P500 (ABSOLUTE) ──  only {} gated picks have a ^GSPC window — too few.", rows.len());
@@ -647,12 +647,15 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     for (b, sc, pc, spc) in &rows {
         by_bucket.entry(*b).or_default().push((*sc, *pc, *spc));
     }
-    println!("\n── vs S&P500 (ABSOLUTE goal metric: top-N growth picks, equal-weight, held {years}y vs ^GSPC) ──");
+    println!("\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {years}y no-sell, vs ^GSPC) ──");
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
-    // (#41 Phase A) sweep hard concentration too (top-1/2/3): Buffett-style few-names. Mean excess
-    // should RISE as N shrinks, worst-window should WORSEN — the return↔variance tradeoff, made visible.
+    // (#41/#43) EQUAL-WEIGHT HELD-BOOK return — the correct metric for a no-sell hold. A held book earns
+    // ann(mean of terminal MULTIPLES), NOT mean of per-name CAGRs: a 20× winner in the book covers twenty
+    // −100% zeros, and a name that goes to 0 contributes its full weight lost (1/N), not its scary CAGR.
+    // Also count "zeros ridden" (names ≤−90% you must hold through) to show the no-sell tail you survive.
     for n in [1usize, 2, 3, 5, 10, 15, 20] {
-        let (mut pick, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut zeros, mut held) = (0usize, 0usize);
         for v in by_bucket.values() {
             let mut vv = v.clone();
             vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc
@@ -660,11 +663,14 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             if take == 0 {
                 continue;
             }
-            let pc = mean(&vv[..take].iter().map(|x| x.1).collect::<Vec<_>>());
-            let spc = mean(&vv[..take].iter().map(|x| x.2).collect::<Vec<_>>());
-            pick.push(pc);
-            spy.push(spc);
-            excess.push(pc - spc);
+            let p = &vv[..take];
+            let book_cum = mean(&p.iter().map(|x| 1.0 + x.1 / 100.0).collect::<Vec<_>>()); // equal-weight terminal multiple
+            let spy_cum = mean(&p.iter().map(|x| 1.0 + x.2 / 100.0).collect::<Vec<_>>());
+            book.push(ann((book_cum - 1.0) * 100.0, years));
+            spy.push(ann((spy_cum - 1.0) * 100.0, years));
+            excess.push(*book.last().unwrap() - *spy.last().unwrap());
+            zeros += p.iter().filter(|x| x.1 <= -90.0).count();
+            held += take;
         }
         let m = excess.len();
         if m == 0 {
@@ -675,11 +681,11 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         let cut = m / 2;
         let (early, late) = (mean(&excess[..cut]), mean(&excess[cut..]));
         println!(
-            "  top-{n:<2} picks {:+.1}%/yr  vs S&P500 {:+.1}%/yr  ->  excess {:+.1} pts/yr   win {win:.0}% of {m}   worst {worst:+.1}   OOS early {early:+.1} / late {late:+.1}",
-            mean(&pick), mean(&spy), mean(&excess)
+            "  top-{n:<2} book {:+.1}%/yr  vs S&P500 {:+.1}%/yr  ->  excess {:+.1} pts/yr   win {win:.0}% of {m}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}   rode {zeros} zeros/{held} holds",
+            mean(&book), mean(&spy), mean(&excess)
         );
     }
-    println!("  (excess = CAGR points/yr over an S&P500 buy-and-hold, same window; >0 = the top-N beat it.");
+    println!("  (BOOK = equal-weight terminal wealth annualized (winners carry it, a zero costs its 1/N weight); >0 beats S&P500.");
     println!("   NON-stress: picks are today's survivors (biased UP) vs the true index — run `stress` for the honest excess.)");
 }
 
