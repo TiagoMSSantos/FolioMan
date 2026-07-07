@@ -818,6 +818,56 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         }
         println!("  (knee = highest book with OOS both + and worst not deeper than pure-score -> the value weight to ship.)");
     }
+
+    // VALUE-GATE probe: the blend was flat, so the value edge is a BRAKE not a weight — reject the
+    // most-expensive (lowest earnings_yield) gated STOCKS per bucket, THEN rank the survivors by the
+    // unchanged growth_score. This is the near-high gate's missing valuation ceiling (the Cisco-2000
+    // brake). Names with no earnings_yield (ETF/crypto/foreign/no-SEC) can't be judged -> kept. Ship
+    // the reject-% ONLY if it lifts the STRESS held book with OOS both + and worst no deeper than off.
+    let has_ey = samples.iter().any(|s| s.fund.as_ref().and_then(|f| f.earnings_yield).is_some());
+    if has_ey {
+        println!("\n── VALUE-GATE probe: drop the most-expensive P% (low earnings_yield) gated STOCKS, rank rest by growth_score, top-{n} held {years}y ──");
+        for p in [0.0_f64, 10.0, 25.0, 40.0] {
+            // bucket the gated, benchmarkable, non-crypto picks; per bucket drop the bottom-P% by
+            // earnings_yield among the fund-covered names, keep the rest, rank by growth_score.
+            let mut buckets: std::collections::BTreeMap<i32, Vec<&Sample>> = Default::default();
+            for s in samples {
+                if picks::asset_class(&s.quote) == 0 || growth_score(&s.quote, tuning).is_none() || benchmark_fwd(bd, bc, s.date, years).is_none() {
+                    continue;
+                }
+                buckets.entry(bucket(s.date)).or_default().push(s);
+            }
+            let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+            for (bk, ss) in &buckets {
+                let thr = if p > 0.0 {
+                    let mut eys: Vec<f64> = ss.iter().filter_map(|s| s.fund.as_ref().and_then(|f| f.earnings_yield)).collect();
+                    if eys.is_empty() {
+                        None
+                    } else {
+                        eys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                        Some(eys[(((p / 100.0) * eys.len() as f64) as usize).min(eys.len() - 1)]) // P-th percentile floor
+                    }
+                } else {
+                    None
+                };
+                for s in ss {
+                    if let (Some(t), Some(ey)) = (thr, s.fund.as_ref().and_then(|f| f.earnings_yield)) {
+                        if ey < t {
+                            continue; // too expensive -> rejected by the value brake
+                        }
+                    }
+                    let score = growth_score(&s.quote, tuning).unwrap();
+                    let br = benchmark_fwd(bd, bc, s.date, years).unwrap();
+                    by.entry(*bk).or_default().push((score, s.realized, br));
+                }
+            }
+            if let Some((b, _, e, w, wo, el, la)) = book_stats(&by, n, years) {
+                let tag = if p == 0.0 { "  [gate off]" } else { "" };
+                println!("  reject-bottom {p:>4.0}%  book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{tag}");
+            }
+        }
+        println!("  (a reject-% that lifts book with OOS both + and worst no deeper than off -> ship as a real growth gate.)");
+    }
 }
 
 /// Top/bottom scored-half mean peer-relative return. `pairs` = (sample, score); sorted by score desc,
