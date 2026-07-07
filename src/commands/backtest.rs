@@ -324,6 +324,15 @@ pub async fn run(args: Vec<String>) {
         report_fund_lane(&samples);
         sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
     }
+    // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One ^GSPC fetch
+    // (survivorship-clean index), matched to the sample cadence. realized is untouched by de-mean.
+    let bench = if monthly {
+        fetch::fetch_history_long(&client, &settings.urls, "^GSPC").await
+    } else {
+        fetch::fetch_history(&client, &settings.urls, "^GSPC").await
+    }
+    .unwrap_or_default();
+    report_vs_benchmark(&samples, &bench, years, tuning);
 
     println!("\nCaveats:");
     println!("  • Peer-relative (#1): returns are de-meaned per ~6mo cutoff, so rho is SELECTION vs same-period");
@@ -588,6 +597,88 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
         }
         None => println!("  -> no factor beats price-only with both OOS halves + — keep growth_fund_weight 0. SHIP NOTHING."),
     }
+}
+
+/// Annualize a cumulative % return over `years` -> CAGR %. Clamps the wealth base at 0 so a ≤−100%
+/// forward window (a stress bankruptcy) reads as −100%/yr, not a NaN from a negative root.
+fn ann(cum_pct: f64, years: i64) -> f64 {
+    ((1.0 + cum_pct / 100.0).max(0.0).powf(1.0 / years as f64) - 1.0) * 100.0
+}
+
+/// Cumulative % return of a benchmark series held `years` from the first session on/after `from`. `None`
+/// if `from` predates the series or no full forward window remains — mirrors the ticker walk (line ~208).
+fn benchmark_fwd(dates: &[chrono::NaiveDate], closes: &[f64], from: chrono::NaiveDate, years: i64) -> Option<f64> {
+    let i = dates.iter().position(|d| *d >= from)?;
+    let target = dates[i] + chrono::Duration::days(years * 365);
+    let off = dates[i..].iter().position(|d| *d >= target)?;
+    let r = (closes[i + off] / closes[i] - 1.0) * 100.0;
+    r.is_finite().then_some(r)
+}
+
+/// (#40) ABSOLUTE goal metric — the one the peer-relative lanes never measure. The stated purpose is
+/// "out-return an S&P500 buy-and-hold", but every lane above de-means the level away (SELECTION, not the
+/// index). This asks the real question: buy the top-N growth picks (equal-weight, non-crypto), hold
+/// `years`, and does that beat holding ^GSPC over the SAME window? Per pick, excess = its annualized
+/// return minus what ^GSPC did from the same cutoff. Top-N per ~6mo bucket; report mean pick/SPY CAGR,
+/// excess, win-rate, worst bucket, and the early-vs-late OOS split. Read the STRESS run: the picks come
+/// from today's survivors (biased UP), ^GSPC is the true index, so a non-stress win is optimistic.
+fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let (bd, bc) = bench;
+    if bd.len() < 2 {
+        println!("\n── vs S&P500 (ABSOLUTE) ──  no ^GSPC history fetched — skipping the benchmark leg.");
+        return;
+    }
+    // (bucket, score, pick CAGR, SPY CAGR) for every GATED non-crypto pick that has a benchmark window.
+    let mut rows: Vec<(i32, f64, f64, f64)> = Vec::new();
+    for s in samples {
+        if picks::asset_class(&s.quote) == 0 {
+            continue; // crypto: a coin isn't an S&P500-comparable hold
+        }
+        let Some(score) = growth_score(&s.quote, tuning) else { continue };
+        let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+        rows.push((bucket(s.date), score, ann(s.realized, years), ann(bench_r, years)));
+    }
+    if rows.len() < 8 {
+        println!("\n── vs S&P500 (ABSOLUTE) ──  only {} gated picks have a ^GSPC window — too few.", rows.len());
+        return;
+    }
+    // BTreeMap -> buckets iterate in chronological order, so the OOS split is early-vs-late in time.
+    let mut by_bucket: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = std::collections::BTreeMap::new();
+    for (b, sc, pc, spc) in &rows {
+        by_bucket.entry(*b).or_default().push((*sc, *pc, *spc));
+    }
+    println!("\n── vs S&P500 (ABSOLUTE goal metric: top-N growth picks, equal-weight, held {years}y vs ^GSPC) ──");
+    let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
+    for n in [5usize, 10, 15, 20] {
+        let (mut pick, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
+        for v in by_bucket.values() {
+            let mut vv = v.clone();
+            vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc
+            let take = n.min(vv.len());
+            if take == 0 {
+                continue;
+            }
+            let pc = mean(&vv[..take].iter().map(|x| x.1).collect::<Vec<_>>());
+            let spc = mean(&vv[..take].iter().map(|x| x.2).collect::<Vec<_>>());
+            pick.push(pc);
+            spy.push(spc);
+            excess.push(pc - spc);
+        }
+        let m = excess.len();
+        if m == 0 {
+            continue;
+        }
+        let win = excess.iter().filter(|e| **e > 0.0).count() as f64 / m as f64 * 100.0;
+        let worst = excess.iter().cloned().fold(f64::INFINITY, f64::min);
+        let cut = m / 2;
+        let (early, late) = (mean(&excess[..cut]), mean(&excess[cut..]));
+        println!(
+            "  top-{n:<2} picks {:+.1}%/yr  vs S&P500 {:+.1}%/yr  ->  excess {:+.1} pts/yr   win {win:.0}% of {m}   worst {worst:+.1}   OOS early {early:+.1} / late {late:+.1}",
+            mean(&pick), mean(&spy), mean(&excess)
+        );
+    }
+    println!("  (excess = CAGR points/yr over an S&P500 buy-and-hold, same window; >0 = the top-N beat it.");
+    println!("   NON-stress: picks are today's survivors (biased UP) vs the true index — run `stress` for the honest excess.)");
 }
 
 /// Top/bottom scored-half mean peer-relative return. `pairs` = (sample, score); sorted by score desc,
@@ -1143,6 +1234,21 @@ mod tests {
     }
     fn sample(date: NaiveDate, realized: f64) -> Sample {
         Sample { date, realized, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None }
+    }
+
+    /// (#40) benchmark math: `ann` inverts a 12y cumulative back to CAGR (and floors a wipeout at
+    /// −100%, no NaN), and `benchmark_fwd` picks the first session on/after the cutoff + the first past
+    /// +Ny, returning None when the window runs off the end.
+    #[test]
+    fn benchmark_math() {
+        // (1.10^12 − 1)·100 cumulative -> back to +10%/yr; a −100% window annualizes to −100, not NaN.
+        assert!((ann((1.10_f64.powi(12) - 1.0) * 100.0, 12) - 10.0).abs() < 1e-6);
+        assert!((ann(-100.0, 12) - (-100.0)).abs() < 1e-9);
+        let dates: Vec<NaiveDate> = (0..15).map(|k| ymd(2000 + k, 1, 3)).collect();
+        let closes: Vec<f64> = (0..15).map(|k| 100.0 * 1.08_f64.powi(k)).collect(); // +8%/yr
+        let r = benchmark_fwd(&dates, &closes, ymd(2000, 1, 1), 12).unwrap();
+        assert!((ann(r, 12) - 8.0).abs() < 0.1); // 12y forward from 2000 -> ~+8%/yr
+        assert!(benchmark_fwd(&dates, &closes, ymd(2010, 1, 1), 12).is_none()); // no 12y window left
     }
 
     /// (Item 31) `exit_cohorts`: pairs where the earlier cutoff passes split on the later one —
