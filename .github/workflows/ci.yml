@@ -111,6 +111,12 @@ jobs:
   # so one undeletable run never reddens the pipeline. NIGHTLY (scheduled) runs are where the
   # backtest-gate's gate-re-probe WARNs print, so the newest 5 of those survive until read instead
   # of being wiped by the next morning's push.
+  #
+  # CANCELLED runs (the concurrency `cancel-in-progress` kills a superseded commit's in-flight run)
+  # carry no useful logs but clutter the Actions tab, and `--status completed` does NOT match them —
+  # a cancelled run's status is `cancelled`, not `completed`. So sweep them in their own pass, all of
+  # them regardless of event (a half-run nightly has nothing worth keeping). This runs on every main
+  # push + the nightly cron, so a burst of superseded pushes is cleared on the next run to finish.
   cleanup-runs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -124,5 +130,8 @@ jobs:
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
           for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status completed --limit 200 --json databaseId,event -q '[.[] | select(.event == "schedule")] | .[5:] | .[].databaseId'); do
+            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          done
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status cancelled --limit 200 --json databaseId -q '.[].databaseId'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
