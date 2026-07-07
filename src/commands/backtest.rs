@@ -443,6 +443,7 @@ fn report_fund_lane(samples: &[Sample]) {
         ("eps_growth", |f| f.eps_growth),
         ("insider_net90d", |f| f.insider_net_buys_90d), // (Item 4) only populated under `insider`
         ("earnings_yield", |f| f.earnings_yield),       // (Item 19) as-of valuation (high = cheap); native-currency probe
+        ("buyback_yield", |f| f.buyback_yield),         // as-of 1y share-count shrink (+ = buying back)
         ("composite", |f| core::select_fund_factor(f, "composite")), // (Item 3) blend of the present factors
     ];
     let covered = samples.iter().filter(|s| s.fund.is_some()).count();
@@ -500,10 +501,11 @@ fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], b
 /// then prints the one to paste into settings.yaml. Ships nothing. Needs the `fund` path; with <8 cutoffs
 /// carrying fundamentals there's nothing to sweep. Same chronological split + seeded search as `tune`.
 fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
-    const FACTORS: [&str; 9] = [
+    const FACTORS: [&str; 10] = [
         "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
         "insider_net_buys_90d", // (Item 4) shows n/a unless `insider` populated it
         "earnings_yield",       // (Item 19) as-of valuation; native-currency probe (n/a unless `fund`)
+        "buyback_yield",        // as-of 1y share-count shrink (+ = buying back); n/a unless `fund` + shares in the rows
         "composite",            // (Item 3) shows n/a until ≥2 factors are present
     ];
     if samples.iter().filter(|s| s.fund.is_some()).count() < 8 {

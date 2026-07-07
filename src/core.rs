@@ -1045,6 +1045,7 @@ pub struct FundFactors {
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
     pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
     pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). PROBE-ONLY: set in the backtest loop from the native as-of close; left None by the live path (currency skew — see `earnings_yield` fn)
+    pub buyback_yield: Option<f64>, // as-of net share-count change over the last year, sign-flipped (+ = shrinking share count = buying back). Fully as-of from the FundRows (no price needed), unlike earnings_yield — so it populates in both the backtest AND the live enrich
 }
 
 /// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date (the
@@ -1109,6 +1110,15 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         (Some(a), Some(b)) if a > 0.0 && b > 0.0 => Some(cagr((a / b - 1.0) * 100.0, yrs as f64)),
         _ => None,
     };
+    // as-of buyback yield: 1y share-count change, sign-flipped (shares shrank -> positive = buying back).
+    // Same |Δ|>40% split/M&A guard as income_snapshot. Needs only the FundRows -> fully as-of (no price).
+    let buyback_yield = match (now.and_then(|r| r.shares), yr_ago.and_then(|r| r.shares)) {
+        (Some(a), Some(b)) if b > 0.0 => {
+            let d = (a / b - 1.0) * 100.0;
+            (d.abs() <= 40.0).then_some(-d)
+        }
+        _ => None,
+    };
     FundFactors {
         rev_cagr,
         rev_accel,
@@ -1119,6 +1129,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         insider_net_buys_90d: None, // (Item 4) SEC-sourced, set in the backtest loop, not from FMP rows
         eps_ttm: now.and_then(|r| r.eps), // (Item 19) as-of EPS level; earnings_yield needs price, set by caller
         earnings_yield: None,             // (Item 19) needs the as-of price -> filled in the backtest loop, not here
+        buyback_yield,
     }
 }
 
@@ -1239,6 +1250,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "eps_growth" => f.eps_growth,
         "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
         "earnings_yield" => f.earnings_yield,             // (Item 19) as-of valuation; PROBE-ONLY (None live)
+        "buyback_yield" => f.buyback_yield,               // as-of 1y share-count shrink (+ = buying back); backtest-testable candidate
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -1462,6 +1474,7 @@ mod tests {
             insider_net_buys_90d: Some(7.0),
             eps_ttm: Some(8.0),
             earnings_yield: Some(9.0),
+            buyback_yield: Some(10.0),
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
         assert_eq!(select_fund_factor(&f, "margin_trend"), Some(5.0));
@@ -1469,7 +1482,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "rev_cagr"), Some(1.0));
         assert_eq!(select_fund_factor(&f, "insider_net_buys_90d"), Some(7.0)); // (Item 4)
         assert_eq!(select_fund_factor(&f, "earnings_yield"), Some(9.0)); // (Item 19)
-        assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded
+        assert_eq!(select_fund_factor(&f, "buyback_yield"), Some(10.0));
+        assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
         assert_eq!(earnings_yield(Some(5.0), 100.0), Some(5.0)); // 5/100 = 5%
