@@ -1296,7 +1296,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
         "div" => {
             let d = dividend_yield_1y(quote);
             if d > 0.0 {
-                format!("{d:.1}%")
+                format!("{d:.2}%") // 2 decimals so a token yield (NVDA ~0.02%) prints instead of rounding to 0.0%
             } else {
                 "n/a".to_string()
             }
