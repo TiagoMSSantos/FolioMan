@@ -657,7 +657,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // ann(mean of terminal MULTIPLES), NOT mean of per-name CAGRs: a 20× winner in the book covers twenty
     // −100% zeros, and a name that goes to 0 contributes its full weight lost (1/N), not its scary CAGR.
     // Also count "zeros ridden" (names ≤−90% you must hold through) to show the no-sell tail you survive.
-    for n in [1usize, 2, 3, 5, 10, 15, 20] {
+    for n in [1usize, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50] {
         let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
         let (mut zeros, mut held) = (0usize, 0usize);
         for v in by_bucket.values() {
