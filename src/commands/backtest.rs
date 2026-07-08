@@ -632,24 +632,24 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         println!("\n── vs S&P500 (ABSOLUTE) ──  no ^GSPC history fetched — skipping the benchmark leg.");
         return;
     }
-    // (bucket, score, pick CAGR, SPY CAGR) for every GATED non-crypto pick that has a benchmark window.
-    let mut rows: Vec<(i32, f64, f64, f64)> = Vec::new();
+    // (bucket, score, pick CAGR, SPY CAGR, ticker) for every GATED non-crypto pick that has a benchmark window.
+    let mut rows: Vec<(i32, f64, f64, f64, String)> = Vec::new();
     for s in samples {
         if picks::asset_class(&s.quote) == 0 {
             continue; // crypto: a coin isn't an S&P500-comparable hold
         }
         let Some(score) = growth_score(&s.quote, tuning) else { continue };
         let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
-        rows.push((bucket(s.date), score, s.realized, bench_r)); // RAW cumulative % (annualize the BOOK, not per-name)
+        rows.push((bucket(s.date), score, s.realized, bench_r, s.quote.ticker.clone())); // RAW cumulative % (annualize the BOOK, not per-name)
     }
     if rows.len() < 8 {
         println!("\n── vs S&P500 (ABSOLUTE) ──  only {} gated picks have a ^GSPC window — too few.", rows.len());
         return;
     }
     // BTreeMap -> buckets iterate in chronological order, so the OOS split is early-vs-late in time.
-    let mut by_bucket: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = std::collections::BTreeMap::new();
-    for (b, sc, pc, spc) in &rows {
-        by_bucket.entry(*b).or_default().push((*sc, *pc, *spc));
+    let mut by_bucket: std::collections::BTreeMap<i32, Vec<(f64, f64, f64, String)>> = std::collections::BTreeMap::new();
+    for (b, sc, pc, spc, tk) in &rows {
+        by_bucket.entry(*b).or_default().push((*sc, *pc, *spc, tk.clone()));
     }
     println!("\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {years}y no-sell, vs ^GSPC) ──");
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
@@ -660,7 +660,8 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     for n in [1usize, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50] {
         let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
         let (mut zeros, mut held) = (0usize, 0usize);
-        for v in by_bucket.values() {
+        let mut zero_names: Vec<String> = Vec::new(); // (#zeros) names ≤−90% at top-10 -> union across horizons = true distinct death count
+        for (b, v) in &by_bucket {
             let mut vv = v.clone();
             vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc
             let take = n.min(vv.len());
@@ -674,7 +675,13 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             spy.push(ann((spy_cum - 1.0) * 100.0, years));
             excess.push(*book.last().unwrap() - *spy.last().unwrap());
             zeros += p.iter().filter(|x| x.1 <= -90.0).count();
+            if n == 10 {
+                zero_names.extend(p.iter().filter(|x| x.1 <= -90.0).map(|x| format!("{}@b{b}({:.0}%)", x.3, x.1)));
+            }
             held += take;
+        }
+        if n == 10 && !zero_names.is_empty() {
+            println!("  top-10 zero names ({years}y): {}", zero_names.join(", "));
         }
         let m = excess.len();
         if m == 0 {
