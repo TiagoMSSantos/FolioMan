@@ -324,12 +324,16 @@ pub async fn run(args: Vec<String>) {
         report_fund_lane(&samples);
         sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
     }
-    // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One ^GSPC fetch
-    // (survivorship-clean index), matched to the sample cadence. realized is untouched by de-mean.
+    // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One index fetch
+    // (survivorship-clean), matched to the sample cadence. realized is untouched by de-mean.
+    // (Phase E) with use_adjusted_close on, the picks' realized returns include dividends, so the fair
+    // benchmark is the S&P 500 TOTAL-return index (^SP500TR, Yahoo history from 1988) — TR vs TR;
+    // default (raw close) keeps the price-only ^GSPC, unchanged.
+    let bench_sym = if crate::config::use_adjusted_close() { "^SP500TR" } else { "^GSPC" };
     let bench = if monthly {
-        fetch::fetch_history_long(&client, &settings.urls, "^GSPC").await
+        fetch::fetch_history_long(&client, &settings.urls, bench_sym).await
     } else {
-        fetch::fetch_history(&client, &settings.urls, "^GSPC").await
+        fetch::fetch_history(&client, &settings.urls, bench_sym).await
     }
     .unwrap_or_default();
     report_vs_benchmark(&samples, &bench, years, tuning);
@@ -628,8 +632,10 @@ fn benchmark_fwd(dates: &[chrono::NaiveDate], closes: &[f64], from: chrono::Naiv
 /// from today's survivors (biased UP), ^GSPC is the true index, so a non-stress win is optimistic.
 fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let (bd, bc) = bench;
+    // name the benchmark honestly: ^SP500TR when the run meters total return (use_adjusted_close).
+    let bench_sym = if crate::config::use_adjusted_close() { "^SP500TR total-return" } else { "^GSPC" };
     if bd.len() < 2 {
-        println!("\n── vs S&P500 (ABSOLUTE) ──  no ^GSPC history fetched — skipping the benchmark leg.");
+        println!("\n── vs S&P500 (ABSOLUTE) ──  no {bench_sym} history fetched — skipping the benchmark leg.");
         return;
     }
     // (bucket, score, pick CAGR, SPY CAGR, ticker) for every GATED non-crypto pick that has a benchmark window.
@@ -651,16 +657,18 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     for (b, sc, pc, spc, tk) in &rows {
         by_bucket.entry(*b).or_default().push((*sc, *pc, *spc, tk.clone()));
     }
-    println!("\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {years}y no-sell, vs ^GSPC) ──");
+    println!("\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {years}y no-sell, vs {bench_sym}) ──");
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
     // (#41/#43) EQUAL-WEIGHT HELD-BOOK return — the correct metric for a no-sell hold. A held book earns
     // ann(mean of terminal MULTIPLES), NOT mean of per-name CAGRs: a 20× winner in the book covers twenty
     // −100% zeros, and a name that goes to 0 contributes its full weight lost (1/N), not its scary CAGR.
     // Also count "zeros ridden" (names ≤−90% you must hold through) to show the no-sell tail you survive.
+    let mut m10: Option<f64> = None; // top-10 mean terminal multiple, feeds the after-tax footer below
     for n in [1usize, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50] {
         let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
         let (mut zeros, mut held) = (0usize, 0usize);
         let mut zero_names: Vec<String> = Vec::new(); // (#zeros) names ≤−90% at top-10 -> union across horizons = true distinct death count
+        let mut multiples: Vec<f64> = Vec::new();
         for (b, v) in &by_bucket {
             let mut vv = v.clone();
             vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc
@@ -671,6 +679,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             let p = &vv[..take];
             let book_cum = mean(&p.iter().map(|x| 1.0 + x.1 / 100.0).collect::<Vec<_>>()); // equal-weight terminal multiple
             let spy_cum = mean(&p.iter().map(|x| 1.0 + x.2 / 100.0).collect::<Vec<_>>());
+            multiples.push(book_cum);
             book.push(ann((book_cum - 1.0) * 100.0, years));
             spy.push(ann((spy_cum - 1.0) * 100.0, years));
             excess.push(*book.last().unwrap() - *spy.last().unwrap());
@@ -687,6 +696,9 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         if m == 0 {
             continue;
         }
+        if n == 10 {
+            m10 = Some(mean(&multiples));
+        }
         let win = excess.iter().filter(|e| **e > 0.0).count() as f64 / m as f64 * 100.0;
         let worst = excess.iter().cloned().fold(f64::INFINITY, f64::min);
         let cut = m / 2;
@@ -696,8 +708,32 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             mean(&book), mean(&spy), mean(&excess)
         );
     }
+    // (Phase B) the never-sell tax edge, made visible: a hold pays capital-gains ONCE at the final
+    // sale, a yearly-rotation strategy on the SAME pre-tax path pays tax on each year's gain.
+    if let Some(m) = m10.filter(|m| *m > 1.0) {
+        let (never, rot) = after_tax_pair(m, years, CAPITAL_GAINS_TAX);
+        println!(
+            "  after-tax ({:.0}% PT, top-10 book): never-sell {never:+.1}%/yr vs yearly-rotation {rot:+.1}%/yr -> deferral edge {:+.1} pts/yr",
+            CAPITAL_GAINS_TAX * 100.0,
+            never - rot
+        );
+    }
     println!("  (BOOK = equal-weight terminal wealth annualized (winners carry it, a zero costs its 1/N weight); >0 beats S&P500.");
     println!("   NON-stress: picks are today's survivors (biased UP) vs the true index — run `stress` for the honest excess.)");
+}
+
+/// (Phase B) PT capital-gains rate; hardcoded — add a knob only if a second rate is ever needed.
+const CAPITAL_GAINS_TAX: f64 = 0.28;
+
+/// After-tax %/yr of (never-sell, yearly-rotation) for the SAME pre-tax terminal multiple `m` over
+/// `years` at gains-tax rate `t`. Never-sell defers to one final sale: net multiple = 1 + (m−1)(1−t).
+/// Rotation realizes each year's gain: after-tax rate = gross annual rate × (1−t) — a simplification
+/// that ignores loss-offset asymmetry, fine for a positive-multiple book.
+fn after_tax_pair(m: f64, years: i64, t: f64) -> (f64, f64) {
+    let y = years.max(1) as f64;
+    let never = ((1.0 + (m - 1.0) * (1.0 - t)).powf(1.0 / y) - 1.0) * 100.0;
+    let rot = (m.powf(1.0 / y) - 1.0) * (1.0 - t) * 100.0;
+    (never, rot)
 }
 
 /// (#43) Equal-weight held-book stats for a given ranking key. `by_bucket`: 6mo-bucket ->
@@ -1760,5 +1796,20 @@ mod tests {
         // each half's relatives net to ~0 (every bucket within it de-meaned to its own peers)
         assert!(train.iter().map(|x| x.relative).sum::<f64>().abs() < 1e-9);
         assert!(test.iter().map(|x| x.relative).sum::<f64>().abs() < 1e-9);
+    }
+
+    /// (Phase B) `after_tax_pair` against hand-computed constants: M=4.0 over 12y at t=0.28.
+    /// Never-sell: net multiple 1+3·0.72=3.16 -> 3.16^(1/12)−1 ≈ +10.06%/yr. Yearly rotation:
+    /// gross 4^(1/12)−1 ≈ 12.25%/yr, ×0.72 ≈ +8.82%/yr. Deferral edge ≈ +1.25 pts/yr — the
+    /// never-sell lever the footer prints. years=0 must clamp to 1 (no div-by-zero / powf(inf)).
+    #[test]
+    fn after_tax_pair_hand_computed() {
+        let (never, rot) = after_tax_pair(4.0, 12, 0.28);
+        assert!((never - 10.063).abs() < 0.01, "never-sell got {never}");
+        assert!((rot - 8.817).abs() < 0.01, "rotation got {rot}");
+        assert!(never > rot); // deferral always wins on a gain
+        let (n2, r2) = after_tax_pair(4.0, 0, 0.28); // years clamps to 1
+        assert!((n2 - 216.0).abs() < 1e-9); // 1+3·0.72=3.16 -> +216%/yr over 1y
+        assert!((r2 - 216.0).abs() < 1e-9); // 4^1−1=300% gross ×0.72 = +216% — same over 1y
     }
 }
