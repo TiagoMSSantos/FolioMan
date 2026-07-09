@@ -1110,6 +1110,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false },
     ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true },
     ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true }, // whole-life %/yr since listing (display; ranking uses the fixed-horizon ladder)
+    ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true }, // whole-life %/yr WITH the dividend sum added (lower-bound total return; ≈ CAGR for Acc/non-payers)
     ColSpec { key: "1h", hdr: "1H", width: 7, right: true },
     ColSpec { key: "6h", hdr: "6H", width: 7, right: true },
     ColSpec { key: "12h", hdr: "12H", width: 7, right: true },
@@ -1133,6 +1134,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true },       // ETF fund size (BF etp_search, EUR-approximate) — sub-scale funds get liquidated/merged mid-hold
     ColSpec { key: "use", hdr: "USE", width: 4, right: false },      // ETF share class: Acc(umulating)/Dist(ributing) — Dist pays out (taxed yearly); Acc compounds tax-deferred
     ColSpec { key: "repl", hdr: "REPL", width: 4, right: false },    // ETF replication: Swap/Full/Opt(imised)/Hybr(id)/Samp(le) — counterparty structure over a decades hold
+    ColSpec { key: "dom", hdr: "DOM", width: 4, right: false },      // ETF legal domicile (ISIN prefix): IE gets the 15% US-dividend withholding treaty, LU eats 30% — ≈ +0.2%/yr on a US/world fund over a decades hold
     ColSpec { key: "rev-yoy", hdr: "REV-YoY", width: 8, right: true }, // newest complete-FY revenue growth vs prior FY (stocks only; report pipeline) — "still growing?"
     ColSpec { key: "eps-yoy", hdr: "EPS-YoY", width: 8, right: true }, // newest complete-FY EPS growth vs prior FY (stocks only) — profit follow-through
     ColSpec { key: "net", hdr: "NET%", width: 6, right: true },      // newest complete-FY net margin level (stocks only) — profitability quality
@@ -1256,6 +1258,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
         // this compound at since listing" headline. Ranking/gates still use the fixed 20/10/5Y ladder,
         // so this cell can differ from the CAGR a gate message quotes.
         "cagr" => quote.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        "trcagr" => quote.tr_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         // span of the CAGR leg (20/10/5) — a "+16% over 20" and a "+16% over 5" are NOT the same
         // conviction; this makes the record length behind the headline number visible per row.
         "yrs" => quote.age_years.map_or("n/a".to_string(), |y| format!("{y:.0}")),
@@ -1304,17 +1307,19 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
         // ETF expense ratio (%/yr). Low is good — a 0.07% index ETF vs a 0.50% active fund is ~18% more
         // wealth over 40y. "—" for stocks/crypto (no expense ratio); "n/a" for an ETF FMP didn't cover.
         "ter" if etf_only_na => "—".to_string(),
-        "ter" => quote.expense_ratio.map_or("n/a".to_string(), |v| format!("{v:.2}%")),
+        "ter" => quote.ter_shown().map_or("n/a".to_string(), |v| format!("{v:.2}%")),
         // ETF fund size (EUR-approximate). Small funds get liquidated/merged — a forced taxable exit
         // mid-hold. "—" for stocks/crypto (not funds); "n/a" for an ETF BF's payload didn't cover.
         "aum" if etf_only_na => "—".to_string(),
-        "aum" => turnover_cell(quote.aum_eur),
+        "aum" => turnover_cell(quote.aum_shown()),
         // ETF share class + replication tokens (BF keyData). Display-only — the price-only CAGR already
         // prices the Dist payout drag, so these inform the BUY (which listing), never the ranking.
         "use" if etf_only_na => "—".to_string(),
         "use" => quote.use_of_profits.map_or("n/a".to_string(), str::to_string),
         "repl" if etf_only_na => "—".to_string(),
         "repl" => quote.replication.map_or("n/a".to_string(), str::to_string),
+        "dom" if etf_only_na => "—".to_string(),
+        "dom" => quote.domicile.clone().unwrap_or_else(|| "n/a".to_string()),
         // newest complete-FY income-statement snapshot (report pipeline; enriched only for displayed
         // stock rows). "—" for ETF/crypto (no income statement); "n/a" = not enriched / no data.
         "rev-yoy" if stock_only_na => "—".to_string(),
@@ -1499,6 +1504,17 @@ pub fn crypto_adjust(quote: &Quote, base: f64, tuning: &BuyHeuristic, cfactor: f
     btc_relative(perf_pct(quote, "1Y"), btc_1y, base * cfactor, tuning.growth_btc_outperf_weight)
 }
 
+/// CORE-shortlist domicile ordering: IE first — the 15% US-dividend withholding treaty vs LU's 30%
+/// ≈ +0.2%/yr on a US/world equity fund over a decades hold, outweighing the single-digit-bp TER
+/// deltas ranked after it. Unknown last: missing data is never rewarded.
+fn dom_rank(q: &Quote) -> u8 {
+    match q.domicile.as_deref() {
+        Some("IE") => 0,
+        Some(_) => 1,
+        None => 2,
+    }
+}
+
 /// Buy-and-hold CORE shortlist — the one-fund-forever holds the momentum SCORE buries at 0.0 (the
 /// overext brake floors a broad index fund that has simply run for years). Built straight from the full
 /// universe, bypassing `growth_score` entirely: keep every `hold_suitable` fund (broad + cheap +
@@ -1511,8 +1527,9 @@ fn print_hold_core(quotes: &[Quote], n: usize) {
     cores.sort_by(|a, b| {
         core::hold_breadth_tier(&a.name)
             .cmp(&core::hold_breadth_tier(&b.name))
-            .then(a.expense_ratio.unwrap_or(9.9).partial_cmp(&b.expense_ratio.unwrap_or(9.9)).unwrap())
-            .then(b.aum_eur.unwrap_or(0.0).partial_cmp(&a.aum_eur.unwrap_or(0.0)).unwrap())
+            .then(dom_rank(a).cmp(&dom_rank(b)))
+            .then(a.ter_shown().unwrap_or(9.9).partial_cmp(&b.ter_shown().unwrap_or(9.9)).unwrap())
+            .then(b.aum_shown().unwrap_or(0.0).partial_cmp(&a.aum_shown().unwrap_or(0.0)).unwrap())
     });
     let mut seen: HashSet<&str> = HashSet::new();
     cores.retain(|q| seen.insert(q.name.as_str())); // one row per fund (VUAA.DE vs VUAA.L), best-ranked kept
@@ -1529,24 +1546,25 @@ fn print_hold_core(quotes: &[Quote], n: usize) {
     }
     println!(
         "\nbuy-and-hold CORE — broad one-fund-forever holds (the momentum ranking buries these at 0.0; \
-         ranked by breadth → cheapest TER → largest AUM, NOT advice):"
+         ranked by breadth → domicile (IE first, withholding) → cheapest TER → largest AUM, NOT advice):"
     );
-    println!("  {:<38} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4}", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL");
+    println!("  {:<38} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
     for q in cores.iter().take(n) {
         let cagr = q.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%"));
         let yrs = q.age_years.map_or("—".to_string(), |a| format!("{a:.0}"));
-        let ter = q.expense_ratio.map_or("n/a".to_string(), |t| format!("{t:.2}%"));
+        let ter = q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%"));
         println!(
-            "  {:<38} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4}",
+            "  {:<38} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}",
             truncate(&q.name, 38),
             truncate(&q.ticker, 9),
             truncate(&q.market, 9),
             cagr,
             yrs,
             ter,
-            turnover_cell(q.aum_eur),
+            turnover_cell(q.aum_shown()),
             q.use_of_profits.unwrap_or("—"),
             q.replication.unwrap_or("—"),
+            q.domicile.as_deref().unwrap_or("n/a"),
         );
     }
 }
@@ -1832,6 +1850,23 @@ mod tests {
         assert_eq!(col_cell("repl", &eq, 0.0, ""), "Swap");
         assert_eq!(col_cell("use", &cq, 0.0, ""), "—");
         assert_eq!(col_cell("repl", &cq, 0.0, ""), "—");
+        // (DOM) same per-class gating as USE/REPL; ETF prints its ISIN-prefix country
+        assert_eq!(col_cell("dom", &eq, 0.0, ""), "n/a");
+        eq.domicile = Some("IE".to_string());
+        assert_eq!(col_cell("dom", &eq, 0.0, ""), "IE");
+        assert_eq!(col_cell("dom", &cq, 0.0, ""), "—");
+        // (TR-CAGR) display-only lower-bound total return; stub -> n/a
+        assert_eq!(col_cell("trcagr", &q, 0.0, ""), "n/a");
+        eq.tr_cagr = Some(16.4);
+        assert_eq!(col_cell("trcagr", &eq, 0.0, ""), "+16%");
+        // (DOM) CORE ordering: IE beats any other known domicile, unknown sorts last —
+        // withholding (~0.2%/yr) outranks TER deltas, so the sort applies dom_rank BEFORE TER
+        let mut ie = Quote::stub("A", "€1", "", "f");
+        ie.domicile = Some("IE".to_string());
+        let mut lu = Quote::stub("B", "€1", "", "f");
+        lu.domicile = Some("LU".to_string());
+        let unk = Quote::stub("C", "€1", "", "f");
+        assert!(dom_rank(&ie) < dom_rank(&lu) && dom_rank(&lu) < dom_rank(&unk));
         // (REV-YoY/EPS-YoY/NET%) stock-only FY snapshot: stock prints signed %s / margin level, an
         // un-enriched stock -> n/a, ETF/crypto -> — (no income statement)
         let mut st = Quote::stub("S", "€1", "", "Co");
@@ -1889,11 +1924,15 @@ mod tests {
             fund_factor: None,     // (G) default off; the fund-tilt asserts set it explicitly
             age_years: None,       // display-only pair; never scored
             life_cagr: None,
+            tr_cagr: None,         // (TR-CAGR) display-only; never scored
             history_proxied: false, // display-only marker; never scored
             aum_eur: None,          // (AUM) fund-size gate inert by default; its tests set it explicitly
+            ter_fallback: None,     // Yahoo facts fallback pair — display/H-CORE only; their tests set them explicitly
+            aum_fallback: None,
             use_of_profits: None,   // (USE) display-only token; never scored
             replication: None,      // (REPL) display-only token; never scored
             benchmark: None,        // twin-hint key only; the hint tests set it explicitly
+            domicile: None,         // (DOM) display + CORE ordering only; its tests set it explicitly
             rev_yoy: None,          // display-only FY snapshot; cell tests set them explicitly
             eps_yoy: None,
             net_margin_fy: None,
@@ -2163,6 +2202,12 @@ mod tests {
     let dear = growth_score(&etf(Some(0.65)), &ter_t).unwrap();
     assert!(undamped > cheap && cheap > dear, "higher TER docks the score more: {undamped} / {cheap} / {dear}");
     assert!((cheap / undamped - 0.999_f64.powi(20)).abs() < 1e-9); // 0.10% TER over 20y ≈ ×0.980
+    // (round 47) THE fallback invariant: Yahoo-sourced facts must never move the score — a first
+    // merged implementation leaked them into ter_damp and shifted live ranks (PEA 3->9).
+    let mut yh = etf(None);
+    yh.ter_fallback = Some(0.65);
+    yh.aum_fallback = Some(5e8);
+    assert_eq!(growth_score(&yh, &ter_t).unwrap(), undamped); // fallback TER invisible to the drag
 
     // --- SCORE (relational, robust to knob tuning) ---
     // trust: same inputs, the one missing a 10Y record scores lower (uptrend less proven)

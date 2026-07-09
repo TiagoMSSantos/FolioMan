@@ -97,11 +97,15 @@ pub struct Quote {
     pub fund_factor: Option<f64>,      // (G) the ONE as-of fundamental factor folded into growth_score (e.g. revenue accel). Set in the backtest (from fund_factors) so the term is ablatable, and live only on the small/check-scale path; None -> neutral (universe screen & price-only backtest)
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history; DISPLAY-ONLY (`cagr` column). Ranking/gates stay on the validated fixed-horizon ladder. None = <6mo history / stub / backtest
+    pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). DISPLAY-ONLY (`trcagr` column), never scored; ≈ life_cagr for Acc funds/non-payers
     pub history_proxied: bool,         // (history_proxy) closes bridged from a configured older same-strategy twin — CAGR/YRS describe the STRATEGY, not this listing; rendered as `~` so the bridge is never invisible
     pub aum_eur: Option<f64>,          // (AUM) fund size from the Börse Frankfurt universe payload, EUR-approximate (BF mixes fund currencies; ±FX is immaterial vs the order-of-magnitude gate). ETFs/ETPs only; None = not a fund / not in BF / backtest -> gate inert
+    pub ter_fallback: Option<f64>,     // Yahoo quoteSummary TER (%) for funds with NO BF facts (venue/regulatory-only rows). Read ONLY via ter_shown() for display + H/CORE — kept out of expense_ratio because ter_damp SCORES that field (a merged run moved live ranks; scoring lane closed)
+    pub aum_fallback: Option<f64>,     // Yahoo quoteSummary totalAssets for the same funds, quote-currency ≈ EUR. Read ONLY via aum_shown() for display + H/CORE — the closure-risk AUM gate stays on BF aum_eur
     pub use_of_profits: Option<&'static str>, // (USE) share class from the same BF row: "Acc"/"Dist". DISPLAY-ONLY — never scored: the price-only CAGR already prices the Dist payout drag (payouts leave the NAV), so Acc twins win by construction
     pub replication: Option<&'static str>,    // (REPL) replication method, same BF row: "Swap"/"Full"/"Opt"/"Hybr"/"Samp". DISPLAY-ONLY counterparty-structure legibility (swap-based US-index funds also legally dodge dividend withholding — why they track so well)
     pub benchmark: Option<String>,     // BF benchmark-index name, lowercased at capture (BF normalizes it: same-index funds share the literal string, hedged classes differ). Used ONLY for history_proxy twin HINTS — never scored, never a match key beyond exact `==`
+    pub domicile: Option<String>,      // (DOM) fund legal domicile from the ISIN prefix ("IE"/"LU"/"DE"…). DISPLAY + CORE-shortlist ordering (IE first: 15% US-dividend withholding treaty vs LU's 30% ≈ +0.2%/yr on a US/world fund) — never scored; None for stocks/crypto, watchlist-only runs and backtest
     pub rev_yoy: Option<f64>,          // newest COMPLETE-fiscal-year revenue growth (%) vs the prior FY, from the same income-statement pipeline `report` prints. DISPLAY-ONLY (stocks) — the fund-factor family measured null for ranking; enriched only for the displayed top rows, None otherwise/backtest
     pub eps_yoy: Option<f64>,          // newest complete-FY EPS growth (%) vs the prior FY. DISPLAY-ONLY, same scoping as rev_yoy
     pub net_margin_fy: Option<f64>,    // newest complete-FY net margin (%). DISPLAY-ONLY, same scoping as rev_yoy
@@ -146,16 +150,32 @@ impl Quote {
             fund_factor: None,
             age_years: None,
             life_cagr: None,
+            tr_cagr: None,
             history_proxied: false,
             aum_eur: None,
+            ter_fallback: None,
+            aum_fallback: None,
             use_of_profits: None,
             replication: None,
             benchmark: None,
+            domicile: None,
             rev_yoy: None,
             eps_yoy: None,
             net_margin_fy: None,
             buyback_yoy: None,
         }
+    }
+
+    /// TER as SHOWN: BF first, Yahoo fallback second. For display cells + the H/CORE flag only —
+    /// never feed this into scoring/gates (they stay on the raw BF `expense_ratio` so momentum ranks
+    /// are byte-identical with pre-fallback runs).
+    pub fn ter_shown(&self) -> Option<f64> {
+        self.expense_ratio.or(self.ter_fallback)
+    }
+
+    /// AUM as SHOWN: BF first, Yahoo fallback second. Same display/H-CORE-only stance as `ter_shown`.
+    pub fn aum_shown(&self) -> Option<f64> {
+        self.aum_eur.or(self.aum_fallback)
     }
 }
 
@@ -564,13 +584,18 @@ fn is_broad_index_name(name: &str) -> bool {
     const BROAD: [&str; 5] = ["s&p 500", "msci world", "ftse all-world", "all-country", "acwi"];
     // sector/thematic/tilt tokens that disqualify a plain broad core: single sectors (Nasdaq-100 is a
     // tech concentration), regional exclusions ("World ex USA" is a bet, not the whole market), ESG/SRI
-    // screens (a filtered subset), and factor tilts (value/momentum/quality/min-vol/equal-weight).
-    const NARROW: [&str; 30] = [
+    // screens (a filtered subset), factor tilts (value/momentum/quality/min-vol/equal-weight), and
+    // currency-hedged classes (hedge-cost drag ≈ the interest-rate differential/yr — not the canonical hold).
+    // "minimum vol" + " pab": live CORE receipts — funds spell the tilt out ("MSCI World Minimum
+    // Volatility") or abbreviate the ESG screen ("MSCI World PAB" = Paris-Aligned Benchmark), and the
+    // "min vol"/"paris" tokens miss both. " pab" keeps its leading space so a name merely containing
+    // the letters (e.g. a provider string) can't false-positive.
+    const NARROW: [&str; 33] = [
         "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
         "sector", "select", "nasdaq", "small", "mid cap", "communicat", "biotech",
         "world ex", "acwi ex", "ex-usa", "esg", "sri ", "socially responsible", "screened",
-        "sustainab", "paris", "climate", "islamic", "value", "momentum", "quality", "equal weight",
-        "min vol",
+        "sustainab", "paris", " pab", "climate", "islamic", "value", "momentum", "quality",
+        "equal weight", "min vol", "minimum vol", "hedged",
     ];
     BROAD.iter().any(|t| n.contains(t)) && !NARROW.iter().any(|t| n.contains(t))
 }
@@ -594,16 +619,17 @@ pub fn hold_breadth_tier(name: &str) -> u8 {
 /// index + cheap + physical + accumulating + large + EU-domiciled, all read from facts already on the
 /// row (no fetch, no scoring). The numeric legs (Acc / Full / AUM Some) only hold on BF-fund rows, so
 /// stocks/crypto and factless venue funds return false naturally.
-/// ponytail: name-based heuristic; "ucits" stands in for EU domicile (no ISIN on Quote to read the
-/// real country). Add an ISIN domicile leg only if a non-UCITS or non-IE/LU broad fund ever
-/// leaks/misses the flag.
+/// The "ucits" name token gates UCITS-ness (the wrapper), while the real country now rides
+/// `Quote.domicile` (ISIN prefix) and orders the CORE shortlist. Deliberately NO domicile hard gate
+/// here: watchlist-only runs have `domicile: None` and missing data must not kill the flag — the
+/// same stance as the AUM gate.
 pub fn hold_suitable(q: &Quote) -> bool {
     is_broad_index_name(&q.name)
         && q.name.to_lowercase().contains("ucits")
-        && q.expense_ratio.is_some_and(|t| t <= 0.25) // 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the canonical one-fund hold — qualifies; below that is S&P/World territory (0.03–0.20%)
+        && q.ter_shown().is_some_and(|t| t <= 0.25) // 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the canonical one-fund hold — qualifies; below that is S&P/World territory (0.03–0.20%). ter_shown: Yahoo fallback counts here (display-side flag), the score does NOT see it
         && q.replication == Some("Full")
         && q.use_of_profits == Some("Acc")
-        && q.aum_eur.is_some_and(|a| a >= 1e9)
+        && q.aum_shown().is_some_and(|a| a >= 1e9)
 }
 
 /// Pick the newest FULINS_C download link out of a FIRDS registry payload. Handles both registry
@@ -1739,6 +1765,21 @@ mod tests {
     assert!(!hold("Apple", None, None, None, None)); // a stock -> false
     assert!(hold("Vanguard FTSE All-World UCITS ETF USD Acc", Some(0.22), Some("Full"), Some("Acc"), Some(15e9))); // VWCE: 0.22% all-world under the 0.25 cap
     assert!(!hold("Vanguard FTSE All-World UCITS ETF USD Acc", Some(0.30), Some("Full"), Some("Acc"), Some(15e9))); // 0.30% too dear for a core
+    assert!(!hold("iShares MSCI World EUR Hedged UCITS ETF Acc", Some(0.20), Some("Full"), Some("Acc"), Some(5e9))); // hedged class: hedge-cost drag, not the canonical core
+    assert!(!hold("Xtrackers MSCI World Minimum Volatility UCITS ETF", Some(0.25), Some("Full"), Some("Acc"), Some(1.1e9))); // spelled-out factor tilt (live CORE receipt)
+    assert!(!hold("BNP PARIBAS EASY II MSCI World PAB UCITS ETF Acc", Some(0.20), Some("Full"), Some("Acc"), Some(1.5e9))); // PAB = Paris-Aligned Benchmark, an ESG screen (live CORE receipt)
+
+    // (round 47) Yahoo fallback facts count for the H flag via ter_shown/aum_shown — a venue fund with
+    // no BF TER/AUM but Yahoo facts qualifies; BF stays authoritative when both are present.
+    let mut q = Quote::stub("X", "", "", "Vanguard S&P 500 UCITS ETF USD Acc");
+    q.replication = Some("Full");
+    q.use_of_profits = Some("Acc");
+    q.ter_fallback = Some(0.07);
+    q.aum_fallback = Some(5e9);
+    assert!(hold_suitable(&q));
+    q.expense_ratio = Some(0.30); // BF answers dear -> fallback must NOT mask it
+    assert_eq!(q.ter_shown(), Some(0.30));
+    assert!(!hold_suitable(&q));
 
     // hold_breadth_tier: broadest (all-world/ACWI) sorts first, S&P 500 last
     assert_eq!(hold_breadth_tier("Vanguard FTSE All-World UCITS ETF"), 0);

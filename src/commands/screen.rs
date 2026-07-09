@@ -128,7 +128,7 @@ pub async fn run(args: Vec<String>) {
     // finding them one row at a time. Counts by asset class so a stock with no P/E or an ETF with no TER
     // is visible at a glance.
     let stocks_no_pe = quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY") && q.pe_ratio.is_none()).count();
-    let etfs_no_ter = quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("ETF") && q.expense_ratio.is_none()).count();
+    let etfs_no_ter = quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("ETF") && q.ter_shown().is_none()).count();
     println!(
         "Data quality: {} names | {stocks_no_pe} stocks missing P/E | {etfs_no_ter} ETFs missing TER | {} stale dropped (>{}d)",
         quotes.len(), fresh_before - quotes.len(), settings.stale_days

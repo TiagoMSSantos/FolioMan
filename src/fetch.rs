@@ -402,6 +402,16 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         }
         _ => None,
     };
+    // (TR-CAGR) same endpoints + the whole-life dividend sum: closes are price-only, so a payer's CAGR
+    // hides the cash it returned. LOWER BOUND — the payout is added, not reinvested (true total return
+    // with reinvestment compounds higher). Display-only, same guards as life_cagr; ≈ CAGR for Acc funds.
+    let tr_cagr = match (long_closes.first(), long_closes.last(), age_years) {
+        (Some(&first), Some(&last), Some(age)) if first > 0.0 && age >= 0.5 => {
+            let divs_sum: f64 = long_divs.iter().map(|(_, d)| d).sum();
+            Some((((last + divs_sum) / first).powf(1.0 / age) - 1.0) * 100.0)
+        }
+        _ => None,
+    };
 
     let cur_close = *chart.closes.last().unwrap();
     let rate = eur_rate(client, urls, &chart.currency, fx_cache).await;
@@ -476,9 +486,14 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         expense_ratio: ter,
         // (AUM) fund size from the BF universe payload (ETFs/ETPs only; None -> gate inert, n/a column).
         aum_eur,
+        // (round 47) Yahoo quoteSummary facts for funds WITHOUT BF facts — display/H-flag only via
+        // ter_shown()/aum_shown(); the scored fields above stay BF-only so ranks don't move.
+        ter_fallback: if is_etf { yh_ter_exact(ticker) } else { None },
+        aum_fallback: if is_etf { yh_aum_exact(ticker) } else { None },
         use_of_profits: meta.use_of,
         replication: meta.repl,
         benchmark: meta.bench,
+        domicile: meta.dom,
         // (REV-YoY/EPS-YoY/NET%/BUYBK) filled later by enrich_income_stmt for the DISPLAYED stock rows only
         rev_yoy: None,
         eps_yoy: None,
@@ -497,6 +512,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         fund_factor: None, // (G) live screen leaves this None (neutral); only the small/check-scale path (A3) populates it
         age_years,
         life_cagr,
+        tr_cagr,
         history_proxied,
     }
 }
@@ -721,6 +737,11 @@ const REGULATORY_ISINS_PATH: &str = ".regulatory_isins.json";
 /// Only regulatory-sourced (speculative) ISINs land here — venue-list misses keep retrying every
 /// run (round-36 flakiness lesson) — see the resolution block in `fetch_xetra_etfs`.
 const ISIN_NEG_CACHE_PATH: &str = ".isin_negative_cache.json";
+
+/// Weekly Yahoo quoteSummary fund facts (`{sym: ["YYYY-MM-DD", ter%|null, aum|null]}`) for funds
+/// whose BF facts are missing — see `yahoo_fund_facts_fill`. Both-None rows are cached too, so a
+/// factless fund costs one request a week, not one per run.
+const FUND_FACTS_CACHE_PATH: &str = ".fund_facts_cache.json";
 
 /// (G) One FMP income-statement row -> FundRow. Margins are derived (FMP's free tier doesn't serve the
 /// ratios endpoint), so gross/op/net margin = the matching income line / revenue. `filingDate` (when
@@ -1291,6 +1312,24 @@ static BF_AUM: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::
 /// (lowercased BF fund name, AUM) for ALL BF rows — same name-keyed fallback role as `BF_TER_NAMES`.
 static BF_AUM_NAMES: std::sync::OnceLock<Vec<(String, f64)>> = std::sync::OnceLock::new();
 
+/// Yahoo quoteSummary TER fallback for funds with NO BF facts (see `yahoo_fund_facts_fill`). Kept
+/// OUT of `BF_TER` on purpose: `Quote.expense_ratio` feeds the score's ter_damp, and filling it from
+/// a second source moved live ranks — these are display/H-flag facts only (`Quote.ter_fallback`).
+static YH_TER: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
+
+/// Yahoo quoteSummary AUM fallback — same display-only stance as `YH_TER` (`Quote.aum_fallback`;
+/// the closure-risk AUM gate keeps reading BF-only `aum_eur`).
+static YH_AUM: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
+
+/// Exact-symbol Yahoo-fallback lookups — the fill is keyed by the resolved Yahoo symbol the quote
+/// fetch itself uses, so no stem/name tiers are needed.
+fn yh_ter_exact(ticker: &str) -> Option<f64> {
+    YH_TER.get().and_then(|m| m.get(ticker)).copied()
+}
+fn yh_aum_exact(ticker: &str) -> Option<f64> {
+    YH_AUM.get().and_then(|m| m.get(ticker)).copied()
+}
+
 /// Per-row BF keyData facts: share-class + replication tokens ("Acc"/"Dist"; "Swap"/"Full"/"Opt"/
 /// "Hybr"/"Samp") and the benchmark-index name (lowercased at capture so twin matching is one `==`;
 /// BF normalizes it — same-index funds carry the literal same string, hedged classes differ).
@@ -1299,6 +1338,10 @@ pub struct BfMeta {
     pub use_of: Option<&'static str>,
     pub repl: Option<&'static str>,
     pub bench: Option<String>,
+    /// (DOM) fund legal domicile = first 2 ISIN chars ("IE"/"LU"/"DE"…), set where the ISIN is in hand
+    /// (BF rows AND venue/regulatory-only funds — every source is ISIN-keyed). Display + CORE-shortlist
+    /// ordering only, never scored. Withholding stakes: IE gets the 15% US-dividend treaty, LU eats 30%.
+    pub dom: Option<String>,
 }
 
 /// Resolved-Yahoo-symbol -> share-class/replication tokens, captured from the SAME etp_search row as
@@ -1325,6 +1368,170 @@ fn bf_by_name<T: Clone>(list: &std::sync::OnceLock<Vec<(String, T)>>, name: &str
 
 fn bf_ter_by_name(name: &str) -> Option<f64> {
     bf_by_name(&BF_TER_NAMES, name)
+}
+
+/// First 2 ISIN chars = the fund's legal domicile country code. Defensive slice: upstream ISINs are
+/// shape-checked (`core::is_isin`), but a short string must yield None, never panic.
+fn isin_domicile(isin: &str) -> Option<String> {
+    isin.get(..2).map(|p| p.to_ascii_uppercase())
+}
+
+/// Yahoo cookie+crumb pair for the query2 quoteSummary API (required since 2023). Fetched once per
+/// process, best-effort: a race just repeats the two-request handshake, first `set` wins.
+/// ponytail: endpoints hardcoded — lift into `Urls` only if a test ever needs to stub them.
+static YQ_AUTH: std::sync::OnceLock<Option<(String, String)>> = std::sync::OnceLock::new();
+async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
+    if let Some(v) = YQ_AUTH.get() {
+        return v.clone();
+    }
+    let v: Option<(String, String)> = async {
+        // fc.yahoo.com answers 404 but SETS the session cookie — keep the pairs, drop the attributes.
+        let resp = client.get("https://fc.yahoo.com").header("User-Agent", "Mozilla/5.0").send().await.ok()?;
+        let cookie = resp
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|h| h.to_str().ok()?.split(';').next().map(str::to_string))
+            .collect::<Vec<_>>()
+            .join("; ");
+        if cookie.is_empty() {
+            return None;
+        }
+        let crumb = client
+            .get("https://query2.finance.yahoo.com/v1/test/getcrumb")
+            .header("Cookie", &cookie)
+            .header("User-Agent", "Mozilla/5.0")
+            .send()
+            .await
+            .ok()?
+            .text()
+            .await
+            .ok()?;
+        // a real crumb is a short opaque token; an error comes back as a JSON body
+        (!crumb.is_empty() && !crumb.contains('{')).then_some((cookie, crumb))
+    }
+    .await;
+    let _ = YQ_AUTH.set(v.clone());
+    v
+}
+
+/// Pull (TER %, AUM) out of one Yahoo quoteSummary payload. TER arrives as a FRACTION (0.0014 =
+/// 0.14%) -> ×100; a literal 0.0 is Yahoo's "unknown", not a free fund (probe receipt: VUAA.DE came
+/// back 0.0 against its known 0.07%) -> None. AUM = totalAssets in the fund's quote currency,
+/// umbrella-level — treated EUR-approximate like BF's (order-of-magnitude gate, ±FX immaterial).
+fn parse_yahoo_fund_facts(v: &Value) -> (Option<f64>, Option<f64>) {
+    let Some(r) = v.pointer("/quoteSummary/result/0") else {
+        return (None, None);
+    };
+    let ter = r
+        .pointer("/fundProfile/feesExpensesInvestment/annualReportExpenseRatio/raw")
+        .and_then(|x| x.as_f64())
+        .filter(|t| *t > 0.0)
+        .map(|t| t * 100.0);
+    let aum = r
+        .pointer("/summaryDetail/totalAssets/raw")
+        .or_else(|| r.pointer("/defaultKeyStatistics/totalAssets/raw"))
+        .and_then(|x| x.as_f64())
+        .filter(|a| *a > 0.0);
+    (ter, aum)
+}
+
+/// (round 47) Second FACTS source: BF's etp_search is the only venue payload carrying TER/AUM, so
+/// Euronext/SIX/regulatory-only funds land factless and print all-n/a cells forever. Fetch the holes
+/// from Yahoo quoteSummary into SEPARATE fallback maps (`YH_TER`/`YH_AUM`) — never merged into the BF
+/// maps, because `expense_ratio`/`aum_eur` feed the SCORE (ter_damp ^20 drag) and the AUM gate: a
+/// first merged run moved live ranks (PEA 3->9, score 7.3->6.8), and the scoring lane is closed.
+/// Fallback facts are DISPLAY + H/CORE only, read via `Quote::ter_shown`/`aum_shown`. Weekly disk
+/// cache + per-run request budget so a cold universe converges over a few runs instead of stampeding
+/// Yahoo. USE/REPL stay BF-only (Yahoo lacks them), so factless venue funds still can't earn the H
+/// flag — the win is honest TER/AUM cells.
+async fn yahoo_fund_facts_fill(
+    client: &reqwest::Client,
+    syms: &[String],
+    bf_ter: &HashMap<String, f64>,
+    bf_aum: &HashMap<String, f64>,
+) -> (HashMap<String, f64>, HashMap<String, f64>) {
+    const BUDGET: usize = 200;
+    type Row = (String, Option<f64>, Option<f64>); // (fetched date, TER %, AUM)
+    let (mut ter_map, mut aum_map) = (HashMap::new(), HashMap::new());
+    let mut cache: HashMap<String, Row> = std::fs::read_to_string(FUND_FACTS_CACHE_PATH)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let today = chrono::Utc::now().date_naive();
+    let fresh = |r: &Row| {
+        NaiveDate::parse_from_str(&r.0, "%Y-%m-%d").is_ok_and(|d| (today - d).num_days() < 7)
+    };
+    let mut todo: Vec<String> = Vec::new();
+    for s in syms {
+        let (miss_ter, miss_aum) = (!bf_ter.contains_key(s), !bf_aum.contains_key(s));
+        if !miss_ter && !miss_aum {
+            continue; // BF already answered — Yahoo is only consulted for the holes
+        }
+        match cache.get(s) {
+            Some(r) if fresh(r) => {
+                if miss_ter {
+                    if let Some(t) = r.1 {
+                        ter_map.insert(s.clone(), t);
+                    }
+                }
+                if miss_aum {
+                    if let Some(a) = r.2 {
+                        aum_map.insert(s.clone(), a);
+                    }
+                }
+            }
+            _ => todo.push(s.clone()),
+        }
+    }
+    todo.truncate(BUDGET);
+    if todo.is_empty() {
+        return (ter_map, aum_map);
+    }
+    let Some((cookie, crumb)) = yahoo_crumb(client).await else {
+        eprintln!("fetch: Yahoo crumb handshake failed — fund-facts fallback skipped this run");
+        return (ter_map, aum_map);
+    };
+    let (cookie_ref, crumb_ref) = (&cookie, &crumb);
+    let fetched: Vec<Option<(String, Option<f64>, Option<f64>)>> = stream::iter(todo)
+        .map(|sym| async move {
+            let url = format!(
+                "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules=fundProfile%2CsummaryDetail%2CdefaultKeyStatistics&crumb={crumb_ref}"
+            );
+            let v = client
+                .get(&url)
+                .header("Cookie", cookie_ref)
+                .header("User-Agent", "Mozilla/5.0")
+                .send()
+                .await
+                .ok()?
+                .json::<Value>()
+                .await
+                .ok()?;
+            let (ter, aum) = parse_yahoo_fund_facts(&v);
+            Some((sym, ter, aum))
+        })
+        .buffer_unordered(fetch_concurrency())
+        .collect()
+        .await;
+    let mut got = 0usize;
+    for (sym, ter, aum) in fetched.into_iter().flatten() {
+        if ter.is_some() || aum.is_some() {
+            got += 1;
+        }
+        if let Some(t) = ter {
+            ter_map.entry(sym.clone()).or_insert(t);
+        }
+        if let Some(a) = aum {
+            aum_map.entry(sym.clone()).or_insert(a);
+        }
+        cache.insert(sym, (today.to_string(), ter, aum)); // both-None cached too: one retry a week
+    }
+    eprintln!("fetch: Yahoo fund-facts fallback filled {got} non-BF funds (weekly cache: {})", cache.len());
+    if let Ok(json) = serde_json::to_string(&cache) {
+        let _ = std::fs::write(FUND_FACTS_CACHE_PATH, json);
+    }
+    (ter_map, aum_map)
 }
 
 /// (AUM) the same 3-tier BF lookup the TER uses (exact resolved symbol -> same-stem cross-venue ->
@@ -1421,7 +1628,9 @@ fn bf_row_meta(row: &Value) -> BfMeta {
     });
     // benchmark: free-text index name, kept as-is (lowercased) — used for same-index twin hints only
     let bench = bf_row_keydata(row, "benchmark").map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
-    BfMeta { use_of, repl, bench }
+    // dom is NOT on the BF row payload path — it's stamped from the ISIN wherever the ISIN is in
+    // hand (name-keyed capture + the resolution closure), so all sources share one derivation.
+    BfMeta { use_of, repl, bench, dom: None }
 }
 
 /// The EU-buyable UCITS ETF universe: ask Börse Frankfurt for the top-`cap` ETFs by turnover (real
@@ -1473,7 +1682,8 @@ pub async fn fetch_xetra_etfs(
                 let _ = BF_META_NAMES.set(
                     arr.iter()
                         .filter_map(|r| {
-                            let m = bf_row_meta(r);
+                            let mut m = bf_row_meta(r);
+                            m.dom = isin_domicile(r.get("isin")?.as_str()?);
                             (m != BfMeta::default())
                                 .then_some((r.pointer("/name/originalValue")?.as_str()?.trim().to_lowercase(), m))
                         })
@@ -1545,7 +1755,10 @@ pub async fn fetch_xetra_etfs(
     // Err(None) = everything else dropped (cached negative, transport error, .SG fallback).
     type Resolved = (String, Option<f64>, Option<f64>, BfMeta, Option<String>);
     let outcomes: Vec<Result<Resolved, Option<String>>> = stream::iter(top)
-        .map(|(isin, ter, aum, meta)| async move {
+        .map(|(isin, ter, aum, mut meta)| async move {
+            // domicile rides the ISIN every source already carries — set it here so BF, venue-list and
+            // regulatory funds all get it, on both the cache-hit and fresh-resolution paths.
+            meta.dom = isin_domicile(&isin);
             if let Some(sym) = cache_ref.get(&isin) {
                 return Ok((sym.clone(), ter, aum, meta, None));
             }
@@ -1635,6 +1848,12 @@ pub async fn fetch_xetra_etfs(
             sym
         })
         .collect();
+    // (round 47) top up missing TER/AUM from Yahoo into the SEPARATE display-only fallback statics —
+    // venue/regulatory-only funds (no BF row -> factless forever) get honest cells; the BF maps that
+    // feed the score/gates stay untouched so momentum ranks are byte-identical with pre-fallback runs.
+    let (yh_ter, yh_aum) = yahoo_fund_facts_fill(client, &tickers, &ter_map, &aum_map).await;
+    let _ = YH_TER.set(yh_ter);
+    let _ = YH_AUM.set(yh_aum);
     let ter_n = ter_map.len();
     let _ = BF_TER.set(ter_map);
     let _ = BF_AUM.set(aum_map);
@@ -2261,6 +2480,44 @@ mod tests {
         let zero_rev = parse_fund_row(&json!({"filingDate": "2022-02-01", "revenue": 0.0, "grossProfit": 10.0})).unwrap();
         assert_eq!(zero_rev.revenue, None);
         assert_eq!(zero_rev.gross_margin, None);
+    }
+
+    /// (round 41) `isin_domicile`: first 2 ISIN chars, uppercased; a too-short string yields None
+    /// instead of panicking (defensive against a malformed venue row).
+    #[test]
+    fn isin_domicile_prefix() {
+        assert_eq!(isin_domicile("IE00B3RBWM25"), Some("IE".to_string()));
+        assert_eq!(isin_domicile("lu0908500753"), Some("LU".to_string()));
+        assert_eq!(isin_domicile("X"), None);
+        assert_eq!(isin_domicile(""), None);
+    }
+
+    /// (round 42) `parse_yahoo_fund_facts` against canned quoteSummary shapes. Yahoo sends TER as a
+    /// FRACTION -> ×100 to percent; a literal 0.0 is its "unknown" sentinel (probe receipt: VUAA.DE
+    /// returned 0.0 against its known 0.07%) -> None, never a free fund. AUM prefers
+    /// summaryDetail.totalAssets, falls back to defaultKeyStatistics.
+    #[test]
+    fn yahoo_fund_facts_parse() {
+        use serde_json::json;
+        // XLKS.L-shape: real TER fraction + summaryDetail assets
+        let ok = json!({"quoteSummary": {"result": [{
+            "fundProfile": {"feesExpensesInvestment": {"annualReportExpenseRatio": {"raw": 0.0014}}},
+            "summaryDetail": {"totalAssets": {"raw": 2.42e9}}
+        }]}});
+        let (ter, aum) = parse_yahoo_fund_facts(&ok);
+        assert!((ter.unwrap() - 0.14).abs() < 1e-9); // fraction 0.0014 -> 0.14%
+        assert_eq!(aum, Some(2.42e9));
+        // VUAA.DE-shape: raw 0.0 = "unknown" -> None; assets only under defaultKeyStatistics
+        let zero_ter = json!({"quoteSummary": {"result": [{
+            "fundProfile": {"feesExpensesInvestment": {"annualReportExpenseRatio": {"raw": 0.0}}},
+            "defaultKeyStatistics": {"totalAssets": {"raw": 5.0e8}}
+        }]}});
+        let (ter, aum) = parse_yahoo_fund_facts(&zero_ter);
+        assert_eq!(ter, None);
+        assert_eq!(aum, Some(5.0e8));
+        // empty result / malformed -> (None, None), never panics
+        assert_eq!(parse_yahoo_fund_facts(&json!({})), (None, None));
+        assert_eq!(parse_yahoo_fund_facts(&json!({"quoteSummary": {"result": []}})), (None, None));
     }
 }
 

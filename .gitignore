@@ -39,3 +39,5 @@ config/settings.yaml
 .regulatory_isins.json
 # definitive Yahoo "no such ISIN" answers for regulatory-sourced ISINs (30-day TTL)
 .isin_negative_cache.json
+# weekly Yahoo quoteSummary TER/AUM for funds missing BF facts
+.fund_facts_cache.json
