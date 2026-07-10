@@ -579,7 +579,7 @@ pub fn euronext_track_isins(payload: &Value) -> Vec<String> {
 /// so "S&P 500 Information Technology" (has "s&p 500" but also "information"/"technolog") is
 /// correctly NOT broad, while "Vanguard S&P 500 UCITS ETF" is. Name-token heuristic — lowercased,
 /// substring match, same style as the venue-list funnels above.
-fn is_broad_index_name(name: &str) -> bool {
+pub fn is_broad_index_name(name: &str) -> bool {
     let n = name.to_lowercase();
     const BROAD: [&str; 5] = ["s&p 500", "msci world", "ftse all-world", "all-country", "acwi"];
     // sector/thematic/tilt tokens that disqualify a plain broad core: single sectors (Nasdaq-100 is a
@@ -624,12 +624,40 @@ pub fn hold_breadth_tier(name: &str) -> u8 {
 /// here: watchlist-only runs have `domicile: None` and missing data must not kill the flag — the
 /// same stance as the AUM gate.
 pub fn hold_suitable(q: &Quote) -> bool {
-    is_broad_index_name(&q.name)
-        && q.name.to_lowercase().contains("ucits")
-        && q.ter_shown().is_some_and(|t| t <= 0.25) // 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the canonical one-fund hold — qualifies; below that is S&P/World territory (0.03–0.20%). ter_shown: Yahoo fallback counts here (display-side flag), the score does NOT see it
-        && q.replication == Some("Full")
-        && q.use_of_profits == Some("Acc")
-        && q.aum_shown().is_some_and(|a| a >= 1e9)
+    hold_miss_reason(q).is_none()
+}
+
+/// (round 49) The FIRST hold-core leg this quote fails, as a printable reason — None = passes all
+/// (i.e. `hold_suitable`). Single source of truth: hold_suitable IS this function's is_none(), so
+/// the H flag and the printed reason can never disagree. Leg order = cheapest check first, and the
+/// TER cap note lives here: 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the canonical one-fund
+/// hold — qualifies; below that is S&P/World territory (0.03–0.20%). ter_shown/aum_shown: Yahoo
+/// fallback counts here (display-side flag), the score does NOT see it.
+pub fn hold_miss_reason(q: &Quote) -> Option<String> {
+    if !is_broad_index_name(&q.name) {
+        return Some("not a broad-index name (sector/thematic/factor tilt)".into());
+    }
+    if !q.name.to_lowercase().contains("ucits") {
+        return Some("no UCITS token in the name".into());
+    }
+    match q.ter_shown() {
+        None => return Some("TER unknown".into()),
+        Some(t) if t > 0.25 => return Some(format!("TER {t:.2}% > 0.25% cap")),
+        _ => {}
+    }
+    if q.replication != Some("Full") {
+        return Some(format!("replication {} (needs Full)", q.replication.unwrap_or("unknown")));
+    }
+    if q.use_of_profits != Some("Acc") {
+        return Some(format!("share class {} (needs Acc)", q.use_of_profits.unwrap_or("unknown")));
+    }
+    if !q.aum_shown().is_some_and(|a| a >= 1e9) {
+        return Some(match q.aum_shown() {
+            Some(a) => format!("AUM €{:.1}B < €1B floor", a / 1e9),
+            None => "AUM unknown".into(),
+        });
+    }
+    None
 }
 
 /// Pick the newest FULINS_C download link out of a FIRDS registry payload. Handles both registry
@@ -1780,6 +1808,25 @@ mod tests {
     q.expense_ratio = Some(0.30); // BF answers dear -> fallback must NOT mask it
     assert_eq!(q.ter_shown(), Some(0.30));
     assert!(!hold_suitable(&q));
+
+    // (round 49) hold_miss_reason: first failing leg, printable; None == hold_suitable by construction
+    let miss = |name: &str, ter: Option<f64>, repl: Option<&'static str>, use_: Option<&'static str>, aum: Option<f64>| {
+        let mut q = Quote::stub("X", "", "", name);
+        q.expense_ratio = ter;
+        q.replication = repl;
+        q.use_of_profits = use_;
+        q.aum_eur = aum;
+        hold_miss_reason(&q)
+    };
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF USD Acc", Some(0.07), Some("Full"), Some("Acc"), Some(28.8e9)), None); // VUAA passes all
+    assert_eq!(miss("Amundi Nasdaq-100 UCITS ETF", Some(0.22), Some("Full"), Some("Acc"), Some(5.8e9)).as_deref(), Some("not a broad-index name (sector/thematic/factor tilt)"));
+    assert_eq!(miss("Vanguard S&P 500 ETF", Some(0.03), Some("Full"), Some("Acc"), Some(2e9)).as_deref(), Some("no UCITS token in the name"));
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF", None, Some("Full"), Some("Acc"), Some(2e9)).as_deref(), Some("TER unknown"));
+    assert_eq!(miss("Vanguard FTSE All-World UCITS ETF", Some(0.30), Some("Full"), Some("Acc"), Some(15e9)).as_deref(), Some("TER 0.30% > 0.25% cap"));
+    assert_eq!(miss("Amundi S&P 500 Swap UCITS ETF", Some(0.15), Some("Swap"), Some("Acc"), Some(2.6e9)).as_deref(), Some("replication Swap (needs Full)")); // AUM5
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF", Some(0.07), Some("Full"), Some("Dist"), Some(2e9)).as_deref(), Some("share class Dist (needs Acc)"));
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(0.3e9)).as_deref(), Some("AUM €0.3B < €1B floor"));
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), None).as_deref(), Some("AUM unknown"));
 
     // hold_breadth_tier: broadest (all-world/ACWI) sorts first, S&P 500 last
     assert_eq!(hold_breadth_tier("Vanguard FTSE All-World UCITS ETF"), 0);

@@ -1522,7 +1522,7 @@ fn dom_rank(q: &Quote) -> u8 {
 /// a decades hold actually cares about — broadest diversification first (one fund = the whole world),
 /// then cheapest TER, then largest AUM (least closure risk). Pure display; touches no score, no gate,
 /// no backtest. Scoped to the wide `screen` universe (empty on the small `check` watchlist anyway).
-fn print_hold_core(quotes: &[Quote], n: usize) {
+fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
     let mut cores: Vec<&Quote> = quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)).collect();
     cores.sort_by(|a, b| {
         core::hold_breadth_tier(&a.name)
@@ -1566,6 +1566,22 @@ fn print_hold_core(quotes: &[Quote], n: usize) {
             q.replication.unwrap_or("—"),
             q.domicile.as_deref().unwrap_or("n/a"),
         );
+    }
+    // (round 49) tier-0 hole made visible: the venue lists carry all-world funds, but without facts
+    // (TER/AUM) none can qualify — the documented ceiling was silent until now.
+    if per_tier[0] == 0 {
+        println!("  (no all-world/ACWI fund with facts qualified — pin one, e.g. VWCE.DE, to surface it)");
+    }
+    // (round 49) pinned near-H: a watchlist fund that IS a broad core candidate but misses the H flag —
+    // say the first failing leg (single source of truth: core::hold_miss_reason == !hold_suitable),
+    // same posture as the gate-review footer. Bounded by watchlist size.
+    let near: Vec<&Quote> = quotes.iter()
+        .filter(|q| pinned.contains(q.ticker.as_str()) && quote_is_etf(q) && core::is_broad_index_name(&q.name))
+        .collect();
+    for q in near {
+        if let Some(reason) = core::hold_miss_reason(q) {
+            println!("  {:<9} not hold-core: {reason}", truncate(&q.ticker, 9));
+        }
     }
 }
 
@@ -1623,7 +1639,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     // buy-and-hold CORE shortlist: momentum floors broad index funds at 0.0, so surface the
     // one-fund-forever holds from the full universe here (display-only). Only on the wide `screen`.
     if quotes.len() > 200 {
-        print_hold_core(quotes, 9); // up to 3 per breadth tier (all-world / world / S&P 500)
+        print_hold_core(quotes, 9, &pinned_set); // up to 3 per breadth tier (all-world / world / S&P 500)
     }
     // gate review: pinned names are shown in their table even when a gate rejects them (score 0.0).
     // Say WHICH gate, so a 0.0 next to strong metrics isn't mistaken for a bug (VVSM stretch, VUAA/

@@ -368,7 +368,13 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     let aum_eur = if is_etf { bf_aum(ticker, &chart.name) } else { bf_aum_exact(ticker) };
     // (USE/REPL/bench) share-class + replication tokens + benchmark index, same BF payload —
     // display columns + history_proxy twin hints, never scored.
-    let meta = if is_etf { bf_meta(ticker, &chart.name) } else { BfMeta::default() };
+    let mut meta = if is_etf { bf_meta(ticker, &chart.name) } else { BfMeta::default() };
+    // (round 49) USE fallback from the listing name when BF is silent (venue/regulatory funds carry
+    // no BF row): UCITS names spell the share class as a word token ("… USD (Acc)"). BF stays
+    // authoritative via or_else. Display-only; H still requires BF Full replication, so no H flips.
+    if is_etf {
+        meta.use_of = meta.use_of.or_else(|| use_from_name(&chart.name));
+    }
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
     // long dividend sums populate for old names. Prepend only the monthly bars that predate the daily
@@ -1329,7 +1335,6 @@ fn yh_ter_exact(ticker: &str) -> Option<f64> {
 fn yh_aum_exact(ticker: &str) -> Option<f64> {
     YH_AUM.get().and_then(|m| m.get(ticker)).copied()
 }
-
 /// Per-row BF keyData facts: share-class + replication tokens ("Acc"/"Dist"; "Swap"/"Full"/"Opt"/
 /// "Hybr"/"Samp") and the benchmark-index name (lowercased at capture so twin matching is one `==`;
 /// BF normalizes it — same-index funds carry the literal same string, hedged classes differ).
@@ -1631,6 +1636,21 @@ fn bf_row_meta(row: &Value) -> BfMeta {
     // dom is NOT on the BF row payload path — it's stamped from the ISIN wherever the ISIN is in
     // hand (name-keyed capture + the resolution closure), so all sources share one derivation.
     BfMeta { use_of, repl, bench, dom: None }
+}
+
+/// (round 49) Share-class token from the LISTING NAME, the fallback for funds with no BF row
+/// (venue/regulatory sources ship name-only). Word-split kills substring false positives
+/// ("Vaccine" ≠ "acc"). Unknown wording -> None (honest n/a), same stance as bf_row_meta.
+fn use_from_name(name: &str) -> Option<&'static str> {
+    let lower = name.to_lowercase();
+    let word = |t: &[&str]| lower.split(|c: char| !c.is_alphanumeric()).any(|w| t.contains(&w));
+    if word(&["acc", "accumulating"]) {
+        Some("Acc")
+    } else if word(&["dist", "distributing"]) {
+        Some("Dist")
+    } else {
+        None
+    }
 }
 
 /// The EU-buyable UCITS ETF universe: ask Börse Frankfurt for the top-`cap` ETFs by turnover (real
@@ -2246,6 +2266,18 @@ mod tests {
         let drift = serde_json::json!({"keyData": {"useOfProfits": {"translations": {"en": "Reinvesting"}}}});
         assert_eq!(bf_row_meta(&drift), BfMeta::default()); // unknown wording -> blank, not a guess
         assert_eq!(bf_row_meta(&serde_json::json!({})), BfMeta::default()); // no keyData at all
+    }
+
+    /// (round 49) USE-from-name fallback: word token only ("Vaccine" must not read as "acc"),
+    /// Acc checked before Dist, unknown wording -> None.
+    #[test]
+    fn use_from_name_tokens() {
+        assert_eq!(use_from_name("Vanguard S&P 500 UCITS ETF USD (Acc)"), Some("Acc"));
+        assert_eq!(use_from_name("iShares Core MSCI World UCITS ETF USD Accumulating"), Some("Acc"));
+        assert_eq!(use_from_name("Vanguard FTSE All-World UCITS ETF Dist"), Some("Dist"));
+        assert_eq!(use_from_name("SPDR S&P Global Dividend Aristocrats Distributing"), Some("Dist"));
+        assert_eq!(use_from_name("VanEck Vaccine and Genomics UCITS ETF"), None); // substring trap
+        assert_eq!(use_from_name("Xtrackers MSCI World UCITS ETF 1C"), None); // no token -> honest n/a
     }
 
     /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but
