@@ -1671,6 +1671,91 @@ async fn yahoo_fund_facts_fill(
     (ter_map, aum_map)
 }
 
+/// (round 56) Top-10 holdings out of one Yahoo quoteSummary `topHoldings` payload: the underlying
+/// symbol when present, else the holding name, uppercased so the same stock matches across funds.
+fn parse_top_holdings(v: &Value) -> Vec<String> {
+    v.pointer("/quoteSummary/result/0/topHoldings/holdings")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .take(10)
+                .filter_map(|h| {
+                    h.pointer("/symbol")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| h.pointer("/holdingName").and_then(Value::as_str))
+                        .map(str::to_uppercase)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// (round 56) Weekly `{sym: ["YYYY-MM-DD", [holdings...]]}` cache for `yahoo_top_holdings`; empty
+/// lists are cached too, so a fund Yahoo has no holdings for costs one request a week.
+const HOLDINGS_CACHE_PATH: &str = ".holdings_cache.json";
+
+/// (round 56) Top-10 holdings per fund, for the screen's holdings-overlap footer — the sector-tech
+/// table is full of "different" funds holding the same mega-caps, and that concentration is
+/// invisible from the fund names. Display-only: holdings are never scored. Called for the printed
+/// fund picks only (a couple dozen symbols), so no request budget needed.
+pub async fn yahoo_top_holdings(client: &Client, syms: &[String]) -> HashMap<String, Vec<String>> {
+    type Row = (String, Vec<String>); // (fetched date, top-10 holding symbols/names)
+    let mut cache: HashMap<String, Row> = std::fs::read_to_string(HOLDINGS_CACHE_PATH)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let today = chrono::Utc::now().date_naive();
+    let fresh = |r: &Row| {
+        NaiveDate::parse_from_str(&r.0, "%Y-%m-%d").is_ok_and(|d| (today - d).num_days() < 7)
+    };
+    let mut out = HashMap::new();
+    let mut todo: Vec<String> = Vec::new();
+    for s in syms {
+        match cache.get(s) {
+            Some(r) if fresh(r) => {
+                out.insert(s.clone(), r.1.clone());
+            }
+            _ => todo.push(s.clone()),
+        }
+    }
+    if !todo.is_empty() {
+        let Some((cookie, crumb)) = yahoo_crumb(client).await else {
+            eprintln!("fetch: Yahoo crumb handshake failed — holdings-overlap footer skipped this run");
+            return out;
+        };
+        let (cookie_ref, crumb_ref) = (&cookie, &crumb);
+        let fetched: Vec<Option<(String, Vec<String>)>> = stream::iter(todo)
+            .map(|sym| async move {
+                let url = format!(
+                    "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules=topHoldings&crumb={crumb_ref}"
+                );
+                let v = client
+                    .get(&url)
+                    .header("Cookie", cookie_ref)
+                    .header("User-Agent", "Mozilla/5.0")
+                    .send()
+                    .await
+                    .ok()?
+                    .json::<Value>()
+                    .await
+                    .ok()?;
+                Some((sym, parse_top_holdings(&v)))
+            })
+            .buffer_unordered(fetch_concurrency())
+            .collect()
+            .await;
+        for (sym, holdings) in fetched.into_iter().flatten() {
+            cache.insert(sym.clone(), (today.to_string(), holdings.clone()));
+            out.insert(sym, holdings);
+        }
+        if let Ok(json) = serde_json::to_string(&cache) {
+            let _ = std::fs::write(HOLDINGS_CACHE_PATH, json);
+        }
+    }
+    out
+}
+
 /// (AUM) the same 3-tier BF lookup the TER uses (exact resolved symbol -> same-stem cross-venue ->
 /// unique fund-name prefix, retried without Yahoo's umbrella-company prefix) — both values ride the
 /// same etp_search row. No FMP fallback: its free tier doesn't serve fund size.
@@ -2434,6 +2519,23 @@ mod tests {
         assert!(long_cache_fresh(Some(&today), today)); // cached today -> reuse
         assert!(!long_cache_fresh(Some(&stale), today)); // TTL expired -> refetch (month rolled)
         assert!(!long_cache_fresh(None, today)); // never cached -> fetch
+    }
+
+    /// (round 56) topHoldings parse: symbol preferred, holdingName fallback, uppercased, empty
+    /// symbol treated as absent, capped at 10, missing module -> empty (not a panic).
+    #[test]
+    fn top_holdings_parse() {
+        let v = serde_json::json!({"quoteSummary": {"result": [{"topHoldings": {"holdings": [
+            {"symbol": "AAPL", "holdingName": "Apple Inc"},
+            {"symbol": "", "holdingName": "Microsoft Corp"},
+            {"holdingName": "nvidia corp"},
+        ]}}]}});
+        assert_eq!(parse_top_holdings(&v), vec!["AAPL", "MICROSOFT CORP", "NVIDIA CORP"]);
+        assert!(parse_top_holdings(&serde_json::json!({"quoteSummary": {"result": [{}]}})).is_empty());
+        assert!(parse_top_holdings(&serde_json::json!({})).is_empty());
+        let eleven: Vec<Value> = (0..11).map(|i| serde_json::json!({"symbol": format!("S{i}")})).collect();
+        let v = serde_json::json!({"quoteSummary": {"result": [{"topHoldings": {"holdings": eleven}}]}});
+        assert_eq!(parse_top_holdings(&v).len(), 10);
     }
 
     /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but

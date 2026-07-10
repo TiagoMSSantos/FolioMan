@@ -57,6 +57,47 @@ fn journal(date: &str, lines: &[String]) {
     }
 }
 
+/// (round 56) A pair of printed fund picks counts as overlapping when they share at least this many
+/// of their top-10 holdings — half the book, past coincidence: buying both mostly doubles the same
+/// mega-caps rather than diversifying.
+const HOLDINGS_OVERLAP_MIN: usize = 5;
+
+/// (round 56) Pairwise top-10-holdings overlap among the printed fund picks, one line per pair at
+/// or above `HOLDINGS_OVERLAP_MIN`, heaviest overlap first, capped so a table of near-identical
+/// tech funds can't flood the footer. Funds Yahoo has no holdings for simply never pair.
+fn holdings_overlap_lines(holdings: &std::collections::HashMap<String, Vec<String>>) -> Vec<String> {
+    let mut tickers: Vec<&String> =
+        holdings.keys().filter(|t| holdings[*t].len() >= HOLDINGS_OVERLAP_MIN).collect();
+    tickers.sort();
+    let set = |t: &str| -> std::collections::HashSet<&str> {
+        holdings[t].iter().map(String::as_str).collect()
+    };
+    let mut rows: Vec<(usize, String)> = Vec::new();
+    for (i, a) in tickers.iter().enumerate() {
+        let sa = set(a);
+        for b in &tickers[i + 1..] {
+            let sb = set(b);
+            let mut shared: Vec<&str> = sa.intersection(&sb).copied().collect();
+            if shared.len() < HOLDINGS_OVERLAP_MIN {
+                continue;
+            }
+            shared.sort();
+            let more = if shared.len() > 4 { format!(" +{}", shared.len() - 4) } else { String::new() };
+            rows.push((
+                shared.len(),
+                format!(
+                    "  {a} ~ {b}: {}/{} shared top holdings ({}{more})",
+                    shared.len(),
+                    sa.len().min(sb.len()),
+                    shared[..shared.len().min(4)].join(" ")
+                ),
+            ));
+        }
+    }
+    rows.sort_by(|x, y| y.0.cmp(&x.0).then_with(|| x.1.cmp(&y.1)));
+    rows.into_iter().take(12).map(|(_, l)| l).collect()
+}
+
 /// (round 50) TER hike worth flagging: ≥0.05 pp is a real fee decision (Vanguard-scale cuts/hikes
 /// move in 0.05+ steps), below is basis-point noise / rounding drift in the source.
 const TER_HIKE_PP: f64 = 0.05;
@@ -328,7 +369,7 @@ pub async fn run(args: Vec<String>) {
             .collect(),
         facts,
         fund_meta,
-        core: core_now,
+        core: core_now.clone(), // still needed below by the holdings-overlap pick set
     };
     let _ = std::fs::write(SCREEN_STATE_FILE, serde_json::to_string(&state).unwrap_or_default());
 
@@ -360,6 +401,39 @@ pub async fn run(args: Vec<String>) {
         let mut seen_names = std::collections::HashSet::new();
         for (q, gate, why) in near.iter().filter(|(q, ..)| seen_names.insert(q.name.to_lowercase())) {
             println!("  {:<8} {:<44.44} {:<10} {why}", q.ticker, q.name, gate);
+        }
+    }
+
+    // (round 56) holdings-overlap footer: the buy candidates are the ranked ETF rows + the pinned
+    // funds + the CORE shortlist, and "different" sector funds routinely hold the same top-10
+    // mega-caps — invisible from the names. Yahoo topHoldings, weekly-cached, display-only.
+    {
+        let is_fund = |q: &&Quote| crate::picks::quote_is_etf(q) && !q.ticker.contains('-');
+        let mut ranked: Vec<(&Quote, f64)> = quotes
+            .iter()
+            .filter(is_fund)
+            .filter_map(|q| growth_score(q, &settings.buy_heuristic).map(|s| (q, s)))
+            .collect();
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+        // one venue per fund name (the momentum table dedups the same way), then top rows + pinned + CORE
+        let mut seen = std::collections::HashSet::new();
+        let mut syms: Vec<String> = ranked
+            .iter()
+            .filter(|(q, _)| seen.insert(q.name.to_lowercase()))
+            .take(settings.top_picks)
+            .map(|(q, _)| q.ticker.clone())
+            .chain(quotes.iter().filter(is_fund).filter(|q| settings.tickers.contains(&q.ticker)).map(|q| q.ticker.clone()))
+            .chain(core_now.iter().cloned())
+            .collect();
+        syms.sort();
+        syms.dedup();
+        let holdings = fetch::yahoo_top_holdings(&client, &syms).await;
+        let lines = holdings_overlap_lines(&holdings);
+        if !lines.is_empty() {
+            println!("\nHoldings overlap — picks sharing most of their top-10 (buying both ≈ doubling the same mega-caps, not diversifying):");
+            for l in &lines {
+                println!("{l}");
+            }
         }
     }
 
@@ -449,5 +523,24 @@ mod tests {
             "ALERT FLIP.DE: replication Opt -> Swap (fund structure changed — review the hold)".to_string(),
         ]);
         assert!(meta_alerts(&prev, &prev).is_empty());
+    }
+
+    /// (round 56) overlap semantics: a 9/10 pair fires and sorts above a 5/10 pair, a 4/10 pair is
+    /// silent, funds with too few known holdings never pair, shared list shows 4 names then "+N".
+    #[test]
+    fn holdings_overlap_semantics() {
+        let syms = |n: usize| -> Vec<String> { (0..n).map(|i| format!("S{i}")).collect() };
+        let mut h: HashMap<String, Vec<String>> = HashMap::new();
+        h.insert("A.L".into(), syms(10));
+        h.insert("B.L".into(), { let mut v = syms(9); v.push("ONLY-B".into()); v }); // 9 shared with A
+        h.insert("C.L".into(), { let mut v = syms(5); v.extend((0..5).map(|i| format!("C{i}"))); v }); // 5 shared
+        h.insert("D.L".into(), { let mut v: Vec<String> = (0..6).map(|i| format!("D{i}")).collect(); v.extend(syms(4)); v }); // 4 shared -> silent with A
+        h.insert("E.L".into(), syms(3)); // too few known holdings -> never pairs
+        let lines = holdings_overlap_lines(&h);
+        assert_eq!(lines[0], "  A.L ~ B.L: 9/10 shared top holdings (S0 S1 S2 S3 +5)");
+        assert!(lines.iter().any(|l| l.starts_with("  A.L ~ C.L: 5/10")));
+        assert!(!lines.iter().any(|l| l.contains("D.L")));
+        assert!(!lines.iter().any(|l| l.contains("E.L")));
+        assert!(holdings_overlap_lines(&HashMap::new()).is_empty());
     }
 }

@@ -44,4 +44,5 @@ config/settings.yaml
 # tickers whose MAX-monthly history added no bars beyond the daily window (30-day TTL)
 .long_history_skip.json
 .long_history_cache.json
+.holdings_cache.json
 .screen_alerts.log
