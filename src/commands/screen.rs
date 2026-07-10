@@ -37,6 +37,26 @@ struct ScreenState {
 
 const SCREEN_STATE_FILE: &str = ".screen_state.json";
 
+/// (round 56) Permanent record of every alert this command ever printed. Each alert fires exactly
+/// once — the state file is rewritten right below it — so a scrolled-past terminal or a piped-away
+/// stdout is a LOST fee-hike/closure-risk warning. Append-only, gitignored, never read back here;
+/// `grep VUAA .screen_alerts.log` is the fund's full event history.
+const ALERT_JOURNAL_FILE: &str = ".screen_alerts.log";
+
+/// Append `lines` to the alert journal, one `YYYY-MM-DD <line>` per row. Best-effort: a journal
+/// write failure must never break the screen output it mirrors.
+fn journal(date: &str, lines: &[String]) {
+    use std::io::Write;
+    if lines.is_empty() {
+        return;
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(ALERT_JOURNAL_FILE) {
+        for l in lines {
+            let _ = writeln!(f, "{date} {}", l.trim());
+        }
+    }
+}
+
 /// (round 50) TER hike worth flagging: ≥0.05 pp is a real fee decision (Vanguard-scale cuts/hikes
 /// move in 0.05+ steps), below is basis-point noise / rounding drift in the source.
 const TER_HIKE_PP: f64 = 0.05;
@@ -106,6 +126,8 @@ fn meta_alerts(
 }
 
 pub async fn run(args: Vec<String>) {
+    let started = std::time::Instant::now();
+    let run_date = chrono::Local::now().date_naive().to_string();
     // `--explain [TICKER]`: after the tables, print the SCORE arithmetic for TICKER (a flag with no
     // ticker, or no flag at all, still explains the #1 row — that footer is always on). The named ticker
     // is also added to the scan, so `screen --explain NVDA` ranks + explains just NVDA. Strip the flag
@@ -246,6 +268,7 @@ pub async fn run(args: Vec<String>) {
             for l in &lines {
                 println!("{l}");
             }
+            journal(&run_date, &lines);
         }
     }
     // (round 50) fact-drift alerts: TER hikes / AUM collapses on watchlist + H-flagged funds since
@@ -269,6 +292,7 @@ pub async fn run(args: Vec<String>) {
             for a in &alerts {
                 println!("  {a}");
             }
+            journal(&run_date, &alerts);
         }
     }
 
@@ -285,16 +309,18 @@ pub async fn run(args: Vec<String>) {
             let fmt = |sign: char, ts: &[&str]| {
                 ts.iter().map(|t| format!("{sign}{t}")).collect::<Vec<_>>().join(" ")
             };
-            println!(
-                "\nCORE shortlist changed since {}: {}",
+            let line = format!(
+                "CORE shortlist changed since {}: {}",
                 prev.date,
                 [fmt('+', &joined), fmt('-', &dropped)].join(" ").trim()
             );
+            println!("\n{line}");
+            journal(&run_date, &[line]);
         }
     }
 
     let state = ScreenState {
-        date: chrono::Local::now().date_naive().to_string(),
+        date: run_date.clone(),
         passing: watch
             .iter()
             .filter(|q| gate_failures(q, &settings.buy_heuristic).is_some_and(|f| f.is_empty()))
@@ -352,6 +378,16 @@ pub async fn run(args: Vec<String>) {
     // Euribor / Certificados de Aforro / inflation — fixed-income + macro baselines to compare the
     // asset tables against
     crate::commands::print_macro_footer(&client, &settings.urls).await;
+
+    // (round 56) run diagnostics on stderr (stdout stays pipeable): the round-51/53 fetch caches
+    // are otherwise invisible — the first sign of one silently breaking would be Yahoo 429s.
+    let (calls, cache_hits, skips) = fetch::fetch_stats();
+    let secs = started.elapsed().as_secs();
+    eprintln!(
+        "screen: {calls} paced HTTP calls | monthly series: {cache_hits} cache hits, {skips} too-young skips | {}m{:02}s",
+        secs / 60,
+        secs % 60
+    );
 }
 
 #[cfg(test)]

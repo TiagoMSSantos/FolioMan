@@ -85,7 +85,22 @@ fn claim_slot(next: Instant, now: Instant, interval: StdDuration) -> (Instant, I
     (launch, launch + interval)
 }
 
+/// (round 56) Run counters behind the screen diagnostics footer: paced HTTP launches plus the two
+/// monthly-series shortcut paths (round-53 cache hit / round-51 too-young skip). The caches are
+/// otherwise invisible — the first sign of one silently breaking would be Yahoo 429s coming back.
+/// Relaxed ordering: approximate counts are fine for a footer.
+static HTTP_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LONG_CACHE_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LONG_SKIPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// (paced HTTP calls, monthly-series cache hits, monthly-series too-young skips) so far this run.
+pub fn fetch_stats() -> (u64, u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (HTTP_CALLS.load(Relaxed), LONG_CACHE_HITS.load(Relaxed), LONG_SKIPS.load(Relaxed))
+}
+
 async fn throttle() {
+    HTTP_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (gate, interval) = THROTTLE.get_or_init(|| {
         let rps = crate::config::load().fetch_requests_per_second;
         let interval = if rps > 0.0 {
@@ -298,12 +313,14 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         async {
             let today = chrono::Local::now().date_naive();
             if long_skip_fresh(long_skip_load().get(ticker), today) {
+                LONG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return None;
             }
             // (round 53) 7-day raw-JSON disk cache — monthly bars only change on month boundaries,
             // so within the TTL the cached payload IS what Yahoo would return.
             if let Some((recorded, v)) = long_cache_load().get(ticker) {
                 if long_cache_fresh(Some(recorded), today) {
+                    LONG_CACHE_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return Some(v.clone());
                 }
             }
