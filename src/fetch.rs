@@ -1568,7 +1568,10 @@ async fn yahoo_fund_facts_fill(
     bf_ter: &HashMap<String, f64>,
     bf_aum: &HashMap<String, f64>,
 ) -> (HashMap<String, f64>, HashMap<String, f64>) {
-    const BUDGET: usize = 200;
+    // (round 54) 200 -> 400: each TER hole blocks a potential H/CORE qualifier and the wide screen
+    // was converging ~90 holes/run; the round-53 monthly cache freed the runtime headroom. Fallback
+    // facts are never scored, so a faster fill is rank-neutral by construction.
+    const BUDGET: usize = 400;
     type Row = (String, Option<f64>, Option<f64>); // (fetched date, TER %, AUM)
     let (mut ter_map, mut aum_map) = (HashMap::new(), HashMap::new());
     let mut cache: HashMap<String, Row> = std::fs::read_to_string(FUND_FACTS_CACHE_PATH)
