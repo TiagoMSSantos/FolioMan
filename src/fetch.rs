@@ -296,11 +296,22 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // ones. (round 51) skipped for tickers a previous run proved too young to have any (the
         // None path below == the fetch-failed path, so output is identical).
         async {
-            if long_skip_fresh(long_skip_load().get(ticker), chrono::Local::now().date_naive()) {
-                None
-            } else {
-                chart_json_long(client, urls, ticker).await
+            let today = chrono::Local::now().date_naive();
+            if long_skip_fresh(long_skip_load().get(ticker), today) {
+                return None;
             }
+            // (round 53) 7-day raw-JSON disk cache — monthly bars only change on month boundaries,
+            // so within the TTL the cached payload IS what Yahoo would return.
+            if let Some((recorded, v)) = long_cache_load().get(ticker) {
+                if long_cache_fresh(Some(recorded), today) {
+                    return Some(v.clone());
+                }
+            }
+            let fetched = chart_json_long(client, urls, ticker).await;
+            if let Some(v) = &fetched {
+                LONG_CACHE_NEW.lock().unwrap().push((ticker.to_string(), v.clone()));
+            }
+            fetched
         },
         // news headlines are displayed ONLY by `check`/`alert`; `screen`/`perf` ignore them, so skip the
         // per-name Yahoo search there (~25% fewer requests across a 3800-name screen -> proportionally faster).
@@ -1390,6 +1401,52 @@ fn long_skip_save() {
     }
     let _ = std::fs::write(LONG_SKIP_FILE, serde_json::to_string(&m).unwrap_or_default());
 }
+
+/// (round 53) Full MAX-monthly series cache: the raw Yahoo JSON per ticker, 7-day TTL. Monthly bars
+/// only change on a month boundary, so refetching thousands of them every screen bought nothing but
+/// runtime and 429 pressure. The RAW payload is cached (not the parsed series) so a cache hit takes
+/// the exact same parse path as a live fetch — output identical by construction, including the
+/// adjusted-close config flag. Gitignored (~tens of MB, self-prunes on TTL); loaded once per
+/// process, written once per fan-out, same pattern as `.long_history_skip.json` above.
+const LONG_CACHE_FILE: &str = ".long_history_cache.json";
+const LONG_CACHE_TTL_DAYS: i64 = 7;
+static LONG_CACHE: std::sync::OnceLock<HashMap<String, (NaiveDate, Value)>> = std::sync::OnceLock::new();
+/// This run's live fetches (collected concurrently, written ONCE in `quotes`).
+static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Value)>> = std::sync::Mutex::new(Vec::new());
+
+fn long_cache_load() -> &'static HashMap<String, (NaiveDate, Value)> {
+    LONG_CACHE.get_or_init(|| {
+        std::fs::read_to_string(LONG_CACHE_FILE)
+            .ok()
+            .and_then(|s| serde_json::from_str::<HashMap<String, (String, Value)>>(&s).ok())
+            .map(|m| m.into_iter().filter_map(|(t, (d, v))| Some((t, (d.parse().ok()?, v)))).collect())
+            .unwrap_or_default()
+    })
+}
+
+/// The reuse decision, pure for testability: cached within the TTL -> serve from disk, no refetch.
+fn long_cache_fresh(recorded: Option<&NaiveDate>, today: NaiveDate) -> bool {
+    recorded.is_some_and(|d| (today - *d).num_days() <= LONG_CACHE_TTL_DAYS)
+}
+
+/// Persist: still-fresh old entries keep their ORIGINAL date (so the TTL actually expires), this
+/// run's fetches stamp today. Stale entries drop out — the file self-prunes.
+fn long_cache_save() {
+    let today = chrono::Local::now().date_naive();
+    let new = LONG_CACHE_NEW.lock().unwrap();
+    if new.is_empty() && long_cache_load().iter().all(|(_, (d, _))| long_cache_fresh(Some(d), today)) {
+        return; // nothing new, nothing stale — skip rewriting tens of MB
+    }
+    let mut m: HashMap<&str, (String, &Value)> = long_cache_load()
+        .iter()
+        .filter(|(_, (d, _))| long_cache_fresh(Some(d), today))
+        .map(|(t, (d, v))| (t.as_str(), (d.to_string(), v)))
+        .collect();
+    for (t, v) in new.iter() {
+        m.insert(t.as_str(), (today.to_string(), v));
+    }
+    let _ = std::fs::write(LONG_CACHE_FILE, serde_json::to_string(&m).unwrap_or_default());
+}
 /// Per-row BF keyData facts: share-class + replication tokens ("Acc"/"Dist"; "Swap"/"Full"/"Opt"/
 /// "Hybr"/"Samp") and the benchmark-index name (lowercased at capture so twin matching is one `==`;
 /// BF normalizes it — same-index funds carry the literal same string, hedged classes differ).
@@ -2347,6 +2404,18 @@ mod tests {
         assert!(!long_skip_fresh(None, today)); // never recorded -> fetch
     }
 
+    /// (round 53) monthly-payload cache decision: within the 7d TTL -> serve from disk, else refetch.
+    #[test]
+    fn long_cache_ttl() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
+        let fresh = NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(); // 5d old
+        let stale = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(); // 9d old
+        assert!(long_cache_fresh(Some(&fresh), today));
+        assert!(long_cache_fresh(Some(&today), today)); // cached today -> reuse
+        assert!(!long_cache_fresh(Some(&stale), today)); // TTL expired -> refetch (month rolled)
+        assert!(!long_cache_fresh(None, today)); // never cached -> fetch
+    }
+
     /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but
     /// ROE -27% => equity < 0 => not meaningful). Genuine loss-makers and normal filers pass through.
     #[test]
@@ -2715,6 +2784,8 @@ pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &
     }
     // (round 51) one write per run: persist the tickers whose monthly fetch proved useless above.
     long_skip_save();
+    // (round 53) one write per run: persist this run's fresh monthly payloads.
+    long_cache_save();
     out
 }
 
