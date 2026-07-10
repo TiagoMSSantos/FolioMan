@@ -1673,34 +1673,42 @@ async fn yahoo_fund_facts_fill(
 
 /// (round 56) Top-10 holdings out of one Yahoo quoteSummary `topHoldings` payload: the underlying
 /// symbol when present, else the holding name, uppercased so the same stock matches across funds.
-fn parse_top_holdings(v: &Value) -> Vec<String> {
+/// (round 57) each paired with its portfolio weight as a FRACTION (`holdingPercent.raw`, 0.058 =
+/// 5.8%; 0.0 when Yahoo omits it) so the screen can flag top-heavy funds.
+fn parse_top_holdings(v: &Value) -> Vec<(String, f64)> {
     v.pointer("/quoteSummary/result/0/topHoldings/holdings")
         .and_then(Value::as_array)
         .map(|rows| {
             rows.iter()
                 .take(10)
                 .filter_map(|h| {
-                    h.pointer("/symbol")
+                    let sym = h
+                        .pointer("/symbol")
                         .and_then(Value::as_str)
                         .filter(|s| !s.is_empty())
                         .or_else(|| h.pointer("/holdingName").and_then(Value::as_str))
-                        .map(str::to_uppercase)
+                        .map(str::to_uppercase)?;
+                    let pct = h.pointer("/holdingPercent/raw").and_then(Value::as_f64).unwrap_or(0.0);
+                    Some((sym, pct))
                 })
                 .collect()
         })
         .unwrap_or_default()
 }
 
-/// (round 56) Weekly `{sym: ["YYYY-MM-DD", [holdings...]]}` cache for `yahoo_top_holdings`; empty
-/// lists are cached too, so a fund Yahoo has no holdings for costs one request a week.
+/// (round 56) Weekly `{sym: ["YYYY-MM-DD", [[holding, weight]...]]}` cache for `yahoo_top_holdings`;
+/// empty lists are cached too, so a fund Yahoo has no holdings for costs one request a week.
+/// (round 57) the row schema gained per-holding weights; an old symbols-only cache fails to
+/// deserialize and is treated as empty — one refetch of the ~30 printed picks heals it.
 const HOLDINGS_CACHE_PATH: &str = ".holdings_cache.json";
 
-/// (round 56) Top-10 holdings per fund, for the screen's holdings-overlap footer — the sector-tech
-/// table is full of "different" funds holding the same mega-caps, and that concentration is
-/// invisible from the fund names. Display-only: holdings are never scored. Called for the printed
-/// fund picks only (a couple dozen symbols), so no request budget needed.
-pub async fn yahoo_top_holdings(client: &Client, syms: &[String]) -> HashMap<String, Vec<String>> {
-    type Row = (String, Vec<String>); // (fetched date, top-10 holding symbols/names)
+/// (round 56) Top-10 holdings per fund (each with its weight fraction), for the screen's
+/// holdings-overlap + concentration footers — the sector-tech table is full of "different" funds
+/// holding the same mega-caps, and that concentration is invisible from the fund names.
+/// Display-only: holdings are never scored. Called for the printed fund picks only (a couple dozen
+/// symbols), so no request budget needed.
+pub async fn yahoo_top_holdings(client: &Client, syms: &[String]) -> HashMap<String, Vec<(String, f64)>> {
+    type Row = (String, Vec<(String, f64)>); // (fetched date, [(holding symbol/name, weight fraction)])
     let mut cache: HashMap<String, Row> = std::fs::read_to_string(HOLDINGS_CACHE_PATH)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -1725,7 +1733,7 @@ pub async fn yahoo_top_holdings(client: &Client, syms: &[String]) -> HashMap<Str
             return out;
         };
         let (cookie_ref, crumb_ref) = (&cookie, &crumb);
-        let fetched: Vec<Option<(String, Vec<String>)>> = stream::iter(todo)
+        let fetched: Vec<Option<(String, Vec<(String, f64)>)>> = stream::iter(todo)
             .map(|sym| async move {
                 let url = format!(
                     "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules=topHoldings&crumb={crumb_ref}"
@@ -2521,16 +2529,21 @@ mod tests {
         assert!(!long_cache_fresh(None, today)); // never cached -> fetch
     }
 
-    /// (round 56) topHoldings parse: symbol preferred, holdingName fallback, uppercased, empty
-    /// symbol treated as absent, capped at 10, missing module -> empty (not a panic).
+    /// (round 56/57) topHoldings parse: symbol preferred, holdingName fallback, uppercased, empty
+    /// symbol treated as absent, weight fraction kept (0.0 when absent), capped at 10, missing
+    /// module -> empty (not a panic).
     #[test]
     fn top_holdings_parse() {
         let v = serde_json::json!({"quoteSummary": {"result": [{"topHoldings": {"holdings": [
-            {"symbol": "AAPL", "holdingName": "Apple Inc"},
-            {"symbol": "", "holdingName": "Microsoft Corp"},
+            {"symbol": "AAPL", "holdingName": "Apple Inc", "holdingPercent": {"raw": 0.07}},
+            {"symbol": "", "holdingName": "Microsoft Corp", "holdingPercent": {"raw": 0.06}},
             {"holdingName": "nvidia corp"},
         ]}}]}});
-        assert_eq!(parse_top_holdings(&v), vec!["AAPL", "MICROSOFT CORP", "NVIDIA CORP"]);
+        assert_eq!(parse_top_holdings(&v), vec![
+            ("AAPL".to_string(), 0.07),
+            ("MICROSOFT CORP".to_string(), 0.06),
+            ("NVIDIA CORP".to_string(), 0.0),
+        ]);
         assert!(parse_top_holdings(&serde_json::json!({"quoteSummary": {"result": [{}]}})).is_empty());
         assert!(parse_top_holdings(&serde_json::json!({})).is_empty());
         let eleven: Vec<Value> = (0..11).map(|i| serde_json::json!({"symbol": format!("S{i}")})).collect();

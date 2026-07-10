@@ -57,45 +57,74 @@ fn journal(date: &str, lines: &[String]) {
     }
 }
 
-/// (round 56) A pair of printed fund picks counts as overlapping when they share at least this many
-/// of their top-10 holdings — half the book, past coincidence: buying both mostly doubles the same
-/// mega-caps rather than diversifying.
+/// (round 56) Two printed fund picks overlap when they share at least this many of their top-10
+/// holdings — half the book, past coincidence: buying both mostly doubles the same mega-caps.
 const HOLDINGS_OVERLAP_MIN: usize = 5;
+/// (round 57) A pick is "top-heavy" when its top-10 holdings are at least this fraction of the
+/// whole fund — single-name/sector risk concentrated inside the wrapper (a "diversified" semis ETF
+/// that is half NVDA+AVGO+TSM), the risk a 20yr survival screen cares about.
+const TOP_HEAVY_FRACTION: f64 = 0.40;
 
-/// (round 56) Pairwise top-10-holdings overlap among the printed fund picks, one line per pair at
-/// or above `HOLDINGS_OVERLAP_MIN`, heaviest overlap first, capped so a table of near-identical
-/// tech funds can't flood the footer. Funds Yahoo has no holdings for simply never pair.
-fn holdings_overlap_lines(holdings: &std::collections::HashMap<String, Vec<String>>) -> Vec<String> {
+/// (round 57) Group the printed picks that hold most of the same top-10 names, one line per group
+/// of 2+ instead of round-56's O(n²) pair spam. COMPLETE linkage: a pick joins a group only if it
+/// shares ≥ `HOLDINGS_OVERLAP_MIN` holdings with EVERY current member — single-linkage would chain
+/// an all-world tracker to a semis ETF through the one megacap (NVDA) they both hold and call 15
+/// unrelated funds "one bet" (verified live). Greedy/order-dependent, but every printed group is a
+/// true clique whose members all mutually overlap. The line reports the holdings common to the
+/// whole group, so its own size states how tight the group is.
+fn holdings_overlap_lines(holdings: &std::collections::HashMap<String, Vec<(String, f64)>>) -> Vec<String> {
     let mut tickers: Vec<&String> =
         holdings.keys().filter(|t| holdings[*t].len() >= HOLDINGS_OVERLAP_MIN).collect();
     tickers.sort();
-    let set = |t: &str| -> std::collections::HashSet<&str> {
-        holdings[t].iter().map(String::as_str).collect()
+    let syms = |t: &str| -> std::collections::HashSet<&str> {
+        holdings[t].iter().map(|(s, _)| s.as_str()).collect()
     };
-    let mut rows: Vec<(usize, String)> = Vec::new();
-    for (i, a) in tickers.iter().enumerate() {
-        let sa = set(a);
-        for b in &tickers[i + 1..] {
-            let sb = set(b);
-            let mut shared: Vec<&str> = sa.intersection(&sb).copied().collect();
-            if shared.len() < HOLDINGS_OVERLAP_MIN {
-                continue;
-            }
-            shared.sort();
-            let more = if shared.len() > 4 { format!(" +{}", shared.len() - 4) } else { String::new() };
-            rows.push((
-                shared.len(),
-                format!(
-                    "  {a} ~ {b}: {}/{} shared top holdings ({}{more})",
-                    shared.len(),
-                    sa.len().min(sb.len()),
-                    shared[..shared.len().min(4)].join(" ")
-                ),
-            ));
+    let overlap = |a: &str, b: &str| syms(a).intersection(&syms(b)).count();
+    let mut groups: Vec<Vec<&str>> = Vec::new();
+    for t in &tickers {
+        // join the first group this pick overlaps with ALL members of; else start its own
+        match groups.iter_mut().find(|g| g.iter().all(|m| overlap(t, m) >= HOLDINGS_OVERLAP_MIN)) {
+            Some(g) => g.push(t),
+            None => groups.push(vec![t]),
         }
     }
-    rows.sort_by(|x, y| y.0.cmp(&x.0).then_with(|| x.1.cmp(&y.1)));
-    rows.into_iter().take(12).map(|(_, l)| l).collect()
+    let mut groups: Vec<Vec<&str>> = groups.into_iter().filter(|g| g.len() >= 2).collect();
+    groups.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a[0].cmp(b[0])));
+    groups
+        .into_iter()
+        .map(|members| {
+            let mut common = syms(members[0]);
+            for m in &members[1..] {
+                let s = syms(m);
+                common.retain(|x| s.contains(x));
+            }
+            let mut common: Vec<&str> = common.into_iter().collect();
+            common.sort();
+            let more = if common.len() > 4 { format!(" +{}", common.len() - 4) } else { String::new() };
+            let lead = if common.len() >= HOLDINGS_OVERLAP_MIN { "effectively one bet" } else { "heavily overlap" };
+            format!(
+                "  {} picks {lead}: {} (shared top-10: {}{more})",
+                members.len(),
+                members.join(" "),
+                common[..common.len().min(4)].join(" ")
+            )
+        })
+        .collect()
+}
+
+/// (round 57) Printed picks whose top-10 holdings sum to ≥ `TOP_HEAVY_FRACTION` of the fund, heaviest
+/// first — concentration inside the wrapper that the fund name hides. Silent when weights are absent
+/// (sum 0.0) or the fund is genuinely broad.
+fn concentration_lines(holdings: &std::collections::HashMap<String, Vec<(String, f64)>>) -> Vec<String> {
+    let mut rows: Vec<(f64, String)> = holdings
+        .iter()
+        .filter_map(|(t, hs)| {
+            let sum: f64 = hs.iter().map(|(_, p)| p).sum();
+            (sum >= TOP_HEAVY_FRACTION).then(|| (sum, format!("{t} {:.0}%", sum * 100.0)))
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    rows.into_iter().map(|(_, l)| l).collect()
 }
 
 /// (round 50) TER hike worth flagging: ≥0.05 pp is a real fee decision (Vanguard-scale cuts/hikes
@@ -428,12 +457,16 @@ pub async fn run(args: Vec<String>) {
         syms.sort();
         syms.dedup();
         let holdings = fetch::yahoo_top_holdings(&client, &syms).await;
-        let lines = holdings_overlap_lines(&holdings);
-        if !lines.is_empty() {
-            println!("\nHoldings overlap — picks sharing most of their top-10 (buying both ≈ doubling the same mega-caps, not diversifying):");
-            for l in &lines {
+        let clusters = holdings_overlap_lines(&holdings);
+        if !clusters.is_empty() {
+            println!("\nHoldings overlap — picks that are effectively the same position (shared top-10 holdings, so buying several ≈ one concentrated bet):");
+            for l in &clusters {
                 println!("{l}");
             }
+        }
+        let heavy = concentration_lines(&holdings);
+        if !heavy.is_empty() {
+            println!("\nTop-heavy picks — top-10 holdings as a share of the whole fund (single-name/sector risk inside the wrapper): {}", heavy.join(", "));
         }
     }
 
@@ -525,22 +558,38 @@ mod tests {
         assert!(meta_alerts(&prev, &prev).is_empty());
     }
 
-    /// (round 56) overlap semantics: a 9/10 pair fires and sorts above a 5/10 pair, a 4/10 pair is
-    /// silent, funds with too few known holdings never pair, shared list shows 4 names then "+N".
+    /// (round 57) overlap grouping is COMPLETE-linkage: A/B/C mutually share ≥5 -> ONE group line
+    /// of 3 (not 3 pair lines). D shares only 4 with A and E has too few holdings -> out. G shares 5
+    /// with A but only 4 with B, so it must NOT chain into the A/B/C group (the single-linkage bug
+    /// that merged 15 unrelated funds live). Shared line is the intersection across the whole group.
     #[test]
-    fn holdings_overlap_semantics() {
-        let syms = |n: usize| -> Vec<String> { (0..n).map(|i| format!("S{i}")).collect() };
-        let mut h: HashMap<String, Vec<String>> = HashMap::new();
-        h.insert("A.L".into(), syms(10));
-        h.insert("B.L".into(), { let mut v = syms(9); v.push("ONLY-B".into()); v }); // 9 shared with A
-        h.insert("C.L".into(), { let mut v = syms(5); v.extend((0..5).map(|i| format!("C{i}"))); v }); // 5 shared
-        h.insert("D.L".into(), { let mut v: Vec<String> = (0..6).map(|i| format!("D{i}")).collect(); v.extend(syms(4)); v }); // 4 shared -> silent with A
-        h.insert("E.L".into(), syms(3)); // too few known holdings -> never pairs
+    fn holdings_overlap_clusters() {
+        let names = |it: &[&str]| -> Vec<(String, f64)> { it.iter().map(|s| (s.to_string(), 0.0)).collect() };
+        let syms = |n: usize| -> Vec<(String, f64)> { (0..n).map(|i| (format!("S{i}"), 0.0)).collect() };
+        let mut h: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        h.insert("A.L".into(), syms(10)); // S0..S9
+        h.insert("B.L".into(), { let mut v = syms(9); v.push(("ONLY-B".into(), 0.0)); v }); // S0..S8 -> ∩A=9, ∩C=5
+        h.insert("C.L".into(), { let mut v = syms(5); v.extend((0..5).map(|i| (format!("C{i}"), 0.0))); v }); // S0..S4
+        h.insert("D.L".into(), { let mut v: Vec<(String, f64)> = (0..6).map(|i| (format!("D{i}"), 0.0)).collect(); v.extend(syms(4)); v }); // ∩A=4 -> out
+        h.insert("E.L".into(), syms(3)); // too few known holdings -> never groups
+        h.insert("G.L".into(), names(&["S5", "S6", "S7", "S8", "S9", "G0", "G1", "G2", "G3", "G4"])); // ∩A=5 but ∩B=4 -> must NOT chain
         let lines = holdings_overlap_lines(&h);
-        assert_eq!(lines[0], "  A.L ~ B.L: 9/10 shared top holdings (S0 S1 S2 S3 +5)");
-        assert!(lines.iter().any(|l| l.starts_with("  A.L ~ C.L: 5/10")));
-        assert!(!lines.iter().any(|l| l.contains("D.L")));
-        assert!(!lines.iter().any(|l| l.contains("E.L")));
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], "  3 picks effectively one bet: A.L B.L C.L (shared top-10: S0 S1 S2 S3 +1)");
+        assert!(!lines[0].contains("G.L"));
         assert!(holdings_overlap_lines(&HashMap::new()).is_empty());
+    }
+
+    /// (round 57) concentration: a fund whose top-10 weights sum ≥40% fires (heaviest first), a
+    /// broad fund and one with absent weights (sum 0) stay silent.
+    #[test]
+    fn concentration_semantics() {
+        let mut h: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        h.insert("HEAVY.DE".into(), vec![("A".into(), 0.30), ("B".into(), 0.28)]); // 58%
+        h.insert("MID.DE".into(), vec![("A".into(), 0.25), ("B".into(), 0.20)]);   // 45%
+        h.insert("BROAD.DE".into(), vec![("A".into(), 0.02), ("B".into(), 0.02)]); // 4% -> silent
+        h.insert("NOWEIGHT.DE".into(), vec![("A".into(), 0.0), ("B".into(), 0.0)]); // 0% -> silent
+        assert_eq!(concentration_lines(&h), vec!["HEAVY.DE 58%".to_string(), "MID.DE 45%".to_string()]);
+        assert!(concentration_lines(&HashMap::new()).is_empty());
     }
 }
