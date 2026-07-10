@@ -22,6 +22,12 @@ struct ScreenState {
     // serde(default) so state files written before this field still load.
     #[serde(default)]
     facts: std::collections::HashMap<String, (Option<f64>, Option<f64>)>,
+    // (round 54) ticker -> (USE, REPL) as shown last run, same fund set as `facts`. A share-class
+    // conversion (Acc -> Dist: payouts turn taxable yearly) or a replication flip (physical -> Swap:
+    // counterparty risk enters) is a structural hold-review event. Parallel field, not a wider
+    // `facts` tuple, so round-50..53 state files still deserialize.
+    #[serde(default)]
+    fund_meta: std::collections::HashMap<String, (Option<String>, Option<String>)>,
 }
 
 const SCREEN_STATE_FILE: &str = ".screen_state.json";
@@ -56,6 +62,34 @@ fn fact_alerts(
         if let (Some(p), Some(c)) = (pa, ca) {
             if p > 0.0 && c <= p * AUM_COLLAPSE_FRACTION {
                 out.push(format!("ALERT {t}: AUM {} -> {} (closure risk — a forced taxable exit)", aum_fmt(p), aum_fmt(c)));
+            }
+        }
+    }
+    out
+}
+
+/// (round 54) Structural drift: a share-class conversion (Acc -> Dist: payouts turn taxable every
+/// year) or a replication flip (physical -> Swap: counterparty risk enters the hold) since the last
+/// run. Rare, but exactly the kind of quiet fund event a never-sell holder would otherwise learn
+/// about years later. Same stance as `fact_alerts`: pure diff, None<->Some silent (coverage churn).
+fn meta_alerts(
+    prev: &std::collections::HashMap<String, (Option<String>, Option<String>)>,
+    cur: &std::collections::HashMap<String, (Option<String>, Option<String>)>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut tickers: Vec<&String> = cur.keys().filter(|t| prev.contains_key(*t)).collect();
+    tickers.sort();
+    for t in tickers {
+        let (pu, pr) = &prev[t];
+        let (cu, cr) = &cur[t];
+        if let (Some(p), Some(c)) = (pu, cu) {
+            if p != c {
+                out.push(format!("ALERT {t}: share class {p} -> {c} (distribution policy changed — review the hold)"));
+            }
+        }
+        if let (Some(p), Some(c)) = (pr, cr) {
+            if p != c {
+                out.push(format!("ALERT {t}: replication {p} -> {c} (fund structure changed — review the hold)"));
             }
         }
     }
@@ -207,15 +241,22 @@ pub async fn run(args: Vec<String>) {
     }
     // (round 50) fact-drift alerts: TER hikes / AUM collapses on watchlist + H-flagged funds since
     // the previous run — the two fund events a never-sell holder must actually react to.
-    let facts: std::collections::HashMap<String, (Option<f64>, Option<f64>)> = quotes
+    let tracked: Vec<&Quote> = quotes
         .iter()
         .filter(|q| settings.tickers.contains(&q.ticker) || crate::core::hold_suitable(q))
-        .map(|q| (q.ticker.clone(), (q.ter_shown(), q.aum_shown())))
+        .collect();
+    let facts: std::collections::HashMap<String, (Option<f64>, Option<f64>)> =
+        tracked.iter().map(|q| (q.ticker.clone(), (q.ter_shown(), q.aum_shown()))).collect();
+    // (round 54) USE/REPL tracked alongside — structural changes alert below.
+    let fund_meta: std::collections::HashMap<String, (Option<String>, Option<String>)> = tracked
+        .iter()
+        .map(|q| (q.ticker.clone(), (q.use_of_profits.map(String::from), q.replication.map(String::from))))
         .collect();
     if let Some(prev) = &prior {
-        let alerts = fact_alerts(&prev.facts, &facts);
+        let mut alerts = fact_alerts(&prev.facts, &facts);
+        alerts.extend(meta_alerts(&prev.fund_meta, &fund_meta));
         if !alerts.is_empty() {
-            println!("\nFund-fact drift since {} (fee hikes / closure risk — review, not auto-sell):", prev.date);
+            println!("\nFund-fact drift since {} (fee hikes / closure risk / structure changes — review, not auto-sell):", prev.date);
             for a in &alerts {
                 println!("  {a}");
             }
@@ -230,6 +271,7 @@ pub async fn run(args: Vec<String>) {
             .map(|q| q.ticker.clone())
             .collect(),
         facts,
+        fund_meta,
     };
     let _ = std::fs::write(SCREEN_STATE_FILE, serde_json::to_string(&state).unwrap_or_default());
 
@@ -309,5 +351,32 @@ mod tests {
             "ALERT VUAA.DE: TER 0.07% -> 0.15% (fee hike compounds against a hold)".to_string(),
         ]);
         assert!(fact_alerts(&prev, &prev).is_empty()); // no drift -> no alerts
+    }
+
+    /// (round 54) structural drift: a share-class conversion and a replication flip fire; unchanged
+    /// values, coverage churn (None<->Some) and unknown tickers stay silent.
+    #[test]
+    fn meta_alerts_semantics() {
+        let m = |rows: &[(&str, Option<&str>, Option<&str>)]| -> HashMap<String, (Option<String>, Option<String>)> {
+            rows.iter().map(|(t, u, r)| (t.to_string(), (u.map(String::from), r.map(String::from)))).collect()
+        };
+        let prev = m(&[
+            ("CONV.DE", Some("Acc"), Some("Full")),
+            ("FLIP.DE", Some("Acc"), Some("Opt")),
+            ("SAME.DE", Some("Acc"), Some("Full")),
+            ("CHURN.DE", None, None),
+        ]);
+        let cur = m(&[
+            ("CONV.DE", Some("Dist"), Some("Full")), // share-class conversion -> fires
+            ("FLIP.DE", Some("Acc"), Some("Swap")),  // replication flip -> fires
+            ("SAME.DE", Some("Acc"), Some("Full")),  // unchanged -> silent
+            ("CHURN.DE", Some("Acc"), Some("Full")), // None -> Some = coverage, silent
+            ("NEW.DE", Some("Dist"), Some("Swap")),  // not in prev -> silent
+        ]);
+        assert_eq!(meta_alerts(&prev, &cur), vec![
+            "ALERT CONV.DE: share class Acc -> Dist (distribution policy changed — review the hold)".to_string(),
+            "ALERT FLIP.DE: replication Opt -> Swap (fund structure changed — review the hold)".to_string(),
+        ]);
+        assert!(meta_alerts(&prev, &prev).is_empty());
     }
 }
