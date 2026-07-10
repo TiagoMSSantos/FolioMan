@@ -292,8 +292,16 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // (~3652) for 1D..10Y, plus turnover/SMA/range/R². The pre-10y span (the 20Y column) is
         // back-filled from the separate monthly series below.
         chart_json(client, urls, ticker, "10y"),
-        // monthly full history, ONLY to back-fill the >10y horizons (20Y) without breaking the daily ones.
-        chart_json_long(client, urls, ticker),
+        // monthly full history, ONLY to back-fill the >10y horizons (20Y) without breaking the daily
+        // ones. (round 51) skipped for tickers a previous run proved too young to have any (the
+        // None path below == the fetch-failed path, so output is identical).
+        async {
+            if long_skip_fresh(long_skip_load().get(ticker), chrono::Local::now().date_naive()) {
+                None
+            } else {
+                chart_json_long(client, urls, ticker).await
+            }
+        },
         // news headlines are displayed ONLY by `check`/`alert`; `screen`/`perf` ignore them, so skip the
         // per-name Yahoo search there (~25% fewer requests across a 3800-name screen -> proportionally faster).
         async { if news { fetch_news(client, urls, ticker).await } else { Vec::new() } },
@@ -386,6 +394,11 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         match chart_long_j.as_ref().and_then(|j| parse_chart(j, ticker)) {
             Some(lc) => {
                 let keep = lc.dates.iter().take_while(|d| **d < cut).count();
+                // (round 51) monthly series contributed nothing (young listing) — flag the ticker so
+                // the next 30 days of runs skip its useless second fetch.
+                if keep == 0 {
+                    LONG_SKIP_NEW.lock().unwrap().push(ticker.to_string());
+                }
                 let mut dates = lc.dates[..keep].to_vec();
                 let mut closes = lc.closes[..keep].to_vec();
                 dates.extend_from_slice(&chart.dates);
@@ -1335,6 +1348,48 @@ fn yh_ter_exact(ticker: &str) -> Option<f64> {
 fn yh_aum_exact(ticker: &str) -> Option<f64> {
     YH_AUM.get().and_then(|m| m.get(ticker)).copied()
 }
+
+/// (round 51) Tickers whose MAX-monthly series contributed ZERO bars beyond the 10y daily window on
+/// a previous run (young listings — a large slice of the ETF universe). For those the second Yahoo
+/// call per name buys nothing, so it's skipped for `LONG_SKIP_TTL_DAYS` (a relisting/history
+/// extension heals within a month). ticker -> date recorded; gitignored local cache, same pattern
+/// as `.fund_facts_cache.json`. Zero display change: a skipped fetch takes the exact daily-only
+/// fallback path a failed fetch already takes (20Y column n/a, as today).
+const LONG_SKIP_FILE: &str = ".long_history_skip.json";
+const LONG_SKIP_TTL_DAYS: i64 = 30;
+static LONG_SKIP: std::sync::OnceLock<HashMap<String, NaiveDate>> = std::sync::OnceLock::new();
+/// Tickers to record after this run's fan-out (collected concurrently, written ONCE in `quotes`).
+static LONG_SKIP_NEW: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn long_skip_load() -> &'static HashMap<String, NaiveDate> {
+    LONG_SKIP.get_or_init(|| {
+        std::fs::read_to_string(LONG_SKIP_FILE)
+            .ok()
+            .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
+            .map(|m| m.into_iter().filter_map(|(t, d)| Some((t, d.parse().ok()?))).collect())
+            .unwrap_or_default()
+    })
+}
+
+/// The skip decision, pure for testability: recorded within the TTL -> skip the monthly fetch.
+fn long_skip_fresh(recorded: Option<&NaiveDate>, today: NaiveDate) -> bool {
+    recorded.is_some_and(|d| (today - *d).num_days() <= LONG_SKIP_TTL_DAYS)
+}
+
+/// Persist the skip list: still-fresh old entries keep their ORIGINAL date (so the TTL actually
+/// expires), this run's new zero-contribution tickers stamp today. Stale entries drop out.
+fn long_skip_save() {
+    let today = chrono::Local::now().date_naive();
+    let mut m: HashMap<String, String> = long_skip_load()
+        .iter()
+        .filter(|(_, d)| long_skip_fresh(Some(d), today))
+        .map(|(t, d)| (t.clone(), d.to_string()))
+        .collect();
+    for t in LONG_SKIP_NEW.lock().unwrap().drain(..) {
+        m.entry(t).or_insert_with(|| today.to_string());
+    }
+    let _ = std::fs::write(LONG_SKIP_FILE, serde_json::to_string(&m).unwrap_or_default());
+}
 /// Per-row BF keyData facts: share-class + replication tokens ("Acc"/"Dist"; "Swap"/"Full"/"Opt"/
 /// "Hybr"/"Samp") and the benchmark-index name (lowercased at capture so twin matching is one `==`;
 /// BF normalizes it — same-index funds carry the literal same string, hedged classes differ).
@@ -2280,6 +2335,18 @@ mod tests {
         assert_eq!(use_from_name("Xtrackers MSCI World UCITS ETF 1C"), None); // no token -> honest n/a
     }
 
+    /// (round 51) monthly-fetch skip decision: within the 30d TTL -> skip, expired/absent -> fetch.
+    #[test]
+    fn long_skip_ttl() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
+        let fresh = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap(); // 20d old
+        let stale = NaiveDate::from_ymd_opt(2026, 5, 1).unwrap(); // 70d old
+        assert!(long_skip_fresh(Some(&fresh), today));
+        assert!(long_skip_fresh(Some(&today), today)); // recorded today -> skip
+        assert!(!long_skip_fresh(Some(&stale), today)); // TTL expired -> retry (heals relistings)
+        assert!(!long_skip_fresh(None, today)); // never recorded -> fetch
+    }
+
     /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but
     /// ROE -27% => equity < 0 => not meaningful). Genuine loss-makers and normal filers pass through.
     #[test]
@@ -2646,6 +2713,8 @@ pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &
         let more = if dead.len() > 20 { format!(" …(+{} more)", dead.len() - 20) } else { String::new() };
         eprintln!("fetch: {} symbol(s) returned no Yahoo data, gated out: {shown}{more}", dead.len());
     }
+    // (round 51) one write per run: persist the tickers whose monthly fetch proved useless above.
+    long_skip_save();
     out
 }
 
