@@ -390,7 +390,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     let mut meta = if is_etf { bf_meta(ticker, &chart.name) } else { BfMeta::default() };
     // (round 49) USE fallback from the listing name when BF is silent (venue/regulatory funds carry
     // no BF row): UCITS names spell the share class as a word token ("… USD (Acc)"). BF stays
-    // authoritative via or_else. Display-only; H still requires BF Full replication, so no H flips.
+    // authoritative via or_else. Display-only; H still requires a BF replication token, so no H flips.
     if is_etf {
         meta.use_of = meta.use_of.or_else(|| use_from_name(&chart.name));
     }

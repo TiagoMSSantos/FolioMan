@@ -645,8 +645,13 @@ pub fn hold_miss_reason(q: &Quote) -> Option<String> {
         Some(t) if t > 0.25 => return Some(format!("TER {t:.2}% > 0.25% cap")),
         _ => {}
     }
-    if q.replication != Some("Full") {
-        return Some(format!("replication {} (needs Full)", q.replication.unwrap_or("unknown")));
+    // (round 53) physical FAMILY, not literal "Full": this leg exists to exclude swap counterparty
+    // risk over a decades hold, but requiring Full replication structurally excluded every large
+    // all-world fund — VWRA (€43B), iShares ACWI (€29B), SPDR ACWI (€14B) all sample ("Optimised",
+    // the norm for a 3000+ name index; BF verified live 2026-07) — keeping the CORE tier-0 slot
+    // permanently empty. Optimised/Sample/Hybrid hold the stocks; Swap and unknown still fail.
+    if !matches!(q.replication, Some("Full" | "Opt" | "Samp" | "Hybr")) {
+        return Some(format!("replication {} (needs physical)", q.replication.unwrap_or("unknown")));
     }
     if q.use_of_profits != Some("Acc") {
         return Some(format!("share class {} (needs Acc)", q.use_of_profits.unwrap_or("unknown")));
@@ -1823,7 +1828,11 @@ mod tests {
     assert_eq!(miss("Vanguard S&P 500 ETF", Some(0.03), Some("Full"), Some("Acc"), Some(2e9)).as_deref(), Some("no UCITS token in the name"));
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF", None, Some("Full"), Some("Acc"), Some(2e9)).as_deref(), Some("TER unknown"));
     assert_eq!(miss("Vanguard FTSE All-World UCITS ETF", Some(0.30), Some("Full"), Some("Acc"), Some(15e9)).as_deref(), Some("TER 0.30% > 0.25% cap"));
-    assert_eq!(miss("Amundi S&P 500 Swap UCITS ETF", Some(0.15), Some("Swap"), Some("Acc"), Some(2.6e9)).as_deref(), Some("replication Swap (needs Full)")); // AUM5
+    assert_eq!(miss("Amundi S&P 500 Swap UCITS ETF", Some(0.15), Some("Swap"), Some("Acc"), Some(2.6e9)).as_deref(), Some("replication Swap (needs physical)")); // AUM5
+    // (round 53) sampling IS physical: VWRA-shape all-world fund ("Optimised") must pass — the old
+    // literal-Full leg kept the CORE tier-0 slot empty (every big all-world fund samples).
+    assert_eq!(miss("Vanguard FTSE All-World UCITS ETF USD Acc", Some(0.22), Some("Opt"), Some("Acc"), Some(42.9e9)), None);
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), None, Some("Acc"), Some(2e9)).as_deref(), Some("replication unknown (needs physical)"));
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF", Some(0.07), Some("Full"), Some("Dist"), Some(2e9)).as_deref(), Some("share class Dist (needs Acc)"));
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(0.3e9)).as_deref(), Some("AUM €0.3B < €1B floor"));
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), None).as_deref(), Some("AUM unknown"));
