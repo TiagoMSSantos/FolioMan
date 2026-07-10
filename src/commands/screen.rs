@@ -146,7 +146,7 @@ pub async fn run(args: Vec<String>) {
             .collect();
         eprintln!("screen: dropped {} stale listing(s) (>{}d since last close): {}", stale.len(), settings.stale_days, names.join(", "));
     }
-    println!("Scanned {} instruments.", quotes.len());
+    // (round 52) no separate "Scanned N" line — the Data-quality line below carries the same count.
 
     // Income-statement snapshot (REV-YoY / EPS-YoY / NET%) for the DISPLAYED stock rows only: the
     // ranked top-N plus pinned stocks — enriching all ~500 S&P names cold would burn the shared FMP
@@ -181,7 +181,9 @@ pub async fn run(args: Vec<String>) {
 
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
-    render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, explain.as_deref());
+    // (round 52) render returns the score-math walkthrough; printed AFTER the actionable footers
+    // (gate/exit review, fact drift, near-miss) so alerts aren't buried under arithmetic.
+    let explain_text = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, explain.as_deref());
 
     // (X) EXIT review — WATCHLIST names that cleared every growth gate on the previous screen run
     // but fail one now. The backtest's exit probe measures this exact transition: newly-failing
@@ -234,7 +236,10 @@ pub async fn run(args: Vec<String>) {
     // (B) NEAR-MISS tail: names the growth lane rejected on EXACTLY one gate — a compounder one notch
     // outside the fence (e.g. a great name 25% off its high failing only the range gate). Makes the silent
     // exclusions visible so a dropped winner can be eyeballed, without loosening any gate. Empty -> nothing.
+    // (round 52) pinned names skipped: the gate-review footer above already explains them, and the
+    // same ticker printing twice with the same reason read as a bug (VVSM stretch receipt).
     let mut near: Vec<(&Quote, &'static str, String)> = quotes.iter()
+        .filter(|q| !settings.tickers.contains(&q.ticker))
         .filter_map(|q| growth_near_miss(q, &settings.buy_heuristic).map(|(g, why)| (q, g, why)))
         .collect();
     if !near.is_empty() {
@@ -243,6 +248,11 @@ pub async fn run(args: Vec<String>) {
         for (q, gate, why) in near.iter() {
             println!("  {:<8} {:<24.24} {:<10} {why}", q.ticker, q.name, gate);
         }
+    }
+
+    // (round 52) score-math walkthrough LAST among the analysis blocks: reference material, not an alert.
+    if let Some(text) = explain_text {
+        println!("{}", text.trim_end());
     }
 
     if let Some(n) = nupl {

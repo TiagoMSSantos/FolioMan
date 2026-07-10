@@ -795,7 +795,10 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
         fails.push(("range", format!("{:.0}% in range (need ≥{:.0}%)", quote.range_pct, min_range), quote.range_pct >= min_range - 10.0));
     }
     if long_cagr < min_cagr {
-        fails.push(("cagr", format!("{long_cagr:.1}%/yr (need ≥{min_cagr:.1}%)"), long_cagr >= min_cagr - 4.0));
+        // close = within 1.5 pp of the floor. 4.0 flooded the screen tail with ~55 "10%/yr vs a 14%
+        // bar" rows — that's a different asset class, not a near miss; 1.5 keeps the genuine
+        // one-notch-out compounders (13.9 vs 14.0) and nothing else.
+        fails.push(("cagr", format!("{long_cagr:.1}%/yr (need ≥{min_cagr:.1}%)"), long_cagr >= min_cagr - 1.5));
     }
     if return_1y <= y1_floor {
         fails.push(("1Y+", format!("1Y {return_1y:+.1}% (need >{y1_floor:.1}%)"), return_1y > y1_floor - 10.0));
@@ -1448,7 +1451,10 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // P/E, PEG, ROE, REV-YoY, EPS-YoY, NET% are equity-only; TER/AUM/USE/REPL are ETF-only. Hide the
     // always-"—" columns per class: stocks drop the fund columns, ETFs drop the equity fundamentals,
     // crypto drops both.
-    print_picks(&format!("{} stocks [sectors: {secs}] {kind} — {desc}", head(stock.len())), &stock, n, w, pinned, &["ter", "aum", "use", "repl"], tuning);
+    // the ranking explainer prints ONCE here — repeating the same ~340-char paragraph in all three
+    // table titles (incl. the crypto sentence over the stocks table) tripled the noise.
+    println!("\n{kind} — {desc}");
+    print_picks(&format!("{} stocks [sectors: {secs}]:", head(stock.len())), &stock, n, w, pinned, &["ter", "aum", "use", "repl"], tuning);
     // (#27) cluster concentration: a top-20 stock table is usually ~3 correlated trades, not 20
     // independent bets — count the SHOWN rows per GICS sector so "semis-heavy" is a number, not a
     // vibe. Display-only; empty map (`check`, explicit-args screen) skips the sector line. Names
@@ -1475,10 +1481,10 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
         }
         mix_line("market mix", counts, "listing country ~ currency exposure; all-USA = one bet on the dollar too");
     }
-    print_picks(&format!("{} ETFs [sectors: {secs}] {kind} — {desc}", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net"], tuning);
+    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net"], tuning);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
-    print_picks(&format!("{} crypto {kind} (ranked vs Bitcoin, the base) — {desc}", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl"], tuning);
+    print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl"], tuning);
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -1548,14 +1554,14 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
         "\nbuy-and-hold CORE — broad one-fund-forever holds (the momentum ranking buries these at 0.0; \
          ranked by breadth → domicile (IE first, withholding) → cheapest TER → largest AUM, NOT advice):"
     );
-    println!("  {:<38} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
+    println!("  {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
     for q in cores.iter().take(n) {
         let cagr = q.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%"));
         let yrs = q.age_years.map_or("—".to_string(), |a| format!("{a:.0}"));
         let ter = q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%"));
         println!(
-            "  {:<38} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}",
-            truncate(&q.name, 38),
+            "  {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}",
+            truncate(&q.name, 44),
             truncate(&q.ticker, 9),
             truncate(&q.market, 9),
             cagr,
@@ -1592,7 +1598,7 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
 /// deepest-dip ranking picks future LOSERS over a multi-decade hold. `nupl` (Bitcoin
 /// net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or fetch fail) damps
 /// the crypto rows when the market is euphoric.
-pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], explain: Option<&str>) {
+pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], explain: Option<&str>) -> Option<String> {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
     let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
@@ -1616,7 +1622,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     let growth = "20yr+ growth ranking: at/near its own ~10y high (OFF-HI ≈ 0) with a strong proven \
                   long-term CAGR and an accelerating recent year, braked by how far it's run above its \
                   200wk trend — quality pricey *because* it keeps winning. Crypto ranked vs Bitcoin (the \
-                  market base). NOT advice:";
+                  market base). NOT advice.";
     // rank with NO trim (0.0): print_lane trims equities by growth_min_score but keeps the crypto lane
     // full (all growers up to Bitcoin). Gates inside growth_score still exclude non-growers.
     let picks = ranked(quotes, tuning, growth_scorer, 0.0, &pinned_set);
@@ -1658,13 +1664,16 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     for h in &bridge_hint_lines(&pinned_q, quotes, tuning) {
         println!("{h}");
     }
+    // returned, not printed: the caller places the score-math walkthrough AFTER the actionable
+    // footers (gate review / exit review / fact drift / near-miss) so the alerts aren't buried
+    // under 20 lines of arithmetic.
     match (explain_text, explain) {
-        (Some(text), _) => println!("{text}"),
+        (Some(text), _) => Some(text),
         // an explicit --explain TICKER that didn't land a row: say why instead of silently printing nothing
-        (None, Some(t)) if !t.is_empty() => println!(
+        (None, Some(t)) if !t.is_empty() => Some(format!(
             "\n--explain: {t} is not in the growth ranking (fails a growth gate, isn't EU-buyable, or wasn't scanned)."
-        ),
-        _ => {}
+        )),
+        _ => None,
     }
 }
 
