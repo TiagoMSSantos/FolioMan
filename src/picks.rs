@@ -890,7 +890,11 @@ pub fn gate_review_lines(quotes: &[&Quote], tuning: &BuyHeuristic, ticker_w: usi
                 return None;
             }
             let why = fails.iter().map(|(gate, why, _)| format!("{gate}: {why}")).collect::<Vec<_>>().join("; ");
-            Some(format!("  {:<ticker_w$} {}", q.ticker, why))
+            // (round 54) hold-core names fail the growth gates FOREVER BY DESIGN (a broad index fund
+            // never clears a 14%/yr momentum bar) — without this tag the same three pinned funds read
+            // as unresolved warnings every single run.
+            let hold = if core::hold_suitable(q) { "  (hold-core H — growth gates don't apply)" } else { "" };
+            Some(format!("  {:<ticker_w$} {}{hold}", q.ticker, why))
         })
         .collect()
 }

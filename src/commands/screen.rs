@@ -297,7 +297,11 @@ pub async fn run(args: Vec<String>) {
                 .then_with(|| a.0.ticker.cmp(&b.0.ticker))
         });
         println!("\nNear-miss — rejected on ONE growth gate (not ranked above), loosen intentionally if wanted:");
-        for (q, gate, why) in near.iter() {
+        // (round 54) one row per FUND: the same UCITS fund lists on several venues (L&G Gold Mining
+        // printed as both AUCO.L and ETLX.DE) — the momentum tables dedup by underlying, this block
+        // didn't. First occurrence wins = the closest venue, thanks to the sort above.
+        let mut seen_names = std::collections::HashSet::new();
+        for (q, gate, why) in near.iter().filter(|(q, ..)| seen_names.insert(q.name.to_lowercase())) {
             println!("  {:<8} {:<44.44} {:<10} {why}", q.ticker, q.name, gate);
         }
     }
