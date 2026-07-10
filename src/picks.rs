@@ -1532,7 +1532,11 @@ fn dom_rank(q: &Quote) -> u8 {
 /// a decades hold actually cares about — broadest diversification first (one fund = the whole world),
 /// then cheapest TER, then largest AUM (least closure risk). Pure display; touches no score, no gate,
 /// no backtest. Scoped to the wide `screen` universe (empty on the small `check` watchlist anyway).
-fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
+/// (round 55) The CORE shortlist selection, shared by the printed block and the screen-state
+/// membership diff: EU-buyable hold-suitable funds, one row per fund name (best venue kept),
+/// breadth-major sort (all-world -> World -> S&P 500; IE domicile, cheapest TER, largest AUM
+/// within a tier), capped at 3 per tier so no index family crowds out the others.
+pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     let mut cores: Vec<&Quote> = quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)).collect();
     cores.sort_by(|a, b| {
         core::hold_breadth_tier(&a.name)
@@ -1551,9 +1555,15 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
         per_tier[t] += 1;
         per_tier[t] <= 3
     });
+    cores
+}
+
+fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
+    let cores = hold_core_list(quotes);
     if cores.is_empty() {
         return;
     }
+    let per_tier0 = cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 0).count();
     println!(
         "\nbuy-and-hold CORE — broad one-fund-forever holds (the momentum ranking buries these at 0.0; \
          ranked by breadth → domicile (IE first, withholding) → cheapest TER → largest AUM, NOT advice):"
@@ -1579,7 +1589,7 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
     }
     // (round 49) tier-0 hole made visible: the venue lists carry all-world funds, but without facts
     // (TER/AUM) none can qualify — the documented ceiling was silent until now.
-    if per_tier[0] == 0 {
+    if per_tier0 == 0 {
         println!("  (no all-world/ACWI fund with facts qualified — pin one, e.g. VWCE.DE, to surface it)");
     }
     // (round 49) pinned near-H: a watchlist fund that IS a broad core candidate but misses the H flag —

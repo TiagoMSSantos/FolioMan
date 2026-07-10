@@ -28,6 +28,11 @@ struct ScreenState {
     // `facts` tuple, so round-50..53 state files still deserialize.
     #[serde(default)]
     fund_meta: std::collections::HashMap<String, (Option<String>, Option<String>)>,
+    // (round 55) the CORE shortlist tickers as printed last run. The shortlist is what a 20yr
+    // holder actually buys, and its composition changes silently (round-53's replication fix put
+    // VWRA/SSAC in overnight) — one diff line makes joins/dropouts visible.
+    #[serde(default)]
+    core: Vec<String>,
 }
 
 const SCREEN_STATE_FILE: &str = ".screen_state.json";
@@ -43,6 +48,10 @@ const AUM_COLLAPSE_FRACTION: f64 = 0.5;
 /// are a fee hike (compounds against you forever) and an AUM collapse (fund closure = forced
 /// taxable exit). Pure diff of last run's facts vs this run's; None<->Some transitions are silent
 /// (data-coverage churn, not fund events). Sorted for stable output.
+/// Known limitation (round 55, documented not guarded): `ter_shown` mixes BF and Yahoo-fallback
+/// sources, so a fund whose BF row disappears can flip source between runs and the two sources'
+/// TER can differ by >0.05 pp — a false "hike" alert. Rare, and the cost is one glance at a
+/// review line; a source-tracking guard isn't worth the state it would add.
 fn fact_alerts(
     prev: &std::collections::HashMap<String, (Option<f64>, Option<f64>)>,
     cur: &std::collections::HashMap<String, (Option<f64>, Option<f64>)>,
@@ -263,6 +272,27 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (round 55) CORE membership diff: joins/dropouts of the shortlist above since the last run.
+    // Silent when the previous state predates the field (empty vec — everything would read as new).
+    let core_now: Vec<String> =
+        crate::picks::hold_core_list(&quotes).iter().take(settings.top_picks).map(|q| q.ticker.clone()).collect();
+    if let Some(prev) = prior.as_ref().filter(|p| !p.core.is_empty()) {
+        let joined: Vec<&str> =
+            core_now.iter().filter(|t| !prev.core.contains(t)).map(String::as_str).collect();
+        let dropped: Vec<&str> =
+            prev.core.iter().filter(|t| !core_now.contains(t)).map(String::as_str).collect();
+        if !joined.is_empty() || !dropped.is_empty() {
+            let fmt = |sign: char, ts: &[&str]| {
+                ts.iter().map(|t| format!("{sign}{t}")).collect::<Vec<_>>().join(" ")
+            };
+            println!(
+                "\nCORE shortlist changed since {}: {}",
+                prev.date,
+                [fmt('+', &joined), fmt('-', &dropped)].join(" ").trim()
+            );
+        }
+    }
+
     let state = ScreenState {
         date: chrono::Local::now().date_naive().to_string(),
         passing: watch
@@ -272,6 +302,7 @@ pub async fn run(args: Vec<String>) {
             .collect(),
         facts,
         fund_meta,
+        core: core_now,
     };
     let _ = std::fs::write(SCREEN_STATE_FILE, serde_json::to_string(&state).unwrap_or_default());
 
