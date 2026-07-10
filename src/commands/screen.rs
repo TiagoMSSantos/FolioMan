@@ -17,9 +17,50 @@ use crate::{config, fetch};
 struct ScreenState {
     date: String,         // YYYY-MM-DD of the run that wrote it
     passing: Vec<String>, // watchlist tickers that cleared every growth gate on that run
+    // (round 50) ticker -> (TER %, AUM €) AS SHOWN last run (ter_shown/aum_shown, i.e. incl. the
+    // Yahoo fallback) for watchlist + H-flagged funds — feeds the fact-drift alerts below.
+    // serde(default) so state files written before this field still load.
+    #[serde(default)]
+    facts: std::collections::HashMap<String, (Option<f64>, Option<f64>)>,
 }
 
 const SCREEN_STATE_FILE: &str = ".screen_state.json";
+
+/// (round 50) TER hike worth flagging: ≥0.05 pp is a real fee decision (Vanguard-scale cuts/hikes
+/// move in 0.05+ steps), below is basis-point noise / rounding drift in the source.
+const TER_HIKE_PP: f64 = 0.05;
+/// (round 50) AUM collapse worth flagging: a halving since last run. Normal market drawdown moves
+/// AUM tens of %, not −50% between screens — that scale means redemptions/closure risk.
+const AUM_COLLAPSE_FRACTION: f64 = 0.5;
+
+/// (round 50) Fact-drift alerts for a never-sell holder: the two events a 20yr hold must react to
+/// are a fee hike (compounds against you forever) and an AUM collapse (fund closure = forced
+/// taxable exit). Pure diff of last run's facts vs this run's; None<->Some transitions are silent
+/// (data-coverage churn, not fund events). Sorted for stable output.
+fn fact_alerts(
+    prev: &std::collections::HashMap<String, (Option<f64>, Option<f64>)>,
+    cur: &std::collections::HashMap<String, (Option<f64>, Option<f64>)>,
+) -> Vec<String> {
+    let aum_fmt = |v: f64| if v >= 1e9 { format!("€{:.1}B", v / 1e9) } else { format!("€{:.0}M", v / 1e6) };
+    let mut out = Vec::new();
+    let mut tickers: Vec<&String> = cur.keys().filter(|t| prev.contains_key(*t)).collect();
+    tickers.sort();
+    for t in tickers {
+        let (pt, pa) = prev[t];
+        let (ct, ca) = cur[t];
+        if let (Some(p), Some(c)) = (pt, ct) {
+            if c - p >= TER_HIKE_PP {
+                out.push(format!("ALERT {t}: TER {p:.2}% -> {c:.2}% (fee hike compounds against a hold)"));
+            }
+        }
+        if let (Some(p), Some(c)) = (pa, ca) {
+            if p > 0.0 && c <= p * AUM_COLLAPSE_FRACTION {
+                out.push(format!("ALERT {t}: AUM {} -> {} (closure risk — a forced taxable exit)", aum_fmt(p), aum_fmt(c)));
+            }
+        }
+    }
+    out
+}
 
 pub async fn run(args: Vec<String>) {
     // `--explain [TICKER]`: after the tables, print the SCORE arithmetic for TICKER (a flag with no
@@ -162,6 +203,23 @@ pub async fn run(args: Vec<String>) {
             }
         }
     }
+    // (round 50) fact-drift alerts: TER hikes / AUM collapses on watchlist + H-flagged funds since
+    // the previous run — the two fund events a never-sell holder must actually react to.
+    let facts: std::collections::HashMap<String, (Option<f64>, Option<f64>)> = quotes
+        .iter()
+        .filter(|q| settings.tickers.contains(&q.ticker) || crate::core::hold_suitable(q))
+        .map(|q| (q.ticker.clone(), (q.ter_shown(), q.aum_shown())))
+        .collect();
+    if let Some(prev) = &prior {
+        let alerts = fact_alerts(&prev.facts, &facts);
+        if !alerts.is_empty() {
+            println!("\nFund-fact drift since {} (fee hikes / closure risk — review, not auto-sell):", prev.date);
+            for a in &alerts {
+                println!("  {a}");
+            }
+        }
+    }
+
     let state = ScreenState {
         date: chrono::Local::now().date_naive().to_string(),
         passing: watch
@@ -169,6 +227,7 @@ pub async fn run(args: Vec<String>) {
             .filter(|q| gate_failures(q, &settings.buy_heuristic).is_some_and(|f| f.is_empty()))
             .map(|q| q.ticker.clone())
             .collect(),
+        facts,
     };
     let _ = std::fs::write(SCREEN_STATE_FILE, serde_json::to_string(&state).unwrap_or_default());
 
@@ -196,4 +255,39 @@ pub async fn run(args: Vec<String>) {
     // Euribor / Certificados de Aforro / inflation — fixed-income + macro baselines to compare the
     // asset tables against
     crate::commands::print_macro_footer(&client, &settings.urls).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// (round 50) fact-drift alert semantics: a real TER hike and an AUM halving fire; basis-point
+    /// wobble, coverage churn (None<->Some) and unknown-both stay silent.
+    #[test]
+    fn fact_alerts_semantics() {
+        let m = |rows: &[(&str, Option<f64>, Option<f64>)]| -> HashMap<String, (Option<f64>, Option<f64>)> {
+            rows.iter().map(|(t, ter, aum)| (t.to_string(), (*ter, *aum))).collect()
+        };
+        let prev = m(&[
+            ("VUAA.DE", Some(0.07), Some(28.8e9)),
+            ("WOBBLE.DE", Some(0.20), Some(2.0e9)),
+            ("SHRINK.DE", Some(0.15), Some(2.1e9)),
+            ("CHURN.DE", None, None),
+            ("GONE.DE", Some(0.10), Some(1e9)),
+        ]);
+        let cur = m(&[
+            ("VUAA.DE", Some(0.15), Some(28.0e9)),  // +0.08 pp -> fires
+            ("WOBBLE.DE", Some(0.22), Some(1.9e9)), // +0.02 pp + normal AUM drift -> silent
+            ("SHRINK.DE", Some(0.15), Some(0.8e9)), // -62% AUM -> fires
+            ("CHURN.DE", Some(0.10), Some(5e9)),    // None -> Some = coverage, silent
+            ("NEW.DE", Some(0.30), Some(1e9)),      // not in prev -> silent
+        ]);
+        let alerts = fact_alerts(&prev, &cur);
+        assert_eq!(alerts, vec![
+            "ALERT SHRINK.DE: AUM €2.1B -> €800M (closure risk — a forced taxable exit)".to_string(),
+            "ALERT VUAA.DE: TER 0.07% -> 0.15% (fee hike compounds against a hold)".to_string(),
+        ]);
+        assert!(fact_alerts(&prev, &prev).is_empty()); // no drift -> no alerts
+    }
 }
