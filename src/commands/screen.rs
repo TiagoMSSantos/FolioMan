@@ -243,10 +243,20 @@ pub async fn run(args: Vec<String>) {
         .filter_map(|q| growth_near_miss(q, &settings.buy_heuristic).map(|(g, why)| (q, g, why)))
         .collect();
     if !near.is_empty() {
-        near.sort_by(|a, b| a.1.cmp(b.1).then_with(|| a.0.ticker.cmp(&b.0.ticker)));
+        // (round 53) within the cagr group (the bulk) closest-to-the-bar first — the `why` string
+        // starts with the value, higher = closer to the floor. Other gates mix floor/ceiling
+        // directions, one sort rule would be wrong for half of them; they keep ticker order.
+        let cagr_val = |gate: &str, why: &str| {
+            if gate == "cagr" { why.split('%').next().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0) } else { 0.0 }
+        };
+        near.sort_by(|a, b| {
+            a.1.cmp(b.1)
+                .then_with(|| cagr_val(b.1, &b.2).partial_cmp(&cagr_val(a.1, &a.2)).unwrap_or(std::cmp::Ordering::Equal))
+                .then_with(|| a.0.ticker.cmp(&b.0.ticker))
+        });
         println!("\nNear-miss — rejected on ONE growth gate (not ranked above), loosen intentionally if wanted:");
         for (q, gate, why) in near.iter() {
-            println!("  {:<8} {:<24.24} {:<10} {why}", q.ticker, q.name, gate);
+            println!("  {:<8} {:<44.44} {:<10} {why}", q.ticker, q.name, gate);
         }
     }
 

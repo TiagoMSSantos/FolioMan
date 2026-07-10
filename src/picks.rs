@@ -1481,10 +1481,10 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
         }
         mix_line("market mix", counts, "listing country ~ currency exposure; all-USA = one bet on the dollar too");
     }
-    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net"], tuning);
+    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "buyback"], tuning);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
-    print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl"], tuning);
+    print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom"], tuning);
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
