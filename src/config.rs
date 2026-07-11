@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)] // a typo'd key must error, not silently fall back to the default
 pub struct Settings {
     pub tickers: Vec<String>, // single watchlist: `check`/`perf`/`alert` fetch it as their default list AND `screen` always fetches+pins it (marked PIN, exempt from the sector/score cut) so you can compare holdings against the top growth candidates. note: one list, two roles
 
@@ -46,7 +47,7 @@ pub struct Settings {
 /// nominal. Off by default. When on, deflates by the ACTUAL cumulative EU HICP inflation over each
 /// horizon (fetched live, same source as the `check` footer) — no rate to guess.
 #[derive(Debug, Deserialize, Clone, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)] // a typo'd knob must error, not silently fall back to the default
 pub struct InflationAdjust {
     pub enabled: bool, // false = raw nominal % (default); true = deflate long-horizon returns by live EU HICP
 }
@@ -78,7 +79,7 @@ fn default_true() -> bool {
 /// Table column widths (chars): each value is truncated AND padded to this. Optional in
 /// YAML — omit the `widths:` block or any field for these defaults.
 #[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)] // a typo'd knob must error, not silently fall back to the default
 pub struct Widths {
     pub name: usize,     // NAME column (check/screen/picks)
     pub ticker: usize,   // TICKER column
@@ -119,7 +120,7 @@ impl Default for Widths {
 /// dividend_reward(D)`, then `score = base × value(E) × geomean(decline(B), trust)`.
 /// GATES exclude a candidate outright; SCORE knobs rank the survivors. Mirrors `config/settings.yaml`.
 #[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)] // a typo'd knob must error, not silently fall back to the default
 pub struct BuyHeuristic {
     // --- GATES: a candidate failing ANY of these is dropped before scoring ---
     pub min_1y_pct: f64,             // [FOIL] on-sale only: reject if equity 1Y % <= this (growth uses a hardcoded 0% floor, not this)
@@ -305,6 +306,7 @@ impl Default for BuyHeuristic {
 /// Every data-source URL the tool hits. Templates use `{placeholder}` tokens replaced
 /// at fetch time (`{ticker}`, `{range}`, `{topic}`). Edit in settings.yaml.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)] // a typo'd key must error, not silently fall back to the default
 pub struct Urls {
     pub yahoo_chart: String,   // {ticker} {range}
     pub yahoo_intraday: String, // {ticker} — hourly bars (~2d) for the screen 1h/6h/12h columns
