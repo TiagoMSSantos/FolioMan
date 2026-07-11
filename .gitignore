@@ -23,6 +23,10 @@ target
 **/CLAUDE.md
 **/*.claude
 **/*.lock
+# …except the Cargo lockfile: binaries commit it (Cargo's guidance), so a dependency regression
+# can only arrive as a reviewable `cargo update` commit — never ambush a CI run — and the RustSec
+# audit scans the exact resolution every build uses.
+!Cargo.lock
 config/settings.yaml
 .fmp_cache/
 .folioman_turnover_*.txt

@@ -12,7 +12,8 @@ on:
 # Tame flaky crates.io fetches. The "[16] Error in the HTTP2 framing layer" curl failure is HTTP/2
 # multiplexing choking mid-download; CARGO_HTTP_MULTIPLEXING=false forces HTTP/1.1 and dodges it.
 # CARGO_NET_RETRY bumps cargo's own retry (default 3) so a transient blip self-heals instead of
-# failing the job. (Cargo.lock is untracked, so every job re-resolves + re-downloads — more exposure.)
+# failing the job. (Cargo.lock is committed — versions are pinned — but cache-miss jobs still
+# download every crate, so the retry hardening stays.)
 env:
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_MULTIPLEXING: "false"
@@ -71,8 +72,8 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
 
   # RustSec advisory gate: a networked CLI whose whole job is fetching remote payloads should not
-  # sit on a dependency with a known CVE. Cargo.lock is untracked (see the env note above), so
-  # generate it first — the audit then covers the exact freshest resolution every other job builds.
+  # sit on a dependency with a known CVE. Audits the COMMITTED Cargo.lock — the exact resolution
+  # every job builds — so a red is always about the tree we actually ship, deterministically.
   # BLOCKING: an advisory in the tree is a real defect, and the nightly cron means a newly published
   # CVE reddens within a day, not whenever the next code push happens. Escape hatch if an advisory
   # is ever unfixable (no patched release, not exploitable here): commit an `audit.toml` with an
@@ -83,7 +84,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: taiki-e/install-action@cargo-audit
-      - run: cargo generate-lockfile
       - run: cargo audit
 
   unit-tests:
