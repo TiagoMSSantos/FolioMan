@@ -11,6 +11,9 @@ use std::process::{Command, Stdio};
 /// Run the binary with `args` and optional stdin; return (exit_code, stdout, stderr).
 fn run(args: &[&str], stdin: Option<&str>) -> (i32, String, String) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_folioman"));
+    // point config::load() at the committed fixture: the private config/settings.yaml is
+    // gitignored, so in CI any subcommand that reaches config loading would panic without this.
+    cmd.env("FOLIOMAN_CONFIG", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml"));
     cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().expect("spawn folioman");
     if let Some(s) = stdin {
@@ -50,6 +53,15 @@ fn trade_bad_side_exit_2() {
     let (code, _, stderr) = run(&["trade", "binance", "hodl", "BTCEUR", "1"], None);
     assert_eq!(code, 2);
     assert!(stderr.contains("side must be"), "side guard missing: {stderr}");
+}
+
+#[test]
+fn report_crypto_prints_no_statement_offline() {
+    // `-` in the ticker (crypto/FX) short-circuits BEFORE any fetch (src/commands/report.rs), so
+    // this exercises report's binary dispatch + its only offline branch without touching the network.
+    let (code, stdout, _) = run(&["report", "BTC-USD"], None);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("no income statement (crypto/FX)"), "crypto guard missing: {stdout}");
 }
 
 #[test]
