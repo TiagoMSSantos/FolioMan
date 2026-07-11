@@ -1812,4 +1812,76 @@ mod tests {
         assert!((n2 - 216.0).abs() < 1e-9); // 1+3·0.72=3.16 -> +216%/yr over 1y
         assert!((r2 - 216.0).abs() < 1e-9); // 4^1−1=300% gross ×0.72 = +216% — same over 1y
     }
+
+    /// (round 67) END-TO-END walk-forward pin. Every helper above is tested piecewise, but this is
+    /// the only test that runs the actual pipeline composition — synthetic price series →
+    /// `core::backtest_quote` at run()'s cutoff cadence → `demean` → `growth_score` gates →
+    /// `lane_metrics`/`winsor_edge`/`edge_terciles` — to EXACT numbers. Every tuning decision trusts
+    /// this pipeline's edge; if this test reds you changed edge composition (a quote-reconstruction
+    /// fn, the de-mean, a gate, the metric math) — revert unless that was the explicit, validated
+    /// goal, and re-validate the shipped tuning if it was. Deterministic: fixed dates, closed-form
+    /// series, BuyHeuristic::default(), no network, no RNG.
+    #[test]
+    fn walk_forward_edge_pin() {
+        // ~13y of "daily" bars on a synthetic trading calendar (calendar-days spread like ~252/yr;
+        // strictly increasing since the step 365/252 > 1 day).
+        let n_bars = 13 * 252;
+        let d0 = ymd(2010, 1, 4);
+        let dates: Vec<NaiveDate> =
+            (0..n_bars).map(|k| d0 + chrono::Duration::days(k as i64 * 365 / 252)).collect();
+        // closed-form series: CAGR `g` plus a deterministic sine wobble (amplitude `amp`, phase `ph`)
+        // so ranks aren't degenerate and vol/MA/R² differ per name.
+        let series = |g: f64, amp: f64, ph: f64| -> Vec<f64> {
+            (0..n_bars)
+                .map(|k| {
+                    let t = k as f64 / 252.0;
+                    100.0 * (1.0 + g).powf(t) * (1.0 + amp * (t * 2.7 + ph).sin())
+                })
+                .collect()
+        };
+        // a spread of compounders, laggards and choppy names: winners near-high with high R²
+        // (pass the growth gates), losers/flats shape the peer-means and get gated out.
+        let universe: [(&str, Vec<f64>); 8] = [
+            ("WIN1", series(0.22, 0.04, 0.0)),
+            ("WIN2", series(0.17, 0.06, 1.0)),
+            ("MID1", series(0.10, 0.08, 2.0)),
+            ("MID2", series(0.07, 0.10, 3.0)),
+            ("FLAT", series(0.01, 0.12, 4.0)),
+            ("LOSE", series(-0.08, 0.10, 5.0)),
+            ("WOB1", series(0.13, 0.20, 0.5)),
+            ("WOB2", series(0.04, 0.25, 1.5)),
+        ];
+        // run()'s exact cutoff walk: MIN_HISTORY warmup, STEP_SESSIONS stride, 5y forward window,
+        // stop when no full window remains. (Kept in sync by the pin itself: a drift in these
+        // constants changes the sample set and the pinned numbers move.)
+        let years = 5;
+        let mut samples: Vec<Sample> = Vec::new();
+        for (tk, closes) in &universe {
+            let mut i = MIN_HISTORY;
+            while i < dates.len() {
+                let target = dates[i] + chrono::Duration::days(years * 365);
+                let Some(off) = dates[i..].iter().position(|d| *d >= target) else { break };
+                let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
+                let quote = core::backtest_quote(tk, &dates, closes, i, 252);
+                samples.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund: None });
+                i += STEP_SESSIONS;
+            }
+        }
+        demean(&mut samples);
+        let tuning = BuyHeuristic::default();
+        let (rho, edge) = lane_metrics(&samples, growth_score, &tuning);
+        let scored: Vec<(&Sample, f64)> =
+            samples.iter().filter_map(|s| growth_score(&s.quote, &tuning).map(|v| (s, v))).collect();
+        let (top, mid, bot) = edge_terciles(&scored);
+        let got = format!(
+            "n={} scored={} rho={:.3} edge={:+.1} winsor={:+.1} terciles={:+.1}/{:+.1}/{:+.1}",
+            samples.len(), scored.len(), rho.unwrap_or(f64::NAN), edge, winsor_edge(&scored),
+            top, mid, bot,
+        );
+        // golden values captured from the run that introduced this test. The SIGNS are meaningless
+        // here (synthetic series, tiny universe — this is not a quality claim about the heuristic);
+        // only their exact stability matters. Trip-verified: widening winsor_edge's clamp
+        // percentiles to 5/95 reddened this pin.
+        assert_eq!(got, "n=88 scored=30 rho=-0.052 edge=-26.4 winsor=-26.4 terciles=+26.4/+67.1/+40.9");
+    }
 }
