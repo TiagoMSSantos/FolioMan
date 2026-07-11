@@ -50,6 +50,7 @@ async fn main() {
         "alert" => commands::alert::run(rest).await,
         "accounts" => commands::accounts::run(rest).await,
         "trade" => commands::trade::run(rest).await,
+        "help" | "--help" | "-h" => println!("{USAGE}"), // asked-for help exits 0 below; unknown commands keep exit 2
         _ => {
             println!("{USAGE}");
             std::process::exit(2);

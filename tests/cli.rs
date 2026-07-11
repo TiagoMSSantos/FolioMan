@@ -35,6 +35,16 @@ fn unknown_subcommand_prints_usage_exit_2() {
 }
 
 #[test]
+fn help_prints_usage_exit_0() {
+    // asked-for help is not an error: same banner as the catch-all, but exit 0 (CLI convention).
+    for flag in ["help", "--help", "-h"] {
+        let (code, stdout, _) = run(&[flag], None);
+        assert_eq!(code, 0, "{flag} should exit 0");
+        assert!(stdout.contains("folioman — review"), "usage banner missing for {flag}: {stdout}");
+    }
+}
+
+#[test]
 fn trade_wrong_arg_count_exit_2() {
     let (code, _, stderr) = run(&["trade", "binance", "buy"], None); // 3 args, needs 4
     assert_eq!(code, 2);
