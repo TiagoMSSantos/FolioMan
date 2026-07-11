@@ -287,17 +287,31 @@ pub async fn run(args: Vec<String>) {
     let fx_cache = fetch::fx_cache();
     // live universe (CoinGecko + S&P 500), not a hand-kept list; explicit args override it.
     // etf_tickers = Xetra-ETF source set, used below to fix Yahoo mislabeling them as EQUITY.
-    let (mut universe, etf_tickers, sector_of) = if args.is_empty() {
-        fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &settings.sectors).await
-    } else {
+    let explicit_args = !args.is_empty();
+    let (mut universe, etf_tickers, sector_of) = if explicit_args {
         (args, std::collections::HashSet::new(), std::collections::HashMap::new())
+    } else {
+        fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &settings.sectors).await
     };
     // watchlist tickers are ALWAYS fetched so they show in their table for comparison (sector filter or not)
     universe.extend(settings.tickers.iter().cloned());
     universe.sort();
     universe.dedup();
 
-    eprintln!("screen: {} tickers in universe (crypto + S&P 500 + Xetra UCITS ETFs)", universe.len());
+    // per-class counts so an EMPTY class is visible here (a leg that "succeeded" with 0 rows
+    // never trips the fetch-failure warnings). Explicit-args runs skip the split — etf_tickers
+    // is empty on that path, so the split would mislabel every arg ETF as a stock.
+    if explicit_args {
+        eprintln!("screen: {} explicit tickers + watchlist", universe.len());
+    } else {
+        let crypto = universe.iter().filter(|t| crate::picks::is_currency_quoted(t)).count();
+        let etfs = universe.iter().filter(|t| etf_tickers.contains(*t)).count();
+        eprintln!(
+            "screen: {} tickers in universe ({crypto} crypto + {} stocks + {etfs} ETFs)",
+            universe.len(),
+            universe.len() - crypto - etfs
+        );
+    }
 
     // live EU HICP series to inflation-adjust long-horizon returns, only when enabled
     let eu_infl = if settings.inflation_adjust.enabled {
