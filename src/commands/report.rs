@@ -17,10 +17,15 @@ pub async fn run(args: Vec<String>) {
     // FMP feeds the global path; SEC EDGAR (no key) covers US filers as fallback. So an empty line means
     // a foreign/ETF name with no US XBRL (and FMP throttled/keyless), not necessarily a missing key.
     let no_data = if std::env::var("FMP_API_KEY").is_ok_and(|k| !k.is_empty()) {
-        "no statements (US filers fall back to SEC EDGAR; this is likely a non-US/ETF name, or FMP is throttled)"
+        "no statements (US filers fall back to SEC EDGAR; this is likely a non-US/ETF name, a dead/delisted ticker, or FMP is throttled)"
     } else {
-        "no statements (set FMP_API_KEY for global coverage; US filers still resolve via SEC EDGAR)"
+        "no statements (set FMP_API_KEY for global coverage; US filers still resolve via SEC EDGAR — or the ticker is dead/delisted)"
     };
+    // exit-code contract: asked about ≥1 equity and produced ZERO tables -> exit 1 so a script/cron
+    // can tell total failure from success. Partial success (some tickers resolve) stays 0 — some
+    // data beats none. Crypto/FX-only invocations stay 0 (there is nothing to fetch by design).
+    let mut equity_requested = 0u32;
+    let mut tables_printed = 0u32;
 
     for ticker in &tickers {
         // crypto/FX carry no income statement -> don't waste an FMP budget slot probing.
@@ -30,6 +35,7 @@ pub async fn run(args: Vec<String>) {
             println!("\n{ticker}: no income statement (crypto/FX)");
             continue;
         }
+        equity_requested += 1;
         let rows = match fetch::fetch_fundamentals_report(&client, &settings.urls, ticker).await {
             Some(r) => r,
             None => {
@@ -40,6 +46,13 @@ pub async fn run(args: Vec<String>) {
         let annual = core::annual_rollup(&rows);
 
         println!("\n{ticker} — annual income statements (fiscal-year rollup, newest first)");
+        // an empty rollup under a bare header reads like a rendering bug — say why it's empty
+        // (quarters exist but no fiscal year completed yet), and don't count it as a table.
+        if annual.is_empty() {
+            println!("  (statements fetched, but no complete fiscal year to roll up)");
+        } else {
+            tables_printed += 1;
+        }
         println!("{:>6} {:>10} {:>8} {:>7} {:>7} {:>7} {:>9} {:>8}", "YEAR", "REVENUE", "REV-YoY", "GROSS%", "OP%", "NET%", "EPS", "EPS-YoY");
         for (i, a) in annual.iter().enumerate() {
             let older = annual.get(i + 1); // next row is the previous (older) fiscal year
@@ -73,6 +86,9 @@ pub async fn run(args: Vec<String>) {
             yoy(ff.rev_cagr), yoy(ff.eps_growth), pts(ff.rev_accel), pts(ff.margin_trend),
             level(ff.gross_margin), level(ff.op_margin),
         );
+    }
+    if equity_requested > 0 && tables_printed == 0 {
+        std::process::exit(1);
     }
 }
 
