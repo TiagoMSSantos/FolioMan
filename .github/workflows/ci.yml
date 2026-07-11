@@ -27,9 +27,24 @@ concurrency:
 # rust-cache with a shared key: all jobs restore ONE common warm cache from prior runs
 # (deps compiled once, not N×). Parallel jobs can't share THIS run's cache — GitHub saves it
 # at job end — so cross-run reuse is the win; within-run hand-off would require `needs: build`.
+# timeout-minutes on every job (round 63): without one, a wedged cargo fetch or a hung live API
+# read burns the 6-hour default runner ceiling. Values are ~3-4x the warm-cache norm so only a
+# genuine hang trips them, never a slow day.
 jobs:
+  # Workflow linter: this file changes often and its bugs surface at RUN time (a bad expression,
+  # a wrong needs:, a misnamed key) — actionlint catches them at PR time in seconds. Same prebuilt
+  # install pattern as the audit/coverage jobs.
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@actionlint
+      - run: actionlint
+
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -43,6 +58,7 @@ jobs:
   # hundreds of lines — cosmetic churn, no bug caught. clippy stays; it finds real defects.
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - run: rustup component add clippy
@@ -60,6 +76,7 @@ jobs:
   # `[advisories] ignore = ["RUSTSEC-..."]` entry and a comment saying why.
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: taiki-e/install-action@cargo-audit
@@ -68,6 +85,7 @@ jobs:
 
   unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -82,6 +100,7 @@ jobs:
   # poison the shared plain-build cache the other jobs restore.
   coverage:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -106,6 +125,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -121,6 +141,7 @@ jobs:
   # the checked-in, secret-free tests/ci-settings.yaml fixture.
   network-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -164,6 +185,7 @@ jobs:
   cleanup-runs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       actions: write   # gh run delete; other jobs keep the default read-only token
     steps:
