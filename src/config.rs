@@ -736,6 +736,27 @@ mod tests {
         std::env::remove_var("FOLIOMAN_CONFIG");
     }
 
+    /// Pins the deny_unknown_fields guard: a typo'd top-level key must ERROR naming the field, never
+    /// silently fall back to the default. If a refactor drops the serde attribute, this test reds.
+    #[test]
+    fn unknown_top_level_key_errors() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
+        let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
+        let err = serde_yaml::from_str::<Settings>(&format!("{text}\nnot_a_real_key: 1\n"))
+            .expect_err("unknown key must not parse")
+            .to_string();
+        assert!(err.contains("unknown field `not_a_real_key`"), "must name the field: {err}");
+    }
+
+    /// Same pin for the hand-tuned knob surface: a buy_heuristic typo must error, not become a no-op.
+    #[test]
+    fn typoed_buy_heuristic_knob_errors() {
+        let err = serde_yaml::from_str::<BuyHeuristic>("groth_accel_weight: 0.5\n")
+            .expect_err("typo'd knob must not parse")
+            .to_string();
+        assert!(err.contains("unknown field `groth_accel_weight`"), "must name the field: {err}");
+    }
+
     /// The overlay wins field-by-field over the base, mappings merge DEEP (a partial `buy_heuristic:` only
     /// replaces the knobs it names), new keys are added, and untouched base keys survive. This is the whole
     /// contract that lets `config/settings.yaml` carry only overrides instead of a full `buy_heuristic` copy.
