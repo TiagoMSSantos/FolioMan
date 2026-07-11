@@ -102,3 +102,27 @@ fn pts(v: Option<f64>) -> String {
 fn level(v: Option<f64>) -> String {
     v.map(|x| format!("{x:.1}")).unwrap_or_else(|| "-".into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (round 61) formatter semantics: unit tier picked by magnitude (sign preserved, tier chosen
+    /// on |v|), signed vs unsigned styles, "-" for absent values across all three Option formatters.
+    #[test]
+    fn formatter_semantics() {
+        assert_eq!(humanize(2.34e12), "2.34T");
+        assert_eq!(humanize(391.04e9), "391.0B");
+        assert_eq!(humanize(-1.5e9), "-1.5B"); // negative revenue: tier on |v|, sign kept
+        assert_eq!(humanize(25.6e6), "25.6M");
+        assert_eq!(humanize(1_500.0), "1.5K");
+        assert_eq!(humanize(999.4), "999"); // below 1K: plain, no decimals
+        assert_eq!(yoy(Some(8.06)), "+8.1%");
+        assert_eq!(yoy(Some(-12.3)), "-12.3%");
+        assert_eq!(yoy(None), "-");
+        assert_eq!(pts(Some(3.25)), "+3.2"); // points, signed, no % (a difference, not a rate)
+        assert_eq!(pts(None), "-");
+        assert_eq!(level(Some(48.04)), "48.0"); // margins are levels: unsigned
+        assert_eq!(level(None), "-");
+    }
+}

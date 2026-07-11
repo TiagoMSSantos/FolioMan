@@ -24,6 +24,23 @@ pub fn pct(x: Option<f64>) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (round 61) truncate counts CHARS not bytes (fund names carry €/é/ü — a byte slice would
+    /// panic mid-codepoint); pct rounds to 1dp and never signs.
+    #[test]
+    fn shared_formatter_semantics() {
+        assert_eq!(truncate("Amundi Core €STR", 13), "Amundi Core €");
+        assert_eq!(truncate("ab", 5), "ab"); // shorter than n: unchanged
+        assert_eq!(truncate("", 3), "");
+        assert_eq!(pct(Some(2.34)), "2.3%");
+        assert_eq!(pct(Some(-1.26)), "-1.3%"); // negative keeps its own sign, no forced +
+        assert_eq!(pct(None), "n/a");
+    }
+}
+
 /// The macro backdrop you compare the asset tables against: live Euribor 3M, the Certificados de
 /// Aforro fixed-income ladder, and inflation. Shared by `check` and `screen` (printed at the end).
 /// NO config fallbacks — a failed fetch prints an explicit error line and skips that table, never a
