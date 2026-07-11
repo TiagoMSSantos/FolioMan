@@ -1612,7 +1612,9 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
 /// deepest-dip ranking picks future LOSERS over a multi-decade hold. `nupl` (Bitcoin
 /// net-unrealized-P/L, the screen footer's market-greed gauge; `None` on `check` or fetch fail) damps
 /// the crypto rows when the market is euphoric.
-pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], explain: Option<&str>) -> Option<String> {
+/// Returns (score-math walkthrough for the caller to print last, this run's ranked top-`n`
+/// tickers — round 68: the screen diffs the latter against its previous run's state).
+pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], explain: Option<&str>) -> (Option<String>, Vec<String>) {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
     let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
@@ -1681,14 +1683,17 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     // returned, not printed: the caller places the score-math walkthrough AFTER the actionable
     // footers (gate review / exit review / fact drift / near-miss) so the alerts aren't buried
     // under 20 lines of arithmetic.
-    match (explain_text, explain) {
+    let text = match (explain_text, explain) {
         (Some(text), _) => Some(text),
         // an explicit --explain TICKER that didn't land a row: say why instead of silently printing nothing
         (None, Some(t)) if !t.is_empty() => Some(format!(
             "\n--explain: {t} is not in the growth ranking (fails a growth gate, isn't EU-buyable, or wasn't scanned)."
         )),
         _ => None,
-    }
+    };
+    // (round 68) the same top-n slice turnover_note just measured, handed to the caller so the
+    // screen can DIFF membership by name against its previous run (the note only says how many moved).
+    (text, tickers.into_iter().take(n).collect())
 }
 
 /// Suggested basket weights (%, summing to 100) for an already-scored list: weight ∝ score ÷

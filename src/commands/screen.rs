@@ -33,6 +33,30 @@ struct ScreenState {
     // VWRA/SSAC in overnight) — one diff line makes joins/dropouts visible.
     #[serde(default)]
     core: Vec<String>,
+    // (round 68) the ranked top-N tickers as of last run (render's turnover_note slice). The
+    // rank-stability note says HOW MANY names moved; this diffs WHICH — the by-name verification
+    // every code change was checked with manually, now printed + journaled every run.
+    #[serde(default)]
+    ranked: Vec<String>,
+}
+
+/// (round 68) One-line membership diff, "+JOINED -DROPPED" (order-insensitive — market drift
+/// reorders legitimately; membership is the signal). None when nothing changed or there is no
+/// baseline (first run / state predating the field). Shared by the CORE and ranked-lane diffs.
+fn membership_diff(label: &str, prev_date: &str, prev: &[String], now: &[String]) -> Option<String> {
+    if prev.is_empty() {
+        return None;
+    }
+    let joined: Vec<&str> = now.iter().filter(|t| !prev.contains(t)).map(String::as_str).collect();
+    let dropped: Vec<&str> = prev.iter().filter(|t| !now.contains(t)).map(String::as_str).collect();
+    if joined.is_empty() && dropped.is_empty() {
+        return None;
+    }
+    let fmt = |sign: char, ts: &[&str]| ts.iter().map(|t| format!("{sign}{t}")).collect::<Vec<_>>().join(" ");
+    Some(format!(
+        "{label} changed since {prev_date}: {}",
+        [fmt('+', &joined), fmt('-', &dropped)].join(" ").trim()
+    ))
 }
 
 const SCREEN_STATE_FILE: &str = ".screen_state.json";
@@ -353,7 +377,7 @@ pub async fn run(args: Vec<String>) {
     // by fund name (stocks were already sector-filtered before fetch)
     // (round 52) render returns the score-math walkthrough; printed AFTER the actionable footers
     // (gate/exit review, fact drift, near-miss) so alerts aren't buried under arithmetic.
-    let explain_text = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, explain.as_deref());
+    let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, explain.as_deref());
 
     // (X) EXIT review — WATCHLIST names that cleared every growth gate on the previous screen run
     // but fail one now. The backtest's exit probe measures this exact transition: newly-failing
@@ -410,24 +434,19 @@ pub async fn run(args: Vec<String>) {
     }
 
     // (round 55) CORE membership diff: joins/dropouts of the shortlist above since the last run.
-    // Silent when the previous state predates the field (empty vec — everything would read as new).
+    // Silent when the previous state predates the field (empty prev — everything would read as new).
     let core_now: Vec<String> =
         crate::picks::hold_core_list(&quotes).iter().take(settings.top_picks).map(|q| q.ticker.clone()).collect();
-    if let Some(prev) = prior.as_ref().filter(|p| !p.core.is_empty()) {
-        let joined: Vec<&str> =
-            core_now.iter().filter(|t| !prev.core.contains(t)).map(String::as_str).collect();
-        let dropped: Vec<&str> =
-            prev.core.iter().filter(|t| !core_now.contains(t)).map(String::as_str).collect();
-        if !joined.is_empty() || !dropped.is_empty() {
-            let fmt = |sign: char, ts: &[&str]| {
-                ts.iter().map(|t| format!("{sign}{t}")).collect::<Vec<_>>().join(" ")
-            };
-            let line = format!(
-                "CORE shortlist changed since {}: {}",
-                prev.date,
-                [fmt('+', &joined), fmt('-', &dropped)].join(" ").trim()
-            );
+    if let Some(prev) = &prior {
+        if let Some(line) = membership_diff("CORE shortlist", &prev.date, &prev.core, &core_now) {
             println!("\n{line}");
+            journal(&run_date, &[line]);
+        }
+        // (round 68) same net for the ranked tables: joins/dropouts of render's top-N since the
+        // last run. Market drift moves this legitimately day-to-day — the value is the by-name
+        // record (journal) and the minutes-apart code-change verification the manual table diff did.
+        if let Some(line) = membership_diff("Ranking membership", &prev.date, &prev.ranked, &ranked_now) {
+            println!("{line}");
             journal(&run_date, &[line]);
         }
     }
@@ -442,6 +461,7 @@ pub async fn run(args: Vec<String>) {
         facts,
         fund_meta,
         core: core_now.clone(), // still needed below by the holdings-overlap pick set
+        ranked: ranked_now,
     };
     let _ = std::fs::write(SCREEN_STATE_FILE, serde_json::to_string(&state).unwrap_or_default());
 
@@ -672,6 +692,7 @@ mod tests {
             facts: HashMap::new(),
             fund_meta: HashMap::new(),
             core: Vec::new(),
+            ranked: Vec::new(),
         })
         .unwrap();
         let (st, corrupt) = parse_state(Some(valid));
@@ -680,5 +701,23 @@ mod tests {
         assert_eq!((st.date.as_str(), st.passing), ("2026-07-11", vec!["VUAA.DE".to_string()]));
         let (old, corrupt) = parse_state(Some(r#"{"date":"2026-01-01","passing":[]}"#.into()));
         assert!(old.is_some() && !corrupt);
+    }
+
+    /// (round 68) membership diff: no baseline (empty prev — first run or a state file predating
+    /// the field) and no-change are both silent; joins/dropouts print by NAME, order-insensitive
+    /// (a pure reorder of the same names is market noise, not a membership event).
+    #[test]
+    fn membership_diff_semantics() {
+        let v = |ts: &[&str]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        assert!(membership_diff("X", "d", &[], &v(&["A"])).is_none()); // no baseline -> silent
+        assert!(membership_diff("X", "d", &v(&["A", "B"]), &v(&["B", "A"])).is_none()); // reorder only
+        assert_eq!(
+            membership_diff("Ranking membership", "2026-07-10", &v(&["A", "B"]), &v(&["B", "C"])).unwrap(),
+            "Ranking membership changed since 2026-07-10: +C -A"
+        );
+        assert_eq!(
+            membership_diff("CORE shortlist", "d", &v(&["A"]), &v(&[])).unwrap(),
+            "CORE shortlist changed since d: -A" // pure dropout: no dangling "+" prefix
+        );
     }
 }
