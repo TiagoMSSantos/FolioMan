@@ -3076,13 +3076,17 @@ pub async fn inflation_all(client: &Client, urls: &Urls) -> Vec<(&'static str, B
     vec![("Portugal", pt), ("USA", us), ("EU", eu)]
 }
 
-/// Push a notification to the configured ntfy URL (`{topic}` filled in).
-pub async fn push(client: &Client, urls: &Urls, topic: &str, title: &str, msg: &str) {
-    let _ = client
+/// Push a notification to the configured ntfy URL (`{topic}` filled in). Returns whether ntfy
+/// accepted it (POST sent AND 2xx) — a dropped push is the one thing `alert` exists to deliver,
+/// so the caller must get the chance to say so. No retry: alert runs from an hourly cron, the
+/// next run re-fires anything still dipping.
+pub async fn push(client: &Client, urls: &Urls, topic: &str, title: &str, msg: &str) -> bool {
+    client
         .post(urls.ntfy.replace("{topic}", topic))
         .header("Title", title)
         .header("Tags", "chart_with_downwards_trend")
         .body(msg.to_string())
         .send()
-        .await;
+        .await
+        .is_ok_and(|resp| resp.status().is_success())
 }
