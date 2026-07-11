@@ -183,7 +183,9 @@ fn underlying(ticker: &str) -> &str {
 /// Currency-quoted (crypto/FX) ticker — carries a `-USD`/`-EUR` suffix, unlike an equity/ETF
 /// symbol. Such assets are far more volatile, so a −40% year is normal noise, not a death
 /// signal: they get the looser `min_1y_pct_crypto` floor instead of the equity `min_1y_pct`.
-fn is_currency_quoted(ticker: &str) -> bool {
+/// pub(crate): `report` uses this too — a bare `contains('-')` there misfired on share-class
+/// tickers (`BRK.B` is normalized to `BRK-B` for the whole S&P universe).
+pub(crate) fn is_currency_quoted(ticker: &str) -> bool {
     underlying(ticker) != ticker
 }
 
@@ -1769,6 +1771,16 @@ fn turnover_note(now: &[String], n: usize, path: &std::path::Path) -> Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (round 73) currency-quoted = a `-EUR`/`-USD` SUFFIX, not any dash: share-class tickers
+    /// (`BRK.B` is normalized to `BRK-B` universe-wide) must classify as equities.
+    #[test]
+    fn currency_quoted_is_suffix_not_any_dash() {
+        assert!(is_currency_quoted("BTC-USD"));
+        assert!(is_currency_quoted("ETH-EUR"));
+        assert!(!is_currency_quoted("BRK-B"));
+        assert!(!is_currency_quoted("AAPL"));
+    }
 
     /// Legal-suffix strip: whole names fit the tight NAME column instead of clipping to dangling
     /// fragments; ETF/crypto names and short names pass through untouched.

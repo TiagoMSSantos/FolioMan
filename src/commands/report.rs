@@ -5,7 +5,7 @@
 //! (free, no key, no daily cap; US filers) when FMP is throttled/keyless. The verdict comes straight
 //! from `core::fund_factors`, so the inspection can't drift from what `screen`/`check` actually weigh.
 
-use crate::{config, core, fetch};
+use crate::{config, core, fetch, picks};
 
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
@@ -23,8 +23,10 @@ pub async fn run(args: Vec<String>) {
     };
 
     for ticker in &tickers {
-        // crypto/FX carry no income statement -> don't waste an FMP budget slot probing
-        if ticker.contains('-') {
+        // crypto/FX carry no income statement -> don't waste an FMP budget slot probing.
+        // Suffix check, NOT contains('-'): share-class tickers are dash-normalized (BRK.B -> BRK-B)
+        // and must fall through to the fetch.
+        if picks::is_currency_quoted(ticker) {
             println!("\n{ticker}: no income statement (crypto/FX)");
             continue;
         }
