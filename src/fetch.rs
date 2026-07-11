@@ -939,7 +939,7 @@ pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core
         evict_if_stale(&fund_cache_path(&q.ticker), LIVE_TTL);
         if let Some(snap) = fetch_fundamentals_report(client, urls, &q.ticker)
             .await
-            .and_then(|rows| core::income_snapshot(&core::annual_rollup(&rows)))
+            .and_then(|(rows, _)| core::income_snapshot(&core::annual_rollup(&rows)))
         {
             (q.rev_yoy, q.eps_yoy, q.net_margin_fy, q.buyback_yoy) = snap;
         }
@@ -1288,11 +1288,13 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
 /// when FMP yields nothing (429 daily cap, no key, or not covered). Kept SEPARATE from
 /// `fetch_fundamentals_history` so the validated backtest/live-enrich data source stays FMP-only (no
 /// silent train-serve drift). SEC covers US filers; a foreign ADR with no US XBRL still degrades to None.
-pub async fn fetch_fundamentals_report(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
+/// The second tuple element names which source won — the two render materially different tables
+/// (FMP = quarterly rollup, SEC = annual facts), so `report` prints it in the title line.
+pub async fn fetch_fundamentals_report(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<core::FundRow>, &'static str)> {
     if let Some(rows) = fetch_fundamentals_history(client, urls, ticker).await {
-        return Some(rows);
+        return Some((rows, "FMP"));
     }
-    fetch_fundamentals_sec(client, urls, ticker).await
+    fetch_fundamentals_sec(client, urls, ticker).await.map(|rows| (rows, "SEC EDGAR"))
 }
 
 /// (Item 22) The fundamentals feed the RANKING fund lane reads — routed by `buy_heuristic.fund_source`

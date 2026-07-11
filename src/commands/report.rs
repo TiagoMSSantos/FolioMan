@@ -36,7 +36,7 @@ pub async fn run(args: Vec<String>) {
             continue;
         }
         equity_requested += 1;
-        let rows = match fetch::fetch_fundamentals_report(&client, &settings.urls, ticker).await {
+        let (rows, source) = match fetch::fetch_fundamentals_report(&client, &settings.urls, ticker).await {
             Some(r) => r,
             None => {
                 println!("\n{ticker}: {no_data}");
@@ -45,7 +45,7 @@ pub async fn run(args: Vec<String>) {
         };
         let annual = core::annual_rollup(&rows);
 
-        println!("\n{ticker} — annual income statements (fiscal-year rollup, newest first)");
+        println!("\n{ticker} — annual income statements (fiscal-year rollup, newest first · source: {source})");
         // an empty rollup under a bare header reads like a rendering bug — say why it's empty
         // (quarters exist but no fiscal year completed yet), and don't count it as a table.
         if annual.is_empty() {
