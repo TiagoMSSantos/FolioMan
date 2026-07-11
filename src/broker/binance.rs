@@ -30,14 +30,23 @@ pub async fn summary(client: &Client) -> Result<String, String> {
         return Err(format!("binance {status}: {body}"));
     }
     let acct: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-    let balances = acct.get("balances").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    // a missing balances array is API drift, not an empty account — say so instead of "(none)"
+    let balances = acct
+        .get("balances")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .ok_or_else(|| "binance: no balances array in the account response (API drift?)".to_string())?;
 
     let mut cash = Vec::new();
     let mut holdings = Vec::new();
     for b in &balances {
         let asset = b.get("asset").and_then(|v| v.as_str()).unwrap_or("?");
-        let free: f64 = b.get("free").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()).unwrap_or(0.0);
-        let locked: f64 = b.get("locked").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let num = |k: &str| b.get(k).and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok());
+        // an unparsable amount must not render as 0.0 — that reads as "no money here"
+        let (Some(free), Some(locked)) = (num("free"), num("locked")) else {
+            eprintln!("WARNING: binance balance row for {asset} has an unparsable amount — row skipped");
+            continue;
+        };
         if free + locked <= 0.0 {
             continue; // skip dust/empty
         }
