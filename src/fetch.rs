@@ -2410,7 +2410,10 @@ pub async fn fetch_universe(
     // (the only maintained source for e.g. the S&P MidCap 400) — the URL's host picks the parser.
     let mut ponds: Vec<Vec<(String, String)>> = Vec::new();
     for url in std::iter::once(&urls.sp500_csv).chain(urls.constituents_csv.iter()) {
-        let Some(text) = get_text(client, url).await else { continue };
+        let Some(text) = get_text(client, url).await else {
+            eprintln!("fetch: constituents CSV {url} unavailable — its stocks absent from the screen");
+            continue;
+        };
         ponds.push(if url.contains("wikipedia.org") {
             core::wiki_constituents(&text, sectors)
         } else {
@@ -2419,11 +2422,16 @@ pub async fn fetch_universe(
     }
     let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
     let mut out: Vec<String> = Vec::new();
-    // crypto: CoinGecko market-cap-ranked array -> SYMBOL-<EUR|USD> (Yahoo crypto form)
-    if let Some(arr) = cg.as_ref().and_then(|v| v.as_array()) {
-        out.extend(arr.iter().take(cap).filter_map(|c| {
-            c.get("symbol").and_then(|s| s.as_str()).map(|s| format!("{}-{crypto_cur}", s.to_uppercase()))
-        }));
+    // crypto: CoinGecko market-cap-ranked array -> SYMBOL-<EUR|USD> (Yahoo crypto form).
+    // Every other universe leg warns when it degrades — this one must too, or the crypto
+    // tables just vanish with no clue whether that's the market or a dead feed.
+    match cg.as_ref().and_then(|v| v.as_array()) {
+        Some(arr) if !arr.is_empty() => {
+            out.extend(arr.iter().take(cap).filter_map(|c| {
+                c.get("symbol").and_then(|s| s.as_str()).map(|s| format!("{}-{crypto_cur}", s.to_uppercase()))
+            }));
+        }
+        _ => eprintln!("fetch: CoinGecko returned nothing — crypto absent from the screen"),
     }
     // stocks: each constituent CSV -> Yahoo symbol, kept only if the row's GICS sector passes `sectors`
     // (empty = all). Filtering HERE means a sector-restricted screen never even fetches the other
