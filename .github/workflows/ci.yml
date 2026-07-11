@@ -33,13 +33,16 @@ concurrency:
 jobs:
   # Workflow linter: this file changes often and its bugs surface at RUN time (a bad expression,
   # a wrong needs:, a misnamed key) — actionlint catches them at PR time in seconds. Same prebuilt
-  # install pattern as the audit/coverage jobs.
+  # install pattern as the audit/coverage jobs — but via `with: tool:`, because unlike cargo-audit/
+  # cargo-llvm-cov there is no `@actionlint` tag alias in taiki-e/install-action.
   actionlint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@actionlint
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: actionlint
       - run: actionlint
 
   build:
