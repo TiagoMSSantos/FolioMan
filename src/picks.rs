@@ -2607,4 +2607,110 @@ mod tests {
     let wmom = BuyHeuristic { growth_mom121_weight: 0.5, ..BuyHeuristic::default() };
     assert!(growth_score(&hi_mom, &wmom).unwrap() > growth_score(&lo_mom, &wmom).unwrap());
     }
+
+    /// (round 59) SCORING REGRESSION PIN. Scoring is CLOSED at the round-14 optimum — every score,
+    /// gate and rank below is pinned to the exact current output on a fixed synthetic universe. If
+    /// this test reds you changed ranking behavior (a weight, a gate, a damp, a scored field's
+    /// coverage — the round-47 trap class); revert unless changing the ranking was the explicit,
+    /// validated goal. The relational asserts in `buy_heuristic` above check DIRECTIONS; this one
+    /// pins the NUMBERS, replacing the manual live-run table diff done every round.
+    #[test]
+    fn scoring_regression_pin() {
+        // archetype builder: known €1B turnover (liquidity-neutral, ln(1)=0), chosen horizons set
+        let fx = |name: &str, ticker: &str, range_pct: f64, labels: &[(&str, f64)]| -> Quote {
+            let mut q = Quote::stub(ticker, "€1.00", "", name);
+            q.perf = HORIZONS
+                .iter()
+                .map(|(l, _)| labels.iter().find(|(pl, _)| pl == l).map(|(_, v)| ("x".to_string(), *v)))
+                .collect();
+            q.avg_turnover_eur = Some(1e9);
+            q.range_pct = range_pct;
+            q
+        };
+        let tuning = BuyHeuristic::default();
+
+        // broad all-world core ETF: near its high, steady compounder, passes every hold-core leg
+        let mut broad = fx("Vanguard FTSE All-World UCITS ETF USD Acc", "CORE.L", 90.0,
+            &[("1D", 0.1), ("1W", 0.5), ("1M", 2.0), ("1Y", 25.0), ("5Y", 100.0), ("10Y", 300.0)]);
+        broad.instrument_type = "ETF".into();
+        broad.ter_fallback = Some(0.22);
+        broad.replication = Some("Opt");
+        broad.use_of_profits = Some("Acc");
+        broad.aum_fallback = Some(30e9);
+        // sector tech ETF: higher CAGR but stretched far above its 200wk SMA (overext brake bites)
+        let mut tech = fx("iShares S&P 500 Information Technology UCITS ETF", "TECH.L", 85.0,
+            &[("1M", -2.0), ("1Y", 17.0), ("5Y", 98.0), ("10Y", 438.0)]);
+        tech.instrument_type = "ETF".into();
+        tech.above_ma_pct = 61.0;
+        // single stock with fundamentals: P/E value damp + ROE quality reward + vol/maxdd risk terms
+        let mut stock = fx("Apple Inc.", "APL", 88.0,
+            &[("1M", 3.0), ("1Y", 30.0), ("5Y", 150.0), ("10Y", 400.0)]);
+        stock.instrument_type = "EQUITY".into();
+        stock.pe_ratio = Some(30.0);
+        stock.roe = Some(40.0);
+        stock.volatility_pct = Some(2.0);
+        stock.max_drawdown_pct = 40.0;
+        // crypto pair: 5Y leg is "proven enough" (trust 1.0), looser crypto range floor applies
+        let btc = fx("Bitcoin EUR", "BTC-EUR", 70.0, &[("1M", 5.0), ("1Y", 50.0), ("5Y", 400.0)]);
+
+        // 1) EXACT scores, 2dp — the numeric pin
+        let got: Vec<String> = [&broad, &tech, &stock, &btc]
+            .iter()
+            .map(|q| growth_score(q, &tuning).map_or("gated".into(), |s| format!("{s:.2}")))
+            .collect();
+        assert_eq!(got, ["6.51", "3.54", "9.60", "9.03"]);
+
+        // 2) EXACT rank order when sorted by score — the membership/ordering pin
+        let mut ranked: Vec<(&str, f64)> = [&broad, &tech, &stock, &btc]
+            .iter()
+            .filter_map(|q| growth_score(q, &tuning).map(|s| (q.ticker.as_str(), s)))
+            .collect();
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let order: Vec<&str> = ranked.iter().map(|(t, _)| *t).collect();
+        assert_eq!(order, ["APL", "BTC-EUR", "CORE.L", "TECH.L"]);
+
+        // 3) gates: each structural reject must stay a reject
+        let lev = fx("Direxion Daily Tech Bull 3x", "LEV", 90.0, &[("1Y", 80.0), ("10Y", 900.0)]);
+        assert_eq!(growth_score(&lev, &tuning), None); // leveraged decay vehicle
+        let mut unknown_turnover = broad.clone();
+        unknown_turnover.avg_turnover_eur = None;
+        assert_eq!(growth_score(&unknown_turnover, &tuning), None); // (#20) unassessable liquidity
+        let mut off_high = broad.clone();
+        off_high.range_pct = 50.0;
+        assert_eq!(growth_score(&off_high, &tuning), None); // below the 80% range floor
+        let laggard = fx("Vanguard FTSE All-World UCITS ETF USD Acc", "LAG.L", 90.0,
+            &[("1M", 1.0), ("1Y", 10.0), ("5Y", 20.0), ("10Y", 50.0)]);
+        assert_eq!(growth_score(&laggard, &tuning), None); // 4.1%/yr < the 8%/yr CAGR floor
+        let mut knife = broad.clone();
+        knife.perf = fx("x", "x", 0.0, &[("1M", -20.0), ("1Y", 25.0), ("5Y", 100.0), ("10Y", 300.0)]).perf;
+        assert_eq!(growth_score(&knife, &tuning), None); // 1M -20% through the -15% knife floor
+
+        // 4) hold-core legs: exact reason string per failing leg, None on the canonical core
+        assert_eq!(core::hold_miss_reason(&broad), None);
+        assert_eq!(core::hold_miss_reason(&tech).as_deref(),
+            Some("not a broad-index name (sector/thematic/factor tilt)"));
+        let mut m = broad.clone();
+        m.name = "Vanguard FTSE All-World Fund USD Acc".into();
+        assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("no UCITS token in the name"));
+        m = broad.clone();
+        m.ter_fallback = None;
+        assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("TER unknown"));
+        m = broad.clone();
+        m.ter_fallback = Some(0.30);
+        assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("TER 0.30% > 0.25% cap"));
+        m = broad.clone();
+        m.replication = Some("Swap");
+        assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("replication Swap (needs physical)"));
+        m = broad.clone();
+        m.use_of_profits = Some("Dist");
+        assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("share class Dist (needs Acc)"));
+        m = broad.clone();
+        m.aum_fallback = Some(0.5e9);
+        assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("AUM €0.5B < €1B floor"));
+
+        // 5) asset-class split: instrumentType is authoritative, name marker is the fallback
+        assert!(quote_is_etf(&broad) && quote_is_etf(&tech));
+        assert!(!quote_is_etf(&stock));
+        assert!(quote_is_etf(&Quote::stub("X", "€1", "", "Foo UCITS ETF Acc"))); // no meta -> name marker
+    }
 }
