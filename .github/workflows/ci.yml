@@ -26,6 +26,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege token: every job gets read-only checkout access and nothing else. cleanup-runs
+# is the one job that needs more and overrides this with its own `actions: write` block.
+permissions:
+  contents: read
+
 # note: ubuntu-latest ships a stable Rust toolchain, so no install step needed.
 # rust-cache with a shared key: all jobs restore ONE common warm cache from prior runs
 # (deps compiled once, not N×). Parallel jobs can't share THIS run's cache — GitHub saves it
