@@ -276,6 +276,13 @@ pub async fn run(args: Vec<String>) {
                 positional.push(t.clone()); // ensure the target is fetched/scanned
                 explain = Some(t);
             } // a bare `--explain` falls through: the default #1 footer covers it
+        } else if a.starts_with('-') {
+            // an unrecognized flag must not fall through to the positional tickers: any explicit
+            // arg OVERRIDES the whole universe, so a typo'd flag silently turns the full screen
+            // into a tiny watchlist-only run. Tickers never START with '-' (BTC-USD has it
+            // inside), so this can't reject a real symbol.
+            eprintln!("screen: unknown flag {a} (only --explain [TICKER] is supported)");
+            std::process::exit(2);
         } else {
             positional.push(a);
         }

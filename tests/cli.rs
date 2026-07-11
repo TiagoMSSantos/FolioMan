@@ -84,6 +84,15 @@ fn accounts_without_creds_skips_all_brokers_exit_0() {
 }
 
 #[test]
+fn screen_unknown_flag_exit_2() {
+    // rejected at arg parse, BEFORE config loading or any network call — a typo'd flag must not
+    // silently become a "ticker" that overrides the whole universe with a watchlist-only run.
+    let (code, _, stderr) = run(&["screen", "--bogus"], None);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("unknown flag --bogus"), "flag guard missing: {stderr}");
+}
+
+#[test]
 fn report_crypto_prints_no_statement_offline() {
     // `-` in the ticker (crypto/FX) short-circuits BEFORE any fetch (src/commands/report.rs), so
     // this exercises report's binary dispatch + its only offline branch without touching the network.
