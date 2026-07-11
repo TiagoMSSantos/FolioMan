@@ -67,17 +67,22 @@ const SCREEN_STATE_FILE: &str = ".screen_state.json";
 /// `grep VUAA .screen_alerts.log` is the fund's full event history.
 const ALERT_JOURNAL_FILE: &str = ".screen_alerts.log";
 
-/// Append `lines` to the alert journal, one `YYYY-MM-DD <line>` per row. Best-effort: a journal
-/// write failure must never break the screen output it mirrors.
+/// Append `lines` to the alert journal, one `YYYY-MM-DD <line>` per row. Best-effort — a journal
+/// write failure must never break the screen output it mirrors — but LOUD (round 75): the
+/// journal's whole point is that a scrolled-past terminal loses nothing, so losing an entry
+/// silently would defeat it. One stderr warning, never abort, never journal the failure itself.
 fn journal(date: &str, lines: &[String]) {
     use std::io::Write;
     if lines.is_empty() {
         return;
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(ALERT_JOURNAL_FILE) {
-        for l in lines {
-            let _ = writeln!(f, "{date} {}", l.trim());
-        }
+    let appended = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(ALERT_JOURNAL_FILE)
+        .and_then(|mut f| lines.iter().try_for_each(|l| writeln!(f, "{date} {}", l.trim())));
+    if appended.is_err() {
+        eprintln!("WARNING: could not append to {ALERT_JOURNAL_FILE} — the alerts above are printed but not journaled");
     }
 }
 
