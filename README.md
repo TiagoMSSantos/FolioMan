@@ -16,6 +16,7 @@ cargo run -- check              # default watchlist: price(EUR), % per horizon, 
 cargo run -- check AAPL BTC-USD VWCE.DE
 cargo run -- perf NVDA          # past EUR price + % at each horizon, with source URL
 cargo run -- screen             # live universe -> GROWTH ranking per class (stocks/ETFs/crypto) + NUPL
+cargo run -- report AAPL        # annual income-statement trajectory + the grower verdict screen bets on
 cargo run -- backtest           # walk-forward validation: rho, top/bottom edge, OOS split, ablation
 cargo run -- backtest 7 universe       # 7y-forward window, over the live screen universe (not the watchlist)
 cargo run -- backtest universe fund    # add the as-of fundamentals lane (needs FMP_API_KEY)
