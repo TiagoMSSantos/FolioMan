@@ -33,18 +33,18 @@ concurrency:
 # genuine hang trips them, never a slow day.
 jobs:
   # Workflow linter: this file changes often and its bugs surface at RUN time (a bad expression,
-  # a wrong needs:, a misnamed key) — actionlint catches them at PR time in seconds. Same prebuilt
-  # install pattern as the audit/coverage jobs — but via `with: tool:`, because unlike cargo-audit/
-  # cargo-llvm-cov there is no `@actionlint` tag alias in taiki-e/install-action.
+  # a wrong needs:, a misnamed key) — actionlint catches them at PR time in seconds. Installed via
+  # the project's own download script (the documented CI usage): actionlint is a Go tool, so the
+  # Rust-centric taiki-e/install-action can't serve it (not in its manifest, and the cargo-binstall
+  # fallback fails — it's not a crate).
   actionlint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: actionlint
-      - run: actionlint
+      - run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint
 
   build:
     runs-on: ubuntu-latest
