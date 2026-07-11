@@ -170,6 +170,67 @@ async fn yahoo_top_holdings_parses() {
     }
 }
 
+/// (round 79) Generic status probe for the non-Yahoo endpoints: transport/throttle/auth failures
+/// SKIP; anything else is left to the real parser — a healthy endpoint plus a None parse is the
+/// drift verdict. (probe_yahoo stays separate: it also checks the chart contract + error envelope.)
+async fn probe_url(url: &str, ctx: &str) -> bool {
+    let resp = match fetch::client().get(url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("network smoke [{ctx}] SKIPPED — transport error: {e}");
+            return false;
+        }
+    };
+    let status = resp.status();
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+        || status == reqwest::StatusCode::UNAUTHORIZED
+        || status == reqwest::StatusCode::FORBIDDEN
+    {
+        eprintln!("network smoke [{ctx}] SKIPPED — throttled/unavailable: HTTP {status}");
+        return false;
+    }
+    true
+}
+
+/// (round 79) NUPL drift net. `fetch_nupl` feeds the crypto damp/boost in screen and size, and its
+/// None path is silent BY DESIGN (the factor just stays neutral) — so a bitcoin-data.com payload
+/// reshape would quietly disable the euphoria brake forever. Healthy endpoint + None parse = red.
+#[tokio::test]
+#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
+async fn nupl_parses() {
+    if !opted_in() {
+        return;
+    }
+    let settings = config::load();
+    if !probe_url(&settings.urls.nupl, "NUPL").await {
+        return;
+    }
+    let nupl = fetch::fetch_nupl(&fetch::client(), &settings.urls)
+        .await
+        .expect("NUPL endpoint healthy but fetch_nupl returned None — payload shape drifted (the crypto damp is silently neutral right now)");
+    assert!((-1.0..2.0).contains(&nupl), "implausible NUPL value: {nupl}");
+}
+
+/// (round 79) Euribor drift net. `fetch_euribor_3m` scrapes euribor-rates.eu HTML (fragile, says
+/// its own doc) for the check footer's Certificados de Aforro baseline; a page redesign = silent
+/// permanent None. Healthy endpoint + no parsable rate = red.
+#[tokio::test]
+#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
+async fn euribor_parses() {
+    if !opted_in() {
+        return;
+    }
+    let settings = config::load();
+    if !probe_url(&settings.urls.euribor, "Euribor 3M").await {
+        return;
+    }
+    let rate = fetch::fetch_euribor_3m(&fetch::client(), &settings.urls)
+        .await
+        .expect("euribor-rates.eu healthy but fetch_euribor_3m parsed no rate — page layout drifted");
+    assert!((-2.0..10.0).contains(&rate), "implausible 3M Euribor: {rate}%");
+}
+
 /// Nightly walk-forward gate. Shells the release binary's `backtest 12 universe` over the LIVE
 /// universe and asserts the committed default tuning still yields a POSITIVE validated edge.
 /// Same skip-vs-fail contract as the probes above: a throttle (spawn error / nonzero exit /
