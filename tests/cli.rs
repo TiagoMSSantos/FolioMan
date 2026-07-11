@@ -14,6 +14,11 @@ fn run(args: &[&str], stdin: Option<&str>) -> (i32, String, String) {
     // point config::load() at the committed fixture: the private config/settings.yaml is
     // gitignored, so in CI any subcommand that reaches config loading would panic without this.
     cmd.env("FOLIOMAN_CONFIG", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml"));
+    // strip broker credentials so every case is deterministic on a machine where the user's
+    // real keys are exported (no test here may ever reach a live broker call anyway).
+    for k in ["TRADING212_API_KEY", "BINANCE_API_KEY", "BINANCE_API_SECRET", "TR_PHONE", "TR_PIN", "TR_ACCEPT_UNOFFICIAL"] {
+        cmd.env_remove(k);
+    }
     cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().expect("spawn folioman");
     if let Some(s) = stdin {
@@ -63,6 +68,19 @@ fn trade_bad_side_exit_2() {
     let (code, _, stderr) = run(&["trade", "binance", "hodl", "BTCEUR", "1"], None);
     assert_eq!(code, 2);
     assert!(stderr.contains("side must be"), "side guard missing: {stderr}");
+}
+
+#[test]
+fn accounts_without_creds_skips_all_brokers_exit_0() {
+    // with no credentials every broker short-circuits BEFORE any network call, so this runs
+    // offline. Pins the documented contract: a broker with no creds (or no API, like Trade
+    // Republic) prints its skip reason instead of failing the whole command.
+    let (code, stdout, _) = run(&["accounts"], None);
+    assert_eq!(code, 0);
+    for broker in ["Trading212", "Binance", "Trade Republic"] {
+        assert!(stdout.contains(broker), "{broker} header missing: {stdout}");
+    }
+    assert_eq!(stdout.matches("(skipped)").count(), 3, "expected 3 skipped brokers: {stdout}");
 }
 
 #[test]
