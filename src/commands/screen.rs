@@ -463,7 +463,18 @@ pub async fn run(args: Vec<String>) {
         core: core_now.clone(), // still needed below by the holdings-overlap pick set
         ranked: ranked_now,
     };
-    let _ = std::fs::write(SCREEN_STATE_FILE, serde_json::to_string(&state).unwrap_or_default());
+    // (round 69) persistence failure must not be silent: a stuck baseline means every drift alert
+    // above re-fires (or a pending one never fires) on the next run with no hint why. Serialize
+    // failure no longer writes an empty file (which r62 would then report as CORRUPT). Warn+journal,
+    // never abort — one run's worth of stale baseline is annoying, a dead screen is worse.
+    let persisted = serde_json::to_string(&state).map(|json| std::fs::write(SCREEN_STATE_FILE, json));
+    if !matches!(persisted, Ok(Ok(()))) {
+        let warn = format!(
+            "WARNING: could not persist {SCREEN_STATE_FILE} — alert baselines stay at the previous run; alerts may repeat next run"
+        );
+        eprintln!("{warn}");
+        journal(&run_date, &[warn]);
+    }
 
     // (B) NEAR-MISS tail: names the growth lane rejected on EXACTLY one gate — a compounder one notch
     // outside the fence (e.g. a great name 25% off its high failing only the range gate). Makes the silent

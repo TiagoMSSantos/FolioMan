@@ -41,7 +41,9 @@ pub async fn run(args: Vec<String>) {
         println!("{:>6} {:>10} {:>8} {:>7} {:>7} {:>7} {:>9} {:>8}", "YEAR", "REVENUE", "REV-YoY", "GROSS%", "OP%", "NET%", "EPS", "EPS-YoY");
         for (i, a) in annual.iter().enumerate() {
             let older = annual.get(i + 1); // next row is the previous (older) fiscal year
-            let rev_yoy = older.map(|o| (a.revenue / o.revenue - 1.0) * 100.0);
+            // zero-revenue older row (missing/partial data) would print "+inf%" — same guard the
+            // EPS column below already has ("-" instead).
+            let rev_yoy = older.filter(|o| o.revenue != 0.0).map(|o| (a.revenue / o.revenue - 1.0) * 100.0);
             let eps_yoy = match (a.eps, older.and_then(|o| o.eps)) {
                 (Some(c), Some(p)) if p != 0.0 => Some((c / p - 1.0) * 100.0),
                 _ => None,
