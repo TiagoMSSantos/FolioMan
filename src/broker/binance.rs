@@ -89,9 +89,20 @@ pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64) -> Resul
         .await
         .map_err(|e| e.to_string())?;
     let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
+    // the order may already be live at this point — a body-read failure must say so, not print
+    // an empty confirmation.
+    let body = resp
+        .text()
+        .await
+        .unwrap_or_else(|e| format!("(response body unreadable: {e} — check the order in the Binance app)"));
     if status.is_success() {
-        Ok(format!("binance filled: {body}"))
+        // 2xx without an orderId in the body = accepted transport-wise but the fill is
+        // unconfirmed; the caller printed real money, make the doubt explicit.
+        if body.contains("orderId") {
+            Ok(format!("binance filled: {body}"))
+        } else {
+            Ok(format!("binance answered {status} but no orderId in the response — VERIFY the order in the app: {body}"))
+        }
     } else {
         Err(format!("binance {status}: {body}"))
     }
