@@ -13,7 +13,9 @@ on:
 # multiplexing choking mid-download; CARGO_HTTP_MULTIPLEXING=false forces HTTP/1.1 and dodges it.
 # CARGO_NET_RETRY bumps cargo's own retry (default 3) so a transient blip self-heals instead of
 # failing the job. (Cargo.lock is committed — versions are pinned — but cache-miss jobs still
-# download every crate, so the retry hardening stays.)
+# download every crate, so the retry hardening stays.) Every cargo invocation passes --locked:
+# a Cargo.toml/Cargo.lock mismatch is a hard red instead of a silent re-resolve that would build
+# a dependency tree nobody reviewed.
 env:
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_MULTIPLEXING: "false"
@@ -54,7 +56,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
-      - run: cargo build --verbose
+      - run: cargo build --locked --verbose
 
   # lint gate. clippy -D warnings turns every lint into an error (needless clone, dead code,
   # unwrap-heavy footguns…). NO `cargo fmt --check`: this codebase keeps a deliberate dense style
@@ -69,7 +71,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-ci   # one warm cache shared across all jobs
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --locked --all-targets -- -D warnings
 
   # RustSec advisory gate: a networked CLI whose whole job is fetching remote payloads should not
   # sit on a dependency with a known CVE. Audits the COMMITTED Cargo.lock — the exact resolution
@@ -94,7 +96,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
-      - run: cargo test --lib   # in-module #[cfg(test)] unit tests
+      - run: cargo test --locked --lib   # in-module #[cfg(test)] unit tests
 
   # Coverage visibility, REPORT-ONLY (continue-on-error): a % threshold on a moving codebase is
   # friction that gets a gate deleted, but the numbers steer where the next tests are worth writing.
@@ -114,7 +116,7 @@ jobs:
           shared-key: folioman-coverage   # instrumented build — kept apart from folioman-ci
       - name: unit-test coverage (report-only)
         run: |
-          cargo llvm-cov --lib --html
+          cargo llvm-cov --locked --lib --html
           {
             echo '```text'
             cargo llvm-cov report --summary-only
@@ -134,7 +136,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
-      - run: cargo test --test '*'   # everything under tests/ (tests/network.rs cases are #[ignore]d -> skipped here, stays offline)
+      - run: cargo test --locked --test '*'   # everything under tests/ (tests/network.rs cases are #[ignore]d -> skipped here, stays offline)
 
   # live API smoke tests — hit Yahoo/FX to catch the API changing shape under the parsers. The tests
   # self-classify (see tests/network.rs): a 429/5xx/transport hiccup SKIPS (green), only a 200-OK-but-
@@ -151,7 +153,7 @@ jobs:
         with:
           shared-key: folioman-ci   # same warm cache as the other jobs
       - name: live API smoke tests (skip-on-throttle, fail-on-drift)
-        run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored
+        run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_NET_TESTS=1 cargo test --locked --test network -- --ignored
 
   # Walk-forward gate. Runs the REAL `backtest 12 universe` over the live universe and checks the shipped
   # tuning still yields a POSITIVE validated edge. Runs on push/PR + nightly cron + manual dispatch. The
@@ -170,7 +172,7 @@ jobs:
         with:
           shared-key: folioman-ci   # same warm cache as the other jobs
       - name: walk-forward edge gate (skip-on-throttle, fail-on-collapse)
-        run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --ignored --nocapture
+        run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_BACKTEST_GATE=1 cargo test --locked --release --test network backtest_edge_holds -- --ignored --nocapture
 
   # Actions housekeeping: each main run supersedes the history, so delete this workflow's older
   # COMPLETED runs (logs + artifacts go with them). Main-only by the `if`: a PR ref is the merge ref
