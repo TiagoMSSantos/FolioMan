@@ -574,6 +574,19 @@ pub async fn run(args: Vec<String>) {
         secs / 60,
         secs % 60
     );
+    // optional feeds fail SILENTLY into a weaker run (NUPL None = crypto euphoria damping off;
+    // empty HICP map = inflation adjustment off despite being enabled) — name them so a degraded
+    // run is distinguishable from a normal one. Display-only; the score paths already handle both.
+    let mut degraded: Vec<&str> = Vec::new();
+    if nupl.is_none() {
+        degraded.push("NUPL feed down (crypto euphoria damping off)");
+    }
+    if eu_infl.as_ref().is_some_and(|m| m.is_empty()) {
+        degraded.push("EU HICP feed down (inflation adjustment off)");
+    }
+    if !degraded.is_empty() {
+        eprintln!("screen: DEGRADED — {}", degraded.join("; "));
+    }
 }
 
 #[cfg(test)]
