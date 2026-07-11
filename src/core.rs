@@ -1101,6 +1101,7 @@ pub struct FundFactors {
     pub op_margin: Option<f64>,    // current operating margin level (operating efficiency)
     pub margin_trend: Option<f64>, // op-margin now minus ~1y ago (margin expanding = strengthening)
     pub eps_growth: Option<f64>,   // EPS CAGR over the lookback (bottom-line compounding; both ends must be +)
+    pub roe: Option<f64>,          // as-of return-on-equity level, % (quality of capital). SEC feed computes it per row (NetIncome ÷ StockholdersEquity); FMP free tier leaves it None
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
     pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
     pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). PROBE-ONLY: set in the backtest loop from the native as-of close; left None by the live path (currency skew — see `earnings_yield` fn)
@@ -1185,6 +1186,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         op_margin: now.and_then(|r| r.op_margin),
         margin_trend,
         eps_growth,
+        roe: now.and_then(|r| r.roe), // as-of level through fund_as_of, same look-ahead guard as the margins
         insider_net_buys_90d: None, // (Item 4) SEC-sourced, set in the backtest loop, not from FMP rows
         eps_ttm: now.and_then(|r| r.eps), // (Item 19) as-of EPS level; earnings_yield needs price, set by caller
         earnings_yield: None,             // (Item 19) needs the as-of price -> filled in the backtest loop, not here
@@ -1307,6 +1309,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "op_margin" => f.op_margin,
         "margin_trend" => f.margin_trend,
         "eps_growth" => f.eps_growth,
+        "roe" => f.roe,                                   // quality of capital (SEC feed; FMP free tier = None)
         "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
         "earnings_yield" => f.earnings_yield,             // (Item 19) as-of valuation; PROBE-ONLY (None live)
         "buyback_yield" => f.buyback_yield,               // as-of 1y share-count shrink (+ = buying back); backtest-testable candidate
@@ -1530,6 +1533,7 @@ mod tests {
             op_margin: Some(4.0),
             margin_trend: Some(5.0),
             eps_growth: Some(6.0),
+            roe: Some(11.0),
             insider_net_buys_90d: Some(7.0),
             eps_ttm: Some(8.0),
             earnings_yield: Some(9.0),
@@ -1542,6 +1546,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "insider_net_buys_90d"), Some(7.0)); // (Item 4)
         assert_eq!(select_fund_factor(&f, "earnings_yield"), Some(9.0)); // (Item 19)
         assert_eq!(select_fund_factor(&f, "buyback_yield"), Some(10.0));
+        assert_eq!(select_fund_factor(&f, "roe"), Some(11.0)); // quality of capital; NOT in composite (a level, and the blend already failed the lane)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -1894,9 +1899,9 @@ mod tests {
     // fund_as_of point-in-time join: latest row FILED on/before the cutoff, NEVER a future filing
     // (the look-ahead guard). Rows out of order on purpose to prove order-independence.
     let frows = vec![
-        FundRow { filed: NaiveDate::from_ymd_opt(2022, 2, 1).unwrap(), revenue: Some(200.0), ..Default::default() },
+        FundRow { filed: NaiveDate::from_ymd_opt(2022, 2, 1).unwrap(), revenue: Some(200.0), roe: Some(18.0), ..Default::default() },
         FundRow { filed: NaiveDate::from_ymd_opt(2020, 2, 1).unwrap(), revenue: Some(100.0), ..Default::default() },
-        FundRow { filed: NaiveDate::from_ymd_opt(2021, 2, 1).unwrap(), revenue: Some(150.0), ..Default::default() },
+        FundRow { filed: NaiveDate::from_ymd_opt(2021, 2, 1).unwrap(), revenue: Some(150.0), roe: Some(12.0), ..Default::default() },
     ];
     // cutoff between the 2021 and 2022 filings -> sees 2021, NOT the unfiled 2022 (no look-ahead)
     assert_eq!(fund_as_of(&frows, NaiveDate::from_ymd_opt(2021, 6, 1).unwrap()).unwrap().revenue, Some(150.0));
@@ -1909,6 +1914,10 @@ mod tests {
     assert!((ff.rev_cagr.unwrap() - 41.42).abs() < 0.1); // sqrt(2)-1 ≈ 41.4%/yr
     assert!(ff.op_margin.is_none() && ff.eps_growth.is_none()); // absent fields -> None, never a garbage value
     assert!(fund_factors(&frows, NaiveDate::from_ymd_opt(2020, 6, 1).unwrap(), 2).rev_cagr.is_none()); // no row 2y before -> None
+    // as-of roe: the level rides the same fund_as_of look-ahead guard — a cutoff between the 2021
+    // and 2022 filings sees 12.0, NEVER the unfiled 18.0; after both, the latest level.
+    assert_eq!(ff.roe, Some(18.0));
+    assert_eq!(fund_factors(&frows, NaiveDate::from_ymd_opt(2021, 6, 1).unwrap(), 2).roe, Some(12.0));
     // default_anchor_half: window widens with horizon length; 1D exact
     assert_eq!(default_anchor_half(1), 0);
     assert_eq!(default_anchor_half(7), 7);

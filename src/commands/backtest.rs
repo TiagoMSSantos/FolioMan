@@ -458,6 +458,7 @@ fn report_fund_lane(samples: &[Sample]) {
         ("op_margin", |f| f.op_margin),
         ("margin_trend", |f| f.margin_trend),
         ("eps_growth", |f| f.eps_growth),
+        ("roe", |f| f.roe),                             // quality of capital (SEC feed only; FMP free tier = None)
         ("insider_net90d", |f| f.insider_net_buys_90d), // (Item 4) only populated under `insider`
         ("earnings_yield", |f| f.earnings_yield),       // (Item 19) as-of valuation (high = cheap); native-currency probe
         ("buyback_yield", |f| f.buyback_yield),         // as-of 1y share-count shrink (+ = buying back)
@@ -771,8 +772,8 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
 /// growth-gated universe, rank by the factor (not the score), hold the top-N, and compare its held-book
 /// excess-vs-S&P500 to ranking by `growth_score`. A factor whose held-book excess BEATS the score with
 /// both OOS halves + is a better selector for a 15y no-sell book — a ship candidate for the fund tilt.
-/// Only the free SEC/income-statement factors are listed (roe/roic/net-debt/fcf are premium-blocked;
-/// compute-from-SEC is the free follow-up). Runs only under `fund` (else `s.fund` is None everywhere).
+/// Only the free SEC/income-statement factors are listed (roe now included — the SEC parse computes it;
+/// roic/net-debt/fcf stay the compute-from-SEC follow-up). Runs only under `fund` (else `s.fund` is None everywhere).
 fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let (bd, bc) = bench;
     if bd.len() < 2 {
@@ -805,6 +806,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("eps_growth", |f| f.eps_growth),          // bottom-line compounding
         ("earnings_yield", |f| f.earnings_yield),  // VALUE (anti-overpay — the near-high gate lacks one)
         ("buyback_yield", |f| f.buyback_yield),    // capital return
+        ("roe", |f| f.roe),                        // quality of capital (SEC-computed NetIncome ÷ StockholdersEquity)
     ];
     let mut any = false;
     for (name, get) in factors {
@@ -827,7 +829,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         println!("  no fundamental coverage — needs `fund` + fund_source sec (free EDGAR) or an FMP key.");
     }
     println!("  (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.");
-    println!("   roe/roic/net-debt/fcf are FMP-premium (None here) — the free path is to compute them from SEC concepts.)");
+    println!("   roe is SEC-computed (fund_source sec) and swept above; roic/net-debt/fcf remain the compute-from-SEC follow-up.)");
 
     // BLEND sweep: pure-value beat pure-score standalone — but pure-value alone risks value-traps the
     // gates miss, so find the growth_fund_weight KNEE where tilting growth_score toward the baked
