@@ -43,53 +43,64 @@ pub async fn run(args: Vec<String>) {
                 continue;
             }
         };
-        let annual = core::annual_rollup(&rows);
-
-        println!("\n{ticker} — annual income statements (fiscal-year rollup, newest first · source: {source})");
-        // an empty rollup under a bare header reads like a rendering bug — say why it's empty
-        // (quarters exist but no fiscal year completed yet), and don't count it as a table.
-        if annual.is_empty() {
-            println!("  (statements fetched, but no complete fiscal year to roll up)");
-        } else {
+        let (block, has_table) = render_annual(ticker, source, &rows, today);
+        print!("{block}");
+        if has_table {
             tables_printed += 1;
         }
-        println!("{:>6} {:>10} {:>8} {:>7} {:>7} {:>7} {:>9} {:>8}", "YEAR", "REVENUE", "REV-YoY", "GROSS%", "OP%", "NET%", "EPS", "EPS-YoY");
-        for (i, a) in annual.iter().enumerate() {
-            let older = annual.get(i + 1); // next row is the previous (older) fiscal year
-            // zero-revenue older row (missing/partial data) would print "+inf%" — same guard the
-            // EPS column below already has ("-" instead).
-            let rev_yoy = older.filter(|o| o.revenue != 0.0).map(|o| (a.revenue / o.revenue - 1.0) * 100.0);
-            let eps_yoy = match (a.eps, older.and_then(|o| o.eps)) {
-                (Some(c), Some(p)) if p != 0.0 => Some((c / p - 1.0) * 100.0),
-                _ => None,
-            };
-            // 2-3 quarters = a genuinely partial quarterly (FMP) year; mark it. 1 = an annual filing
-            // (SEC EDGAR rolls a fiscal year into one row) OR the rare newest-FMP-year-with-only-Q1, which
-            // we don't flag. 4+ = a full quarterly year. ponytail: can't tell source per-row, this is close.
-            let mark = if (2..4).contains(&a.quarters) { "*" } else { "" };
-            println!(
-                "{:>5}{} {:>10} {:>8} {:>7} {:>7} {:>7} {:>9} {:>8}",
-                a.year, mark, humanize(a.revenue), yoy(rev_yoy),
-                level(a.gross_margin), level(a.op_margin), level(a.net_margin),
-                a.eps.map(|e| format!("{e:.2}")).unwrap_or_else(|| "-".into()), yoy(eps_yoy),
-            );
-        }
-        if annual.iter().any(|a| a.quarters < 4) {
-            println!("  (* = incomplete fiscal year: fewer than 4 quarters reported)");
-        }
-
-        // grower verdict — the EXACT as-of factors growth_score weighs (5y lookback matches the live enrich)
-        let ff = core::fund_factors(&rows, today, 5);
-        println!("--- grower verdict (what screen bets on) ---");
-        println!(
-            "  rev_cagr {}  eps_growth {}  rev_accel {}  margin_trend {}  gross_margin {}  op_margin {}",
-            yoy(ff.rev_cagr), yoy(ff.eps_growth), pts(ff.rev_accel), pts(ff.margin_trend),
-            level(ff.gross_margin), level(ff.op_margin),
-        );
     }
     if equity_requested > 0 && tables_printed == 0 {
         std::process::exit(1);
     }
+}
+
+/// Render one ticker's annual table + grower verdict; pure so the real branches — the +inf% YoY
+/// guard, the incomplete-year `*` mark, the empty-rollup note — are unit-testable offline (same
+/// seam split as the trading212 render_summary). Returns (text, whether a fiscal-year table
+/// rendered) for run()'s exit-code rule.
+fn render_annual(ticker: &str, source: &str, rows: &[core::FundRow], today: chrono::NaiveDate) -> (String, bool) {
+    let annual = core::annual_rollup(rows);
+    let mut out = format!("\n{ticker} — annual income statements (fiscal-year rollup, newest first · source: {source})\n");
+    // an empty rollup under a bare header reads like a rendering bug — say why it's empty
+    // (statements exist but no fiscal year completed yet), and don't count it as a table.
+    if annual.is_empty() {
+        out.push_str("  (statements fetched, but no complete fiscal year to roll up)\n");
+    }
+    out.push_str(&format!("{:>6} {:>10} {:>8} {:>7} {:>7} {:>7} {:>9} {:>8}\n", "YEAR", "REVENUE", "REV-YoY", "GROSS%", "OP%", "NET%", "EPS", "EPS-YoY"));
+    for (i, a) in annual.iter().enumerate() {
+        let older = annual.get(i + 1); // next row is the previous (older) fiscal year
+        // zero-revenue older row (missing/partial data) would print "+inf%" — same guard the
+        // EPS column below already has ("-" instead).
+        let rev_yoy = older.filter(|o| o.revenue != 0.0).map(|o| (a.revenue / o.revenue - 1.0) * 100.0);
+        let eps_yoy = match (a.eps, older.and_then(|o| o.eps)) {
+            (Some(c), Some(p)) if p != 0.0 => Some((c / p - 1.0) * 100.0),
+            _ => None,
+        };
+        // 2-3 quarters = a genuinely partial quarterly (FMP) year; mark it. 1 = an annual filing
+        // (SEC EDGAR rolls a fiscal year into one row) OR the rare newest-FMP-year-with-only-Q1, which
+        // we don't flag. 4+ = a full quarterly year. ponytail: can't tell source per-row, this is close.
+        let mark = if (2..4).contains(&a.quarters) { "*" } else { "" };
+        out.push_str(&format!(
+            "{:>5}{} {:>10} {:>8} {:>7} {:>7} {:>7} {:>9} {:>8}\n",
+            a.year, mark, humanize(a.revenue), yoy(rev_yoy),
+            level(a.gross_margin), level(a.op_margin), level(a.net_margin),
+            a.eps.map(|e| format!("{e:.2}")).unwrap_or_else(|| "-".into()), yoy(eps_yoy),
+        ));
+    }
+    if annual.iter().any(|a| a.quarters < 4) {
+        out.push_str("  (* = incomplete fiscal year: fewer than 4 quarters reported)\n");
+    }
+
+    // grower verdict — the EXACT as-of factors growth_score weighs (5y lookback matches the live enrich)
+    let ff = core::fund_factors(rows, today, 5);
+    out.push_str("--- grower verdict (what screen bets on) ---\n");
+    out.push_str(&format!(
+        "  rev_cagr {}  eps_growth {}  rev_accel {}  margin_trend {}  gross_margin {}  op_margin {}\n",
+        yoy(ff.rev_cagr), yoy(ff.eps_growth), pts(ff.rev_accel), pts(ff.margin_trend),
+        level(ff.gross_margin), level(ff.op_margin),
+    ));
+    let has_table = !annual.is_empty();
+    (out, has_table)
 }
 
 // ponytail: tiny local number formatters — no shared humanize helper exists and these are display-only.
@@ -126,6 +137,58 @@ fn level(v: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDate;
+
+    fn quarter(y: i32, m: u32, revenue: Option<f64>, eps: Option<f64>) -> core::FundRow {
+        let d = NaiveDate::from_ymd_opt(y, m, 15).unwrap();
+        core::FundRow { filed: d, period_end: d, revenue, eps, ..Default::default() }
+    }
+
+    fn today() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()
+    }
+
+    /// Happy path: title carries ticker + source, a full 4-quarter year renders with its YoY vs the
+    /// older year (4×120 = 480 vs 4×100 = 400 -> +20.0%), and has_table is true.
+    #[test]
+    fn renders_table_with_source_and_yoy() {
+        let mut rows: Vec<core::FundRow> = (1..=4).map(|q| quarter(2024, q * 3, Some(100.0), Some(1.0))).collect();
+        rows.extend((1..=4).map(|q| quarter(2025, q * 3, Some(120.0), Some(1.5))));
+        let (out, has_table) = render_annual("ACME", "FMP", &rows, today());
+        assert!(out.contains("ACME — annual income statements"), "{out}");
+        assert!(out.contains("source: FMP"), "{out}");
+        assert!(out.contains("+20.0%"), "rev YoY missing: {out}");
+        assert!(has_table);
+    }
+
+    /// (round 69 guard) a zero-revenue older year must render REV-YoY as "-", never "+inf%".
+    #[test]
+    fn zero_revenue_older_year_is_dash_not_inf() {
+        let rows = vec![quarter(2024, 6, Some(0.0), None), quarter(2025, 6, Some(50.0), None)];
+        let (out, _) = render_annual("ACME", "FMP", &rows, today());
+        assert!(!out.contains("inf"), "{out}");
+    }
+
+    /// 2-3 quarters = a genuinely partial fiscal year: the row carries `*` and the footnote prints.
+    #[test]
+    fn partial_year_carries_incomplete_mark() {
+        let mut rows: Vec<core::FundRow> = (1..=4).map(|q| quarter(2024, q * 3, Some(100.0), None)).collect();
+        rows.push(quarter(2025, 3, Some(110.0), None));
+        rows.push(quarter(2025, 6, Some(110.0), None));
+        let (out, _) = render_annual("ACME", "FMP", &rows, today());
+        assert!(out.contains(" 2025*"), "mark missing: {out}");
+        assert!(out.contains("incomplete fiscal year"), "footnote missing: {out}");
+        assert!(!out.contains(" 2024*"), "full year must not be marked: {out}");
+    }
+
+    /// (round 89 note) no rows to roll up -> the explanatory note prints under the header and the
+    /// block does NOT count as a table for the exit-code rule.
+    #[test]
+    fn empty_rollup_prints_note_not_bare_header() {
+        let (out, has_table) = render_annual("ACME", "SEC EDGAR", &[], today());
+        assert!(out.contains("no complete fiscal year to roll up"), "{out}");
+        assert!(!has_table);
+    }
 
     /// (round 61) formatter semantics: unit tier picked by magnitude (sign preserved, tier chosen
     /// on |v|), signed vs unsigned styles, "-" for absent values across all three Option formatters.
