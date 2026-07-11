@@ -5,6 +5,29 @@ use crate::commands::{print_macro_footer, truncate};
 use crate::core::HORIZONS;
 use crate::{config, core, fetch, picks};
 
+/// (round 58) One line per checked fund: top-5 holdings with weights, "+N" for the rest, and the
+/// top-10 total as a share of the fund (omitted when Yahoo sent no weights). Input order kept —
+/// it mirrors the table above. Funds with no known holdings print nothing.
+fn holdings_lines(
+    holdings: &std::collections::HashMap<String, Vec<(String, f64)>>,
+    order: &[String],
+) -> Vec<String> {
+    order
+        .iter()
+        .filter_map(|t| {
+            let hs = holdings.get(t).filter(|hs| !hs.is_empty())?;
+            let cell = |(s, p): &(String, f64)| {
+                if *p > 0.0 { format!("{s} {:.1}%", p * 100.0) } else { s.clone() }
+            };
+            let head: Vec<String> = hs.iter().take(5).map(cell).collect();
+            let more = if hs.len() > 5 { format!(" +{}", hs.len() - 5) } else { String::new() };
+            let sum: f64 = hs.iter().map(|(_, p)| p).sum();
+            let total = if sum > 0.0 { format!(" (top-10 = {:.0}% of fund)", sum * 100.0) } else { String::new() };
+            Some(format!("  {t}: {}{more}{total}", head.join(", ")))
+        })
+        .collect()
+}
+
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
@@ -54,6 +77,24 @@ pub async fn run(args: Vec<String>) {
         );
     }
 
+    // (round 58) what's inside the wrapper: top-10 holdings with weights for the checked ETFs —
+    // `check` is the single-fund buy-decision view and showed nothing below the fund name. Same
+    // weekly-cached Yahoo topHoldings the screen's overlap footer uses (direct by symbol, no BF
+    // dependency, so it works on this path). Display-only; funds Yahoo has no holdings for are
+    // simply absent.
+    let etfs: Vec<String> =
+        quotes.iter().filter(|q| picks::quote_is_etf(q)).map(|q| q.ticker.clone()).collect();
+    if !etfs.is_empty() {
+        let holdings = fetch::yahoo_top_holdings(&client, &etfs).await;
+        let lines = holdings_lines(&holdings, &etfs);
+        if !lines.is_empty() {
+            println!("\nTop-10 holdings — what's inside the wrapper:");
+            for l in &lines {
+                println!("{l}");
+            }
+        }
+    }
+
     // best growth candidates (heuristic, derived from the table above — no extra fetch). Empty sector
     // filter: the watchlist is hand-picked, never sector-culled.
     let explain_text = picks::render(&quotes, settings.top_picks, &settings.buy_heuristic, widths, None, &[], &std::collections::HashMap::new(), &[], None);
@@ -77,4 +118,29 @@ pub async fn run(args: Vec<String>) {
 
     // Euribor / Certificados de Aforro / inflation — the macro backdrop, shared with `screen`
     print_macro_footer(&client, &settings.urls).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// (round 58) holdings line semantics: top-5 with weights then "+N", top-10 total suffix,
+    /// weightless holdings print name-only and no total, unknown/empty funds print nothing,
+    /// input order kept.
+    #[test]
+    fn holdings_lines_semantics() {
+        let mut h: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        h.insert(
+            "SEMI.DE".into(),
+            (0..10).map(|i| (format!("H{i}"), 0.10 - i as f64 * 0.01)).collect(), // 10%..1% = 55%
+        );
+        h.insert("NOW.DE".into(), vec![("AAA".into(), 0.0), ("BBB".into(), 0.0)]);
+        h.insert("EMPTY.DE".into(), vec![]);
+        let order = vec!["SEMI.DE".to_string(), "NOW.DE".to_string(), "EMPTY.DE".to_string(), "GONE.DE".to_string()];
+        assert_eq!(holdings_lines(&h, &order), vec![
+            "  SEMI.DE: H0 10.0%, H1 9.0%, H2 8.0%, H3 7.0%, H4 6.0% +5 (top-10 = 55% of fund)".to_string(),
+            "  NOW.DE: AAA, BBB".to_string(),
+        ]);
+    }
 }
