@@ -93,17 +93,36 @@ fn holdings_overlap_lines(holdings: &std::collections::HashMap<String, Vec<(Stri
     groups
         .into_iter()
         .map(|members| {
-            let mut common = syms(members[0]);
-            for m in &members[1..] {
+            let common = members[1..].iter().fold(syms(members[0]), |mut acc, m| {
                 let s = syms(m);
-                common.retain(|x| s.contains(x));
-            }
+                acc.retain(|x| s.contains(x));
+                acc
+            });
+            // (round 58) how much of each member the common names ARE: the same 4 shared megacaps
+            // can be ~18% of an S&P 500 tracker but ~45% of a tech-sector fund — the range is the
+            // number that says whether buying two members is double-buying. Members whose weights
+            // Yahoo omitted (all 0.0) are left out; no weights anywhere -> no suffix.
+            let sums: Vec<f64> = members
+                .iter()
+                .map(|m| holdings[*m].iter().filter(|(s, _)| common.contains(s.as_str())).map(|(_, p)| p).sum())
+                .filter(|s: &f64| *s > 0.0)
+                .collect();
+            let weight = match (
+                sums.iter().cloned().fold(f64::INFINITY, f64::min),
+                sums.iter().cloned().fold(0.0, f64::max),
+            ) {
+                _ if sums.is_empty() => String::new(),
+                (lo, hi) if (hi * 100.0).round() == (lo * 100.0).round() => {
+                    format!(" = {:.0}% of each fund", hi * 100.0)
+                }
+                (lo, hi) => format!(" = {:.0}-{:.0}% of each fund", lo * 100.0, hi * 100.0),
+            };
             let mut common: Vec<&str> = common.into_iter().collect();
             common.sort();
             let more = if common.len() > 4 { format!(" +{}", common.len() - 4) } else { String::new() };
             let lead = if common.len() >= HOLDINGS_OVERLAP_MIN { "effectively one bet" } else { "heavily overlap" };
             format!(
-                "  {} picks {lead}: {} (shared top-10: {}{more})",
+                "  {} picks {lead}: {} (shared top-10: {}{more}{weight})",
                 members.len(),
                 members.join(" "),
                 common[..common.len().min(4)].join(" ")
@@ -578,6 +597,28 @@ mod tests {
         assert_eq!(lines[0], "  3 picks effectively one bet: A.L B.L C.L (shared top-10: S0 S1 S2 S3 +1)");
         assert!(!lines[0].contains("G.L"));
         assert!(holdings_overlap_lines(&HashMap::new()).is_empty());
+    }
+
+    /// (round 58) the cluster line quantifies the common set per member: same 5 shared names are
+    /// 25% of the broad fund but 50% of the sector fund -> range suffix; identical after rounding
+    /// collapses to one number; all-zero weights (Yahoo omitted) -> no suffix (previous test).
+    #[test]
+    fn holdings_overlap_weight_range() {
+        let w = |ps: &[f64]| -> Vec<(String, f64)> {
+            ps.iter().enumerate().map(|(i, p)| (format!("S{i}"), *p)).collect()
+        };
+        let mut h: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        h.insert("BROAD.DE".into(), w(&[0.05; 10]));  // common 5 names = 25%
+        h.insert("SECTOR.DE".into(), { let mut v = w(&[0.10; 5]); v.extend((0..5).map(|i| (format!("X{i}"), 0.02))); v }); // common = 50%
+        let lines = holdings_overlap_lines(&h);
+        assert_eq!(lines, vec![
+            "  2 picks effectively one bet: BROAD.DE SECTOR.DE (shared top-10: S0 S1 S2 S3 +1 = 25-50% of each fund)".to_string()
+        ]);
+        // equal after rounding -> single number
+        let mut h: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        h.insert("A.DE".into(), w(&[0.06; 10]));
+        h.insert("B.DE".into(), w(&[0.06; 10]));
+        assert!(holdings_overlap_lines(&h)[0].ends_with("= 60% of each fund)"));
     }
 
     /// (round 57) concentration: a fund whose top-10 weights sum ≥40% fires (heaviest first), a
