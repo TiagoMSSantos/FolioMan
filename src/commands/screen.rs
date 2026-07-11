@@ -57,6 +57,22 @@ fn journal(date: &str, lines: &[String]) {
     }
 }
 
+/// (round 62) Parse the state file's raw contents into (state, was_corrupt). An ABSENT file
+/// (None) is a normal first run — silent. A file that reads but does NOT parse (truncated write,
+/// hand edit, a schema change serde can't bridge) was previously swallowed by `.ok()` into the
+/// same None, silently resetting every alert baseline (exit review, TER/AUM drift, USE/REPL
+/// flips, CORE diff) — a pending alert vanished without a word. The `true` flag lets the caller
+/// say so; it never changes what loads.
+fn parse_state(raw: Option<String>) -> (Option<ScreenState>, bool) {
+    match raw {
+        None => (None, false),
+        Some(s) => match serde_json::from_str(&s) {
+            Ok(st) => (Some(st), false),
+            Err(_) => (None, true),
+        },
+    }
+}
+
 /// (round 56) Two printed fund picks overlap when they share at least this many of their top-10
 /// holdings — half the book, past coincidence: buying both mostly doubles the same mega-caps.
 const HOLDINGS_OVERLAP_MIN: usize = 5;
@@ -345,8 +361,16 @@ pub async fn run(args: Vec<String>) {
     // Watchlist only (the holdings — actionable); universe names churn with fetch batches and
     // would spam. First run (no state file) prints nothing and just seeds the state.
     let watch: Vec<&Quote> = quotes.iter().filter(|q| settings.tickers.contains(&q.ticker)).collect();
-    let prior: Option<ScreenState> =
-        std::fs::read_to_string(SCREEN_STATE_FILE).ok().and_then(|s| serde_json::from_str(&s).ok());
+    let (prior, state_corrupt) = parse_state(std::fs::read_to_string(SCREEN_STATE_FILE).ok());
+    if state_corrupt {
+        // (round 62) stderr so a piped stdout still shows it, and journaled so the reset is on the
+        // permanent record — the one silent failure mode the alert surface had.
+        let warn = format!(
+            "WARNING: {SCREEN_STATE_FILE} exists but is unreadable — alert baselines (exit review / fact drift / CORE diff) reset this run, pending alerts suppressed once"
+        );
+        eprintln!("{warn}");
+        journal(&run_date, &[warn]);
+    }
     if let Some(prev) = &prior {
         let lines = exit_review_lines(&prev.passing, &watch, &settings.buy_heuristic, settings.widths.ticker);
         if !lines.is_empty() {
@@ -632,5 +656,29 @@ mod tests {
         h.insert("NOWEIGHT.DE".into(), vec![("A".into(), 0.0), ("B".into(), 0.0)]); // 0% -> silent
         assert_eq!(concentration_lines(&h), vec!["HEAVY.DE 58%".to_string(), "MID.DE 45%".to_string()]);
         assert!(concentration_lines(&HashMap::new()).is_empty());
+    }
+
+    /// (round 62) state-file parse fork: absent = normal first run (silent), present-but-garbage =
+    /// corrupt (the case that used to silently wipe every alert baseline), valid JSON loads, and a
+    /// round-50-era file missing the newer fields still deserializes (the serde(default) guard).
+    #[test]
+    fn parse_state_corruption_fork() {
+        assert!(matches!(parse_state(None), (None, false)));
+        let (st, corrupt) = parse_state(Some("{ truncated".into()));
+        assert!(st.is_none() && corrupt);
+        let valid = serde_json::to_string(&ScreenState {
+            date: "2026-07-11".into(),
+            passing: vec!["VUAA.DE".into()],
+            facts: HashMap::new(),
+            fund_meta: HashMap::new(),
+            core: Vec::new(),
+        })
+        .unwrap();
+        let (st, corrupt) = parse_state(Some(valid));
+        assert!(!corrupt);
+        let st = st.unwrap();
+        assert_eq!((st.date.as_str(), st.passing), ("2026-07-11", vec!["VUAA.DE".to_string()]));
+        let (old, corrupt) = parse_state(Some(r#"{"date":"2026-01-01","passing":[]}"#.into()));
+        assert!(old.is_some() && !corrupt);
     }
 }
