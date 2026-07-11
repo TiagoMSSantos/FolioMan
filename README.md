@@ -65,6 +65,26 @@ long random string. Cron hourly:
 0 * * * * /path/to/folioman/target/release/folioman alert >> /tmp/folioman.log 2>&1
 ```
 
+### Run-to-run alerts (`screen`)
+
+`screen` remembers its previous run in `.screen_state.json` (working dir, gitignored) and prints
+a footer alert when something a long-term holder must react to changed since then — each is
+**review, not auto-sell**:
+
+- **Exit review** — a watchlist name that passed every growth gate last run fails one now
+  (measured: newly-failing names lag kept-passing peers by ~14 pts forward).
+- **Fund-fact drift** — TER hike or AUM collapse on watchlist + hold-suitable funds (fee creep,
+  closure risk).
+- **Structure changes** — USE Acc→Dist (payouts turn taxable yearly) or replication
+  physical→Swap (counterparty risk enters).
+- **CORE shortlist diff** and **ranking membership diff** — which names joined/dropped the
+  buy-and-hold shortlist and the ranked tables since the last run, by ticker.
+
+Every alert is also appended to `.screen_alerts.log` (permanent, append-only journal — a
+scrolled-past terminal loses nothing; `grep VUAA .screen_alerts.log` is that fund's event
+history). Deleting `.screen_state.json` resets all baselines (next run is a quiet first run);
+a corrupt or unwritable state file is detected and warned about, never silently ignored.
+
 ## How a buy candidate is computed
 
 `check` and `screen` both print the **growth ranking** — the proven-compounder lane. The pipeline
