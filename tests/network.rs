@@ -137,6 +137,39 @@ async fn full_quote_build() {
     }
 }
 
+/// (round 66) topHoldings drift net. The holdings pipeline (screen's overlap/concentration footers,
+/// check's holdings block) degrades SILENTLY by design: any parse miss becomes an empty list that the
+/// weekly cache then serves for a week — if Yahoo reshapes the quoteSummary topHoldings payload, the
+/// footers just vanish and nothing ever reds. This is the one place that failure mode turns into a
+/// red build. Uses the cacheless `top_holdings_live` core, so the run never touches (or is fooled by)
+/// `.holdings_cache.json`. Same contract as the probes above: environmental -> skip, 200-but-empty
+/// on a major equity ETF -> FAIL (drift).
+#[tokio::test]
+#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
+async fn yahoo_top_holdings_parses() {
+    if !opted_in() {
+        return;
+    }
+    // a symbol the screen actually prints (sector-tech table) — the exact payload class the footers eat
+    const SYM: &str = "IITU.L";
+    match fetch::top_holdings_live(&fetch::client(), SYM).await {
+        Err(why) => eprintln!("network smoke [topHoldings {SYM}] SKIPPED — {why}"),
+        Ok(holdings) => {
+            assert!(
+                !holdings.is_empty(),
+                "{SYM}: 200 OK but no holdings parsed — quoteSummary topHoldings payload drifted \
+                 (the screen's overlap/concentration footers are silently empty right now)"
+            );
+            assert!(holdings.len() <= 10, "{SYM}: parser returned {} rows, contract is top-10", holdings.len());
+            assert!(
+                holdings.iter().any(|(_, w)| *w > 0.0),
+                "{SYM}: holdings parsed but every holdingPercent weight is 0 — weight field drifted \
+                 (the top-heavy concentration footer is silently blind)"
+            );
+        }
+    }
+}
+
 /// Nightly walk-forward gate. Shells the release binary's `backtest 12 universe` over the LIVE
 /// universe and asserts the committed default tuning still yields a POSITIVE validated edge.
 /// Same skip-vs-fail contract as the probes above: a throttle (spawn error / nonzero exit /

@@ -1702,6 +1702,35 @@ fn parse_top_holdings(v: &Value) -> Vec<(String, f64)> {
 /// deserialize and is treated as empty — one refetch of the ~30 printed picks heals it.
 const HOLDINGS_CACHE_PATH: &str = ".holdings_cache.json";
 
+/// (round 66) Single-symbol live topHoldings fetch — the cacheless core of `yahoo_top_holdings`,
+/// public so the network smoke test can probe the payload without touching the weekly cache.
+/// `Err` = environmental (transport/handshake/throttle — skip, retry later); `Ok(empty)` = HTTP 200
+/// whose body yielded no holdings, which for a major equity ETF means the payload shape drifted.
+pub async fn top_holdings_live(client: &Client, sym: &str) -> Result<Vec<(String, f64)>, String> {
+    let (cookie, crumb) = yahoo_crumb(client).await.ok_or("Yahoo crumb handshake failed")?;
+    let url = format!(
+        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules=topHoldings&crumb={crumb}"
+    );
+    let resp = client
+        .get(&url)
+        .header("Cookie", &cookie)
+        .header("User-Agent", "Mozilla/5.0")
+        .send()
+        .await
+        .map_err(|e| format!("transport error: {e}"))?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+        || status == reqwest::StatusCode::UNAUTHORIZED
+        || status == reqwest::StatusCode::FORBIDDEN
+    {
+        return Err(format!("throttled/unavailable: HTTP {status}"));
+    }
+    let v: Value =
+        resp.json().await.map_err(|_| "200 but body wasn't JSON (likely a throttle/HTML page)".to_string())?;
+    Ok(parse_top_holdings(&v))
+}
+
 /// (round 56) Top-10 holdings per fund (each with its weight fraction), for the screen's
 /// holdings-overlap + concentration footers — the sector-tech table is full of "different" funds
 /// holding the same mega-caps, and that concentration is invisible from the fund names.
@@ -1728,27 +1757,17 @@ pub async fn yahoo_top_holdings(client: &Client, syms: &[String]) -> HashMap<Str
         }
     }
     if !todo.is_empty() {
-        let Some((cookie, crumb)) = yahoo_crumb(client).await else {
+        // handshake once up front for the explicit skip message; top_holdings_live's own crumb
+        // call is then a free OnceLock read per symbol.
+        if yahoo_crumb(client).await.is_none() {
             eprintln!("fetch: Yahoo crumb handshake failed — holdings-overlap footer skipped this run");
             return out;
-        };
-        let (cookie_ref, crumb_ref) = (&cookie, &crumb);
+        }
         let fetched: Vec<Option<(String, Vec<(String, f64)>)>> = stream::iter(todo)
             .map(|sym| async move {
-                let url = format!(
-                    "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules=topHoldings&crumb={crumb_ref}"
-                );
-                let v = client
-                    .get(&url)
-                    .header("Cookie", cookie_ref)
-                    .header("User-Agent", "Mozilla/5.0")
-                    .send()
-                    .await
-                    .ok()?
-                    .json::<Value>()
-                    .await
-                    .ok()?;
-                Some((sym, parse_top_holdings(&v)))
+                // Err (transport/throttle) -> None: symbol stays uncached, retried next run
+                let holdings = top_holdings_live(client, &sym).await.ok()?;
+                Some((sym, holdings))
             })
             .buffer_unordered(fetch_concurrency())
             .collect()
