@@ -51,6 +51,21 @@ jobs:
           shared-key: folioman-ci   # one warm cache shared across all jobs
       - run: cargo clippy --all-targets -- -D warnings
 
+  # RustSec advisory gate: a networked CLI whose whole job is fetching remote payloads should not
+  # sit on a dependency with a known CVE. Cargo.lock is untracked (see the env note above), so
+  # generate it first — the audit then covers the exact freshest resolution every other job builds.
+  # BLOCKING: an advisory in the tree is a real defect, and the nightly cron means a newly published
+  # CVE reddens within a day, not whenever the next code push happens. Escape hatch if an advisory
+  # is ever unfixable (no patched release, not exploitable here): commit an `audit.toml` with an
+  # `[advisories] ignore = ["RUSTSEC-..."]` entry and a comment saying why.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo generate-lockfile
+      - run: cargo audit
+
   unit-tests:
     runs-on: ubuntu-latest
     steps:
@@ -59,6 +74,35 @@ jobs:
         with:
           shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
       - run: cargo test --lib   # in-module #[cfg(test)] unit tests
+
+  # Coverage visibility, REPORT-ONLY (continue-on-error): a % threshold on a moving codebase is
+  # friction that gets a gate deleted, but the numbers steer where the next tests are worth writing.
+  # Summary table lands in the run's step summary; the browsable per-line HTML report is an artifact.
+  # Own cache key: llvm-cov builds with -C instrument-coverage, so its target artifacts must not
+  # poison the shared plain-build cache the other jobs restore.
+  coverage:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup component add llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: folioman-coverage   # instrumented build — kept apart from folioman-ci
+      - name: unit-test coverage (report-only)
+        run: |
+          cargo llvm-cov --lib --html
+          {
+            echo '```text'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: target/llvm-cov/html
+          retention-days: 14
 
   integration-tests:
     runs-on: ubuntu-latest
