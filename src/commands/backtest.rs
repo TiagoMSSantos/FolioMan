@@ -337,6 +337,8 @@ pub async fn run(args: Vec<String>) {
     }
     .unwrap_or_default();
     report_vs_benchmark(&samples, &bench, years, tuning);
+    // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
+    report_entry_state(&samples, &bench, years, tuning);
     if fund || insider {
         // (#44 Phase C) grade the FREE fundamental factors on the ABSOLUTE held-book, not peer-relative.
         report_book_by_factor(&samples, &bench, years, tuning);
@@ -626,6 +628,22 @@ fn benchmark_fwd(dates: &[chrono::NaiveDate], closes: &[f64], from: chrono::Naiv
     r.is_finite().then_some(r)
 }
 
+/// (round 108) Benchmark's % below its running high at the last session on/before `date` (≤ 0; 0 = at
+/// a fresh high). None when `date` predates the series. The ENTRY-STATE classifier: what the market
+/// looked like the day money went in.
+fn bench_drawdown_at(dates: &[chrono::NaiveDate], closes: &[f64], date: chrono::NaiveDate) -> Option<f64> {
+    let mut hi = f64::MIN;
+    let mut last = None;
+    for (d, c) in dates.iter().zip(closes) {
+        if *d > date {
+            break;
+        }
+        hi = hi.max(*c);
+        last = Some(*c);
+    }
+    last.map(|c| (c / hi - 1.0) * 100.0)
+}
+
 /// (#40) ABSOLUTE goal metric — the one the peer-relative lanes never measure. The stated purpose is
 /// "out-return an S&P500 buy-and-hold", but every lane above de-means the level away (SELECTION, not the
 /// index). This asks the real question: buy the top-N growth picks (equal-weight, non-crypto), hold
@@ -774,6 +792,69 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
 /// growth-gated universe, rank by the factor (not the score), hold the top-N, and compare its held-book
 /// excess-vs-S&P500 to ranking by `growth_score`. A factor whose held-book excess BEATS the score with
 /// both OOS halves + is a better selector for a 15y no-sell book — a ship candidate for the fund tilt.
+/// (round 108) ENTRY-STATE — the WHEN dimension, never measured before this round: every prior lane
+/// conditioned on the PICK; this conditions on what the MARKET looked like the day money went in.
+/// Buckets are classed by the benchmark's drawdown from its running high at the bucket's first
+/// cutoff, then the SAME top-10 growth book is graded per class. Report-only, and the guidance can
+/// only ever be "deploy new money faster when a state occurs" — never "wait in cash for it" (the
+/// table can't see cash drag, and waiting is the classic market-timing trap).
+fn report_entry_state(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let (bd, bc) = bench;
+    if bd.len() < 2 {
+        return;
+    }
+    // full price pool (gated, non-crypto, benchmarkable — no fund filter): the "all entries" row
+    // must reproduce the absolute held-book above, so the class rows split THAT number, not a subset.
+    let mut base: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+    let mut first: std::collections::BTreeMap<i32, chrono::NaiveDate> = Default::default();
+    for s in samples {
+        if picks::asset_class(&s.quote) == 0 {
+            continue;
+        }
+        let Some(score) = growth_score(&s.quote, tuning) else { continue };
+        let Some(br) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+        let bk = bucket(s.date);
+        base.entry(bk).or_default().push((score, s.realized, br));
+        first.entry(bk).and_modify(|d| *d = (*d).min(s.date)).or_insert(s.date);
+    }
+    if base.is_empty() {
+        return;
+    }
+    let n = 10;
+    println!("\n── ENTRY-STATE (class each ~6mo entry window by the benchmark's drawdown at entry, same top-{n} growth book held {years}y) ──");
+    let classes: &[(&str, fn(f64) -> bool)] = &[
+        ("near-high (dd > -5%)", |d| d > -5.0),
+        ("pullback  (-15 < dd <= -5%)", |d| d > -15.0 && d <= -5.0),
+        ("drawdown  (dd <= -15%)", |d| d <= -15.0),
+    ];
+    for (label, is) in classes {
+        let mut m: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+        let mut dds = Vec::new();
+        for (bk, rows) in &base {
+            let Some(dd) = first.get(bk).and_then(|d| bench_drawdown_at(bd, bc, *d)) else { continue };
+            if is(dd) {
+                m.insert(*bk, rows.clone());
+                dds.push(dd);
+            }
+        }
+        if let Some((b, _, e, w, wo, el, la)) = book_stats(&m, n, years) {
+            let mdd = dds.iter().sum::<f64>() / dds.len() as f64;
+            println!(
+                "  {label:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}, mean entry dd {mdd:+.1}%)",
+                dds.len()
+            );
+        }
+    }
+    if let Some((b, _, e, w, wo, el, la)) = book_stats(&base, n, years) {
+        println!(
+            "  {:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}) [unconditional]",
+            "all entries", base.len()
+        );
+    }
+    println!("  (a class with a handful of windows is a regime story, not a statistic. If a state over-delivers, the");
+    println!("   guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)");
+}
+
 /// Only the free SEC/income-statement factors are listed (roe + the round-107 survival levels are
 /// SEC-computed; roic stays premium-gated). Runs only under `fund` (else `s.fund` is None everywhere).
 fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
@@ -1704,6 +1785,18 @@ mod tests {
         let (b, _, n, ov) = union_book(&noey, 1, 2).unwrap(); // no ey anywhere -> growth-only book
         assert!((b - 2.0).abs() < 1e-9 && n == 1 && ov == 0, "{b} {n}");
         assert!(union_book(&rows, 0, 0).is_none()); // nothing picked -> None
+    }
+
+    /// (round 108) `bench_drawdown_at`: at the high -> 0, halved -> −50 at the trough, recovered ->
+    /// 0 again, and a date before the series -> None (no fabricated entry state).
+    #[test]
+    fn entry_state_drawdown() {
+        let dates: Vec<NaiveDate> = (1..=4).map(|m| ymd(2020, m, 1)).collect();
+        let closes = vec![100.0, 100.0, 50.0, 100.0];
+        assert_eq!(bench_drawdown_at(&dates, &closes, ymd(2020, 2, 15)), Some(0.0)); // at the high
+        assert_eq!(bench_drawdown_at(&dates, &closes, ymd(2020, 3, 15)), Some(-50.0)); // halved
+        assert_eq!(bench_drawdown_at(&dates, &closes, ymd(2020, 5, 1)), Some(0.0)); // recovered to the high
+        assert_eq!(bench_drawdown_at(&dates, &closes, ymd(2019, 12, 31)), None); // predates the series
     }
 
     /// (Item 31) `exit_cohorts`: pairs where the earlier cutoff passes split on the later one —
