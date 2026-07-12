@@ -1119,6 +1119,10 @@ pub struct FundFactors {
     pub fcf_margin: Option<f64>,     // % (op cash flow − capex) / revenue
     pub interest_cover: Option<f64>, // × operating income / interest expense
     pub net_cash_rev: Option<f64>,   // % (cash − debt) / revenue
+    // (round 109) the cyclical detector: NEGATED sample stddev of net_margin across the as-of
+    // lookback rows (higher = stabler). Margin LEVEL and 1y TREND are swept elsewhere; the
+    // dispersion is what a peak-cycle name (fertilizer, refiner) hides behind a good level.
+    pub margin_stability: Option<f64>,
 }
 
 /// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date (the
@@ -1192,6 +1196,21 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         }
         _ => None,
     };
+    // (round 109) margin stability: negated sample stddev of net_margin over the last `yrs`+1 as-of
+    // rows, oldest-first so the take() grabs the most RECENT filings. ≥3 values required (2 points =
+    // a line, not a dispersion). CAVEAT: FMP rows are QUARTERLY — seasonality inflates the std; the
+    // validated lane (fund_source sec) files one annual row per year, which is what the sweep grades.
+    let margin_stability = {
+        let mut ms: Vec<(NaiveDate, f64)> =
+            rows.iter().filter(|r| r.filed <= cutoff).filter_map(|r| r.net_margin.map(|m| (r.period_end, m))).collect();
+        ms.sort_by_key(|(e, _)| *e);
+        let vals: Vec<f64> = ms.iter().rev().take(yrs as usize + 1).map(|(_, m)| *m).collect();
+        (vals.len() >= 3).then(|| {
+            let n = vals.len() as f64;
+            let mean = vals.iter().sum::<f64>() / n;
+            -(vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt()
+        })
+    };
     FundFactors {
         rev_cagr,
         rev_accel,
@@ -1208,6 +1227,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         fcf_margin: now.and_then(|r| r.fcf_margin),
         interest_cover: now.and_then(|r| r.interest_cover),
         net_cash_rev: now.and_then(|r| r.net_cash_rev),
+        margin_stability,
     }
 }
 
@@ -1392,6 +1412,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "fcf_margin" => f.fcf_margin,                     // (round 107) survival: cash generation
         "interest_cover" => f.interest_cover,             // (round 107) survival: debt-service headroom
         "net_cash_rev" => f.net_cash_rev,                 // (round 107) survival: balance-sheet cushion
+        "margin_stability" => f.margin_stability,         // (round 109) cyclical detector: −std(net_margin)
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -1620,6 +1641,7 @@ mod tests {
             fcf_margin: Some(12.0),
             interest_cover: Some(13.0),
             net_cash_rev: Some(14.0),
+            margin_stability: Some(15.0),
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
         assert_eq!(select_fund_factor(&f, "margin_trend"), Some(5.0));
@@ -1632,6 +1654,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "fcf_margin"), Some(12.0)); // (round 107) survival levels; NOT in composite either
         assert_eq!(select_fund_factor(&f, "interest_cover"), Some(13.0));
         assert_eq!(select_fund_factor(&f, "net_cash_rev"), Some(14.0));
+        assert_eq!(select_fund_factor(&f, "margin_stability"), Some(15.0)); // (round 109)
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -1694,6 +1717,27 @@ mod tests {
         assert_eq!(s[0].gross_margin, None);
         assert_eq!(s[0].eps, None);
         assert_eq!(s[0].revenue, 10.0);
+    }
+
+    /// (round 109) `margin_stability` = negated sample stddev of net_margin over the as-of rows:
+    /// 10/20/30 -> mean 20, sample variance 100, std 10 -> factor −10. Fewer than 3 values -> None
+    /// (2 points define a line, not a dispersion), and rows filed after the cutoff never leak in.
+    #[test]
+    fn margin_stability_stddev() {
+        let r = |y: i32, nm: f64| FundRow {
+            filed: NaiveDate::from_ymd_opt(y, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y - 1, 12, 31).unwrap(),
+            net_margin: Some(nm),
+            ..Default::default()
+        };
+        let rows = vec![r(2022, 10.0), r(2023, 20.0), r(2024, 30.0)];
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let f = fund_factors(&rows, cutoff, 5);
+        assert!((f.margin_stability.unwrap() + 10.0).abs() < 1e-9);
+        // only 2 net_margin values -> None
+        assert_eq!(fund_factors(&rows[..2], cutoff, 5).margin_stability, None);
+        // as-of guard: cutoff before the 2024 filing leaves 2 rows -> None, no look-ahead
+        assert_eq!(fund_factors(&rows, NaiveDate::from_ymd_opt(2023, 6, 1).unwrap(), 5).margin_stability, None);
     }
 
     /// `income_snapshot`: picks the newest COMPLETE year (1 = annual filing, 4+ = full quarterly year;

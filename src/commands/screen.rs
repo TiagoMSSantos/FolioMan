@@ -621,6 +621,19 @@ pub async fn run(args: Vec<String>) {
         );
     }
 
+    // (round 109) entry-state banner: what TODAY'S market state historically meant for new money.
+    // Round-108 backtest receipt: entries taken ≥15% below the S&P 500 high compounded +17.3%/yr vs
+    // the +14.9%/yr all-entry average (excess over SPY +9.1 vs +5.9, 100% win) — the actionable read
+    // is deployment SPEED, never whether to wait in cash. Display-only; a failed fetch stays silent.
+    let spx = fetch::quotes(
+        &client, &settings.urls, &fx_cache, &["^GSPC".to_string()], settings.dip_days, settings.high_days,
+        false, false, &settings.anchor_windows, eu_infl.as_ref(),
+    )
+    .await;
+    if let Some(q) = spx.first() {
+        println!("\n{}", entry_state_line(q.drawdown_pct));
+    }
+
     // Euribor / Certificados de Aforro / inflation — fixed-income + macro baselines to compare the
     // asset tables against
     crate::commands::print_macro_footer(&client, &settings.urls).await;
@@ -652,10 +665,36 @@ pub async fn run(args: Vec<String>) {
     }
 }
 
+/// (round 109) One-line entry-state read for the screen footer. `off_hi` = % the S&P 500 sits below
+/// its high (positive, 0 = at high). Classes mirror the round-108 backtest: <5 near-high, 5–15
+/// pullback, ≥15 drawdown. The receipt behind the wording: drawdown entries returned +17.3%/yr vs
+/// the +14.9%/yr all-entry average — deployment SPEED is the lever, waiting in cash never was.
+fn entry_state_line(off_hi: f64) -> String {
+    let (state, read) = if off_hi >= 15.0 {
+        ("DRAWDOWN", "Deploy new money FASTER — entries here averaged +17.3%/yr vs +14.9%/yr overall (12y backtest, 100% win vs SPY)")
+    } else if off_hi >= 5.0 {
+        ("PULLBACK", "Keep the normal schedule; lean in if it deepens — the measured edge starts 15% below the high (+17.3%/yr vs +14.9%/yr overall)")
+    } else {
+        ("NEAR-HIGH", "Normal schedule — waiting in cash for a dip was the only losing move in the 12y backtest")
+    };
+    format!("Entry state: S&P 500 {off_hi:.1}% off its high — {state}. {read}. NOT advice.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    /// (round 109) entry-state classes + exact boundaries: <5 near-high, 5–15 pullback, ≥15 drawdown.
+    #[test]
+    fn entry_state_classes_and_boundaries() {
+        assert!(entry_state_line(0.0).contains("NEAR-HIGH"));
+        assert!(entry_state_line(4.9).contains("NEAR-HIGH"));
+        assert!(entry_state_line(5.0).contains("PULLBACK"));
+        assert!(entry_state_line(14.9).contains("PULLBACK"));
+        assert!(entry_state_line(15.0).contains("DRAWDOWN"));
+        assert!(entry_state_line(7.0).contains("7.0% off"));
+    }
 
     /// (round 50) fact-drift alert semantics: a real TER hike and an AUM halving fire; basis-point
     /// wobble, coverage churn (None<->Some) and unknown-both stay silent.

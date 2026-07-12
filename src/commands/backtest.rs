@@ -896,6 +896,9 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("fcf_margin", |f| f.fcf_margin),          // cash generation: (op cash flow − capex) / revenue
         ("interest_cover", |f| f.interest_cover),  // debt-service headroom: op income / interest expense
         ("net_cash_rev", |f| f.net_cash_rev),      // balance-sheet cushion: (cash − debt) / revenue
+        // (round 109) cyclical detector: −std(net_margin) over the lookback — margin LEVEL and 1y
+        // TREND are swept above; the dispersion is what a peak-cycle name hides behind a good level.
+        ("margin_stability", |f| f.margin_stability),
     ];
     let mut any = false;
     for (name, get) in factors {
@@ -979,6 +982,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("fcf_margin", |f| f.fcf_margin),
         ("interest_cover", |f| f.interest_cover),
         ("net_cash_rev", |f| f.net_cash_rev),
+        ("margin_stability", |f| f.margin_stability), // (round 109) reject the most-cyclical margins
     ];
     let mut shown = false;
     for (name, get) in survival {
