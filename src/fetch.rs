@@ -1110,10 +1110,23 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
 // and de-dupes each fiscal period to its EARLIEST filing so a later 10-K's restated comparative can't
 // post-date the as-of `filed`. US filers only (a non-US ticker has no CIK -> None).
 
-// (filed, period_end, revenue, gross_margin, op_margin, net_margin, eps, roe). Adding roe bumped the
-// arity: a pre-roe 7-tuple cache file fails to deserialize -> treated as a miss -> refetched + rewritten
-// (SEC is uncapped, so a one-time rebuild is free).
-type SecCacheRow = (String, String, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>);
+// (filed, period_end, revenue, gross_margin, op_margin, net_margin, eps, roe, shares, fcf_margin,
+// interest_cover, net_cash_rev). An arity change fails deserialization -> treated as a miss ->
+// refetched + rewritten (SEC is uncapped, so a one-time rebuild is free).
+type SecCacheRow = (
+    String,
+    String,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+);
 
 /// Parse a SEC `companyfacts` payload into ANNUAL `FundRow`s (one per fiscal year). Pure -> unit-tested.
 /// Revenue is merged across the concepts different eras/filers use; each annual line is joined to the
@@ -1216,6 +1229,23 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     // `collect_instant`. Basic fallback for the rare filer that never reports diluted. Feeds the buyback column.
     let shares = collect(&["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"], "shares");
     let eq = collect_instant(&["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "USD");
+    // (round 107) survival inputs. Duration lines: operating cash flow, capex, interest expense.
+    let ocf = collect(
+        &["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
+        "USD",
+    );
+    let capex = collect(&["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"], "USD");
+    let intexp = collect(&["InterestExpense", "InterestExpenseDebt", "InterestAndDebtExpense"], "USD");
+    // Instant balance items: debt (noncurrent + current, collected separately — LongTermDebt total is
+    // only the fallback inside the noncurrent map) and cash. A missing debt tag reads as 0 debt, which
+    // can only make net_cash_rev OPTIMISTIC — a reject-the-worst gate then under-rejects, never wrongly
+    // rejects, so the failure direction is safe. Cash is the parse anchor: no cash line -> None.
+    let debt_nc = collect_instant(&["LongTermDebtNoncurrent", "LongTermDebt"], "USD");
+    let debt_cur = collect_instant(&["LongTermDebtCurrent", "DebtCurrent"], "USD");
+    let cash = collect_instant(
+        &["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
+        "USD",
+    );
     rev.into_iter()
         .map(|(end, (filed, revenue))| {
             let at = |m: &std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)>| m.get(&end).map(|(_, v)| *v);
@@ -1235,6 +1265,14 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 // ROE = net income ÷ shareholders' equity (%), both as-of this period end. Free from
                 // SEC — no premium ratios endpoint needed.
                 roe: at(&ni).zip(at(&eq)).and_then(|(n, e)| (e != 0.0).then_some(n / e * 100.0)),
+                // (round 107) survival levels, high = safer. fcf needs BOTH lines (a bank with no capex
+                // tag stays None-neutral, not fake-frugal); interest_cover needs a positive interest
+                // expense (debt-free -> None-neutral, and a negative op income reads as negative cover).
+                fcf_margin: at(&ocf).zip(at(&capex)).and_then(|(o, c)| margin(Some(o - c))),
+                interest_cover: at(&op).zip(at(&intexp)).and_then(|(o, i)| (i > 0.0).then_some(o / i)),
+                net_cash_rev: at(&cash).and_then(|c| {
+                    margin(Some(c - at(&debt_nc).unwrap_or(0.0) - at(&debt_cur).unwrap_or(0.0)))
+                }),
                 ..Default::default()
             }
         })
@@ -1246,15 +1284,15 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
 /// forever. Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
 pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
-    // "_facts3": cache-key bump when the parse gains concepts (revenue Including/pre-606 tags, net-income
-    // fallbacks, now diluted-shares for the buyback column) — old rows were parsed WITHOUT them and would
-    // pin the gaps forever. Old *_facts2.json files are orphaned (few KB each); refetch amortizes over runs
-    // under SEC_FETCH_BUDGET.
-    let cache = sec_cache_path(&format!("{ticker}_facts3"));
+    // "_facts4": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 adds
+    // the round-107 survival levels) — old rows were parsed WITHOUT them and would pin the gaps forever.
+    // Old *_facts3.json files are orphaned (few KB each); refetch amortizes over runs under
+    // SEC_FETCH_BUDGET.
+    let cache = sec_cache_path(&format!("{ticker}_facts4"));
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
-            .filter_map(|(f, e, rev, gm, op, net, eps, roe, shares)| {
+            .filter_map(|(f, e, rev, gm, op, net, eps, roe, shares, fcfm, icov, ncash)| {
                 Some(core::FundRow {
                     filed: NaiveDate::parse_from_str(&f, "%Y-%m-%d").ok()?,
                     period_end: NaiveDate::parse_from_str(&e, "%Y-%m-%d").ok()?,
@@ -1265,6 +1303,9 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
                     eps,
                     shares,
                     roe,
+                    fcf_margin: fcfm,
+                    interest_cover: icov,
+                    net_cash_rev: ncash,
                     ..Default::default()
                 })
             })
@@ -1282,7 +1323,8 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
             .iter()
             .map(|r| {
                 (r.filed.format("%Y-%m-%d").to_string(), r.period_end.format("%Y-%m-%d").to_string(),
-                 r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps, r.roe, r.shares)
+                 r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps, r.roe, r.shares,
+                 r.fcf_margin, r.interest_cover, r.net_cash_rev)
             })
             .collect();
         if let Some(dir) = cache.parent() {
@@ -2706,6 +2748,28 @@ mod tests {
             // INSTANT balance item (only `end`, no 12-month duration) -> exercises collect_instant for ROE
             "StockholdersEquity": {"units": {"USD": [
                 {"end": "2021-09-30", "val": 1000.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
+            // (round 107) survival inputs, FY2021 only — FY2022 must stay None-neutral
+            "OperatingIncomeLoss": {"units": {"USD": [
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 200.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
+            "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 300.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
+            "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 100.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
+            "InterestExpense": {"units": {"USD": [
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 50.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
+            "LongTermDebtNoncurrent": {"units": {"USD": [
+                {"end": "2021-09-30", "val": 300.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
+            "DebtCurrent": {"units": {"USD": [
+                {"end": "2021-09-30", "val": 100.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
+            "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [
+                {"end": "2021-09-30", "val": 500.0, "form": "10-K", "filed": "2021-11-01"}
             ]}}
         }}});
         let mut rows = parse_sec_facts(&j);
@@ -2718,11 +2782,18 @@ mod tests {
         assert_eq!(rows[0].gross_margin, Some(40.0)); // 400/1000
         assert_eq!(rows[0].eps, Some(3.0));
         assert_eq!(rows[0].roe, Some(15.0)); // NetIncome 150 ÷ StockholdersEquity 1000 (instant)
-        // FY2022: no EPS / NI / equity line -> None (neutral, never a fake 0)
+        // (round 107) survival levels, FY2021: fcf (300−100)/1000, cover 200/50, net cash (500−300−100)/1000
+        assert_eq!(rows[0].fcf_margin, Some(20.0));
+        assert_eq!(rows[0].interest_cover, Some(4.0));
+        assert_eq!(rows[0].net_cash_rev, Some(10.0));
+        // FY2022: no EPS / NI / equity / survival line -> None (neutral, never a fake 0)
         assert_eq!(rows[1].revenue, Some(1200.0));
         assert_eq!(rows[1].gross_margin, Some(50.0)); // 600/1200
         assert_eq!(rows[1].eps, None);
         assert_eq!(rows[1].roe, None);
+        assert_eq!(rows[1].fcf_margin, None);
+        assert_eq!(rows[1].interest_cover, None);
+        assert_eq!(rows[1].net_cash_rev, None);
         assert!(parse_sec_facts(&json!({})).is_empty()); // no facts -> empty, never panics
     }
 

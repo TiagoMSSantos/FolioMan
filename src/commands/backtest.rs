@@ -774,8 +774,8 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
 /// growth-gated universe, rank by the factor (not the score), hold the top-N, and compare its held-book
 /// excess-vs-S&P500 to ranking by `growth_score`. A factor whose held-book excess BEATS the score with
 /// both OOS halves + is a better selector for a 15y no-sell book — a ship candidate for the fund tilt.
-/// Only the free SEC/income-statement factors are listed (roe now included — the SEC parse computes it;
-/// roic/net-debt/fcf stay the compute-from-SEC follow-up). Runs only under `fund` (else `s.fund` is None everywhere).
+/// Only the free SEC/income-statement factors are listed (roe + the round-107 survival levels are
+/// SEC-computed; roic stays premium-gated). Runs only under `fund` (else `s.fund` is None everywhere).
 fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let (bd, bc) = bench;
     if bd.len() < 2 {
@@ -810,6 +810,11 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("buyback_yield", |f| f.buyback_yield),    // capital return
         ("roe", |f| f.roe),                        // quality of capital (SEC-computed NetIncome ÷ StockholdersEquity)
         ("insider_net_buys_90d", |f| f.insider_net_buys_90d), // (Item 4) insider conviction — rows appear only under `backtest … insider`
+        // (round 107) SURVIVAL levels (SEC-computed, high = safer) — swept as rank factors here,
+        // graded as reject-the-worst gates in the SURVIVAL-GATE probe below.
+        ("fcf_margin", |f| f.fcf_margin),          // cash generation: (op cash flow − capex) / revenue
+        ("interest_cover", |f| f.interest_cover),  // debt-service headroom: op income / interest expense
+        ("net_cash_rev", |f| f.net_cash_rev),      // balance-sheet cushion: (cash − debt) / revenue
     ];
     let mut any = false;
     for (name, get) in factors {
@@ -832,7 +837,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         println!("  no fundamental coverage — needs `fund` + fund_source sec (free EDGAR) or an FMP key.");
     }
     println!("  (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.");
-    println!("   roe is SEC-computed (fund_source sec) and swept above; roic/net-debt/fcf remain the compute-from-SEC follow-up.)");
+    println!("   roe + the round-107 survival levels (fcf_margin/interest_cover/net_cash_rev) are SEC-computed; roic stays premium-gated.)");
 
     // BLEND sweep: pure-value beat pure-score standalone — but pure-value alone risks value-traps the
     // gates miss, so find the growth_fund_weight KNEE where tilting growth_score toward the baked
@@ -876,46 +881,92 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     if has_ey {
         println!("\n── VALUE-GATE probe: drop the most-expensive P% (low earnings_yield) gated STOCKS, rank rest by growth_score, top-{n} held {years}y ──");
         for p in [0.0_f64, 10.0, 25.0, 40.0] {
-            // bucket the gated, benchmarkable, non-crypto picks; per bucket drop the bottom-P% by
-            // earnings_yield among the fund-covered names, keep the rest, rank by growth_score.
-            let mut buckets: std::collections::BTreeMap<i32, Vec<&Sample>> = Default::default();
-            for s in samples {
-                if picks::asset_class(&s.quote) == 0 || growth_score(&s.quote, tuning).is_none() || benchmark_fwd(bd, bc, s.date, years).is_none() {
-                    continue;
-                }
-                buckets.entry(bucket(s.date)).or_default().push(s);
-            }
-            let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
-            for (bk, ss) in &buckets {
-                let thr = if p > 0.0 {
-                    let mut eys: Vec<f64> = ss.iter().filter_map(|s| s.fund.as_ref().and_then(|f| f.earnings_yield)).collect();
-                    if eys.is_empty() {
-                        None
-                    } else {
-                        eys.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                        Some(eys[(((p / 100.0) * eys.len() as f64) as usize).min(eys.len() - 1)]) // P-th percentile floor
-                    }
-                } else {
-                    None
-                };
-                for s in ss {
-                    if let (Some(t), Some(ey)) = (thr, s.fund.as_ref().and_then(|f| f.earnings_yield)) {
-                        if ey < t {
-                            continue; // too expensive -> rejected by the value brake
-                        }
-                    }
-                    let score = growth_score(&s.quote, tuning).unwrap();
-                    let br = benchmark_fwd(bd, bc, s.date, years).unwrap();
-                    by.entry(*bk).or_default().push((score, s.realized, br));
-                }
-            }
-            if let Some((b, _, e, w, wo, el, la)) = book_stats(&by, n, years) {
+            if let Some((b, _, e, w, wo, el, la)) = drop_bottom_book(samples, bd, bc, years, tuning, n, p, |f| f.earnings_yield) {
                 let tag = if p == 0.0 { "  [gate off]" } else { "" };
                 println!("  reject-bottom {p:>4.0}%  book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{tag}");
             }
         }
         println!("  (a reject-% that lifts book with OOS both + and worst no deeper than off -> ship as a real growth gate.)");
     }
+
+    // (round 107) SURVIVAL-GATE probe: the same brake pointed at DEATH instead of price. A never-sell
+    // book can't exit a bankruptcy — one −100% in an equal-weight top-10 costs ~10 pts of terminal
+    // wealth — so cutting a future zero is worth more than another point of selection edge. Reject the
+    // per-bucket weakest P% by each survival level; names the factor can't judge are kept (None =
+    // neutral). Ship exactly like the value gate: STRESS book/worst lifted, OOS both +.
+    let survival: &[(&str, fn(&core::FundFactors) -> Option<f64>)] = &[
+        ("fcf_margin", |f| f.fcf_margin),
+        ("interest_cover", |f| f.interest_cover),
+        ("net_cash_rev", |f| f.net_cash_rev),
+    ];
+    let mut shown = false;
+    for (name, get) in survival {
+        if !samples.iter().any(|s| s.fund.as_ref().and_then(get).is_some()) {
+            continue; // factor never populated on this feed -> no fabricated rows
+        }
+        if !shown {
+            println!("\n── SURVIVAL-GATE probe: drop the weakest P% per survival factor, rank rest by growth_score, top-{n} held {years}y ──");
+            shown = true;
+        }
+        for p in [0.0_f64, 10.0, 25.0] {
+            if let Some((b, _, e, w, wo, el, la)) = drop_bottom_book(samples, bd, bc, years, tuning, n, p, *get) {
+                let tag = if p == 0.0 { "  [gate off]" } else { "" };
+                println!("  {name:<14} reject {p:>3.0}%  book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{tag}");
+            }
+        }
+    }
+    if shown {
+        println!("  (gate-off rows repeat the baseline; a reject-% lifting book or worst with OOS both + -> ship as a survival gate.)");
+    }
+}
+
+/// Shared gate-probe engine: per ~6mo bucket, drop the bottom-P% of the gated, non-crypto,
+/// benchmarkable stocks by `get` (names the factor can't judge are KEPT — a gate can only act on
+/// evidence), rank the survivors by the unchanged growth_score, and grade the top-`n` held book.
+/// `p == 0` is the gate-off baseline. Extracted from the value-gate probe so the round-107 survival
+/// gates grade on byte-identical math.
+fn drop_bottom_book(
+    samples: &[Sample],
+    bd: &[chrono::NaiveDate],
+    bc: &[f64],
+    years: i64,
+    tuning: &BuyHeuristic,
+    n: usize,
+    p: f64,
+    get: fn(&core::FundFactors) -> Option<f64>,
+) -> Option<(f64, f64, f64, f64, f64, f64, f64)> {
+    let mut buckets: std::collections::BTreeMap<i32, Vec<&Sample>> = Default::default();
+    for s in samples {
+        if picks::asset_class(&s.quote) == 0 || growth_score(&s.quote, tuning).is_none() || benchmark_fwd(bd, bc, s.date, years).is_none() {
+            continue;
+        }
+        buckets.entry(bucket(s.date)).or_default().push(s);
+    }
+    let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+    for (bk, ss) in &buckets {
+        let thr = if p > 0.0 {
+            let mut vals: Vec<f64> = ss.iter().filter_map(|s| s.fund.as_ref().and_then(get)).collect();
+            if vals.is_empty() {
+                None
+            } else {
+                vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                Some(vals[(((p / 100.0) * vals.len() as f64) as usize).min(vals.len() - 1)]) // P-th percentile floor
+            }
+        } else {
+            None
+        };
+        for s in ss {
+            if let (Some(t), Some(v)) = (thr, s.fund.as_ref().and_then(get)) {
+                if v < t {
+                    continue; // below the floor -> rejected by the gate
+                }
+            }
+            let score = growth_score(&s.quote, tuning).unwrap();
+            let br = benchmark_fwd(bd, bc, s.date, years).unwrap();
+            by.entry(*bk).or_default().push((score, s.realized, br));
+        }
+    }
+    book_stats(&by, n, years)
 }
 
 /// (round 106) One bucket's TWO-STYLE union book: top-`g` by growth score plus top-`v` by
