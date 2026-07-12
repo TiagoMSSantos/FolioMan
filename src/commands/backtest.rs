@@ -340,6 +340,8 @@ pub async fn run(args: Vec<String>) {
     if fund || insider {
         // (#44 Phase C) grade the FREE fundamental factors on the ABSOLUTE held-book, not peer-relative.
         report_book_by_factor(&samples, &bench, years, tuning);
+        // (round 106) the no-borrow structural lever: growth book + value book held side by side.
+        report_two_style_book(&samples, &bench, years, tuning);
     }
 
     println!("\nCaveats:");
@@ -914,6 +916,133 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         }
         println!("  (a reject-% that lifts book with OOS both + and worst no deeper than off -> ship as a real growth gate.)");
     }
+}
+
+/// (round 106) One bucket's TWO-STYLE union book: top-`g` by growth score plus top-`v` by
+/// earnings_yield (rows without ey can't be value-picked), deduped by ticker — a name both styles
+/// pick takes ONE equal-weight slot, so the book shrinks by the overlap instead of double-weighting.
+/// Rows: (ticker, score, earnings_yield, realized %, bench %). Returns
+/// (mean pick terminal multiple, mean bench terminal multiple, book size, overlap count).
+fn union_book(rows: &[(String, f64, Option<f64>, f64, f64)], g: usize, v: usize) -> Option<(f64, f64, usize, usize)> {
+    let mut by_score: Vec<&(String, f64, Option<f64>, f64, f64)> = rows.iter().collect();
+    by_score.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let mut picked: Vec<&(String, f64, Option<f64>, f64, f64)> = by_score.into_iter().take(g).collect();
+    let mut by_ey: Vec<&(String, f64, Option<f64>, f64, f64)> = rows.iter().filter(|r| r.2.is_some()).collect();
+    by_ey.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+    let mut overlap = 0;
+    for r in by_ey.into_iter().take(v) {
+        if picked.iter().any(|p| p.0 == r.0) {
+            overlap += 1;
+        } else {
+            picked.push(r);
+        }
+    }
+    if picked.is_empty() {
+        return None;
+    }
+    let n = picked.len() as f64;
+    let book = picked.iter().map(|r| 1.0 + r.3 / 100.0).sum::<f64>() / n;
+    let spy = picked.iter().map(|r| 1.0 + r.4 / 100.0).sum::<f64>() / n;
+    Some((book, spy, picked.len(), overlap))
+}
+
+/// (round 106) TWO-STYLE HELD BOOK — the no-borrow structural lever. The growth_score book and the
+/// pure earnings_yield book pick mostly DIFFERENT names (the round-45 receipt: grafting value INTO
+/// the score was flat precisely because the value edge lives in a different book, not in reordering
+/// this one). So measure the portfolio-level structure instead: hold BOTH books side by side,
+/// equal-weight union, never-sell. Report-only: the outcome can ship as portfolio GUIDANCE (like
+/// "hold 10-15 equal-weight"), NEVER as a score/gate/knob — the ranking stays untouched in every branch.
+fn report_two_style_book(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let (bd, bc) = bench;
+    if bd.len() < 2 {
+        return;
+    }
+    // the same fair pool report_book_by_factor grades on (gated, non-crypto, fund-covered,
+    // benchmarkable) so the rows here are head-to-head comparable with the factor table above.
+    let mut buckets: std::collections::BTreeMap<i32, Vec<(String, f64, Option<f64>, f64, f64)>> = Default::default();
+    for s in samples {
+        if picks::asset_class(&s.quote) == 0 || s.fund.is_none() {
+            continue;
+        }
+        let Some(score) = growth_score(&s.quote, tuning) else { continue };
+        let Some(br) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+        let ey = s.fund.as_ref().and_then(|f| f.earnings_yield);
+        buckets.entry(bucket(s.date)).or_default().push((s.quote.ticker.clone(), score, ey, s.realized, br));
+    }
+    if buckets.is_empty() || !buckets.values().flatten().any(|r| r.2.is_some()) {
+        return; // no earnings_yield coverage -> nothing to combine
+    }
+    println!("\n── TWO-STYLE HELD BOOK (growth_score book + pure-earnings_yield book, equal-weight UNION, held {years}y no-sell) ──");
+    let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
+    let variants: &[(&str, usize, usize)] = &[
+        ("growth top-10  [baseline]", 10, 0),
+        ("value  top-10", 0, 10),
+        ("combo  5g+5v", 5, 5),
+        ("combo  10g+10v", 10, 10),
+    ];
+    // per-variant per-bucket (book CAGR, excess) — growth/value legs feed the corr + era receipts
+    let mut by_variant: Vec<std::collections::BTreeMap<i32, (f64, f64)>> = vec![Default::default(); variants.len()];
+    for (vi, (label, g, v)) in variants.iter().enumerate() {
+        let (mut books, mut excess, mut sizes, mut overlaps) = (Vec::new(), Vec::new(), Vec::new(), 0usize);
+        for (bk, rows) in &buckets {
+            let Some((bcum, scum, size, ov)) = union_book(rows, *g, *v) else { continue };
+            let (b, s) = (ann((bcum - 1.0) * 100.0, years), ann((scum - 1.0) * 100.0, years));
+            books.push(b);
+            excess.push(b - s);
+            sizes.push(size as f64);
+            overlaps += ov;
+            by_variant[vi].insert(*bk, (b, b - s));
+        }
+        if excess.is_empty() {
+            continue;
+        }
+        let m = excess.len();
+        let win = excess.iter().filter(|e| **e > 0.0).count() as f64 / m as f64 * 100.0;
+        let worst = excess.iter().cloned().fold(f64::INFINITY, f64::min);
+        let cut = m / 2;
+        // union size < g+v = the styles overlapped; print how much so a "combo win" that is really
+        // "the same book again" is visible at a glance.
+        let ov_note = if *g > 0 && *v > 0 {
+            format!("  (mean size {:.1}, overlap {:.1}/window)", mean(&sizes), overlaps as f64 / m as f64)
+        } else {
+            String::new()
+        };
+        println!(
+            "  {label:<26} book {:+.1}%/yr  excess {:+.1}  win {win:.0}%  worst {worst:+.1}  OOS {:+.1}/{:+.1}{ov_note}",
+            mean(&books),
+            mean(&excess),
+            mean(&excess[..cut]),
+            mean(&excess[cut..])
+        );
+    }
+    // WHY a combo can beat both parents: window-level correlation of the two pure books over the
+    // buckets both cover — low = real diversification; ~+1.0 = the same bet twice, combo can't help.
+    let shared: Vec<(f64, f64)> = by_variant[0]
+        .iter()
+        .filter_map(|(bk, gv)| by_variant[1].get(bk).map(|vv| (gv.0, vv.0)))
+        .collect();
+    if shared.len() >= 4 {
+        let (gs, vs): (Vec<f64>, Vec<f64>) = shared.iter().cloned().unzip();
+        if let Some(rho) = core::spearman(&gs, &vs) {
+            println!("  window corr (growth vs value book, spearman) {rho:+.2} over {} shared windows", shared.len());
+        }
+    }
+    // value-leg hardening (the round-44 caveats made measurable): chronological era slices of the pure
+    // value book's excess, plus how thin its per-bucket pick pool runs (a 3-name "book" is not a book).
+    let vexcess: Vec<f64> = by_variant[1].values().map(|(_, e)| *e).collect();
+    if vexcess.len() >= 8 {
+        let parts: Vec<String> =
+            vexcess.chunks((vexcess.len() / 4).max(1)).take(4).map(|c| format!("{:+.1}", mean(c))).collect();
+        let ns: Vec<f64> = buckets.values().map(|rows| rows.iter().filter(|r| r.2.is_some()).count() as f64).collect();
+        let nmin = ns.iter().cloned().fold(f64::INFINITY, f64::min);
+        println!(
+            "  value-book era slices (chronological quarters, excess %/yr) {}   ey rows/window min {nmin:.0} mean {:.1}",
+            parts.join(" / "),
+            mean(&ns)
+        );
+    }
+    println!("  (ship rule: the combo becomes PORTFOLIO GUIDANCE — buy both books, never-sell — ONLY if the STRESS");
+    println!("   combo book ≥ the growth book with OOS both + and worst no deeper. Never a score/gate/knob change.)");
 }
 
 /// Top/bottom scored-half mean peer-relative return. `pairs` = (sample, score); sorted by score desc,
@@ -1501,6 +1630,29 @@ mod tests {
         assert!((win - 50.0).abs() < 1e-6 && (worst + 50.0).abs() < 1e-6);
         assert!((early - 100.0).abs() < 1e-6 && (late + 50.0).abs() < 1e-6);
         assert!(book_stats(&std::collections::BTreeMap::new(), 1, 1).is_none()); // empty -> None
+    }
+
+    /// (round 106) `union_book`: dedupe by ticker (an overlapping pick takes ONE slot), value leg
+    /// skips ey-None rows (all-None degrades to growth-only), equal-weight terminal-multiple math,
+    /// empty pick set -> None.
+    #[test]
+    fn two_style_union_book() {
+        let r = |tk: &str, score: f64, ey: Option<f64>, real: f64| (tk.to_string(), score, ey, real, 0.0);
+        let rows = vec![
+            r("A", 9.0, Some(2.0), 100.0), // growth #1, value #3
+            r("B", 5.0, Some(8.0), 50.0),  // growth #2, value #2
+            r("C", 1.0, Some(9.0), -50.0), // value #1
+        ];
+        let (b, s, n, ov) = union_book(&rows, 1, 0).unwrap(); // pure growth top-1 = A
+        assert!((b - 2.0).abs() < 1e-9 && (s - 1.0).abs() < 1e-9 && n == 1 && ov == 0, "{b} {s} {n} {ov}");
+        let (b, _, n, ov) = union_book(&rows, 0, 2).unwrap(); // pure value top-2 = C,B -> mean(0.5, 1.5)
+        assert!((b - 1.0).abs() < 1e-9 && n == 2 && ov == 0, "{b} {n}");
+        let (b, _, n, ov) = union_book(&rows, 2, 2).unwrap(); // A,B union C,B -> B overlaps once
+        assert!((b - (2.0 + 1.5 + 0.5) / 3.0).abs() < 1e-9 && n == 3 && ov == 1, "{b} {n} {ov}");
+        let noey = vec![r("A", 9.0, None, 100.0), r("B", 5.0, None, 50.0)];
+        let (b, _, n, ov) = union_book(&noey, 1, 2).unwrap(); // no ey anywhere -> growth-only book
+        assert!((b - 2.0).abs() < 1e-9 && n == 1 && ov == 0, "{b} {n}");
+        assert!(union_book(&rows, 0, 0).is_none()); // nothing picked -> None
     }
 
     /// (Item 31) `exit_cohorts`: pairs where the earlier cutoff passes split on the later one —
