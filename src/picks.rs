@@ -1347,9 +1347,20 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
     }
 }
 
+/// (round 110) Ticker-base normalizers for the owned-position overlay. Trading212 encodes a listing
+/// as `BASE_MARKET_EQ` (`AAPL_US_EQ`), Yahoo as `BASE.EXCHANGE` (`IITU.L`); comparing the lowercased
+/// bases joins the two worlds. Honest caveat: a same-base listing on another exchange also matches —
+/// acceptable for a display flag (same strategy, different venue), never fed into a score.
+pub fn t212_base(ticker: &str) -> String {
+    ticker.split('_').next().unwrap_or(ticker).to_lowercase()
+}
+pub fn yahoo_base(ticker: &str) -> String {
+    ticker.split('.').next().unwrap_or(ticker).to_lowercase()
+}
+
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks). Columns +
 /// order come from `widths.columns` via [`active_columns`] (default = [`DEFAULT_COLUMNS`]).
-fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, hide: &[&str], tuning: &BuyHeuristic) {
+fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, owned: &HashSet<String>, hide: &[&str], tuning: &BuyHeuristic) {
     println!("\n{title}");
     if picks.is_empty() {
         println!("  (none pass the gates)");
@@ -1392,15 +1403,19 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     // INDEPENDENTLY of the momentum score — the broad index funds it marks are floored to 0.0 by the
     // late-cycle brake, so without this the table reads them as the WORST rows. Display-only.
     let holdable = |quote: &Quote| if core::hold_suitable(quote) { "H" } else { "" };
-    let mark =
-        |quote: &Quote, i: usize| format!("{}{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), bridged(quote), holdable(quote));
+    // o = ALREADY HELD at the broker (round 110): the screen ranks candidates but can't otherwise
+    // see your portfolio, so a top row you already own reads "covered", not "buy more". Display-only.
+    let held = |quote: &Quote| if owned.contains(&yahoo_base(&quote.ticker)) { "o" } else { "" };
+    let mark = |quote: &Quote, i: usize| {
+        format!("{}{}{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), bridged(quote), holdable(quote), held(quote))
+    };
     // pinned tickers that ranked BELOW the cut still print (with their real rank + "*") so you can
     // compare a holding against the tops above even when it doesn't make the top-N.
     let below_cut = picks.iter().enumerate().skip(n).filter(|(_, (quote, _))| pinned.contains(quote.ticker.as_str()));
     let mut seen = String::new(); // rank-flag chars that actually printed, drives the legend line
     for (i, (quote, score)) in picks.iter().enumerate().take(n).chain(below_cut) {
         let m = mark(quote, i);
-        for flag in ['*', '#', '!', '~', 'H'] {
+        for flag in ['*', '#', '!', '~', 'H', 'o'] {
             if m.contains(flag) && !seen.contains(flag) {
                 seen.push(flag);
             }
@@ -1414,6 +1429,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         ("!", "late-cycle: price >= cap above 200wk trend, brake floored — conviction is the SCORE, not the rank"),
         ("~", "history bridged from configured older twin (history_proxy) — CAGR/YRS describe the strategy, not this listing"),
         ("H", "hold-suitable: broad + cheap + physical + accumulating + large — a buy-and-hold-20yr core, independent of the momentum rank"),
+        ("o", "already held (broker portfolio)"),
     ]
     .iter()
     .filter(|(flag, _)| seen.contains(flag))
@@ -1429,7 +1445,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
 /// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
-fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>) {
+fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &HashSet<String>) {
     let min_score = tuning.growth_min_score;
     // ETFs get their OWN, lower floor: 4 of the 7 score terms (accel/quality/liq/fund) are ~0 for a
     // diversified basket, so ETF scores structurally cap ~5.6 vs stocks ~19 — the shared growth_min_score
@@ -1460,7 +1476,7 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // the ranking explainer prints ONCE here — repeating the same ~340-char paragraph in all three
     // table titles (incl. the crypto sentence over the stocks table) tripled the noise.
     println!("\n{kind} — {desc}");
-    print_picks(&format!("{} stocks [sectors: {secs}]:", head(stock.len())), &stock, n, w, pinned, &["ter", "aum", "use", "repl"], tuning);
+    print_picks(&format!("{} stocks [sectors: {secs}]:", head(stock.len())), &stock, n, w, pinned, owned, &["ter", "aum", "use", "repl"], tuning);
     // (#27) cluster concentration: a top-20 stock table is usually ~3 correlated trades, not 20
     // independent bets — count the SHOWN rows per GICS sector so "semis-heavy" is a number, not a
     // vibe. Display-only; empty map (`check`, explicit-args screen) skips the sector line. Names
@@ -1487,10 +1503,10 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
         }
         mix_line("market mix", counts, "listing country ~ currency exposure; all-USA = one bet on the dollar too");
     }
-    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "buyback"], tuning);
+    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, w, pinned, owned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "buyback"], tuning);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
-    print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom"], tuning);
+    print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, owned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom"], tuning);
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -1616,7 +1632,7 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
 /// the crypto rows when the market is euphoric.
 /// Returns (score-math walkthrough for the caller to print last, this run's ranked top-`n`
 /// tickers — round 68: the screen diffs the latter against its previous run's state).
-pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], explain: Option<&str>) -> (Option<String>, Vec<String>) {
+pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], owned: &HashSet<String>, explain: Option<&str>) -> (Option<String>, Vec<String>) {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
     let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
@@ -1659,7 +1675,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
         None => picks.first(),
     };
     let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
-    print_lane(picks, n, w, "growth candidates", growth, sectors, sector_of, tuning, &pinned_set);
+    print_lane(picks, n, w, "growth candidates", growth, sectors, sector_of, tuning, &pinned_set, owned);
     // buy-and-hold CORE shortlist: momentum floors broad index funds at 0.0, so surface the
     // one-fund-forever holds from the full universe here (display-only). Only on the wide `screen`.
     if quotes.len() > 200 {
@@ -1771,6 +1787,19 @@ fn turnover_note(now: &[String], n: usize, path: &std::path::Path) -> Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (round 110) owned-overlay base normalizers: Trading212 `BASE_MARKET_EQ` and Yahoo
+    /// `BASE.EXCHANGE` meet on the lowercased base; dash share-class tickers pass through unmangled.
+    #[test]
+    fn owned_overlay_base_mapping() {
+        assert_eq!(t212_base("AAPL_US_EQ"), "aapl");
+        assert_eq!(t212_base("IITU_GB_EQ"), "iitu");
+        assert_eq!(yahoo_base("AAPL"), "aapl");
+        assert_eq!(yahoo_base("IITU.L"), "iitu");
+        assert_eq!(yahoo_base("VVSM.DE"), "vvsm");
+        assert_eq!(yahoo_base("BRK-B"), "brk-b");
+        assert_eq!(t212_base(yahoo_base("AAPL").as_str()), yahoo_base(t212_base("AAPL_US_EQ").as_str()));
+    }
 
     /// (round 73) currency-quoted = a `-EUR`/`-USD` SUFFIX, not any dash: share-class tickers
     /// (`BRK.B` is normalized to `BRK-B` universe-wide) must classify as equities.

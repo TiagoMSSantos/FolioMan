@@ -99,7 +99,7 @@ pub async fn run(args: Vec<String>) {
     // filter: the watchlist is hand-picked, never sector-culled.
     // (round 68) the ranked-ticker list feeds the SCREEN's run-to-run membership diff; check has
     // no state file, so it drops it.
-    let (explain_text, _) = picks::render(&quotes, settings.top_picks, &settings.buy_heuristic, widths, None, &[], &std::collections::HashMap::new(), &[], None);
+    let (explain_text, _) = picks::render(&quotes, settings.top_picks, &settings.buy_heuristic, widths, None, &[], &std::collections::HashMap::new(), &[], &Default::default(), None);
 
     // held-name gate review: a watchlist name that would no longer clear today's growth gates is an
     // exit-review candidate — the screen would never surface it again, so `check` has to say so.

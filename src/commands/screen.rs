@@ -418,11 +418,19 @@ pub async fn run(args: Vec<String>) {
     // crypto rows (high NUPL = euphoric top), then also printed as the footer line.
     let nupl = fetch::fetch_nupl(&client, &settings.urls).await;
 
+    // (round 110) owned-position overlay: what you already hold at the broker, so the tables can
+    // mark covered rows with `o`. No TRADING212_API_KEY (or an API error) -> empty set, overlay
+    // silently off — a broker key is optional config, not a degradation. Display-only.
+    let owned: std::collections::HashSet<String> = match crate::broker::trading212::owned_tickers(&client).await {
+        Ok(v) => v.iter().map(|t| crate::picks::t212_base(t)).collect(),
+        Err(_) => Default::default(),
+    };
+
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
     // (round 52) render returns the score-math walkthrough; printed AFTER the actionable footers
     // (gate/exit review, fact drift, near-miss) so alerts aren't buried under arithmetic.
-    let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, explain.as_deref());
+    let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, &owned, explain.as_deref());
 
     // (B) fundamentals-trajectory footer for the enriched stock rows: report's annual rollup
     // compacted to one line per name, so "is the growth real or one good year?" doesn't take a

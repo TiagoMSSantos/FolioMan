@@ -30,6 +30,25 @@ pub async fn summary(client: &Client) -> Result<String, String> {
     render_summary(&cash, &port)
 }
 
+/// (round 110) Owned tickers in Trading212 form (e.g. `AAPL_US_EQ`) for the screen's held-position
+/// overlay. Same endpoint `summary` reads; rows without a ticker string are skipped (a display
+/// overlay must never fail the screen over one malformed row).
+pub async fn owned_tickers(client: &Client) -> Result<Vec<String>, String> {
+    let key = env_var("TRADING212_API_KEY")?;
+    let port = get(client, &key, "equity/portfolio").await?;
+    extract_tickers(&port)
+}
+
+/// Pure extraction, split from the fetch so drift handling is testable offline (like `render_summary`).
+fn extract_tickers(port: &Value) -> Result<Vec<String>, String> {
+    Ok(port
+        .as_array()
+        .ok_or_else(|| "trading212: portfolio response is not an array (API drift?)".to_string())?
+        .iter()
+        .filter_map(|h| h.get("ticker").and_then(|v| v.as_str()).map(str::to_string))
+        .collect())
+}
+
 /// Pure response→text rendering, split from the fetch so drift handling is testable offline.
 /// A missing cash field or a non-array portfolio is API drift and must surface as the broker
 /// error (accounts prints it as "(skipped) …"), never render as plausible zeros/emptiness.
@@ -94,6 +113,18 @@ mod tests {
         let cash = json!({ "free": 0.0, "invested": 0.0, "total": 0.0 });
         let err = render_summary(&cash, &json!({ "positions": [] })).unwrap_err();
         assert!(err.contains("not an array"), "{err}");
+    }
+
+    /// (round 110) ticker extraction: strings collected, malformed rows skipped, non-array = drift error.
+    #[test]
+    fn extract_tickers_collects_and_skips() {
+        let port = json!([
+            { "ticker": "AAPL_US_EQ", "quantity": 2.0 },
+            { "quantity": 1.0 },
+            { "ticker": "IITU_GB_EQ" }
+        ]);
+        assert_eq!(extract_tickers(&port).unwrap(), vec!["AAPL_US_EQ", "IITU_GB_EQ"]);
+        assert!(extract_tickers(&json!({ "positions": [] })).unwrap_err().contains("not an array"));
     }
 
     #[test]
