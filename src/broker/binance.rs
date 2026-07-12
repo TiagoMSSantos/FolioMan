@@ -7,8 +7,10 @@ use serde_json::Value;
 /// Quote/stable assets treated as "cash available to invest".
 const CASH_ASSETS: &[&str] = &["EUR", "USD", "USDT", "USDC", "BUSD", "FDUSD"];
 
-/// Free + invested balances (read-only). Splits stable/fiat (cash) from the rest (holdings).
-pub async fn summary(client: &Client) -> Result<String, String> {
+/// Signed `/api/v3/account` call → the raw balances array. Shared by `summary` (rendering) and
+/// `owned_assets` (round 111 screen overlay). A missing balances array is API drift, not an empty
+/// account — say so instead of rendering "(none)".
+async fn account_balances(client: &Client) -> Result<Vec<Value>, String> {
     let key = env_var("BINANCE_API_KEY")?;
     let secret = env_var("BINANCE_API_SECRET")?;
     let ts = std::time::SystemTime::now()
@@ -30,13 +32,35 @@ pub async fn summary(client: &Client) -> Result<String, String> {
         return Err(format!("binance {status}: {body}"));
     }
     let acct: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-    // a missing balances array is API drift, not an empty account — say so instead of "(none)"
-    let balances = acct
-        .get("balances")
+    acct.get("balances")
         .and_then(|v| v.as_array())
         .cloned()
-        .ok_or_else(|| "binance: no balances array in the account response (API drift?)".to_string())?;
+        .ok_or_else(|| "binance: no balances array in the account response (API drift?)".to_string())
+}
 
+/// (round 111) Non-cash assets with a real balance (e.g. `BTC`, `ETH`) for the screen's
+/// held-position overlay.
+pub async fn owned_assets(client: &Client) -> Result<Vec<String>, String> {
+    Ok(extract_assets(&account_balances(client).await?))
+}
+
+/// Pure extraction, offline-testable: cash/stable and zero-balance rows drop, unparsable rows are
+/// skipped — a display overlay must never invent a holding.
+fn extract_assets(balances: &[Value]) -> Vec<String> {
+    balances
+        .iter()
+        .filter_map(|b| {
+            let asset = b.get("asset").and_then(|v| v.as_str())?;
+            let num = |k: &str| b.get(k).and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok());
+            let held = num("free")? + num("locked")?;
+            (held > 0.0 && !CASH_ASSETS.contains(&asset)).then(|| asset.to_string())
+        })
+        .collect()
+}
+
+/// Free + invested balances (read-only). Splits stable/fiat (cash) from the rest (holdings).
+pub async fn summary(client: &Client) -> Result<String, String> {
+    let balances = account_balances(client).await?;
     let mut cash = Vec::new();
     let mut holdings = Vec::new();
     for b in &balances {
@@ -120,6 +144,19 @@ pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    /// (round 111) owned-assets extraction: cash/stable and zero rows drop, unparsable rows skip.
+    #[test]
+    fn extract_assets_drops_cash_zero_and_unparsable() {
+        let rows = vec![
+            json!({ "asset": "BTC", "free": "0.5", "locked": "0" }),
+            json!({ "asset": "EUR", "free": "100", "locked": "0" }),
+            json!({ "asset": "ETH", "free": "0", "locked": "0" }),
+            json!({ "asset": "SOL", "free": "oops", "locked": "0" }),
+        ];
+        assert_eq!(extract_assets(&rows), vec!["BTC"]);
+    }
 
     /// Signing self-check against a known HMAC-SHA256 test vector.
     #[test]

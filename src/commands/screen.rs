@@ -418,12 +418,19 @@ pub async fn run(args: Vec<String>) {
     // crypto rows (high NUPL = euphoric top), then also printed as the footer line.
     let nupl = fetch::fetch_nupl(&client, &settings.urls).await;
 
-    // (round 110) owned-position overlay: what you already hold at the broker, so the tables can
-    // mark covered rows with `o`. No TRADING212_API_KEY (or an API error) -> empty set, overlay
-    // silently off — a broker key is optional config, not a degradation. Display-only.
-    let owned: std::collections::HashSet<String> = match crate::broker::trading212::owned_tickers(&client).await {
-        Ok(v) => v.iter().map(|t| crate::picks::t212_base(t)).collect(),
-        Err(_) => Default::default(),
+    // (round 110/111) owned-position overlay: what you already hold at the brokers, so the tables
+    // can mark covered rows with `o`. Stocks/ETFs from Trading212, crypto from Binance; each broker
+    // absent (no env key) or erroring is independently and silently off — a broker key is optional
+    // config, not a degradation. Display-only.
+    let owned = {
+        let mut o = crate::picks::Owned::default();
+        if let Ok(v) = crate::broker::trading212::owned_tickers(&client).await {
+            o.stocks = v.iter().map(|t| crate::picks::t212_base(t)).collect();
+        }
+        if let Ok(v) = crate::broker::binance::owned_assets(&client).await {
+            o.crypto = v.iter().map(|a| a.to_lowercase()).collect();
+        }
+        o
     };
 
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs

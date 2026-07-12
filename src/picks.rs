@@ -1358,9 +1358,28 @@ pub fn yahoo_base(ticker: &str) -> String {
     ticker.split('.').next().unwrap_or(ticker).to_lowercase()
 }
 
+/// (round 111) What the user already holds, split by class so a Binance asset (`SOL`) can never
+/// flag the same-lettered stock. Stocks/ETFs = lowercased Yahoo bases (Trading212); crypto =
+/// lowercased asset names (Binance), matched against `underlying()` of the currency-quoted ticker.
+#[derive(Default)]
+pub struct Owned {
+    pub stocks: HashSet<String>,
+    pub crypto: HashSet<String>,
+}
+
+impl Owned {
+    fn holds(&self, ticker: &str) -> bool {
+        if is_currency_quoted(ticker) {
+            self.crypto.contains(&underlying(ticker).to_lowercase())
+        } else {
+            self.stocks.contains(&yahoo_base(ticker))
+        }
+    }
+}
+
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks). Columns +
 /// order come from `widths.columns` via [`active_columns`] (default = [`DEFAULT_COLUMNS`]).
-fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, owned: &HashSet<String>, hide: &[&str], tuning: &BuyHeuristic) {
+fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, owned: &Owned, hide: &[&str], tuning: &BuyHeuristic) {
     println!("\n{title}");
     if picks.is_empty() {
         println!("  (none pass the gates)");
@@ -1405,7 +1424,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     let holdable = |quote: &Quote| if core::hold_suitable(quote) { "H" } else { "" };
     // o = ALREADY HELD at the broker (round 110): the screen ranks candidates but can't otherwise
     // see your portfolio, so a top row you already own reads "covered", not "buy more". Display-only.
-    let held = |quote: &Quote| if owned.contains(&yahoo_base(&quote.ticker)) { "o" } else { "" };
+    let held = |quote: &Quote| if owned.holds(&quote.ticker) { "o" } else { "" };
     let mark = |quote: &Quote, i: usize| {
         format!("{}{}{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), bridged(quote), holdable(quote), held(quote))
     };
@@ -1445,7 +1464,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
 /// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
-fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &HashSet<String>) {
+fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned) {
     let min_score = tuning.growth_min_score;
     // ETFs get their OWN, lower floor: 4 of the 7 score terms (accel/quality/liq/fund) are ~0 for a
     // diversified basket, so ETF scores structurally cap ~5.6 vs stocks ~19 — the shared growth_min_score
@@ -1576,7 +1595,7 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     cores
 }
 
-fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
+fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>, owned: &Owned) {
     let cores = hold_core_list(quotes);
     if cores.is_empty() {
         return;
@@ -1586,13 +1605,19 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
         "\nbuy-and-hold CORE — broad one-fund-forever holds (the momentum ranking buries these at 0.0; \
          ranked by breadth → domicile (IE first, withholding) → cheapest TER → largest AUM, NOT advice):"
     );
-    println!("  {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
+    // (round 111) leading 1-char cell = the owned-position marker; this list is what a 20yr holder
+    // actually buys, so "covered" matters most here. Blank when the overlay is off/empty.
+    println!("  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
+    let mut any_owned = false;
     for q in cores.iter().take(n) {
         let cagr = q.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%"));
         let yrs = q.age_years.map_or("—".to_string(), |a| format!("{a:.0}"));
         let ter = q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%"));
+        let own = if owned.holds(&q.ticker) { "o" } else { "" };
+        any_owned |= !own.is_empty();
         println!(
-            "  {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}",
+            "  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}",
+            own,
             truncate(&q.name, 44),
             truncate(&q.ticker, 9),
             truncate(&q.market, 9),
@@ -1604,6 +1629,9 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
             q.replication.unwrap_or("—"),
             q.domicile.as_deref().unwrap_or("n/a"),
         );
+    }
+    if any_owned {
+        println!("  (o = already held (broker portfolio))");
     }
     // (round 49) tier-0 hole made visible: the venue lists carry all-world funds, but without facts
     // (TER/AUM) none can qualify — the documented ceiling was silent until now.
@@ -1632,7 +1660,7 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>) {
 /// the crypto rows when the market is euphoric.
 /// Returns (score-math walkthrough for the caller to print last, this run's ranked top-`n`
 /// tickers — round 68: the screen diffs the latter against its previous run's state).
-pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], owned: &HashSet<String>, explain: Option<&str>) -> (Option<String>, Vec<String>) {
+pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], owned: &Owned, explain: Option<&str>) -> (Option<String>, Vec<String>) {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
     let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
@@ -1679,7 +1707,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     // buy-and-hold CORE shortlist: momentum floors broad index funds at 0.0, so surface the
     // one-fund-forever holds from the full universe here (display-only). Only on the wide `screen`.
     if quotes.len() > 200 {
-        print_hold_core(quotes, 9, &pinned_set); // up to 3 per breadth tier (all-world / world / S&P 500)
+        print_hold_core(quotes, 9, &pinned_set, owned); // up to 3 per breadth tier (all-world / world / S&P 500)
     }
     // gate review: pinned names are shown in their table even when a gate rejects them (score 0.0).
     // Say WHICH gate, so a 0.0 next to strong metrics isn't mistaken for a bug (VVSM stretch, VUAA/
@@ -1799,6 +1827,15 @@ mod tests {
         assert_eq!(yahoo_base("VVSM.DE"), "vvsm");
         assert_eq!(yahoo_base("BRK-B"), "brk-b");
         assert_eq!(t212_base(yahoo_base("AAPL").as_str()), yahoo_base(t212_base("AAPL_US_EQ").as_str()));
+        // (round 111) class-split lookup: a Binance asset flags only currency-quoted rows, a broker
+        // stock never flags a crypto row — SOL the coin and SOL the stock stay distinct.
+        let owned = Owned { crypto: ["sol".to_string()].into(), stocks: ["sol".to_string()].into() };
+        assert!(owned.holds("SOL-EUR"));
+        assert!(owned.holds("SOL"));
+        let coin_only = Owned { crypto: ["sol".to_string()].into(), ..Default::default() };
+        assert!(coin_only.holds("SOL-USD") && !coin_only.holds("SOL"));
+        let stock_only = Owned { stocks: ["sol".to_string()].into(), ..Default::default() };
+        assert!(stock_only.holds("SOL") && !stock_only.holds("SOL-USD"));
     }
 
     /// (round 73) currency-quoted = a `-EUR`/`-USD` SUFFIX, not any dash: share-class tickers
