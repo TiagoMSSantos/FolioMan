@@ -1340,14 +1340,17 @@ pub fn annual_brief(annual: &[AnnualReport]) -> Option<String> {
         out.push_str(&format!(" · net {a:.0}%→{b:.0}%"));
     }
     if let (Some(a), Some(b)) = (first.eps, last.eps) {
-        // as-reported EPS spans splits UN-adjusted (NVDA's 2024 10:1 read as flat EPS growth):
-        // any >40% year-over-year share-count jump inside the window — income_snapshot's split
-        // tolerance — drops the leg rather than print a confidently wrong number.
-        let splitty = years.windows(2).any(|w| match (w[0].shares, w[1].shares) {
-            (Some(p), Some(c)) if p > 0.0 => (c / p - 1.0).abs() > 0.4,
+        // as-reported EPS spans splits UN-adjusted (NVDA's 2024 10:1 read as flat EPS growth), so
+        // the leg prints only over a VERIFIABLE share history: every adjacent year carries a count
+        // AND none jumps >40% (income_snapshot's split tolerance). A missing count is not "no
+        // split" — Alphabet files pre-2022 counts per share class only, so the undimensioned tag
+        // is None and its 20:1 split printed as eps -44%/yr. Unverifiable -> drop the leg rather
+        // than print a confidently wrong number.
+        let verifiable = years.windows(2).all(|w| match (w[0].shares, w[1].shares) {
+            (Some(p), Some(c)) if p > 0.0 => (c / p - 1.0).abs() <= 0.4,
             _ => false,
         });
-        if a > 0.0 && b > 0.0 && !splitty {
+        if a > 0.0 && b > 0.0 && verifiable {
             let cagr = ((b / a).powf(1.0 / (n - 1) as f64) - 1.0) * 100.0;
             out.push_str(&format!(" · eps {cagr:+.0}%/yr"));
         }
@@ -1710,11 +1713,11 @@ mod tests {
 
     /// (B) `annual_brief`: newest ≤5 complete years, partial years dropped, oldest→newest chain with
     /// rev/EPS CAGR; <2 complete years -> None; loss-year EPS endpoint -> EPS leg omitted, never a
-    /// nonsense negative-ratio CAGR.
+    /// nonsense negative-ratio CAGR; EPS leg needs a verifiable share chain (present + no split jump).
     #[test]
     fn annual_brief_trajectory() {
         let y = |year: i32, revenue: f64, nm: Option<f64>, eps: Option<f64>, quarters: usize| AnnualReport {
-            year, revenue, gross_margin: None, op_margin: None, net_margin: nm, eps, shares: None, quarters,
+            year, revenue, gross_margin: None, op_margin: None, net_margin: nm, eps, shares: Some(16.0e9), quarters,
         };
         // newest-first like annual_rollup; 2024 partial (2 quarters) must be dropped from the chain
         let rows = vec![
@@ -1745,6 +1748,16 @@ mod tests {
         assert!(!annual_brief(&split).unwrap().contains("eps"));
         let nosplit = vec![ys(2023, 18.0, 102.0), ys(2022, 15.0, 100.0)];
         assert!(annual_brief(&nosplit).unwrap().contains("eps +20%/yr"));
+        // (GOOG shape) a missing share count anywhere in the window = UNVERIFIABLE split history ->
+        // leg omitted even with profitable endpoints (Alphabet's pre-2022 counts are per-class only,
+        // so the 2022 20:1 split was invisible and eps -44%/yr printed against rev +12%/yr).
+        let noshares = AnnualReport {
+            year: 2021, revenue: 257.6e9, gross_margin: None, op_margin: None, net_margin: None,
+            eps: Some(112.2), shares: None, quarters: 1,
+        };
+        let unverifiable = vec![ys(2025, 10.81, 12.2e9), noshares];
+        let ub = annual_brief(&unverifiable).unwrap();
+        assert!(!ub.contains("eps"), "{ub}");
     }
 
     /// (Item 4) `insider_net_buys` counts P(+1)/S(−1) only in [cutoff−window, cutoff): a same-day or later
