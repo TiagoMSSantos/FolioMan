@@ -338,8 +338,20 @@ pub async fn run(args: Vec<String>) {
     // (G) route the validated as-of fundamental onto the live quotes so the growth ranking weighs it —
     // only when the tilt is on (weight 0 default = no fetch, no change). Across the ~750-name universe the
     // FMP daily budget caps cold fetches; the rest serve from the disk cache, warming over runs.
+    let mut fund_tilt_uncovered = false; // set below; joins the DEGRADED line at the end of the run
     if settings.buy_heuristic.growth_fund_weight > 0.0 {
         fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic.growth_fund_factor).await;
+        // the tilt fails SILENT (fetch errors -> factor None -> neutral): with the feed down every
+        // stock quietly reverts to price-only ranks. Say what the tilt actually covered so a
+        // degraded run is distinguishable from a normal one. Display-only.
+        let stocks = quotes.iter().filter(|q| q.instrument_type == "EQUITY").count();
+        let covered =
+            quotes.iter().filter(|q| q.instrument_type == "EQUITY" && q.fund_factor.is_some()).count();
+        eprintln!(
+            "screen: fund tilt ({}): {covered} of {stocks} stocks carry the factor (SEC = US filers; uncovered names rank price-only)",
+            settings.buy_heuristic.growth_fund_factor
+        );
+        fund_tilt_uncovered = covered == 0 && stocks > 0;
     }
     // keep only what an EU-retail investor can actually buy (drops any non-European-listed ETF,
     // Asian-only stock listings) so the growth ranking below is actionable.
@@ -374,7 +386,7 @@ pub async fn run(args: Vec<String>) {
     // tickers will print cannot change the ranking render() computes. Cache-first: warm runs are free.
     let mut quotes = quotes;
     let targets: std::collections::HashSet<String> = {
-        let is_stock = |q: &&Quote| !q.ticker.contains('-') && !crate::picks::quote_is_etf(q);
+        let is_stock = |q: &&Quote| !crate::picks::is_currency_quoted(&q.ticker) && !crate::picks::quote_is_etf(q);
         let mut ranked: Vec<(&Quote, f64)> = quotes.iter().filter(is_stock)
             .filter_map(|q| growth_score(q, &settings.buy_heuristic).map(|s| (q, s)))
             .collect();
@@ -537,7 +549,7 @@ pub async fn run(args: Vec<String>) {
     // funds + the CORE shortlist, and "different" sector funds routinely hold the same top-10
     // mega-caps — invisible from the names. Yahoo topHoldings, weekly-cached, display-only.
     {
-        let is_fund = |q: &&Quote| crate::picks::quote_is_etf(q) && !q.ticker.contains('-');
+        let is_fund = |q: &&Quote| crate::picks::quote_is_etf(q) && !crate::picks::is_currency_quoted(&q.ticker);
         let mut ranked: Vec<(&Quote, f64)> = quotes
             .iter()
             .filter(is_fund)
@@ -604,6 +616,9 @@ pub async fn run(args: Vec<String>) {
     }
     if eu_infl.as_ref().is_some_and(|m| m.is_empty()) {
         degraded.push("EU HICP feed down (inflation adjustment off)");
+    }
+    if fund_tilt_uncovered {
+        degraded.push("fund tilt feed down (0 stocks carry the factor; stock ranks are price-only)");
     }
     if !degraded.is_empty() {
         eprintln!("screen: DEGRADED — {}", degraded.join("; "));

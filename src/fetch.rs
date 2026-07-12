@@ -513,7 +513,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),
         // avg daily turnover in native currency -> EUR (×rate). Crypto: Yahoo "volume" is already
         // a notional amount, so use it raw (close×volume would double-count). Equities: close×volume.
-        avg_turnover_eur: if ticker.contains('-') {
+        // Suffix check, NOT any dash: BRK-B is an equity — the crypto arm fed its raw share count
+        // (~4M) into the scored liquidity term instead of ~€1.5B of close×volume.
+        avg_turnover_eur: if crate::picks::is_currency_quoted(ticker) {
             core::avg_volume(&chart.volumes, 30).map(|v| v * rate.unwrap_or(1.0))
         } else {
             core::avg_turnover(&chart.closes, &chart.volumes, 30).map(|v| v * rate.unwrap_or(1.0))
@@ -888,8 +890,10 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
     let today = chrono::Local::now().date_naive();
     let needs_insider = factor == "insider_net_buys_90d"; // (Item 16) composite stays FMP-only (no skew)
     for q in quotes.iter_mut() {
-        if q.ticker.contains('-') {
-            continue; // crypto/FX -> no income statement, don't spend a budget slot probing
+        if crate::picks::is_currency_quoted(&q.ticker) {
+            continue; // crypto/FX -> no income statement, don't spend a budget slot probing.
+                      // Suffix check, NOT any dash: BRK-B/BF-B are share classes the backtest
+                      // validated WITH the factor — a contains('-') here was a train-serve skew.
         }
         evict_if_stale(&fund_cache_path(&q.ticker), LIVE_TTL); // (Item 14) drop a stale newest-quarter
         let mut ff = fetch_fundamentals_ranked(client, urls, &q.ticker)
@@ -932,8 +936,9 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
 pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core::Quote], targets: &HashSet<String>) {
     const LIVE_TTL: StdDuration = StdDuration::from_secs(7 * 24 * 3600); // weekly refetch, like the fund tilt
     for q in quotes.iter_mut() {
-        // crypto/FX ('-' tickers) and funds carry no income statement -> don't spend a budget slot
-        if !targets.contains(&q.ticker) || q.ticker.contains('-') || q.instrument_type.eq_ignore_ascii_case("ETF") {
+        // crypto/FX (currency-quoted tickers) and funds carry no income statement -> don't spend a
+        // budget slot (suffix check: BRK-B is a stock and gets its columns)
+        if !targets.contains(&q.ticker) || crate::picks::is_currency_quoted(&q.ticker) || q.instrument_type.eq_ignore_ascii_case("ETF") {
             continue;
         }
         evict_if_stale(&fund_cache_path(&q.ticker), LIVE_TTL);

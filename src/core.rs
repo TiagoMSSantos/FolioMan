@@ -376,8 +376,9 @@ pub fn market_of(ticker: &str) -> String {
         let suf = ticker.rsplit('.').next().unwrap().to_uppercase();
         return suffix_country(&suf).unwrap_or(&suf).to_string();
     }
-    if ticker.contains('-') {
+    if crate::picks::is_currency_quoted(ticker) {
         // just "Crypto": "(global)" added nothing and a tight MARKET column clipped it to "Crypto ("
+        // Suffix check, NOT any dash — BRK-B/BF-B are US share classes, not coins.
         return "Crypto".to_string();
     }
     "USA".to_string()
@@ -1682,6 +1683,7 @@ mod tests {
     assert_eq!(market_of("VWCE.DE"), "Germany");
     assert_eq!(market_of("AAPL"), "USA");
     assert_eq!(market_of("BTC-USD"), "Crypto");
+    assert_eq!(market_of("BRK-B"), "USA"); // share-class dash is not a coin (same trap as report's r73 fix)
     // nupl_zone: band edges
     assert_eq!(nupl_zone(-0.1), "Capitulation");
     assert_eq!(nupl_zone(0.16), "Hope/Fear");

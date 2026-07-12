@@ -1227,7 +1227,7 @@ fn display_name(name: &str) -> String {
 /// summary line; lookups (BF TER name match) keep the full name.
 pub fn clean_name(quote: &Quote) -> String {
     let n = display_name(&quote.name);
-    let is_crypto = quote.ticker.contains('-') || quote.instrument_type.eq_ignore_ascii_case("CRYPTOCURRENCY");
+    let is_crypto = is_currency_quoted(&quote.ticker) || quote.instrument_type.eq_ignore_ascii_case("CRYPTOCURRENCY");
     if is_crypto {
         n.strip_suffix(" USD").or_else(|| n.strip_suffix(" EUR")).map(str::to_string).unwrap_or(n)
     } else if quote.instrument_type.eq_ignore_ascii_case("ETF") {
@@ -1250,7 +1250,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, mark: &str) -> String {
     // asset class -> which fundamental columns even APPLY. "—" = not applicable to this class (an equity
     // has no expense ratio; an ETF/crypto has no P/E/ROE); "n/a" stays reserved for applies-but-no-data.
     // Unknown class ("" instrument_type) falls through to the value so a real name is never wrongly blanked.
-    let is_crypto = quote.ticker.contains('-') || quote.instrument_type.eq_ignore_ascii_case("CRYPTOCURRENCY");
+    let is_crypto = is_currency_quoted(&quote.ticker) || quote.instrument_type.eq_ignore_ascii_case("CRYPTOCURRENCY");
     let is_etf = quote.instrument_type.eq_ignore_ascii_case("ETF");
     let is_equity = quote.instrument_type.eq_ignore_ascii_case("EQUITY");
     let stock_only_na = is_etf || is_crypto; // P/E, PEG, ROE don't apply here
