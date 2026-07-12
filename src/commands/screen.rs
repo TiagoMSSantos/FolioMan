@@ -385,16 +385,23 @@ pub async fn run(args: Vec<String>) {
     // daily budget for columns nobody sees. Display-only fields, so pre-ranking here to learn WHICH
     // tickers will print cannot change the ranking render() computes. Cache-first: warm runs are free.
     let mut quotes = quotes;
-    let targets: std::collections::HashSet<String> = {
+    // rank order kept (Vec) so the fundamentals footer below prints in table order, not hash order
+    let target_order: Vec<String> = {
         let is_stock = |q: &&Quote| !crate::picks::is_currency_quoted(&q.ticker) && !crate::picks::quote_is_etf(q);
         let mut ranked: Vec<(&Quote, f64)> = quotes.iter().filter(is_stock)
             .filter_map(|q| growth_score(q, &settings.buy_heuristic).map(|s| (q, s)))
             .collect();
         ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
-        ranked.iter().take(settings.top_picks).map(|(q, _)| q.ticker.clone())
-            .chain(quotes.iter().filter(is_stock).filter(|q| settings.tickers.contains(&q.ticker)).map(|q| q.ticker.clone()))
-            .collect()
+        let mut order: Vec<String> =
+            ranked.iter().take(settings.top_picks).map(|(q, _)| q.ticker.clone()).collect();
+        for q in quotes.iter().filter(is_stock).filter(|q| settings.tickers.contains(&q.ticker)) {
+            if !order.contains(&q.ticker) {
+                order.push(q.ticker.clone());
+            }
+        }
+        order
     };
+    let targets: std::collections::HashSet<String> = target_order.iter().cloned().collect();
     fetch::enrich_income_stmt(&client, &settings.urls, &mut quotes, &targets).await;
 
     // (C) DATA-QUALITY audit: surface the n/a holes (a missing/wrong column) as one number instead of
@@ -416,6 +423,26 @@ pub async fn run(args: Vec<String>) {
     // (round 52) render returns the score-math walkthrough; printed AFTER the actionable footers
     // (gate/exit review, fact drift, near-miss) so alerts aren't buried under arithmetic.
     let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, explain.as_deref());
+
+    // (B) fundamentals-trajectory footer for the enriched stock rows: report's annual rollup
+    // compacted to one line per name, so "is the growth real or one good year?" doesn't take a
+    // `report` run per ticker. DISPLAY-ONLY (every multi-year fundamental measured null as a rank
+    // input); names without statements (no SEC/FMP coverage) simply don't print a line.
+    {
+        let briefs: Vec<(&str, &str)> = target_order
+            .iter()
+            .filter_map(|tk| {
+                let q = quotes.iter().find(|q| &q.ticker == tk)?;
+                q.annual_brief.as_deref().map(|b| (tk.as_str(), b))
+            })
+            .collect();
+        if !briefs.is_empty() {
+            println!("\nfundamentals trend — displayed stocks, complete fiscal years, oldest→newest (display-only, not scored):");
+            for (tk, b) in briefs {
+                println!("  {tk:<8} {b}");
+            }
+        }
+    }
 
     // (X) EXIT review — WATCHLIST names that cleared every growth gate on the previous screen run
     // but fail one now. The backtest's exit probe measures this exact transition: newly-failing

@@ -1993,6 +1993,7 @@ mod tests {
             eps_yoy: None,
             net_margin_fy: None,
             buyback_yoy: None,
+            annual_brief: None,
         }
     };
     let tuning = BuyHeuristic::default(); // momentum neutral 1.0/1.0, CAGR-based long reward, A-E terms on

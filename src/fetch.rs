@@ -543,11 +543,12 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         replication: meta.repl,
         benchmark: meta.bench,
         domicile: meta.dom,
-        // (REV-YoY/EPS-YoY/NET%/BUYBK) filled later by enrich_income_stmt for the DISPLAYED stock rows only
+        // (REV-YoY/EPS-YoY/NET%/BUYBK + trend line) filled later by enrich_income_stmt for the DISPLAYED stock rows only
         rev_yoy: None,
         eps_yoy: None,
         net_margin_fy: None,
         buyback_yoy: None,
+        annual_brief: None,
         // (A) percentile rank of today's price in its OWN ~10y history; picks discount = 100-this.
         // Self-normalizes amplitude so BTC-near-its-range-top and a deep alt don't both peg the cap.
         range_pct: core::price_pct_rank(&chart.closes),
@@ -942,11 +943,14 @@ pub async fn enrich_income_stmt(client: &Client, urls: &Urls, quotes: &mut [core
             continue;
         }
         evict_if_stale(&fund_cache_path(&q.ticker), LIVE_TTL);
-        if let Some(snap) = fetch_fundamentals_report(client, urls, &q.ticker)
-            .await
-            .and_then(|(rows, _)| core::income_snapshot(&core::annual_rollup(&rows)))
-        {
-            (q.rev_yoy, q.eps_yoy, q.net_margin_fy, q.buyback_yoy) = snap;
+        if let Some((rows, source)) = fetch_fundamentals_report(client, urls, &q.ticker).await {
+            let annual = core::annual_rollup(&rows);
+            if let Some(snap) = core::income_snapshot(&annual) {
+                (q.rev_yoy, q.eps_yoy, q.net_margin_fy, q.buyback_yoy) = snap;
+            }
+            // (B) same rollup, kept this time: the multi-year trajectory line for screen's
+            // fundamentals footer. Zero extra requests — this was fetched and discarded before.
+            q.annual_brief = core::annual_brief(&annual).map(|b| format!("{b}  [{source}]"));
         }
     }
 }

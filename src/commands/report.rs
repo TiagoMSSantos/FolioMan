@@ -103,21 +103,7 @@ fn render_annual(ticker: &str, source: &str, rows: &[core::FundRow], today: chro
     (out, has_table)
 }
 
-// ponytail: tiny local number formatters — no shared humanize helper exists and these are display-only.
-fn humanize(v: f64) -> String {
-    let a = v.abs();
-    if a >= 1e12 {
-        format!("{:.2}T", v / 1e12)
-    } else if a >= 1e9 {
-        format!("{:.1}B", v / 1e9)
-    } else if a >= 1e6 {
-        format!("{:.1}M", v / 1e6)
-    } else if a >= 1e3 {
-        format!("{:.1}K", v / 1e3)
-    } else {
-        format!("{v:.0}")
-    }
-}
+use crate::core::humanize; // shared with screen's fundamentals footer since it grew a second user
 
 /// signed growth/return, e.g. "+8.1%" — for CAGR/YoY style numbers; "-" when absent
 fn yoy(v: Option<f64>) -> String {
