@@ -145,7 +145,34 @@ with no `FMP_API_KEY` coverage) are detected and skipped so the search doesn't w
 | Damp crypto when the market is euphoric | `nupl_euphoria` / `nupl_damp_floor` | lower the floor |
 | Reward dividend payers more | `dividend_weight` (cap `dividend_cap`) | raise |
 | Tilt toward cheap-on-earnings (needs `FMP_API_KEY`) | `ref_pe` | raise = treat more names as cheap |
-| Tilt toward strong fundamentals (needs `FMP_API_KEY`) | `growth_fund_weight` (cap `growth_fund_cap`) | raise from 0 |
+| Tilt toward strong fundamentals (`FMP_API_KEY`, or key-free with `fund_source: "sec"`) | `growth_fund_weight` (cap `growth_fund_cap`) | raise from 0 |
+
+### Current status (2026-07): the defaults are a measured optimum
+
+The shipped defaults were validated by the 12y walk-forward: growth edge ~+105 pts with both
+out-of-sample halves positive; a held top-10 book compounds ~+14.7%/yr vs the S&P's ~8.0. The
+ship rule for ANY knob change is the same bar: the edge must hold with BOTH out-of-sample
+halves positive, or the change reverts.
+
+Measured dead — don't re-run these:
+
+- **Range gate below 80** — lost the same-batch triple three separate times.
+- **R² steadiness floor or damp** — low-R² boom-bust names near their high BEAT the field at
+  12y (the accel term is deliberately buying cyclical upswings).
+- **Removing the 1Y>0 floor** — the names it would admit average −108 pts forward; it is one
+  of the lane's most protective gates.
+- **Shorter horizons** — the edge is a LONG-horizon signal: negative under 3y, rising through
+  10y. Selling early converts a validated signal into noise.
+- **Every fundamentals factor through the fund lane** — margins, value, buyback yield,
+  SEC-computed ROE, and Form-4 insider net-buys all fail out-of-sample against the price-only
+  baseline on the full S&P pool.
+
+The `[FOIL]` on-sale lane stays deliberately unimproved: its job is to keep proving that
+dip-buying loses to the growth lane over a multi-decade hold.
+
+Open item: the `earnings_yield` fund tilt re-validates on fresh data after 2026-10-01 (two
+same-day runs flagged it as the lane winner; only an independent batch can separate signal
+from run variance).
 
 ## Glossary
 
