@@ -212,16 +212,25 @@ buy_heuristic:
   growth_min_score: 5.0          # hide growth rows scoring <= this; 0 = show all top_picks
   growth_min_score_etf: 4.0      # ETF-only floor. ETF scores structurally cap ~5.6 (accel~0: a diversified basket doesn't accelerate; quality/liq/fund all 0) so the stock-calibrated 5.0 floor (fine at 26% of the ~19 stock ceiling) sits at ~89% of the ETF ceiling and shows only a sliver. 4.0 = surface the diversified broad-tech tier (Nasdaq-100 / World-IT / S&P-IT wrappers score 4.5-5.6; TER column lets you pick the cheapest wrapper) while still trimming the young single-sector padding (Europe-Financials 3.2, 6y). DISPLAY-only -> validated edge untouched. Does NOT surface broad S&P500 core (VUAA/SPYL young=no 5y leg, AUM5 ~8% CAGR=market-beta<growth_min_cagr) — history/thesis wall, not this floor
   growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
-  # (#2) VALUATION BRAKE experiment — CLOSED 2026-07-02: SHIP NOTHING. Validated at scale via SEC EDGAR
-  #   (`fund_source: "sec"`, free/uncapped — FMP's 250/day cap is burned by one full `screen`, so wide fund
-  #   runs must use SEC): full S&P 500, 12y, 8175/8380 cutoffs with as-of fundamentals. Standalone
-  #   earnings_yield is real but modest (n=1562, rho +0.11, both OOS +); through the lane it LOSES to
-  #   price-only (TEST edge +140.4 vs +151.2 baseline) — the price terms already carry the information.
-  #   Every other factor (margins, rev growth, eps growth, composite) also fails the both-OOS+ keep-rule.
-  #   Re-open only with a NEW factor idea + a wide SEC-sourced `backtest 12 fund <stocks>` that beats
-  #   price-only on TEST with both OOS halves +.
-  growth_fund_factor: "earnings_yield"  # best standalone factor (kept staged for future re-tests); INERT at weight 0
-  growth_fund_weight: 0.0   # OFF — validated verdict above, not a placeholder. The lane is price-only by measurement.
+  # (#2) VALUATION TILT — ENABLED 2026-07-12 after re-validation. History: the 2026-07-02 wide run
+  #   (8175 cutoffs) had the earnings_yield lane LOSING to price-only (+140.4 vs +151.2) and the tilt
+  #   shipped OFF. Three later independent-pool wide runs (2× full S&P 500 on 8320/8380 cutoffs, then
+  #   the whole live screen universe) all reversed that: the earnings_yield lane beats the price-only
+  #   baseline with BOTH out-of-sample halves positive every time (+156.9 vs +120.5, +156.4 vs +115.4,
+  #   +136.9 vs +124.1), and the swing traced to baseline variance, not the factor (its lane edge held
+  #   +137..+157 in all four runs). Ship test on the serving pool, tilt on-vs-off same batch:
+  #   GROWTH edge +170.3 vs +156.9, rho +0.19 vs +0.15, OOS +0.14|+0.20 vs +0.14|+0.12, winsorized
+  #   +139.2 vs +126.8, held top-10 book +15.0 vs +14.7 (excess +7.0, OOS +5.6/+8.4), worst drawdown
+  #   -7.8 unchanged. Weight sweep knee = 1.0 (monotone up to 1, falls at 2). Every OTHER factor
+  #   (margins, rev/eps growth, buyback, ROE, insider, composite) still fails the both-OOS+ keep-rule —
+  #   the sweep's nominal per-run "WINNER" line bounces between factors (searched-weight overfit);
+  #   earnings_yield is the only one positive on every view. Revert rule: if a future wide run shows
+  #   the tilted lane losing an OOS half, set weight back to 0.
+  fund_source: "sec"         # SEC EDGAR XBRL: free, keyless, uncapped — the source the tilt was validated on
+                             #   (train-serve: FMP's 250/day cap can't even cover one wide run). US filers only;
+                             #   non-covered names get fund_factor None -> tilt neutral, price terms decide.
+  growth_fund_factor: "earnings_yield"  # as-of TTM EPS / native close — same definition in backtest and live (Item 19)
+  growth_fund_weight: 1.0    # ON — validated knee (see block above); score pts per pt of capped earnings_yield
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.

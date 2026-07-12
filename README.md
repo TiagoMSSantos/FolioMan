@@ -145,12 +145,12 @@ with no `FMP_API_KEY` coverage) are detected and skipped so the search doesn't w
 | Damp crypto when the market is euphoric | `nupl_euphoria` / `nupl_damp_floor` | lower the floor |
 | Reward dividend payers more | `dividend_weight` (cap `dividend_cap`) | raise |
 | Tilt toward cheap-on-earnings (needs `FMP_API_KEY`) | `ref_pe` | raise = treat more names as cheap |
-| Tilt toward strong fundamentals (`FMP_API_KEY`, or key-free with `fund_source: "sec"`) | `growth_fund_weight` (cap `growth_fund_cap`) | raise from 0 |
+| Tilt toward strong fundamentals (`FMP_API_KEY`, or key-free with `fund_source: "sec"`) | `growth_fund_weight` (cap `growth_fund_cap`) | shipped 1.0 (`earnings_yield`); 0 = off |
 
 ### Current status (2026-07): the defaults are a measured optimum
 
-The shipped defaults were validated by the 12y walk-forward: growth edge ~+105 pts with both
-out-of-sample halves positive; a held top-10 book compounds ~+14.7%/yr vs the S&P's ~8.0. The
+The shipped defaults were validated by the 12y walk-forward: growth edge ~+170 pts with both
+out-of-sample halves positive; a held top-10 book compounds ~+15.0%/yr vs the S&P's ~8.0. The
 ship rule for ANY knob change is the same bar: the edge must hold with BOTH out-of-sample
 halves positive, or the change reverts.
 
@@ -163,16 +163,20 @@ Measured dead — don't re-run these:
   of the lane's most protective gates.
 - **Shorter horizons** — the edge is a LONG-horizon signal: negative under 3y, rising through
   10y. Selling early converts a validated signal into noise.
-- **Every fundamentals factor through the fund lane** — margins, value, buyback yield,
-  SEC-computed ROE, and Form-4 insider net-buys all fail out-of-sample against the price-only
-  baseline on the full S&P pool.
+- **Every fundamentals factor through the fund lane except `earnings_yield`** — margins, rev/eps
+  growth, buyback yield, SEC-computed ROE, and Form-4 insider net-buys all fail out-of-sample
+  against the price-only baseline on the full S&P pool.
 
 The `[FOIL]` on-sale lane stays deliberately unimproved: its job is to keep proving that
 dip-buying loses to the growth lane over a multi-decade hold.
 
-Open item: the `earnings_yield` fund tilt re-validates on fresh data after 2026-10-01 (two
-same-day runs flagged it as the lane winner; only an independent batch can separate signal
-from run variance).
+One exception shipped 2026-07-12: the `earnings_yield` fund tilt (`growth_fund_weight: 1.0`,
+SEC-sourced) is ON. It beat the price-only baseline with both out-of-sample halves positive in
+three independent-pool wide runs, and the on-vs-off ship test on the serving universe improved
+the growth edge (+170.3 vs +156.9, OOS +0.14|+0.20) and the held top-10 book (+15.0 vs
++14.7%/yr) with the worst 12y hold unchanged. Revert rule: a future wide run losing an
+out-of-sample half sets the weight back to 0. The one earlier contradicting run (2026-07-02)
+traced to baseline variance — the factor's own lane edge held +137..+157 in all four runs.
 
 ## Glossary
 
