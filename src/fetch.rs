@@ -2529,6 +2529,35 @@ mod tests {
     assert!(near(bf_row_ter(&json!({"isin": "X", "overview": {"totalExpenseRatio": 0.0007}})), 0.07));
     // string value with EU decimal comma
     assert!(near(bf_row_ter(&json!({"overview": {"ongoingCharges": "0,002"}})), 0.2));
+    // string value carrying a percent suffix (BF sometimes ships "0,20%") -> stripped before parse
+    assert!(near(bf_row_ter(&json!({"overview": {"ongoingCharges": "0,002%"}})), 0.2));
+    // first known key wins; a non-numeric junk string on that key -> None (never a fake fee)
+    assert_eq!(bf_row_ter(&json!({"ter": "n/a"})), None);
+    }
+
+    /// `bf_row_aum`: fund size from `overview.assetsUnderManagement`; absent / top-level-only /
+    /// non-positive / non-finite -> None (never a fake 0-size fund).
+    #[test]
+    fn bf_row_aum_parse() {
+        use serde_json::json;
+        assert_eq!(bf_row_aum(&json!({"overview": {"assetsUnderManagement": 1.7e9}})), Some(1.7e9));
+        assert_eq!(bf_row_aum(&json!({"overview": {}})), None); // field absent
+        assert_eq!(bf_row_aum(&json!({"assetsUnderManagement": 1.0e8})), None); // top-level, not under overview
+        assert_eq!(bf_row_aum(&json!({"overview": {"assetsUnderManagement": 0.0}})), None); // zero -> None
+        assert_eq!(bf_row_aum(&json!({"overview": {"assetsUnderManagement": -5.0}})), None); // negative -> None
+        assert_eq!(bf_row_aum(&json!({})), None);
+    }
+
+    /// `between`/`between_all` string scanners: an unmatched close tag stops cleanly (None / short list),
+    /// never panics or slices past the end. Pins the Form-4 XML scan's only tag-matching primitive.
+    #[test]
+    fn between_helpers() {
+        assert_eq!(between("<a>x</a>", "<a>", "</a>"), Some("x"));
+        assert_eq!(between("<a>x", "<a>", "</a>"), None); // open but no close
+        assert_eq!(between("x", "<a>", "</a>"), None); // no open
+        assert_eq!(between_all("<a>1</a><a>2</a>", "<a>", "</a>"), vec!["1", "2"]);
+        assert_eq!(between_all("<a>1</a><a>2", "<a>", "</a>"), vec!["1"]); // trailing unmatched open dropped
+        assert!(between_all("<a>1", "<a>", "</a>").is_empty()); // open, no close -> break arm, empty
     }
 
     /// Name-keyed TER fallback: unique fund-name prefix hits, ambiguous share-class prefixes and
@@ -2571,6 +2600,13 @@ mod tests {
         let drift = serde_json::json!({"keyData": {"useOfProfits": {"translations": {"en": "Reinvesting"}}}});
         assert_eq!(bf_row_meta(&drift), BfMeta::default()); // unknown wording -> blank, not a guess
         assert_eq!(bf_row_meta(&serde_json::json!({})), BfMeta::default()); // no keyData at all
+        // every known replication wording maps; an unknown one blanks (not a guess)
+        for (word, want) in [("Full replication", "Full"), ("Optimised", "Opt"), ("Hybrid", "Hybr"), ("Sample", "Samp")] {
+            let r = serde_json::json!({"keyData": {"replicationMethod": {"originalValue": word}}});
+            assert_eq!(bf_row_meta(&r).repl, Some(want));
+        }
+        let repl_drift = serde_json::json!({"keyData": {"replicationMethod": {"originalValue": "Synthetic-ish"}}});
+        assert_eq!(bf_row_meta(&repl_drift).repl, None);
     }
 
     /// (round 49) USE-from-name fallback: word token only ("Vaccine" must not read as "acc"),
@@ -2676,6 +2712,13 @@ mod tests {
             facts("2024-06-30", "2025-06-28", 0.37, "2025-08-20"),
         ]}});
         assert_eq!(ttm_eps_from_concept(&annual_only), Some(0.37));
+        // current YTD exists but NO prior-year YTD of matching length -> can't de-cumulate -> annual fallback
+        let no_prior = json!({"units": {"USD/shares": [
+            facts("2024-06-30", "2025-06-28", 0.37, "2025-08-20"),  // FY base
+            facts("2025-06-29", "2026-03-28", 2.59, "2026-05-06"),  // current 9mo YTD, no prior twin
+        ]}});
+        assert_eq!(ttm_eps_from_concept(&no_prior), Some(0.37));
+        assert_eq!(ttm_eps_from_concept(&json!({})), None); // no units at all -> None
     }
 
     #[test]
@@ -2795,6 +2838,23 @@ mod tests {
         assert_eq!(rows[1].interest_cover, None);
         assert_eq!(rows[1].net_cash_rev, None);
         assert!(parse_sec_facts(&json!({})).is_empty()); // no facts -> empty, never panics
+        assert!(parse_sec_facts(&json!({"facts": {}})).is_empty()); // facts but no us-gaap -> empty
+    }
+
+    /// `parse_sec_facts` drops every malformed / non-annual datapoint (missing start/end, unparseable
+    /// date, missing filed/val, non-10-K form, sub-annual span) without panicking — the revenue anchor
+    /// map ends empty, so no row survives.
+    #[test]
+    fn sec_facts_skips_malformed() {
+        use serde_json::json;
+        let j = json!({"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+            {"end": "2021-09-30", "val": 100.0, "form": "10-K", "filed": "2021-11-01"},                 // no start -> skip
+            {"start": "bad", "end": "2021-09-30", "val": 100.0, "form": "10-K", "filed": "2021-11-01"}, // unparseable date -> skip
+            {"start": "2020-10-01", "end": "2021-09-30", "form": "10-K", "filed": "2021-11-01"},        // no val -> skip
+            {"start": "2020-10-01", "end": "2021-09-30", "val": 100.0, "form": "10-Q", "filed": "2021-11-01"}, // not 10-K -> skip
+            {"start": "2021-07-01", "end": "2021-09-30", "val": 100.0, "form": "10-K", "filed": "2021-11-01"}, // ~3mo span -> skip
+        ]}}}}});
+        assert!(parse_sec_facts(&j).is_empty());
     }
 
     /// (Item 4) `parse_form4_txns` pairs each transaction's date with its code and keeps only P/S. Two
@@ -2885,6 +2945,12 @@ mod tests {
         assert_eq!(fr.op_margin, Some(25.0));
         assert_eq!(fr.net_margin, Some(20.0));
         assert_eq!(fr.eps, Some(2.5));
+        assert_eq!(fr.shares, None); // no share field on this row -> None (never a fake buyback anchor)
+        // diluted-share count: a positive value is kept, absent/zero -> None (feeds the buyback column)
+        let with_sh = parse_fund_row(&json!({"filingDate": "2022-02-01", "revenue": 5.0, "weightedAverageShsOutDil": 1000.0})).unwrap();
+        assert_eq!(with_sh.shares, Some(1000.0));
+        let zero_sh = parse_fund_row(&json!({"filingDate": "2022-02-01", "revenue": 5.0, "weightedAverageShsOutDil": 0.0})).unwrap();
+        assert_eq!(zero_sh.shares, None); // 0 shares -> None, never a divide anchor
         // no filingDate -> None; bad date -> None
         assert!(parse_fund_row(&json!({"revenue": 100.0})).is_none());
         assert!(parse_fund_row(&json!({"filingDate": "nope"})).is_none());
