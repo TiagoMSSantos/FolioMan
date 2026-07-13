@@ -47,6 +47,7 @@ struct Sample {
     relative: f64, // (#1) realized minus its cutoff-bucket peer mean -> SELECTION, not regime beta
     quote: Quote,
     fund: Option<core::FundFactors>, // (G) as-of fundamentals at this cutoff (None unless `fund` + FMP key + cached)
+    trail: Vec<f64>, // (round 112) up to 36 trailing monthly returns % at the cutoff — CORR-CAP probe input; empty = can't judge
 }
 
 /// (#1) Cross-sectional peer-group key: the ~6-month bucket a cutoff falls in (2 buckets/year). Names
@@ -238,7 +239,16 @@ pub async fn run(args: Vec<String>) {
                             // no recompile. Price-only backtest (no `fund`/key) leaves this None -> growth_score
                             // neutral -> validated edge untouched.
                             quote.fund_factor = fund.as_ref().and_then(|f| core::select_fund_factor(f, factor));
-                            out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund });
+                            // (round 112) trailing monthly returns for the CORR-CAP probe — this is the only
+                            // place with the raw series in scope. 36 months ≈ the 200wk trend window. A
+                            // zero/non-finite close drops that month (rare; alignment slippage is acceptable
+                            // for a correlation probe, and pearson() demands 12 overlapping months anyway).
+                            let lo = i.saturating_sub(36);
+                            let trail: Vec<f64> = (lo..i)
+                                .filter(|&j| closes[j] > 0.0 && closes[j + 1].is_finite() && closes[j + 1] > 0.0)
+                                .map(|j| (closes[j + 1] / closes[j] - 1.0) * 100.0)
+                                .collect();
+                            out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund, trail });
                         }
                         None => break, // no full forward window left -> stop walking this ticker
                     }
@@ -339,6 +349,8 @@ pub async fn run(args: Vec<String>) {
     report_vs_benchmark(&samples, &bench, years, tuning);
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
     report_entry_state(&samples, &bench, years, tuning);
+    // (round 112) the DIVERSIFICATION dimension: does de-correlating the held book beat plain rank order?
+    report_corr_cap(&samples, &bench, years, tuning);
     if fund || insider {
         // (#44 Phase C) grade the FREE fundamental factors on the ABSOLUTE held-book, not peer-relative.
         report_book_by_factor(&samples, &bench, years, tuning);
@@ -409,7 +421,7 @@ async fn hold_period_sweep(
                             // whole demeaned bucket to -inf (short holds reach data the 12y path never walks)
                             if realized.is_finite() {
                                 let quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
-                                out.push((h, Sample { date: dates[i], realized, relative: 0.0, quote, fund: None }));
+                                out.push((h, Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() }));
                             }
                         }
                         None => break,
@@ -1052,6 +1064,96 @@ fn drop_bottom_book(
         }
     }
     book_stats(&by, n, years)
+}
+
+/// (round 112) Pearson correlation of two trailing monthly-return windows, aligned on their most
+/// recent months. Fewer than 12 overlapping months = no verdict (None) — the same evidence bar as
+/// every gate; a flat (zero-variance) series is also unjudgeable.
+fn pearson(a: &[f64], b: &[f64]) -> Option<f64> {
+    let k = a.len().min(b.len());
+    if k < 12 {
+        return None;
+    }
+    let (a, b) = (&a[a.len() - k..], &b[b.len() - k..]);
+    let n = k as f64;
+    let (ma, mb) = (a.iter().sum::<f64>() / n, b.iter().sum::<f64>() / n);
+    let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+    for i in 0..k {
+        let (x, y) = (a[i] - ma, b[i] - mb);
+        cov += x * y;
+        va += x * x;
+        vb += y * y;
+    }
+    (va > 0.0 && vb > 0.0).then(|| cov / (va * vb).sqrt())
+}
+
+/// (round 112) CORR-CAP book — the DIVERSIFICATION axis: per bucket, walk the gated non-crypto
+/// names in growth_score order and keep one only if its trailing-return correlation with every
+/// already-kept name stays under `cap`; the first `n` kept are the book. Unjudgeable pairs (empty
+/// trail, <12mo overlap) are KEPT — a brake can only act on evidence, like every gate. `cap` >= 1.0
+/// keeps everything (pearson <= 1 by construction) -> reproduces the plain top-`n` book.
+fn corr_cap_book(
+    samples: &[Sample],
+    bd: &[chrono::NaiveDate],
+    bc: &[f64],
+    years: i64,
+    tuning: &BuyHeuristic,
+    n: usize,
+    cap: f64,
+) -> Option<(f64, f64, f64, f64, f64, f64, f64)> {
+    let mut buckets: std::collections::BTreeMap<i32, Vec<(f64, &Sample)>> = Default::default();
+    for s in samples {
+        if picks::asset_class(&s.quote) == 0 || benchmark_fwd(bd, bc, s.date, years).is_none() {
+            continue;
+        }
+        let Some(score) = growth_score(&s.quote, tuning) else { continue };
+        buckets.entry(bucket(s.date)).or_default().push((score, s));
+    }
+    let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+    for (bk, ranked) in &mut buckets {
+        ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        for (score, s) in greedy_decorrelate(ranked, n, cap) {
+            let br = benchmark_fwd(bd, bc, s.date, years).unwrap();
+            by.entry(*bk).or_default().push((score, s.realized, br));
+        }
+    }
+    book_stats(&by, n, years)
+}
+
+/// (round 112) The greedy walk itself, pure for testing: keep a ranked name only if no already-kept
+/// name correlates >= `cap` with it; unjudgeable pairs (None) never block. cap = INFINITY keeps the
+/// plain top-`n` — the probe's identity row.
+fn greedy_decorrelate<'a>(ranked: &[(f64, &'a Sample)], n: usize, cap: f64) -> Vec<(f64, &'a Sample)> {
+    let mut kept: Vec<(f64, &Sample)> = Vec::new();
+    for &(score, s) in ranked {
+        if kept.len() >= n {
+            break;
+        }
+        if !kept.iter().any(|(_, k)| pearson(&s.trail, &k.trail).is_some_and(|c| c >= cap)) {
+            kept.push((score, s));
+        }
+    }
+    kept
+}
+
+/// (round 112) CORR-CAP probe: is the top-10 ten copies of one bet? The same brake family as the
+/// gates, pointed at REDUNDANCY: cap the pairwise trailing-return correlation inside the book and
+/// refill from the ranked list. Ship exactly like a gate: book/worst lifted, OOS both +, STRESS agrees.
+fn report_corr_cap(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let (bd, bc) = bench;
+    if bd.len() < 2 || !samples.iter().any(|s| s.trail.len() >= 12) {
+        return; // no trails (stub/short-history run) -> no fabricated rows
+    }
+    let n = 10; // the measured held-book optimum
+    println!("\n── CORR-CAP probe: greedy top-{n} by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held {years}y ──");
+    for cap in [f64::INFINITY, 0.8, 0.6, 0.4] {
+        if let Some((b, _, e, w, wo, el, la)) = corr_cap_book(samples, bd, bc, years, tuning, n, cap) {
+            let label = if cap.is_finite() { format!("{cap:.1}") } else { "off".to_string() };
+            let tag = if cap.is_finite() { "" } else { "  [cap off = plain top-10 book]" };
+            println!("  cap {label:>4}  book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{tag}");
+        }
+    }
+    println!("  (a cap lifting book or worst with OOS both + -> ship as a book-construction rule; expectation low — every structure tweak since round 14 diluted.)");
 }
 
 /// (round 106) One bucket's TWO-STYLE union book: top-`g` by growth score plus top-`v` by
@@ -1733,7 +1835,7 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
     fn sample(date: NaiveDate, realized: f64) -> Sample {
-        Sample { date, realized, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None }
+        Sample { date, realized, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None, trail: Vec::new() }
     }
 
     /// (#40) benchmark math: `ann` inverts a 12y cumulative back to CAGR (and floors a wipeout at
@@ -1803,6 +1905,44 @@ mod tests {
         assert_eq!(bench_drawdown_at(&dates, &closes, ymd(2019, 12, 31)), None); // predates the series
     }
 
+    /// (round 112) `pearson`: perfect co-movement -> +1, mirror -> −1, tails align when lengths
+    /// differ, and the evidence bar holds — <12 overlapping months or a flat series -> None.
+    #[test]
+    fn pearson_correlation() {
+        let t: Vec<f64> = (0..12).map(|i| if i % 2 == 0 { 1.0 } else { 2.0 }).collect();
+        let anti: Vec<f64> = t.iter().map(|v| 3.0 - v).collect();
+        assert!((pearson(&t, &t).unwrap() - 1.0).abs() < 1e-9);
+        assert!((pearson(&t, &anti).unwrap() + 1.0).abs() < 1e-9);
+        let long: Vec<f64> = [vec![9.0; 12], t.clone()].concat(); // 24mo whose last 12 == t
+        assert!((pearson(&long, &t).unwrap() - 1.0).abs() < 1e-9); // aligned on the tail
+        assert!(pearson(&t[..11], &anti[..11]).is_none()); // <12 overlap -> no verdict
+        assert!(pearson(&[5.0; 12], &t).is_none()); // flat series -> no verdict
+    }
+
+    /// (round 112) `greedy_decorrelate`: a clone of a kept name is skipped and the next diversifier
+    /// takes its slot; an empty trail can't be judged so it is KEPT; cap = INFINITY reproduces the
+    /// plain top-n book (the probe's identity row).
+    #[test]
+    fn greedy_decorrelate_membership() {
+        let t: Vec<f64> = (0..12).map(|i| if i % 2 == 0 { 1.0 } else { 2.0 }).collect();
+        let anti: Vec<f64> = t.iter().map(|v| 3.0 - v).collect();
+        let with = |trail: Vec<f64>| {
+            let mut s = sample(ymd(2020, 1, 1), 0.0);
+            s.trail = trail;
+            s
+        };
+        let (a, b, c) = (with(t.clone()), with(t), with(anti));
+        let ranked = vec![(9.0, &a), (8.0, &b), (7.0, &c)];
+        let scores = |v: Vec<(f64, &Sample)>| v.into_iter().map(|(sc, _)| sc).collect::<Vec<_>>();
+        // cap 0.8: b clones a (corr +1) -> skipped; c (corr −1) fills the slot
+        assert_eq!(scores(greedy_decorrelate(&ranked, 2, 0.8)), vec![9.0, 7.0]);
+        // cap off: plain rank order
+        assert_eq!(scores(greedy_decorrelate(&ranked, 2, f64::INFINITY)), vec![9.0, 8.0]);
+        // empty trail = unjudgeable -> kept even at a tight cap
+        let blind = with(Vec::new());
+        assert_eq!(scores(greedy_decorrelate(&[(9.0, &a), (8.0, &blind)], 2, 0.4)), vec![9.0, 8.0]);
+    }
+
     /// (Item 31) `exit_cohorts`: pairs where the earlier cutoff passes split on the later one —
     /// pass->pass lands in `kept`, pass->fail in `failed`; fail->anything and other tickers are
     /// ignored. Scorer keyed on drop_pct so the split logic is tested without building gated quotes.
@@ -1863,8 +2003,8 @@ mod tests {
     /// stocks must NOT move the stocks' peer-mean — else crypto's scale swamps the equity edge to noise.
     #[test]
     fn demean_splits_by_asset_class() {
-        let stock = |r: f64| Sample { date: ymd(2020, 2, 1), realized: r, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None };
-        let crypto = |r: f64| Sample { date: ymd(2020, 2, 1), realized: r, relative: 0.0, quote: Quote::stub("BTC-USD", "1", "", "Bitcoin"), fund: None };
+        let stock = |r: f64| Sample { date: ymd(2020, 2, 1), realized: r, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None, trail: Vec::new() };
+        let crypto = |r: f64| Sample { date: ymd(2020, 2, 1), realized: r, relative: 0.0, quote: Quote::stub("BTC-USD", "1", "", "Bitcoin"), fund: None, trail: Vec::new() };
         let mut s = [stock(10.0), stock(30.0), crypto(1e9)];
         demean(&mut s);
         assert!((s[0].relative - -10.0).abs() < 1e-9); // stock peer-mean = 20, unmoved by the crypto
@@ -1881,7 +2021,7 @@ mod tests {
     fn s_rel(relative: f64, dd: f64) -> Sample {
         let mut q = Quote::stub("X", "1", "", "X");
         q.drawdown_pct = dd;
-        Sample { date: ymd(2020, 1, 1), realized: relative, relative, quote: q, fund: None }
+        Sample { date: ymd(2020, 1, 1), realized: relative, relative, quote: q, fund: None, trail: Vec::new() }
     }
 
     /// `lane_metrics` is what the tune search ranks configs by, so its rho/edge must have the right SIGN:
@@ -1926,6 +2066,7 @@ mod tests {
             relative: 0.0,
             quote: Quote::stub(t, "1", "", t),
             fund: None,
+            trail: Vec::new(),
         };
         // bucket H1: A,B,C,D (top-half by score -> A,B). bucket H2: A,C,E,F (top-half -> A,C).
         let s = [mk("A", 1), mk("B", 2), mk("C", 3), mk("D", 4), mk("A", 7), mk("C", 8), mk("E", 9), mk("F", 10)];
@@ -1944,7 +2085,7 @@ mod tests {
         let mut samples: Vec<Sample> = (0..100)
             .map(|i| {
                 let r = (i as f64 - 50.0) / 25.0;
-                Sample { date: ymd(2020, 1, 1), realized: r, relative: r, quote: Quote::stub("X", "1", "", "X"), fund: None }
+                Sample { date: ymd(2020, 1, 1), realized: r, relative: r, quote: Quote::stub("X", "1", "", "X"), fund: None, trail: Vec::new() }
             })
             .collect();
         samples[99].relative = 500.0; // a 500-pt blow-up in the highest-scored row
@@ -2166,7 +2307,7 @@ mod tests {
                 let Some(off) = dates[i..].iter().position(|d| *d >= target) else { break };
                 let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
                 let quote = core::backtest_quote(tk, &dates, closes, i, 252);
-                samples.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund: None });
+                samples.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() });
                 i += STEP_SESSIONS;
             }
         }
