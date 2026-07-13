@@ -2835,4 +2835,202 @@ mod tests {
         assert!(!quote_is_etf(&stock));
         assert!(quote_is_etf(&Quote::stub("X", "€1", "", "Foo UCITS ETF Acc"))); // no meta -> name marker
     }
+
+    /// HORIZONS-ordered perf legs from a sparse (label, %) list — the shape `Quote.perf` expects.
+    fn legs(pairs: &[(&str, f64)]) -> Vec<Option<(String, f64)>> {
+        HORIZONS
+            .iter()
+            .map(|(l, _)| pairs.iter().find(|(pl, _)| pl == l).map(|(_, v)| ("x".to_string(), *v)))
+            .collect()
+    }
+
+    /// A hold-suitable broad-index CORE fund: broad + UCITS name, physical, Acc, cheap TER, ≥€1B, IE.
+    fn core_etf(ticker: &str, name: &str, aum: f64, ter: f64) -> Quote {
+        let mut q = Quote::stub(ticker, "€100.00", "", name);
+        q.instrument_type = "ETF".into();
+        q.expense_ratio = Some(ter);
+        q.replication = Some("Opt");
+        q.use_of_profits = Some("Acc");
+        q.aum_eur = Some(aum);
+        q.domicile = Some("IE".to_string());
+        q.life_cagr = Some(9.0);
+        q.age_years = Some(12.0);
+        q
+    }
+
+    /// (QA) `render` — the pure screen seam (takes already-built quotes, no network). A pinned name that
+    /// FAILS the growth gate still reaches the table (render sentinel-scores it), so a single call drives
+    /// the whole offline pipeline: nupl_factor, btc_relative tilt, ranked, print_lane → print_picks (rows
+    /// + rank-flag marks + legend) → col_cell VALUE arms, turnover_note, gate review, bridge hints.
+    /// Asserts the returned contract; printed lines go to captured test stdout. Cleans the gitignored
+    /// cwd turnover cache render writes.
+    #[test]
+    fn render_growth_lane_smoke() {
+        let tuning = BuyHeuristic::default();
+        let w = Widths::default();
+        let sectors: Vec<String> = Vec::new();
+        let sector_of: HashMap<String, String> = HashMap::new();
+
+        // pinned equity, no >2Y leg -> growth-gated -> render's pinned sentinel keeps it in the table.
+        // rich fields make its row exercise col_cell's value arms instead of every cell reading n/a.
+        let mut pin = Quote::stub("AAPL", "€200.00", "", "Apple Inc.");
+        pin.instrument_type = "EQUITY".into();
+        pin.drawdown_pct = 8.5;
+        pin.avg_turnover_eur = Some(3.4e9);
+        pin.volatility_pct = Some(1.3);
+        pin.max_drawdown_pct = 34.0;
+        pin.trend_r2 = 0.95;
+        pin.above_ma_pct = 42.0;
+        pin.life_cagr = Some(23.0);
+        pin.age_years = Some(11.0);
+        pin.pe_ratio = Some(31.5);
+        pin.roe = Some(45.0);
+        pin.rev_yoy = Some(12.3);
+        pin.eps_yoy = Some(-4.5);
+        pin.net_margin_fy = Some(25.6);
+        pin.buyback_yoy = Some(-3.0);
+        pin.intraday = [Some(0.1), Some(-0.2), Some(0.4)];
+        pin.perf = legs(&[("1D", 0.3), ("1W", 1.1), ("1M", -2.0), ("1Y", 19.0)]);
+
+        // Bitcoin base (btc_1y Some) + one alt -> the crypto lane + crypto_adjust/btc_relative tilt run.
+        let mut btc = Quote::stub("BTC-USD", "€60000", "", "Bitcoin");
+        btc.perf = legs(&[("1Y", 40.0)]);
+        let mut eth = Quote::stub("ETH-USD", "€3000", "", "Ethereum");
+        eth.perf = legs(&[("1Y", 55.0)]);
+
+        let quotes = vec![pin, btc, eth];
+        let pinned = vec!["AAPL".to_string()];
+        let owned = Owned { stocks: ["aapl".to_string()].into(), ..Default::default() };
+
+        // euphoric NUPL (>euphoria band) -> nupl_factor damps the crypto rows (the >1 branch).
+        let (_text, tickers) =
+            render(&quotes, 5, &tuning, &w, Some(0.9), &sectors, &sector_of, &pinned, &owned, None);
+        assert!(tickers.iter().any(|t| t == "AAPL"), "pinned gated name must still surface in the ranking");
+        assert!(tickers.len() <= 5);
+
+        // an --explain for a ticker that never ranked -> the "not in the growth ranking" message branch.
+        let (miss, _) =
+            render(&quotes, 5, &tuning, &w, None, &sectors, &sector_of, &pinned, &owned, Some("ZZZZ"));
+        assert!(miss.is_some_and(|m| m.contains("not in the growth ranking")));
+
+        let _ = std::fs::remove_file(".folioman_turnover_watch.txt"); // gitignored cwd cache render wrote
+    }
+
+    /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + per-tier cap ≤3, and the
+    /// `print_hold_core` block over it (owned marker, empty-tier-0 hint, pinned near-miss reason). Pure.
+    #[test]
+    fn hold_core_list_and_print() {
+        let mut quotes = vec![
+            core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22), // tier 0
+            core_etf("IWDA.DE", "iShares Core MSCI World UCITS ETF", 60e9, 0.20), // tier 1
+            // tier 2 (S&P 500): four DISTINCT names -> the cheapest three survive the per-tier cap.
+            core_etf("SPYL.DE", "SPDR S&P 500 UCITS ETF", 8e9, 0.03),
+            core_etf("CSPX.DE", "iShares Core S&P 500 UCITS ETF", 70e9, 0.07),
+            core_etf("VUAA.DE", "Vanguard S&P 500 UCITS ETF", 10e9, 0.07),
+            core_etf("XDWL.DE", "Xtrackers S&P 500 UCITS ETF", 2e9, 0.09), // 4th S&P -> capped out
+            core_etf("VUAA.L", "Vanguard S&P 500 UCITS ETF", 5e9, 0.15),  // dup NAME -> deduped
+            Quote::stub("AAPL", "€1", "", "Apple Inc."),                   // not a fund -> excluded
+        ];
+
+        let cores = hold_core_list(&quotes);
+        assert_eq!(core::hold_breadth_tier(&cores[0].name), 0, "all-world sorts first (broadest)");
+        assert_eq!(cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 2).count(), 3, "S&P tier capped at 3");
+        assert_eq!(cores.len(), 5, "1 all-world + 1 world + 3 S&P (4th + dup dropped)");
+        let uniq: HashSet<&str> = cores.iter().map(|q| q.name.as_str()).collect();
+        assert_eq!(uniq.len(), cores.len(), "one row per fund name");
+        assert!(!cores.iter().any(|q| q.name == "Apple Inc."), "a single stock is never a hold core");
+
+        // print block: owned marker on a held core + a pinned broad-index ETF that misses a leg (near).
+        let mut near = core_etf("VWRL.DE", "Vanguard FTSE All-World UCITS ETF Dist", 5e9, 0.22);
+        near.use_of_profits = Some("Dist"); // fails the Acc leg -> not a core, but pinned+broad -> near-miss line
+        quotes.push(near);
+        let owned = Owned { stocks: ["vwce".to_string()].into(), ..Default::default() };
+        let pinned: HashSet<&str> = ["VWRL.DE"].into();
+        print_hold_core(&quotes, 9, &pinned, &owned);
+
+        // no all-world fund present -> the "no ACWI fund with facts qualified" hint branch.
+        let no_world: Vec<Quote> =
+            quotes.iter().filter(|q| core::hold_breadth_tier(&q.name) != 0).cloned().collect();
+        print_hold_core(&no_world, 9, &HashSet::new(), &Owned::default());
+    }
+
+    /// (QA) `col_cell` VALUE arms the `screen_columns_config` test leaves at n/a (it uses a bare stub):
+    /// the number-formatting columns + the ≥1000% no-decimal path + the unknown-key fallback.
+    #[test]
+    fn col_cell_value_arms() {
+        let mut q = Quote::stub("AAA", "€12.34", "", "Alpha");
+        assert_eq!(col_cell("price", &q, 0.0, ""), "€12.34");
+        assert_eq!(col_cell("ticker", &q, 0.0, ""), "AAA");
+        assert_eq!(col_cell("market", &q, 0.0, ""), q.market.clone());
+        q.drawdown_pct = 12.5;
+        assert_eq!(col_cell("off-hi", &q, 0.0, ""), "-12.5%");
+        assert_eq!(col_cell("upside", &q, 0.0, ""), format!("+{:.1}%", upside_to_high(12.5)));
+        q.avg_turnover_eur = Some(3.4e9);
+        assert_eq!(col_cell("turnover", &q, 0.0, ""), "€3.4B");
+        q.volatility_pct = Some(1.3);
+        assert_eq!(col_cell("vol", &q, 0.0, ""), "1.3%");
+        q.max_drawdown_pct = 42.0;
+        assert_eq!(col_cell("maxdd", &q, 0.0, ""), "-42%");
+        q.trend_r2 = 0.87;
+        assert_eq!(col_cell("r2", &q, 0.0, ""), "0.87");
+        q.above_ma_pct = 61.0;
+        assert_eq!(col_cell("abv-ma", &q, 0.0, ""), "+61%");
+        q.above_ma_pct = 0.0;
+        assert_eq!(col_cell("abv-ma", &q, 0.0, ""), "0%");
+        q.age_years = Some(11.0);
+        assert_eq!(col_cell("yrs", &q, 0.0, ""), "11");
+        q.intraday = [Some(0.12), Some(-0.34), Some(2.0)];
+        assert_eq!(col_cell("1h", &q, 0.0, ""), "+0.1%");
+        assert_eq!(col_cell("6h", &q, 0.0, ""), "-0.3%");
+        assert_eq!(col_cell("12h", &q, 0.0, ""), "+2.0%");
+        // the "1d|1w|…|20y" arm via perf_pct; a ≥1000% cell drops the decimal so it still fits its column.
+        q.perf = legs(&[("1D", 0.5), ("20Y", 2600.0)]);
+        assert_eq!(col_cell("1d", &q, 0.0, ""), "+0.5%");
+        assert_eq!(col_cell("20y", &q, 0.0, ""), "+2600%");
+        assert_eq!(col_cell("1w", &q, 0.0, ""), "n/a"); // absent leg
+        assert_eq!(col_cell("bogus", &q, 0.0, ""), "?"); // unknown key fallback
+    }
+
+    /// (QA) `turnover_note` both branches against a temp cache: first run -> None (writes baseline),
+    /// later runs -> the overlap note (Jaccard %, moved count, singular/plural). Pure fs, no network.
+    #[test]
+    fn turnover_note_roundtrip() {
+        let dir = std::env::var("CLAUDE_JOB_DIR")
+            .map(|d| format!("{d}/tmp"))
+            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
+        let path = std::path::PathBuf::from(format!("{dir}/fm_turnover_test_{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let s = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+
+        assert!(turnover_note(&s(&["A", "B", "C"]), 3, &path).is_none(), "first run has no baseline");
+        // vs {A,B,C}: {A,B,D} -> ∩{A,B}/∪{A,B,C,D} = 50%, one new name (singular).
+        let note = turnover_note(&s(&["A", "B", "D"]), 3, &path).unwrap();
+        assert!(note.contains("50% top-3 overlap"), "note = {note}");
+        assert!(note.contains("(1 new name)"), "singular: {note}");
+        // vs {A,B,D}: {A,X,Y} -> two new names (plural).
+        let note3 = turnover_note(&s(&["A", "X", "Y"]), 3, &path).unwrap();
+        assert!(note3.contains("new names"), "plural: {note3}");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// (QA) crypto render-time tilt: `crypto_adjust` skips equities, folds the NUPL cfactor then tilts
+    /// vs Bitcoin's year via `btc_relative` — bounded 0.5×..2× so one moonshot can't run away. Pure.
+    #[test]
+    fn crypto_tilt_arms() {
+        let tuning = BuyHeuristic::default();
+        // equity: no crypto-market damp, no BTC base -> base passes through untouched (cfactor ignored).
+        let stock = Quote::stub("AAPL", "€1", "", "Apple");
+        assert_eq!(crypto_adjust(&stock, 10.0, &tuning, 0.5, Some(20.0)), 10.0);
+        // btc_relative: unknown coin-or-btc 1Y, or w=0 -> unchanged.
+        assert_eq!(btc_relative(None, Some(10.0), 5.0, 1.0), 5.0);
+        assert_eq!(btc_relative(Some(10.0), None, 5.0, 1.0), 5.0);
+        assert_eq!(btc_relative(Some(10.0), Some(5.0), 5.0, 0.0), 5.0);
+        // far ahead of BTC -> capped at 2×; far behind -> floored at 0.5×.
+        assert!((btc_relative(Some(10_000.0), Some(0.0), 5.0, 1.0) - 10.0).abs() < 1e-9, "2x ceiling");
+        assert!((btc_relative(Some(0.0), Some(10_000.0), 5.0, 1.0) - 2.5).abs() < 1e-9, "0.5x floor");
+        // crypto_adjust on BTC vs itself: edge 0 -> neutral 1×, so only the cfactor scales the base.
+        let mut btc = Quote::stub("BTC-USD", "€1", "", "Bitcoin");
+        btc.perf = legs(&[("1Y", 40.0)]);
+        assert!((crypto_adjust(&btc, 10.0, &tuning, 0.8, Some(40.0)) - 8.0).abs() < 1e-9);
+    }
 }
