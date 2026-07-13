@@ -121,7 +121,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      COVERAGE_MIN: "0"   # UNARMED bootstrap: 0 never fails. Read run 1's "TOTAL" line % off this job's step summary, set COVERAGE_MIN just under it to ARM the gate, then ratchet UP as tests grow. Never lower it. (0 avoids a false-red on the very commit that enables the gate — the current % isn't known until CI measures it.)
+      COVERAGE_MIN: "58"   # ARMED floor. Measured line coverage was 59.10% (2026-07-13, lib+integration scope); floor set ~1pt under for CI-toolchain measurement wobble so it arms without flapping. Ratchet UP toward the live % as tests grow; never lower it. Read the current "TOTAL" line % off this job's step summary.
     steps:
       - uses: actions/checkout@v7
       - run: rustup component add llvm-tools-preview
