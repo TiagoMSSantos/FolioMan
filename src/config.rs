@@ -2,7 +2,7 @@
 //! Language-agnostic YAML so any tool can read the same source of truth.
 //! Acronyms (CAGR, ROE, P/E, NUPL, SMA, …): see the Glossary in README.md.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -119,7 +119,7 @@ impl Default for Widths {
 /// Its score: `base = discount × trend_health × momentum + long_reward(A) + cheap_reward(C) +
 /// dividend_reward(D)`, then `score = base × value(E) × geomean(decline(B), trust)`.
 /// GATES exclude a candidate outright; SCORE knobs rank the survivors. Mirrors `config/settings.yaml`.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(default, deny_unknown_fields)] // a typo'd knob must error, not silently fall back to the default
 pub struct BuyHeuristic {
     // --- GATES: a candidate failing ANY of these is dropped before scoring ---
@@ -628,8 +628,66 @@ pub fn load() -> Settings {
     let path = settings_path();
     let merged =
         merged_config().unwrap_or_else(|| panic!("cannot read/parse config {}", path.display()));
-    serde_yaml::from_value(merged)
-        .unwrap_or_else(|e| panic!("invalid config ({} over tests/ci-settings.yaml): {e}", path.display()))
+    let s = serde_yaml::from_value(merged)
+        .unwrap_or_else(|e| panic!("invalid config ({} over tests/ci-settings.yaml): {e}", path.display()));
+    // (round 113) QA tripwire: the measured edge lives in specific validated knob values, and the
+    // overlay wins the merge silently — a leftover experiment serves an UNVALIDATED ranking with no
+    // trace. Name every moved knob once per process, on stderr so tables and receipts stay clean.
+    use std::sync::OnceLock;
+    static TRIPWIRE: OnceLock<()> = OnceLock::new();
+    TRIPWIRE.get_or_init(|| {
+        if let Some(w) = heuristic_drift() {
+            eprintln!("{w}");
+        }
+    });
+    s
+}
+
+/// (round 113) The off-validated warning for the loaded overlay, if any. The validated baseline =
+/// code defaults overlaid by the committed `tests/ci-settings.yaml` knobs — the exact config the
+/// backtest receipts graded. None when the overlay IS the fixture (CI), names no `buy_heuristic`
+/// knobs, or matches the baseline value-for-value. Deliberate experiments still work — they're just
+/// named. Display-only, never changes behaviour.
+fn heuristic_drift() -> Option<String> {
+    let path = settings_path();
+    if path.ends_with("ci-settings.yaml") {
+        return None; // the fixture IS the validated baseline
+    }
+    let over: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+    let over_bh = over.get("buy_heuristic")?.as_mapping()?;
+    let serde_yaml::Value::Mapping(mut base) = serde_yaml::to_value(BuyHeuristic::default()).ok()? else {
+        return None;
+    };
+    if let Some(serde_yaml::Value::Mapping(cb)) = ci_base_yaml(&path).get("buy_heuristic").cloned() {
+        for (k, v) in cb {
+            base.insert(k, v);
+        }
+    }
+    let drift = drift_lines(&base, over_bh);
+    (!drift.is_empty()).then(|| {
+        format!(
+            "WARNING: buy_heuristic off-validated in {} (vs tests/ci-settings.yaml + defaults): {}",
+            path.display(),
+            drift.join(", ")
+        )
+    })
+}
+
+/// (round 113) Pure knob diff: every overlay key whose value differs from the validated baseline,
+/// as `key base->loaded`. Integer/float spellings of the same number (5 vs 5.0) are NOT drift.
+fn drift_lines(base: &serde_yaml::Mapping, over: &serde_yaml::Mapping) -> Vec<String> {
+    let fmt = |v: &serde_yaml::Value| serde_yaml::to_string(v).unwrap_or_default().trim().to_string();
+    let eq = |a: &serde_yaml::Value, b: &serde_yaml::Value| match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
+    };
+    over.iter()
+        .filter(|(k, v)| base.get(k).is_none_or(|b| !eq(b, v)))
+        .map(|(k, v)| {
+            let from = base.get(k).map(&fmt).unwrap_or_else(|| "?".to_string());
+            format!("{} {from}->{}", fmt(k), fmt(v))
+        })
+        .collect()
 }
 
 /// (Item 21) Process-once read of the adjusted-close probe flag. SOFT — a missing/invalid config
@@ -755,6 +813,25 @@ mod tests {
             .expect_err("typo'd knob must not parse")
             .to_string();
         assert!(err.contains("unknown field `groth_accel_weight`"), "must name the field: {err}");
+    }
+
+    /// (round 113) Drift tripwire semantics: a changed number or string is named `key base->loaded`,
+    /// an int/float respelling of the same value is NOT drift, an unknown key shows `?` as its base,
+    /// and the serialized code defaults expose real knob values for the baseline.
+    #[test]
+    fn drift_lines_semantics() {
+        let m = |s: &str| match serde_yaml::from_str::<serde_yaml::Value>(s).unwrap() {
+            serde_yaml::Value::Mapping(m) => m,
+            _ => unreachable!(),
+        };
+        let base = m("a: 0.5\nb: 5\nc: fmp\n");
+        let over = m("b: 5.0\na: 0.7\nc: sec\n");
+        assert_eq!(drift_lines(&base, &over), vec!["a 0.5->0.7", "c fmp->sec"]);
+        assert_eq!(drift_lines(&base, &m("b: 5\n")), Vec::<String>::new());
+        assert_eq!(drift_lines(&base, &m("z: 1\n")), vec!["z ?->1"]);
+        // the baseline source: code defaults serialize to a mapping with the real knob values
+        let defaults = serde_yaml::to_value(BuyHeuristic::default()).unwrap();
+        assert_eq!(defaults["growth_min_range_pct"].as_f64(), Some(80.0));
     }
 
     /// The overlay wins field-by-field over the base, mappings merge DEEP (a partial `buy_heuristic:` only
