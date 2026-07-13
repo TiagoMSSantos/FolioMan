@@ -39,6 +39,25 @@ pub async fn owned_tickers(client: &Client) -> Result<Vec<String>, String> {
     extract_tickers(&port)
 }
 
+/// (round 114) Held positions (ticker, quantity) for the size command's allocation-gap section.
+/// Same endpoint `summary` reads; rows missing either field are skipped (the gap table must never
+/// invent a position), a non-array response is API drift.
+pub async fn owned_positions(client: &Client) -> Result<Vec<(String, f64)>, String> {
+    let key = env_var("TRADING212_API_KEY")?;
+    let port = get(client, &key, "equity/portfolio").await?;
+    extract_positions(&port)
+}
+
+/// Pure extraction, offline-testable (like `render_summary`).
+fn extract_positions(port: &Value) -> Result<Vec<(String, f64)>, String> {
+    Ok(port
+        .as_array()
+        .ok_or_else(|| "trading212: portfolio response is not an array (API drift?)".to_string())?
+        .iter()
+        .filter_map(|h| Some((h.get("ticker")?.as_str()?.to_string(), h.get("quantity")?.as_f64()?)))
+        .collect())
+}
+
 /// Pure extraction, split from the fetch so drift handling is testable offline (like `render_summary`).
 fn extract_tickers(port: &Value) -> Result<Vec<String>, String> {
     Ok(port
@@ -113,6 +132,19 @@ mod tests {
         let cash = json!({ "free": 0.0, "invested": 0.0, "total": 0.0 });
         let err = render_summary(&cash, &json!({ "positions": [] })).unwrap_err();
         assert!(err.contains("not an array"), "{err}");
+    }
+
+    /// (round 114) position extraction: (ticker, qty) pairs collected, rows missing either field
+    /// skipped, non-array = drift error.
+    #[test]
+    fn extract_positions_collects_and_skips() {
+        let port = json!([
+            { "ticker": "AAPL_US_EQ", "quantity": 2.5 },
+            { "quantity": 1.0 },
+            { "ticker": "NOQTY_US_EQ" }
+        ]);
+        assert_eq!(extract_positions(&port).unwrap(), vec![("AAPL_US_EQ".to_string(), 2.5)]);
+        assert!(extract_positions(&json!({ "positions": [] })).unwrap_err().contains("not an array"));
     }
 
     /// (round 110) ticker extraction: strings collected, malformed rows skipped, non-array = drift error.

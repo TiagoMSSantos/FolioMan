@@ -86,4 +86,125 @@ pub async fn run(args: Vec<String>) {
             w * gross, // ALLOC% = the slice of TOTAL capital after the regime scaler
         );
     }
+
+    // (round 114) allocation gap — what you ACTUALLY hold (Trading212 stocks + Binance crypto,
+    // valued at THIS run's EUR prices, so no broker-currency conversion) vs the SIZE% split above.
+    // Keyless brokers are silently skipped, same posture as the screen's owned overlay; with no
+    // broker key at all the section is absent. Class-prefixed keys so a SOL coin never matches a
+    // SOL-lettered stock (round 111 rule). Display-only, NOT advice.
+    let mut held: Vec<(String, String, f64)> = Vec::new();
+    if let Ok(v) = crate::broker::trading212::owned_positions(&client).await {
+        for (t, q) in v {
+            held.push((format!("s:{}", crate::picks::t212_base(&t)), t, q));
+        }
+    }
+    if let Ok(v) = crate::broker::binance::owned_amounts(&client).await {
+        for (a, q) in v {
+            held.push((format!("c:{}", a.to_lowercase()), a, q));
+        }
+    }
+    if !held.is_empty() {
+        let sized: Vec<(String, String, Option<f64>, f64)> = scored
+            .iter()
+            .zip(&weights)
+            .map(|((q, _), w)| {
+                let key = if crate::picks::is_currency_quoted(&q.ticker) {
+                    format!("c:{}", crate::picks::underlying(&q.ticker).to_lowercase())
+                } else {
+                    format!("s:{}", crate::picks::yahoo_base(&q.ticker))
+                };
+                (q.ticker.clone(), key, q.price_eur, *w)
+            })
+            .collect();
+        println!("\nAllocation gap — actual broker weights vs the SIZE% split (matched names only; NOT advice):");
+        for line in allocation_gap_lines(&sized, &held) {
+            println!("{line}");
+        }
+    }
+}
+
+/// (round 114) The gap table, pure for testing. `sized` = (display ticker, class-prefixed base key,
+/// EUR price, suggested SIZE%); `held` = (key, broker label, qty). ACTUAL% is each matched holding's
+/// share of the matched holdings' total EUR value — held names the sized list doesn't cover have no
+/// EUR price on this run, so they're excluded from the % math and said out loud instead of silently
+/// skewing the weights. A held name whose quote lost its EUR price (FX unknown) is flagged, never
+/// shown as "not held".
+fn allocation_gap_lines(sized: &[(String, String, Option<f64>, f64)], held: &[(String, String, f64)]) -> Vec<String> {
+    let mut qty: std::collections::HashMap<&str, f64> = Default::default();
+    for (k, _, q) in held {
+        *qty.entry(k.as_str()).or_insert(0.0) += q;
+    }
+    let total: f64 = sized
+        .iter()
+        .filter_map(|(_, k, p, _)| Some(qty.get(k.as_str())? * (*p)?))
+        .sum();
+    let mut out = Vec::new();
+    if total > 0.0 {
+        out.push(format!("  {:<10} {:>10} {:>8} {:>8} {:>8}", "TICKER", "VALUE(EUR)", "ACTUAL%", "SUGG%", "GAP"));
+        for (disp, k, p, sugg) in sized {
+            let q_held = qty.get(k.as_str()).copied().unwrap_or(0.0);
+            if q_held > 0.0 && p.is_none() {
+                out.push(format!("  {disp:<10} (held, but no EUR price this run — excluded from the % math)"));
+                continue;
+            }
+            let v = q_held * p.unwrap_or(0.0);
+            let actual = v / total * 100.0;
+            let gap = actual - sugg;
+            let tag = if v == 0.0 {
+                "  not held"
+            } else if gap > 5.0 {
+                "  overweight"
+            } else if gap < -5.0 {
+                "  underweight"
+            } else {
+                ""
+            };
+            out.push(format!("  {disp:<10} {v:>10.0} {actual:>7.1}% {sugg:>7.1}% {gap:>+7.1}%{tag}"));
+        }
+    } else {
+        out.push("  (no held name matches the sized list — no weights to compare)".to_string());
+    }
+    let covered: std::collections::HashSet<&str> = sized.iter().map(|(_, k, _, _)| k.as_str()).collect();
+    for (k, label, q) in held {
+        if !covered.contains(k.as_str()) {
+            out.push(format!("  (held but not sized: {label} qty {q} — no EUR price this run, excluded from the % math)"));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (round 114) Gap-table semantics: matched holdings split ACTUAL% over their EUR total, an
+    /// unheld sized name reads "not held" with a negative gap, ±5pt gaps get the weight tag, a held
+    /// name with no EUR price is flagged (never "not held"), and held-but-not-sized names are named
+    /// outside the % math. No match at all -> the no-weights line.
+    #[test]
+    fn allocation_gap_semantics() {
+        let s = |d: &str, k: &str, p: Option<f64>, w: f64| (d.to_string(), k.to_string(), p, w);
+        let h = |k: &str, l: &str, q: f64| (k.to_string(), l.to_string(), q);
+        let sized = vec![
+            s("AAPL", "s:aapl", Some(10.0), 50.0),
+            s("IITU.L", "s:iitu", Some(20.0), 30.0),
+            s("BTC-EUR", "c:btc", Some(100.0), 20.0),
+            s("NVDA", "s:nvda", None, 0.0),
+        ];
+        let held = vec![
+            h("s:aapl", "AAPL_US_EQ", 10.0),  // 100 EUR -> 50% of 200, gap 0
+            h("s:iitu", "IITU_GB_EQ", 5.0),   // 100 EUR -> 50%, gap +20 -> overweight
+            h("s:nvda", "NVDA_US_EQ", 3.0),   // held but price None -> flagged
+            h("c:sol", "SOL", 2.0),           // held, not sized -> named outside the math
+        ];
+        let out = allocation_gap_lines(&sized, &held).join("\n");
+        assert!(out.contains("AAPL              100    50.0%    50.0%    +0.0%\n"), "{out}");
+        assert!(out.contains("IITU.L            100    50.0%    30.0%   +20.0%  overweight"), "{out}");
+        assert!(out.contains("BTC-EUR             0     0.0%    20.0%   -20.0%  not held"), "{out}");
+        assert!(out.contains("NVDA       (held, but no EUR price this run"), "{out}");
+        assert!(out.contains("held but not sized: SOL qty 2"), "{out}");
+        // nothing matches -> the honest no-weights line, not a zero-division table
+        let none = allocation_gap_lines(&sized[..1], &[h("c:eth", "ETH", 1.0)]).join("\n");
+        assert!(none.contains("no held name matches"), "{none}");
+    }
 }

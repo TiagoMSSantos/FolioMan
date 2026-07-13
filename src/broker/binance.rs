@@ -41,19 +41,25 @@ async fn account_balances(client: &Client) -> Result<Vec<Value>, String> {
 /// (round 111) Non-cash assets with a real balance (e.g. `BTC`, `ETH`) for the screen's
 /// held-position overlay.
 pub async fn owned_assets(client: &Client) -> Result<Vec<String>, String> {
-    Ok(extract_assets(&account_balances(client).await?))
+    Ok(extract_amounts(&account_balances(client).await?).into_iter().map(|(a, _)| a).collect())
+}
+
+/// (round 114) Non-cash assets WITH the held amount (free+locked) for the size command's
+/// allocation-gap section.
+pub async fn owned_amounts(client: &Client) -> Result<Vec<(String, f64)>, String> {
+    Ok(extract_amounts(&account_balances(client).await?))
 }
 
 /// Pure extraction, offline-testable: cash/stable and zero-balance rows drop, unparsable rows are
 /// skipped — a display overlay must never invent a holding.
-fn extract_assets(balances: &[Value]) -> Vec<String> {
+fn extract_amounts(balances: &[Value]) -> Vec<(String, f64)> {
     balances
         .iter()
         .filter_map(|b| {
             let asset = b.get("asset").and_then(|v| v.as_str())?;
             let num = |k: &str| b.get(k).and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok());
             let held = num("free")? + num("locked")?;
-            (held > 0.0 && !CASH_ASSETS.contains(&asset)).then(|| asset.to_string())
+            (held > 0.0 && !CASH_ASSETS.contains(&asset)).then(|| (asset.to_string(), held))
         })
         .collect()
 }
@@ -146,16 +152,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// (round 111) owned-assets extraction: cash/stable and zero rows drop, unparsable rows skip.
+    /// (round 111/114) owned-amounts extraction: cash/stable and zero rows drop, unparsable rows
+    /// skip, and the held amount = free + locked.
     #[test]
-    fn extract_assets_drops_cash_zero_and_unparsable() {
+    fn extract_amounts_drops_cash_zero_and_unparsable() {
         let rows = vec![
-            json!({ "asset": "BTC", "free": "0.5", "locked": "0" }),
+            json!({ "asset": "BTC", "free": "0.5", "locked": "0.25" }),
             json!({ "asset": "EUR", "free": "100", "locked": "0" }),
             json!({ "asset": "ETH", "free": "0", "locked": "0" }),
             json!({ "asset": "SOL", "free": "oops", "locked": "0" }),
         ];
-        assert_eq!(extract_assets(&rows), vec!["BTC"]);
+        assert_eq!(extract_amounts(&rows), vec![("BTC".to_string(), 0.75)]);
     }
 
     /// Signing self-check against a known HMAC-SHA256 test vector.

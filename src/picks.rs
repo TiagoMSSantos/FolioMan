@@ -176,7 +176,7 @@ pub(crate) fn quote_is_etf(quote: &Quote) -> bool {
 
 /// Underlying of a currency-quoted ticker: strips a trailing `-EUR`/`-USD` (crypto twins like
 /// `BTC-EUR`/`BTC-USD`); anything else is its own underlying.
-fn underlying(ticker: &str) -> &str {
+pub(crate) fn underlying(ticker: &str) -> &str {
     ticker.strip_suffix("-EUR").or_else(|| ticker.strip_suffix("-USD")).unwrap_or(ticker)
 }
 
