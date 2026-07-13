@@ -2690,6 +2690,44 @@ mod tests {
     // TILT: a positive weight rewards the higher 12-1 momentum.
     let wmom = BuyHeuristic { growth_mom121_weight: 0.5, ..BuyHeuristic::default() };
     assert!(growth_score(&hi_mom, &wmom).unwrap() > growth_score(&lo_mom, &wmom).unwrap());
+
+    // gate_failures DIAGNOSTIC reasons (the footer path, separate impl from score_parts' gating): one
+    // equity quote tripping every armed gate must surface each reason tag. Arms the normally-off knobs.
+    let gt = BuyHeuristic {
+        min_avg_turnover_eur: 1_000_000.0,
+        growth_max_above_ma: 100.0,
+        growth_require_lifetime_uptrend: true,
+        growth_maxdd_cap: 50.0,
+        max_1m_drop_pct: -20.0,
+        ..BuyHeuristic::default()
+    };
+    let mut bad = quote(5.0, &[("1Y", 10.0), ("5Y", -5.0), ("10Y", 40.0), ("1M", -30.0)]);
+    bad.above_ma_pct = 300.0;             // stretch: far above the 200wk SMA cap
+    bad.avg_turnover_eur = Some(1_000.0); // liquidity: below the €1M floor (still Some -> assessable)
+    bad.max_drawdown_pct = 90.0;          // maxdd: worse than the 50% cap
+    bad.trend_cagr = Some(-5.0);          // lifetime: whole-life trend <= 0
+    let fails = gate_failures(&bad, &gt).unwrap();
+    let has = |t: &str| fails.iter().any(|(g, _, _)| *g == t);
+    assert!(has("1M-knife"), "1M -30% vs a -20% floor must fire the knife reason");
+    assert!(has("5Y+"), "5Y -5% must fire the 5Y+ reason");
+    assert!(has("liquidity") && has("stretch") && has("lifetime") && has("maxdd"));
+    // the lifetime SECOND leg: window trend positive but listing-to-date CAGR negative (Greece pattern)
+    let mut greece_gf = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    greece_gf.trend_cagr = Some(5.0);     // window trend fine
+    greece_gf.life_cagr = Some(-8.0);     // ...but since-listing negative
+    assert!(gate_failures(&greece_gf, &gt).unwrap().iter().any(|(g, why, _)| *g == "lifetime" && why.contains("since listing")));
+    // crypto-only VOL gate: a coin swinging wider than the base fires "volatile"
+    let vt = BuyHeuristic { growth_max_vol_crypto: 3.0, ..BuyHeuristic::default() };
+    let mut wildc = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    wildc.ticker = "OKB-USD".into();
+    wildc.volatility_pct = Some(5.0);
+    assert!(gate_failures(&wildc, &vt).unwrap().iter().any(|(g, _, _)| *g == "volatile"));
+
+    // turnover_cell compaction across every magnitude arm (B/M/K) + the unknown fallback
+    assert_eq!(turnover_cell(Some(1.2e9)), "€1.2B");
+    assert_eq!(turnover_cell(Some(340e6)), "€340M");
+    assert_eq!(turnover_cell(Some(5e3)), "€5K");
+    assert_eq!(turnover_cell(None), "n/a");
     }
 
     /// (round 59) SCORING REGRESSION PIN. Scoring is CLOSED at the round-14 optimum — every score,
