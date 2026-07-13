@@ -103,15 +103,25 @@ jobs:
           shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
       - run: cargo test --locked --lib   # in-module #[cfg(test)] unit tests
 
-  # Coverage visibility, REPORT-ONLY (continue-on-error): a % threshold on a moving codebase is
-  # friction that gets a gate deleted, but the numbers steer where the next tests are worth writing.
-  # Summary table lands in the run's step summary; the browsable per-line HTML report is an artifact.
+  # Coverage gate. The numbers steer where the next tests are worth writing AND enforce a floor:
+  # COVERAGE_MIN is a no-regression ratchet — line coverage below it fails the job (BLOCKING; the
+  # continue-on-error escape hatch is gone). Absolute floor, not a per-PR diff: `--fail-under-lines`
+  # trips when total line % drops under COVERAGE_MIN, so a deleted test or an untested new path reds.
+  # Ratchet it UP as coverage climbs (never down) — read the "TOTAL" line % off this job's step
+  # summary and bump COVERAGE_MIN just under it. A true "dropped vs the base commit" per-PR diff needs
+  # a stored baseline; Codecov's project status does exactly that (costs a CODECOV_TOKEN + upload).
+  # Summary table + HTML land even on a red (if: always()) so you can see WHICH lines fell.
   # Own cache key: llvm-cov builds with -C instrument-coverage, so its target artifacts must not
   # poison the shared plain-build cache the other jobs restore.
+  # Scope: lib unit tests + the tests/ integration suite. cli.rs drives the COMPILED binary via
+  # CARGO_BIN_EXE_folioman, and cargo-llvm-cov instruments that binary too — so main.rs dispatch,
+  # arg parsing and the `trade` confirm guards are counted (they read as 0% under a bare --lib).
+  # network.rs cases are #[ignore]d and no --ignored is passed here, so this stays fully offline.
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
+    env:
+      COVERAGE_MIN: "0"   # UNARMED bootstrap: 0 never fails. Read run 1's "TOTAL" line % off this job's step summary, set COVERAGE_MIN just under it to ARM the gate, then ratchet UP as tests grow. Never lower it. (0 avoids a false-red on the very commit that enables the gate — the current % isn't known until CI measures it.)
     steps:
       - uses: actions/checkout@v7
       - run: rustup component add llvm-tools-preview
@@ -119,15 +129,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-coverage   # instrumented build — kept apart from folioman-ci
-      - name: unit-test coverage (report-only)
+      - name: coverage — lib + integration + binary dispatch (floor-gated)
         run: |
-          cargo llvm-cov --locked --lib --html
+          # collect + HTML + the floor gate in one shot; --fail-under-lines is the LAST check, so the
+          # HTML/profdata are already written when it trips. Capture its exit (|| guards `set -e`) so the
+          # summary still lands on a red — that's exactly when you need to see which lines fell.
+          cargo llvm-cov --locked --html --fail-under-lines "${COVERAGE_MIN}" || gate=$?
           {
             echo '```text'
             cargo llvm-cov report --summary-only
             echo '```'
+            echo "Floor (COVERAGE_MIN): ${COVERAGE_MIN}% lines — job fails if TOTAL drops below (0 = unarmed)."
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "${gate:-0}"
       - uses: actions/upload-artifact@v7
+        if: always()   # keep the browsable HTML even when the floor gate reds — that's when you need it
         with:
           name: coverage-html
           path: target/llvm-cov/html
