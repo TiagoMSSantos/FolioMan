@@ -1087,6 +1087,13 @@ pub struct FundRow {
     pub fcf_margin: Option<f64>,     // % = (op cash flow − capex) / revenue; negative = burning cash
     pub interest_cover: Option<f64>, // × = operating income / interest expense; low = one bad year from distress. None when no interest expense filed (debt-free reads NEUTRAL, not great)
     pub net_cash_rev: Option<f64>,   // % = (cash − debt) / revenue; negative = levered. Revenue-scaled (not EBITDA) so loss-makers stay defined instead of None-ing out of the gate
+    // (EV/EBITDA probe) raw as-of LEVELS for the enterprise-value valuation factor. SEC-computed, None on
+    // the FMP free tier. ebitda = operating income + D&A (BOTH required — a partial is garbage, so None if
+    // either is missing). net_debt = total debt − cash (cash the anchor, missing debt reads 0 like
+    // net_cash_rev). Combined with the as-of PRICE into ebitda_yield in the backtest loop (price-dependent,
+    // exactly like earnings_yield — so no live currency skew).
+    pub ebitda: Option<f64>,
+    pub net_debt: Option<f64>,
 }
 
 /// As-of (point-in-time) join: the latest statement that was already FILED on or before `cutoff`.
@@ -1113,6 +1120,15 @@ pub struct FundFactors {
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
     pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
     pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). PROBE-ONLY: set in the backtest loop from the native as-of close; left None by the live path (currency skew — see `earnings_yield` fn)
+    // (EV/EBITDA probe) capital-structure-neutral value cousin of earnings_yield. The three as-of LEVELS
+    // are price-free (set here from the latest filed row); ebitda_yield itself is EBITDA ÷ enterprise value
+    // (EV = shares·price + net_debt), so it needs the as-of price -> filled in the backtest loop like
+    // earnings_yield, left None by the live path. Distinct from earnings_yield because EV folds in leverage
+    // (the one axis EPS/price misses).
+    pub ebitda_ttm: Option<f64>,     // (EV/EBITDA) as-of EBITDA level = operating income + D&A
+    pub shares_ttm: Option<f64>,     // (EV/EBITDA) as-of diluted share count — the market-cap leg of EV
+    pub net_debt: Option<f64>,       // (EV/EBITDA) as-of net debt (total debt − cash) — the leverage leg of EV
+    pub ebitda_yield: Option<f64>,   // (EV/EBITDA) EBITDA ÷ EV, % (high = cheap). PROBE-ONLY, None live (price skew, same as earnings_yield)
     pub buyback_yield: Option<f64>, // as-of net share-count change over the last year, sign-flipped (+ = shrinking share count = buying back). Fully as-of from the FundRows (no price needed), unlike earnings_yield — so it populates in both the backtest AND the live enrich
     // (round 107) as-of SURVIVAL levels straight off the latest filed row (like op_margin/roe) —
     // price-free, so they populate in both the backtest and the live enrich. High = safer.
@@ -1222,6 +1238,11 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         insider_net_buys_90d: None, // (Item 4) SEC-sourced, set in the backtest loop, not from FMP rows
         eps_ttm: now.and_then(|r| r.eps), // (Item 19) as-of EPS level; earnings_yield needs price, set by caller
         earnings_yield: None,             // (Item 19) needs the as-of price -> filled in the backtest loop, not here
+        // (EV/EBITDA) as-of levels through the same fund_as_of guard; ebitda_yield needs price -> caller fills
+        ebitda_ttm: now.and_then(|r| r.ebitda),
+        shares_ttm: now.and_then(|r| r.shares),
+        net_debt: now.and_then(|r| r.net_debt),
+        ebitda_yield: None,
         buyback_yield,
         // (round 107) survival levels: same as-of join as the margins, no derivation needed
         fcf_margin: now.and_then(|r| r.fcf_margin),
@@ -1241,6 +1262,24 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
 pub fn earnings_yield(eps: Option<f64>, price: f64) -> Option<f64> {
     match eps {
         Some(e) if price > 0.0 => Some(e / price * 100.0),
+        _ => None,
+    }
+}
+
+/// (EV/EBITDA probe) As-of EBITDA yield = EBITDA ÷ enterprise value, in % — the capital-structure-neutral
+/// cousin of `earnings_yield`. EV = market cap + net debt = shares·price + net_debt. PROBE-ONLY, same
+/// currency discipline as earnings_yield: computed in the backtest from the native as-of close + native
+/// SEC levels (clean ratio), left None by the live path (EUR price vs USD levels would skew). None unless
+/// EBITDA is POSITIVE (EV/EBITDA is meaningless for a loss-maker — a negative multiple isn't "cheap", so
+/// it None-outs rather than fabricating a signal), shares are positive, and EV ends up positive.
+/// ponytail: net_debt None (rare — cash is the SEC anchor) degrades EV to market-cap only; the leverage
+/// leg simply drops for that name. Tighten to require net_debt only if the probe shows an edge worth it.
+pub fn ev_ebitda_yield(ebitda: Option<f64>, shares: Option<f64>, net_debt: Option<f64>, price: f64) -> Option<f64> {
+    match (ebitda, shares) {
+        (Some(e), Some(sh)) if e > 0.0 && sh > 0.0 && price > 0.0 => {
+            let ev = sh * price + net_debt.unwrap_or(0.0);
+            (ev > 0.0).then_some(e / ev * 100.0)
+        }
         _ => None,
     }
 }
@@ -1408,6 +1447,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "roe" => f.roe,                                   // quality of capital (SEC feed; FMP free tier = None)
         "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
         "earnings_yield" => f.earnings_yield,             // (Item 19) as-of valuation; PROBE-ONLY (None live)
+        "ebitda_yield" => f.ebitda_yield,                 // (EV/EBITDA) capital-structure-neutral valuation; PROBE-ONLY (None live)
         "buyback_yield" => f.buyback_yield,               // as-of 1y share-count shrink (+ = buying back); backtest-testable candidate
         "fcf_margin" => f.fcf_margin,                     // (round 107) survival: cash generation
         "interest_cover" => f.interest_cover,             // (round 107) survival: debt-service headroom
@@ -1637,6 +1677,10 @@ mod tests {
             insider_net_buys_90d: Some(7.0),
             eps_ttm: Some(8.0),
             earnings_yield: Some(9.0),
+            ebitda_ttm: Some(50.0),
+            shares_ttm: Some(2.0),
+            net_debt: Some(-10.0),
+            ebitda_yield: Some(16.0),
             buyback_yield: Some(10.0),
             fcf_margin: Some(12.0),
             interest_cover: Some(13.0),
@@ -1649,6 +1693,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "rev_cagr"), Some(1.0));
         assert_eq!(select_fund_factor(&f, "insider_net_buys_90d"), Some(7.0)); // (Item 4)
         assert_eq!(select_fund_factor(&f, "earnings_yield"), Some(9.0)); // (Item 19)
+        assert_eq!(select_fund_factor(&f, "ebitda_yield"), Some(16.0)); // (EV/EBITDA)
         assert_eq!(select_fund_factor(&f, "buyback_yield"), Some(10.0));
         assert_eq!(select_fund_factor(&f, "roe"), Some(11.0)); // quality of capital; NOT in composite (a level, and the blend already failed the lane)
         assert_eq!(select_fund_factor(&f, "fcf_margin"), Some(12.0)); // (round 107) survival levels; NOT in composite either
@@ -1662,6 +1707,14 @@ mod tests {
         assert_eq!(earnings_yield(Some(-2.0), 50.0), Some(-4.0)); // loss-maker -> negative yield (floored later in score)
         assert_eq!(earnings_yield(Some(5.0), 0.0), None); // non-positive price -> None, no div-by-zero
         assert_eq!(earnings_yield(None, 100.0), None); // no EPS -> None
+        // (EV/EBITDA) ebitda_yield = EBITDA / (shares·price + net_debt), %, high = cheap
+        assert_eq!(ev_ebitda_yield(Some(50.0), Some(2.0), Some(50.0), 25.0), Some(50.0)); // EV = 2*25 + 50 = 100 -> 50/100 = 50%
+        assert_eq!(ev_ebitda_yield(Some(20.0), Some(2.0), Some(-10.0), 15.0), Some(100.0)); // net CASH: EV = 30 − 10 = 20 -> 20/20 = 100%
+        assert_eq!(ev_ebitda_yield(Some(30.0), Some(3.0), None, 10.0), Some(100.0)); // no net_debt -> EV = mkt cap only (30) -> 30/30
+        assert_eq!(ev_ebitda_yield(Some(-5.0), Some(2.0), Some(0.0), 10.0), None); // negative EBITDA -> None (multiple meaningless)
+        assert_eq!(ev_ebitda_yield(Some(50.0), Some(2.0), Some(0.0), 0.0), None); // non-positive price -> None
+        assert_eq!(ev_ebitda_yield(Some(50.0), None, Some(0.0), 10.0), None); // no shares -> no market cap -> None
+        assert_eq!(ev_ebitda_yield(Some(10.0), Some(1.0), Some(-100.0), 10.0), None); // net cash swamps mkt cap -> EV<=0 -> None
     }
 
     /// (Item 3) `composite_factor` = mean of the factors that are `Some`; <2 present -> None (a 1-factor

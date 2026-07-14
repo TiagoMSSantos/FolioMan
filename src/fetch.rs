@@ -1111,8 +1111,8 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
 // post-date the as-of `filed`. US filers only (a non-US ticker has no CIK -> None).
 
 // (filed, period_end, revenue, gross_margin, op_margin, net_margin, eps, roe, shares, fcf_margin,
-// interest_cover, net_cash_rev). An arity change fails deserialization -> treated as a miss ->
-// refetched + rewritten (SEC is uncapped, so a one-time rebuild is free).
+// interest_cover, net_cash_rev, ebitda, net_debt). An arity change fails deserialization -> treated as a
+// miss -> refetched + rewritten (SEC is uncapped, so a one-time rebuild is free).
 type SecCacheRow = (
     String,
     String,
@@ -1126,6 +1126,8 @@ type SecCacheRow = (
     Option<f64>,
     Option<f64>,
     Option<f64>,
+    Option<f64>, // ebitda
+    Option<f64>, // net_debt
 );
 
 /// Parse a SEC `companyfacts` payload into ANNUAL `FundRow`s (one per fiscal year). Pure -> unit-tested.
@@ -1220,6 +1222,13 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     );
     let gp = collect(&["GrossProfit"], "USD");
     let op = collect(&["OperatingIncomeLoss"], "USD");
+    // (EV/EBITDA probe) D&A from the cash-flow statement — the add-back that turns operating income into
+    // EBITDA. Duration concept (USD). The accretion variant is the combined tag some filers use; the plain
+    // one is the common case. Missing -> EBITDA None-outs (a partial EBITDA is garbage).
+    let dna = collect(
+        &["DepreciationDepreciationAndAmortization", "DepreciationAndAmortization", "DepreciationAmortizationAndAccretionNet"],
+        "USD",
+    );
     // NetIncomeLoss first (parent-company net income, the standard tag); some filers stopped filing it
     // years ago (CF in 2011, MNST) and carry only the available-to-common / ProfitLoss variants — their
     // net margin AND ROE were silently None without the fallbacks.
@@ -1273,6 +1282,12 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 net_cash_rev: at(&cash).and_then(|c| {
                     margin(Some(c - at(&debt_nc).unwrap_or(0.0) - at(&debt_cur).unwrap_or(0.0)))
                 }),
+                // (EV/EBITDA probe) raw as-of levels. EBITDA needs BOTH op income and D&A (a partial is
+                // garbage). net_debt = total debt − cash, cash the anchor (None -> None), missing debt reads
+                // 0 (same optimistic-safe direction as net_cash_rev). Sign is OPPOSITE net_cash_rev's (debt −
+                // cash, so + = levered) because EV ADDS net debt.
+                ebitda: at(&op).zip(at(&dna)).map(|(o, d)| o + d),
+                net_debt: at(&cash).map(|c| at(&debt_nc).unwrap_or(0.0) + at(&debt_cur).unwrap_or(0.0) - c),
                 ..Default::default()
             }
         })
@@ -1284,15 +1299,15 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
 /// forever. Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
 pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
-    // "_facts4": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 adds
-    // the round-107 survival levels) — old rows were parsed WITHOUT them and would pin the gaps forever.
-    // Old *_facts3.json files are orphaned (few KB each); refetch amortizes over runs under
-    // SEC_FETCH_BUDGET.
-    let cache = sec_cache_path(&format!("{ticker}_facts4"));
+    // "_facts5": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
+    // the round-107 survival levels; facts5 adds the EV/EBITDA levels — raw ebitda + net_debt) — old rows
+    // were parsed WITHOUT them and would pin the gaps forever. Old *_facts{3,4}.json files are orphaned
+    // (few KB each); refetch amortizes over runs under SEC_FETCH_BUDGET.
+    let cache = sec_cache_path(&format!("{ticker}_facts5"));
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
-            .filter_map(|(f, e, rev, gm, op, net, eps, roe, shares, fcfm, icov, ncash)| {
+            .filter_map(|(f, e, rev, gm, op, net, eps, roe, shares, fcfm, icov, ncash, ebitda, ndebt)| {
                 Some(core::FundRow {
                     filed: NaiveDate::parse_from_str(&f, "%Y-%m-%d").ok()?,
                     period_end: NaiveDate::parse_from_str(&e, "%Y-%m-%d").ok()?,
@@ -1306,6 +1321,8 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
                     fcf_margin: fcfm,
                     interest_cover: icov,
                     net_cash_rev: ncash,
+                    ebitda,
+                    net_debt: ndebt,
                     ..Default::default()
                 })
             })
@@ -1324,7 +1341,7 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
             .map(|r| {
                 (r.filed.format("%Y-%m-%d").to_string(), r.period_end.format("%Y-%m-%d").to_string(),
                  r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps, r.roe, r.shares,
-                 r.fcf_margin, r.interest_cover, r.net_cash_rev)
+                 r.fcf_margin, r.interest_cover, r.net_cash_rev, r.ebitda, r.net_debt)
             })
             .collect();
         if let Some(dir) = cache.parent() {
@@ -2796,6 +2813,10 @@ mod tests {
             "OperatingIncomeLoss": {"units": {"USD": [
                 {"start": "2020-10-01", "end": "2021-09-30", "val": 200.0, "form": "10-K", "filed": "2021-11-01"}
             ]}},
+            // (EV/EBITDA) D&A add-back, FY2021 only -> EBITDA = op 200 + 80 = 280; FY2022 stays None
+            "DepreciationDepreciationAndAmortization": {"units": {"USD": [
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 80.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
             "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
                 {"start": "2020-10-01", "end": "2021-09-30", "val": 300.0, "form": "10-K", "filed": "2021-11-01"}
             ]}},
@@ -2829,6 +2850,9 @@ mod tests {
         assert_eq!(rows[0].fcf_margin, Some(20.0));
         assert_eq!(rows[0].interest_cover, Some(4.0));
         assert_eq!(rows[0].net_cash_rev, Some(10.0));
+        // (EV/EBITDA) FY2021: EBITDA = op 200 + D&A 80 = 280; net_debt = debt (300+100) − cash 500 = −100 (net cash)
+        assert_eq!(rows[0].ebitda, Some(280.0));
+        assert_eq!(rows[0].net_debt, Some(-100.0));
         // FY2022: no EPS / NI / equity / survival line -> None (neutral, never a fake 0)
         assert_eq!(rows[1].revenue, Some(1200.0));
         assert_eq!(rows[1].gross_margin, Some(50.0)); // 600/1200
@@ -2837,6 +2861,9 @@ mod tests {
         assert_eq!(rows[1].fcf_margin, None);
         assert_eq!(rows[1].interest_cover, None);
         assert_eq!(rows[1].net_cash_rev, None);
+        // (EV/EBITDA) FY2022: no op income / D&A / cash line -> both None (a partial EBITDA is garbage)
+        assert_eq!(rows[1].ebitda, None);
+        assert_eq!(rows[1].net_debt, None);
         assert!(parse_sec_facts(&json!({})).is_empty()); // no facts -> empty, never panics
         assert!(parse_sec_facts(&json!({"facts": {}})).is_empty()); // facts but no us-gaap -> empty
     }

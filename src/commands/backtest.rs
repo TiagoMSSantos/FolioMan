@@ -232,6 +232,9 @@ pub async fn run(args: Vec<String>) {
                             // so the factor is PROBE-ONLY until a native live price exists and it validates.
                             if let Some(f) = fund.as_mut() {
                                 f.earnings_yield = core::earnings_yield(f.eps_ttm, closes[i]);
+                                // (EV/EBITDA) same native-close discipline: EV = shares·close + net_debt,
+                                // all as-of. PROBE-ONLY like earnings_yield (live path leaves it None).
+                                f.ebitda_yield = core::ev_ebitda_yield(f.ebitda_ttm, f.shares_ttm, f.net_debt, closes[i]);
                             }
                             // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                             // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
@@ -900,6 +903,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("rev_accel", |f| f.rev_accel),
         ("eps_growth", |f| f.eps_growth),          // bottom-line compounding
         ("earnings_yield", |f| f.earnings_yield),  // VALUE (anti-overpay — the near-high gate lacks one)
+        ("ebitda_yield", |f| f.ebitda_yield),      // VALUE, capital-structure-neutral (EV folds in leverage — the axis EPS/price misses)
         ("buyback_yield", |f| f.buyback_yield),    // capital return
         ("roe", |f| f.roe),                        // quality of capital (SEC-computed NetIncome ÷ StockholdersEquity)
         ("insider_net_buys_90d", |f| f.insider_net_buys_90d), // (Item 4) insider conviction — rows appear only under `backtest … insider`
@@ -978,6 +982,22 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         println!("\n── VALUE-GATE probe: drop the most-expensive P% (low earnings_yield) gated STOCKS, rank rest by growth_score, top-{n} held {years}y ──");
         for p in [0.0_f64, 10.0, 25.0, 40.0] {
             if let Some((b, _, e, w, wo, el, la)) = drop_bottom_book(samples, bd, bc, years, tuning, n, p, |f| f.earnings_yield) {
+                let tag = if p == 0.0 { "  [gate off]" } else { "" };
+                println!("  reject-bottom {p:>4.0}%  book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{tag}");
+            }
+        }
+        println!("  (a reject-% that lifts book with OOS both + and worst no deeper than off -> ship as a real growth gate.)");
+    }
+
+    // (EV/EBITDA probe) the SAME brake on the capital-structure-neutral multiple — reject the most-expensive
+    // (lowest ebitda_yield) gated STOCKS, then rank survivors by growth_score. Distinct from the earnings_yield
+    // gate above because EV folds in leverage (a debt-heavy name can look cheap on P/E yet dear on EV/EBITDA).
+    // Ship on the same golden bar: STRESS book/worst lifted, OOS both +. Prior: dead like the other 14 factors.
+    let has_eby = samples.iter().any(|s| s.fund.as_ref().and_then(|f| f.ebitda_yield).is_some());
+    if has_eby {
+        println!("\n── EV-VALUE-GATE probe: drop the most-expensive P% (low ebitda_yield) gated STOCKS, rank rest by growth_score, top-{n} held {years}y ──");
+        for p in [0.0_f64, 10.0, 25.0, 40.0] {
+            if let Some((b, _, e, w, wo, el, la)) = drop_bottom_book(samples, bd, bc, years, tuning, n, p, |f| f.ebitda_yield) {
                 let tag = if p == 0.0 { "  [gate off]" } else { "" };
                 println!("  reject-bottom {p:>4.0}%  book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{tag}");
             }
