@@ -2686,6 +2686,16 @@ mod tests {
     over_cap.fund_factor = Some(100.0); // above the default growth_fund_cap 30 -> clamped
     assert_eq!(score_parts(&over_cap, &weighted).unwrap().fund, 0.5 * 30.0); // pins the .clamp(0,cap) upper bound
 
+    // (D) dividend fold — magnitude + cap on the LIVE term (default weight 1.5, cap 6.0); isolate via ScoreParts.dividend.
+    // dividend_yield_1y divides -> not bit-exact -> epsilon compare (matches the float-score convention above).
+    let mut div_grow = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    div_grow.price_eur = Some(100.0);
+    div_grow.div_eur = vec![Some(5.0)]; // 5% trailing-1Y yield, under the 6% cap
+    assert!((score_parts(&div_grow, &tuning).unwrap().dividend - 1.5 * 5.0).abs() < 1e-9); // weight 1.5 × yield 5 = 7.5
+    let mut div_cap = div_grow.clone();
+    div_cap.div_eur = vec![Some(20.0)]; // 20% (bad-feed / special-div artifact) -> clamped to the 6% cap
+    assert!((score_parts(&div_cap, &tuning).unwrap().dividend - 1.5 * 6.0).abs() < 1e-9); // .min(dividend_cap) upper bound = 9.0
+
     // (M) 12-1 momentum — NEUTRALITY: two names identical but for last-month return (different 12-1)
     // must score the SAME at the default growth_mom121_weight 0 — the price-validated lane is unchanged
     // until the weight is tuned. Both 1M values clear the knife gate, so only the 12-1 term differs.
