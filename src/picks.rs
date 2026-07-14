@@ -2680,6 +2680,11 @@ mod tests {
     let mut neg_fund = none_fund.clone();
     neg_fund.fund_factor = Some(-40.0); // decelerating -> floored at 0, not a penalty
     assert_eq!(growth_score(&neg_fund, &weighted).unwrap(), growth_score(&none_fund, &weighted).unwrap());
+    // exact magnitude + cap clamp — isolate the (G) term (ScoreParts.fund = weight·clamp(factor,0,cap)):
+    assert_eq!(score_parts(&with_fund, &weighted).unwrap().fund, 0.5 * 15.0); // 15pt factor × 0.5, under the 30 cap
+    let mut over_cap = none_fund.clone();
+    over_cap.fund_factor = Some(100.0); // above the default growth_fund_cap 30 -> clamped
+    assert_eq!(score_parts(&over_cap, &weighted).unwrap().fund, 0.5 * 30.0); // pins the .clamp(0,cap) upper bound
 
     // (M) 12-1 momentum — NEUTRALITY: two names identical but for last-month return (different 12-1)
     // must score the SAME at the default growth_mom121_weight 0 — the price-validated lane is unchanged
