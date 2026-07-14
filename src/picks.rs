@@ -1684,7 +1684,10 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     let growth = "20yr+ growth ranking: at/near its own ~10y high (OFF-HI ≈ 0) with a strong proven \
                   long-term CAGR and an accelerating recent year, braked by how far it's run above its \
                   200wk trend — quality pricey *because* it keeps winning. Crypto ranked vs Bitcoin (the \
-                  market base). NOT advice.";
+                  market base). For a literal 20-year buy-and-hold the anchor is a broad, cheap, accumulating \
+                  index core (the `H`-marked hold-suitable names) — these ranked tilts are higher-variance, \
+                  regime-dependent sector/thematic bets whose recent leadership won't necessarily repeat. \
+                  NOT advice.";
     // rank with NO trim (0.0): print_lane trims equities by growth_min_score but keeps the crypto lane
     // full (all growers up to Bitcoin). Gates inside growth_score still exclude non-growers.
     let picks = ranked(quotes, tuning, growth_scorer, 0.0, &pinned_set);
