@@ -1660,7 +1660,7 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>, owned: &O
 /// the crypto rows when the market is euphoric.
 /// Returns (score-math walkthrough for the caller to print last, this run's ranked top-`n`
 /// tickers — round 68: the screen diffs the latter against its previous run's state).
-pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], owned: &Owned, explain: Option<&str>) -> (Option<String>, Vec<String>) {
+pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], owned: &Owned, explain: Option<&str>, show_hold_core: bool) -> (Option<String>, Vec<String>) {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
     let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
@@ -1708,8 +1708,11 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
     print_lane(picks, n, w, "growth candidates", growth, sectors, sector_of, tuning, &pinned_set, owned);
     // buy-and-hold CORE shortlist: momentum floors broad index funds at 0.0, so surface the
-    // one-fund-forever holds from the full universe here (display-only). Only on the wide `screen`.
-    if quotes.len() > 200 {
+    // one-fund-forever holds re-sorted by hold-suitability (breadth → domicile → TER → AUM) — the
+    // right order for a 20yr hold, which the momentum table inverts. Caller-gated (display-only):
+    // every `screen` lane that carries cores (the wide run OR `screen etfs`), never `check`. Empty
+    // cores early-return inside, so stock/crypto-only screen filters stay silent.
+    if show_hold_core {
         print_hold_core(quotes, 9, &pinned_set, owned); // up to 3 per breadth tier (all-world / world / S&P 500)
     }
     // gate review: pinned names are shown in their table even when a gate rejects them (score 0.0).
@@ -2922,13 +2925,13 @@ mod tests {
 
         // euphoric NUPL (>euphoria band) -> nupl_factor damps the crypto rows (the >1 branch).
         let (_text, tickers) =
-            render(&quotes, 5, &tuning, &w, Some(0.9), &sectors, &sector_of, &pinned, &owned, None);
+            render(&quotes, 5, &tuning, &w, Some(0.9), &sectors, &sector_of, &pinned, &owned, None, true);
         assert!(tickers.iter().any(|t| t == "AAPL"), "pinned gated name must still surface in the ranking");
         assert!(tickers.len() <= 5);
 
         // an --explain for a ticker that never ranked -> the "not in the growth ranking" message branch.
         let (miss, _) =
-            render(&quotes, 5, &tuning, &w, None, &sectors, &sector_of, &pinned, &owned, Some("ZZZZ"));
+            render(&quotes, 5, &tuning, &w, None, &sectors, &sector_of, &pinned, &owned, Some("ZZZZ"), false);
         assert!(miss.is_some_and(|m| m.contains("not in the growth ranking")));
 
         let _ = std::fs::remove_file(".folioman_turnover_watch.txt"); // gitignored cwd cache render wrote

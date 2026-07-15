@@ -437,7 +437,9 @@ pub async fn run(args: Vec<String>) {
     // by fund name (stocks were already sector-filtered before fetch)
     // (round 52) render returns the score-math walkthrough; printed AFTER the actionable footers
     // (gate/exit review, fact drift, near-miss) so alerts aren't buried under arithmetic.
-    let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, &owned, explain.as_deref());
+    // show_hold_core = true: this is a hunt (wide OR `screen etfs`), so re-surface the buy-and-hold
+    // cores the momentum ranking buries at 0.0. Empty cores early-return, so stock/crypto lanes stay quiet.
+    let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, &owned, explain.as_deref(), true);
 
     // (B) fundamentals-trajectory footer for the enriched stock rows: report's annual rollup
     // compacted to one line per name, so "is the growth real or one good year?" doesn't take a
