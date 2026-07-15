@@ -442,7 +442,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // Whole-life age + endpoint CAGR from the SAME merged series (display-only `yrs`/`cagr` columns;
     // ranking/gates stay on the fixed-horizon ladder the backtest validated). Guard: >=6mo of history
     // and a positive first close, else an IPO week or a bad first bar prints a silly annualized number.
-    let age_years = Some((*long_dates.last().unwrap() - long_dates[0]).num_days() as f64 / 365.25);
+    let age_years = long_dates.first().zip(long_dates.last())
+        .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25);
     let life_cagr = match (long_closes.first(), long_closes.last(), age_years) {
         (Some(&first), Some(&last), Some(age)) if first > 0.0 && age >= 0.5 => {
             Some(((last / first).powf(1.0 / age) - 1.0) * 100.0)
@@ -483,8 +484,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     let (arrow, dur, _) = trend_streak(&chart.dates, &chart.closes);
     let (at_ath, at_atl) = extreme_flags(&chart.closes, 0.001);
 
-    let last_date = *chart.dates.last().unwrap();
-    let month_ago = asof(&chart.dates, &chart.closes, last_date - chrono::Duration::days(30));
+    let last_date = chart.dates.last().copied();
+    let month_ago = last_date.and_then(|ld| asof(&chart.dates, &chart.closes, ld - chrono::Duration::days(30)));
     let mom_pct = match month_ago {
         Some(m) if m != 0.0 => Some((cur_close - m) / m * 100.0),
         _ => None,
@@ -508,7 +509,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         div_eur: core::dividend_sums(&long_divs, &long_dates, rate),
         price_eur: rate.map(|r| cur_close * r),
         close_native: Some(cur_close), // (Item 19) native-currency close for a currency-consistent earnings_yield
-        last_close_date: Some(last_date), // (D) newest bar's date -> screen flags/drops stale (halted/dead) listings
+        last_close_date: last_date, // (D) newest bar's date -> screen flags/drops stale (halted/dead) listings
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),
         // avg daily turnover in native currency -> EUR (×rate). Crypto: Yahoo "volume" is already
