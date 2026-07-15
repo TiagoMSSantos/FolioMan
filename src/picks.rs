@@ -1660,13 +1660,27 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>, owned: &O
 /// the crypto rows when the market is euphoric.
 /// Returns (score-math walkthrough for the caller to print last, this run's ranked top-`n`
 /// tickers — round 68: the screen diffs the latter against its previous run's state).
-pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nupl: Option<f64>, sectors: &[String], sector_of: &HashMap<String, String>, pinned: &[String], owned: &Owned, explain: Option<&str>, show_hold_core: bool) -> (Option<String>, Vec<String>) {
+/// The per-run display context for `render`: the peripheral inputs (market sentiment, sector filter,
+/// pinned/owned overlays, --explain target, core-shortlist toggle) bundled so the hot path stays
+/// `render(quotes, n, tuning, w, ctx)`. Named fields also kill the call-site bool blindness the old
+/// trailing `show_hold_core` flag had — `RenderCtx { show_hold_core: true, .. }` reads itself.
+pub struct RenderCtx<'a> {
+    pub nupl: Option<f64>,               // Bitcoin NUPL sentiment gauge; damps crypto rows (None on check/fetch-fail)
+    pub sectors: &'a [String],           // ETF sector filter (stocks are pre-filtered before fetch)
+    pub sector_of: &'a HashMap<String, String>,
+    pub pinned: &'a [String],            // watchlist tickers shown even when gated
+    pub owned: &'a Owned,                // broker-held positions -> `o` overlay
+    pub explain: Option<&'a str>,        // --explain TICKER (None = explain the #1 row)
+    pub show_hold_core: bool,            // print the buy-and-hold CORE shortlist (screen hunts, not check)
+}
+
+pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx: RenderCtx) -> (Option<String>, Vec<String>) {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
-    let pinned_set: HashSet<&str> = pinned.iter().map(String::as_str).collect();
+    let pinned_set: HashSet<&str> = ctx.pinned.iter().map(String::as_str).collect();
     // (4) market-sentiment factor, applied to crypto rows only (it's a whole-crypto-market gauge):
     // <1 in euphoria, >1 in capitulation, 1.0 in the neutral band / unknown.
-    let cfactor = nupl_factor(nupl, tuning);
+    let cfactor = nupl_factor(ctx.nupl, tuning);
     // Bitcoin = the crypto market's base: tilt each alt by its 1Y return RELATIVE to BTC, so the looser
     // crypto gate surfaces more coins without flooding the table with names that merely lag the base.
     let btc_1y = quotes.iter().find(|quote| quote.ticker.starts_with("BTC-")).and_then(|quote| perf_pct(quote, "1Y"));
@@ -1701,19 +1715,19 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     // worked example: derive a row's SCORE term-by-term so a reader can hand-verify the ranking. Default
     // is the #1 (highest-scoring) row; `--explain TICKER` targets that ticker instead. Captured before
     // print_lane consumes `picks`. crypto_adj is folded into the displayed score.
-    let target = match explain {
+    let target = match ctx.explain {
         Some(t) => picks.iter().find(|(q, _)| q.ticker.eq_ignore_ascii_case(t)),
         None => picks.first(),
     };
     let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
-    print_lane(picks, n, w, "growth candidates", growth, sectors, sector_of, tuning, &pinned_set, owned);
+    print_lane(picks, n, w, "growth candidates", growth, ctx.sectors, ctx.sector_of, tuning, &pinned_set, ctx.owned);
     // buy-and-hold CORE shortlist: momentum floors broad index funds at 0.0, so surface the
     // one-fund-forever holds re-sorted by hold-suitability (breadth → domicile → TER → AUM) — the
     // right order for a 20yr hold, which the momentum table inverts. Caller-gated (display-only):
     // every `screen` lane that carries cores (the wide run OR `screen etfs`), never `check`. Empty
     // cores early-return inside, so stock/crypto-only screen filters stay silent.
-    if show_hold_core {
-        print_hold_core(quotes, 9, &pinned_set, owned); // up to 3 per breadth tier (all-world / world / S&P 500)
+    if ctx.show_hold_core {
+        print_hold_core(quotes, 9, &pinned_set, ctx.owned); // up to 3 per breadth tier (all-world / world / S&P 500)
     }
     // gate review: pinned names are shown in their table even when a gate rejects them (score 0.0).
     // Say WHICH gate, so a 0.0 next to strong metrics isn't mistaken for a bug (VVSM stretch, VUAA/
@@ -1735,7 +1749,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, nup
     // returned, not printed: the caller places the score-math walkthrough AFTER the actionable
     // footers (gate review / exit review / fact drift / near-miss) so the alerts aren't buried
     // under 20 lines of arithmetic.
-    let text = match (explain_text, explain) {
+    let text = match (explain_text, ctx.explain) {
         (Some(text), _) => Some(text),
         // an explicit --explain TICKER that didn't land a row: say why instead of silently printing nothing
         (None, Some(t)) if !t.is_empty() => Some(format!(
@@ -2924,14 +2938,18 @@ mod tests {
         let owned = Owned { stocks: ["aapl".to_string()].into(), ..Default::default() };
 
         // euphoric NUPL (>euphoria band) -> nupl_factor damps the crypto rows (the >1 branch).
-        let (_text, tickers) =
-            render(&quotes, 5, &tuning, &w, Some(0.9), &sectors, &sector_of, &pinned, &owned, None, true);
+        let (_text, tickers) = render(&quotes, 5, &tuning, &w, RenderCtx {
+            nupl: Some(0.9), sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
+            owned: &owned, explain: None, show_hold_core: true,
+        });
         assert!(tickers.iter().any(|t| t == "AAPL"), "pinned gated name must still surface in the ranking");
         assert!(tickers.len() <= 5);
 
         // an --explain for a ticker that never ranked -> the "not in the growth ranking" message branch.
-        let (miss, _) =
-            render(&quotes, 5, &tuning, &w, None, &sectors, &sector_of, &pinned, &owned, Some("ZZZZ"), false);
+        let (miss, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
+            nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
+            owned: &owned, explain: Some("ZZZZ"), show_hold_core: false,
+        });
         assert!(miss.is_some_and(|m| m.contains("not in the growth ranking")));
 
         let _ = std::fs::remove_file(".folioman_turnover_watch.txt"); // gitignored cwd cache render wrote

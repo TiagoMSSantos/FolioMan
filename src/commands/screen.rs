@@ -6,7 +6,7 @@
 //! were dropped — their selection edge was zero-to-negative for a multi-decade hold.
 
 use crate::core::Quote;
-use crate::picks::{eu_buyable, exit_review_lines, gate_failures, growth_near_miss, growth_score, render};
+use crate::picks::{eu_buyable, exit_review_lines, gate_failures, growth_near_miss, growth_score, render, RenderCtx};
 use crate::{config, fetch};
 
 /// (X) Watchlist gate-state persisted between `screen` runs so the EXIT-review footer can flag a
@@ -409,8 +409,11 @@ pub async fn run(args: Vec<String>) {
     // is visible at a glance.
     let stocks_no_pe = quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("EQUITY") && q.pe_ratio.is_none()).count();
     let etfs_no_ter = quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("ETF") && q.ter_shown().is_none()).count();
+    // names fetch swallowed to an err/no-data stub (quote_one self-swallows a bad ticker) — otherwise
+    // invisible in aggregate: each surfaces only as one "err" row buried in a class table.
+    let no_data = quotes.iter().filter(|q| q.price == "err" || q.price == "no data").count();
     println!(
-        "Data quality: {} names | {stocks_no_pe} stocks missing P/E | {etfs_no_ter} ETFs missing TER | {} stale dropped (>{}d)",
+        "Data quality: {} names | {no_data} no data | {stocks_no_pe} stocks missing P/E | {etfs_no_ter} ETFs missing TER | {} stale dropped (>{}d)",
         quotes.len(), fresh_before - quotes.len(), settings.stale_days
     );
 
@@ -439,7 +442,15 @@ pub async fn run(args: Vec<String>) {
     // (gate/exit review, fact drift, near-miss) so alerts aren't buried under arithmetic.
     // show_hold_core = true: this is a hunt (wide OR `screen etfs`), so re-surface the buy-and-hold
     // cores the momentum ranking buries at 0.0. Empty cores early-return, so stock/crypto lanes stay quiet.
-    let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, nupl, &settings.sectors, &sector_of, &settings.tickers, &owned, explain.as_deref(), true);
+    let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, RenderCtx {
+        nupl,
+        sectors: &settings.sectors,
+        sector_of: &sector_of,
+        pinned: &settings.tickers,
+        owned: &owned,
+        explain: explain.as_deref(),
+        show_hold_core: true,
+    });
 
     // (B) fundamentals-trajectory footer for the enriched stock rows: report's annual rollup
     // compacted to one line per name, so "is the growth real or one good year?" doesn't take a

@@ -101,7 +101,15 @@ pub async fn run(args: Vec<String>) {
     // no state file, so it drops it.
     // show_hold_core = false: `check` inspects hand-picked watchlist names (H flagged inline per row);
     // the consolidated core shortlist is a wide-hunt affordance, not wanted here.
-    let (explain_text, _) = picks::render(&quotes, settings.top_picks, &settings.buy_heuristic, widths, None, &[], &std::collections::HashMap::new(), &[], &Default::default(), None, false);
+    let (explain_text, _) = picks::render(&quotes, settings.top_picks, &settings.buy_heuristic, widths, picks::RenderCtx {
+        nupl: None,
+        sectors: &[],
+        sector_of: &std::collections::HashMap::new(),
+        pinned: &[],
+        owned: &Default::default(),
+        explain: None,
+        show_hold_core: false,
+    });
 
     // held-name gate review: a watchlist name that would no longer clear today's growth gates is an
     // exit-review candidate — the screen would never surface it again, so `check` has to say so.
