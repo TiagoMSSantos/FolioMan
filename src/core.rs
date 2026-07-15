@@ -207,7 +207,7 @@ pub fn below_long_ma_pct(closes: &[f64], n: usize) -> f64 {
     // (#19) deliberately the RAW last close, NOT measure_endpoint: smoothing this endpoint was
     // measured WORSE (backtest A/B at the 5-bar window: edge +115.7 smoothed vs +120.2 raw) — a
     // smoothed endpoint under-reads a fresh spike, so the overext brake docks parabolic names less.
-    f64::max(0.0, (ma - *closes.last().unwrap()) / ma * 100.0)
+    f64::max(0.0, (ma - *closes.last().expect("closes non-empty: closes.len() >= n >= 1 guarded above")) / ma * 100.0)
 }
 
 /// % the latest close sits ABOVE the moving average of the last `n` sessions — the mirror of
@@ -223,7 +223,7 @@ pub fn above_long_ma_pct(closes: &[f64], n: usize) -> f64 {
         return 0.0;
     }
     // (#19) raw last close on purpose — see below_long_ma_pct; the brake must see the spike.
-    f64::max(0.0, (*closes.last().unwrap() - ma) / ma * 100.0)
+    f64::max(0.0, (*closes.last().expect("closes non-empty: closes.len() >= n >= 1 guarded above") - ma) / ma * 100.0)
 }
 
 /// (A) R² (0..1) of a straight-line fit to LOG price over time — how STEADILY the asset compounds. A
@@ -778,7 +778,7 @@ pub fn inflation_summary(
         let tail = &years[years.len().saturating_sub(n)..];
         tail.iter().map(|y| series[y]).sum::<f64>() / tail.len() as f64
     };
-    let last = *years.last().unwrap();
+    let last = *years.last().expect("years non-empty: series.is_empty() guarded above");
     (Some(last), Some(series[&last]), Some(avg(10)), Some(avg(30)))
 }
 
@@ -868,7 +868,7 @@ pub fn slice_since(dates: &[NaiveDate], closes: &[f64], days: i64) -> Vec<f64> {
     if dates.is_empty() {
         return Vec::new();
     }
-    let cutoff = *dates.last().unwrap() - Duration::days(days);
+    let cutoff = *dates.last().expect("dates non-empty: dates.is_empty() guarded above") - Duration::days(days);
     dates.iter()
         .zip(closes)
         .filter(|(d, _)| **d >= cutoff)
@@ -959,8 +959,8 @@ pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, w
     // endpoint; the SHORT legs (1D/1W/1M, incl. the 1M-knife gate) keep the true last close — a
     // months-wide average would make "this month's move" meaningless as both a gate and a display.
     let cur_smooth = measure_endpoint(closes);
-    let cur_raw = *closes.last().unwrap();
-    let last = *dates.last().unwrap();
+    let cur_raw = *closes.last().expect("closes non-empty: callers pass a fetched chart (quote_one guards !closes.is_empty(), fetch.rs)");
+    let last = *dates.last().expect("dates non-empty: parallel to closes (same fetched chart)");
     HORIZONS
         .iter()
         .map(|(label, days)| {
@@ -1621,7 +1621,7 @@ pub fn trend_streak(dates: &[NaiveDate], closes: &[f64]) -> (&'static str, Strin
         i -= 1;
     }
     let arrow = if direction > 0 { "↑" } else { "↓" };
-    let span = *dates.last().unwrap() - dates[i];
+    let span = *dates.last().expect("dates non-empty: lockstep with closes, len >= 2 guarded above") - dates[i];
     (arrow, fmt_duration(span), span.num_days())
 }
 
@@ -1631,7 +1631,7 @@ pub fn extreme_flags(closes: &[f64], tol: f64) -> (bool, bool) {
     if closes.is_empty() {
         return (false, false);
     }
-    let last = *closes.last().unwrap();
+    let last = *closes.last().expect("closes non-empty: closes.is_empty() guarded above");
     let hi = closes.iter().cloned().fold(f64::MIN, f64::max);
     let lo = closes.iter().cloned().fold(f64::MAX, f64::min);
     (last >= hi * (1.0 - tol), last <= lo * (1.0 + tol))
