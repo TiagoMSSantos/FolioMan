@@ -152,9 +152,15 @@ buy_heuristic:
   cheap_cap: 60.0                # [FOIL] cap the below-SMA % fed in
 
   # --- SCORE — SHARED / LIVE tilts (read by the growth lane `screen` prints) ---
-  # (D) Dividend reward: reinvested dividends are a big slice of long-run total return. Read by BOTH lanes.
-  dividend_weight: 1.5           # LIVE: reward per % of trailing-1Y yield (×cap = max bonus, ~9)
-  dividend_cap: 6.0              # LIVE: cap the yield % fed in
+  # (D) Dividend reward: DEMOTED 2026-07-15 (1.5 -> 0). BACKTEST-BLIND (no as-of divs in the price-only
+  #   pool, so the walk-forward can't grade it), and its rationale — price-only CAGR misses reinvested
+  #   dividends — was tested DIRECTLY by the use_adjusted_close total-return probe (adjclose CAGR), which
+  #   came back NO-EDGE (reverted false 2026-06-28). Total-return/valuation is now carried by the VALIDATED
+  #   live earnings_yield tilt (the fund fold), so this blind term is consolidated to 0 — same move as
+  #   growth_value_weight:0 below. Near-high growers are low-yield, so the top-N barely shifts. Revert to
+  #   1.5 if the eyeballed top-N is worse. Read by BOTH lanes.
+  dividend_weight: 0.0           # LIVE: reward per % of trailing-1Y yield (0 = OFF; blind term folded onto validated earnings_yield)
+  dividend_cap: 6.0              # LIVE: cap the yield % fed in (inert at weight 0)
 
   # (E) Valuation tilt: cheap on EARNINGS, not just recently dropped. value = ref_pe / P/E, clamped
   # [0.5,1.5] (P/E = Price-to-Earnings ratio). Needs a trailing P/E -> set FMP_API_KEY (Financial
