@@ -235,6 +235,10 @@ pub async fn run(args: Vec<String>) {
                                 // (EV/EBITDA) same native-close discipline: EV = shares·close + net_debt,
                                 // all as-of. PROBE-ONLY like earnings_yield (live path leaves it None).
                                 f.ebitda_yield = core::ev_ebitda_yield(f.ebitda_ttm, f.shares_ttm, f.net_debt, closes[i]);
+                                // (PEG) 1/PEG = earnings_yield · as-of CAGR; quote.trend_cagr is the as-of CAGR
+                                // (backtest_quote built it at this cutoff, line 221 — endpoint-robust log-fit, the
+                                // score's own growth backbone). PROBE-ONLY like the two above (live path None).
+                                f.peg_yield = core::peg_yield(f.eps_ttm, quote.trend_cagr, closes[i]);
                             }
                             // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                             // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
@@ -904,6 +908,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("eps_growth", |f| f.eps_growth),          // bottom-line compounding
         ("earnings_yield", |f| f.earnings_yield),  // VALUE (anti-overpay — the near-high gate lacks one)
         ("ebitda_yield", |f| f.ebitda_yield),      // VALUE, capital-structure-neutral (EV folds in leverage — the axis EPS/price misses)
+        ("peg_yield", |f| f.peg_yield),            // GROWTH-AT-PRICE: earnings_yield · as-of CAGR (1/PEG). PROBE — redundant with earnings_yield×CAGR already in the score
         ("buyback_yield", |f| f.buyback_yield),    // capital return
         ("roe", |f| f.roe),                        // quality of capital (SEC-computed NetIncome ÷ StockholdersEquity)
         ("insider_net_buys_90d", |f| f.insider_net_buys_90d), // (Item 4) insider conviction — rows appear only under `backtest … insider`
@@ -998,6 +1003,23 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         println!("\n── EV-VALUE-GATE probe: drop the most-expensive P% (low ebitda_yield) gated STOCKS, rank rest by growth_score, top-{n} held {years}y ──");
         for p in [0.0_f64, 10.0, 25.0, 40.0] {
             if let Some((b, _, e, w, wo, el, la)) = drop_bottom_book(samples, bd, bc, years, tuning, n, p, |f| f.ebitda_yield) {
+                let tag = if p == 0.0 { "  [gate off]" } else { "" };
+                println!("  reject-bottom {p:>4.0}%  book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{tag}");
+            }
+        }
+        println!("  (a reject-% that lifts book with OOS both + and worst no deeper than off -> ship as a real growth gate.)");
+    }
+
+    // (PEG probe) the brake on growth-at-price — reject the most-expensive-FOR-ITS-GROWTH P% (lowest
+    // peg_yield = earnings_yield·CAGR) gated STOCKS, rank survivors by growth_score. Distinct from the two
+    // gates above in intent (a fast grower can be dear on P/E yet cheap on PEG, and vice-versa) but its
+    // components (earnings_yield, CAGR) already drive the multiplicative score — expected dead. Same golden
+    // bar: STRESS book/worst lifted, OOS both +. A dead receipt closes the growth-at-price axis on measurement.
+    let has_peg = samples.iter().any(|s| s.fund.as_ref().and_then(|f| f.peg_yield).is_some());
+    if has_peg {
+        println!("\n── PEG-VALUE-GATE probe: drop the most-expensive-for-growth P% (low peg_yield) gated STOCKS, rank rest by growth_score, top-{n} held {years}y ──");
+        for p in [0.0_f64, 10.0, 25.0, 40.0] {
+            if let Some((b, _, e, w, wo, el, la)) = drop_bottom_book(samples, bd, bc, years, tuning, n, p, |f| f.peg_yield) {
                 let tag = if p == 0.0 { "  [gate off]" } else { "" };
                 println!("  reject-bottom {p:>4.0}%  book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{tag}");
             }

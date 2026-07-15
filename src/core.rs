@@ -1129,6 +1129,7 @@ pub struct FundFactors {
     pub shares_ttm: Option<f64>,     // (EV/EBITDA) as-of diluted share count — the market-cap leg of EV
     pub net_debt: Option<f64>,       // (EV/EBITDA) as-of net debt (total debt − cash) — the leverage leg of EV
     pub ebitda_yield: Option<f64>,   // (EV/EBITDA) EBITDA ÷ EV, % (high = cheap). PROBE-ONLY, None live (price skew, same as earnings_yield)
+    pub peg_yield: Option<f64>,      // (PEG) 1/PEG = earnings_yield · as-of CAGR (high = cheap-for-its-growth). PROBE-ONLY, None live (needs the native as-of close, same skew as earnings_yield)
     pub buyback_yield: Option<f64>, // as-of net share-count change over the last year, sign-flipped (+ = shrinking share count = buying back). Fully as-of from the FundRows (no price needed), unlike earnings_yield — so it populates in both the backtest AND the live enrich
     // (round 107) as-of SURVIVAL levels straight off the latest filed row (like op_margin/roe) —
     // price-free, so they populate in both the backtest and the live enrich. High = safer.
@@ -1243,6 +1244,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         shares_ttm: now.and_then(|r| r.shares),
         net_debt: now.and_then(|r| r.net_debt),
         ebitda_yield: None,
+        peg_yield: None, // (PEG probe) needs the as-of price AND CAGR -> filled in the backtest loop, not here
         buyback_yield,
         // (round 107) survival levels: same as-of join as the margins, no derivation needed
         fcf_margin: now.and_then(|r| r.fcf_margin),
@@ -1282,6 +1284,19 @@ pub fn ev_ebitda_yield(ebitda: Option<f64>, shares: Option<f64>, net_debt: Optio
         }
         _ => None,
     }
+}
+
+/// (PEG probe) 1/PEG as a higher-is-better "yield" so it slots into the same sweep as earnings_yield:
+/// PEG = (P/E) ÷ CAGR, so 1/PEG = (eps/price)·CAGR = `earnings_yield` · CAGR (unit-consistent with the
+/// textbook PEG, where growth is the % NUMBER). PEG < 1 ⇔ this > (100·earnings_yield form)… i.e. higher =
+/// cheaper for its growth. PROBE-ONLY, same native-close discipline as earnings_yield (None on the live
+/// path). None unless earnings_yield is POSITIVE (a loss-maker isn't "cheap for growth" — no fabricated
+/// signal) AND CAGR is positive (negative growth makes PEG sign-nonsense). Deliberately mirrors the
+/// EV/EBITDA loss-maker None-out.
+pub fn peg_yield(eps: Option<f64>, cagr: Option<f64>, price: f64) -> Option<f64> {
+    let ey = earnings_yield(eps, price).filter(|&y| y > 0.0)?; // eps>0 (earnings_yield itself allows eps<0)
+    let g = cagr.filter(|&g| g > 0.0)?;                        // %/yr; negative growth -> PEG meaningless
+    Some(ey * g)
 }
 
 /// One fiscal year of an income statement, rolled up from the quarterly `FundRow`s — the `report`
@@ -1448,6 +1463,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
         "earnings_yield" => f.earnings_yield,             // (Item 19) as-of valuation; PROBE-ONLY (None live)
         "ebitda_yield" => f.ebitda_yield,                 // (EV/EBITDA) capital-structure-neutral valuation; PROBE-ONLY (None live)
+        "peg_yield" => f.peg_yield,                        // (PEG) 1/PEG = earnings_yield · CAGR, cheap-for-growth; PROBE-ONLY (None live)
         "buyback_yield" => f.buyback_yield,               // as-of 1y share-count shrink (+ = buying back); backtest-testable candidate
         "fcf_margin" => f.fcf_margin,                     // (round 107) survival: cash generation
         "interest_cover" => f.interest_cover,             // (round 107) survival: debt-service headroom
@@ -1681,6 +1697,7 @@ mod tests {
             shares_ttm: Some(2.0),
             net_debt: Some(-10.0),
             ebitda_yield: Some(16.0),
+            peg_yield: Some(17.0),
             buyback_yield: Some(10.0),
             fcf_margin: Some(12.0),
             interest_cover: Some(13.0),
@@ -1694,6 +1711,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "insider_net_buys_90d"), Some(7.0)); // (Item 4)
         assert_eq!(select_fund_factor(&f, "earnings_yield"), Some(9.0)); // (Item 19)
         assert_eq!(select_fund_factor(&f, "ebitda_yield"), Some(16.0)); // (EV/EBITDA)
+        assert_eq!(select_fund_factor(&f, "peg_yield"), Some(17.0)); // (PEG probe)
         assert_eq!(select_fund_factor(&f, "buyback_yield"), Some(10.0));
         assert_eq!(select_fund_factor(&f, "roe"), Some(11.0)); // quality of capital; NOT in composite (a level, and the blend already failed the lane)
         assert_eq!(select_fund_factor(&f, "fcf_margin"), Some(12.0)); // (round 107) survival levels; NOT in composite either
@@ -1715,6 +1733,14 @@ mod tests {
         assert_eq!(ev_ebitda_yield(Some(50.0), Some(2.0), Some(0.0), 0.0), None); // non-positive price -> None
         assert_eq!(ev_ebitda_yield(Some(50.0), None, Some(0.0), 10.0), None); // no shares -> no market cap -> None
         assert_eq!(ev_ebitda_yield(Some(10.0), Some(1.0), Some(-100.0), 10.0), None); // net cash swamps mkt cap -> EV<=0 -> None
+        // (PEG probe) peg_yield = earnings_yield(%) · CAGR(%-number) = 1/PEG · 100. peg_yield == 100 ⇔ PEG == 1; > 100 ⇔ PEG < 1 (cheap for growth)
+        assert_eq!(peg_yield(Some(5.0), Some(20.0), 100.0), Some(100.0)); // ey 5% · g 20 = PEG (20/20)=1 marker
+        assert_eq!(peg_yield(Some(5.0), Some(40.0), 100.0), Some(200.0)); // faster growth same price -> PEG 0.5 -> yield 200 (>100)
+        assert_eq!(peg_yield(Some(-2.0), Some(20.0), 50.0), None); // loss-maker -> earnings_yield<0 filtered -> None (no fabricated "cheap")
+        assert_eq!(peg_yield(Some(5.0), Some(-10.0), 100.0), None); // negative growth -> PEG sign-nonsense -> None
+        assert_eq!(peg_yield(Some(5.0), Some(0.0), 100.0), None); // zero growth -> PEG infinite -> None
+        assert_eq!(peg_yield(Some(5.0), None, 100.0), None); // no CAGR -> None
+        assert_eq!(peg_yield(Some(5.0), Some(20.0), 0.0), None); // non-positive price -> earnings_yield None -> None
     }
 
     /// (Item 3) `composite_factor` = mean of the factors that are `Some`; <2 present -> None (a 1-factor
