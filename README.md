@@ -79,6 +79,12 @@ overlay; 0 = off) and `screen` also turns the state into a number: `DEPLOY THIS 
 your monthly base × 1 near the high, × 1.5 in a pullback, × 2 in a drawdown — the "how much this
 month?" arithmetic done for you. Not advice.
 
+Below the tables, `screen` prints the top book as **paste-ready `trade` commands** (stocks/ETFs →
+Trading212, crypto → Binance), QTY sized from that deploy € split equally across the book. Exact
+Trading212 ticker forms are only knowable for names you already hold — new names print a
+`<T212_SYMBOL>` placeholder to look up once in the app. Printing is all that happens here: each
+command still walks `trade`'s own real-money confirm gate when you run it.
+
 ### `track` — live out-of-sample track record
 
 Every `screen` run journals its ranked top slice (tickers, EUR prices, S&P 500 close) to

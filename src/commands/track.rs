@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 pub const SNAPSHOT_FILE: &str = ".screen_snapshots.jsonl";
 /// Graded book = the top-10 slice, matching the backtest's held-book receipts.
-const BOOK: usize = 10;
+pub(crate) const BOOK: usize = 10;
 
 #[derive(Serialize, Deserialize)]
 pub struct Snapshot {

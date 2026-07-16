@@ -425,9 +425,13 @@ pub async fn run(args: Vec<String>) {
     // can mark covered rows with `o`. Stocks/ETFs from Trading212, crypto from Binance; each broker
     // absent (no env key) or erroring is independently and silently off — a broker key is optional
     // config, not a degradation. Display-only.
+    // t212_raw keeps the broker's exact ticker forms (`AAPL_US_EQ`) — the order-glue footer needs
+    // them verbatim, while the overlay below collapses them to comparable bases.
+    let mut t212_raw: Vec<String> = Vec::new();
     let owned = {
         let mut o = crate::picks::Owned::default();
         if let Ok(v) = crate::broker::trading212::owned_tickers(&client).await {
+            t212_raw = v.clone();
             o.stocks = v.iter().map(|t| crate::picks::t212_base(t)).collect();
         }
         if let Ok(v) = crate::broker::binance::owned_assets(&client).await {
@@ -587,7 +591,7 @@ pub async fn run(args: Vec<String>) {
         facts,
         fund_meta,
         core: core_now.clone(), // still needed below by the holdings-overlap pick set
-        ranked: ranked_now,
+        ranked: ranked_now.clone(), // still needed below by the order-glue footer
     };
     // (round 69) persistence failure must not be silent: a stuck baseline means every drift alert
     // above re-fires (or a pending one never fires) on the next run with no hint why. Serialize
@@ -689,6 +693,39 @@ pub async fn run(args: Vec<String>) {
         println!("\n{}", entry_state_line(off));
     }
 
+    // (round 116) order-glue: the ranked top book as paste-ready `trade` commands, so acting on the
+    // screen stops being manual retyping. Broker per class (stocks/ETFs → Trading212, crypto →
+    // Binance); exact T212 symbols only exist for names already held (t212_raw), others print a
+    // placeholder; Binance pairs are derivable for every coin. QTY = this month's deploy € (base ×
+    // entry-state multiplier, same math as the top line) split equally across the book — the
+    // equal-weight top-10 IS the validated backtest/track book. Each command still runs trade's own
+    // real-money confirm gate; nothing here sends anything.
+    {
+        let deploy_scaled = (settings.monthly_deploy_eur > 0.0).then(|| {
+            settings.monthly_deploy_eur * spx_off_hi.map_or(1.0, deploy_multiplier)
+        });
+        let glue_rows: Vec<(String, Option<f64>, &'static str, Option<String>)> = ranked_now
+            .iter()
+            .take(crate::commands::track::BOOK)
+            .map(|t| {
+                let price = quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur);
+                if crate::picks::is_currency_quoted(t) {
+                    let sym = format!("{}EUR", crate::picks::underlying(t).to_uppercase());
+                    (t.clone(), price, "binance", Some(sym))
+                } else {
+                    let sym = t212_raw
+                        .iter()
+                        .find(|r| crate::picks::t212_base(r) == crate::picks::yahoo_base(t))
+                        .map(|r| r.to_uppercase());
+                    (t.clone(), price, "trading212", sym)
+                }
+            })
+            .collect();
+        if let Some(glue) = order_glue(&glue_rows, deploy_scaled) {
+            println!("{glue}");
+        }
+    }
+
     // Euribor / Certificados de Aforro / inflation — fixed-income + macro baselines to compare the
     // asset tables against
     crate::commands::print_macro_footer(&client, &settings.urls).await;
@@ -770,11 +807,7 @@ fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> {
     Some(match off_hi {
         Some(off) => {
             let (state, _) = entry_state_class(off);
-            let mult = match state {
-                "DRAWDOWN" => 2.0,
-                "PULLBACK" => 1.5,
-                _ => 1.0,
-            };
+            let mult = deploy_multiplier(off);
             format!(
                 "\n  DEPLOY THIS MONTH: €{:.0} — base €{base_eur:.0} × {mult} ({state} entry state). NOT advice.",
                 base_eur * mult
@@ -784,6 +817,58 @@ fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> {
             "\n  DEPLOY THIS MONTH: €{base_eur:.0} — base × 1 (S&P 500 entry state unavailable this run). NOT advice."
         ),
     })
+}
+
+/// (round 116) The 1×/1.5×/2× ladder as a number — shared by the deploy line and the order-glue
+/// QTY sizing so the two can never disagree. Thresholds stay in [`entry_state_class`].
+fn deploy_multiplier(off_hi: f64) -> f64 {
+    match entry_state_class(off_hi).0 {
+        "DRAWDOWN" => 2.0,
+        "PULLBACK" => 1.5,
+        _ => 1.0,
+    }
+}
+
+/// (round 116) order-glue: the top book as paste-ready `trade` commands. Rows =
+/// (yahoo ticker, price €, broker, broker symbol if known); `deploy_eur` = this month's scaled
+/// deploy total, split equally across the rows (the equal-weight book). Unknown broker symbol →
+/// `<T212_SYMBOL>` placeholder (T212 forms are only knowable from held positions); no deploy set
+/// or no price → `<QTY>`. Never prints an empty section; commands only PRINT here — sending one
+/// still walks trade's real-money confirm gate.
+fn order_glue(rows: &[(String, Option<f64>, &'static str, Option<String>)], deploy_eur: Option<f64>) -> Option<String> {
+    if rows.is_empty() {
+        return None;
+    }
+    let n = rows.len();
+    let slice = deploy_eur.map(|d| d / n as f64);
+    let mut out = String::from("\nPaste-ready orders — ");
+    match slice {
+        Some(s) => out.push_str(&format!(
+            "€{:.0} this month ÷ {n} names ≈ €{s:.0} each. Review each; every command asks its own real-money 'yes'. NOT advice.\n",
+            s * n as f64
+        )),
+        None => out.push_str(
+            "set monthly_deploy_eur for sized QTY. Review each; every command asks its own real-money 'yes'. NOT advice.\n",
+        ),
+    }
+    let mut unheld = false;
+    for (ticker, price, broker, sym) in rows {
+        let sym_cell = sym.clone().unwrap_or_else(|| {
+            unheld = true;
+            "<T212_SYMBOL>".to_string()
+        });
+        let qty_cell = match (slice, price) {
+            (Some(s), Some(p)) if *p > 0.0 => format!("{:.4}", s / p),
+            _ => "<QTY>".to_string(),
+        };
+        let price_note = price.map_or(String::new(), |p| format!(" @ €{p:.2}"));
+        out.push_str(&format!("  folioman trade {broker} buy {sym_cell} {qty_cell}   # {ticker}{price_note}\n"));
+    }
+    if unheld {
+        out.push_str("  # <T212_SYMBOL> = not currently held, so the Trading212 ticker form is unknown — look it up in the app once.\n");
+    }
+    out.pop(); // drop the trailing newline; the caller println!'s
+    Some(out)
 }
 
 #[cfg(test)]
@@ -831,6 +916,45 @@ mod tests {
         assert!(dd.contains("€2000") && dd.contains("× 2 ") && dd.contains("DRAWDOWN"));
         let unknown = deploy_line(1000.0, None).unwrap();
         assert!(unknown.contains("€1000") && unknown.contains("unavailable"));
+    }
+
+    /// (round 116) order-glue semantics: empty book prints nothing; sized rows split the deploy €
+    /// equally (qty = slice ÷ price) across both brokers; missing deploy or missing symbol degrade
+    /// to placeholders (never a guessed number), and the unheld footnote only prints when earned.
+    #[test]
+    fn order_glue_semantics() {
+        assert!(order_glue(&[], Some(1000.0)).is_none());
+        let rows = vec![
+            ("AAPL".to_string(), Some(150.0), "trading212", Some("AAPL_US_EQ".to_string())),
+            ("BTC-EUR".to_string(), Some(75000.0), "binance", Some("BTCEUR".to_string())),
+        ];
+        let sized = order_glue(&rows, Some(300.0)).unwrap();
+        assert!(sized.contains("€300 this month ÷ 2 names ≈ €150 each"));
+        assert!(sized.contains("folioman trade trading212 buy AAPL_US_EQ 1.0000"));
+        assert!(sized.contains("folioman trade binance buy BTCEUR 0.0020"));
+        assert!(!sized.contains("<T212_SYMBOL>") && !sized.contains("look it up"));
+        let no_deploy = order_glue(&rows, None).unwrap();
+        assert!(no_deploy.contains("set monthly_deploy_eur") && no_deploy.contains("<QTY>"));
+        let unheld = order_glue(
+            &[("SXLK.L".to_string(), Some(156.62), "trading212", None)],
+            Some(300.0),
+        )
+        .unwrap();
+        assert!(unheld.contains("<T212_SYMBOL>") && unheld.contains("look it up"));
+        assert!(unheld.contains("# SXLK.L @ €156.62"));
+        // priceless row can't size a qty even with a deploy set
+        let no_price = order_glue(&[("X".to_string(), None, "trading212", None)], Some(100.0)).unwrap();
+        assert!(no_price.contains("<QTY>"));
+    }
+
+    /// (round 116) the multiplier ladder tracks the classifier's exact boundaries.
+    #[test]
+    fn deploy_multiplier_boundaries() {
+        assert_eq!(deploy_multiplier(0.0), 1.0);
+        assert_eq!(deploy_multiplier(4.9), 1.0);
+        assert_eq!(deploy_multiplier(5.0), 1.5);
+        assert_eq!(deploy_multiplier(14.9), 1.5);
+        assert_eq!(deploy_multiplier(15.0), 2.0);
     }
 
     /// (round 50) fact-drift alert semantics: a real TER hike and an AUM halving fire; basis-point
