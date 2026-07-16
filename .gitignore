@@ -35,6 +35,9 @@ config/settings.yaml
 # screen run-to-run gate state (EXIT-review footer)
 .screen_state.json
 
+# alert run-to-run market entry state (flip-ping dedup)
+.alert_state
+
 # persistent ISIN -> Yahoo-symbol resolutions (positive-only; stabilizes the ETF universe)
 .isin_cache.json
 # last-good venue ISIN lists (fallback across venue outages)

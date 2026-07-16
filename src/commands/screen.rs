@@ -704,12 +704,12 @@ pub async fn run(args: Vec<String>) {
 }
 
 /// (round 112) Entry-state classifier — the single source of state name + read wording, so the top
-/// banner and the footer never drift. `off_hi` = % the S&P 500 sits below its high (positive, 0 = at
+/// banner, the footer and the `alert` flip ping never drift. `off_hi` = % the S&P 500 sits below its high (positive, 0 = at
 /// high). Classes: <5 near-high, 5–15 pullback, ≥15 drawdown. Wording is now the EXCESS-vs-SPY framing
 /// from this session's 12y multi-regime + survivorship-stress run (entries bucketed by how far the
 /// index was off its high): drawdown +9.1 pts/yr over SPY, pullback +6.0, near-high +5.9 — the whole
 /// book beats the index at every entry point, so the lever is deployment SPEED, never waiting in cash.
-fn entry_state_class(off_hi: f64) -> (&'static str, &'static str) {
+pub(crate) fn entry_state_class(off_hi: f64) -> (&'static str, &'static str) {
     if off_hi >= 15.0 {
         ("DRAWDOWN", "Deploy new money FASTER — drawdown entries beat the index by +9.1 pts/yr vs +5.9 near the high (12y multi-regime backtest, 100% win vs SPY)")
     } else if off_hi >= 5.0 {
