@@ -74,7 +74,10 @@ near the high in the 12y multi-regime backtest), recovery back to near-high says
 normal schedule. Deduped via `.alert_state` (working dir, gitignored), so a months-long drawdown
 pings once per line crossed, not hourly; a failed push keeps the old state and retries next cron.
 The `screen` command shows the same signal live — as a loud banner above the tables when the
-market is ≥5% off its high, as a quiet footer near the high.
+market is ≥5% off its high, as a quiet footer near the high. Set `monthly_deploy_eur` (private
+overlay; 0 = off) and `screen` also turns the state into a number: `DEPLOY THIS MONTH: €X` =
+your monthly base × 1 near the high, × 1.5 in a pullback, × 2 in a drawdown — the "how much this
+month?" arithmetic done for you. Not advice.
 
 ### `track` — live out-of-sample track record
 

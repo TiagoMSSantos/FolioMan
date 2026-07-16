@@ -451,6 +451,11 @@ pub async fn run(args: Vec<String>) {
     if let Some(banner) = spx_off_hi.and_then(entry_state_banner) {
         println!("{banner}");
     }
+    // (round 115) deploy-math: turn the entry state into a number. Prints only when the user set
+    // their personal monthly base (monthly_deploy_eur > 0, private overlay).
+    if let Some(line) = deploy_line(settings.monthly_deploy_eur, spx_off_hi) {
+        println!("{line}");
+    }
 
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
@@ -752,6 +757,35 @@ fn entry_state_banner(off_hi: f64) -> Option<String> {
     ))
 }
 
+/// (round 115) deploy-math: monthly base € × entry-state multiplier, so "how much this month?"
+/// stops being mental arithmetic. Multipliers 1×/1.5×/2× follow the backtest excess shape
+/// (+5.9/+6.0/+9.1 pts/yr near-high/pullback/drawdown) — never 0× anywhere, waiting in cash was
+/// the only losing move. State thresholds stay single-sourced in [`entry_state_class`]. `None`
+/// when the knob is unset (≤0). A failed ^GSPC fetch prints the 1× base and says why instead of
+/// guessing a state.
+fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> {
+    if base_eur <= 0.0 {
+        return None;
+    }
+    Some(match off_hi {
+        Some(off) => {
+            let (state, _) = entry_state_class(off);
+            let mult = match state {
+                "DRAWDOWN" => 2.0,
+                "PULLBACK" => 1.5,
+                _ => 1.0,
+            };
+            format!(
+                "\n  DEPLOY THIS MONTH: €{:.0} — base €{base_eur:.0} × {mult} ({state} entry state). NOT advice.",
+                base_eur * mult
+            )
+        }
+        None => format!(
+            "\n  DEPLOY THIS MONTH: €{base_eur:.0} — base × 1 (S&P 500 entry state unavailable this run). NOT advice."
+        ),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -780,6 +814,23 @@ mod tests {
         assert!(dd.contains("DRAWDOWN") && dd.contains("Deploy") && dd.contains("FASTER"));
         // the banner and the footer never disagree on the state name for the same input
         assert!(entry_state_line(20.0).contains("DRAWDOWN") && entry_state_banner(20.0).unwrap().contains("DRAWDOWN"));
+    }
+
+    /// (round 115) deploy-math line: off at base ≤0; multiplier follows the entry state
+    /// (1×/1.5×/2× at the same <5/5–15/≥15 boundaries as the classifier); unknown state = 1× base
+    /// with the reason, never a guessed multiplier.
+    #[test]
+    fn deploy_line_semantics() {
+        assert!(deploy_line(0.0, Some(20.0)).is_none());
+        assert!(deploy_line(-5.0, Some(20.0)).is_none());
+        let near = deploy_line(1000.0, Some(0.0)).unwrap();
+        assert!(near.contains("€1000") && near.contains("× 1 ") && near.contains("NEAR-HIGH"));
+        let pull = deploy_line(1000.0, Some(5.0)).unwrap();
+        assert!(pull.contains("€1500") && pull.contains("× 1.5") && pull.contains("PULLBACK"));
+        let dd = deploy_line(1000.0, Some(15.0)).unwrap();
+        assert!(dd.contains("€2000") && dd.contains("× 2 ") && dd.contains("DRAWDOWN"));
+        let unknown = deploy_line(1000.0, None).unwrap();
+        assert!(unknown.contains("€1000") && unknown.contains("unavailable"));
     }
 
     /// (round 50) fact-drift alert semantics: a real TER hike and an AUM halving fire; basis-point

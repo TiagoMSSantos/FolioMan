@@ -18,6 +18,10 @@ drawdown_pct: 1000.0
 dip_days: 30       # trailing window (days) for the vs-high dip
 drop_pct: 5.0      # `alert` fires when a name is >= this % below that window high
 top_picks: 20      # how many "buy candidate" rows `check` lists after the table
+# deploy-math base (€ you put in per month): `screen` prints "DEPLOY THIS MONTH: €base × entry-state
+# multiplier" (near-high 1×, pullback 1.5×, drawdown 2× — the backtest's deploy-faster shape). 0 = line
+# off. PERSONAL number — set it in the private config/settings.yaml overlay, never here.
+monthly_deploy_eur: 0
 
 # Per-horizon ±days averaged around each horizon's anchor date when computing 1D/1W/.../20Y %
 # changes (smooths a single outlier day; 0 = exact day). All optional — omit the block or any

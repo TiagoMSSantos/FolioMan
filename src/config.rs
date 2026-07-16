@@ -26,6 +26,8 @@ pub struct Settings {
     #[serde(default)]
     pub sectors: Vec<String>, // `screen` sector filter (GICS keyword, case-insensitive substring): which company/ETF types to fetch. Empty = ALL sectors. e.g. [Technology, Communication, Semiconductor] = tech only. Stocks filtered before fetch (by GICS sector); ETFs filtered by fund name (no GICS for funds)
     pub ntfy_topic: String,
+    #[serde(default)]
+    pub monthly_deploy_eur: f64, // deploy-math base: the € amount you put in per month. `screen` prints "DEPLOY THIS MONTH: €X" = this × the entry-state multiplier (near-high 1×, pullback 1.5×, drawdown 2×). 0 (default) = line off. Personal number — set it in the private config/settings.yaml overlay, never in the shared base
     #[serde(default = "default_top_picks")]
     pub top_picks: usize, // how many buy candidates `check` lists after the table
     #[serde(default = "default_stale_days")]
