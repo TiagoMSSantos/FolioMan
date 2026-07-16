@@ -76,6 +76,16 @@ pings once per line crossed, not hourly; a failed push keeps the old state and r
 The `screen` command shows the same signal live — as a loud banner above the tables when the
 market is ≥5% off its high, as a quiet footer near the high.
 
+### `track` — live out-of-sample track record
+
+Every `screen` run journals its ranked top slice (tickers, EUR prices, S&P 500 close) to
+`.screen_snapshots.jsonl` — one line per day. `folioman track` grades every past top-10 at
+today's prices: equal-weight book return vs the index over the same window, plus a win-rate
+summary. This is the screen's own advice graded on data that did not exist when it ranked — the
+live counterpart of the backtest's held-book metric, and the honest answer to "does the ranking
+actually work?" as evidence accrues. Price-only (dividends not counted, like the backtest);
+delisted/unpriced names drop out and flatter the book — the `N` column keeps that visible.
+
 ### Run-to-run alerts (`screen`)
 
 `screen` remembers its previous run in `.screen_state.json` (working dir, gitignored) and prints

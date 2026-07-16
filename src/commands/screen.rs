@@ -468,6 +468,18 @@ pub async fn run(args: Vec<String>) {
         show_hold_core: true,
     });
 
+    // (round 114) live track record: journal today's ranked slice + the S&P close so `track` can
+    // grade every past top-10 on prices that didn't exist when it ranked. One line per day (a
+    // same-day rerun adds nothing); a failed append warns inside and never fails the screen.
+    crate::commands::track::append_snapshot(&crate::commands::track::Snapshot {
+        date: run_date.clone(),
+        spx: spx.first().and_then(|q| q.price_eur),
+        rows: ranked_now
+            .iter()
+            .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur)))
+            .collect(),
+    });
+
     // (B) fundamentals-trajectory footer for the enriched stock rows: report's annual rollup
     // compacted to one line per name, so "is the growth real or one good year?" doesn't take a
     // `report` run per ticker. DISPLAY-ONLY (every multi-year fundamental measured null as a rank
