@@ -436,6 +436,22 @@ pub async fn run(args: Vec<String>) {
         o
     };
 
+    // (round 112) entry-state fetch, hoisted ABOVE the tables: S&P 500 % off its high decides how fast
+    // new money should go in. Fetched once here; the top banner (when actionable) and the near-high
+    // footer both read it. A failed fetch stays silent (None). Display-only.
+    let spx = fetch::quotes(
+        &client, &settings.urls, &fx_cache, &["^GSPC".to_string()], settings.dip_days, settings.high_days,
+        false, false, &settings.anchor_windows, eu_infl.as_ref(),
+    )
+    .await;
+    let spx_off_hi: Option<f64> = spx.first().map(|q| q.drawdown_pct);
+    // Promote the actionable states (pullback/drawdown) to a loud banner ABOVE the ranking — the
+    // round-109 footer was buried under the tables where the user never scrolled. Near-high stays a
+    // quiet footer (nothing to do). None (fetch failed) prints nothing.
+    if let Some(banner) = spx_off_hi.and_then(entry_state_banner) {
+        println!("{banner}");
+    }
+
     // the 20yr+ growth ranking, split per asset class (stocks / ETFs / crypto); sectors filters ETFs
     // by fund name (stocks were already sector-filtered before fetch)
     // (round 52) render returns the score-math walkthrough; printed AFTER the actionable footers
@@ -649,17 +665,11 @@ pub async fn run(args: Vec<String>) {
         );
     }
 
-    // (round 109) entry-state banner: what TODAY'S market state historically meant for new money.
-    // Round-108 backtest receipt: entries taken ≥15% below the S&P 500 high compounded +17.3%/yr vs
-    // the +14.9%/yr all-entry average (excess over SPY +9.1 vs +5.9, 100% win) — the actionable read
-    // is deployment SPEED, never whether to wait in cash. Display-only; a failed fetch stays silent.
-    let spx = fetch::quotes(
-        &client, &settings.urls, &fx_cache, &["^GSPC".to_string()], settings.dip_days, settings.high_days,
-        false, false, &settings.anchor_windows, eu_infl.as_ref(),
-    )
-    .await;
-    if let Some(q) = spx.first() {
-        println!("\n{}", entry_state_line(q.drawdown_pct));
+    // (round 112) entry-state footer: only the NEAR-HIGH case lands here — pullback/drawdown were
+    // already promoted to the loud top banner (above the tables). Keeping the quiet one-liner here for
+    // near-high avoids a redundant banner when there's nothing to do. `spx` was fetched above render.
+    if let Some(off) = spx_off_hi.filter(|off| *off < 5.0) {
+        println!("\n{}", entry_state_line(off));
     }
 
     // Euribor / Certificados de Aforro / inflation — fixed-income + macro baselines to compare the
@@ -693,19 +703,41 @@ pub async fn run(args: Vec<String>) {
     }
 }
 
-/// (round 109) One-line entry-state read for the screen footer. `off_hi` = % the S&P 500 sits below
-/// its high (positive, 0 = at high). Classes mirror the round-108 backtest: <5 near-high, 5–15
-/// pullback, ≥15 drawdown. The receipt behind the wording: drawdown entries returned +17.3%/yr vs
-/// the +14.9%/yr all-entry average — deployment SPEED is the lever, waiting in cash never was.
-fn entry_state_line(off_hi: f64) -> String {
-    let (state, read) = if off_hi >= 15.0 {
-        ("DRAWDOWN", "Deploy new money FASTER — entries here averaged +17.3%/yr vs +14.9%/yr overall (12y backtest, 100% win vs SPY)")
+/// (round 112) Entry-state classifier — the single source of state name + read wording, so the top
+/// banner and the footer never drift. `off_hi` = % the S&P 500 sits below its high (positive, 0 = at
+/// high). Classes: <5 near-high, 5–15 pullback, ≥15 drawdown. Wording is now the EXCESS-vs-SPY framing
+/// from this session's 12y multi-regime + survivorship-stress run (entries bucketed by how far the
+/// index was off its high): drawdown +9.1 pts/yr over SPY, pullback +6.0, near-high +5.9 — the whole
+/// book beats the index at every entry point, so the lever is deployment SPEED, never waiting in cash.
+fn entry_state_class(off_hi: f64) -> (&'static str, &'static str) {
+    if off_hi >= 15.0 {
+        ("DRAWDOWN", "Deploy new money FASTER — drawdown entries beat the index by +9.1 pts/yr vs +5.9 near the high (12y multi-regime backtest, 100% win vs SPY)")
     } else if off_hi >= 5.0 {
-        ("PULLBACK", "Keep the normal schedule; lean in if it deepens — the measured edge starts 15% below the high (+17.3%/yr vs +14.9%/yr overall)")
+        ("PULLBACK", "Lean in as it deepens — pullback entries beat the index +6.0 pts/yr vs +5.9 near the high; the edge steepens past −15%")
     } else {
-        ("NEAR-HIGH", "Normal schedule — waiting in cash for a dip was the only losing move in the 12y backtest")
-    };
+        ("NEAR-HIGH", "Normal schedule — near-high entries still beat the index +5.9 pts/yr; waiting in cash for a dip was the only losing move")
+    }
+}
+
+/// (round 109→112) One-line entry-state read for the near-high footer. Delegates to
+/// [`entry_state_class`]; format is unchanged so the alert scans the same as the other footers.
+fn entry_state_line(off_hi: f64) -> String {
+    let (state, read) = entry_state_class(off_hi);
     format!("Entry state: S&P 500 {off_hi:.1}% off its high — {state}. {read}. NOT advice.")
+}
+
+/// (round 112) Loud top banner for the ACTIONABLE entry states (pullback/drawdown). `None` at near-high
+/// (<5% off) — nothing to do, so the quiet footer covers it. `Some` boxed multi-line printed ABOVE the
+/// ranking tables so the deploy-faster signal isn't buried below them like the round-109 footer was.
+fn entry_state_banner(off_hi: f64) -> Option<String> {
+    if off_hi < 5.0 {
+        return None;
+    }
+    let (state, read) = entry_state_class(off_hi);
+    let rule = "=".repeat(72);
+    Some(format!(
+        "\n{rule}\n  ENTRY STATE: {state} — S&P 500 {off_hi:.1}% off its high\n  {read}. NOT advice.\n{rule}"
+    ))
 }
 
 #[cfg(test)]
@@ -722,6 +754,20 @@ mod tests {
         assert!(entry_state_line(14.9).contains("PULLBACK"));
         assert!(entry_state_line(15.0).contains("DRAWDOWN"));
         assert!(entry_state_line(7.0).contains("7.0% off"));
+    }
+
+    /// (round 112) the top banner fires ONLY for actionable states (≥5% off) and carries the state name
+    /// + the deploy verb; near-high returns None so the footer (not a banner) covers it.
+    #[test]
+    fn entry_state_banner_actionable_only() {
+        assert!(entry_state_banner(0.0).is_none());
+        assert!(entry_state_banner(4.9).is_none());
+        let pull = entry_state_banner(5.0).expect("pullback is actionable");
+        assert!(pull.contains("PULLBACK") && pull.contains("Lean in") && pull.contains("5.0% off"));
+        let dd = entry_state_banner(15.0).expect("drawdown is actionable");
+        assert!(dd.contains("DRAWDOWN") && dd.contains("Deploy") && dd.contains("FASTER"));
+        // the banner and the footer never disagree on the state name for the same input
+        assert!(entry_state_line(20.0).contains("DRAWDOWN") && entry_state_banner(20.0).unwrap().contains("DRAWDOWN"));
     }
 
     /// (round 50) fact-drift alert semantics: a real TER hike and an AUM halving fire; basis-point
