@@ -67,6 +67,15 @@ long random string. Cron hourly:
 0 * * * * /path/to/folioman/target/release/folioman alert >> /tmp/folioman.log 2>&1
 ```
 
+The same run also pushes a **market entry-state flip ping** when the S&P 500 *crosses* a line:
+near-high (<5% off its high) / pullback (5–15%) / drawdown (≥15%). Every transition pings once —
+worsening says deploy new money faster (drawdown entries beat the index by +9.1 pts/yr vs +5.9
+near the high in the 12y multi-regime backtest), recovery back to near-high says resume the
+normal schedule. Deduped via `.alert_state` (working dir, gitignored), so a months-long drawdown
+pings once per line crossed, not hourly; a failed push keeps the old state and retries next cron.
+The `screen` command shows the same signal live — as a loud banner above the tables when the
+market is ≥5% off its high, as a quiet footer near the high.
+
 ### Run-to-run alerts (`screen`)
 
 `screen` remembers its previous run in `.screen_state.json` (working dir, gitignored) and prints

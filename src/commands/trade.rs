@@ -13,25 +13,39 @@ use std::io::Write;
 
 const USAGE: &str = "usage: folioman trade <trading212|binance|tr> <buy|sell> <SYMBOL> <QTY>";
 
-pub async fn run(args: Vec<String>) {
+/// Parse + validate the order args: (broker, side, symbol, qty). EVERYTHING is validated here —
+/// including the broker name — so a bad invocation errors BEFORE the real-money confirm prompt,
+/// never after the user has already typed `yes`.
+fn parse_order(args: &[String]) -> Result<(String, String, String, f64), String> {
     if args.len() != 4 {
-        eprintln!("{USAGE}");
-        std::process::exit(2);
+        return Err(USAGE.to_string());
     }
     let broker_name = args[0].to_lowercase();
+    if !matches!(broker_name.as_str(), "trading212" | "t212" | "binance" | "tr" | "traderepublic") {
+        return Err(USAGE.to_string());
+    }
     let side = args[1].to_lowercase();
+    if side != "buy" && side != "sell" {
+        return Err("side must be 'buy' or 'sell'".to_string());
+    }
     let symbol = args[2].to_uppercase();
-    let qty: f64 = match args[3].parse() {
-        Ok(q) if q > 0.0 => q,
-        _ => {
-            eprintln!("QTY must be a positive number");
+    // NaN fails the > 0.0 filter, so it lands in the same rejection as 0/-1/non-numeric
+    let qty: f64 = args[3]
+        .parse()
+        .ok()
+        .filter(|q: &f64| *q > 0.0)
+        .ok_or_else(|| "QTY must be a positive number".to_string())?;
+    Ok((broker_name, side, symbol, qty))
+}
+
+pub async fn run(args: Vec<String>) {
+    let (broker_name, side, symbol, qty) = match parse_order(&args) {
+        Ok(order) => order,
+        Err(e) => {
+            eprintln!("{e}");
             std::process::exit(2);
         }
     };
-    if side != "buy" && side != "sell" {
-        eprintln!("side must be 'buy' or 'sell'");
-        std::process::exit(2);
-    }
 
     // irreversible-money confirm gate (kept in live mode on purpose — fat-finger guard)
     println!("⚠ REAL LIVE ORDER — {broker_name}: {side} {qty} {symbol}");
@@ -49,6 +63,7 @@ pub async fn run(args: Vec<String>) {
         "trading212" | "t212" => broker::trading212::order(&client, &side, &symbol, qty).await,
         "binance" => broker::binance::order(&client, &side, &symbol, qty).await,
         "tr" | "traderepublic" => broker::tr::order(&client, &side, &symbol, qty).await,
+        // parse_order already rejected anything else; keep a defensive arm rather than a panic
         _ => {
             eprintln!("{USAGE}");
             std::process::exit(2);
@@ -60,5 +75,35 @@ pub async fn run(args: Vec<String>) {
             eprintln!("ORDER FAILED: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_order;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The real-money command's parse path: every malformed invocation is rejected BEFORE the
+    /// confirm prompt (incl. an unknown broker), and the happy path normalizes case.
+    #[test]
+    fn parse_order_rejects_and_normalizes() {
+        // arity
+        assert!(parse_order(&args(&["binance", "buy", "BTCEUR"])).is_err());
+        assert!(parse_order(&args(&["binance", "buy", "BTCEUR", "1", "extra"])).is_err());
+        // unknown broker rejected at parse time (used to slip past the confirm prompt)
+        assert!(parse_order(&args(&["robinhood", "buy", "AAPL", "1"])).is_err());
+        // side
+        assert!(parse_order(&args(&["binance", "hold", "BTCEUR", "1"])).is_err());
+        // qty: zero, negative, NaN and non-numeric all rejected the same way
+        for bad in ["0", "-1", "NaN", "one"] {
+            assert!(parse_order(&args(&["binance", "buy", "BTCEUR", bad])).is_err(), "qty {bad} must be rejected");
+        }
+        // happy path: broker+side lowercased, symbol uppercased, qty parsed
+        let (b, s, sym, q) = parse_order(&args(&["T212", "Buy", "aapl_us_eq", "1.5"])).expect("valid order");
+        assert_eq!((b.as_str(), s.as_str(), sym.as_str()), ("t212", "buy", "AAPL_US_EQ"));
+        assert!((q - 1.5).abs() < 1e-12);
     }
 }
