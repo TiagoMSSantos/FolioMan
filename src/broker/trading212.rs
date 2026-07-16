@@ -68,6 +68,66 @@ fn extract_tickers(port: &Value) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// (round 117) One tradable instrument from the metadata endpoint — the minimum the order-glue
+/// symbol resolver needs: exact T212 ticker form + ISIN + listing currency.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct Instrument {
+    pub ticker: String,
+    pub isin: String,
+    pub currency: String,
+}
+
+/// Pure extraction, offline-testable (like the others): rows missing any field are skipped, a
+/// non-array response is API drift.
+fn extract_instruments(v: &Value) -> Result<Vec<Instrument>, String> {
+    Ok(v
+        .as_array()
+        .ok_or_else(|| "trading212: instruments response is not an array (API drift?)".to_string())?
+        .iter()
+        .filter_map(|i| {
+            Some(Instrument {
+                ticker: i.get("ticker")?.as_str()?.to_string(),
+                isin: i.get("isin")?.as_str()?.to_string(),
+                currency: i.get("currencyCode")?.as_str()?.to_string(),
+            })
+        })
+        .collect())
+}
+
+/// (round 117) Full tradable-instrument list for order-glue symbol resolution, cached in
+/// `.t212_instruments.json` for 7 days — the endpoint returns ~10k rows and is rate-limited
+/// (~1 req/50s), and listings don't churn daily. ANY failure (no key, throttle, API drift) →
+/// empty vec: the glue degrades to `<T212_SYMBOL>` placeholders exactly like the owned overlay,
+/// never fails the screen.
+pub async fn instruments_cached(client: &Client) -> Vec<Instrument> {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Cache {
+        date: String,
+        rows: Vec<Instrument>,
+    }
+    const PATH: &str = ".t212_instruments.json";
+    let today = chrono::Utc::now().date_naive();
+    if let Some(c) = std::fs::read_to_string(PATH).ok().and_then(|s| serde_json::from_str::<Cache>(&s).ok()) {
+        if chrono::NaiveDate::parse_from_str(&c.date, "%Y-%m-%d").is_ok_and(|d| (today - d).num_days() < 7) {
+            return c.rows;
+        }
+    }
+    let Ok(key) = env_var("TRADING212_API_KEY") else {
+        return Vec::new(); // no key configured = broker off, silent like the owned overlay
+    };
+    let rows = match get(client, &key, "equity/metadata/instruments").await.and_then(|v| extract_instruments(&v)) {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("screen: trading212 instruments fetch failed ({e}) — order symbols degrade to placeholders");
+            return Vec::new();
+        }
+    };
+    if let Ok(json) = serde_json::to_string(&Cache { date: today.to_string(), rows: rows.clone() }) {
+        let _ = std::fs::write(PATH, json);
+    }
+    rows
+}
+
 /// Pure response→text rendering, split from the fetch so drift handling is testable offline.
 /// A missing cash field or a non-array portfolio is API drift and must surface as the broker
 /// error (accounts prints it as "(skipped) …"), never render as plausible zeros/emptiness.
@@ -108,6 +168,21 @@ fn render_summary(cash: &Value, port: &Value) -> Result<String, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// (round 117) instruments extraction: complete rows collected, partial rows skipped (a
+    /// resolver must never see a half-instrument), non-array = drift error.
+    #[test]
+    fn extract_instruments_collects_and_skips() {
+        let v = json!([
+            { "ticker": "AAPL_US_EQ", "isin": "US0378331005", "currencyCode": "USD" },
+            { "ticker": "NOISIN_EQ", "currencyCode": "USD" },
+            { "isin": "IE00LONELY00", "currencyCode": "EUR" }
+        ]);
+        let rows = extract_instruments(&v).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].ticker.as_str(), rows[0].isin.as_str(), rows[0].currency.as_str()), ("AAPL_US_EQ", "US0378331005", "USD"));
+        assert!(extract_instruments(&json!({ "not": "array" })).is_err());
+    }
 
     #[test]
     fn renders_cash_and_holdings() {

@@ -81,9 +81,11 @@ month?" arithmetic done for you. Not advice.
 
 Below the tables, `screen` prints the top book as **paste-ready `trade` commands** (stocks/ETFs →
 Trading212, crypto → Binance), QTY sized from that deploy € split equally across the book. Exact
-Trading212 ticker forms are only knowable for names you already hold — new names print a
-`<T212_SYMBOL>` placeholder to look up once in the app. Printing is all that happens here: each
-command still walks `trade`'s own real-money confirm gate when you run it.
+Trading212 symbols are resolved from your held positions first, then from the full T212
+instrument list (fetched with your API key, cached a week in `.t212_instruments.json`) by ISIN or
+unique base symbol — only genuinely ambiguous or unlisted names still print a `<T212_SYMBOL>`
+placeholder. Printing is all that happens here: each command still walks `trade`'s own real-money
+confirm gate when you run it.
 
 ### `track` — live out-of-sample track record
 

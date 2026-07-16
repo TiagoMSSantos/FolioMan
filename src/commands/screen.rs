@@ -704,20 +704,38 @@ pub async fn run(args: Vec<String>) {
         let deploy_scaled = (settings.monthly_deploy_eur > 0.0).then(|| {
             settings.monthly_deploy_eur * spx_off_hi.map_or(1.0, deploy_multiplier)
         });
-        let glue_rows: Vec<(String, Option<f64>, &'static str, Option<String>)> = ranked_now
+        let book: Vec<&String> = ranked_now.iter().take(crate::commands::track::BOOK).collect();
+        // (round 117) fetch the full T212 instrument list (7-day cached, silent-empty without a
+        // key) only when some stock/ETF row can't already be resolved from held positions — a
+        // fully-held book or a keyless run costs zero extra HTTP. The ISIN map (inverted from the
+        // ETF universe's ISIN→Yahoo cache) gives the resolver its exact-match path.
+        let need_instruments = book.iter().any(|t| {
+            !crate::picks::is_currency_quoted(t)
+                && !t212_raw.iter().any(|r| crate::picks::t212_base(r) == crate::picks::yahoo_base(t))
+        });
+        let instruments = if need_instruments {
+            crate::broker::trading212::instruments_cached(&client).await
+        } else {
+            Vec::new()
+        };
+        let isin_of: std::collections::HashMap<String, String> = if instruments.is_empty() {
+            Default::default()
+        } else {
+            std::fs::read_to_string(".isin_cache.json")
+                .ok()
+                .and_then(|s| serde_json::from_str::<std::collections::HashMap<String, String>>(&s).ok())
+                .map(|m| m.into_iter().map(|(isin, sym)| (sym, isin)).collect())
+                .unwrap_or_default()
+        };
+        let glue_rows: Vec<(String, Option<f64>, &'static str, Option<String>)> = book
             .iter()
-            .take(crate::commands::track::BOOK)
             .map(|t| {
-                let price = quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur);
+                let price = quotes.iter().find(|q| &q.ticker == *t).and_then(|q| q.price_eur);
                 if crate::picks::is_currency_quoted(t) {
                     let sym = format!("{}EUR", crate::picks::underlying(t).to_uppercase());
-                    (t.clone(), price, "binance", Some(sym))
+                    ((*t).clone(), price, "binance", Some(sym))
                 } else {
-                    let sym = t212_raw
-                        .iter()
-                        .find(|r| crate::picks::t212_base(r) == crate::picks::yahoo_base(t))
-                        .map(|r| r.to_uppercase());
-                    (t.clone(), price, "trading212", sym)
+                    ((*t).clone(), price, "trading212", resolve_t212(t, &t212_raw, &instruments, &isin_of))
                 }
             })
             .collect();
@@ -826,6 +844,37 @@ fn deploy_multiplier(off_hi: f64) -> f64 {
         "DRAWDOWN" => 2.0,
         "PULLBACK" => 1.5,
         _ => 1.0,
+    }
+}
+
+/// (round 117) Resolve a Yahoo ticker to its exact Trading212 symbol, safest source first:
+/// (1) held positions are ground truth; (2) ISIN-exact via the ETF universe's ISIN cache —
+/// several listings of one ISIN are the same fund, prefer the EUR one; (3) base-symbol match
+/// ONLY when unique — two venues sharing a base is ambiguity, and a guessed venue in a
+/// paste-ready real-money command is worse than a placeholder.
+fn resolve_t212(
+    yahoo: &str,
+    owned_raw: &[String],
+    instruments: &[crate::broker::trading212::Instrument],
+    isin_of: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let base = crate::picks::yahoo_base(yahoo);
+    if let Some(o) = owned_raw.iter().find(|r| crate::picks::t212_base(r) == base) {
+        return Some(o.to_uppercase());
+    }
+    if let Some(isin) = isin_of.get(yahoo) {
+        let hits: Vec<&crate::broker::trading212::Instrument> =
+            instruments.iter().filter(|i| &i.isin == isin).collect();
+        if !hits.is_empty() {
+            let pick = hits.iter().find(|i| i.currency == "EUR").unwrap_or(&hits[0]);
+            return Some(pick.ticker.to_uppercase());
+        }
+    }
+    let base_hits: Vec<&crate::broker::trading212::Instrument> =
+        instruments.iter().filter(|i| crate::picks::t212_base(&i.ticker) == base).collect();
+    match base_hits.as_slice() {
+        [one] => Some(one.ticker.to_uppercase()),
+        _ => None,
     }
 }
 
@@ -945,6 +994,30 @@ mod tests {
         // priceless row can't size a qty even with a deploy set
         let no_price = order_glue(&[("X".to_string(), None, "trading212", None)], Some(100.0)).unwrap();
         assert!(no_price.contains("<QTY>"));
+    }
+
+    /// (round 117) symbol resolution priority: owned beats instruments; ISIN-exact prefers the
+    /// EUR listing; base match resolves only when unique — two venues on one base stay a
+    /// placeholder (never guess a listing for a real-money command).
+    #[test]
+    fn resolve_t212_priority_and_ambiguity() {
+        use crate::broker::trading212::Instrument;
+        let inst = |t: &str, isin: &str, ccy: &str| Instrument { ticker: t.to_string(), isin: isin.to_string(), currency: ccy.to_string() };
+        let owned = vec!["IITU_GB_EQ".to_string()];
+        let instruments = vec![
+            inst("IITUx_EQ", "IE00B3WJKG14", "USD"), // distractor — owned entry must win before instruments are consulted
+            inst("SXLK_US_EQ", "IE00BWBXM948", "USD"),
+            inst("SXLKe_EQ", "IE00BWBXM948", "EUR"), // same ISIN, EUR listing preferred
+            inst("AAPL_US_EQ", "US0378331005", "USD"),
+            inst("DUAL_US_EQ", "US1111111111", "USD"),
+            inst("DUAL_GB_EQ", "GB2222222222", "GBP"), // same base, different ISINs = ambiguous
+        ];
+        let isin_of: HashMap<String, String> = [("SXLK.L".to_string(), "IE00BWBXM948".to_string())].into();
+        assert_eq!(resolve_t212("IITU.L", &owned, &instruments, &isin_of).as_deref(), Some("IITU_GB_EQ"));
+        assert_eq!(resolve_t212("SXLK.L", &owned, &instruments, &isin_of).as_deref(), Some("SXLKE_EQ"));
+        assert_eq!(resolve_t212("AAPL", &owned, &instruments, &isin_of).as_deref(), Some("AAPL_US_EQ"));
+        assert_eq!(resolve_t212("DUAL", &owned, &instruments, &isin_of), None);
+        assert_eq!(resolve_t212("UNKNOWN", &owned, &[], &isin_of), None);
     }
 
     /// (round 116) the multiplier ladder tracks the classifier's exact boundaries.
