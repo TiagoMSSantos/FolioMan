@@ -847,7 +847,9 @@ fn deploy_multiplier(off_hi: f64) -> f64 {
 /// (1) held positions are ground truth; (2) ISIN-exact via the ETF universe's ISIN cache —
 /// several listings of one ISIN are the same fund, prefer the EUR one; (3) base-symbol match
 /// ONLY when unique — two venues sharing a base is ambiguity, and a guessed venue in a
-/// paste-ready real-money command is worse than a placeholder.
+/// paste-ready real-money command is worse than a placeholder. Symbols return VERBATIM: T212
+/// venue letters are meaningfully lowercase (`VUAGl_EQ`, l = LSE) and `trade` now sends them
+/// untransformed — the instrument list is the single source of truth end-to-end.
 fn resolve_t212(
     yahoo: &str,
     owned_raw: &[String],
@@ -856,20 +858,20 @@ fn resolve_t212(
 ) -> Option<(String, &'static str)> {
     let base = crate::picks::yahoo_base(yahoo);
     if let Some(o) = owned_raw.iter().find(|r| crate::picks::t212_base(r) == base) {
-        return Some((o.to_uppercase(), "owned"));
+        return Some((o.clone(), "owned"));
     }
     if let Some(isin) = isin_of.get(yahoo) {
         let hits: Vec<&crate::broker::trading212::Instrument> =
             instruments.iter().filter(|i| &i.isin == isin).collect();
         if !hits.is_empty() {
             let pick = hits.iter().find(|i| i.currency == "EUR").unwrap_or(&hits[0]);
-            return Some((pick.ticker.to_uppercase(), "isin"));
+            return Some((pick.ticker.clone(), "isin"));
         }
     }
     let base_hits: Vec<&crate::broker::trading212::Instrument> =
         instruments.iter().filter(|i| crate::picks::t212_base(&i.ticker) == base).collect();
     match base_hits.as_slice() {
-        [one] => Some((one.ticker.to_uppercase(), "base")),
+        [one] => Some((one.ticker.clone(), "base")),
         _ => None,
     }
 }
@@ -1011,7 +1013,8 @@ mod tests {
         let isin_of: HashMap<String, String> = [("SXLK.L".to_string(), "IE00BWBXM948".to_string())].into();
         // (round 118) each resolution also names its source rung — the stderr report counts them
         assert_eq!(resolve_t212("IITU.L", &owned, &instruments, &isin_of), Some(("IITU_GB_EQ".to_string(), "owned")));
-        assert_eq!(resolve_t212("SXLK.L", &owned, &instruments, &isin_of), Some(("SXLKE_EQ".to_string(), "isin")));
+        // venue letter stays lowercase — the paste line must show T212's true form (real-money path)
+        assert_eq!(resolve_t212("SXLK.L", &owned, &instruments, &isin_of), Some(("SXLKe_EQ".to_string(), "isin")));
         assert_eq!(resolve_t212("AAPL", &owned, &instruments, &isin_of), Some(("AAPL_US_EQ".to_string(), "base")));
         assert_eq!(resolve_t212("DUAL", &owned, &instruments, &isin_of), None);
         assert_eq!(resolve_t212("UNKNOWN", &owned, &[], &isin_of), None);

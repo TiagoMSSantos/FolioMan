@@ -2,8 +2,9 @@
 //! REAL MONEY, IRREVERSIBLE. Credentials are read from environment variables only (see
 //! `src/broker.rs`); nothing trade-related is ever read from `settings.yaml`.
 //!
-//! Brokers: `trading212` (ticker form `AAPL_US_EQ`), `binance` (pair like `BTCEUR`, qty in
-//! base asset), `tr`/`traderepublic` (unofficial, login only — see broker docs).
+//! Brokers: `trading212` (ticker form `AAPL_US_EQ`, sent EXACTLY as typed — venue letters are
+//! meaningfully lowercase, e.g. `VUAGl_EQ`), `binance` (pair like `BTCEUR`, qty in base asset),
+//! `tr`/`traderepublic` (unofficial, login only — see broker docs).
 //!
 //! Every order prints a summary and requires typing `yes` to send — kept even in live mode
 //! as a fat-finger guard, because the action can't be undone.
@@ -28,7 +29,16 @@ fn parse_order(args: &[String]) -> Result<(String, String, String, f64), String>
     if side != "buy" && side != "sell" {
         return Err("side must be 'buy' or 'sell'".to_string());
     }
-    let symbol = args[2].to_uppercase();
+    // Symbol case is broker POLICY, not cosmetics. Binance pairs are genuinely uppercase
+    // (btceur -> BTCEUR stays a typing convenience) and TR takes ISINs (uppercase by spec) —
+    // but Trading212 tickers carry MEANINGFUL lowercase venue letters (`VUAGl_EQ`, l = LSE),
+    // so a T212 symbol passes VERBATIM: transforming a real-money symbol could reject the
+    // order, or worse, name a different instrument. Paste the order-glue line as printed.
+    let symbol = if matches!(broker_name.as_str(), "trading212" | "t212") {
+        args[2].clone()
+    } else {
+        args[2].to_uppercase()
+    };
     // NaN fails the > 0.0 filter, so it lands in the same rejection as 0/-1/non-numeric
     let qty: f64 = args[3]
         .parse()
@@ -101,9 +111,12 @@ mod tests {
         for bad in ["0", "-1", "NaN", "one"] {
             assert!(parse_order(&args(&["binance", "buy", "BTCEUR", bad])).is_err(), "qty {bad} must be rejected");
         }
-        // happy path: broker+side lowercased, symbol uppercased, qty parsed
-        let (b, s, sym, q) = parse_order(&args(&["T212", "Buy", "aapl_us_eq", "1.5"])).expect("valid order");
-        assert_eq!((b.as_str(), s.as_str(), sym.as_str()), ("t212", "buy", "AAPL_US_EQ"));
+        // happy path: broker+side lowercased, qty parsed; symbol case is broker POLICY —
+        // T212 verbatim (venue letters are meaningfully lowercase), binance uppercased
+        let (b, s, sym, q) = parse_order(&args(&["T212", "Buy", "VUAGl_EQ", "1.5"])).expect("valid order");
+        assert_eq!((b.as_str(), s.as_str(), sym.as_str()), ("t212", "buy", "VUAGl_EQ"));
         assert!((q - 1.5).abs() < 1e-12);
+        let (_, _, sym, _) = parse_order(&args(&["binance", "buy", "btceur", "0.1"])).expect("valid order");
+        assert_eq!(sym, "BTCEUR");
     }
 }
