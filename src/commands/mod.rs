@@ -25,6 +25,32 @@ pub fn pct(x: Option<f64>) -> String {
     }
 }
 
+/// `--explain [TICKER]` parse, shared by `screen` and `check`: returns the explain target and the
+/// remaining positional tickers. A bare `--explain` = None (the always-on #1 footer covers it).
+/// What each command DOES with the target differs on purpose: `screen` adds it to the scan list
+/// (narrowing a full-universe run to it is the point), `check` keeps the whole watchlist view and
+/// only ensures the target gets fetched. Any other flag is fatal: positional args OVERRIDE the
+/// universe/watchlist, so a typo'd flag must not silently shrink the run to a tiny ticker list.
+/// Tickers never START with '-' (BTC-USD has it inside), so this can't reject a real symbol.
+pub(crate) fn parse_explain(cmd: &str, args: Vec<String>) -> (Option<String>, Vec<String>) {
+    let mut explain: Option<String> = None;
+    let mut positional: Vec<String> = Vec::new();
+    let mut it = args.into_iter().peekable();
+    while let Some(a) = it.next() {
+        if a == "--explain" {
+            if it.peek().is_some_and(|t| !t.starts_with('-')) {
+                explain = Some(it.next().unwrap());
+            }
+        } else if a.starts_with('-') {
+            eprintln!("{cmd}: unknown flag {a} (only --explain [TICKER] is supported)");
+            std::process::exit(2);
+        } else {
+            positional.push(a);
+        }
+    }
+    (explain, positional)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,6 +65,22 @@ mod tests {
         assert_eq!(pct(Some(2.34)), "2.3%");
         assert_eq!(pct(Some(-1.26)), "-1.3%"); // negative keeps its own sign, no forced +
         assert_eq!(pct(None), "n/a");
+    }
+
+    /// parse_explain: flag+ticker extracted from any position, bare flag = None (footer covers #1),
+    /// positional tickers pass through in order. (The unknown-flag arm exits the process — not
+    /// unit-testable, guarded by inspection.)
+    #[test]
+    fn parse_explain_semantics() {
+        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(parse_explain("check", v(&[])), (None, vec![]));
+        assert_eq!(parse_explain("check", v(&["AAPL", "MSFT"])), (None, v(&["AAPL", "MSFT"])));
+        assert_eq!(parse_explain("check", v(&["--explain", "KEYS"])), (Some("KEYS".into()), vec![]));
+        assert_eq!(
+            parse_explain("check", v(&["AAPL", "--explain", "KEYS", "BTC-USD"])),
+            (Some("KEYS".into()), v(&["AAPL", "BTC-USD"]))
+        );
+        assert_eq!(parse_explain("check", v(&["--explain"])), (None, vec![])); // bare flag
     }
 }
 

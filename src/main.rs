@@ -1,6 +1,6 @@
 //! folioman — review ETF/stock/crypto holdings. Read-only, never trades.
 //!
-//!   folioman check  [TICKERS...]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline
+//!   folioman check  [TICKERS...] [--explain [TICKER]]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline; --explain prints TICKER's SCORE arithmetic without narrowing the watchlist view
 //!   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
 //!   folioman screen [TICKERS...] [--explain [TICKER]]   scan live universe (CoinGecko + S&P500) growth ranking; --explain prints the SCORE arithmetic for TICKER (or the #1 row)
 //!   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)
@@ -23,7 +23,7 @@ use folioman::commands;
 const USAGE: &str = "\
 folioman — review ETF/stock/crypto holdings. Read-only, never trades.
 
-  folioman check  [TICKERS...]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline
+  folioman check  [TICKERS...] [--explain [TICKER]]   price(EUR) + 1D/1W/1M/3M/6M/1Y/5Y/10Y/20Y % + market + headline; --explain prints TICKER's SCORE arithmetic without narrowing the watchlist view
   folioman perf   [TICKERS...]   per-ticker block: past price + % at each horizon
   folioman screen [TICKERS...] [--explain [TICKER]]   scan live universe (CoinGecko + S&P500) growth ranking; --explain prints the SCORE arithmetic for TICKER (or the #1 row)
   folioman size   [TICKERS...]   suggested position sizes for the growth picks (weight ∝ score ÷ vol; read-only)

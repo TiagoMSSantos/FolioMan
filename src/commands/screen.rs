@@ -263,29 +263,11 @@ pub async fn run(args: Vec<String>) {
     let started = std::time::Instant::now();
     let run_date = chrono::Local::now().date_naive().to_string();
     // `--explain [TICKER]`: after the tables, print the SCORE arithmetic for TICKER (a flag with no
-    // ticker, or no flag at all, still explains the #1 row — that footer is always on). The named ticker
-    // is also added to the scan, so `screen --explain NVDA` ranks + explains just NVDA. Strip the flag
-    // out of the positional tickers first, else it gets fetched as a junk symbol.
-    let mut explain: Option<String> = None;
-    let mut positional: Vec<String> = Vec::new();
-    let mut it = args.into_iter().peekable();
-    while let Some(a) = it.next() {
-        if a == "--explain" {
-            if it.peek().is_some_and(|t| !t.starts_with('-')) {
-                let t = it.next().unwrap();
-                positional.push(t.clone()); // ensure the target is fetched/scanned
-                explain = Some(t);
-            } // a bare `--explain` falls through: the default #1 footer covers it
-        } else if a.starts_with('-') {
-            // an unrecognized flag must not fall through to the positional tickers: any explicit
-            // arg OVERRIDES the whole universe, so a typo'd flag silently turns the full screen
-            // into a tiny watchlist-only run. Tickers never START with '-' (BTC-USD has it
-            // inside), so this can't reject a real symbol.
-            eprintln!("screen: unknown flag {a} (only --explain [TICKER] is supported)");
-            std::process::exit(2);
-        } else {
-            positional.push(a);
-        }
+    // ticker, or no flag at all, still explains the #1 row — that footer is always on). The named
+    // ticker is also added to the scan, so `screen --explain NVDA` ranks + explains just NVDA.
+    let (explain, mut positional) = crate::commands::parse_explain("screen", args);
+    if let Some(t) = &explain {
+        positional.push(t.clone()); // ensure the target is fetched/scanned
     }
     let args = positional;
 

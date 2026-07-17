@@ -14,6 +14,7 @@ cargo test                      # unit tests (#[cfg(test)] mod tests per module)
 cargo run -- check              # default watchlist: price(EUR), % per horizon, trend, headline,
                                 #   then the GROWTH ranking (buy candidates), Euribor, CdA, inflation
 cargo run -- check AAPL BTC-USD VWCE.DE
+cargo run -- check --explain KEYS      # full watchlist view + KEYS's SCORE arithmetic decomposed
 cargo run -- perf NVDA          # past EUR price + % at each horizon, with source URL
 cargo run -- screen             # live universe -> GROWTH ranking per class (stocks/ETFs/crypto) + NUPL
 cargo run -- size               # suggested position sizes for the growth picks (score ÷ volatility, read-only)

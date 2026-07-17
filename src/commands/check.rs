@@ -29,10 +29,20 @@ fn holdings_lines(
 }
 
 pub async fn run(args: Vec<String>) {
+    // `--explain [TICKER]`: print the SCORE arithmetic for TICKER without narrowing the view —
+    // the whole watchlist still renders (unlike `screen`, where the target narrows the scan).
+    // Kills the doubt-a-mid-list-row workflow's second fetch round-trip: one run shows the full
+    // table AND the named decomposition. The target is fetched even if it's not on the watchlist.
+    let (explain, positional) = crate::commands::parse_explain("check", args);
     let settings = config::load();
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
-    let tickers = if args.is_empty() { settings.tickers.clone() } else { args };
+    let mut tickers = if positional.is_empty() { settings.tickers.clone() } else { positional };
+    if let Some(t) = &explain {
+        if !tickers.contains(t) {
+            tickers.push(t.clone());
+        }
+    }
 
     let hdr = HORIZONS
         .iter()
@@ -107,7 +117,7 @@ pub async fn run(args: Vec<String>) {
         sector_of: &std::collections::HashMap::new(),
         pinned: &[],
         owned: &Default::default(),
-        explain: None,
+        explain: explain.as_deref(),
         show_hold_core: false,
     });
 
