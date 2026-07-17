@@ -59,9 +59,10 @@ symbol/qty at the prompt; test with tiny quantities first.
 
 ### `alert` — dip notifications
 
-Pushes to `ntfy.sh/<ntfy_topic>` for each ticker ≥ `drop_pct` below its trailing high. Subscribe
-your phone at `https://ntfy.sh/<topic>`. The ntfy topic is a secret (= your watchlist) — use a
-long random string. Cron hourly:
+Pushes to `ntfy.sh/<ntfy_topic>` when a ticker *crosses* ≥ `drop_pct` below its trailing high —
+once per dip, not once per run (`.alert_dips` remembers who was pinged; a recovery clears the
+name so its next dip pings again). Subscribe your phone at `https://ntfy.sh/<topic>`. The ntfy
+topic is a secret (= your watchlist) — use a long random string. Cron hourly:
 
 ```cron
 0 * * * * /path/to/folioman/target/release/folioman alert >> /tmp/folioman.log 2>&1

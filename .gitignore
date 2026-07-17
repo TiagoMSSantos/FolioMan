@@ -38,6 +38,9 @@ config/settings.yaml
 # alert run-to-run market entry state (flip-ping dedup)
 .alert_state
 
+# alert per-ticker dip dedup (tickers already pinged; recovery clears)
+.alert_dips
+
 # ranked-snapshot journal (one line per screen day; `track` grades it)
 .screen_snapshots.jsonl
 
