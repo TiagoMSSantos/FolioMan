@@ -98,6 +98,14 @@ live counterpart of the backtest's held-book metric, and the honest answer to "d
 actually work?" as evidence accrues. Price-only (dividends not counted, like the backtest);
 delisted/unpriced names drop out and flatter the book — the `N` column keeps that visible.
 
+`folioman track --push` additionally sends the one-line verdict to the same ntfy topic the
+alerts use — cron it monthly so the record reaches your phone without a manual run (the cron
+schedule is the dedup; a failed push just retries next month):
+
+```cron
+0 9 1 * * /path/to/folioman/target/release/folioman track --push >> /tmp/folioman.log 2>&1
+```
+
 ### Run-to-run alerts (`screen`)
 
 `screen` remembers its previous run in `.screen_state.json` (working dir, gitignored) and prints

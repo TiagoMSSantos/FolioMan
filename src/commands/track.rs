@@ -79,7 +79,22 @@ fn grade(snap: &Snapshot, today: chrono::NaiveDate, px_now: &dyn Fn(&str) -> Opt
     Some(Graded { date: snap.date.clone(), days, priced: rets.len(), book_pct, spy_pct })
 }
 
-pub async fn run(_args: Vec<String>) {
+/// The one-line verdict — printed at the bottom of every run, and the title of the `--push` ping.
+fn summary_line(wins: usize, graded_n: usize, excess_sum: f64) -> String {
+    match graded_n {
+        0 => "nothing gradeable yet — snapshots need at least one day of age (and priced rows).".to_string(),
+        n => format!(
+            "book beat the index in {wins}/{n} windows ({:.0}%), mean excess {:+.1}pp per window.",
+            100.0 * wins as f64 / n as f64,
+            excess_sum / n as f64
+        ),
+    }
+}
+
+pub async fn run(args: Vec<String>) {
+    // --push: also send the summary to ntfy — for a monthly cron, so the track record reaches the
+    // phone without a manual run. The cron schedule IS the dedup: no state file, one ping per fire.
+    let push = args.iter().any(|a| a == "--push");
     let raw = match std::fs::read_to_string(SNAPSHOT_FILE) {
         Ok(s) => s,
         Err(_) => {
@@ -151,13 +166,20 @@ pub async fn run(_args: Vec<String>) {
             ),
         }
     }
-    match graded_n {
-        0 => println!("\n  nothing gradeable yet — snapshots need at least one day of age (and priced rows)."),
-        n => println!(
-            "\n  summary: book beat the index in {wins}/{n} windows ({:.0}%), mean excess {:+.1}pp per window.",
-            100.0 * wins as f64 / n as f64,
-            excess_sum / n as f64
-        ),
+    let summary = summary_line(wins, graded_n, excess_sum);
+    println!("\n  summary: {summary}");
+    if push {
+        let delivered = fetch::push(
+            &client,
+            &settings.urls,
+            &settings.ntfy_topic,
+            &format!("Track record: {summary}"),
+            "Screen's own past top-10s graded at today's prices vs the S&P 500 — live out-of-sample. NOT advice.",
+        )
+        .await;
+        if !delivered {
+            eprintln!("WARNING: ntfy push failed — track summary NOT delivered (next monthly cron retries)");
+        }
     }
 }
 
@@ -198,6 +220,17 @@ mod tests {
         // benchmark missing on either end -> book still grades, spy is None
         let g = grade(&snap("2026-06-16", None, &[("UP", Some(100.0))]), today, &px, Some(105.0)).expect("grades");
         assert!(g.spy_pct.is_none() && (g.book_pct - 10.0).abs() < 1e-9);
+    }
+
+    /// summary_line(): the verdict that reaches the phone via `--push` — 0 windows reads as
+    /// nothing-gradeable; graded windows carry the win rate and mean excess unmangled.
+    #[test]
+    fn summary_semantics() {
+        assert!(summary_line(0, 0, 0.0).starts_with("nothing gradeable yet"));
+        assert_eq!(
+            summary_line(2, 3, 4.5),
+            "book beat the index in 2/3 windows (67%), mean excess +1.5pp per window."
+        );
     }
 
     /// Snapshot JSONL round-trips (the journal format `screen` writes and `track` reads back).
