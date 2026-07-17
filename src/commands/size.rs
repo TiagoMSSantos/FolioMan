@@ -57,34 +57,35 @@ pub async fn run(args: Vec<String>) {
         &scored.iter().map(|(q, s)| (*s, q.volatility_pct, q.instrument_type.as_str())).collect::<Vec<_>>(),
     );
 
-    // (Item 7) regime gross scaler: dial TOTAL exposure down when the broad market (S&P 500) is below its
-    // long (~200-week) SMA. Purely multiplicative on the whole basket -> the SIZE% split below is
-    // unchanged (never re-orders names); only how much capital to deploy moves. A failed fetch -> full.
+    println!("Suggested sizes — weight ∝ score ÷ volatility (vol-target, cluster-capped, READ-ONLY, NOT advice):\n");
+    println!("  {:<10} {:>7} {:>7} {:>7}", "TICKER", "SCORE", "VOL", "SIZE%");
+    for ((q, s), w) in scored.iter().zip(&weights) {
+        println!(
+            "  {:<10} {:>7.1} {:>7} {:>6.1}%",
+            q.ticker,
+            s,
+            q.volatility_pct.map_or("n/a".to_string(), |v| format!("{v:.1}%")),
+            w, // within-basket relative split (sums to 100)
+        );
+    }
+
+    // Entry-state deploy pace — the same validated line `screen` prints (drawdown deployments beat
+    // the index +9.1 pts/yr vs +5.9 near the high in the 12y multi-regime backtest; the multiplier
+    // is shared via screen::deploy_line so the two surfaces can never disagree). This REPLACES the
+    // old below-200wk-SMA gross haircut, which preached the opposite of that measured edge. A stub
+    // ^GSPC quote leaves the state unknown -> deploy_line's honest ×1-base fallback; an unset
+    // monthly_deploy_eur (≤0) prints nothing, same as `screen`.
     let spx = fetch::quotes(
         &client, &settings.urls, &fx_cache, &["^GSPC".to_string()], settings.dip_days, settings.high_days,
         false, false, &settings.anchor_windows, eu_infl.as_ref(),
     )
     .await;
-    let risk_off = spx.first().is_some_and(|q| q.below_ma_pct > 0.0);
-    let gross = if risk_off { 0.6 } else { 1.0 };
-
-    println!("Suggested sizes — weight ∝ score ÷ volatility (vol-target, cluster-capped, READ-ONLY, NOT advice):");
-    println!(
-        "Suggested gross exposure: {:.0}% of capital — S&P 500 {} its ~200-week SMA ({}).\n",
-        gross * 100.0,
-        if risk_off { "below" } else { "at/above" },
-        if risk_off { "risk-off" } else { "risk-on" },
-    );
-    println!("  {:<10} {:>7} {:>7} {:>7} {:>7}", "TICKER", "SCORE", "VOL", "SIZE%", "ALLOC%");
-    for ((q, s), w) in scored.iter().zip(&weights) {
-        println!(
-            "  {:<10} {:>7.1} {:>7} {:>6.1}% {:>6.1}%",
-            q.ticker,
-            s,
-            q.volatility_pct.map_or("n/a".to_string(), |v| format!("{v:.1}%")),
-            w,        // within-basket relative split (sums to 100)
-            w * gross, // ALLOC% = the slice of TOTAL capital after the regime scaler
-        );
+    let off_hi = spx
+        .first()
+        .filter(|q| q.price != "err" && q.price != "no data")
+        .map(|q| q.drawdown_pct);
+    if let Some(line) = crate::commands::screen::deploy_line(settings.monthly_deploy_eur, off_hi) {
+        println!("{line}");
     }
 
     // (round 114) allocation gap — what you ACTUALLY hold (Trading212 stocks + Binance crypto,

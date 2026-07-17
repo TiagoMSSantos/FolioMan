@@ -814,7 +814,7 @@ fn entry_state_banner(off_hi: f64) -> Option<String> {
 /// the only losing move. State thresholds stay single-sourced in [`entry_state_class`]. `None`
 /// when the knob is unset (≤0). A failed ^GSPC fetch prints the 1× base and says why instead of
 /// guessing a state.
-fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> {
+pub(crate) fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> {
     if base_eur <= 0.0 {
         return None;
     }
