@@ -1,4 +1,6 @@
 //! `perf [TICKERS]` — per-ticker block: past EUR price + % at each horizon + source URL.
+//! With `inflation_adjust` on, >=1Y % are real (HICP-deflated) while past prices stay nominal;
+//! a header line says so whenever the adjustment is actually in effect.
 
 use crate::core::HORIZONS;
 use crate::{config, core, fetch};
@@ -14,6 +16,13 @@ pub async fn run(args: Vec<String>) {
     } else {
         None
     };
+    // Label the nominal/real mix: the past-price column is NOMINAL EUR while >=1Y % are
+    // HICP-deflated (core::horizon_changes) — unlabeled, the visible arithmetic looks wrong
+    // ((now-past)/past no longer matches the printed %). Gated on a non-empty series: a failed
+    // HICP fetch leaves every % nominal (empty map -> no deflation), and the label must not lie.
+    if eu_infl.as_ref().is_some_and(|s| !s.is_empty()) {
+        println!("(1Y+ % inflation-adjusted — real EUR terms, EU HICP; past prices stay nominal)");
+    }
     for quote in fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, eu_infl.as_ref()).await { // news off: perf prints only % columns
         println!(
             "\n{} [{}]  now {}  ({})  {}",
