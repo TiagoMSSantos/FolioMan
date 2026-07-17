@@ -396,7 +396,7 @@ ntfy_topic: "ci-smoke-tests-unused"
 # Data-source URLs. Templates use {placeholder} tokens filled at fetch time: {ticker} {range} {n}
 # {topic} {key}. Swap a source by editing the URL here, no rebuild of logic needed (only the response
 # shape must match what the parser expects). The keys with a built-in code default (constituents_csv,
-# euronext_lisbon, nasdaq_listed/other_listed, fundamentals*) are listed here for documentation — omit
+# euronext_lisbon, fundamentals*) are listed here for documentation — omit
 # any and it falls back to the SAME URL, so the backtest gate already fetches them either way.
 urls:
   yahoo_chart: "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={range}&interval=1d&events=div,split"
@@ -432,11 +432,6 @@ urls:
     - "https://yfiua.github.io/index-constituents/constituents-nasdaq100.csv"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
   euronext_lisbon: "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS"
-  # NASDAQ Trader symbol files (pipe-delimited, ETF flag column) -> screen ETF universe. No free
-  # AUM-ranked ETF list exists, so these dump ALL US-listed ETFs; the turnover gate culls the tail.
-  # ETF flag: nasdaqlisted col 6, otherlisted col 4 (where SPY/Arca funds live).
-  nasdaq_listed: "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
-  other_listed: "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
   # latest Bitcoin NUPL (net unrealized profit/loss), free on-chain sentiment gauge; `screen` prints it after the crypto table
   nupl: "https://bitcoin-data.com/v1/nupl/last"
   # (E) trailing-P/E source for the valuation tilt. {ticker} + {key} (key from FMP_API_KEY env, NOT

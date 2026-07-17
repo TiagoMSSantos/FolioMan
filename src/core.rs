@@ -484,26 +484,6 @@ pub fn wiki_constituents(html: &str, sectors: &[String]) -> Vec<(String, String)
         .collect()
 }
 
-/// Parse a NASDAQ Trader SymDir file (pipe-delimited) -> ETF symbols (Yahoo form): keep col-0 symbols
-/// whose `etf_col` flag is "Y". Skips the header row and the "File Creation Time" footer; drops
-/// `$`-bearing (preferred/test) tickers. ETFs span two files with different layouts, hence the
-/// column-index arg (nasdaqlisted = 6, otherlisted = 4). No free AUM rank exists, so this is ALL of
-/// them — the turnover gate culls the illiquid tail after fetch.
-pub fn etf_symbols(text: &str, etf_col: usize) -> Vec<String> {
-    text.lines()
-        .skip(1)
-        .filter(|l| !l.starts_with("File Creation Time"))
-        .filter_map(|l| {
-            let f: Vec<&str> = l.split('|').collect();
-            let sym = f.first()?.trim();
-            if f.get(etf_col)?.trim() != "Y" || sym.is_empty() || sym.contains('$') {
-                return None;
-            }
-            Some(sym.replace('.', "-"))
-        })
-        .collect()
-}
-
 /// Parse the Euronext Lisbon equities DataTables payload -> Yahoo `.LS` tickers. The request
 /// (`fetch_euronext_lisbon`) asks for columns `name,isin,symbol,market,...`, so each `aaData` row is
 /// an array with the bare symbol at index 2 (e.g. "GALP"); append `.LS` for the Yahoo form
@@ -1986,11 +1966,6 @@ mod tests {
     );
     assert_eq!(wiki_constituents(wiki, &["Financials".to_string()]).len(), 1); // sector filter applies
     assert!(wiki_constituents("<html>no table here</html>", &[]).is_empty());
-    // etf_symbols: keep ETF flag = Y at the given column, skip header/footer/$/non-ETF; '.'->'-'
-    let nasdaq = "Symbol|Name|Cat|Test|Fin|Lot|ETF|NS\nQQQ|Invesco QQQ|Q|N|N|100|Y|N\nAAPL|Apple|Q|N|N|100|N|N\nFOO$|x|Q|N|N|100|Y|N\nFile Creation Time: now";
-    assert_eq!(etf_symbols(nasdaq, 6), vec!["QQQ".to_string()]); // AAPL=N dropped, FOO$ dropped, footer skipped
-    let other = "ACT Symbol|Name|Exch|CQS|ETF|Lot|Test|NASDAQ\nSPY|SPDR S&P 500|P|SPY|Y|100|N|SPY\nBRK.A|Berkshire|N|BRK.A|N|1|N|";
-    assert_eq!(etf_symbols(other, 4), vec!["SPY".to_string()]); // BRK.A is ETF=N -> dropped
     // euronext_lisbon_symbols: symbol at row index 2 -> `<SYM>.LS`; odd/empty cells dropped; no aaData -> []
     let es = serde_json::json!({"aaData": [
         ["<a href=x>GALP ENERGIA</a>", "PTGAL0AM0009", "GALP", "<div>XLIS</div>", "EUR 18", "0.1%", "12:00"],

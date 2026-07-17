@@ -350,15 +350,8 @@ pub struct Urls {
     // expenseRatio -> column stays n/a. Defaulted so an older settings.yaml without it still loads.
     #[serde(default = "default_fund_expense_url")]
     pub fund_expense: String,
-    // NASDAQ Trader SymDir symbol files (pipe-delimited, ETF flag column) -> screen ETF universe.
-    // No free AUM-ranked ETF source exists, so these dump ALL US-listed ETFs across both exchanges;
-    // the turnover gate culls the illiquid tail. Defaulted so an older settings.yaml still loads.
-    #[serde(default = "default_nasdaq_listed_url")]
-    pub nasdaq_listed: String,
-    #[serde(default = "default_other_listed_url")]
-    pub other_listed: String,
-    // Börse Frankfurt / Xetra ETF search (POST) -> the EU-buyable UCITS ETF universe (the US-listed
-    // ETFs above aren't EU-buyable). Signed with `bf_salt` lifted from their web bundle; if the API
+    // Börse Frankfurt / Xetra ETF search (POST) -> the EU-buyable UCITS ETF universe (US-listed
+    // ETFs aren't EU-buyable). Signed with `bf_salt` lifted from their web bundle; if the API
     // moves or the salt rotates, refresh these two here — no recompile. Defaulted so older settings
     // still load.
     #[serde(default = "default_bf_etf_search_url")]
@@ -493,16 +486,6 @@ fn default_fundamentals_history_url() -> String {
 /// FRACTION, e.g. 0.0003 = 0.03%). Free-tier reachable; returns nothing for stocks/crypto.
 fn default_fund_expense_url() -> String {
     "https://financialmodelingprep.com/stable/etf/info?symbol={ticker}&apikey={key}".to_string()
-}
-
-/// Default NASDAQ-listed symbol file (ETF flag = column 6).
-fn default_nasdaq_listed_url() -> String {
-    "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt".to_string()
-}
-
-/// Default other-listed (NYSE/Arca/BATS) symbol file (ETF flag = column 4); where SPY etc. live.
-fn default_other_listed_url() -> String {
-    "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt".to_string()
 }
 
 /// Default Börse Frankfurt ETF search (POST, turnover-sorted UCITS list).
