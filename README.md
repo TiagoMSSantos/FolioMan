@@ -63,10 +63,13 @@ symbol/qty at the prompt; test with tiny quantities first.
 Pushes to `ntfy.sh/<ntfy_topic>` when a ticker *crosses* ≥ `drop_pct` below its trailing high —
 once per dip, not once per run (`.alert_dips` remembers who was pinged; a recovery clears the
 name so its next dip pings again). Subscribe your phone at `https://ntfy.sh/<topic>`. The ntfy
-topic is a secret (= your watchlist) — use a long random string. Cron hourly:
+topic is a secret (= your watchlist) — use a long random string. Cron hourly (the `cd` is
+load-bearing: dedup state and the track journal are working-dir-relative, and cron's default
+cwd is `$HOME` — without it, cron and manual runs keep separate state, and `track --push`
+finds no journal and silently sends nothing):
 
 ```cron
-0 * * * * /path/to/folioman/target/release/folioman alert >> /tmp/folioman.log 2>&1
+0 * * * * cd /path/to/folioman && ./target/release/folioman alert >> /tmp/folioman.log 2>&1
 ```
 
 The same run also pushes a **market entry-state flip ping** when the S&P 500 *crosses* a line:
@@ -104,7 +107,7 @@ alerts use — cron it monthly so the record reaches your phone without a manual
 schedule is the dedup; a failed push just retries next month):
 
 ```cron
-0 9 1 * * /path/to/folioman/target/release/folioman track --push >> /tmp/folioman.log 2>&1
+0 9 1 * * cd /path/to/folioman && ./target/release/folioman track --push >> /tmp/folioman.log 2>&1
 ```
 
 ### Run-to-run alerts (`screen`)
