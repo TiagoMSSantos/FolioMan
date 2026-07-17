@@ -170,6 +170,64 @@ async fn yahoo_top_holdings_parses() {
     }
 }
 
+/// (tests round 3) SEC drift net. `fetch_fundamentals_sec` feeds the ONE validated ranking tilt
+/// (earnings_yield, fund_source "sec"): a live XBRL payload reshape makes `fund_factor` None and the
+/// tilt goes silently OFF while every offline parse pin stays green — this is the only place that
+/// failure mode reds. Uses the cacheless `sec_facts_live` core, so the run never tests the disk
+/// cache instead of the wire. Environmental (CIK map down/throttle) -> skip; fetched-but-unparsable
+/// on a major US filer -> FAIL (drift).
+#[tokio::test]
+#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
+async fn sec_facts_parse() {
+    if !opted_in() {
+        return;
+    }
+    match fetch::sec_facts_live(&fetch::client(), &config::load().urls, "AAPL").await {
+        Err(why) => eprintln!("network smoke [SEC facts AAPL] SKIPPED — {why}"),
+        Ok(rows) => {
+            assert!(
+                rows.len() >= 5,
+                "AAPL: only {} annual facts rows parsed (a major US filer carries ~19y) — \
+                 companyfacts payload drifted (the earnings_yield tilt is starving)",
+                rows.len()
+            );
+            assert!(
+                rows.iter().any(|r| r.eps.is_some()),
+                "AAPL: facts parsed but no EPS in any row — the earnings_yield numerator is gone \
+                 (the ranking tilt is silently OFF right now)"
+            );
+        }
+    }
+}
+
+/// (tests round 3) Yahoo fund-facts drift net — the crumb-gated fallback that fills ETF TER/AUM
+/// holes (the TER drag, AUM gate and bridge hints ride it). Proven silent-degrade: it failed live
+/// on 2026-07-17 ("Yahoo crumb handshake failed — fund-facts fallback skipped this run") and
+/// nothing red. Same contract as the topHoldings net: crumb/transport/throttle -> skip;
+/// 200-but-factless on a major equity ETF -> FAIL (drift).
+#[tokio::test]
+#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
+async fn yahoo_fund_facts_parse() {
+    if !opted_in() {
+        return;
+    }
+    match fetch::fund_facts_live(&fetch::client(), "IITU.L").await {
+        Err(why) => eprintln!("network smoke [fund facts IITU.L] SKIPPED — {why}"),
+        Ok((ter, aum)) => {
+            let t = ter.expect(
+                "IITU.L: 200 OK but no TER parsed — fundProfile expense-ratio drifted \
+                 (ETF TER cells are silently n/a right now)",
+            );
+            assert!(t > 0.0 && t < 5.0, "IITU.L: implausible TER {t}% (parse should yield ~0.15)");
+            let a = aum.expect(
+                "IITU.L: 200 OK but no AUM parsed — summaryDetail totalAssets drifted \
+                 (the AUM gate and CORE sizing are silently blind)",
+            );
+            assert!(a > 1e8, "IITU.L: implausible AUM {a} for a multi-billion ETF");
+        }
+    }
+}
+
 /// (round 79) Generic status probe for the non-Yahoo endpoints: transport/throttle/auth failures
 /// SKIP; anything else is left to the real parser — a healthy endpoint plus a None parse is the
 /// drift verdict. (probe_yahoo stays separate: it also checks the chart contract + error envelope.)

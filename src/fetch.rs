@@ -1696,27 +1696,15 @@ async fn yahoo_fund_facts_fill(
     if todo.is_empty() {
         return (ter_map, aum_map);
     }
-    let Some((cookie, crumb)) = yahoo_crumb(client).await else {
+    // one handshake up front so a dead crumb skips the whole batch instead of 400 doomed calls;
+    // the per-symbol seam below reuses it via the in-process YQ_AUTH cache.
+    if yahoo_crumb(client).await.is_none() {
         eprintln!("fetch: Yahoo crumb handshake failed — fund-facts fallback skipped this run");
         return (ter_map, aum_map);
-    };
-    let (cookie_ref, crumb_ref) = (&cookie, &crumb);
+    }
     let fetched: Vec<Option<(String, Option<f64>, Option<f64>)>> = stream::iter(todo)
         .map(|sym| async move {
-            let url = format!(
-                "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules=fundProfile%2CsummaryDetail%2CdefaultKeyStatistics&crumb={crumb_ref}"
-            );
-            let v = client
-                .get(&url)
-                .header("Cookie", cookie_ref)
-                .header("User-Agent", "Mozilla/5.0")
-                .send()
-                .await
-                .ok()?
-                .json::<Value>()
-                .await
-                .ok()?;
-            let (ter, aum) = parse_yahoo_fund_facts(&v);
+            let (ter, aum) = fund_facts_live(client, &sym).await.ok()?;
             Some((sym, ter, aum))
         })
         .buffer_unordered(fetch_concurrency())
@@ -1800,6 +1788,53 @@ pub async fn top_holdings_live(client: &Client, sym: &str) -> Result<Vec<(String
     let v: Value =
         resp.json().await.map_err(|_| "200 but body wasn't JSON (likely a throttle/HTML page)".to_string())?;
     Ok(parse_top_holdings(&v))
+}
+
+/// (drift net) Single-symbol live fund-facts fetch — the cacheless core of the
+/// `yahoo_fund_facts_fill` fallback, public so the network smoke test can probe the quoteSummary
+/// fundProfile/summaryDetail payload without touching the weekly cache. Err = environmental
+/// (crumb/transport/throttle — skip, retry later); Ok((None, None)) = HTTP 200 whose body yielded
+/// neither TER nor AUM, which for a major equity ETF means the payload shape drifted.
+pub async fn fund_facts_live(client: &Client, sym: &str) -> Result<(Option<f64>, Option<f64>), String> {
+    let (cookie, crumb) = yahoo_crumb(client).await.ok_or("Yahoo crumb handshake failed")?;
+    let url = format!(
+        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules=fundProfile%2CsummaryDetail%2CdefaultKeyStatistics&crumb={crumb}"
+    );
+    let resp = client
+        .get(&url)
+        .header("Cookie", &cookie)
+        .header("User-Agent", "Mozilla/5.0")
+        .send()
+        .await
+        .map_err(|e| format!("transport error: {e}"))?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+        || status == reqwest::StatusCode::UNAUTHORIZED
+        || status == reqwest::StatusCode::FORBIDDEN
+    {
+        return Err(format!("throttled/unavailable: HTTP {status}"));
+    }
+    let v: Value =
+        resp.json().await.map_err(|_| "200 but body wasn't JSON (likely a throttle/HTML page)".to_string())?;
+    Ok(parse_yahoo_fund_facts(&v))
+}
+
+/// (drift net) Single-ticker live SEC companyfacts fetch+parse — the cacheless core of
+/// `fetch_fundamentals_sec`, public so the network smoke test can probe the XBRL payload without
+/// reading or writing the per-ticker disk cache (the cache-first batch fn would test the disk, not
+/// the wire; the shared ticker→CIK map may still come from its own cache — the drift target is the
+/// companyfacts payload). Skips the batch budget counter: one probe call, not a universe sweep.
+/// Err = environmental (CIK map/transport unavailable); Ok(empty) = fetched but nothing parsed,
+/// which for a major US filer means the payload shape drifted.
+pub async fn sec_facts_live(client: &Client, urls: &Urls, ticker: &str) -> Result<Vec<core::FundRow>, String> {
+    let cik = sec_cik(client, urls, ticker)
+        .await
+        .ok_or("ticker->CIK resolution failed (map unavailable or non-US filer)")?;
+    let v = sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", &cik), &urls.sec_user_agent)
+        .await
+        .ok_or("companyfacts fetch failed (transport/throttle)")?;
+    Ok(parse_sec_facts(&v))
 }
 
 /// (round 56) Top-10 holdings per fund (each with its weight fraction), for the screen's
