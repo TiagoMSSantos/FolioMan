@@ -727,20 +727,34 @@ pub async fn run(args: Vec<String>) {
                 .map(|m| m.into_iter().map(|(isin, sym)| (sym, isin)).collect())
                 .unwrap_or_default()
         };
-        let glue_rows: Vec<(String, Option<f64>, &'static str, Option<String>)> = book
-            .iter()
-            .map(|t| {
-                let price = quotes.iter().find(|q| &q.ticker == *t).and_then(|q| q.price_eur);
-                if crate::picks::is_currency_quoted(t) {
-                    let sym = format!("{}EUR", crate::picks::underlying(t).to_uppercase());
-                    ((*t).clone(), price, "binance", Some(sym))
-                } else {
-                    ((*t).clone(), price, "trading212", resolve_t212(t, &t212_raw, &instruments, &isin_of))
+        // (round 118) tally which resolution rung produced each symbol — the stderr report below
+        // makes a keyed verification run self-explaining and turns a silent resolver miss (stale
+        // ISIN cache, quietly-empty instruments fetch) into a visible placeholder count.
+        let mut glue_rows: Vec<(String, Option<f64>, &'static str, Option<String>)> = Vec::new();
+        let (mut n_owned, mut n_isin, mut n_base, mut n_binance, mut n_ph) = (0usize, 0usize, 0usize, 0usize, 0usize);
+        for t in &book {
+            let price = quotes.iter().find(|q| &q.ticker == *t).and_then(|q| q.price_eur);
+            if crate::picks::is_currency_quoted(t) {
+                n_binance += 1;
+                let sym = format!("{}EUR", crate::picks::underlying(t).to_uppercase());
+                glue_rows.push(((*t).clone(), price, "binance", Some(sym)));
+            } else {
+                let resolved = resolve_t212(t, &t212_raw, &instruments, &isin_of);
+                match &resolved {
+                    Some((_, "owned")) => n_owned += 1,
+                    Some((_, "isin")) => n_isin += 1,
+                    Some(_) => n_base += 1,
+                    None => n_ph += 1,
                 }
-            })
-            .collect();
+                glue_rows.push(((*t).clone(), price, "trading212", resolved.map(|(sym, _)| sym)));
+            }
+        }
         if let Some(glue) = order_glue(&glue_rows, deploy_scaled) {
             println!("{glue}");
+            eprintln!(
+                "screen: order symbols — owned {n_owned} | isin {n_isin} | base {n_base} | placeholder {n_ph} | binance {n_binance} | instruments {}",
+                instruments.len()
+            );
         }
     }
 
@@ -857,23 +871,23 @@ fn resolve_t212(
     owned_raw: &[String],
     instruments: &[crate::broker::trading212::Instrument],
     isin_of: &std::collections::HashMap<String, String>,
-) -> Option<String> {
+) -> Option<(String, &'static str)> {
     let base = crate::picks::yahoo_base(yahoo);
     if let Some(o) = owned_raw.iter().find(|r| crate::picks::t212_base(r) == base) {
-        return Some(o.to_uppercase());
+        return Some((o.to_uppercase(), "owned"));
     }
     if let Some(isin) = isin_of.get(yahoo) {
         let hits: Vec<&crate::broker::trading212::Instrument> =
             instruments.iter().filter(|i| &i.isin == isin).collect();
         if !hits.is_empty() {
             let pick = hits.iter().find(|i| i.currency == "EUR").unwrap_or(&hits[0]);
-            return Some(pick.ticker.to_uppercase());
+            return Some((pick.ticker.to_uppercase(), "isin"));
         }
     }
     let base_hits: Vec<&crate::broker::trading212::Instrument> =
         instruments.iter().filter(|i| crate::picks::t212_base(&i.ticker) == base).collect();
     match base_hits.as_slice() {
-        [one] => Some(one.ticker.to_uppercase()),
+        [one] => Some((one.ticker.to_uppercase(), "base")),
         _ => None,
     }
 }
@@ -1013,9 +1027,10 @@ mod tests {
             inst("DUAL_GB_EQ", "GB2222222222", "GBP"), // same base, different ISINs = ambiguous
         ];
         let isin_of: HashMap<String, String> = [("SXLK.L".to_string(), "IE00BWBXM948".to_string())].into();
-        assert_eq!(resolve_t212("IITU.L", &owned, &instruments, &isin_of).as_deref(), Some("IITU_GB_EQ"));
-        assert_eq!(resolve_t212("SXLK.L", &owned, &instruments, &isin_of).as_deref(), Some("SXLKE_EQ"));
-        assert_eq!(resolve_t212("AAPL", &owned, &instruments, &isin_of).as_deref(), Some("AAPL_US_EQ"));
+        // (round 118) each resolution also names its source rung — the stderr report counts them
+        assert_eq!(resolve_t212("IITU.L", &owned, &instruments, &isin_of), Some(("IITU_GB_EQ".to_string(), "owned")));
+        assert_eq!(resolve_t212("SXLK.L", &owned, &instruments, &isin_of), Some(("SXLKE_EQ".to_string(), "isin")));
+        assert_eq!(resolve_t212("AAPL", &owned, &instruments, &isin_of), Some(("AAPL_US_EQ".to_string(), "base")));
         assert_eq!(resolve_t212("DUAL", &owned, &instruments, &isin_of), None);
         assert_eq!(resolve_t212("UNKNOWN", &owned, &[], &isin_of), None);
     }
