@@ -46,7 +46,7 @@ fn apply_dip_state(set: &mut std::collections::BTreeSet<String>, ticker: &str, i
 
 /// Persist the last pushed state; a failed write only risks a repeated ping next run — warn, don't die.
 fn persist_entry_state(state: &str) {
-    if std::fs::write(ALERT_STATE_FILE, state).is_err() {
+    if std::fs::write(crate::config::data_path(ALERT_STATE_FILE), state).is_err() {
         eprintln!("WARNING: could not persist {ALERT_STATE_FILE} — the entry-state ping may repeat next run");
     }
 }
@@ -57,7 +57,7 @@ pub async fn run(args: Vec<String>) {
     let fx_cache = fetch::fx_cache();
     let tickers = if args.is_empty() { settings.tickers.clone() } else { args };
 
-    let mut alerted: std::collections::BTreeSet<String> = std::fs::read_to_string(ALERT_DIPS_FILE)
+    let mut alerted: std::collections::BTreeSet<String> = std::fs::read_to_string(crate::config::data_path(ALERT_DIPS_FILE))
         .map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
         .unwrap_or_default();
     let before = alerted.clone();
@@ -89,7 +89,7 @@ pub async fn run(args: Vec<String>) {
     }
     if alerted != before {
         let text = alerted.iter().map(|t| format!("{t}\n")).collect::<String>();
-        if std::fs::write(ALERT_DIPS_FILE, text).is_err() {
+        if std::fs::write(crate::config::data_path(ALERT_DIPS_FILE), text).is_err() {
             eprintln!("WARNING: could not persist {ALERT_DIPS_FILE} — delivered dip alerts may repeat next run");
         }
     }
@@ -107,7 +107,7 @@ pub async fn run(args: Vec<String>) {
     if let Some(q) = spx.first().filter(|q| q.price != "err" && q.price != "no data") {
         let off_hi = q.drawdown_pct;
         let (state, read) = entry_state_class(off_hi);
-        let prev = std::fs::read_to_string(ALERT_STATE_FILE).ok();
+        let prev = std::fs::read_to_string(crate::config::data_path(ALERT_STATE_FILE)).ok();
         if entry_flip_due(prev.as_deref().map(str::trim), state) {
             let delivered = fetch::push(
                 &client,

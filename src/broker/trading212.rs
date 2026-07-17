@@ -107,7 +107,7 @@ pub async fn instruments_cached(client: &Client) -> Vec<Instrument> {
     }
     const PATH: &str = ".t212_instruments.json";
     let today = chrono::Utc::now().date_naive();
-    if let Some(c) = std::fs::read_to_string(PATH).ok().and_then(|s| serde_json::from_str::<Cache>(&s).ok()) {
+    if let Some(c) = std::fs::read_to_string(crate::config::data_path(PATH)).ok().and_then(|s| serde_json::from_str::<Cache>(&s).ok()) {
         if chrono::NaiveDate::parse_from_str(&c.date, "%Y-%m-%d").is_ok_and(|d| (today - d).num_days() < 7) {
             return c.rows;
         }
@@ -123,7 +123,7 @@ pub async fn instruments_cached(client: &Client) -> Vec<Instrument> {
         }
     };
     if let Ok(json) = serde_json::to_string(&Cache { date: today.to_string(), rows: rows.clone() }) {
-        let _ = std::fs::write(PATH, json);
+        let _ = std::fs::write(crate::config::data_path(PATH), json);
     }
     rows
 }

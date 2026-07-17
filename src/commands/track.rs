@@ -25,7 +25,7 @@ pub struct Snapshot {
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
 /// A write failure only costs one day of track record: warn, never fail the screen run.
 pub fn append_snapshot(snap: &Snapshot) {
-    let last_date = std::fs::read_to_string(SNAPSHOT_FILE).ok().and_then(|s| {
+    let last_date = std::fs::read_to_string(crate::config::data_path(SNAPSHOT_FILE)).ok().and_then(|s| {
         s.lines().last().and_then(|l| serde_json::from_str::<Snapshot>(l).ok()).map(|s| s.date)
     });
     if last_date.as_deref() == Some(snap.date.as_str()) {
@@ -36,7 +36,7 @@ pub fn append_snapshot(snap: &Snapshot) {
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(SNAPSHOT_FILE)
+            .open(crate::config::data_path(SNAPSHOT_FILE))
             .and_then(|mut f| writeln!(f, "{json}"))
     });
     if !matches!(appended, Ok(Ok(()))) {
@@ -95,7 +95,7 @@ pub async fn run(args: Vec<String>) {
     // --push: also send the summary to ntfy — for a monthly cron, so the track record reaches the
     // phone without a manual run. The cron schedule IS the dedup: no state file, one ping per fire.
     let push = args.iter().any(|a| a == "--push");
-    let raw = match std::fs::read_to_string(SNAPSHOT_FILE) {
+    let raw = match std::fs::read_to_string(crate::config::data_path(SNAPSHOT_FILE)) {
         Ok(s) => s,
         Err(_) => {
             println!("No track record yet — {SNAPSHOT_FILE} appears after the first `screen` run; grading starts the day after.");

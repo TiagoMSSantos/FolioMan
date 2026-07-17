@@ -575,6 +575,26 @@ fn ci_settings_path() -> PathBuf {
     PathBuf::new()
 }
 
+/// Anchor for the working dot-files (caches, dedup state, the track journal): the repo root —
+/// the directory holding the config — NOT the process cwd. Cron starts in $HOME, and any run
+/// from another directory used to scatter diverged copies of every cache there (seen live:
+/// ~287K across 5 cache files inside a sibling repo, with keyed FMP data refetched because the
+/// split copy missed it). Tries the private overlay first, then the committed CI fixture (so
+/// config-less checkouts like CI anchor too); a bare binary with no repo keeps the old
+/// cwd-relative behaviour.
+pub fn data_path(name: &str) -> PathBuf {
+    for cfg in [settings_path(), ci_settings_path()] {
+        if cfg.is_file() {
+            if let Some(root) = cfg.parent().and_then(Path::parent) {
+                if !root.as_os_str().is_empty() {
+                    return root.join(name);
+                }
+            }
+        }
+    }
+    PathBuf::from(name)
+}
+
 /// Deep-merge `over` INTO `base`: for two mappings, recurse key-by-key (so a partial `buy_heuristic:`
 /// override only replaces the knobs it names); for anything else, `over` wins outright.
 fn merge_yaml(base: &mut serde_yaml::Value, over: serde_yaml::Value) {
@@ -765,6 +785,18 @@ pub fn endpoint_smooth_days() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Working dot-files anchor at the repo root (the dir holding the config), never the process
+    /// cwd — the scatter this prevents was seen live: cron cwd=$HOME plus runs from a sibling
+    /// repo left diverged cache copies outside the repo. Both test layouts (private overlay
+    /// present locally, only the committed fixture in CI) must resolve to a dir with Cargo.toml.
+    #[test]
+    fn data_path_anchors_to_repo_root() {
+        let p = data_path(".probe.json");
+        assert!(p.ends_with(".probe.json"), "{p:?}");
+        let root = p.parent().expect("anchored path has a parent");
+        assert!(root.join("Cargo.toml").is_file(), "expected the repo root, got {root:?}");
+    }
 
     /// The CI network fixture must parse into Settings (else the network-smoke job panics for a non-API
     /// reason — the exact bug this guards), AND serde defaults must fill the omitted fields (the contract

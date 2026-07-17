@@ -579,7 +579,7 @@ const LIVE_FUND_TTL: StdDuration = StdDuration::from_secs(7 * 24 * 3600);
 /// 250/day limit — the exact failure that left every column n/a. `tag` namespaces the cache per endpoint.
 async fn cached_fund_json(client: &Client, url_tmpl: &str, ticker: &str, tag: &str) -> Option<Value> {
     use std::sync::atomic::Ordering;
-    let path = std::path::Path::new(".fmp_cache").join(format!("live_{tag}_{}.json", ticker.replace(['/', '\\'], "_")));
+    let path = crate::config::data_path(".fmp_cache").join(format!("live_{tag}_{}.json", ticker.replace(['/', '\\'], "_")));
     evict_if_stale(&path, LIVE_FUND_TTL);
     if let Some(v) = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
         return Some(v); // cache hit -> no network, no budget spend
@@ -768,7 +768,7 @@ static FUND_FETCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 const FUND_FETCH_BUDGET: usize = 200; // leave headroom under 250/day for the live P/E/ROE calls
 
 fn fund_cache_path(ticker: &str) -> std::path::PathBuf {
-    std::path::Path::new(".fmp_cache").join(format!("{}.json", ticker.replace(['/', '\\'], "_")))
+    crate::config::data_path(".fmp_cache").join(format!("{}.json", ticker.replace(['/', '\\'], "_")))
 }
 
 /// Persistent ISIN -> Yahoo-symbol map (one flat JSON object, gitignored like `.fmp_cache`).
@@ -965,7 +965,7 @@ const SEC_FORM4_CAP: usize = 40; // per ticker: only the N newest Form 4 XML doc
 static CIK_MAP: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
 
 fn sec_cache_path(ticker: &str) -> std::path::PathBuf {
-    std::path::Path::new(".sec_cache").join(format!("{}.json", ticker.replace(['/', '\\'], "_")))
+    crate::config::data_path(".sec_cache").join(format!("{}.json", ticker.replace(['/', '\\'], "_")))
 }
 
 async fn sec_get_text(client: &Client, url: &str, ua: &str) -> Option<String> {
@@ -1462,7 +1462,7 @@ static LONG_SKIP_NEW: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec:
 
 fn long_skip_load() -> &'static HashMap<String, NaiveDate> {
     LONG_SKIP.get_or_init(|| {
-        std::fs::read_to_string(LONG_SKIP_FILE)
+        std::fs::read_to_string(crate::config::data_path(LONG_SKIP_FILE))
             .ok()
             .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
             .map(|m| m.into_iter().filter_map(|(t, d)| Some((t, d.parse().ok()?))).collect())
@@ -1487,7 +1487,7 @@ fn long_skip_save() {
     for t in LONG_SKIP_NEW.lock().unwrap().drain(..) {
         m.entry(t).or_insert_with(|| today.to_string());
     }
-    let _ = std::fs::write(LONG_SKIP_FILE, serde_json::to_string(&m).unwrap_or_default());
+    let _ = std::fs::write(crate::config::data_path(LONG_SKIP_FILE), serde_json::to_string(&m).unwrap_or_default());
 }
 
 /// (round 53) Full MAX-monthly series cache: the raw Yahoo JSON per ticker, 7-day TTL. Monthly bars
@@ -1504,7 +1504,7 @@ static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Value)>> = std::sync::Mutex
 
 fn long_cache_load() -> &'static HashMap<String, (NaiveDate, Value)> {
     LONG_CACHE.get_or_init(|| {
-        std::fs::read_to_string(LONG_CACHE_FILE)
+        std::fs::read_to_string(crate::config::data_path(LONG_CACHE_FILE))
             .ok()
             .and_then(|s| serde_json::from_str::<HashMap<String, (String, Value)>>(&s).ok())
             .map(|m| m.into_iter().filter_map(|(t, (d, v))| Some((t, (d.parse().ok()?, v)))).collect())
@@ -1533,7 +1533,7 @@ fn long_cache_save() {
     for (t, v) in new.iter() {
         m.insert(t.as_str(), (today.to_string(), v));
     }
-    let _ = std::fs::write(LONG_CACHE_FILE, serde_json::to_string(&m).unwrap_or_default());
+    let _ = std::fs::write(crate::config::data_path(LONG_CACHE_FILE), serde_json::to_string(&m).unwrap_or_default());
 }
 /// Per-row BF keyData facts: share-class + replication tokens ("Acc"/"Dist"; "Swap"/"Full"/"Opt"/
 /// "Hybr"/"Samp") and the benchmark-index name (lowercased at capture so twin matching is one `==`;
@@ -1662,7 +1662,7 @@ async fn yahoo_fund_facts_fill(
     const BUDGET: usize = 400;
     type Row = (String, Option<f64>, Option<f64>); // (fetched date, TER %, AUM)
     let (mut ter_map, mut aum_map) = (HashMap::new(), HashMap::new());
-    let mut cache: HashMap<String, Row> = std::fs::read_to_string(FUND_FACTS_CACHE_PATH)
+    let mut cache: HashMap<String, Row> = std::fs::read_to_string(crate::config::data_path(FUND_FACTS_CACHE_PATH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
@@ -1737,7 +1737,7 @@ async fn yahoo_fund_facts_fill(
     }
     eprintln!("fetch: Yahoo fund-facts fallback filled {got} non-BF funds (weekly cache: {})", cache.len());
     if let Ok(json) = serde_json::to_string(&cache) {
-        let _ = std::fs::write(FUND_FACTS_CACHE_PATH, json);
+        let _ = std::fs::write(crate::config::data_path(FUND_FACTS_CACHE_PATH), json);
     }
     (ter_map, aum_map)
 }
@@ -1809,7 +1809,7 @@ pub async fn top_holdings_live(client: &Client, sym: &str) -> Result<Vec<(String
 /// symbols), so no request budget needed.
 pub async fn yahoo_top_holdings(client: &Client, syms: &[String]) -> HashMap<String, Vec<(String, f64)>> {
     type Row = (String, Vec<(String, f64)>); // (fetched date, [(holding symbol/name, weight fraction)])
-    let mut cache: HashMap<String, Row> = std::fs::read_to_string(HOLDINGS_CACHE_PATH)
+    let mut cache: HashMap<String, Row> = std::fs::read_to_string(crate::config::data_path(HOLDINGS_CACHE_PATH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
@@ -1848,7 +1848,7 @@ pub async fn yahoo_top_holdings(client: &Client, syms: &[String]) -> HashMap<Str
             out.insert(sym, holdings);
         }
         if let Ok(json) = serde_json::to_string(&cache) {
-            let _ = std::fs::write(HOLDINGS_CACHE_PATH, json);
+            let _ = std::fs::write(crate::config::data_path(HOLDINGS_CACHE_PATH), json);
         }
     }
     out
@@ -2073,11 +2073,11 @@ pub async fn fetch_xetra_etfs(
     // found once can silently vanish the next screen when its search hiccups), and ISIN->symbol is
     // stable, so positive resolutions are remembered forever. Negative results are NOT cached
     // (retried next run); a delisted cached symbol self-gates downstream via the no-chart path.
-    let isin_cache: HashMap<String, String> = std::fs::read_to_string(ISIN_CACHE_PATH)
+    let isin_cache: HashMap<String, String> = std::fs::read_to_string(crate::config::data_path(ISIN_CACHE_PATH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    let neg_cache: HashMap<String, String> = std::fs::read_to_string(ISIN_NEG_CACHE_PATH)
+    let neg_cache: HashMap<String, String> = std::fs::read_to_string(crate::config::data_path(ISIN_NEG_CACHE_PATH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
@@ -2147,7 +2147,7 @@ pub async fn fetch_xetra_etfs(
             neg.insert(isin, today.to_string());
         }
         if let Ok(json) = serde_json::to_string(&neg) {
-            let _ = std::fs::write(ISIN_NEG_CACHE_PATH, json);
+            let _ = std::fs::write(crate::config::data_path(ISIN_NEG_CACHE_PATH), json);
         }
     }
     // write fresh resolutions back (best-effort — a read-only dir just costs next run's re-search)
@@ -2160,7 +2160,7 @@ pub async fn fetch_xetra_etfs(
         let mut isin_cache = isin_cache;
         isin_cache.extend(fresh);
         if let Ok(json) = serde_json::to_string(&isin_cache) {
-            let _ = std::fs::write(ISIN_CACHE_PATH, json);
+            let _ = std::fs::write(crate::config::data_path(ISIN_CACHE_PATH), json);
         }
     }
     // split into the ticker list + the symbol->TER and symbol->AUM maps (each stored once;
@@ -2341,7 +2341,7 @@ pub async fn fetch_regulatory_etf_isins(client: &Client, urls: &Urls) -> Vec<Str
         fetched: String,
         isins: Vec<String>,
     }
-    let cached: RegCache = std::fs::read_to_string(REGULATORY_ISINS_PATH)
+    let cached: RegCache = std::fs::read_to_string(crate::config::data_path(REGULATORY_ISINS_PATH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
@@ -2389,7 +2389,7 @@ pub async fn fetch_regulatory_etf_isins(client: &Client, urls: &Urls) -> Vec<Str
     all.dedup();
     if complete && !all.is_empty() {
         if let Ok(json) = serde_json::to_string(&RegCache { fetched: today.to_string(), isins: all.clone() }) {
-            let _ = std::fs::write(REGULATORY_ISINS_PATH, json);
+            let _ = std::fs::write(crate::config::data_path(REGULATORY_ISINS_PATH), json);
         }
         return all;
     }
@@ -2435,7 +2435,7 @@ pub async fn fetch_universe(
         fetch_six_etf_isins(client, urls),
         fetch_regulatory_etf_isins(client, urls),
     );
-    let mut store: HashMap<String, Vec<String>> = std::fs::read_to_string(VENUE_ISINS_PATH)
+    let mut store: HashMap<String, Vec<String>> = std::fs::read_to_string(crate::config::data_path(VENUE_ISINS_PATH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
@@ -2454,7 +2454,7 @@ pub async fn fetch_universe(
     }
     if dirty {
         if let Ok(json) = serde_json::to_string(&store) {
-            let _ = std::fs::write(VENUE_ISINS_PATH, json);
+            let _ = std::fs::write(crate::config::data_path(VENUE_ISINS_PATH), json);
         }
     }
     let [(_, euronext_isins), (_, six_isins)] = lists;
@@ -3146,7 +3146,7 @@ pub async fn fetch_euribor_3m(client: &Client, urls: &Urls) -> Option<f64> {
 /// Born from BLS: its keyless cap is 25 req/day per SHARED IP, so repeated screen runs redden USA.
 const MACRO_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
 fn macro_cache_path(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(".fmp_cache").join(format!("{name}.json"))
+    crate::config::data_path(".fmp_cache").join(format!("{name}.json"))
 }
 fn macro_cache_read(name: &str) -> Option<Value> {
     std::fs::read_to_string(macro_cache_path(name)).ok().and_then(|s| serde_json::from_str(&s).ok())
@@ -3158,7 +3158,7 @@ fn macro_cache_fresh(name: &str) -> bool {
         .is_some_and(|t| t.elapsed().is_ok_and(|e| e < MACRO_TTL))
 }
 fn macro_cache_write(name: &str, v: &Value) {
-    let _ = std::fs::create_dir_all(".fmp_cache");
+    let _ = std::fs::create_dir_all(crate::config::data_path(".fmp_cache"));
     let _ = std::fs::write(macro_cache_path(name), v.to_string());
 }
 

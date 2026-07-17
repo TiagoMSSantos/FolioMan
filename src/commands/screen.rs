@@ -79,7 +79,7 @@ fn journal(date: &str, lines: &[String]) {
     let appended = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(ALERT_JOURNAL_FILE)
+        .open(crate::config::data_path(ALERT_JOURNAL_FILE))
         .and_then(|mut f| lines.iter().try_for_each(|l| writeln!(f, "{date} {}", l.trim())));
     if appended.is_err() {
         eprintln!("WARNING: could not append to {ALERT_JOURNAL_FILE} — the alerts above are printed but not journaled");
@@ -497,7 +497,7 @@ pub async fn run(args: Vec<String>) {
     // Watchlist only (the holdings — actionable); universe names churn with fetch batches and
     // would spam. First run (no state file) prints nothing and just seeds the state.
     let watch: Vec<&Quote> = quotes.iter().filter(|q| settings.tickers.contains(&q.ticker)).collect();
-    let (prior, state_corrupt) = parse_state(std::fs::read_to_string(SCREEN_STATE_FILE).ok());
+    let (prior, state_corrupt) = parse_state(std::fs::read_to_string(crate::config::data_path(SCREEN_STATE_FILE)).ok());
     if state_corrupt {
         // (round 62) stderr so a piped stdout still shows it, and journaled so the reset is on the
         // permanent record — the one silent failure mode the alert surface had.
@@ -579,7 +579,7 @@ pub async fn run(args: Vec<String>) {
     // above re-fires (or a pending one never fires) on the next run with no hint why. Serialize
     // failure no longer writes an empty file (which r62 would then report as CORRUPT). Warn+journal,
     // never abort — one run's worth of stale baseline is annoying, a dead screen is worse.
-    let persisted = serde_json::to_string(&state).map(|json| std::fs::write(SCREEN_STATE_FILE, json));
+    let persisted = serde_json::to_string(&state).map(|json| std::fs::write(crate::config::data_path(SCREEN_STATE_FILE), json));
     if !matches!(persisted, Ok(Ok(()))) {
         let warn = format!(
             "WARNING: could not persist {SCREEN_STATE_FILE} — alert baselines stay at the previous run; alerts may repeat next run"
