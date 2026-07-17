@@ -1707,7 +1707,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     let picks = ranked(quotes, tuning, growth_scorer, 0.0, &pinned_set);
     // (Item 8) churn warning: compare this run's top-N against the last. Separate cache for the wide
     // `screen` universe vs the small `check`/watch set (keyed by size) so their overlaps don't mix.
-    let cache = std::path::PathBuf::from(if quotes.len() > 200 { ".folioman_turnover_screen.txt" } else { ".folioman_turnover_watch.txt" });
+    let cache = crate::config::data_path(if quotes.len() > 200 { ".folioman_turnover_screen.txt" } else { ".folioman_turnover_watch.txt" });
     let tickers: Vec<String> = picks.iter().map(|(q, _)| q.ticker.clone()).collect();
     if let Some(note) = turnover_note(&tickers, n, &cache) {
         println!("{note}");
@@ -2952,7 +2952,7 @@ mod tests {
         });
         assert!(miss.is_some_and(|m| m.contains("not in the growth ranking")));
 
-        let _ = std::fs::remove_file(".folioman_turnover_watch.txt"); // gitignored cwd cache render wrote
+        let _ = std::fs::remove_file(crate::config::data_path(".folioman_turnover_watch.txt")); // gitignored cache render wrote
     }
 
     /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + per-tier cap ≤3, and the

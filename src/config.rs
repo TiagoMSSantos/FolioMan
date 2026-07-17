@@ -781,6 +781,49 @@ mod tests {
         assert!(root.join("Cargo.toml").is_file(), "expected the repo root, got {root:?}");
     }
 
+    /// Every fs touch of a working dot-file must route through data_path — a bare relative
+    /// path silently re-roots state on the process cwd (the cwd-scatter class the anchor was
+    /// shipped to kill; this scan caught two live regressions on its first run: screen's
+    /// .isin_cache.json read and picks' turnover-note cache). Main code only — test modules
+    /// (everything after a file's first `#[cfg(test)]`) may use scratch files freely.
+    #[test]
+    fn working_dotfiles_anchor_through_data_path() {
+        let fs_ops = ["read_to_string(", "fs::write(", "File::open(", "File::create(",
+            "OpenOptions::new(", "remove_file(", "create_dir_all(", "PathBuf::from("];
+        let mut stack = vec![std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))];
+        let mut hits = Vec::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("read src dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("read source file");
+                    let main_code = text.split("#[cfg(test)]").next().unwrap_or("");
+                    for (i, line) in main_code.lines().enumerate() {
+                        if line.trim_start().starts_with("//") || line.contains("data_path") {
+                            continue;
+                        }
+                        // a `".x` string literal (dot-file) or an UPPER_CASE *_FILE/*_PATH state const
+                        let dot_literal = line.as_bytes().windows(3).any(|w| {
+                            w[0] == b'"' && w[1] == b'.' && (w[2].is_ascii_alphanumeric() || w[2] == b'_')
+                        });
+                        let state_const =
+                            line.contains("_FILE") || line.contains("_PATH") || line.contains("(PATH");
+                        if (dot_literal || state_const) && fs_ops.iter().any(|op| line.contains(op)) {
+                            hits.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            hits.is_empty(),
+            "working dot-file access bypasses config::data_path:\n{}",
+            hits.join("\n")
+        );
+    }
+
     /// The CI network fixture must parse into Settings (else the network-smoke job panics for a non-API
     /// reason — the exact bug this guards), AND serde defaults must fill the omitted fields (the contract
     /// that lets a minimal / older settings.yaml load). Offline + deterministic.

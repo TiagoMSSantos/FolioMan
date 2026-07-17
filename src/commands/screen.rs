@@ -703,7 +703,7 @@ pub async fn run(args: Vec<String>) {
         let isin_of: std::collections::HashMap<String, String> = if instruments.is_empty() {
             Default::default()
         } else {
-            std::fs::read_to_string(".isin_cache.json")
+            std::fs::read_to_string(crate::config::data_path(crate::fetch::ISIN_CACHE_PATH))
                 .ok()
                 .and_then(|s| serde_json::from_str::<std::collections::HashMap<String, String>>(&s).ok())
                 .map(|m| m.into_iter().map(|(isin, sym)| (sym, isin)).collect())

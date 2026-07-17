@@ -773,7 +773,7 @@ fn fund_cache_path(ticker: &str) -> std::path::PathBuf {
 
 /// Persistent ISIN -> Yahoo-symbol map (one flat JSON object, gitignored like `.fmp_cache`).
 /// Only POSITIVE resolutions live here — see the cache block in `fetch_xetra_etfs`.
-const ISIN_CACHE_PATH: &str = ".isin_cache.json";
+pub(crate) const ISIN_CACHE_PATH: &str = ".isin_cache.json";
 
 /// Last-good venue ISIN lists (`{"euronext": [...], "six": [...]}`), the fallback when a venue
 /// endpoint has an outage — see the store block in `fetch_universe`.
