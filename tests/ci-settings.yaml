@@ -234,8 +234,12 @@ buy_heuristic:
   #   -7.8 unchanged. Weight sweep knee = 1.0 (monotone up to 1, falls at 2). Every OTHER factor
   #   (margins, rev/eps growth, buyback, ROE, insider, composite) still fails the both-OOS+ keep-rule —
   #   the sweep's nominal per-run "WINNER" line bounces between factors (searched-weight overfit);
-  #   earnings_yield is the only one positive on every view. Revert rule: if a future wide run shows
-  #   the tilted lane losing an OOS half, set weight back to 0.
+  #   earnings_yield is the only one positive on every view. Revert rule: revert (weight -> 0) only
+  #   on TILT-SPECIFIC degradation in a future wide run: the growth-lane ablation shows removing this
+  #   weight HELPS (Δ edge >= 0), or standalone earnings_yield loses an OOS half. A lane OOS half that
+  #   price-only ALSO loses is regime weather, not the tilt (2026-07-17 early audit: lane early half
+  #   -0.03 with price-only -0.04, ablation removal cost -8.6 edge, standalone ey +0.20|+0.23 -> kept;
+  #   receipts .claude/bt_audit_2026-07-17.txt).
   fund_source: "sec"         # SEC EDGAR XBRL: free, keyless, uncapped — the source the tilt was validated on
                              #   (train-serve: FMP's 250/day cap can't even cover one wide run). US filers only;
                              #   non-covered names get fund_factor None -> tilt neutral, price terms decide.
