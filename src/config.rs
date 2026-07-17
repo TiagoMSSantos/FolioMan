@@ -785,6 +785,26 @@ mod tests {
         assert!(s.urls.fundamentals.contains("financialmodelingprep")); // defaulted Urls subfield
     }
 
+    /// Value-pin for the RANKING-LIVE tilt knobs. The scoring pins (r59/r67) guard the CODE defaults
+    /// (tilt off) and the drift tripwire treats this fixture as its BASELINE, so an edit to these
+    /// values in tests/ci-settings.yaml is the one path that changes live ranks with nothing
+    /// tripping. Raw-parses the fixture (no merge) so the pin covers the committed base, never the
+    /// private overlay.
+    #[test]
+    fn validated_tilt_pin() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
+        let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
+        let s: Settings = serde_yaml::from_str(&text).expect("parse tests/ci-settings.yaml");
+        let h = &s.buy_heuristic;
+        let receipts = "RANKING change: re-validate first (same-batch backtest, BOTH OOS halves \
+                        positive — receipts block in tests/ci-settings.yaml), then move this pin";
+        assert_eq!(h.fund_source, "sec", "{receipts}");
+        assert_eq!(h.growth_fund_factor, "earnings_yield", "{receipts}");
+        assert_eq!(h.growth_fund_weight, 1.0, "{receipts}");
+        assert_eq!(h.dividend_weight, 0.0, "blind tilt stays consolidated to 0 — {receipts}");
+        assert_eq!(h.growth_value_weight, 0.0, "blind tilt stays consolidated to 0 — {receipts}");
+    }
+
     /// FOLIOMAN_CONFIG overrides the discovery walk (how CI points at the fixture). No other test reads
     /// this var, so the set/remove is isolated.
     #[test]
