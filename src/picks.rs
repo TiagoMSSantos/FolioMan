@@ -2757,6 +2757,24 @@ mod tests {
     wildc.ticker = "OKB-USD".into();
     wildc.volatility_pct = Some(5.0);
     assert!(gate_failures(&wildc, &vt).unwrap().iter().any(|(g, _, _)| *g == "volatile"));
+    // "1Y+" floor — the falling-knife gate (round 5: the cohort a loosened floor admits measured
+    // −108 fwd; never loosen). Stock leg is a hardcoded 1Y > 0 in BOTH paths: gate_failures names
+    // it, and score_parts bails to None. Legs are strong enough that the 1Y floor is the ONLY
+    // decisive gate — the +5% control scoring Some proves the floor is what rejected the −5% twin.
+    let down1y = quote(5.0, &[("1Y", -5.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    assert!(gate_failures(&down1y, &tuning).unwrap().iter().any(|(g, _, _)| *g == "1Y+"));
+    assert!(growth_score(&down1y, &tuning).is_none(), "score path must enforce the 1Y floor");
+    let up1y = quote(5.0, &[("1Y", 5.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    assert!(growth_score(&up1y, &tuning).is_some(), "control: same quote above the floor ranks");
+    // crypto leg: min_1y_pct_crypto is a CRASH bar, not a swing bar (round 22, live −50): a −62%
+    // year fires, a BTC-like −33% year does not.
+    let ct = BuyHeuristic { min_1y_pct_crypto: -50.0, ..BuyHeuristic::default() };
+    let mut crashc = quote(5.0, &[("1Y", -62.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    crashc.ticker = "GT-USD".into();
+    assert!(gate_failures(&crashc, &ct).unwrap().iter().any(|(g, _, _)| *g == "1Y+"));
+    let mut swingc = quote(5.0, &[("1Y", -33.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    swingc.ticker = "GT-USD".into();
+    assert!(!gate_failures(&swingc, &ct).unwrap().iter().any(|(g, _, _)| *g == "1Y+"));
 
     // turnover_cell compaction across every magnitude arm (B/M/K) + the unknown fallback
     assert_eq!(turnover_cell(Some(1.2e9)), "€1.2B");
