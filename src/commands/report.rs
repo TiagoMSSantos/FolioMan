@@ -1,8 +1,9 @@
 //! `report [TICKERS]` — inspect a company's ANNUAL income-statement trajectory (revenue, margins,
-//! EPS, year-over-year growth) plus the SAME fundamental "grower verdict" the buy heuristic ranks on.
+//! EPS, year-over-year growth) plus the as-of fundamental "grower profile" (of which only the
+//! valuation tilt is score-weighed — the rest of the fund lane measured no-edge and prints as info).
 //! Workflow: run `screen` to surface the best growers, then `report AAPL` to drill into one before
 //! betting. Sources the FMP `stable/income-statement` pipeline first, falling back to SEC EDGAR XBRL
-//! (free, no key, no daily cap; US filers) when FMP is throttled/keyless. The verdict comes straight
+//! (free, no key, no daily cap; US filers) when FMP is throttled/keyless. The profile comes straight
 //! from `core::fund_factors`, so the inspection can't drift from what `screen`/`check` actually weigh.
 
 use crate::{config, core, fetch, picks};
@@ -70,7 +71,7 @@ pub async fn run(args: Vec<String>) {
     }
 }
 
-/// Render one ticker's annual table + grower verdict; pure so the real branches — the +inf% YoY
+/// Render one ticker's annual table + grower profile; pure so the real branches — the +inf% YoY
 /// guard, the incomplete-year `*` mark, the empty-rollup note — are unit-testable offline (same
 /// seam split as the trading212 render_summary). Returns (text, whether a fiscal-year table
 /// rendered) for run()'s exit-code rule.
@@ -117,9 +118,11 @@ fn render_annual(
         out.push_str("  (SHΔ% = YoY share-count change, sign-flipped: + = buying back, - = diluting; a swing >40% (split/M&A) prints \"-\")\n");
     }
 
-    // grower verdict — the EXACT as-of factors growth_score weighs (5y lookback matches the live enrich)
+    // grower profile — the as-of factors (5y lookback matches the live enrich). Of everything on
+    // these two lines, ONLY the valuation tilt below is score-weighed: the fund lane measured
+    // no-edge and is closed, so these print as info, never as score inputs.
     let ff = core::fund_factors(rows, today, 5);
-    out.push_str("--- grower verdict (what screen bets on) ---\n");
+    out.push_str("--- grower profile (info — only the valuation tilt below is score-weighed) ---\n");
     out.push_str(&format!(
         "  rev_cagr {}  eps_growth {}  rev_accel {}  margin_trend {}  gross_margin {}  op_margin {}  roe {}  buyback_yield {}\n",
         yoy(ff.rev_cagr), yoy(ff.eps_growth), pts(ff.rev_accel), pts(ff.margin_trend),
@@ -225,11 +228,12 @@ mod tests {
     }
 
     /// (round 69 guard) a zero-revenue older year must render REV-YoY as "-", never "+inf%".
+    /// Pinned to the rendered "inf%" cell, not bare "inf" — prose like "info" must not trip it.
     #[test]
     fn zero_revenue_older_year_is_dash_not_inf() {
         let rows = vec![quarter(2024, 6, Some(0.0), None), quarter(2025, 6, Some(50.0), None)];
         let (out, _) = render("ACME", "FMP", &rows);
-        assert!(!out.contains("inf"), "{out}");
+        assert!(!out.contains("inf%"), "{out}");
     }
 
     /// 2-3 quarters = a genuinely partial fiscal year: the row carries `*` and the footnote prints.
