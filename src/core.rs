@@ -96,6 +96,7 @@ pub struct Quote {
     pub max_drawdown_pct: f64,         // (C) worst peak-to-trough decline (%) in its history; feeds the Calmar (return-per-pain) reward. 0 = never down/no history
     pub roll5y_pos_pct: Option<f64>,   // (consistency) % of rolling ~5y windows with a positive NOMINAL return, from the same closes. DISPLAY-ONLY footer ("how often did 5 patient years pay?"); None = <5y of history — never a fake 100%
     pub underwater_yrs: Option<f64>,   // (underwater) longest stretch below the prior peak, in years (~252 sessions/yr), ongoing stretch counts. DISPLAY-ONLY footer — MAXDD's missing twin: depth says how far down, this says how LONG the pain lasted. None = <2 usable closes
+    pub worst_5y_pct: Option<f64>,     // (worst-5y) single worst rolling ~5y NOMINAL outcome (%), severity twin of roll5y_pos_pct's frequency. DISPLAY-ONLY footer; None = <5y of history — no claim
     pub fund_factor: Option<f64>,      // (G) the ONE as-of fundamental factor folded into growth_score (e.g. revenue accel). Set in the backtest (from fund_factors) so the term is ablatable, and live only on the small/check-scale path; None -> neutral (universe screen & price-only backtest)
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history; DISPLAY-ONLY (`cagr` column). Ranking/gates stay on the validated fixed-horizon ladder. None = <6mo history / stub / backtest
@@ -152,6 +153,7 @@ impl Quote {
             max_drawdown_pct: 0.0,
             roll5y_pos_pct: None,
             underwater_yrs: None,
+            worst_5y_pct: None,
             fund_factor: None,
             age_years: None,
             life_cagr: None,
@@ -341,6 +343,26 @@ pub fn longest_underwater_yrs(closes: &[f64]) -> Option<f64> {
         }
     }
     Some(worst as f64 / 252.0)
+}
+
+/// (worst-5y) The single worst rolling ~5y (nominal) outcome — severity twin of
+/// `rolling_5y_positive_pct`'s frequency ("97% of windows positive; the worst one did −12%").
+/// Same WIN/STEP walk and skip rules: a window with a non-positive close on either end is
+/// skipped; `None` when no full window exists — no claim, never a fake number.
+pub fn worst_rolling_5y_pct(closes: &[f64]) -> Option<f64> {
+    const WIN: usize = 5 * 252;
+    const STEP: usize = 5;
+    let mut worst: Option<f64> = None;
+    let mut i = 0;
+    while i + WIN < closes.len() {
+        let (a, b) = (closes[i], closes[i + WIN]);
+        if a > 0.0 && b > 0.0 {
+            let r = 100.0 * (b / a - 1.0);
+            worst = Some(worst.map_or(r, |w: f64| w.min(r)));
+        }
+        i += STEP;
+    }
+    worst
 }
 
 /// Format a number with comma thousands separators and 2 decimals (Python `{:,.2f}`).
@@ -1718,6 +1740,24 @@ mod tests {
         assert_eq!(longest_underwater_yrs(&[0.0, 100.0, 90.0, 101.0]), Some(1.0 / 252.0));
         assert_eq!(longest_underwater_yrs(&[100.0]), None);
         assert_eq!(longest_underwater_yrs(&[]), None);
+    }
+
+    /// (worst-5y) worst_rolling_5y_pct: the MINIMUM window return wins (window A +10% vs window
+    /// B −10% -> −10); a non-positive window endpoint skips that window, not the whole series;
+    /// no full window -> None (no claim).
+    #[test]
+    fn worst_rolling_semantics() {
+        const WIN: usize = 5 * 252;
+        let mut closes = vec![1.0; WIN + 6];
+        closes[0] = 100.0;
+        closes[WIN] = 110.0; // window A (i=0): +10%
+        closes[5] = 100.0;
+        closes[5 + WIN] = 90.0; // window B (i=5): -10%
+        assert!((worst_rolling_5y_pct(&closes).unwrap() + 10.0).abs() < 1e-9);
+        closes[0] = 0.0; // bad endpoint skips window A only
+        assert!((worst_rolling_5y_pct(&closes).unwrap() + 10.0).abs() < 1e-9);
+        assert!(worst_rolling_5y_pct(&vec![1.0; WIN]).is_none()); // no full window -> no claim
+        assert!(worst_rolling_5y_pct(&[]).is_none());
     }
 
     /// (#17/Step 4) `endpoint_avg`: n=1 = the raw last close (the inert default must be byte-identical);

@@ -605,6 +605,25 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (worst-5y) severity closes the closes-derived risk picture: depth (MAXDD column) ·
+    // duration (underwater) · frequency (5y-consistency) · severity (this). Worst outcome
+    // first. DISPLAY-ONLY, never scored.
+    {
+        let mut rows: Vec<(&str, f64)> = ranked_now
+            .iter()
+            .filter_map(|t| {
+                quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.worst_5y_pct).map(|v| (t.as_str(), v))
+            })
+            .collect();
+        rows.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(b.0)));
+        if !rows.is_empty() {
+            let cells = rows.iter().map(|(t, v)| format!("{t} {v:+.0}%")).collect::<Vec<_>>().join(" · ");
+            println!(
+                "\nWorst 5-year hold — the single worst rolling 5y (nominal) outcome, weekly-stepped:\n  {cells}"
+            );
+        }
+    }
+
     // (X) EXIT review — WATCHLIST names that cleared every growth gate on the previous screen run
     // but fail one now. The backtest's exit probe measures this exact transition: newly-failing
     // names lag kept-passing names by ~14 pts forward — a mild REVIEW signal, not an auto-sell.

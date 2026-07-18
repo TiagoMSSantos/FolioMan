@@ -563,6 +563,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // (consistency) % of rolling 5y windows positive, same closes — the screen's footer stat.
         roll5y_pos_pct: core::rolling_5y_positive_pct(&chart.closes),
         underwater_yrs: core::longest_underwater_yrs(&chart.closes),
+        worst_5y_pct: core::worst_rolling_5y_pct(&chart.closes),
         fund_factor: None, // (G) live screen leaves this None (neutral); only the small/check-scale path (A3) populates it
         age_years,
         life_cagr,
