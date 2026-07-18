@@ -48,6 +48,19 @@ pub fn append_snapshot(snap: &Snapshot) {
     }
 }
 
+/// Read + parse the snapshot journal: (snapshots in file order, corrupt line count). Shared by
+/// `track`, `sim` and the screen's trust line so the three parse the record identically.
+pub(crate) fn read_snapshots() -> (Vec<Snapshot>, usize) {
+    let raw = std::fs::read_to_string(crate::config::data_path(SNAPSHOT_FILE)).unwrap_or_default();
+    let mut corrupt = 0usize;
+    let snaps = raw
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).map_err(|_| corrupt += 1).ok())
+        .collect();
+    (snaps, corrupt)
+}
+
 /// One graded journal row: equal-weight book return vs the index over the same window.
 /// `priced` says how many of the book's names had a price on BOTH ends — delisted/err names drop
 /// out, which FLATTERS the book (survivorship); the count keeps that visible.
@@ -83,8 +96,24 @@ fn grade(snap: &Snapshot, today: chrono::NaiveDate, px_now: &dyn Fn(&str) -> Opt
     Some(Graded { date: snap.date.clone(), days, priced: rets.len(), book_pct, spy_pct })
 }
 
+/// Fold every gradeable snapshot with a benchmark leg into the verdict numbers:
+/// (wins, graded_n, excess_sum). The ONE source for the summary — track's table and the screen's
+/// live-track-record line both consume this, so the two surfaces can't disagree.
+pub(crate) fn verdict_stats(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> (usize, usize, f64) {
+    snaps
+        .iter()
+        .filter_map(|s| grade(s, today, px_now, spx_now))
+        .filter_map(|g| g.spy_pct.map(|spy| g.book_pct - spy))
+        .fold((0, 0, 0.0), |(wins, n, sum), ex| (wins + (ex > 0.0) as usize, n + 1, sum + ex))
+}
+
 /// The one-line verdict — printed at the bottom of every run, and the title of the `--push` ping.
-fn summary_line(wins: usize, graded_n: usize, excess_sum: f64) -> String {
+pub(crate) fn summary_line(wins: usize, graded_n: usize, excess_sum: f64) -> String {
     match graded_n {
         0 => "nothing gradeable yet — snapshots need at least one day of age (and priced rows).".to_string(),
         n => format!(
@@ -99,24 +128,12 @@ pub async fn run(args: Vec<String>) {
     // --push: also send the summary to ntfy — for a monthly cron, so the track record reaches the
     // phone without a manual run. The cron schedule IS the dedup: no state file, one ping per fire.
     let push = args.iter().any(|a| a == "--push");
-    let raw = match std::fs::read_to_string(crate::config::data_path(SNAPSHOT_FILE)) {
-        Ok(s) => s,
-        Err(_) => {
-            println!("No track record yet — {SNAPSHOT_FILE} appears after the first `screen` run; grading starts the day after.");
-            return;
-        }
-    };
-    let mut corrupt = 0usize;
-    let snaps: Vec<Snapshot> = raw
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str(l).map_err(|_| corrupt += 1).ok())
-        .collect();
+    let (snaps, corrupt) = read_snapshots();
     if corrupt > 0 {
         eprintln!("WARNING: {corrupt} corrupt line(s) in {SNAPSHOT_FILE} skipped");
     }
     if snaps.is_empty() {
-        println!("No track record yet — {SNAPSHOT_FILE} has no readable snapshots.");
+        println!("No track record yet — {SNAPSHOT_FILE} appears after the first `screen` run; grading starts the day after.");
         return;
     }
 
@@ -147,17 +164,11 @@ pub async fn run(args: Vec<String>) {
     );
     println!("  {:<12} {:>6} {:>4} {:>10} {:>10} {:>9}  BEAT?", "DATE", "AGE", "N", "BOOK", "S&P 500", "EXCESS");
     let today = chrono::Local::now().date_naive();
-    let mut wins = 0usize;
-    let mut graded_n = 0usize;
-    let mut excess_sum = 0.0;
     for snap in &snaps {
         let Some(g) = grade(snap, today, &px_now, spx_now) else { continue };
         match g.spy_pct {
             Some(spy) => {
                 let excess = g.book_pct - spy;
-                graded_n += 1;
-                wins += (excess > 0.0) as usize;
-                excess_sum += excess;
                 println!(
                     "  {:<12} {:>5}d {:>4} {:>+9.1}% {:>+9.1}% {:>+8.1}pp  {}",
                     g.date, g.days, g.priced, g.book_pct, spy, excess,
@@ -170,6 +181,9 @@ pub async fn run(args: Vec<String>) {
             ),
         }
     }
+    // summary comes from the SAME fold the screen's trust line reads — not from accumulators in
+    // the print loop above, so the two surfaces can't drift apart.
+    let (wins, graded_n, excess_sum) = verdict_stats(&snaps, today, &px_now, spx_now);
     let summary = summary_line(wins, graded_n, excess_sum);
     println!("\n  summary: {summary}");
     if push {
@@ -240,6 +254,28 @@ mod tests {
             summary_line(2, 3, 4.5),
             "book beat the index in 2/3 windows (67%), mean excess +1.5pp per window."
         );
+    }
+
+    /// verdict_stats(): the shared fold behind track's summary AND the screen's trust line —
+    /// one win + one loss counted with their excess sum; ungradeable rows (same-day) and rows
+    /// without a benchmark leg stay out of n.
+    #[test]
+    fn verdict_stats_fold() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "UP" => Some(110.0),
+            "DOWN" => Some(90.0),
+            _ => None,
+        };
+        let snaps = vec![
+            snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), // book +10, spy +5 -> win, ex +5
+            snap("2026-06-16", Some(100.0), &[("DOWN", Some(100.0))]), // book -10, spy +5 -> loss, ex -15
+            snap("2026-06-16", None, &[("UP", Some(100.0))]),        // no benchmark leg -> not counted
+            snap("2026-07-16", Some(100.0), &[("UP", Some(100.0))]), // same-day -> not counted
+        ];
+        let (wins, n, sum) = verdict_stats(&snaps, today, &px, Some(105.0));
+        assert_eq!((wins, n), (1, 2));
+        assert!((sum - (5.0 - 15.0)).abs() < 1e-9);
     }
 
     /// Snapshot JSONL round-trips (the journal format `screen` writes and `track` reads back),

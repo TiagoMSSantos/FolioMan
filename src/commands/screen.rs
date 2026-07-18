@@ -191,6 +191,36 @@ fn concentration_lines(holdings: &std::collections::HashMap<String, Vec<(String,
     rows.into_iter().map(|(_, l)| l).collect()
 }
 
+/// (sector tilt) One line per fund that carries sector data: top-2 sectors + equity/bond split,
+/// heaviest top sector first — the "99% one sector" risk the shared mega-cap holdings hide.
+/// Weights arrive as fractions (0.99 = 99%); the bond leg prints only when it actually exists
+/// (≥0.5% — equity ETFs report bond 0). Funds without sector data simply don't print.
+fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) -> Vec<String> {
+    let mut rows: Vec<(&String, &Vec<(String, f64)>, Option<(f64, f64)>)> = mix
+        .iter()
+        .filter(|(_, (sectors, _))| !sectors.is_empty())
+        .map(|(t, (sectors, sb))| (t, sectors, *sb))
+        .collect();
+    rows.sort_by(|a, b| b.1[0].1.total_cmp(&a.1[0].1).then_with(|| a.0.cmp(b.0)));
+    rows.into_iter()
+        .map(|(t, sectors, sb)| {
+            let tops = sectors
+                .iter()
+                .take(2)
+                .map(|(name, w)| format!("{name} {:.0}%", 100.0 * w))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let split = match sb {
+                Some((stock, bond)) if bond >= 0.005 => {
+                    format!("  (equity {:.0}% / bond {:.0}%)", 100.0 * stock, 100.0 * bond)
+                }
+                _ => String::new(),
+            };
+            format!("  {t:<10} {tops}{split}")
+        })
+        .collect()
+}
+
 /// (round 50) TER hike worth flagging: ≥0.05 pp is a real fee decision (Vanguard-scale cuts/hikes
 /// move in 0.05+ steps), below is basis-point noise / rounding drift in the source.
 const TER_HIKE_PP: f64 = 0.05;
@@ -643,7 +673,7 @@ pub async fn run(args: Vec<String>) {
             .collect();
         syms.sort();
         syms.dedup();
-        let holdings = fetch::yahoo_top_holdings(&client, &syms).await;
+        let (holdings, mix) = fetch::yahoo_top_holdings(&client, &syms).await;
         let clusters = holdings_overlap_lines(&holdings);
         if !clusters.is_empty() {
             println!("\nHoldings overlap — picks that are effectively the same position (shared top-10 holdings, so buying several ≈ one concentrated bet):");
@@ -654,6 +684,16 @@ pub async fn run(args: Vec<String>) {
         let heavy = concentration_lines(&holdings);
         if !heavy.is_empty() {
             println!("\nTop-heavy picks — top-10 holdings as a share of the whole fund (single-name/sector risk inside the wrapper): {}", heavy.join(", "));
+        }
+        // (sector tilt) the composition datum the two blocks above can't show: a concentrated
+        // tech ETF and a broad core list the SAME mega-caps up top — the sector spread is where
+        // they differ. Same payload as the holdings fetch, previously discarded.
+        let tilt = sector_tilt_lines(&mix);
+        if !tilt.is_empty() {
+            println!("\nSector tilt — fund picks by top-sector weight (what the shared mega-cap holdings hide):");
+            for l in &tilt {
+                println!("{l}");
+            }
         }
     }
 
@@ -737,6 +777,29 @@ pub async fn run(args: Vec<String>) {
                 "screen: order symbols — owned {n_owned} | isin {n_isin} | base {n_base} | placeholder {n_ph} | binance {n_binance} | instruments {}",
                 instruments.len()
             );
+        }
+    }
+
+    // (trust line) the ranking's own live out-of-sample grade: every past journaled top-10 at
+    // today's prices vs the S&P 500 — same fold as `track` (verdict_stats), so the two can't
+    // disagree. Zero new fetches: past books are ex-universe names, so this run's quotes already
+    // price them (a narrow watchlist run may grade fewer rows; track's table stays the honest
+    // view). Today's own snapshot is 0 days old and grades nothing, so no self-grade.
+    {
+        let (snaps, _) = crate::commands::track::read_snapshots();
+        if !snaps.is_empty() {
+            let today = chrono::Local::now().date_naive();
+            let px_now = |t: &str| {
+                quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0)
+            };
+            let spx_now = spx.first().and_then(|q| q.price_eur).filter(|p| *p > 0.0);
+            let (wins, n, sum) = crate::commands::track::verdict_stats(&snaps, today, &px_now, spx_now);
+            if n > 0 {
+                println!(
+                    "\nLive track record — this ranking's past top-10s at today's prices: {} (details: `folioman track`)",
+                    crate::commands::track::summary_line(wins, n, sum)
+                );
+            }
         }
     }
 
@@ -1226,6 +1289,33 @@ mod tests {
         h.insert("NOWEIGHT.DE".into(), vec![("A".into(), 0.0), ("B".into(), 0.0)]); // 0% -> silent
         assert_eq!(concentration_lines(&h), vec!["HEAVY.DE 58%".to_string(), "MID.DE 45%".to_string()]);
         assert!(concentration_lines(&HashMap::new()).is_empty());
+    }
+
+    /// (sector tilt) heaviest top sector prints first, top-2 sectors only, the bond leg shows only
+    /// when it exists (equity funds report bond 0), and a fund without sector data stays silent.
+    #[test]
+    fn sector_tilt_semantics() {
+        let mut m: HashMap<String, fetch::FundMix> = HashMap::new();
+        m.insert(
+            "TECH.L".into(),
+            (vec![("Technology".into(), 0.99), ("Communication Services".into(), 0.01)], Some((1.0, 0.0))),
+        );
+        m.insert(
+            "MIXED.DE".into(),
+            (
+                vec![("Financial Services".into(), 0.40), ("Industrials".into(), 0.30), ("Energy".into(), 0.20)],
+                Some((0.60, 0.40)),
+            ),
+        );
+        m.insert("NOSECTORS.L".into(), (Vec::new(), Some((1.0, 0.0)))); // silent
+        let lines = sector_tilt_lines(&m);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("  TECH.L") && lines[0].contains("Technology 99% · Communication Services 1%"));
+        assert!(!lines[0].contains("bond"), "pure-equity fund must not print a bond leg: {}", lines[0]);
+        assert!(lines[1].contains("Financial Services 40% · Industrials 30%"), "top-2 cap: {}", lines[1]);
+        assert!(!lines[1].contains("Energy"), "third sector must drop: {}", lines[1]);
+        assert!(lines[1].contains("(equity 60% / bond 40%)"), "real bond leg prints: {}", lines[1]);
+        assert!(sector_tilt_lines(&HashMap::new()).is_empty());
     }
 
     /// (round 62) state-file parse fork: absent = normal first run (silent), present-but-garbage =

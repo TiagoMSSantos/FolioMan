@@ -190,21 +190,13 @@ pub async fn run(_args: Vec<String>) {
         );
         return;
     }
-    let raw = match std::fs::read_to_string(config::data_path(SNAPSHOT_FILE)) {
-        Ok(s) => s,
-        Err(_) => {
-            println!("No journal yet — {SNAPSHOT_FILE} appears after the first `screen` run; the sim buys from each month's first snapshot.");
-            return;
-        }
-    };
-    let mut corrupt = 0usize;
-    let mut snaps: Vec<Snapshot> = raw
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str(l).map_err(|_| corrupt += 1).ok())
-        .collect();
+    let (mut snaps, corrupt) = crate::commands::track::read_snapshots();
     if corrupt > 0 {
         eprintln!("WARNING: {corrupt} corrupt line(s) in {SNAPSHOT_FILE} skipped");
+    }
+    if snaps.is_empty() {
+        println!("No journal yet — {SNAPSHOT_FILE} appears after the first `screen` run; the sim buys from each month's first snapshot.");
+        return;
     }
     snaps.sort_by(|a, b| a.date.cmp(&b.date));
     let today = chrono::Local::now().date_naive();

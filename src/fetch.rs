@@ -1819,10 +1819,13 @@ fn parse_fund_category(v: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// (round 56) Weekly `{sym: ["YYYY-MM-DD", [[holding, weight]...]]}` cache for `yahoo_top_holdings`;
-/// empty lists are cached too, so a fund Yahoo has no holdings for costs one request a week.
+/// (round 56) Weekly `{sym: ["YYYY-MM-DD", [[holding, weight]...], [[sector, weight]...], stock_bond]}`
+/// cache for `yahoo_top_holdings`; empty lists are cached too, so a fund Yahoo has no holdings for
+/// costs one request a week.
 /// (round 57) the row schema gained per-holding weights; an old symbols-only cache fails to
 /// deserialize and is treated as empty — one refetch of the ~30 printed picks heals it.
+/// (sector tilt) same healing path again: rows gained the sector weightings + equity/bond split
+/// that ride the SAME topHoldings payload (previously parsed-and-dropped — zero new HTTP).
 const HOLDINGS_CACHE_PATH: &str = ".holdings_cache.json";
 
 /// (report round 7) Shared cacheless quoteSummary GET — the fund seams below (and their
@@ -1913,13 +1916,21 @@ pub async fn sec_facts_live(client: &Client, urls: &Urls, ticker: &str) -> Resul
     Ok(parse_sec_facts(&v))
 }
 
+/// Per-fund composition for the sector-tilt footer: (sectors desc by weight, equity/bond split).
+pub type FundMix = (Vec<(String, f64)>, Option<(f64, f64)>);
+
 /// (round 56) Top-10 holdings per fund (each with its weight fraction), for the screen's
 /// holdings-overlap + concentration footers — the sector-tech table is full of "different" funds
 /// holding the same mega-caps, and that concentration is invisible from the fund names.
-/// Display-only: holdings are never scored. Called for the printed fund picks only (a couple dozen
-/// symbols), so no request budget needed.
-pub async fn yahoo_top_holdings(client: &Client, syms: &[String]) -> HashMap<String, Vec<(String, f64)>> {
-    type Row = (String, Vec<(String, f64)>); // (fetched date, [(holding symbol/name, weight fraction)])
+/// (sector tilt) also returns each fund's sector weightings + equity/bond split — same payload,
+/// previously discarded. Display-only: none of it is scored. Called for the printed fund picks
+/// only (a couple dozen symbols), so no request budget needed.
+pub async fn yahoo_top_holdings(
+    client: &Client,
+    syms: &[String],
+) -> (HashMap<String, Vec<(String, f64)>>, HashMap<String, FundMix>) {
+    // (fetched date, [(holding symbol/name, weight fraction)], [(sector, weight)], stock/bond)
+    type Row = (String, Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>);
     let mut cache: HashMap<String, Row> = std::fs::read_to_string(crate::config::data_path(HOLDINGS_CACHE_PATH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -1929,40 +1940,44 @@ pub async fn yahoo_top_holdings(client: &Client, syms: &[String]) -> HashMap<Str
         NaiveDate::parse_from_str(&r.0, "%Y-%m-%d").is_ok_and(|d| (today - d).num_days() < 7)
     };
     let mut out = HashMap::new();
+    let mut mix = HashMap::new();
     let mut todo: Vec<String> = Vec::new();
     for s in syms {
         match cache.get(s) {
             Some(r) if fresh(r) => {
                 out.insert(s.clone(), r.1.clone());
+                mix.insert(s.clone(), (r.2.clone(), r.3));
             }
             _ => todo.push(s.clone()),
         }
     }
     if !todo.is_empty() {
-        // handshake once up front for the explicit skip message; top_holdings_live's own crumb
+        // handshake once up front for the explicit skip message; fund_composition_live's own crumb
         // call is then a free OnceLock read per symbol.
         if yahoo_crumb(client).await.is_none() {
             eprintln!("fetch: Yahoo crumb handshake failed — holdings-overlap footer skipped this run");
-            return out;
+            return (out, mix);
         }
-        let fetched: Vec<Option<(String, Vec<(String, f64)>)>> = stream::iter(todo)
-            .map(|sym| async move {
-                // Err (transport/throttle) -> None: symbol stays uncached, retried next run
-                let holdings = top_holdings_live(client, &sym).await.ok()?;
-                Some((sym, holdings))
-            })
-            .buffer_unordered(fetch_concurrency())
-            .collect()
-            .await;
-        for (sym, holdings) in fetched.into_iter().flatten() {
-            cache.insert(sym.clone(), (today.to_string(), holdings.clone()));
-            out.insert(sym, holdings);
+        let fetched: Vec<Option<(String, Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>)>> =
+            stream::iter(todo)
+                .map(|sym| async move {
+                    // Err (transport/throttle) -> None: symbol stays uncached, retried next run
+                    let (holdings, sectors, stock_bond) = fund_composition_live(client, &sym).await.ok()?;
+                    Some((sym, holdings, sectors, stock_bond))
+                })
+                .buffer_unordered(fetch_concurrency())
+                .collect()
+                .await;
+        for (sym, holdings, sectors, stock_bond) in fetched.into_iter().flatten() {
+            cache.insert(sym.clone(), (today.to_string(), holdings.clone(), sectors.clone(), stock_bond));
+            out.insert(sym.clone(), holdings);
+            mix.insert(sym, (sectors, stock_bond));
         }
         if let Ok(json) = serde_json::to_string(&cache) {
             let _ = std::fs::write(crate::config::data_path(HOLDINGS_CACHE_PATH), json);
         }
     }
-    out
+    (out, mix)
 }
 
 /// (AUM) the same 3-tier BF lookup the TER uses (exact resolved symbol -> same-stem cross-venue ->
