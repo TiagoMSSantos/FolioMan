@@ -22,24 +22,29 @@ pub async fn run(args: Vec<String>) {
     } else {
         "no statements (set FMP_API_KEY for global coverage; US filers still resolve via SEC EDGAR — or the ticker is dead/delisted)"
     };
-    // exit-code contract: asked about ≥1 equity and produced ZERO tables -> exit 1 so a script/cron
-    // can tell total failure from success. Partial success (some tickers resolve) stays 0 — some
-    // data beats none. Crypto/FX-only invocations stay 0 (there is nothing to fetch by design).
+    // exit-code contract: asked about ≥1 equity and produced ZERO tables/fund blocks -> exit 1 so a
+    // script/cron can tell total failure from success. Partial success (some tickers resolve) stays
+    // 0 — some data beats none. Crypto/FX-only invocations stay 0 (nothing to fetch by design).
+    // The market line alone does NOT count: it renders from the quote even for dead statements
+    // pipes, and a run that only echoed prices back is a failed drill-in.
     let mut equity_requested = 0u32;
     let mut tables_printed = 0u32;
 
     // (round 115) one quote fetch for the valuation line: close_native pairs with the native EPS so
     // the printed earnings_yield is the SAME number the live enrich feeds growth_score (fetch.rs) —
     // no new math, no currency skew. A failed/short fetch just leaves the close absent ("-").
+    // (data round) the whole Quote is kept now, not just the close: the market line prints the
+    // screen row's essentials (CAGR/1Y/vol/maxdd/R²/extension) beside the fundamentals — the data
+    // was already fetched and discarded.
     let equities: Vec<String> = tickers.iter().filter(|t| !picks::is_currency_quoted(t)).cloned().collect();
-    let closes: std::collections::HashMap<String, f64> = if equities.is_empty() {
+    let quotes_by: std::collections::HashMap<String, core::Quote> = if equities.is_empty() {
         Default::default()
     } else {
         let fx_cache = fetch::fx_cache();
         fetch::quotes(&client, &settings.urls, &fx_cache, &equities, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, None)
             .await
             .into_iter()
-            .filter_map(|q| q.close_native.map(|c| (q.ticker.clone(), c)))
+            .map(|q| (q.ticker.clone(), q))
             .collect()
     };
 
@@ -52,14 +57,29 @@ pub async fn run(args: Vec<String>) {
             continue;
         }
         equity_requested += 1;
+        let q = quotes_by.get(ticker.as_str());
+        if let Some(q) = q {
+            println!("{}", market_line(q));
+        }
         let (rows, source) = match fetch::fetch_fundamentals_report(&client, &settings.urls, ticker).await {
             Some(r) => r,
             None => {
-                println!("\n{ticker}: {no_data}");
+                // (data round) no statements ≠ nothing to say: the book is mostly ETFs, which
+                // carry no income statement at all. Fall through to the fund side via the
+                // round-3 cacheless seams (TER/AUM + top-10 holdings) before giving up; a
+                // crumb/transport failure is environmental and just leaves the no-data line.
+                let (ter, aum) = fetch::fund_facts_live(&client, ticker).await.unwrap_or((None, None));
+                let holdings = fetch::top_holdings_live(&client, ticker).await.unwrap_or_default();
+                if ter.is_some() || aum.is_some() || !holdings.is_empty() {
+                    print!("{}", render_fund(ticker, ter, aum, &holdings));
+                    tables_printed += 1;
+                } else {
+                    println!("\n{ticker}: {no_data}");
+                }
                 continue;
             }
         };
-        let close = closes.get(ticker.as_str()).copied();
+        let close = q.and_then(|q| q.close_native);
         let (block, has_table) = render_annual(ticker, source, &rows, today, close, &settings.buy_heuristic);
         print!("{block}");
         if has_table {
@@ -154,6 +174,52 @@ fn render_annual(
 
     let has_table = !annual.is_empty();
     (out, has_table)
+}
+
+/// (data round) One compact price-side line per ticker, from the Quote run() already fetches for
+/// the valuation close — the screen row's essentials beside the fundamentals at drill-in time,
+/// zero new network. Zeroed trend fields (stub/short history) print "-"/"at high", never a
+/// fabricated 0. Pure formatting.
+fn market_line(q: &core::Quote) -> String {
+    let y1 = core::HORIZONS
+        .iter()
+        .position(|(l, _)| *l == "1Y")
+        .and_then(|i| q.perf.get(i))
+        .and_then(|p| p.as_ref().map(|(_, pct)| *pct));
+    format!(
+        "\n{} — market: cagr {} ({})  1y {}  vol {}  maxdd {}  r2 {:.2}  abv-200wk {}  off-hi {}",
+        q.ticker,
+        yoy(q.life_cagr),
+        q.age_years.map(|y| format!("{y:.0}y")).unwrap_or_else(|| "-".into()),
+        yoy(y1),
+        q.volatility_pct.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "-".into()),
+        if q.max_drawdown_pct > 0.0 { format!("-{:.0}%", q.max_drawdown_pct) } else { "-".into() },
+        q.trend_r2,
+        if q.above_ma_pct > 0.0 { format!("+{:.0}%", q.above_ma_pct) } else { "-".into() },
+        if q.drawdown_pct > 0.0 { format!("-{:.1}%", q.drawdown_pct) } else { "at high".into() },
+    )
+}
+
+/// (data round) Fund drill-in for no-statement names — the ETF book: TER/AUM + top-10 holdings via
+/// the round-3 cacheless seams. Rendered only when at least one field arrived; the caller keeps the
+/// tailored no-data line for the true-nothing case. AUM is quote-currency ≈ EUR (same approximation
+/// the screen's AUM column already makes). Pure formatting.
+fn render_fund(ticker: &str, ter: Option<f64>, aum: Option<f64>, holdings: &[(String, f64)]) -> String {
+    let mut out = format!("\n{ticker} — fund profile (no income statements: ETF/fund)\n");
+    out.push_str(&format!(
+        "  TER {}  AUM {}\n",
+        ter.map(|t| format!("{t:.2}%")).unwrap_or_else(|| "-".into()),
+        aum.map(|a| format!("€{}", humanize(a))).unwrap_or_else(|| "-".into()),
+    ));
+    if !holdings.is_empty() {
+        out.push_str("  top holdings:");
+        for (name, w) in holdings.iter().take(10) {
+            // seam weights are FRACTIONS (holdingPercent.raw, 0.058 = 5.8%) — scale for display
+            out.push_str(&format!("  {name} {:.1}%", w * 100.0));
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// YoY share-count change, sign-flipped (+ = shrinking count = buying back). Same `|Δ|>40%`
@@ -306,6 +372,49 @@ mod tests {
         let (out, _) = render("ACME", "FMP", &rows);
         assert!(out.contains("+10.0%"), "buyback SHΔ% missing: {out}");
         assert!(out.contains("share-count change"), "footnote missing: {out}");
+    }
+
+    /// (data round) market line: a populated quote renders every cell in screen-column semantics
+    /// (maxdd/off-hi negative-signed, abv-200wk positive-signed); a bare stub (empty perf, zeroed
+    /// trend fields) renders "-"/"at high", never a fabricated 0%.
+    #[test]
+    fn market_line_cells_and_dashes() {
+        let mut q = core::Quote::stub("IITU.L", "€42.84", "", "iShares IT");
+        q.life_cagr = Some(25.0);
+        q.age_years = Some(11.0);
+        q.volatility_pct = Some(1.3);
+        q.max_drawdown_pct = 28.0;
+        q.trend_r2 = 0.98;
+        q.above_ma_pct = 61.0;
+        q.drawdown_pct = 17.1;
+        let i1y = core::HORIZONS.iter().position(|(l, _)| *l == "1Y").unwrap();
+        q.perf = vec![None; core::HORIZONS.len()];
+        q.perf[i1y] = Some((String::new(), 17.1));
+        let line = market_line(&q);
+        assert!(
+            line.contains("IITU.L — market: cagr +25.0% (11y)  1y +17.1%  vol 1.3%  maxdd -28%  r2 0.98  abv-200wk +61%  off-hi -17.1%"),
+            "{line}"
+        );
+
+        let bare = market_line(&core::Quote::stub("X", "err", "", "X"));
+        assert!(bare.contains("cagr - (-)  1y -  vol -  maxdd -"), "{bare}");
+        assert!(bare.contains("abv-200wk -  off-hi at high"), "{bare}");
+    }
+
+    /// (data round) fund profile: TER/AUM render with the humanized € tier and holdings join on one
+    /// line; absent TER prints "-" (never 0.00%); no holdings -> no holdings line at all.
+    #[test]
+    fn fund_profile_renders_facts_and_holdings() {
+        // weights arrive as fractions from the seam (0.225 = 22.5%)
+        let holds = vec![("AAPL".to_string(), 0.225), ("MSFT".to_string(), 0.21)];
+        let out = render_fund("IITU.L", Some(0.15), Some(16.1e9), &holds);
+        assert!(out.contains("IITU.L — fund profile (no income statements: ETF/fund)"), "{out}");
+        assert!(out.contains("TER 0.15%  AUM €16.1B"), "{out}");
+        assert!(out.contains("top holdings:  AAPL 22.5%  MSFT 21.0%"), "{out}");
+
+        let sparse = render_fund("X.L", None, Some(1e9), &[]);
+        assert!(sparse.contains("TER -  AUM €1.0B"), "{sparse}");
+        assert!(!sparse.contains("top holdings"), "{sparse}");
     }
 
     /// (round 61) formatter semantics: unit tier picked by magnitude (sign preserved, tier chosen
