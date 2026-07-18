@@ -141,6 +141,33 @@ fn benchmark(events: &[Event]) -> (f64, f64, usize) {
     )
 }
 
+/// Aggregate every event's lots into one holding per ticker (a name bought in several months is
+/// ONE position): summed qty, summed cost €. Keyed by owned ticker so the map is free of the
+/// events' lifetime; run() prints from this same map, so the shown rows ARE the tested ones.
+fn holdings(events: &[Event]) -> BTreeMap<String, (f64, f64)> {
+    let mut held: BTreeMap<String, (f64, f64)> = BTreeMap::new();
+    for e in events {
+        for (t, qty, cost) in &e.lots {
+            let h = held.entry(t.clone()).or_insert((0.0, 0.0));
+            h.0 += qty;
+            h.1 += cost;
+        }
+    }
+    held
+}
+
+/// Portfolio totals at TODAY's prices: (value €, cost € of the priced names, priced count).
+/// An unpriced-today name is excluded from BOTH sides — value AND cost — so P/L never compares
+/// a book with a hole in it against full cost; the count keeps the hole visible upstream.
+fn value_priced(
+    held: &BTreeMap<String, (f64, f64)>,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+) -> (f64, f64, usize) {
+    held.iter()
+        .filter_map(|(t, &(qty, cost))| px_now(t).map(|px| (qty * px, cost)))
+        .fold((0.0, 0.0, 0), |(v, c, n), (val, cost)| (v + val, c + cost, n + 1))
+}
+
 pub async fn run(_args: Vec<String>) {
     let settings = config::load();
     let base = settings.monthly_deploy_eur;
@@ -220,19 +247,13 @@ pub async fn run(_args: Vec<String>) {
     .await;
     let px_now = |t: &str| quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0);
 
-    // aggregate lots per ticker (a name bought in several months is one holding)
-    let mut held: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
-    for e in &led.events {
-        for (t, qty, cost) in &e.lots {
-            let h = held.entry(t.as_str()).or_insert((0.0, 0.0));
-            h.0 += qty;
-            h.1 += cost;
-        }
-    }
+    let held = holdings(&led.events);
+    // totals come from the SAME map + price closure the display loop below reads, via the pure
+    // (tested) fns — membership and arithmetic can't disagree with the printed rows.
+    let (value, priced_cost, priced_n) = value_priced(&held, &px_now);
 
     println!("\n  HOLDINGS at today's prices");
     println!("  {:<10} {:>12} {:>10} {:>10} {:>8}", "TICKER", "QTY", "COST€", "VALUE€", "P/L");
-    let (mut value, mut priced_cost, mut priced_n) = (0.0, 0.0, 0usize);
     let (mut contributed, mut fees) = (0.0, 0.0);
     for e in &led.events {
         contributed += e.deployed;
@@ -242,9 +263,6 @@ pub async fn run(_args: Vec<String>) {
         match px_now(t) {
             Some(px) => {
                 let v = qty * px;
-                value += v;
-                priced_cost += cost;
-                priced_n += 1;
                 println!(
                     "  {:<10} {:>12.4} {:>10.0} {:>10.0} {:>+7.1}%",
                     t, qty, cost, v,
@@ -373,6 +391,51 @@ mod tests {
         assert!((led.events[1].deployed - (scaled + base)).abs() < 1e-9);
         // October (no snapshot yet) pending
         assert_eq!(led.pending_months, 1);
+
+        // a month whose snapshot has NO priced rows buys nothing — its income stays pending
+        // (the ledger wiring of buy_event's None, not just buy_event standalone)
+        let led = ledger(&[snap("2026-07-16", None, None, &[("A", None)])], base, (2026, 7));
+        assert!(led.events.is_empty());
+        assert_eq!(led.pending_months, 1);
+
+        // future-dated journal line (start after `now`) → nothing to replay, no panic, no pending
+        let led = ledger(&[snap("2027-01-05", None, None, &[("A", Some(1.0))])], base, (2026, 7));
+        assert!(led.events.is_empty() && led.pending_months == 0);
+    }
+
+    /// holdings(): a name bought in several months is ONE position with summed qty and cost —
+    /// an overwrite instead of a sum would misreport every multi-month holding silently.
+    #[test]
+    fn holdings_aggregate_across_events() {
+        let ev = |lots: Vec<(&str, f64, f64)>| Event {
+            date: "2026-07-16".into(),
+            mult: 1.0,
+            mult_known: true,
+            deployed: 0.0,
+            fees: 0.0,
+            spx: None,
+            lots: lots.into_iter().map(|(t, q, c)| (t.to_string(), q, c)).collect(),
+        };
+        let held = holdings(&[
+            ev(vec![("AAPL", 1.0, 240.0), ("MSFT", 2.0, 240.0)]),
+            ev(vec![("AAPL", 0.5, 120.0)]),
+        ]);
+        assert_eq!(held.len(), 2);
+        assert_eq!(held["AAPL"], (1.5, 360.0));
+        assert_eq!(held["MSFT"], (2.0, 240.0));
+    }
+
+    /// value_priced(): an unpriced-today name drops from BOTH the value AND the cost side of
+    /// P/L (a one-sided leak would skew P/L% silently); the priced count exposes the hole.
+    #[test]
+    fn value_priced_excludes_unpriced_both_sides() {
+        let held: BTreeMap<String, (f64, f64)> =
+            [("UP".to_string(), (2.0, 100.0)), ("GONE".to_string(), (1.0, 999.0))].into();
+        let px = |t: &str| (t == "UP").then_some(60.0);
+        let (value, priced_cost, priced_n) = value_priced(&held, &px);
+        assert!((value - 120.0).abs() < 1e-9);
+        assert!((priced_cost - 100.0).abs() < 1e-9); // GONE's 999 cost must NOT drag P/L
+        assert_eq!(priced_n, 1);
     }
 
     /// benchmark(): same gross cashflow into the journaled ^GSPC close minus one fee per event;
@@ -394,6 +457,9 @@ mod tests {
         assert!((units - 999.0 / 100.0).abs() < 1e-9);
         // index +10% since → value 1098.9 vs cost 1000 → the fee drag shows up honestly
         assert!((units * 110.0 - 1098.9).abs() < 1e-6);
+
+        // a zero ^GSPC close is not a price — the event skips like a missing leg
+        assert_eq!(benchmark(&[mk(1000.0, Some(0.0))]).2, 0);
     }
 
     /// ym()/next_ym(): month parsing + December rollover.
