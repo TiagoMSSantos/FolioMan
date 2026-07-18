@@ -79,7 +79,7 @@ pub async fn run(args: Vec<String>) {
                 // giving up; a crumb/transport failure is environmental and leaves the no-data line.
                 let (ter, aum, category) =
                     fetch::fund_facts_ext_live(&client, ticker).await.unwrap_or((None, None, None));
-                let (holdings, sectors, stock_bond) =
+                let (holdings, sectors, stock_bond, _fund_pe) =
                     fetch::fund_composition_live(&client, ticker).await.unwrap_or_default();
                 if ter.is_some() || aum.is_some() || !holdings.is_empty() || !sectors.is_empty() {
                     print!(

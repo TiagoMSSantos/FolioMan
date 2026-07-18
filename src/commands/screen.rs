@@ -198,8 +198,8 @@ fn concentration_lines(holdings: &std::collections::HashMap<String, Vec<(String,
 fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) -> Vec<String> {
     let mut rows: Vec<(&String, &Vec<(String, f64)>, Option<(f64, f64)>)> = mix
         .iter()
-        .filter(|(_, (sectors, _))| !sectors.is_empty())
-        .map(|(t, (sectors, sb))| (t, sectors, *sb))
+        .filter(|(_, (sectors, _, _))| !sectors.is_empty())
+        .map(|(t, (sectors, sb, _))| (t, sectors, *sb))
         .collect();
     rows.sort_by(|a, b| b.1[0].1.total_cmp(&a.1[0].1).then_with(|| a.0.cmp(b.0)));
     rows.into_iter()
@@ -219,6 +219,18 @@ fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) ->
             format!("  {t:<10} {tops}{split}")
         })
         .collect()
+}
+
+/// (fund valuation) One wrapped line of fund equity-book P/Es, CHEAPEST first — the number behind
+/// the header's "quality pricey because it keeps winning". Values arrive already inverted from
+/// `parse_fund_pe` (Yahoo serves reciprocals — see the fetch-side pin). Funds without the datum
+/// stay silent; `None` when nobody has it.
+fn fund_pe_line(mix: &std::collections::HashMap<String, fetch::FundMix>) -> Option<String> {
+    let mut rows: Vec<(&String, f64)> =
+        mix.iter().filter_map(|(t, (_, _, pe))| pe.map(|p| (t, p))).collect();
+    rows.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(b.0)));
+    (!rows.is_empty())
+        .then(|| rows.iter().map(|(t, p)| format!("{t} {p:.0}")).collect::<Vec<_>>().join(" · "))
 }
 
 /// (crossover) Fund picks whose top-10 holdings you ALREADY own directly as stocks — buying the
@@ -756,6 +768,11 @@ pub async fn run(args: Vec<String>) {
             for l in &cross {
                 println!("{l}");
             }
+        }
+        // (fund valuation) HOW pricey the pricey quality is: the fund book's P/E, same payload
+        // as everything above. Display-only, never scored.
+        if let Some(pe) = fund_pe_line(&mix) {
+            println!("\nFund valuation — P/E of each fund's equity book (cheapest first): {pe}");
         }
     }
 
@@ -1379,16 +1396,17 @@ mod tests {
         let mut m: HashMap<String, fetch::FundMix> = HashMap::new();
         m.insert(
             "TECH.L".into(),
-            (vec![("Technology".into(), 0.99), ("Communication Services".into(), 0.01)], Some((1.0, 0.0))),
+            (vec![("Technology".into(), 0.99), ("Communication Services".into(), 0.01)], Some((1.0, 0.0)), None),
         );
         m.insert(
             "MIXED.DE".into(),
             (
                 vec![("Financial Services".into(), 0.40), ("Industrials".into(), 0.30), ("Energy".into(), 0.20)],
                 Some((0.60, 0.40)),
+                None,
             ),
         );
-        m.insert("NOSECTORS.L".into(), (Vec::new(), Some((1.0, 0.0)))); // silent
+        m.insert("NOSECTORS.L".into(), (Vec::new(), Some((1.0, 0.0)), None)); // silent
         let lines = sector_tilt_lines(&m);
         assert_eq!(lines.len(), 2);
         assert!(lines[0].starts_with("  TECH.L") && lines[0].contains("Technology 99% · Communication Services 1%"));
@@ -1397,6 +1415,18 @@ mod tests {
         assert!(!lines[1].contains("Energy"), "third sector must drop: {}", lines[1]);
         assert!(lines[1].contains("(equity 60% / bond 40%)"), "real bond leg prints: {}", lines[1]);
         assert!(sector_tilt_lines(&HashMap::new()).is_empty());
+    }
+
+    /// (fund valuation) cheapest-first ordering, pe-less funds silent, empty map -> None. The
+    /// values are post-inversion real ratios (fetch-side pin owns the reciprocal trap).
+    #[test]
+    fn fund_pe_line_semantics() {
+        let mut m: HashMap<String, fetch::FundMix> = HashMap::new();
+        m.insert("IITU.L".into(), (Vec::new(), None, Some(33.93)));
+        m.insert("SPYL.DE".into(), (Vec::new(), None, Some(24.2)));
+        m.insert("NOPE.L".into(), (Vec::new(), None, None)); // silent
+        assert_eq!(fund_pe_line(&m).unwrap(), "SPYL.DE 24 · IITU.L 34");
+        assert_eq!(fund_pe_line(&HashMap::new()), None);
     }
 
     /// (round 62) state-file parse fork: absent = normal first run (silent), present-but-garbage =

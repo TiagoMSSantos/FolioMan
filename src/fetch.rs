@@ -1792,6 +1792,18 @@ fn parse_fund_stock_bond(v: &Value) -> Option<(f64, f64)> {
     Some((f("stockPosition")?, f("bondPosition").unwrap_or(0.0)))
 }
 
+/// (fund valuation) `topHoldings.equityHoldings.priceToEarnings` — Yahoo serves the fund-book
+/// ratios INVERTED: IITU.L arrives as raw 0.02947, the real P/E is 1/0.02947 ≈ 33.9 (P/B
+/// 0.076→13.1 and P/S 0.096→10.5 confirm the reciprocal family — same trap class as the
+/// fraction holdings weights). Do NOT "fix" this back to the raw value. Non-positive raw
+/// (missing earnings / weird payload) → `None`, never a fake ratio.
+fn parse_fund_pe(v: &Value) -> Option<f64> {
+    v.pointer("/quoteSummary/result/0/topHoldings/equityHoldings/priceToEarnings")
+        .and_then(|x| x.as_f64().or_else(|| x.pointer("/raw").and_then(Value::as_f64)))
+        .filter(|r| *r > 0.0)
+        .map(|r| 1.0 / r)
+}
+
 /// (report round 7) Yahoo's snake_case sector key -> display ("financial_services" -> "Financial
 /// Services"); "realestate" is the one key with no underscore to split.
 fn pretty_sector(k: &str) -> String {
@@ -1828,6 +1840,7 @@ fn parse_fund_category(v: &Value) -> Option<String> {
 /// deserialize and is treated as empty — one refetch of the ~30 printed picks heals it.
 /// (sector tilt) same healing path again: rows gained the sector weightings + equity/bond split
 /// that ride the SAME topHoldings payload (previously parsed-and-dropped — zero new HTTP).
+/// (fund valuation) third widening, same heal: rows gained the inverted equity-book P/E.
 const HOLDINGS_CACHE_PATH: &str = ".holdings_cache.json";
 
 /// (report round 7) Shared cacheless quoteSummary GET — the fund seams below (and their
@@ -1867,14 +1880,15 @@ pub async fn top_holdings_live(client: &Client, sym: &str) -> Result<Vec<(String
 
 /// (report round 7) Report-only cousin of `top_holdings_live`: one topHoldings fetch, but also
 /// pulls the composition fields the plain seam drops — `sectorWeightings` (what the top-10
-/// holdings can't show: diversified core vs sector bet) and the equity/bond split. Returns
-/// (holdings, sectors desc, `Option<(stock, bond)>`).
+/// holdings can't show: diversified core vs sector bet), the equity/bond split, and the
+/// (fund valuation) inverted equity-book P/E. Returns
+/// (holdings, sectors desc, `Option<(stock, bond)>`, `Option<P/E>`).
 pub(crate) async fn fund_composition_live(
     client: &Client,
     sym: &str,
-) -> Result<(Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>), String> {
+) -> Result<(Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>, Option<f64>), String> {
     let v = quote_summary_json(client, sym, "topHoldings").await?;
-    Ok((parse_top_holdings(&v), parse_fund_sectors(&v), parse_fund_stock_bond(&v)))
+    Ok((parse_top_holdings(&v), parse_fund_sectors(&v), parse_fund_stock_bond(&v), parse_fund_pe(&v)))
 }
 
 /// (drift net) Single-symbol live fund-facts fetch — the cacheless core of the
@@ -1918,21 +1932,23 @@ pub async fn sec_facts_live(client: &Client, urls: &Urls, ticker: &str) -> Resul
     Ok(parse_sec_facts(&v))
 }
 
-/// Per-fund composition for the sector-tilt footer: (sectors desc by weight, equity/bond split).
-pub type FundMix = (Vec<(String, f64)>, Option<(f64, f64)>);
+/// Per-fund composition for the sector-tilt + fund-valuation footers:
+/// (sectors desc by weight, equity/bond split, P/E of the fund's equity book).
+pub type FundMix = (Vec<(String, f64)>, Option<(f64, f64)>, Option<f64>);
 
 /// (round 56) Top-10 holdings per fund (each with its weight fraction), for the screen's
 /// holdings-overlap + concentration footers — the sector-tech table is full of "different" funds
 /// holding the same mega-caps, and that concentration is invisible from the fund names.
 /// (sector tilt) also returns each fund's sector weightings + equity/bond split — same payload,
-/// previously discarded. Display-only: none of it is scored. Called for the printed fund picks
-/// only (a couple dozen symbols), so no request budget needed.
+/// previously discarded. (fund valuation) plus the inverted equity-book P/E, same story.
+/// Display-only: none of it is scored. Called for the printed fund picks only (a couple dozen
+/// symbols), so no request budget needed.
 pub async fn yahoo_top_holdings(
     client: &Client,
     syms: &[String],
 ) -> (HashMap<String, Vec<(String, f64)>>, HashMap<String, FundMix>) {
-    // (fetched date, [(holding symbol/name, weight fraction)], [(sector, weight)], stock/bond)
-    type Row = (String, Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>);
+    // (fetched date, [(holding symbol/name, weight fraction)], [(sector, weight)], stock/bond, fund P/E)
+    type Row = (String, Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>, Option<f64>);
     let mut cache: HashMap<String, Row> = std::fs::read_to_string(crate::config::data_path(HOLDINGS_CACHE_PATH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -1948,7 +1964,7 @@ pub async fn yahoo_top_holdings(
         match cache.get(s) {
             Some(r) if fresh(r) => {
                 out.insert(s.clone(), r.1.clone());
-                mix.insert(s.clone(), (r.2.clone(), r.3));
+                mix.insert(s.clone(), (r.2.clone(), r.3, r.4));
             }
             _ => todo.push(s.clone()),
         }
@@ -1960,20 +1976,20 @@ pub async fn yahoo_top_holdings(
             eprintln!("fetch: Yahoo crumb handshake failed — holdings-overlap footer skipped this run");
             return (out, mix);
         }
-        let fetched: Vec<Option<(String, Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>)>> =
+        let fetched: Vec<Option<(String, Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>, Option<f64>)>> =
             stream::iter(todo)
                 .map(|sym| async move {
                     // Err (transport/throttle) -> None: symbol stays uncached, retried next run
-                    let (holdings, sectors, stock_bond) = fund_composition_live(client, &sym).await.ok()?;
-                    Some((sym, holdings, sectors, stock_bond))
+                    let (holdings, sectors, stock_bond, pe) = fund_composition_live(client, &sym).await.ok()?;
+                    Some((sym, holdings, sectors, stock_bond, pe))
                 })
                 .buffer_unordered(fetch_concurrency())
                 .collect()
                 .await;
-        for (sym, holdings, sectors, stock_bond) in fetched.into_iter().flatten() {
-            cache.insert(sym.clone(), (today.to_string(), holdings.clone(), sectors.clone(), stock_bond));
+        for (sym, holdings, sectors, stock_bond, pe) in fetched.into_iter().flatten() {
+            cache.insert(sym.clone(), (today.to_string(), holdings.clone(), sectors.clone(), stock_bond, pe));
             out.insert(sym.clone(), holdings);
-            mix.insert(sym, (sectors, stock_bond));
+            mix.insert(sym, (sectors, stock_bond, pe));
         }
         if let Ok(json) = serde_json::to_string(&cache) {
             let _ = std::fs::write(crate::config::data_path(HOLDINGS_CACHE_PATH), json);
@@ -2855,6 +2871,26 @@ mod tests {
         assert!(parse_fund_sectors(&serde_json::json!({})).is_empty());
         assert_eq!(pretty_sector("consumer_cyclical"), "Consumer Cyclical");
         assert_eq!(pretty_sector("realestate"), "Real Estate");
+    }
+
+    /// Fund-P/E inversion pin: Yahoo serves equityHoldings ratios as RECIPROCALS (live IITU.L
+    /// receipt: raw 0.02947 => real P/E 33.9). A "fix" that returns the raw value trips here.
+    /// Non-positive / missing raw -> None, never a fake ratio; bare-number form parses too.
+    #[test]
+    fn fund_pe_inversion() {
+        let wrap = |pe: serde_json::Value| {
+            serde_json::json!({"quoteSummary": {"result": [{
+                "topHoldings": {"equityHoldings": {"priceToEarnings": pe}}
+            }]}})
+        };
+        let pe = parse_fund_pe(&wrap(serde_json::json!({"raw": 0.02947}))).unwrap();
+        assert!((pe - 33.93).abs() < 0.05, "inverted P/E expected ~33.9, got {pe}");
+        let bare = parse_fund_pe(&wrap(serde_json::json!(0.05))).unwrap();
+        assert!((bare - 20.0).abs() < 1e-9);
+        assert_eq!(parse_fund_pe(&wrap(serde_json::json!({"raw": 0.0}))), None);
+        assert_eq!(parse_fund_pe(&wrap(serde_json::json!({"raw": -0.01}))), None);
+        assert_eq!(parse_fund_pe(&wrap(serde_json::json!({}))), None);
+        assert_eq!(parse_fund_pe(&serde_json::json!({})), None);
     }
 
     /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but
