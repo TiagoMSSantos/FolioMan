@@ -683,9 +683,8 @@ pub async fn run(args: Vec<String>) {
     // equal-weight top-10 IS the validated backtest/track book. Each command still runs trade's own
     // real-money confirm gate; nothing here sends anything.
     {
-        let deploy_scaled = (settings.monthly_deploy_eur > 0.0).then(|| {
-            settings.monthly_deploy_eur * spx_off_hi.map_or(1.0, deploy_multiplier)
-        });
+        let deploy_scaled =
+            deploy_scaled_eur(settings.monthly_deploy_eur, spx_off_hi).map(|(_, total)| total);
         let book: Vec<&String> = ranked_now.iter().take(crate::commands::track::BOOK).collect();
         // (round 117) fetch the full T212 instrument list (7-day cached, silent-empty without a
         // key) only when some stock/ETF row can't already be resolved from held positions — a
@@ -845,22 +844,30 @@ fn entry_state_banner(off_hi: f64) -> Option<String> {
 /// when the knob is unset (≤0). A failed ^GSPC fetch prints the 1× base and says why instead of
 /// guessing a state.
 pub(crate) fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> {
-    if base_eur <= 0.0 {
-        return None;
-    }
+    let (mult, total) = deploy_scaled_eur(base_eur, off_hi)?;
     Some(match off_hi {
         Some(off) => {
             let (state, _) = entry_state_class(off);
-            let mult = deploy_multiplier(off);
             format!(
-                "\n  DEPLOY THIS MONTH: €{:.0} — base €{base_eur:.0} × {mult} ({state} entry state). NOT advice.",
-                base_eur * mult
+                "\n  DEPLOY THIS MONTH: €{total:.0} — base €{base_eur:.0} × {mult} ({state} entry state). NOT advice."
             )
         }
         None => format!(
-            "\n  DEPLOY THIS MONTH: €{base_eur:.0} — base × 1 (S&P 500 entry state unavailable this run). NOT advice."
+            "\n  DEPLOY THIS MONTH: €{total:.0} — base × {mult} (S&P 500 entry state unavailable this run). NOT advice."
         ),
     })
+}
+
+/// (tests round 5) The deploy composition — knob gate (≤0 = unset), unknown-state ×1 fallback,
+/// base × ladder — in ONE place. The banner/`size` line (via [`deploy_line`]) and the order-glue
+/// QTY sizing both consume this, so the € the banner announces and the € the orders split can
+/// never disagree; until now only the multiplier was shared and the composition lived twice.
+fn deploy_scaled_eur(base_eur: f64, off_hi: Option<f64>) -> Option<(f64, f64)> {
+    if base_eur <= 0.0 {
+        return None;
+    }
+    let mult = off_hi.map_or(1.0, deploy_multiplier);
+    Some((mult, base_eur * mult))
 }
 
 /// (round 116) The 1×/1.5×/2× ladder as a number — shared by the deploy line and the order-glue
@@ -1067,6 +1074,25 @@ mod tests {
         assert_eq!(resolve_t212("AAPL", &owned, &instruments, &isin_of), Some(("AAPL_US_EQ".to_string(), "base")));
         assert_eq!(resolve_t212("DUAL", &owned, &instruments, &isin_of), None);
         assert_eq!(resolve_t212("UNKNOWN", &owned, &[], &isin_of), None);
+    }
+
+    /// (tests round 5) The banner € and the order-glue € ride ONE composition fn — pin its
+    /// semantics (knob gate, unknown-state ×1, ladder product) so the two real-money surfaces
+    /// can never silently disagree.
+    #[test]
+    fn deploy_composition_single_source() {
+        assert!(deploy_scaled_eur(0.0, Some(20.0)).is_none());
+        assert!(deploy_scaled_eur(-1.0, None).is_none());
+        assert_eq!(deploy_scaled_eur(1000.0, None), Some((1.0, 1000.0)));
+        assert_eq!(deploy_scaled_eur(1000.0, Some(0.0)), Some((1.0, 1000.0)));
+        assert_eq!(deploy_scaled_eur(1000.0, Some(5.0)), Some((1.5, 1500.0)));
+        assert_eq!(deploy_scaled_eur(1000.0, Some(15.0)), Some((2.0, 2000.0)));
+        // the glue total IS the number the banner prints — same fn, and same value end to end
+        let (_, total) = deploy_scaled_eur(800.0, Some(7.0)).expect("set knob must size");
+        assert!(
+            deploy_line(800.0, Some(7.0)).expect("same inputs must print").contains(&format!("€{total:.0}")),
+            "banner and glue disagree on the deploy total"
+        );
     }
 
     /// (round 116) the multiplier ladder tracks the classifier's exact boundaries.
