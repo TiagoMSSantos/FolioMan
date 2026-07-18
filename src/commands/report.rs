@@ -55,7 +55,7 @@ pub async fn run(args: Vec<String>) {
         // and must fall through to the fetch.
         let q = quotes_by.get(ticker.as_str());
         if let Some(q) = q {
-            println!("{}", market_line(q));
+            println!("{}", market_line(q, today, settings.stale_days));
         }
         if picks::is_currency_quoted(ticker) {
             println!("\n{ticker}: no income statement (crypto/FX)");
@@ -180,8 +180,10 @@ fn render_annual(
 /// (data round) One compact price-side line per ticker, from the Quote run() already fetches for
 /// the valuation close — the screen row's essentials beside the fundamentals at drill-in time,
 /// zero new network. Zeroed trend fields (stub/short history) print "-"/"at high", never a
-/// fabricated 0. Pure formatting.
-fn market_line(q: &core::Quote) -> String {
+/// fabricated 0. Report MARKS a stale price instead of dropping the listing like `screen` does —
+/// the user asked for this ticker by name; `~` mirrors the screen table's bridged-history glyph.
+/// Pure formatting.
+fn market_line(q: &core::Quote, today: chrono::NaiveDate, stale_days: i64) -> String {
     let h = |label: &str| {
         core::HORIZONS
             .iter()
@@ -189,10 +191,19 @@ fn market_line(q: &core::Quote) -> String {
             .and_then(|i| q.perf.get(i))
             .and_then(|p| p.as_ref().map(|(_, pct)| *pct))
     };
+    // same threshold + calendar-day arithmetic as screen's (D) stale gate; 0 = off
+    let stale = q
+        .last_close_date
+        .map(|d| (today - d).num_days())
+        .filter(|days| stale_days > 0 && *days > stale_days)
+        .map(|days| format!(" (stale {days}d)"))
+        .unwrap_or_default();
     format!(
-        "\n{} — market: {}  cagr {} ({})  1y {}  5y {}  10y {}  vol {}  maxdd {}  r2 {:.2}  abv-200wk {}  off-hi {}  turnover {}",
+        "\n{} — market: {}{}  cagr {}{} ({})  1y {}  5y {}  10y {}  vol {}  maxdd {}  r2 {:.2}  abv-200wk {}  off-hi {}  turnover {}",
         q.ticker,
         q.price_eur.map(|p| format!("€{p:.2}")).unwrap_or_else(|| "-".into()),
+        stale,
+        if q.history_proxied { "~" } else { "" },
         yoy(q.life_cagr),
         q.age_years.map(|y| format!("{y:.0}y")).unwrap_or_else(|| "-".into()),
         yoy(h("1Y")),
@@ -401,15 +412,26 @@ mod tests {
             q.perf[i] = Some((String::new(), pct));
         }
         q.avg_turnover_eur = Some(12e6);
-        let line = market_line(&q);
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 18).unwrap();
+        q.last_close_date = Some(today - chrono::Duration::days(2)); // fresh under a 5d gate
+        let line = market_line(&q, today, 5);
         assert!(
             line.contains("IITU.L — market: €42.84  cagr +25.0% (11y)  1y +17.1%  5y +98.7%  10y +438.5%  vol 1.3%  maxdd -28%  r2 0.98  abv-200wk +61%  off-hi -17.1%  turnover €12.0M"),
             "{line}"
         );
 
-        let bare = market_line(&core::Quote::stub("X", "err", "", "X"));
+        // (round 4) integrity markers: stale close flagged (not dropped), bridged history tilded
+        q.last_close_date = Some(today - chrono::Duration::days(47));
+        q.history_proxied = true;
+        let marked = market_line(&q, today, 5);
+        assert!(marked.contains("market: €42.84 (stale 47d)  cagr ~+25.0% (11y)"), "{marked}");
+        let gate_off = market_line(&q, today, 0); // stale_days 0 = off, same as screen
+        assert!(!gate_off.contains("stale"), "{gate_off}");
+
+        let bare = market_line(&core::Quote::stub("X", "err", "", "X"), today, 5);
         assert!(bare.contains("market: -  cagr - (-)  1y -  5y -  10y -  vol -  maxdd -"), "{bare}");
         assert!(bare.contains("abv-200wk -  off-hi at high  turnover -"), "{bare}");
+        assert!(!bare.contains("stale"), "{bare}"); // no close date -> no marker, never a false flag
     }
 
     /// (data round) fund profile: TER/AUM render with the humanized € tier and holdings join on one
