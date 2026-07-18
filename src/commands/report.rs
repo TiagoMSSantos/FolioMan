@@ -81,7 +81,9 @@ pub async fn run(args: Vec<String>) {
             }
         };
         let close = q.and_then(|q| q.close_native);
-        let (block, has_table) = render_annual(ticker, source, &rows, today, close, &settings.buy_heuristic);
+        let tcagr = q.and_then(|q| q.trend_cagr);
+        let (block, has_table) =
+            render_annual(ticker, source, &rows, today, close, tcagr, &settings.buy_heuristic);
         print!("{block}");
         if has_table {
             tables_printed += 1;
@@ -98,7 +100,7 @@ pub async fn run(args: Vec<String>) {
 /// rendered) for run()'s exit-code rule.
 fn render_annual(
     ticker: &str, source: &str, rows: &[core::FundRow], today: chrono::NaiveDate,
-    close_native: Option<f64>, tuning: &config::BuyHeuristic,
+    close_native: Option<f64>, trend_cagr: Option<f64>, tuning: &config::BuyHeuristic,
 ) -> (String, bool) {
     let annual = core::annual_rollup(rows);
     let mut out = format!("\n{ticker} — annual income statements (fiscal-year rollup, newest first · source: {source})\n");
@@ -172,6 +174,18 @@ fn render_annual(
         ));
     }
     out.push('\n');
+
+    // (round 5) the two probe valuation cousins, from the SAME native close + SEC levels the
+    // backtest fills them with; helpers None-out loss-makers/no-SEC rows -> "-", never a
+    // fabricated signal. Info cells only — neither is ever score-weighed live.
+    let evy = close_native
+        .and_then(|p| core::ev_ebitda_yield(ff.ebitda_ttm, ff.shares_ttm, ff.net_debt, p));
+    let peg = close_native.and_then(|p| core::peg_yield(ff.eps_ttm, trend_cagr, p));
+    out.push_str(&format!(
+        "  ebitda_yield {}  peg_yield {} (info — probe factors, never scored)\n",
+        yoy(evy),
+        pts(peg),
+    ));
 
     let has_table = !annual.is_empty();
     (out, has_table)
@@ -295,7 +309,7 @@ mod tests {
     }
 
     fn render(ticker: &str, source: &str, rows: &[core::FundRow]) -> (String, bool) {
-        render_annual(ticker, source, rows, today(), None, &config::BuyHeuristic::default())
+        render_annual(ticker, source, rows, today(), None, None, &config::BuyHeuristic::default())
     }
 
     /// Happy path: title carries ticker + source, a full 4-quarter year renders with its YoY vs the
@@ -359,11 +373,11 @@ mod tests {
     fn tilt_receipt_mirrors_score_clamp() {
         let rows = vec![quarter(2024, 6, Some(100.0), Some(2.0))];
         let tuned = config::BuyHeuristic { growth_fund_factor: "earnings_yield".to_string(), growth_fund_weight: 1.0, ..Default::default() };
-        let (out, _) = render_annual("ACME", "FMP", &rows, today(), Some(100.0), &tuned);
+        let (out, _) = render_annual("ACME", "FMP", &rows, today(), Some(100.0), None, &tuned);
         assert!(out.contains("earnings_yield +2.0% -> +2.0 pts in growth_score (weight 1.0, cap 30)"), "{out}");
 
         // default weight 0.0 -> the SAME ratio shown (still info), but no pts clause (it isn't weighed)
-        let (off, _) = render_annual("ACME", "FMP", &rows, today(), Some(100.0), &config::BuyHeuristic::default());
+        let (off, _) = render_annual("ACME", "FMP", &rows, today(), Some(100.0), None, &config::BuyHeuristic::default());
         assert!(off.contains("earnings_yield +2.0%"), "{off}");
         assert!(!off.contains("-> "), "weight-0 must not claim a score contribution: {off}");
     }
@@ -374,6 +388,29 @@ mod tests {
         let rows = vec![quarter(2024, 6, Some(100.0), Some(2.0))];
         let (out, _) = render("ACME", "FMP", &rows);
         assert!(out.contains("valuation: eps_ttm 2.00  close - (native ccy)  earnings_yield -"), "{out}");
+        assert!(out.contains("ebitda_yield -  peg_yield - (info — probe factors, never scored)"), "{out}");
+    }
+
+    /// (round 5) probe valuation cousins from the SEC levels + native close: EV = 10·100 + 100
+    /// net debt = 1100 -> ebitda_yield 50/1100 = +4.5%; peg = earnings_yield 2.0% × trend CAGR 15
+    /// -> +30.0. No-SEC rows (levels None) keep "-" even with a close — no fabricated signal.
+    #[test]
+    fn probe_valuation_cousins_render_and_dash() {
+        let rows = vec![core::FundRow {
+            ebitda: Some(50.0),
+            shares: Some(10.0),
+            net_debt: Some(100.0),
+            ..quarter(2024, 6, Some(100.0), Some(2.0))
+        }];
+        let (out, _) =
+            render_annual("ACME", "SEC", &rows, today(), Some(100.0), Some(15.0), &config::BuyHeuristic::default());
+        assert!(out.contains("ebitda_yield +4.5%  peg_yield +30.0 (info — probe factors, never scored)"), "{out}");
+
+        // FMP free-tier rows carry no EV/EBITDA levels -> both cells dash despite a live close
+        let bare = vec![quarter(2024, 6, Some(100.0), Some(2.0))];
+        let (out, _) =
+            render_annual("ACME", "FMP", &bare, today(), Some(100.0), Some(15.0), &config::BuyHeuristic::default());
+        assert!(out.contains("ebitda_yield -"), "{out}");
     }
 
     /// (round 115) SHΔ% column: 100 -> 90 shares (buyback) prints the sign-flipped +10.0%; a >40%
