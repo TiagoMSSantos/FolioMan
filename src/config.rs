@@ -558,6 +558,11 @@ fn ci_settings_path() -> PathBuf {
     PathBuf::new()
 }
 
+/// (tests round 4) Last live drift-net run, unix seconds, written by tests/network.rs whenever
+/// the opted-in probe family executes. `screen` reads it to nag when the nets go stale — pub
+/// (not pub(crate)) because the integration-test crate is the writer.
+pub const NET_STAMP_FILE: &str = ".folioman_net_stamp";
+
 /// Anchor for the working dot-files (caches, dedup state, the track journal): the repo root —
 /// the directory holding the config — NOT the process cwd. Cron starts in $HOME, and any run
 /// from another directory used to scatter diverged copies of every cache there (seen live:

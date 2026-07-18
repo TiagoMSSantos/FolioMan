@@ -769,6 +769,36 @@ pub async fn run(args: Vec<String>) {
     if !degraded.is_empty() {
         eprintln!("screen: DEGRADED — {}", degraded.join("; "));
     }
+    let stamp = std::fs::read_to_string(crate::config::data_path(crate::config::NET_STAMP_FILE)).ok();
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Some(nag) = net_nag(stamp.as_deref(), now_secs) {
+        eprintln!("{nag}");
+    }
+}
+
+/// (tests round 4) Stale drift-net nag. The live network probes are the only thing that catches a
+/// feed changing shape under the parsers (no HTTP mocks by design), but they only run when someone
+/// types the command — which had happened three times ever, each at ship time, while a real
+/// fund-facts outage sat invisible. The screen is the moment the numbers get trusted, so staleness
+/// announces itself here. Missing/corrupt stamp degrades to the never-ran wording; clock skew is
+/// cosmetic (saturating).
+const NET_STAMP_STALE_DAYS: u64 = 30;
+
+fn net_nag(stamp: Option<&str>, now_secs: u64) -> Option<String> {
+    const CMD: &str = "FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored";
+    match stamp.and_then(|s| s.trim().parse::<u64>().ok()) {
+        None => Some(format!(
+            "screen: drift nets have never run on this machine — feed drift would be invisible; run {CMD}"
+        )),
+        Some(then) => {
+            let age_days = now_secs.saturating_sub(then) / 86_400;
+            (age_days > NET_STAMP_STALE_DAYS)
+                .then(|| format!("screen: drift nets last ran {age_days}d ago — run {CMD}"))
+        }
+    }
 }
 
 /// (round 112) Entry-state classifier — the single source of state name + read wording, so the top
@@ -922,6 +952,25 @@ fn order_glue(rows: &[(String, Option<f64>, &'static str, Option<String>)], depl
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    /// (tests round 4) Stale-nets nag: never-ran/corrupt and stale stamps must nag with the exact
+    /// run command; a fresh or exactly-30d stamp must stay silent (monthly cadence, `>` not `>=`).
+    #[test]
+    fn net_nag_fires_on_stale_missing_and_garbage_stamps() {
+        let now = 1_800_000_000u64;
+        for bad in [None, Some(""), Some("not-a-number")] {
+            let msg = net_nag(bad, now).expect("missing/corrupt stamp must nag");
+            assert!(msg.contains("never run"), "wrong never-ran wording: {msg}");
+            assert!(msg.contains("FOLIOMAN_NET_TESTS=1"), "nag must carry the run command: {msg}");
+        }
+        let stale = (now - 45 * 86_400).to_string();
+        let msg = net_nag(Some(&stale), now).expect("45d-old stamp must nag at a 30d threshold");
+        assert!(msg.contains("45d ago"), "age missing from stale nag: {msg}");
+        let fresh = (now - 86_400).to_string();
+        assert!(net_nag(Some(&fresh), now).is_none(), "fresh stamp must not nag");
+        let edge = (now - 30 * 86_400).to_string();
+        assert!(net_nag(Some(&edge), now).is_none(), "exactly 30d is the cadence, not stale");
+    }
 
     /// (round 109) entry-state classes + exact boundaries: <5 near-high, 5–15 pullback, ≥15 drawdown.
     #[test]

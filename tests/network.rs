@@ -17,7 +17,21 @@ use folioman::{config, fetch};
 use serde_json::Value;
 
 fn opted_in() -> bool {
-    std::env::var("FOLIOMAN_NET_TESTS").is_ok()
+    let on = std::env::var("FOLIOMAN_NET_TESTS").is_ok();
+    if on {
+        // (tests round 4) Stamp the pull so `screen` can nag when the nets go stale — a net nobody
+        // runs catches nothing. Once per process; a run that ends in SKIPPED lines still counts
+        // (the family executed and a human saw the skips). Never fails a probe.
+        static STAMP: std::sync::Once = std::sync::Once::new();
+        STAMP.call_once(|| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let _ = std::fs::write(config::data_path(config::NET_STAMP_FILE), now.to_string());
+        });
+    }
+    on
 }
 
 enum Probe {
