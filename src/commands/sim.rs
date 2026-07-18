@@ -168,6 +168,18 @@ fn value_priced(
         .fold((0.0, 0.0, 0), |(v, c, n), (val, cost)| (v + val, c + cost, n + 1))
 }
 
+/// One buy event's basket at TODAY's prices — the per-month "what did that advice become" line:
+/// (value €, cost € of the priced lots, priced count). Same both-sides rule as [`value_priced`]
+/// (an unpriced lot drops from value AND cost). None = nothing in the basket priced today.
+fn event_now(e: &Event, px_now: &dyn Fn(&str) -> Option<f64>) -> Option<(f64, f64, usize)> {
+    let (v, c, n) = e
+        .lots
+        .iter()
+        .filter_map(|(t, qty, cost)| px_now(t).map(|px| (qty * px, *cost)))
+        .fold((0.0, 0.0, 0), |(v, c, n), (val, cost)| (v + val, c + cost, n + 1));
+    (n > 0).then_some((v, c, n))
+}
+
 pub async fn run(_args: Vec<String>) {
     let settings = config::load();
     let base = settings.monthly_deploy_eur;
@@ -211,25 +223,8 @@ pub async fn run(_args: Vec<String>) {
          counted. NOT advice.\n"
     );
 
-    println!("  BUYS");
-    for e in &led.events {
-        let names: Vec<&str> = e.lots.iter().map(|(t, _, _)| t.as_str()).collect();
-        let mult = if e.mult_known {
-            format!("×{}", e.mult)
-        } else {
-            "×1 (no S&P state journaled)".to_string()
-        };
-        println!(
-            "  {}  {}  deployed €{:.0} (fees €{:.0})  {}",
-            e.date,
-            mult,
-            e.deployed,
-            e.fees,
-            names.join(" ")
-        );
-    }
-
-    // one paced fetch for today's prices: every held ticker + the benchmark leg
+    // one paced fetch for today's prices: every held ticker + the benchmark leg — fetched BEFORE
+    // the BUYS section so each buy line can say what that month's basket became.
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
     let mut tickers: Vec<String> = led
@@ -246,6 +241,36 @@ pub async fn run(_args: Vec<String>) {
     )
     .await;
     let px_now = |t: &str| quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0);
+
+    println!("\n  BUYS — each month's advice, and what that €-basket is worth today");
+    for e in &led.events {
+        let names: Vec<&str> = e.lots.iter().map(|(t, _, _)| t.as_str()).collect();
+        let mult = if e.mult_known {
+            format!("×{}", e.mult)
+        } else {
+            "×1 (no S&P state journaled)".to_string()
+        };
+        let now = match event_now(e, &px_now) {
+            Some((v, c, n)) if c > 0.0 => {
+                let part = if n < e.lots.len() {
+                    format!(", {n}/{} priced", e.lots.len())
+                } else {
+                    String::new()
+                };
+                format!("→ now €{v:.0} ({:+.1}%{part})", 100.0 * (v / c - 1.0))
+            }
+            _ => "→ now n/a".to_string(),
+        };
+        println!(
+            "  {}  {}  invested €{:.0} (fees €{:.0})  {}  |  {}",
+            e.date,
+            mult,
+            e.deployed,
+            e.fees,
+            now,
+            names.join(" ")
+        );
+    }
 
     let held = holdings(&led.events);
     // totals come from the SAME map + price closure the display loop below reads, via the pure
@@ -282,27 +307,36 @@ pub async fn run(_args: Vec<String>) {
 
     println!("\n  SUMMARY");
     let pl = value - priced_cost;
+    let pl_pct = if priced_cost > 0.0 { 100.0 * pl / priced_cost } else { 0.0 };
+    let since = led.events.first().map_or("-", |e| e.date.as_str());
+    println!("  invested €{contributed:.0} since {since}  →  worth €{value:.0} today");
     println!(
-        "  contributed €{contributed:.0} (incl. fees €{fees:.0})  →  value €{value:.0}  P/L {pl:+.0}€ ({:+.1}%)",
-        if priced_cost > 0.0 { 100.0 * pl / priced_cost } else { 0.0 }
+        "  change: {pl:+.0}€ ({pl_pct:+.1}%)   fees paid: €{fees:.0} ({:.1}% of invested, a one-off drag)",
+        if contributed > 0.0 { 100.0 * fees / contributed } else { 0.0 }
     );
     let (b_cost, b_units, b_n) = benchmark(&led.events);
     match px_now("^GSPC") {
         Some(spx_now) if b_n > 0 => {
             let b_value = b_units * spx_now;
             let b_pct = 100.0 * (b_value / b_cost - 1.0);
-            let book_pct = if priced_cost > 0.0 { 100.0 * pl / priced_cost } else { 0.0 };
+            let ex = pl_pct - b_pct;
             let coverage = if b_n < led.events.len() {
-                format!(" (covers {b_n}/{} events)", led.events.len())
+                format!(" — benchmark covers {b_n}/{} buys", led.events.len())
             } else {
                 String::new()
             };
+            let verdict = if ex.abs() < 0.05 {
+                "level with the index so far".to_string()
+            } else if ex > 0.0 {
+                format!("screen ahead by {ex:+.1} pp")
+            } else {
+                format!("screen behind by {ex:+.1} pp")
+            };
             println!(
-                "  S&P 500 same-cashflow DCA: €{b_value:.0} ({b_pct:+.1}%)  →  excess {:+.1} pp{coverage}",
-                book_pct - b_pct
+                "  same money into the S&P 500 instead: €{b_value:.0} ({b_pct:+.1}%)  →  {verdict}{coverage}"
             );
         }
-        _ => println!("  S&P 500 same-cashflow DCA: n/a (no benchmark leg priced)"),
+        _ => println!("  same money into the S&P 500 instead: n/a (no benchmark leg priced)"),
     }
     if led.pending_months > 0 {
         println!(
@@ -436,6 +470,28 @@ mod tests {
         assert!((value - 120.0).abs() < 1e-9);
         assert!((priced_cost - 100.0).abs() < 1e-9); // GONE's 999 cost must NOT drag P/L
         assert_eq!(priced_n, 1);
+    }
+
+    /// event_now(): one buy basket valued today under the same both-sides rule — an unpriced lot
+    /// drops from value AND cost (its growth % never compares apples to a hole), the priced count
+    /// exposes the gap, and a fully-unpriced basket is None (line prints n/a, not 0%).
+    #[test]
+    fn event_now_both_sides() {
+        let e = Event {
+            date: "2026-07-16".into(),
+            mult: 1.0,
+            mult_known: true,
+            deployed: 480.0,
+            fees: 2.0 * SIM_FEE_EUR,
+            spx: Some(5000.0),
+            lots: vec![("UP".to_string(), 2.0, 240.0), ("GONE".to_string(), 1.0, 240.0)],
+        };
+        let px = |t: &str| (t == "UP").then_some(150.0);
+        let (v, c, n) = event_now(&e, &px).expect("one lot priced");
+        assert!((v - 300.0).abs() < 1e-9);
+        assert!((c - 240.0).abs() < 1e-9); // GONE.s cost drops too — both sides
+        assert_eq!(n, 1);
+        assert!(event_now(&e, &|_| None).is_none()); // nothing priced → n/a, not fake 0%
     }
 
     /// benchmark(): same gross cashflow into the journaled ^GSPC close minus one fee per event;
