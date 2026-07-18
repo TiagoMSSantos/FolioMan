@@ -34,14 +34,15 @@ pub async fn run(args: Vec<String>) {
     // the printed earnings_yield is the SAME number the live enrich feeds growth_score (fetch.rs) —
     // no new math, no currency skew. A failed/short fetch just leaves the close absent ("-").
     // (data round) the whole Quote is kept now, not just the close: the market line prints the
-    // screen row's essentials (CAGR/1Y/vol/maxdd/R²/extension) beside the fundamentals — the data
-    // was already fetched and discarded.
-    let equities: Vec<String> = tickers.iter().filter(|t| !picks::is_currency_quoted(t)).cloned().collect();
-    let quotes_by: std::collections::HashMap<String, core::Quote> = if equities.is_empty() {
+    // screen row's essentials (CAGR/1Y/vol/maxdd/R²/extension/turnover) beside the fundamentals —
+    // the data was already fetched and discarded. Currency-quoted names (crypto/FX) are fetched
+    // too: they carry no statements, but their price history is exactly as real, and excluding
+    // them left `report BTC-EUR` with nothing but a shrug.
+    let quotes_by: std::collections::HashMap<String, core::Quote> = if tickers.is_empty() {
         Default::default()
     } else {
         let fx_cache = fetch::fx_cache();
-        fetch::quotes(&client, &settings.urls, &fx_cache, &equities, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, None)
+        fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, None)
             .await
             .into_iter()
             .map(|q| (q.ticker.clone(), q))
@@ -52,15 +53,15 @@ pub async fn run(args: Vec<String>) {
         // crypto/FX carry no income statement -> don't waste an FMP budget slot probing.
         // Suffix check, NOT contains('-'): share-class tickers are dash-normalized (BRK.B -> BRK-B)
         // and must fall through to the fetch.
+        let q = quotes_by.get(ticker.as_str());
+        if let Some(q) = q {
+            println!("{}", market_line(q));
+        }
         if picks::is_currency_quoted(ticker) {
             println!("\n{ticker}: no income statement (crypto/FX)");
             continue;
         }
         equity_requested += 1;
-        let q = quotes_by.get(ticker.as_str());
-        if let Some(q) = q {
-            println!("{}", market_line(q));
-        }
         let (rows, source) = match fetch::fetch_fundamentals_report(&client, &settings.urls, ticker).await {
             Some(r) => r,
             None => {
@@ -187,7 +188,7 @@ fn market_line(q: &core::Quote) -> String {
         .and_then(|i| q.perf.get(i))
         .and_then(|p| p.as_ref().map(|(_, pct)| *pct));
     format!(
-        "\n{} — market: cagr {} ({})  1y {}  vol {}  maxdd {}  r2 {:.2}  abv-200wk {}  off-hi {}",
+        "\n{} — market: cagr {} ({})  1y {}  vol {}  maxdd {}  r2 {:.2}  abv-200wk {}  off-hi {}  turnover {}",
         q.ticker,
         yoy(q.life_cagr),
         q.age_years.map(|y| format!("{y:.0}y")).unwrap_or_else(|| "-".into()),
@@ -197,6 +198,7 @@ fn market_line(q: &core::Quote) -> String {
         q.trend_r2,
         if q.above_ma_pct > 0.0 { format!("+{:.0}%", q.above_ma_pct) } else { "-".into() },
         if q.drawdown_pct > 0.0 { format!("-{:.1}%", q.drawdown_pct) } else { "at high".into() },
+        q.avg_turnover_eur.map(|t| format!("€{}", humanize(t))).unwrap_or_else(|| "-".into()),
     )
 }
 
@@ -390,15 +392,16 @@ mod tests {
         let i1y = core::HORIZONS.iter().position(|(l, _)| *l == "1Y").unwrap();
         q.perf = vec![None; core::HORIZONS.len()];
         q.perf[i1y] = Some((String::new(), 17.1));
+        q.avg_turnover_eur = Some(12e6);
         let line = market_line(&q);
         assert!(
-            line.contains("IITU.L — market: cagr +25.0% (11y)  1y +17.1%  vol 1.3%  maxdd -28%  r2 0.98  abv-200wk +61%  off-hi -17.1%"),
+            line.contains("IITU.L — market: cagr +25.0% (11y)  1y +17.1%  vol 1.3%  maxdd -28%  r2 0.98  abv-200wk +61%  off-hi -17.1%  turnover €12.0M"),
             "{line}"
         );
 
         let bare = market_line(&core::Quote::stub("X", "err", "", "X"));
         assert!(bare.contains("cagr - (-)  1y -  vol -  maxdd -"), "{bare}");
-        assert!(bare.contains("abv-200wk -  off-hi at high"), "{bare}");
+        assert!(bare.contains("abv-200wk -  off-hi at high  turnover -"), "{bare}");
     }
 
     /// (data round) fund profile: TER/AUM render with the humanized € tier and holdings join on one
