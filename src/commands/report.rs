@@ -42,7 +42,15 @@ pub async fn run(args: Vec<String>) {
         Default::default()
     } else {
         let fx_cache = fetch::fx_cache();
-        fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, None)
+        // real (inflation-adjusted) 1Y+ returns, SAME as screen/check — otherwise the market line
+        // and the verdict score would read nominal while the ranking is real, disagreeing with the
+        // screen table the reader came from. One cached HICP call, only when the adjustment is on.
+        let eu_infl = if settings.inflation_adjust.enabled {
+            Some(fetch::fetch_eu_inflation(&client, &settings.urls).await)
+        } else {
+            None
+        };
+        fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, eu_infl.as_ref())
             .await
             .into_iter()
             .map(|q| (q.ticker.clone(), q))
@@ -77,6 +85,11 @@ pub async fn run(args: Vec<String>) {
                 } else {
                     println!("\n{ticker}: {no_data}");
                 }
+                // ETFs/funds carry no fund_factor on either side (no statements) -> the score
+                // matches the screen table exactly, no tilt mirror needed.
+                if let Some(q) = q {
+                    println!("{}", verdict_line(q, &settings.buy_heuristic));
+                }
                 continue;
             }
         };
@@ -87,6 +100,22 @@ pub async fn run(args: Vec<String>) {
         print!("{block}");
         if has_table {
             tables_printed += 1;
+        }
+        // verdict last (conclusion position). Mirror the live fund tilt so the printed score
+        // matches the valuation cell's `-> pts` just above it: report's Quote arrives with
+        // fund_factor None (the enrich runs in screen/check, not here).
+        if let Some(q) = q {
+            let mut scored = q.clone();
+            if scored.fund_factor.is_none() {
+                let mut ff = core::fund_factors(&rows, today, 5); // pure, cheap; same as the valuation line
+                ff.earnings_yield = close.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
+                // ponytail: annual EPS like the valuation cell above — skips fetch.rs's sec_ttm_eps
+                // TTM override, so report stays self-consistent; diverges from screen only for
+                // mid-ramp US growers (where the valuation line already shows the same annual ey).
+                scored.fund_factor =
+                    core::select_fund_factor(&ff, &settings.buy_heuristic.growth_fund_factor);
+            }
+            println!("{}", verdict_line(&scored, &settings.buy_heuristic));
         }
     }
     if equity_requested > 0 && tables_printed == 0 {
@@ -254,6 +283,48 @@ fn render_fund(ticker: &str, ter: Option<f64>, aum: Option<f64>, holdings: &[(St
     out
 }
 
+/// (round 6) The growth lane's VERDICT on this one name — the thing a report drill-in never said,
+/// so the reader round-tripped back to the screen table for it. Reproduces the SAME per-quote
+/// machinery the screen ranks with: `picks::growth_score` (Some = ranked, incl. a floored 0.0;
+/// None = unrankable), the late-cycle brake flag (`above_ma_pct >= growth_overext_cap`, screen's
+/// `!`), the hold-suitable core flag (screen's `H`), and `growth_near_miss` / `gate_failures` for
+/// the "why isn't this in my screen" answer. A scored name is NOT called REJECT — a late-cycle
+/// name still RANKS (VVSM is #10 in the list), so it prints its score + the same "conviction is the
+/// score" note the legend uses. Display-only; the caller mirrors the live fund tilt before scoring
+/// so the number matches the valuation cell above it. Pure.
+fn verdict_line(q: &core::Quote, tuning: &config::BuyHeuristic) -> String {
+    let cap = tuning.growth_overext_cap; // equities/ETFs only here — crypto lane isn't verdicted
+    match picks::growth_score(q, tuning) {
+        Some(s) => {
+            let tail = if cap > 0.0 && q.above_ma_pct >= cap {
+                format!(
+                    " — late-cycle: price {:.0}% above 200wk trend, brake floored (conviction is the score)",
+                    q.above_ma_pct,
+                )
+            } else if core::hold_suitable(q) {
+                " — hold-suitable 20yr core (broad + cheap + physical + Acc + large)".to_string()
+            } else {
+                String::new()
+            };
+            format!("\n{} — verdict: growth_score {s:.1}{tail}", q.ticker)
+        }
+        None => {
+            let why = picks::growth_near_miss(q, tuning)
+                .map(|(gate, w)| format!("near miss on {gate}: {w}"))
+                .or_else(|| {
+                    picks::gate_failures(q, tuning).filter(|f| !f.is_empty()).map(|fails| {
+                        let gates: Vec<&str> = fails.iter().map(|(g, _, _)| *g).collect();
+                        format!("fails {}", gates.join(", "))
+                    })
+                })
+                .unwrap_or_else(|| {
+                    "not a growth-lane candidate (leveraged / stablecoin / unknown turnover)".to_string()
+                });
+            format!("\n{} — verdict: not ranked — {why}", q.ticker)
+        }
+    }
+}
+
 /// YoY share-count change, sign-flipped (+ = shrinking count = buying back). Same `|Δ|>40%`
 /// split/M&A guard as `core::fund_factors`' `buyback_yield` — a GOOG 20:1 split must print "-",
 /// never a fabricated -95%.
@@ -389,6 +460,71 @@ mod tests {
         let (out, _) = render("ACME", "FMP", &rows);
         assert!(out.contains("valuation: eps_ttm 2.00  close - (native ccy)  earnings_yield -"), "{out}");
         assert!(out.contains("ebitda_yield -  peg_yield - (info — probe factors, never scored)"), "{out}");
+    }
+
+    /// (round 6) verdict line reproduces the screen's per-quote verdict at drill-in time. Build a
+    /// scoring quote from the stub + the handful of fields growth_score reads (range clears the 80
+    /// gate, known turnover admits, 10Y 200% ≈ 11.6%/yr clears the 8 floor). Branches: ranked ->
+    /// score; late-cycle (above_ma ≥ cap) -> the floored-brake tail; range-only miss -> near miss;
+    /// two-gate reject -> fails list; bare stub (no turnover/history) -> not-a-candidate. Plus the
+    /// tilt-mirror premise: a set fund_factor moves the rendered score.
+    #[test]
+    fn verdict_line_branches_and_tilt() {
+        let scoring = || {
+            let mut q = core::Quote::stub("IITU.L", "€1", "", "n");
+            q.range_pct = 95.0; // clears the 80 range gate
+            q.avg_turnover_eur = Some(1e9); // known turnover -> assessable
+            q.perf = vec![None; core::HORIZONS.len()];
+            for (label, pct) in [("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)] {
+                let i = core::HORIZONS.iter().position(|(l, _)| *l == label).unwrap();
+                q.perf[i] = Some(("x".to_string(), pct));
+            }
+            q
+        };
+        let t = config::BuyHeuristic::default();
+
+        // ranked -> plain score, no reject wording
+        let ranked = verdict_line(&scoring(), &t);
+        assert!(ranked.contains("IITU.L — verdict: growth_score "), "{ranked}");
+        assert!(!ranked.contains("not ranked") && !ranked.contains("late-cycle"), "{ranked}");
+
+        // late-cycle: price past the overextension cap -> the floored-brake tail (still ranked)
+        let mut late = scoring();
+        late.above_ma_pct = t.growth_overext_cap + 68.0;
+        let lc = verdict_line(&late, &t);
+        assert!(lc.contains("growth_score ") && lc.contains("late-cycle: price"), "{lc}");
+        assert!(lc.contains("brake floored (conviction is the score)"), "{lc}");
+
+        // range-only miss (range 75 < 80, everything else clears) -> near miss on that one gate
+        let mut miss = scoring();
+        miss.range_pct = 75.0;
+        let nm = verdict_line(&miss, &t);
+        assert!(nm.contains("not ranked — near miss on range:"), "{nm}");
+
+        // two gates fail (range AND cagr: 10Y 40% ≈ 3.4%/yr < 8) -> fails-list, not a near miss
+        let mut two = scoring();
+        two.range_pct = 75.0;
+        let i10 = core::HORIZONS.iter().position(|(l, _)| *l == "10Y").unwrap();
+        two.perf[i10] = Some(("x".to_string(), 40.0));
+        let fl = verdict_line(&two, &t);
+        assert!(fl.contains("not ranked — fails ") && fl.contains("range"), "{fl}");
+
+        // bare stub: no turnover, no history -> not assessable as a candidate at all
+        let bare = verdict_line(&core::Quote::stub("X", "err", "", "X"), &t);
+        assert!(bare.contains("not ranked — not a growth-lane candidate"), "{bare}");
+
+        // tilt-mirror premise: the run() call sets fund_factor before scoring, so the verdict must
+        // MOVE when it's present (guards the mirror from silently feeding None — round-5 lesson).
+        let tilt = config::BuyHeuristic {
+            growth_fund_factor: "earnings_yield".to_string(),
+            growth_fund_weight: 1.0,
+            ..Default::default()
+        };
+        let flat = verdict_line(&scoring(), &tilt);
+        let mut tilted_q = scoring();
+        tilted_q.fund_factor = Some(20.0);
+        let tilted = verdict_line(&tilted_q, &tilt);
+        assert_ne!(flat, tilted, "a set fund_factor must move the verdict score: {flat} vs {tilted}");
     }
 
     /// (round 5) probe valuation cousins from the SEC levels + native close: EV = 10·100 + 100
