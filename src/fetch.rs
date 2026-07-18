@@ -1227,7 +1227,7 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     // EBITDA. Duration concept (USD). The accretion variant is the combined tag some filers use; the plain
     // one is the common case. Missing -> EBITDA None-outs (a partial EBITDA is garbage).
     let dna = collect(
-        &["DepreciationDepreciationAndAmortization", "DepreciationAndAmortization", "DepreciationAmortizationAndAccretionNet"],
+        &["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "DepreciationAmortizationAndAccretionNet"],
         "USD",
     );
     // NetIncomeLoss first (parent-company net income, the standard tag); some filers stopped filing it
@@ -1300,11 +1300,13 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
 /// forever. Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
 pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
-    // "_facts5": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
-    // the round-107 survival levels; facts5 adds the EV/EBITDA levels — raw ebitda + net_debt) — old rows
-    // were parsed WITHOUT them and would pin the gaps forever. Old *_facts{3,4}.json files are orphaned
-    // (few KB each); refetch amortizes over runs under SEC_FETCH_BUDGET.
-    let cache = sec_cache_path(&format!("{ticker}_facts5"));
+    // "_facts6": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
+    // the round-107 survival levels; facts5 added the EV/EBITDA levels; facts6 fixes the misspelled
+    // DepreciationDepletionAndAmortization concept — facts5 rows have EBITDA None for every filer on
+    // that tag, e.g. AAPL 2023+) — old rows were parsed WITHOUT them and would pin the gaps forever.
+    // Old *_facts{3,4,5}.json files are orphaned (few KB each); refetch amortizes over runs under
+    // SEC_FETCH_BUDGET.
+    let cache = sec_cache_path(&format!("{ticker}_facts6"));
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
@@ -2850,7 +2852,7 @@ mod tests {
                 {"start": "2020-10-01", "end": "2021-09-30", "val": 200.0, "form": "10-K", "filed": "2021-11-01"}
             ]}},
             // (EV/EBITDA) D&A add-back, FY2021 only -> EBITDA = op 200 + 80 = 280; FY2022 stays None
-            "DepreciationDepreciationAndAmortization": {"units": {"USD": [
+            "DepreciationDepletionAndAmortization": {"units": {"USD": [
                 {"start": "2020-10-01", "end": "2021-09-30", "val": 80.0, "form": "10-K", "filed": "2021-11-01"}
             ]}},
             "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
