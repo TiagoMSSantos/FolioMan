@@ -740,6 +740,14 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // Conviction bridge: the per-name depth lives in other subcommands, but nothing on this
+    // surface said so — the ranking is where a pick decision starts, so the pointer belongs here.
+    println!(
+        "\nBefore buying a row, deep-dive it: `folioman report TICKER` (income trajectory, fund \
+         sectors/assets, why-ranked verdict) · `folioman screen --explain TICKER` (the score \
+         arithmetic) · `folioman size` (how much of each)."
+    );
+
     // Euribor / Certificados de Aforro / inflation — fixed-income + macro baselines to compare the
     // asset tables against
     crate::commands::print_macro_footer(&client, &settings.urls).await;
