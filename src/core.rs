@@ -95,6 +95,7 @@ pub struct Quote {
     pub trend_cagr: Option<f64>,       // (#14) annualized CAGR from the log-price trend SLOPE (endpoint-robust); precomputed at build, ranked on only when `use_trend_cagr`. None = <2 points
     pub max_drawdown_pct: f64,         // (C) worst peak-to-trough decline (%) in its history; feeds the Calmar (return-per-pain) reward. 0 = never down/no history
     pub roll5y_pos_pct: Option<f64>,   // (consistency) % of rolling ~5y windows with a positive NOMINAL return, from the same closes. DISPLAY-ONLY footer ("how often did 5 patient years pay?"); None = <5y of history — never a fake 100%
+    pub underwater_yrs: Option<f64>,   // (underwater) longest stretch below the prior peak, in years (~252 sessions/yr), ongoing stretch counts. DISPLAY-ONLY footer — MAXDD's missing twin: depth says how far down, this says how LONG the pain lasted. None = <2 usable closes
     pub fund_factor: Option<f64>,      // (G) the ONE as-of fundamental factor folded into growth_score (e.g. revenue accel). Set in the backtest (from fund_factors) so the term is ablatable, and live only on the small/check-scale path; None -> neutral (universe screen & price-only backtest)
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history; DISPLAY-ONLY (`cagr` column). Ranking/gates stay on the validated fixed-horizon ladder. None = <6mo history / stub / backtest
@@ -150,6 +151,7 @@ impl Quote {
             trend_cagr: None,
             max_drawdown_pct: 0.0,
             roll5y_pos_pct: None,
+            underwater_yrs: None,
             fund_factor: None,
             age_years: None,
             life_cagr: None,
@@ -317,6 +319,28 @@ pub fn rolling_5y_positive_pct(closes: &[f64]) -> Option<f64> {
         i += STEP;
     }
     (n > 0).then(|| 100.0 * pos as f64 / n as f64)
+}
+
+/// (underwater) Longest stretch of sessions spent below the running peak, in years (~252
+/// sessions/yr) — MAXDD's missing twin: depth says how far down, this says how LONG until back
+/// to even. An ongoing stretch counts at its elapsed length (whether it's underwater NOW is the
+/// OFF-HI column's job). Non-positive closes (data holes) are filtered out first; a monotonic
+/// riser legitimately reports 0.0; fewer than 2 usable closes -> None.
+pub fn longest_underwater_yrs(closes: &[f64]) -> Option<f64> {
+    let px: Vec<f64> = closes.iter().copied().filter(|c| *c > 0.0).collect();
+    if px.len() < 2 {
+        return None;
+    }
+    let (mut peak_i, mut peak, mut worst) = (0usize, px[0], 0usize);
+    for (i, &c) in px.iter().enumerate().skip(1) {
+        if c >= peak {
+            peak = c;
+            peak_i = i;
+        } else {
+            worst = worst.max(i - peak_i);
+        }
+    }
+    Some(worst as f64 / 252.0)
 }
 
 /// Format a number with comma thousands separators and 2 decimals (Python `{:,.2f}`).
@@ -1677,6 +1701,23 @@ mod tests {
         let mut bad = rising[..WIN + 1].to_vec();
         bad[0] = 0.0;
         assert!(rolling_5y_positive_pct(&bad).is_none());
+    }
+
+    /// (underwater) longest_underwater_yrs: rising series never dips (0.0 — a legit value, not
+    /// None); a falling series is underwater its whole length; a recovery resets the peak so only
+    /// the longest run wins; data-hole closes are filtered before indexing; <2 usable -> None.
+    #[test]
+    fn underwater_semantics() {
+        let rising: Vec<f64> = (1..=300).map(|i| i as f64).collect();
+        assert_eq!(longest_underwater_yrs(&rising), Some(0.0));
+        let falling: Vec<f64> = (1..=5).rev().map(|i| i as f64).collect();
+        assert_eq!(longest_underwater_yrs(&falling), Some(4.0 / 252.0)); // 4 sessions since peak
+        // dip (1) -> recovery at 101 resets the peak -> second, longer run (3) wins
+        assert_eq!(longest_underwater_yrs(&[100.0, 90.0, 101.0, 95.0, 96.0, 97.0]), Some(3.0 / 252.0));
+        // leading data hole filtered out, not treated as a 0.0 peak
+        assert_eq!(longest_underwater_yrs(&[0.0, 100.0, 90.0, 101.0]), Some(1.0 / 252.0));
+        assert_eq!(longest_underwater_yrs(&[100.0]), None);
+        assert_eq!(longest_underwater_yrs(&[]), None);
     }
 
     /// (#17/Step 4) `endpoint_avg`: n=1 = the raw last close (the inert default must be byte-identical);

@@ -586,6 +586,25 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (underwater) the endurance twin of MAXDD, worst first: depth said how far down, this says
+    // how LONG the pain lasted. Same closes as everything above; ongoing stretches count (the
+    // OFF-HI column already says who's underwater NOW). DISPLAY-ONLY, never scored.
+    {
+        let mut rows: Vec<(&str, f64)> = ranked_now
+            .iter()
+            .filter_map(|t| {
+                quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.underwater_yrs).map(|v| (t.as_str(), v))
+            })
+            .collect();
+        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        if !rows.is_empty() {
+            let cells = rows.iter().map(|(t, v)| format!("{t} {v:.1}y")).collect::<Vec<_>>().join(" · ");
+            println!(
+                "\nLongest underwater — worst stretch below the prior peak, in years (endurance check for buy-and-hold):\n  {cells}"
+            );
+        }
+    }
+
     // (X) EXIT review — WATCHLIST names that cleared every growth gate on the previous screen run
     // but fail one now. The backtest's exit probe measures this exact transition: newly-failing
     // names lag kept-passing names by ~14 pts forward — a mild REVIEW signal, not an auto-sell.
