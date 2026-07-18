@@ -1757,20 +1757,82 @@ fn parse_top_holdings(v: &Value) -> Vec<(String, f64)> {
         .unwrap_or_default()
 }
 
+/// (report round 7) `topHoldings.sectorWeightings` — an array of single-key `{sector: fraction}`
+/// objects (value bare or `{raw}`). The composition datum top-10 holdings HIDES: a concentrated
+/// tech ETF and a broad core both list NVDA/AAPL/MSFT up top, but their sector spreads differ.
+/// Drops zero-weight sectors, sorted heaviest first.
+fn parse_fund_sectors(v: &Value) -> Vec<(String, f64)> {
+    let Some(arr) =
+        v.pointer("/quoteSummary/result/0/topHoldings/sectorWeightings").and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, f64)> = arr
+        .iter()
+        .filter_map(|o| {
+            let (k, val) = o.as_object()?.iter().next()?; // each row is one {sector: weight}
+            let w = val.as_f64().or_else(|| val.pointer("/raw").and_then(Value::as_f64))?;
+            (w > 0.0).then(|| (pretty_sector(k), w))
+        })
+        .collect();
+    out.sort_by(|a, b| b.1.total_cmp(&a.1));
+    out
+}
+
+/// (report round 7) `topHoldings` equity/bond split (bare or `{raw}`) — ≈100/0 for an equity ETF,
+/// meaningful for a mixed/bond fund. `None` unless a stock position is present (bond defaults 0).
+fn parse_fund_stock_bond(v: &Value) -> Option<(f64, f64)> {
+    let r = v.pointer("/quoteSummary/result/0/topHoldings")?;
+    let f = |k: &str| {
+        r.pointer(&format!("/{k}"))
+            .and_then(|x| x.as_f64().or_else(|| x.pointer("/raw").and_then(Value::as_f64)))
+    };
+    Some((f("stockPosition")?, f("bondPosition").unwrap_or(0.0)))
+}
+
+/// (report round 7) Yahoo's snake_case sector key -> display ("financial_services" -> "Financial
+/// Services"); "realestate" is the one key with no underscore to split.
+fn pretty_sector(k: &str) -> String {
+    if k == "realestate" {
+        return "Real Estate".to_string();
+    }
+    k.split('_')
+        .map(|w| {
+            let mut ch = w.chars();
+            match ch.next() {
+                Some(f) => f.to_uppercase().chain(ch).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// (report round 7) `fundProfile.categoryName` — the fund's one-word class (Technology, Large
+/// Blend). Report-only; `None` when absent/blank.
+fn parse_fund_category(v: &Value) -> Option<String> {
+    v.pointer("/quoteSummary/result/0/fundProfile/categoryName")
+        .or_else(|| v.pointer("/quoteSummary/result/0/fundProfile/category"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 /// (round 56) Weekly `{sym: ["YYYY-MM-DD", [[holding, weight]...]]}` cache for `yahoo_top_holdings`;
 /// empty lists are cached too, so a fund Yahoo has no holdings for costs one request a week.
 /// (round 57) the row schema gained per-holding weights; an old symbols-only cache fails to
 /// deserialize and is treated as empty — one refetch of the ~30 printed picks heals it.
 const HOLDINGS_CACHE_PATH: &str = ".holdings_cache.json";
 
-/// (round 66) Single-symbol live topHoldings fetch — the cacheless core of `yahoo_top_holdings`,
-/// public so the network smoke test can probe the payload without touching the weekly cache.
-/// `Err` = environmental (transport/handshake/throttle — skip, retry later); `Ok(empty)` = HTTP 200
-/// whose body yielded no holdings, which for a major equity ETF means the payload shape drifted.
-pub async fn top_holdings_live(client: &Client, sym: &str) -> Result<Vec<(String, f64)>, String> {
+/// (report round 7) Shared cacheless quoteSummary GET — the fund seams below (and their
+/// report-only `_ext`/composition cousins) differ ONLY in the `modules=` list, so the crumb
+/// handshake + throttle guard live here once. `Err` = environmental (skip/retry); `Ok(Value)` =
+/// an HTTP-200 body that parsed as JSON (may still be an empty result for an unknown symbol).
+async fn quote_summary_json(client: &Client, sym: &str, modules: &str) -> Result<Value, String> {
     let (cookie, crumb) = yahoo_crumb(client).await.ok_or("Yahoo crumb handshake failed")?;
     let url = format!(
-        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules=topHoldings&crumb={crumb}"
+        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules={modules}&crumb={crumb}"
     );
     let resp = client
         .get(&url)
@@ -1787,9 +1849,27 @@ pub async fn top_holdings_live(client: &Client, sym: &str) -> Result<Vec<(String
     {
         return Err(format!("throttled/unavailable: HTTP {status}"));
     }
-    let v: Value =
-        resp.json().await.map_err(|_| "200 but body wasn't JSON (likely a throttle/HTML page)".to_string())?;
-    Ok(parse_top_holdings(&v))
+    resp.json().await.map_err(|_| "200 but body wasn't JSON (likely a throttle/HTML page)".to_string())
+}
+
+/// (round 66) Single-symbol live topHoldings fetch — the cacheless core of `yahoo_top_holdings`,
+/// public so the network smoke test can probe the payload without touching the weekly cache.
+/// `Err` = environmental (transport/handshake/throttle — skip, retry later); `Ok(empty)` = HTTP 200
+/// whose body yielded no holdings, which for a major equity ETF means the payload shape drifted.
+pub async fn top_holdings_live(client: &Client, sym: &str) -> Result<Vec<(String, f64)>, String> {
+    Ok(parse_top_holdings(&quote_summary_json(client, sym, "topHoldings").await?))
+}
+
+/// (report round 7) Report-only cousin of `top_holdings_live`: one topHoldings fetch, but also
+/// pulls the composition fields the plain seam drops — `sectorWeightings` (what the top-10
+/// holdings can't show: diversified core vs sector bet) and the equity/bond split. Returns
+/// (holdings, sectors desc, `Option<(stock, bond)>`).
+pub(crate) async fn fund_composition_live(
+    client: &Client,
+    sym: &str,
+) -> Result<(Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>), String> {
+    let v = quote_summary_json(client, sym, "topHoldings").await?;
+    Ok((parse_top_holdings(&v), parse_fund_sectors(&v), parse_fund_stock_bond(&v)))
 }
 
 /// (drift net) Single-symbol live fund-facts fetch — the cacheless core of the
@@ -1798,28 +1878,22 @@ pub async fn top_holdings_live(client: &Client, sym: &str) -> Result<Vec<(String
 /// (crumb/transport/throttle — skip, retry later); Ok((None, None)) = HTTP 200 whose body yielded
 /// neither TER nor AUM, which for a major equity ETF means the payload shape drifted.
 pub async fn fund_facts_live(client: &Client, sym: &str) -> Result<(Option<f64>, Option<f64>), String> {
-    let (cookie, crumb) = yahoo_crumb(client).await.ok_or("Yahoo crumb handshake failed")?;
-    let url = format!(
-        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules=fundProfile%2CsummaryDetail%2CdefaultKeyStatistics&crumb={crumb}"
-    );
-    let resp = client
-        .get(&url)
-        .header("Cookie", &cookie)
-        .header("User-Agent", "Mozilla/5.0")
-        .send()
-        .await
-        .map_err(|e| format!("transport error: {e}"))?;
-    let status = resp.status();
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS
-        || status.is_server_error()
-        || status == reqwest::StatusCode::UNAUTHORIZED
-        || status == reqwest::StatusCode::FORBIDDEN
-    {
-        return Err(format!("throttled/unavailable: HTTP {status}"));
-    }
-    let v: Value =
-        resp.json().await.map_err(|_| "200 but body wasn't JSON (likely a throttle/HTML page)".to_string())?;
+    let v =
+        quote_summary_json(client, sym, "fundProfile%2CsummaryDetail%2CdefaultKeyStatistics").await?;
     Ok(parse_yahoo_fund_facts(&v))
+}
+
+/// (report round 7) Report-only cousin of `fund_facts_live`: same one fetch, but also returns the
+/// fund's `categoryName` (its one-word class — Technology, Large Blend). The screen never needs the
+/// category (it ranks, doesn't describe); the report drill-in does. Returns (ter, aum, category).
+pub(crate) async fn fund_facts_ext_live(
+    client: &Client,
+    sym: &str,
+) -> Result<(Option<f64>, Option<f64>, Option<String>), String> {
+    let v =
+        quote_summary_json(client, sym, "fundProfile%2CsummaryDetail%2CdefaultKeyStatistics").await?;
+    let (ter, aum) = parse_yahoo_fund_facts(&v);
+    Ok((ter, aum, parse_fund_category(&v)))
 }
 
 /// (drift net) Single-ticker live SEC companyfacts fetch+parse — the cacheless core of
@@ -2720,6 +2794,50 @@ mod tests {
         let eleven: Vec<Value> = (0..11).map(|i| serde_json::json!({"symbol": format!("S{i}")})).collect();
         let v = serde_json::json!({"quoteSummary": {"result": [{"topHoldings": {"holdings": eleven}}]}});
         assert_eq!(parse_top_holdings(&v).len(), 10);
+    }
+
+    /// (report round 7) composition fields the plain holdings seam drops: sector weights (bare float
+    /// OR `{raw}`, zeros dropped, sorted heaviest-first, keys prettified), the equity/bond split
+    /// (bond defaults 0, `None` when no stock position), and the fund category (with blank filter).
+    #[test]
+    fn fund_composition_parse() {
+        let v = serde_json::json!({"quoteSummary": {"result": [{
+            "fundProfile": {"categoryName": "Technology"},
+            "topHoldings": {
+                "stockPosition": {"raw": 0.994},
+                "bondPosition": 0.006,
+                "sectorWeightings": [
+                    {"technology": {"raw": 0.55}},
+                    {"financial_services": 0.20},
+                    {"realestate": {"raw": 0.10}},
+                    {"utilities": 0.0},            // zero -> dropped
+                ],
+            },
+        }]}});
+        assert_eq!(parse_fund_sectors(&v), vec![
+            ("Technology".to_string(), 0.55),
+            ("Financial Services".to_string(), 0.20),
+            ("Real Estate".to_string(), 0.10),
+        ]);
+        assert_eq!(parse_fund_stock_bond(&v), Some((0.994, 0.006)));
+        assert_eq!(parse_fund_category(&v), Some("Technology".to_string()));
+
+        // bondPosition absent -> defaults 0; category via fallback key; blank category -> None.
+        let v2 = serde_json::json!({"quoteSummary": {"result": [{
+            "fundProfile": {"category": "Large Blend"},
+            "topHoldings": {"stockPosition": 1.0},
+        }]}});
+        assert_eq!(parse_fund_stock_bond(&v2), Some((1.0, 0.0)));
+        assert_eq!(parse_fund_category(&v2), Some("Large Blend".to_string()));
+        let blank = serde_json::json!({"quoteSummary": {"result": [{"fundProfile": {"categoryName": "  "}}]}});
+        assert_eq!(parse_fund_category(&blank), None);
+
+        // no stock position at all -> None (not a fund with a reported split); empty payloads.
+        let none = serde_json::json!({"quoteSummary": {"result": [{"topHoldings": {"bondPosition": 0.5}}]}});
+        assert_eq!(parse_fund_stock_bond(&none), None);
+        assert!(parse_fund_sectors(&serde_json::json!({})).is_empty());
+        assert_eq!(pretty_sector("consumer_cyclical"), "Consumer Cyclical");
+        assert_eq!(pretty_sector("realestate"), "Real Estate");
     }
 
     /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but

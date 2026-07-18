@@ -74,13 +74,18 @@ pub async fn run(args: Vec<String>) {
             Some(r) => r,
             None => {
                 // (data round) no statements ≠ nothing to say: the book is mostly ETFs, which
-                // carry no income statement at all. Fall through to the fund side via the
-                // round-3 cacheless seams (TER/AUM + top-10 holdings) before giving up; a
-                // crumb/transport failure is environmental and just leaves the no-data line.
-                let (ter, aum) = fetch::fund_facts_live(&client, ticker).await.unwrap_or((None, None));
-                let holdings = fetch::top_holdings_live(&client, ticker).await.unwrap_or_default();
-                if ter.is_some() || aum.is_some() || !holdings.is_empty() {
-                    print!("{}", render_fund(ticker, ter, aum, &holdings));
+                // carry no income statement at all. Fall through to the fund side via the cacheless
+                // seams (TER/AUM/category + holdings + sector weights + equity/bond split) before
+                // giving up; a crumb/transport failure is environmental and leaves the no-data line.
+                let (ter, aum, category) =
+                    fetch::fund_facts_ext_live(&client, ticker).await.unwrap_or((None, None, None));
+                let (holdings, sectors, stock_bond) =
+                    fetch::fund_composition_live(&client, ticker).await.unwrap_or_default();
+                if ter.is_some() || aum.is_some() || !holdings.is_empty() || !sectors.is_empty() {
+                    print!(
+                        "{}",
+                        render_fund(ticker, ter, aum, category.as_deref(), &holdings, &sectors, stock_bond)
+                    );
                     tables_printed += 1;
                 } else {
                     println!("\n{ticker}: {no_data}");
@@ -265,13 +270,39 @@ fn market_line(q: &core::Quote, today: chrono::NaiveDate, stale_days: i64) -> St
 /// the round-3 cacheless seams. Rendered only when at least one field arrived; the caller keeps the
 /// tailored no-data line for the true-nothing case. AUM is quote-currency ≈ EUR (same approximation
 /// the screen's AUM column already makes). Pure formatting.
-fn render_fund(ticker: &str, ter: Option<f64>, aum: Option<f64>, holdings: &[(String, f64)]) -> String {
+fn render_fund(
+    ticker: &str,
+    ter: Option<f64>,
+    aum: Option<f64>,
+    category: Option<&str>,
+    holdings: &[(String, f64)],
+    sectors: &[(String, f64)],
+    stock_bond: Option<(f64, f64)>,
+) -> String {
     let mut out = format!("\n{ticker} — fund profile (no income statements: ETF/fund)\n");
     out.push_str(&format!(
-        "  TER {}  AUM {}\n",
+        "  TER {}  AUM {}{}\n",
         ter.map(|t| format!("{t:.2}%")).unwrap_or_else(|| "-".into()),
         aum.map(|a| format!("€{}", humanize(a))).unwrap_or_else(|| "-".into()),
+        category.map(|c| format!("  category {c}")).unwrap_or_default(),
     ));
+    if let Some((stock, bond)) = stock_bond {
+        // (round 7) fractions -> %; equity vs bond is the buy-and-hold class question the sector-tech
+        // table can't answer. bond only when it actually holds some (an equity ETF reads ~100/0).
+        out.push_str(&format!("  assets: equity {:.0}%", stock * 100.0));
+        if bond * 100.0 >= 0.5 {
+            out.push_str(&format!("  bond {:.0}%", bond * 100.0));
+        }
+        out.push('\n');
+    }
+    if !sectors.is_empty() {
+        // (round 7) the discriminator top-10 holdings hide: concentrated sector bet vs broad core.
+        out.push_str("  sectors:");
+        for (name, w) in sectors {
+            out.push_str(&format!("  {name} {:.0}%", w * 100.0));
+        }
+        out.push('\n');
+    }
     if !holdings.is_empty() {
         out.push_str("  top holdings:");
         for (name, w) in holdings.iter().take(10) {
@@ -607,20 +638,34 @@ mod tests {
         assert!(!bare.contains("stale"), "{bare}"); // no close date -> no marker, never a false flag
     }
 
-    /// (data round) fund profile: TER/AUM render with the humanized € tier and holdings join on one
-    /// line; absent TER prints "-" (never 0.00%); no holdings -> no holdings line at all.
+    /// (data round / round 7) fund profile: TER/AUM/category on the facts line; equity/bond split
+    /// (bond suppressed near 0); sector spread; holdings join. Absent TER prints "-" (never 0.00%);
+    /// a missing category/holdings/sectors/split drops its whole line — no empty scaffolding.
     #[test]
     fn fund_profile_renders_facts_and_holdings() {
         // weights arrive as fractions from the seam (0.225 = 22.5%)
         let holds = vec![("AAPL".to_string(), 0.225), ("MSFT".to_string(), 0.21)];
-        let out = render_fund("IITU.L", Some(0.15), Some(16.1e9), &holds);
+        let sectors = vec![("Technology".to_string(), 0.62), ("Financial Services".to_string(), 0.18)];
+        let out =
+            render_fund("IITU.L", Some(0.15), Some(16.1e9), Some("Technology"), &holds, &sectors, Some((0.998, 0.002)));
         assert!(out.contains("IITU.L — fund profile (no income statements: ETF/fund)"), "{out}");
-        assert!(out.contains("TER 0.15%  AUM €16.1B"), "{out}");
+        assert!(out.contains("TER 0.15%  AUM €16.1B  category Technology"), "{out}");
+        assert!(out.contains("assets: equity 100%"), "{out}"); // 0.998 -> 100%
+        assert!(!out.contains("bond"), "{out}"); // 0.2% bond suppressed (< 0.5%)
+        assert!(out.contains("sectors:  Technology 62%  Financial Services 18%"), "{out}");
         assert!(out.contains("top holdings:  AAPL 22.5%  MSFT 21.0%"), "{out}");
 
-        let sparse = render_fund("X.L", None, Some(1e9), &[]);
+        // sparse: no category/holdings/sectors/split -> only the TER/AUM line survives.
+        let sparse = render_fund("X.L", None, Some(1e9), None, &[], &[], None);
         assert!(sparse.contains("TER -  AUM €1.0B"), "{sparse}");
+        assert!(!sparse.contains("category"), "{sparse}");
         assert!(!sparse.contains("top holdings"), "{sparse}");
+        assert!(!sparse.contains("sectors:"), "{sparse}");
+        assert!(!sparse.contains("assets:"), "{sparse}");
+
+        // a real bond holding IS shown (mixed fund).
+        let mixed = render_fund("AGGH.L", Some(0.1), None, None, &[], &[], Some((0.4, 0.6)));
+        assert!(mixed.contains("assets: equity 40%  bond 60%"), "{mixed}");
     }
 
     /// (round 61) formatter semantics: unit tier picked by magnitude (sign preserved, tier chosen
