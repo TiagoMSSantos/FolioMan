@@ -182,17 +182,22 @@ fn render_annual(
 /// zero new network. Zeroed trend fields (stub/short history) print "-"/"at high", never a
 /// fabricated 0. Pure formatting.
 fn market_line(q: &core::Quote) -> String {
-    let y1 = core::HORIZONS
-        .iter()
-        .position(|(l, _)| *l == "1Y")
-        .and_then(|i| q.perf.get(i))
-        .and_then(|p| p.as_ref().map(|(_, pct)| *pct));
+    let h = |label: &str| {
+        core::HORIZONS
+            .iter()
+            .position(|(l, _)| *l == label)
+            .and_then(|i| q.perf.get(i))
+            .and_then(|p| p.as_ref().map(|(_, pct)| *pct))
+    };
     format!(
-        "\n{} — market: cagr {} ({})  1y {}  vol {}  maxdd {}  r2 {:.2}  abv-200wk {}  off-hi {}  turnover {}",
+        "\n{} — market: {}  cagr {} ({})  1y {}  5y {}  10y {}  vol {}  maxdd {}  r2 {:.2}  abv-200wk {}  off-hi {}  turnover {}",
         q.ticker,
+        q.price_eur.map(|p| format!("€{p:.2}")).unwrap_or_else(|| "-".into()),
         yoy(q.life_cagr),
         q.age_years.map(|y| format!("{y:.0}y")).unwrap_or_else(|| "-".into()),
-        yoy(y1),
+        yoy(h("1Y")),
+        yoy(h("5Y")),
+        yoy(h("10Y")),
         q.volatility_pct.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "-".into()),
         if q.max_drawdown_pct > 0.0 { format!("-{:.0}%", q.max_drawdown_pct) } else { "-".into() },
         q.trend_r2,
@@ -389,18 +394,21 @@ mod tests {
         q.trend_r2 = 0.98;
         q.above_ma_pct = 61.0;
         q.drawdown_pct = 17.1;
-        let i1y = core::HORIZONS.iter().position(|(l, _)| *l == "1Y").unwrap();
+        q.price_eur = Some(42.84);
         q.perf = vec![None; core::HORIZONS.len()];
-        q.perf[i1y] = Some((String::new(), 17.1));
+        for (label, pct) in [("1Y", 17.1), ("5Y", 98.7), ("10Y", 438.5)] {
+            let i = core::HORIZONS.iter().position(|(l, _)| *l == label).unwrap();
+            q.perf[i] = Some((String::new(), pct));
+        }
         q.avg_turnover_eur = Some(12e6);
         let line = market_line(&q);
         assert!(
-            line.contains("IITU.L — market: cagr +25.0% (11y)  1y +17.1%  vol 1.3%  maxdd -28%  r2 0.98  abv-200wk +61%  off-hi -17.1%  turnover €12.0M"),
+            line.contains("IITU.L — market: €42.84  cagr +25.0% (11y)  1y +17.1%  5y +98.7%  10y +438.5%  vol 1.3%  maxdd -28%  r2 0.98  abv-200wk +61%  off-hi -17.1%  turnover €12.0M"),
             "{line}"
         );
 
         let bare = market_line(&core::Quote::stub("X", "err", "", "X"));
-        assert!(bare.contains("cagr - (-)  1y -  vol -  maxdd -"), "{bare}");
+        assert!(bare.contains("market: -  cagr - (-)  1y -  5y -  10y -  vol -  maxdd -"), "{bare}");
         assert!(bare.contains("abv-200wk -  off-hi at high  turnover -"), "{bare}");
     }
 
