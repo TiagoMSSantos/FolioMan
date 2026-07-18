@@ -554,6 +554,26 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (consistency) the named buy-and-hold datum: how often did 5 patient years pay? One line for
+    // the ranked book, best first, from the same closes every other stat reads. NOMINAL by design
+    // (the label says so — per-window inflation deflation isn't worth the date mapping); names
+    // with <5y of history have no window and stay silent. DISPLAY-ONLY, never scored.
+    {
+        let mut rows: Vec<(&str, f64)> = ranked_now
+            .iter()
+            .filter_map(|t| {
+                quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.roll5y_pos_pct).map(|p| (t.as_str(), p))
+            })
+            .collect();
+        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        if !rows.is_empty() {
+            let cells = rows.iter().map(|(t, p)| format!("{t} {p:.0}%")).collect::<Vec<_>>().join(" · ");
+            println!(
+                "\n5y-consistency — % of rolling 5-year windows with a positive (nominal) return, weekly-stepped:\n  {cells}"
+            );
+        }
+    }
+
     // (X) EXIT review — WATCHLIST names that cleared every growth gate on the previous screen run
     // but fail one now. The backtest's exit probe measures this exact transition: newly-failing
     // names lag kept-passing names by ~14 pts forward — a mild REVIEW signal, not an auto-sell.

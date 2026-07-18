@@ -560,6 +560,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // matching backtest_quote's per-cadence call so the live rank and the validation agree.
         trend_cagr: core::trend_cagr(&chart.closes, 252),
         max_drawdown_pct: core::max_drawdown_pct(&chart.closes),
+        // (consistency) % of rolling 5y windows positive, same closes — the screen's footer stat.
+        roll5y_pos_pct: core::rolling_5y_positive_pct(&chart.closes),
         fund_factor: None, // (G) live screen leaves this None (neutral); only the small/check-scale path (A3) populates it
         age_years,
         life_cagr,

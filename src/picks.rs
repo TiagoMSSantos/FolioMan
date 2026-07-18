@@ -2063,6 +2063,7 @@ mod tests {
             trend_r2: 0.0, // default lumpy -> consistency floor, UNIFORM across test quotes so relational asserts hold
             trend_cagr: None, // (#14) default off; ranking uses endpoint cagr unless use_trend_cagr is set
             max_drawdown_pct: 0.0, // default -> no calmar reward (additive 0)
+            roll5y_pos_pct: None,  // (consistency) display-only footer stat; never scored
             fund_factor: None,     // (G) default off; the fund-tilt asserts set it explicitly
             age_years: None,       // display-only pair; never scored
             life_cagr: None,

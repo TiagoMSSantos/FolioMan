@@ -94,6 +94,7 @@ pub struct Quote {
     pub trend_r2: f64,                 // (A) R² (0..1) of the log-price trend — how steadily it compounds; damps CAGR endpoint-luck. 0 = no/short history
     pub trend_cagr: Option<f64>,       // (#14) annualized CAGR from the log-price trend SLOPE (endpoint-robust); precomputed at build, ranked on only when `use_trend_cagr`. None = <2 points
     pub max_drawdown_pct: f64,         // (C) worst peak-to-trough decline (%) in its history; feeds the Calmar (return-per-pain) reward. 0 = never down/no history
+    pub roll5y_pos_pct: Option<f64>,   // (consistency) % of rolling ~5y windows with a positive NOMINAL return, from the same closes. DISPLAY-ONLY footer ("how often did 5 patient years pay?"); None = <5y of history — never a fake 100%
     pub fund_factor: Option<f64>,      // (G) the ONE as-of fundamental factor folded into growth_score (e.g. revenue accel). Set in the backtest (from fund_factors) so the term is ablatable, and live only on the small/check-scale path; None -> neutral (universe screen & price-only backtest)
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history; DISPLAY-ONLY (`cagr` column). Ranking/gates stay on the validated fixed-horizon ladder. None = <6mo history / stub / backtest
@@ -148,6 +149,7 @@ impl Quote {
             trend_r2: 0.0,
             trend_cagr: None,
             max_drawdown_pct: 0.0,
+            roll5y_pos_pct: None,
             fund_factor: None,
             age_years: None,
             life_cagr: None,
@@ -293,6 +295,28 @@ pub fn max_drawdown_pct(closes: &[f64]) -> f64 {
         }
     }
     worst
+}
+
+/// (consistency footer) % of rolling ~5-year windows (1260 sessions) whose endpoint return is
+/// positive, stepped weekly (5 sessions) so overlapping duplicates don't drown short histories.
+/// The literal buy-and-hold question: how often did 5 patient years pay? NOMINAL, not
+/// inflation-adjusted — the footer label says so. None = history shorter than one window (no
+/// windows means no claim, never a fake 100%); a non-positive close on either end skips that
+/// window (halted/bad bars).
+pub fn rolling_5y_positive_pct(closes: &[f64]) -> Option<f64> {
+    const WIN: usize = 5 * 252;
+    const STEP: usize = 5;
+    let (mut pos, mut n) = (0usize, 0usize);
+    let mut i = 0;
+    while i + WIN < closes.len() {
+        let (a, b) = (closes[i], closes[i + WIN]);
+        if a > 0.0 && b > 0.0 {
+            n += 1;
+            pos += (b > a) as usize;
+        }
+        i += STEP;
+    }
+    (n > 0).then(|| 100.0 * pos as f64 / n as f64)
 }
 
 /// Format a number with comma thousands separators and 2 decimals (Python `{:,.2f}`).
@@ -1636,6 +1660,24 @@ pub fn extreme_flags(closes: &[f64], tol: f64) -> (bool, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (consistency) rolling_5y_positive_pct: an always-rising series scores 100%, always-falling
+    /// 0%; exactly one window of history (or less) is None — no windows means NO CLAIM, never a
+    /// fake 100%; a non-positive close at a window start skips that window instead of counting it.
+    #[test]
+    fn rolling_consistency_semantics() {
+        const WIN: usize = 5 * 252;
+        let rising: Vec<f64> = (1..=WIN + 50).map(|i| i as f64).collect();
+        assert_eq!(rolling_5y_positive_pct(&rising), Some(100.0));
+        let falling: Vec<f64> = (1..=WIN + 50).rev().map(|i| i as f64).collect();
+        assert_eq!(rolling_5y_positive_pct(&falling), Some(0.0));
+        assert!(rolling_5y_positive_pct(&rising[..WIN]).is_none()); // no full window -> no claim
+        assert!(rolling_5y_positive_pct(&[]).is_none());
+        // bad bar: zero close at the ONLY window's start -> that window skips -> nothing counted
+        let mut bad = rising[..WIN + 1].to_vec();
+        bad[0] = 0.0;
+        assert!(rolling_5y_positive_pct(&bad).is_none());
+    }
 
     /// (#17/Step 4) `endpoint_avg`: n=1 = the raw last close (the inert default must be byte-identical);
     /// n>1 averages the last n; n beyond the history clamps to the whole series. Pure math, no config.
