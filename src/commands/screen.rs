@@ -221,6 +221,38 @@ fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) ->
         .collect()
 }
 
+/// (crossover) Fund picks whose top-10 holdings you ALREADY own directly as stocks — buying the
+/// fund silently doubles those positions (the `o` marker only catches the same ticker, sector
+/// tilt only the sector). Per fund: the shared names with their in-fund weights + the summed
+/// overlap, heaviest first. `held` = normalized broker stock bases (`Owned.stocks`). Zero-weight
+/// holdings rows (Yahoo omitted the weight) drop — same blindness the top-heavy footer documents.
+fn crossover_lines(
+    holdings: &std::collections::HashMap<String, Vec<(String, f64)>>,
+    held: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut rows: Vec<(f64, String)> = holdings
+        .iter()
+        .filter_map(|(fund, hs)| {
+            let shared: Vec<(&str, f64)> = hs
+                .iter()
+                .filter(|(h, w)| *w > 0.0 && held.contains(&crate::picks::yahoo_base(h)))
+                .map(|(h, w)| (h.as_str(), *w))
+                .collect();
+            (!shared.is_empty()).then(|| {
+                let sum: f64 = shared.iter().map(|(_, w)| w).sum();
+                let names = shared
+                    .iter()
+                    .map(|(h, w)| format!("{h} {:.0}%", 100.0 * w))
+                    .collect::<Vec<_>>()
+                    .join(" + ");
+                (sum, format!("  {fund:<10} {names} = {:.0}% of the fund", 100.0 * sum))
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    rows.into_iter().map(|(_, l)| l).collect()
+}
+
 /// (round 50) TER hike worth flagging: ≥0.05 pp is a real fee decision (Vanguard-scale cuts/hikes
 /// move in 0.05+ steps), below is basis-point noise / rounding drift in the source.
 const TER_HIKE_PP: f64 = 0.05;
@@ -695,6 +727,16 @@ pub async fn run(args: Vec<String>) {
                 println!("{l}");
             }
         }
+        // (crossover) the third concentration lens: fund picks × the stocks you already hold
+        // directly. Both inputs are already in memory (holdings cache + broker positions) — the
+        // cross was just never computed.
+        let cross = crossover_lines(&holdings, &owned.stocks);
+        if !cross.is_empty() {
+            println!("\nPortfolio crossover — picks that duplicate stocks you already hold directly (buying the fund doubles them):");
+            for l in &cross {
+                println!("{l}");
+            }
+        }
     }
 
     // (round 52) score-math walkthrough LAST among the analysis blocks: reference material, not an alert.
@@ -1031,7 +1073,7 @@ fn order_glue(rows: &[(String, Option<f64>, &'static str, Option<String>)], depl
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     /// (tests round 4) Stale-nets nag: never-ran/corrupt and stale stamps must nag with the exact
     /// run command; a fresh or exactly-30d stamp must stay silent (monthly cadence, `>` not `>=`).
@@ -1289,6 +1331,25 @@ mod tests {
         h.insert("NOWEIGHT.DE".into(), vec![("A".into(), 0.0), ("B".into(), 0.0)]); // 0% -> silent
         assert_eq!(concentration_lines(&h), vec!["HEAVY.DE 58%".to_string(), "MID.DE 45%".to_string()]);
         assert!(concentration_lines(&HashMap::new()).is_empty());
+    }
+
+    /// (crossover) a fund sharing held stocks prints them with summed weight (heaviest overlap
+    /// first); Yahoo symbols normalize to broker bases (NVDA matches nvda); zero-weight rows and
+    /// funds sharing nothing stay silent; empty held set -> no output at all.
+    #[test]
+    fn crossover_semantics() {
+        let mut h: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        h.insert("TECH.L".into(), vec![("NVDA".into(), 0.20), ("AAPL".into(), 0.17), ("MSFT".into(), 0.11)]);
+        h.insert("SMALL.DE".into(), vec![("NVDA".into(), 0.05), ("ZZZ".into(), 0.30)]);
+        h.insert("CLEAN.DE".into(), vec![("ZZZ".into(), 0.40)]); // shares nothing -> silent
+        h.insert("NOW8.DE".into(), vec![("NVDA".into(), 0.0)]); // weight omitted -> silent
+        let held: HashSet<String> = ["nvda".to_string(), "aapl".to_string()].into();
+        let lines = crossover_lines(&h, &held);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("  TECH.L") && lines[0].contains("NVDA 20% + AAPL 17% = 37% of the fund"));
+        assert!(lines[1].starts_with("  SMALL.DE") && lines[1].contains("NVDA 5% = 5% of the fund"));
+        assert!(!lines.iter().any(|l| l.contains("MSFT")), "unheld holding must not print: {lines:?}");
+        assert!(crossover_lines(&h, &HashSet::new()).is_empty());
     }
 
     /// (sector tilt) heaviest top sector prints first, top-2 sectors only, the bond leg shows only
