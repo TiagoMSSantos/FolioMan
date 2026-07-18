@@ -102,6 +102,15 @@ fn report_crypto_prints_no_statement_offline() {
 }
 
 #[test]
+fn sim_without_deploy_base_exit_0() {
+    // the CI fixture carries monthly_deploy_eur: 0, so `sim` gates off with the knob hint BEFORE
+    // reading the journal or touching the network — deterministic on any machine.
+    let (code, stdout, _) = run(&["sim"], None);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("monthly_deploy_eur"), "knob gate missing: {stdout}");
+}
+
+#[test]
 fn trade_abort_at_confirm_no_order() {
     // valid args reach the fat-finger gate; typing anything but "yes" aborts BEFORE any broker call.
     let (code, stdout, _) = run(&["trade", "binance", "buy", "BTCEUR", "1"], Some("no\n"));

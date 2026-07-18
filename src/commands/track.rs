@@ -17,8 +17,12 @@ pub(crate) const BOOK: usize = 10;
 
 #[derive(Serialize, Deserialize)]
 pub struct Snapshot {
-    pub date: String,                     // YYYY-MM-DD of the screen run
-    pub spx: Option<f64>,                 // ^GSPC close (EUR) that day — the benchmark leg
+    pub date: String, // YYYY-MM-DD of the screen run
+    pub spx: Option<f64>, // ^GSPC close (EUR) that day — the benchmark leg
+    /// ^GSPC % off its high that day — lets `sim` replay the deploy-line entry-state multiplier
+    /// at the journaled date. Absent on pre-sim lines (serde default) -> sim falls back to ×1.
+    #[serde(default)]
+    pub spx_off_hi: Option<f64>,
     pub rows: Vec<(String, Option<f64>)>, // (ticker, close EUR) in rank order, top slice
 }
 
@@ -188,7 +192,12 @@ mod tests {
     use super::*;
 
     fn snap(date: &str, spx: Option<f64>, rows: &[(&str, Option<f64>)]) -> Snapshot {
-        Snapshot { date: date.into(), spx, rows: rows.iter().map(|(t, p)| (t.to_string(), *p)).collect() }
+        Snapshot {
+            date: date.into(),
+            spx,
+            spx_off_hi: None,
+            rows: rows.iter().map(|(t, p)| (t.to_string(), *p)).collect(),
+        }
     }
 
     /// grade(): zero-day windows and unpriced books grade nothing; a priced book computes the
@@ -233,7 +242,8 @@ mod tests {
         );
     }
 
-    /// Snapshot JSONL round-trips (the journal format `screen` writes and `track` reads back).
+    /// Snapshot JSONL round-trips (the journal format `screen` writes and `track` reads back),
+    /// and pre-sim journal lines WITHOUT spx_off_hi still deserialize (serde default -> None).
     #[test]
     fn snapshot_roundtrip() {
         let s = snap("2026-07-16", Some(5000.0), &[("SXLK.L", Some(156.62)), ("ERR", None)]);
@@ -242,5 +252,9 @@ mod tests {
         assert_eq!(back.date, "2026-07-16");
         assert_eq!(back.rows.len(), 2);
         assert_eq!(back.rows[0].1, Some(156.62));
+
+        let old: Snapshot =
+            serde_json::from_str(r#"{"date":"2026-07-01","spx":5000.0,"rows":[["A",1.0]]}"#).unwrap();
+        assert!(old.spx_off_hi.is_none());
     }
 }

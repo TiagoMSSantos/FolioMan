@@ -465,6 +465,7 @@ pub async fn run(args: Vec<String>) {
     crate::commands::track::append_snapshot(&crate::commands::track::Snapshot {
         date: run_date.clone(),
         spx: spx.first().and_then(|q| q.price_eur),
+        spx_off_hi,
         rows: ranked_now
             .iter()
             .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur)))
@@ -859,10 +860,11 @@ pub(crate) fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> 
 }
 
 /// (tests round 5) The deploy composition — knob gate (≤0 = unset), unknown-state ×1 fallback,
-/// base × ladder — in ONE place. The banner/`size` line (via [`deploy_line`]) and the order-glue
-/// QTY sizing both consume this, so the € the banner announces and the € the orders split can
-/// never disagree; until now only the multiplier was shared and the composition lived twice.
-fn deploy_scaled_eur(base_eur: f64, off_hi: Option<f64>) -> Option<(f64, f64)> {
+/// base × ladder — in ONE place. The banner/`size` line (via [`deploy_line`]), the order-glue
+/// QTY sizing, and `sim`'s monthly paper budget all consume this, so the € the banner announces,
+/// the € the orders split, and the € the sim deploys can never disagree; until now only the
+/// multiplier was shared and the composition lived twice.
+pub(crate) fn deploy_scaled_eur(base_eur: f64, off_hi: Option<f64>) -> Option<(f64, f64)> {
     if base_eur <= 0.0 {
         return None;
     }

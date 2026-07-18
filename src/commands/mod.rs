@@ -8,6 +8,7 @@ pub mod check;
 pub mod perf;
 pub mod report;
 pub mod screen;
+pub mod sim;
 pub mod size;
 pub mod track;
 pub mod trade;
