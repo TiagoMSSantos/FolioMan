@@ -315,7 +315,7 @@ pub struct Urls {
     pub yahoo_search: String,  // {ticker}
     pub yahoo_quote: String,   // {ticker} (human quote page, for `perf`)
     pub euribor: String,
-    pub us_cpi: String, // BLS CPI-U base /data/ URL (v1); seriesID + year window POSTed by fetch_us_inflation, which swaps to /v2/ when BLS_API_KEY env is set (20y/call vs v1's 10y, 500 vs 25 req/day)
+    pub us_cpi: String, // BLS CPI-U base /data/ URL (v1); seriesID + year window POSTed by fetch_us_inflation — keyless it POSTs the fresh 10y window daily plus a PERMANENT old-decade window once (merged, fills 20Y); swaps to /v2/ when BLS_API_KEY env is set (20y/call vs v1's 10y, 500 vs 25 req/day)
     pub pt_cpi: String,
     pub eu_hicp: String,
     pub coingecko_markets: String, // {n} = top-N crypto by market cap -> screen universe

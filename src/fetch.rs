@@ -2893,6 +2893,52 @@ mod tests {
         assert_eq!(parse_fund_pe(&serde_json::json!({})), None);
     }
 
+    /// (us 20Y) fixture: one December index row per year, 3%/yr compounding so every YoY rate
+    /// that has its predecessor level in the payload exists and equals 3.0.
+    fn bls_dec_levels(years: std::ops::RangeInclusive<i32>) -> serde_json::Value {
+        let data: Vec<serde_json::Value> = years
+            .map(|y| {
+                serde_json::json!({
+                    "year": y.to_string(),
+                    "period": "M12",
+                    "value": format!("{:.6}", 100.0 * 1.03f64.powi(y - 2006)),
+                })
+            })
+            .collect();
+        serde_json::json!({"Results": {"series": [{"data": data}]}})
+    }
+
+    /// (us 20Y) The starved column and its fix in one place: the fresh keyless window alone
+    /// (2017..2026 levels -> 9 rates) can't fill a 20Y compound; merged with the old-decade
+    /// window at the LEVEL layer, the cross-window year (2017) gets its predecessor and the map
+    /// reaches 20 contiguous rates. Merging parsed RATES instead of levels fails exactly here.
+    #[test]
+    fn bls_two_window_merge() {
+        let old = bls_dec_levels(2006..=2016);
+        let new = bls_dec_levels(2017..=2026);
+        let new_alone = core::parse_bls_cpi(&new);
+        assert_eq!(new_alone.len(), 9); // 2018..2026 — 2017 has no in-window predecessor
+        assert_eq!(core::inflation_compounded(&new_alone, 20), None); // the n/a being fixed
+        let merged = core::parse_bls_cpi(&merge_bls_payloads(Some(&old), &new));
+        assert_eq!(merged.len(), 20); // 2007..2026 — 2017 healed across the window seam
+        assert!(merged.contains_key(&2017), "cross-window year must gain its rate");
+        let cum = core::inflation_compounded(&merged, 20).unwrap();
+        assert!((cum - (1.03f64.powi(20) - 1.0) * 100.0).abs() < 1e-4, "20 x 3% compound, got {cum}");
+        // absent/shapeless old leaves the fresh payload untouched
+        assert_eq!(merge_bls_payloads(None, &new), new);
+        assert_eq!(merge_bls_payloads(Some(&serde_json::json!({})), &new), new);
+    }
+
+    /// (us 20Y) Year-hole guard: the permanent old-window cache is valid only while it still
+    /// yields the rate for now-10, the year adjacent to the fresh window. Same cache, one
+    /// calendar year later -> stale -> refetch (silent short "20Y" compounds never happen).
+    #[test]
+    fn bls_old_window_revalidation() {
+        let old = bls_dec_levels(2006..=2016); // rates 2007..2016
+        assert!(old_window_covers(&old, 2026)); // 2026-10 = 2016 -> covered
+        assert!(!old_window_covers(&old, 2027)); // 2017 rate missing -> hole -> refetch
+    }
+
     /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but
     /// ROE -27% => equity < 0 => not meaningful). Genuine loss-makers and normal filers pass through.
     #[test]
@@ -3389,21 +3435,68 @@ async fn cached_macro<F: Fn(&Value) -> BTreeMap<i32, f64>>(client: &Client, url:
     macro_cache_read(name).map(|d| parse(&d)).unwrap_or_default()
 }
 
+/// (us 20Y) Splice the permanent old-decade window's raw index rows onto the fresh window's
+/// payload so ONE parse sees continuous (year, month) LEVELS. Rates need each year's
+/// predecessor level, so merging parsed RATES instead would silently drop the cross-window
+/// year. `old` absent/shapeless → `new` unchanged.
+fn merge_bls_payloads(old: Option<&Value>, new: &Value) -> Value {
+    let path = "/Results/series/0/data";
+    let (Some(o), Some(n)) = (
+        old.and_then(|v| v.pointer(path)).and_then(Value::as_array),
+        new.pointer(path).and_then(Value::as_array),
+    ) else {
+        return new.clone();
+    };
+    let mut data = o.clone();
+    data.extend(n.iter().cloned());
+    serde_json::json!({"Results": {"series": [{"data": data}]}})
+}
+
+/// (us 20Y) Year-hole guard: a cached old window is valid only while it still yields the rate
+/// for year now-10, the year ADJACENT to the fresh (now-9..now) window. As the calendar rolls,
+/// an aging cache would leave a missing level year in between and the merged map would silently
+/// compound a too-short "20Y" — an UNDERSTATED number, worse than n/a. False → refetch the old
+/// window (one extra call per calendar YEAR).
+fn old_window_covers(old: &Value, now: i32) -> bool {
+    core::parse_bls_cpi(old).contains_key(&(now - 10))
+}
+
 pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
     use chrono::Datelike;
     // POST-based (year window in the body), so it drives the macro cache by hand instead of cached_macro.
+    let now = chrono::Utc::now().year();
+    let key = std::env::var("BLS_API_KEY").ok().filter(|k| !k.is_empty());
+    // (us 20Y) Second, PERMANENT old-decade window (now-19..now-10): the keyless v1 API caps at
+    // 10 years/call, so the fresh window alone yields ~9 annual rates and the 20Y column starved
+    // at n/a. Unadjusted CPI-U (CUUR0000SA0) history never changes, so this window is fetched
+    // once and cached with NO TTL — presence + old_window_covers = valid; steady state stays ONE
+    // call/day (the retired 3-call keyless design re-paid its whole budget daily and exhausted
+    // the shared-IP 25/day cap). A cold cache or a new calendar year costs one extra call; a
+    // failed old fetch just leaves today's behavior (20Y n/a) until a later run heals it. The
+    // keyed v2 path (20y/call) never fetches it but still merges a present copy.
+    let mut old = macro_cache_read("us_cpi_old").filter(|d| old_window_covers(d, now));
+    if old.is_none() && key.is_none() {
+        let mut b = serde_json::Map::new();
+        b.insert("seriesid".into(), serde_json::json!(["CUUR0000SA0"]));
+        b.insert("startyear".into(), (now - 19).to_string().into());
+        b.insert("endyear".into(), (now - 10).to_string().into()); // 10 years inclusive: at the v1 cap
+        if let Some(d) = post_json(client, &urls.us_cpi, &serde_json::Value::Object(b)).await {
+            if !core::parse_bls_cpi(&d).is_empty() {
+                macro_cache_write("us_cpi_old", &d);
+                old = Some(d);
+            }
+        }
+    }
+    let finish = |new_payload: &Value| core::parse_bls_cpi(&merge_bls_payloads(old.as_ref(), new_payload));
     if macro_cache_fresh("us_cpi") {
-        if let Some(m) = macro_cache_read("us_cpi").map(|d| core::parse_bls_cpi(&d)).filter(|m| !m.is_empty()) {
+        if let Some(m) = macro_cache_read("us_cpi").map(|d| finish(&d)).filter(|m| !m.is_empty()) {
             return m;
         }
     }
-    // BLS year windows are honored only via POST (seriesid in the body, base /data/ URL). The keyless v1
-    // API caps at 25 requests/DAY (shared per-IP) and 10 years/call, so we make ONE 10y call — enough
-    // for the 5Y/10Y columns; the 20Y column then mirrors ~10y. Set BLS_API_KEY (free, instant signup at
-    // data.bls.gov/registrationEngine) to use v2: 500 req/day and 20y/call, so a single call fills the
-    // full 20Y. note: 1 call either way — the old 3-call keyless version exhausted the 25/day cap.
-    let now = chrono::Utc::now().year();
-    let key = std::env::var("BLS_API_KEY").ok().filter(|k| !k.is_empty());
+    // BLS year windows are honored only via POST (seriesid in the body, base /data/ URL). Keyless
+    // v1: 25 requests/DAY (shared per-IP), 10 years/call — the fresh window covers 5Y/10Y and,
+    // merged with the old-decade cache, the 20Y. Set BLS_API_KEY (free, instant signup at
+    // data.bls.gov/registrationEngine) to use v2: 500 req/day and 20y/call in one request.
     let (url, start, mut body) = match &key {
         Some(k) => {
             let mut b = serde_json::Map::new();
@@ -3416,15 +3509,15 @@ pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f
     body.insert("startyear".into(), start.to_string().into());
     body.insert("endyear".into(), now.to_string().into());
     // a throttled BLS reply is still valid JSON with empty Results, so "parsed non-empty" is the
-    // success test — never cache a dud, and fall back to the stale copy instead of an empty map.
+    // success test (on the NEW payload alone — never cache a dud), and the stale fallback still
+    // beats an empty map. Every return path parses the old-window MERGE, not the bare payload.
     if let Some(d) = post_json(client, &url, &serde_json::Value::Object(body)).await {
-        let parsed = core::parse_bls_cpi(&d);
-        if !parsed.is_empty() {
+        if !core::parse_bls_cpi(&d).is_empty() {
             macro_cache_write("us_cpi", &d);
-            return parsed;
+            return finish(&d);
         }
     }
-    macro_cache_read("us_cpi").map(|d| core::parse_bls_cpi(&d)).unwrap_or_default()
+    macro_cache_read("us_cpi").map(|d| finish(&d)).unwrap_or_default()
 }
 
 /// {year -> annual CPI %} for Portugal from Banco de Portugal (series 5721550), each
