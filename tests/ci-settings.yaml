@@ -219,6 +219,12 @@ buy_heuristic:
                                  #   so validated END-TO-END (not backtest-blind): 2/5/10/20 sweep gave Δedge +5.4/+13.2/+10.3/-38.0
                                  #   same-batch, rho intact at +0.13 — clean hump, knee at 5. A 6M-momentum twin swept in the same
                                  #   run was null at every weight and was NOT wired. 0 = off.
+  growth_underwater_weight: 0.3  # SCORE: additive penalty per year of the LONGEST below-prior-peak stretch
+                                 #   (drawdown DURATION; the maxdd cap #26 only sees depth). Rebuilt in backtest_quote
+                                 #   (daily cadence) so validated END-TO-END. Standalone probe (universe fund, 2026-07-19):
+                                 #   n=8571 rho +0.26 edge +27.9 OOS +0.40|+0.14 both +. Candidate lane run at 0.3 same-batch:
+                                 #   edge +25.5->+27.5, winsorized +15.7->+17.7, rho intact +0.12, OOS -0.03|+0.26 -> -0.02|+0.27,
+                                 #   worst era -11.7->-4.8 (nothing degraded). 0 = off.
   growth_min_score: 5.0          # hide growth rows scoring <= this; 0 = show all top_picks
   growth_min_score_etf: 4.0      # ETF-only floor. ETF scores structurally cap ~5.6 (accel~0: a diversified basket doesn't accelerate; quality/liq/fund all 0) so the stock-calibrated 5.0 floor (fine at 26% of the ~19 stock ceiling) sits at ~89% of the ETF ceiling and shows only a sliver. 4.0 = surface the diversified broad-tech tier (Nasdaq-100 / World-IT / S&P-IT wrappers score 4.5-5.6; TER column lets you pick the cheapest wrapper) while still trimming the young single-sector padding (Europe-Financials 3.2, 6y). DISPLAY-only -> validated edge untouched. Does NOT surface broad S&P500 core (VUAA/SPYL young=no 5y leg, AUM5 ~8% CAGR=market-beta<growth_min_cagr) — history/thesis wall, not this floor
   growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation

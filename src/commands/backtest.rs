@@ -320,6 +320,7 @@ pub async fn run(args: Vec<String>) {
         ("growth_fund_weight", |tuning| tuning.growth_fund_weight = 0.0), // (G) Δ shows the as-of fund factor's through-the-lane edge; ~0 when weight is already 0 (default) or no fund coverage
         ("growth_mom121_weight", |tuning| tuning.growth_mom121_weight = 0.0), // (M) Δ shows the 12-1 momentum term's through-the-lane edge; ~0 when weight is 0 (default)
         ("growth_smoothness_weight", |tuning| tuning.growth_smoothness_weight = 0.0), // (E) Δ shows the trend-smoothness reward's through-the-lane edge; ~0 when weight is 0 (default)
+        ("growth_underwater_weight", |tuning| tuning.growth_underwater_weight = 0.0), // Δ shows the drawdown-duration penalty's through-the-lane edge; ~0 when weight is 0 (default)
     ];
     // (#10) loosen each numeric growth GATE one notch, relative to the loaded tuning (respects settings.yaml
     // overrides). The sweep reports the mean forward return of the names each loosening newly admits.
@@ -341,6 +342,7 @@ pub async fn run(args: Vec<String>) {
         report_fund_lane(&samples);
         sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
     }
+    report_risk_lane(&samples); // closes-derived risk stats, standalone — no fundamentals needed
     // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One index fetch
     // (survivorship-clean), matched to the sample cadence. realized is untouched by de-mean.
     // (Phase E) with use_adjusted_close on, the picks' realized returns include dividends, so the fair
@@ -507,6 +509,49 @@ fn report_fund_lane(samples: &[Sample]) {
             samples.iter().filter_map(|s| s.fund.as_ref().and_then(get).map(|v| (s, v))).collect();
         if pairs.len() < 4 {
             println!("  {:<14} n/a (only {} cutoffs carry this factor)", name, pairs.len());
+            continue;
+        }
+        let sc: Vec<f64> = pairs.iter().map(|(_, v)| *v).collect();
+        let rels: Vec<f64> = pairs.iter().map(|(s, _)| s.relative).collect();
+        let rho = core::spearman(&sc, &rels).map_or("n/a".to_string(), |v| format!("{v:+.2}"));
+        let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
+        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        let half = v.len() / 2;
+        let edge = mean(&v[..half]) - mean(&v[v.len() - half..]);
+        let mid = pairs.len() / 2; // pairs preserve the date order of `samples` -> early-vs-late OOS
+        println!(
+            "  {:<14} n={:<5} rho {}  edge {:+.1}  OOS {} | {}",
+            name, pairs.len(), rho, edge, split_rho(&pairs[..mid]), split_rho(&pairs[mid..])
+        );
+    }
+}
+
+/// Closes-derived risk stats probed STANDALONE against the same peer-relative forward return —
+/// the price-side twin of `report_fund_lane`, same validation gate: a stat earns a `growth_score`
+/// term only on real edge with both-positive OOS. Extracted from `Sample.quote` (filled by
+/// `backtest_quote` on the daily cadence; None elsewhere -> the probe skips). `underwater_neg`
+/// negates years-underwater so "higher = better" matches the rho/edge convention of every probe.
+const RISK_FACTORS: &[(&str, fn(&Quote) -> Option<f64>)] = &[
+    ("consistency_5y", |q| q.roll5y_pos_pct),               // % of rolling 5y windows positive
+    ("worst_5y", |q| q.worst_5y_pct),                       // single worst rolling 5y outcome
+    ("underwater_neg", |q| q.underwater_yrs.map(|y| -y)),   // longest below-peak stretch, negated
+];
+
+fn report_risk_lane(samples: &[Sample]) {
+    println!("\n── PRICE-RISK (closes-derived, standalone probes) ──");
+    let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
+    let split_rho = |s: &[(&Sample, f64)]| {
+        core::spearman(
+            &s.iter().map(|x| x.1).collect::<Vec<_>>(),
+            &s.iter().map(|x| x.0.relative).collect::<Vec<_>>(),
+        )
+        .map_or("n/a".to_string(), |v| format!("{v:+.2}"))
+    };
+    for (name, get) in RISK_FACTORS {
+        let pairs: Vec<(&Sample, f64)> =
+            samples.iter().filter_map(|s| get(&s.quote).map(|v| (s, v))).collect();
+        if pairs.len() < 4 {
+            println!("  {:<14} n/a (only {} cutoffs carry this stat)", name, pairs.len());
             continue;
         }
         let sc: Vec<f64> = pairs.iter().map(|(_, v)| *v).collect();
@@ -1893,6 +1938,23 @@ mod tests {
         let r = benchmark_fwd(&dates, &closes, ymd(2000, 1, 1), 12).unwrap();
         assert!((ann(r, 12) - 8.0).abs() < 0.1); // 12y forward from 2000 -> ~+8%/yr
         assert!(benchmark_fwd(&dates, &closes, ymd(2010, 1, 1), 12).is_none()); // no 12y window left
+    }
+
+    /// PRICE-RISK probe extractors: pass-through for consistency/worst-5y, and the underwater
+    /// NEGATION pinned (years-underwater is bad-when-high, so the probe must see it sign-flipped
+    /// to share the higher-is-better rho/edge convention — dropping the `-` silently reads the
+    /// probe backwards).
+    #[test]
+    fn risk_factor_extractors() {
+        let mut q = Quote::stub("X", "1", "", "X");
+        q.roll5y_pos_pct = Some(90.0);
+        q.worst_5y_pct = Some(-12.0);
+        q.underwater_yrs = Some(2.5);
+        let get = |name: &str| RISK_FACTORS.iter().find(|(n, _)| *n == name).unwrap().1(&q);
+        assert_eq!(get("consistency_5y"), Some(90.0));
+        assert_eq!(get("worst_5y"), Some(-12.0));
+        assert_eq!(get("underwater_neg"), Some(-2.5));
+        assert!(RISK_FACTORS.iter().all(|(_, f)| f(&Quote::stub("Y", "1", "", "Y")).is_none()));
     }
 
     #[test]

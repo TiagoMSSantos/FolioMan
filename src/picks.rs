@@ -435,7 +435,8 @@ struct ScoreParts {
     fund: f64,         // (G) growth_fund_weight × clamp(fund_factor, 0, cap)
     mom121: f64,       // (M) growth_mom121_weight × clamp(12-1 mom, 0, cap)
     smooth: f64,       // (E) growth_smoothness_weight × trend_r2
-    base: f64,         // sum of the eight terms above
+    underwater: f64,   // −growth_underwater_weight × underwater_yrs (drawdown-duration penalty; 0 when off/None)
+    base: f64,         // sum of the nine terms above
     proximity: f64,    // range_pct / 100
     value_raw: f64,    // (E) raw P/E value_factor (ref_pe/PE clamped)
     value: f64,        // 1 + growth_value_weight × (value_raw − 1)
@@ -635,7 +636,12 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // peaked at 5 (Δedge +13.2 same-batch, rho intact; 20 collapsed -38). Weight 0 = term inert.
     // A 6M-momentum twin (F) was swept in the same run and came back null — not wired.
     let smooth = tuning.growth_smoothness_weight * quote.trend_r2;
-    let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term + smooth;
+    // drawdown-DURATION penalty: dock per year of the longest below-prior-peak stretch (the depth cap
+    // #26 can't see a shallow-but-endless bleed). Price-only, rebuilt in backtest_quote (daily cadence)
+    // -> validated end-to-end; standalone probe 2026-07-19: rho +0.26, edge +27.9, OOS +0.40|+0.14.
+    // None (no history) -> no penalty, matching the missing-data stance of every gate. Weight 0 = off.
+    let underwater = -tuning.growth_underwater_weight * quote.underwater_yrs.unwrap_or(0.0);
+    let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term + smooth + underwater;
     let value_raw = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     // (Item 20) dial the BLIND P/E multiplier's authority toward neutral 1.0. weight 1.0 = full ×0.5..1.5
     // swing (default, unchanged); 0.0 = off. The validated edge was measured with this term OFF (pe_ratio
@@ -697,8 +703,8 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     };
     Some(ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
-        fund, mom121: mom_term, smooth, base, proximity, value_raw, value, trust, overext, overext_cap,
-        overext_damp, damp, liq_bonus, ter_damp, score,
+        fund, mom121: mom_term, smooth, underwater, base, proximity, value_raw, value, trust, overext,
+        overext_cap, overext_damp, damp, liq_bonus, ter_damp, score,
     })
 }
 
@@ -951,6 +957,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     s.push_str(&format!("    fund     = growth_fund_weight × clamp(fund_factor)    = {:.2}\n", p.fund));
     s.push_str(&format!("    mom121   = growth_mom121_weight × clamp(12-1 mom)     = {:.2}\n", p.mom121));
     s.push_str(&format!("    smooth   = growth_smoothness_weight × trend_r2 (R²)   = {:.2}\n", p.smooth));
+    s.push_str(&format!("    underwtr = −growth_underwater_weight × underwater_yrs = {:.2}\n", p.underwater));
     s.push_str(&format!("    base (sum)                                            = {:.2}\n", p.base));
     s.push_str(&format!("  proximity    = range_pct / 100                          = {:.1} / 100 = {:.3}\n",
         p.proximity * 100.0, p.proximity));
@@ -2205,6 +2212,17 @@ mod tests {
     assert!(growth_score(&straight, &sm).unwrap() > growth_score(&lumpy, &sm).unwrap());
     lumpy.trend_r2 = 0.9; // weight 0: r2 inert
     assert_eq!(growth_score(&lumpy, &BuyHeuristic::default()), growth_score(&quote(2.0, strong), &BuyHeuristic::default()));
+    // drawdown-duration penalty: same quote, longer underwater stretch -> lower score; None = no
+    // penalty (equals an explicit 0.0y); weight 0 (default) leaves the score untouched by the field.
+    let uw = BuyHeuristic { growth_underwater_weight: 0.3, ..BuyHeuristic::default() };
+    let quick = quote(2.0, strong);
+    let mut bleeder = quick.clone();
+    bleeder.underwater_yrs = Some(3.0);
+    assert!(growth_score(&bleeder, &uw).unwrap() < growth_score(&quick, &uw).unwrap());
+    let mut zeroed = quick.clone();
+    zeroed.underwater_yrs = Some(0.0); // fresh-high name: 0y stretch == None (no claim, no dock)
+    assert_eq!(growth_score(&zeroed, &uw), growth_score(&quick, &uw));
+    assert_eq!(growth_score(&bleeder, &BuyHeuristic::default()), growth_score(&quick, &BuyHeuristic::default())); // weight 0: field inert
 
     // (X) EXIT-review diff: only PRIOR-PASSING names that fail NOW get a line — still-passing and
     // never-passing names are skipped; a structurally unassessable one (unknown turnover) is flagged.

@@ -1546,6 +1546,14 @@ pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: 
     quote.trend_r2 = trend_r2(c);
     quote.trend_cagr = trend_cagr(c, cadence); // (#14) same fit, annualized by the run's cadence -> train==serve
     quote.max_drawdown_pct = max_drawdown_pct(c);
+    // closes-derived risk stats for the standalone PRICE-RISK probes (backtest report only —
+    // no score path reads these). Window constants are daily-session-based (5×252, /252), so
+    // fill on the daily cadence only; a monthly run leaves them None (probes then skip).
+    if cadence == 252 {
+        quote.roll5y_pos_pct = rolling_5y_positive_pct(c);
+        quote.underwater_yrs = longest_underwater_yrs(c);
+        quote.worst_5y_pct = worst_rolling_5y_pct(c);
+    }
     // (#20) the LIVE growth lane excludes a name whose turnover is UNKNOWN (an untradeable/dead listing
     // like 0Y72.L). backtest_quote can't reconstruct turnover, but that absence is NOT a liquidity signal
     // here — mark it "liquid enough" so the exclusion stays a LIVE-ONLY gate (never fires in the backtest).
