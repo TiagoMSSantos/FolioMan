@@ -246,7 +246,7 @@ async fn intraday_closes(client: &Client, urls: &Urls, ticker: &str) -> Option<V
     Some(closes.iter().filter_map(|c| c.as_f64()).collect())
 }
 
-async fn fetch_news(client: &Client, urls: &Urls, ticker: &str) -> Vec<String> {
+pub async fn fetch_news(client: &Client, urls: &Urls, ticker: &str) -> Vec<String> {
     let url = urls.yahoo_search.replace("{ticker}", ticker);
     let items: Vec<Value> = get_json(client, &url)
         .await

@@ -291,6 +291,25 @@ fn twin_groups<'q>(names: &[String], quotes: &'q [Quote]) -> Vec<(&'q str, Vec<(
         .collect()
 }
 
+/// (r20) Headlines footer feed: input order preserved (rank then pinned), names with no or
+/// empty headline skipped silently — a headless row would be a fake "no news" claim. Yahoo's
+/// search feed falls back to generic market stories, handing several names the SAME headline,
+/// so exact-duplicate titles merge into one row listing every name that returned it.
+fn headline_rows(
+    names: &[String],
+    first_title: &std::collections::BTreeMap<String, String>,
+) -> Vec<(Vec<String>, String)> {
+    let mut rows: Vec<(Vec<String>, String)> = Vec::new();
+    for t in names {
+        let Some(title) = first_title.get(t).filter(|s| !s.is_empty()) else { continue };
+        match rows.iter_mut().find(|(_, existing)| existing == title) {
+            Some((group, _)) => group.push(t.clone()),
+            None => rows.push((vec![t.clone()], title.clone())),
+        }
+    }
+    rows
+}
+
 /// (r14) "hedged" as a whole word — split on non-alphanumerics so "unhedged"/"Hedge" never match
 /// (same word-split stance as fetch's use_from_name: substrings are trap city in fund names).
 fn has_hedged_token(s: &str) -> bool {
@@ -928,6 +947,31 @@ pub async fn run(args: Vec<String>) {
                 .collect::<Vec<_>>()
                 .join(", ");
             println!("\nFund survival — AUM under €100M (liquidation/closure risk over a decades hold; a forced exit is a taxable event): {cells}");
+        }
+    }
+
+    // (r20) headlines footer — the LAST census shelf item: latest first headline per ranked or
+    // pinned name, context only and labeled so: news is momentum noise against a 20y hold, the
+    // case for a name lives in the numbers above. Fetched here for just the footer names — the
+    // universe quotes call keeps news OFF (~500 wasted paced calls otherwise).
+    {
+        let mut first_title: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for t in &footer_names {
+            if let Some(title) =
+                fetch::fetch_news(&client, &settings.urls, t).await.into_iter().next()
+            {
+                first_title.insert(t.clone(), title);
+            }
+        }
+        let rows = headline_rows(&footer_names, &first_title);
+        if !rows.is_empty() {
+            println!("\nHeadlines — latest news per name (context only, NOT a 20y signal):");
+            for (group, title) in rows {
+                let labels =
+                    group.iter().map(|t| footer_label(t, &ranked_now)).collect::<Vec<_>>().join(", ");
+                println!("  {labels:<9} {title}");
+            }
         }
     }
 
@@ -1857,6 +1901,31 @@ mod tests {
         // best compounder first — the order the header promises
         assert_eq!(twins, &[("NASD.L", 61.6), ("ANX.PA", 60.8), ("CSNDX.SW", 59.9)]);
         assert!(twin_groups(&[], &quotes).is_empty());
+    }
+
+    /// (r20) headline rows: input order preserved, empty-title and missing names skipped (a
+    /// headless name must never print a blank "no news" row), and exact-duplicate titles merge
+    /// into one row — Yahoo's generic-story fallback hands several names the same headline.
+    #[test]
+    fn headline_rows_semantics() {
+        let generic = "The Average 401(k) Is Misleading You".to_string();
+        let titles: std::collections::BTreeMap<String, String> = [
+            ("NVDA".to_string(), "Nvidia ships new chip".to_string()),
+            ("VUAA.DE".to_string(), generic.clone()),
+            ("SPYL.DE".to_string(), generic.clone()),
+            ("HEADLESS.L".to_string(), String::new()), // fetched but headless
+        ]
+        .into();
+        let names = ["VUAA.DE", "MISSING.L", "HEADLESS.L", "NVDA", "SPYL.DE"].map(String::from);
+        // VUAA row first = input order; SPYL merges into it; MISSING + HEADLESS skipped
+        assert_eq!(
+            headline_rows(&names, &titles),
+            vec![
+                (vec!["VUAA.DE".to_string(), "SPYL.DE".to_string()], generic),
+                (vec!["NVDA".to_string()], "Nvidia ships new chip".to_string())
+            ]
+        );
+        assert!(headline_rows(&[], &titles).is_empty());
     }
 
     /// (r14) hedged detection: whole-word only — "UnHedged"/"Hedge" must never flag (the
