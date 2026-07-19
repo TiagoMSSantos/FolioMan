@@ -252,6 +252,18 @@ fn year_cells(years: &[(i32, f64)], max_years: usize) -> String {
     years[skip..].iter().map(|(y, v)| format!("{y} {v:+.0}%")).collect::<Vec<_>>().join(" · ")
 }
 
+/// (r13) One row per ranked fund WITH a captured BF benchmark, RANK order; benchless
+/// (venue/regulatory-only) names are skipped — no claim, same stance as the other footers.
+fn bench_rows<'q>(ranked: &[String], quotes: &'q [core::Quote]) -> Vec<(&'q str, &'q str)> {
+    ranked
+        .iter()
+        .filter_map(|t| {
+            let q = quotes.iter().find(|q| &q.ticker == t)?;
+            Some((q.ticker.as_str(), q.benchmark.as_deref()?))
+        })
+        .collect()
+}
+
 /// (crossover) Fund picks whose top-10 holdings you ALREADY own directly as stocks — buying the
 /// fund silently doubles those positions (the `o` marker only catches the same ticker, sector
 /// tilt only the sector). Per fund: the shared names with their in-fund weights + the summed
@@ -692,6 +704,16 @@ pub async fn run(args: Vec<String>) {
             println!("\nCalendar years — each full year's return (regime check: does it lose whole years?):");
             for (t, cells) in rows {
                 println!("  {t:<9} {cells}");
+            }
+        }
+
+        // (r13) benchmark display: the BF index string is already on the Quote for twin hints —
+        // showing it answers "what am I actually buying" and names hedged share classes outright.
+        let rows = bench_rows(&ranked_now, &quotes);
+        if !rows.is_empty() {
+            println!("\nIndex — the benchmark each fund tracks (BF-normalized; hedged classes say so):");
+            for (t, b) in rows {
+                println!("  {t:<9} {b}");
             }
         }
     }
@@ -1560,6 +1582,29 @@ mod tests {
         assert_eq!(year_cells(&yrs, 8), "2022 -30% · 2023 +45% · 2024 +10%");
         assert_eq!(year_cells(&yrs, 2), "2023 +45% · 2024 +10%");
         assert_eq!(year_cells(&[], 8), "");
+    }
+
+    /// (r13) benchmark footer feed: RANK order preserved, benchless quotes and unknown ranked
+    /// tickers skipped silently (venue/regulatory-only funds carry no BF bench — no claim).
+    #[test]
+    fn bench_rows_semantics() {
+        let q = |t: &str, b: Option<&str>| {
+            let mut quote = Quote::stub(t, "1", "", t);
+            quote.benchmark = b.map(str::to_string);
+            quote
+        };
+        let quotes = vec![
+            q("A.L", Some("s&p 500 information technology")),
+            q("B.L", None),
+            q("C.L", Some("nasdaq-100")),
+        ];
+        let ranked = ["C.L", "B.L", "A.L", "GHOST.L"].map(String::from);
+        // C before A = rank order, not quotes order; B (benchless) + GHOST (unknown) skipped
+        assert_eq!(
+            bench_rows(&ranked, &quotes),
+            vec![("C.L", "nasdaq-100"), ("A.L", "s&p 500 information technology")]
+        );
+        assert!(bench_rows(&[], &quotes).is_empty());
     }
 
     /// (fund valuation) cheapest-first ordering, pe-less funds silent, empty map -> None. The
