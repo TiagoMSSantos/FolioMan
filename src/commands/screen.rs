@@ -1289,6 +1289,16 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (round 27) method line: the wide-backtest verdict (top-10 held-book vs the index over the
+    // whole 54y sample) journaled by `backtest universe`, cited here so the buy surface carries
+    // the long-horizon proof of the ranking it prints — not just this run's live grade. Drift =
+    // the tuning changed since the run, so the numbers are stale; say so. Absent file (never
+    // backtested) = silent. Zero fetch.
+    if let Some(v) = crate::commands::backtest::read_verdict() {
+        let drift = v.tuning_fp != crate::commands::backtest::tuning_fingerprint(&settings.buy_heuristic);
+        println!("\n{}", crate::commands::backtest::verdict_line(&v, drift));
+    }
+
     // Conviction bridge: the per-name depth lives in other subcommands, but nothing on this
     // surface said so — the ranking is where a pick decision starts, so the pointer belongs here.
     println!(

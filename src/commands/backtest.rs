@@ -35,6 +35,71 @@ use chrono::Datelike;
 use futures::stream::{self, StreamExt};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+/// The journaled method verdict — written by WIDE (`universe`) runs only, read by the screen's
+/// method footer (track-pattern twin: one writer, one reader, same struct, so the two surfaces
+/// can't disagree). A watchlist run must never overwrite this: its tiny survivor sample isn't
+/// the method's proof.
+pub(crate) const VERDICT_FILE: &str = ".backtest_verdict.json";
+
+/// The unconditional held-book verdict of one wide backtest run: the "all entries" row of the
+/// entry-state table (full gated pool, growth_score ranking, equal-weight top-10, held `years`
+/// forward, vs the index) plus the run date and a fingerprint of the tuning that earned it.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct Verdict {
+    pub(crate) date: String,
+    pub(crate) years: i64,
+    pub(crate) windows: usize,
+    pub(crate) book: f64,
+    pub(crate) excess: f64,
+    pub(crate) win: f64,
+    pub(crate) worst: f64,
+    pub(crate) oos_early: f64,
+    pub(crate) oos_late: f64,
+    pub(crate) tuning_fp: String,
+}
+
+/// The ONE fingerprint both surfaces use (backtest stamps it, screen compares it) — a tuning
+/// knob changed since the run means the cited numbers were never earned by the current settings.
+pub(crate) fn tuning_fingerprint(t: &BuyHeuristic) -> String {
+    serde_json::to_string(t).unwrap_or_default()
+}
+
+/// Malformed/corrupt JSON is None — a broken file must SILENCE the screen line, never
+/// fabricate a verdict. (Kept pure and separate from the fs read so the failure mode is tested.)
+pub(crate) fn parse_verdict(raw: &str) -> Option<Verdict> {
+    serde_json::from_str(raw).ok()
+}
+
+pub(crate) fn read_verdict() -> Option<Verdict> {
+    parse_verdict(&std::fs::read_to_string(config::data_path(VERDICT_FILE)).ok()?)
+}
+
+fn write_verdict(v: &Verdict) {
+    let ok = serde_json::to_string(v)
+        .ok()
+        .and_then(|s| std::fs::write(config::data_path(VERDICT_FILE), s).ok());
+    match ok {
+        Some(()) => eprintln!("backtest: method verdict journaled — the screen footer will cite it"),
+        None => eprintln!("WARNING: could not write {VERDICT_FILE} — the screen's method line stays absent/stale"),
+    }
+}
+
+/// One-line rendering of [`Verdict`] for the screen footer. `drift` = the current tuning no
+/// longer matches the fingerprint that earned these numbers — say so instead of citing them
+/// as if they still applied.
+pub(crate) fn verdict_line(v: &Verdict, drift: bool) -> String {
+    let tail = if drift {
+        " — ⚠ settings changed since, rerun `folioman backtest universe`"
+    } else {
+        " (rerun: `folioman backtest universe`)"
+    };
+    format!(
+        "Method backtest (run {}, wide universe, top-10 held {}y, {} windows): book {:+.1}%/yr, \
+         {:+.1}pp/yr vs index, win {:.0}%, worst {:+.1}, OOS {:+.1}/{:+.1}{tail}",
+        v.date, v.years, v.windows, v.book, v.excess, v.win, v.worst, v.oos_early, v.oos_late
+    )
+}
+
 /// One cutoff observation: the date it was scored on and the realized forward return over the holdout.
 /// The Quote is kept so EACH lane (on-sale + growth) can score it under its own gates/knobs — and
 /// ablation can re-score under a mutated knob set — with ZERO re-fetch / re-math. A sample is recorded
@@ -357,7 +422,26 @@ pub async fn run(args: Vec<String>) {
     .unwrap_or_default();
     report_vs_benchmark(&samples, &bench, years, tuning);
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
-    report_entry_state(&samples, &bench, years, tuning);
+    let verdict = report_entry_state(&samples, &bench, years, tuning);
+    // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
+    // the watchlist's ~50-survivor sample is not the method's proof, and must never overwrite it.
+    // The screen's method footer reads this file back.
+    if wide {
+        if let Some((book, excess, win, worst, oos_early, oos_late, windows)) = verdict {
+            write_verdict(&Verdict {
+                date: chrono::Local::now().date_naive().to_string(),
+                years,
+                windows,
+                book,
+                excess,
+                win,
+                worst,
+                oos_early,
+                oos_late,
+                tuning_fp: tuning_fingerprint(tuning),
+            });
+        }
+    }
     // (round 112) the DIVERSIFICATION dimension: does de-correlating the held book beat plain rank order?
     report_corr_cap(&samples, &bench, years, tuning);
     if fund || insider {
@@ -862,10 +946,19 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
 /// cutoff, then the SAME top-10 growth book is graded per class. Report-only, and the guidance can
 /// only ever be "deploy new money faster when a state occurs" — never "wait in cash for it" (the
 /// table can't see cash drag, and waiting is the classic market-timing trap).
-fn report_entry_state(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+/// Returns the unconditional "all entries" held-book stats (book, excess, win, worst, oos_early,
+/// oos_late, windows) — the same numbers it prints on the `[unconditional]` row — so run() can
+/// journal them as the method verdict without recomputing. None when the sample can't form a book.
+#[allow(clippy::type_complexity)]
+fn report_entry_state(
+    samples: &[Sample],
+    bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
+    years: i64,
+    tuning: &BuyHeuristic,
+) -> Option<(f64, f64, f64, f64, f64, f64, usize)> {
     let (bd, bc) = bench;
     if bd.len() < 2 {
-        return;
+        return None;
     }
     // full price pool (gated, non-crypto, benchmarkable — no fund filter): the "all entries" row
     // must reproduce the absolute held-book above, so the class rows split THAT number, not a subset.
@@ -882,7 +975,7 @@ fn report_entry_state(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f
         first.entry(bk).and_modify(|d| *d = (*d).min(s.date)).or_insert(s.date);
     }
     if base.is_empty() {
-        return;
+        return None;
     }
     let n = 10;
     println!("\n── ENTRY-STATE (class each ~6mo entry window by the benchmark's drawdown at entry, same top-{n} growth book held {years}y) ──");
@@ -909,14 +1002,16 @@ fn report_entry_state(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f
             );
         }
     }
-    if let Some((b, _, e, w, wo, el, la)) = book_stats(&base, n, years) {
+    let verdict = book_stats(&base, n, years).map(|(b, _, e, w, wo, el, la)| {
         println!(
             "  {:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}) [unconditional]",
             "all entries", base.len()
         );
-    }
+        (b, e, w, wo, el, la, base.len())
+    });
     println!("  (a class with a handful of windows is a regime story, not a statistic. If a state over-delivers, the");
     println!("   guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)");
+    verdict
 }
 
 /// Only the free SEC/income-statement factors are listed (roe + the round-107 survival levels are
@@ -1955,6 +2050,43 @@ mod tests {
         assert_eq!(get("worst_5y"), Some(-12.0));
         assert_eq!(get("underwater_neg"), Some(-2.5));
         assert!(RISK_FACTORS.iter().all(|(_, f)| f(&Quote::stub("Y", "1", "", "Y")).is_none()));
+    }
+
+    /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back
+    /// exactly what backtest wrote), corrupt/empty JSON is None (a broken file silences the footer,
+    /// never fabricates a verdict), and verdict_line's drift arm swaps the rerun-pointer for the ⚠
+    /// stale-settings warning (citing stale numbers as current would mislead the buy decision).
+    #[test]
+    fn verdict_journal_semantics() {
+        let v = Verdict {
+            date: "2026-07-19".into(),
+            years: 12,
+            windows: 84,
+            book: 14.3,
+            excess: 6.9,
+            win: 71.0,
+            worst: -8.2,
+            oos_early: 5.1,
+            oos_late: 7.4,
+            tuning_fp: "{\"a\":1}".into(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back = parse_verdict(&json).expect("roundtrip parses");
+        assert_eq!((back.date.as_str(), back.years, back.windows), ("2026-07-19", 12, 84));
+        assert!((back.book - 14.3).abs() < 1e-9 && (back.excess - 6.9).abs() < 1e-9);
+        assert_eq!(back.tuning_fp, "{\"a\":1}");
+
+        assert!(parse_verdict("not json").is_none());
+        assert!(parse_verdict("").is_none());
+        assert!(parse_verdict("{\"date\":\"x\"}").is_none()); // missing fields -> None, not a default
+
+        let fresh = verdict_line(&v, false);
+        assert!(fresh.contains("run 2026-07-19, wide universe, top-10 held 12y, 84 windows"));
+        assert!(fresh.contains("book +14.3%/yr, +6.9pp/yr vs index, win 71%, worst -8.2, OOS +5.1/+7.4"));
+        assert!(fresh.contains("(rerun: `folioman backtest universe`)") && !fresh.contains('⚠'));
+        let drifted = verdict_line(&v, true);
+        assert!(drifted.contains("⚠ settings changed since"));
+        assert!(!drifted.contains("(rerun:"));
     }
 
     #[test]
