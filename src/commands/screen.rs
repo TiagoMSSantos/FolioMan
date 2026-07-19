@@ -297,6 +297,23 @@ fn footer_label(t: &str, ranked: &[String]) -> String {
     if ranked.iter().any(|r| r == t) { t.to_string() } else { format!("{t}*") }
 }
 
+/// (r15) Names with a KNOWN ISIN that the T212 catalog does NOT carry, input order. Catalog
+/// membership is by ISIN (any venue listing counts as orderable). No cached ISIN or an empty
+/// catalog = no claim — same silent stance as every other data footer.
+fn t212_missing<'a>(
+    names: &'a [String],
+    isin_of: &std::collections::HashMap<String, String>,
+    catalog: &std::collections::HashSet<String>,
+) -> Vec<&'a str> {
+    if catalog.is_empty() {
+        return Vec::new();
+    }
+    names
+        .iter()
+        .filter_map(|t| isin_of.get(t).filter(|isin| !catalog.contains(*isin)).map(|_| t.as_str()))
+        .collect()
+}
+
 /// (crossover) Fund picks whose top-10 holdings you ALREADY own directly as stocks — buying the
 /// fund silently doubles those positions (the `o` marker only catches the same ticker, sector
 /// tilt only the sector). Per fund: the shared names with their in-fund weights + the summed
@@ -771,6 +788,29 @@ pub async fn run(args: Vec<String>) {
         if !hedged.is_empty() {
             let names = hedged.iter().map(|t| footer_label(t, &ranked_now)).collect::<Vec<_>>().join(", ");
             println!("\nHedged share classes — currency-hedged (hedge cost drags a decades hold; check the unhedged twin first): {names}");
+        }
+    }
+
+    // (r15) T212 orderability: the screen ends in T212 buy orders (order glue), so a ranked or
+    // pinned name whose ISIN the broker catalog doesn't carry is a dead pick for THIS user —
+    // say so before they shortlist it. ISIN-known names only (no claim otherwise); keyless runs
+    // stay silent (instruments_cached returns empty without a key, ≤1 HTTP per 7 days with one).
+    {
+        let catalog: std::collections::HashSet<String> =
+            crate::broker::trading212::instruments_cached(&client).await.into_iter().map(|i| i.isin).collect();
+        if !catalog.is_empty() {
+            let isin_of: std::collections::HashMap<String, String> =
+                std::fs::read_to_string(crate::config::data_path(crate::fetch::ISIN_CACHE_PATH))
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<std::collections::HashMap<String, String>>(&s).ok())
+                    .map(|m| m.into_iter().map(|(isin, sym)| (sym, isin)).collect())
+                    .unwrap_or_default();
+            let missing = t212_missing(&footer_names, &isin_of, &catalog);
+            if !missing.is_empty() {
+                let names =
+                    missing.iter().map(|t| footer_label(t, &ranked_now)).collect::<Vec<_>>().join(", ");
+                println!("\nNot at Trading 212 — no listing for this ISIN in the broker catalog (can't order there): {names}");
+            }
         }
     }
 
@@ -1699,6 +1739,20 @@ mod tests {
         assert_eq!(footer_label("A.L", &ranked), "A.L"); // ranked prints bare
         assert_eq!(footer_label("B.L", &ranked), "B.L"); // pinned-but-ranked too
         assert_eq!(footer_label("P.DE", &ranked), "P.DE*"); // extras carry the table's glyph
+    }
+
+    /// (r15) T212 orderability: flagged = known-ISIN AND absent from the catalog, input order.
+    /// No cached ISIN = no claim (skipped); empty catalog (keyless run) = always silent.
+    #[test]
+    fn t212_missing_semantics() {
+        let isin_of: HashMap<String, String> = [("A.L", "IE00A"), ("B.L", "IE00B"), ("C.L", "IE00C")]
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .into();
+        let catalog: HashSet<String> = ["IE00B"].map(String::from).into();
+        let names = ["A.L", "B.L", "C.L", "NOISIN.L"].map(String::from);
+        assert_eq!(t212_missing(&names, &isin_of, &catalog), vec!["A.L", "C.L"]); // B carried, NOISIN no claim
+        assert!(t212_missing(&names, &isin_of, &HashSet::new()).is_empty()); // keyless = silent
+        assert!(t212_missing(&["B.L".into()], &isin_of, &catalog).is_empty()); // all orderable = silent
     }
 
     /// (fund valuation) cheapest-first ordering, pe-less funds silent, empty map -> None. The
