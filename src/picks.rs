@@ -2073,6 +2073,7 @@ mod tests {
             roll5y_pos_pct: None,  // (consistency) display-only footer stat; never scored
             underwater_yrs: None,  // (underwater) display-only footer stat; never scored
             worst_5y_pct: None,    // (worst-5y) display-only footer stat; never scored
+            year_returns: Vec::new(), // (r11) display-only footer strip; never scored
             fund_factor: None,     // (G) default off; the fund-tilt asserts set it explicitly
             age_years: None,       // display-only pair; never scored
             life_cagr: None,

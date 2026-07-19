@@ -7,7 +7,7 @@
 
 use crate::core::Quote;
 use crate::picks::{eu_buyable, exit_review_lines, gate_failures, growth_near_miss, growth_score, render, RenderCtx};
-use crate::{config, fetch};
+use crate::{config, core, fetch, picks};
 
 /// (X) Watchlist gate-state persisted between `screen` runs so the EXIT-review footer can flag a
 /// holding that PASSED every growth gate last run but fails now — the transition the backtest's
@@ -231,6 +231,25 @@ fn fund_pe_line(mix: &std::collections::HashMap<String, fetch::FundMix>) -> Opti
     rows.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(b.0)));
     (!rows.is_empty())
         .then(|| rows.iter().map(|(t, p)| format!("{t} {p:.0}")).collect::<Vec<_>>().join(" · "))
+}
+
+/// (r11) CAGR premium over the index on the longest SHARED leg — "10Y" first, else "5Y". Both
+/// sides must carry the SAME horizon so the comparison is like-for-like (a young listing's 5Y
+/// vs the index's 10Y would flatter it). `None` = no shared leg (young listing / failed index
+/// fetch). Premium = name CAGR − index CAGR, in %/yr — positive means it beat buying the index.
+fn spy_premium(q: &core::Quote, spx: &core::Quote) -> Option<(f64, &'static str)> {
+    [("10Y", 10.0), ("5Y", 5.0)].iter().find_map(|(leg, yrs)| {
+        match (picks::perf_pct(q, leg), picks::perf_pct(spx, leg)) {
+            (Some(a), Some(b)) => Some((core::cagr(a, *yrs) - core::cagr(b, *yrs), *leg)),
+            _ => None,
+        }
+    })
+}
+
+/// (r11) One name's calendar-year strip: the LAST `max_years` complete years, ascending.
+fn year_cells(years: &[(i32, f64)], max_years: usize) -> String {
+    let skip = years.len().saturating_sub(max_years);
+    years[skip..].iter().map(|(y, v)| format!("{y} {v:+.0}%")).collect::<Vec<_>>().join(" · ")
 }
 
 /// (crossover) Fund picks whose top-10 holdings you ALREADY own directly as stocks — buying the
@@ -621,6 +640,53 @@ pub async fn run(args: Vec<String>) {
             println!(
                 "\nWorst 5-year hold — the single worst rolling 5y (nominal) outcome, weekly-stepped:\n  {cells}"
             );
+        }
+    }
+
+    // (r11) vs S&P 500 — the capstone yardstick surfaced live (the backtest's goal metric is
+    // absolute-vs-^GSPC): each pick's CAGR premium over the index on the longest shared leg.
+    // Reuses the round-112 entry-state ^GSPC quote — zero new network; a failed index fetch
+    // silently drops this footer exactly like it drops the banner. DISPLAY-ONLY, never scored.
+    if let Some(spx_q) = spx.first() {
+        let mut rows: Vec<(&str, f64, &str)> = ranked_now
+            .iter()
+            .filter_map(|t| {
+                quotes
+                    .iter()
+                    .find(|q| &q.ticker == t)
+                    .and_then(|q| spy_premium(q, spx_q))
+                    .map(|(p, leg)| (t.as_str(), p, leg))
+            })
+            .collect();
+        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        if !rows.is_empty() {
+            let cells =
+                rows.iter().map(|(t, p, leg)| format!("{t} {p:+.1} ({leg})")).collect::<Vec<_>>().join(" · ");
+            println!(
+                "\nvs S&P 500 — CAGR premium over the index, longest shared leg (%/yr; the yardstick the strategy is graded on):\n  {cells}"
+            );
+        }
+    }
+
+    // (r11) calendar years — the regime check cumulative horizons smear: does the name lose whole
+    // YEARS? One row per pick in RANK order (per-name detail, not a re-ranking); names without a
+    // complete year pair stay silent. DISPLAY-ONLY, never scored.
+    {
+        let rows: Vec<(&str, String)> = ranked_now
+            .iter()
+            .filter_map(|t| {
+                quotes
+                    .iter()
+                    .find(|q| &q.ticker == t)
+                    .filter(|q| !q.year_returns.is_empty())
+                    .map(|q| (t.as_str(), year_cells(&q.year_returns, 8)))
+            })
+            .collect();
+        if !rows.is_empty() {
+            println!("\nCalendar years — each full year's return (regime check: does it lose whole years?):");
+            for (t, cells) in rows {
+                println!("  {t:<9} {cells}");
+            }
         }
     }
 
@@ -1453,6 +1519,41 @@ mod tests {
         assert!(!lines[1].contains("Energy"), "third sector must drop: {}", lines[1]);
         assert!(lines[1].contains("(equity 60% / bond 40%)"), "real bond leg prints: {}", lines[1]);
         assert!(sector_tilt_lines(&HashMap::new()).is_empty());
+    }
+
+    /// (r11) vs-SPY premium: longest SHARED leg wins (10Y before 5Y), premium = name CAGR minus
+    /// index CAGR (index-beater must print POSITIVE — the sign the footer ranks on), young name
+    /// falls back to the shared 5Y leg, and no shared long leg = None (no claim).
+    #[test]
+    fn spy_premium_semantics() {
+        let q = |legs: &[(&str, f64)]| {
+            let mut quote = Quote::stub("T", "1", "", "T");
+            quote.perf = core::HORIZONS
+                .iter()
+                .map(|(l, _)| legs.iter().find(|(pl, _)| pl == l).map(|(_, v)| (l.to_string(), *v)))
+                .collect();
+            quote
+        };
+        let spx = q(&[("10Y", 150.0), ("5Y", 40.0)]);
+        let (p, leg) = spy_premium(&q(&[("10Y", 300.0), ("5Y", 80.0)]), &spx).unwrap();
+        assert_eq!(leg, "10Y"); // longest shared leg preferred even when 5Y is also shared
+        let want = core::cagr(300.0, 10.0) - core::cagr(150.0, 10.0);
+        assert!((p - want).abs() < 1e-9, "premium {p} != cagr diff {want}");
+        assert!(p > 0.0, "index-beating name must print a POSITIVE premium, got {p}");
+        let (p5, leg5) = spy_premium(&q(&[("5Y", 80.0)]), &spx).unwrap();
+        assert_eq!(leg5, "5Y"); // young name: no 10Y leg -> falls back to shared 5Y
+        assert!((p5 - (core::cagr(80.0, 5.0) - core::cagr(40.0, 5.0))).abs() < 1e-9);
+        assert_eq!(spy_premium(&q(&[("1Y", 20.0)]), &spx), None); // no shared long leg
+    }
+
+    /// (r11) calendar strip cells: `{year} {ret:+.0}%` dot-joined, and max_years keeps the LAST
+    /// (most recent) years — dropping the newest instead is the truncation bug this pins.
+    #[test]
+    fn year_cells_semantics() {
+        let yrs = [(2022, -30.0), (2023, 45.2), (2024, 9.8)];
+        assert_eq!(year_cells(&yrs, 8), "2022 -30% · 2023 +45% · 2024 +10%");
+        assert_eq!(year_cells(&yrs, 2), "2023 +45% · 2024 +10%");
+        assert_eq!(year_cells(&[], 8), "");
     }
 
     /// (fund valuation) cheapest-first ordering, pe-less funds silent, empty map -> None. The

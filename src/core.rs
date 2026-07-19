@@ -97,6 +97,7 @@ pub struct Quote {
     pub roll5y_pos_pct: Option<f64>,   // (consistency) % of rolling ~5y windows with a positive NOMINAL return, from the same closes. DISPLAY-ONLY footer ("how often did 5 patient years pay?"); None = <5y of history — never a fake 100%
     pub underwater_yrs: Option<f64>,   // (underwater) longest stretch below the prior peak, in years (~252 sessions/yr), ongoing stretch counts. DISPLAY-ONLY footer — MAXDD's missing twin: depth says how far down, this says how LONG the pain lasted. None = <2 usable closes
     pub worst_5y_pct: Option<f64>,     // (worst-5y) single worst rolling ~5y NOMINAL outcome (%), severity twin of roll5y_pos_pct's frequency. DISPLAY-ONLY footer; None = <5y of history — no claim
+    pub year_returns: Vec<(i32, f64)>, // (r11) each COMPLETE calendar year's % return from the fetched daily window, ascending. DISPLAY-ONLY footer (regime check: losing whole years); empty = <2 usable years — no claim. NOT filled in backtest_quote (display-era, edge-blind by construction, like life_cagr)
     pub fund_factor: Option<f64>,      // (G) the ONE as-of fundamental factor folded into growth_score (e.g. revenue accel). Set in the backtest (from fund_factors) so the term is ablatable, and live only on the small/check-scale path; None -> neutral (universe screen & price-only backtest)
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history; DISPLAY-ONLY (`cagr` column). Ranking/gates stay on the validated fixed-horizon ladder. None = <6mo history / stub / backtest
@@ -154,6 +155,7 @@ impl Quote {
             roll5y_pos_pct: None,
             underwater_yrs: None,
             worst_5y_pct: None,
+            year_returns: Vec::new(),
             fund_factor: None,
             age_years: None,
             life_cagr: None,
@@ -363,6 +365,27 @@ pub fn worst_rolling_5y_pct(closes: &[f64]) -> Option<f64> {
         i += STEP;
     }
     worst
+}
+
+/// (r11) Each COMPLETE calendar year's % return from the fetched daily window: last positive
+/// close of year Y vs last positive close of year Y−1, for consecutive years only (a data hole
+/// spanning a whole year breaks the chain rather than faking a multi-year "annual" number). The
+/// current (partial) year is skipped — 1Y/1M columns already cover recency. Ascending year order;
+/// empty when no complete pair exists (no claim).
+pub fn calendar_year_returns(dates: &[NaiveDate], closes: &[f64]) -> Vec<(i32, f64)> {
+    let mut last_by_year: BTreeMap<i32, f64> = BTreeMap::new();
+    for (d, &c) in dates.iter().zip(closes) {
+        if c > 0.0 {
+            last_by_year.insert(d.year(), c); // ascending input -> keeps each year's LAST close
+        }
+    }
+    let cur = dates.last().map_or(0, |d| d.year()); // partial year = the window's own end year
+    last_by_year
+        .iter()
+        .zip(last_by_year.iter().skip(1))
+        .filter(|((py, _), (y, _))| **y != cur && **y - **py == 1)
+        .map(|((_, prev), (y, c))| (*y, 100.0 * (c / prev - 1.0)))
+        .collect()
 }
 
 /// Format a number with comma thousands separators and 2 decimals (Python `{:,.2f}`).
@@ -1766,6 +1789,39 @@ mod tests {
         assert!((worst_rolling_5y_pct(&closes).unwrap() + 10.0).abs() < 1e-9);
         assert!(worst_rolling_5y_pct(&vec![1.0; WIN]).is_none()); // no full window -> no claim
         assert!(worst_rolling_5y_pct(&[]).is_none());
+    }
+
+    /// (r11) `calendar_year_returns`: complete-year pairs only — the current (partial) year and
+    /// any year separated by a full-year data hole are skipped; zero closes never count as a
+    /// year's last print; <2 usable years = empty (no claim).
+    #[test]
+    fn calendar_year_semantics() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // 2022..2024 full years + a partial 2025: last closes 100, 110, 99, (partial 120)
+        let dates = vec![
+            ymd(2022, 3, 1), ymd(2022, 12, 30),
+            ymd(2023, 6, 1), ymd(2023, 12, 29),
+            ymd(2024, 12, 31),
+            ymd(2025, 2, 3),
+        ];
+        let closes = vec![90.0, 100.0, 105.0, 110.0, 99.0, 120.0];
+        let r = calendar_year_returns(&dates, &closes);
+        assert_eq!(r.len(), 2); // 2023 and 2024; partial 2025 skipped
+        assert_eq!(r[0].0, 2023);
+        assert!((r[0].1 - 10.0).abs() < 1e-9); // 100 -> 110
+        assert_eq!(r[1].0, 2024);
+        assert!((r[1].1 + 10.0).abs() < 1e-9); // 110 -> 99
+        // a zero 2024-year-end print must not become the year's last close
+        let z = calendar_year_returns(&dates, &[90.0, 100.0, 105.0, 110.0, 0.0, 120.0]);
+        assert_eq!(z.len(), 1); // only 2023 survives (2024 has no positive close at all)
+        // year hole: 2022 then 2024 -> non-consecutive, no fake "annual" pair
+        let hole = calendar_year_returns(
+            &[ymd(2022, 12, 30), ymd(2024, 12, 31), ymd(2025, 2, 3)],
+            &[100.0, 99.0, 120.0],
+        );
+        assert!(hole.is_empty());
+        assert!(calendar_year_returns(&[ymd(2024, 1, 2)], &[100.0]).is_empty()); // <2 years
+        assert!(calendar_year_returns(&[], &[]).is_empty());
     }
 
     /// (#17/Step 4) `endpoint_avg`: n=1 = the raw last close (the inert default must be byte-identical);
