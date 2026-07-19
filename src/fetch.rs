@@ -560,10 +560,13 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // matching backtest_quote's per-cadence call so the live rank and the validation agree.
         trend_cagr: core::trend_cagr(&chart.closes, 252),
         max_drawdown_pct: core::max_drawdown_pct(&chart.closes),
-        // (consistency) % of rolling 5y windows positive, same closes — the screen's footer stat.
-        roll5y_pos_pct: core::rolling_5y_positive_pct(&chart.closes),
+        // (consistency) % of rolling 5y/10y windows positive, same closes — the screen's footer
+        // stats; the 10y pair (r16) is the decade horizon the book is actually held for.
+        roll5y_pos_pct: core::rolling_positive_pct(&chart.closes, 5),
         underwater_yrs: core::longest_underwater_yrs(&chart.closes),
-        worst_5y_pct: core::worst_rolling_5y_pct(&chart.closes),
+        worst_5y_pct: core::worst_rolling_pct(&chart.closes, 5),
+        roll10y_pos_pct: core::rolling_positive_pct(&chart.closes, 10),
+        worst_10y_pct: core::worst_rolling_pct(&chart.closes, 10),
         year_returns: core::calendar_year_returns(&chart.dates, &chart.closes),
         fund_factor: None, // (G) live screen leaves this None (neutral); only the small/check-scale path (A3) populates it
         age_years,

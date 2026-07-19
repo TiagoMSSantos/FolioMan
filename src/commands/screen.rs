@@ -314,6 +314,20 @@ fn t212_missing<'a>(
         .collect()
 }
 
+/// (r16) Funds in the footer population with AUM under €100M — liquidation/closure territory
+/// over a decades hold (a forced exit mid-hold is a taxable event). aum_shown() None
+/// (stocks/crypto, factless funds) = skipped, no claim. Threshold hardcoded: industry rule of
+/// thumb; the H/CORE gate already demands ≥€1B, this only guards the ranked tail.
+fn small_aum_names<'q>(names: &'q [String], quotes: &[core::Quote]) -> Vec<(&'q str, f64)> {
+    names
+        .iter()
+        .filter_map(|t| {
+            let q = quotes.iter().find(|q| &q.ticker == t)?;
+            q.aum_shown().filter(|a| *a < 1e8).map(|a| (t.as_str(), a))
+        })
+        .collect()
+}
+
 /// (crossover) Fund picks whose top-10 holdings you ALREADY own directly as stocks — buying the
 /// fund silently doubles those positions (the `o` marker only catches the same ticker, sector
 /// tilt only the sector). Per fund: the shared names with their in-fund weights + the summed
@@ -679,6 +693,27 @@ pub async fn run(args: Vec<String>) {
                 "\n5y-consistency — % of rolling 5-year windows with a positive (nominal) return, weekly-stepped:\n  {cells}"
             );
         }
+
+        // (r16) the DECADE twin — the horizon the book is actually held for; names with <10y of
+        // history stay silent (no claim), so a short 10y line next to a full 5y line is itself
+        // information: the missing names simply haven't lived a decade yet.
+        let mut rows: Vec<(String, f64)> = footer_names
+            .iter()
+            .filter_map(|t| {
+                quotes
+                    .iter()
+                    .find(|q| &q.ticker == t)
+                    .and_then(|q| q.roll10y_pos_pct)
+                    .map(|p| (footer_label(t, &ranked_now), p))
+            })
+            .collect();
+        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        if !rows.is_empty() {
+            let cells = rows.iter().map(|(t, p)| format!("{t} {p:.0}%")).collect::<Vec<_>>().join(" · ");
+            println!(
+                "\n10y-consistency — % of rolling 10-year windows with a positive (nominal) return, weekly-stepped:\n  {cells}"
+            );
+        }
     }
 
     // (underwater) the endurance twin of MAXDD, worst first: depth said how far down, this says
@@ -723,6 +758,26 @@ pub async fn run(args: Vec<String>) {
             let cells = rows.iter().map(|(t, v)| format!("{t} {v:+.0}%")).collect::<Vec<_>>().join(" · ");
             println!(
                 "\nWorst 5-year hold — the single worst rolling 5y (nominal) outcome, weekly-stepped:\n  {cells}"
+            );
+        }
+
+        // (r16) decade severity: "has ANY patient decade lost money?" — the literal 20y-hold
+        // confidence question the 5y window can't answer.
+        let mut rows: Vec<(String, f64)> = footer_names
+            .iter()
+            .filter_map(|t| {
+                quotes
+                    .iter()
+                    .find(|q| &q.ticker == t)
+                    .and_then(|q| q.worst_10y_pct)
+                    .map(|v| (footer_label(t, &ranked_now), v))
+            })
+            .collect();
+        rows.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        if !rows.is_empty() {
+            let cells = rows.iter().map(|(t, v)| format!("{t} {v:+.0}%")).collect::<Vec<_>>().join(" · ");
+            println!(
+                "\nWorst 10-year hold — the single worst rolling 10y (nominal) outcome, weekly-stepped:\n  {cells}"
             );
         }
     }
@@ -811,6 +866,25 @@ pub async fn run(args: Vec<String>) {
                     missing.iter().map(|t| footer_label(t, &ranked_now)).collect::<Vec<_>>().join(", ");
                 println!("\nNot at Trading 212 — no listing for this ISIN in the broker catalog (can't order there): {names}");
             }
+        }
+    }
+
+    // (r16) fund-survival line, same "can you actually hold it for decades" family as the T212
+    // marker: the drift alert only fires on AUM COLLAPSE between runs and the H/CORE gate only
+    // grades core candidates — nothing said a ranked fund is small RIGHT NOW. Silent on a clean
+    // book (the common case; the current ranked tail bottoms around €300M).
+    {
+        let small = small_aum_names(&footer_names, &quotes);
+        if !small.is_empty() {
+            let cells = small
+                .iter()
+                .map(|(t, a)| {
+                    let amt = if *a >= 1e6 { format!("€{:.0}M", a / 1e6) } else { format!("€{:.0}K", a / 1e3) };
+                    format!("{} {amt}", footer_label(t, &ranked_now))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("\nFund survival — AUM under €100M (liquidation/closure risk over a decades hold; a forced exit is a taxable event): {cells}");
         }
     }
 
@@ -1753,6 +1827,27 @@ mod tests {
         assert_eq!(t212_missing(&names, &isin_of, &catalog), vec!["A.L", "C.L"]); // B carried, NOISIN no claim
         assert!(t212_missing(&names, &isin_of, &HashSet::new()).is_empty()); // keyless = silent
         assert!(t212_missing(&["B.L".into()], &isin_of, &catalog).is_empty()); // all orderable = silent
+    }
+
+    /// (r16) fund-survival flag: under €100M flagged (BF aum_eur or Yahoo aum_fallback via
+    /// aum_shown), at/over silent, AUM-less names (stocks/crypto) skipped — no claim.
+    #[test]
+    fn small_aum_semantics() {
+        let mut tiny = Quote::stub("TINY.L", "1", "", "Micro Fund");
+        tiny.aum_eur = Some(36e6);
+        let mut big = Quote::stub("BIG.L", "1", "", "Mega Fund");
+        big.aum_eur = Some(16e9);
+        let mut fb = Quote::stub("FB.L", "1", "", "Fallback Fund");
+        fb.aum_fallback = Some(9e7); // Yahoo fallback counts too (aum_shown)
+        let none = Quote::stub("NVDA", "1", "", "Stock No Aum");
+        let quotes = vec![tiny, big, fb, none];
+        let names = ["BIG.L", "TINY.L", "FB.L", "NVDA"].map(String::from);
+        let got = small_aum_names(&names, &quotes);
+        assert_eq!(got.len(), 2); // input order preserved
+        assert_eq!(got[0].0, "TINY.L");
+        assert_eq!(got[1].0, "FB.L");
+        assert!((got[0].1 - 36e6).abs() < 1.0);
+        assert!(small_aum_names(&["BIG.L".into(), "NVDA".into()], &quotes).is_empty()); // clean book = silent
     }
 
     /// (fund valuation) cheapest-first ordering, pe-less funds silent, empty map -> None. The
