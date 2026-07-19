@@ -264,6 +264,33 @@ fn bench_rows<'q>(ranked: &[String], quotes: &'q [core::Quote]) -> Vec<(&'q str,
         .collect()
 }
 
+/// (r19) Same-index twins: funds sharing one BF benchmark string are interchangeable wrappers,
+/// so their realized 5Y gap IS the cost/replication difference — fund-vs-fund tracking, the
+/// honest method (index-series comparisons mix price vs total-return bases). Exact `==` grouping:
+/// BF normalizes the string, and hedged classes carry a different one so they never collide with
+/// unhedged twins. Groups of ≥2 only (a solo fund is no comparison); <5y twins drop via perf
+/// None — no claim. Each group best-compounder-first.
+fn twin_groups<'q>(names: &[String], quotes: &'q [Quote]) -> Vec<(&'q str, Vec<(&'q str, f64)>)> {
+    let mut by_bench: std::collections::BTreeMap<&str, Vec<(&str, f64)>> =
+        std::collections::BTreeMap::new();
+    for t in names {
+        let Some(q) = quotes.iter().find(|q| &q.ticker == t) else { continue };
+        let (Some(b), Some(p)) = (q.benchmark.as_deref(), q.perf.get(6).and_then(|o| o.as_ref()))
+        else {
+            continue;
+        };
+        by_bench.entry(b).or_default().push((q.ticker.as_str(), p.1));
+    }
+    by_bench
+        .into_iter()
+        .filter(|(_, v)| v.len() >= 2)
+        .map(|(b, mut v)| {
+            v.sort_by(|a, b| b.1.total_cmp(&a.1));
+            (b, v)
+        })
+        .collect()
+}
+
 /// (r14) "hedged" as a whole word — split on non-alphanumerics so "unhedged"/"Hedge" never match
 /// (same word-split stance as fetch's use_from_name: substrings are trap city in fund names).
 fn has_hedged_token(s: &str) -> bool {
@@ -835,6 +862,22 @@ pub async fn run(args: Vec<String>) {
             println!("\nIndex — the benchmark each fund tracks (BF-normalized; hedged classes say so):");
             for (t, b) in rows {
                 println!("  {:<9} {b}", footer_label(t, &ranked_now));
+            }
+        }
+
+        // (r19) same-index twin spread: interchangeable wrappers ranked by what they actually
+        // compounded — the realized gap is TER + replication drag as one number.
+        let groups = twin_groups(&footer_names, &quotes);
+        if !groups.is_empty() {
+            println!("\nSame-index twins — realized 5Y per wrapper (the gap = real cost/replication drag; pick the best compounder):");
+            for (b, v) in groups {
+                let cells = v
+                    .iter()
+                    .map(|(t, p)| format!("{} {p:+.1}%", footer_label(t, &ranked_now)))
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                let gap = v.first().map_or(0.0, |f| f.1) - v.last().map_or(0.0, |l| l.1);
+                println!("  {b}: {cells}  (gap {gap:.1}pp)");
             }
         }
 
@@ -1783,6 +1826,37 @@ mod tests {
             vec![("C.L", "nasdaq-100"), ("A.L", "s&p 500 information technology")]
         );
         assert!(bench_rows(&[], &quotes).is_empty());
+    }
+
+    /// (r19) twin grouping: same-bench funds grouped best-compounder-first, singletons dropped
+    /// (a solo fund is no comparison), benchless and no-5Y quotes skipped — no claim either way.
+    #[test]
+    fn twin_groups_semantics() {
+        let q = |t: &str, bench: Option<&str>, five_y: Option<f64>| {
+            let mut quote = Quote::stub(t, "1", "", t);
+            quote.benchmark = bench.map(str::to_string);
+            quote.perf = vec![None; 9];
+            quote.perf[6] = five_y.map(|p| (String::new(), p));
+            quote
+        };
+        let quotes = vec![
+            q("NASD.L", Some("nasdaq-100"), Some(61.6)),
+            q("CSNDX.SW", Some("nasdaq-100"), Some(59.9)),
+            q("ANX.PA", Some("nasdaq-100"), Some(60.8)),
+            q("SXLK.L", Some("s&p u.s. technology select"), Some(77.0)), // singleton bench
+            q("NOB.L", None, Some(50.0)),                                // benchless
+            q("YOUNG.DE", Some("nasdaq-100"), None),                     // <5y history
+        ];
+        let names: Vec<String> =
+            ["NASD.L", "CSNDX.SW", "ANX.PA", "SXLK.L", "NOB.L", "YOUNG.DE"].map(String::from).into();
+        let groups = twin_groups(&names, &quotes);
+        // one group survives: the singleton s&p bench, the benchless and the no-5Y all drop
+        assert_eq!(groups.len(), 1);
+        let (bench, twins) = &groups[0];
+        assert_eq!(*bench, "nasdaq-100");
+        // best compounder first — the order the header promises
+        assert_eq!(twins, &[("NASD.L", 61.6), ("ANX.PA", 60.8), ("CSNDX.SW", 59.9)]);
+        assert!(twin_groups(&[], &quotes).is_empty());
     }
 
     /// (r14) hedged detection: whole-word only — "UnHedged"/"Hedge" must never flag (the
