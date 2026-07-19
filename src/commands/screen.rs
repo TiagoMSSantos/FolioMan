@@ -264,6 +264,24 @@ fn bench_rows<'q>(ranked: &[String], quotes: &'q [core::Quote]) -> Vec<(&'q str,
         .collect()
 }
 
+/// (r14) "hedged" as a whole word — split on non-alphanumerics so "unhedged"/"Hedge" never match
+/// (same word-split stance as fetch's use_from_name: substrings are trap city in fund names).
+fn has_hedged_token(s: &str) -> bool {
+    s.split(|c: char| !c.is_alphanumeric()).any(|w| w.eq_ignore_ascii_case("hedged"))
+}
+
+/// (r14) Ranked funds that are currency-hedged share classes, RANK order: the listing name
+/// (all runs) or the BF bench string (wide runs) carries the word "hedged". Hedge cost drags a
+/// decades hold — an accidental hedged pick instead of the unhedged twin is a silent mistake.
+fn hedged_names<'q>(ranked: &[String], quotes: &'q [core::Quote]) -> Vec<&'q str> {
+    ranked
+        .iter()
+        .filter_map(|t| quotes.iter().find(|q| &q.ticker == t))
+        .filter(|q| has_hedged_token(&q.name) || q.benchmark.as_deref().is_some_and(has_hedged_token))
+        .map(|q| q.ticker.as_str())
+        .collect()
+}
+
 /// (crossover) Fund picks whose top-10 holdings you ALREADY own directly as stocks — buying the
 /// fund silently doubles those positions (the `o` marker only catches the same ticker, sector
 /// tilt only the sector). Per fund: the shared names with their in-fund weights + the summed
@@ -715,6 +733,12 @@ pub async fn run(args: Vec<String>) {
             for (t, b) in rows {
                 println!("  {t:<9} {b}");
             }
+        }
+
+        // (r14) hedged-class warning: silent on a clean book (the common case).
+        let hedged = hedged_names(&ranked_now, &quotes);
+        if !hedged.is_empty() {
+            println!("\nHedged share classes — currency-hedged (hedge cost drags a decades hold; check the unhedged twin first): {}", hedged.join(", "));
         }
     }
 
@@ -1605,6 +1629,29 @@ mod tests {
             vec![("C.L", "nasdaq-100"), ("A.L", "s&p 500 information technology")]
         );
         assert!(bench_rows(&[], &quotes).is_empty());
+    }
+
+    /// (r14) hedged detection: whole-word only — "UnHedged"/"Hedge" must never flag (the
+    /// substring bug this pins), name OR bench source both count, rank order preserved.
+    #[test]
+    fn hedged_names_semantics() {
+        let q = |t: &str, name: &str, bench: Option<&str>| {
+            let mut quote = Quote::stub(t, "1", "", name);
+            quote.benchmark = bench.map(str::to_string);
+            quote
+        };
+        let quotes = vec![
+            q("N.L", "iShares MSCI World EUR Hedged UCITS ETF", None), // name carries it
+            q("B.L", "Amundi S&P 500 Acc", Some("s&p 500 eur hedged")), // bench carries it
+            q("U.L", "WisdomTree UnHedged Global", Some("msci world unhedged")), // never flags
+            q("H.L", "Man Hedge Fund Strategies", None), // "Hedge" word ≠ "hedged"
+            q("C.L", "Vanguard S&P 500", Some("s&p 500")), // clean
+        ];
+        let ranked = ["B.L", "U.L", "H.L", "N.L", "C.L"].map(String::from);
+        assert_eq!(hedged_names(&ranked, &quotes), vec!["B.L", "N.L"]); // rank order, not quotes order
+        assert!(hedged_names(&[], &quotes).is_empty());
+        assert!(has_hedged_token("EUR Hedged (Acc)"));
+        assert!(!has_hedged_token("unhedged"));
     }
 
     /// (fund valuation) cheapest-first ordering, pe-less funds silent, empty map -> None. The
