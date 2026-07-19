@@ -282,6 +282,21 @@ fn hedged_names<'q>(ranked: &[String], quotes: &'q [core::Quote]) -> Vec<&'q str
         .collect()
 }
 
+/// (r15) Footer population: the ranked book PLUS pinned extras. Pinned rows score a sentinel,
+/// sort last, and never survive render's take(n) — so the HELD names (the ones the user cares
+/// about most) carried no per-name footer data. Ranked order first, then pinned extras in
+/// watchlist order. Track journal + order glue stay ranked-only (grading/deploy must not see
+/// pinned rows).
+fn footer_names(ranked: &[String], pinned: &[String]) -> Vec<String> {
+    ranked.iter().chain(pinned.iter().filter(|p| !ranked.contains(p))).cloned().collect()
+}
+
+/// (r15) Footer row label: pinned extras carry the table's `*` glyph so a starred footer row
+/// reads as "your watchlist, not the ranking"; ranked names print bare.
+fn footer_label(t: &str, ranked: &[String]) -> String {
+    if ranked.iter().any(|r| r == t) { t.to_string() } else { format!("{t}*") }
+}
+
 /// (crossover) Fund picks whose top-10 holdings you ALREADY own directly as stocks — buying the
 /// fund silently doubles those positions (the `o` marker only catches the same ticker, sector
 /// tilt only the sector). Per fund: the shared names with their in-fund weights + the summed
@@ -601,6 +616,10 @@ pub async fn run(args: Vec<String>) {
             .collect(),
     });
 
+    // (r15) footer population: ranked book + pinned extras — the held/watched names sit in the
+    // table (sentinel score) but carried no footer data until now. Starred rows = pinned extras.
+    let footer_names = footer_names(&ranked_now, &settings.tickers);
+
     // (B) fundamentals-trajectory footer for the enriched stock rows: report's annual rollup
     // compacted to one line per name, so "is the growth real or one good year?" doesn't take a
     // `report` run per ticker. DISPLAY-ONLY (every multi-year fundamental measured null as a rank
@@ -626,13 +645,17 @@ pub async fn run(args: Vec<String>) {
     // (the label says so — per-window inflation deflation isn't worth the date mapping); names
     // with <5y of history have no window and stay silent. DISPLAY-ONLY, never scored.
     {
-        let mut rows: Vec<(&str, f64)> = ranked_now
+        let mut rows: Vec<(String, f64)> = footer_names
             .iter()
             .filter_map(|t| {
-                quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.roll5y_pos_pct).map(|p| (t.as_str(), p))
+                quotes
+                    .iter()
+                    .find(|q| &q.ticker == t)
+                    .and_then(|q| q.roll5y_pos_pct)
+                    .map(|p| (footer_label(t, &ranked_now), p))
             })
             .collect();
-        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         if !rows.is_empty() {
             let cells = rows.iter().map(|(t, p)| format!("{t} {p:.0}%")).collect::<Vec<_>>().join(" · ");
             println!(
@@ -645,13 +668,17 @@ pub async fn run(args: Vec<String>) {
     // how LONG the pain lasted. Same closes as everything above; ongoing stretches count (the
     // OFF-HI column already says who's underwater NOW). DISPLAY-ONLY, never scored.
     {
-        let mut rows: Vec<(&str, f64)> = ranked_now
+        let mut rows: Vec<(String, f64)> = footer_names
             .iter()
             .filter_map(|t| {
-                quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.underwater_yrs).map(|v| (t.as_str(), v))
+                quotes
+                    .iter()
+                    .find(|q| &q.ticker == t)
+                    .and_then(|q| q.underwater_yrs)
+                    .map(|v| (footer_label(t, &ranked_now), v))
             })
             .collect();
-        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         if !rows.is_empty() {
             let cells = rows.iter().map(|(t, v)| format!("{t} {v:.1}y")).collect::<Vec<_>>().join(" · ");
             println!(
@@ -664,13 +691,17 @@ pub async fn run(args: Vec<String>) {
     // duration (underwater) · frequency (5y-consistency) · severity (this). Worst outcome
     // first. DISPLAY-ONLY, never scored.
     {
-        let mut rows: Vec<(&str, f64)> = ranked_now
+        let mut rows: Vec<(String, f64)> = footer_names
             .iter()
             .filter_map(|t| {
-                quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.worst_5y_pct).map(|v| (t.as_str(), v))
+                quotes
+                    .iter()
+                    .find(|q| &q.ticker == t)
+                    .and_then(|q| q.worst_5y_pct)
+                    .map(|v| (footer_label(t, &ranked_now), v))
             })
             .collect();
-        rows.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(b.0)));
+        rows.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
         if !rows.is_empty() {
             let cells = rows.iter().map(|(t, v)| format!("{t} {v:+.0}%")).collect::<Vec<_>>().join(" · ");
             println!(
@@ -684,17 +715,17 @@ pub async fn run(args: Vec<String>) {
     // Reuses the round-112 entry-state ^GSPC quote — zero new network; a failed index fetch
     // silently drops this footer exactly like it drops the banner. DISPLAY-ONLY, never scored.
     if let Some(spx_q) = spx.first() {
-        let mut rows: Vec<(&str, f64, &str)> = ranked_now
+        let mut rows: Vec<(String, f64, &str)> = footer_names
             .iter()
             .filter_map(|t| {
                 quotes
                     .iter()
                     .find(|q| &q.ticker == t)
                     .and_then(|q| spy_premium(q, spx_q))
-                    .map(|(p, leg)| (t.as_str(), p, leg))
+                    .map(|(p, leg)| (footer_label(t, &ranked_now), p, leg))
             })
             .collect();
-        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         if !rows.is_empty() {
             let cells =
                 rows.iter().map(|(t, p, leg)| format!("{t} {p:+.1} ({leg})")).collect::<Vec<_>>().join(" · ");
@@ -708,14 +739,14 @@ pub async fn run(args: Vec<String>) {
     // YEARS? One row per pick in RANK order (per-name detail, not a re-ranking); names without a
     // complete year pair stay silent. DISPLAY-ONLY, never scored.
     {
-        let rows: Vec<(&str, String)> = ranked_now
+        let rows: Vec<(String, String)> = footer_names
             .iter()
             .filter_map(|t| {
                 quotes
                     .iter()
                     .find(|q| &q.ticker == t)
                     .filter(|q| !q.year_returns.is_empty())
-                    .map(|q| (t.as_str(), year_cells(&q.year_returns, 8)))
+                    .map(|q| (footer_label(t, &ranked_now), year_cells(&q.year_returns, 8)))
             })
             .collect();
         if !rows.is_empty() {
@@ -727,18 +758,19 @@ pub async fn run(args: Vec<String>) {
 
         // (r13) benchmark display: the BF index string is already on the Quote for twin hints —
         // showing it answers "what am I actually buying" and names hedged share classes outright.
-        let rows = bench_rows(&ranked_now, &quotes);
+        let rows = bench_rows(&footer_names, &quotes);
         if !rows.is_empty() {
             println!("\nIndex — the benchmark each fund tracks (BF-normalized; hedged classes say so):");
             for (t, b) in rows {
-                println!("  {t:<9} {b}");
+                println!("  {:<9} {b}", footer_label(t, &ranked_now));
             }
         }
 
         // (r14) hedged-class warning: silent on a clean book (the common case).
-        let hedged = hedged_names(&ranked_now, &quotes);
+        let hedged = hedged_names(&footer_names, &quotes);
         if !hedged.is_empty() {
-            println!("\nHedged share classes — currency-hedged (hedge cost drags a decades hold; check the unhedged twin first): {}", hedged.join(", "));
+            let names = hedged.iter().map(|t| footer_label(t, &ranked_now)).collect::<Vec<_>>().join(", ");
+            println!("\nHedged share classes — currency-hedged (hedge cost drags a decades hold; check the unhedged twin first): {names}");
         }
     }
 
@@ -1652,6 +1684,21 @@ mod tests {
         assert!(hedged_names(&[], &quotes).is_empty());
         assert!(has_hedged_token("EUR Hedged (Acc)"));
         assert!(!has_hedged_token("unhedged"));
+    }
+
+    /// (r15) footer population = ranked ∪ pinned: ranked order first, pinned extras appended in
+    /// watchlist order, a pinned name that RANKED appears once (and un-starred). The star glyph
+    /// marks only the extras — the rows the ranking would otherwise hide from every footer.
+    #[test]
+    fn footer_names_semantics() {
+        let ranked = ["A.L", "B.L"].map(String::from);
+        let pinned = ["P.DE", "B.L", "Q.DE"].map(String::from); // B.L ranked AND pinned
+        assert_eq!(footer_names(&ranked, &pinned), ["A.L", "B.L", "P.DE", "Q.DE"].map(String::from));
+        assert_eq!(footer_names(&ranked, &[]), ranked.to_vec()); // no pins = old behavior exactly
+        assert_eq!(footer_names(&[], &pinned), pinned.to_vec()); // pins survive an empty ranking
+        assert_eq!(footer_label("A.L", &ranked), "A.L"); // ranked prints bare
+        assert_eq!(footer_label("B.L", &ranked), "B.L"); // pinned-but-ranked too
+        assert_eq!(footer_label("P.DE", &ranked), "P.DE*"); // extras carry the table's glyph
     }
 
     /// (fund valuation) cheapest-first ordering, pe-less funds silent, empty map -> None. The
