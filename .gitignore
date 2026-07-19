@@ -45,6 +45,9 @@ config/settings.yaml
 # ranked-snapshot journal (one line per screen day; `track` grades it)
 .screen_snapshots.jsonl
 
+# wide-backtest method verdict (written by `backtest universe`; the screen footer cites it)
+.backtest_verdict.json
+
 # Trading212 tradable-instrument list (weekly cache; order-glue symbol resolution)
 .t212_instruments.json
 
