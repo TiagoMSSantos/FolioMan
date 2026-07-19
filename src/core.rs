@@ -875,6 +875,47 @@ pub fn inflation_compounded(series: &BTreeMap<i32, f64>, years: usize) -> Option
     Some((factor - 1.0) * 100.0)
 }
 
+/// Parse a Eurostat JSON-stat monthly annual-rate payload into {year -> annual %}: the sparse
+/// `value` map is keyed by the `time` index POSITION, positions sorted so the last month of a
+/// year wins (a partial current year resolves to its newest month YoY — same stance as the
+/// BLS/PT parses). Junk shapes parse to empty. Works for both the COICOP-2018 successor
+/// (prc_hicp_minr) and the terminated pre-2026 dataset it archives (prc_hicp_manr).
+pub fn parse_eurostat_hicp(d: &Value) -> BTreeMap<i32, f64> {
+    let mut out = BTreeMap::new();
+    let idx = d.pointer("/dimension/time/category/index").and_then(|v| v.as_object());
+    let val = d.get("value");
+    if let (Some(idx), Some(val)) = (idx, val) {
+        let mut pairs: Vec<(&String, i64)> =
+            idx.iter().map(|(k, v)| (k, v.as_i64().unwrap_or(0))).collect();
+        pairs.sort_by_key(|(_, p)| *p);
+        for (tm, pos) in pairs {
+            if let (Some(Ok(year)), Some(rate)) = (
+                tm.get(..4).map(|y| y.parse::<i32>()),
+                val.get(pos.to_string()).and_then(|v| v.as_f64()),
+            ) {
+                out.insert(year, rate); // last month of a year wins
+            }
+        }
+    }
+    out
+}
+
+/// Merge the TERMINATED pre-2026 HICP archive under the live successor series: the successor
+/// wins every overlapping year (recomputed under COICOP-2018), the archive contributes only
+/// its earlier tail (1997-1999). An EMPTY live series returns empty — the archive extends a
+/// LIVE feed, it must never mask a dead one (screen's degraded-feeds line keys off empty).
+pub fn merge_infl_archive(
+    old: BTreeMap<i32, f64>,
+    new: BTreeMap<i32, f64>,
+) -> BTreeMap<i32, f64> {
+    if new.is_empty() {
+        return new;
+    }
+    let mut merged = old;
+    merged.extend(new);
+    merged
+}
+
 /// Parse the BLS public API (v1) CPI-U response into {year -> annual %}. The series is the
 /// index LEVEL (e.g. CUUR0000SA0) by month, so convert to a rate: for each year, the rate is
 /// (its latest month with a prior-year same-month) / (that prior-year value) − 1. A complete
@@ -2495,5 +2536,34 @@ mod tests {
     });
     assert_eq!(parse_pt_series(&pt_obj).get(&2024), Some(&2.4));
     assert!(parse_pt_series(&Value::Null).is_empty());
+
+    // (r17) Eurostat HICP parse: sparse {position: rate} value keyed off the time index; last
+    // month of a year wins; junk -> empty. One parser serves the COICOP-2018 successor and the
+    // frozen pre-2026 archive.
+    let eu = serde_json::json!({
+        "dimension": {"time": {"category": {"index": {"2025-11": 0, "2025-12": 1, "2026-06": 2}}}},
+        "value": {"0": 2.4, "1": 2.3, "2": 2.9}
+    });
+    let s = parse_eurostat_hicp(&eu);
+    assert_eq!(s.get(&2025), Some(&2.3)); // December wins the year
+    assert_eq!(s.get(&2026), Some(&2.9)); // partial year = newest month YoY
+    let eu_hole = serde_json::json!({
+        "dimension": {"time": {"category": {"index": {"2025-12": 0, "2026-01": 1}}}},
+        "value": {"0": 2.3}
+    });
+    assert_eq!(parse_eurostat_hicp(&eu_hole).get(&2026), None); // sparse hole skipped, not zeroed
+    assert!(parse_eurostat_hicp(&Value::Null).is_empty());
+
+    // (r17) archive merge: the successor wins overlapping years, the archive contributes only
+    // its earlier tail, and an EMPTY live series stays empty — an outage must reach the
+    // degraded-feeds line, the frozen archive must never mask a dead feed.
+    let old: BTreeMap<i32, f64> = [(1997, 1.7), (2000, 2.9), (2025, 9.9)].into();
+    let new: BTreeMap<i32, f64> = [(2000, 2.5), (2025, 2.3), (2026, 2.9)].into();
+    let merged = merge_infl_archive(old.clone(), new.clone());
+    assert_eq!(merged.get(&1997), Some(&1.7)); // tail from the archive
+    assert_eq!(merged.get(&2025), Some(&2.3)); // successor wins the overlap
+    assert_eq!(merged.get(&2026), Some(&2.9));
+    assert!(merge_infl_archive(old, BTreeMap::new()).is_empty()); // outage guard
+    assert_eq!(merge_infl_archive(BTreeMap::new(), new.clone()), new); // no archive = passthrough
     }
 }

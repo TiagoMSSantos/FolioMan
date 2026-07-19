@@ -418,7 +418,11 @@ urls:
   euribor: "https://www.euribor-rates.eu/en/current-euribor-rates/2/euribor-rate-3-months/"
   us_cpi: "https://api.bls.gov/publicAPI/v1/timeseries/data/"  # BLS CPI-U index (monthly); seriesid + year window POSTed by fetch (path-GET ignores years). v1 = no key, 10y/call
   pt_cpi: "https://bpstat.bportugal.pt/data/v1/domains/12/datasets/7f13efcd65fc6bd0c5adb0e8d29d9b44/?lang=EN&series_ids=5721550"
-  eu_hicp: "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_manr?format=JSON&lang=EN&coicop=CP00&geo=EU27_2020"
+  # COICOP-2018 successor (Feb 2026): prc_hicp_manr was TERMINATED at 2025-12; minr carries the
+  # same annual-rate series (unit=RCH_A, all-items now coicop18=TOTAL) but only back to 2000.
+  eu_hicp: "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_minr?format=JSON&lang=EN&unit=RCH_A&coicop18=TOTAL&geo=EU27_2020"
+  # the frozen pre-2026 dataset, still served: merged UNDER the live series for the 1997-1999 tail
+  eu_hicp_old: "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_manr?format=JSON&lang=EN&coicop=CP00&geo=EU27_2020"
   # {n} = top-N crypto by market cap; `screen` maps each .symbol to SYMBOL-USD (Yahoo form)
   coingecko_markets: "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page={n}&page=1"
   # S&P 500 constituents CSV (first column = Symbol); `screen` maps '.'->'-' for Yahoo

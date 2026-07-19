@@ -3534,27 +3534,18 @@ pub async fn fetch_pt_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f
 }
 
 /// {year -> annual HICP %} for the EU27 from Eurostat, each year = its last month.
-/// JSON-stat: value is a sparse {position: rate} map keyed off the time {time: position} index.
+/// Eurostat TERMINATED prc_hicp_manr at 2025-12 (COICOP-2018 migration, Feb 2026) — the old
+/// endpoint keeps serving a frozen series with a live-looking update stamp, which silently
+/// pinned "latest EU inflation" to 2025. The successor prc_hicp_minr (same JSON-stat shape;
+/// all-items now coicop18=TOTAL, rate unit=RCH_A) carries 2000→now, and the frozen dataset is
+/// merged UNDER it for the 1997-1999 tail so the 30y average keeps its full window. Cache key
+/// bumped eu_hicp -> eu_hicp2 so a pre-switch day-fresh cache can't mask the heal.
 pub async fn fetch_eu_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
-    cached_macro(client, &urls.eu_hicp, "eu_hicp", |d| {
-        let mut out = BTreeMap::new();
-        let idx = d.pointer("/dimension/time/category/index").and_then(|v| v.as_object());
-        let val = d.get("value");
-        if let (Some(idx), Some(val)) = (idx, val) {
-            let mut pairs: Vec<(&String, i64)> =
-                idx.iter().map(|(k, v)| (k, v.as_i64().unwrap_or(0))).collect();
-            pairs.sort_by_key(|(_, p)| *p);
-            for (tm, pos) in pairs {
-                if let (Ok(year), Some(rate)) =
-                    (tm[..4].parse::<i32>(), val.get(pos.to_string()).and_then(|v| v.as_f64()))
-                {
-                    out.insert(year, rate); // last month of a year wins
-                }
-            }
-        }
-        out
-    })
-    .await
+    let (old, new) = tokio::join!(
+        cached_macro(client, &urls.eu_hicp_old, "eu_hicp_old", core::parse_eurostat_hicp),
+        cached_macro(client, &urls.eu_hicp, "eu_hicp2", core::parse_eurostat_hicp),
+    );
+    core::merge_infl_archive(old, new)
 }
 
 /// (label, series) — Portugal (BPstat), USA (BLS CPI-U), EU (Eurostat). Async fetched.
