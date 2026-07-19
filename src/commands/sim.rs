@@ -180,6 +180,59 @@ fn event_now(e: &Event, px_now: &dyn Fn(&str) -> Option<f64>) -> Option<(f64, f6
     (n > 0).then_some((v, c, n))
 }
 
+/// The screen's follow-the-screen digest: the whole sim ledger folded to one line's parts —
+/// replay the journal exactly like [`run`] (same ledger/holdings/value fns, so the two surfaces
+/// can't disagree), then value the resulting book at TODAY's prices supplied by the caller.
+/// Returns (since_date, cost € of priced names, value € today, index-twin value € today,
+/// priced count, held count). The index twin only appears when it is a fair comparison: every
+/// held name priced AND every event carried a benchmark leg — a partial book vs the full-cashflow
+/// twin would skew the verdict silently. None = nothing bought yet, or nothing priced today
+/// (the caller stays silent; `sim` remains the honest full view). Zero fetches.
+pub(crate) fn digest(
+    snaps: &[Snapshot],
+    base: f64,
+    now_ym: (i32, u32),
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> Option<(String, f64, f64, Option<f64>, usize, usize)> {
+    let led = ledger(snaps, base, now_ym);
+    let since = led.events.first()?.date.clone();
+    let held = holdings(&led.events);
+    let held_n = held.len();
+    let (value, cost, priced_n) = value_priced(&held, px_now);
+    if priced_n == 0 {
+        return None;
+    }
+    let (_, units, covered) = benchmark(&led.events);
+    let bench = (priced_n == held_n && covered == led.events.len())
+        .then_some(())
+        .and(spx_now.filter(|p| *p > 0.0))
+        .map(|p| units * p);
+    Some((since, cost, value, bench, priced_n, held_n))
+}
+
+/// One-line rendering of [`digest`] — the screen prints this under its live-track-record line.
+pub(crate) fn digest_line(
+    base: f64,
+    since: &str,
+    cost: f64,
+    value: f64,
+    bench: Option<f64>,
+    priced: usize,
+    held: usize,
+) -> String {
+    let vs = match bench {
+        Some(b) => format!("vs €{b:.0} same cashflow in the index"),
+        None => "vs index n/a".to_string(),
+    };
+    let hole =
+        if priced < held { format!(" (priced {priced}/{held})") } else { String::new() };
+    format!(
+        "Follow-the-screen — paper DCA of each month's book since {since} (base €{base:.0}): \
+         €{cost:.0} in → €{value:.0} today {vs} (details: `folioman sim`){hole}"
+    )
+}
+
 pub async fn run(_args: Vec<String>) {
     let settings = config::load();
     let base = settings.monthly_deploy_eur;
@@ -508,6 +561,54 @@ mod tests {
 
         // a zero ^GSPC close is not a price — the event skips like a missing leg
         assert_eq!(benchmark(&[mk(1000.0, Some(0.0))]).2, 0);
+    }
+
+    /// digest(): the screen's one-line fold of the whole ledger — same buy math as `run`
+    /// (first snapshot of the month wins; a same-month extra row must NOT buy), cost/value on
+    /// the priced side only, and the index twin ONLY when the comparison is fair (all names
+    /// priced + every event benchmarked); a hole suppresses the twin instead of skewing it.
+    #[test]
+    fn digest_semantics() {
+        let snaps = vec![
+            snap("2026-05-10", Some(100.0), None, &[("A", Some(10.0)), ("B", Some(20.0))]),
+            snap("2026-05-20", Some(100.0), None, &[("A", Some(99.0))]), // same-month extra: ignored
+            snap("2026-06-03", Some(110.0), None, &[("A", Some(12.0))]),
+        ];
+        let px = |t: &str| match t {
+            "A" => Some(15.0),
+            "B" => Some(25.0),
+            _ => None,
+        };
+        let (since, cost, value, bench, priced, held) =
+            digest(&snaps, 300.0, (2026, 6), &px, Some(120.0)).expect("two events priced");
+        assert_eq!(since, "2026-05-10");
+        assert_eq!((priced, held), (2, 2));
+        assert!((cost - 600.0).abs() < 1e-9); // 300 May + 300 June, fully priced
+        // May: A 149/10, B 149/20 · June: A 299/12 → value = (14.9+299/12)·15 + 7.45·25
+        assert!((value - 783.5).abs() < 1e-9);
+        // index twin: (299/100 + 299/110) units × 120 today — fee-adjusted at each buy
+        assert!((bench.expect("fair comparison") - (299.0 / 100.0 + 299.0 / 110.0) * 120.0).abs() < 1e-9);
+
+        // a hole (B unpriced today) → cost/value shrink BOTH sides and the index twin drops
+        let px_hole = |t: &str| (t == "A").then_some(15.0);
+        let (_, cost, value, bench, priced, held) =
+            digest(&snaps, 300.0, (2026, 6), &px_hole, Some(120.0)).expect("A still priced");
+        assert_eq!((priced, held), (1, 2));
+        assert!((cost - 450.0).abs() < 1e-9);
+        assert!((value - (14.9 + 299.0 / 12.0) * 15.0).abs() < 1e-9);
+        assert!(bench.is_none());
+
+        // empty journal / nothing priced today → None (screen stays silent)
+        assert!(digest(&[], 300.0, (2026, 6), &px, Some(120.0)).is_none());
+        assert!(digest(&snaps, 300.0, (2026, 6), &|_| None, Some(120.0)).is_none());
+
+        // line shapes: fair twin spelled out; hole marked + twin replaced by n/a
+        let line = digest_line(300.0, "2026-05-10", 600.0, 783.6, Some(685.0), 2, 2);
+        assert!(line.contains("since 2026-05-10 (base €300): €600 in → €784 today vs €685 same cashflow in the index"));
+        assert!(!line.contains("priced"));
+        let line = digest_line(300.0, "2026-05-10", 450.0, 597.2, None, 1, 2);
+        assert!(line.contains("vs index n/a"));
+        assert!(line.contains("(priced 1/2)"));
     }
 
     /// ym()/next_ym(): month parsing + December rollover.

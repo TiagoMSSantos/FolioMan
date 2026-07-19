@@ -1268,6 +1268,24 @@ pub async fn run(args: Vec<String>) {
                     crate::commands::track::summary_line(wins, n, sum)
                 );
             }
+            // (round 25) follow-the-screen digest: the sim ledger folded to one line — the
+            // compounded €-outcome of buying each month's book vs the same cashflow DCA'd into
+            // the index. Same fns as `sim` (ledger/holdings/value fold), so the two surfaces
+            // can't disagree. Gated on the same knob as the deploy line and `sim` itself;
+            // unset knob, nothing bought yet, or nothing priced today = silent.
+            if settings.monthly_deploy_eur > 0.0 {
+                let now_ym = (chrono::Datelike::year(&today), chrono::Datelike::month(&today));
+                if let Some((since, cost, value, bench, priced, held)) = crate::commands::sim::digest(
+                    &snaps, settings.monthly_deploy_eur, now_ym, &px_now, spx_now,
+                ) {
+                    println!(
+                        "\n{}",
+                        crate::commands::sim::digest_line(
+                            settings.monthly_deploy_eur, &since, cost, value, bench, priced, held,
+                        )
+                    );
+                }
+            }
         }
     }
 
