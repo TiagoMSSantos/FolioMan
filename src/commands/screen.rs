@@ -542,6 +542,12 @@ pub async fn run(args: Vec<String>) {
     // (gate/exit review, fact drift, near-miss) so alerts aren't buried under arithmetic.
     // show_hold_core = true: this is a hunt (wide OR `screen etfs`), so re-surface the buy-and-hold
     // cores the momentum ranking buries at 0.0. Empty cores early-return, so stock/crypto lanes stay quiet.
+    // (round 12) columns-drift nag: an explicit columns: list silently hides every column added
+    // after it was written (dom sat invisible this way). stderr like the stale-nets nag.
+    let hidden = picks::missing_columns(&settings.widths.columns);
+    if !hidden.is_empty() {
+        eprintln!("(columns: config hides available: {} — add to the columns: block in settings.yaml to show)", hidden.join(", "));
+    }
     let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, RenderCtx {
         nupl,
         sectors: &settings.sectors,

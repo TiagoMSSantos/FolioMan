@@ -1176,6 +1176,21 @@ fn active_columns(cfg: &[String]) -> Vec<&'static ColSpec> {
     keys.iter().filter_map(|k| COLUMNS.iter().find(|c| c.key.eq_ignore_ascii_case(k))).collect()
 }
 
+/// (round 12) Master column keys ABSENT from an explicit `widths.columns` config, master order,
+/// case-insensitive (same matching as `active_columns`). Screen nags on these once per run: a
+/// hand-maintained columns list silently hides every column added after it was written (dom was
+/// invisible for months this way). Empty config = built-in DEFAULT layout, curated — never nags.
+pub fn missing_columns(cfg: &[String]) -> Vec<&'static str> {
+    if cfg.is_empty() {
+        return Vec::new();
+    }
+    COLUMNS
+        .iter()
+        .filter(|c| !cfg.iter().any(|k| c.key.eq_ignore_ascii_case(k)))
+        .map(|c| c.key)
+        .collect()
+}
+
 /// Pad/truncate one cell to `width`, right- or left-aligned.
 fn fmt_cell(s: &str, width: usize, right: bool) -> String {
     let t = truncate(s, width);
@@ -2040,6 +2055,22 @@ mod tests {
         assert!((rank_jaccard(&a, &b, 3) - 0.5).abs() < 1e-9); // {A,B}/{A,B,C,D}
         assert_eq!(rank_jaccard(&a, &["X".to_string()], 3), 0.0); // disjoint
         assert!((rank_jaccard(&[], &[], 3) - 1.0).abs() < 1e-9); // both empty -> stable
+    }
+
+    /// (round 12) columns-drift nag feed: empty config never nags (DEFAULT layout curated), a full
+    /// list is silent, a subset reports exactly the absent master keys in master order, and
+    /// matching is case-insensitive — "DOM" counts as present, same as `active_columns` resolves it.
+    #[test]
+    fn missing_columns_semantics() {
+        assert!(missing_columns(&[]).is_empty());
+        let full: Vec<String> = COLUMNS.iter().map(|c| c.key.to_string()).collect();
+        assert!(missing_columns(&full).is_empty());
+        let mut sub = full.clone();
+        sub.retain(|k| k != "dom" && k != "trcagr");
+        assert_eq!(missing_columns(&sub), vec!["trcagr", "dom"]); // master COLUMNS order
+        let mut upper = sub.clone();
+        upper.push("DOM".to_string());
+        assert_eq!(missing_columns(&upper), vec!["trcagr"]); // case-insensitive presence
     }
 
     /// Buy-heuristic asserts (no network). White-box: reaches `picks` privates via `use super::*`.
