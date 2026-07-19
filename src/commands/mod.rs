@@ -135,6 +135,10 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
         let cum = |y| pct(core::inflation_compounded(series, y));
         let note = if series.is_empty() {
             "  (⚠ ERROR — live fetch failed, no data)".to_string()
+        } else if let Some(y) = core::infl_series_stale(series, chrono::Local::now().date_naive()) {
+            // frozen-not-empty feed (e.g. a terminated Eurostat dataset) — the year alone is
+            // easy to miss, so say it outright
+            format!("  (latest {y} ⚠ STALE — feed frozen at an old year?)")
         } else {
             match ly {
                 Some(y) => format!("  (latest {y})"),

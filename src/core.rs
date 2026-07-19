@@ -916,6 +916,19 @@ pub fn merge_infl_archive(
     merged
 }
 
+/// Detect a frozen-but-non-empty inflation feed: every parser inserts the current year once
+/// its first YoY print lands (by mid-Feb), so from March onward a healthy feed always carries
+/// the current year. Returns the stale latest year, or None when healthy / empty (empty has
+/// its own ERROR path) / before March (grace: last year's max is still legitimate).
+pub fn infl_series_stale(
+    series: &BTreeMap<i32, f64>,
+    today: chrono::NaiveDate,
+) -> Option<i32> {
+    use chrono::Datelike;
+    let max_year = *series.keys().next_back()?;
+    (today.month() >= 3 && max_year < today.year()).then_some(max_year)
+}
+
 /// Parse the BLS public API (v1) CPI-U response into {year -> annual %}. The series is the
 /// index LEVEL (e.g. CUUR0000SA0) by month, so convert to a rate: for each year, the rate is
 /// (its latest month with a prior-year same-month) / (that prior-year value) − 1. A complete
@@ -2565,5 +2578,17 @@ mod tests {
     assert_eq!(merged.get(&2026), Some(&2.9));
     assert!(merge_infl_archive(old, BTreeMap::new()).is_empty()); // outage guard
     assert_eq!(merge_infl_archive(BTreeMap::new(), new.clone()), new); // no archive = passthrough
+
+    // (r18) staleness tripwire: frozen-not-empty feed self-reports from March of the next
+    // year; healthy feed silent; Jan/Feb grace (prior-year max still legitimate); empty
+    // stays None (the ERROR path owns empty).
+    let day = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
+    let frozen: BTreeMap<i32, f64> = [(2024, 2.4), (2025, 2.3)].into();
+    let healthy: BTreeMap<i32, f64> = [(2025, 2.3), (2026, 2.9)].into();
+    assert_eq!(infl_series_stale(&frozen, day(2026, 7, 19)), Some(2025)); // r17 blindness caught
+    assert_eq!(infl_series_stale(&healthy, day(2026, 7, 19)), None);
+    assert_eq!(infl_series_stale(&frozen, day(2026, 2, 28)), None); // early-year grace
+    assert_eq!(infl_series_stale(&frozen, day(2026, 3, 1)), Some(2025)); // grace ends in March
+    assert_eq!(infl_series_stale(&BTreeMap::new(), day(2026, 7, 19)), None);
     }
 }
