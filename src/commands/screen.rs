@@ -414,6 +414,43 @@ fn rank_trend(
     (climbers, faders)
 }
 
+/// (round 30) Book STABILITY — how much of the top-[`track::BOOK`] set carries over between
+/// consecutive screens, averaged across the journal. A meta-confidence number ABOUT the ranking
+/// (does it reshuffle every screen?), orthogonal to the persistent-leaders footer (which names
+/// hold), the rank-trend footer (which way a name moves), and the trust line (return). Retention
+/// per pair = |A ∩ B| / min(|A|, |B|) over the two top-[`track::BOOK`] slices — scored against the
+/// SMALLER book so a short snapshot (some days store < 10 rows) reads as fewer slots, not churn.
+/// `None` if fewer than two comparable screens.
+fn book_stability(journal: &[crate::commands::track::Snapshot]) -> Option<f64> {
+    let books: Vec<std::collections::HashSet<&str>> = journal
+        .iter()
+        .map(|s| {
+            s.rows
+                .iter()
+                .take(crate::commands::track::BOOK)
+                .map(|(t, _)| t.as_str())
+                .collect()
+        })
+        .collect();
+    if books.len() < 2 {
+        return None; // no pair to compare
+    }
+    let mut sum = 0.0;
+    let mut pairs = 0usize;
+    for w in books.windows(2) {
+        let denom = w[0].len().min(w[1].len());
+        if denom == 0 {
+            continue; // an empty book has nothing to retain
+        }
+        sum += w[0].intersection(&w[1]).count() as f64 / denom as f64;
+        pairs += 1;
+    }
+    if pairs == 0 {
+        return None;
+    }
+    Some(sum / pairs as f64)
+}
+
 /// (r15) Footer row label: pinned extras carry the table's `*` glyph so a starred footer row
 /// reads as "your watchlist, not the ranking"; ranked names print bare.
 fn footer_label(t: &str, ranked: &[String]) -> String {
@@ -1433,6 +1470,34 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (round 30) book stability: how much of the top-10 set has carried over screen-to-screen
+    // across the journal — a meta-confidence number ABOUT the ranking, not any one name. A book
+    // that reshuffles every screen is a weak 20yr anchor even when today's #1 looks great. Distinct
+    // from the single-step membership diff above: this averages retention over ALL consecutive
+    // pairs, scored against the smaller book so a short snapshot reads as fewer slots, not churn.
+    // Zero fetch; needs ≥3 screens (≥2 pairs); silent otherwise.
+    {
+        let (snaps, _) = crate::commands::track::read_snapshots();
+        if snaps.len() >= 3 {
+            if let Some(ratio) = book_stability(&snaps) {
+                let book = crate::commands::track::BOOK;
+                let k = snaps.len();
+                let pct = ratio * 100.0;
+                let tag = if ratio >= 0.8 {
+                    "stable"
+                } else if ratio >= 0.6 {
+                    "moderate churn"
+                } else {
+                    "churny — ranks are noisy"
+                };
+                println!(
+                    "\nTop-{book} stability — holds {pct:.0}% of its names screen-to-screen \
+                     across the last {k} screens ({tag})"
+                );
+            }
+        }
+    }
+
     // Conviction bridge: the per-name depth lives in other subcommands, but nothing on this
     // surface said so — the ranking is where a pick decision starts, so the pointer belongs here.
     println!(
@@ -2207,6 +2272,50 @@ mod tests {
         assert_eq!(up, vec![("UP".to_string(), 8, 3), ("UP2".to_string(), 9, 2)]);
         // fader; FLAT (deadband) / THIN (<3 appearances) / BELOW (below book) / NEW (absent) excluded
         assert_eq!(down, vec![("DOWN".to_string(), 2, 7)]);
+    }
+
+    /// (round 30) book stability: averaged top-BOOK name-retention between consecutive screens.
+    /// A fully-held book scores 1.0; a two-of-three churn scores 2/3; a smaller book is scored
+    /// against its own size (min denominator), so all of a short book carrying over is still 1.0;
+    /// a name past the top-BOOK cut can't affect the score; < 2 screens yields no number.
+    #[test]
+    fn book_stability_semantics() {
+        use crate::commands::track::Snapshot;
+        let snap = |date: &str, names: &[&str]| Snapshot {
+            date: date.into(),
+            spx: None,
+            spx_off_hi: None,
+            rows: names.iter().map(|t| (t.to_string(), Some(1.0))).collect(),
+        };
+        // fully stable: same top set across 3 screens → every pair retains all → 1.0
+        let stable = vec![
+            snap("d1", &["A", "B", "C"]),
+            snap("d2", &["A", "B", "C"]),
+            snap("d3", &["A", "B", "C"]),
+        ];
+        assert_eq!(book_stability(&stable), Some(1.0));
+        // partial churn: each pair keeps {A,B} of 3 → 2/3 on both pairs → 2/3
+        let churn = vec![
+            snap("d1", &["A", "B", "C"]),
+            snap("d2", &["A", "B", "D"]),
+            snap("d3", &["A", "B", "E"]),
+        ];
+        assert!((book_stability(&churn).unwrap() - 2.0 / 3.0).abs() < 1e-9);
+        // smaller book fully carried: {A,B} ⊂ {A,B,C,D} → 2/min(2,4)=2/2 → 1.0, not 2/4
+        let grow = vec![snap("d1", &["A", "B"]), snap("d2", &["A", "B", "C", "D"])];
+        assert_eq!(book_stability(&grow), Some(1.0));
+        // BOOK cap: two 11-name books identical in the top 10, differing only at rank 11 → the
+        // 11th name is past the cut, so retention is a full 10/10 → 1.0 (not 10/11)
+        let ten: Vec<String> =
+            (0..crate::commands::track::BOOK).map(|i| format!("N{i}")).collect();
+        let mut a: Vec<&str> = ten.iter().map(String::as_str).collect();
+        let mut b = a.clone();
+        a.push("X11");
+        b.push("Y11");
+        let capped = vec![snap("d1", &a), snap("d2", &b)];
+        assert_eq!(book_stability(&capped), Some(1.0));
+        // < 2 screens → no pair to compare → None
+        assert_eq!(book_stability(&[snap("d1", &["A"])]), None);
     }
 
     /// (r15) T212 orderability: flagged = known-ISIN AND absent from the catalog, input order.
