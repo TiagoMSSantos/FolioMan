@@ -337,6 +337,38 @@ fn footer_names(ranked: &[String], pinned: &[String]) -> Vec<String> {
     ranked.iter().chain(pinned.iter().filter(|p| !ranked.contains(p))).cloned().collect()
 }
 
+/// (round 28) Which of today's top rows have DURABLY held a top-10 rank across the journal —
+/// the frequency the trust line's return-grade and the single-step membership diff don't show.
+/// For each `today_top` ticker (rank order preserved), the fraction of `past` snapshots whose own
+/// top-[`track::BOOK`] rows carried it; kept when `>= min_frac`. A name sitting at rank 11+ in a
+/// snapshot does NOT count (the book is the top-10, same cut the journal is graded on). Empty
+/// `past` → empty: a persistence claim needs history.
+fn persistent_leaders(
+    today_top: &[String],
+    past: &[crate::commands::track::Snapshot],
+    min_frac: f64,
+) -> Vec<String> {
+    if past.is_empty() {
+        return Vec::new();
+    }
+    today_top
+        .iter()
+        .filter(|t| {
+            let hits = past
+                .iter()
+                .filter(|s| {
+                    s.rows
+                        .iter()
+                        .take(crate::commands::track::BOOK)
+                        .any(|(r, _)| r == *t)
+                })
+                .count();
+            hits as f64 / past.len() as f64 >= min_frac
+        })
+        .cloned()
+        .collect()
+}
+
 /// (r15) Footer row label: pinned extras carry the table's `*` glyph so a starred footer row
 /// reads as "your watchlist, not the ranking"; ranked names print bare.
 fn footer_label(t: &str, ranked: &[String]) -> String {
@@ -1299,6 +1331,31 @@ pub async fn run(args: Vec<String>) {
         println!("\n{}", crate::commands::backtest::verdict_line(&v, drift));
     }
 
+    // (round 28) persistent leaders: which of today's top-10 have DURABLY held a top-10 rank
+    // across the journal — the multi-screen frequency the trust line (return) and the membership
+    // diff (churn since last screen) don't show. A 20yr holder wants the durable leaders, not a
+    // name that flashed in once. Reads the same journal as the trust line; today's own row (just
+    // written) is excluded so the frequency is out-of-sample. K and the since-date are stated so a
+    // thin journal can't read as a long record. Zero fetch; silent under 2 past screens or an
+    // empty durable set.
+    {
+        let (snaps, _) = crate::commands::track::read_snapshots();
+        let past: Vec<_> = snaps.into_iter().filter(|s| s.date < run_date).collect();
+        if past.len() >= 2 {
+            let today_top: Vec<String> =
+                ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
+            let leaders = persistent_leaders(&today_top, &past, 0.8);
+            if !leaders.is_empty() {
+                let k = past.len();
+                let since = past.iter().map(|s| s.date.as_str()).min().unwrap_or("");
+                println!(
+                    "\nPersistent leaders — held a top-10 rank in ≥80% of the last {k} screens (since {since}): {}",
+                    leaders.join(", ")
+                );
+            }
+        }
+    }
+
     // Conviction bridge: the per-name depth lives in other subcommands, but nothing on this
     // surface said so — the ranking is where a pick decision starts, so the pointer belongs here.
     println!(
@@ -1992,6 +2049,47 @@ mod tests {
         assert_eq!(footer_label("A.L", &ranked), "A.L"); // ranked prints bare
         assert_eq!(footer_label("B.L", &ranked), "B.L"); // pinned-but-ranked too
         assert_eq!(footer_label("P.DE", &ranked), "P.DE*"); // extras carry the table's glyph
+    }
+
+    /// (round 28) persistent leaders: a name in ≥80% of past top-10s is kept (0.8 boundary IN,
+    /// 0.6 OUT); a name that only ever sat at rank 11+ is NOT counted (the book is the top-10);
+    /// a brand-new name (0 past appearances) is out; input/rank order is preserved; empty past
+    /// (no history) → empty.
+    #[test]
+    fn persistent_leaders_semantics() {
+        use crate::commands::track::Snapshot;
+        // Each snapshot: `lead` names first, padded with fillers to 10, then DEEP at rank 11 —
+        // so DEEP is present-but-below-the-book in EVERY snapshot (capped 0.0, uncapped 1.0).
+        let snap = |date: &str, lead: &[&str]| {
+            let mut rows: Vec<(String, Option<f64>)> =
+                lead.iter().map(|t| (t.to_string(), Some(1.0))).collect();
+            let mut f = 0;
+            while rows.len() < crate::commands::track::BOOK {
+                rows.push((format!("PAD{f}"), Some(1.0)));
+                f += 1;
+            }
+            rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, rows }
+        };
+        // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
+        let past = vec![
+            snap("2026-06-01", &["ALL", "MOST", "HALF"]),
+            snap("2026-06-02", &["ALL", "MOST", "HALF"]),
+            snap("2026-06-03", &["ALL", "MOST", "HALF"]),
+            snap("2026-06-04", &["ALL", "MOST"]),
+            snap("2026-06-05", &["ALL"]),
+        ];
+        // today's top, deliberately NOT in the past-frequency order, to prove input order is kept;
+        // DEEP is IN today's list, so the book cap is what keeps it out of the result.
+        let today = ["HALF", "ALL", "NEW", "DEEP", "MOST"].map(String::from);
+        // 0.8: ALL(1.0) + MOST(0.8 boundary IN); HALF(0.6) out, NEW(0) out, DEEP(capped 0) out
+        assert_eq!(persistent_leaders(&today, &past, 0.8), vec!["ALL".to_string(), "MOST".to_string()]);
+        // 0.6: HALF clears the lower bar; DEEP still never does (rank 11 is past the book cut)
+        assert_eq!(
+            persistent_leaders(&today, &past, 0.6),
+            vec!["HALF".to_string(), "ALL".to_string(), "MOST".to_string()]
+        );
+        assert!(persistent_leaders(&today, &[], 0.8).is_empty()); // no history → no claim
     }
 
     /// (r15) T212 orderability: flagged = known-ISIN AND absent from the catalog, input order.
