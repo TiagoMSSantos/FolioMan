@@ -369,6 +369,51 @@ fn persistent_leaders(
         .collect()
 }
 
+/// (round 29) Rank DIRECTION for today's top names — which are climbing toward #1 vs fading down
+/// the book across the journal. Orthogonal to the persistent-leaders footer (top-10 MEMBERSHIP)
+/// and the trust line (RETURN): a name can hold the book durably yet be deteriorating, a caution
+/// for a 20yr anchor. `journal` is chronological and includes today's row, so the trend ends at
+/// today's rank. For each `today_top` ticker (today-order kept), its rank in each snapshot =
+/// position within the top-[`track::BOOK`] slice, +1 (a name below the book has NO rank — same cut
+/// r28 and `track::grade` use). A claim needs `>= min_pts` appearances; earlier-half mean vs
+/// later-half mean decides, with a `band`-rank deadband so a flat drift stays silent. Returns
+/// (climbers, faders), each `(ticker, first_rank, last_rank)` as first→last evidence.
+#[allow(clippy::type_complexity)]
+fn rank_trend(
+    today_top: &[String],
+    journal: &[crate::commands::track::Snapshot],
+    min_pts: usize,
+    band: f64,
+) -> (Vec<(String, usize, usize)>, Vec<(String, usize, usize)>) {
+    let mut climbers = Vec::new();
+    let mut faders = Vec::new();
+    for t in today_top {
+        let ranks: Vec<usize> = journal
+            .iter()
+            .filter_map(|s| {
+                s.rows
+                    .iter()
+                    .take(crate::commands::track::BOOK)
+                    .position(|(r, _)| r == t)
+                    .map(|p| p + 1)
+            })
+            .collect();
+        if ranks.len() < min_pts {
+            continue; // a trend needs enough points to be non-trivial
+        }
+        let m = ranks.len() / 2;
+        let mean = |xs: &[usize]| xs.iter().sum::<usize>() as f64 / xs.len() as f64;
+        let (mean_e, mean_l) = (mean(&ranks[..m]), mean(&ranks[m..]));
+        let entry = (t.clone(), ranks[0], *ranks.last().unwrap());
+        if mean_l <= mean_e - band {
+            climbers.push(entry); // later ranks are NUMERICALLY smaller = higher up the book
+        } else if mean_l >= mean_e + band {
+            faders.push(entry);
+        }
+    }
+    (climbers, faders)
+}
+
 /// (r15) Footer row label: pinned extras carry the table's `*` glyph so a starred footer row
 /// reads as "your watchlist, not the ranking"; ranked names print bare.
 fn footer_label(t: &str, ranked: &[String]) -> String {
@@ -1356,6 +1401,38 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (round 29) rank trend: for today's top-10, which are CLIMBING toward #1 vs FADING down the
+    // book across the journal — the direction the persistent-leaders footer (membership) and the
+    // trust line (return) don't show. A durable name that's deteriorating is a caution for a 20yr
+    // anchor. The chronological journal already includes today's row, so the trend ends at today's
+    // rank. Zero fetch; needs ≥3 screens and ≥3 appearances per name; a ±1-rank deadband keeps a
+    // flat drift silent; silent when nothing clears the band.
+    {
+        let (snaps, _) = crate::commands::track::read_snapshots();
+        if snaps.len() >= 3 {
+            let today_top: Vec<String> =
+                ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
+            let (up, down) = rank_trend(&today_top, &snaps, 3, 1.0);
+            if !up.is_empty() || !down.is_empty() {
+                let k = snaps.len();
+                let fmt = |v: &[(String, usize, usize)]| {
+                    v.iter()
+                        .map(|(n, a, b)| format!("{n} (#{a}→#{b})"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                let mut parts = Vec::new();
+                if !up.is_empty() {
+                    parts.push(format!("climbing: {}", fmt(&up)));
+                }
+                if !down.is_empty() {
+                    parts.push(format!("fading: {}", fmt(&down)));
+                }
+                println!("\nRank trend over the last {k} screens — {}", parts.join(" · "));
+            }
+        }
+    }
+
     // Conviction bridge: the per-name depth lives in other subcommands, but nothing on this
     // surface said so — the ranking is where a pick decision starts, so the pointer belongs here.
     println!(
@@ -2090,6 +2167,46 @@ mod tests {
             vec!["HALF".to_string(), "ALL".to_string(), "MOST".to_string()]
         );
         assert!(persistent_leaders(&today, &[], 0.8).is_empty()); // no history → no claim
+    }
+
+    /// (round 29) rank trend: a name whose later-half mean rank beats its earlier-half by ≥ band is
+    /// climbing (first→last evidence); the reverse fades; a flat name (within the deadband) is
+    /// neither; < min_pts appearances gets no claim; a name below BOOK contributes no point; an
+    /// absent name is skipped; today-order is preserved within each group.
+    #[test]
+    fn rank_trend_semantics() {
+        use crate::commands::track::Snapshot;
+        // place each (name, rank) at index rank-1; every other slot is a unique pad, so a name
+        // really sits at the given rank and unlisted names are absent. Book = the top-BOOK slice.
+        let snap = |date: &str, at: &[(&str, usize)]| {
+            let len = at
+                .iter()
+                .map(|(_, r)| *r)
+                .max()
+                .unwrap_or(0)
+                .max(crate::commands::track::BOOK);
+            let mut rows: Vec<(String, Option<f64>)> =
+                (1..=len).map(|i| (format!("{date}_PAD{i}"), Some(1.0))).collect();
+            for (n, r) in at {
+                rows[*r - 1] = (n.to_string(), Some(1.0));
+            }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, rows }
+        };
+        // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
+        // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
+        let journal = vec![
+            snap("2026-06-01", &[("UP", 8), ("UP2", 9), ("DOWN", 2), ("FLAT", 10), ("BELOW", 12)]),
+            snap("2026-06-02", &[("UP", 7), ("UP2", 6), ("DOWN", 3), ("FLAT", 10), ("THIN", 8), ("BELOW", 12)]),
+            snap("2026-06-03", &[("UP", 5), ("UP2", 4), ("DOWN", 6), ("FLAT", 10), ("THIN", 2), ("BELOW", 12)]),
+            snap("2026-06-04", &[("UP", 3), ("UP2", 2), ("DOWN", 7), ("FLAT", 10), ("BELOW", 12)]),
+        ];
+        // scrambled today order proves grouping keeps today-order, not journal or strength order
+        let today = ["UP", "FLAT", "UP2", "DOWN", "THIN", "BELOW", "NEW"].map(String::from);
+        let (up, down) = rank_trend(&today, &journal, 3, 1.0);
+        // climbers in today-order; first→last observed rank as evidence
+        assert_eq!(up, vec![("UP".to_string(), 8, 3), ("UP2".to_string(), 9, 2)]);
+        // fader; FLAT (deadband) / THIN (<3 appearances) / BELOW (below book) / NEW (absent) excluded
+        assert_eq!(down, vec![("DOWN".to_string(), 2, 7)]);
     }
 
     /// (r15) T212 orderability: flagged = known-ISIN AND absent from the catalog, input order.
