@@ -612,11 +612,13 @@ fn report_fund_lane(samples: &[Sample]) {
 
 /// Closes-derived risk stats probed STANDALONE against the same peer-relative forward return —
 /// the price-side twin of `report_fund_lane`, same validation gate: a stat earns a `growth_score`
-/// term only on real edge with both-positive OOS. Extracted from `Sample.quote` (filled by
-/// `backtest_quote` on the daily cadence; None elsewhere -> the probe skips). `underwater_neg`
-/// negates years-underwater so "higher = better" matches the rho/edge convention of every probe.
+/// term only on real edge with both-positive OOS. Extracted from `Sample.quote` (the consistency/
+/// worst windows scale with the run's cadence, so they fill on daily AND monthly; `underwater_neg`
+/// is daily-only -> it skips on a monthly run). `underwater_neg` negates years-underwater so
+/// "higher = better" matches the rho/edge convention of every probe.
 const RISK_FACTORS: &[(&str, fn(&Quote) -> Option<f64>)] = &[
     ("consistency_5y", |q| q.roll5y_pos_pct),               // % of rolling 5y windows positive
+    ("consistency_10y", |q| q.roll10y_pos_pct),             // same hit-rate at the DECADE horizon (fills on monthly runs)
     ("worst_5y", |q| q.worst_5y_pct),                       // single worst rolling 5y outcome
     ("underwater_neg", |q| q.underwater_yrs.map(|y| -y)),   // longest below-peak stretch, negated
 ];

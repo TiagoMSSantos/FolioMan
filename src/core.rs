@@ -307,14 +307,14 @@ pub fn max_drawdown_pct(closes: &[f64]) -> f64 {
     worst
 }
 
-/// (consistency footers) % of rolling ~`win_years`-year windows (252 sessions/yr) whose
+/// (consistency footers) % of rolling ~`win_years`-year windows (`bars_per_year` bars/yr — 252 daily, 12 monthly) whose
 /// endpoint return is positive, stepped weekly (5 sessions) so overlapping duplicates don't
 /// drown short histories. The literal buy-and-hold question: how often did N patient years
 /// pay? NOMINAL, not inflation-adjusted — the footer labels say so. None = history shorter
 /// than one window (no windows means no claim, never a fake 100%); a non-positive close on
 /// either end skips that window (halted/bad bars).
-pub fn rolling_positive_pct(closes: &[f64], win_years: usize) -> Option<f64> {
-    let win = win_years * 252;
+pub fn rolling_positive_pct(closes: &[f64], win_years: usize, bars_per_year: usize) -> Option<f64> {
+    let win = win_years * bars_per_year;
     const STEP: usize = 5;
     let (mut pos, mut n) = (0usize, 0usize);
     let mut i = 0;
@@ -355,8 +355,8 @@ pub fn longest_underwater_yrs(closes: &[f64]) -> Option<f64> {
 /// `rolling_positive_pct`'s frequency ("97% of windows positive; the worst one did −12%").
 /// Same win/STEP walk and skip rules: a window with a non-positive close on either end is
 /// skipped; `None` when no full window exists — no claim, never a fake number.
-pub fn worst_rolling_pct(closes: &[f64], win_years: usize) -> Option<f64> {
-    let win = win_years * 252;
+pub fn worst_rolling_pct(closes: &[f64], win_years: usize, bars_per_year: usize) -> Option<f64> {
+    let win = win_years * bars_per_year;
     const STEP: usize = 5;
     let mut worst: Option<f64> = None;
     let mut i = 0;
@@ -1627,15 +1627,18 @@ pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: 
     quote.trend_r2 = trend_r2(c);
     quote.trend_cagr = trend_cagr(c, cadence); // (#14) same fit, annualized by the run's cadence -> train==serve
     quote.max_drawdown_pct = max_drawdown_pct(c);
-    // closes-derived risk stats for the standalone PRICE-RISK probes (backtest report only —
-    // no score path reads these). Window constants are daily-session-based (5×252, /252), so
-    // fill on the daily cadence only; a monthly run leaves them None (probes then skip).
+    // closes-derived risk stats for the standalone PRICE-RISK probes (backtest report only — no
+    // score path reads roll*/worst*). The hit-rate/worst windows scale with the run's cadence
+    // (bars/year) so a MONTHLY run measures the same 5y/10y calendar span the daily run does — a
+    // rolling multi-year window needs decades of history, which only the monthly series carries.
+    quote.roll5y_pos_pct = rolling_positive_pct(c, 5, cadence);
+    quote.worst_5y_pct = worst_rolling_pct(c, 5, cadence);
+    quote.roll10y_pos_pct = rolling_positive_pct(c, 10, cadence);
+    quote.worst_10y_pct = worst_rolling_pct(c, 10, cadence);
+    // underwater_yrs is /252-based AND score-read (growth_underwater_weight) -> keep it daily-only
+    // so a monthly run can't feed a miscalibrated duration into the validated held-book verdict.
     if cadence == 252 {
-        quote.roll5y_pos_pct = rolling_positive_pct(c, 5);
         quote.underwater_yrs = longest_underwater_yrs(c);
-        quote.worst_5y_pct = worst_rolling_pct(c, 5);
-        quote.roll10y_pos_pct = rolling_positive_pct(c, 10);
-        quote.worst_10y_pct = worst_rolling_pct(c, 10);
     }
     // (#20) the LIVE growth lane excludes a name whose turnover is UNKNOWN (an untradeable/dead listing
     // like 0Y72.L). backtest_quote can't reconstruct turnover, but that absence is NOT a liquidity signal
@@ -1805,20 +1808,25 @@ mod tests {
     fn rolling_consistency_semantics() {
         const WIN: usize = 5 * 252;
         let rising: Vec<f64> = (1..=WIN + 50).map(|i| i as f64).collect();
-        assert_eq!(rolling_positive_pct(&rising, 5), Some(100.0));
+        assert_eq!(rolling_positive_pct(&rising, 5, 252), Some(100.0));
         let falling: Vec<f64> = (1..=WIN + 50).rev().map(|i| i as f64).collect();
-        assert_eq!(rolling_positive_pct(&falling, 5), Some(0.0));
-        assert!(rolling_positive_pct(&rising[..WIN], 5).is_none()); // no full window -> no claim
-        assert!(rolling_positive_pct(&[], 5).is_none());
+        assert_eq!(rolling_positive_pct(&falling, 5, 252), Some(0.0));
+        assert!(rolling_positive_pct(&rising[..WIN], 5, 252).is_none()); // no full window -> no claim
+        assert!(rolling_positive_pct(&[], 5, 252).is_none());
         // bad bar: zero close at the ONLY window's start -> that window skips -> nothing counted
         let mut bad = rising[..WIN + 1].to_vec();
         bad[0] = 0.0;
-        assert!(rolling_positive_pct(&bad, 5).is_none());
+        assert!(rolling_positive_pct(&bad, 5, 252).is_none());
         // (r16) decade fork: 6y of history HAS 5y windows but NO 10y window — the 10y stat must
         // say no-claim, never silently reuse the 5y answer (the win_years param must bite).
         let six_yrs: Vec<f64> = (1..=6 * 252).map(|i| i as f64).collect();
-        assert!(rolling_positive_pct(&six_yrs, 5).is_some());
-        assert!(rolling_positive_pct(&six_yrs, 10).is_none());
+        assert!(rolling_positive_pct(&six_yrs, 5, 252).is_some());
+        assert!(rolling_positive_pct(&six_yrs, 10, 252).is_none());
+        // (r35) cadence: the SAME 5y window on MONTHLY bars needs only 5*12 points — so a 6-year
+        // monthly series HAS a 5y window, where the daily bars_per_year (5*252) would find none.
+        let monthly_6y: Vec<f64> = (1..=6 * 12).map(|i| i as f64).collect();
+        assert!(rolling_positive_pct(&monthly_6y, 5, 12).is_some());
+        assert!(rolling_positive_pct(&monthly_6y, 5, 252).is_none());
     }
 
     /// (underwater) longest_underwater_yrs: rising series never dips (0.0 — a legit value, not
@@ -1849,13 +1857,13 @@ mod tests {
         closes[WIN] = 110.0; // window A (i=0): +10%
         closes[5] = 100.0;
         closes[5 + WIN] = 90.0; // window B (i=5): -10%
-        assert!((worst_rolling_pct(&closes, 5).unwrap() + 10.0).abs() < 1e-9);
+        assert!((worst_rolling_pct(&closes, 5, 252).unwrap() + 10.0).abs() < 1e-9);
         closes[0] = 0.0; // bad endpoint skips window A only
-        assert!((worst_rolling_pct(&closes, 5).unwrap() + 10.0).abs() < 1e-9);
-        assert!(worst_rolling_pct(&vec![1.0; WIN], 5).is_none()); // no full window -> no claim
-        assert!(worst_rolling_pct(&[], 5).is_none());
+        assert!((worst_rolling_pct(&closes, 5, 252).unwrap() + 10.0).abs() < 1e-9);
+        assert!(worst_rolling_pct(&vec![1.0; WIN], 5, 252).is_none()); // no full window -> no claim
+        assert!(worst_rolling_pct(&[], 5, 252).is_none());
         // (r16) decade fork: a 5y-window-deep series carries NO 10y claim
-        assert!(worst_rolling_pct(&closes, 10).is_none());
+        assert!(worst_rolling_pct(&closes, 10, 252).is_none());
     }
 
     /// (r11) `calendar_year_returns`: complete-year pairs only — the current (partial) year and
