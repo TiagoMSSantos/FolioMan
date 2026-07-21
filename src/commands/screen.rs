@@ -895,12 +895,15 @@ pub async fn run(args: Vec<String>) {
             .iter()
             .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur)))
             .collect(),
-        // (round 34) parallel per-name AUM so the fund-flow footer can accrue an AUM history. Same
-        // BF-scored `aum_eur` the closure-risk gate reads — one source across snapshots so a
-        // provider switch never fakes a flow. Non-funds carry None and never produce a reading.
+        // (round 34) parallel per-name AUM so the fund-flow footer can accrue an AUM history. Uses
+        // `aum_shown()` (BF `aum_eur` ∨ Yahoo `aum_fallback`) — the SAME value the table's AUM column
+        // prints, so the journal matches what the user sees, and BF's intermittent universe
+        // enrichment doesn't starve the signal. Non-funds carry None and never produce a reading.
+        // ponytail: aum_shown source is stable within a user's consistent monthly full-runs; a rare
+        // cross-source switch could blip one reading — split into per-source fields only if observed.
         aum: ranked_now
             .iter()
-            .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.aum_eur)))
+            .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.aum_shown())))
             .collect(),
     });
 
