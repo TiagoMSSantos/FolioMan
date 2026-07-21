@@ -788,6 +788,8 @@ pub async fn run(args: Vec<String>) {
         }
         o
     };
+    // (round 118) live free cash, same key + degrade-to-silence stance as the holdings overlay above.
+    let t212_cash = crate::broker::trading212::cash_free(&client).await.ok();
 
     // (round 112) entry-state fetch, hoisted ABOVE the tables: S&P 500 % off its high decides how fast
     // new money should go in. Fetched once here; the top banner (when actionable) and the near-high
@@ -807,6 +809,14 @@ pub async fn run(args: Vec<String>) {
     // (round 115) deploy-math: turn the entry state into a number. Prints only when the user set
     // their personal monthly base (monthly_deploy_eur > 0, private overlay).
     if let Some(line) = deploy_line(settings.monthly_deploy_eur, spx_off_hi) {
+        println!("{line}");
+    }
+    // (round 118) is the deploy actually funded? print live free cash + a covers/short verdict
+    // right under it. Silent without a key (t212_cash None), like the `o` overlay.
+    if let Some(line) = cash_line(
+        deploy_scaled_eur(settings.monthly_deploy_eur, spx_off_hi).map(|(_, t)| t),
+        t212_cash,
+    ) {
         println!("{line}");
     }
 
@@ -1694,6 +1704,28 @@ pub(crate) fn deploy_line(base_eur: f64, off_hi: Option<f64>) -> Option<String> 
     })
 }
 
+/// (round 118) Broker free-cash line, printed under the deploy figure so the month's deploy
+/// fundability is visible without a separate `accounts` run. `t212_free` is the live Trading212
+/// free-cash balance (`None` = no key / fetch failed → the line stays silent, exactly like the
+/// `o` holdings overlay on a keyless run). With a monthly deploy set (`deploy_scaled` = the
+/// entry-scaled €) the line says whether the cash covers it or by how much it falls short; with
+/// no budget it just states the balance. Display-only, no ranking effect. Trading212 only — the
+/// ETF deploy broker; Binance (crypto) cash is a different budget, deferred.
+fn cash_line(deploy_scaled: Option<f64>, t212_free: Option<f64>) -> Option<String> {
+    let free = t212_free?;
+    Some(match deploy_scaled {
+        Some(d) if d > 0.0 => {
+            let verdict = if free >= d {
+                format!("covers this month's €{d:.0} deploy")
+            } else {
+                format!("€{:.0} short of the €{d:.0} deploy", d - free)
+            };
+            format!("\n  Broker cash — Trading212 free €{free:.0}, {verdict}.")
+        }
+        _ => format!("\n  Broker cash — Trading212 free €{free:.0}."),
+    })
+}
+
 /// (tests round 5) The deploy composition — knob gate (≤0 = unset), unknown-state ×1 fallback,
 /// base × ladder — in ONE place. The banner/`size` line (via [`deploy_line`]), the order-glue
 /// QTY sizing, and `sim`'s monthly paper budget all consume this, so the € the banner announces,
@@ -1856,6 +1888,22 @@ mod tests {
         assert!(dd.contains("€2000") && dd.contains("× 2 ") && dd.contains("DRAWDOWN"));
         let unknown = deploy_line(1000.0, None).unwrap();
         assert!(unknown.contains("€1000") && unknown.contains("unavailable"));
+    }
+
+    /// (round 118) cash-line semantics: no cash (no key) prints nothing; with a deploy budget the
+    /// line says covers vs by-how-much short; with no budget it just states the balance.
+    #[test]
+    fn cash_line_semantics() {
+        assert!(cash_line(Some(500.0), None).is_none());
+        let covers = cash_line(Some(500.0), Some(600.0)).unwrap();
+        assert!(covers.contains("free €600") && covers.contains("covers this month's €500 deploy"));
+        let short = cash_line(Some(500.0), Some(300.0)).unwrap();
+        assert!(short.contains("free €300") && short.contains("€200 short of the €500 deploy"));
+        let no_budget = cash_line(None, Some(400.0)).unwrap();
+        assert!(no_budget.contains("free €400") && !no_budget.contains("deploy"));
+        // zero budget is "unset", same as None → balance only, no verdict
+        let zero_budget = cash_line(Some(0.0), Some(400.0)).unwrap();
+        assert!(zero_budget.contains("free €400") && !zero_budget.contains("deploy"));
     }
 
     /// (round 116) order-glue semantics: empty book prints nothing; sized rows split the deploy €

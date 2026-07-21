@@ -58,6 +58,22 @@ fn extract_positions(port: &Value) -> Result<Vec<(String, f64)>, String> {
         .collect())
 }
 
+/// (round 118) Free cash (deploy-available, account currency) for the screen's cash line — just the
+/// `free` field of the `equity/account/cash` endpoint `summary` already reads. A missing field is
+/// API drift (error, not a silent 0.00), same stance as `render_summary`.
+pub async fn cash_free(client: &Client) -> Result<f64, String> {
+    let key = env_var("TRADING212_API_KEY")?;
+    let cash = get(client, &key, "equity/account/cash").await?;
+    parse_free(&cash)
+}
+
+/// Pure extraction, offline-testable (like `render_summary`/`extract_positions`).
+fn parse_free(cash: &Value) -> Result<f64, String> {
+    cash.get("free")
+        .and_then(|x| x.as_f64())
+        .ok_or_else(|| "trading212: no `free` in the cash response (API drift?)".to_string())
+}
+
 /// Pure extraction, split from the fetch so drift handling is testable offline (like `render_summary`).
 fn extract_tickers(port: &Value) -> Result<Vec<String>, String> {
     Ok(port
@@ -199,6 +215,16 @@ mod tests {
         let cash = json!({ "free": 100.0, "invested": 200.0 }); // no "total"
         let err = render_summary(&cash, &json!([])).unwrap_err();
         assert!(err.contains("`total`"), "error must name the missing field: {err}");
+    }
+
+    /// (round 118) free-cash extraction: the `free` number is returned; a dropped `free` is API drift
+    /// (error naming the field), never a silent 0.
+    #[test]
+    fn parse_free_extracts_and_drift_errors() {
+        let cash = json!({ "free": 123.45, "invested": 200.0, "total": 323.45 });
+        assert_eq!(parse_free(&cash).unwrap(), 123.45);
+        let err = parse_free(&json!({ "invested": 200.0 })).unwrap_err();
+        assert!(err.contains("`free`"), "must name the missing field: {err}");
     }
 
     /// A non-array portfolio (wrapper object, error payload) must not read as an empty account.
