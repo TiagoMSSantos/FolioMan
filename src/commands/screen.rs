@@ -451,6 +451,44 @@ fn book_stability(journal: &[crate::commands::track::Snapshot]) -> Option<f64> {
     Some(sum / pairs as f64)
 }
 
+/// (round 31) Mean book RANK — a name's AVERAGE position in the top-[`track::BOOK`] slice across
+/// the journal, the LEVEL the slope/churn footers don't read. r29 rank-trend reports direction and
+/// r30 reports book stability, but a name can be flat (r29 silent) yet durably sit at #2 vs #8 —
+/// same r28 "persistent" bucket, opposite conviction. Reorders today's top by where each name has
+/// SAT on average, so a one-day spike (high today, mid on average) sorts below a durable resident.
+/// Rank per snapshot = position within the top-[`track::BOOK`] slice, +1 (a below-book name adds no
+/// point — same cut r28/r29/r30 and `track::grade` use). A name needs `>= min_pts` appearances for a
+/// non-trivial mean. Returns (ticker, mean_rank, appearances), best-seated (lowest mean) first.
+fn mean_ranks(
+    today_top: &[String],
+    journal: &[crate::commands::track::Snapshot],
+    min_pts: usize,
+) -> Vec<(String, f64, usize)> {
+    let mut out: Vec<(String, f64, usize)> = today_top
+        .iter()
+        .filter_map(|t| {
+            let ranks: Vec<usize> = journal
+                .iter()
+                .filter_map(|s| {
+                    s.rows
+                        .iter()
+                        .take(crate::commands::track::BOOK)
+                        .position(|(r, _)| r == t)
+                        .map(|p| p + 1)
+                })
+                .collect();
+            if ranks.len() < min_pts {
+                return None; // a 1-2 screen mean is trivial
+            }
+            let mean = ranks.iter().sum::<usize>() as f64 / ranks.len() as f64;
+            Some((t.clone(), mean, ranks.len()))
+        })
+        .collect();
+    // best-seated first; ties → more evidence first, then name (deterministic)
+    out.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| b.2.cmp(&a.2)).then_with(|| a.0.cmp(&b.0)));
+    out
+}
+
 /// (r15) Footer row label: pinned extras carry the table's `*` glyph so a starred footer row
 /// reads as "your watchlist, not the ranking"; ranked names print bare.
 fn footer_label(t: &str, ranked: &[String]) -> String {
@@ -1498,6 +1536,29 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (round 31) average book rank: for today's top-10, the mean position each name has held in the
+    // journal — the LEVEL the rank-trend (slope) and book-stability (churn) footers don't read. A
+    // flat name r29 stays silent on can still durably sit at #2 vs #8; this reorders today's top by
+    // where each has SAT on average, so a one-day spike sorts below a durable resident. Zero fetch;
+    // needs ≥3 screens and ≥3 appearances per name; silent when none qualify.
+    {
+        let (snaps, _) = crate::commands::track::read_snapshots();
+        if snaps.len() >= 3 {
+            let today_top: Vec<String> =
+                ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
+            let depth = mean_ranks(&today_top, &snaps, 3);
+            if !depth.is_empty() {
+                let k = snaps.len();
+                let parts = depth
+                    .iter()
+                    .map(|(n, m, c)| format!("{n} #{m:.1} ({c}×)"))
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                println!("\nAverage book rank over the last {k} screens — {parts}");
+            }
+        }
+    }
+
     // Conviction bridge: the per-name depth lives in other subcommands, but nothing on this
     // surface said so — the ranking is where a pick decision starts, so the pointer belongs here.
     println!(
@@ -2316,6 +2377,42 @@ mod tests {
         assert_eq!(book_stability(&capped), Some(1.0));
         // < 2 screens → no pair to compare → None
         assert_eq!(book_stability(&[snap("d1", &["A"])]), None);
+    }
+
+    /// (round 31) mean book rank: a name's average top-BOOK position across the journal, best-seated
+    /// first. A durably-high name (mean #2) sorts before a volatile one (mean #5); < min_pts
+    /// appearances is excluded; an absent name is excluded; a name past the top-BOOK cut contributes
+    /// no point; the output is mean-sorted, not today-sorted.
+    #[test]
+    fn mean_ranks_semantics() {
+        use crate::commands::track::Snapshot;
+        // place each (name, rank) at index rank-1, every other slot a unique pad, top-BOOK slice
+        let snap = |date: &str, at: &[(&str, usize)]| {
+            let len = at
+                .iter()
+                .map(|(_, r)| *r)
+                .max()
+                .unwrap_or(0)
+                .max(crate::commands::track::BOOK);
+            let mut rows: Vec<(String, Option<f64>)> =
+                (1..=len).map(|i| (format!("{date}_PAD{i}"), Some(1.0))).collect();
+            for (n, r) in at {
+                rows[*r - 1] = (n.to_string(), Some(1.0));
+            }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, rows }
+        };
+        // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
+        // E always rank 12 (past the top-10 cut → no point) · D never appears
+        let journal = vec![
+            snap("2026-06-01", &[("A", 2), ("B", 1), ("C", 3), ("E", 12)]),
+            snap("2026-06-02", &[("A", 2), ("B", 5), ("C", 3), ("E", 12)]),
+            snap("2026-06-03", &[("A", 2), ("B", 9), ("E", 12)]),
+        ];
+        // scrambled today order proves the output is mean-sorted, not today-sorted
+        let today = ["B", "E", "C", "A", "D"].map(String::from);
+        let got = mean_ranks(&today, &journal, 3);
+        // A (mean 2.0) before B (mean 5.0); C (< 3), D (absent), E (below book) all excluded
+        assert_eq!(got, vec![("A".to_string(), 2.0, 3), ("B".to_string(), 5.0, 3)]);
     }
 
     /// (r15) T212 orderability: flagged = known-ISIN AND absent from the catalog, input order.
