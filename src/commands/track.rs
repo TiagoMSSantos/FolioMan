@@ -24,6 +24,12 @@ pub struct Snapshot {
     #[serde(default)]
     pub spx_off_hi: Option<f64>,
     pub rows: Vec<(String, Option<f64>)>, // (ticker, close EUR) in rank order, top slice
+    /// (round 34) per-name fund AUM (EUR) for the same top slice, PARALLEL to `rows` — lets the
+    /// fund-flow footer divide price appreciation out of AUM growth to read net shares
+    /// created/redeemed. Absent on pre-r34 lines (serde default -> empty) -> the flow footer stays
+    /// silent for them. Non-fund rows (stocks/crypto) carry `None` here.
+    #[serde(default)]
+    pub aum: Vec<(String, Option<f64>)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -211,7 +217,22 @@ mod tests {
             spx,
             spx_off_hi: None,
             rows: rows.iter().map(|(t, p)| (t.to_string(), *p)).collect(),
+            aum: Vec::new(),
         }
+    }
+
+    /// (round 34) backward-compat: a PRE-r34 journal line (no `aum` key, and no `spx_off_hi`) still
+    /// deserializes — both are `#[serde(default)]` — so an existing `.screen_snapshots.jsonl` keeps
+    /// parsing and the fund-flow footer simply stays silent on those lines (empty `aum`).
+    #[test]
+    fn snapshot_pre_r34_line_parses() {
+        let line = r#"{"date":"2026-06-01","spx":100.0,"rows":[["A",10.0],["B",null]]}"#;
+        let s: Snapshot = serde_json::from_str(line).expect("pre-r34 line must still parse");
+        assert_eq!(s.date, "2026-06-01");
+        assert_eq!(s.spx_off_hi, None); // serde default
+        assert!(s.aum.is_empty()); // serde default → flow footer silent for this line
+        assert_eq!(s.rows.len(), 2);
+        assert_eq!(s.rows[1], ("B".to_string(), None));
     }
 
     /// grade(): zero-day windows and unpriced books grade nothing; a priced book computes the

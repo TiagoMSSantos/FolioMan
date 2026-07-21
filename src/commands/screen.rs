@@ -489,6 +489,48 @@ fn mean_ranks(
     out
 }
 
+/// (round 34) Fund FLOW — for today's top names, net shares created/redeemed across the journal
+/// with price appreciation divided OUT of AUM growth. AUM = shares × price, so between a name's
+/// EARLIEST and LATEST journal points that carry BOTH a positive close (`rows`) and a positive AUM
+/// (`aum`), `(aum_late/aum_early) / (close_late/close_early) − 1` is the pure net-flow fraction: > 0
+/// = money arriving (smart-money validation + closure-risk comfort for a 20yr hold), < 0 = bleeding
+/// assets (a fund shrinking toward liquidation before a decades hold ends). Orthogonal to every
+/// other footer — those read RANK and price-RETURN, never the asset base. AUM is rank-independent,
+/// so points are gathered from ALL rows (not the top-[`track::BOOK`] cut the rank footers use). A
+/// name needs ≥ 2 qualifying points; funds only (stocks/crypto journal `None` AUM and drop out).
+/// Returns (ticker, net_flow_pct, points), biggest inflow first; empty when nothing qualifies.
+fn fund_flow_lines(
+    today_top: &[String],
+    journal: &[crate::commands::track::Snapshot],
+) -> Vec<(String, f64, usize)> {
+    let mut out: Vec<(String, f64, usize)> = today_top
+        .iter()
+        .filter_map(|t| {
+            // journal-order points where this name has BOTH a positive close and a positive AUM
+            let pts: Vec<(f64, f64)> = journal
+                .iter()
+                .filter_map(|s| {
+                    let close =
+                        s.rows.iter().find(|(r, _)| r == t).and_then(|(_, p)| *p).filter(|p| *p > 0.0)?;
+                    let aum =
+                        s.aum.iter().find(|(r, _)| r == t).and_then(|(_, a)| *a).filter(|a| *a > 0.0)?;
+                    Some((close, aum))
+                })
+                .collect();
+            if pts.len() < 2 {
+                return None; // a flow reading needs two AUM+close observations
+            }
+            let (c0, a0) = pts[0];
+            let (c1, a1) = *pts.last().unwrap();
+            let flow = (a1 / a0) / (c1 / c0) - 1.0; // price appreciation divided out → net shares
+            Some((t.clone(), flow * 100.0, pts.len()))
+        })
+        .collect();
+    // biggest inflow first; ties → more evidence, then name (deterministic)
+    out.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| b.2.cmp(&a.2)).then_with(|| a.0.cmp(&b.0)));
+    out
+}
+
 /// (r15) Footer row label: pinned extras carry the table's `*` glyph so a starred footer row
 /// reads as "your watchlist, not the ranking"; ranked names print bare.
 fn footer_label(t: &str, ranked: &[String]) -> String {
@@ -852,6 +894,13 @@ pub async fn run(args: Vec<String>) {
         rows: ranked_now
             .iter()
             .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur)))
+            .collect(),
+        // (round 34) parallel per-name AUM so the fund-flow footer can accrue an AUM history. Same
+        // BF-scored `aum_eur` the closure-risk gate reads — one source across snapshots so a
+        // provider switch never fakes a flow. Non-funds carry None and never produce a reading.
+        aum: ranked_now
+            .iter()
+            .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.aum_eur)))
             .collect(),
     });
 
@@ -1566,6 +1615,32 @@ pub async fn run(args: Vec<String>) {
                     .join(" · ");
                 println!("\nAverage book rank over the last {k} screens — {parts}");
             }
+        }
+    }
+
+    // (round 34) fund flow: for today's top-10, net shares created/redeemed across the journal with
+    // price appreciation divided OUT of AUM growth — is each fund GAINING or BLEEDING assets? A 20yr
+    // durability axis orthogonal to every rank/return footer above: a fund bleeding AUM risks
+    // liquidation before a decades hold ends, and net inflows are smart-money confirmation. Funds
+    // only (stocks/crypto carry no AUM). Zero fetch. COARSE by design — BF refreshes AUM ~monthly,
+    // so a reading accrues over weeks, not per-day; silent until ≥2 journal points carry AUM+close.
+    {
+        let (snaps, _) = crate::commands::track::read_snapshots();
+        let today_top: Vec<String> =
+            ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
+        let flows = fund_flow_lines(&today_top, &snaps);
+        if !flows.is_empty() {
+            let parts = flows
+                .iter()
+                .map(|(n, f, c)| {
+                    let tag = if *f < 0.0 { " (bleeding)" } else { "" };
+                    format!("{n} {f:+.1}% ({c}×){tag}")
+                })
+                .collect::<Vec<_>>()
+                .join(" · ");
+            println!(
+                "\nFund flows across the journal (net shares created/redeemed, price-adjusted) — {parts}"
+            );
         }
     }
 
@@ -2320,7 +2395,7 @@ mod tests {
                 f += 1;
             }
             rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), rows }
         };
         // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
         let past = vec![
@@ -2364,7 +2439,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), rows }
         };
         // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
         // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
@@ -2395,6 +2470,7 @@ mod tests {
             spx: None,
             spx_off_hi: None,
             rows: names.iter().map(|t| (t.to_string(), Some(1.0))).collect(),
+            aum: Vec::new(),
         };
         // fully stable: same top set across 3 screens → every pair retains all → 1.0
         let stable = vec![
@@ -2447,7 +2523,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), rows }
         };
         // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
         // E always rank 12 (past the top-10 cut → no point) · D never appears
@@ -2461,6 +2537,57 @@ mod tests {
         let got = mean_ranks(&today, &journal, 3);
         // A (mean 2.0) before B (mean 5.0); C (< 3), D (absent), E (below book) all excluded
         assert_eq!(got, vec![("A".to_string(), 2.0, 3), ("B".to_string(), 5.0, 3)]);
+    }
+
+    /// (round 34) fund flow: net shares created/redeemed with price appreciation divided OUT of AUM
+    /// growth. AUM 2× while price +25% → (2.0/1.25)−1 = +60% inflow; AUM −20% while price flat →
+    /// −20% outflow (bleeding); a name with < 2 AUM+close points is excluded; a non-fund (None AUM)
+    /// is excluded; an absent name is excluded; output is flow-sorted (biggest inflow first); a
+    /// single-snapshot (or empty) journal yields nothing.
+    #[test]
+    fn fund_flow_semantics() {
+        use crate::commands::track::Snapshot;
+        // (ticker, close, aum) per snapshot — None aum = a non-fund row (stock/crypto)
+        let snap = |date: &str, at: &[(&str, Option<f64>, Option<f64>)]| Snapshot {
+            date: date.into(),
+            spx: None,
+            spx_off_hi: None,
+            rows: at.iter().map(|(t, c, _)| (t.to_string(), *c)).collect(),
+            aum: at.iter().map(|(t, _, a)| (t.to_string(), *a)).collect(),
+        };
+        let journal = vec![
+            snap(
+                "2026-06-01",
+                &[
+                    ("INFLOW", Some(10.0), Some(100.0)),
+                    ("OUTFLOW", Some(20.0), Some(100.0)),
+                    ("STOCK", Some(5.0), None),
+                ],
+            ),
+            snap(
+                "2026-06-02",
+                &[
+                    // aum 100→200 (2×) vs close 10→12.5 (+25%) → (2.0/1.25)−1 = +0.60
+                    ("INFLOW", Some(12.5), Some(200.0)),
+                    // aum 100→80 (−20%) vs close flat → 0.8−1 = −0.20
+                    ("OUTFLOW", Some(20.0), Some(80.0)),
+                    ("STOCK", Some(6.0), None), // no AUM either end → excluded
+                    ("ONESHOT", Some(1.0), Some(50.0)), // only one AUM point → excluded
+                ],
+            ),
+        ];
+        // scrambled today order + an absent name prove filtering and the flow sort
+        let today = ["OUTFLOW", "INFLOW", "STOCK", "ONESHOT", "ABSENT"].map(String::from);
+        let got = fund_flow_lines(&today, &journal);
+        assert_eq!(got.len(), 2); // STOCK (no AUM), ONESHOT (1 pt), ABSENT (never seen) all out
+        assert_eq!(got[0].0, "INFLOW"); // +60% sorts above −20%
+        assert!((got[0].1 - 60.0).abs() < 1e-9);
+        assert_eq!(got[0].2, 2);
+        assert_eq!(got[1].0, "OUTFLOW");
+        assert!((got[1].1 - (-20.0)).abs() < 1e-9);
+        // a flow needs two points: empty and single-snapshot journals yield nothing
+        assert!(fund_flow_lines(&today, &[]).is_empty());
+        assert!(fund_flow_lines(&today, &journal[..1]).is_empty());
     }
 
     /// (r15) T212 orderability: flagged = known-ISIN AND absent from the catalog, input order.
