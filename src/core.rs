@@ -112,6 +112,7 @@ pub struct Quote {
     pub trend_r2: f64,                 // (A) R² (0..1) of the log-price trend — how steadily it compounds; damps CAGR endpoint-luck. 0 = no/short history
     pub trend_cagr: Option<f64>,       // (#14) annualized CAGR from the log-price trend SLOPE (endpoint-robust); precomputed at build, ranked on only when `use_trend_cagr`. None = <2 points
     pub max_drawdown_pct: f64,         // (C) worst peak-to-trough decline (%) in its history; feeds the Calmar (return-per-pain) reward. 0 = never down/no history
+    pub downside_dev_pct: Option<f64>, // (r39) per-bar downside deviation — `volatility_pct` counting only DOWN moves. BACKTEST-PROBE-ONLY (Sortino candidate); no score path and no live fill read it, so it is None everywhere except `backtest_quote`
     pub roll5y_pos_pct: Option<f64>,   // (consistency) % of rolling ~5y windows with a positive NOMINAL return, from the same closes. DISPLAY-ONLY footer ("how often did 5 patient years pay?"); None = <5y of history — never a fake 100%
     pub underwater_yrs: Option<f64>,   // (underwater) longest stretch below the prior peak, in years (~252 sessions/yr), ongoing stretch counts. DISPLAY-ONLY footer — MAXDD's missing twin: depth says how far down, this says how LONG the pain lasted. None = <2 usable closes
     pub worst_5y_pct: Option<f64>,     // (worst-5y) single worst rolling ~5y NOMINAL outcome (%), severity twin of roll5y_pos_pct's frequency. DISPLAY-ONLY footer; None = <5y of history — no claim
@@ -173,6 +174,7 @@ impl Quote {
             trend_r2: 0.0,
             trend_cagr: None,
             max_drawdown_pct: 0.0,
+            downside_dev_pct: None,
             roll5y_pos_pct: None,
             underwater_yrs: None,
             worst_5y_pct: None,
@@ -1641,6 +1643,9 @@ pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: 
     // reproduces the daily path exactly). note: monthly bars APPROXIMATE the daily vol/MA, not
     // equal them — fine, a backtest run is single-cadence so the cross-sectional ranks stay consistent.
     quote.volatility_pct = volatility_pct(c, cadence);
+    // (r39) same window/cadence as the vol above so `sortino` vs `sharpe_ref` differ ONLY in which
+    // returns reach the denominator — the whole question the probe asks.
+    quote.downside_dev_pct = downside_deviation_pct(c, cadence);
     let long_ma = crate::config::LONG_MA_SESSIONS * cadence / 252;
     quote.below_ma_pct = below_long_ma_pct(c, long_ma);
     quote.above_ma_pct = above_long_ma_pct(c, long_ma);
@@ -1716,6 +1721,27 @@ pub fn volatility_pct(closes: &[f64], n: usize) -> Option<f64> {
     let mean = rets.iter().sum::<f64>() / rets.len() as f64;
     let var = rets.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / rets.len() as f64;
     Some(var.sqrt())
+}
+
+/// (r39 probe) Downside twin of `volatility_pct` — same window, same per-bar % units, but only the
+/// NEGATIVE returns contribute: RMS of `min(r, 0)` over ALL n periods (the standard target-0
+/// downside deviation, so a name with few down bars isn't flattered by a thin denominator).
+/// The whole point: Sharpe's denominator punishes a compounder for its UP-moves too, which is
+/// exactly backwards for a lane that exists to surface high-CAGR winners. This is the denominator
+/// that doesn't. Same `<2 returns -> None` guard as its twin; an all-positive stretch legitimately
+/// returns 0.0, so a caller building a ratio MUST guard against dividing by it.
+pub fn downside_deviation_pct(closes: &[f64], n: usize) -> Option<f64> {
+    let len = closes.len();
+    let start = len.saturating_sub(n + 1); // n returns need n+1 closes
+    let rets: Vec<f64> = (start + 1..len)
+        .map(|i| (closes[i] - closes[i - 1]) / closes[i - 1] * 100.0)
+        .filter(|r| r.is_finite())
+        .collect();
+    if rets.len() < 2 {
+        return None;
+    }
+    let sq = rets.iter().map(|r| r.min(0.0).powi(2)).sum::<f64>() / rets.len() as f64;
+    Some(sq.sqrt())
 }
 
 /// Horizons over which `screen` totals dividends (label -> calendar days back).
@@ -2465,6 +2491,19 @@ mod tests {
     assert!(volatility_pct(&[100.0, 101.0, 102.01, 103.0301], 30).unwrap() < 1e-9); // ~0 (float dust)
     assert!(volatility_pct(&[100.0, 110.0, 100.0, 110.0], 30).unwrap() > 0.0);
     assert_eq!(volatility_pct(&[100.0], 30), None); // too few sessions
+
+    // (r39) downside deviation: the SAME walk as volatility_pct with only the down-moves counted.
+    // A monotonic riser has real vol (its up-steps vary) but zero downside — that gap IS the term's
+    // whole thesis, so pin it: if the filter ever stops discriminating, these two collapse together.
+    let riser = [100.0, 110.0, 115.0, 130.0];
+    assert!(volatility_pct(&riser, 30).unwrap() > 0.0);
+    assert_eq!(downside_deviation_pct(&riser, 30), Some(0.0)); // never down -> no downside measured
+    // one −10% move in 3 periods: RMS over ALL periods = sqrt(100/3), NOT sqrt(100/1) — the
+    // all-periods denominator is what stops a name with few down bars flattering itself.
+    let dip = [100.0, 110.0, 99.0, 108.9];
+    assert!((downside_deviation_pct(&dip, 30).unwrap() - (100.0_f64 / 3.0).sqrt()).abs() < 1e-9);
+    assert!(downside_deviation_pct(&dip, 30).unwrap() < volatility_pct(&dip, 30).unwrap());
+    assert_eq!(downside_deviation_pct(&[100.0], 30), None); // same too-few guard as its twin
 
     assert_eq!(pct_cell(Some(&("€10.00".to_string(), 5.0))), "+5.0%");
     assert_eq!(pct_cell(None), "n/a");

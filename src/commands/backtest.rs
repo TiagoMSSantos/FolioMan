@@ -621,7 +621,27 @@ const RISK_FACTORS: &[(&str, fn(&Quote) -> Option<f64>)] = &[
     ("consistency_10y", |q| q.roll10y_pos_pct),             // same hit-rate at the DECADE horizon (fills on monthly runs)
     ("worst_5y", |q| q.worst_5y_pct),                       // single worst rolling 5y outcome
     ("underwater_neg", |q| q.underwater_yrs.map(|y| -y)),   // longest below-peak stretch, negated
+    // (r39) the Sortino question, asked as a matched pair so the answer is readable. `sharpe_ref`
+    // is the INCUMBENT denominator (`volatility_pct`, the stat `risk_bonus` already ranks on) and
+    // `sortino` is the identical ratio with only-down-moves underneath it — same numerator, same
+    // window, same cadence. A verdict is only meaningful as the DIFFERENCE between these two rows:
+    // `sortino` beating `sharpe_ref` is the claim "vol punishes a compounder for its up-moves".
+    // Both skip a name with no trend CAGR or a zero denominator (an all-positive stretch measures
+    // no downside — that is missing data, not an infinite ratio).
+    ("downside_dev_neg", |q| q.downside_dev_pct.map(|d| -d)), // the raw stat alone, negated (less downside = better)
+    ("sortino", |q| ratio(q.trend_cagr, q.downside_dev_pct)),
+    ("sharpe_ref", |q| ratio(q.trend_cagr, q.volatility_pct)),
 ];
+
+/// Return-per-unit-of-risk for the paired risk probes: `None` unless BOTH legs exist and the
+/// denominator is strictly positive, so a zero-risk name drops out of the sample instead of
+/// landing at infinity and hijacking the rank correlation.
+fn ratio(num: Option<f64>, den: Option<f64>) -> Option<f64> {
+    match (num, den) {
+        (Some(n), Some(d)) if d > 0.0 => Some(n / d),
+        _ => None,
+    }
+}
 
 fn report_risk_lane(samples: &[Sample]) {
     println!("\n── PRICE-RISK (closes-derived, standalone probes) ──");
@@ -2040,17 +2060,31 @@ mod tests {
     /// PRICE-RISK probe extractors: pass-through for consistency/worst-5y, and the underwater
     /// NEGATION pinned (years-underwater is bad-when-high, so the probe must see it sign-flipped
     /// to share the higher-is-better rho/edge convention — dropping the `-` silently reads the
-    /// probe backwards).
+    /// probe backwards). (r39) the Sortino pair is pinned to DIFFERENT denominators off one shared
+    /// numerator — if both rows ever read the same field the comparison they exist to make is void
+    /// and the run would print two identical rows as if they were evidence.
     #[test]
     fn risk_factor_extractors() {
         let mut q = Quote::stub("X", "1", "", "X");
         q.roll5y_pos_pct = Some(90.0);
         q.worst_5y_pct = Some(-12.0);
         q.underwater_yrs = Some(2.5);
-        let get = |name: &str| RISK_FACTORS.iter().find(|(n, _)| *n == name).unwrap().1(&q);
-        assert_eq!(get("consistency_5y"), Some(90.0));
-        assert_eq!(get("worst_5y"), Some(-12.0));
-        assert_eq!(get("underwater_neg"), Some(-2.5));
+        q.trend_cagr = Some(24.0);
+        q.downside_dev_pct = Some(0.8);
+        q.volatility_pct = Some(1.6);
+        let get = |q: &Quote, name: &str| RISK_FACTORS.iter().find(|(n, _)| *n == name).unwrap().1(q);
+        assert_eq!(get(&q, "consistency_5y"), Some(90.0));
+        assert_eq!(get(&q, "worst_5y"), Some(-12.0));
+        assert_eq!(get(&q, "underwater_neg"), Some(-2.5));
+        assert_eq!(get(&q, "downside_dev_neg"), Some(-0.8));
+        assert_eq!(get(&q, "sortino"), Some(30.0)); // 24.0 / 0.8 — down-moves only
+        assert_eq!(get(&q, "sharpe_ref"), Some(15.0)); // 24.0 / 1.6 — every move, the incumbent
+        // an all-positive stretch has NO measured downside: the name must leave the sample, not
+        // arrive at +inf and dominate the rank correlation with what is really missing data.
+        let mut flat = q.clone();
+        flat.downside_dev_pct = Some(0.0);
+        assert_eq!(get(&flat, "sortino"), None);
+        assert_eq!(get(&flat, "downside_dev_neg"), Some(0.0)); // the raw stat is still a real 0
         assert!(RISK_FACTORS.iter().all(|(_, f)| f(&Quote::stub("Y", "1", "", "Y")).is_none()));
     }
 

@@ -577,6 +577,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // matching backtest_quote's per-cadence call so the live rank and the validation agree.
         trend_cagr: core::trend_cagr(&chart.closes, 252),
         max_drawdown_pct: core::max_drawdown_pct(&chart.closes),
+        downside_dev_pct: None, // (r39) backtest-probe-only — no score path or footer reads it, so the live fetch doesn't pay for it
         // (consistency) % of rolling 5y/10y windows positive, same closes — the screen's footer
         // stats; the 10y pair (r16) is the decade horizon the book is actually held for.
         roll5y_pos_pct: core::rolling_positive_pct(&chart.closes, 5, 252),

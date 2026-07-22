@@ -2171,6 +2171,7 @@ mod tests {
             // quotes; tests exercising that gate set avg_turnover_eur = None explicitly. €1B -> liq_bonus
             // ln(1e9/1e9)=0, so it stays rank-neutral for the relational score asserts.
             stats_8y: None, // (S-8Y) display-only diagnostic; None keeps `as_8y_window` the identity here
+            downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
             pe_ratio: None,
             roe: None,
