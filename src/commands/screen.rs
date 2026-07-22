@@ -275,11 +275,10 @@ fn twin_groups<'q>(names: &[String], quotes: &'q [Quote]) -> Vec<(&'q str, Vec<(
         std::collections::BTreeMap::new();
     for t in names {
         let Some(q) = quotes.iter().find(|q| &q.ticker == t) else { continue };
-        let (Some(b), Some(p)) = (q.benchmark.as_deref(), q.perf.get(6).and_then(|o| o.as_ref()))
-        else {
+        let (Some(b), Some(p)) = (q.benchmark.as_deref(), picks::perf_pct(q, "5Y")) else {
             continue;
         };
-        by_bench.entry(b).or_default().push((q.ticker.as_str(), p.1));
+        by_bench.entry(b).or_default().push((q.ticker.as_str(), p));
     }
     by_bench
         .into_iter()
@@ -2293,8 +2292,9 @@ mod tests {
         let q = |t: &str, bench: Option<&str>, five_y: Option<f64>| {
             let mut quote = Quote::stub(t, "1", "", t);
             quote.benchmark = bench.map(str::to_string);
-            quote.perf = vec![None; 9];
-            quote.perf[6] = five_y.map(|p| (String::new(), p));
+            quote.perf = vec![None; core::HORIZONS.len()];
+            let i5 = core::HORIZONS.iter().position(|(l, _)| *l == "5Y").unwrap();
+            quote.perf[i5] = five_y.map(|p| (String::new(), p));
             quote
         };
         let quotes = vec![

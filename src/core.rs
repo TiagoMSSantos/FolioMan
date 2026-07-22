@@ -6,7 +6,9 @@ use chrono::{Datelike, Duration, NaiveDate};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// label -> calendar days back
+/// label -> calendar days back. `Quote.perf` is a Vec aligned to THIS order, so anything reading a
+/// leg must go through `picks::perf_pct` (label lookup) — a raw `perf[i]` breaks silently when a
+/// horizon is inserted.
 pub const HORIZONS: &[(&str, i64)] = &[
     ("1D", 1),
     ("1W", 7),
@@ -14,7 +16,9 @@ pub const HORIZONS: &[(&str, i64)] = &[
     ("3M", 91),
     ("6M", 182),
     ("1Y", 365),
+    ("2Y", 730),
     ("5Y", 1825),
+    ("8Y", 2920),
     ("10Y", 3650),
     ("20Y", 7300),
 ];
