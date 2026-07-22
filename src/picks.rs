@@ -1171,7 +1171,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "upside", hdr: "UPSIDE", width: 8, right: true },
     ColSpec { key: "turnover", hdr: "TURNOVER", width: 10, right: true },
     ColSpec { key: "score", hdr: "SCORE", width: 0, right: true },
-    ColSpec { key: "score8y", hdr: "S-8Y", width: 6, right: true }, // DIAGNOSTIC: the same score with the long-CAGR window (and the trust leg) pinned to 8Y — "how does this name look on an 8-year view?". Never ranked on; crypto shows "—" (young EUR pairs have no 8Y leg)
+    ColSpec { key: "score8y", hdr: "S-8Y", width: 6, right: true }, // DIAGNOSTIC: the same score with the long-CAGR window (and the trust leg) pinned to 8Y — "how does this name look on an 8-year view?". Never ranked on, and scored WITHOUT the 8Y CAGR admission floor so every row carries a comparable number
 ];
 
 /// Canonical default layout when `widths.columns` is empty: the historical table PLUS `cagr` and
@@ -1379,9 +1379,9 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str) 
         "upside" => format!("+{:.1}%", upside_to_high(quote.drawdown_pct)),
         "turnover" => turnover_cell(quote.avg_turnover_eur),
         "score" => format!("{score:.1}"),
-        // the 8Y-pinned twin of SCORE (`alt`), computed by the caller. "—" for crypto: an EUR pair
-        // young enough to lack an 8Y leg makes the pin meaningless, not merely missing.
-        "score8y" if is_crypto => "—".to_string(),
+        // the 8Y-pinned twin of SCORE (`alt`), computed by the caller — crypto included: BTC-EUR carries
+        // a real 8Y leg (+657% ≈ 28%/yr), so blanking the class would hide a number that exists. "n/a"
+        // survives only for a name with no rankable leg at all, which a printed row can't be.
         "score8y" => alt.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         _ => "?".to_string(),
     }
@@ -1434,10 +1434,21 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     // S-8Y: the same heuristic with the CAGR window (and, via `trust_factor`, the required record)
     // pinned to 8 years — a second READ on each row, never a ranking input. Built once per table and
     // only when the column is on, so a table without it pays nothing.
-    let tuning8 = cols
-        .iter()
-        .any(|c| c.key == "score8y")
-        .then(|| BuyHeuristic { fixed_cagr_years: 8, ..tuning.clone() });
+    //
+    // The CAGR floor is neutralized so EVERY printed row gets a number. Pinning changes exactly one
+    // input, `long_cagr`, and `growth_min_cagr` is the only gate that reads it (the others test range,
+    // age, AUM, 1Y/1M, drawdown, above-MA — none of which the pin touches, and every printed row already
+    // cleared them live). So dropping this one floor is the whole of "score it anyway": without it a
+    // strong 20-year name whose 8-year window compounds under 14%/yr — XDJE.DE at 10.9%/yr — printed a
+    // bare "n/a" that read as missing data instead of the low score it actually earns on 8 years.
+    // NOTE: the floor is a GATE, never a term (grep says `min_cagr` is only ever compared, never summed),
+    // so removing it changes no arithmetic — S-8Y is the same score, judged without the 8Y admission bar.
+    let tuning8 = cols.iter().any(|c| c.key == "score8y").then(|| BuyHeuristic {
+        fixed_cagr_years: 8,
+        growth_min_cagr: f64::NEG_INFINITY,
+        growth_min_cagr_crypto: f64::NEG_INFINITY,
+        ..tuning.clone()
+    });
     // one printed row; `mark` is the rank label (number + "*" pinned / "#" fundamentals flags). Flags on
     // the rank cell, not the name, so name truncation can't eat them.
     let row = |mark: &str, quote: &Quote, score: f64| {
@@ -2713,6 +2724,18 @@ mod tests {
     assert!((trust_factor(&btc_young, true, 0) - 1.0).abs() < 1e-9);
     assert!(growth_score(&btc_young, &tuning).is_some());
 
+    // (S-8Y) the pin re-runs the CAGR floor on the 8-year window, so a name whose full record clears
+    // the floor but whose 8Y window doesn't gets NO pinned score — that was the bare "n/a" in the
+    // column. (Floor here is the Rust default 8.0; the shipped config raises it to 14.0.)
+    // Dropping the floor (what `print_picks` builds for S-8Y) scores it anyway. The live assert is the
+    // guard: it proves the name is scoreable and the pin is the ONLY reason the bare version is None.
+    let weak8 = quote(5.0, &[("1Y", 12.0), ("5Y", 60.0), ("8Y", 50.0), ("10Y", 400.0)]); // 8Y +50% ≈ 5.2%/yr, under the 8.0 default floor
+    assert!(growth_score(&weak8, &tuning).is_some(), "scoreable live off its 10Y leg (+17.5%/yr)");
+    let pin8 = BuyHeuristic { fixed_cagr_years: 8, ..tuning.clone() };
+    assert!(growth_score(&weak8, &pin8).is_none(), "8Y CAGR under the floor gates the pinned score");
+    let pin8_open = BuyHeuristic { growth_min_cagr: f64::NEG_INFINITY, ..pin8.clone() };
+    assert!(growth_score(&weak8, &pin8_open).is_some(), "S-8Y drops the floor -> a number, not n/a");
+
     // (#4) combine_damps: empty/all-1.0 -> 1.0; a lone 0.5 softens to 0.5^(1/n) (bounded, NOT the raw
     // product); the geomean of several mild damps stays well above their product (no silent nuke).
     assert_eq!(combine_damps(&[]), 1.0);
@@ -3135,12 +3158,13 @@ mod tests {
         assert_eq!(col_cell("8y", &q, 0.0, None, ""), "+290.1%");
         assert_eq!(col_cell("1w", &q, 0.0, None, ""), "n/a"); // absent leg
         assert_eq!(col_cell("bogus", &q, 0.0, None, ""), "?"); // unknown key fallback
-        // S-8Y renders the caller's pinned score; gated names have none, crypto is not applicable at all
+        // S-8Y renders the caller's pinned score, crypto included (BTC-EUR has a real 8Y leg); "n/a"
+        // only when the caller had nothing to score at all.
         assert_eq!(col_cell("score8y", &q, 7.7, Some(6.4), ""), "6.4");
         assert_eq!(col_cell("score8y", &q, 7.7, None, ""), "n/a");
         let mut coin = Quote::stub("BTC-EUR", "€1", "", "Bitcoin");
         coin.instrument_type = "CRYPTOCURRENCY".into();
-        assert_eq!(col_cell("score8y", &coin, 7.7, Some(6.4), ""), "—");
+        assert_eq!(col_cell("score8y", &coin, 7.7, Some(6.4), ""), "6.4");
     }
 
     /// (QA) `turnover_note` both branches against a temp cache: first run -> None (writes baseline),
