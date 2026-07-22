@@ -9,6 +9,7 @@
 use crate::commands::truncate;
 use crate::config::{BuyHeuristic, Widths};
 use crate::core::{self, Quote, HORIZONS};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 /// The longest >2Y leg as (cumulative %, span years): 20Y, else 10Y, else 5Y. None if the asset
@@ -36,6 +37,40 @@ fn long_leg_fixed(quote: &Quote, fixed_years: u32) -> Option<(f64, f64)> {
     match perf_pct(quote, &format!("{fixed_years}Y")) {
         Some(p) => Some((p, fixed_years as f64)),
         None => long_leg(quote), // pinned leg absent -> longest leg, docked by trust_factor
+    }
+}
+
+/// (S-8Y) The same quote with every price stat whose window exceeds 8 years re-measured on its last 8
+/// (`core::Stats8`, precomputed at fetch — the closes are gone by the time anything here runs).
+/// `long_leg_fixed` only pins the CAGR leg; without this the 8Y-pinned column mixed an 8-year CAGR with
+/// 10-year range/R²/drawdown/underwater and only half meant what its header said.
+///
+/// `None` (no history older than 8y, stub, backtest) borrows the quote untouched — the whole record IS
+/// the 8-year window there, so the full-window stats already ARE the 8-year ones. That borrow is what
+/// keeps the LIVE ranking bit-identical: nothing but the S-8Y column ever calls this.
+fn as_8y_window(quote: &Quote) -> Cow<'_, Quote> {
+    let Some(s) = &quote.stats_8y else { return Cow::Borrowed(quote) };
+    let mut q = quote.clone();
+    q.range_pct = s.range_pct;
+    q.trend_r2 = s.trend_r2;
+    q.max_drawdown_pct = s.max_drawdown_pct;
+    q.underwater_yrs = s.underwater_yrs;
+    Cow::Owned(q)
+}
+
+/// (S-8Y) `"†"` when the 8Y pin did NOT apply to this name — it has no 8Y leg, so `long_leg_fixed`
+/// fell back to the longest one and its S-8Y is the full-history score wearing an 8Y label. Marked
+/// rather than blanked, because an unmarked cell would silently claim an 8-year judgement it never
+/// made — the same ambiguity the bare `n/a` had before r37b dropped the CAGR floor.
+///
+/// Distinct from `n/a`, which still appears when a PINNED name fails a gate the pin doesn't touch
+/// (r37b neutralized only the CAGR floor). A pinned row prints at score 0.0 even when gated, so it
+/// can reach this cell with nothing to show — e.g. VVSM.DE at +152% above its 200wk SMA.
+fn short_8y_mark(quote: &Quote) -> &'static str {
+    if perf_pct(quote, "8Y").is_none() {
+        "†"
+    } else {
+        ""
     }
 }
 
@@ -1382,7 +1417,9 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str) 
         // the 8Y-pinned twin of SCORE (`alt`), computed by the caller — crypto included: BTC-EUR carries
         // a real 8Y leg (+657% ≈ 28%/yr), so blanking the class would hide a number that exists. "n/a"
         // survives only for a name with no rankable leg at all, which a printed row can't be.
-        "score8y" => alt.map_or("n/a".to_string(), |v| format!("{v:.1}")),
+        // `†` = the pin did NOT apply: no 8Y leg, so `long_leg_fixed` fell back to the longest one and
+        // this is the full-history score wearing an 8Y label. Same test the fallback itself uses.
+        "score8y" => alt.map_or("n/a".to_string(), |v| format!("{v:.1}{}", short_8y_mark(quote))),
         _ => "?".to_string(),
     }
 }
@@ -1452,7 +1489,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     // one printed row; `mark` is the rank label (number + "*" pinned / "#" fundamentals flags). Flags on
     // the rank cell, not the name, so name truncation can't eat them.
     let row = |mark: &str, quote: &Quote, score: f64| {
-        let alt = tuning8.as_ref().and_then(|t| growth_score(quote, t));
+        let alt = tuning8.as_ref().and_then(|t| growth_score(&as_8y_window(quote), t));
         let line = cols
             .iter()
             .map(|c| fmt_cell(&col_cell(c.key, quote, score, alt, mark), col_width(c, w), c.right))
@@ -1498,6 +1535,10 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
                 seen.push(flag);
             }
         }
+        // `†` rides the S-8Y cell, not the rank cell, so it can't come from `m` — collect it here.
+        if tuning8.is_some() && !short_8y_mark(quote).is_empty() && !seen.contains('†') {
+            seen.push('†');
+        }
         row(&m, quote, *score);
     }
     // Legend: explain only the flags THIS table used, so clean tables stay clean.
@@ -1508,6 +1549,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         ("~", "history bridged from configured older twin (history_proxy) — CAGR/YRS describe the strategy, not this listing"),
         ("H", "hold-suitable: broad + cheap + physical + accumulating + large — a buy-and-hold-20yr core, independent of the momentum rank"),
         ("o", "already held (broker portfolio)"),
+        ("†", "under 8y of record — its S-8Y is the full-history score, not an 8-year one"),
     ]
     .iter()
     .filter(|(flag, _)| seen.contains(flag))
@@ -2128,6 +2170,7 @@ mod tests {
             // (#20) default a KNOWN turnover so the growth lane's unknown-turnover gate admits test
             // quotes; tests exercising that gate set avg_turnover_eur = None explicitly. €1B -> liq_bonus
             // ln(1e9/1e9)=0, so it stays rank-neutral for the relational score asserts.
+            stats_8y: None, // (S-8Y) display-only diagnostic; None keeps `as_8y_window` the identity here
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
             pe_ratio: None,
             roe: None,
@@ -3159,12 +3202,64 @@ mod tests {
         assert_eq!(col_cell("1w", &q, 0.0, None, ""), "n/a"); // absent leg
         assert_eq!(col_cell("bogus", &q, 0.0, None, ""), "?"); // unknown key fallback
         // S-8Y renders the caller's pinned score, crypto included (BTC-EUR has a real 8Y leg); "n/a"
-        // only when the caller had nothing to score at all.
+        // only when the caller had nothing to score at all. `q` HAS an 8Y leg -> the pin applied -> bare.
         assert_eq!(col_cell("score8y", &q, 7.7, Some(6.4), ""), "6.4");
         assert_eq!(col_cell("score8y", &q, 7.7, None, ""), "n/a");
+        // no 8Y leg -> the pin fell back to the longest one -> "†" says so instead of passing the
+        // full-history score off as an 8-year judgement.
+        let mut short = Quote::stub("S", "€1", "", "Short");
+        short.perf = legs(&[("1Y", 12.0), ("5Y", 60.0)]);
+        assert_eq!(col_cell("score8y", &short, 7.7, Some(6.4), ""), "6.4†");
         let mut coin = Quote::stub("BTC-EUR", "€1", "", "Bitcoin");
         coin.instrument_type = "CRYPTOCURRENCY".into();
-        assert_eq!(col_cell("score8y", &coin, 7.7, Some(6.4), ""), "6.4");
+        assert_eq!(col_cell("score8y", &coin, 7.7, Some(6.4), ""), "6.4†"); // stub: no legs at all
+    }
+
+    /// (S-8Y) `as_8y_window` swaps EXACTLY the four >8y price stats and nothing else, and is the
+    /// identity when there is no 8-year window to swap in. The identity case is what keeps the LIVE
+    /// ranking bit-identical — every scored fixture in this file has `stats_8y: None`.
+    #[test]
+    fn as_8y_window_swaps_only_the_long_window_stats() {
+        let mut q = Quote::stub("T", "€1", "", "n");
+        q.perf = legs(&[("1Y", 12.0), ("8Y", 200.0), ("10Y", 400.0)]);
+        q.range_pct = 95.0;
+        q.trend_r2 = 0.90;
+        q.max_drawdown_pct = -55.0;
+        q.underwater_yrs = Some(4.0);
+        q.above_ma_pct = 60.0;
+        q.volatility_pct = Some(1.4);
+        // None -> borrowed untouched
+        assert!(matches!(as_8y_window(&q), Cow::Borrowed(_)));
+        assert_eq!(as_8y_window(&q).range_pct, 95.0);
+
+        q.stats_8y = Some(core::Stats8 { range_pct: 88.0, trend_r2: 0.96, max_drawdown_pct: -32.0, underwater_yrs: Some(1.5) });
+        let w = as_8y_window(&q);
+        assert!(matches!(w, Cow::Owned(_)));
+        assert_eq!(w.range_pct, 88.0);
+        assert_eq!(w.trend_r2, 0.96);
+        assert_eq!(w.max_drawdown_pct, -32.0);
+        assert_eq!(w.underwater_yrs, Some(1.5));
+        // untouched: both windows already sit INSIDE 8 years (200wk SMA ≈ 3.8y, vol ≈ 1y), so
+        // re-slicing them would be dead code — if that ever changes this assert is the tripwire.
+        assert_eq!(w.above_ma_pct, 60.0);
+        assert_eq!(w.volatility_pct, Some(1.4));
+    }
+
+    /// (S-8Y) the swap actually MOVES the score: `range_pct` is the `proximity` multiplier on the whole
+    /// score, so a name whose last 8 years put it lower in its own range scores strictly lower than the
+    /// same name judged over its full ~10y window. This is the one that proves the pin does something.
+    #[test]
+    fn as_8y_window_lower_range_scores_lower() {
+        let tuning = BuyHeuristic::default();
+        let mut q = Quote::stub("T", "€1", "", "n");
+        q.perf = legs(&[("1Y", 30.0), ("5Y", 120.0), ("8Y", 300.0), ("10Y", 400.0)]);
+        q.range_pct = 98.0;
+        q.avg_turnover_eur = Some(5e9);
+        let full = growth_score(&q, &tuning).expect("scoreable");
+        // the oldest, cheapest bars leaving the window pull the percentile rank down
+        q.stats_8y = Some(core::Stats8 { range_pct: 88.0, trend_r2: q.trend_r2, max_drawdown_pct: q.max_drawdown_pct, underwater_yrs: q.underwater_yrs });
+        let pinned = growth_score(&as_8y_window(&q), &tuning).expect("scoreable");
+        assert!(pinned < full, "8y window ranks it lower in its own range -> lower score ({pinned} vs {full})");
     }
 
     /// (QA) `turnover_note` both branches against a temp cache: first run -> None (writes baseline),

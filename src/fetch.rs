@@ -461,6 +461,23 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         _ => None,
     };
 
+    // (S-8Y) the same price stats over the LAST 8 YEARS only, for the 8Y-pinned diagnostic column. This
+    // is the one place the closes still exist — `Quote` carries derived scalars only — so a consumer
+    // downstream cannot re-slice, it has to be precomputed here. `i == 0` means nothing in the payload
+    // predates the cutoff, i.e. the name's whole record already IS its 8-year window: leave None and the
+    // column falls back to the full-window stats, exactly like `long_leg_fixed` falls back on its CAGR leg.
+    let stats_8y = chart
+        .dates
+        .last()
+        .map(|last| chart.dates.partition_point(|d| *d < *last - chrono::Duration::days(2920)))
+        .filter(|&i| i > 0)
+        .map(|i| core::Stats8 {
+            range_pct: core::price_pct_rank(&chart.closes[i..]),
+            trend_r2: core::trend_r2(&chart.closes[i..]),
+            max_drawdown_pct: core::max_drawdown_pct(&chart.closes[i..]),
+            underwater_yrs: core::longest_underwater_yrs(&chart.closes[i..]),
+        });
+
     let cur_close = *chart.closes.last().unwrap();
     let rate = eur_rate(client, urls, &chart.currency, fx_cache).await;
     let price = match rate {
@@ -573,6 +590,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         life_cagr,
         tr_cagr,
         history_proxied,
+        stats_8y,
     }
 }
 
