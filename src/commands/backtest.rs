@@ -421,6 +421,8 @@ pub async fn run(args: Vec<String>) {
     }
     .unwrap_or_default();
     report_vs_benchmark(&samples, &bench, years, tuning);
+    // (r40) relative strength vs the index — needs the benchmark, so it lives here, after the fetch.
+    report_relative_strength(&samples, &bench);
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
     let verdict = report_entry_state(&samples, &bench, years, tuning);
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
@@ -643,8 +645,17 @@ fn ratio(num: Option<f64>, den: Option<f64>) -> Option<f64> {
     }
 }
 
-fn report_risk_lane(samples: &[Sample]) {
-    println!("\n── PRICE-RISK (closes-derived, standalone probes) ──");
+/// One standalone-probe row: Spearman rho of the signal vs the same peer-relative forward return, the
+/// top-minus-bottom-half EDGE on that return, and the early-vs-late OOS split. Shared by every
+/// standalone probe (`report_risk_lane`, `report_relative_strength`) so each measures a signal the
+/// SAME way — a factor earns a score term only on real edge with both OOS halves positive. `pairs`
+/// preserve `samples`' date order, so the midpoint IS the early/late OOS cut. Fewer than 4 pairs is
+/// no claim, never a fabricated number.
+fn emit_probe(name: &str, pairs: &[(&Sample, f64)]) {
+    if pairs.len() < 4 {
+        println!("  {:<14} n/a (only {} cutoffs carry this stat)", name, pairs.len());
+        return;
+    }
     let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
     let split_rho = |s: &[(&Sample, f64)]| {
         core::spearman(
@@ -653,26 +664,53 @@ fn report_risk_lane(samples: &[Sample]) {
         )
         .map_or("n/a".to_string(), |v| format!("{v:+.2}"))
     };
+    let sc: Vec<f64> = pairs.iter().map(|(_, v)| *v).collect();
+    let rels: Vec<f64> = pairs.iter().map(|(s, _)| s.relative).collect();
+    let rho = core::spearman(&sc, &rels).map_or("n/a".to_string(), |v| format!("{v:+.2}"));
+    let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
+    v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let half = v.len() / 2;
+    let edge = mean(&v[..half]) - mean(&v[v.len() - half..]);
+    let mid = pairs.len() / 2; // pairs preserve the date order of `samples` -> early-vs-late OOS
+    println!(
+        "  {:<14} n={:<5} rho {}  edge {:+.1}  OOS {} | {}",
+        name, pairs.len(), rho, edge, split_rho(&pairs[..mid]), split_rho(&pairs[mid..])
+    );
+}
+
+fn report_risk_lane(samples: &[Sample]) {
+    println!("\n── PRICE-RISK (closes-derived, standalone probes) ──");
     for (name, get) in RISK_FACTORS {
         let pairs: Vec<(&Sample, f64)> =
             samples.iter().filter_map(|s| get(&s.quote).map(|v| (s, v))).collect();
-        if pairs.len() < 4 {
-            println!("  {:<14} n/a (only {} cutoffs carry this stat)", name, pairs.len());
-            continue;
-        }
-        let sc: Vec<f64> = pairs.iter().map(|(_, v)| *v).collect();
-        let rels: Vec<f64> = pairs.iter().map(|(s, _)| s.relative).collect();
-        let rho = core::spearman(&sc, &rels).map_or("n/a".to_string(), |v| format!("{v:+.2}"));
-        let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
-        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        let half = v.len() / 2;
-        let edge = mean(&v[..half]) - mean(&v[v.len() - half..]);
-        let mid = pairs.len() / 2; // pairs preserve the date order of `samples` -> early-vs-late OOS
-        println!(
-            "  {:<14} n={:<5} rho {}  edge {:+.1}  OOS {} | {}",
-            name, pairs.len(), rho, edge, split_rho(&pairs[..mid]), split_rho(&pairs[mid..])
-        );
+        emit_probe(name, &pairs);
     }
+}
+
+/// (r40) RELATIVE STRENGTH vs the index, as a matched pair so the verdict is a DIFFERENCE, not a
+/// floating number. `abs_mom_5y` is the name's trailing 5y return (absolute momentum); `rel_str_5y`
+/// subtracts what the benchmark did over the identical 5y window ending at the cutoff. They differ
+/// ONLY by that subtraction, so `rel_str_5y` beating `abs_mom_5y` is exactly the claim "being ahead
+/// of the INDEX predicts forward excess return better than being up in absolute terms"; level rows =
+/// the subtraction is inert and there is nothing to ship. Window is a FIXED 5y (well-populated on the
+/// monthly series, the score's most reliable long leg) so the SAME signal is graded at both the 8y
+/// and 20y forward horizons. Probe-only: no score term, no live fill — this measures whether such a
+/// term would be worth the (large) work of plumbing the benchmark into the per-`Quote` score.
+fn report_relative_strength(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>)) {
+    let (bd, bc) = bench;
+    println!("\n── RELATIVE STRENGTH (name vs benchmark, trailing 5y; abs momentum vs index-relative) ──");
+    let abs_pairs: Vec<(&Sample, f64)> =
+        samples.iter().filter_map(|s| picks::perf_pct(&s.quote, "5Y").map(|v| (s, v))).collect();
+    let rel_pairs: Vec<(&Sample, f64)> = samples
+        .iter()
+        .filter_map(|s| {
+            let name = picks::perf_pct(&s.quote, "5Y")?;
+            let bench_ret = bench_trailing(bd, bc, s.date, 5)?;
+            Some((s, name - bench_ret))
+        })
+        .collect();
+    emit_probe("abs_mom_5y", &abs_pairs);
+    emit_probe("rel_str_5y", &rel_pairs);
 }
 
 /// (G) Pick the fund factor whose HELD-OUT TEST edge wins AND whose two OOS halves are both positive AND
@@ -795,6 +833,18 @@ fn benchmark_fwd(dates: &[chrono::NaiveDate], closes: &[f64], from: chrono::Naiv
     let target = dates[i] + chrono::Duration::days(years * 365);
     let off = dates[i..].iter().position(|d| *d >= target)?;
     let r = (closes[i + off] / closes[i] - 1.0) * 100.0;
+    r.is_finite().then_some(r)
+}
+
+/// (r40) Cumulative % return of a benchmark series over the `years` ENDING at `date` — the trailing
+/// mirror of `benchmark_fwd`, for the relative-strength probe. Anchors on the last session `≤ date`
+/// and the last session `≤ date − years`; `None` if either is missing (the series doesn't reach back
+/// a full window before the cutoff). Trailing, not forward, so it can't peek at the holdout it grades.
+fn bench_trailing(dates: &[chrono::NaiveDate], closes: &[f64], date: chrono::NaiveDate, years: i64) -> Option<f64> {
+    let end = dates.iter().rposition(|d| *d <= date)?;
+    let start_date = dates[end] - chrono::Duration::days(years * 365);
+    let start = dates[..=end].iter().rposition(|d| *d <= start_date)?;
+    let r = (closes[end] / closes[start] - 1.0) * 100.0;
     r.is_finite().then_some(r)
 }
 
@@ -2055,6 +2105,21 @@ mod tests {
         let r = benchmark_fwd(&dates, &closes, ymd(2000, 1, 1), 12).unwrap();
         assert!((ann(r, 12) - 8.0).abs() < 0.1); // 12y forward from 2000 -> ~+8%/yr
         assert!(benchmark_fwd(&dates, &closes, ymd(2010, 1, 1), 12).is_none()); // no 12y window left
+    }
+
+    /// (r40) `bench_trailing` is the BACKWARD mirror of `benchmark_fwd`: the return over the N years
+    /// ENDING at the cutoff, the quantity subtracted from a name's trailing return to make relative
+    /// strength. It must be a real, non-zero, per-cutoff-VARYING number — if it ever collapsed to 0
+    /// (or the subtraction were dropped) `rel_str_5y` would equal `abs_mom_5y` and the whole probe
+    /// would be measuring absolute momentum twice. None before the series reaches back a full window.
+    #[test]
+    fn bench_trailing_math() {
+        let dates: Vec<NaiveDate> = (0..15).map(|k| ymd(2000 + k, 1, 3)).collect();
+        let closes: Vec<f64> = (0..15).map(|k| 100.0 * 1.08_f64.powi(k)).collect(); // +8%/yr
+        let r = bench_trailing(&dates, &closes, ymd(2012, 1, 3), 5).unwrap();
+        assert!((ann(r, 5) - 8.0).abs() < 0.2); // trailing 5y of +8%/yr -> ~+8%/yr, and materially non-zero
+        assert!(r > 40.0); // (1.08^5 − 1)·100 ≈ +47%: the subtracted leg is real, not a rounding ghost
+        assert!(bench_trailing(&dates, &closes, ymd(2001, 1, 3), 5).is_none()); // <5y of trailing history
     }
 
     /// PRICE-RISK probe extractors: pass-through for consistency/worst-5y, and the underwater
