@@ -2663,6 +2663,10 @@ mod tests {
         // here (synthetic series, tiny universe — this is not a quality claim about the heuristic);
         // only their exact stability matters. Trip-verified: widening winsor_edge's clamp
         // percentiles to 5/95 reddened this pin.
-        assert_eq!(got, "n=88 scored=30 rho=-0.052 edge=-26.4 winsor=-26.4 terciles=+26.4/+67.1/+40.9");
+        // rho moved -0.052 -> -0.057 on 2026-07-25 when `long_leg`'s middle rung went 10Y -> 8Y. This
+        // is the one pin that genuinely had to move: it scores `backtest_quote`s built from contiguous
+        // closes, so unlike the picks.rs fixtures it really does carry an 8Y leg and really is measured
+        // on it now. Every other field is unchanged.
+        assert_eq!(got, "n=88 scored=30 rho=-0.057 edge=-26.4 winsor=-26.4 terciles=+26.4/+67.1/+40.9");
     }
 }

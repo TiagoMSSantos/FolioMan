@@ -506,7 +506,9 @@ mod tests {
             q.range_pct = 95.0; // clears the 80 range gate
             q.avg_turnover_eur = Some(1e9); // known turnover -> assessable
             q.perf = vec![None; core::HORIZONS.len()];
-            for (label, pct) in [("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)] {
+            // 8Y carries the same 11.6%/yr as the 10Y leg — the 20/8/5 ladder reads 8Y first, and real
+            // history is contiguous, so a 10Y record without an 8Y one is an impossible quote.
+            for (label, pct) in [("1Y", 10.0), ("5Y", 40.0), ("8Y", 140.8), ("10Y", 200.0)] {
                 let i = core::HORIZONS.iter().position(|(l, _)| *l == label).unwrap();
                 q.perf[i] = Some(("x".to_string(), pct));
             }
@@ -532,11 +534,14 @@ mod tests {
         let nm = verdict_line(&miss, &t);
         assert!(nm.contains("not ranked — near miss on range:"), "{nm}");
 
-        // two gates fail (range AND cagr: 10Y 40% ≈ 3.4%/yr < 8) -> fails-list, not a near miss
+        // two gates fail (range AND cagr) -> fails-list, not a near miss. The 20/8/5 ladder reads the
+        // 8Y leg, so that is the one that has to be weak: +30.7% over 8y ≈ 3.4%/yr, under the 8 floor.
         let mut two = scoring();
         two.range_pct = 75.0;
-        let i10 = core::HORIZONS.iter().position(|(l, _)| *l == "10Y").unwrap();
-        two.perf[i10] = Some(("x".to_string(), 40.0));
+        for (label, pct) in [("8Y", 30.7), ("10Y", 40.0)] {
+            let i = core::HORIZONS.iter().position(|(l, _)| *l == label).unwrap();
+            two.perf[i] = Some(("x".to_string(), pct));
+        }
         let fl = verdict_line(&two, &t);
         assert!(fl.contains("not ranked — fails ") && fl.contains("range"), "{fl}");
 

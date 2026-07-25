@@ -12,11 +12,20 @@ use crate::core::{self, Quote, HORIZONS};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-/// The longest >2Y leg as (cumulative %, span years): 20Y, else 10Y, else 5Y. None if the asset
+/// The longest >2Y leg as (cumulative %, span years): 20Y, else 8Y, else 5Y. None if the asset
 /// has no >2Y history. The cumulative % feeds the corpse GATE; annualized (CAGR) it feeds the SCORE,
-/// so a 10Y and a 20Y leg are compared on the same %/yr footing.
+/// so an 8Y and a 20Y leg are compared on the same %/yr footing.
+///
+/// The middle rung was 10Y until 2026-07-25, when it moved to 8Y to match the displayed perf columns
+/// — a name aged 10-20y was being ranked on a leg no table showed. VALIDATED same-batch 12y: baseline
+/// edge +156.8 (rho +0.15, OOS +0.14|+0.12, winsorized +126.7) -> 8Y rung +169.4 (rho +0.15, OOS
+/// +0.14|+0.12, winsorized +137.2). Every dial up or flat, none down, and the on-sale foil moved the
+/// same way independently (+62.2 -> +63.0). CAVEAT, recorded honestly: +12.6 sits INSIDE the 90%
+/// bootstrap bands ([+95.9 … +205.5] vs [+105.8 … +217.3]), the sample shrinks 1542 -> 1488 windows
+/// (a shorter leg compounds less, so more names fall under growth_min_cagr), and the newest era is
+/// worse (+100.2 -> +80.5). Accepted on direction and unanimity, not on significance.
 fn long_leg(quote: &Quote) -> Option<(f64, f64)> {
-    for (label, years) in [("20Y", 20.0), ("10Y", 10.0), ("5Y", 5.0)] {
+    for (label, years) in [("20Y", 20.0), ("8Y", 8.0), ("5Y", 5.0)] {
         if let Some(p) = perf_pct(quote, label) {
             return Some((p, years));
         }
@@ -325,6 +334,14 @@ pub fn perf_pct(quote: &Quote, label: &str) -> Option<f64> {
 /// `fixed_years` (#15 `fixed_cagr_years`) moves the required leg WITH the pinned CAGR window: under an
 /// 8-year view an 8-year record IS the full record, so demanding 10Y there would halve every name the
 /// view exists to judge. 0 (the live default) keeps 10Y — this is inert on the ranked path.
+///
+/// The 10Y here deliberately does NOT track `long_leg`'s ladder, which moved to 20/8/5 on 2026-07-25.
+/// Looks inconsistent; is measured. Same-batch 12y, ladder already at 8Y: trust leg 10Y -> edge +169.4
+/// (rho +0.15, OOS +0.14|+0.12, winsorized +137.2); dropping it to 8Y -> +144.4 (rho +0.14, OOS
+/// +0.13|+0.12, winsorized +115.8) — WORSE than the 20/10/5 baseline it started from. The two numbers
+/// answer different questions: the ladder picks the window a CAGR is measured over, this picks the bar
+/// for calling a record PROVEN, and a 10-year record is demonstrably worth more than an 8-year one.
+/// Do NOT "fix" the mismatch without a same-batch run that clears +169.4.
 fn trust_factor(quote: &Quote, crypto: bool, fixed_years: u32) -> f64 {
     let needed = if crypto {
         "5Y".to_string()
@@ -2193,10 +2210,25 @@ mod tests {
     // build a Quote with chosen horizon %s set (others n/a), robust to HORIZONS order. First
     // arg = drawdown_pct (% below the OFF-HI high) — the on-sale signal the score is built on.
     let quote = |drawdown_pct: f64, labels: &[(&str, f64)]| -> Quote {
-        let perf = HORIZONS
+        let mut perf: Vec<Option<(String, f64)>> = HORIZONS
             .iter()
             .map(|(l, _)| labels.iter().find(|(pl, _)| pl == l).map(|(_, v)| ("x".to_string(), *v)))
             .collect();
+        // (ladder) Real history is contiguous: anything carrying a 10Y record also carries an 8Y one.
+        // These fixtures predate the 20/8/5 ladder and list 10Y alone, so `long_leg` would skip past
+        // the empty 8Y rung down to 5Y and quietly rescore ~90 asserts against a leg they never meant.
+        // Fill the gap at the SAME annualized rate, which leaves every fixture's long CAGR byte-identical
+        // to what its assert was written against — the ladder move is measured in the backtest, not here.
+        let idx = |label: &str| HORIZONS.iter().position(|(l, _)| *l == label).unwrap();
+        let (i8y, i10y) = (idx("8Y"), idx("10Y"));
+        if perf[i8y].is_none() {
+            if let Some((_, c10)) = perf[i10y].clone() {
+                let growth = 1.0 + c10 / 100.0;
+                if growth > 0.0 {
+                    perf[i8y] = Some(("x".to_string(), (growth.powf(0.8) - 1.0) * 100.0));
+                }
+            }
+        }
         Quote {
             ticker: "T".into(), price: "€1.00".into(), dip: "-5.0%".into(), drop_pct: drawdown_pct,
             market: "USA".into(), instrument_type: String::new(), head: String::new(), news_block: String::new(), perf,
@@ -2808,8 +2840,10 @@ mod tests {
     // column. (Floor here is the Rust default 8.0; the shipped config raises it to 14.0.)
     // Dropping the floor (what `print_picks` builds for S-8Y) scores it anyway. The live assert is the
     // guard: it proves the name is scoreable and the pin is the ONLY reason the bare version is None.
-    let weak8 = quote(5.0, &[("1Y", 12.0), ("5Y", 60.0), ("8Y", 50.0), ("10Y", 400.0)]); // 8Y +50% ≈ 5.2%/yr, under the 8.0 default floor
-    assert!(growth_score(&weak8, &tuning).is_some(), "scoreable live off its 10Y leg (+17.5%/yr)");
+    // The strong leg is 20Y, not 10Y: since the ladder moved to 20/8/5 an 8Y leg OUTRANKS a 10Y one,
+    // so a 10Y-strong/8Y-weak name is no longer scoreable live and could not make this point.
+    let weak8 = quote(5.0, &[("1Y", 12.0), ("5Y", 60.0), ("8Y", 50.0), ("10Y", 400.0), ("20Y", 1500.0)]); // 8Y +50% ≈ 5.2%/yr, under the 8.0 default floor
+    assert!(growth_score(&weak8, &tuning).is_some(), "scoreable live off its 20Y leg (+14.9%/yr)");
     let pin8 = BuyHeuristic { fixed_cagr_years: 8, ..tuning.clone() };
     assert!(growth_score(&weak8, &pin8).is_none(), "8Y CAGR under the floor gates the pinned score");
     let pin8_open = BuyHeuristic { growth_min_cagr: f64::NEG_INFINITY, ..pin8.clone() };
@@ -3025,6 +3059,20 @@ mod tests {
                 .iter()
                 .map(|(l, _)| labels.iter().find(|(pl, _)| pl == l).map(|(_, v)| ("x".to_string(), *v)))
                 .collect();
+            // (ladder) same contiguity fix as the `quote` builder above: these fixtures list a 10Y leg
+            // and no 8Y one, which no real history can produce. Left alone, the 20/8/5 ladder drops to
+            // the 5Y rung and the pinned scores move for a reason that is pure fixture artifact rather
+            // than a scoring change. Fill 8Y at the 10Y leg's own rate.
+            let idx = |label: &str| HORIZONS.iter().position(|(l, _)| *l == label).unwrap();
+            let (i8y, i10y) = (idx("8Y"), idx("10Y"));
+            if q.perf[i8y].is_none() {
+                if let Some((_, c10)) = q.perf[i10y].clone() {
+                    let growth = 1.0 + c10 / 100.0;
+                    if growth > 0.0 {
+                        q.perf[i8y] = Some(("x".to_string(), (growth.powf(0.8) - 1.0) * 100.0));
+                    }
+                }
+            }
             q.avg_turnover_eur = Some(1e9);
             q.range_pct = range_pct;
             q
