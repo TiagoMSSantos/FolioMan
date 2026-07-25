@@ -832,6 +832,66 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
         }
         None => println!("  -> no factor beats price-only with both OOS halves + — keep growth_fund_weight 0. SHIP NOTHING."),
     }
+
+    // (#3) WEIGHT CURVE for the CONFIGURED factor. Everything above reports only the search's ARGMAX,
+    // which cannot tell a sharp peak from a plateau — and that is the entire question when asking
+    // whether the tilt can carry more authority. Plateau => the shipped weight is leaving edge on the
+    // table (for peg_yield: PEG < 1 could be worth several points instead of 1.8); sharp peak => the
+    // shipped value IS the ceiling and "rank cheap names harder" has no honest room left. Same
+    // samples / cut / demean / metric / early-late split as `eval`, but the weight is FIXED per row,
+    // so every row is directly comparable to that factor's sweep line above. No re-fetch.
+    let configured = default.growth_fund_factor.as_str();
+    let covered = samples
+        .iter()
+        .any(|s| s.fund.as_ref().and_then(|f| core::select_fund_factor(f, configured)).is_some());
+    if covered {
+        let curve = |w: f64| -> (f64, Option<f64>, Option<f64>) {
+            let mut s = samples.to_vec();
+            for smp in &mut s {
+                smp.quote.fund_factor =
+                    smp.fund.as_ref().and_then(|f| core::select_fund_factor(f, configured));
+            }
+            demean(&mut s[..cut]);
+            demean(&mut s[cut..]);
+            let test = &s[cut..];
+            let mut t = default.clone();
+            t.growth_fund_weight = w;
+            let mid = test.len() / 2;
+            (
+                lane_metrics(test, growth_score, &t).1,
+                lane_metrics(&test[..mid], growth_score, &t).0,
+                lane_metrics(&test[mid..], growth_score, &t).0,
+            )
+        };
+        // bracket the shipped value and always include 0 as the tilt-off control; sourcing `shipped`
+        // from config (not a literal) keeps the row present and correctly labelled after any move.
+        let shipped = default.growth_fund_weight;
+        // dense through 0.05-0.10: for peg_yield the edge PEAKS at 0.05 and has fallen below the
+        // tilt-off baseline by 0.10, so the usable ceiling lives inside that decade. A coarse ladder
+        // shows the cliff exists but not where it starts, which is the number that decides safety.
+        let mut ladder =
+            vec![0.0, 0.005, shipped, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.25, 0.5];
+        ladder.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ladder.dedup();
+        println!(
+            "\n── growth_fund_weight CURVE for `{configured}` (held-out TEST, growth_fund_cap {:.0}) ──",
+            default.growth_fund_cap
+        );
+        for w in ladder {
+            let (edge, a, b) = curve(w);
+            let tag = if w == 0.0 {
+                "  [tilt off]"
+            } else if w == shipped {
+                "  [SHIPPED]"
+            } else {
+                ""
+            };
+            println!("  weight {w:<5.3}  TEST edge {edge:+.1}  OOS {} | {}{tag}", fmt(a), fmt(b));
+        }
+        println!("  (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value is the ceiling.");
+        println!("   SELF-CHECK: the weight-0 row must equal the price-only baseline above, and the SHIPPED row must");
+        println!("   reproduce that factor's sweep line — if either disagrees this curve is measuring something else.)");
+    }
 }
 
 /// Annualize a cumulative % return over `years` -> CAGR %. Clamps the wealth base at 0 so a ≤−100%
