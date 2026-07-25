@@ -1254,6 +1254,7 @@ pub struct FundRow {
     pub eps: Option<f64>,
     pub shares: Option<f64>,          // diluted weighted-avg shares outstanding — DISPLAY-ONLY (buyback column); None on the free tier / when the source omits it
     pub roe: Option<f64>,             // % — PREMIUM (key-metrics/ratios), None on free tier
+    pub roa: Option<f64>,             // % = netIncome/totalAssets — SEC-computed. The ROE FALLBACK: assets can't go negative, so a buyback-shrunk filer (HCA, HLT) still has a meaningful quality level. None on the FMP path. Resolved with roe by `quality_return`
     pub roic: Option<f64>,            // % — PREMIUM
     pub net_debt_ebitda: Option<f64>, // ratio, lower=safer — PREMIUM
     pub fcf_ps: Option<f64>,          // free cash flow / share — PREMIUM
@@ -1297,7 +1298,8 @@ pub struct FundFactors {
     pub op_margin: Option<f64>,    // current operating margin level (operating efficiency)
     pub margin_trend: Option<f64>, // op-margin now minus ~1y ago (margin expanding = strengthening)
     pub eps_growth: Option<f64>,   // EPS CAGR over the lookback (bottom-line compounding; both ends must be +)
-    pub roe: Option<f64>,          // as-of return-on-equity level, % (quality of capital). SEC feed computes it per row (NetIncome ÷ StockholdersEquity); FMP free tier leaves it None
+    pub roe: Option<f64>,          // as-of return-on-equity level, % (quality of capital). SEC feed computes it per row (NetIncome ÷ StockholdersEquity); FMP free tier leaves it None. RAW — sweep-only; the SCORE reads `quality` below
+    pub quality: Option<f64>,      // as-of return-on-capital level, % — `quality_return(roe, roa, net_margin)`: ROE when equity is positive, else ROA. THE field the live screen and the backtest both score, so neither can drift from the other's definition
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
     pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
     pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). PROBE-ONLY: set in the backtest loop from the native as-of close; left None by the live path (currency skew — see `earnings_yield` fn)
@@ -1417,6 +1419,9 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         margin_trend,
         eps_growth,
         roe: now.and_then(|r| r.roe), // as-of level through fund_as_of, same look-ahead guard as the margins
+        // the SCORED quality level, resolved from the same as-of row. `roe` above stays raw so the
+        // factor sweep can still price it standalone; everything that feeds the ranking reads this.
+        quality: now.and_then(|r| quality_return(r.roe, r.roa, r.net_margin)),
         insider_net_buys_90d: None, // (Item 4) SEC-sourced, set in the backtest loop, not from FMP rows
         eps_ttm: now.and_then(|r| r.eps), // (Item 19) as-of EPS level; earnings_yield needs price, set by caller
         earnings_yield: None,             // (Item 19) needs the as-of price -> filled in the backtest loop, not here
@@ -1475,6 +1480,30 @@ pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f
     match (eur_from, eur_to) {
         (Some(a), Some(b)) if b > 0.0 && a > 0.0 => Some(close_native * a / b),
         _ => None, // unknown rate -> caller must drop the ratio, never guess it
+    }
+}
+
+/// The quality-of-capital level to SCORE and DISPLAY: return on equity when equity is positive,
+/// return on assets when it is not, None when neither is usable.
+///
+/// ROE is only meaningful when stockholders' equity is positive. Buyback-heavy filers (HCA, HLT) run
+/// NEGATIVE equity, turning a profitable year into a fake "-113%" (NI +$1.5B ÷ equity -$4B) that slips
+/// under the |ROE| > 100 n/m display rule. Equity's sign isn't carried on the row, but net income's is
+/// (net margin), and NI÷equity flips sign exactly when equity < 0 — so a meaningful ROE must share net
+/// income's sign. That also catches the double-negative fake (loss year + negative equity => ROE > 0).
+///
+/// Suppressing it was the old behaviour and left HCA with a blank quality column despite 15 years of
+/// statements; the ROA fallback replaces the meaningless ratio with a meaningful one instead of a hole.
+/// ROA runs lower than ROE by construction (assets > equity for any levered filer), so a name landing
+/// here earns systematically less quality credit — deliberate, and the reason it isn't a free upgrade.
+///
+/// ONE fn because both lanes must agree: the live screen (fetch.rs) and the backtest (fund_factors).
+/// A live-only filter is exactly the train-serve skew that let the factor sweep measure negative-equity
+/// fakes the live path rejects.
+pub fn quality_return(roe: Option<f64>, roa: Option<f64>, net_margin: Option<f64>) -> Option<f64> {
+    match roe {
+        Some(r) if net_margin.is_none_or(|nm| (r >= 0.0) == (nm >= 0.0)) => Some(r),
+        _ => roa, // no ROE at all, or a sign-inconsistent one -> the denominator that can't go negative
     }
 }
 
@@ -1698,7 +1727,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "op_margin" => f.op_margin,
         "margin_trend" => f.margin_trend,
         "eps_growth" => f.eps_growth,
-        "roe" => f.roe,                                   // quality of capital (SEC feed; FMP free tier = None)
+        "roe" => f.roe,                                   // RAW ROE (SEC feed; FMP free tier = None) — includes the negative-equity fakes; kept selectable only so the sweep's two rows stay comparable
+        "quality" => f.quality,                           // quality of capital as the score reads it: ROE, or ROA where equity is negative
         "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
         "earnings_yield" => f.earnings_yield,             // (Item 19) as-of valuation; PROBE-ONLY (None live)
         "ebitda_yield" => f.ebitda_yield,                 // (EV/EBITDA) capital-structure-neutral valuation; PROBE-ONLY (None live)
@@ -2064,6 +2094,7 @@ mod tests {
             margin_trend: Some(5.0),
             eps_growth: Some(6.0),
             roe: Some(11.0),
+            quality: Some(18.0),
             insider_net_buys_90d: Some(7.0),
             eps_ttm: Some(8.0),
             earnings_yield: Some(9.0),
@@ -2087,7 +2118,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "ebitda_yield"), Some(16.0)); // (EV/EBITDA)
         assert_eq!(select_fund_factor(&f, "peg_yield"), Some(17.0)); // (PEG probe)
         assert_eq!(select_fund_factor(&f, "buyback_yield"), Some(10.0));
-        assert_eq!(select_fund_factor(&f, "roe"), Some(11.0)); // quality of capital; NOT in composite (a level, and the blend already failed the lane)
+        assert_eq!(select_fund_factor(&f, "roe"), Some(11.0)); // RAW ROE; NOT in composite (a level, and the blend already failed the lane)
+        assert_eq!(select_fund_factor(&f, "quality"), Some(18.0)); // the ROE/ROA resolution — a DIFFERENT field, so the two names can't collapse into one
         assert_eq!(select_fund_factor(&f, "fcf_margin"), Some(12.0)); // (round 107) survival levels; NOT in composite either
         assert_eq!(select_fund_factor(&f, "interest_cover"), Some(13.0));
         assert_eq!(select_fund_factor(&f, "net_cash_rev"), Some(14.0));
@@ -2146,6 +2178,26 @@ mod tests {
         assert_eq!(rate_as_of(&series, d(4)), Some(0.80)); // after the end -> last known, the honest carry-forward
         assert_eq!(rate_as_of(&series, d(1).pred_opt().unwrap()), None); // before the start -> no rate exists yet
         assert_eq!(rate_as_of(&BTreeMap::new(), d(2)), None); // no series -> caller drops the factor
+    }
+
+    /// `quality_return`: ROE when equity is positive, ROA when it isn't. The sign test is indirect (the
+    /// row carries no equity, only net margin, and NI÷equity flips sign exactly when equity < 0), which
+    /// is why every branch is pinned — a wrong one shows up as a plausible number, not an error.
+    #[test]
+    fn quality_return_falls_back_on_negative_equity() {
+        // normal filers: ROE kept verbatim, ROA ignored even when present
+        assert_eq!(quality_return(Some(30.1), Some(8.0), Some(15.0)), Some(30.1));
+        assert_eq!(quality_return(Some(-5.0), Some(-2.0), Some(-3.0)), Some(-5.0)); // genuine loss-maker: real negative ROE
+        assert_eq!(quality_return(Some(-27.0), Some(4.0), None), Some(-27.0)); // no margin -> can't judge -> keep ROE
+        // negative equity: profit ÷ negative equity (HCA -112.6 on a +9% margin) -> ROA instead
+        assert_eq!(quality_return(Some(-112.6), Some(9.0), Some(9.0)), Some(9.0));
+        // double negative: loss ÷ negative equity reads POSITIVE — the fake the sign test exists to catch
+        assert_eq!(quality_return(Some(40.0), Some(-3.5), Some(-3.0)), Some(-3.5));
+        // no ROE at all -> ROA carries the row rather than blanking it
+        assert_eq!(quality_return(None, Some(7.0), Some(12.0)), Some(7.0));
+        // neither -> None (NEUTRAL in the score), never a fabricated 0
+        assert_eq!(quality_return(None, None, Some(12.0)), None);
+        assert_eq!(quality_return(Some(-112.6), None, Some(9.0)), None); // meaningless ROE, no fallback -> drop it
     }
 
     /// (Item 3) `composite_factor` = mean of the factors that are `Some`; <2 present -> None (a 1-factor

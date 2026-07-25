@@ -718,8 +718,8 @@ async fn fetch_ratios(client: &Client, urls: &Urls, ticker: &str) -> (Option<f64
 /// P/E = close ÷ latest annual diluted EPS, both forced into the FILER'S REPORTING CURRENCY first: a US
 /// filer reports and trades in USD so nothing is converted, but a foreign private issuer need not (ASML
 /// keeps its books in EUR and its ADR trades USD), and dividing across two currencies would print a
-/// plausible-looking P/E that is wrong by the whole FX rate. ROE is read straight off the SEC-derived
-/// `FundRow` and is a ratio, so it needs no conversion. None when there's no CIK or no rate, so the
+/// plausible-looking P/E that is wrong by the whole FX rate. The quality level is read off the SEC-derived
+/// `FundRow` (ROE, or ROA where equity is negative) and is a ratio, so it needs no conversion. None when there's no CIK or no rate, so the
 /// caller can fall back to FMP. Filling `pe_ratio` also un-blanks the PEG column, which derives from it
 /// downstream. The SEC fetch is itself disk-cached + budget-capped (see `fetch_fundamentals_sec`), so a
 /// wide `screen` cold-fetches once then reads free forever.
@@ -751,16 +751,9 @@ async fn fetch_ratios_sec(
         .filter(|e| *e > 0.0)
         .zip(price)
         .map(|(e, p)| p / e);
-    (pe, latest.roe.filter(|r| roe_sign_consistent(*r, latest.net_margin)))
-}
-
-/// ROE is only meaningful when stockholders' equity is positive; buyback-heavy filers like HLT run
-/// NEGATIVE equity, turning a profitable year into a fake "-27%" (NI +$1.5B ÷ equity -$4B) that slips
-/// under the |ROE|>100 n/m display rule. Equity's sign isn't in the cached rows, but net income's is
-/// (net margin), and NI÷equity flips sign exactly when equity < 0 — so a meaningful ROE must share
-/// net income's sign. Also catches the double-negative fake (loss year + negative equity => ROE > 0).
-fn roe_sign_consistent(roe: f64, net_margin: Option<f64>) -> bool {
-    net_margin.is_none_or(|nm| (roe >= 0.0) == (nm >= 0.0))
+    // ROE where equity is positive, ROA where it isn't — the SAME resolver the backtest scores through
+    // (core::fund_factors), so the live column and the validated factor can't drift apart.
+    (pe, core::quality_return(latest.roe, latest.roa, latest.net_margin))
 }
 
 /// Trailing-twelve-month diluted EPS for a US filer from SEC XBRL's single-concept `companyconcept`
@@ -1264,8 +1257,8 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
 // post-date the as-of `filed`. US filers only (a non-US ticker has no CIK -> None).
 
 // (filed, period_end, revenue, gross_margin, op_margin, net_margin, eps, roe, shares, fcf_margin,
-// interest_cover, net_cash_rev, ebitda, net_debt, currency). An arity change fails deserialization ->
-// treated as a miss -> refetched + rewritten (SEC is uncapped, so a one-time rebuild is free).
+// interest_cover, net_cash_rev, ebitda, net_debt, currency, roa). An arity change fails deserialization
+// -> treated as a miss -> refetched + rewritten (SEC is uncapped, so a one-time rebuild is free).
 type SecCacheRow = (
     String,
     String,
@@ -1282,6 +1275,7 @@ type SecCacheRow = (
     Option<f64>, // ebitda
     Option<f64>, // net_debt
     Option<String>, // (FX) reporting currency — money lines are meaningless against a price without it
+    Option<f64>, // roa — the ROE fallback for negative-equity filers (appended, so the order above is untouched)
 );
 
 /// ANNUAL report forms. `10-K` = US domestic; `20-F` = foreign private issuer (ASML, ARM, BABA); `40-F`
@@ -1306,6 +1300,7 @@ struct FactTags {
     eps: &'static [&'static str],
     shares: &'static [&'static str],
     eq: &'static [&'static str],
+    assets: &'static [&'static str],
     ocf: &'static [&'static str],
     capex: &'static [&'static str],
     intexp: &'static [&'static str],
@@ -1333,6 +1328,10 @@ const US_GAAP_TAGS: FactTags = FactTags {
     eps: &["EarningsPerShareDiluted"],
     shares: &["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"],
     eq: &["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+    // total assets — the ROE fallback denominator. Unlike equity it CANNOT go negative, which is the
+    // whole point: a buyback-shrunk filer (HCA, HLT) has meaningless ROE but perfectly ordinary ROA.
+    // Same literal in both taxonomies (verified live: AZN/NVS USD, NVO DKK), hence no IFRS-specific name.
+    assets: &["Assets"],
     ocf: &["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
     capex: &["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
     intexp: &["InterestExpense", "InterestExpenseDebt", "InterestAndDebtExpense"],
@@ -1354,6 +1353,9 @@ const IFRS_TAGS: FactTags = FactTags {
     eps: &["DilutedEarningsLossPerShare", "BasicEarningsLossPerShare"],
     shares: &["AdjustedWeightedAverageShares", "WeightedAverageShares"],
     eq: &["Equity", "EquityAttributableToOwnersOfParent"],
+    // same tag string as us-gaap. Starts LATER than Equity for several IFRS filers (AZN 2015 vs 2014,
+    // NVS 2017, NVO 2020), so early rows carry ROE but no ROA — missing stays None, never a fake 0.
+    assets: &["Assets"],
     ocf: &["CashFlowsFromUsedInOperatingActivities"],
     capex: &["PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities"],
     intexp: &["InterestExpense"],
@@ -1492,6 +1494,7 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     // `collect_instant`. Basic fallback for the rare filer that never reports diluted. Feeds the buyback column.
     let shares = collect(tags.shares, "shares");
     let eq = collect_instant(tags.eq, &money);
+    let assets = collect_instant(tags.assets, &money);
     // (round 107) survival inputs. Duration lines: operating cash flow, capex, interest expense.
     let ocf = collect(tags.ocf, &money);
     let capex = collect(tags.capex, &money);
@@ -1522,6 +1525,10 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 // ROE = net income ÷ shareholders' equity (%), both as-of this period end. Free from
                 // SEC — no premium ratios endpoint needed.
                 roe: at(&ni).zip(at(&eq)).and_then(|(n, e)| (e != 0.0).then_some(n / e * 100.0)),
+                // ROA = net income ÷ TOTAL ASSETS (%) — same numerator, a denominator that cannot go
+                // negative. `> 0.0` not `!= 0.0`: total assets are positive by construction, so a
+                // non-positive value is a parse artifact, not a leveraged balance sheet.
+                roa: at(&ni).zip(at(&assets)).and_then(|(n, a)| (a > 0.0).then_some(n / a * 100.0)),
                 // (round 107) survival levels, high = safer. fcf needs BOTH lines (a bank with no capex
                 // tag stays None-neutral, not fake-frugal); interest_cover needs a positive interest
                 // expense (debt-free -> None-neutral, and a negative op income reads as negative cover).
@@ -1550,19 +1557,20 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
 /// forever. Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
 pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
-    // "_facts7": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
+    // "_facts8": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
     // the round-107 survival levels; facts5 added the EV/EBITDA levels; facts6 fixes the misspelled
     // DepreciationDepletionAndAmortization concept — facts5 rows have EBITDA None for every filer on
     // that tag, e.g. AAPL 2023+; facts7 adds the 20-F/40-F forms, the ifrs-full taxonomy and the
     // reporting CURRENCY — every foreign filer cached as "no rows" under facts6 and would stay empty
-    // forever) — old rows were parsed WITHOUT them and would pin the gaps forever.
-    // Old *_facts{3,4,5,6}.json files are orphaned (few KB each); refetch amortizes over runs under
+    // forever; facts8 adds ROA, without which every negative-equity filer keeps a permanently blank
+    // quality term) — old rows were parsed WITHOUT them and would pin the gaps forever.
+    // Old *_facts{3,4,5,6,7}.json files are orphaned (few KB each); refetch amortizes over runs under
     // SEC_FETCH_BUDGET.
-    let cache = sec_cache_path(&format!("{ticker}_facts7"));
+    let cache = sec_cache_path(&format!("{ticker}_facts8"));
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
-            .filter_map(|(f, e, rev, gm, op, net, eps, roe, shares, fcfm, icov, ncash, ebitda, ndebt, ccy)| {
+            .filter_map(|(f, e, rev, gm, op, net, eps, roe, shares, fcfm, icov, ncash, ebitda, ndebt, ccy, roa)| {
                 Some(core::FundRow {
                     filed: NaiveDate::parse_from_str(&f, "%Y-%m-%d").ok()?,
                     period_end: NaiveDate::parse_from_str(&e, "%Y-%m-%d").ok()?,
@@ -1573,6 +1581,7 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
                     eps,
                     shares,
                     roe,
+                    roa,
                     fcf_margin: fcfm,
                     interest_cover: icov,
                     net_cash_rev: ncash,
@@ -1597,7 +1606,8 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
             .map(|r| {
                 (r.filed.format("%Y-%m-%d").to_string(), r.period_end.format("%Y-%m-%d").to_string(),
                  r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps, r.roe, r.shares,
-                 r.fcf_margin, r.interest_cover, r.net_cash_rev, r.ebitda, r.net_debt, r.currency.clone())
+                 r.fcf_margin, r.interest_cover, r.net_cash_rev, r.ebitda, r.net_debt, r.currency.clone(),
+                 r.roa)
             })
             .collect();
         if let Some(dir) = cache.parent() {
@@ -3190,17 +3200,6 @@ mod tests {
         assert!(!old_window_covers(&old, 2027)); // 2017 rate missing -> hole -> refetch
     }
 
-    /// Negative-equity ROE guard: a meaningful ROE shares net income's sign (HLT: NI +12% margin but
-    /// ROE -27% => equity < 0 => not meaningful). Genuine loss-makers and normal filers pass through.
-    #[test]
-    fn roe_negative_equity_guard() {
-        assert!(!roe_sign_consistent(-27.0, Some(12.1))); // HLT: profit ÷ negative equity
-        assert!(!roe_sign_consistent(40.0, Some(-3.0))); // double negative: loss ÷ negative equity
-        assert!(roe_sign_consistent(-5.0, Some(-3.0))); // genuine loss-maker: real negative ROE
-        assert!(roe_sign_consistent(30.1, Some(15.0))); // normal profitable filer
-        assert!(roe_sign_consistent(-27.0, None)); // no margin data -> can't judge, keep
-    }
-
     /// Pence-quote FX scale: LSE "GBp"/"GBX" divide the pound rate by 100; real ISO codes (and the
     /// already-uppercase "GBP") pass through untouched.
     #[test]
@@ -3315,6 +3314,10 @@ mod tests {
             "StockholdersEquity": {"units": {"USD": [
                 {"end": "2021-09-30", "val": 1000.0, "form": "10-K", "filed": "2021-11-01"}
             ]}},
+            // total assets — same instant collector, the ROE fallback denominator
+            "Assets": {"units": {"USD": [
+                {"end": "2021-09-30", "val": 3000.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}},
             // (round 107) survival inputs, FY2021 only — FY2022 must stay None-neutral
             "OperatingIncomeLoss": {"units": {"USD": [
                 {"start": "2020-10-01", "end": "2021-09-30", "val": 200.0, "form": "10-K", "filed": "2021-11-01"}
@@ -3353,6 +3356,7 @@ mod tests {
         assert_eq!(rows[0].gross_margin, Some(40.0)); // 400/1000
         assert_eq!(rows[0].eps, Some(3.0));
         assert_eq!(rows[0].roe, Some(15.0)); // NetIncome 150 ÷ StockholdersEquity 1000 (instant)
+        assert_eq!(rows[0].roa, Some(5.0)); // NetIncome 150 ÷ Assets 3000 — same numerator, wider denominator
         // (round 107) survival levels, FY2021: fcf (300−100)/1000, cover 200/50, net cash (500−300−100)/1000
         assert_eq!(rows[0].fcf_margin, Some(20.0));
         assert_eq!(rows[0].interest_cover, Some(4.0));
@@ -3365,6 +3369,7 @@ mod tests {
         assert_eq!(rows[1].gross_margin, Some(50.0)); // 600/1200
         assert_eq!(rows[1].eps, None);
         assert_eq!(rows[1].roe, None);
+        assert_eq!(rows[1].roa, None); // no NI and no Assets line for FY2022 -> None, not a fabricated 0
         assert_eq!(rows[1].fcf_margin, None);
         assert_eq!(rows[1].interest_cover, None);
         assert_eq!(rows[1].net_cash_rev, None);
@@ -3415,6 +3420,9 @@ mod tests {
             ]}},
             "StockholdersEquity": {"units": {"EUR": [
                 {"end": "2023-12-31", "val": 13000.0, "form": "20-F", "filed": "2024-02-14"}
+            ]}},
+            "Assets": {"units": {"EUR": [
+                {"end": "2023-12-31", "val": 39000.0, "form": "20-F", "filed": "2024-02-14"}
             ]}}
         }}});
         let rows = parse_sec_facts(&j);
@@ -3423,6 +3431,7 @@ mod tests {
         assert_eq!(rows[0].revenue, Some(27600.0), "the earlier-filed 6-K must not win the period");
         assert_eq!(rows[0].eps, Some(19.91)); // read from EUR/shares — "USD/shares" is not a universal key
         assert_eq!(rows[0].roe, Some(60.0)); // 7800/13000 — a ratio, so it never needed the currency
+        assert_eq!(rows[0].roa, Some(20.0)); // 7800/39000 — same tag string as a 10-K filer's, in EUR
     }
 
     /// (IFRS) The other half of the foreign world files `ifrs-full`, whose concept names share almost
@@ -3448,6 +3457,11 @@ mod tests {
             "Equity": {"units": {"USD": [
                 {"end": "2023-12-31", "val": 29500.0, "form": "20-F", "filed": "2024-02-29"}
             ]}},
+            // `Assets` is the SAME literal under ifrs-full as under us-gaap — the one tag that needed no
+            // translation. Pinned here because "obviously the same" is exactly how a silent None ships.
+            "Assets": {"units": {"USD": [
+                {"end": "2023-12-31", "val": 59000.0, "form": "20-F", "filed": "2024-02-29"}
+            ]}},
             "CashFlowsFromUsedInOperatingActivities": {"units": {"USD": [
                 {"start": "2023-01-01", "end": "2023-12-31", "val": 11000.0, "form": "20-F", "filed": "2024-02-29"}
             ]}}
@@ -3458,6 +3472,7 @@ mod tests {
         assert_eq!(rows[0].revenue, Some(45800.0));
         assert_eq!(rows[0].eps, Some(3.79));
         assert_eq!(rows[0].roe, Some(20.0)); // 5900/29500
+        assert_eq!(rows[0].roa, Some(10.0)); // 5900/59000
         assert_eq!(rows[0].fcf_margin, None); // no capex tag -> None, never "ocf is the whole FCF"
     }
 

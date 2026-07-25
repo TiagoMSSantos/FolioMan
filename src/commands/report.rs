@@ -201,10 +201,16 @@ fn render_annual(
     let ff = core::fund_factors(rows, today, 5);
     out.push_str("--- grower profile (info — only the valuation tilt below is score-weighed) ---\n");
     out.push_str(&format!(
-        "  rev_cagr {}  eps_growth {}  rev_accel {}  margin_trend {}  gross_margin {}  op_margin {}  roe {}  buyback_yield {}\n",
+        "  rev_cagr {}  eps_growth {}  rev_accel {}  margin_trend {}  gross_margin {}  op_margin {}  roe {}  quality {}  buyback_yield {}\n",
         yoy(ff.rev_cagr), yoy(ff.eps_growth), pts(ff.rev_accel), pts(ff.margin_trend),
-        level(ff.gross_margin), level(ff.op_margin), level(ff.roe), yoy(ff.buyback_yield),
+        level(ff.gross_margin), level(ff.op_margin), level(ff.roe), level(ff.quality), yoy(ff.buyback_yield),
     ));
+    // `quality` is what the score actually reads: ROE where equity is positive, ROA where it isn't.
+    // Printed BESIDE the raw ROE rather than replacing it — for a negative-equity filer the two differ
+    // wildly (HCA: roe -112.6, quality +9.0) and collapsing them would hide which denominator was used.
+    if ff.roe != ff.quality {
+        out.push_str("  (quality != roe: equity is negative, so the score reads return on ASSETS instead)\n");
+    }
     out.push_str(&format!(
         "  survival (judgment — measured no-edge as gates): fcf_margin {}  interest_cover {}  net_cash_rev {}  margin_stability {}\n",
         level(ff.fcf_margin), cover(ff.interest_cover), level(ff.net_cash_rev), pts(ff.margin_stability),

@@ -334,6 +334,14 @@ pub async fn run(args: Vec<String>) {
                             // no recompile. Price-only backtest (no `fund`/key) leaves this None -> growth_score
                             // neutral -> validated edge untouched.
                             quote.fund_factor = fund.as_ref().and_then(|f| core::select_fund_factor(f, factor));
+                            // UN-BLIND the quality term. `backtest_quote` builds from `Quote::stub` (roe
+                            // None) and fills only closes-derived fields, so before this line
+                            // `quality_reward` was 0.15 × 0 for EVERY sample in EVERY lane — the term was
+                            // shipped live but structurally invisible to the walk-forward that is supposed
+                            // to price it. Every prior measurement of `quality_weight` was taken with the
+                            // term switched off. Price-free level (no FX, unlike the three yields above),
+                            // through the same fund_as_of look-ahead guard.
+                            quote.roe = fund.as_ref().and_then(|f| f.quality);
                             // (round 112) trailing monthly returns for the CORR-CAP probe — this is the only
                             // place with the raw series in scope. 36 months ≈ the 200wk trend window. A
                             // zero/non-finite close drops that month (rare; alignment slippage is acceptable
@@ -398,6 +406,7 @@ pub async fn run(args: Vec<String>) {
         ("dividend_weight*", |tuning| tuning.dividend_weight = 0.0),
         ("onsale_sharpe_weight", |tuning| tuning.onsale_sharpe_weight = 0.0),
         ("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
+        ("quality_weight", |tuning| tuning.quality_weight = 0.0), // shared with the growth lane — one knob, so it must be ablatable in both
     ];
     let growth_knobs: &[Knob] = &[
         ("growth_trend_weight", |tuning| tuning.growth_trend_weight = 0.0),
@@ -409,6 +418,7 @@ pub async fn run(args: Vec<String>) {
         ("growth_mom121_weight", |tuning| tuning.growth_mom121_weight = 0.0), // (M) Δ shows the 12-1 momentum term's through-the-lane edge; ~0 when weight is 0 (default)
         ("growth_smoothness_weight", |tuning| tuning.growth_smoothness_weight = 0.0), // (E) Δ shows the trend-smoothness reward's through-the-lane edge; ~0 when weight is 0 (default)
         ("growth_underwater_weight", |tuning| tuning.growth_underwater_weight = 0.0), // Δ shows the drawdown-duration penalty's through-the-lane edge; ~0 when weight is 0 (default)
+        ("quality_weight", |tuning| tuning.quality_weight = 0.0), // Δ prices the ROE/ROA quality reward. Absent until the term was un-blinded above — it read exactly 0.0 by construction, not by measurement. Needs `fund` (price-only lanes have no quality level -> ~0)
     ];
     // (#10) loosen each numeric growth GATE one notch, relative to the loaded tuning (respects settings.yaml
     // overrides). The sweep reports the mean forward return of the names each loosening newly admits.
@@ -594,7 +604,8 @@ fn report_fund_lane(samples: &[Sample]) {
         ("op_margin", |f| f.op_margin),
         ("margin_trend", |f| f.margin_trend),
         ("eps_growth", |f| f.eps_growth),
-        ("roe", |f| f.roe),                             // quality of capital (SEC feed only; FMP free tier = None)
+        ("quality(roe/roa)", |f| f.quality),            // quality of capital, the SCORED resolution: ROE, or ROA where equity is negative (SEC feed only; FMP free tier = None). The raw `roe` was probed here before and measured negative-equity fakes the live path rejected — this is the number the score now reads
+        ("roe_raw", |f| f.roe),                         // unfiltered ROE, kept alongside so the fallback's effect is visible: the two rows differ only on negative-equity filers
         ("insider_net90d", |f| f.insider_net_buys_90d), // (Item 4) only populated under `insider`
         ("earnings_yield", |f| f.earnings_yield),       // (Item 19) as-of valuation (high = cheap); native-currency probe
         ("ebitda_yield", |f| f.ebitda_yield),           // (EV/EBITDA) capital-structure-neutral valuation cousin
@@ -1221,7 +1232,8 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("ebitda_yield", |f| f.ebitda_yield),      // VALUE, capital-structure-neutral (EV folds in leverage — the axis EPS/price misses)
         ("peg_yield", |f| f.peg_yield),            // GROWTH-AT-PRICE: earnings_yield · as-of CAGR (1/PEG). THE SHIPPED tilt since 2026-07-25 — the old "redundant with earnings_yield×CAGR already in the score" note was an assumption, never measured, and it was wrong on every view but this one
         ("buyback_yield", |f| f.buyback_yield),    // capital return
-        ("roe", |f| f.roe),                        // quality of capital (SEC-computed NetIncome ÷ StockholdersEquity)
+        ("quality(roe/roa)", |f| f.quality),       // quality of capital as SCORED: NetIncome ÷ StockholdersEquity, or ÷ Assets where equity is negative
+        ("roe_raw", |f| f.roe),                    // the unfiltered ratio — a book built on this one holds the negative-equity fakes
         ("insider_net_buys_90d", |f| f.insider_net_buys_90d), // (Item 4) insider conviction — rows appear only under `backtest … insider`
         // (round 107) SURVIVAL levels (SEC-computed, high = safer) — swept as rank factors here,
         // graded as reject-the-worst gates in the SURVIVAL-GATE probe below.
