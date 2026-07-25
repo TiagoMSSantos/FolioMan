@@ -118,6 +118,7 @@ pub struct Quote {
     pub div_eur: Vec<Option<f64>>, // total dividends/share (EUR) per DIV_HORIZONS; None = short history
     pub price_eur: Option<f64>, // current close in EUR (None if FX unknown); for dividend yield
     pub close_native: Option<f64>, // (Item 19) latest close in the listing's OWN currency (NOT FX-converted) — paired with native EPS for a currency-consistent earnings_yield, same number the backtest scores on
+    pub quote_currency: Option<String>, // (FX) which currency `close_native` IS, straight from Yahoo ("USD", "EUR", "GBp" for pence-quoted LSE). Needed because a foreign filer's statements are in ITS currency, not the listing's — ASML reports EUR and trades USD — so pairing EPS with a price requires proving both sides match FIRST. None = unknown -> callers must not convert
     pub last_close_date: Option<NaiveDate>, // (D) date of the most recent close bar — stale (old) = a halted/dead listing frozen at an old price; LIVE-only, None in stub/backtest (staleness is a live-fetch data-quality gate)
     pub drawdown_pct: f64, // % below the high of the last ~high_days (picks "on sale" signal)
     pub intraday: [Option<f64>; 3], // % change over [1h, 6h, 12h] = 1/6/12 hourly bars back; None if too few bars
@@ -180,6 +181,7 @@ impl Quote {
             div_eur: Vec::new(),
             price_eur: None,
             close_native: None,
+            quote_currency: None,
             last_close_date: None,
             drawdown_pct: 0.0,
             intraday: [None; 3],
@@ -1267,6 +1269,12 @@ pub struct FundRow {
     // exactly like earnings_yield — so no live currency skew).
     pub ebitda: Option<f64>,
     pub net_debt: Option<f64>,
+    // (FX) the currency these MONEY lines are REPORTED in, straight off the XBRL unit key ("EUR" for a
+    // 20-F filer like ASML, "USD" for a 10-K filer). None = unknown/FMP-sourced -> callers must assume
+    // nothing. The margins/ROE above are ratios and cancel it, but anything joined to a PRICE
+    // (earnings_yield / peg_yield / ebitda_yield / P/E) is only meaningful once BOTH sides sit in this
+    // currency — a EUR EPS over a USD ADR close is the Item 16 trap, off by the whole FX rate.
+    pub currency: Option<String>,
 }
 
 /// As-of (point-in-time) join: the latest statement that was already FILED on or before `cutoff`.
@@ -1430,6 +1438,54 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         net_cash_rev: now.and_then(|r| r.net_cash_rev),
         margin_stability,
     }
+}
+
+/// (FX) The price to divide a filer's PER-SHARE figures by, expressed in the filer's REPORTING currency.
+///
+/// Returns `close_native` completely UNCHANGED when the listing already trades in that currency — the
+/// overwhelming case (every US 10-K filer) — so the validated earnings_yield / peg_yield path is
+/// bit-for-bit identical and no FX rate is fetched or applied at all. That exactness is the point: any
+/// drift here would move `scoring_regression_pin` and silently re-rank names the backtest already graded.
+///
+/// Only a genuine mismatch converts, and it routes through EUR because that is the one rate a Quote
+/// already carries: `price_eur / eur_per_reporting`. Going via `price_eur` also absorbs pence-quoted LSE
+/// listings for free — `price_eur` already has the GBp÷100 scale applied while `close_native` does not.
+///
+/// None when the mismatch can't be resolved, so a price-joined factor None-outs (neutral) instead of
+/// dividing EUR earnings by a USD price — a ~1.17x error that would look entirely plausible in the
+/// output. That is the Item 16 trap, and silence is the only safe failure here.
+///
+/// Rates are "EUR per 1 unit", the convention `fetch::eur_rate` already returns (and which already folds
+/// the GBp÷100 pence scale in), so EUR is only ever an intermediate hop — never a currency either side
+/// has to be in. Pure so the identity below is unit-tested rather than assumed.
+/// (FX) Convert only when BOTH currencies are known AND they differ. The empty half is the sharp edge:
+/// Yahoo occasionally omits `meta.currency`, and `"" != "USD"` would send a plain US name through a
+/// USD→EUR rate — an ~1.16x error on exactly the names this whole change promises not to touch. Unknown
+/// therefore means "leave the price alone", never "assume it needs fixing".
+///
+/// One predicate so live, backtest and the P/E path can't drift into three subtly different rules.
+pub fn needs_fx(from: &str, to: &str) -> bool {
+    !from.is_empty() && !to.is_empty() && !from.eq_ignore_ascii_case(to)
+}
+
+pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f64>, eur_to: Option<f64>) -> Option<f64> {
+    if !needs_fx(from, to) {
+        return Some(close_native); // same books -> EXACT: no rate, no multiply, no rounding
+    }
+    match (eur_from, eur_to) {
+        (Some(a), Some(b)) if b > 0.0 && a > 0.0 => Some(close_native * a / b),
+        _ => None, // unknown rate -> caller must drop the ratio, never guess it
+    }
+}
+
+/// (FX) The rate in force ON `date`: the latest quote at or BEFORE it, never after. None before the
+/// series starts, so an early cutoff drops its price-joined factors instead of borrowing a later rate.
+///
+/// The direction IS the whole function. `.range(date..).next()` would hand a 2016 cutoff a 2016-or-later
+/// rate — look-ahead, in the one lane that exists to have none — and the two spellings differ by four
+/// characters while producing plausible numbers either way. Hence pure, named, and pinned by a test.
+pub fn rate_as_of(series: &BTreeMap<NaiveDate, f64>, date: NaiveDate) -> Option<f64> {
+    series.range(..=date).next_back().map(|(_, r)| *r)
 }
 
 /// (Item 19) As-of earnings yield = EPS ÷ price, in % — a VALIDATABLE valuation level (high = cheap), the
@@ -2059,6 +2115,37 @@ mod tests {
         assert_eq!(peg_yield(Some(5.0), Some(0.0), 100.0), None); // zero growth -> PEG infinite -> None
         assert_eq!(peg_yield(Some(5.0), None, 100.0), None); // no CAGR -> None
         assert_eq!(peg_yield(Some(5.0), Some(20.0), 0.0), None); // non-positive price -> earnings_yield None -> None
+    }
+
+    /// (FX) The three rules the price-joined factors rest on, pinned because each fails silently.
+    ///
+    /// 1. Same currency is the IDENTITY — bit-for-bit, before any rate is consulted. Every US filer
+    ///    takes this path, so a regression here would move the validated edge without touching a factor.
+    /// 2. Unknown currency ("") means LEAVE IT ALONE, not "convert". `"" != "USD"` is the trap: it would
+    ///    push a plain US name through a USD→EUR rate and produce a ~1.16x wrong yield that reads fine.
+    /// 3. `rate_as_of` looks BACKWARD only. Forward would be look-ahead in the walk-forward lane.
+    #[test]
+    fn fx_conversion_rules() {
+        // 1 — identity, and note NO rates are supplied: the short-circuit must fire before it needs them
+        assert_eq!(convert_price(100.0, "USD", "USD", None, None), Some(100.0));
+        assert_eq!(convert_price(100.0, "usd", "USD", None, None), Some(100.0)); // case is not a currency difference
+        // 2 — either side unknown -> untouched, never converted
+        assert!(!needs_fx("", "USD"));
+        assert!(!needs_fx("USD", ""));
+        assert!(needs_fx("USD", "EUR"));
+        assert_eq!(convert_price(100.0, "", "USD", Some(1.0), Some(0.86)), Some(100.0));
+        // real conversion: EUR per USD 0.86, target EUR (rate 1.0) -> a $100 ADR is €86 in the filer's books
+        assert_eq!(convert_price(100.0, "USD", "EUR", Some(0.86), Some(1.0)), Some(86.0));
+        assert_eq!(convert_price(100.0, "USD", "EUR", None, Some(1.0)), None); // missing rate -> drop, don't guess
+        assert_eq!(convert_price(100.0, "USD", "EUR", Some(0.86), Some(0.0)), None); // zero rate -> no div-by-zero
+        // 3 — direction. Series has Jan and Mar; a Feb cutoff must see JAN's rate, never March's.
+        let d = |m| NaiveDate::from_ymd_opt(2024, m, 1).unwrap();
+        let series: BTreeMap<NaiveDate, f64> = [(d(1), 0.90), (d(3), 0.80)].into_iter().collect();
+        assert_eq!(rate_as_of(&series, d(2)), Some(0.90), "look-ahead: a Feb cutoff cannot see March's rate");
+        assert_eq!(rate_as_of(&series, d(3)), Some(0.80)); // exact hit is in-range (..=)
+        assert_eq!(rate_as_of(&series, d(4)), Some(0.80)); // after the end -> last known, the honest carry-forward
+        assert_eq!(rate_as_of(&series, d(1).pred_opt().unwrap()), None); // before the start -> no rate exists yet
+        assert_eq!(rate_as_of(&BTreeMap::new(), d(2)), None); // no series -> caller drops the factor
     }
 
     /// (Item 3) `composite_factor` = mean of the factors that are `Some`; <2 present -> None (a 1-factor

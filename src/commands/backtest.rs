@@ -257,13 +257,28 @@ pub async fn run(args: Vec<String>) {
                 } else {
                     fetch::fetch_history(client, urls, tk).await
                 };
-                let (dates, closes) = match fetched {
+                let (dates, closes, native_ccy) = match fetched {
                     Some(x) => x,
                     None => return Vec::new(),
                 };
                 // (G) one cached fundamentals fetch per ticker (only when `fund`); as-of factors are then
                 // derived per cutoff from these rows with no further network. None -> the fund lane skips it.
                 let fund_rows = if fund { fetch::fetch_fundamentals_ranked(client, urls, tk).await } else { None };
+                // (FX) a foreign filer keeps its books in ITS currency while its US listing trades another
+                // (ASML: EUR statements, USD ADR), so the price-joined factors below have to move the close
+                // into the filer's books first — dividing a EUR EPS by a USD close is off by the whole FX
+                // rate and looks entirely plausible. Same currency (every US filer) takes the None arm: no
+                // fetch, no multiply, sample bit-identical. That's what makes this change additive.
+                // ponytail: one uncached FX chart pair per foreign ticker (~2 extra fetches each). Share a
+                // series cache across tickers if the foreign slice ever shows up in the run time.
+                let filer_ccy = fund_rows.as_ref().and_then(|r| r.last().and_then(|x| x.currency.clone()));
+                let fx = match filer_ccy.as_deref() {
+                    Some(f) if core::needs_fx(&native_ccy, f) => {
+                        // same `monthly` the closes came from: rates and prices must span the same era
+                        Some(fetch::fx_factor_series(client, urls, &native_ccy, f, monthly).await)
+                    }
+                    _ => None, // same books, or a side unknown -> leave the close alone (legacy path)
+                };
                 // (Item 4) one cached SEC Form-4 fetch per ticker (only when `insider`); net buys are then
                 // derived per cutoff from these transactions with no further network. None -> factor skips.
                 let insider_txns = if insider { fetch::fetch_insider_history(client, urls, tk).await } else { None };
@@ -292,18 +307,26 @@ pub async fn run(args: Vec<String>) {
                                 fund.get_or_insert_with(Default::default).insider_net_buys_90d =
                                     core::insider_net_buys(txns, dates[i], 90);
                             }
-                            // (Item 19) as-of earnings yield from the NATIVE close (currency-consistent with
-                            // native EPS). The live path leaves this None (EUR price vs USD EPS would skew),
-                            // so the factor is PROBE-ONLY until a native live price exists and it validates.
+                            // (Item 19) as-of earnings yield from the as-of close, in the SAME currency the
+                            // EPS beside it is reported in. (FX) `fx` is None for every same-currency name,
+                            // so `px` is the raw close on that path — no rate, no multiply, unchanged. A
+                            // cutoff older than the FX series has no honest rate: None the three factors
+                            // rather than borrow a later one, which would be look-ahead in a walk-forward lane.
                             if let Some(f) = fund.as_mut() {
-                                f.earnings_yield = core::earnings_yield(f.eps_ttm, closes[i]);
-                                // (EV/EBITDA) same native-close discipline: EV = shares·close + net_debt,
-                                // all as-of. PROBE-ONLY like earnings_yield (live path leaves it None).
-                                f.ebitda_yield = core::ev_ebitda_yield(f.ebitda_ttm, f.shares_ttm, f.net_debt, closes[i]);
+                                let px = match fx.as_ref() {
+                                    None => Some(closes[i]),
+                                    Some(s) => core::rate_as_of(s, dates[i]).map(|r| closes[i] * r),
+                                };
+                                f.earnings_yield = px.and_then(|p| core::earnings_yield(f.eps_ttm, p));
+                                // (EV/EBITDA) same close, same currency discipline: EV = shares·px + net_debt,
+                                // all as-of. Still PROBE-ONLY — never the live score's weighed factor.
+                                f.ebitda_yield = px.and_then(|p| core::ev_ebitda_yield(f.ebitda_ttm, f.shares_ttm, f.net_debt, p));
                                 // (PEG) 1/PEG = earnings_yield · as-of CAGR; quote.trend_cagr is the as-of CAGR
                                 // (backtest_quote built it at this cutoff, line 221 — endpoint-robust log-fit, the
-                                // score's own growth backbone). PROBE-ONLY like the two above (live path None).
-                                f.peg_yield = core::peg_yield(f.eps_ttm, quote.trend_cagr, closes[i]);
+                                // score's own growth backbone). This one IS shipped live now (growth_fund_factor
+                                // "peg_yield"), and the live enrich converts the same way — so train and serve
+                                // finally compute the identical ratio instead of differing by an FX rate.
+                                f.peg_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, quote.trend_cagr, p));
                             }
                             // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                             // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
@@ -419,6 +442,8 @@ pub async fn run(args: Vec<String>) {
     } else {
         fetch::fetch_history(&client, &settings.urls, bench_sym).await
     }
+    // (FX) an index LEVEL, never joined to a filing — nothing to convert, so drop the currency
+    .map(|(dates, closes, _)| (dates, closes))
     .unwrap_or_default();
     report_vs_benchmark(&samples, &bench, years, tuning);
     // (r40) relative strength vs the index — needs the benchmark, so it lives here, after the fetch.
@@ -500,7 +525,7 @@ async fn hold_period_sweep(
             } else {
                 fetch::fetch_history(client, urls, tk).await
             };
-            let (dates, closes) = match fetched {
+            let (dates, closes, _) = match fetched { // (FX) price-only sweep — no filing joined, no currency needed
                 Some(x) => x,
                 None => return Vec::new(),
             };

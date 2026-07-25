@@ -101,10 +101,14 @@ async fn yahoo_history_parses() {
             continue; // endpoint throttled for this symbol — don't fail the suite
         }
         // endpoint is healthy (200 + contract present) -> a None now is a REAL parser break, not flakiness
-        let (dates, closes) = fetch::fetch_history(&client, &settings.urls, ticker)
+        let (dates, closes, ccy) = fetch::fetch_history(&client, &settings.urls, ticker)
             .await
             .unwrap_or_else(|| panic!("{ticker}: 200 OK but fetch_history/parse_chart returned None — drift"));
         assert!(!closes.is_empty(), "{ticker}: no closes");
+        // (FX) the backtest decides whether to convert by comparing this to the filer's reporting
+        // currency. An empty string compares unequal to everything, so a silent drop here would start
+        // converting US names against themselves — assert the meta field actually arrives.
+        assert!(!ccy.is_empty(), "{ticker}: chart meta carried no currency");
         assert_eq!(dates.len(), closes.len(), "{ticker}: dates/closes length mismatch");
         assert!(dates.windows(2).all(|w| w[0] <= w[1]), "{ticker}: dates not ascending");
         assert!(closes.iter().all(|c| c.is_finite() && *c > 0.0), "{ticker}: bad close value");

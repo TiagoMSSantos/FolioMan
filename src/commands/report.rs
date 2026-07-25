@@ -30,18 +30,18 @@ pub async fn run(args: Vec<String>) {
     let mut equity_requested = 0u32;
     let mut tables_printed = 0u32;
 
-    // (round 115) one quote fetch for the valuation line: close_native pairs with the native EPS so
-    // the printed earnings_yield is the SAME number the live enrich feeds growth_score (fetch.rs) —
-    // no new math, no currency skew. A failed/short fetch just leaves the close absent ("-").
+    // (round 115) one quote fetch for the valuation line: the close pairs with the as-of EPS so the
+    // printed earnings_yield is the SAME number the live enrich feeds growth_score (fetch.rs) — no new
+    // math, no currency skew. A failed/short fetch just leaves the close absent ("-").
     // (data round) the whole Quote is kept now, not just the close: the market line prints the
     // screen row's essentials (CAGR/1Y/vol/maxdd/R²/extension/turnover) beside the fundamentals —
     // the data was already fetched and discarded. Currency-quoted names (crypto/FX) are fetched
     // too: they carry no statements, but their price history is exactly as real, and excluding
     // them left `report BTC-EUR` with nothing but a shrug.
+    let fx_cache = fetch::fx_cache(); // (FX) also reused below to put prices in each filer's own books
     let quotes_by: std::collections::HashMap<String, core::Quote> = if tickers.is_empty() {
         Default::default()
     } else {
-        let fx_cache = fetch::fx_cache();
         // real (inflation-adjusted) 1Y+ returns, SAME as screen/check — otherwise the market line
         // and the verdict score would read nominal while the ranking is real, disagreeing with the
         // screen table the reader came from. One cached HICP call, only when the adjustment is on.
@@ -98,7 +98,21 @@ pub async fn run(args: Vec<String>) {
                 continue;
             }
         };
-        let close = q.and_then(|q| q.close_native);
+        // (FX) every per-share ratio below — the valuation cell's earnings_yield/peg_yield AND the
+        // verdict mirror's scored tilt — divides this price by an EPS taken straight from the filing.
+        // So it has to be in the FILER's currency, not the listing's: ASML keeps its books in EUR and
+        // its ADR trades USD, and dividing across the two prints a wrong-by-the-FX-rate number that
+        // looks entirely reasonable. Same currency (every US filer) passes through untouched.
+        let close = match (
+            q.and_then(|q| q.close_native),
+            q.and_then(|q| q.quote_currency.as_deref()),
+            rows.last().and_then(|r| r.currency.as_deref()),
+        ) {
+            (Some(c), Some(nat), Some(fund)) => {
+                fetch::price_in(&client, &settings.urls, &fx_cache, c, nat, fund).await
+            }
+            (c, _, _) => c, // unknown either side -> unchanged legacy behaviour
+        };
         let tcagr = q.and_then(|q| q.trend_cagr);
         let (block, has_table) =
             render_annual(ticker, source, &rows, today, close, tcagr, &settings.buy_heuristic);
@@ -140,7 +154,7 @@ pub async fn run(args: Vec<String>) {
 /// rendered) for run()'s exit-code rule.
 fn render_annual(
     ticker: &str, source: &str, rows: &[core::FundRow], today: chrono::NaiveDate,
-    close_native: Option<f64>, trend_cagr: Option<f64>, tuning: &config::BuyHeuristic,
+    close_filer: Option<f64>, trend_cagr: Option<f64>, tuning: &config::BuyHeuristic,
 ) -> (String, bool) {
     let annual = core::annual_rollup(rows);
     let mut out = format!("\n{ticker} — annual income statements (fiscal-year rollup, newest first · source: {source})\n");
@@ -199,11 +213,16 @@ fn render_annual(
     // valuation — the SAME native-close × as-of EPS ratio the live enrich feeds growth_score
     // (fetch.rs) when growth_fund_factor is "earnings_yield"; printed regardless of which factor is
     // selected (info line), the "-> pts" clause only when it's the one actually weighed.
-    let ey = close_native.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
+    // (FX) the close arrives in the FILER's reporting currency, not the listing's — run() converts it
+    // so this divide isn't the Item 16 trap — so name the currency instead of calling it "native".
+    // ASML quotes USD and reports EUR: an unlabelled 1585.02 next to a €1,757 screen row reads as a
+    // stale price rather than the same price in the other book.
+    let ey = close_filer.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
     out.push_str(&format!(
-        "  valuation: eps_ttm {}  close {} (native ccy)  earnings_yield {}",
+        "  valuation: eps_ttm {}  close {} ({})  earnings_yield {}",
         ff.eps_ttm.map(|e| format!("{e:.2}")).unwrap_or_else(|| "-".into()),
-        close_native.map(|c| format!("{c:.2}")).unwrap_or_else(|| "-".into()),
+        close_filer.map(|c| format!("{c:.2}")).unwrap_or_else(|| "-".into()),
+        rows.last().and_then(|r| r.currency.as_deref()).unwrap_or("reporting ccy"),
         yoy(ey),
     ));
     if tuning.growth_fund_factor == "earnings_yield" && tuning.growth_fund_weight > 0.0 {
@@ -215,12 +234,12 @@ fn render_annual(
     }
     out.push('\n');
 
-    // (round 5) the two probe valuation cousins, from the SAME native close + SEC levels the
+    // (round 5) the two probe valuation cousins, from the SAME close + SEC levels the
     // backtest fills them with; helpers None-out loss-makers/no-SEC rows -> "-", never a
     // fabricated signal. Info cells only — neither is ever score-weighed live.
-    let evy = close_native
+    let evy = close_filer
         .and_then(|p| core::ev_ebitda_yield(ff.ebitda_ttm, ff.shares_ttm, ff.net_debt, p));
-    let peg = close_native.and_then(|p| core::peg_yield(ff.eps_ttm, trend_cagr, p));
+    let peg = close_filer.and_then(|p| core::peg_yield(ff.eps_ttm, trend_cagr, p));
     out.push_str(&format!("  ebitda_yield {}  peg_yield {}", yoy(evy), pts(peg)));
     // (#3) peg_yield became the SHIPPED tilt on 2026-07-25, so "never scored" is no longer true of it —
     // show the same `-> pts` clause the valuation line above gets, from the same weight×clamp arithmetic
@@ -501,12 +520,19 @@ mod tests {
     }
 
     /// (round 115) missing close -> "-", never a fabricated ratio.
+    /// (FX) and the close is labelled with the filer's OWN reporting currency, so a converted number
+    /// (ASML: a EUR close under a USD listing) can't be misread as the quote you'd see on the exchange.
+    /// Unknown currency keeps a neutral word — never a guessed "USD".
     #[test]
     fn valuation_line_dash_on_missing_close() {
         let rows = vec![quarter(2024, 6, Some(100.0), Some(2.0))];
         let (out, _) = render("ACME", "FMP", &rows);
-        assert!(out.contains("valuation: eps_ttm 2.00  close - (native ccy)  earnings_yield -"), "{out}");
+        assert!(out.contains("valuation: eps_ttm 2.00  close - (reporting ccy)  earnings_yield -"), "{out}");
         assert!(out.contains("ebitda_yield -  peg_yield - (info — probe factors, never scored)"), "{out}");
+
+        let eur = vec![core::FundRow { currency: Some("EUR".into()), ..rows[0].clone() }];
+        let (out, _) = render_annual("ACME", "SEC", &eur, today(), Some(100.0), None, &config::BuyHeuristic::default());
+        assert!(out.contains("close 100.00 (EUR)"), "{out}");
     }
 
     /// (round 6) verdict line reproduces the screen's per-quote verdict at drill-in time. Build a

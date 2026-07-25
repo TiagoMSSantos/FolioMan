@@ -2233,7 +2233,7 @@ mod tests {
             ticker: "T".into(), price: "€1.00".into(), dip: "-5.0%".into(), drop_pct: drawdown_pct,
             market: "USA".into(), instrument_type: String::new(), head: String::new(), news_block: String::new(), perf,
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
-            div_eur: Vec::new(), price_eur: None, close_native: None, last_close_date: None, drawdown_pct, intraday: [None; 3],
+            div_eur: Vec::new(), price_eur: None, close_native: None, quote_currency: None, last_close_date: None, drawdown_pct, intraday: [None; 3],
             // (#20) default a KNOWN turnover so the growth lane's unknown-turnover gate admits test
             // quotes; tests exercising that gate set avg_turnover_eur = None explicitly. €1B -> liq_bonus
             // ln(1e9/1e9)=0, so it stays rank-neutral for the relational score asserts.

@@ -298,6 +298,77 @@ pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) 
     rate.map(|r| r * scale)
 }
 
+/// (FX) [`eur_rate`]'s as-of twin: EUR per 1 unit of `cur` for every date Yahoo quotes the pair on.
+/// The backtest scores cutoffs going back a decade and USD/EUR moved ~30% across it, so reusing today's
+/// SPOT rate there would both misprice every old cutoff AND leak the present into the walk-forward
+/// split — the one thing that lane exists to prevent.
+///
+/// `None` = `cur` IS the euro (the identity; nothing to fetch). `Some(empty)` = the pair has no history
+/// and the caller must drop the ratio, never guess. Same `{CUR}EUR=X` / `EUR{CUR}=X` pair and the same
+/// GBp÷100 pence scale `eur_rate` uses, so spot and as-of can't disagree about what a rate means.
+///
+/// `long` mirrors the backtest's own history choice. It has to: the ≥8y lane walks MAX monthly bars back
+/// decades, and a 10y daily rate series would leave every cutoff before it with NO rate — silently
+/// dropping the oldest two thirds of exactly the foreign sample this is meant to measure.
+async fn eur_rate_series(client: &Client, urls: &Urls, cur: &str, long: bool) -> Option<BTreeMap<NaiveDate, f64>> {
+    let scale = fx_scale(cur);
+    let cur = cur.to_uppercase();
+    if cur.is_empty() || cur == "EUR" {
+        return None;
+    }
+    for (sym, invert) in [(format!("{cur}EUR=X"), false), (format!("EUR{cur}=X"), true)] {
+        let hist = if long {
+            fetch_history_long(client, urls, &sym).await
+        } else {
+            fetch_history(client, urls, &sym).await
+        };
+        if let Some((dates, closes, _)) = hist {
+            return Some(
+                dates
+                    .into_iter()
+                    .zip(closes)
+                    .filter(|(_, px)| px.is_finite() && *px > 0.0) // a 0 close would invert to +inf
+                    .map(|(d, px)| (d, if invert { scale / px } else { px * scale }))
+                    .collect(),
+            );
+        }
+    }
+    Some(BTreeMap::new())
+}
+
+/// (FX) The `from -> to` price factor per DATE — what turns a native as-of close into the filer's own
+/// books at the cutoff that close belongs to. Empty map = a leg has no history; the caller then drops
+/// the price-joined factors for that ticker rather than falling back to spot.
+///
+/// Callers MUST short-circuit `from == to` before calling. That path has to stay bit-identical (it is
+/// every US filer, and the proof that this change is additive), and this one would introduce a
+/// rate-lookup and a multiply where the answer is exactly 1.0.
+///
+/// `long` must match the price history the caller is walking, or the rates and the closes cover
+/// different eras — see [`eur_rate_series`].
+pub async fn fx_factor_series(client: &Client, urls: &Urls, from: &str, to: &str, long: bool) -> BTreeMap<NaiveDate, f64> {
+    match (eur_rate_series(client, urls, from, long).await, eur_rate_series(client, urls, to, long).await) {
+        (Some(a), None) => a,                                                  // X -> EUR
+        (None, Some(b)) => b.into_iter().map(|(d, r)| (d, 1.0 / r)).collect(),  // EUR -> X
+        // both legs quoted: hop through EUR, keeping only dates BOTH have (no cross-date rate splicing)
+        (Some(a), Some(b)) => a.iter().filter_map(|(d, ra)| b.get(d).map(|rb| (*d, ra / rb))).collect(),
+        (None, None) => BTreeMap::new(), // both EUR — caller was supposed to skip; empty = no conversion claimed
+    }
+}
+
+/// (FX) `close_native` re-expressed in the `to` currency, fetching only the rates it actually needs.
+/// Same-currency short-circuits inside [`core::convert_price`] BEFORE either rate is looked up, so the
+/// US-filer path (and every other listing that trades in its filer's own currency) costs nothing and is
+/// bit-for-bit unchanged. None when a rate is missing — the caller then drops the price-joined ratio.
+pub async fn price_in(client: &Client, urls: &Urls, fx: &FxCache, close_native: f64, from: &str, to: &str) -> Option<f64> {
+    if !core::needs_fx(from, to) {
+        return Some(close_native); // avoid even touching the cache on the common path
+    }
+    let eur_from = eur_rate(client, urls, from, fx).await;
+    let eur_to = eur_rate(client, urls, to, fx).await;
+    core::convert_price(close_native, from, to, eur_from, eur_to)
+}
+
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
 pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
@@ -390,7 +461,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // SEC EDGAR first: free, no key, no daily cap — the reliable P/E+ROE source for US filers (FMP's
         // 250/day US-centric free tier is what left these columns n/a). A non-US filer has no CIK -> SEC
         // None -> fall back to FMP (covers ADRs / foreign listings SEC doesn't).
-        match fetch_ratios_sec(client, urls, ticker, *chart.closes.last().unwrap()).await {
+        match fetch_ratios_sec(client, urls, fx_cache, ticker, *chart.closes.last().unwrap(), &chart.currency).await {
             (None, None) => fetch_ratios(client, urls, ticker).await,
             got => got,
         }
@@ -526,6 +597,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         div_eur: core::dividend_sums(&long_divs, &long_dates, rate),
         price_eur: rate.map(|r| cur_close * r),
         close_native: Some(cur_close), // (Item 19) native-currency close for a currency-consistent earnings_yield
+        quote_currency: Some(chart.currency.clone()), // (FX) what close_native is denominated in — the proof a filer's EPS may be divided by it
         last_close_date: last_date, // (D) newest bar's date -> screen flags/drops stale (halted/dead) listings
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),
@@ -642,13 +714,23 @@ async fn fetch_ratios(client: &Client, urls: &Urls, ticker: &str) -> (Option<f64
     (pe, roe)
 }
 
-/// (E/F) Trailing P/E + ROE for a US EQUITY from SEC EDGAR — free, no key, no daily cap (unlike FMP).
-/// P/E = native-currency close ÷ latest annual diluted EPS (US filers report & trade in USD, so it's
-/// currency-consistent); ROE is read straight off the SEC-derived `FundRow`. None for a non-US filer
-/// (no CIK) so the caller can fall back to FMP. Filling `pe_ratio` also un-blanks the PEG column, which
-/// derives from it downstream. The SEC fetch is itself disk-cached + budget-capped (see
-/// `fetch_fundamentals_sec`), so a wide `screen` cold-fetches once then reads free forever.
-async fn fetch_ratios_sec(client: &Client, urls: &Urls, ticker: &str, close_native: f64) -> (Option<f64>, Option<f64>) {
+/// (E/F) Trailing P/E + ROE for an EQUITY from SEC EDGAR — free, no key, no daily cap (unlike FMP).
+/// P/E = close ÷ latest annual diluted EPS, both forced into the FILER'S REPORTING CURRENCY first: a US
+/// filer reports and trades in USD so nothing is converted, but a foreign private issuer need not (ASML
+/// keeps its books in EUR and its ADR trades USD), and dividing across two currencies would print a
+/// plausible-looking P/E that is wrong by the whole FX rate. ROE is read straight off the SEC-derived
+/// `FundRow` and is a ratio, so it needs no conversion. None when there's no CIK or no rate, so the
+/// caller can fall back to FMP. Filling `pe_ratio` also un-blanks the PEG column, which derives from it
+/// downstream. The SEC fetch is itself disk-cached + budget-capped (see `fetch_fundamentals_sec`), so a
+/// wide `screen` cold-fetches once then reads free forever.
+async fn fetch_ratios_sec(
+    client: &Client,
+    urls: &Urls,
+    fx: &FxCache,
+    ticker: &str,
+    close_native: f64,
+    quote_ccy: &str,
+) -> (Option<f64>, Option<f64>) {
     let rows = fetch_fundamentals_sec(client, urls, ticker).await.unwrap_or_default();
     let Some(latest) = rows.last() else {
         return (None, None); // rows are BTreeMap-ordered by period_end -> last = newest fiscal year
@@ -658,7 +740,17 @@ async fn fetch_ratios_sec(client: &Client, urls: &Urls, ticker: &str, close_nati
     // ~150). Roll TTM from the quarterly concept; fall back to the annual EPS when there's no newer
     // quarter (just-filed 10-K / annual-only filer) so it's never worse than before, never a fake value.
     let eps = sec_ttm_eps(client, urls, ticker).await.or(latest.eps);
-    let pe = eps.filter(|e| *e > 0.0).map(|e| close_native / e);
+    // (FX) put the price in the same books as the EPS before dividing. Same-currency (every US filer)
+    // returns the close untouched and fetches no rate; a mismatch with no rate yields None, so the P/E
+    // column stays n/a rather than showing a number that is silently off by the exchange rate.
+    let price = match latest.currency.as_deref() {
+        Some(fund) => price_in(client, urls, fx, close_native, quote_ccy, fund).await,
+        None => Some(close_native), // FMP-sourced rows carry no currency -> legacy behaviour
+    };
+    let pe = eps
+        .filter(|e| *e > 0.0)
+        .zip(price)
+        .map(|(e, p)| p / e);
     (pe, latest.roe.filter(|r| roe_sign_consistent(*r, latest.net_margin)))
 }
 
@@ -701,7 +793,17 @@ async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> 
 /// that annual EPS unchanged. Pure -> unit-tested. None if not even an annual EPS is present.
 fn ttm_eps_from_concept(j: &Value) -> Option<f64> {
     // the "USD/shares" unit key contains a '/', which a JSON pointer would mis-split -> chained get.
-    let arr = j.get("units")?.get("USD/shares")?.as_array()?;
+    // (FX) the unit is NOT assumed USD: a 20-F filer reports EPS in its own currency ("EUR/shares" for
+    // ASML), and hard-coding USD returned None for every one of them. The USD-first preference MIRRORS
+    // `money_unit` on purpose — a dual-currency filer (TM tags both JPY and USD) must resolve to the same
+    // currency here as its FundRows did, or the P/E would divide two different books by each other.
+    let units = j.get("units")?.as_object()?;
+    let key = if units.contains_key("USD/shares") {
+        "USD/shares".to_string()
+    } else {
+        units.keys().filter(|k| k.ends_with("/shares")).min()?.clone()
+    };
+    let arr = units.get(&key)?.as_array()?;
     // (start, end) -> (earliest filed, val); de-dupes a period's restatements to its FIRST filing.
     let mut periods: std::collections::HashMap<(NaiveDate, NaiveDate), (NaiveDate, f64)> = std::collections::HashMap::new();
     for x in arr {
@@ -917,6 +1019,10 @@ fn evict_if_stale(path: &std::path::Path, ttl: StdDuration) {
 pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core::Quote], factor: &str) {
     const LIVE_TTL: StdDuration = StdDuration::from_secs(7 * 24 * 3600); // refetch weekly -> catches new filings
     let today = chrono::Local::now().date_naive();
+    // (FX) run-local rate cache. Only foreign filers whose listing trades in a DIFFERENT currency than
+    // their books ever touch it, so it stays empty on a US-only universe and costs at most one fetch per
+    // distinct reporting currency per run.
+    let fx = fx_cache();
     let needs_insider = factor == "insider_net_buys_90d"; // (Item 16) composite stays FMP-only (no skew)
     for q in quotes.iter_mut() {
         if crate::picks::is_currency_quoted(&q.ticker) {
@@ -925,8 +1031,12 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
                       // validated WITH the factor — a contains('-') here was a train-serve skew.
         }
         evict_if_stale(&fund_cache_path(&q.ticker), LIVE_TTL); // (Item 14) drop a stale newest-quarter
-        let mut ff = fetch_fundamentals_ranked(client, urls, &q.ticker)
-            .await
+        let fetched = fetch_fundamentals_ranked(client, urls, &q.ticker).await;
+        // (FX) the currency the statements are KEPT in travels with the rows. Newest row wins — a filer
+        // can redenominate, and the live factors are as-of today anyway. None for FMP-sourced rows,
+        // which is exactly the signal to leave the price join untouched.
+        let fund_ccy = fetched.as_ref().and_then(|r| r.last().and_then(|x| x.currency.clone()));
+        let mut ff = fetched
             .map(|rows| core::fund_factors(&rows, today, 5))
             .unwrap_or_default(); // no rows/key -> empty factors; insider can still fill in below
         if needs_insider {
@@ -949,13 +1059,22 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
                 ff.eps_ttm = Some(ttm);
             }
         }
-        ff.earnings_yield = q.close_native.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
+        // (FX) the price these per-share figures may legally be divided by. A filer whose listing trades
+        // in its own reporting currency (every US name) takes `close_native` untouched and costs NO fetch;
+        // only a genuine mismatch (ASML: EUR statements, USD ADR) pays one rate lookup, cached per run.
+        let price = match (q.close_native, fund_ccy.as_deref(), q.quote_currency.as_deref()) {
+            (Some(c), Some(fund), Some(nat)) => price_in(client, urls, &fx, c, nat, fund).await,
+            // unknown reporting currency (FMP rows) or unknown quote currency -> unchanged legacy
+            // behaviour: the native close, exactly as before this existed.
+            (c, _, _) => c,
+        };
+        ff.earnings_yield = price.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
         // (PEG) same native-close discipline one line up, so `growth_fund_factor: peg_yield` is a
         // real selection instead of a silent None (which would zero the fund term and drop the
         // validated earnings_yield tilt with nothing in its place). `peg_yield` None-outs
         // loss-makers and non-positive growth itself — no extra guard here. Mirrors report.rs's
         // info cell, so the drill-in number and the scored number are one definition.
-        ff.peg_yield = q.close_native.and_then(|p| core::peg_yield(ff.eps_ttm, q.trend_cagr, p));
+        ff.peg_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, q.trend_cagr, p));
         q.fund_factor = core::select_fund_factor(&ff, factor);
     }
 }
@@ -1145,8 +1264,8 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
 // post-date the as-of `filed`. US filers only (a non-US ticker has no CIK -> None).
 
 // (filed, period_end, revenue, gross_margin, op_margin, net_margin, eps, roe, shares, fcf_margin,
-// interest_cover, net_cash_rev, ebitda, net_debt). An arity change fails deserialization -> treated as a
-// miss -> refetched + rewritten (SEC is uncapped, so a one-time rebuild is free).
+// interest_cover, net_cash_rev, ebitda, net_debt, currency). An arity change fails deserialization ->
+// treated as a miss -> refetched + rewritten (SEC is uncapped, so a one-time rebuild is free).
 type SecCacheRow = (
     String,
     String,
@@ -1162,21 +1281,135 @@ type SecCacheRow = (
     Option<f64>,
     Option<f64>, // ebitda
     Option<f64>, // net_debt
+    Option<String>, // (FX) reporting currency — money lines are meaningless against a price without it
 );
+
+/// ANNUAL report forms. `10-K` = US domestic; `20-F` = foreign private issuer (ASML, ARM, BABA); `40-F`
+/// = Canadian MJDS (RY, TD). All three are the filer's ONE yearly report, which is what the 350-380 day
+/// span check downstream assumes. `6-K` is deliberately EXCLUDED: it is the foreign INTERIM filing, and
+/// admitting it would splice sub-year slices into rows that must each cover one fiscal year.
+fn is_annual_form(f: &str) -> bool {
+    f.starts_with("10-K") || f.starts_with("20-F") || f.starts_with("40-F")
+}
+
+/// Concept names per XBRL taxonomy — the same income/balance lines under two different vocabularies.
+/// `us-gaap` covers US filers AND the foreign issuers who file 20-F in us-gaap (ASML, ARM, BABA);
+/// `ifrs-full` covers most of the rest (NVS, AZN, NVO, RY, TD). Every IFRS tag here was verified present
+/// in live companyfacts payloads rather than guessed from the spec. Coverage is uneven by filer and a
+/// missing tag stays None (neutral): a bank with no operating-income line loses op_margin, not the row.
+struct FactTags {
+    rev: &'static [&'static str],
+    gp: &'static [&'static str],
+    op: &'static [&'static str],
+    dna: &'static [&'static str],
+    ni: &'static [&'static str],
+    eps: &'static [&'static str],
+    shares: &'static [&'static str],
+    eq: &'static [&'static str],
+    ocf: &'static [&'static str],
+    capex: &'static [&'static str],
+    intexp: &'static [&'static str],
+    debt_nc: &'static [&'static str],
+    debt_cur: &'static [&'static str],
+    cash: &'static [&'static str],
+}
+
+// ExcludingAssessedTax listed before Including: when a filer reports both for a period (values differ by
+// the assessed taxes) the first-inserted wins on a filed-date tie, and Excluding is the cleaner revenue
+// line. ServicesNet/GoodsNet = the pre-2018 (pre-ASC-606) era of service/goods filers (e.g. ODFL) whose
+// whole history was invisible without them.
+const US_GAAP_TAGS: FactTags = FactTags {
+    rev: &["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
+           "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet",
+           "SalesRevenueServicesNet", "SalesRevenueGoodsNet"],
+    gp: &["GrossProfit"],
+    op: &["OperatingIncomeLoss"],
+    dna: &["DepreciationDepletionAndAmortization", "DepreciationAndAmortization",
+           "DepreciationAmortizationAndAccretionNet"],
+    // NetIncomeLoss first (parent-company net income, the standard tag); some filers stopped filing it
+    // years ago (CF in 2011, MNST) and carry only the available-to-common / ProfitLoss variants — their
+    // net margin AND ROE were silently None without the fallbacks.
+    ni: &["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss"],
+    eps: &["EarningsPerShareDiluted"],
+    shares: &["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"],
+    eq: &["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+    ocf: &["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
+    capex: &["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
+    intexp: &["InterestExpense", "InterestExpenseDebt", "InterestAndDebtExpense"],
+    debt_nc: &["LongTermDebtNoncurrent", "LongTermDebt"],
+    debt_cur: &["LongTermDebtCurrent", "DebtCurrent"],
+    cash: &["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
+};
+
+// IFRS. `ProfitLoss`/`Equity`/`CashFlowsFromUsedInOperatingActivities`/`CashAndCashEquivalents` were
+// present in 7/7 filers probed, so ROE and net_cash_rev carry broadly; `GrossProfit` and the D&A tag
+// only 3/7, so gross_margin and EBITDA are frequently None here. NOTE the row ANCHOR is revenue — a
+// filer with neither revenue tag (HSBC, a bank) yields NO rows at all, not partial ones.
+const IFRS_TAGS: FactTags = FactTags {
+    rev: &["Revenue", "RevenueFromSaleOfGoods"],
+    gp: &["GrossProfit"],
+    op: &["ProfitLossFromOperatingActivities"],
+    dna: &["DepreciationAndAmortisationExpense"],
+    ni: &["ProfitLoss", "ProfitLossAttributableToOwnersOfParent"],
+    eps: &["DilutedEarningsLossPerShare", "BasicEarningsLossPerShare"],
+    shares: &["AdjustedWeightedAverageShares", "WeightedAverageShares"],
+    eq: &["Equity", "EquityAttributableToOwnersOfParent"],
+    ocf: &["CashFlowsFromUsedInOperatingActivities"],
+    capex: &["PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities"],
+    intexp: &["InterestExpense"],
+    debt_nc: &["LongtermBorrowings", "Borrowings"],
+    debt_cur: &["CurrentPortionOfLongtermBorrowings", "ShorttermBorrowings"],
+    cash: &["CashAndCashEquivalents"],
+};
+
+/// (FX) The currency the filer REPORTS in, read off the XBRL unit key instead of assumed. A 20-F filer
+/// uses its own books' currency (ASML in EUR), so the old hard-coded "USD" matched nothing at all and
+/// silently produced zero rows. Read from the money anchors, skipping the unitless share counts and the
+/// compound "CUR/shares" EPS keys. USD is PREFERRED when a filer tags both (TM and BABA publish a USD
+/// convenience translation next to JPY/CNY): it is the one that already matches their ADR's trading
+/// currency, so choosing it removes an FX conversion instead of adding one. Otherwise the lexicographic
+/// minimum, purely so the pick is deterministic run to run.
+fn money_unit(g: &Value, tags: &FactTags) -> Option<String> {
+    let mut best: Option<String> = None;
+    for tag in tags.rev.iter().chain(tags.ni).chain(tags.eq) {
+        let Some(units) = g.get(tag).and_then(|t| t.get("units")).and_then(|u| u.as_object()) else {
+            continue;
+        };
+        for k in units.keys().filter(|k| *k != "shares" && !k.contains('/')) {
+            if k == "USD" {
+                return Some(k.clone());
+            }
+            if best.as_ref().is_none_or(|b| k < b) {
+                best = Some(k.clone());
+            }
+        }
+    }
+    best
+}
 
 /// Parse a SEC `companyfacts` payload into ANNUAL `FundRow`s (one per fiscal year). Pure -> unit-tested.
 /// Revenue is merged across the concepts different eras/filers use; each annual line is joined to the
-/// others by exact period-end date (a 10-K's income lines all share one period end). Margins derived
-/// (line / revenue), matching `parse_fund_row`. A missing line -> None (neutral), never a fake 0.
+/// others by exact period-end date (an annual report's income lines all share one period end). Margins
+/// derived (line / revenue), matching `parse_fund_row`. A missing line -> None (neutral), never a fake 0.
 fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
-    let g = match j.pointer("/facts/us-gaap") {
-        Some(v) => v,
-        None => return Vec::new(),
+    // us-gaap first — it covers US filers AND the foreign issuers who file 20-F in us-gaap; ifrs-full is
+    // the rest of the foreign world. The concept NAMES differ per taxonomy, so the tag table travels
+    // with the pointer rather than being read from a single global list.
+    let (g, tags) = match j.pointer("/facts/us-gaap") {
+        Some(v) => (v, &US_GAAP_TAGS),
+        None => match j.pointer("/facts/ifrs-full") {
+            Some(v) => (v, &IFRS_TAGS),
+            None => return Vec::new(),
+        },
     };
+    let Some(money) = money_unit(g, tags) else {
+        return Vec::new(); // no money unit anywhere -> nothing joinable to parse
+    };
+    let per_share = format!("{money}/shares");
     // annual datapoints for a set of equivalent concept names: period-end -> (earliest filed, value)
-    let collect = |tags: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> {
+    let collect = |names: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> {
         let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> = std::collections::BTreeMap::new();
-        for tag in tags {
+        for tag in names {
             // chained get (NOT json pointer): the "USD/shares" unit key contains a '/', which a JSON
             // pointer would mis-split into two tokens -> EPS silently lost.
             let arr = match g.get(tag).and_then(|t| t.get("units")).and_then(|u| u.get(unit)).and_then(|v| v.as_array()) {
@@ -1184,7 +1417,7 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 None => continue,
             };
             for x in arr {
-                if !x.get("form").and_then(|v| v.as_str()).is_some_and(|f| f.starts_with("10-K")) {
+                if !x.get("form").and_then(|v| v.as_str()).is_some_and(is_annual_form) {
                     continue; // annual filing only
                 }
                 let (Some(s), Some(e)) = (x.get("start").and_then(|v| v.as_str()), x.get("end").and_then(|v| v.as_str())) else {
@@ -1214,16 +1447,16 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     };
     // Balance-sheet items (equity) are INSTANT (as-of period_end, no 12-month duration), so the
     // 350-380 day filter in `collect` drops them — a separate point-in-time collector keyed on `end`,
-    // 10-K only, earliest-filed wins (matches `collect`).
-    let collect_instant = |tags: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> {
+    // annual forms only, earliest-filed wins (matches `collect`).
+    let collect_instant = |names: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> {
         let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> = std::collections::BTreeMap::new();
-        for tag in tags {
+        for tag in names {
             let arr = match g.get(tag).and_then(|t| t.get("units")).and_then(|u| u.get(unit)).and_then(|v| v.as_array()) {
                 Some(a) => a,
                 None => continue,
             };
             for x in arr {
-                if !x.get("form").and_then(|v| v.as_str()).is_some_and(|f| f.starts_with("10-K")) {
+                if !x.get("form").and_then(|v| v.as_str()).is_some_and(is_annual_form) {
                     continue;
                 }
                 let Some(ed) = x.get("end").and_then(|v| v.as_str()).and_then(|e| NaiveDate::parse_from_str(e, "%Y-%m-%d").ok()) else {
@@ -1244,51 +1477,32 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
         }
         m
     };
-    // ExcludingAssessedTax listed before Including: when a filer reports both for a period (values
-    // differ by the assessed taxes) the first-inserted wins on a filed-date tie, and Excluding is the
-    // cleaner revenue line. ServicesNet/GoodsNet = the pre-2018 (pre-ASC-606) era of service/goods
-    // filers (e.g. ODFL) whose whole history was invisible without them.
-    let rev = collect(
-        &["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
-          "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "SalesRevenueServicesNet",
-          "SalesRevenueGoodsNet"],
-        "USD",
-    );
-    let gp = collect(&["GrossProfit"], "USD");
-    let op = collect(&["OperatingIncomeLoss"], "USD");
+    // Concept names come from the taxonomy table; the unit is the filer's OWN reporting currency, not a
+    // hard-coded "USD" (that matched nothing for a EUR filer like ASML). `shares` is a unitless count and
+    // stays literal — it is the one line that never carries a currency.
+    let rev = collect(tags.rev, &money);
+    let gp = collect(tags.gp, &money);
+    let op = collect(tags.op, &money);
     // (EV/EBITDA probe) D&A from the cash-flow statement — the add-back that turns operating income into
-    // EBITDA. Duration concept (USD). The accretion variant is the combined tag some filers use; the plain
-    // one is the common case. Missing -> EBITDA None-outs (a partial EBITDA is garbage).
-    let dna = collect(
-        &["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "DepreciationAmortizationAndAccretionNet"],
-        "USD",
-    );
-    // NetIncomeLoss first (parent-company net income, the standard tag); some filers stopped filing it
-    // years ago (CF in 2011, MNST) and carry only the available-to-common / ProfitLoss variants — their
-    // net margin AND ROE were silently None without the fallbacks.
-    let ni = collect(&["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss"], "USD");
-    let eps = collect(&["EarningsPerShareDiluted"], "USD/shares");
+    // EBITDA. Duration concept. Missing -> EBITDA None-outs (a partial EBITDA is garbage).
+    let dna = collect(tags.dna, &money);
+    let ni = collect(tags.ni, &money);
+    let eps = collect(tags.eps, &per_share);
     // diluted weighted-avg shares — a 12-month DURATION concept (unit "shares") -> `collect`, not
     // `collect_instant`. Basic fallback for the rare filer that never reports diluted. Feeds the buyback column.
-    let shares = collect(&["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"], "shares");
-    let eq = collect_instant(&["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "USD");
+    let shares = collect(tags.shares, "shares");
+    let eq = collect_instant(tags.eq, &money);
     // (round 107) survival inputs. Duration lines: operating cash flow, capex, interest expense.
-    let ocf = collect(
-        &["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
-        "USD",
-    );
-    let capex = collect(&["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"], "USD");
-    let intexp = collect(&["InterestExpense", "InterestExpenseDebt", "InterestAndDebtExpense"], "USD");
-    // Instant balance items: debt (noncurrent + current, collected separately — LongTermDebt total is
+    let ocf = collect(tags.ocf, &money);
+    let capex = collect(tags.capex, &money);
+    let intexp = collect(tags.intexp, &money);
+    // Instant balance items: debt (noncurrent + current, collected separately — the total-debt tag is
     // only the fallback inside the noncurrent map) and cash. A missing debt tag reads as 0 debt, which
     // can only make net_cash_rev OPTIMISTIC — a reject-the-worst gate then under-rejects, never wrongly
     // rejects, so the failure direction is safe. Cash is the parse anchor: no cash line -> None.
-    let debt_nc = collect_instant(&["LongTermDebtNoncurrent", "LongTermDebt"], "USD");
-    let debt_cur = collect_instant(&["LongTermDebtCurrent", "DebtCurrent"], "USD");
-    let cash = collect_instant(
-        &["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
-        "USD",
-    );
+    let debt_nc = collect_instant(tags.debt_nc, &money);
+    let debt_cur = collect_instant(tags.debt_cur, &money);
+    let cash = collect_instant(tags.cash, &money);
     rev.into_iter()
         .map(|(end, (filed, revenue))| {
             let at = |m: &std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)>| m.get(&end).map(|(_, v)| *v);
@@ -1322,6 +1536,9 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 // cash, so + = levered) because EV ADDS net debt.
                 ebitda: at(&op).zip(at(&dna)).map(|(o, d)| o + d),
                 net_debt: at(&cash).map(|c| at(&debt_nc).unwrap_or(0.0) + at(&debt_cur).unwrap_or(0.0) - c),
+                // (FX) every money line above is in THIS currency. The margins/ROE are ratios and cancel
+                // it; anything later joined to a price must convert first or land in the Item 16 trap.
+                currency: Some(money.clone()),
                 ..Default::default()
             }
         })
@@ -1333,17 +1550,19 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
 /// forever. Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
 pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
-    // "_facts6": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
+    // "_facts7": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
     // the round-107 survival levels; facts5 added the EV/EBITDA levels; facts6 fixes the misspelled
     // DepreciationDepletionAndAmortization concept — facts5 rows have EBITDA None for every filer on
-    // that tag, e.g. AAPL 2023+) — old rows were parsed WITHOUT them and would pin the gaps forever.
-    // Old *_facts{3,4,5}.json files are orphaned (few KB each); refetch amortizes over runs under
+    // that tag, e.g. AAPL 2023+; facts7 adds the 20-F/40-F forms, the ifrs-full taxonomy and the
+    // reporting CURRENCY — every foreign filer cached as "no rows" under facts6 and would stay empty
+    // forever) — old rows were parsed WITHOUT them and would pin the gaps forever.
+    // Old *_facts{3,4,5,6}.json files are orphaned (few KB each); refetch amortizes over runs under
     // SEC_FETCH_BUDGET.
-    let cache = sec_cache_path(&format!("{ticker}_facts6"));
+    let cache = sec_cache_path(&format!("{ticker}_facts7"));
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
-            .filter_map(|(f, e, rev, gm, op, net, eps, roe, shares, fcfm, icov, ncash, ebitda, ndebt)| {
+            .filter_map(|(f, e, rev, gm, op, net, eps, roe, shares, fcfm, icov, ncash, ebitda, ndebt, ccy)| {
                 Some(core::FundRow {
                     filed: NaiveDate::parse_from_str(&f, "%Y-%m-%d").ok()?,
                     period_end: NaiveDate::parse_from_str(&e, "%Y-%m-%d").ok()?,
@@ -1359,6 +1578,7 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
                     net_cash_rev: ncash,
                     ebitda,
                     net_debt: ndebt,
+                    currency: ccy,
                     ..Default::default()
                 })
             })
@@ -1377,7 +1597,7 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
             .map(|r| {
                 (r.filed.format("%Y-%m-%d").to_string(), r.period_end.format("%Y-%m-%d").to_string(),
                  r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps, r.roe, r.shares,
-                 r.fcf_margin, r.interest_cover, r.net_cash_rev, r.ebitda, r.net_debt)
+                 r.fcf_margin, r.interest_cover, r.net_cash_rev, r.ebitda, r.net_debt, r.currency.clone())
             })
             .collect();
         if let Some(dir) = cache.parent() {
@@ -3129,6 +3349,7 @@ mod tests {
         assert_eq!(rows[0].period_end, NaiveDate::from_ymd_opt(2021, 9, 30).unwrap());
         assert_eq!(rows[0].filed, NaiveDate::from_ymd_opt(2021, 11, 1).unwrap());
         assert_eq!(rows[0].revenue, Some(1000.0));
+        assert_eq!(rows[0].currency.as_deref(), Some("USD")); // (FX) a US filer's books, detected not assumed
         assert_eq!(rows[0].gross_margin, Some(40.0)); // 400/1000
         assert_eq!(rows[0].eps, Some(3.0));
         assert_eq!(rows[0].roe, Some(15.0)); // NetIncome 150 ÷ StockholdersEquity 1000 (instant)
@@ -3168,6 +3389,76 @@ mod tests {
             {"start": "2021-07-01", "end": "2021-09-30", "val": 100.0, "form": "10-K", "filed": "2021-11-01"}, // ~3mo span -> skip
         ]}}}}});
         assert!(parse_sec_facts(&j).is_empty());
+    }
+
+    /// (FX/20-F) A foreign private issuer files in `us-gaap` but keeps its books in its OWN currency —
+    /// ASML files 20-F in EUR. Both were hard-coded before (form `10-K`, unit `USD`), so every datapoint
+    /// was rejected and the filer cached as "no fundamentals" with no error surfacing anywhere.
+    ///
+    /// Pins all three fixes at once: 20-F counts as annual, EUR is DETECTED off the unit key, and the
+    /// currency rides back on the row — without it nothing downstream can prove a price belongs in the
+    /// same books as this EPS. `6-K` is interim and must still be rejected: it is filed EARLIER than the
+    /// 20-F, so the earliest-filing dedup would hand it the period if the form filter ever let it in.
+    #[test]
+    fn sec_facts_foreign_20f_non_usd() {
+        use serde_json::json;
+        let j = json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"EUR": [
+                {"start": "2023-01-01", "end": "2023-12-31", "val": 27600.0, "form": "20-F", "filed": "2024-02-14"},
+                {"start": "2023-01-01", "end": "2023-12-31", "val": 99999.0, "form": "6-K", "filed": "2023-07-19"}
+            ]}},
+            "NetIncomeLoss": {"units": {"EUR": [
+                {"start": "2023-01-01", "end": "2023-12-31", "val": 7800.0, "form": "20-F", "filed": "2024-02-14"}
+            ]}},
+            "EarningsPerShareDiluted": {"units": {"EUR/shares": [
+                {"start": "2023-01-01", "end": "2023-12-31", "val": 19.91, "form": "20-F", "filed": "2024-02-14"}
+            ]}},
+            "StockholdersEquity": {"units": {"EUR": [
+                {"end": "2023-12-31", "val": 13000.0, "form": "20-F", "filed": "2024-02-14"}
+            ]}}
+        }}});
+        let rows = parse_sec_facts(&j);
+        assert_eq!(rows.len(), 1, "20-F must count as an annual form");
+        assert_eq!(rows[0].currency.as_deref(), Some("EUR"));
+        assert_eq!(rows[0].revenue, Some(27600.0), "the earlier-filed 6-K must not win the period");
+        assert_eq!(rows[0].eps, Some(19.91)); // read from EUR/shares — "USD/shares" is not a universal key
+        assert_eq!(rows[0].roe, Some(60.0)); // 7800/13000 — a ratio, so it never needed the currency
+    }
+
+    /// (IFRS) The other half of the foreign world files `ifrs-full`, whose concept names share almost
+    /// nothing with us-gaap (`Revenue` not `Revenues`, `ProfitLoss` not `NetIncomeLoss`). Reading only
+    /// `/facts/us-gaap` returned zero rows for every one of them.
+    ///
+    /// Currency is INDEPENDENT of taxonomy — AZN files IFRS in USD — so this pins that axis separately
+    /// from the EUR fixture above: getting the taxonomy right must not drag a currency assumption along.
+    /// No capex tag here, so fcf_margin stays None rather than treating absent as zero.
+    #[test]
+    fn sec_facts_ifrs_taxonomy() {
+        use serde_json::json;
+        let j = json!({"facts": {"ifrs-full": {
+            "Revenue": {"units": {"USD": [
+                {"start": "2023-01-01", "end": "2023-12-31", "val": 45800.0, "form": "20-F", "filed": "2024-02-29"}
+            ]}},
+            "ProfitLoss": {"units": {"USD": [
+                {"start": "2023-01-01", "end": "2023-12-31", "val": 5900.0, "form": "20-F", "filed": "2024-02-29"}
+            ]}},
+            "DilutedEarningsLossPerShare": {"units": {"USD/shares": [
+                {"start": "2023-01-01", "end": "2023-12-31", "val": 3.79, "form": "20-F", "filed": "2024-02-29"}
+            ]}},
+            "Equity": {"units": {"USD": [
+                {"end": "2023-12-31", "val": 29500.0, "form": "20-F", "filed": "2024-02-29"}
+            ]}},
+            "CashFlowsFromUsedInOperatingActivities": {"units": {"USD": [
+                {"start": "2023-01-01", "end": "2023-12-31", "val": 11000.0, "form": "20-F", "filed": "2024-02-29"}
+            ]}}
+        }}});
+        let rows = parse_sec_facts(&j);
+        assert_eq!(rows.len(), 1, "ifrs-full must be read when us-gaap is absent");
+        assert_eq!(rows[0].currency.as_deref(), Some("USD"));
+        assert_eq!(rows[0].revenue, Some(45800.0));
+        assert_eq!(rows[0].eps, Some(3.79));
+        assert_eq!(rows[0].roe, Some(20.0)); // 5900/29500
+        assert_eq!(rows[0].fcf_margin, None); // no capex tag -> None, never "ocf is the whole FCF"
     }
 
     /// (Item 4) `parse_form4_txns` pairs each transaction's date with its code and keeps only P/S. Two
@@ -3335,28 +3626,32 @@ pub fn fetch_concurrency() -> usize {
     })
 }
 
-/// Raw (dates, closes) for one ticker — the 10y daily series, for the `backtest` command. Same single
-/// chart call the live path already makes (no EXTRA per-ticker fetch). None on fetch/parse fail or
-/// empty history.
-pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<NaiveDate>, Vec<f64>)> {
+/// Raw (dates, closes, listing currency) for one ticker — the 10y daily series, for the `backtest`
+/// command. Same single chart call the live path already makes (no EXTRA per-ticker fetch). None on
+/// fetch/parse fail or empty history.
+///
+/// (FX) the currency rides along because the closes alone are ambiguous: a foreign filer's ADR trades in
+/// one currency and reports in another, so joining these closes to SEC per-share lines needs proof both
+/// sides match FIRST. Price-only callers destructure it away.
+pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<NaiveDate>, Vec<f64>, String)> {
     let j = chart_json(client, urls, ticker, "10y").await?;
     let chart = parse_chart(&j, ticker)?;
     if chart.closes.is_empty() {
         return None;
     }
-    Some((chart.dates, chart.closes))
+    Some((chart.dates, chart.closes, chart.currency))
 }
 
-/// Raw (dates, closes) from the MAX monthly history — the long-horizon `backtest` path. Decades of
-/// monthly bars (vs fetch_history's 10y daily), so forward windows of 10y+ exist for old names and a
-/// genuine multi-decade hold can be measured. Same single chart call quote_one already makes for the
-/// 20Y backfill (no new fetch type). None on fetch/parse fail or empty history.
-pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<NaiveDate>, Vec<f64>)> {
+/// Raw (dates, closes, listing currency) from the MAX monthly history — the long-horizon `backtest`
+/// path. Decades of monthly bars (vs fetch_history's 10y daily), so forward windows of 10y+ exist for
+/// old names and a genuine multi-decade hold can be measured. Same single chart call quote_one already
+/// makes for the 20Y backfill (no new fetch type). None on fetch/parse fail or empty history.
+pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<NaiveDate>, Vec<f64>, String)> {
     let chart = parse_chart(&chart_json_long(client, urls, ticker).await?, ticker)?;
     if chart.closes.is_empty() {
         return None;
     }
-    Some((chart.dates, chart.closes))
+    Some((chart.dates, chart.closes, chart.currency))
 }
 
 /// One Quote per ticker, concurrent (≤`FETCH_CONCURRENCY` in flight), input order preserved.

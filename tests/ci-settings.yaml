@@ -275,8 +275,10 @@ buy_heuristic:
   #   -0.03 with price-only -0.04, ablation removal cost -8.6 edge, standalone ey +0.20|+0.23 -> kept;
   #   receipts .claude/bt_audit_2026-07-17.txt).
   fund_source: "sec"         # SEC EDGAR XBRL: free, keyless, uncapped — the source the tilt was validated on
-                             #   (train-serve: FMP's 250/day cap can't even cover one wide run). US filers only;
-                             #   non-covered names get fund_factor None -> tilt neutral, price terms decide.
+                             #   (train-serve: FMP's 250/day cap can't even cover one wide run).
+                             #   NO LONGER US-only as of 2026-07-25 (#3c): 20-F/40-F forms, the ifrs-full
+                             #   taxonomy and non-USD reporting currencies all parse now. Non-covered names
+                             #   still get fund_factor None -> tilt neutral, price terms decide.
   # (#3) GROWTH-AT-PRICE — earnings_yield SUPERSEDED by peg_yield 2026-07-25. peg_yield = 1/PEG =
   #   earnings_yield · as-of CAGR (100 <=> PEG 1; >100 <=> PEG < 1 = cheap for its growth). The axis sat
   #   wired-but-unmeasured for rounds, annotated "expected dead — redundant with earnings_yield x CAGR
@@ -334,6 +336,34 @@ buy_heuristic:
   #       unanimous win — it is an expression choice taken on a flat-edge plateau, not a validated lift.
   #   Revert rule for THIS knob: drop to 0.05 (the measured optimum, 60% headroom to the cliff) at the
   #   first sign of late-half degradation in a future wide run, before touching the factor itself.
+  # (#3c) FOREIGN FILERS ADMITTED 2026-07-25 — re-validation of the above, MANDATORY because it changed
+  #   the sample the weight was chosen on. Until this date `parse_sec_facts` required form 10-K, unit USD,
+  #   the us-gaap taxonomy and a "USD/shares" EPS key, so every 20-F/40-F/IFRS/non-USD filer produced ZERO
+  #   rows and was ranked price-only with no error anywhere (ASML: seven n/a columns, no `#`). All four now
+  #   parse, and any price-joined ratio converts the close into the FILER's reporting currency first —
+  #   a EUR EPS over a USD ADR close is the Item 16 trap, wrong by the whole FX rate and plausible-looking.
+  #   Same conversion in backtest (as-of, dated rate series) and live, so train and serve agree.
+  #   RESULT — same wide 12y batch, 4913 tickers / 11717 cutoffs, curve reproduced against (#3b):
+  #     0.000 +116.9   0.050 +203.8   0.070 +198.1 [SHIPPED]   0.080 +127.0   0.250 +81.2 / 0.500 +71.4
+  #   Every rung within 0.2 edge of (#3b). Plateau, peak and the -71 cliff at 0.08 all sit where they did;
+  #   OOS at 0.07 +0.23|+0.09 vs +0.24|+0.09. Sweep winner still peg_yield +195.1 to the decimal.
+  #   -> revert rule NOT triggered; weight stays 0.07.
+  #   READ THAT NARROWLY. Fund coverage moved only 8393 -> 8458 cutoffs (+0.8%): a 12y forward window
+  #   needs cutoffs from 2014 or earlier and foreign SEC XBRL mostly starts after the 2011 20-F mandate,
+  #   so this lane STRUCTURALLY cannot hold many of the newly-admitted names. It proves the change did not
+  #   disturb the validated edge. It does NOT prove the foreign names carry it.
+  #   Second lane that can see them — `backtest universe fund 5` (daily, 8594 cutoffs, 2389 fund-covered):
+  #     0.000 +28.0   0.070 +47.7 [SHIPPED]   0.080 +48.7   0.250 +66.4   0.500 +52.7 — NO cliff at 0.08,
+  #     exactly as (#3b) warns (the cliff is a ceiling on weight x value, so it moves with the sample).
+  #     peg_yield is the best of 11 factors here too (+47.7 vs price-only +28.0) and the only one that
+  #     lifts the early OOS half (-0.09 -> -0.03). That lane's headline prints "SHIP NOTHING" because its
+  #     early half is negative — but it is negative at weight 0 as well, which (#3)'s own keep-rule calls
+  #     regime weather, not tilt degradation. Not a revert signal; not an independent confirmation either,
+  #     since there is no pre-change 5y run to difference against.
+  #   Known gaps, measured not assumed: HSBC yields NO rows (neither IFRS revenue tag, and revenue is the
+  #   row ANCHOR); banks lack ProfitLossFromOperatingActivities so op_margin/interest_cover stay None for
+  #   RY/TD. Verified live: ARM/BABA (20-F us-gaap), NVS/AZN/SHEL (ifrs-full USD), NVO (DKK), RY/TD (40-F
+  #   CAD), TM (dual-currency -> USD, matching its ADR).
   growth_fund_cap: 300.0     # (#3) clamp in the factor's OWN pts before weighting. 300 <=> PEG >= 0.33 stays
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are
