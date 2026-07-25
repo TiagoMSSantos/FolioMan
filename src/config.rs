@@ -120,6 +120,9 @@ impl Default for Widths {
 ///   ONLY this lane — changing them does nothing to `screen` output.
 /// Its score: `base = discount × trend_health × momentum + long_reward(A) + cheap_reward(C) +
 /// dividend_reward(D)`, then `score = base × value(E) × geomean(decline(B), trust)`.
+///
+/// The `dividend` term in BOTH lanes is scored NET of Portuguese tax — see `picks::dividend_reward`
+/// and the `tax_keep_eu` / `tax_keep_other` knobs below.
 /// GATES exclude a candidate outright; SCORE knobs rank the survivors. Mirrors `config/settings.yaml`.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(default, deny_unknown_fields)] // a typo'd knob must error, not silently fall back to the default
@@ -155,6 +158,8 @@ pub struct BuyHeuristic {
     pub cheap_cap: f64,              // (C) cap on that below-SMA % fed into the cheap reward
     pub dividend_weight: f64,        // (D) reward per % of trailing-1Y dividend yield (reinvested divs dominate long-run total return)
     pub dividend_cap: f64,           // (D) cap on the yield % fed into the dividend reward
+    pub tax_keep_eu: f64,            // (D/PT) fraction of a dividend KEPT after Portuguese tax when the payer is an EU company — Art. 40.º-A CIRS englobates only 50% of dividends from an EU-resident company meeting the Parent-Subsidiary Directive conditions. HAND-SET from your own IRS position (bracket, englobamento yes/no, source withholding you actually eat): no tax law is encoded in this codebase, the two knobs ARE the model. 1.0 = off (DEFAULT — the lane is byte-identical to the pre-tax version). ponytail: ONE rate blends source withholding from 12.8% (France) to 35% (Finland) — that 22-pt within-EU spread is ~3× the EU-vs-US gap this term exists to capture, so a single number is a real approximation, not a rounding. Upgrade path if it bites: a per-market map keyed on `Quote.market`
+    pub tax_keep_other: f64,         // (D/PT) same keep-fraction for EVERY other market AND for funds of any domicile: an OICVM/ETF distribution is not a Parent-Subsidiary-Directive company's *lucro*, so it draws no 50% exclusion however EU-listed the wrapper is. 1.0 = off (DEFAULT)
     pub ref_pe: f64,                 // (E) "fair" trailing P/E: value tilt = ref_pe/PE, clamped — cheap (<ref) lifts, rich (>ref) dampens; no PE = neutral
     pub quality_weight: f64,         // (F) reward per % of trailing ROE — the profitability/QUALITY factor (Novy-Marx: high-ROE firms out-compound). Applied to BOTH lanes. BACKTEST-BLIND (point-in-time ROE, no as-of), so kept small. 0 = off
     pub quality_cap: f64,            // (F) cap the ROE % fed into the quality reward (one 200%-ROE outlier can't dominate)
@@ -254,6 +259,8 @@ impl Default for BuyHeuristic {
             cheap_cap: 60.0,               // (C) cap the below-SMA % fed into the cheap reward
             dividend_weight: 1.5,          // (D) ~+9 at the cap for a 6% yielder
             dividend_cap: 6.0,             // (D) cap the trailing yield % fed into the dividend reward
+            tax_keep_eu: 1.0,              // (D/PT) 1.0 = no tax haircut -> byte-identical to the pre-tax lane; ci-settings.yaml ships the live rate
+            tax_keep_other: 1.0,           // (D/PT) same: neutral out-of-the-box, the fixture carries the operator's number
             ref_pe: 20.0,                  // (E) "fair" P/E; PE 10 -> ×1.5 (capped cheap), PE 40 -> ×0.5 (capped rich)
             quality_weight: 0.15,          // (F) per % ROE: a 40% ROE adds ~+6 (capped) — secondary tilt, deliberately small since BACKTEST-BLIND
             quality_cap: 40.0,             // (F) cap the ROE % at 40 (a buyback-levered 200% ROE doesn't dwarf a healthy 25%)
@@ -876,7 +883,18 @@ mod tests {
         assert_eq!(h.fund_source, "sec", "{receipts}");
         assert_eq!(h.growth_fund_factor, "earnings_yield", "{receipts}");
         assert_eq!(h.growth_fund_weight, 1.0, "{receipts}");
-        assert_eq!(h.dividend_weight, 0.0, "blind tilt stays consolidated to 0 — {receipts}");
+        // (D) revived 2026-07-25. This one canNOT carry the receipt the message above demands: the
+        // backtest cannot reconstruct as-of dividends, so no walk-forward run grades it at any weight
+        // (see commands/backtest.rs's module header). It is pinned as a JUDGMENT lever sized by
+        // argument — 0.5 peaks the term at +2.25, under quality_weight's +6 blind ceiling.
+        let blind = "BACKTEST-BLIND by construction — no walk-forward receipt is possible for this \
+                     term at any weight; it is sized by argument and pinned so the size can't drift \
+                     silently. Re-argue it in tests/ci-settings.yaml before moving this pin";
+        assert_eq!(h.dividend_weight, 0.5, "{blind}");
+        // (D/PT) the two after-tax keep-fractions ARE the whole tax model and they move live ranks,
+        // so they belong in the same tripwire as every other unvalidatable live tilt.
+        assert_eq!(h.tax_keep_eu, 0.75, "{blind}");
+        assert_eq!(h.tax_keep_other, 0.72, "{blind}");
         assert_eq!(h.growth_value_weight, 0.0, "blind tilt stays consolidated to 0 — {receipts}");
     }
 

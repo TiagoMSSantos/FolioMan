@@ -87,6 +87,40 @@ fn dividend_yield_1y(quote: &Quote) -> f64 {
     core::dividend_yields(&quote.div_eur, quote.price_eur).first().and_then(|o| *o).unwrap_or(0.0)
 }
 
+/// (D) The dividend reward, scored NET of Portuguese tax. Shared by BOTH lanes so the on-sale foil
+/// and the growth lane can never drift apart on it.
+///
+/// A gross euro of dividend is not worth a gross euro of dividend: under Art. 40.º-A CIRS a payout
+/// from an EU-resident company is englobado at only 50% (you must opt for englobamento), while a US
+/// or other non-EU payer is taxed in full. `tax_keep_*` are the after-tax KEEP fractions, hand-set
+/// by the operator from their own bracket — see the knob docs; nothing here encodes tax law.
+///
+/// CAP FIRST, THEN SCALE — not interchangeable. Capping the scaled yield (`min(yield × keep, cap)`)
+/// would saturate EU and non-EU onto the identical capped value for every above-cap yielder, erasing
+/// the tax distinction exactly where yields are highest and the distinction is worth most.
+///
+/// The EU rate reaches STOCKS only: a fund distribution is not a Parent-Subsidiary-Directive
+/// company's *lucro*, so an EU-listed UCITS draws no exclusion and takes `tax_keep_other`.
+///
+/// BACKTEST-BLIND by construction — `backtest_quote` cannot reconstruct as-of dividends (see the
+/// module header of `commands/backtest.rs`), so no walk-forward run can grade this term at any
+/// weight. It ships as a judgment lever sized by argument, which is why `dividend_weight` stays well
+/// under the lane's other blind ceilings.
+fn dividend_reward(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
+    tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap) * tax_keep(quote, tuning).0
+}
+
+/// (D) Which after-tax keep-fraction applies to this row, plus the tier label the score breakdown
+/// prints. One source for the EU/other decision so `explain_growth_score` can never label a row
+/// differently from how `dividend_reward` actually scored it.
+fn tax_keep(quote: &Quote, tuning: &BuyHeuristic) -> (f64, &'static str) {
+    if !quote_is_etf(quote) && core::is_eu_market(&quote.market) {
+        (tuning.tax_keep_eu, "EU payer, 50% englobado")
+    } else {
+        (tuning.tax_keep_other, "non-EU or fund")
+    }
+}
+
 /// (E) Valuation tilt from trailing P/E: cheap (PE < ref) lifts the score, rich dampens it, clamped
 /// to [VALUE_TILT_MIN, VALUE_TILT_MAX]. Unknown PE or non-earning (crypto/ETF/PE<=0) -> 1.0 (neutral
 /// — never punished for missing data).
@@ -446,7 +480,7 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     let discount_frac = (discount / tuning.discount_cap).clamp(0.0, 1.0); // 0 = at its high, 1 = deeply discounted
     let long_reward = tuning.long_trend_weight * long_cagr.min(tuning.long_trend_cap) * discount_frac; // (A)
     let cheap_reward = tuning.cheap_weight * quote.below_ma_pct.min(tuning.cheap_cap); // (C)
-    let dividend_reward = tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap); // (D)
+    let dividend_reward = dividend_reward(quote, tuning); // (D) net of PT tax — see the fn
 
     let risk_reward = risk_bonus(quote, long_cagr, tuning.onsale_sharpe_weight, tuning.calmar_weight, tuning); // (B/C) on-sale lane's own Sharpe weight
     let base = tuning.discount_weight * discount * health * momentum // (#4) demoted: dip-depth ranks backwards on peer-relative backtest
@@ -476,7 +510,7 @@ struct ScoreParts {
     accel_term: f64,   // growth_accel_weight × accel
     risk_reward: f64,  // (B/C) Sharpe+Calmar bonus
     quality: f64,      // (F) quality_weight × ROE
-    dividend: f64,     // (D) dividend_weight × min(yield, cap)
+    dividend: f64,     // (D) dividend_weight × min(yield, cap) × PT tax keep-rate (EU payer keeps more)
     fund: f64,         // (G) growth_fund_weight × clamp(fund_factor, 0, cap)
     mom121: f64,       // (M) growth_mom121_weight × clamp(12-1 mom, 0, cap)
     smooth: f64,       // (E) growth_smoothness_weight × trend_r2
@@ -666,7 +700,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let trend_term = tuning.growth_trend_weight * trend;
     let accel_term = tuning.growth_accel_weight * accel;
     let quality = quality_reward(quote, tuning); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
-    let dividend = tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap); // (D) total-return tilt: closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
+    let dividend = dividend_reward(quote, tuning); // (D) total-return tilt, NET of Portuguese tax (EU payers keep more — Art. 40.º-A CIRS; see dividend_reward). Closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
     // (G) as-of FUNDAMENTAL tilt. Unlike the BACKTEST-BLIND terms above, this one IS validatable: the
     // backtest attaches the as-of factor to quote.fund_factor so `backtest <set> fund` can ablate it.
     // Floor at 0 (only reward the factor, don't penalise a missing/negative one) and cap the artifact.
@@ -998,7 +1032,8 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         tuning.growth_accel_weight, p.accel, p.accel_term, p.return_1y, p.long_cagr));
     s.push_str(&format!("    risk     = Sharpe+Calmar bonus                        = {:.2}\n", p.risk_reward));
     s.push_str(&format!("    quality  = quality_weight × ROE                       = {:.2}\n", p.quality));
-    s.push_str(&format!("    dividend = dividend_weight × min(1Y yield, cap)       = {:.2}\n", p.dividend));
+    let (keep, tier) = tax_keep(quote, tuning); // (D) same call dividend_reward scored on -> label can't drift
+    s.push_str(&format!("    dividend = dividend_weight × min(1Y yield, cap) × keep = {:.2}   (PT tax keep {keep:.2} — {tier})\n", p.dividend));
     s.push_str(&format!("    fund     = growth_fund_weight × clamp(fund_factor)    = {:.2}\n", p.fund));
     s.push_str(&format!("    mom121   = growth_mom121_weight × clamp(12-1 mom)     = {:.2}\n", p.mom121));
     s.push_str(&format!("    smooth   = growth_smoothness_weight × trend_r2 (R²)   = {:.2}\n", p.smooth));
@@ -2869,6 +2904,44 @@ mod tests {
     let mut div_cap = div_grow.clone();
     div_cap.div_eur = vec![Some(20.0)]; // 20% (bad-feed / special-div artifact) -> clamped to the 6% cap
     assert!((score_parts(&div_cap, &tuning).unwrap().dividend - 1.5 * 6.0).abs() < 1e-9); // .min(dividend_cap) upper bound = 9.0
+
+    // (D/PT) PORTUGUESE TAX on the dividend term. Art. 40.º-A CIRS englobates only 50% of a dividend
+    // from an EU-resident company, so a EUR of EU dividend is worth more after tax than a EUR of US
+    // dividend — the term must score them differently. `tuning` above leaves both keep-rates at the
+    // 1.0 default, which is exactly why the two asserts ABOVE stay untouched by this feature.
+    let taxed = BuyHeuristic { tax_keep_eu: 0.75, tax_keep_other: 0.72, ..BuyHeuristic::default() };
+    let mut us_stock = div_grow.clone(); // market "USA" from the helper, 5% yield, under the cap
+    us_stock.market = "USA".into();
+    let mut pt_stock = us_stock.clone();
+    pt_stock.market = "Portugal".into();
+    let us_div = score_parts(&us_stock, &taxed).unwrap().dividend;
+    let pt_div = score_parts(&pt_stock, &taxed).unwrap().dividend;
+    assert!((us_div - 1.5 * 5.0 * 0.72).abs() < 1e-9); // non-EU payer keeps tax_keep_other
+    assert!((pt_div - 1.5 * 5.0 * 0.75).abs() < 1e-9); // EU payer keeps the (higher) tax_keep_eu
+    assert!(pt_div > us_div, "the 50% englobamento exclusion must favour the EU payer");
+    // European but NOT EU: UK left in 2020, Switzerland/Norway never joined -> no Art. 40.º-A relief.
+    for outside in ["UK", "Switzerland", "Norway"] {
+        let mut q = us_stock.clone();
+        q.market = outside.into();
+        assert!((score_parts(&q, &taxed).unwrap().dividend - us_div).abs() < 1e-9, "{outside} is not EU");
+    }
+    // CAP-ORDER PIN: the cap hits the GROSS yield, then the keep-rate scales it. Write it the other
+    // way round (`min(yield × keep, cap)`) and both rows saturate at the cap — the tax distinction
+    // silently vanishes for every high yielder, which is where it is worth most. This assert reds.
+    let mut us_over = us_stock.clone();
+    us_over.div_eur = vec![Some(20.0)]; // 20% yield, well above the 6% cap
+    let mut pt_over = us_over.clone();
+    pt_over.market = "Portugal".into();
+    let (us_o, pt_o) = (score_parts(&us_over, &taxed).unwrap().dividend, score_parts(&pt_over, &taxed).unwrap().dividend);
+    assert!((us_o - 1.5 * 6.0 * 0.72).abs() < 1e-9);
+    assert!((pt_o - 1.5 * 6.0 * 0.75).abs() < 1e-9);
+    assert!(pt_o > us_o, "above the cap the EU/non-EU distinction must SURVIVE — cap first, then scale");
+    // FUNDS take tax_keep_other at any domicile: an OICVM distribution is not a Parent-Subsidiary
+    // Directive company's *lucro*, so an EU-listed UCITS draws no 50% exclusion.
+    let mut eu_etf = pt_stock.clone();
+    eu_etf.market = "Germany".into();
+    eu_etf.instrument_type = "ETF".into();
+    assert!((score_parts(&eu_etf, &taxed).unwrap().dividend - us_div).abs() < 1e-9, "a fund gets no EU exclusion");
 
     // (M) 12-1 momentum — NEUTRALITY: two names identical but for last-month return (different 12-1)
     // must score the SAME at the default growth_mom121_weight 0 — the price-validated lane is unchanged

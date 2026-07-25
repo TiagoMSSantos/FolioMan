@@ -65,6 +65,26 @@ fn suffix_country(suf: &str) -> Option<&'static str> {
     })
 }
 
+/// EU member states, spelled exactly as `suffix_country` above spells them (kept adjacent so an edit
+/// to either literal sees the other). This is the Art. 40.º-A CIRS set: dividends from a company
+/// resident in an EU state meeting the Parent-Subsidiary Directive conditions are englobados at only
+/// 50% on a Portuguese IRS return. UK (post-Brexit), Switzerland and Norway are European but NOT EU
+/// members — no exclusion, so they are deliberately absent.
+///
+/// CAVEAT this set cannot fix: `market` is the LISTING VENUE, not the payer's tax residence. An
+/// Irish-domiciled S&P 500 name (ACN, ETN, MDT…) carries no suffix and reads "USA" here, so it is
+/// under-credited. That direction is conservative — it never awards the exclusion to a payer that
+/// lacks it. Closing it needs a domicile source for stocks, which no current feed provides.
+const EU_MARKETS: [&str; 12] = [
+    "Germany", "France", "Netherlands", "Italy", "Spain", "Austria",
+    "Portugal", "Belgium", "Finland", "Sweden", "Denmark", "Ireland",
+];
+
+/// Is this `Quote.market` an EU member state (see `EU_MARKETS`)?
+pub fn is_eu_market(market: &str) -> bool {
+    EU_MARKETS.contains(&market)
+}
+
 /// (S-8Y) the four price stats whose window is LONGER than 8 years, re-measured on just the last 8.
 /// The `S-8Y` column pins the long-CAGR window to 8 years, but every other price stat on a `Quote` is
 /// computed once at fetch time over the whole ~10y daily payload — so without these the column mixed
