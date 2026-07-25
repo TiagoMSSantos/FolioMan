@@ -469,7 +469,18 @@ urls:
   # 12y: baseline edge +127.6 (rho +0.13, OOS +0.14|+0.10) -> with 140 EU large-caps +117.0
   # (rho +0.11, OOS +0.11|+0.09, winsorized 97.7 -> 89.1) — every dial moved down, same direction
   # as the MidCap rejection: the US-momentum persistence the lane rides is weaker in EU large-caps.
+  # RE-TESTED AND REJECTED AGAIN 2026-07-25, this time with FTSE MIB added (the one pond never
+  # measured before) — DAX 40 + FTSE MIB 40 + FTSE 100 100, same-batch 12y: baseline 4913 tickers
+  # edge +156.8 (rho +0.15, OOS +0.14|+0.12, winsorized +126.7) -> with the three ponds 5077 tickers
+  # edge +136.0 (rho +0.13, OOS +0.11|+0.12, winsorized +106.4). Every dial down or flat, none up,
+  # and the -20.8 falls well inside the 90% bootstrap bands ([+99.1 … +197.7] vs [+87.6 … +187.2]),
+  # so it is not even distinguishable from noise — an indistinguishable result does not overturn a
+  # prior measured rejection. Three runs, three ponds, one direction; Italy did not rescue it.
   # Do NOT re-add without a new same-batch run that clears the bar.
+  # NOTE for whoever tries a fourth time: the dilution is a POOL effect, not just extra rows being
+  # ranked — forward returns are de-meaned per ~6mo cutoff, so +164 EU names move every bucket's
+  # mean. Widening the pond can therefore only pay if the new names rank as well as the incumbents,
+  # and by three measurements EU large-caps do not.
   constituents_csv:
     - "https://yfiua.github.io/index-constituents/constituents-nasdaq100.csv"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
