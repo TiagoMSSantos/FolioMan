@@ -107,7 +107,7 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
             );
             println!(
                 "  {:<6} {:>6} {:>6} {:>14} {:>8} {:>8} {:>8} {:>8}",
-                "SÉRIE", "BASE", "CAP", "PREMIUM 2-5/6+", "1Y", "5Y", "10Y", "20Y"
+                "SÉRIE", "BASE", "CAP", "PREMIUM 2-5/6+", "2Y", "5Y", "8Y", "20Y"
             );
             for s in core::CA_SERIES {
                 let base = core::ca_base_rate(euribor, s.spread, s.cap);
@@ -119,9 +119,9 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
                     base,
                     s.cap,
                     format!("+{:.2}/+{:.2}%", s.premium_early, s.premium_late),
-                    gain(1),
+                    gain(2),
                     gain(5),
-                    gain(10),
+                    gain(8),
                     gain(20),
                 );
             }
@@ -129,7 +129,7 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
     }
 
     println!("\nInflation — latest annual % + cumulative price rise (compounded) over last N years:");
-    println!("  {:<9} {:>9} {:>9} {:>9} {:>9}", "", "latest", "5Y", "10Y", "20Y");
+    println!("  {:<9} {:>9} {:>9} {:>9} {:>9} {:>9}", "", "latest", "2Y", "5Y", "8Y", "20Y");
     for (label, series) in &inflations {
         let (ly, lv, _, _) = core::inflation_summary(series);
         let cum = |y| pct(core::inflation_compounded(series, y));
@@ -145,6 +145,14 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
                 None => String::new(),
             }
         };
-        println!("  {:<9} {:>9} {:>9} {:>9} {:>9}{note}", label, pct(lv), cum(5), cum(10), cum(20));
+        println!(
+            "  {:<9} {:>9} {:>9} {:>9} {:>9} {:>9}{note}",
+            label,
+            pct(lv),
+            cum(2),
+            cum(5),
+            cum(8),
+            cum(20)
+        );
     }
 }
