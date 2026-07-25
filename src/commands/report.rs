@@ -114,6 +114,12 @@ pub async fn run(args: Vec<String>) {
             if scored.fund_factor.is_none() {
                 let mut ff = core::fund_factors(&rows, today, 5); // pure, cheap; same as the valuation line
                 ff.earnings_yield = close.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
+                // (#3) the SHIPPED factor needs the same backfill. Without it select_fund_factor
+                // returns None for peg_yield, the verdict silently scores with NO fund tilt, and the
+                // printed score contradicts the `-> pts` clause rendered directly above it — the very
+                // mismatch this mirror exists to prevent. `fund_factors` leaves every price-dependent
+                // factor None by construction; each call site must fill the one it selects.
+                ff.peg_yield = close.and_then(|p| core::peg_yield(ff.eps_ttm, tcagr, p));
                 // ponytail: annual EPS like the valuation cell above — skips fetch.rs's sec_ttm_eps
                 // TTM override, so report stays self-consistent; diverges from screen only for
                 // mid-ramp US growers (where the valuation line already shows the same annual ey).

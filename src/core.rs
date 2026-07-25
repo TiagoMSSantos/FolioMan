@@ -1417,7 +1417,12 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         shares_ttm: now.and_then(|r| r.shares),
         net_debt: now.and_then(|r| r.net_debt),
         ebitda_yield: None,
-        peg_yield: None, // (PEG) needs the as-of price AND CAGR -> filled by the CALLER, both sides: the backtest loop and fetch.rs's live enrich. Leaving it None here would silently zero the shipped tilt
+        // (PEG) needs the as-of price AND CAGR, which this fn has no access to -> filled by the CALLER.
+        // THREE call sites must each remember, and a miss is SILENT (select_fund_factor just reads None
+        // and the tilt vanishes with no error): the backtest loop (commands/backtest.rs), the live enrich
+        // (fetch.rs::enrich_fund_factor), and report.rs's verdict mirror. The last two were each missing
+        // it once. Adding a price-dependent factor here means auditing all three.
+        peg_yield: None,
         buyback_yield,
         // (round 107) survival levels: same as-of join as the margins, no derivation needed
         fcf_margin: now.and_then(|r| r.fcf_margin),
