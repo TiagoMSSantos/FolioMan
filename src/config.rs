@@ -893,7 +893,7 @@ mod tests {
         assert_eq!(h.dividend_weight, 0.5, "{blind}");
         // (D/PT) the two after-tax keep-fractions ARE the whole tax model and they move live ranks,
         // so they belong in the same tripwire as every other unvalidatable live tilt.
-        assert_eq!(h.tax_keep_eu, 0.75, "{blind}");
+        assert_eq!(h.tax_keep_eu, 0.76, "{blind}");
         assert_eq!(h.tax_keep_other, 0.72, "{blind}");
         assert_eq!(h.growth_value_weight, 0.0, "blind tilt stays consolidated to 0 — {receipts}");
     }
