@@ -1302,7 +1302,7 @@ pub struct FundFactors {
     pub shares_ttm: Option<f64>,     // (EV/EBITDA) as-of diluted share count — the market-cap leg of EV
     pub net_debt: Option<f64>,       // (EV/EBITDA) as-of net debt (total debt − cash) — the leverage leg of EV
     pub ebitda_yield: Option<f64>,   // (EV/EBITDA) EBITDA ÷ EV, % (high = cheap). PROBE-ONLY, None live (price skew, same as earnings_yield)
-    pub peg_yield: Option<f64>,      // (PEG) 1/PEG = earnings_yield · as-of CAGR (high = cheap-for-its-growth). PROBE-ONLY, None live (needs the native as-of close, same skew as earnings_yield)
+    pub peg_yield: Option<f64>,      // (PEG) 1/PEG = earnings_yield · as-of CAGR (high = cheap-for-its-growth). THE LIVE RANKING TILT since 2026-07-25 (`growth_fund_factor`); filled from the NATIVE close in both the backtest loop and the live enrich, so train and serve share one definition
     pub buyback_yield: Option<f64>, // as-of net share-count change over the last year, sign-flipped (+ = shrinking share count = buying back). Fully as-of from the FundRows (no price needed), unlike earnings_yield — so it populates in both the backtest AND the live enrich
     // (round 107) as-of SURVIVAL levels straight off the latest filed row (like op_margin/roe) —
     // price-free, so they populate in both the backtest and the live enrich. High = safer.
@@ -1417,7 +1417,7 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         shares_ttm: now.and_then(|r| r.shares),
         net_debt: now.and_then(|r| r.net_debt),
         ebitda_yield: None,
-        peg_yield: None, // (PEG probe) needs the as-of price AND CAGR -> filled in the backtest loop, not here
+        peg_yield: None, // (PEG) needs the as-of price AND CAGR -> filled by the CALLER, both sides: the backtest loop and fetch.rs's live enrich. Leaving it None here would silently zero the shipped tilt
         buyback_yield,
         // (round 107) survival levels: same as-of join as the margins, no derivation needed
         fcf_margin: now.and_then(|r| r.fcf_margin),
@@ -1461,11 +1461,16 @@ pub fn ev_ebitda_yield(ebitda: Option<f64>, shares: Option<f64>, net_debt: Optio
 
 /// (PEG probe) 1/PEG as a higher-is-better "yield" so it slots into the same sweep as earnings_yield:
 /// PEG = (P/E) ÷ CAGR, so 1/PEG = (eps/price)·CAGR = `earnings_yield` · CAGR (unit-consistent with the
-/// textbook PEG, where growth is the % NUMBER). PEG < 1 ⇔ this > (100·earnings_yield form)… i.e. higher =
-/// cheaper for its growth. PROBE-ONLY, same native-close discipline as earnings_yield (None on the live
-/// path). None unless earnings_yield is POSITIVE (a loss-maker isn't "cheap for growth" — no fabricated
+/// textbook PEG, where growth is the % NUMBER). peg_yield == 100 ⇔ PEG == 1; > 100 ⇔ PEG < 1, i.e. higher =
+/// cheaper for its growth. THE SHIPPED growth-lane fund tilt since 2026-07-25 (receipt (#3) in
+/// tests/ci-settings.yaml): standalone wide 12y n=1489 rho +0.14 edge +291.7 OOS +0.16|+0.13, beating the
+/// previous earnings_yield tilt on all four dials. Same native-close discipline as earnings_yield, now
+/// applied on BOTH sides (backtest loop + live enrich) so train and serve compute one number.
+/// None unless earnings_yield is POSITIVE (a loss-maker isn't "cheap for growth" — no fabricated
 /// signal) AND CAGR is positive (negative growth makes PEG sign-nonsense). Deliberately mirrors the
-/// EV/EBITDA loss-maker None-out.
+/// EV/EBITDA loss-maker None-out. Those two None-outs are why "rank PEG < 0 higher" is unimplementable
+/// here by design, not by omission: a negative PEG needs negative earnings, and this returns None there.
+/// NOTE the SCALE before touching `growth_fund_cap`: ~0-500, vs ~0-15 for earnings_yield.
 pub fn peg_yield(eps: Option<f64>, cagr: Option<f64>, price: f64) -> Option<f64> {
     let ey = earnings_yield(eps, price).filter(|&y| y > 0.0)?; // eps>0 (earnings_yield itself allows eps<0)
     let g = cagr.filter(|&g| g > 0.0)?;                        // %/yr; negative growth -> PEG meaningless
@@ -1636,7 +1641,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
         "earnings_yield" => f.earnings_yield,             // (Item 19) as-of valuation; PROBE-ONLY (None live)
         "ebitda_yield" => f.ebitda_yield,                 // (EV/EBITDA) capital-structure-neutral valuation; PROBE-ONLY (None live)
-        "peg_yield" => f.peg_yield,                        // (PEG) 1/PEG = earnings_yield · CAGR, cheap-for-growth; PROBE-ONLY (None live)
+        "peg_yield" => f.peg_yield,                        // (PEG) 1/PEG = earnings_yield · CAGR, cheap-for-growth; THE SHIPPED live tilt (2026-07-25)
         "buyback_yield" => f.buyback_yield,               // as-of 1y share-count shrink (+ = buying back); backtest-testable candidate
         "fcf_margin" => f.fcf_margin,                     // (round 107) survival: cash generation
         "interest_cover" => f.interest_cover,             // (round 107) survival: debt-service headroom

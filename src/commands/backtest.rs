@@ -572,6 +572,8 @@ fn report_fund_lane(samples: &[Sample]) {
         ("roe", |f| f.roe),                             // quality of capital (SEC feed only; FMP free tier = None)
         ("insider_net90d", |f| f.insider_net_buys_90d), // (Item 4) only populated under `insider`
         ("earnings_yield", |f| f.earnings_yield),       // (Item 19) as-of valuation (high = cheap); native-currency probe
+        ("ebitda_yield", |f| f.ebitda_yield),           // (EV/EBITDA) capital-structure-neutral valuation cousin
+        ("peg_yield", |f| f.peg_yield),                 // (PEG) growth-at-price = earnings_yield · as-of CAGR (1/PEG)
         ("buyback_yield", |f| f.buyback_yield),         // as-of 1y share-count shrink (+ = buying back)
         ("composite", |f| core::select_fund_factor(f, "composite")), // (Item 3) blend of the present factors
     ];
@@ -731,10 +733,17 @@ fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], b
 /// then prints the one to paste into settings.yaml. Ships nothing. Needs the `fund` path; with <8 cutoffs
 /// carrying fundamentals there's nothing to sweep. Same chronological split + seeded search as `tune`.
 fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
-    const FACTORS: [&str; 10] = [
+    const FACTORS: [&str; 11] = [
         "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
         "insider_net_buys_90d", // (Item 4) shows n/a unless `insider` populated it
         "earnings_yield",       // (Item 19) as-of valuation; native-currency probe (n/a unless `fund`)
+        // (PEG) growth-at-price = earnings_yield · as-of CAGR (1/PEG; 100 ⇔ PEG 1, >100 ⇔ PEG <1).
+        // Swept HERE, not just in the held-book list, because this is the sweep that carries the
+        // Šidák best-of-N haircut — the axis was annotated "expected dead" for rounds without ever
+        // being measured. NOTE the scale: peg_yield runs ~0-500 where earnings_yield runs ~0-15, so
+        // the default `growth_fund_cap: 30` clamps every PEG < 3.3 name to the same value and would
+        // fake a dead result. Raise the cap (~300) for any run that reads this row.
+        "peg_yield",
         "buyback_yield",        // as-of 1y share-count shrink (+ = buying back); n/a unless `fund` + shares in the rows
         "composite",            // (Item 3) shows n/a until ≥2 factors are present
     ];
@@ -799,6 +808,11 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
             // by selection. Re-bootstrap the winner's tilt but read a Šidák-tightened tail (5/N instead of
             // 5) — if THAT band straddles 0 the "win" is within best-of-N luck, ship nothing anyway.
             let weight = eval(Some(w)).3; // seeded search -> identical to the sweep's pick; re-derive the won weight
+            // The winner's edge was measured AT THIS WEIGHT, searched in [0,0.5] — which need not be the
+            // shipped `growth_fund_weight`. Print it: shipping the factor at a different weight ships an
+            // untested tilt, and the miss is silent (the factor name matches, the magnitude does not).
+            // Read it together with `growth_fund_cap` — what the score sees is weight × clamp(value, 0, cap).
+            println!("  -> validated growth_fund_weight for {w}: {weight:.3} (at growth_fund_cap {:.0})", default.growth_fund_cap);
             let mut s = samples.to_vec();
             for smp in &mut s {
                 smp.quote.fund_factor = smp.fund.as_ref().and_then(|f| core::select_fund_factor(f, w));
@@ -1120,7 +1134,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("eps_growth", |f| f.eps_growth),          // bottom-line compounding
         ("earnings_yield", |f| f.earnings_yield),  // VALUE (anti-overpay — the near-high gate lacks one)
         ("ebitda_yield", |f| f.ebitda_yield),      // VALUE, capital-structure-neutral (EV folds in leverage — the axis EPS/price misses)
-        ("peg_yield", |f| f.peg_yield),            // GROWTH-AT-PRICE: earnings_yield · as-of CAGR (1/PEG). PROBE — redundant with earnings_yield×CAGR already in the score
+        ("peg_yield", |f| f.peg_yield),            // GROWTH-AT-PRICE: earnings_yield · as-of CAGR (1/PEG). THE SHIPPED tilt since 2026-07-25 — the old "redundant with earnings_yield×CAGR already in the score" note was an assumption, never measured, and it was wrong on every view but this one
         ("buyback_yield", |f| f.buyback_yield),    // capital return
         ("roe", |f| f.roe),                        // quality of capital (SEC-computed NetIncome ÷ StockholdersEquity)
         ("insider_net_buys_90d", |f| f.insider_net_buys_90d), // (Item 4) insider conviction — rows appear only under `backtest … insider`
@@ -1224,9 +1238,13 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
 
     // (PEG probe) the brake on growth-at-price — reject the most-expensive-FOR-ITS-GROWTH P% (lowest
     // peg_yield = earnings_yield·CAGR) gated STOCKS, rank survivors by growth_score. Distinct from the two
-    // gates above in intent (a fast grower can be dear on P/E yet cheap on PEG, and vice-versa) but its
-    // components (earnings_yield, CAGR) already drive the multiplicative score — expected dead. Same golden
-    // bar: STRESS book/worst lifted, OOS both +. A dead receipt closes the growth-at-price axis on measurement.
+    // gates above in intent (a fast grower can be dear on P/E yet cheap on PEG, and vice-versa).
+    // MEASURED DEAD 2026-07-25, wide same-batch 12y (4913 tickers, 8393 fund-covered cutoffs): flat across
+    // the whole sweep — excess +6.8 / +6.9 / +6.9 / +6.9 at reject 0/10/25/40%, book +14.8%/yr and worst
+    // -7.8 unmoved throughout. The growth-at-price axis is closed AS A BRAKE, on measurement rather than
+    // on the old "expected dead" assumption. Note the same factor is very much alive as a RANK TILT in the
+    // same run (peg_yield is the shipped `growth_fund_factor`) — cutting the dear names and ranking by
+    // cheapness are different questions, and only the second one pays here.
     let has_peg = samples.iter().any(|s| s.fund.as_ref().and_then(|f| f.peg_yield).is_some());
     if has_peg {
         println!("\n── PEG-VALUE-GATE probe: drop the most-expensive-for-growth P% (low peg_yield) gated STOCKS, rank rest by growth_score, top-{n} held {years}y ──");

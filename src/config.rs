@@ -881,8 +881,13 @@ mod tests {
         let receipts = "RANKING change: re-validate first (same-batch backtest, BOTH OOS halves \
                         positive — receipts block in tests/ci-settings.yaml), then move this pin";
         assert_eq!(h.fund_source, "sec", "{receipts}");
-        assert_eq!(h.growth_fund_factor, "earnings_yield", "{receipts}");
-        assert_eq!(h.growth_fund_weight, 1.0, "{receipts}");
+        assert_eq!(h.growth_fund_factor, "peg_yield", "{receipts}");
+        // (#3) weight and cap are ONE dial: the score sees weight x clamp(factor, 0, cap). peg_yield
+        // runs ~0-500 (100 = PEG 1) where the old earnings_yield ran ~0-15, so carrying the previous
+        // 1.0/30 pair over would have shipped a tilt ~55x hotter than the sweep ever measured, under a
+        // factor name that still matched its receipt. Pin BOTH so neither can drift alone.
+        assert_eq!(h.growth_fund_weight, 0.018, "{receipts}");
+        assert_eq!(h.growth_fund_cap, 300.0, "cap is half the tilt magnitude — {receipts}");
         // (D) revived 2026-07-25. This one canNOT carry the receipt the message above demands: the
         // backtest cannot reconstruct as-of dividends, so no walk-forward run grades it at any weight
         // (see commands/backtest.rs's module header). It is pinned as a JUDGMENT lever sized by

@@ -950,6 +950,12 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
             }
         }
         ff.earnings_yield = q.close_native.and_then(|p| core::earnings_yield(ff.eps_ttm, p));
+        // (PEG) same native-close discipline one line up, so `growth_fund_factor: peg_yield` is a
+        // real selection instead of a silent None (which would zero the fund term and drop the
+        // validated earnings_yield tilt with nothing in its place). `peg_yield` None-outs
+        // loss-makers and non-positive growth itself — no extra guard here. Mirrors report.rs's
+        // info cell, so the drill-in number and the scored number are one definition.
+        ff.peg_yield = q.close_native.and_then(|p| core::peg_yield(ff.eps_ttm, q.trend_cagr, p));
         q.fund_factor = core::select_fund_factor(&ff, factor);
     }
 }

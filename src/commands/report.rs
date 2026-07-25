@@ -215,11 +215,21 @@ fn render_annual(
     let evy = close_native
         .and_then(|p| core::ev_ebitda_yield(ff.ebitda_ttm, ff.shares_ttm, ff.net_debt, p));
     let peg = close_native.and_then(|p| core::peg_yield(ff.eps_ttm, trend_cagr, p));
-    out.push_str(&format!(
-        "  ebitda_yield {}  peg_yield {} (info — probe factors, never scored)\n",
-        yoy(evy),
-        pts(peg),
-    ));
+    out.push_str(&format!("  ebitda_yield {}  peg_yield {}", yoy(evy), pts(peg)));
+    // (#3) peg_yield became the SHIPPED tilt on 2026-07-25, so "never scored" is no longer true of it —
+    // show the same `-> pts` clause the valuation line above gets, from the same weight×clamp arithmetic
+    // growth_score runs. ebitda_yield stays info-only. Weight 0 or another factor selected -> the old
+    // info wording, so a drill-in never claims a contribution the score isn't actually making.
+    if tuning.growth_fund_factor == "peg_yield" && tuning.growth_fund_weight > 0.0 {
+        let contrib = peg.map(|v| tuning.growth_fund_weight * v.clamp(0.0, tuning.growth_fund_cap));
+        out.push_str(&format!(
+            " -> {} pts in growth_score (weight {:.3}, cap {:.0}); ebitda_yield info only",
+            pts(contrib), tuning.growth_fund_weight, tuning.growth_fund_cap,
+        ));
+    } else {
+        out.push_str(" (info — probe factors, never scored)");
+    }
+    out.push('\n');
 
     let has_table = !annual.is_empty();
     (out, has_table)
@@ -577,6 +587,20 @@ mod tests {
         let (out, _) =
             render_annual("ACME", "SEC", &rows, today(), Some(100.0), Some(15.0), &config::BuyHeuristic::default());
         assert!(out.contains("ebitda_yield +4.5%  peg_yield +30.0 (info — probe factors, never scored)"), "{out}");
+
+        // (#3) with peg_yield SELECTED (the shipped tilt) the same cell must claim its score
+        // contribution instead of "never scored": peg 30.0 × weight 0.018 = +0.5 pts, cap 300 not
+        // binding. Guards the drill-in against under-reporting the live tilt (round-5 lesson, mirrored).
+        let peg_tilt = config::BuyHeuristic {
+            growth_fund_factor: "peg_yield".to_string(),
+            growth_fund_weight: 0.018,
+            growth_fund_cap: 300.0,
+            ..Default::default()
+        };
+        let (tilted, _) =
+            render_annual("ACME", "SEC", &rows, today(), Some(100.0), Some(15.0), &peg_tilt);
+        assert!(tilted.contains("peg_yield +30.0 -> +0.5 pts in growth_score (weight 0.018, cap 300)"), "{tilted}");
+        assert!(!tilted.contains("never scored"), "selected tilt must not read as unscored: {tilted}");
 
         // FMP free-tier rows carry no EV/EBITDA levels -> both cells dash despite a live close
         let bare = vec![quarter(2024, 6, Some(100.0), Some(2.0))];
