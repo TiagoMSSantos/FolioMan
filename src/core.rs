@@ -1253,6 +1253,15 @@ pub struct FundRow {
     pub net_margin: Option<f64>,      // % = netIncome/revenue
     pub eps: Option<f64>,
     pub shares: Option<f64>,          // diluted weighted-avg shares outstanding — DISPLAY-ONLY (buyback column); None on the free tier / when the source omits it
+    // The PRIOR fiscal year's eps/shares AS THE SAME FILING STATED THEM — the year-over-year
+    // denominators. NOT the previous row's `eps`/`shares`: those come from their own original filing,
+    // on whatever share basis was current THEN, so dividing across them straddles every split and
+    // restatement (TPL's 3-for-1s turned +6.0% real EPS growth into -64.7%). A 10-K prints its
+    // comparatives on today's basis, so these two compare like with like by construction, and the gap
+    // between `shares` and `prior_shares` is real issuance rather than a unit change. None when the
+    // filing carried no comparative (first year of coverage) or on the FMP path -> callers fall back.
+    pub prior_eps: Option<f64>,
+    pub prior_shares: Option<f64>,
     pub roe: Option<f64>,             // % — PREMIUM (key-metrics/ratios), None on free tier
     pub roa: Option<f64>,             // % = netIncome/totalAssets — SEC-computed. The ROE FALLBACK: assets can't go negative, so a buyback-shrunk filer (HCA, HLT) still has a meaningful quality level. None on the FMP path. Resolved with roe by `quality_return`
     pub roic: Option<f64>,            // % — PREMIUM
@@ -1383,18 +1392,66 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         (Some(a), Some(b)) => Some(a - b),
         _ => None,
     };
-    let eps_growth = match (now.and_then(|r| r.eps), long_ago.and_then(|r| r.eps)) {
-        (Some(a), Some(b)) if a > 0.0 && b > 0.0 => Some(cagr((a / b - 1.0) * 100.0, yrs as f64)),
-        _ => None,
+    // `yrs`-year EPS CAGR, CHAINED rather than taken end-to-end. The two endpoints come from two
+    // filings written on two different share bases, so dividing them straddles every split in between:
+    // TPL reads -21.0%/yr that way against +22.6%/yr real. Compounding each year's own same-filing
+    // ratio never crosses a basis at all — each step is two numbers off one income statement.
+    // Look-ahead-free: a step is fully determined by its row's own filing, and rows are already
+    // filtered to `filed <= cutoff`, so nothing here is knowable earlier than it was filed.
+    let eps_growth = {
+        let mut yearly: Vec<&FundRow> = rows
+            .iter()
+            .filter(|r| r.filed <= cutoff && r.period_end > cutoff - Duration::days((yrs + 1) * 365))
+            .collect();
+        yearly.sort_by_key(|r| r.period_end);
+        let steps: Vec<f64> = yearly
+            .iter()
+            .rev()
+            .take(yrs as usize)
+            .filter_map(|r| match (r.eps, r.prior_eps) {
+                // both legs positive or the ratio is not a growth rate: a swing through a loss makes
+                // -0.5 -> +1.0 read as "-300% growth", which would poison the whole product.
+                (Some(e), Some(p)) if e > 0.0 && p > 0.0 => Some(e / p),
+                _ => None,
+            })
+            .collect();
+        if steps.len() == yrs as usize {
+            Some(cagr((steps.iter().product::<f64>() - 1.0) * 100.0, yrs as f64))
+        } else {
+            // Chain broken (a loss year, a missing comparative, thin history) -> the old endpoint read,
+            // still behind the per-year share guard. Endpoint-and-guard is the fallback, never the
+            // primary: it can only ever blank a splitter, never measure one.
+            let split_in_window = {
+                let mut sh: Vec<(NaiveDate, f64)> = yearly
+                    .iter()
+                    .filter(|r| r.period_end >= cutoff - Duration::days(yrs * 365))
+                    .filter_map(|r| r.shares.map(|s| (r.period_end, s)))
+                    .collect();
+                sh.sort_by_key(|(e, _)| *e);
+                sh.windows(2).any(|w| w[0].1 > 0.0 && ((w[1].1 / w[0].1 - 1.0) * 100.0).abs() > 40.0)
+            };
+            match (now.and_then(|r| r.eps), long_ago.and_then(|r| r.eps)) {
+                (Some(a), Some(b)) if a > 0.0 && b > 0.0 && !split_in_window => {
+                    Some(cagr((a / b - 1.0) * 100.0, yrs as f64))
+                }
+                _ => None,
+            }
+        }
     };
     // as-of buyback yield: 1y share-count change, sign-flipped (shares shrank -> positive = buying back).
-    // Same |Δ|>40% split/M&A guard as income_snapshot. Needs only the FundRows -> fully as-of (no price).
-    let buyback_yield = match (now.and_then(|r| r.shares), yr_ago.and_then(|r| r.shares)) {
-        (Some(a), Some(b)) if b > 0.0 => {
-            let d = (a / b - 1.0) * 100.0;
-            (d.abs() <= 40.0).then_some(-d)
-        }
-        _ => None,
+    // Reads the as-of row's OWN same-filing comparative, so a split no longer reads as a 200% issuance
+    // and a genuine issuance is no longer thrown away with it. Needs only the FundRows -> fully as-of
+    // (no price), and look-ahead-free: both numbers were printed in the row's own filing.
+    let buyback_yield = match now.and_then(|r| r.prior_shares) {
+        Some(p) => yoy_pct(now.and_then(|r| r.shares), Some(p)).map(|d| -d),
+        // no comparative in that filing -> the old cross-filing read, still guarded (see eps_yoy_split_safe)
+        None => match (now.and_then(|r| r.shares), yr_ago.and_then(|r| r.shares)) {
+            (Some(a), Some(b)) if b > 0.0 => {
+                let d = (a / b - 1.0) * 100.0;
+                (d.abs() <= 40.0).then_some(-d)
+            }
+            _ => None,
+        },
     };
     // (round 109) margin stability: negated sample stddev of net_margin over the last `yrs`+1 as-of
     // rows, oldest-first so the take() grabs the most RECENT filings. ≥3 values required (2 points =
@@ -1580,6 +1637,12 @@ pub struct AnnualReport {
     pub net_margin: Option<f64>,
     pub eps: Option<f64>,
     pub shares: Option<f64>,          // diluted weighted-avg shares outstanding for the FY (mean of the year's rows) — feeds the buyback column
+    // prior-FY eps/shares as the SAME filing stated them (see `FundRow::prior_eps`), carried up from
+    // the year's LAST row. The YoY denominators, immune to splits and restatements. SEC-only: the FMP
+    // path leaves them None, and its rows are quarterly anyway, so a prior there would be a prior
+    // QUARTER — the wrong comparison entirely. None -> callers fall back to the previous AnnualReport.
+    pub prior_eps: Option<f64>,
+    pub prior_shares: Option<f64>,
     pub quarters: usize,
 }
 
@@ -1613,6 +1676,7 @@ pub fn annual_rollup(rows: &[FundRow]) -> Vec<AnnualReport> {
             // -> mean = that value; FMP gives ~4 quarters of per-quarter weighted-avg diluted -> their mean
             // approximates the annual weighted-avg diluted share count. Good enough for a display column.
             let share_vals: Vec<f64> = qs.iter().filter_map(|r| r.shares).collect();
+            let newest = qs.iter().copied().max_by_key(|r| r.period_end);
             AnnualReport {
                 year,
                 revenue,
@@ -1621,6 +1685,10 @@ pub fn annual_rollup(rows: &[FundRow]) -> Vec<AnnualReport> {
                 net_margin: wmargin(|r| r.net_margin),
                 eps: (!eps_vals.is_empty()).then(|| eps_vals.iter().sum::<f64>()),
                 shares: (!share_vals.is_empty()).then(|| share_vals.iter().sum::<f64>() / share_vals.len() as f64),
+                // from the year's LAST period end — for SEC that is the single annual row, so these are
+                // its own filing's comparatives verbatim.
+                prior_eps: newest.and_then(|r| r.prior_eps),
+                prior_shares: newest.and_then(|r| r.prior_shares),
                 quarters: qs.len(),
             }
         })
@@ -1639,20 +1707,58 @@ pub fn income_snapshot(annual: &[AnnualReport]) -> Option<(Option<f64>, Option<f
     let a = &annual[idx];
     let older = annual.get(idx + 1);
     let rev_yoy = older.filter(|o| o.revenue > 0.0).map(|o| (a.revenue / o.revenue - 1.0) * 100.0);
-    let eps_yoy = match (a.eps, older.and_then(|o| o.eps)) {
-        (Some(c), Some(p)) if p != 0.0 => Some((c / p - 1.0) * 100.0),
-        _ => None,
+    // Both per-share columns read the PRIOR YEAR OFF THE SAME FILING, so a split (comparatives
+    // restated) and an issuance (comparatives untouched) come out as what they are instead of both
+    // reading as a +200% share explosion. TPL: 69,059,252 -> 69,027,492 is a 0.05% buyback, not a
+    // 3-for-1; COF's 383.6M -> 541.3M stays the real 41% dilution it is, and its EPS drop stops
+    // being suppressed. Only when the filing carried no comparative do we fall back to the previous
+    // AnnualReport plus the old |Δ|>40% guard.
+    let eps_yoy = match a.prior_eps {
+        Some(p) => yoy_pct(a.eps, Some(p)),
+        None => eps_yoy_split_safe(a.eps, older.and_then(|o| o.eps), a.shares, older.and_then(|o| o.shares)),
     };
-    let buyback = match (a.shares, older.and_then(|o| o.shares)) {
-        (Some(c), Some(p)) if p > 0.0 => {
-            let shares_yoy = (c / p - 1.0) * 100.0;
-            // ponytail: as-reported shares aren't split-adjusted; |Δ|>40%/yr is a split or M&A/secondary,
-            // never an organic buyback -> None (matches the repo's existing as-reported tolerance on eps_yoy).
-            (shares_yoy.abs() <= 40.0).then_some(-shares_yoy)
-        }
-        _ => None,
+    let buyback = match a.prior_shares {
+        Some(p) => yoy_pct(a.shares, Some(p)).map(|d| -d),
+        None => match (a.shares, older.and_then(|o| o.shares)) {
+            (Some(c), Some(p)) if p > 0.0 => Some((c / p - 1.0) * 100.0).filter(|d| d.abs() <= 40.0).map(|d| -d),
+            _ => None,
+        },
     };
     Some((rev_yoy, eps_yoy, a.net_margin, buyback))
+}
+
+/// Percent change between two values, None unless both are present and the base is non-zero.
+pub fn yoy_pct(now: Option<f64>, prior: Option<f64>) -> Option<f64> {
+    match (now, prior) {
+        (Some(c), Some(p)) if p != 0.0 => Some((c / p - 1.0) * 100.0),
+        _ => None,
+    }
+}
+
+/// FALLBACK ONLY, for a row whose filing carried no comparative. EPS growth (%) between two
+/// consecutive fiscal years taken from DIFFERENT filings, nulled when the share count jumped more than
+/// 40% in the same step. Those two values sit on whatever share basis each filing was written on, so
+/// the 40% share move is the only available hint that the bases differ — a crude proxy that cannot
+/// tell a split from an acquisition and blanks both. Prefer `FundRow::prior_eps`, which removes the
+/// question by reading both numbers off one income statement; this remains for the first year of
+/// coverage and the FMP path. No share data -> nothing to judge -> keep the value (absence of a
+/// disqualifying signal is not itself disqualifying — same stance as `quality_return`).
+/// Shared by `income_snapshot` (the screen column) and report's annual table so the two views, which
+/// read the same un-adjusted rows, cannot print contradictory verdicts side by side.
+pub fn eps_yoy_split_safe(
+    eps: Option<f64>,
+    prior_eps: Option<f64>,
+    shares: Option<f64>,
+    prior_shares: Option<f64>,
+) -> Option<f64> {
+    let split = match (shares, prior_shares) {
+        (Some(c), Some(p)) if p > 0.0 => ((c / p - 1.0) * 100.0).abs() > 40.0,
+        _ => false,
+    };
+    match (eps, prior_eps) {
+        (Some(c), Some(p)) if p != 0.0 && !split => Some((c / p - 1.0) * 100.0),
+        _ => None,
+    }
 }
 
 /// Compact number for money-scale displays: 2.34T / 391.0B / 25.6M / 1.5K, plain below. Tier on |v|,
@@ -1695,13 +1801,26 @@ pub fn annual_brief(annual: &[AnnualReport]) -> Option<String> {
     if let (Some(a), Some(b)) = (first.net_margin, last.net_margin) {
         out.push_str(&format!(" · net {a:.0}%→{b:.0}%"));
     }
-    if let (Some(a), Some(b)) = (first.eps, last.eps) {
-        // as-reported EPS spans splits UN-adjusted (NVDA's 2024 10:1 read as flat EPS growth), so
-        // the leg prints only over a VERIFIABLE share history: every adjacent year carries a count
-        // AND none jumps >40% (income_snapshot's split tolerance). A missing count is not "no
-        // split" — Alphabet files pre-2022 counts per share class only, so the undimensioned tag
-        // is None and its 20:1 split printed as eps -44%/yr. Unverifiable -> drop the leg rather
-        // than print a confidently wrong number.
+    // EPS CAGR, CHAINED over each year's own same-filing ratio — same reasoning as `fund_factors`.
+    // End-to-end this leg spanned splits un-adjusted (NVDA's 2024 10:1 read as flat EPS growth), which
+    // is why it used to demand a "verifiable" share history: every adjacent year present and no step
+    // over 40%. That test blanked the leg for every splitter AND for Alphabet, whose pre-2022 counts
+    // are per share class so the undimensioned tag is None. The chain needs neither — a restated
+    // comparative IS the split adjustment.
+    let steps: Vec<f64> = years
+        .iter()
+        .skip(1) // the oldest year's own prior sits outside the window
+        .filter_map(|a| match (a.eps, a.prior_eps) {
+            (Some(e), Some(p)) if e > 0.0 && p > 0.0 => Some(e / p),
+            _ => None,
+        })
+        .collect();
+    if steps.len() == n - 1 {
+        let cagr = (steps.iter().product::<f64>().powf(1.0 / (n - 1) as f64) - 1.0) * 100.0;
+        out.push_str(&format!(" · eps {cagr:+.0}%/yr"));
+    } else if let (Some(a), Some(b)) = (first.eps, last.eps) {
+        // no comparatives (FMP rows, or a filer that prints none) -> endpoint read behind the old
+        // verifiable test. A missing count is not "no split", so an absent leg still blanks it.
         let verifiable = years.windows(2).all(|w| match (w[0].shares, w[1].shares) {
             (Some(p), Some(c)) if p > 0.0 => (c / p - 1.0).abs() <= 0.4,
             _ => false,
@@ -2255,6 +2374,90 @@ mod tests {
         assert_eq!(s[0].revenue, 10.0);
     }
 
+    /// `eps_growth` spans `yrs` years, so its split guard walks CONSECUTIVE rows instead of testing the
+    /// endpoints — an endpoint test gets both directions wrong (a 2:1 spread over 5y annualizes to
+    /// +14.9% and slips through; a real 10%/yr buyback stacks to -41% and gets wrongly flagged).
+    #[test]
+    fn eps_growth_survives_buybacks_and_dies_on_splits() {
+        let r = |y: i32, eps: f64, shares: f64| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            eps: Some(eps),
+            shares: Some(shares),
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        // MNST's real as-reported EPS chain, 2:1 split in early 2024 (shares 100 -> 200 at FY2023).
+        // Endpoints 2.64 -> 1.94 read as -6.0%/yr; the truth is roughly +8.0%/yr.
+        let mnst = vec![
+            r(2020, 2.64, 100.0), r(2021, 2.57, 100.0), r(2022, 2.23, 100.0),
+            r(2023, 1.54, 200.0), r(2024, 1.49, 200.0), r(2025, 1.94, 200.0),
+        ];
+        assert_eq!(fund_factors(&mnst, cutoff, 5).eps_growth, None);
+        // Same EPS chain, no split anywhere -> the decline is REAL and must still be reported.
+        let real: Vec<FundRow> = mnst.iter().map(|x| FundRow { shares: Some(100.0), ..x.clone() }).collect();
+        assert!(fund_factors(&real, cutoff, 5).eps_growth.unwrap() < 0.0);
+        // The false positive an endpoint test would create: 10%/yr buyback = -41% cumulative over 5y,
+        // every single step a legitimate -10%. EPS growth must survive.
+        let buyback = vec![
+            r(2020, 2.00, 100.0), r(2021, 2.30, 90.0), r(2022, 2.70, 81.0),
+            r(2023, 3.10, 72.9), r(2024, 3.50, 65.61), r(2025, 4.00, 59.05),
+        ];
+        assert!(fund_factors(&buyback, cutoff, 5).eps_growth.unwrap() > 0.0);
+        // No share counts at all -> nothing to judge -> keep the value.
+        let noshares: Vec<FundRow> = mnst.iter().map(|x| FundRow { shares: None, ..x.clone() }).collect();
+        assert!(fund_factors(&noshares, cutoff, 5).eps_growth.is_some());
+    }
+
+    /// (same-filing comparatives) The PRIMARY `eps_growth` path: compound each year's own same-filing
+    /// ratio instead of dividing two endpoints that sit on different share bases. TPL's real chain,
+    /// straight off `companyconcept` — it split 3-for-1 in BOTH 2024 and 2025, so the FY2024 and FY2025
+    /// filings restate their comparatives (17.59 = 52.77/3, 6.573 = 19.72/3) while the stored rows keep
+    /// each year at its original basis. Endpoint-wise that is 6.97 over 22.70 = -21.0%/yr; the truth is
+    /// +22.6%/yr, and the old guard could only ever blank it, never measure it.
+    #[test]
+    fn eps_growth_chains_same_filing_steps_across_splits() {
+        let r = |y: i32, eps: f64, prior: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 20).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            eps: Some(eps),
+            prior_eps: prior,
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        let tpl = vec![
+            r(2020, 22.70, None),          // oldest in window: its own prior is outside it
+            r(2021, 34.83, Some(22.70)),   // +53.4%
+            r(2022, 57.77, Some(34.83)),   // +65.9%
+            r(2023, 52.77, Some(57.77)),   //  -8.7%
+            r(2024, 19.72, Some(17.59)),   // +12.1%  <- comparative restated /3
+            r(2025, 6.97, Some(6.573)),    //  +6.1%  <- restated /3 again
+        ];
+        let chained = fund_factors(&tpl, cutoff, 5).eps_growth.expect("chain complete");
+        assert!((chained - 22.6).abs() < 0.1, "{chained}");
+        // Same rows without comparatives -> the endpoint fallback, which is the -21.0%/yr lie. Pinned
+        // so the two paths can never be confused for each other.
+        let no_prior: Vec<FundRow> = tpl.iter().map(|x| FundRow { prior_eps: None, ..x.clone() }).collect();
+        let endpoint = fund_factors(&no_prior, cutoff, 5).eps_growth.expect("no shares -> nothing to guard");
+        assert!((endpoint + 21.0).abs() < 0.1, "{endpoint}");
+        // One broken link (a loss year) drops the whole chain to that fallback rather than compounding
+        // a partial window — 4 steps annualized over 5 years would understate growth by construction.
+        let mut gap = tpl.clone();
+        gap[3] = FundRow { eps: Some(-1.0), ..gap[3].clone() };
+        assert!(fund_factors(&gap, cutoff, 5).eps_growth.unwrap() < 0.0);
+        // buyback_yield reads the same comparative: shares 100 -> 300 across a 3:1 whose prior was
+        // restated to 297 is a 1% BUYBACK, not a 200% issuance.
+        let split_row = vec![FundRow {
+            filed: NaiveDate::from_ymd_opt(2026, 2, 20).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2025, 12, 31).unwrap(),
+            shares: Some(300.0),
+            prior_shares: Some(303.0),
+            ..Default::default()
+        }];
+        let bb = fund_factors(&split_row, cutoff, 5).buyback_yield.expect("comparative present");
+        assert!((bb - 0.99).abs() < 0.01, "{bb}");
+    }
+
     /// (round 109) `margin_stability` = negated sample stddev of net_margin over the as-of rows:
     /// 10/20/30 -> mean 20, sample variance 100, std 10 -> factor −10. Fewer than 3 values -> None
     /// (2 points define a line, not a dispersion), and rows filed after the cutoff never leak in.
@@ -2282,11 +2485,13 @@ mod tests {
     #[test]
     fn income_snapshot_complete_year_and_yoy() {
         let a = |year: i32, revenue: f64, eps: Option<f64>, quarters: usize| AnnualReport {
-            year, revenue, gross_margin: None, op_margin: None, net_margin: Some(50.0), eps, shares: None, quarters,
+            year, revenue, gross_margin: None, op_margin: None, net_margin: Some(50.0), eps, shares: None,
+            prior_eps: None, prior_shares: None, quarters, // no comparatives -> exercises the cross-filing FALLBACK
         };
         // shares-carrying variant for the buyback leg
         let s = |year: i32, revenue: f64, eps: Option<f64>, shares: Option<f64>, quarters: usize| AnnualReport {
-            year, revenue, gross_margin: None, op_margin: None, net_margin: Some(50.0), eps, shares, quarters,
+            year, revenue, gross_margin: None, op_margin: None, net_margin: Some(50.0), eps, shares,
+            prior_eps: None, prior_shares: None, quarters,
         };
         // newest year partial (3 quarters) -> skipped; snapshot = 2023 vs 2022
         let rows = vec![a(2024, 900.0, Some(9.0), 3), a(2023, 600.0, Some(6.0), 4), a(2022, 500.0, Some(4.0), 4)];
@@ -2303,6 +2508,49 @@ mod tests {
         assert!((income_snapshot(&buy).unwrap().3.unwrap() - 5.0).abs() < 1e-9);
         let split = vec![s(2023, 600.0, Some(6.0), Some(200.0), 1), s(2022, 500.0, Some(6.0), Some(100.0), 1)];
         assert_eq!(income_snapshot(&split).unwrap().3, None); // +100% shares = split, not dilution signal
+        // ...and the SAME jump now kills eps_yoy, which reads off the same un-split-adjusted rows.
+        // MNST-shaped: 2:1 in early 2024, as-reported EPS 2.64 -> 1.49, which is -43.6% of pure artifact.
+        let mnst = vec![s(2024, 700.0, Some(1.49), Some(200.0), 1), s(2023, 600.0, Some(2.64), Some(100.0), 1)];
+        let snap = income_snapshot(&mnst).unwrap();
+        assert_eq!(snap.1, None, "eps_yoy across a split is an artifact, not growth");
+        assert_eq!(snap.3, None);
+        assert!(snap.0.is_some(), "revenue has no share denominator -> a split can't touch it");
+        // Below the 40% line it is ordinary dilution and BOTH legs survive: shares 100 -> 130 (+30%).
+        let dilute = vec![s(2024, 700.0, Some(6.6), Some(130.0), 1), s(2023, 600.0, Some(6.0), Some(100.0), 1)];
+        let d = income_snapshot(&dilute).unwrap();
+        assert!((d.1.unwrap() - 10.0).abs() < 1e-9); // 6.6/6.0
+        assert!((d.3.unwrap() + 30.0).abs() < 1e-9); // −(+30%) = issuance, not a buyback
+        // No share data at all -> nothing to judge -> KEEP eps_yoy (absence of a signal isn't a verdict)
+        let noshares = vec![a(2024, 700.0, Some(6.6), 1), a(2023, 600.0, Some(6.0), 1)];
+        assert!((income_snapshot(&noshares).unwrap().1.unwrap() - 10.0).abs() < 1e-9);
+        // SAME-FILING COMPARATIVES win over both the cross-filing read AND its guard. TPL FY2025, real
+        // numbers: the row below it in the cache is 19.72 EPS / 23.02M shares (FY2024 as the FY2024 10-K
+        // stated it, pre the second 3-for-1). Cross-filing that reads -64.7% EPS / +199.9% shares, which
+        // the 40% rule then blanks -- the `n/a`s this work is about. The FY2025 filing's OWN comparatives
+        // are 6.573 and 69,059,252, and they give the truth: +6.0% EPS, a 0.05% buyback.
+        let tpl = vec![
+            AnnualReport {
+                year: 2025, revenue: 700.0, gross_margin: None, op_margin: None, net_margin: Some(50.0),
+                eps: Some(6.97), shares: Some(69_027_492.0),
+                prior_eps: Some(6.573), prior_shares: Some(69_059_252.0), quarters: 1,
+            },
+            s(2024, 600.0, Some(19.72), Some(23_019_751.0), 1),
+        ];
+        let t = income_snapshot(&tpl).unwrap();
+        assert!((t.1.unwrap() - 6.04).abs() < 0.01, "eps_yoy {:?}", t.1);
+        assert!((t.3.unwrap() - 0.046).abs() < 0.01, "buyback {:?}", t.3);
+        // ...and dilution is NOT rescued by the same field -- COF-shaped, comparatives not restated.
+        let cof = vec![
+            AnnualReport {
+                year: 2025, revenue: 700.0, gross_margin: None, op_margin: None, net_margin: Some(50.0),
+                eps: Some(4.03), shares: Some(500.0), prior_eps: Some(11.59), prior_shares: Some(380.0),
+                quarters: 1,
+            },
+            s(2024, 600.0, Some(11.59), Some(380.0), 1),
+        ];
+        let c = income_snapshot(&cof).unwrap();
+        assert!((c.1.unwrap() + 65.23).abs() < 0.01, "real EPS collapse, not an artifact: {:?}", c.1);
+        assert!((c.3.unwrap() + 31.58).abs() < 0.01, "issuance prints negative, no 40% blanking: {:?}", c.3);
         // oldest year in the data: nothing older to compare -> YoY components None, margin still real
         let lone = vec![a(2023, 600.0, Some(6.0), 4)];
         assert_eq!(income_snapshot(&lone).unwrap(), (None, None, Some(50.0), None));
@@ -2320,7 +2568,8 @@ mod tests {
     #[test]
     fn annual_brief_trajectory() {
         let y = |year: i32, revenue: f64, nm: Option<f64>, eps: Option<f64>, quarters: usize| AnnualReport {
-            year, revenue, gross_margin: None, op_margin: None, net_margin: nm, eps, shares: Some(16.0e9), quarters,
+            year, revenue, gross_margin: None, op_margin: None, net_margin: nm, eps, shares: Some(16.0e9),
+            prior_eps: None, prior_shares: None, quarters,
         };
         // newest-first like annual_rollup; 2024 partial (2 quarters) must be dropped from the chain
         let rows = vec![
@@ -2345,7 +2594,7 @@ mod tests {
         // a >40% share-count jump (split) makes as-reported EPS CAGR a lie -> leg omitted
         let ys = |year: i32, eps: f64, shares: f64| AnnualReport {
             year, revenue: 500.0, gross_margin: None, op_margin: None, net_margin: None,
-            eps: Some(eps), shares: Some(shares), quarters: 1,
+            eps: Some(eps), shares: Some(shares), prior_eps: None, prior_shares: None, quarters: 1,
         };
         let split = vec![ys(2023, 2.0, 1000.0), ys(2022, 15.0, 100.0)];
         assert!(!annual_brief(&split).unwrap().contains("eps"));
@@ -2356,7 +2605,7 @@ mod tests {
         // so the 2022 20:1 split was invisible and eps -44%/yr printed against rev +12%/yr).
         let noshares = AnnualReport {
             year: 2021, revenue: 257.6e9, gross_margin: None, op_margin: None, net_margin: None,
-            eps: Some(112.2), shares: None, quarters: 1,
+            eps: Some(112.2), shares: None, prior_eps: None, prior_shares: None, quarters: 1,
         };
         let unverifiable = vec![ys(2025, 10.81, 12.2e9), noshares];
         let ub = annual_brief(&unverifiable).unwrap();

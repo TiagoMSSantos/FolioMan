@@ -761,30 +761,42 @@ async fn fetch_ratios_sec(
 /// non-US/unknown ticker or when TTM can't be rolled (caller then falls back to the annual EPS).
 async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
     use std::sync::atomic::Ordering;
-    let cache = sec_cache_path(&format!("{ticker}_ttmeps"));
+    // `_ttmeps2`, not `_ttmeps`: the v1 file is a BARE FLOAT with no version field, so every stale roll
+    // already on disk (MNST's 2.73, rolled off a 2010 annual) would be served forever no matter what
+    // this fn learned to reject. A cache bump is the only way the guards below can take effect.
+    let cache = sec_cache_path(&format!("{ticker}_ttmeps2"));
     if let Some(v) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<f64>(&s).ok()) {
         return Some(v); // cache hit -> no network, no budget spend
     }
     let cik = sec_cik(client, urls, ticker).await?; // non-US / unknown -> None
-    if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) >= SEC_FETCH_BUDGET {
-        return None;
+    let today = chrono::Utc::now().date_naive();
+    // Walk the SAME tag list `parse_sec_facts` uses, in the same order, taking the first roll that
+    // passes the guards inside `ttm_eps_from_concept`. A filer that switched concepts has a dead first
+    // tag whose roll is stale by years, and only the fallback carries a current one. Healthy filers
+    // still cost exactly ONE fetch — the loop only advances when a tag yields nothing usable.
+    for concept in US_GAAP_TAGS.eps {
+        if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+            return None;
+        }
+        let url = urls.sec_companyconcept.replace("{cik}", &cik).replace("{concept}", concept);
+        let Some(j) = sec_get_json(client, &url, &urls.sec_user_agent).await else {
+            continue; // concept absent for this filer (404) -> try the next name
+        };
+        if let Some(ttm) = ttm_eps_from_concept(&j, today) {
+            let _ = std::fs::write(&cache, serde_json::to_string(&ttm).ok()?);
+            return Some(ttm);
+        }
     }
-    let url = urls
-        .sec_companyconcept
-        .replace("{cik}", &cik)
-        .replace("{concept}", "EarningsPerShareDiluted");
-    let j = sec_get_json(client, &url, &urls.sec_user_agent).await?;
-    let ttm = ttm_eps_from_concept(&j)?;
-    let _ = std::fs::write(&cache, serde_json::to_string(&ttm).ok()?);
-    Some(ttm)
+    None // every tag stale, insane or missing -> caller falls back to the annual EPS
 }
 
 /// Roll a trailing-twelve-month EPS from a SEC `companyconcept` (EarningsPerShareDiluted) payload:
 ///   TTM = latest full-year EPS + current fiscal YTD − prior-year same-length YTD
 /// the standard cumulative roll-forward (SEC reports quarters as YTD cumulatives, not standalone). When
 /// there's no YTD reported past the latest 10-K (a just-filed annual, or an annual-only filer) it returns
-/// that annual EPS unchanged. Pure -> unit-tested. None if not even an annual EPS is present.
-fn ttm_eps_from_concept(j: &Value) -> Option<f64> {
+/// that annual EPS unchanged. Pure -> unit-tested. None if not even an annual EPS is present, or if the
+/// roll fails either guard (see `fresh`/`sane` below) — the caller then tries the next concept name.
+fn ttm_eps_from_concept(j: &Value, today: NaiveDate) -> Option<f64> {
     // the "USD/shares" unit key contains a '/', which a JSON pointer would mis-split -> chained get.
     // (FX) the unit is NOT assumed USD: a 20-F filer reports EPS in its own currency ("EUR/shares" for
     // ASML), and hard-coding USD returned None for every one of them. The USD-first preference MIRRORS
@@ -825,13 +837,29 @@ fn ttm_eps_from_concept(j: &Value) -> Option<f64> {
     }
     annual.sort_by_key(|(e, _)| *e);
     let (fy_end, fy_eps) = *annual.last()?; // latest full year — the base + the fallback
+    // TWO GUARDS, and neither subsumes the other — both were needed against real payloads:
+    //   FRESHNESS. MNST stopped filing this concept in 2010, so the roll happily served a 2011 EPS
+    //     against a 2026 price: P/E 34.3 where the truth is ~48.2, and a PEG wrong by the same factor.
+    //     Nothing in the maths above notices, because the arithmetic is perfectly valid — just ancient.
+    //   SANITY. HAL mis-tags SHARE COUNTS (120000 .. 650000) inside the EPS concept, and those entries
+    //     run 2021-09 .. 2024-09 — INSIDE a 2-year freshness window. The roll came out -60001.29 on a
+    //     -1.29 annual. Today it is masked only because `pe` filters `> 0.0`; `earnings_yield` wouldn't.
+    let fresh = |end: NaiveDate| (today - end).num_days() <= 730;
+    // Relative, never absolute: BRK-A's genuine EPS is ~$40,000, so any fixed band is a trap. K=100 is
+    // set against the case this fn EXISTS to serve — LITE mid-ramp rolls 15x its annual (FY 0.37 vs TTM
+    // 5.7) — and still rejects unit confusion by 2+ orders of magnitude (HAL is 46,500x). It catches
+    // unit confusion, NOT implausible valuation: a merely-wrong 50x roll still passes, by design.
+    // The 1.0 floor stops a near-breakeven annual (0.01) from making an honest 0.50 roll look like 50x.
+    let ok = |end: NaiveDate, ttm: f64| {
+        (fresh(end) && ttm.abs() <= 100.0 * fy_eps.abs().max(1.0)).then_some(ttm)
+    };
     // current YTD = the longest cumulative period that ends AFTER the latest 10-K (into the new fiscal year)
     let current = ytd
         .iter()
         .filter(|(e, _, _)| *e > fy_end)
         .max_by_key(|(_, _, span)| *span);
     let Some(&(cur_end, cur_val, cur_span)) = current else {
-        return Some(fy_eps); // no newer quarter -> the annual EPS IS the trailing year
+        return ok(fy_end, fy_eps); // no newer quarter -> the annual EPS IS the trailing year
     };
     // prior-year YTD of the SAME length: end ≈ current end − 1y, span ≈ current span
     let prior = ytd.iter().find(|(e, _, span)| {
@@ -839,8 +867,8 @@ fn ttm_eps_from_concept(j: &Value) -> Option<f64> {
         (350..=380).contains(&dy) && (*span - cur_span).abs() <= 20
     });
     match prior {
-        Some(&(_, prior_val, _)) => Some(fy_eps + cur_val - prior_val),
-        None => Some(fy_eps), // can't de-cumulate without the prior-year YTD -> honest annual fallback
+        Some(&(_, prior_val, _)) => ok(cur_end, fy_eps + cur_val - prior_val),
+        None => ok(fy_end, fy_eps), // can't de-cumulate without the prior-year YTD -> honest annual fallback
     }
 }
 
@@ -1047,6 +1075,11 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // annual-only `eps_ttm` fund_factors derives from SEC 10-K rows (which is stale for a mid-ramp
         // grower: LITE FY 0.37 vs TTM 5.7). Only when this factor is selected, so other factors pay no
         // fetch; US filers only (non-US keeps the derived value); the sidecar cache makes it near-free.
+        // DO NOT widen this to `peg_yield`, however obvious it looks. `peg_yield` is the SHIPPED factor,
+        // and it deliberately reads the annual `eps_ttm` because that is the only thing the backtest can
+        // reconstruct as-of — a TTM roll needs quarterly data the as-of path does not have. Adding
+        // `peg_yield` here would MANUFACTURE a train-serve skew: the live tilt would score on a number
+        // the validation never saw. The latent skew is confined to `earnings_yield`, which isn't shipped.
         if factor == "earnings_yield" {
             if let Some(ttm) = sec_ttm_eps(client, urls, &q.ticker).await {
                 ff.eps_ttm = Some(ttm);
@@ -1256,27 +1289,33 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
 // and de-dupes each fiscal period to its EARLIEST filing so a later 10-K's restated comparative can't
 // post-date the as-of `filed`. US filers only (a non-US ticker has no CIK -> None).
 
-// (filed, period_end, revenue, gross_margin, op_margin, net_margin, eps, roe, shares, fcf_margin,
-// interest_cover, net_cash_rev, ebitda, net_debt, currency, roa). An arity change fails deserialization
-// -> treated as a miss -> refetched + rewritten (SEC is uncapped, so a one-time rebuild is free).
-type SecCacheRow = (
-    String,
-    String,
-    Option<f64>,
-    Option<f64>,
-    Option<f64>,
-    Option<f64>,
-    Option<f64>,
-    Option<f64>,
-    Option<f64>,
-    Option<f64>,
-    Option<f64>,
-    Option<f64>,
-    Option<f64>, // ebitda
-    Option<f64>, // net_debt
-    Option<String>, // (FX) reporting currency — money lines are meaningless against a price without it
-    Option<f64>, // roa — the ROE fallback for negative-equity filers (appended, so the order above is untouched)
-);
+// A NAMED struct, not the positional tuple this used to be: serde only implements Serialize for tuples
+// up to 16 elements and the row outgrew that at 18. Names are strictly better anyway — the tuple came
+// with a hand-maintained index map in a comment, and reading `roe` at slot 7 when slot 7 was `shares`
+// is a mistake the compiler could not catch. Field names cost a few hundred bytes per cached ticker.
+// A shape change fails deserialization -> treated as a miss -> refetched + rewritten (SEC is uncapped,
+// so a one-time rebuild is free), which is also why every field is a plain Option with no serde attrs.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SecCacheRow {
+    filed: String,
+    period_end: String,
+    revenue: Option<f64>,
+    gross_margin: Option<f64>,
+    op_margin: Option<f64>,
+    net_margin: Option<f64>,
+    eps: Option<f64>,
+    roe: Option<f64>,
+    shares: Option<f64>,
+    fcf_margin: Option<f64>,
+    interest_cover: Option<f64>,
+    net_cash_rev: Option<f64>,
+    ebitda: Option<f64>,
+    net_debt: Option<f64>,
+    currency: Option<String>, // (FX) money lines are meaningless against a price without it
+    roa: Option<f64>,         // the ROE fallback for negative-equity filers
+    prior_eps: Option<f64>,   // the prior FY's EPS as THIS row's filing stated it (the YoY denominator)
+    prior_shares: Option<f64>, // likewise for the share count
+}
 
 /// ANNUAL report forms. `10-K` = US domestic; `20-F` = foreign private issuer (ASML, ARM, BABA); `40-F`
 /// = Canadian MJDS (RY, TD). All three are the filer's ONE yearly report, which is what the 350-380 day
@@ -1325,7 +1364,26 @@ const US_GAAP_TAGS: FactTags = FactTags {
     // years ago (CF in 2011, MNST) and carry only the available-to-common / ProfitLoss variants — their
     // net margin AND ROE were silently None without the fallbacks.
     ni: &["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss"],
-    eps: &["EarningsPerShareDiluted"],
+    // Same tag-switch story as `ni` above, and for several of the same filers: the diluted-EPS series
+    // simply STOPS (MNST 2010, KIM 2018, HAL 2019, EXC/FCX 2021, VRSN 2022) when the filer moves to the
+    // continuing-operations concept, and ABNB/REG never used the standard tag at all. Single-tag, this
+    // list left 9 tickers with no EPS on their newest annual row -> no eps_yoy, no eps_growth, no PEG.
+    // ORDER IS LOAD-BEARING: `collect` merges all tags into one map keyed by period end and keeps the
+    // lowest `filed`, strictly. A filer reports diluted and basic in the SAME 10-K on the SAME day
+    // (AAPL FY2025: both filed 2025-10-31, 7.46 vs 7.49), so on a tie the strict `<` keeps whichever is
+    // listed FIRST — diluted. Measured across the cached universe: 487/509 tickers unchanged, 17 gained
+    // an EPS they never had, and 5 (AIG/DELL/FAST/O/WTW) had a value REPLACED — not by the ordering, but
+    // because a fallback tag was filed STRICTLY EARLIER. That is the earliest-filed policy working, and
+    // it removes look-ahead rather than adding it: DELL's FY2024 original 10-K (filed 2024-03-25) tagged
+    // only continuing-ops 4.36, while the 4.60 this list used to serve first appears a YEAR later as a
+    // comparative in the FY2025 10-K. Same shape for FAST 2009 (1.24 as-reported in 2011 vs 0.62
+    // restated post-split in 2012). Do not "fix" these back.
+    // Two things this deliberately accepts: continuing-ops EXCLUDES discontinued operations, so for a
+    // spin-off filer (EXC/Constellation) it is not the headline EPS — it is the cleaner recurring one;
+    // and `EarningsPerShareBasic` is basic, ~0.4% above diluted on AAPL-shaped dilution, which is
+    // exactly why it is last. It is here for LEN, whose FY2025 has basic but no diluted.
+    eps: &["EarningsPerShareDiluted", "IncomeLossFromContinuingOperationsPerDilutedShare",
+           "EarningsPerShareBasic"],
     shares: &["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"],
     eq: &["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
     // total assets — the ROE fallback denominator. Unlike equity it CANNOT go negative, which is the
@@ -1408,10 +1466,26 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
         return Vec::new(); // no money unit anywhere -> nothing joinable to parse
     };
     let per_share = format!("{money}/shares");
-    // annual datapoints for a set of equivalent concept names: period-end -> (earliest filed, value)
-    let collect = |names: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> {
-        let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> = std::collections::BTreeMap::new();
-        for tag in names {
+    // annual datapoints for a set of equivalent concept names:
+    //   period-end -> (earliest filed, value, the PRIOR annual period's value FROM THAT SAME FILING).
+    // The third slot is the whole point. Keeping the earliest filing per period is right for a LEVEL
+    // (it is what was knowable then, no look-ahead) but it makes every RATIO divide two different
+    // bases, because each 10-K restates its comparatives at the CURRENT share basis. TPL split 3-for-1
+    // in 2024 and again in 2025, so its stored series runs 7.69M / 23.02M / 69.03M — three bases in
+    // one column, reading as +199.9% share growth twice. The prior-from-the-same-filing is measured
+    // against the identical basis by construction: no split ratio to infer, no restatement to detect,
+    // and it also settles the case a ratio never can — whether a share jump was a split (comparatives
+    // restated, TPL) or a real issuance (comparatives untouched, COF buying Discover).
+    // Look-ahead-free: this value was printed in the same document, on the same day, as `value`.
+    let collect = |names: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64, Option<f64>)> {
+        // period end -> (filed, WHICH tag won, value). The tag index rides along so the prior below is
+        // read from the SAME concept: mixing a diluted `value` with a basic `prior` would re-introduce
+        // a (small, ~0.4%) basis mismatch, which is the exact bug class this field exists to kill.
+        let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, usize, f64)> = std::collections::BTreeMap::new();
+        // (tag, filed, period end) -> value. Every datapoint, not just the winners — the prior year of
+        // a filing is normally NOT a winner anywhere (its own original 10-K filed it first).
+        let mut seen: std::collections::BTreeMap<(usize, NaiveDate, NaiveDate), f64> = std::collections::BTreeMap::new();
+        for (tag_idx, tag) in names.iter().enumerate() {
             // chained get (NOT json pointer): the "USD/shares" unit key contains a '/', which a JSON
             // pointer would mis-split into two tokens -> EPS silently lost.
             let arr = match g.get(tag).and_then(|t| t.get("units")).and_then(|u| u.get(unit)).and_then(|v| v.as_array()) {
@@ -1437,21 +1511,39 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 ) else {
                     continue;
                 };
+                // `or_insert`, not overwrite: on a repeat the first tag listed wins, matching the
+                // strict `<` below so `seen` and `m` never disagree about which concept is authoritative.
+                seen.entry((tag_idx, filed, ed)).or_insert(val);
                 // keep the ORIGINAL report (lowest filed) for this period end, not a later restatement
                 m.entry(ed).and_modify(|cur| {
                     if filed < cur.0 {
-                        *cur = (filed, val);
+                        *cur = (filed, tag_idx, val);
                     }
-                }).or_insert((filed, val));
+                }).or_insert((filed, tag_idx, val));
             }
         }
-        m
+        // attach each winner's same-filing prior: the greatest period end BEFORE this one that the same
+        // filing also reported, under the same concept. `range` over the (tag, filed, end) key is an
+        // exact scan of one document's comparatives — a 10-K carries two or three, so this normally
+        // hits. Nothing there (first year of coverage, or a filer that prints no comparative) -> None,
+        // and the callers fall back to the cross-filing read they used before.
+        m.into_iter()
+            .map(|(end, (filed, tag_idx, val))| {
+                let prior = seen
+                    .range((tag_idx, filed, NaiveDate::MIN)..(tag_idx, filed, end))
+                    .next_back()
+                    .map(|(_, v)| *v);
+                (end, (filed, val, prior))
+            })
+            .collect()
     };
     // Balance-sheet items (equity) are INSTANT (as-of period_end, no 12-month duration), so the
     // 350-380 day filter in `collect` drops them — a separate point-in-time collector keyed on `end`,
-    // annual forms only, earliest-filed wins (matches `collect`).
-    let collect_instant = |names: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> {
-        let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)> = std::collections::BTreeMap::new();
+    // annual forms only, earliest-filed wins (matches `collect`). Same 3-slot value shape as `collect`
+    // so one `at` accessor serves both, with the prior always None: no consumer wants a year-over-year
+    // ratio of a BALANCE-sheet instant, and a slot nobody reads beats a second accessor everywhere.
+    let collect_instant = |names: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64, Option<f64>)> {
+        let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, f64, Option<f64>)> = std::collections::BTreeMap::new();
         for tag in names {
             let arr = match g.get(tag).and_then(|t| t.get("units")).and_then(|u| u.get(unit)).and_then(|v| v.as_array()) {
                 Some(a) => a,
@@ -1472,9 +1564,9 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 };
                 m.entry(ed).and_modify(|cur| {
                     if filed < cur.0 {
-                        *cur = (filed, val);
+                        *cur = (filed, val, None);
                     }
-                }).or_insert((filed, val));
+                }).or_insert((filed, val, None));
             }
         }
         m
@@ -1507,8 +1599,11 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     let debt_cur = collect_instant(tags.debt_cur, &money);
     let cash = collect_instant(tags.cash, &money);
     rev.into_iter()
-        .map(|(end, (filed, revenue))| {
-            let at = |m: &std::collections::BTreeMap<NaiveDate, (NaiveDate, f64)>| m.get(&end).map(|(_, v)| *v);
+        .map(|(end, (filed, revenue, _))| {
+            type Collected = std::collections::BTreeMap<NaiveDate, (NaiveDate, f64, Option<f64>)>;
+            let at = |m: &Collected| m.get(&end).map(|(_, v, _)| *v);
+            // the same period's PRIOR-YEAR value as the winning filing stated it — see `collect`
+            let at_prior = |m: &Collected| m.get(&end).and_then(|(_, _, p)| *p);
             let margin = |line: Option<f64>| match line {
                 Some(l) if revenue != 0.0 => Some(l / revenue * 100.0),
                 _ => None,
@@ -1522,6 +1617,10 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 net_margin: margin(at(&ni)),
                 eps: at(&eps),
                 shares: at(&shares),
+                // the year-over-year denominators, on THIS row's basis. Every ratio built from these
+                // two compares like with like even across a split or a restatement.
+                prior_eps: at_prior(&eps),
+                prior_shares: at_prior(&shares),
                 // ROE = net income ÷ shareholders' equity (%), both as-of this period end. Free from
                 // SEC — no premium ratios endpoint needed.
                 roe: at(&ni).zip(at(&eq)).and_then(|(n, e)| (e != 0.0).then_some(n / e * 100.0)),
@@ -1557,37 +1656,43 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
 /// forever. Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
 pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
-    // "_facts8": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
+    // "_facts9": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
     // the round-107 survival levels; facts5 added the EV/EBITDA levels; facts6 fixes the misspelled
     // DepreciationDepletionAndAmortization concept — facts5 rows have EBITDA None for every filer on
     // that tag, e.g. AAPL 2023+; facts7 adds the 20-F/40-F forms, the ifrs-full taxonomy and the
     // reporting CURRENCY — every foreign filer cached as "no rows" under facts6 and would stay empty
     // forever; facts8 adds ROA, without which every negative-equity filer keeps a permanently blank
-    // quality term) — old rows were parsed WITHOUT them and would pin the gaps forever.
-    // Old *_facts{3,4,5,6,7}.json files are orphaned (few KB each); refetch amortizes over runs under
+    // quality term; facts9 adds the EPS tag fallbacks — 9 tickers, MNST/KIM/HAL/EXC/FCX/VRSN/LEN/ABNB/REG,
+    // cached under facts8 with NO eps on their newest annual row; facts10 adds the same-filing prior
+    // eps/shares, without which every year-over-year ratio divides two different share bases and any
+    // filer that split reads as a collapse — TPL -64.7% against +6.0% real) — old rows were parsed
+    // WITHOUT them and would pin the gaps forever.
+    // Old *_facts{3,4,5,6,7,8,9}.json files are orphaned (few KB each); refetch amortizes over runs under
     // SEC_FETCH_BUDGET.
-    let cache = sec_cache_path(&format!("{ticker}_facts8"));
+    let cache = sec_cache_path(&format!("{ticker}_facts10"));
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
-            .filter_map(|(f, e, rev, gm, op, net, eps, roe, shares, fcfm, icov, ncash, ebitda, ndebt, ccy, roa)| {
+            .filter_map(|c| {
                 Some(core::FundRow {
-                    filed: NaiveDate::parse_from_str(&f, "%Y-%m-%d").ok()?,
-                    period_end: NaiveDate::parse_from_str(&e, "%Y-%m-%d").ok()?,
-                    revenue: rev,
-                    gross_margin: gm,
-                    op_margin: op,
-                    net_margin: net,
-                    eps,
-                    shares,
-                    roe,
-                    roa,
-                    fcf_margin: fcfm,
-                    interest_cover: icov,
-                    net_cash_rev: ncash,
-                    ebitda,
-                    net_debt: ndebt,
-                    currency: ccy,
+                    filed: NaiveDate::parse_from_str(&c.filed, "%Y-%m-%d").ok()?,
+                    period_end: NaiveDate::parse_from_str(&c.period_end, "%Y-%m-%d").ok()?,
+                    revenue: c.revenue,
+                    gross_margin: c.gross_margin,
+                    op_margin: c.op_margin,
+                    net_margin: c.net_margin,
+                    eps: c.eps,
+                    shares: c.shares,
+                    prior_eps: c.prior_eps,
+                    prior_shares: c.prior_shares,
+                    roe: c.roe,
+                    roa: c.roa,
+                    fcf_margin: c.fcf_margin,
+                    interest_cover: c.interest_cover,
+                    net_cash_rev: c.net_cash_rev,
+                    ebitda: c.ebitda,
+                    net_debt: c.net_debt,
+                    currency: c.currency,
                     ..Default::default()
                 })
             })
@@ -1603,11 +1708,25 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
     if !rows.is_empty() {
         let serial: Vec<SecCacheRow> = rows
             .iter()
-            .map(|r| {
-                (r.filed.format("%Y-%m-%d").to_string(), r.period_end.format("%Y-%m-%d").to_string(),
-                 r.revenue, r.gross_margin, r.op_margin, r.net_margin, r.eps, r.roe, r.shares,
-                 r.fcf_margin, r.interest_cover, r.net_cash_rev, r.ebitda, r.net_debt, r.currency.clone(),
-                 r.roa)
+            .map(|r| SecCacheRow {
+                filed: r.filed.format("%Y-%m-%d").to_string(),
+                period_end: r.period_end.format("%Y-%m-%d").to_string(),
+                revenue: r.revenue,
+                gross_margin: r.gross_margin,
+                op_margin: r.op_margin,
+                net_margin: r.net_margin,
+                eps: r.eps,
+                roe: r.roe,
+                shares: r.shares,
+                fcf_margin: r.fcf_margin,
+                interest_cover: r.interest_cover,
+                net_cash_rev: r.net_cash_rev,
+                ebitda: r.ebitda,
+                net_debt: r.net_debt,
+                currency: r.currency.clone(),
+                roa: r.roa,
+                prior_eps: r.prior_eps,
+                prior_shares: r.prior_shares,
             })
             .collect();
         if let Some(dir) = cache.parent() {
@@ -3228,19 +3347,60 @@ mod tests {
             facts("2025-06-29", "2026-03-28", 2.59, "2026-06-01"),  // restatement dup -> deduped
             facts("2025-12-28", "2026-03-28", 1.50, "2026-05-06"),  // standalone quarter -> ignored
         ]}});
-        assert_eq!(ttm_eps_from_concept(&j), Some(0.37 + 2.59 - (-2.72)));
+        let today = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        // 15x the annual — the very case this fn exists to serve. It MUST survive the sanity bound.
+        assert_eq!(ttm_eps_from_concept(&j, today), Some(0.37 + 2.59 - (-2.72)));
         // no YTD past the latest 10-K -> falls back to the annual EPS unchanged (never n/a, never a guess)
         let annual_only = json!({"units": {"USD/shares": [
             facts("2024-06-30", "2025-06-28", 0.37, "2025-08-20"),
         ]}});
-        assert_eq!(ttm_eps_from_concept(&annual_only), Some(0.37));
+        assert_eq!(ttm_eps_from_concept(&annual_only, today), Some(0.37));
         // current YTD exists but NO prior-year YTD of matching length -> can't de-cumulate -> annual fallback
         let no_prior = json!({"units": {"USD/shares": [
             facts("2024-06-30", "2025-06-28", 0.37, "2025-08-20"),  // FY base
             facts("2025-06-29", "2026-03-28", 2.59, "2026-05-06"),  // current 9mo YTD, no prior twin
         ]}});
-        assert_eq!(ttm_eps_from_concept(&no_prior), Some(0.37));
-        assert_eq!(ttm_eps_from_concept(&json!({})), None); // no units at all -> None
+        assert_eq!(ttm_eps_from_concept(&no_prior, today), Some(0.37));
+        assert_eq!(ttm_eps_from_concept(&json!({}), today), None); // no units at all -> None
+    }
+
+    /// The two guards, each against the REAL payload that motivated it. They are independent: neither
+    /// bad case is caught by the other's rule, which is why both ship.
+    #[test]
+    fn ttm_eps_rejects_stale_and_insane_rolls() {
+        use serde_json::json;
+        let facts = |start: &str, end: &str, val: f64, filed: &str| {
+            json!({"start": start, "end": end, "val": val, "filed": filed, "form": "10-Q"})
+        };
+        let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        // MNST: EarningsPerShareDiluted STOPS in 2010. The roll is arithmetically perfect and 15 years
+        // dead — 2.28 + 1.49 − 1.04 = 2.73, which against a 2026 price printed P/E 34.3 vs the real ~48.
+        let stale = json!({"units": {"USD/shares": [
+            facts("2010-01-01", "2010-12-31", 2.28, "2011-03-01"), // FY2010 base
+            facts("2010-01-01", "2010-06-30", 1.04, "2010-08-01"), // prior-year H1
+            facts("2011-01-01", "2011-06-30", 1.49, "2011-08-01"), // current H1
+        ]}});
+        assert_eq!(ttm_eps_from_concept(&stale, today), None);
+        // ...and the SAME payload read in 2011 was perfectly good. The guard is about age, not shape.
+        assert_eq!(
+            ttm_eps_from_concept(&stale, NaiveDate::from_ymd_opt(2011, 9, 1).unwrap()),
+            Some(2.28 + 1.49 - 1.04)
+        );
+        // HAL: SHARE COUNTS mis-tagged inside the EPS concept. Note the dates — 2024/2025 — well INSIDE
+        // a 2-year freshness window, so only the relative bound catches this one. 46,500x the annual.
+        let insane = json!({"units": {"USD/shares": [
+            facts("2024-01-01", "2024-12-31", -1.29, "2025-02-01"),   // FY2024 base, a real EPS
+            facts("2024-01-01", "2024-09-30", 600000.0, "2024-10-01"),// prior-year YTD, a SHARE COUNT
+            facts("2025-01-01", "2025-09-30", 540000.0, "2025-10-01"),// current YTD, likewise
+        ]}});
+        assert_eq!(ttm_eps_from_concept(&insane, today), None);
+        // BRK-A shaped: a genuine ~$40,000 EPS is NOT unit confusion. An absolute band would kill it.
+        let huge = json!({"units": {"USD/shares": [
+            facts("2024-01-01", "2024-12-31", 39_000.0, "2025-02-01"),
+            facts("2024-01-01", "2024-09-30", 28_000.0, "2024-10-01"),
+            facts("2025-01-01", "2025-09-30", 31_000.0, "2025-10-01"),
+        ]}});
+        assert_eq!(ttm_eps_from_concept(&huge, today), Some(39_000.0 + 31_000.0 - 28_000.0));
     }
 
     #[test]
@@ -3432,6 +3592,88 @@ mod tests {
         assert_eq!(rows[0].eps, Some(19.91)); // read from EUR/shares — "USD/shares" is not a universal key
         assert_eq!(rows[0].roe, Some(60.0)); // 7800/13000 — a ratio, so it never needed the currency
         assert_eq!(rows[0].roa, Some(20.0)); // 7800/39000 — same tag string as a 10-K filer's, in EUR
+    }
+
+    /// (same-filing comparatives) `prior_eps`/`prior_shares` must come from the filing that WON the
+    /// period, not from the previous row — and the difference is the whole point. Two real shapes:
+    ///
+    /// TPL split 3-for-1 in 2024 and again in 2025, so each 10-K restates its comparatives at the
+    /// current basis. Earliest-filed keeps each year from its ORIGINAL filing, so the stored series
+    /// runs 7.69M / 23.02M / 69.03M shares and 52.77 / 19.72 / 6.97 EPS — three bases, and dividing
+    /// across them reads -64.7% on a company that grew +6.0%.
+    ///
+    /// COF issued shares to buy Discover: no split, so its FY2025 10-K repeats FY2024 UNRESTATED. The
+    /// share jump is identical in shape to TPL's (both blow past any |Δ|>40% rule) but here the drop
+    /// is real and must survive. Nothing but the comparative can tell these two apart.
+    #[test]
+    fn sec_facts_same_filing_prior_split_vs_issuance() {
+        use serde_json::json;
+        let ann = |end: &str, val: f64, filed: &str| {
+            let start = format!("{}-01-01", &end[..4]);
+            json!({"start": start, "end": end, "val": val, "form": "10-K", "filed": filed})
+        };
+        // --- TPL: comparatives RESTATED at each filing's basis ---
+        let tpl = json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [
+                ann("2023-12-31", 631_595_000.0, "2024-02-21"),
+                ann("2024-12-31", 705_823_000.0, "2025-02-19"),
+                ann("2025-12-31", 798_190_000.0, "2026-02-18"),
+            ]}},
+            "EarningsPerShareDiluted": {"units": {"USD/shares": [
+                ann("2022-12-31", 57.77, "2024-02-21"), ann("2023-12-31", 52.77, "2024-02-21"),
+                ann("2023-12-31", 17.59, "2025-02-19"), ann("2024-12-31", 19.72, "2025-02-19"),
+                ann("2024-12-31", 6.573, "2026-02-18"), ann("2025-12-31", 6.97, "2026-02-18"),
+            ]}},
+            "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+                ann("2022-12-31", 7_726_809.0, "2024-02-21"), ann("2023-12-31", 7_686_615.0, "2024-02-21"),
+                ann("2023-12-31", 23_059_845.0, "2025-02-19"), ann("2024-12-31", 23_019_751.0, "2025-02-19"),
+                ann("2024-12-31", 69_059_252.0, "2026-02-18"), ann("2025-12-31", 69_027_492.0, "2026-02-18"),
+            ]}},
+        }}});
+        let rows = parse_sec_facts(&tpl);
+        let newest = rows.iter().max_by_key(|r| r.period_end).expect("FY2025 row");
+        // the LEVELS still come from the earliest filing — as-of semantics are untouched
+        assert_eq!(newest.eps, Some(6.97));
+        assert_eq!(newest.shares, Some(69_027_492.0));
+        // ...and the DENOMINATORS come from that same filing, so both sit on the post-split basis.
+        // The previous ROW says 19.72 / 23,019,751; using those is the -64.7% lie.
+        assert_eq!(newest.prior_eps, Some(6.573));
+        assert_eq!(newest.prior_shares, Some(69_059_252.0));
+        assert!((core::yoy_pct(newest.eps, newest.prior_eps).unwrap() - 6.04).abs() < 0.01);
+        assert!((core::yoy_pct(newest.shares, newest.prior_shares).unwrap() + 0.046).abs() < 0.01);
+        // an older row reads its OWN filing's comparative, not the next filing's restatement
+        let fy23 = rows.iter().find(|r| r.period_end.to_string() == "2023-12-31").expect("FY2023 row");
+        assert_eq!((fy23.eps, fy23.prior_eps), (Some(52.77), Some(57.77)));
+
+        // --- COF: comparatives NOT restated (an acquisition, not a split) ---
+        let cof = json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [
+                ann("2024-12-31", 39_100_000_000.0, "2025-01-21"),
+                ann("2025-12-31", 55_000_000_000.0, "2026-01-20"),
+            ]}},
+            "EarningsPerShareDiluted": {"units": {"USD/shares": [
+                ann("2024-12-31", 11.59, "2025-01-21"),
+                ann("2024-12-31", 11.59, "2026-01-20"), ann("2025-12-31", 4.03, "2026-01-20"),
+            ]}},
+            "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+                ann("2024-12-31", 383_600_000.0, "2025-01-21"),
+                ann("2024-12-31", 383_600_000.0, "2026-01-20"), ann("2025-12-31", 541_300_000.0, "2026-01-20"),
+            ]}},
+        }}});
+        let rows = parse_sec_facts(&cof);
+        let newest = rows.iter().max_by_key(|r| r.period_end).expect("FY2025 row");
+        assert_eq!(newest.prior_eps, Some(11.59), "unrestated -> the comparative equals the prior row");
+        assert_eq!(newest.prior_shares, Some(383_600_000.0));
+        // both REAL and both previously suppressed by the |Δ|>40% rule
+        assert!((core::yoy_pct(newest.eps, newest.prior_eps).unwrap() + 65.23).abs() < 0.01);
+        assert!((core::yoy_pct(newest.shares, newest.prior_shares).unwrap() - 41.11).abs() < 0.01);
+
+        // a filing with no comparative at all -> None, and the caller falls back
+        let lone = json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [ann("2025-12-31", 100.0, "2026-01-20")]}},
+            "EarningsPerShareDiluted": {"units": {"USD/shares": [ann("2025-12-31", 1.0, "2026-01-20")]}},
+        }}});
+        assert_eq!(parse_sec_facts(&lone)[0].prior_eps, None);
     }
 
     /// (IFRS) The other half of the foreign world files `ifrs-full`, whose concept names share almost

@@ -262,7 +262,7 @@ impl Default for BuyHeuristic {
             tax_keep_eu: 1.0,              // (D/PT) 1.0 = no tax haircut -> byte-identical to the pre-tax lane; ci-settings.yaml ships the live rate
             tax_keep_other: 1.0,           // (D/PT) same: neutral out-of-the-box, the fixture carries the operator's number
             ref_pe: 20.0,                  // (E) "fair" P/E; PE 10 -> ×1.5 (capped cheap), PE 40 -> ×0.5 (capped rich)
-            quality_weight: 0.15,          // (F) per % ROE: a 40% ROE adds ~+6 (capped) — secondary tilt, deliberately small since BACKTEST-BLIND
+            quality_weight: 0.15,          // (F) per % return-on-capital: 40% adds ~+6 (capped). Sized small while the term was blind; the first sighted run (ci-settings (F)) says it earns more than that in the buy lane — zeroing it costs -48.7 edge and flips rho to -0.06
             quality_cap: 40.0,             // (F) cap the ROE % at 40 (a buyback-levered 200% ROE doesn't dwarf a healthy 25%)
             // growth lane (near-high compounders still climbing)
             growth_min_range_pct: 80.0,    // must sit in the top 20% of its own ~10y range. Tightened 70->80: the walk-forward shows the acceleration signal only works for genuine near-high names — at 80 the growth lane's rho rises (5y +0.24->+0.35 narrow, +0.21->+0.24 wide) AND the top/bottom-half edge flips POSITIVE (+31.6 pts wide, OOS +0.12/+0.12), i.e. top picks actually outperform. Loosening to 55 collapsed it (rho +0.10, OOS-early negative)

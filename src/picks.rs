@@ -509,7 +509,7 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
         + cheap_reward
         + dividend_reward
         + risk_reward
-        + quality_reward(quote, tuning); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
+        + quality_reward(quote, tuning); // (F) return-on-capital tilt — MEASURED since the backtest fills quote.roe: zeroing it costs this lane -48.7 edge and flips rho negative (see ci-settings (F))
     let value = value_factor(quote, tuning.ref_pe); // (E) cheap lifts, rich dampens, unknown neutral
     let decline = sustained_decline_factor(quote, tuning); // (B) multi-year-bleed dock
     let trust = trust_factor(quote, crypto, tuning.fixed_cagr_years); // (A) equities need a 10Y leg (the pinned window when fixed_cagr_years is set); crypto: only 5Y
@@ -720,9 +720,9 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // without recomputing (single source). Summed in the SAME order as before -> byte-identical base.
     let trend_term = tuning.growth_trend_weight * trend;
     let accel_term = tuning.growth_accel_weight * accel;
-    let quality = quality_reward(quote, tuning); // (F) ROE profitability tilt (BACKTEST-BLIND, small)
+    let quality = quality_reward(quote, tuning); // (F) return-on-capital tilt — MEASURED (Δ-12.6 edge here, Δ-48.7 in the buy lane), and it OVERLAPS the (G) tilt below: see ci-settings (#3d)
     let dividend = dividend_reward(quote, tuning); // (D) total-return tilt, NET of Portuguese tax (EU payers keep more — Art. 40.º-A CIRS; see dividend_reward). Closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
-    // (G) as-of FUNDAMENTAL tilt. Unlike the BACKTEST-BLIND terms above, this one IS validatable: the
+    // (G) as-of FUNDAMENTAL tilt. Unlike the still-blind terms above (dividends), this one IS validatable: the
     // backtest attaches the as-of factor to quote.fund_factor so `backtest <set> fund` can ablate it.
     // Floor at 0 (only reward the factor, don't penalise a missing/negative one) and cap the artifact.
     // weight 0 (default) -> this whole term is 0 -> growth_score is byte-identical to the pre-(G) lane.
@@ -1433,14 +1433,20 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str) 
         // quality_cap. NEGATIVE-equity filers never reach here — `quality_return` swapped them to ROA
         // upstream, so HCA prints its real +9% rather than the fake -113% or the old blank.
         "roe" => quote.roe.map_or("n/a".to_string(), |v| if v.abs() > 100.0 { "n/m".to_string() } else { format!("{v:+.0}%") }),
-        "div" => {
-            let d = dividend_yield_1y(quote);
-            if d > 0.0 {
-                format!("{d:.2}%") // 2 decimals so a token yield (NVDA ~0.02%) prints instead of rounding to 0.0%
-            } else {
-                "n/a".to_string()
-            }
-        }
+        // Read the Option `dividend_yields` already carries rather than `dividend_yield_1y`, whose
+        // `unwrap_or(0.0)` collapses two different facts into one: Some(0.0) = pays NOTHING (MNST, and
+        // it's a real, knowable 0.00%), None = no price or too little history to say. Printing both as
+        // "n/a" made a confident zero look like missing data. 2 decimals so a token yield (NVDA ~0.02%)
+        // prints instead of rounding to 0.0%. The SCORE keeps `unwrap_or(0.0)` — `dividend_reward`
+        // genuinely wants unknown to score as zero — so this is display-only, no re-validation.
+        "div" => core::dividend_yields(&quote.div_eur, quote.price_eur)
+            .first()
+            .and_then(|o| *o)
+            // A yield that ROUNDS to zero is a non-payer and must print as one. The raw value comes off
+            // an FX-scaled sum and can land a hair below zero, which formats as "-0.00%" — every one of
+            // the 24 non-payers on the table printed that. Clamp the DISPLAY, not the number: the score
+            // reads `dividend_yield_1y` on its own path and is untouched.
+            .map_or("n/a".to_string(), |d| format!("{:.2}%", if d.abs() < 0.005 { 0.0 } else { d })),
         // ETF expense ratio (%/yr). Low is good — a 0.07% index ETF vs a 0.50% active fund is ~18% more
         // wealth over 40y. "—" for stocks/crypto (no expense ratio); "n/a" for an ETF FMP didn't cover.
         "ter" if etf_only_na => "—".to_string(),
@@ -2139,6 +2145,22 @@ mod tests {
         assert_eq!(col_cell("peg", &q, 0.0, None, ""), "n/a");
         // ter is None on a stub (no expense ratio fetched) -> n/a
         assert_eq!(col_cell("ter", &q, 0.0, None, ""), "n/a");
+        // div distinguishes "pays nothing" from "don't know" — the whole point of reading the Option
+        // instead of `dividend_yield_1y`'s unwrap_or(0.0). No price -> genuinely unknown -> n/a.
+        assert_eq!(col_cell("div", &q, 0.0, None, ""), "n/a");
+        let mut payer = Quote::stub("P", "€1", "", "Payer");
+        payer.price_eur = Some(100.0);
+        payer.div_eur = vec![Some(2.0)]; // 2.00 EUR/share on a 100 EUR price = 2.00%
+        assert_eq!(col_cell("div", &payer, 0.0, None, ""), "2.00%");
+        // a CONFIDENT zero prints as one, and must never surface the FX-sum's negative-zero as "-0.00%"
+        let mut none_paid = payer.clone();
+        none_paid.div_eur = vec![Some(-0.0)];
+        assert_eq!(col_cell("div", &none_paid, 0.0, None, ""), "0.00%");
+        none_paid.div_eur = vec![Some(-1e-9)];
+        assert_eq!(col_cell("div", &none_paid, 0.0, None, ""), "0.00%");
+        // ...but a token yield still prints rather than rounding away (NVDA is ~0.02%)
+        none_paid.div_eur = vec![Some(0.02)];
+        assert_eq!(col_cell("div", &none_paid, 0.0, None, ""), "0.02%");
         // per-class gating: a crypto ('-' ticker) has neither P/E nor expense ratio -> "—" (not applicable),
         // distinct from "n/a" (applies but unfetched).
         let cq = Quote::stub("X-EUR", "€1", "", "Coin");

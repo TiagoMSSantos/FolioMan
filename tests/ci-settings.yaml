@@ -200,11 +200,34 @@ buy_heuristic:
   # scale, stays neutral (×1.0) across the big `screen`. Read by BOTH lanes.
   ref_pe: 20.0                   # LIVE: "fair" trailing P/E; P/E 10 -> ×1.5 (cheap), P/E 40 -> ×0.5 (rich)
 
-  # (F) Profitability/QUALITY tilt: reward trailing ROE (Return On Equity — the canonical quality
-  # factor; high-ROE firms out-compound long-run). Same FMP_API_KEY opt-in as ref_pe (populates at
-  # `check` scale). BACKTEST-BLIND: ROE is point-in-time, so the price-only backtest can't validate it
-  # — kept deliberately small so it tilts but never dominates the price signal. Read by BOTH lanes. 0 = off.
-  quality_weight: 0.15           # LIVE: reward per % ROE (×cap = max bonus, ~6 at a 40% ROE)
+  # (F) Profitability/QUALITY tilt: reward trailing return-on-capital — ROE (Return On Equity, the
+  # canonical quality factor; high-ROE firms out-compound long-run), or ROA where equity is negative
+  # (`core::quality_return`). Same FMP_API_KEY opt-in as ref_pe for the LIVE screen (populates at
+  # `check` scale). Read by BOTH lanes. 0 = off.
+  # NO LONGER BACKTEST-BLIND, and the first measurement is a large one. This term was shipped for
+  # rounds against a backtest that could not see it: `backtest_quote` builds from `Quote::stub` (roe
+  # None) and fills only closes-derived fields, so `quality_reward` was 0.15 × 0 for EVERY sample in
+  # EVERY lane — the ablation row read 0.0 by CONSTRUCTION, not by measurement. `4975f23` filled
+  # `Quote.roe` from the as-of fundamentals in the backtest loop (same look-ahead guard as the three
+  # yields), and this is its first wide run — `backtest universe fund 12`, 11690 cutoffs, 8458 with
+  # as-of fundamentals:
+  #     BUY lane    (full rho +0.04, edge +111.6): zeroing it -> rho -0.06 Δ-0.10, edge +62.9 Δ-48.7
+  #     GROWTH lane (full rho +0.18, edge +181.6): zeroing it -> rho +0.18 Δ-0.00, edge +169.0 Δ-12.6
+  #   The buy-lane Δ is the biggest RHO hit of any knob in that lane (bigger than cheap_weight, whose
+  #   -50.4 edge comes with Δrho 0.00) — zeroing quality flips the lane's rank correlation NEGATIVE.
+  #   Keep at 0.15. It is no longer a "small blind tilt"; it is load-bearing in the on-sale lane.
+  # STANDALONE, though, it does NOT rank on its own: `quality(roe/roa) n=1826 rho -0.01 edge -115.1
+  #   OOS +0.04 | -0.06`, and raw ROE alone is worse (rho -0.03, edge -123.2). It works as a MODIFIER
+  #   on a price-led score, not as a selector. Held-book view agrees it is not junk (top-10 held 12y:
+  #   +15.9%/yr, excess +4.3, win 100%, worst +2.5, OOS +4.7/+4.0 n=266) — the standalone edge is
+  #   negative because ranking PURELY on ROE buys expensive quality.
+  # NEITHER PIN GUARDS THIS TERM — do not read a green `cargo test` as a regression net for it:
+  #   `walk_forward_edge_pin` builds samples with `core::backtest_quote` and `fund: None`, never
+  #   routing through the run() loop's `quote.roe = ...`, so roe is None and the term is 0 for every
+  #   pinned sample. `scoring_regression_pin` DOES set `stock.roe = Some(40.0)` by hand, so it pins
+  #   `quality_reward`'s arithmetic — but never `core::quality_return`, which is where the ROE/ROA
+  #   choice is actually made. That is why both pins sat still through `4975f23`. Expected, not lucky.
+  quality_weight: 0.15           # LIVE + MEASURED: reward per % return-on-capital (×cap = max bonus, ~6 at 40%)
   quality_cap: 40.0              # LIVE: cap the ROE % fed in (a buyback-levered 200% ROE doesn't dominate)
 
   # === GROWTH LANE — THIS is the ranking `screen` actually prints. =============================
@@ -364,6 +387,36 @@ buy_heuristic:
   #   row ANCHOR); banks lack ProfitLossFromOperatingActivities so op_margin/interest_cover stay None for
   #   RY/TD. Verified live: ARM/BABA (20-F us-gaap), NVS/AZN/SHEL (ifrs-full USD), NVO (DKK), RY/TD (40-F
   #   CAD), TM (dual-currency -> USD, matching its ADR).
+  # (#3d) THE PLATEAU IS GONE — measured 2026-07-26, and the cause is NOT this knob. First wide run
+  #   after `4975f23` un-blinded `quality_weight` (see (F) above), same `backtest universe fund 12`
+  #   batch as (#3c) to the cutoff (11690 vs 11717; fund-covered 8458, identical):
+  #     weight   0.000    0.050   0.070 [SHIPPED]   0.080    0.250    0.500
+  #     (#3c)   +116.9   +203.8       +198.1       +127.0    +81.2    +71.4
+  #     now     +202.3    +85.2        +95.9        +93.6    +78.2    +69.5
+  #   Tilt-OFF gained +85.4 and every rung on the old plateau lost ~-105. The tails CONVERGE (0.250
+  #   -3.0, 0.500 -1.9), which is the tell: at a weight where PEG swamps the score, quality's presence
+  #   barely registers; at the shipped weight, where the two terms are comparable in size, they
+  #   DOUBLE-COUNT. Both say the same thing — a good business you are not overpaying for.
+  #   Four corners, held-out TEST edge:  quality only +202.3 | PEG only +198.1 (#3c) | both +95.9 |
+  #   neither +116.9. Either term ALONE is worth ~+85; together they are worth -100 against either.
+  #   Corroborated in the same run, independently of the curve:
+  #     - growth-lane ablation: zeroing growth_fund_weight -> edge +187.0 Δ+5.4 (rho +0.17 Δ-0.02).
+  #       Removing it HELPS on edge, hurts slightly on rho.
+  #     - factor sweep verdict: "no factor beats price-only with both OOS halves + — keep
+  #       growth_fund_weight 0. SHIP NOTHING." peg_yield's searched-best TEST +199.1 vs price-only
+  #       +202.3; it is now the best of 11 factors and still cannot clear the bar.
+  #   THIS TRIPS (#3)'s OWN REVERT RULE — "the growth-lane ablation shows removing this weight HELPS"
+  #   — but read what it actually indicts. PEG did not decay: standalone it is unchanged and still the
+  #   best single fundamental factor (n=1506 rho +0.14 edge +283.1 OOS +0.15|+0.13, vs the recorded
+  #   n=1489 +0.14 / +291.7 / +0.16|+0.13 — sample up 17 names from the EPS tag fix, every dial flat;
+  #   earnings_yield n=1737 rho +0.11 edge +203.9). What changed is that its ROOMMATE woke up.
+  #   OPEN DECISION, deliberately NOT taken here: at 0.07 the two terms cost ~-106 TEST edge against
+  #   running quality alone. The measured options are (a) growth_fund_weight -> 0 (best measured
+  #   corner, +202.3, and the sweep's own verdict), (b) drop to ~0.005 (+194.0, PEG keeps a whisper of
+  #   say), (c) keep 0.07 and zero quality in the GROWTH lane only — untested, and it would cost the
+  #   BUY lane nothing since the knob is shared. Do NOT re-run the (#3b) curve to "re-find the
+  #   plateau" without first fixing which of the two terms is being kept: the curve is a slice through
+  #   a two-term interaction now, not a one-knob shape.
   growth_fund_cap: 300.0     # (#3) clamp in the factor's OWN pts before weighting. 300 <=> PEG >= 0.33 stays
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are

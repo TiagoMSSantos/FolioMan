@@ -172,9 +172,21 @@ fn render_annual(
         // zero-revenue older row (missing/partial data) would print "+inf%" — same guard the
         // EPS column below already has ("-" instead).
         let rev_yoy = older.filter(|o| o.revenue != 0.0).map(|o| (a.revenue / o.revenue - 1.0) * 100.0);
-        let eps_yoy = match (a.eps, older.and_then(|o| o.eps)) {
-            (Some(c), Some(p)) if p != 0.0 => Some((c / p - 1.0) * 100.0),
-            _ => None,
+        // Both columns read this year's filing's OWN comparatives — the same numbers `income_snapshot`
+        // gives the screen, so the two views cannot disagree. Across a split that means real growth
+        // beside a real share delta (TPL 2025: +6.0% and -0.05%) instead of two dashes, and across an
+        // acquisition it means the dilution prints instead of being suppressed. Fall back to the
+        // previous row only when the filing carried no comparative.
+        let eps_yoy = match a.prior_eps {
+            Some(p) => core::yoy_pct(a.eps, Some(p)),
+            None => core::eps_yoy_split_safe(a.eps, older.and_then(|o| o.eps), a.shares, older.and_then(|o| o.shares)),
+        };
+        // NOTE the negation: this column is sign-flipped (+ = count shrank = buying back), which is what
+        // `sh_delta` returns and what the legend below promises. `yoy_pct` is raw, so the two branches
+        // would otherwise print opposite signs for the same event.
+        let sh_yoy = match a.prior_shares {
+            Some(p) => core::yoy_pct(a.shares, Some(p)).map(|d| -d),
+            None => sh_delta(a.shares, older.and_then(|o| o.shares)),
         };
         // 2-3 quarters = a genuinely partial quarterly (FMP) year; mark it. 1 = an annual filing
         // (SEC EDGAR rolls a fiscal year into one row) OR the rare newest-FMP-year-with-only-Q1, which
@@ -185,7 +197,7 @@ fn render_annual(
             a.year, mark, humanize(a.revenue), yoy(rev_yoy),
             level(a.gross_margin), level(a.op_margin), level(a.net_margin),
             a.eps.map(|e| format!("{e:.2}")).unwrap_or_else(|| "-".into()), yoy(eps_yoy),
-            yoy(sh_delta(a.shares, older.and_then(|o| o.shares))),
+            yoy(sh_yoy),
         ));
     }
     if annual.iter().any(|a| a.quarters < 4) {
@@ -661,6 +673,16 @@ mod tests {
         let (out, _) = render("ACME", "FMP", &rows);
         assert!(out.contains("+10.0%"), "buyback SHΔ% missing: {out}");
         assert!(out.contains("share-count change"), "footnote missing: {out}");
+
+        // The same-filing branch must flip the sign too. `core::yoy_pct` is RAW, `sh_delta` is flipped,
+        // so a bare `match` here prints the two branches in opposite directions for the same event —
+        // it shipped that way for one build and made TPL's buybacks read as dilution.
+        let restated = vec![
+            quarter_sh(2024, 6, Some(100.0), Some(100.0)),
+            core::FundRow { prior_shares: Some(100.0), ..quarter_sh(2025, 6, Some(100.0), Some(90.0)) },
+        ];
+        let (out, _) = render("ACME", "FMP", &restated);
+        assert!(out.contains("+10.0%"), "same-filing SHΔ% must flip sign like sh_delta: {out}");
     }
 
     /// (data round) market line: a populated quote renders every cell in screen-column semantics
