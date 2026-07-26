@@ -658,6 +658,20 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if long_cagr < min_cagr {
         return None; // equities: weak trend = expensive laggard. crypto: looser floor (show all growers vs BTC)
     }
+    // (#3i) the SAME bar against the WHOLE-LIFE CAGR. The leg above is the most recent 20/8/5Y rung, so a
+    // name with a bad first decade clears it on its good second one — a 46y listing was admitted on its
+    // last 20 years and the first 26 never touched a gate. The gold-miner ETFs are the live case: they
+    // crashed 2011-15 and ran since, so IAUP.L reads +3%/yr since listing against a +16%/yr 8Y leg.
+    //
+    // LIVE-ONLY BY CONSTRUCTION, and that is the point of `is_some_and`: `backtest_quote` never fills
+    // life_cagr (core.rs:150 — a point-in-time slice has no whole-life history), so in every backtest
+    // this leg cannot fire and the gate is bit-identical to the one the 12->14 receipt was measured on.
+    // Same edge-blind shape as the `life_cagr <= 0` value-trap dock below: it can only REJECT a name the
+    // live fetch can see, never admit one, so the live pool is a strict subset of the measured pool.
+    // Unmeasurable by construction -> no backtest number can ever confirm it; see (#3i).
+    if quote.life_cagr.is_some_and(|l| l < min_cagr) {
+        return None; // strong recent leg, mediocre whole life -> not a proven compounder
+    }
     let return_1y = perf_pct(quote, "1Y")?;
     // equities must be climbing this year; crypto is allowed down to its looser 1Y floor so the market
     // base (Bitcoin, often red year-on-year) and near-BTC coins still appear, ranked vs BTC.
@@ -944,6 +958,13 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
         // bar" rows — that's a different asset class, not a near miss; 1.5 keeps the genuine
         // one-notch-out compounders (13.9 vs 14.0) and nothing else.
         fails.push(("cagr", format!("{long_cagr:.1}%/yr (need ≥{min_cagr:.1}%)"), long_cagr >= min_cagr - 1.5));
+    }
+    // (#3i) the whole-life half of the same floor. REQUIRED, not decorative: without it a name rejected
+    // by the life bar drops out of the table with no reason printed anywhere. Same 1.5pp near-miss margin
+    // as the leg above. Label `cagr-life`, NOT `lifetime` — that string belongs to the `<= 0` value-trap
+    // dock below, and a footer that can't tell "mediocre" from "negative" is the confusion this fixes.
+    if let Some(l) = quote.life_cagr.filter(|&l| l < min_cagr) {
+        fails.push(("cagr-life", format!("{l:.1}%/yr since listing (need ≥{min_cagr:.1}%)"), l >= min_cagr - 1.5));
     }
     if return_1y <= y1_floor {
         fails.push(("1Y+", format!("1Y {return_1y:+.1}% (need >{y1_floor:.1}%)"), return_1y > y1_floor - 10.0));
@@ -2394,6 +2415,17 @@ mod tests {
     assert_eq!(normalized_dip(30.0, None, 2.0), 30.0);
     assert_eq!(normalized_dip(30.0, Some(0.0), 2.0), 30.0); // div-by-zero guard
 
+    // (#3h) FOIL GUARD: `long_trend_cap` is shared with this lane, and 0 now means OFF. `min(cagr, 0.0)`
+    // is 0.0 for every positive CAGR, so an unguarded cap-0 config would zero `long_reward` here — a foil
+    // quietly losing its trend term while still returning plausible scores, which no other test would
+    // catch. A >30%/yr name must score at least as well uncapped as capped, never worse.
+    let fast = quote(20.0, &[("1Y", 20.0), ("5Y", 400.0)]); // 5Y +400% = 38.0%/yr, above the 30 cap
+    let capped = BuyHeuristic { long_trend_cap: 30.0, ..tuning.clone() };
+    let uncapped = BuyHeuristic { long_trend_cap: 0.0, ..tuning.clone() };
+    let (sc, su) = (buy_score(&fast, &capped).unwrap(), buy_score(&fast, &uncapped).unwrap());
+    assert!(su >= sc, "cap 0 must UNCAP the foil's long_reward, not zero it ({su} vs {sc})");
+    assert!(su > 0.0, "cap 0 zeroed the foil score outright — the min(cagr, 0.0) trap");
+
     // --- GATES (exclusion behaviour, unchanged) ---
     assert!(buy_score(&quote(5.0, &[("1Y", 20.0)]), &tuning).is_none()); // equity: no >2Y leg -> excluded
     let mut crypto = quote(5.0, &[("1Y", 20.0)]); // ...but crypto falls back to its 1Y leg -> admitted
@@ -2520,7 +2552,14 @@ mod tests {
     // (#25) lifetime-uptrend second leg: trend_cagr is fit on the fetched window, so a name that
     // collapsed BEFORE the window and recovered inside it slips through (MSCI Greece pattern) —
     // life_cagr (listing-to-date) catches it. None (backtest) stays exempt -> edge-blind.
-    let lt = BuyHeuristic { growth_require_lifetime_uptrend: true, ..BuyHeuristic::default() };
+    // growth_min_cagr is neutralized so the LIFETIME dock is the only thing that can reject: since
+    // (#3i) that floor reads life_cagr too, and -8.0 would fail it as well — the assert would still be
+    // green while proving nothing about the leg under test.
+    let lt = BuyHeuristic {
+        growth_require_lifetime_uptrend: true,
+        growth_min_cagr: f64::NEG_INFINITY,
+        ..BuyHeuristic::default()
+    };
     let mut greece = quote(2.0, strong);
     greece.life_cagr = Some(-8.0);
     assert!(growth_score(&greece, &lt).is_none()); // lifetime loser despite strong window legs
@@ -2528,6 +2567,29 @@ mod tests {
     assert!(growth_score(&greece, &lt).is_some()); // whole life positive -> passes
     greece.life_cagr = None; // backtest shape: field absent -> gate leg inert
     assert!(growth_score(&greece, &lt).is_some());
+
+    // (#3i) growth_min_cagr's SECOND leg: the same floor against the whole-life CAGR. Strong recent legs
+    // are held fixed throughout, so only life_cagr moves — a name that clears the 20/8/5Y rung but
+    // compounded under the floor since listing (the gold-miner ETF shape: crashed, then ran) is out.
+    let life = BuyHeuristic { growth_min_cagr: 14.0, ..BuyHeuristic::default() };
+    // NOT the shared `strong` fixture: its 10Y +200% backfills the 8Y rung at 11.6%/yr, under the floor,
+    // so the leg gate would reject first and this would test nothing. 10Y +400% -> 17.5%/yr, clear of 14.
+    let mut miner = quote(2.0, &[("1Y", 30.0), ("5Y", 99.0), ("10Y", 400.0)]);
+    assert!(long_leg(&miner).map(|(c, y)| core::cagr(c, y)).unwrap() >= 14.0, "the LEG must clear the floor, else this tests the wrong gate");
+    miner.life_cagr = Some(9.0);
+    assert!(growth_score(&miner, &life).is_none()); // strong leg, mediocre whole life -> rejected
+    miner.life_cagr = Some(20.0);
+    assert!(growth_score(&miner, &life).is_some()); // both bars cleared
+    // THE safety assert: backtest_quote leaves life_cagr None, so this leg MUST stay inert there —
+    // that is the whole reason the validated 12->14 receipt survives the change.
+    miner.life_cagr = None;
+    assert!(growth_score(&miner, &life).is_some());
+    // and the rejection has to be EXPLAINED, not silent: the gate-review footer names it `cagr-life`,
+    // distinct from the `lifetime` label the <= 0 dock uses.
+    miner.life_cagr = Some(9.0);
+    let why = gate_failures(&miner, &life).unwrap();
+    assert!(why.iter().any(|(g, _, _)| *g == "cagr-life"), "life-bar rejection must print a reason: {why:?}");
+    assert!(!why.iter().any(|(g, _, _)| *g == "cagr"), "the LEG cleared — only the life bar should fail");
     let liq_t = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
     let mut thin = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     thin.avg_turnover_eur = Some(1_000.0);
@@ -3471,6 +3533,12 @@ mod tests {
         hot.perf = legs(&[("5Y", 400.0)]);
         assert_eq!(cc("leg", &hot, 0.0, None, ""), "+30%");
         assert!(core::cagr(400.0, 5.0) > 37.0, "the cap must be what clamps this, not a weak leg");
+        // (#3h) and with the cap OFF (0, the SHIPPED live value) the same row prints its raw leg CAGR.
+        // This is the only assert that fails if `capped_trend`'s zero-guard regresses — without it
+        // `long_cagr.min(0.0)` is 0.0 for every positive CAGR, so the cell would read "+0%" and BOTH
+        // trend terms would be silently gutted while the table still printed plausible scores.
+        let uncapped = BuyHeuristic { long_trend_cap: 0.0, ..BuyHeuristic::default() };
+        assert_eq!(col_cell("leg", &hot, 0.0, None, "", &uncapped), "+38%");
         assert_eq!(cc("leg", &Quote::stub("N", "€1", "", "No legs"), 0.0, None, ""), "n/a");
         // S-8Y renders the caller's pinned score, crypto included (BTC-EUR has a real 8Y leg); "n/a"
         // only when the caller had nothing to score at all. `q` HAS an 8Y leg -> the pin applied -> bare.

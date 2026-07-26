@@ -120,7 +120,7 @@ buy_heuristic:
   # CAGR (Compound Annual Growth Rate, %/yr — annualized so a 10Y and a 20Y leg compare fairly).
   long_trend_weight: 0.5         # [FOIL] on-sale reward per %/yr of long-leg CAGR (×cap below = max bonus, ~15)
   long_trend_cap: 0.0            # LIVE+FOIL (SHARED): 0 = OFF. No ceiling on the CAGR fed into either lane's trend reward — the fastest compounder is now rewarded in full, linearly, however fast it ran. See (#3h): shipped BY DIRECTION, against the curve
-                                 #   history: #16 sweep 2026-06-28: 20/30/40/50/1000 all edge ≈ -100337360 (flat) → cap inert on that run; 2026-07-02 re-test 30→50 on `backtest 12 universe` DROPPED growth edge +103.2→+87.7 → 30 read protective (parabolic names mean-revert), kept 30; (#3g) 2026-07-26 full curve confirmed the ceiling wanted to go DOWN (25 +191.1) not up; (#3h) same day removed it anyway on request
+                                 #   history: #16 sweep 2026-06-28: 20/30/40/50/1000 all edge ≈ -100337360 (flat) → cap inert on that run; 2026-07-02 re-test 30→50 on `backtest 12 universe` DROPPED growth edge +103.2→+87.7 → 30 read protective (parabolic names mean-revert), kept 30; (#3g) 2026-07-26 full curve confirmed the ceiling wanted to go DOWN (25 +191.2) not up; (#3h) same day removed it anyway on request, measured cost -11.5 edge (+181.3 -> +169.8)
                                  #   RESTORE: put any positive number back here (30 = the long-time value). One line, no code change — that is why the knob still exists rather than the clamp being deleted
   health_zero_cagr: -10.0        # [FOIL] long-leg CAGR (%/yr) where on-sale trend_health hits 0; health=1 at flat/rising
 
@@ -247,7 +247,11 @@ buy_heuristic:
   growth_btc_outperf_weight: 0.3 # SCORE (crypto only): tilt a coin by its 1Y return vs BITCOIN's (the market base) — beats
                                  #   BTC -> boost, lags -> mild dock, bounded 0.5x..2x. BTC itself = 1.0x (the neutral anchor
                                  #   you read the others against). SCREEN/CHECK-only (backtest-blind, validated edge untouched). 0 = off.
-  growth_min_cagr: 14.0          # GATE: long leg must compound >=14%/yr to count as a proven grower. The gate, not a
+  growth_min_cagr: 14.0          # GATE, TWO LEGS, one number: the long leg (20/8/5Y rung) AND (#3i) the whole-life CAGR
+                                 #   must BOTH compound >=14%/yr to count as a proven grower. The whole-life leg is
+                                 #   SCREEN-ONLY — backtest_quote leaves life_cagr None, so it never fires there and the
+                                 #   receipt below still measures the long leg alone. It can only REJECT, so the live pool
+                                 #   is a strict subset of the measured one. The gate, not a
                                  #   weight, is what moves the signal (additive/multiplier knobs are inert; gates reshape the scored pool).
                                  #   12y MAX-monthly knee (the real 20y-hold horizon): 12->14 lifts GROWTH edge +91.1->+92.7 AND
                                  #   flips top-half peer-relative -5.2->+4.6 (the bought basket now BEATS its peers, not just loses less);
@@ -578,6 +582,63 @@ buy_heuristic:
   #   5y forward leaves only that sliver), so its era table repeats one date and its OOS split splits
   #   within a day. It reported the curve as monotone-decreasing from 0. Use `12` (>=8 switches to the
   #   MAX-monthly series) for anything read as a horizon result.
+  # (#3h) LEG CLAMP REMOVED — 2026-07-26, BY DIRECTION, AGAINST THE CURVE. long_trend_cap 30 -> 0 (off).
+  #   The golden rule would revert this. It is shipped anyway because it was asked for twice, and it is
+  #   recorded as a conflict rather than quietly softened. Re-measured on the SAME batch as (#3g)
+  #   (`backtest universe fund 12`, n=1338):
+  #     BEFORE (cap 30)  rho +0.18  edge +181.3  winsor +150.9
+  #     AFTER  (cap 0)   rho +0.16  edge +169.8  winsor +139.8   -> COST -11.5 edge, -11.1 winsor, -0.02 rho
+  #   Predicted -13.2 before running (on the reasoning that 50 and 60 read an identical +168.1, so nothing
+  #   in the sample tops a 50%/yr leg and OFF should land there). Prediction HELD: -11.5 actual, and the
+  #   +1.7 above the cap-50 row is the handful of names that DO exceed 50%/yr.
+  #   The full ladder, with 0 now on it and reproducing (#3g) to +-0.1 across every rung:
+  #     long_trend_cap  0 +169.8 [SHIPPED/off] | 15 +175.7 | 20 +185.2 | 25 +191.2 (peak) | 30 +181.3
+  #                     40 +177.3 | 50 +168.1 | 60 +168.1
+  #   So OFF is -21.4 from the measured optimum (25) and -11.5 from where it sat. HONEST CAVEAT IN BOTH
+  #   DIRECTIONS: that whole spread lies inside the 90% bootstrap band ([+121.7 … +214.1] this run), so
+  #   the cost is a real point estimate but not separable from noise. The mechanism is not noise, though —
+  #   the decline above 25 is monotone and has now reproduced across three independent runs.
+  #   0 = OFF is the mechanism, not a deletion: `capped_trend` (picks.rs) guards the zero, because
+  #   `long_cagr.min(0.0)` is 0.0 for every positive CAGR and an unguarded 0 would silently ZERO both
+  #   trend terms instead of uncapping them. One helper feeds all three readers (growth score, on-sale
+  #   foil, `LEG` column) so the printed cell cannot drift from the arithmetic it claims to show.
+  #   RESTORE = one line: put any positive number back (30 = the long-time value, 25 = the measured peak).
+  #   Also gone: the cap was an ARTIFACT guard as well as a mean-reversion belief (cf. growth_fund_cap's
+  #   "+9000% rev-accel artifact"). Uncapped, a bad split or a near-zero anchor price can hand core::cagr
+  #   an absurd number and that name takes #1 until someone notices. Checked on the live screen the same
+  #   day — highest life CAGR is BNB at +98%/yr, nothing runaway — but that check has to be re-done by eye,
+  #   because no gate does it now.
+  # (#3i) "WHY DOES SCREEN SHOW ROWS UNDER growth_min_cagr?" — asked 2026-07-26. It didn't. The COLUMN
+  #   and the GATE read different numbers: `cagr` prints life_cagr (whole-life, listing->today), the gate
+  #   reads long_cagr (the 20/8/5Y rung). So a 46y name is admitted on its LAST 20 YEARS and the first 26
+  #   never touch a gate — nothing stopped `life +2%/yr / leg +20%/yr`. The only whole-life check in
+  #   scoring was the value-trap dock at life_cagr <= 0. (Two other honest causes of a low `cagr` cell,
+  #   unchanged: `*` PINNED rows bypass every gate via the f64::MIN_POSITIVE sentinel in `growth_scorer`,
+  #   and crypto uses growth_min_cagr_crypto: 0.0.)
+  #   SHIPPED: growth_min_cagr now bars BOTH — the leg AND life_cagr, same number, one field.
+  #   THIS IS UNMEASURABLE BY CONSTRUCTION, and that is a design property, not a gap. life_cagr is None in
+  #   every backtest (core.rs:150; backtest_quote builds from a point-in-time SLICE, which has no
+  #   whole-life history), so the new leg CANNOT FIRE there. Consequences, all deliberate:
+  #     - the 12->14 receipt above still measures the long leg alone and stays valid;
+  #     - `is_some_and` means the leg only ever REJECTS a name the live fetch can see, so the live pool is
+  #       a strict SUBSET of the measured pool — divergence in the safe direction, never the reverse;
+  #     - NO BACKTEST NUMBER CAN EVER CONFIRM THIS. Do not "validate" it with one, and do not read an
+  #       unchanged edge as evidence for it — unchanged is the REQUIREMENT, proving inertness, not support.
+  #   The alternative (swap the floor onto life_cagr instead of adding to it) was rejected for exactly
+  #   this: the gate would go inert in every backtest and the 12->14 receipt would become dead text.
+  #   MEASURED where it is visible — the live screen, same day, same universe. 5 rows cut, tables still
+  #   full at 20/20/2 (backfilled from below the cut: SEMI.AS, XUTC.L, FLXK.L):
+  #     FSLR +10% (was stock #4) | IAUP.L +3% | ETLX.DE +7% | ITWN.MI +11% | GDX.L +13.4%
+  #   Four of the five are the GOLD-MINER pattern the bar was built for — crashed 2011-15, ran since, so a
+  #   great 8Y leg sits on a mediocre life (IAUP.L: +3%/yr since listing vs a +16%/yr leg). GDXJ.L clears
+  #   both bars and stayed. The three rows displaying "+14%" (TJX, TPL, URI) all survived, so their true
+  #   life_cagr is >= 14.0 — the column rounds, the gate does not.
+  #   gate_review gained a `cagr-life` leg beside `cagr` (same 1.5pp near-miss margin), so a rejection
+  #   prints a reason instead of vanishing: "GDX.L … cagr-life 13.4%/yr since listing (need >=14.0%)".
+  #   Label is deliberately NOT `lifetime` — that belongs to the <= 0 dock, and a footer that can't tell
+  #   "mediocre" from "negative" is the confusion this receipt exists to end.
+  #   NOTE: life_cagr comes from the MERGED series (fetch.rs:510), so a `~` history_proxy row is barred on
+  #   its TWIN's whole life, not its own. Correct for the strategy thesis, surprising if unstated.
   growth_fund_cap: 300.0     # (#3) clamp in the factor's OWN pts before weighting. 300 <=> PEG >= 0.33 stays
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are
