@@ -1142,11 +1142,23 @@ pub fn horizon_changes(dates: &[NaiveDate], closes: &[f64], rate: Option<f64>, w
     let cur_smooth = measure_endpoint(closes);
     let cur_raw = *closes.last().expect("closes non-empty: callers pass a fetched chart (quote_one guards !closes.is_empty(), fetch.rs)");
     let last = *dates.last().expect("dates non-empty: parallel to closes (same fetched chart)");
+    let first = *dates.first().expect("dates non-empty: parallel to closes (same fetched chart)");
     HORIZONS
         .iter()
         .map(|(label, days)| {
             let cur = if *days >= 365 { cur_smooth } else { cur_raw };
             let target = last - Duration::days(*days);
+            // (H-cov) the series must actually REACH this horizon. `asof` alone would return None here,
+            // but `asof_avg` below averages [target ± half] and SUCCEEDS when the series merely STARTS
+            // inside that window — handing back the name's earliest bars under a label they never
+            // earned. That made every leg fabricable over a band `half` wide: a 4y fund printed a "5Y"
+            // (±365 on 1825), a 7-month listing printed a "1Y" (±182 on 365). Not cosmetic — these legs
+            // feed `long_leg`'s CAGR, the 5Y+ gate, `spy_premium` and `twin_groups`.
+            // 31d of slack, not 0: history older than the ~10y daily window is MONTHLY (fetch.rs), so an
+            // exact test would blank an old name's 20Y leg over bar PLACEMENT rather than missing data.
+            if first > target + Duration::days(31) {
+                return None;
+            }
             let half = windows.get(*label).copied().unwrap_or_else(|| default_anchor_half(*days));
             let past = if half > 0 {
                 asof_avg(dates, closes, target, half).or_else(|| asof(dates, closes, target))
@@ -2928,6 +2940,27 @@ mod tests {
     assert!(splice_history(&ds, &cs, &late, &[99.0]).is_none());
     assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), 0), Some(10.0));
     assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(), 5), None);
+    // (H-cov) the JEDG.L case: a ~4-year daily series must NOT report a 5Y leg. The 5Y anchor window is
+    // ±365d, so `asof_avg` finds this series' earliest bars inside [target-365, target+365] and returns
+    // an average — a real price under a label it never earned. Only the coverage guard blanks it; note
+    // the window-entirely-before-history case above never exercised a window that STRADDLES the first
+    // bar, which is why this shipped. The legs the series does cover must still fill.
+    let young: Vec<NaiveDate> =
+        (0..1460).map(|k| NaiveDate::from_ymd_opt(2022, 1, 1).unwrap() + Duration::days(k)).collect();
+    let yc: Vec<f64> = (0..1460).map(|k| 100.0 * 1.0005_f64.powi(k)).collect();
+    let yp = horizon_changes(&young, &yc, None, &BTreeMap::new(), None);
+    let leg = |l: &str| yp[HORIZONS.iter().position(|(h, _)| *h == l).unwrap()].clone();
+    assert!(leg("5Y").is_none(), "4y of history cannot carry a 5Y leg: {:?}", leg("5Y"));
+    assert!(leg("8Y").is_none() && leg("10Y").is_none() && leg("20Y").is_none());
+    // covered legs unaffected — the guard must blank the unreachable ones ONLY
+    assert!(leg("1Y").is_some() && leg("2Y").is_some() && leg("6M").is_some() && leg("1W").is_some());
+    // the grace is 31d, not a free horizon — but a series only 20d short of its 2Y leg keeps it,
+    // which is the monthly-bar slack the guard exists to tolerate
+    let near: Vec<NaiveDate> =
+        (0..710).map(|k| NaiveDate::from_ymd_opt(2022, 1, 1).unwrap() + Duration::days(k)).collect();
+    let nc: Vec<f64> = (0..710).map(|k| 100.0 + k as f64).collect();
+    let np = horizon_changes(&near, &nc, None, &BTreeMap::new(), None);
+    assert!(np[HORIZONS.iter().position(|(h, _)| *h == "2Y").unwrap()].is_some(), "20d short is within the 31d grace");
     // backtest_quote on a synthetic rising MONTHLY series (cadence=12): the cadence window math must
     // still populate volatility (from monthly returns) and put a monotone climber at the top of its
     // range. Guards the long-horizon path against a zero/oversized window silently nulling the metrics.

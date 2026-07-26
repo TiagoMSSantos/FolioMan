@@ -480,6 +480,62 @@ buy_heuristic:
   #   fires and its market-cap leg is 10^6x light; HAL's shares (883-908M) are CORRECT and its EPS is
   #   the mis-tagged side. Nulling on disagreement would break HAL's four good rows. Same-filing
   #   comparatives neutralise these rows for every RATIO column regardless.
+  # (#3f) HORIZON COVERAGE — measured 2026-07-26, A/B on the SAME day and universe. Found from one row:
+  #   JEDG.L (VanEck Space Innovators) printed YRS 4 and a filled 5Y +234.5%. A 4-year-old fund has no
+  #   5-year return. Tell: its 5Y sat BELOW its own 2Y (+258.3%) — both anchors were in the same era.
+  #   MECHANISM. `horizon_changes` anchors each leg via
+  #     asof_avg(dates, closes, target, half).or_else(|| asof(dates, closes, target))
+  #   `asof` is correct ("None if before history"), but `asof_avg` runs FIRST and averages every close
+  #   in [target-half, target+half]. A series that merely STARTS inside that window still returns Some,
+  #   so the correct None never happens and the leg is built from the name's earliest bars wearing a
+  #   label they never earned. A leg of D days with window +/-H is fabricable for ANY history length in
+  #   [D-H, D) — and when H >= D (1W, 1M at their defaults) for a series of any length at all.
+  #   Bands at the LIVE windows (config/settings.yaml sets no `anchor_windows`; the field is
+  #   serde(default) -> empty -> core::default_anchor_half. NOTE the block below in THIS file overrides
+  #   1Y to 182, so CI's 1Y band is 0.50-1.00y, wider than live's):
+  #     6M  +/-90d  -> 0.25-0.50y | 1Y +/-90d -> 0.75-1.00y | 2Y +/-90d -> 1.75-2.00y
+  #     5Y  +/-365d -> 4.00-5.00y (JEDG) | 8Y -> 7-8y | 10Y -> 9-10y | 20Y -> 19-20y
+  #   NOT display-only, and identical in TRAIN and SERVE — the only two call sites are fetch.rs (live)
+  #   and core::backtest_quote, which passes an EMPTY windows map and so always used the defaults.
+  #   Consumers of a possibly-fabricated leg: `long_leg`'s 20Y/8Y/5Y CAGR ladder, the 5Y+ gate (written
+  #   `is_some_and` precisely to SKIP names with no 5Y record — the fabrication defeated that intent),
+  #   `spy_premium` (whose own doc warns a young listing's leg "would flatter it") and `twin_groups`
+  #   (whose doc claimed "<5y twins drop via perf None" — that claim was simply false).
+  #   FIX: one guard, `first > target + 31d -> None`. 31 and not 0 because history older than the ~10y
+  #   daily window is MONTHLY, so an exact test would blank an old name's 20Y leg over bar PLACEMENT
+  #   rather than missing data. Residual lie is bounded at 31d: 0.4% of a 20Y leg, 1.7% of a 5Y.
+  #   A/B, `backtest universe fund 12`, guard OFF vs ON, same day / same 11717 cutoffs / 4913 tickers:
+  #                                   OFF (fabricating)   ON (guarded)    delta
+  #     GROWTH windows scored              1488               1338         -150  (10.1% were fabricated)
+  #     ON-SALE windows scored             5101               4616         -485  ( 9.5%)
+  #     GROWTH edge                      +181.6             +181.3         -0.3  <- the shipped lane is FLAT
+  #     GROWTH rho / OOS            +0.18 +0.14|+0.16   +0.18 +0.13|+0.15  flat
+  #     GROWTH winsorized edge           +148.1             +150.9         +2.8  <- BETTER
+  #     GROWTH bootstrap band     [+111.4 … +242.6]   [+136.3 … +237.3]    tighter
+  #     fund-sweep price-only baseline   +202.2             +112.4        -89.8
+  #   CONTROL: all 15 standalone fundamental probes are BIT-IDENTICAL across the pair (peg_yield n=1506
+  #   rho +0.14 edge +283.2 OOS +0.15|+0.13; eps_growth n=265 +0.09 +16.8; rev_yoy n=1316 +0.08 +60.2;
+  #   net_margin n=1824 -0.19 -62.5; op_margin n=1516 -0.23 -326.7). They read fundamentals vs forward
+  #   returns and never touch a perf leg, so their invariance proves the universe and the forward
+  #   returns did NOT drift — the deltas above are the guard and nothing else. The OFF run also
+  #   reproduces (#3e)'s recorded +202.2 / rev_yoy +214.9 exactly, so (#3e) is reproducible too.
+  #   THE FINDING THAT MATTERS: the fund sweep's WINNER FLIPS, rev_yoy -> peg_yield.
+  #     rev_yoy    +214.9 OOS +0.24|+0.11  ->  +131.8 OOS +0.12|+0.07   (-83.1, OOS roughly halved)
+  #     peg_yield  +199.2 OOS +0.24|+0.11  ->  +186.7 OOS +0.15|+0.09   (-12.5)
+  #   (#3e) recorded rev_yoy as "the first factor ever to beat the price-only baseline" and declined to
+  #   ship it on horizon-dependence alone. That caution was right for a better reason than was known:
+  #   the win was substantially an ARTIFACT of fabricated legs. The sweep now names the factor that is
+  #   already SHIPPED. The -89.8 baseline drop is the same artifact leaving — the old number was partly
+  #   harvesting phantom legs on young names, so it was never a defensible bar to clear.
+  #   COST, stated plainly: `long_leg`'s shortest rung is 5Y, so a non-crypto name now needs 5.0y (less
+  #   the 31d grace) to be RANKED AT ALL, up from 4.0y — picks.rs bails with `?` when no rung resolves.
+  #   JEDG.L therefore leaves the ranking entirely, not just the cell. The sanctioned way to rank a
+  #   young fund stays `history_proxy` (curated older twin, spliced and marked `~`, e.g. VUAA.DE), which
+  #   genuinely extends the series and is untouched by the guard. Adding a 2Y rung to the ladder would
+  #   re-admit these names but is a separate ranking change needing its own receipt — NOT done here.
+  #   `walk_forward_edge_pin` moved with this (scored 30 -> 26): backtest_quote slices to [..=as_of], so
+  #   its EARLY cutoffs hold only a year or two of bars and were scored on legs fabricated from the
+  #   slice's own first days. The guard can only turn Some into None, so `scored` can only FALL there.
   growth_fund_cap: 300.0     # (#3) clamp in the factor's OWN pts before weighting. 300 <=> PEG >= 0.33 stays
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are

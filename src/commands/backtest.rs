@@ -2833,6 +2833,13 @@ mod tests {
         // is the one pin that genuinely had to move: it scores `backtest_quote`s built from contiguous
         // closes, so unlike the picks.rs fixtures it really does carry an 8Y leg and really is measured
         // on it now. Every other field is unchanged.
-        assert_eq!(got, "n=88 scored=30 rho=-0.057 edge=-26.4 winsor=-26.4 terciles=+26.4/+67.1/+40.9");
+        // (H-cov) moved AGAIN on 2026-07-26, same reason and the same direction: scored 30 -> 26.
+        // `horizon_changes` now blanks a leg the series does not reach, and `backtest_quote` slices to
+        // [..=as_of], so the EARLY cutoffs hold only a year or two of bars — they were being scored on
+        // legs `asof_avg` fabricated from the slice's own first days. Four such samples stop scoring.
+        // The guard can only ever turn a Some into a None, so `scored` can only fall; a RISE here would
+        // mean something other than this change moved. Signs remain meaningless (synthetic, tiny
+        // universe); the drop is the fix removing fabricated inputs, not a quality claim.
+        assert_eq!(got, "n=88 scored=26 rho=-0.064 edge=-28.4 winsor=-28.4 terciles=+25.6/+67.1/+40.4");
     }
 }
