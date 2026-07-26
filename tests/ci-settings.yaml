@@ -762,6 +762,52 @@ buy_heuristic:
   #   keep true for no gain.
   #   CAVEAT ON THE BASE: measured with use_life_cagr TRUE, which (#3j) records as a -42.0 loser. The
   #   ceiling was not re-priced on the shipped (leg) basis, so its +17.3 is established on that base only.
+  # (#39) "IMPROVE THE RANKS — CF/MPC/ODFL sit above NVDA/ANET" — asked 2026-07-26 off a live table where
+  #   ODFL ranked 4th with revenue AND EPS shrinking at P/E 48, while NVDA (rev +65%, eps +67%, net 55.6%)
+  #   ranked 10th. Three candidates came out of the backtest's OWN probe tables. Result: one rejected on
+  #   MECHANISM despite good numbers, one rejected on ABLATION despite good numbers, one still open.
+  #   growth_max_margin_swing — REJECTED, and this is the instructive one. `fund.margin_stability` is
+  #   -std(net_margin) and core.rs:1386 sells it as catching the "peak-cycle name (fertilizer, refiner)
+  #   that hides the cycle behind a good level". It is edge-POSITIVE at every ceiling tested (3/5/8/12 ->
+  #   edge +154.0/+149.6/+147.0/+149.0 vs +139.7 off; rho +0.17 -> +0.19 at ALL of them, the only thing
+  #   all session to move rho; both OOS halves up). By the house rule it ships. IT DOES NOT SHIP, because
+  #   the live screen shows it cutting the OPPOSITE names from the ones it advertises:
+  #     NVDA  net margin 36% -> 56%  (rev +68%/yr)  swing 16.4pp  CUT at ceiling 5 AND 12
+  #     ANET  net margin 29% -> 39%  (rev +32%/yr)  swing  5.6pp  CUT at ceiling 5
+  #     CF    net margin 14% -> 21%  (rev  +2%/yr)                SURVIVES at 12
+  #     MPC   net margin  8% ->  3%  (rev  +3%/yr)                SURVIVES at 12
+  #   Standard deviation has NO DIRECTION. A margin CLIMBING 36->56 disperses more than a fertilizer
+  #   oscillating 14<->21, so the "cyclical detector" cuts the margin-EXPANDING compounders and keeps the
+  #   actual cyclicals. The era table says the same thing from the other side: 2010->2014 collapses
+  #   +64.4 -> +14.7..+27.2 at EVERY ceiling, which is where those compounders' returns live.
+  #   A gate measuring the right quantity for the wrong reason is worse than no gate: the number would
+  #   have shipped it and the receipt would have taught the next reader something false. The knob stays in
+  #   code at 0, inert and documented, because it is the substrate for the real fix — dispersion must be
+  #   DOWNSIDE-ONLY (std of negative deviations), or paired with `margin_trend` so improvement is not
+  #   punished. That is a different gate and needs its own measurement.
+  #   growth_fund_extra: interest_cover — REJECTED. Best row in the held-book-by-factor probe (+17.4%/yr,
+  #   excess +5.8 TYING the full growth_score, win 100%, worst +1.8 vs -7.8, OOS +5.7/+5.9), so it looked
+  #   like the strongest signal on record and costs zero code. Its WITHIN-RUN ablation says otherwise at
+  #   every weight (cap 20): removing the term is Δ+0.0 at 0.1, Δ+0.0/+1.2 at 0.25, Δ+5.4 at 0.5. The term
+  #   never pays, and at 0.5 it costs. A factor that selects a good BOOK on its own is not the same claim
+  #   as a factor that adds information to a score that already reads price, momentum and PEG.
+  # (#40) METHODOLOGY, worth more than either result above and it invalidates a class of comparison used
+  #   throughout these receipts. `backtest universe` FETCHES THE LIVE UNIVERSE EVERY RUN, and exchange
+  #   endpoints fail differently each time ("Euronext ETF list failed 504 / venue list unavailable — using
+  #   last-good copy (793 ISINs)" on one run, "Euronext Lisbon failed 500" on the next). The universe is
+  #   therefore NOT constant across runs. Same config, same binary, same day, back to back:
+  #     interest_cover w=0.25   run 1: scored 1385  rho +0.19  edge +145.9
+  #                             run 2: scored 1378  rho +0.18  edge +138.6
+  #   ~7 edge points and 0.01 rho of pure run-to-run noise, and it was caught only because a SCORE tilt
+  #   cannot legally change `windows scored` — the pool moving 1378 -> 1385 was the tell. Without that
+  #   impossible-by-construction check the +145.9 would have shipped as a +6.2 win.
+  #   RULE: a cross-run edge delta under ~7 pts is NOT evidence. Two instruments are immune because they
+  #   compare inside ONE universe: (a) the ablation lines, (b) the sweeps a single run prints itself
+  #   (CORR-CAP, VALUE-GATE, SURVIVAL-GATE, held-book-by-factor, the weight CURVEs). Prefer those. Where a
+  #   cross-run comparison is unavoidable — every GATE, since a gate changes the pool by design and cannot
+  #   be ablated — require a SWEEP whose values all sit above baseline, not a single pair. (#37) survives
+  #   exactly that test: 1.5/2.0/2.5/3.0/4.0 all landed +136..+149 against off's +122.4, five draws with
+  #   none falling back. (#38)'s floor straddled baseline and was rejected; consistent.
   growth_fund_cap: 300.0     # (#3) clamp in the factor's OWN pts before weighting. 300 <=> PEG >= 0.33 stays
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are
@@ -811,6 +857,11 @@ buy_heuristic:
                                  #   with growth_max_peg it cancels that gate entirely and turns the newest era negative.
                                  #   Single-digit net margin is an INDUSTRY fact (retail, distribution, industrials), not a
                                  #   quality signal. Raising this cuts sectors, not bad companies. 0 = off.
+  growth_max_margin_swing: 0.0   # (#39) MEASURED, EDGE-POSITIVE, AND DELIBERATELY NOT SHIPPED — kept at 0 with the receipt
+                                 #   so the good numbers don't get it re-proposed. Rejects on net-margin std, which has no
+                                 #   direction, so it cuts NVDA (36%->56%) and ANET (29%->39%) while CF and MPC survive: it
+                                 #   punishes margin EXPANSION as readily as cyclicality. Needs downside-only dispersion, or
+                                 #   pairing with margin_trend, before it means what its name says. 0 = off.
   growth_require_lifetime_uptrend: true # (#25) reject equities whose WHOLE-LIFE log-trend CAGR is <= 0: moon-crash-partial-recovery
                                  #   names whose 10Y leg looks great but never reclaimed their long-run trend (the ranked CAGR uses
                                  #   the longest 20Y/10Y/5Y leg, so it can't see this). Same-batch pair 2026-07-03: off +115.7

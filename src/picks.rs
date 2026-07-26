@@ -802,6 +802,22 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     {
         return None;
     }
+    // (#39) MARGIN-SWING ceiling — the CYCLE detector the (#38) level floor cannot be. `margin_stability`
+    // is -std(net_margin) across the as-of annual filings, so it is always <= 0 and the knob carries the
+    // POSITIVE std (see its config doc). A peak-cycle fertilizer or refiner posts a fine margin LEVEL at
+    // the top of its cycle — only the dispersion gives it away.
+    //
+    // Deliberately NOT wired as a `growth_fund_extra` tilt, which would need no code at all: that path
+    // does `v.clamp(0.0, cap)`, and since this factor is never positive EVERY value would clamp to 0 and
+    // the term would read INERT — reporting "no change" and looking like a safe flip, which is exactly
+    // the (#3i) failure mode. A sign-negative factor needs a gate, not a floor-at-zero reward.
+    if tuning.growth_max_margin_swing > 0.0
+        && ff
+            .and_then(|f| f.margin_stability)
+            .is_some_and(|s| s < -tuning.growth_max_margin_swing)
+    {
+        return None;
+    }
 
     // ---- SCORE ----
     let trend = capped_trend(long_cagr, tuning); // proven compounding; long_trend_cap 0 = uncapped (shipped)
@@ -1077,6 +1093,14 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     if tuning.growth_min_net_margin > 0.0 {
         if let Some(m) = ff.and_then(|f| f.net_margin).filter(|&m| m < tuning.growth_min_net_margin) {
             fails.push(("margin", format!("{m:.1}% net margin (floor {:.1}%)", tuning.growth_min_net_margin), m >= tuning.growth_min_net_margin - 2.0));
+        }
+    }
+    // (#39) the margin-swing ceiling's reason. Quoted as the POSITIVE std the knob speaks, not the raw
+    // negative field — same rule as the PEG leg above: print the number the operator actually set.
+    if tuning.growth_max_margin_swing > 0.0 {
+        if let Some(s) = ff.and_then(|f| f.margin_stability).filter(|&s| s < -tuning.growth_max_margin_swing) {
+            let swing = -s;
+            fails.push(("swing", format!("{swing:.1}pp net-margin swing (ceiling {:.1}pp)", tuning.growth_max_margin_swing), swing <= tuning.growth_max_margin_swing + 2.0));
         }
     }
     let maxdd_cap = if crypto { tuning.growth_maxdd_cap_crypto } else { tuning.growth_maxdd_cap };
@@ -2750,6 +2774,31 @@ mod tests {
     assert!(growth_score(&nq, &nm_t).is_some(), "missing margin is not a failing margin");
     with_margin(&mut nq, Some(7.5));
     assert!(growth_score(&nq, &BuyHeuristic::default()).is_some(), "growth_min_net_margin 0 = off");
+
+    // (#39) MARGIN-SWING ceiling. The knob is the POSITIVE std; the field is -std, so every assert here
+    // also pins the sign flip — get it backwards and the gate cuts the STEADIEST names instead.
+    let sw_t = BuyHeuristic { growth_max_margin_swing: 5.0, ..BuyHeuristic::default() };
+    let mut sq = quote(2.0, &[("1Y", 30.0), ("5Y", 99.0), ("10Y", 400.0)]);
+    let with_swing = |q: &mut Quote, s: Option<f64>| {
+        q.fund = Some(core::FundFactors { margin_stability: s, ..Default::default() });
+    };
+    with_swing(&mut sq, Some(-8.0)); // the CF/MPC shape: margin swinging 8pp across the cycle
+    assert!(growth_score(&sq, &sw_t).is_none(), "an 8pp margin swing must fail a 5pp ceiling");
+    with_swing(&mut sq, Some(-2.0)); // a steady compounder
+    assert!(growth_score(&sq, &sw_t).is_some(), "a 2pp swing is well inside the ceiling");
+    with_swing(&mut sq, Some(-5.0));
+    assert!(growth_score(&sq, &sw_t).is_some(), "exactly at the ceiling passes — `<`, like every other bar here");
+    with_swing(&mut sq, None);
+    assert!(growth_score(&sq, &sw_t).is_some(), "under 3 filings -> None -> passes, like every data gate");
+    sq.fund = None;
+    assert!(growth_score(&sq, &sw_t).is_some(), "no fund at all (every ETF/coin) passes -> equity-only for free");
+    with_swing(&mut sq, Some(-8.0));
+    assert!(growth_score(&sq, &BuyHeuristic::default()).is_some(), "growth_max_margin_swing 0 = off");
+    let why_sw = gate_failures(&sq, &sw_t).unwrap();
+    assert!(
+        why_sw.iter().any(|(g, m, _)| *g == "swing" && m.contains("8.0pp")),
+        "a swing rejection must print the positive swing the knob speaks: {why_sw:?}"
+    );
 
     // both rejections must PRINT a reason — and the PEG one must quote a PEG, not a raw peg_yield,
     // because the `peg` COLUMN is computed differently and a silent cut would read as a bug.
