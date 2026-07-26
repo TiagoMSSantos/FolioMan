@@ -536,6 +536,46 @@ buy_heuristic:
   #   `walk_forward_edge_pin` moved with this (scored 30 -> 26): backtest_quote slices to [..=as_of], so
   #   its EARLY cutoffs hold only a year or two of bars and were scored on legs fabricated from the
   #   slice's own first days. The guard can only turn Some into None, so `scored` can only FALL there.
+  # (#3g) "CAN WE REWARD A GREATER CAGR MORE?" — asked 2026-07-26. Answer, measured: NO on both levers.
+  #   First, the question could not be read off the table at all, because the table's CAGR is not the
+  #   CAGR the rank uses. `cagr` prints `quote.life_cagr` (whole-life, listing-to-date); the growth score
+  #   runs on `long_cagr` — the CAGR of `long_leg_fixed`'s 20Y/8Y/5Y rung, then CAPPED at long_trend_cap.
+  #   CF Industries (rank #1): column +20% over 21y, scored 14.28%/yr (the 20Y leg, +1344% cumulative)
+  #   -> 0.35 × 14.28 = 5.00 pts, ~16% of its 30.81 base. `life_cagr` is not unused in scoring, but it
+  #   appears ONLY as a negative guard (the value-trap dock when it is <= 0), never as a positive reward.
+  #   FIXED by adding the `leg` COLUMN = min(long_cagr, long_trend_cap), i.e. exactly what `trend_term`
+  #   multiplies, sourced from the score's own `long_cagr_from` rather than re-derived. Shown CAPPED on
+  #   purpose: a row reading LEG +30% against CAGR +45% is the ceiling binding, which IS the answer below,
+  #   made visible per row. Four "20/10/5" ladder comments were stale too (it has been 20/8/5 since the
+  #   8Y-rung commit) and are corrected; `yrs` prints listing AGE, which also PICKS the rung.
+  #   MEASURED with a new `weight_curve` (backtest.rs), swept on `universe fund 12` — n=1338 growth
+  #   windows, the same batch behind (#3e)/(#3f), reproducing their headline exactly (rho +0.18, edge
+  #   +181.3, winsor +150.9). Rows are held fixed at the shipped tuning and re-scored, like the ablation;
+  #   sound because NEITHER swept knob touches a gate (the growth_min_cagr floor reads the UNCAPPED
+  #   long_cagr, so the cap cannot change who is admitted). Two exact tie-backs are printed as a
+  #   self-check and both held: the SHIPPED row reproduces the lane headline, and the weight-0 row
+  #   reproduces the ablation's growth_trend_weight line (+0.15 / +119.9).
+  #     growth_trend_weight   0.00 +119.9 [off] | 0.15 +184.6 | 0.25 +185.9 | 0.35 +181.3 [SHIPPED]
+  #                           0.45 +183.3 | 0.55 +153.8 | 0.70 +134.7 | 1.00 +125.1   (winsor tracks all)
+  #     long_trend_cap        15 +175.6 | 20 +185.1 | 25 +191.1 | 30 +181.3 [SHIPPED] | 40 +177.3
+  #                           50 +168.1 | 60 +168.1
+  #   VERDICT. The stale rationale at config.rs ("raw long-CAGR is mildly HARMFUL, Δ+0.03/+0.10") is
+  #   REFUTED — zeroing the term costs -61.4 edge, it is load-bearing. But the conclusion it produced
+  #   (keep the weight low) survives for a different reason: 0.15..0.45 is a FLAT PLATEAU whose entire
+  #   spread (+181.3..+185.9) sits far inside the [+133.9 … +236.5] bootstrap band, and above 0.45 the
+  #   edge cliffs. The shipped 0.35 already sits in that plateau, so there is no honest room to raise it.
+  #   The old "0.35->0.55 cut edge +1.9->-0.6" note came from a ±2-edge sample; its DIRECTION now
+  #   reconfirms at ±180 scale (+181.3 -> +153.8).
+  #   The cap says the same thing harder: it wants to come DOWN, not up. Monotone decline above 25, and
+  #   the +9.8 hump at 25 is both inside the band and only half-measured (the cap is SHARED with the
+  #   on-sale lane), so it is recorded, not shipped. Both levers agree — the fastest compounders mean
+  #   revert, and the ceiling is protective. NOTHING SHIPPED: 0.35 and 30.0 both unmoved, this pass
+  #   changes a column and two rationales only.
+  #   NOT RE-RUN, and worth knowing: the default `backtest universe` (5y holdout, 10y daily) is USELESS
+  #   for this question — its 238 growth windows all land in a ~3-week slice of July 2021 (10y back plus
+  #   5y forward leaves only that sliver), so its era table repeats one date and its OOS split splits
+  #   within a day. It reported the curve as monotone-decreasing from 0. Use `12` (>=8 switches to the
+  #   MAX-monthly series) for anything read as a horizon result.
   growth_fund_cap: 300.0     # (#3) clamp in the factor's OWN pts before weighting. 300 <=> PEG >= 0.33 stays
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are

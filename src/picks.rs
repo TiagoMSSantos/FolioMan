@@ -49,6 +49,22 @@ fn long_leg_fixed(quote: &Quote, fixed_years: u32) -> Option<(f64, f64)> {
     }
 }
 
+/// (#14) The long-leg CAGR the growth lane RANKS on: endpoint CAGR of `long_leg_fixed`'s rung, or the
+/// endpoint-robust log-slope (`trend_cagr`, precomputed at fetch/backtest build) when `use_trend_cagr`
+/// is on. Both knobs default off -> identical to the plain two-point CAGR, so the validated edge is
+/// untouched until a flip is validated.
+///
+/// Extracted rather than inlined a third time: the `leg` COLUMN has to print the score's own number,
+/// and a display that re-derives the score's arithmetic is exactly how the `cagr` column drifted into
+/// showing `life_cagr` (whole-life) while the rank ran on this (the 20/8/5 rung, capped).
+fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) -> f64 {
+    if tuning.use_trend_cagr {
+        quote.trend_cagr.unwrap_or_else(|| core::cagr(cum, years))
+    } else {
+        core::cagr(cum, years)
+    }
+}
+
 /// (S-8Y) The same quote with every price stat whose window exceeds 8 years re-measured on its last 8
 /// (`core::Stats8`, precomputed at fetch — the closes are gone by the time anything here runs).
 /// `long_leg_fixed` only pins the CAGR leg; without this the 8Y-pinned column mixed an 8-year CAGR with
@@ -617,14 +633,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // leg for crypto too: trust_factor already treats 5Y as "proven enough" for young EUR pairs, so
     // this just promotes that bar from a soft halving to a hard gate (BTC/ETH/XMR/… all have 5Y).
     let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years)?; // (#15) pin the CAGR window
-    // (#14) rank the long trend on the endpoint-robust log-slope CAGR (precomputed on the quote at
-    // fetch/backtest build) when enabled; else the two-point endpoint CAGR. Both knobs default off ->
-    // long_cagr is byte-identical to before, so the validated edge is untouched until a flip is validated.
-    let long_cagr = if tuning.use_trend_cagr {
-        quote.trend_cagr.unwrap_or_else(|| core::cagr(long_cum, long_years))
-    } else {
-        core::cagr(long_cum, long_years)
-    };
+    let long_cagr = long_cagr_from(quote, tuning, long_cum, long_years); // (#14) the `LEG` column shows this
     let min_cagr = if crypto { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
     if long_cagr < min_cagr {
         return None; // equities: weak trend = expensive laggard. crypto: looser floor (show all growers vs BTC)
@@ -882,11 +891,7 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
         return Some(vec![("history", why, false)]);
     };
     let return_1y = perf_pct(quote, "1Y")?; // no 1Y data
-    let long_cagr = if tuning.use_trend_cagr {
-        quote.trend_cagr.unwrap_or_else(|| core::cagr(long_cum, long_years))
-    } else {
-        core::cagr(long_cum, long_years)
-    };
+    let long_cagr = long_cagr_from(quote, tuning, long_cum, long_years);
     let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
     let min_cagr = if crypto { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
     let y1_floor = if crypto { tuning.min_1y_pct_crypto } else { 0.0 };
@@ -1238,7 +1243,8 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false },
     ColSpec { key: "price", hdr: "PRICE(EUR)", width: 0, right: true },
-    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true }, // whole-life %/yr since listing (display; ranking uses the fixed-horizon ladder)
+    ColSpec { key: "cagr", hdr: "CAGR", width: 8, right: true }, // whole-life %/yr since listing (display; ranking uses the fixed-horizon ladder — see `leg`)
+    ColSpec { key: "leg", hdr: "LEG", width: 8, right: true }, // the CAPPED long-leg %/yr the growth rank actually scores on
     ColSpec { key: "trcagr", hdr: "TR-CAGR", width: 8, right: true }, // whole-life %/yr WITH the dividend sum added (lower-bound total return; ≈ CAGR for Acc/non-payers)
     ColSpec { key: "1h", hdr: "1H", width: 7, right: true },
     ColSpec { key: "6h", hdr: "6H", width: 7, right: true },
@@ -1281,7 +1287,7 @@ const COLUMNS: &[ColSpec] = &[
 /// `maxdd` (return + worst-pain — what a 20yr buy-and-hold screen was missing). Users add vol/r2/pe/roe/
 /// div/abv-ma by listing them in `widths.columns`.
 const DEFAULT_COLUMNS: &[&str] = &[
-    "rank", "name", "ticker", "market", "price", "cagr", "yrs", "1h", "6h", "12h", "1d", "1w", "1m", "1y",
+    "rank", "name", "ticker", "market", "price", "cagr", "leg", "yrs", "1h", "6h", "12h", "1d", "1w", "1m", "1y",
     "2y", "5y", "8y", "10y", "20y", "maxdd", "off-hi", "upside", "turnover", "score", "score8y",
 ];
 
@@ -1381,7 +1387,9 @@ pub fn clean_name(quote: &Quote) -> String {
 /// Render ONE cell's text for column `key`. `mark` is the rank label (number + `*`/`#` flags), `alt` the
 /// 8Y-pinned score for the `score8y` column (`None` = gated/unscoreable). All values come from
 /// already-fetched `Quote` fields — pure formatting, no scoring. Unknown key -> "?".
-fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str) -> String {
+/// `tuning` is read by the `leg` column alone (which rung, which CAGR flavour, which cap) so that cell
+/// can print the score's own number instead of re-deriving one; nothing here scores.
+fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, tuning: &BuyHeuristic) -> String {
     // ≥1000% drops the decimal so a +26522% 20Y cell still fits its 8-char column instead of overflowing.
     let pct1 = |o: Option<f64>| {
         o.map_or("n/a".to_string(), |v| if v.abs() >= 1000.0 { format!("{v:+.0}%") } else { format!("{v:+.1}%") })
@@ -1400,15 +1408,26 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str) 
         "ticker" => quote.ticker.clone(),
         "market" => quote.market.clone(),
         "price" => quote.price.clone(),
-        // proven long-term CAGR (%/yr) from the longest available leg — the annualized trend the ranking
-        // rewards, shown so a reader sees "+27%/yr for 10y" not just a +900% cumulative blob.
         // whole-life endpoint CAGR over the FULL (monthly-backfilled) history — the honest "what did
-        // this compound at since listing" headline. Ranking/gates still use the fixed 20/10/5Y ladder,
-        // so this cell can differ from the CAGR a gate message quotes.
+        // this compound at since listing" headline. NOT what the growth rank scores (that's `leg`
+        // below); in scoring `life_cagr` appears only as a NEGATIVE guard, the value-trap dock when it
+        // is <= 0. So this cell can differ from the CAGR a gate message quotes — by design, and the
+        // two now sit side by side rather than one silently standing in for the other.
         "cagr" => quote.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        // proven long-term CAGR (%/yr) from the ranked leg — the annualized trend the ranking actually
+        // rewards, shown so a reader sees "+14%/yr" and not just a +1344% cumulative blob. This is
+        // EXACTLY `min(long_cagr, long_trend_cap)`, the value `trend_term` multiplies (`--explain`:
+        // "trend = growth_trend_weight × min(CAGR, cap) = 0.35 × 14.28 = 5.00").
+        // Capped on purpose: a cell reading +30% where CAGR reads +45% is the cap binding, which is the
+        // whole answer to "why doesn't a faster compounder score higher" — visible per row, not buried.
+        "leg" => long_leg_fixed(quote, tuning.fixed_cagr_years).map_or("n/a".to_string(), |(c, y)| {
+            format!("{:+.0}%", long_cagr_from(quote, tuning, c, y).min(tuning.long_trend_cap))
+        }),
         "trcagr" => quote.tr_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
-        // span of the CAGR leg (20/10/5) — a "+16% over 20" and a "+16% over 5" are NOT the same
-        // conviction; this makes the record length behind the headline number visible per row.
+        // real listing age in years. NOT the span of the ranked leg — though it determines it, since
+        // the ladder is 20Y -> 8Y -> 5Y on availability: ≥20y ranks on 20Y, ≥8y on 8Y, else 5Y. A
+        // "+16%/yr over 20" and a "+16%/yr over 5" are NOT the same conviction, so pairing this with
+        // `leg` makes the record length behind the headline number visible per row.
         "yrs" => quote.age_years.map_or("n/a".to_string(), |y| format!("{y:.0}")),
         "1h" => pct1(quote.intraday[0]),
         "6h" => pct1(quote.intraday[1]),
@@ -1567,7 +1586,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         let alt = tuning8.as_ref().and_then(|t| growth_score(&as_8y_window(quote), t));
         let line = cols
             .iter()
-            .map(|c| fmt_cell(&col_cell(c.key, quote, score, alt, mark), col_width(c, w), c.right))
+            .map(|c| fmt_cell(&col_cell(c.key, quote, score, alt, mark, tuning), col_width(c, w), c.right))
             .collect::<Vec<_>>()
             .join(" ");
         println!("  {line}");
@@ -2017,6 +2036,13 @@ fn turnover_note(now: &[String], n: usize, path: &std::path::Path) -> Option<Str
 mod tests {
     use super::*;
 
+    /// `col_cell` under the SHIPPED tuning — the cells that read config (`leg`: which rung, which CAGR
+    /// flavour, `long_trend_cap`) are then asserted against the defaults the screen actually runs with,
+    /// not against a hand-built config that could drift from them.
+    fn cc(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str) -> String {
+        col_cell(key, quote, score, alt, mark, &BuyHeuristic::default())
+    }
+
     /// (round 110) owned-overlay base normalizers: Trading212 `BASE_MARKET_EQ` and Yahoo
     /// `BASE.EXCHANGE` meet on the lowercased base; dash share-class tickers pass through unmangled.
     #[test]
@@ -2150,54 +2176,54 @@ mod tests {
         assert_eq!(col_width(cagr, &wd), "CAGR".chars().count()); // floored at the header
         // col_cell: rank passes the mark through; score -> 1dp; cagr with no history -> n/a (stub has no legs)
         let q = Quote::stub("T", "€1", "", "Name");
-        assert_eq!(col_cell("rank", &q, 9.4, None, "3*"), "3*");
-        assert_eq!(col_cell("score", &q, 7.0, None, ""), "7.0");
-        assert_eq!(col_cell("cagr", &q, 0.0, None, ""), "n/a");
+        assert_eq!(cc("rank", &q, 9.4, None, "3*"), "3*");
+        assert_eq!(cc("score", &q, 7.0, None, ""), "7.0");
+        assert_eq!(cc("cagr", &q, 0.0, None, ""), "n/a");
         // peg needs BOTH a P/E and positive growth; stub has neither -> n/a (never panics on the guard)
-        assert_eq!(col_cell("peg", &q, 0.0, None, ""), "n/a");
+        assert_eq!(cc("peg", &q, 0.0, None, ""), "n/a");
         // ter is None on a stub (no expense ratio fetched) -> n/a
-        assert_eq!(col_cell("ter", &q, 0.0, None, ""), "n/a");
+        assert_eq!(cc("ter", &q, 0.0, None, ""), "n/a");
         // div distinguishes "pays nothing" from "don't know" — the whole point of reading the Option
         // instead of `dividend_yield_1y`'s unwrap_or(0.0). No price -> genuinely unknown -> n/a.
-        assert_eq!(col_cell("div", &q, 0.0, None, ""), "n/a");
+        assert_eq!(cc("div", &q, 0.0, None, ""), "n/a");
         let mut payer = Quote::stub("P", "€1", "", "Payer");
         payer.price_eur = Some(100.0);
         payer.div_eur = vec![Some(2.0)]; // 2.00 EUR/share on a 100 EUR price = 2.00%
-        assert_eq!(col_cell("div", &payer, 0.0, None, ""), "2.00%");
+        assert_eq!(cc("div", &payer, 0.0, None, ""), "2.00%");
         // a CONFIDENT zero prints as one, and must never surface the FX-sum's negative-zero as "-0.00%"
         let mut none_paid = payer.clone();
         none_paid.div_eur = vec![Some(-0.0)];
-        assert_eq!(col_cell("div", &none_paid, 0.0, None, ""), "0.00%");
+        assert_eq!(cc("div", &none_paid, 0.0, None, ""), "0.00%");
         none_paid.div_eur = vec![Some(-1e-9)];
-        assert_eq!(col_cell("div", &none_paid, 0.0, None, ""), "0.00%");
+        assert_eq!(cc("div", &none_paid, 0.0, None, ""), "0.00%");
         // ...but a token yield still prints rather than rounding away (NVDA is ~0.02%)
         none_paid.div_eur = vec![Some(0.02)];
-        assert_eq!(col_cell("div", &none_paid, 0.0, None, ""), "0.02%");
+        assert_eq!(cc("div", &none_paid, 0.0, None, ""), "0.02%");
         // per-class gating: a crypto ('-' ticker) has neither P/E nor expense ratio -> "—" (not applicable),
         // distinct from "n/a" (applies but unfetched).
         let cq = Quote::stub("X-EUR", "€1", "", "Coin");
-        assert_eq!(col_cell("pe", &cq, 0.0, None, ""), "—");
-        assert_eq!(col_cell("ter", &cq, 0.0, None, ""), "—");
+        assert_eq!(cc("pe", &cq, 0.0, None, ""), "—");
+        assert_eq!(cc("ter", &cq, 0.0, None, ""), "—");
         // (USE/REPL) ETF prints its BF tokens; None (off-BF fund) -> n/a; crypto/equity -> — (not a fund)
         let mut eq = Quote::stub("E.DE", "€1", "", "Fund");
         eq.instrument_type = "ETF".to_string();
-        assert_eq!(col_cell("use", &eq, 0.0, None, ""), "n/a");
-        assert_eq!(col_cell("repl", &eq, 0.0, None, ""), "n/a");
+        assert_eq!(cc("use", &eq, 0.0, None, ""), "n/a");
+        assert_eq!(cc("repl", &eq, 0.0, None, ""), "n/a");
         eq.use_of_profits = Some("Acc");
         eq.replication = Some("Swap");
-        assert_eq!(col_cell("use", &eq, 0.0, None, ""), "Acc");
-        assert_eq!(col_cell("repl", &eq, 0.0, None, ""), "Swap");
-        assert_eq!(col_cell("use", &cq, 0.0, None, ""), "—");
-        assert_eq!(col_cell("repl", &cq, 0.0, None, ""), "—");
+        assert_eq!(cc("use", &eq, 0.0, None, ""), "Acc");
+        assert_eq!(cc("repl", &eq, 0.0, None, ""), "Swap");
+        assert_eq!(cc("use", &cq, 0.0, None, ""), "—");
+        assert_eq!(cc("repl", &cq, 0.0, None, ""), "—");
         // (DOM) same per-class gating as USE/REPL; ETF prints its ISIN-prefix country
-        assert_eq!(col_cell("dom", &eq, 0.0, None, ""), "n/a");
+        assert_eq!(cc("dom", &eq, 0.0, None, ""), "n/a");
         eq.domicile = Some("IE".to_string());
-        assert_eq!(col_cell("dom", &eq, 0.0, None, ""), "IE");
-        assert_eq!(col_cell("dom", &cq, 0.0, None, ""), "—");
+        assert_eq!(cc("dom", &eq, 0.0, None, ""), "IE");
+        assert_eq!(cc("dom", &cq, 0.0, None, ""), "—");
         // (TR-CAGR) display-only lower-bound total return; stub -> n/a
-        assert_eq!(col_cell("trcagr", &q, 0.0, None, ""), "n/a");
+        assert_eq!(cc("trcagr", &q, 0.0, None, ""), "n/a");
         eq.tr_cagr = Some(16.4);
-        assert_eq!(col_cell("trcagr", &eq, 0.0, None, ""), "+16%");
+        assert_eq!(cc("trcagr", &eq, 0.0, None, ""), "+16%");
         // (DOM) CORE ordering: IE beats any other known domicile, unknown sorts last —
         // withholding (~0.2%/yr) outranks TER deltas, so the sort applies dom_rank BEFORE TER
         let mut ie = Quote::stub("A", "€1", "", "f");
@@ -2209,15 +2235,15 @@ mod tests {
         // (REV-YoY/EPS-YoY/NET%) stock-only FY snapshot: stock prints signed %s / margin level, an
         // un-enriched stock -> n/a, ETF/crypto -> — (no income statement)
         let mut st = Quote::stub("S", "€1", "", "Co");
-        assert_eq!(col_cell("rev-yoy", &st, 0.0, None, ""), "n/a");
+        assert_eq!(cc("rev-yoy", &st, 0.0, None, ""), "n/a");
         st.rev_yoy = Some(65.5);
         st.eps_yoy = Some(-12.3);
         st.net_margin_fy = Some(55.6);
-        assert_eq!(col_cell("rev-yoy", &st, 0.0, None, ""), "+65.5%");
-        assert_eq!(col_cell("eps-yoy", &st, 0.0, None, ""), "-12.3%");
-        assert_eq!(col_cell("net", &st, 0.0, None, ""), "55.6");
-        assert_eq!(col_cell("rev-yoy", &eq, 0.0, None, ""), "—"); // ETF
-        assert_eq!(col_cell("net", &cq, 0.0, None, ""), "—"); // crypto
+        assert_eq!(cc("rev-yoy", &st, 0.0, None, ""), "+65.5%");
+        assert_eq!(cc("eps-yoy", &st, 0.0, None, ""), "-12.3%");
+        assert_eq!(cc("net", &st, 0.0, None, ""), "55.6");
+        assert_eq!(cc("rev-yoy", &eq, 0.0, None, ""), "—"); // ETF
+        assert_eq!(cc("net", &cq, 0.0, None, ""), "—"); // crypto
     }
 
     /// (Item 8) `rank_jaccard` = |∩|/|∪| of the top-n: identical lists -> 1.0, one swap of three -> 0.5
@@ -3377,50 +3403,63 @@ mod tests {
     #[test]
     fn col_cell_value_arms() {
         let mut q = Quote::stub("AAA", "€12.34", "", "Alpha");
-        assert_eq!(col_cell("price", &q, 0.0, None, ""), "€12.34");
-        assert_eq!(col_cell("ticker", &q, 0.0, None, ""), "AAA");
-        assert_eq!(col_cell("market", &q, 0.0, None, ""), q.market.clone());
+        assert_eq!(cc("price", &q, 0.0, None, ""), "€12.34");
+        assert_eq!(cc("ticker", &q, 0.0, None, ""), "AAA");
+        assert_eq!(cc("market", &q, 0.0, None, ""), q.market.clone());
         q.drawdown_pct = 12.5;
-        assert_eq!(col_cell("off-hi", &q, 0.0, None, ""), "-12.5%");
-        assert_eq!(col_cell("upside", &q, 0.0, None, ""), format!("+{:.1}%", upside_to_high(12.5)));
+        assert_eq!(cc("off-hi", &q, 0.0, None, ""), "-12.5%");
+        assert_eq!(cc("upside", &q, 0.0, None, ""), format!("+{:.1}%", upside_to_high(12.5)));
         q.avg_turnover_eur = Some(3.4e9);
-        assert_eq!(col_cell("turnover", &q, 0.0, None, ""), "€3.4B");
+        assert_eq!(cc("turnover", &q, 0.0, None, ""), "€3.4B");
         q.volatility_pct = Some(1.3);
-        assert_eq!(col_cell("vol", &q, 0.0, None, ""), "1.3%");
+        assert_eq!(cc("vol", &q, 0.0, None, ""), "1.3%");
         q.max_drawdown_pct = 42.0;
-        assert_eq!(col_cell("maxdd", &q, 0.0, None, ""), "-42%");
+        assert_eq!(cc("maxdd", &q, 0.0, None, ""), "-42%");
         q.trend_r2 = 0.87;
-        assert_eq!(col_cell("r2", &q, 0.0, None, ""), "0.87");
+        assert_eq!(cc("r2", &q, 0.0, None, ""), "0.87");
         q.above_ma_pct = 61.0;
-        assert_eq!(col_cell("abv-ma", &q, 0.0, None, ""), "+61%");
+        assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "+61%");
         q.above_ma_pct = 0.0;
-        assert_eq!(col_cell("abv-ma", &q, 0.0, None, ""), "0%");
+        assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "0%");
         q.age_years = Some(11.0);
-        assert_eq!(col_cell("yrs", &q, 0.0, None, ""), "11");
+        assert_eq!(cc("yrs", &q, 0.0, None, ""), "11");
         q.intraday = [Some(0.12), Some(-0.34), Some(2.0)];
-        assert_eq!(col_cell("1h", &q, 0.0, None, ""), "+0.1%");
-        assert_eq!(col_cell("6h", &q, 0.0, None, ""), "-0.3%");
-        assert_eq!(col_cell("12h", &q, 0.0, None, ""), "+2.0%");
+        assert_eq!(cc("1h", &q, 0.0, None, ""), "+0.1%");
+        assert_eq!(cc("6h", &q, 0.0, None, ""), "-0.3%");
+        assert_eq!(cc("12h", &q, 0.0, None, ""), "+2.0%");
         // the "1d|1w|…|20y" arm via perf_pct; a ≥1000% cell drops the decimal so it still fits its column.
         q.perf = legs(&[("1D", 0.5), ("2Y", 41.2), ("8Y", 290.1), ("20Y", 2600.0)]);
-        assert_eq!(col_cell("1d", &q, 0.0, None, ""), "+0.5%");
-        assert_eq!(col_cell("20y", &q, 0.0, None, ""), "+2600%");
-        assert_eq!(col_cell("2y", &q, 0.0, None, ""), "+41.2%");
-        assert_eq!(col_cell("8y", &q, 0.0, None, ""), "+290.1%");
-        assert_eq!(col_cell("1w", &q, 0.0, None, ""), "n/a"); // absent leg
-        assert_eq!(col_cell("bogus", &q, 0.0, None, ""), "?"); // unknown key fallback
+        assert_eq!(cc("1d", &q, 0.0, None, ""), "+0.5%");
+        assert_eq!(cc("20y", &q, 0.0, None, ""), "+2600%");
+        assert_eq!(cc("2y", &q, 0.0, None, ""), "+41.2%");
+        assert_eq!(cc("8y", &q, 0.0, None, ""), "+290.1%");
+        assert_eq!(cc("1w", &q, 0.0, None, ""), "n/a"); // absent leg
+        assert_eq!(cc("bogus", &q, 0.0, None, ""), "?"); // unknown key fallback
+        // `leg` = the CAGR the growth rank scores, NOT the whole-life `cagr` cell. Top of the 20/8/5
+        // ladder wins, so +2600% over 20y -> 17.9%/yr, and `cagr` stays n/a (this stub has no life_cagr)
+        // — the two columns disagreeing is the whole point of adding this one.
+        assert_eq!(cc("leg", &q, 0.0, None, ""), "+18%");
+        assert_eq!(cc("cagr", &q, 0.0, None, ""), "n/a");
+        // the cell is CAPPED at long_trend_cap (30). 5Y is the only rung here and +400% over 5y is
+        // 38.0%/yr, so an uncapped cell would read "+38%" — reading "+30%" is what proves the printed
+        // number is the one `trend_term` multiplies rather than the raw leg CAGR.
+        let mut hot = Quote::stub("H", "€1", "", "Hot");
+        hot.perf = legs(&[("5Y", 400.0)]);
+        assert_eq!(cc("leg", &hot, 0.0, None, ""), "+30%");
+        assert!(core::cagr(400.0, 5.0) > 37.0, "the cap must be what clamps this, not a weak leg");
+        assert_eq!(cc("leg", &Quote::stub("N", "€1", "", "No legs"), 0.0, None, ""), "n/a");
         // S-8Y renders the caller's pinned score, crypto included (BTC-EUR has a real 8Y leg); "n/a"
         // only when the caller had nothing to score at all. `q` HAS an 8Y leg -> the pin applied -> bare.
-        assert_eq!(col_cell("score8y", &q, 7.7, Some(6.4), ""), "6.4");
-        assert_eq!(col_cell("score8y", &q, 7.7, None, ""), "n/a");
+        assert_eq!(cc("score8y", &q, 7.7, Some(6.4), ""), "6.4");
+        assert_eq!(cc("score8y", &q, 7.7, None, ""), "n/a");
         // no 8Y leg -> the pin fell back to the longest one -> "†" says so instead of passing the
         // full-history score off as an 8-year judgement.
         let mut short = Quote::stub("S", "€1", "", "Short");
         short.perf = legs(&[("1Y", 12.0), ("5Y", 60.0)]);
-        assert_eq!(col_cell("score8y", &short, 7.7, Some(6.4), ""), "6.4†");
+        assert_eq!(cc("score8y", &short, 7.7, Some(6.4), ""), "6.4†");
         let mut coin = Quote::stub("BTC-EUR", "€1", "", "Bitcoin");
         coin.instrument_type = "CRYPTOCURRENCY".into();
-        assert_eq!(col_cell("score8y", &coin, 7.7, Some(6.4), ""), "6.4†"); // stub: no legs at all
+        assert_eq!(cc("score8y", &coin, 7.7, Some(6.4), ""), "6.4†"); // stub: no legs at all
     }
 
     /// (S-8Y) `as_8y_window` swaps EXACTLY the four >8y price stats and nothing else, and is the

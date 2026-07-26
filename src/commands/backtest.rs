@@ -464,6 +464,35 @@ pub async fn run(args: Vec<String>) {
     ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, &buy_knobs);
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, &growth_knobs);
+    // (#3g) the two levers that decide how hard a HIGH-CAGR name is rewarded: the slope and the ceiling.
+    // Swept as curves because the ablation only prices removal and `tune` only reports a confounded
+    // argmax — neither distinguishes a plateau (room to push) from a peak (already at the ceiling).
+    weight_curve(
+        "growth_trend_weight",
+        &samples,
+        tuning,
+        |t, v| t.growth_trend_weight = v,
+        tuning.growth_trend_weight,
+        // 0 = the ablation's tilt-off control. 0.55 re-tests the recorded "0.35->0.55 cut edge +1.9->-0.6"
+        // on THIS sample: that verdict comes from a ±2-edge scale, i.e. a far smaller/older run than the
+        // one that now reads ±180. 1.0 is the ceiling `tune` already searches to.
+        &[0.0, 0.15, 0.25, 0.35, 0.45, 0.55, 0.7, 1.0],
+        "SLOPE: points of growth score per %/yr of capped long-leg CAGR.",
+    );
+    weight_curve(
+        "long_trend_cap",
+        &samples,
+        tuning,
+        |t, v| t.long_trend_cap = v,
+        tuning.long_trend_cap,
+        // 50 reproduces the recorded 30->50 pair (edge +103.2 -> +87.7) so the old point-test is visible
+        // as part of a curve rather than as an isolated claim.
+        &[15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0],
+        "CEILING (%/yr) on that CAGR — the binding constraint on the FASTEST compounders.\n  \
+         CAVEAT: this knob is SHARED with the on-sale lane (picks.rs, `long_trend_weight × min(long_cagr, cap)`),\n  \
+         so these rows price HALF its effect. Fine for measurement; a blocker for shipping a move without\n  \
+         curving the on-sale lane too.",
+    );
     gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
     gate_sweep(&samples, tuning, &gate_loosen); // (#10) which specific gate is too tight?
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
@@ -2094,6 +2123,66 @@ fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob]) {
             None => println!("  {name:<26} admits 0 new names (gate not binding on this sample)"),
         }
     }
+}
+
+/// (#3g) The growth lane's edge/rho as ONE knob is swept across a ladder. The ablation above answers
+/// "does removing this term hurt?"; `tune` answers "what is the argmax?" — across 8 dims perturbed at
+/// once, so each dim's own contribution is confounded. NEITHER can tell a sharp peak from a plateau,
+/// and that is the entire question when asking whether a tilt can carry more authority: a plateau says
+/// the shipped value is leaving edge on the table, a peak says it IS the ceiling.
+///
+/// Same rows, same rule as the ablation: `scored` is fixed at the SHIPPED tuning and each ladder point
+/// re-scores THOSE rows (`.unwrap_or(*v)` for anything the mutated config would gate out), so rho stays
+/// comparable point-to-point. Sound here because neither swept knob touches a gate — `growth_trend_weight`
+/// is a pure multiplier, and the `growth_min_cagr` floor reads the UNCAPPED `long_cagr`, so moving
+/// `long_trend_cap` cannot change who is admitted either.
+///
+/// Two exact tie-backs, printed as a self-check: the SHIPPED row must reproduce the lane's own headline
+/// rho/edge, and (weight curve only) the 0.0 row must reproduce the ablation's `growth_trend_weight`
+/// line. If either disagrees this curve is measuring something else. Ships nothing — pure measurement.
+fn weight_curve(
+    knob_name: &str,
+    samples: &[Sample],
+    tuning: &BuyHeuristic,
+    set: fn(&mut BuyHeuristic, f64),
+    shipped: f64,
+    ladder: &[f64],
+    note: &str,
+) {
+    let scored: Vec<(&Sample, f64)> =
+        samples.iter().filter_map(|s| growth_score(&s.quote, tuning).map(|v| (s, v))).collect();
+    if scored.len() < 8 {
+        println!("\n── {knob_name} CURVE — only {} scored windows, too few to sweep. ──", scored.len());
+        return;
+    }
+    let rels: Vec<f64> = scored.iter().map(|(s, _)| s.relative).collect();
+    let mid = scored.len() / 2;
+    let split_rho = |s: &[(&Sample, f64)]| {
+        core::spearman(&s.iter().map(|x| x.1).collect::<Vec<_>>(), &s.iter().map(|x| x.0.relative).collect::<Vec<_>>())
+            .map_or("n/a".to_string(), |v| format!("{v:+.2}"))
+    };
+    println!("\n── {knob_name} CURVE (growth lane, n={}) ──", scored.len());
+    println!("  {note}");
+    for &x in ladder {
+        let mut t = tuning.clone();
+        set(&mut t, x);
+        let re: Vec<(&Sample, f64)> =
+            scored.iter().map(|(s, v)| (*s, growth_score(&s.quote, &t).unwrap_or(*v))).collect();
+        let (top, bot) = edge_halves(&re);
+        let rho = core::spearman(&re.iter().map(|(_, v)| *v).collect::<Vec<_>>(), &rels)
+            .map_or("n/a".to_string(), |v| format!("{v:+.2}"));
+        let tag = if x == shipped { "  [SHIPPED]" } else if x == 0.0 { "  [term off]" } else { "" };
+        println!(
+            "  {x:<6.2} rho {rho}  edge {:+.1}  winsor {:+.1}  OOS {} | {}{tag}",
+            top - bot,
+            winsor_edge(&re),
+            split_rho(&re[..mid]),
+            split_rho(&re[mid..])
+        );
+    }
+    println!("  (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the");
+    println!("   ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.");
+    println!("   SELF-CHECK: the SHIPPED row must reproduce the lane's headline rho/edge above.)");
 }
 
 fn report_lane(
