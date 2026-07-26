@@ -2937,6 +2937,16 @@ mod tests {
         // The guard can only ever turn a Some into a None, so `scored` can only fall; a RISE here would
         // mean something other than this change moved. Signs remain meaningless (synthetic, tiny
         // universe); the drop is the fix removing fabricated inputs, not a quality claim.
-        assert_eq!(got, "n=88 scored=26 rho=-0.064 edge=-28.4 winsor=-28.4 terciles=+25.6/+67.1/+40.4");
+        // (#3j) moved a THIRD time on 2026-07-26: scored 26 -> 24. `backtest_quote` now fills `life_cagr`,
+        // so the `(#3i)` whole-life half of `growth_min_cagr` finally fires here — (#3i) had shipped
+        // claiming it never could, on the false premise that a `[..=as_of]` slice has no whole-life
+        // history (it starts at the series' FIRST bar; the field was simply never filled). Two samples
+        // clear their 20/8/5Y rung and fail the same floor since listing, exactly the shape the bar
+        // exists to catch. `scored` falling by 2 is the check that this and only this moved: the bar can
+        // only turn a Some into a None, so a RISE would mean something else did. edge -28.4 -> -26.2
+        // follows from dropping those two rows, not from admitting anything new — and on 88 synthetic
+        // series it carries no more meaning than the sign does. `use_life_cagr` is OFF here (default), so
+        // this pin still measures the LEG-ranked lane; the knob is priced in the (#3j) universe runs.
+        assert_eq!(got, "n=88 scored=24 rho=-0.029 edge=-26.2 winsor=-26.2 terciles=+31.2/+68.8/+54.2");
     }
 }

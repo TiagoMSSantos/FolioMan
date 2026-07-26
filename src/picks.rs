@@ -49,16 +49,30 @@ fn long_leg_fixed(quote: &Quote, fixed_years: u32) -> Option<(f64, f64)> {
     }
 }
 
-/// (#14) The long-leg CAGR the growth lane RANKS on: endpoint CAGR of `long_leg_fixed`'s rung, or the
-/// endpoint-robust log-slope (`trend_cagr`, precomputed at fetch/backtest build) when `use_trend_cagr`
-/// is on. Both knobs default off -> identical to the plain two-point CAGR, so the validated edge is
-/// untouched until a flip is validated.
+/// (#14) The long-leg CAGR the growth lane RANKS on. Three sources, one knob each, both default OFF ->
+/// identical to the plain two-point CAGR, so the validated edge is untouched until a flip is measured:
+///   - default          endpoint CAGR of `long_leg_fixed`'s rung (20/8/5Y, or the pinned window)
+///   - `use_trend_cagr` (#14) endpoint-robust least-squares log-slope, precomputed at fetch/backtest build
+///   - `use_life_cagr`  (#3j) whole-life CAGR since listing, ditto — no age cliff, no common window
+///
+/// THE chokepoint, and the reason it is worth one: `score_parts` calls this ONCE and hands the result to
+/// every reader, so a knob flipped here moves all seven together — the `growth_min_cagr` gate, `trend`,
+/// `accel` (1Y minus this), `sharpe` and `calmar` (this over vol / maxdd), `trend_health`, and the `LEG`
+/// column. Anything re-deriving the CAGR for itself silently keeps the old definition.
 ///
 /// Extracted rather than inlined a third time: the `leg` COLUMN has to print the score's own number,
 /// and a display that re-derives the score's arithmetic is exactly how the `cagr` column drifted into
-/// showing `life_cagr` (whole-life) while the rank ran on this (the 20/8/5 rung, capped).
+/// showing `life_cagr` (whole-life) while the rank ran on this (the 20/8/5 rung, capped). `peg` was the
+/// last such site and now routes here too.
 fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) -> f64 {
-    if tuning.use_trend_cagr {
+    if tuning.use_life_cagr {
+        // (#3j) whole-life, listing -> as_of: the `cagr` COLUMN's number, promoted from display to rank.
+        // Checked FIRST because it is the coarsest override — it discards the rung `long_leg_fixed` just
+        // picked, so a config setting both this and `use_trend_cagr` gets the life number, not a silent mix.
+        // Fall back to the leg, never to 0: a name too young for `life_cagr` (<6mo) still has a real
+        // 5Y rung, and a 0 here would read as "flat compounder" and fail the floor for the wrong reason.
+        quote.life_cagr.unwrap_or_else(|| core::cagr(cum, years))
+    } else if tuning.use_trend_cagr {
         quote.trend_cagr.unwrap_or_else(|| core::cagr(cum, years))
     } else {
         core::cagr(cum, years)
@@ -663,12 +677,15 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // last 20 years and the first 26 never touched a gate. The gold-miner ETFs are the live case: they
     // crashed 2011-15 and ran since, so IAUP.L reads +3%/yr since listing against a +16%/yr 8Y leg.
     //
-    // LIVE-ONLY BY CONSTRUCTION, and that is the point of `is_some_and`: `backtest_quote` never fills
-    // life_cagr (core.rs:150 — a point-in-time slice has no whole-life history), so in every backtest
-    // this leg cannot fire and the gate is bit-identical to the one the 12->14 receipt was measured on.
-    // Same edge-blind shape as the `life_cagr <= 0` value-trap dock below: it can only REJECT a name the
-    // live fetch can see, never admit one, so the live pool is a strict subset of the measured pool.
-    // Unmeasurable by construction -> no backtest number can ever confirm it; see (#3i).
+    // (#3j) CORRECTION to what (#3i) shipped here. That comment called this leg "LIVE-ONLY / unmeasurable
+    // by construction", on the reasoning that `backtest_quote` never fills life_cagr because "a point-in-
+    // time slice has no whole-life history". The premise was false: `backtest_quote` slices `[..=as_of]`
+    // from the FIRST bar of the full series, so the whole-life history was always present and merely
+    // unread. The field is now filled there (core.rs, same `core::life_cagr` as the live fetch), this leg
+    // fires in the backtest too, and the gate is MEASURED rather than asserted — see the (#3j) runs.
+    //
+    // `is_some_and` still matters, for the honest reason: a name under 6 months old has no life CAGR, and
+    // absent history must not read as a failed bar. It can only REJECT a name, never admit one.
     if quote.life_cagr.is_some_and(|l| l < min_cagr) {
         return None; // strong recent leg, mediocre whole life -> not a proven compounder
     }
@@ -1498,11 +1515,23 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "pe" => quote.pe_ratio.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // PEG = trailing P/E ÷ long-term CAGR (%/yr). Needs both (P/E is FMP-key-only) AND positive growth.
         // <1 = cheap for its growth, >2 = pricey. Price-CAGR proxy for earnings growth — display-only.
+        //
+        // (#3j) the CAGR comes from `long_leg_fixed`/`long_cagr_from`, the same pair the score uses. This
+        // cell used to call `long_leg` + `core::cagr` by hand, so it silently ignored BOTH `fixed_cagr_years`
+        // and `use_trend_cagr` and would have ignored `use_life_cagr` too — the last display site still
+        // re-deriving the score's arithmetic, which is precisely how the `cagr` column drifted for months.
+        // UNCAPPED on purpose (no `capped_trend`, unlike the `leg` column): the cap exists to stop one fast
+        // compounder dominating a REWARD term, but clamping the denominator of a ratio would print a rich
+        // PEG for the fastest growers — the opposite of what the column means.
         "peg" if stock_only_na => "—".to_string(),
-        "peg" => match (quote.pe_ratio, long_leg(quote).map(|(c, y)| core::cagr(c, y))) {
-            (Some(pe), Some(g)) if g > 0.0 => format!("{:.2}", pe / g),
-            _ => "n/a".to_string(),
-        },
+        "peg" => {
+            let g = long_leg_fixed(quote, tuning.fixed_cagr_years)
+                .map(|(c, y)| long_cagr_from(quote, tuning, c, y));
+            match (quote.pe_ratio, g) {
+                (Some(pe), Some(g)) if g > 0.0 => format!("{:.2}", pe / g),
+                _ => "n/a".to_string(),
+            }
+        }
         "roe" if stock_only_na => "—".to_string(),
         // |ROE| > 100% is almost always a buyback-shrunk DENOMINATOR (AAPL "+152%"), not operating
         // quality -> n/m (not meaningful). The score side is unaffected: the quality term clamps to
@@ -2580,8 +2609,9 @@ mod tests {
     assert!(growth_score(&miner, &life).is_none()); // strong leg, mediocre whole life -> rejected
     miner.life_cagr = Some(20.0);
     assert!(growth_score(&miner, &life).is_some()); // both bars cleared
-    // THE safety assert: backtest_quote leaves life_cagr None, so this leg MUST stay inert there —
-    // that is the whole reason the validated 12->14 receipt survives the change.
+    // absent history must not read as a failed bar: a name too young for a life CAGR keeps its leg.
+    // (This assert was written as "backtest_quote leaves life_cagr None, so the leg is inert there" —
+    // (#3j) fills that field, so the inertness claim is gone; the fallback semantics it tests remain.)
     miner.life_cagr = None;
     assert!(growth_score(&miner, &life).is_some());
     // and the rejection has to be EXPLAINED, not silent: the gate-review footer names it `cagr-life`,
@@ -2590,6 +2620,31 @@ mod tests {
     let why = gate_failures(&miner, &life).unwrap();
     assert!(why.iter().any(|(g, _, _)| *g == "cagr-life"), "life-bar rejection must print a reason: {why:?}");
     assert!(!why.iter().any(|(g, _, _)| *g == "cagr"), "the LEG cleared — only the life bar should fail");
+
+    // (#3j) `use_life_cagr`: rank on the whole-life CAGR — the number the `cagr` COLUMN always printed —
+    // instead of the 20/8/5Y rung. GOOGL's real shape is the case that prompted it and is pinned here:
+    // 22 years old, so the ladder hands it the 20Y rung at +1924% = 16.2%/yr, while its life reads
+    // 23%/yr. A floor of 17 therefore rejects it for being OLD ENOUGH to earn the long rung — a 19y-old
+    // peer would be judged on its 8Y leg against the same number. That cliff is the whole complaint.
+    let mut goog = quote(2.0, &[("1Y", 20.0), ("5Y", 142.7), ("8Y", 372.9), ("20Y", 1924.0)]);
+    goog.life_cagr = Some(23.0);
+    let leg17 = BuyHeuristic { growth_min_cagr: 17.0, ..BuyHeuristic::default() };
+    let life17 = BuyHeuristic { use_life_cagr: true, ..leg17.clone() };
+    assert!((long_leg(&goog).map(|(c, y)| core::cagr(c, y)).unwrap() - 16.23).abs() < 0.05, "the 20Y rung is the fixture's point");
+    assert!(growth_score(&goog, &leg17).is_none(), "knob off: the 16.2%/yr leg fails a floor of 17");
+    assert!(growth_score(&goog, &life17).is_some(), "knob on: the 23%/yr whole life clears it");
+
+    // and it must reach the SCORE, not only the gate. All seven readers run off the one
+    // `long_cagr_from` call, so swapping 16.2 -> 23 has to move the number — an equal score would mean
+    // the knob is INERT, which is exactly the failure mode `backtest_quote` leaving life_cagr None used
+    // to produce (a flip that measures "no change" and looks safe).
+    let off = BuyHeuristic::default(); // default floor is 8.0 -> both bases clear, so this isolates the score
+    let on = BuyHeuristic { use_life_cagr: true, ..BuyHeuristic::default() };
+    assert_ne!(growth_score(&goog, &on), growth_score(&goog, &off), "use_life_cagr must change the score");
+    // no life CAGR -> the two are IDENTICAL. The fallback is the LEG, never a silent 0 (which would read
+    // as a flat compounder and fail the floor for a reason the name never earned).
+    goog.life_cagr = None;
+    assert_eq!(growth_score(&goog, &on), growth_score(&goog, &off), "no life_cagr must fall back to the leg");
     let liq_t = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
     let mut thin = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     thin.avg_turnover_eur = Some(1_000.0);
@@ -3539,6 +3594,18 @@ mod tests {
         // trend terms would be silently gutted while the table still printed plausible scores.
         let uncapped = BuyHeuristic { long_trend_cap: 0.0, ..BuyHeuristic::default() };
         assert_eq!(col_cell("leg", &hot, 0.0, None, "", &uncapped), "+38%");
+        // (#3j) `peg` divides by the SAME CAGR the rank scores on, so it follows `use_life_cagr`. It used
+        // to call `long_leg` + `core::cagr` by hand — the last display site re-deriving the score's
+        // arithmetic — so it silently ignored every window knob and would have kept printing the leg.
+        // Also proves it stays UNCAPPED: `long_trend_cap` is 30 in this default tuning against a 38%/yr
+        // leg, so a capped denominator would print 0.67 and make the fastest grower look pricier.
+        let mut peg = Quote::stub("P", "€1", "", "Peg");
+        peg.perf = legs(&[("5Y", 400.0)]);
+        peg.pe_ratio = Some(20.0);
+        peg.life_cagr = Some(10.0);
+        assert_eq!(cc("peg", &peg, 0.0, None, ""), "0.53"); // 20 / 37.97%/yr leg (not the capped 30 -> 0.67)
+        let on_life = BuyHeuristic { use_life_cagr: true, ..BuyHeuristic::default() };
+        assert_eq!(col_cell("peg", &peg, 0.0, None, "", &on_life), "2.00"); // 20 / 10%/yr whole life
         assert_eq!(cc("leg", &Quote::stub("N", "€1", "", "No legs"), 0.0, None, ""), "n/a");
         // S-8Y renders the caller's pinned score, crypto included (BTC-EUR has a real 8Y leg); "n/a"
         // only when the caller had nothing to score at all. `q` HAS an 8Y leg -> the pin applied -> bare.

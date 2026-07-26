@@ -139,7 +139,7 @@ pub struct Quote {
     pub worst_5y_pct: Option<f64>,     // (worst-5y) single worst rolling ~5y NOMINAL outcome (%), severity twin of roll5y_pos_pct's frequency. DISPLAY-ONLY footer; None = <5y of history — no claim
     pub roll10y_pos_pct: Option<f64>,  // (10y-consistency, r16) same walk at the DECADE horizon the book is actually held for. DISPLAY-ONLY footer; None = <10y of history — never a fake 100%
     pub worst_10y_pct: Option<f64>,    // (worst-10y, r16) single worst rolling ~10y NOMINAL outcome (%), severity twin at the decade horizon. DISPLAY-ONLY footer; None = <10y of history — no claim
-    pub year_returns: Vec<(i32, f64)>, // (r11) each COMPLETE calendar year's % return from the fetched daily window, ascending. DISPLAY-ONLY footer (regime check: losing whole years); empty = <2 usable years — no claim. NOT filled in backtest_quote (display-era, edge-blind by construction, like life_cagr)
+    pub year_returns: Vec<(i32, f64)>, // (r11) each COMPLETE calendar year's % return from the fetched daily window, ascending. DISPLAY-ONLY footer (regime check: losing whole years); empty = <2 usable years — no claim. NOT filled in backtest_quote (display-era, edge-blind by construction — unlike `life_cagr`, which (#3j) fills there)
     pub fund_factor: Option<f64>,      // (G) the ONE as-of fundamental factor folded into growth_score (e.g. revenue accel). Set in the backtest (from fund_factors) so the term is ablatable, and live only on the small/check-scale path; None -> neutral (universe screen & price-only backtest)
     // (G+) the WHOLE as-of fundamental struct, so `growth_fund_extra` can weigh several named terms
     // without a carrier field per factor. Set at the same three sites that fill `fund_factor`.
@@ -147,7 +147,7 @@ pub struct Quote {
     // factor, without rebuilding FundFactors — that machinery keeps working untouched.
     pub fund: Option<FundFactors>,
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
-    pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history; DISPLAY-ONLY (`cagr` column). Ranking/gates stay on the validated fixed-horizon ladder. None = <6mo history / stub / backtest
+    pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history, via `core::life_cagr`. NOT display-only since (#3i)/(#3j): the `cagr` column, the `growth_min_cagr` whole-life bar, and the growth RANK when `use_life_cagr` is on. Filled in the backtest too (same fn, `[..=as_of]` slice) -> train==serve. None = <6mo history / non-positive first close / stub
     pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). DISPLAY-ONLY (`trcagr` column), never scored; ≈ life_cagr for Acc funds/non-payers
     pub history_proxied: bool,         // (history_proxy) closes bridged from a configured older same-strategy twin — CAGR/YRS describe the STRATEGY, not this listing; rendered as `~` so the bridge is never invisible
     pub stats_8y: Option<Stats8>,      // (S-8Y) the >8y price stats re-measured on the last 8 years, for the 8Y-pinned diagnostic column ONLY — never read by the live score. None = no history older than 8y (its whole record IS the window, so the full-window stats already are the 8y ones) / stub / backtest
@@ -252,6 +252,31 @@ pub fn cagr(cumulative_pct: f64, years: f64) -> f64 {
     }
     let factor = (1.0 + cumulative_pct / 100.0).max(1e-9);
     (factor.powf(1.0 / years) - 1.0) * 100.0
+}
+
+/// Whole-life endpoint CAGR (%): first close -> last close, annualized over the span of `dates`.
+/// `None` under 6 months of history or on a non-positive first close — a two-point measurement off an
+/// IPO week annualizes to a silly number, and a zero/negative first bar has no growth factor at all.
+///
+/// ONE definition for BOTH callers. The live fetch fills this from the merged (history-proxied)
+/// series, `backtest_quote` from its `[..=as_of]` slice, so anything ranking on it means the same
+/// thing in train and serve. The formula was inlined at the fetch site alone while the backtest left
+/// the field `None`; a second copy is how those two drift.
+///
+/// CAVEAT worth knowing before reading a backtest number off this: on the DAILY path the slice starts
+/// at the fetch window (~10y), so "life" there means "over the fetched window", not since listing.
+/// Only the MAX-monthly path (`backtest ... 12`, i.e. `years >= 8`) reaches the real listing date.
+pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
+    let age = dates
+        .first()
+        .zip(dates.last())
+        .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25)?;
+    match (closes.first(), closes.last()) {
+        (Some(&first), Some(&last)) if first > 0.0 && age >= 0.5 => {
+            Some(((last / first).powf(1.0 / age) - 1.0) * 100.0)
+        }
+        _ => None,
+    }
 }
 
 /// % the latest close sits below the simple moving average of the last `n` sessions (~a long-term
@@ -1934,6 +1959,19 @@ pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: 
     quote.above_ma_pct = above_long_ma_pct(c, long_ma);
     quote.trend_r2 = trend_r2(c);
     quote.trend_cagr = trend_cagr(c, cadence); // (#14) same fit, annualized by the run's cadence -> train==serve
+    // (#3j) whole-life endpoint CAGR over the SAME `[..=as_of]` slice, from the SAME `core::life_cagr`
+    // the live fetch calls -> train==serve, exactly like `trend_cagr` above.
+    //
+    // This field used to be left `None` here, and `(#3i)` mistook that for a fact of nature — it
+    // recorded the whole-life bar as "unmeasurable by construction, a point-in-time slice has no
+    // whole-life history". WRONG: the slice starts at the FIRST bar of the full series, so the history
+    // is right there and was simply never read. Filling it is what makes both the `(#3i)` gate and
+    // `use_life_cagr` measurable at all — without it `long_cagr_from` falls back to the leg and the
+    // knob reads INERT, reporting "no change" and looking like a safe flip.
+    //
+    // Read `core::life_cagr`'s caveat before trusting a number off this on the DAILY path: "life"
+    // there is the ~10y fetch window. Horizon questions need `backtest ... 12` (MAX-monthly).
+    quote.life_cagr = life_cagr(d, c);
     quote.max_drawdown_pct = max_drawdown_pct(c);
     // closes-derived risk stats for the standalone PRICE-RISK probes (backtest report only — no
     // score path reads roll*/worst*). The hit-rate/worst windows scale with the run's cadence
@@ -2970,6 +3008,17 @@ mod tests {
     let mq = backtest_quote("X", &mdates, &mcloses, mdates.len() - 1, 12);
     assert!(mq.volatility_pct.is_some());
     assert!(mq.range_pct > 90.0); // rising every bar -> sits at its range high
+    // (#3j) whole-life CAGR over the SAME `[..=as_of]` slice. THE anti-inert assert: while this stayed
+    // None, `use_life_cagr` fell back to the leg in every backtest and any measurement of it would have
+    // reported "no change" — a broken knob that looks like a safe flip. 1%/bar over 59 30-day bars
+    // (~4.85y) compounds to ~12.9%/yr.
+    assert!((mq.life_cagr.expect("backtest_quote must fill life_cagr") - 12.88).abs() < 0.1);
+    // and the guards that keep an IPO week from annualizing into nonsense
+    assert!(life_cagr(&mdates[..3], &mcloses[..3]).is_none(), "under 6 months of history -> None");
+    let mut zero_start = mcloses.clone();
+    zero_start[0] = 0.0;
+    assert!(life_cagr(&mdates, &zero_start).is_none(), "non-positive first close has no growth factor");
+    assert!(life_cagr(&[], &[]).is_none());
     // fund_as_of point-in-time join: latest row FILED on/before the cutoff, NEVER a future filing
     // (the look-ahead guard). Rows out of order on purpose to prove order-independence.
     let frows = vec![

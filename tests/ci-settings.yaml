@@ -135,8 +135,19 @@ buy_heuristic:
   use_trend_cagr: false          # (E,#14) REVERTED 2026-06-28: slope CAGR edge -100337434.4 vs endpoint
                                  #   -100337336.3 (WORSE), OOS halves identical. Crypto's 1e9-scale peer-rel
                                  #   swamps this sample → knob inert + edge straddles 0 (noise). Keep endpoint.
-  # fixed_cagr_years left at default 0: when use_trend_cagr is on it uses the whole-series slope (overrides
-  # a pinned window), so #15 is redundant here. #16: sweep long_trend_cap (above) per run_me.sh, no flag.
+  use_life_cagr: false           # (#3j) REVERTED 2026-07-26: ranking on the WHOLE-LIFE CAGR (the `cagr`
+                                 #   column's number) instead of the 20/8/5Y leg read edge +125.6 vs +167.6,
+                                 #   rho +0.17 vs +0.20, BOTH OOS halves down. Its ablation is the damning
+                                 #   part: zeroing growth_trend_weight GAINS +3.8 under it (vs -37.6 under
+                                 #   the leg) — the term stops carrying information. "Life" is an unbounded
+                                 #   window (5y for one row here, 46y for another), so it mostly encodes
+                                 #   listing age. Keep the leg. Full receipt: (#3j) below.
+  # fixed_cagr_years still 0, but the reason has CHANGED and the old one is dead. It said "#15 is redundant
+  # because use_trend_cagr overrides a pinned window with the whole-series slope" — use_trend_cagr was then
+  # REVERTED two lines up, so #15 sat untested on a stale rationale. (#3j) finally measured it: pinning every
+  # name to its 10Y window reads edge +160.1 vs the leg's +167.6, i.e. -7.5, INSIDE the bootstrap band and
+  # with a much steadier era table (worst era +111.2 vs +40.5). Best remaining candidate; golden rule still
+  # reverts a drop. #16: sweep long_trend_cap (above) per run_me.sh, no flag.
 
   # (B) Value-trap dock: a name bleeding for YEARS (1Y AND 5Y both deep red) is not a dip — dock it.
   sustained_decline_pct: -40.0   # [FOIL] both 1Y and 5Y must be <= this to count as a multi-year bleed
@@ -616,17 +627,25 @@ buy_heuristic:
   #   unchanged: `*` PINNED rows bypass every gate via the f64::MIN_POSITIVE sentinel in `growth_scorer`,
   #   and crypto uses growth_min_cagr_crypto: 0.0.)
   #   SHIPPED: growth_min_cagr now bars BOTH — the leg AND life_cagr, same number, one field.
-  #   THIS IS UNMEASURABLE BY CONSTRUCTION, and that is a design property, not a gap. life_cagr is None in
-  #   every backtest (core.rs:150; backtest_quote builds from a point-in-time SLICE, which has no
-  #   whole-life history), so the new leg CANNOT FIRE there. Consequences, all deliberate:
-  #     - the 12->14 receipt above still measures the long leg alone and stays valid;
-  #     - `is_some_and` means the leg only ever REJECTS a name the live fetch can see, so the live pool is
-  #       a strict SUBSET of the measured pool — divergence in the safe direction, never the reverse;
-  #     - NO BACKTEST NUMBER CAN EVER CONFIRM THIS. Do not "validate" it with one, and do not read an
-  #       unchanged edge as evidence for it — unchanged is the REQUIREMENT, proving inertness, not support.
-  #   The alternative (swap the floor onto life_cagr instead of adding to it) was rejected for exactly
-  #   this: the gate would go inert in every backtest and the 12->14 receipt would become dead text.
-  #   MEASURED where it is visible — the live screen, same day, same universe. 5 rows cut, tables still
+  #
+  #   *** RETRACTED THE SAME DAY BY (#3j). READ THIS BLOCK AS AN ERROR, NOT AS GUIDANCE. ***
+  #   What it said: "THIS IS UNMEASURABLE BY CONSTRUCTION, and that is a design property, not a gap.
+  #   life_cagr is None in every backtest (backtest_quote builds from a point-in-time SLICE, which has no
+  #   whole-life history), so the new leg CANNOT FIRE there... NO BACKTEST NUMBER CAN EVER CONFIRM THIS."
+  #   The premise is FALSE. `backtest_quote` slices `[..=as_of]` — from the FIRST BAR OF THE FULL SERIES,
+  #   not from some later window — so the whole-life history was present at every cutoff and the field was
+  #   simply never filled. `trend_cagr` had been derived from that identical slice for two receipts.
+  #   "Unmeasurable by construction" was a property of ONE unwritten assignment, dressed up as a law.
+  #   (#3j) fills it, and the gate is now measured like everything else. Two lessons kept on purpose:
+  #     - an inert knob and a sound knob BOTH report "no change"; never accept the second reading without
+  #       proving the first is false. Here the proof is a test asserting backtest_quote fills the field.
+  #     - "X is unmeasurable" is a claim about the code, so it needs the same evidence as any other. This
+  #       one was asserted from a field doc rather than from the function, and the function disagreed.
+  #   What SURVIVES from the block: `is_some_and` means the leg only ever REJECTS, never admits, so the
+  #   live pool stays a strict subset of the leg-only pool — divergence in the safe direction. And the
+  #   12->14 receipt above does measure the long leg alone, because it predates the fill.
+  #   MEASURED where it was visible AT THE TIME — the live screen, same day, same universe. 5 rows cut,
+  #   tables still
   #   full at 20/20/2 (backfilled from below the cut: SEMI.AS, XUTC.L, FLXK.L):
   #     FSLR +10% (was stock #4) | IAUP.L +3% | ETLX.DE +7% | ITWN.MI +11% | GDX.L +13.4%
   #   Four of the five are the GOLD-MINER pattern the bar was built for — crashed 2011-15, ran since, so a
@@ -639,6 +658,53 @@ buy_heuristic:
   #   "mediocre" from "negative" is the confusion this receipt exists to end.
   #   NOTE: life_cagr comes from the MERGED series (fetch.rs:510), so a `~` history_proxy row is barred on
   #   its TWIN's whole life, not its own. Correct for the strategy thesis, surprising if unstated.
+  # (#3j) "MAKE growth_min_cagr THRESHOLD THE CAGR INSTEAD OF THE LEG. CAN THE HEURISTIC USE CAGR TOO?
+  #   WHY WOULD WE WANT LEG AT ALL?" — asked 2026-07-26 after `growth_min_cagr: 17` dropped Alphabet,
+  #   whose `cagr` column reads +23%. DIAGNOSIS FIRST: GOOGL is 22y old, so the 20/8/5 ladder hands it the
+  #   20Y rung — +1924% = 16.23%/yr — while its 8Y (21.4%/yr) and 5Y (19.4%/yr) legs BOTH clear 17. The two
+  #   excluded years are 2004-06, +370% on their own. It was cut for being OLD ENOUGH to earn the long
+  #   rung: a 19y-old peer is judged on 8 years against the same floor. The age cliff is real and it is the
+  #   honest half of the complaint.
+  #   ANSWER, MEASURED: keep the leg. Both alternatives lose. Same code, same day, same universe,
+  #   `backtest universe fund 12`, the operator's live config (growth_min_cagr 16, tax_keep_eu 0.777):
+  #
+  #     run                        scored   rho    edge     winsor   OOS early|late
+  #     A  leg (SHIPPED)              860  +0.20  +167.6   +139.5   +0.15 | +0.18
+  #     B  use_life_cagr: true       1290  +0.17  +125.6   +108.7   +0.12 | +0.12    edge -42.0
+  #     C  fixed_cagr_years: 10       830  +0.19  +160.1   +133.5   +0.12 | +0.19    edge  -7.5
+  #
+  #   B fails on every metric and on BOTH OOS halves. Its ABLATION says why, and it is worse than the
+  #   headline: zeroing growth_trend_weight costs -37.6 edge under A (load-bearing) but GAINS +3.8 under B.
+  #   Ranking on whole-life CAGR does not weaken that term, it EMPTIES it — the score does marginally better
+  #   ignoring the number altogether. The mechanism is visible in the pool: 860 -> 1290 windows admitted,
+  #   because a name's whole life carries its early explosive years, so nearly everything clears a 16%/yr
+  #   floor. Whole-life CAGR largely encodes HOW LONG AGO A NAME LISTED, not how well it compounds now.
+  #   THAT is the answer to "why LEG at all": the ladder BOUNDS THE WINDOW. Life does not bound it at all —
+  #   "life" is 5 years for one row of this table and 46 for another, and they are ranked head-to-head.
+  #   C — the rival fix, pinning every name to the SAME 10Y window — loses too, by -7.5, and that was NOT
+  #   the predicted result (it was expected to win). The drop sits inside A's bootstrap band
+  #   [+118.6 … +228.8], so it is noise-level rather than a refutation, and C's ERA table is markedly
+  #   steadier (194.0/139.7/111.2/122.4 vs A's 148.1/205.3/40.5/74.6 — worst era +111.2 vs +40.5) with
+  #   OOS-late +0.19 > A's +0.18. Recorded as the strongest remaining candidate, NOT shipped: the golden
+  #   rule reverts on a drop, and "steadier across eras" is a DIFFERENT claim from "more edge" — it needs
+  #   its own measurement, not a favourable re-reading of this one.
+  #   BOTH KNOBS STAY OFF. `use_life_cagr` is kept in code, inert and documented, so this is not re-proposed.
+  #   The age cliff therefore SURVIVES, deliberately, with its price now known: removing it costs edge.
+  #
+  #   SHIPPED ANYWAY, because none of it is about the ranking basis:
+  #     - `core::life_cagr` — ONE definition, called by the live fetch AND by `backtest_quote`. The formula
+  #       had been inlined at the fetch site alone while the backtest left the field None.
+  #     - `peg` now divides by the score's OWN CAGR (`long_leg_fixed` + `long_cagr_from`). It had been
+  #       calling `long_leg` + `core::cagr` by hand, so it silently ignored fixed_cagr_years AND
+  #       use_trend_cagr — the last display site re-deriving the score's arithmetic, which is the exact
+  #       defect the `LEG` column was added to end.
+  #     - the (#3i) retraction above.
+  #   CONSEQUENCE, stated because it is a real behaviour change: filling life_cagr turns the (#3i) whole-life
+  #   bar ON inside the backtest, where it had never run. `walk_forward_edge_pin` moved (scored 26 -> 24,
+  #   the only direction that bar can move it) and run A's +167.6 is measured WITH it live. What is STILL
+  #   not isolated is that bar's own cost: no knob separates the two legs of one `growth_min_cagr` field,
+  #   so pricing it needs one. Named here rather than left implicit — (#3i) shipped a gate that called
+  #   itself unmeasurable, and half-measuring it now would be the same mistake in a quieter voice.
   growth_fund_cap: 300.0     # (#3) clamp in the factor's OWN pts before weighting. 300 <=> PEG >= 0.33 stays
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are

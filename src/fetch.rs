@@ -510,17 +510,14 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             None => (chart.dates.clone(), chart.closes.clone(), chart.divs.clone()),
         };
 
-    // Whole-life age + endpoint CAGR from the SAME merged series (display-only `yrs`/`cagr` columns;
-    // ranking/gates stay on the fixed-horizon ladder the backtest validated). Guard: >=6mo of history
-    // and a positive first close, else an IPO week or a bad first bar prints a silly annualized number.
+    // Whole-life age + endpoint CAGR from the SAME merged series. `age_years` is display-only (`yrs`);
+    // `life_cagr` feeds the `cagr` column, the `growth_min_cagr` whole-life bar, and — when
+    // `use_life_cagr` is on — the growth rank itself, so it is no longer display-only and must be
+    // computed the SAME way the backtest computes it: `core::life_cagr` is that shared definition,
+    // carrying the >=6mo / positive-first-close guards this site used to spell out inline.
     let age_years = long_dates.first().zip(long_dates.last())
         .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25);
-    let life_cagr = match (long_closes.first(), long_closes.last(), age_years) {
-        (Some(&first), Some(&last), Some(age)) if first > 0.0 && age >= 0.5 => {
-            Some(((last / first).powf(1.0 / age) - 1.0) * 100.0)
-        }
-        _ => None,
-    };
+    let life_cagr = core::life_cagr(&long_dates, &long_closes);
     // (TR-CAGR) same endpoints + the whole-life dividend sum: closes are price-only, so a payer's CAGR
     // hides the cash it returned. LOWER BOUND — the payout is added, not reinvested (true total return
     // with reinvestment compounds higher). Display-only, same guards as life_cagr; ≈ CAGR for Acc funds.
