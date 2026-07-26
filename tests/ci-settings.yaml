@@ -119,8 +119,9 @@ buy_heuristic:
   # (A) Long-trend reward = the proven-compounder signal for a decades hold, now on the long leg's
   # CAGR (Compound Annual Growth Rate, %/yr — annualized so a 10Y and a 20Y leg compare fairly).
   long_trend_weight: 0.5         # [FOIL] on-sale reward per %/yr of long-leg CAGR (×cap below = max bonus, ~15)
-  long_trend_cap: 30.0           # LIVE+FOIL (SHARED): cap the CAGR fed in (%/yr) for BOTH lanes — a +46%/yr coin doesn't dwarf a +14%/yr one
-                                 #   #16 sweep 2026-06-28: 20/30/40/50/1000 all edge ≈ -100337360 (flat) → cap inert on that run; 2026-07-02 re-test 30→50 on `backtest 12 universe` DROPPED growth edge +103.2→+87.7 → 30 is protective (parabolic names mean-revert), kept 30
+  long_trend_cap: 0.0            # LIVE+FOIL (SHARED): 0 = OFF. No ceiling on the CAGR fed into either lane's trend reward — the fastest compounder is now rewarded in full, linearly, however fast it ran. See (#3h): shipped BY DIRECTION, against the curve
+                                 #   history: #16 sweep 2026-06-28: 20/30/40/50/1000 all edge ≈ -100337360 (flat) → cap inert on that run; 2026-07-02 re-test 30→50 on `backtest 12 universe` DROPPED growth edge +103.2→+87.7 → 30 read protective (parabolic names mean-revert), kept 30; (#3g) 2026-07-26 full curve confirmed the ceiling wanted to go DOWN (25 +191.1) not up; (#3h) same day removed it anyway on request
+                                 #   RESTORE: put any positive number back here (30 = the long-time value). One line, no code change — that is why the knob still exists rather than the clamp being deleted
   health_zero_cagr: -10.0        # [FOIL] long-leg CAGR (%/yr) where on-sale trend_health hits 0; health=1 at flat/rising
 
   # --- (B) total-return inputs + (E) endpoint-robust CAGR + (#8) geomean shape — EDGE-AFFECTING, validate before trusting ---
@@ -254,7 +255,7 @@ buy_heuristic:
                                  #   12 (rho +0.15 sym) but the 12y horizon — what the 20y goal actually targets — peaks at 14.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
-  growth_trend_weight: 0.35      # SCORE: reward per %/yr CAGR (capped at long_trend_cap) — trimmed: raw long-CAGR mildly hurts growth selection (ablation Δ+); weight shifted to acceleration. Raising 0.35->0.55 cut edge +1.9->-0.6 (ablation-Δ predicts removal, not weight scaling)
+  growth_trend_weight: 0.35      # SCORE: reward per %/yr CAGR (uncapped since (#3h) set long_trend_cap to 0). CURVED at 12y (#3g): 0.15..0.45 is a flat plateau (+184.6/+185.9/+181.3/+183.3) whose whole spread sits inside the bootstrap band, and it cliffs above (0.55 +153.8, 1.00 +125.1). 0.35 is already in the plateau — no honest room to raise. The old note here ("raw long-CAGR mildly HURTS, ablation Δ+") is REFUTED: zeroing the term costs -61.4 edge, it is load-bearing
   growth_accel_weight: 0.5       # SCORE: reward per pt the last year outpaced the long CAGR. accel INVERTS with horizon —
                                  #   the 5y proxy wanted it trimmed (mean-reverts: removing it +41.7 edge), but the 12y MAX-monthly
                                  #   horizon (the 20y-hold target) makes it a STRONG helper: removing it costs -55.5..-65.9 edge.
@@ -569,8 +570,9 @@ buy_heuristic:
   #   The cap says the same thing harder: it wants to come DOWN, not up. Monotone decline above 25, and
   #   the +9.8 hump at 25 is both inside the band and only half-measured (the cap is SHARED with the
   #   on-sale lane), so it is recorded, not shipped. Both levers agree — the fastest compounders mean
-  #   revert, and the ceiling is protective. NOTHING SHIPPED: 0.35 and 30.0 both unmoved, this pass
-  #   changes a column and two rationales only.
+  #   revert, and the ceiling is protective. NOTHING SHIPPED HERE: 0.35 and 30.0 both unmoved, this pass
+  #   changed a column and two rationales only. SUPERSEDED IN PART by (#3h) below, which removed the cap
+  #   anyway on direction — including this receipt's "half-measured, so recorded not shipped" caveat.
   #   NOT RE-RUN, and worth knowing: the default `backtest universe` (5y holdout, 10y daily) is USELESS
   #   for this question — its 238 growth windows all land in a ~3-week slice of July 2021 (10y back plus
   #   5y forward leaves only that sliver), so its era table repeats one date and its OOS split splits

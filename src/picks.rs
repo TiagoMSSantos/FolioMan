@@ -65,6 +65,25 @@ fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) ->
     }
 }
 
+/// (#3h) The long-leg CAGR as a trend reward takes it: clamped at `long_trend_cap`, unless the cap is
+/// OFF. `0` = off, the same convention `growth_maxdd_cap` / `growth_max_above_ma` / `fixed_cagr_years`
+/// already use.
+///
+/// The zero-check is REQUIRED, not cosmetic. `long_cagr.min(0.0)` is `0.0` for every positive CAGR, so
+/// a config shipping 0 without this guard would silently zero BOTH trend terms rather than uncap them —
+/// a lane quietly losing its main signal and still printing plausible scores.
+///
+/// One helper for all three readers (growth score, on-sale foil, `LEG` column) so the printed cell
+/// cannot drift from the arithmetic it claims to show. That drift is what the `LEG` column was added
+/// to end; re-implementing the clamp per site is how it would come back.
+fn capped_trend(long_cagr: f64, tuning: &BuyHeuristic) -> f64 {
+    if tuning.long_trend_cap > 0.0 {
+        long_cagr.min(tuning.long_trend_cap)
+    } else {
+        long_cagr
+    }
+}
+
 /// (S-8Y) The same quote with every price stat whose window exceeds 8 years re-measured on its last 8
 /// (`core::Stats8`, precomputed at fetch — the closes are gone by the time anything here runs).
 /// `long_leg_fixed` only pins the CAGR leg; without this the 8Y-pinned column mixed an 8-year CAGR with
@@ -443,7 +462,8 @@ fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: 
 /// - **momentum** — weekly bounce/knife multiplier (`momentum_bounce`/`knife`); 1.0 = off (default:
 ///   weekly timing is noise at a decades horizon).
 /// - **long_reward** — (A) reward for the long leg's CAGR (annualized, comparable across spans;
-///   `long_trend_weight`, `long_trend_cap`), scaled by **discount_frac** = discount/`discount_cap`
+///   `long_trend_weight`, and `long_trend_cap` when that cap is on — 0 = off, uncapped, as shipped),
+///   scaled by **discount_frac** = discount/`discount_cap`
 ///   so a proven compounder only earns it when actually pulled back — at its high the reward → 0.
 /// - **cheap_reward** — (C) reward for sitting below the ~200wk SMA (`cheap_weight`, `cheap_cap`).
 /// - **dividend_reward** — (D) reward for trailing yield (`dividend_weight`, `dividend_cap`). BACKTEST-BLIND:
@@ -515,7 +535,7 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     // a proven compounder is only a BUY when it's actually pulled back. At its all-time high the
     // discount is ~0, so the reward fades to ~0 and an at-the-high rocket stops ranking as "on sale".
     let discount_frac = (discount / tuning.discount_cap).clamp(0.0, 1.0); // 0 = at its high, 1 = deeply discounted
-    let long_reward = tuning.long_trend_weight * long_cagr.min(tuning.long_trend_cap) * discount_frac; // (A)
+    let long_reward = tuning.long_trend_weight * capped_trend(long_cagr, tuning) * discount_frac; // (A) cap 0 = uncapped
     let cheap_reward = tuning.cheap_weight * quote.below_ma_pct.min(tuning.cheap_cap); // (C)
     let dividend_reward = dividend_reward(quote, tuning); // (D) net of PT tax — see the fn
 
@@ -541,7 +561,7 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
 struct ScoreParts {
     long_cagr: f64,    // raw long-leg CAGR (%/yr) before the trend cap
     return_1y: f64,    // raw 1Y return (%) — accel input
-    trend: f64,        // min(long_cagr, long_trend_cap)
+    trend: f64,        // capped_trend(long_cagr) — clamped at long_trend_cap, or raw when it is 0 (off)
     accel: f64,        // clamp(return_1y − long_cagr, 0, growth_accel_cap)
     trend_term: f64,   // growth_trend_weight × trend
     accel_term: f64,   // growth_accel_weight × accel
@@ -572,7 +592,7 @@ struct ScoreParts {
 /// that set: a name AT/NEAR its own range high, with a strong proven long-term CAGR, still climbing.
 ///
 /// ```text
-///   base  = growth_trend_weight × min(long_cagr, long_trend_cap)
+///   base  = growth_trend_weight × capped_trend(long_cagr)   [cap 0 = uncapped, shipped]
 ///         + growth_accel_weight × clamp(1Y − long_cagr, 0, growth_accel_cap)   // recent outpaces long => accelerating
 ///         + quality_reward                                                     // (F) ROE profitability tilt (BACKTEST-BLIND, small)
 ///   score = base × proximity × value(E) × geomean(trust, overext)   // (#4) geomean of the penalties
@@ -715,7 +735,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     }
 
     // ---- SCORE ----
-    let trend = long_cagr.min(tuning.long_trend_cap); // proven compounding, capped like the on-sale lane
+    let trend = capped_trend(long_cagr, tuning); // proven compounding; long_trend_cap 0 = uncapped (shipped)
     let accel = (return_1y - long_cagr).clamp(0.0, tuning.growth_accel_cap); // last year outpacing the long run = building
     let proximity = quote.range_pct / 100.0; // 0.7..1.0 — closer to the high = stronger confirmation
     let risk_reward = risk_bonus(quote, long_cagr, tuning.sharpe_weight, tuning.calmar_weight, tuning); // (B/C) growth lane's Sharpe weight
@@ -1064,7 +1084,11 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
         s.push_str("  growth_score = base × proximity × value × geomean(trust, overext_damp) + liq_bonus\n\n");
     }
     s.push_str("  base = trend + accel + risk + quality + dividend + fund + mom121 + smooth\n");
-    s.push_str(&format!("    trend    = growth_trend_weight × min(CAGR, cap)        = {:.2} × {:.2} = {:.2}\n",
+    // The formula string tracks the cap knob: printing `min(CAGR, cap)` while `long_trend_cap` is 0
+    // (off, shipped) would advertise a clamp that is not running — the same class of lie the `cagr`
+    // column told for months. Padded to keep the `=` column aligned with the rows below.
+    s.push_str(&format!("    trend    = growth_trend_weight × {:<21} = {:.2} × {:.2} = {:.2}\n",
+        if tuning.long_trend_cap > 0.0 { "min(CAGR, cap)" } else { "CAGR (cap off)" },
         tuning.growth_trend_weight, p.trend, p.trend_term));
     s.push_str(&format!("    accel    = growth_accel_weight × clamp(1Y−CAGR,0,cap)  = {:.2} × {:.2} = {:.2}   (1Y {:.1} − CAGR {:.1})\n",
         tuning.growth_accel_weight, p.accel, p.accel_term, p.return_1y, p.long_cagr));
@@ -1416,12 +1440,12 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         "cagr" => quote.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         // proven long-term CAGR (%/yr) from the ranked leg — the annualized trend the ranking actually
         // rewards, shown so a reader sees "+14%/yr" and not just a +1344% cumulative blob. This is
-        // EXACTLY `min(long_cagr, long_trend_cap)`, the value `trend_term` multiplies (`--explain`:
-        // "trend = growth_trend_weight × min(CAGR, cap) = 0.35 × 14.28 = 5.00").
-        // Capped on purpose: a cell reading +30% where CAGR reads +45% is the cap binding, which is the
-        // whole answer to "why doesn't a faster compounder score higher" — visible per row, not buried.
+        // EXACTLY what `trend_term` multiplies (`--explain`: "trend = growth_trend_weight × CAGR").
+        // Goes through `capped_trend`, so it tracks `long_trend_cap` whatever it is set to — 0 (shipped)
+        // prints the raw leg CAGR, a positive cap prints the clamped one. The cell must never re-derive
+        // this: matching the arithmetic is the only reason the column exists.
         "leg" => long_leg_fixed(quote, tuning.fixed_cagr_years).map_or("n/a".to_string(), |(c, y)| {
-            format!("{:+.0}%", long_cagr_from(quote, tuning, c, y).min(tuning.long_trend_cap))
+            format!("{:+.0}%", capped_trend(long_cagr_from(quote, tuning, c, y), tuning))
         }),
         "trcagr" => quote.tr_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         // real listing age in years. NOT the span of the ranked leg — though it determines it, since

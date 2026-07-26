@@ -485,13 +485,14 @@ pub async fn run(args: Vec<String>) {
         tuning,
         |t, v| t.long_trend_cap = v,
         tuning.long_trend_cap,
-        // 50 reproduces the recorded 30->50 pair (edge +103.2 -> +87.7) so the old point-test is visible
-        // as part of a curve rather than as an isolated claim.
-        &[15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0],
-        "CEILING (%/yr) on that CAGR — the binding constraint on the FASTEST compounders.\n  \
-         CAVEAT: this knob is SHARED with the on-sale lane (picks.rs, `long_trend_weight × min(long_cagr, cap)`),\n  \
-         so these rows price HALF its effect. Fine for measurement; a blocker for shipping a move without\n  \
-         curving the on-sale lane too.",
+        // 0 first because it is the SHIPPED state (#3h) — uncapped. 50 reproduces the recorded 30->50 pair
+        // (edge +103.2 -> +87.7) so the old point-test is visible as part of a curve, not an isolated claim.
+        &[0.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0],
+        "CEILING (%/yr) on that CAGR — the binding constraint on the FASTEST compounders. 0 = OFF (uncapped).\n  \
+         NOTE: this knob is SHARED with the on-sale lane (picks.rs, `long_trend_weight × capped_trend(..)`),\n  \
+         so these rows price only its GROWTH-lane effect. That lane is the one `screen` ranks on; the on-sale\n  \
+         side feeds `buy_score`, a backtest foil that is never printed — so a growth-lane read is the one\n  \
+         that decides, and the foil only needs to not break.",
     );
     gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
     gate_sweep(&samples, tuning, &gate_loosen); // (#10) which specific gate is too tight?
@@ -1845,6 +1846,11 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     type Set = fn(&mut BuyHeuristic, f64);
     let dims: &[(&str, Get, Set, f64, f64)] = &[
         ("growth_trend_weight", |t| t.growth_trend_weight, |t, v| t.growth_trend_weight = v, 0.0, 1.0),
+        // band starts at 15, NOT 0: on this knob 0 means OFF (uncapped = +inf), so 0 is a discontinuity a
+        // uniform draw would misread — 0.1 crushes every name, 0.0 crushes none. The shipped state IS 0, so
+        // `dim_active` sees hi=60 change nothing when no sample tops 60%/yr and reports the dim inert; a
+        // search winner that does carry a cap prints under "weights (searched dims only)" and still has to
+        // beat TEST. The off-vs-on comparison belongs to `weight_curve`, which ladders 0 explicitly.
         ("long_trend_cap", |t| t.long_trend_cap, |t, v| t.long_trend_cap = v, 15.0, 60.0),
         ("growth_accel_weight", |t| t.growth_accel_weight, |t, v| t.growth_accel_weight = v, 0.0, 0.6),
         ("sharpe_weight", |t| t.sharpe_weight, |t, v| t.sharpe_weight = v, 0.0, 4.0),
@@ -2171,7 +2177,9 @@ fn weight_curve(
         let (top, bot) = edge_halves(&re);
         let rho = core::spearman(&re.iter().map(|(_, v)| *v).collect::<Vec<_>>(), &rels)
             .map_or("n/a".to_string(), |v| format!("{v:+.2}"));
-        let tag = if x == shipped { "  [SHIPPED]" } else if x == 0.0 { "  [term off]" } else { "" };
+        // "off", not "term off": 0 zeroes a WEIGHT's term, but on a CAP knob it removes the ceiling and
+        // leaves the term running at full size. One label that is true for both kinds of knob.
+        let tag = if x == shipped { "  [SHIPPED]" } else if x == 0.0 { "  [off]" } else { "" };
         println!(
             "  {x:<6.2} rho {rho}  edge {:+.1}  winsor {:+.1}  OOS {} | {}{tag}",
             top - bot,
