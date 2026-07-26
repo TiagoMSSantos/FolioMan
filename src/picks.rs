@@ -738,8 +738,9 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // Second leg: trend_cagr is fit on the FETCHED daily window (~10y), so a name that collapsed
     // BEFORE that window and recovered inside it slips through (MSCI Greece: -95% by 2012, positive
     // window trend, yet whole-life CAGR -8%/18y). quote.life_cagr is the true listing-to-date CAGR
-    // from the merged monthly-max series; None in backtest (display-era field), so this leg is
-    // live-only and edge-blind by construction.
+    // from the merged monthly-max series. (#3j) NOTE: this used to add "None in backtest, so the leg is
+    // live-only and edge-blind by construction" — `backtest_quote` fills life_cagr now, so the leg runs
+    // on both paths and that exemption is gone.
     if !crypto
         && tuning.growth_require_lifetime_uptrend
         && (quote.trend_cagr.is_some_and(|t| t <= 0.0) || quote.life_cagr.is_some_and(|l| l <= 0.0))
@@ -761,6 +762,43 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if crypto
         && tuning.growth_max_vol_crypto > 0.0
         && quote.volatility_pct.is_some_and(|v| v > tuning.growth_max_vol_crypto)
+    {
+        return None;
+    }
+    // (#37)/(#38) VALUATION + MARGIN gates, both off (0) by default. No `!crypto` guard, unlike the two
+    // above: coins and ETFs carry no `quote.fund` at all, so the None arms already scope these to
+    // equities. Adding the guard "for consistency" would be a second thing to keep true for no gain.
+    let ff = quote.fund.as_ref();
+    // (#37) PEG CEILING. The knob is expressed as PEG so it reads like the column and like the request;
+    // it is APPLIED to `peg_yield`, which is 1/PEG x 100 (peg_yield 100 <=> PEG 1), hence the reciprocal
+    // and the flipped comparison — a HIGH peg_yield is cheap. Gating on the printed `peg` cell instead
+    // was rejected deliberately: that cell divides pe_ratio by the leg CAGR, pe_ratio is None in every
+    // backtest, and a gate no run can price is a gate no run can defend. peg_yield is filled from ONE fn
+    // on both paths (fetch.rs live enrich, backtest.rs loop) -> train==serve.
+    //
+    // The two numbers are NOT equal (peg_yield uses eps/price and trend_cagr; the cell uses FMP's P/E and
+    // the leg), so a row can print PEG 1.9 and still be cut here. That is why the gate_failures leg quotes
+    // the gating number back as a PEG — a footer that can't explain a rejection is how the `cagr` column
+    // confusion started.
+    if tuning.growth_max_peg > 0.0 {
+        let bar = 100.0 / tuning.growth_max_peg; // PEG 2.0 -> reject peg_yield < 50
+        match ff.and_then(|f| f.peg_yield) {
+            Some(p) if p < bar => return None, // pricier than the ceiling for the growth it delivers
+            // peg_yield None-outs loss-makers AND negative growth alike, so None is ambiguous. Split it
+            // on the one case we can actually identify: negative EPS is not "missing data", it is a name
+            // with no earnings to be cheap against, and letting the most expensive cohort walk through a
+            // valuation ceiling would make the gate mean the opposite of its name. Deliberate departure
+            // from the house "None passes" rule, and the only one here.
+            None if ff.and_then(|f| f.eps_ttm).is_some_and(|e| e <= 0.0) => return None,
+            _ => {} // no fundamentals at all -> passes, like every other data gate
+        }
+    }
+    // (#38) NET-MARGIN FLOOR on `fund.net_margin` — the as-of, point-in-time twin of the NET% column
+    // (`net_margin_fy` is display-only and live-only, so it is unusable for a gate that has to be
+    // measured). Read the knob doc before raising this: a floor here cuts low-margin INDUSTRIES
+    // (retail, distribution, industrials) rather than low-quality names.
+    if tuning.growth_min_net_margin > 0.0
+        && ff.and_then(|f| f.net_margin).is_some_and(|m| m < tuning.growth_min_net_margin)
     {
         return None;
     }
@@ -1014,6 +1052,31 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     if crypto && tuning.growth_max_vol_crypto > 0.0 {
         if let Some(v) = quote.volatility_pct.filter(|&v| v > tuning.growth_max_vol_crypto) {
             fails.push(("volatile", format!("{v:.1}%/day swing (cap {:.1}%)", tuning.growth_max_vol_crypto), v <= tuning.growth_max_vol_crypto + 0.5));
+        }
+    }
+    // (#37) the PEG ceiling's reason. REQUIRED, and more so than the other legs: the gate reads
+    // `peg_yield` while the table prints a `peg` cell derived differently, so without this a row can
+    // show PEG 1.9, vanish, and look like a bug. Convert the gating value BACK to a PEG (100/peg_yield)
+    // so the footer speaks the same units as the knob and the column.
+    let ff = quote.fund.as_ref();
+    if tuning.growth_max_peg > 0.0 {
+        let bar = 100.0 / tuning.growth_max_peg;
+        match ff.and_then(|f| f.peg_yield) {
+            Some(p) if p < bar => {
+                let peg = 100.0 / p; // p > 0 always: peg_yield is None unless BOTH factors are positive
+                fails.push(("peg", format!("PEG {peg:.2} (ceiling {:.2})", tuning.growth_max_peg), peg <= tuning.growth_max_peg + 0.5));
+            }
+            None if ff.and_then(|f| f.eps_ttm).is_some_and(|e| e <= 0.0) => {
+                // never a near-miss: there is no PEG at all to be close with
+                fails.push(("peg", "no PEG — loss-making (EPS ≤ 0)".to_string(), false));
+            }
+            _ => {}
+        }
+    }
+    // (#38) the net-margin floor's reason, same 1.5-2pp near-miss convention as the CAGR legs.
+    if tuning.growth_min_net_margin > 0.0 {
+        if let Some(m) = ff.and_then(|f| f.net_margin).filter(|&m| m < tuning.growth_min_net_margin) {
+            fails.push(("margin", format!("{m:.1}% net margin (floor {:.1}%)", tuning.growth_min_net_margin), m >= tuning.growth_min_net_margin - 2.0));
         }
     }
     let maxdd_cap = if crypto { tuning.growth_maxdd_cap_crypto } else { tuning.growth_maxdd_cap };
@@ -2645,6 +2708,58 @@ mod tests {
     // as a flat compounder and fail the floor for a reason the name never earned).
     goog.life_cagr = None;
     assert_eq!(growth_score(&goog, &on), growth_score(&goog, &off), "no life_cagr must fall back to the leg");
+
+    // (#37) PEG CEILING. The knob is a PEG, the field is `peg_yield` = 1/PEG x 100, so the comparison is
+    // REVERSED — high peg_yield is cheap. Base quote clears every other gate at default tuning.
+    let peg_t = BuyHeuristic { growth_max_peg: 2.0, ..BuyHeuristic::default() };
+    let mut pq = quote(2.0, &[("1Y", 30.0), ("5Y", 99.0), ("10Y", 400.0)]);
+    let with_peg = |q: &mut Quote, y: Option<f64>, eps: Option<f64>| {
+        q.fund = Some(core::FundFactors { peg_yield: y, eps_ttm: eps, ..Default::default() });
+    };
+    with_peg(&mut pq, Some(40.0), Some(5.0)); // peg_yield 40 -> PEG 2.5, over the ceiling
+    assert!(growth_score(&pq, &peg_t).is_none());
+    with_peg(&mut pq, Some(60.0), Some(5.0)); // PEG 1.67 -> cheap enough
+    assert!(growth_score(&pq, &peg_t).is_some());
+    // the bar itself is admitted: `<`, not `<=`, matching every other floor in this chain.
+    with_peg(&mut pq, Some(50.0), Some(5.0)); // exactly PEG 2.0
+    assert!(growth_score(&pq, &peg_t).is_some(), "PEG exactly at the ceiling must pass");
+    // LOSS-MAKER arm — the one deliberate break from "None passes". peg_yield None-outs a negative-EPS
+    // name, and letting the most expensive cohort walk through a valuation ceiling would inverse the
+    // gate's meaning. Distinguished from absent data by eps_ttm, which is why both cases are pinned.
+    with_peg(&mut pq, None, Some(-1.0));
+    assert!(growth_score(&pq, &peg_t).is_none(), "a loss-maker has no PEG — it must not pass a PEG ceiling");
+    with_peg(&mut pq, None, None);
+    assert!(growth_score(&pq, &peg_t).is_some(), "absent fundamentals must PASS, like every data gate");
+    pq.fund = None;
+    assert!(growth_score(&pq, &peg_t).is_some(), "no fund at all (every ETF/coin) passes -> equity-only for free");
+    // 0 = off admits the worst case above, and guards the 100.0/0.0 infinity from reaching the compare.
+    with_peg(&mut pq, Some(1.0), Some(-1.0)); // PEG 100 AND loss-making
+    assert!(growth_score(&pq, &BuyHeuristic::default()).is_some(), "growth_max_peg 0 must be OFF, not a bar at infinity");
+
+    // (#38) NET-MARGIN FLOOR on the as-of `fund.net_margin` (NOT the display-only net_margin_fy).
+    let nm_t = BuyHeuristic { growth_min_net_margin: 10.0, ..BuyHeuristic::default() };
+    let mut nq = quote(2.0, &[("1Y", 30.0), ("5Y", 99.0), ("10Y", 400.0)]);
+    let with_margin = |q: &mut Quote, m: Option<f64>| {
+        q.fund = Some(core::FundFactors { net_margin: m, ..Default::default() });
+    };
+    with_margin(&mut nq, Some(7.5)); // the EMCOR shape — a low-margin INDUSTRY, not a bad business
+    assert!(growth_score(&nq, &nm_t).is_none());
+    with_margin(&mut nq, Some(12.0));
+    assert!(growth_score(&nq, &nm_t).is_some());
+    with_margin(&mut nq, None);
+    assert!(growth_score(&nq, &nm_t).is_some(), "missing margin is not a failing margin");
+    with_margin(&mut nq, Some(7.5));
+    assert!(growth_score(&nq, &BuyHeuristic::default()).is_some(), "growth_min_net_margin 0 = off");
+
+    // both rejections must PRINT a reason — and the PEG one must quote a PEG, not a raw peg_yield,
+    // because the `peg` COLUMN is computed differently and a silent cut would read as a bug.
+    with_peg(&mut pq, Some(40.0), Some(5.0));
+    let why = gate_failures(&pq, &peg_t).unwrap();
+    assert!(why.iter().any(|(g, m, _)| *g == "peg" && m.contains("PEG 2.50")), "PEG rejection must print the PEG: {why:?}");
+    with_peg(&mut pq, None, Some(-1.0));
+    assert!(gate_failures(&pq, &peg_t).unwrap().iter().any(|(g, m, _)| *g == "peg" && m.contains("loss-making")));
+    let why_m = gate_failures(&nq, &nm_t).unwrap();
+    assert!(why_m.iter().any(|(g, m, _)| *g == "margin" && m.contains("7.5%")), "margin rejection must print a reason: {why_m:?}");
     let liq_t = BuyHeuristic { min_avg_turnover_eur: 1_000_000.0, ..BuyHeuristic::default() };
     let mut thin = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     thin.avg_turnover_eur = Some(1_000.0);

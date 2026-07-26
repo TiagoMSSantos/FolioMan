@@ -705,6 +705,63 @@ buy_heuristic:
   #   not isolated is that bar's own cost: no knob separates the two legs of one `growth_min_cagr` field,
   #   so pricing it needs one. Named here rather than left implicit — (#3i) shipped a gate that called
   #   itself unmeasurable, and half-measuring it now would be the same mistake in a quieter voice.
+  # (#37)/(#38) "THRESHOLD ASSETS WITH PEG > 2 AND NET% < 10" — asked 2026-07-26. Answer splits: the PEG
+  #   ceiling SHIPS (+17.3 edge), the margin floor is REJECTED at every value tested. Two knobs, not one
+  #   AND-ed pair, precisely so they could be priced apart — and they had to be, because together they are
+  #   WORSE than the ceiling alone.
+  #   THE TRAP FIRST, because it will mislead anyone reading the table: there are TWO PEG numbers and TWO
+  #   NET% numbers in this codebase, and only one of each pair is gateable.
+  #     printed `peg` cell = pe_ratio / leg CAGR   |  gated `fund.peg_yield` = earnings_yield x trend_cagr
+  #     pe_ratio is None in EVERY backtest -> blind |  filled by ONE fn on both paths -> train==serve
+  #     printed NET% = net_margin_fy (live only)   |  gated `fund.net_margin` (as-of joined, both paths)
+  #   peg_yield == 100 <=> PEG == 1, so the knob stores PEG and applies `peg_yield < 100/growth_max_peg`.
+  #   CONSEQUENCE, VISIBLE ON THE LIVE SCREEN, do not file it as a bug: the two PEG numbers DISAGREE, in
+  #   both directions. At growth_max_peg 2.0 the footer cut WMT at PEG 2.42 and ULTA at 2.02, while ODFL
+  #   (printed 2.55) and JBL (printed 2.20) stayed RANKED — their peg_yield clears the bar because the
+  #   trend fit sees growth the FMP P/E and the ladder rung do not. Gating on the printed cell instead was
+  #   rejected deliberately: a gate no backtest can price is a gate no backtest can defend.
+  #   MEASURED, `backtest universe fund 12`, one frozen base (use_life_cagr true, growth_min_cagr 15) —
+  #   frozen on purpose, the live file moved three times mid-run and a moving base makes a table of lies:
+  #
+  #     run                            scored   rho    edge     winsor   OOS early|late   worst era
+  #     A  both off                      1407  +0.17  +122.4   +107.7   +0.13 | +0.10      +44.0
+  #     B  growth_max_peg 2.0            1378  +0.17  +139.7   +120.4   +0.12 | +0.12      +63.0   SHIPPED
+  #     C  growth_min_net_margin 10      1303  +0.16  +125.9   +109.5   +0.12 | +0.12      +26.4
+  #     D  both                          1294  +0.16  +125.0   +108.2   +0.12 | +0.12       -7.7
+  #
+  #   D is the reason these are two knobs. The floor CANCELS the ceiling's entire +17.3 and drives the most
+  #   recent era (2008-11..2014-07, n=324) NEGATIVE — the only negative era in any run here. `peg_yield`
+  #   terms interacting non-additively is already on the record at backtest.rs:446 ("+85 alone, -100
+  #   together"); this is the second instance, so stop assuming this factor composes.
+  #   SWEEP, growth_max_peg — the point is the SHAPE, not the winner:
+  #     0 off +122.4 | 1.5 +148.9 | 2.0 +139.7 | 2.5 +148.1 | 3.0 +135.9 | 4.0 +145.4
+  #   Read as two clusters: off = +122, ANY ceiling = +136..+149. Off-to-on (+13.5..+26.5) dwarfs the
+  #   spread among ceilings (13 pts, non-monotonic — 2.0 and 3.0 dip, 1.5/2.5/4.0 sit high), and every
+  #   value lifts rho, edge, winsorized edge, BOTH OOS halves and the worst era at once. So the gate is
+  #   real and the threshold is NOT resolvable at this n. 2.0 ships because it is what was asked for and
+  #   sits inside the plateau; taking 2.5 for its extra +8.4 would be fitting the noise, and the 13-pt
+  #   spread IS the noise floor — quote it before claiming any future PEG threshold beat another.
+  #   SWEEP, growth_min_net_margin — a clean monotone loser once you look past the headline:
+  #     0 off +122.4 (worst era +44.0) | 5 +128.7 (+7.7) | 10 +125.9 (+26.4) | 15 +110.1 (-1.5)
+  #   The +6.3/+3.5 bumps at 5 and 10 are bought ENTIRELY from the pre-2000 era while the modern era caves;
+  #   15 loses outright on every metric and drops 182 windows. Single-digit net margin is a BUSINESS MODEL
+  #   fact for retail, distribution and industrials, not a quality signal — the floor cuts EME (7.5%) and
+  #   CASY (4.1%) for their industry. Predicted to fail before the run, and it failed. STAYS 0.
+  #   SIDE EFFECT worth more than the headline: three ablations FLIP SIGN between A and B. Zeroing
+  #   growth_trend_weight is +8.5 under A but -6.3 under B; growth_fund_weight +4.9 -> -4.5; quality_weight
+  #   +3.0 -> -4.5. Under A those terms were dead weight the score did better ignoring. The PEG ceiling
+  #   removes the cohort that was scrambling them. A gate that RESTORES information to unrelated terms is a
+  #   different (and better) claim than one that merely raises edge.
+  #   LOSS-MAKERS: `core::peg_yield` returns None for negative EPS *and* for negative growth alike, so None
+  #   is ambiguous. The gate splits it on the one case identifiable from the data — `eps_ttm <= 0` is
+  #   rejected, genuinely absent fundamentals still pass. Deliberate departure from the house "None passes"
+  #   rule and the only one: letting the cohort with no earnings at all walk through a VALUATION ceiling
+  #   would make the gate mean the opposite of its name.
+  #   No !crypto guard on either gate, unlike (#24)/(#26): coins and ETFs carry no `quote.fund`, so the
+  #   None arms already scope both to equities. Do not add one "for consistency" — it is a second thing to
+  #   keep true for no gain.
+  #   CAVEAT ON THE BASE: measured with use_life_cagr TRUE, which (#3j) records as a -42.0 loser. The
+  #   ceiling was not re-priced on the shipped (leg) basis, so its +17.3 is established on that base only.
   growth_fund_cap: 300.0     # (#3) clamp in the factor's OWN pts before weighting. 300 <=> PEG >= 0.33 stays
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are
@@ -740,6 +797,20 @@ buy_heuristic:
                                  #   worst-ever tail. BTC ~2.4%/day, so 3.0 keeps the base with headroom and cuts the wild alts
                                  #   (OKB 3.4, LEO 3.1). Crypto absent from the backtest pool -> edge-blind by construction;
                                  #   judgment gate validated by live-screen eyeball. 0 = off.
+  growth_max_peg: 2.0            # (#37) HARD valuation ceiling: reject an equity whose PEG exceeds this. Stored as PEG
+                                 #   (reads like the column and like the request), APPLIED to `fund.peg_yield` — which is
+                                 #   1/PEG x 100 — as `peg_yield < 100/growth_max_peg`, so a HIGH peg_yield is cheap. Gates
+                                 #   the FUND factor, NOT the printed `peg` cell: that cell needs pe_ratio, which is None in
+                                 #   every backtest. The two numbers disagree in BOTH directions on the live table; see (#37)
+                                 #   above before reporting it. Also rejects `eps_ttm <= 0` (no earnings to be cheap against);
+                                 #   genuinely absent fundamentals still pass. Measured +122.4 -> +139.7 edge, worst era
+                                 #   +44.0 -> +63.0. Every value in [1.5, 4.0] beats off and they do not separate — 2.0 is
+                                 #   the asked-for value inside a plateau, not a fitted optimum. 0 = off.
+  growth_min_net_margin: 0.0     # (#38) net-margin floor on `fund.net_margin`. MEASURED AND REJECTED, kept at 0 with the
+                                 #   receipt so it is not re-proposed: 5/10/15 all cost edge or era-stability, and combined
+                                 #   with growth_max_peg it cancels that gate entirely and turns the newest era negative.
+                                 #   Single-digit net margin is an INDUSTRY fact (retail, distribution, industrials), not a
+                                 #   quality signal. Raising this cuts sectors, not bad companies. 0 = off.
   growth_require_lifetime_uptrend: true # (#25) reject equities whose WHOLE-LIFE log-trend CAGR is <= 0: moon-crash-partial-recovery
                                  #   names whose 10Y leg looks great but never reclaimed their long-run trend (the ranked CAGR uses
                                  #   the longest 20Y/10Y/5Y leg, so it can't see this). Same-batch pair 2026-07-03: off +115.7
