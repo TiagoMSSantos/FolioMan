@@ -141,6 +141,11 @@ pub struct Quote {
     pub worst_10y_pct: Option<f64>,    // (worst-10y, r16) single worst rolling ~10y NOMINAL outcome (%), severity twin at the decade horizon. DISPLAY-ONLY footer; None = <10y of history — no claim
     pub year_returns: Vec<(i32, f64)>, // (r11) each COMPLETE calendar year's % return from the fetched daily window, ascending. DISPLAY-ONLY footer (regime check: losing whole years); empty = <2 usable years — no claim. NOT filled in backtest_quote (display-era, edge-blind by construction, like life_cagr)
     pub fund_factor: Option<f64>,      // (G) the ONE as-of fundamental factor folded into growth_score (e.g. revenue accel). Set in the backtest (from fund_factors) so the term is ablatable, and live only on the small/check-scale path; None -> neutral (universe screen & price-only backtest)
+    // (G+) the WHOLE as-of fundamental struct, so `growth_fund_extra` can weigh several named terms
+    // without a carrier field per factor. Set at the same three sites that fill `fund_factor`.
+    // `fund_factor` stays because the factor SWEEP injects a value there directly, per candidate
+    // factor, without rebuilding FundFactors — that machinery keeps working untouched.
+    pub fund: Option<FundFactors>,
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history; DISPLAY-ONLY (`cagr` column). Ranking/gates stay on the validated fixed-horizon ladder. None = <6mo history / stub / backtest
     pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). DISPLAY-ONLY (`trcagr` column), never scored; ≈ life_cagr for Acc funds/non-payers
@@ -204,6 +209,7 @@ impl Quote {
             worst_10y_pct: None,
             year_returns: Vec::new(),
             fund_factor: None,
+            fund: None,
             age_years: None,
             life_cagr: None,
             tr_cagr: None,
@@ -1307,6 +1313,15 @@ pub struct FundFactors {
     pub op_margin: Option<f64>,    // current operating margin level (operating efficiency)
     pub margin_trend: Option<f64>, // op-margin now minus ~1y ago (margin expanding = strengthening)
     pub eps_growth: Option<f64>,   // EPS CAGR over the lookback (bottom-line compounding; both ends must be +)
+    // The three columns `report`/`screen` actually PRINT (REV-YoY, EPS-YoY, NET%), exposed as factors
+    // so the sweep can price them. Until now none of the three was probeable: `rev_yoy` was computed
+    // and thrown away inside `rev_accel`, `eps_yoy` did not exist (only the multi-year `eps_growth`),
+    // and `net_margin` was never carried at all — `op_margin` was the only margin LEVEL ever measured.
+    // All three are 1-row or 2-row reads, so they populate far earlier in the sample than the
+    // `yrs`-lookback factors above, which need a filing `yrs` years before the cutoff.
+    pub rev_yoy: Option<f64>,      // last-1y revenue growth, % (the REV-YoY column) — `rev_accel`'s fast leg
+    pub eps_yoy: Option<f64>,      // last-1y EPS growth, % (the EPS-YoY column), off the row's OWN same-filing comparative -> split-proof
+    pub net_margin: Option<f64>,   // current net margin level, % (the NET% column). Distinct from op_margin: below-the-line items (tax, interest, one-offs) live only here
     pub roe: Option<f64>,          // as-of return-on-equity level, % (quality of capital). SEC feed computes it per row (NetIncome ÷ StockholdersEquity); FMP free tier leaves it None. RAW — sweep-only; the SCORE reads `quality` below
     pub quality: Option<f64>,      // as-of return-on-capital level, % — `quality_return(roe, roa, net_margin)`: ROE when equity is positive, else ROA. THE field the live screen and the backtest both score, so neither can drift from the other's definition
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
@@ -1475,6 +1490,24 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         op_margin: now.and_then(|r| r.op_margin),
         margin_trend,
         eps_growth,
+        // (REV-YoY) the fast leg `rev_accel` already subtracts — surfaced instead of discarded, so the
+        // 1y rate can be priced apart from the accel it feeds. Fills wherever a year-ago row exists,
+        // which is far more of the sample than `rev_cagr`'s `yrs`-year reach.
+        rev_yoy: rev_1y,
+        // (EPS-YoY) the row's OWN prior-year comparative, so the ratio never straddles a split — the
+        // same join `income_snapshot` and the report table use. Falls back to the cross-filing read
+        // (guarded) only for a filing that carried no comparative.
+        eps_yoy: match now.and_then(|r| r.prior_eps) {
+            Some(p) => yoy_pct(now.and_then(|r| r.eps), Some(p)),
+            None => eps_yoy_split_safe(
+                now.and_then(|r| r.eps),
+                yr_ago.and_then(|r| r.eps),
+                now.and_then(|r| r.shares),
+                yr_ago.and_then(|r| r.shares),
+            ),
+        },
+        // (NET%) as-of level through the same one-line join as op_margin above
+        net_margin: now.and_then(|r| r.net_margin),
         roe: now.and_then(|r| r.roe), // as-of level through fund_as_of, same look-ahead guard as the margins
         // the SCORED quality level, resolved from the same as-of row. `roe` above stays raw so the
         // factor sweep can still price it standalone; everything that feeds the ranking reads this.
@@ -1846,6 +1879,9 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "op_margin" => f.op_margin,
         "margin_trend" => f.margin_trend,
         "eps_growth" => f.eps_growth,
+        "rev_yoy" => f.rev_yoy,     // (REV-YoY) 1y top-line growth — the printed column, not the multi-year CAGR
+        "eps_yoy" => f.eps_yoy,     // (EPS-YoY) 1y bottom-line growth off the same-filing comparative
+        "net_margin" => f.net_margin, // (NET%) margin LEVEL below the line; op_margin is the above-the-line twin
         "roe" => f.roe,                                   // RAW ROE (SEC feed; FMP free tier = None) — includes the negative-equity fakes; kept selectable only so the sweep's two rows stay comparable
         "quality" => f.quality,                           // quality of capital as the score reads it: ROE, or ROA where equity is negative
         "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
@@ -2212,6 +2248,9 @@ mod tests {
             op_margin: Some(4.0),
             margin_trend: Some(5.0),
             eps_growth: Some(6.0),
+            rev_yoy: Some(19.0),
+            eps_yoy: Some(20.0),
+            net_margin: Some(21.0),
             roe: Some(11.0),
             quality: Some(18.0),
             insider_net_buys_90d: Some(7.0),
@@ -2456,6 +2495,49 @@ mod tests {
         }];
         let bb = fund_factors(&split_row, cutoff, 5).buyback_yield.expect("comparative present");
         assert!((bb - 0.99).abs() < 0.01, "{bb}");
+    }
+
+    /// The three PRINTED columns as probeable factors: `rev_yoy` (the fast leg `rev_accel` used to
+    /// swallow), `eps_yoy` (off the row's OWN comparative, so a split can't fake it — the whole point
+    /// of the same-filing work) and `net_margin` (a LEVEL that had never been carried at all; only its
+    /// above-the-line twin `op_margin` was ever measured). All three are 1-row or 2-row reads, so they
+    /// populate where the `yrs`-lookback factors beside them are still None.
+    #[test]
+    fn printed_columns_are_probeable_factors() {
+        let row = |y: i32, revenue: f64, eps: f64, prior_eps: Option<f64>, nm: f64| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 20).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            revenue: Some(revenue),
+            eps: Some(eps),
+            prior_eps,
+            net_margin: Some(nm),
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        // TPL's real last two years: revenue 705.8M -> 798.2M, EPS 6.97 against a comparative of 6.573
+        // that the SAME filing restated after the second 3-for-1. The row BELOW it still says 19.72.
+        let rows = vec![row(2024, 705.8, 19.72, Some(17.59), 64.3), row(2025, 798.2, 6.97, Some(6.573), 60.3)];
+        let f = fund_factors(&rows, cutoff, 5);
+        assert!((f.rev_yoy.unwrap() - 13.09).abs() < 0.01, "{:?}", f.rev_yoy);
+        assert!((f.eps_yoy.unwrap() - 6.04).abs() < 0.01, "cross-filing would read -64.7%: {:?}", f.eps_yoy);
+        assert_eq!(f.net_margin, Some(60.3));
+        // the 5y factors beside them are still None on this 2-row history — that asymmetry is why the
+        // printed columns get their own probe rows instead of being read off rev_cagr/eps_growth
+        assert_eq!(f.rev_cagr, None);
+        assert_eq!(f.eps_growth, None);
+        // every one of them is reachable by NAME, which is what `growth_fund_extra` selects on
+        assert_eq!(select_fund_factor(&f, "rev_yoy"), f.rev_yoy);
+        assert_eq!(select_fund_factor(&f, "eps_yoy"), f.eps_yoy);
+        assert_eq!(select_fund_factor(&f, "net_margin"), Some(60.3));
+        // net_margin is NOT op_margin: below-the-line items live only in the former, and op_margin is
+        // the one that measured rho -0.23 — reading them as interchangeable is the mistake to prevent
+        assert_eq!(f.op_margin, None, "these rows carry no op_margin");
+        // no comparative -> the guarded cross-filing fallback, which blanks a split-sized share jump
+        let no_prior: Vec<FundRow> = rows
+            .iter()
+            .map(|r| FundRow { prior_eps: None, shares: Some(if r.period_end.year() == 2025 { 69.0 } else { 23.0 }), ..r.clone() })
+            .collect();
+        assert_eq!(fund_factors(&no_prior, cutoff, 5).eps_yoy, None, "+200% shares -> split guard blanks it");
     }
 
     /// (round 109) `margin_stability` = negated sample stddev of net_margin over the as-of rows:

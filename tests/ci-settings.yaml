@@ -417,6 +417,69 @@ buy_heuristic:
   #   BUY lane nothing since the knob is shared. Do NOT re-run the (#3b) curve to "re-find the
   #   plateau" without first fixing which of the two terms is being kept: the curve is a slice through
   #   a two-term interaction now, not a one-knob shape.
+  # (#3e) SAME-FILING COMPARATIVES + the lookback fix — measured 2026-07-26, two horizons. Two changes
+  #   landed together; read them apart.
+  #   (i) THE JOIN. `collect` (fetch.rs) keeps the EARLIEST-filed value per period end, which is right
+  #   for a LEVEL and wrong for every RATIO: each 10-K restates its comparatives at the CURRENT split
+  #   basis, so taking each year from its own filing divides two different bases. TPL's stored series
+  #   read 7.69M / 23.02M / 69.03M shares — three bases in one column, from two 3-for-1s (2024, 2025).
+  #   Rows now carry `prior_eps`/`prior_shares` AS THE SAME FILING STATED THEM, so a YoY never crosses
+  #   a basis. TPL 5y EPS CAGR: chained same-filing +22.6%/yr vs endpoint-naive -21.0%/yr, same payload.
+  #   No share-ratio test can replace this — ORLY's ratio is 14.58, not 15.0, because buybacks drift it
+  #   off the split ratio, and a jump cannot say WHY it jumped. Three classes the old >40% rule
+  #   conflated: real split (8 names, comparatives restated), real dilution (6 — the guard was HIDING a
+  #   fact: COF's EPS genuinely fell 11.59 -> 4.03), scale error (PDD, WRB). Effect on the shipped
+  #   factors, `backtest universe fund 12`: peg_yield UNCHANGED n=1506 rho +0.14 edge +283.2 OOS
+  #   +0.15|+0.13 (vs recorded +283.1 / +0.15|+0.13) — it reads quote.trend_cagr (a PRICE cagr), so the
+  #   join cannot touch it; (#3)'s keep-rule not tripped. buyback_yield REPOPULATED n=1183 -> 1737
+  #   (+554 samples, the restated names rejoining), edge -276.5 -> -262.1, rho +0.04 -> +0.05. Still a
+  #   losing factor, still unshipped.
+  #   (ii) THE LOOKBACK. `backtest.rs` passed the run's FORWARD hold horizon as the BACKWARD fundamental
+  #   lookback, so `fund 12` demanded 12y of statements before every cutoff. rev_cagr / rev_accel /
+  #   eps_growth were None on EVERY sample and printed "n/a (only 0 cutoffs)", while their sweep lines
+  #   read EXACTLY the price-only baseline — which reads as "measured, no edge" and was "never
+  #   measured". Now a constant 5, the value both live call sites already pass. NOTE the residual
+  #   boundary: `fund_as_of` filters on FILED, and XBRL filings only start 2009-2010 (54 rows filed in
+  #   2009, 651 in 2010), so at horizon 12 (cutoffs end 2014-07) rev_cagr/rev_accel STILL read 0 —
+  #   cutoff-5y lands before the filings exist. eps_growth fills (n=265) only because it filters on
+  #   period_end, and one filing carries several comparative years. `fund 5` clears the boundary
+  #   entirely (cutoffs to ~2021): rev_cagr n=2094, rev_accel n=2092.
+  #   THE ANSWER TO "should REV-YoY / EPS-YoY / NET% raise growth_score", standalone probes, both runs:
+  #                    fund 12 (n / rho / OOS)          fund 5 (n / rho / OOS)         verdict
+  #     eps_growth      265  +0.09  +0.17|+0.05        1810  +0.13  +0.18|+0.09       BOTH halves + at BOTH
+  #     rev_yoy        1316  +0.08  +0.08|+0.07        2277  +0.05  +0.18|-0.08       fails at 5y
+  #     eps_yoy        1719  -0.02  +0.03|-0.09        2236  +0.05  +0.13|-0.05       fails at both
+  #     net_margin     1824  -0.19  -0.16|-0.21        2327  -0.12  -0.12|-0.12       NEGATIVE on all four
+  #     rev_cagr        n/a (filed-date boundary)      2094  +0.06  +0.16|-0.03       fails at 5y
+  #   NET% is the clear one: negative rho on all four halves, matching its above-the-line twin op_margin
+  #   (n=1516 rho -0.23 edge -326.7 OOS -0.22|-0.24). Rewarding a high margin LEVEL subtracts edge. What
+  #   works is the margin RISING (margin_trend +0.02|+0.08), which is a different knob.
+  #   rev_yoy WINS the fund-12 sweep — TEST +214.9 vs price-only +202.2, OOS +0.24|+0.11, and it clears
+  #   the now-stricter best-of-14 Sidak band [+73.4 … +291.8], the first factor ever to beat that
+  #   baseline on this sweep. DO NOT SHIP IT ON THAT ALONE: its own standalone late half goes -0.08 at
+  #   horizon 5, and the fund-5 sweep's verdict is "no factor beats price-only with both OOS halves +
+  #   — SHIP NOTHING" (every factor there has a negative EARLY half, price-only included, so that sweep
+  #   discriminates nothing — read its standalone rows instead). A factor that wins at one horizon and
+  #   loses at the other is horizon-dependent, not an edge.
+  #   Only eps_growth clears both halves at both horizons — and it is exactly the factor (i) made
+  #   split-safe and (ii) made visible. Its held-book is unremarkable though (fund 5: +16.7%/yr, excess
+  #   +4.4, win 50%, OOS -0.3/+9.0, n=269) vs peg_yield +31.9 / +19.5 / 100% — so it is a candidate for
+  #   `growth_fund_extra`, not a replacement for the shipped tilt.
+  #   MECHANISM SHIPPED INERT: `growth_fund_extra` (a list of {factor, weight, cap}) now lets several
+  #   fundamentals tilt at once, each with its OWN cap because the scales are incompatible (peg_yield
+  #   ~0-500, net_margin ~0-60). Empty by default -> contributes exactly 0.0 -> every receipt above is
+  #   still numerically exact, and `report TPL` reproduced growth_score 14.8 unchanged. Pinned empty in
+  #   config.rs::validated_tilt_pin. Before adding a term, read (#3d): quality and peg_yield each pay
+  #   ~+85 alone and -100 TOGETHER, and REV-YoY / EPS-YoY / NET% are three more readings of that same
+  #   latent. The per-term ablation rows (`fund_extra:<factor>`) exist to catch exactly that.
+  #   DEFERRED, evidence recorded so it is not re-derived: `shares_ttm` still carries scale errors into
+  #   ev_ebitda_yield's market-cap leg. Cross-checking shares against net_income/eps flags 105 rows /
+  #   35 tickers (24 of them 2020+); 50x/100x/200x thresholds select the IDENTICAL 105 rows, so it is
+  #   not a tuning knob. Not fixed because the check says the PAIR disagrees, not which side is wrong:
+  #   MCD tags shares in millions EVERY year (716 for FY2025) — self-consistent, so no ratio test ever
+  #   fires and its market-cap leg is 10^6x light; HAL's shares (883-908M) are CORRECT and its EPS is
+  #   the mis-tagged side. Nulling on disagreement would break HAL's four good rows. Same-filing
+  #   comparatives neutralise these rows for every RATIO column regardless.
   growth_fund_cap: 300.0     # (#3) clamp in the factor's OWN pts before weighting. 300 <=> PEG >= 0.33 stays
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are

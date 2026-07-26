@@ -726,7 +726,19 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // backtest attaches the as-of factor to quote.fund_factor so `backtest <set> fund` can ablate it.
     // Floor at 0 (only reward the factor, don't penalise a missing/negative one) and cap the artifact.
     // weight 0 (default) -> this whole term is 0 -> growth_score is byte-identical to the pre-(G) lane.
-    let fund = tuning.growth_fund_weight * quote.fund_factor.unwrap_or(0.0).clamp(0.0, tuning.growth_fund_cap);
+    // (G+) plus any ADDITIONAL named terms, each with its own weight and its own cap — the factors are
+    // on incompatible scales, so one shared clamp would silently flatten whichever is smaller.
+    // `growth_fund_extra` is empty by default, and an empty sum is exactly 0.0, so the default lane is
+    // byte-identical to the single-factor tilt. An unknown factor name reads None -> contributes 0.
+    let fund = tuning.growth_fund_weight * quote.fund_factor.unwrap_or(0.0).clamp(0.0, tuning.growth_fund_cap)
+        + tuning
+            .growth_fund_extra
+            .iter()
+            .map(|t| {
+                let v = quote.fund.as_ref().and_then(|f| crate::core::select_fund_factor(f, &t.factor));
+                t.weight * v.unwrap_or(0.0).clamp(0.0, t.cap)
+            })
+            .sum::<f64>();
     // (M) 12-1 momentum tilt. Floor at 0: reward momentum, don't punish its absence (matches (G)/div).
     // weight 0 (default) -> this term is 0 -> growth_score is byte-identical to the pre-(M) lane.
     let mom_term = tuning.growth_mom121_weight * mom121.clamp(0.0, tuning.growth_mom121_cap);
@@ -2288,6 +2300,7 @@ mod tests {
             worst_10y_pct: None,
             year_returns: Vec::new(), // (r11) display-only footer strip; never scored
             fund_factor: None,     // (G) default off; the fund-tilt asserts set it explicitly
+            fund: None,            // (G+) default off; the multi-term asserts set it explicitly
             age_years: None,       // display-only pair; never scored
             life_cagr: None,
             tr_cagr: None,         // (TR-CAGR) display-only; never scored
@@ -2960,6 +2973,47 @@ mod tests {
     let mut over_cap = none_fund.clone();
     over_cap.fund_factor = Some(100.0); // above the default growth_fund_cap 30 -> clamped
     assert_eq!(score_parts(&over_cap, &weighted).unwrap().fund, 0.5 * 30.0); // pins the .clamp(0,cap) upper bound
+
+    // (G+) MULTI-TERM fund tilt. The default `growth_fund_extra` is empty, and an empty sum must be
+    // exactly 0.0 — that is what keeps every recorded receipt in tests/ci-settings.yaml valid, so pin
+    // it on a quote that CARRIES fundamentals (an all-None quote would pass the assert vacuously).
+    let mut with_facts = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    with_facts.fund = Some(core::FundFactors {
+        rev_yoy: Some(20.0),
+        eps_yoy: Some(200.0), // deliberately huge -> exercises a per-term cap below
+        net_margin: Some(30.0),
+        ..Default::default()
+    });
+    assert_eq!(
+        growth_score(&with_facts, &tuning).unwrap(),
+        growth_score(&none_fund, &tuning).unwrap(),
+        "empty growth_fund_extra must be byte-identical to the single-factor lane"
+    );
+    // Terms SUM, each clamped by its OWN cap — the factors are on incompatible scales, so one shared
+    // clamp would flatten whichever is smaller. eps_yoy 200 is over its cap 50; the other two are not.
+    let multi = BuyHeuristic {
+        growth_fund_extra: vec![
+            crate::config::FundTerm { factor: "rev_yoy".into(), weight: 0.5, cap: 100.0 },
+            crate::config::FundTerm { factor: "eps_yoy".into(), weight: 0.1, cap: 50.0 },
+            crate::config::FundTerm { factor: "net_margin".into(), weight: 0.2, cap: 100.0 },
+        ],
+        ..BuyHeuristic::default()
+    };
+    let want = 0.5 * 20.0 + 0.1 * 50.0 + 0.2 * 30.0; // 10 + 5 (capped, not 20) + 6
+    assert!((score_parts(&with_facts, &multi).unwrap().fund - want).abs() < 1e-9);
+    // an unknown name reads None and contributes 0 rather than erroring — same as the primary term
+    let typo = BuyHeuristic {
+        growth_fund_extra: vec![crate::config::FundTerm { factor: "rev_yyo".into(), weight: 9.0, cap: 100.0 }],
+        ..BuyHeuristic::default()
+    };
+    assert_eq!(score_parts(&with_facts, &typo).unwrap().fund, 0.0);
+    // a quote with NO fundamentals under a configured term is neutral, not a panic
+    assert_eq!(score_parts(&none_fund, &multi).unwrap().fund, 0.0);
+    // primary and extra ADD: same quote, primary term on top of the three extras
+    let both = BuyHeuristic { growth_fund_weight: 0.5, ..multi.clone() };
+    let mut with_both = with_facts.clone();
+    with_both.fund_factor = Some(15.0);
+    assert!((score_parts(&with_both, &both).unwrap().fund - (want + 0.5 * 15.0)).abs() < 1e-9);
 
     // (D) dividend fold — magnitude + cap on the LIVE term (default weight 1.5, cap 6.0); isolate via ScoreParts.dividend.
     // dividend_yield_1y divides -> not bit-exact -> epsilon compare (matches the float-score convention above).

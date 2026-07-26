@@ -659,6 +659,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         worst_10y_pct: core::worst_rolling_pct(&chart.closes, 10, 252),
         year_returns: core::calendar_year_returns(&chart.dates, &chart.closes),
         fund_factor: None, // (G) live screen leaves this None (neutral); only the small/check-scale path (A3) populates it
+        fund: None,        // (G+) same: `enrich_fund_factor` fills it on the paths that fetch fundamentals
         age_years,
         life_cagr,
         tr_cagr,
@@ -1102,6 +1103,9 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // info cell, so the drill-in number and the scored number are one definition.
         ff.peg_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, q.trend_cagr, p));
         q.fund_factor = core::select_fund_factor(&ff, factor);
+        // (G+) carry the whole struct so `growth_fund_extra`'s named terms resolve here too. Set AFTER
+        // the price-dependent fields above, or the extra terms would read a half-built earnings_yield.
+        q.fund = Some(ff);
     }
 }
 

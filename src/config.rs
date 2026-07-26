@@ -124,6 +124,18 @@ impl Default for Widths {
 /// The `dividend` term in BOTH lanes is scored NET of Portuguese tax — see `picks::dividend_reward`
 /// and the `tax_keep_eu` / `tax_keep_other` knobs below.
 /// GATES exclude a candidate outright; SCORE knobs rank the survivors. Mirrors `config/settings.yaml`.
+/// (G+) One additional fundamental tilt term: which `FundFactors` field, how much per point, and the
+/// clamp applied before weighting. What the score adds is `weight × clamp(value, 0, cap)` — the same
+/// arithmetic as the primary `growth_fund_*` term, just repeatable. An unknown `factor` name reads
+/// None and contributes 0, exactly like the primary (`core::select_fund_factor`).
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(deny_unknown_fields)] // no `default` — a term with a missing weight or cap is a config bug, not a 0
+pub struct FundTerm {
+    pub factor: String,
+    pub weight: f64,
+    pub cap: f64,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(default, deny_unknown_fields)] // a typo'd knob must error, not silently fall back to the default
 pub struct BuyHeuristic {
@@ -190,7 +202,17 @@ pub struct BuyHeuristic {
     pub growth_overext_cap_crypto: f64, // (#4) crypto's OWN overextension cap (% above the 200wk SMA at which the brake maxes). Crypto routinely rides far above its long SMA, so a separate looser cap avoids over-braking coins; equities/ETFs keep growth_overext_cap. 0 = crypto brake off
     pub growth_fund_weight: f64,     // (G) reward per pt of the as-of FUNDAMENTAL factor (see growth_score / fund_factor). The fund lane proves WHICH as-of factor predicts forward returns standalone; this folds it INTO growth_score so its through-the-lane edge is ablatable. 0 = off (DEFAULT, no behavior change). Validate via `backtest <set> fund` then set the weight only on +ablation-Δ + both-half-positive OOS
     pub growth_fund_cap: f64,        // (G) cap (in the factor's own pts) on the fund factor fed into that reward, so one data-artifact (+9000% rev) can't dominate the rank
-    pub growth_fund_factor: String,  // (G) WHICH as-of FundFactors term the fund tilt weighs: rev_cagr | rev_accel | gross_margin | op_margin | margin_trend | eps_growth. Set to whichever the `backtest <set> fund` probe shows +rho + both-half-positive OOS — no recompile. Unknown name -> neutral. Default "rev_accel" preserves the prior hardcoded behavior
+    pub growth_fund_factor: String,  // (G) WHICH as-of FundFactors term the fund tilt weighs: rev_cagr | rev_accel | gross_margin | op_margin | margin_trend | eps_growth | rev_yoy | eps_yoy | net_margin. Set to whichever the `backtest <set> fund` probe shows +rho + both-half-positive OOS — no recompile. Unknown name -> neutral. Default "rev_accel" preserves the prior hardcoded behavior
+    // (G+) ADDITIONAL fundamental tilt terms, summed on top of the single `growth_fund_*` term above.
+    // The three knobs above stay the PRIMARY term because the weight sweep, the weight curve and every
+    // recorded receipt in tests/ci-settings.yaml address them by name; this list is purely additive.
+    // EMPTY BY DEFAULT, which makes the whole mechanism inert and every prior receipt still exact.
+    // Each term carries its OWN cap on purpose: the factors are on wildly different scales (peg_yield
+    // ~0-500, net_margin ~0-60, eps_yoy unbounded), and receipt (#3) records what one shared cap did
+    // to a mismatched factor — +151.9 vs +195.1, where "the +43.2 IS the clamp releasing".
+    // Same validation bar as the primary: a term earns a non-zero weight from a probe row showing
+    // +rho with both OOS halves positive, never from looking reasonable.
+    pub growth_fund_extra: Vec<FundTerm>,
     pub fund_source: String,         // (Item 22) WHICH fundamentals feed BOTH the `backtest <set> fund` lane AND the live `screen`/`check` fund tilt: "fmp" (DEFAULT, unchanged — global coverage, quarterly, 250-call/day cap, needs FMP_API_KEY) | "sec" (SEC EDGAR XBRL — free, no key, no daily cap, ~19y annual history, US filers only). The SAME source feeds backtest + live (one router) so the validated and served signal can't drift (train-serve skew). Switching to "sec" is a DATA-SOURCE change: re-run `backtest <set> fund` to re-validate the factor on SEC's annual rows BEFORE raising growth_fund_weight — the FMP-validated weight does NOT carry over. Unknown value -> "fmp". With weight 0 (default) this is inert either way.
     pub growth_mom121_weight: f64,   // (M) reward per pt of 12-1 momentum (trailing 1Y return EX the last 1mo — Jegadeesh-Titman, skips the short-term-reversal month). Price-only, so unlike the BACKTEST-BLIND div/ROE/fund tilts this one IS validated end-to-end (backtest_quote reconstructs 1Y/1M). 0 = off (DEFAULT, no behavior change). Raise only on +ablation-Δ + both-half-positive OOS via `backtest <set>` / `tune`
     pub growth_mom121_cap: f64,      // (M) cap (in pct pts) on the 12-1 momentum fed into that reward, so one moonshot can't dominate the rank
@@ -290,6 +312,7 @@ impl Default for BuyHeuristic {
             growth_fund_weight: 0.0,       // (G) OFF by default — the fund term is inert until validated. Wired through the growth lane so `backtest <set> fund` can ablate it; raise only on +Δ + both-half-positive OOS
             growth_fund_cap: 30.0,         // (G) clamp the fund factor to ±/+30 pts before weighting (irrelevant at weight 0); keeps a freshly-listed +9000% rev-accel artifact from running away with the rank
             growth_fund_factor: "rev_accel".to_string(), // (G) the prior hardcoded factor — change in settings.yaml once the probe names a better one (irrelevant at weight 0)
+            growth_fund_extra: Vec::new(), // (G+) OFF by default — an empty list makes the multi-term sum contribute exactly 0.0, so scores stay byte-identical to the single-factor tilt and every recorded receipt still holds
             fund_source: "fmp".to_string(), // (Item 22) FMP feed by default (= current behavior). Set "sec" for free/uncapped US annual fundamentals, then re-validate via `backtest <set> fund` before raising growth_fund_weight (irrelevant at weight 0)
             growth_mom121_weight: 0.0,     // (M) OFF by default — the 12-1 momentum term is wired + ablatable but inert until validated; raise only on +Δ + both-half-positive OOS
             growth_mom121_cap: 50.0,       // (M) clamp 12-1 momentum to +50 pts before weighting (irrelevant at weight 0); a name up >50% over the year-ago-to-month-ago window is already maxed for this tilt
@@ -888,6 +911,12 @@ mod tests {
         // factor name that still matched its receipt. Pin BOTH so neither can drift alone.
         assert_eq!(h.growth_fund_weight, 0.07, "{receipts}");
         assert_eq!(h.growth_fund_cap, 300.0, "cap is half the tilt magnitude — {receipts}");
+        // (G+) the multi-term tilt ships INERT. An empty list contributes exactly 0.0, which is what
+        // keeps every receipt above numerically valid; the first non-empty entry is a live rank change
+        // and must arrive with its own probe row (+rho, both OOS halves positive), same bar as the
+        // primary. See receipt (#3e): of the six factors it unblocked, only eps_growth cleared that bar
+        // at BOTH horizons — net_margin measured NEGATIVE on all four halves.
+        assert!(h.growth_fund_extra.is_empty(), "{receipts}");
         // (D) revived 2026-07-25. This one canNOT carry the receipt the message above demands: the
         // backtest cannot reconstruct as-of dividends, so no walk-forward run grades it at any weight
         // (see commands/backtest.rs's module header). It is pinned as a JUDGMENT lever sized by

@@ -35,6 +35,14 @@ use chrono::Datelike;
 use futures::stream::{self, StreamExt};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+/// How many years of filed statements the as-of fundamental factors look BACK over — deliberately a
+/// constant, and deliberately not the run's forward hold horizon (see the call site). 5 is not a new
+/// choice: it is what BOTH live call sites already pass (`report.rs`'s verdict mirror and
+/// `fetch.rs`'s live enrich, each `fund_factors(&rows, today, 5)`), so the backtest now grades the
+/// same window the screen serves. Raising it re-opens the coverage hole — SEC XBRL history only
+/// reaches ~2007, so every extra year of lookback deletes a year of usable cutoffs from the front.
+const FUND_LOOKBACK_YRS: i64 = 5;
+
 /// The journaled method verdict — written by WIDE (`universe`) runs only, read by the screen's
 /// method footer (track-pattern twin: one writer, one reader, same struct, so the two surfaces
 /// can't disagree). A watchlist run must never overwrite this: its tiny survivor sample isn't
@@ -299,7 +307,16 @@ pub async fn run(args: Vec<String>) {
                                 continue;
                             }
                             let mut quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
-                            let mut fund = fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], years));
+                            // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
+                            // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
+                            // fund_as_of(rows, cutoff - yrs*365)`). Passing the horizon meant `fund 12`
+                            // demanded twelve years of filed statements before every cutoff — SEC XBRL
+                            // starts ~2007 and a 12y run's cutoffs end 2014-07, so rev_cagr / rev_accel /
+                            // eps_growth were None on EVERY sample and printed "n/a (only 0 cutoffs)".
+                            // Their sweep lines then read exactly the price-only baseline, which looks
+                            // like "measured, no edge" and was actually "never measured at all".
+                            let mut fund =
+                                fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], FUND_LOOKBACK_YRS));
                             // (Item 4) attach the as-of net insider buys (90d before the cutoff, transaction-
                             // date guarded) onto the SAME FundFactors; build one if the FMP lane is off so
                             // `insider` works standalone (no FMP key needed).
@@ -334,6 +351,10 @@ pub async fn run(args: Vec<String>) {
                             // no recompile. Price-only backtest (no `fund`/key) leaves this None -> growth_score
                             // neutral -> validated edge untouched.
                             quote.fund_factor = fund.as_ref().and_then(|f| core::select_fund_factor(f, factor));
+                            // (G+) the whole struct, for `growth_fund_extra`'s named terms. Cloned here
+                            // rather than moved: `fund` is kept on the Sample so the factor sweep can
+                            // re-select from it without rebuilding.
+                            quote.fund = fund.clone();
                             // UN-BLIND the quality term. `backtest_quote` builds from `Quote::stub` (roe
                             // None) and fills only closes-derived fields, so before this line
                             // `quality_reward` was 0.15 × 0 for EVERY sample in EVERY lane — the term was
@@ -399,42 +420,52 @@ pub async fn run(args: Vec<String>) {
     println!("\nBacktest — WALK-FORWARD score vs {years}y-forward PEER-RELATIVE return (de-meaned per ~6mo cutoff):");
     println!("  cutoffs with a forward window: {}   tickers: {}", samples.len(), tickers.len());
 
-    let buy_knobs: &[Knob] = &[
-        ("long_trend_weight", |tuning| tuning.long_trend_weight = 0.0),
-        ("discount_weight", |tuning| tuning.discount_weight = 0.0), // (#4) zero the dip reward — Δ>0 confirms dip-depth ranks backwards
-        ("cheap_weight", |tuning| tuning.cheap_weight = 0.0),
-        ("dividend_weight*", |tuning| tuning.dividend_weight = 0.0),
-        ("onsale_sharpe_weight", |tuning| tuning.onsale_sharpe_weight = 0.0),
-        ("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
-        ("quality_weight", |tuning| tuning.quality_weight = 0.0), // shared with the growth lane — one knob, so it must be ablatable in both
+    let buy_knobs: Vec<Knob> = vec![
+        knob("long_trend_weight", |tuning| tuning.long_trend_weight = 0.0),
+        knob("discount_weight", |tuning| tuning.discount_weight = 0.0), // (#4) zero the dip reward — Δ>0 confirms dip-depth ranks backwards
+        knob("cheap_weight", |tuning| tuning.cheap_weight = 0.0),
+        knob("dividend_weight*", |tuning| tuning.dividend_weight = 0.0),
+        knob("onsale_sharpe_weight", |tuning| tuning.onsale_sharpe_weight = 0.0),
+        knob("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
+        knob("quality_weight", |tuning| tuning.quality_weight = 0.0), // shared with the growth lane — one knob, so it must be ablatable in both
     ];
-    let growth_knobs: &[Knob] = &[
-        ("growth_trend_weight", |tuning| tuning.growth_trend_weight = 0.0),
-        ("growth_accel_weight", |tuning| tuning.growth_accel_weight = 0.0),
-        ("sharpe_weight", |tuning| tuning.sharpe_weight = 0.0),
-        ("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
-        ("overext_brake", |tuning| tuning.growth_overext_cap = 0.0),
-        ("growth_fund_weight", |tuning| tuning.growth_fund_weight = 0.0), // (G) Δ shows the as-of fund factor's through-the-lane edge; ~0 when weight is already 0 (default) or no fund coverage
-        ("growth_mom121_weight", |tuning| tuning.growth_mom121_weight = 0.0), // (M) Δ shows the 12-1 momentum term's through-the-lane edge; ~0 when weight is 0 (default)
-        ("growth_smoothness_weight", |tuning| tuning.growth_smoothness_weight = 0.0), // (E) Δ shows the trend-smoothness reward's through-the-lane edge; ~0 when weight is 0 (default)
-        ("growth_underwater_weight", |tuning| tuning.growth_underwater_weight = 0.0), // Δ shows the drawdown-duration penalty's through-the-lane edge; ~0 when weight is 0 (default)
-        ("quality_weight", |tuning| tuning.quality_weight = 0.0), // Δ prices the ROE/ROA quality reward. Absent until the term was un-blinded above — it read exactly 0.0 by construction, not by measurement. Needs `fund` (price-only lanes have no quality level -> ~0)
+    let growth_knobs: Vec<Knob> = vec![
+        knob("growth_trend_weight", |tuning| tuning.growth_trend_weight = 0.0),
+        knob("growth_accel_weight", |tuning| tuning.growth_accel_weight = 0.0),
+        knob("sharpe_weight", |tuning| tuning.sharpe_weight = 0.0),
+        knob("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
+        knob("overext_brake", |tuning| tuning.growth_overext_cap = 0.0),
+        knob("growth_fund_weight", |tuning| tuning.growth_fund_weight = 0.0), // (G) Δ shows the as-of fund factor's through-the-lane edge; ~0 when weight is already 0 (default) or no fund coverage
+        knob("growth_mom121_weight", |tuning| tuning.growth_mom121_weight = 0.0), // (M) Δ shows the 12-1 momentum term's through-the-lane edge; ~0 when weight is 0 (default)
+        knob("growth_smoothness_weight", |tuning| tuning.growth_smoothness_weight = 0.0), // (E) Δ shows the trend-smoothness reward's through-the-lane edge; ~0 when weight is 0 (default)
+        knob("growth_underwater_weight", |tuning| tuning.growth_underwater_weight = 0.0), // Δ shows the drawdown-duration penalty's through-the-lane edge; ~0 when weight is 0 (default)
+        knob("quality_weight", |tuning| tuning.quality_weight = 0.0), // Δ prices the ROE/ROA quality reward. Absent until the term was un-blinded above — it read exactly 0.0 by construction, not by measurement. Needs `fund` (price-only lanes have no quality level -> ~0)
     ];
+    // (G+) one row per CONFIGURED extra fundamental term, so each is priced separately rather than as
+    // one all-extras-at-once Δ. That distinction is the whole point: receipt (#3d) found quality and
+    // peg_yield each worth ~+85 alone and -100 together, and a combined ablation row could not have
+    // told those apart. Empty by default -> the table is unchanged from the single-factor era.
+    let mut growth_knobs = growth_knobs;
+    for (i, t) in tuning.growth_fund_extra.iter().enumerate() {
+        growth_knobs.push(knob(format!("fund_extra:{}", t.factor), move |tun| {
+            tun.growth_fund_extra[i].weight = 0.0;
+        }));
+    }
     // (#10) loosen each numeric growth GATE one notch, relative to the loaded tuning (respects settings.yaml
     // overrides). The sweep reports the mean forward return of the names each loosening newly admits.
-    let gate_loosen: &[Knob] = &[
-        ("growth_min_range_pct -10", |t| t.growth_min_range_pct -= 10.0),
-        ("growth_min_cagr -4", |t| t.growth_min_cagr -= 4.0),
-        ("max_1m_drop_pct -10 (deeper)", |t| t.max_1m_drop_pct -= 10.0),
-        ("min_avg_turnover_eur ->0", |t| t.min_avg_turnover_eur = 0.0),
-        ("growth_max_above_ma ->off", |t| t.growth_max_above_ma = 0.0), // (#24) fwd return of the extreme-stretch names the gate excludes — validated -125.1 (n=267) at ship time; a POSITIVE flip here says re-probe the ceiling
-        ("growth_require_lifetime_uptrend ->off", |t| t.growth_require_lifetime_uptrend = false), // (#25) fwd return of the lifetime-downtrend names the gate excludes; n=0 while the gate is off
-        ("growth_maxdd_cap ->off", |t| t.growth_maxdd_cap = 0.0), // (#26) fwd return of the deep-drawdown names the gate excludes; n=0 while the gate is off
+    let gate_loosen: Vec<Knob> = vec![
+        knob("growth_min_range_pct -10", |t| t.growth_min_range_pct -= 10.0),
+        knob("growth_min_cagr -4", |t| t.growth_min_cagr -= 4.0),
+        knob("max_1m_drop_pct -10 (deeper)", |t| t.max_1m_drop_pct -= 10.0),
+        knob("min_avg_turnover_eur ->0", |t| t.min_avg_turnover_eur = 0.0),
+        knob("growth_max_above_ma ->off", |t| t.growth_max_above_ma = 0.0), // (#24) fwd return of the extreme-stretch names the gate excludes — validated -125.1 (n=267) at ship time; a POSITIVE flip here says re-probe the ceiling
+        knob("growth_require_lifetime_uptrend ->off", |t| t.growth_require_lifetime_uptrend = false), // (#25) fwd return of the lifetime-downtrend names the gate excludes; n=0 while the gate is off
+        knob("growth_maxdd_cap ->off", |t| t.growth_maxdd_cap = 0.0), // (#26) fwd return of the deep-drawdown names the gate excludes; n=0 while the gate is off
     ];
-    report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, buy_knobs);
-    report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, growth_knobs);
+    report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, &buy_knobs);
+    report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, &growth_knobs);
     gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
-    gate_sweep(&samples, tuning, gate_loosen); // (#10) which specific gate is too tight?
+    gate_sweep(&samples, tuning, &gate_loosen); // (#10) which specific gate is too tight?
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
     if fund || insider {
         report_fund_lane(&samples);
@@ -604,6 +635,13 @@ fn report_fund_lane(samples: &[Sample]) {
         ("op_margin", |f| f.op_margin),
         ("margin_trend", |f| f.margin_trend),
         ("eps_growth", |f| f.eps_growth),
+        // the three columns the report/screen tables print. Probed for the first time here: rev_yoy was
+        // buried inside rev_accel, eps_yoy did not exist, and net_margin was never carried — op_margin
+        // was the only margin LEVEL ever measured, and it reads strongly NEGATIVE (rho -0.23), which is
+        // exactly why the below-the-line twin is worth its own row rather than being assumed to match.
+        ("rev_yoy", |f| f.rev_yoy),
+        ("eps_yoy", |f| f.eps_yoy),
+        ("net_margin", |f| f.net_margin),
         ("quality(roe/roa)", |f| f.quality),            // quality of capital, the SCORED resolution: ROE, or ROA where equity is negative (SEC feed only; FMP free tier = None). The raw `roe` was probed here before and measured negative-equity fakes the live path rejected — this is the number the score now reads
         ("roe_raw", |f| f.roe),                         // unfiltered ROE, kept alongside so the fallback's effect is visible: the two rows differ only on negative-equity filers
         ("insider_net90d", |f| f.insider_net_buys_90d), // (Item 4) only populated under `insider`
@@ -769,8 +807,13 @@ fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], b
 /// then prints the one to paste into settings.yaml. Ships nothing. Needs the `fund` path; with <8 cutoffs
 /// carrying fundamentals there's nothing to sweep. Same chronological split + seeded search as `tune`.
 fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
-    const FACTORS: [&str; 11] = [
+    const FACTORS: [&str; 14] = [
         "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
+        // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
+        // array TIGHTENS every reported band: the Šidák haircut below divides by FACTORS.len(), so
+        // going 11 -> 14 makes the best-of-N test stricter, not the factors weaker. A later reader
+        // comparing bands across runs must check this length before calling it a regression.
+        "rev_yoy", "eps_yoy", "net_margin",
         "insider_net_buys_90d", // (Item 4) shows n/a unless `insider` populated it
         "earnings_yield",       // (Item 19) as-of valuation; native-currency probe (n/a unless `fund`)
         // (PEG) growth-at-price = earnings_yield · as-of CAGR (1/PEG; 100 ⇔ PEG 1, >100 ⇔ PEG <1).
@@ -1871,7 +1914,15 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
 /// score WEIGHT never changes a GATE, so the gated row set stays fixed across the ablation -> the rho
 /// is comparable term-to-term.
 /// One ablation knob: a name + a fn that zeroes its weight in a `BuyHeuristic` copy.
-type Knob = (&'static str, fn(&mut BuyHeuristic));
+/// BOXED, not a plain `fn` pointer: `growth_fund_extra` is a config-driven LIST, so its ablation rows
+/// have to be generated per configured term and each needs to capture its own index — which a fn
+/// pointer cannot do. Owned `String` for the same reason (the names carry the factor).
+type Knob = (String, Box<dyn Fn(&mut BuyHeuristic)>);
+
+/// Terse constructor so the knob tables below stay one line per knob.
+fn knob(name: impl Into<String>, f: impl Fn(&mut BuyHeuristic) + 'static) -> Knob {
+    (name.into(), Box::new(f))
+}
 
 /// (Item 5) p-th percentile of an already-sorted slice (nearest-rank). NaN on empty.
 fn percentile(sorted: &[f64], p: f64) -> f64 {

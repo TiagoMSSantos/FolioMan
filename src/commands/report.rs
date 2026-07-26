@@ -139,6 +139,8 @@ pub async fn run(args: Vec<String>) {
                 // mid-ramp US growers (where the valuation line already shows the same annual ey).
                 scored.fund_factor =
                     core::select_fund_factor(&ff, &settings.buy_heuristic.growth_fund_factor);
+                // (G+) same struct the extra terms read, set after the price-dependent fields above
+                scored.fund = Some(ff);
             }
             println!("{}", verdict_line(&scored, &settings.buy_heuristic));
         }
