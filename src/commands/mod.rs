@@ -102,27 +102,35 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
         Some(euribor) => {
             println!("\nEuribor 3M: {euribor:.3}%  (live)");
             println!(
-                "Certificados de Aforro — base = min(Euribor + spread, cap), floored 0; \
-                 premium added per holding year. Gains compound today's base (Euribor drifts):"
+                "Certificados de Aforro — base = clamp(Euribor × mult + spread, 0, cap); premium \
+                 added per holding year. Gains compound today's base (Euribor drifts) and run PAST \
+                 prazo, so any cell beyond it is terms, not money you collect:"
             );
             println!(
-                "  {:<6} {:>6} {:>6} {:>14} {:>8} {:>8} {:>8} {:>8}",
-                "SÉRIE", "BASE", "CAP", "PREMIUM 2-5/6+", "2Y", "5Y", "8Y", "20Y"
+                "  {:<6} {:>6} {:>6} {:>6} {:>14} {:>8} {:>8} {:>8} {:>8}",
+                "SÉRIE", "BASE", "CAP", "PRAZO", "PREMIUM", "2Y", "5Y", "8Y", "20Y"
             );
             for s in core::CA_SERIES {
-                let base = core::ca_base_rate(euribor, s.spread, s.cap);
-                let gain =
-                    |y| format!("{:+.1}%", core::ca_cumulative_gain(base, s.premium_early, s.premium_late, y));
+                let base = core::ca_base_rate(euribor, s.mult, s.spread, s.cap);
+                // no published formula -> no gains. `—` here means "IGCP does not say", NOT zero.
+                let gain = |y| {
+                    base.map_or_else(
+                        || "—".to_string(),
+                        |b| format!("{:+.1}%", core::ca_cumulative_gain(b, s.premium, y)),
+                    )
+                };
                 println!(
-                    "  {:<6} {:>5.2}% {:>5.1}% {:>13} {:>8} {:>8} {:>8} {:>8}",
+                    "  {:<6} {:>6} {:>6} {:>6} {:>14} {:>8} {:>8} {:>8} {:>8}  {}",
                     s.name,
-                    base,
-                    s.cap,
-                    format!("+{:.2}/+{:.2}%", s.premium_early, s.premium_late),
+                    base.map_or_else(|| "n/a".to_string(), |b| format!("{b:.2}%")),
+                    s.cap.map_or_else(|| "—".to_string(), |c| format!("{c:.1}%")),
+                    s.prazo_years.map_or_else(|| "—".to_string(), |p| format!("{p}y")),
+                    core::ca_premium_range(s.premium),
                     gain(2),
                     gain(5),
                     gain(8),
                     gain(20),
+                    s.note,
                 );
             }
         }

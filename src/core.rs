@@ -23,31 +23,94 @@ pub const HORIZONS: &[(&str, i64)] = &[
     ("20Y", 7300),
 ];
 
-/// Certificados de Aforro: base = Euribor3M + spread, capped, floored at 0; a permanence
-/// premium (NOT capped) is added on top per holding year — `premium_early` in years 2-5,
-/// `premium_late` from year 6 on. All in percentage points.
+/// Certificados de Aforro: base = clamp(Euribor3M × `mult` + `spread`, 0, `cap`); a permanence
+/// premium (NOT capped) is added on top per holding year, read from `premium`'s bands.
+///
+/// Every figure below comes from IGCP's per-series ficha técnica or the Portaria that created the
+/// series. To re-check any of them, the ground truth is IGCP's monthly per-series rate sheet
+/// (`igcp.pt/.../Taxa_Anual_<S>+PP.pdf`) — it publishes the rate actually being paid, so it catches
+/// a wrong formula here in one subtraction.
 pub struct CaSeries {
     pub name: &'static str,
+    /// Multiplier on Euribor 3M. 0.60 for Série B, whose rate is `0,60 × TBA` — and TBA is the SAME
+    /// "média da Euribor a 3 meses dos últimos 10 dias úteis" the newer series index to, so one
+    /// field spans both shapes. 1.0 for C-F. (B was `0,80 × TBA` until DL 172-B/86 art. 15.º b).)
+    ///
+    /// None = IGCP publishes no rate formula for the series at all (Série A, whose ficha only says
+    /// its terms follow pre-1986 Série B). Base and every gain cell then print unknown. Do NOT
+    /// invent one to fill the row: `fetch.rs` already warns that a hand-entered rate silently
+    /// poisons this table, and a guess is worse than a fetch failure because nothing downstream
+    /// can tell it apart from a real number.
+    pub mult: Option<f64>,
     pub spread: f64,
-    pub cap: f64,
-    pub premium_early: f64, // yr 2-5
-    pub premium_late: f64,  // yr 6+
+    /// None = no documented cap (Série B). 0.60 × Euribor has never come near one.
+    pub cap: Option<f64>,
+    /// (first holding year, percentage points), ascending — the last band that has started wins.
+    /// Year 1 earns base only, unless a band starts at 1.
+    ///
+    /// Replaced a `premium_early`/`premium_late` pair that held exactly two tiers. C's ladder has
+    /// six and F's has five, so the pair could not describe either: it stopped F at +0.50 where the
+    /// real ladder climbs to +1.75 by year 14, understating F's 20Y by ~21 points.
+    pub premium: &'static [(i64, f64)],
+    /// None = never matures, lives until redeemed (A and B). Everything else ends — and the gain
+    /// columns deliberately run past it, see `ca_cumulative_gain`.
+    pub prazo_years: Option<i64>,
+    pub note: &'static str,
 }
 
+/// Oldest first; the one you can still subscribe today (F) is last. A-E are all closed to new
+/// subscription and stay because you may still HOLD one — and because the table's job is comparing
+/// what each series pays, not only what is on sale.
 pub const CA_SERIES: &[CaSeries] = &[
-    CaSeries { name: "E", spread: 1.0, cap: 3.5, premium_early: 0.50, premium_late: 1.00 },
-    CaSeries { name: "F", spread: 0.0, cap: 2.5, premium_early: 0.25, premium_late: 0.50 },
+    // DL 43.454 (30 Dec 1960), closed Jul 1986. IGCP still names A in its monthly rate notices but
+    // publishes no formula for it, so the row is honest unknowns rather than a plausible number.
+    CaSeries { name: "A", mult: None, spread: 0.0, cap: None, premium: &[], prazo_years: None, note: "rate not published" },
+    // DL 172-B/86 (30 Jun 1986), closed by Portaria 73-A/2008. No maturity — B lives until redeemed.
+    // Single band because every surviving B was subscribed by Jan 2008 and so is 18+ years old:
+    // IGCP's own ficha says "all certificates present the maximum bonus, i.e. 2%". This models what
+    // B pays NOW, which is what the table asks; it is not B's historical ladder.
+    CaSeries { name: "B", mult: Some(0.60), spread: 0.0, cap: None, premium: &[(1, 2.00)], prazo_years: None, note: "0,60×TBA · no maturity" },
+    // Portaria 230-A/2009 era, subscribable to 2015. Last one matured in 2025, which is why IGCP's
+    // rate notices list A, B, D, E, F and no C. Kept as the historical row it now is.
+    CaSeries { name: "C", mult: Some(1.0), spread: 1.0, cap: Some(3.5), premium: &[(2, 0.50), (3, 0.75), (4, 1.00), (8, 1.25), (9, 1.50), (10, 2.50)], prazo_years: Some(10), note: "MATURED 2025" },
+    // Portaria 17-B/2015, closed by Portaria 329-A/2017. IDENTICAL terms to E by law: 329-A/2017
+    // says E "mantêm as condições financeiras" of D and only moved subscription to digital-only. If
+    // these two rows ever diverge, one of them has been edited without a source.
+    CaSeries { name: "D", mult: Some(1.0), spread: 1.0, cap: Some(3.5), premium: &[(2, 0.50), (6, 1.00)], prazo_years: Some(10), note: "closed Oct 2017" },
+    CaSeries { name: "E", mult: Some(1.0), spread: 1.0, cap: Some(3.5), premium: &[(2, 0.50), (6, 1.00)], prazo_years: Some(10), note: "closed Jun 2023" },
+    // Portaria 149-A/2023. The only series still open, and the only one whose prazo is 15y.
+    CaSeries { name: "F", mult: Some(1.0), spread: 0.0, cap: Some(2.5), premium: &[(2, 0.25), (6, 0.50), (10, 1.00), (12, 1.50), (14, 1.75)], prazo_years: Some(15), note: "open" },
 ];
 
+/// Premium in force during holding year `y` (1-based): the last band that has started, 0 before the
+/// first. Bands are half a dozen entries, so a reverse scan is the whole algorithm.
+fn ca_premium(bands: &[(i64, f64)], y: i64) -> f64 {
+    bands.iter().rev().find(|(from, _)| y >= *from).map_or(0.0, |(_, p)| *p)
+}
+
+/// Compact "+0.50→+2.50%" for a ladder, "+2.00%" for a flat one, "—" for none.
+pub fn ca_premium_range(bands: &[(i64, f64)]) -> String {
+    match bands {
+        [] => "—".to_string(),
+        [(_, p)] => format!("+{p:.2}%"),
+        [(_, lo), .., (_, hi)] => format!("+{lo:.2}→+{hi:.2}%"),
+    }
+}
+
 /// Cumulative % gain on €1 held for `years` whole years, compounding each holding year's
-/// rate = base + that year's permanence premium (yr1 none, yr2-5 early, yr6+ late).
+/// rate = base + that year's permanence premium.
 /// note: annual compounding, ignores intra-year capitalisation — close enough for a
 /// footer estimate, and Euribor (so base) drifts anyway. Assumes today's base holds.
-pub fn ca_cumulative_gain(base: f64, premium_early: f64, premium_late: f64, years: i64) -> f64 {
+///
+/// DELIBERATELY keeps compounding past the series' `prazo_years`. Every series except A and B
+/// matures inside 20 years (C/D/E at 10, F at 15), so their 20Y cell is NOT money anyone collects —
+/// it is what the series' terms would pay if they ran that long. The PRAZO column beside it is what
+/// tells the reader which cells are real. Truncating instead was considered and declined; changing
+/// it is a display decision, not a bug fix.
+pub fn ca_cumulative_gain(base: f64, premium: &[(i64, f64)], years: i64) -> f64 {
     let mut factor = 1.0;
     for y in 1..=years {
-        let premium = if y >= 6 { premium_late } else if y >= 2 { premium_early } else { 0.0 };
-        factor *= 1.0 + (base + premium) / 100.0;
+        factor *= 1.0 + (base + ca_premium(premium, y)) / 100.0;
     }
     (factor - 1.0) * 100.0
 }
@@ -975,10 +1038,14 @@ pub fn name_of(info: &Value, ticker: &str) -> String {
         .to_string()
 }
 
-/// CA base rate: 3-month Euribor + series spread, capped, floored at 0.
-/// The permanence premium is added on top per holding year, not capped.
-pub fn ca_base_rate(euribor_3m: f64, spread: f64, cap: f64) -> f64 {
-    f64::max(0.0, f64::min(euribor_3m + spread, cap))
+/// CA base rate: 3-month Euribor × series multiplier + spread, capped, floored at 0.
+/// The permanence premium is added on top per holding year, and is NOT capped.
+///
+/// None when the series has no published formula (Série A) — the caller prints unknown rather than
+/// substituting a number, see `CaSeries::mult`.
+pub fn ca_base_rate(euribor_3m: f64, mult: Option<f64>, spread: f64, cap: Option<f64>) -> Option<f64> {
+    let raw = euribor_3m * mult? + spread;
+    Some(f64::max(0.0, cap.map_or(raw, |c| f64::min(raw, c))))
 }
 
 /// (latest_year, latest_rate, avg_last_10y, avg_last_30y) from {year->rate}.
@@ -3272,16 +3339,85 @@ mod tests {
         "iShares Core MSCI World UCITS ETF"
     );
 
-    assert_eq!(ca_base_rate(2.1, 0.0, 2.5), 2.1); // Série F
-    assert!((ca_base_rate(2.1, 1.0, 3.5) - 3.1).abs() < 1e-9); // Série E
-    assert_eq!(ca_base_rate(3.0, 1.0, 3.5), 3.5); // capped
-    assert_eq!(ca_base_rate(-2.0, 1.0, 3.5), 0.0); // floored
+    let one = Some(1.0);
+    assert_eq!(ca_base_rate(2.1, one, 0.0, Some(2.5)), Some(2.1)); // Série F
+    assert!((ca_base_rate(2.1, one, 1.0, Some(3.5)).unwrap() - 3.1).abs() < 1e-9); // Série E
+    assert_eq!(ca_base_rate(3.0, one, 1.0, Some(3.5)), Some(3.5)); // capped
+    assert_eq!(ca_base_rate(-2.0, one, 1.0, Some(3.5)), Some(0.0)); // floored
+    // Série B: multiplicative (`0,60 × TBA`) and uncapped. A spread/cap pair cannot express this,
+    // which is why `mult` exists.
+    assert!((ca_base_rate(2.49, Some(0.60), 0.0, None).unwrap() - 1.494).abs() < 1e-9);
+    // Série A: IGCP publishes no formula -> None, never a substituted number.
+    assert_eq!(ca_base_rate(2.49, None, 0.0, None), None);
+
+    // (CA) THE RECEIPT for the multiplicative base: IGCP's own 2026 Série B sheet publishes
+    // 3.30020% / 3.19460% / 3.18260% gross, premium included. Those must fall out of
+    // `0.60 × E3 + 2.00` at the Euribor 3M actually observed in Feb-Apr 2026. If someone "tidies"
+    // mult away into a spread, these three stop reconciling and this test says so.
+    for (e3, published) in [(2.167, 3.30020), (1.991, 3.19460), (1.971, 3.18260)] {
+        let rate = ca_base_rate(e3, Some(0.60), 0.0, None).unwrap() + ca_premium(&[(1, 2.00)], 1);
+        assert!((rate - published).abs() < 5e-4, "Série B {e3} -> {rate}, IGCP says {published}");
+    }
+
+    // (CA) premium bands: the last band that has started wins; year 1 is bare base.
+    let f_bands = &[(2, 0.25), (6, 0.50), (10, 1.00), (12, 1.50), (14, 1.75)][..];
+    let got: Vec<f64> = [1, 2, 5, 6, 9, 10, 11, 12, 13, 14, 15].iter().map(|y| ca_premium(f_bands, *y)).collect();
+    assert_eq!(got, vec![0.0, 0.25, 0.25, 0.50, 0.50, 1.00, 1.00, 1.50, 1.50, 1.75, 1.75]);
+    // the two-tier model this replaced returned 0.50 from year 6 on, so year 10+ was understated
+    // by up to 1.25pp/yr — that is the whole reason `premium` is a slice.
+    assert_eq!(ca_premium(&[(2, 0.50), (3, 0.75), (4, 1.00), (8, 1.25), (9, 1.50), (10, 2.50)], 10), 2.50);
+    assert_eq!(ca_premium(&[], 5), 0.0); // Série A has no published ladder -> no premium invented
 
     // CA cumulative gain: yr1 = base only; compounds with premium thereafter
-    assert!((ca_cumulative_gain(2.1, 0.25, 0.50, 1) - 2.1).abs() < 1e-9); // yr1 = base
+    let f = &[(2, 0.25), (6, 0.50)][..];
+    assert!((ca_cumulative_gain(2.1, f, 1) - 2.1).abs() < 1e-9); // yr1 = base
     // 2yr: (1.021)(1.0235) - 1 = 0.0449935 -> 4.49935%
-    assert!((ca_cumulative_gain(2.1, 0.25, 0.50, 2) - 4.49935).abs() < 1e-4);
-    assert_eq!(ca_cumulative_gain(2.0, 0.5, 1.0, 0), 0.0); // no holding -> no gain
+    assert!((ca_cumulative_gain(2.1, f, 2) - 4.49935).abs() < 1e-4);
+    assert_eq!(ca_cumulative_gain(2.0, &[(2, 0.5), (6, 1.0)], 0), 0.0); // no holding -> no gain
+
+    // (CA) E is the CONTROL for the band rewrite: its last band runs to the end, so every cell it
+    // printed before must be unchanged. F is the one that moves — its ladder climbs to +1.75 and
+    // the old pair stopped at +0.50, so only its 20Y was wrong. At E3 2.49 (base 3.49 / 2.49):
+    // The two-tier model the bands replaced, verbatim, so the rewrite can be diffed against it
+    // instead of against display strings — hardcoding "+38.0%" would only pin whatever Euribor
+    // happened to print that day, and the cell rounds either side of .05 depending on it.
+    let two_tier = |base: f64, early: f64, late: f64, years: i64| {
+        let mut factor = 1.0;
+        for y in 1..=years {
+            let p = if y >= 6 { late } else if y >= 2 { early } else { 0.0 };
+            factor *= 1.0 + (base + p) / 100.0;
+        }
+        (factor - 1.0) * 100.0
+    };
+    // E is the CONTROL: its last band runs to the end, so the rewrite must be a no-op for it at
+    // EVERY base and horizon, not just today's.
+    let e = &CA_SERIES.iter().find(|s| s.name == "E").unwrap().premium;
+    for base in [0.0, 1.25, 3.49, 3.5] {
+        for years in [1, 2, 5, 8, 20, 30] {
+            let (new, old) = (ca_cumulative_gain(base, e, years), two_tier(base, 0.50, 1.00, years));
+            assert!((new - old).abs() < 1e-9, "E moved at base {base} / {years}Y: {new} vs {old}");
+        }
+    }
+    // F is the one that CHANGES, and only where the real ladder outgrows two tiers: identical
+    // through year 9, strictly higher from year 10 once +1.00/+1.50/+1.75 kick in.
+    let ff = &CA_SERIES.iter().find(|s| s.name == "F").unwrap().premium;
+    for years in 1..=9 {
+        let (new, old) = (ca_cumulative_gain(2.49, ff, years), two_tier(2.49, 0.25, 0.50, years));
+        assert!((new - old).abs() < 1e-9, "F must be unchanged at {years}Y: {new} vs {old}");
+    }
+    for years in 10..=20 {
+        assert!(ca_cumulative_gain(2.49, ff, years) > two_tier(2.49, 0.25, 0.50, years), "F must rise at {years}Y");
+    }
+    // and the SIZE of it, near the base the shipped table was printed on. Deliberately a gap and
+    // not two display strings: the printed base is rounded, so "+77.6%" vs "+77.7%" turns on a
+    // Euribor decimal the table never shows. The gap is ~21 points because the old model froze F's
+    // premium at +0.50 for the decade it actually spends climbing to +1.75.
+    let gap = ca_cumulative_gain(2.49, ff, 20) - two_tier(2.49, 0.25, 0.50, 20);
+    assert!((20.0..23.0).contains(&gap), "F 20Y understated by ~21 points, got {gap}");
+    // D and E are the same product by law (Portaria 329-A/2017 kept D's financial conditions);
+    // only the subscription channel differed. Divergence here means an unsourced edit.
+    let d = &CA_SERIES.iter().find(|s| s.name == "D").unwrap().premium;
+    assert_eq!(d, e);
 
     let series: BTreeMap<i32, f64> = [(2018, 1.0), (2019, 2.0), (2020, 3.0)].into();
     let (ly, lv, a10, a30) = inflation_summary(&series);
