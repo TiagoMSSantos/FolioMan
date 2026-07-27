@@ -26,7 +26,7 @@ pub async fn run(args: Vec<String>) {
     // (Item 15) same fund-tilt enrichment `screen`/`check` do, so sizing ranks the names the way `screen`
     // shows them when the tilt is on. Inert when growth_fund_weight == 0 (default) -> no extra fetches.
     if settings.buy_heuristic.growth_fund_weight > 0.0 {
-        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic.growth_fund_factor).await;
+        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
     }
 
     // (Item 17) apply the SAME crypto NUPL + BTC-relative adjustments `screen`/`check` do at render time,

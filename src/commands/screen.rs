@@ -749,7 +749,7 @@ pub async fn run(args: Vec<String>) {
     // FMP daily budget caps cold fetches; the rest serve from the disk cache, warming over runs.
     let mut fund_tilt_uncovered = false; // set below; joins the DEGRADED line at the end of the run
     if settings.buy_heuristic.growth_fund_weight > 0.0 {
-        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic.growth_fund_factor).await;
+        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
         // the tilt fails SILENT (fetch errors -> factor None -> neutral): with the feed down every
         // stock quietly reverts to price-only ranks. Say what the tilt actually covered so a
         // degraded run is distinguishable from a normal one. Display-only.

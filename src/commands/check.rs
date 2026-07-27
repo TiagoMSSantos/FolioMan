@@ -67,7 +67,7 @@ pub async fn run(args: Vec<String>) {
     // (G) route the validated as-of fundamental onto the live quotes so the buy ranking weighs it — only
     // when the tilt is on (weight 0 default = no fetch, no change). `check` scale keeps the FMP budget easy.
     if settings.buy_heuristic.growth_fund_weight > 0.0 {
-        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic.growth_fund_factor).await;
+        fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
     }
     for quote in &quotes {
         let cells = HORIZONS

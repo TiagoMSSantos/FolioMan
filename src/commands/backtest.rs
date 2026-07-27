@@ -338,12 +338,16 @@ pub async fn run(args: Vec<String>) {
                                 // (EV/EBITDA) same close, same currency discipline: EV = shares·px + net_debt,
                                 // all as-of. Still PROBE-ONLY — never the live score's weighed factor.
                                 f.ebitda_yield = px.and_then(|p| core::ev_ebitda_yield(f.ebitda_ttm, f.shares_ttm, f.net_debt, p));
-                                // (PEG) 1/PEG = earnings_yield · as-of CAGR; quote.trend_cagr is the as-of CAGR
-                                // (backtest_quote built it at this cutoff, line 221 — endpoint-robust log-fit, the
-                                // score's own growth backbone). This one IS shipped live now (growth_fund_factor
-                                // "peg_yield"), and the live enrich converts the same way — so train and serve
-                                // finally compute the identical ratio instead of differing by an FX rate.
-                                f.peg_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, quote.trend_cagr, p));
+                                // (PEG) 1/PEG = earnings_yield · as-of CAGR. This one IS shipped live now
+                                // (growth_fund_factor "peg_yield"), and the live enrich converts the same way —
+                                // so train and serve compute the identical ratio instead of differing by an FX rate.
+                                //
+                                // (#37) the CAGR is `long_cagr_pct` — the score's own, honouring use_life_cagr /
+                                // use_trend_cagr / fixed_cagr_years — not the raw `quote.trend_cagr` this read
+                                // until 2026-07-27. backtest_quote fills `perf`, `life_cagr` AND `trend_cagr` at
+                                // this cutoff, so every arm of that switch is reconstructable as-of and
+                                // train==serve still holds. Keep this in lockstep with fetch.rs's enrich.
+                                f.peg_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, picks::long_cagr_pct(&quote, tuning), p));
                             }
                             // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                             // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
@@ -462,6 +466,7 @@ pub async fn run(args: Vec<String>) {
         knob("growth_max_above_ma ->off", |t| t.growth_max_above_ma = 0.0), // (#24) fwd return of the extreme-stretch names the gate excludes — validated -125.1 (n=267) at ship time; a POSITIVE flip here says re-probe the ceiling
         knob("growth_require_lifetime_uptrend ->off", |t| t.growth_require_lifetime_uptrend = false), // (#25) fwd return of the lifetime-downtrend names the gate excludes; n=0 while the gate is off
         knob("growth_maxdd_cap ->off", |t| t.growth_maxdd_cap = 0.0), // (#26) fwd return of the deep-drawdown names the gate excludes; n=0 while the gate is off
+        knob("growth_max_peg ->off", |t| t.growth_max_peg = 0.0), // (#37) fwd return of the names the valuation ceiling excludes — the ceiling's own keep. The ci-settings curve (1.5..4.0) came from six hand-edited configs; this prices the on/off question every run, which is the part that sweep found decisive
     ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, &buy_knobs);
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, &growth_knobs);

@@ -62,8 +62,10 @@ fn long_leg_fixed(quote: &Quote, fixed_years: u32) -> Option<(f64, f64)> {
 ///
 /// Extracted rather than inlined a third time: the `leg` COLUMN has to print the score's own number,
 /// and a display that re-derives the score's arithmetic is exactly how the `cagr` column drifted into
-/// showing `life_cagr` (whole-life) while the rank ran on this (the 20/8/5 rung, capped). `peg` was the
-/// last such site and now routes here too.
+/// showing `life_cagr` (whole-life) while the rank ran on this (the 20/8/5 rung, capped). The `peg`
+/// COLUMN was routed here for the same reason — but the PEG *gate* was not, and that was the real
+/// last site: it read `trend_cagr` directly, so column and gate sat on two arms of this one switch.
+/// `long_cagr_pct` below closed that; nothing may divide by a CAGR without coming through here.
 fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) -> f64 {
     if tuning.use_life_cagr {
         // (#3j) whole-life, listing -> as_of: the `cagr` COLUMN's number, promoted from display to rank.
@@ -77,6 +79,22 @@ fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) ->
     } else {
         core::cagr(cum, years)
     }
+}
+
+/// (#37) The ONE CAGR every PEG in this tool divides by — `long_cagr_from` above, the same number the
+/// score, the `growth_min_cagr` gate and the CAGR/LEG columns already run on, with the leg lookup
+/// folded in so a caller cannot get half of it.
+///
+/// Exists because `peg_yield`'s three fill sites (fetch enrich, backtest loop, report mirror) each
+/// hardcoded `quote.trend_cagr` — one arm of the three-way switch above — while the `peg` COLUMN took
+/// whichever arm the config picked. Under the live `use_life_cagr: true` that split had the tool
+/// cutting APH at PEG 2.02 in the same run it ranked ODFL printing 2.51. Two numbers, one name.
+///
+/// None when the quote has no long leg at all. That propagates: `core::peg_yield` returns None, the
+/// cell prints `n/a` and the gate declines to price the name, which is the honest outcome — the
+/// alternative is inventing a growth figure to divide by.
+pub fn long_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
+    long_leg_fixed(quote, tuning.fixed_cagr_years).map(|(cum, years)| long_cagr_from(quote, tuning, cum, years))
 }
 
 /// (#3h) The long-leg CAGR as a trend reward takes it: clamped at `long_trend_cap`, unless the cap is
@@ -805,15 +823,15 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let ff = quote.fund.as_ref();
     // (#37) PEG CEILING. The knob is expressed as PEG so it reads like the column and like the request;
     // it is APPLIED to `peg_yield`, which is 1/PEG x 100 (peg_yield 100 <=> PEG 1), hence the reciprocal
-    // and the flipped comparison — a HIGH peg_yield is cheap. Gating on the printed `peg` cell instead
-    // was rejected deliberately: that cell divides pe_ratio by the leg CAGR, pe_ratio is None in every
-    // backtest, and a gate no run can price is a gate no run can defend. peg_yield is filled from ONE fn
-    // on both paths (fetch.rs live enrich, backtest.rs loop) -> train==serve.
+    // and the flipped comparison — a HIGH peg_yield is cheap. peg_yield is filled from ONE fn on every
+    // path (fetch.rs live enrich, backtest.rs loop, report.rs mirror) -> train==serve.
     //
-    // The two numbers are NOT equal (peg_yield uses eps/price and trend_cagr; the cell uses FMP's P/E and
-    // the leg), so a row can print PEG 1.9 and still be cut here. That is why the gate_failures leg quotes
-    // the gating number back as a PEG — a footer that can't explain a rejection is how the `cagr` column
-    // confusion started.
+    // This IS the printed `peg` cell now, and that is not an accident. Until 2026-07-27 the cell computed
+    // its own PEG (`pe_ratio / long_cagr_from`) while this gate read `peg_yield`, whose growth term was a
+    // hardcoded `trend_cagr` — one arm of the same three-way switch the cell was following via config.
+    // Under `use_life_cagr: true` the arms diverge, and the tool cut APH at PEG 2.02 in the very run it
+    // ranked ODFL printing 2.51. Both sides now divide by `long_cagr_pct`, so the ceiling means what the
+    // column shows. Do not re-derive a PEG anywhere; route through `long_cagr_pct`.
     if tuning.growth_max_peg > 0.0 {
         let bar = 100.0 / tuning.growth_max_peg; // PEG 2.0 -> reject peg_yield < 50
         match ff.and_then(|f| f.peg_yield) {
@@ -1155,10 +1173,10 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
             fails.push(("volatile", format!("{v:.1}%/day swing (cap {:.1}%)", tuning.growth_max_vol_crypto), v <= tuning.growth_max_vol_crypto + 0.5));
         }
     }
-    // (#37) the PEG ceiling's reason. REQUIRED, and more so than the other legs: the gate reads
-    // `peg_yield` while the table prints a `peg` cell derived differently, so without this a row can
-    // show PEG 1.9, vanish, and look like a bug. Convert the gating value BACK to a PEG (100/peg_yield)
-    // so the footer speaks the same units as the knob and the column.
+    // (#37) the PEG ceiling's reason. Convert the gating value BACK to a PEG (100/peg_yield) so the
+    // footer speaks the same units as the knob and the column. Since 2026-07-27 the `peg` cell prints
+    // this same number, so the footer's PEG and the table's PEG must MATCH for a given ticker — that
+    // equality is pinned in tests and is the check to run first if this gate ever looks wrong again.
     let ff = quote.fund.as_ref();
     if tuning.growth_max_peg > 0.0 {
         let bar = 100.0 / tuning.growth_max_peg;
@@ -1507,7 +1525,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "r2", hdr: "R2", width: 6, right: true },         // log-trend steadiness 0..1 (smoothness)
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true }, // % above the 200wk SMA (overextension)
     ColSpec { key: "pe", hdr: "P/E", width: 7, right: true },        // trailing P/E (FMP key only)
-    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true },       // P/E ÷ long CAGR — valuation vs growth (<1 = cheap for its growth)
+    ColSpec { key: "peg", hdr: "PEG", width: 6, right: true },       // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't exactly equal the TTM-based P/E cell ÷ CAGR
     ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true },     // trailing return on equity — or on ASSETS where equity is not a credible denominator, negative or collapsed (`core::quality_return`), hence the slash: one column, two denominators, no per-row flag
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true },       // trailing-1Y dividend yield
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true },       // ETF annual expense ratio % — the one cost that compounds against a decades hold (FMP key, ETFs only)
@@ -1710,25 +1728,29 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         }
         "pe" if stock_only_na => "—".to_string(),
         "pe" => quote.pe_ratio.map_or("n/a".to_string(), |v| format!("{v:.1}")),
-        // PEG = trailing P/E ÷ long-term CAGR (%/yr). Needs both (P/E is FMP-key-only) AND positive growth.
-        // <1 = cheap for its growth, >2 = pricey. Price-CAGR proxy for earnings growth — display-only.
+        // (#37) THE one PEG: the number `growth_max_peg` cuts on and `growth_fund_factor: peg_yield`
+        // tilts on, printed verbatim as its reciprocal (`peg_yield` 100 <=> PEG 1). <1 = cheap for its
+        // growth, >2 = pricey.
         //
-        // (#3j) the CAGR comes from `long_leg_fixed`/`long_cagr_from`, the same pair the score uses. This
-        // cell used to call `long_leg` + `core::cagr` by hand, so it silently ignored BOTH `fixed_cagr_years`
-        // and `use_trend_cagr` and would have ignored `use_life_cagr` too — the last display site still
-        // re-deriving the score's arithmetic, which is precisely how the `cagr` column drifted for months.
-        // UNCAPPED on purpose (no `capped_trend`, unlike the `leg` column): the cap exists to stop one fast
-        // compounder dominating a REWARD term, but clamping the denominator of a ratio would print a rich
-        // PEG for the fastest growers — the opposite of what the column means.
+        // This cell used to compute `pe_ratio / long_cagr_from(..)` — a SECOND PEG, which is how the
+        // tool came to cut APH at 2.02 in the same run it ranked ODFL printing 2.51. That formula was
+        // also arithmetic you can do on the two columns beside it (P/E ÷ CAGR), so it spent a column
+        // hiding the only PEG the tool actually acts on.
+        //
+        // CAVEAT worth knowing before dividing the row by hand: this uses the ANNUAL 10-K EPS, the only
+        // basis the as-of backtest can reconstruct (`fetch.rs` fences the TTM roll to `earnings_yield`
+        // for exactly that reason), while the `P/E` cell prefers the fresher TTM roll. So `P/E ÷ CAGR`
+        // is CLOSE to this but not equal, and is furthest off for mid-ramp growers. Two columns, two
+        // jobs — the fix is not to make them agree, it is to keep P/E true.
+        //
+        // `n/a` here is not missing data. It is the gate saying it cannot price this name — loss-maker,
+        // non-positive growth, or no long leg — and `gate_failures` names that case in words.
         "peg" if stock_only_na => "—".to_string(),
-        "peg" => {
-            let g = long_leg_fixed(quote, tuning.fixed_cagr_years)
-                .map(|(c, y)| long_cagr_from(quote, tuning, c, y));
-            match (quote.pe_ratio, g) {
-                (Some(pe), Some(g)) if g > 0.0 => format!("{:.2}", pe / g),
-                _ => "n/a".to_string(),
-            }
-        }
+        "peg" => quote
+            .fund
+            .as_ref()
+            .and_then(|f| f.peg_yield)
+            .map_or("n/a".to_string(), |p| format!("{:.2}", 100.0 / p)),
         "roe" if stock_only_na => "—".to_string(),
         // (#42) The `|ROE| > 100 -> n/m` rule that used to live here is GONE, not relaxed: it read the
         // ROE LEVEL, and level does not separate "earned a lot on its assets" from "bought its equity
@@ -3021,6 +3043,32 @@ mod tests {
     with_peg(&mut pq, Some(1.0), Some(-1.0)); // PEG 100 AND loss-making
     assert!(growth_score(&pq, &BuyHeuristic::default()).is_some(), "growth_max_peg 0 must be OFF, not a bar at infinity");
 
+    // (#37) THE UNIFICATION PIN — the defect this whole change exists to kill. Until 2026-07-27 the
+    // `peg` COLUMN computed `pe_ratio / long_cagr_from` while this gate read `peg_yield`, and the live
+    // run cut APH at PEG 2.02 in the same pass it ranked ODFL printing 2.51. Reproduce ODFL's shape:
+    // a printed P/E whose old-formula PEG lands one side of the ceiling and a peg_yield that lands the
+    // other. Column and gate must now return the SAME verdict; before, they disagreed by construction.
+    with_peg(&mut pq, Some(40.0), Some(5.0)); // peg_yield 40 -> PEG 2.50, over the 2.0 ceiling
+    pq.pe_ratio = Some(20.0); // old formula: 20 / 21.5%/yr 10Y leg = PEG 0.93 -> would have printed "cheap"
+    assert!(growth_score(&pq, &peg_t).is_none(), "gate must cut PEG 2.50");
+    assert_eq!(col_cell("peg", &pq, 0.0, None, "", &peg_t), "2.50", "column must SHOW the 2.50 the gate cut on, not 0.93 from pe_ratio");
+    let (_, why, _) = gate_failures(&pq, &peg_t).expect("gated name yields failures").into_iter().find(|(g, ..)| *g == "peg").expect("the peg gate must name itself");
+    assert!(why.contains("PEG 2.50"), "footer and column must quote ONE number, got {why:?}");
+
+    // (#37) and the gate FOLLOWS the CAGR switch, because `long_cagr_pct` resolved it upstream into
+    // peg_yield. Pinned on the helper directly — a fill site that re-hardcodes `trend_cagr` (which is
+    // exactly how the two PEGs were born) makes these two reads equal and fails here.
+    let mut sw = quote(2.0, &[("1Y", 30.0), ("5Y", 99.0), ("10Y", 400.0)]);
+    sw.life_cagr = Some(8.0);
+    sw.trend_cagr = Some(25.0);
+    let life = BuyHeuristic { use_life_cagr: true, ..BuyHeuristic::default() };
+    let trend = BuyHeuristic { use_trend_cagr: true, ..BuyHeuristic::default() };
+    assert_eq!(long_cagr_pct(&sw, &life), Some(8.0), "use_life_cagr must reach the PEG's denominator");
+    assert_eq!(long_cagr_pct(&sw, &trend), Some(25.0), "use_trend_cagr must reach it too");
+    // no long leg at all -> None -> core::peg_yield returns None -> cell prints n/a and the gate
+    // declines to price the name, instead of inventing a growth figure to divide by.
+    assert_eq!(long_cagr_pct(&Quote::stub("N", "€1", "", "No legs"), &life), None);
+
     // (#38) NET-MARGIN FLOOR on the as-of `fund.net_margin` (NOT the display-only net_margin_fy).
     let nm_t = BuyHeuristic { growth_min_net_margin: 10.0, ..BuyHeuristic::default() };
     let mut nq = quote(2.0, &[("1Y", 30.0), ("5Y", 99.0), ("10Y", 400.0)]);
@@ -4143,18 +4191,25 @@ mod tests {
         // trend terms would be silently gutted while the table still printed plausible scores.
         let uncapped = BuyHeuristic { long_trend_cap: 0.0, ..BuyHeuristic::default() };
         assert_eq!(col_cell("leg", &hot, 0.0, None, "", &uncapped), "+38%");
-        // (#3j) `peg` divides by the SAME CAGR the rank scores on, so it follows `use_life_cagr`. It used
-        // to call `long_leg` + `core::cagr` by hand — the last display site re-deriving the score's
-        // arithmetic — so it silently ignored every window knob and would have kept printing the leg.
-        // Also proves it stays UNCAPPED: `long_trend_cap` is 30 in this default tuning against a 38%/yr
-        // leg, so a capped denominator would print 0.67 and make the fastest grower look pricier.
+        // (#37) `peg` prints `fund.peg_yield` and NOTHING else — the number `growth_max_peg` cuts on.
+        // It used to compute `pe_ratio / long_cagr_from` here, a second PEG that disagreed with the gate
+        // (APH cut at 2.02 in the run that ranked ODFL printing 2.51). `pe_ratio` is deliberately left
+        // set below and deliberately ignored: if this cell ever reads it again, this assert fails.
         let mut peg = Quote::stub("P", "€1", "", "Peg");
         peg.perf = legs(&[("5Y", 400.0)]);
-        peg.pe_ratio = Some(20.0);
-        peg.life_cagr = Some(10.0);
-        assert_eq!(cc("peg", &peg, 0.0, None, ""), "0.53"); // 20 / 37.97%/yr leg (not the capped 30 -> 0.67)
+        peg.pe_ratio = Some(20.0); // must NOT reach the cell — the P/E column's TTM basis is not the PEG's
+        peg.life_cagr = Some(10.0); // ditto: the CAGR is already baked into peg_yield upstream
+        // 40 chosen so the three candidate formulas give three DIFFERENT strings and the assert can
+        // only pass one way: 100/40 = 2.50 (peg_yield), 20/37.97 = 0.53 (old leg), 20/10 = 2.00 (old life).
+        peg.fund = Some(core::FundFactors { peg_yield: Some(40.0), ..Default::default() });
+        assert_eq!(cc("peg", &peg, 0.0, None, ""), "2.50");
+        // and it is INERT to the CAGR switch, because peg_yield already resolved it via long_cagr_pct.
+        // The old cell moved 0.53 -> 2.00 across this same flip; a cell that still moves is re-deriving.
         let on_life = BuyHeuristic { use_life_cagr: true, ..BuyHeuristic::default() };
-        assert_eq!(col_cell("peg", &peg, 0.0, None, "", &on_life), "2.00"); // 20 / 10%/yr whole life
+        assert_eq!(col_cell("peg", &peg, 0.0, None, "", &on_life), "2.50");
+        // no peg_yield -> n/a. NOT "missing data": the gate declined to price it (loss-maker / no growth).
+        peg.fund = Some(core::FundFactors { peg_yield: None, ..Default::default() });
+        assert_eq!(cc("peg", &peg, 0.0, None, ""), "n/a");
         assert_eq!(cc("leg", &Quote::stub("N", "€1", "", "No legs"), 0.0, None, ""), "n/a");
         // S-8Y renders the caller's pinned score, crypto included (BTC-EUR has a real 8Y leg); "n/a"
         // only when the caller had nothing to score at all. `q` HAS an 8Y leg -> the pin applied -> bare.

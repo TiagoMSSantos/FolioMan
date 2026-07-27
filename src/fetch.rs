@@ -1045,8 +1045,12 @@ fn evict_if_stale(path: &std::path::Path, ttl: StdDuration) {
 /// composite is FMP-only, so adding insider live would be a train-serve skew (score on a blend you never
 /// tested). Want insider in the composite? Validate it in the backtest first, then re-add here. (Item 14)
 /// Both caches get a LIVE freshness gate so a screen run weeks later doesn't rank on stale fundamentals.
-pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core::Quote], factor: &str) {
+/// (#37) Takes the WHOLE `BuyHeuristic`, not just the factor name: `peg_yield` divides by
+/// `picks::long_cagr_pct`, which reads `use_life_cagr` / `use_trend_cagr` / `fixed_cagr_years`. Passing
+/// only `factor` is what let this fn hardcode `trend_cagr` and drift from the `peg` column.
+pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core::Quote], tuning: &crate::config::BuyHeuristic) {
     const LIVE_TTL: StdDuration = StdDuration::from_secs(7 * 24 * 3600); // refetch weekly -> catches new filings
+    let factor = tuning.growth_fund_factor.as_str();
     let today = chrono::Local::now().date_naive();
     // (FX) run-local rate cache. Only foreign filers whose listing trades in a DIFFERENT currency than
     // their books ever touch it, so it stays empty on a US-only universe and costs at most one fetch per
@@ -1108,7 +1112,12 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // validated earnings_yield tilt with nothing in its place). `peg_yield` None-outs
         // loss-makers and non-positive growth itself — no extra guard here. Mirrors report.rs's
         // info cell, so the drill-in number and the scored number are one definition.
-        ff.peg_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, q.trend_cagr, p));
+        //
+        // (#37) growth term is `long_cagr_pct` — the SCORE's CAGR — not `q.trend_cagr`. It was
+        // trend_cagr until 2026-07-27, which under `use_life_cagr: true` is a different arm of the
+        // same switch the `peg` COLUMN follows: the gate cut APH at 2.02 while ranking ODFL at 2.51.
+        // The backtest loop and report.rs mirror this exact call; all three must move together.
+        ff.peg_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, crate::picks::long_cagr_pct(q, tuning), p));
         q.fund_factor = core::select_fund_factor(&ff, factor);
         // (G+) carry the whole struct so `growth_fund_extra`'s named terms resolve here too. Set AFTER
         // the price-dependent fields above, or the extra terms would read a half-built earnings_yield.

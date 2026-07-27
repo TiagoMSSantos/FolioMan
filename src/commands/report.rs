@@ -113,9 +113,11 @@ pub async fn run(args: Vec<String>) {
             }
             (c, _, _) => c, // unknown either side -> unchanged legacy behaviour
         };
-        let tcagr = q.and_then(|q| q.trend_cagr);
+        // (#37) the SCORE's CAGR, the one `peg_yield` divides by everywhere since 2026-07-27 — was
+        // `q.trend_cagr`, which made this drill-in quote a third PEG the screen never showed.
+        let long_cagr = q.and_then(|q| picks::long_cagr_pct(q, &settings.buy_heuristic));
         let (block, has_table) =
-            render_annual(ticker, source, &rows, today, close, tcagr, &settings.buy_heuristic);
+            render_annual(ticker, source, &rows, today, close, long_cagr, &settings.buy_heuristic);
         print!("{block}");
         if has_table {
             tables_printed += 1;
@@ -133,7 +135,7 @@ pub async fn run(args: Vec<String>) {
                 // printed score contradicts the `-> pts` clause rendered directly above it — the very
                 // mismatch this mirror exists to prevent. `fund_factors` leaves every price-dependent
                 // factor None by construction; each call site must fill the one it selects.
-                ff.peg_yield = close.and_then(|p| core::peg_yield(ff.eps_ttm, tcagr, p));
+                ff.peg_yield = close.and_then(|p| core::peg_yield(ff.eps_ttm, long_cagr, p));
                 // ponytail: annual EPS like the valuation cell above — skips fetch.rs's sec_ttm_eps
                 // TTM override, so report stays self-consistent; diverges from screen only for
                 // mid-ramp US growers (where the valuation line already shows the same annual ey).
@@ -156,7 +158,7 @@ pub async fn run(args: Vec<String>) {
 /// rendered) for run()'s exit-code rule.
 fn render_annual(
     ticker: &str, source: &str, rows: &[core::FundRow], today: chrono::NaiveDate,
-    close_filer: Option<f64>, trend_cagr: Option<f64>, tuning: &config::BuyHeuristic,
+    close_filer: Option<f64>, long_cagr: Option<f64>, tuning: &config::BuyHeuristic, // (#37) long_cagr = picks::long_cagr_pct, the one CAGR every PEG divides by
 ) -> (String, bool) {
     let annual = core::annual_rollup(rows);
     let mut out = format!("\n{ticker} — annual income statements (fiscal-year rollup, newest first · source: {source})\n");
@@ -260,7 +262,7 @@ fn render_annual(
     // fabricated signal. Info cells only — neither is ever score-weighed live.
     let evy = close_filer
         .and_then(|p| core::ev_ebitda_yield(ff.ebitda_ttm, ff.shares_ttm, ff.net_debt, p));
-    let peg = close_filer.and_then(|p| core::peg_yield(ff.eps_ttm, trend_cagr, p));
+    let peg = close_filer.and_then(|p| core::peg_yield(ff.eps_ttm, long_cagr, p));
     out.push_str(&format!("  ebitda_yield {}  peg_yield {}", yoy(evy), pts(peg)));
     // (#3) peg_yield became the SHIPPED tilt on 2026-07-25, so "never scored" is no longer true of it —
     // show the same `-> pts` clause the valuation line above gets, from the same weight×clamp arithmetic
