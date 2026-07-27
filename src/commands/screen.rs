@@ -6,7 +6,7 @@
 //! were dropped — their selection edge was zero-to-negative for a multi-decade hold.
 
 use crate::core::Quote;
-use crate::picks::{eu_buyable, exit_review_lines, gate_failures, growth_near_miss, growth_score, render, RenderCtx};
+use crate::picks::{eu_buyable, exit_review_lines, gate_failures, growth_near_miss, growth_score, growth_two_gate_miss, render, RenderCtx};
 use crate::{config, core, fetch, picks};
 
 /// (X) Watchlist gate-state persisted between `screen` runs so the EXIT-review footer can flag a
@@ -1329,6 +1329,47 @@ pub async fn run(args: Vec<String>) {
         let mut seen_names = std::collections::HashSet::new();
         for (q, gate, why) in near.iter().filter(|(q, ..)| seen_names.insert(q.name.to_lowercase())) {
             println!("  {:<8} {:<44.44} {:<10} {why}", q.ticker, q.name, gate);
+        }
+    }
+
+    // (C) TWO-GATE tail: names failing EXACTLY two gates, both close. The block above needs exactly
+    // ONE failing gate, so a name one notch outside two fences vanished from the whole tool — no table
+    // row, no near-miss line, and (before the --explain fix) no way to ask. That is how MSFT went
+    // missing with no explanation. Kept a SEPARATE block rather than merged: a one-gate name costs one
+    // knob to recover, a two-gate name costs two, and mixing them hides which are cheap.
+    const TWO_GATE_CAP: usize = 15; // hardcoded like the near-miss margins — a cosmetic tail, not a tuned knob
+    let mut two: Vec<(&Quote, (&'static str, &'static str), String)> = quotes
+        .iter()
+        .filter(|q| !settings.tickers.contains(&q.ticker)) // same pinned-skip as above: gate review covers them
+        .filter_map(|q| growth_two_gate_miss(q, &settings.buy_heuristic).map(|(pair, why)| (q, pair, why)))
+        .collect();
+    if !two.is_empty() {
+        // one row per FUND/name, same reason as the block above (one UCITS fund, several venues) — and
+        // dedup BEFORE the histogram so the counts match the rows they summarise.
+        let mut seen_names = std::collections::HashSet::new();
+        two.retain(|(q, ..)| seen_names.insert(q.name.to_lowercase()));
+        // commonest gate PAIR first. The histogram is the actionable summary and it survives the cap:
+        // "peg+cagr 30" names the two knobs doing the work even when the list below is truncated.
+        let mut freq: std::collections::HashMap<(&str, &str), usize> = std::collections::HashMap::new();
+        for (_, pair, _) in &two {
+            *freq.entry(*pair).or_default() += 1;
+        }
+        two.sort_by(|a, b| {
+            freq[&b.1].cmp(&freq[&a.1]).then_with(|| a.1.cmp(&b.1)).then_with(|| a.0.ticker.cmp(&b.0.ticker))
+        });
+        let mut pairs: Vec<_> = freq.iter().collect();
+        pairs.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        // " & " not "+": one gate is literally named `1Y+`, so a `+` join printed `1Y++peg`.
+        let hist = pairs.iter().take(3).map(|((x, y), n)| format!("{x} & {y} {n}")).collect::<Vec<_>>().join(", ");
+        // say when the list is cut — a silent truncation reads as "that's all of them"
+        let more = if two.len() > TWO_GATE_CAP { format!("top {TWO_GATE_CAP} of {}; ", two.len()) } else { String::new() };
+        // NOT "would need both knobs loosened": with `use_life_cagr` on, `cagr` and `cagr-life` read the
+        // SAME number, so that pair (the bulk of the live list) is one fact counted twice and one knob
+        // to recover. The header states what is always true — these are invisible above — and lets the
+        // histogram say which pairs.
+        println!("\nTwo gates — one notch outside TWO fences, so the near-miss tail above (which needs exactly one) can't show them ({more}commonest: {hist}):");
+        for (q, _, why) in two.iter().take(TWO_GATE_CAP) {
+            println!("  {:<8} {:<28.28} {why}", q.ticker, q.name);
         }
     }
 

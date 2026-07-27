@@ -1006,6 +1006,24 @@ pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'stati
     }
 }
 
+/// The TWO-gate sibling of `growth_near_miss`: a name one notch outside EXACTLY two fences, both
+/// close. `None` for everything else — 0, 1 or ≥3 failures, or 2 where either is a gross miss (a
+/// hard reject, not a near miss). Returns ((gate_a, gate_b), the joined "why", both gates named) for
+/// `screen`'s second tail.
+///
+/// Exists because the one-gate block above is the whole reason a name like MSFT could vanish from the
+/// tool entirely: no table row (it fails a gate), no near-miss line (it fails two), and so no way to
+/// see it at all. One gate costs one knob to recover and two cost two, which is why they print as
+/// separate blocks rather than one merged list.
+pub fn growth_two_gate_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<((&'static str, &'static str), String)> {
+    let fails = gate_failures(quote, tuning)?;
+    if fails.len() != 2 || !fails.iter().all(|(.., close)| *close) {
+        return None;
+    }
+    let why = fails.iter().map(|(g, w, _)| format!("{g}: {w}")).collect::<Vec<_>>().join("; ");
+    Some(((fails[0].0, fails[1].0), why)) // gate order is deterministic in gate_failures
+}
+
 /// Every growth gate this quote FAILS, in gate order: (gate_name, human "why", is_close_miss).
 /// `None` = not assessable as a growth candidate at all (leveraged / stablecoin / unknown turnover /
 /// no 1Y data); a name with no 5y+ leg returns a single "history" fail (so a pinned young ETF explains
@@ -2219,10 +2237,33 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // under 20 lines of arithmetic.
     let text = match (explain_text, ctx.explain) {
         (Some(text), _) => Some(text),
-        // an explicit --explain TICKER that didn't land a row: say why instead of silently printing nothing
-        (None, Some(t)) if !t.is_empty() => Some(format!(
-            "\n--explain: {t} is not in the growth ranking (fails a growth gate, isn't EU-buyable, or wasn't scanned)."
-        )),
+        // An explicit --explain TICKER that didn't land a ranked row. This used to print ONE string
+        // naming three causes and picking none ("fails a growth gate, isn't EU-buyable, or wasn't
+        // scanned"), which is the same non-answer whether the name was gated, out-scored, or never
+        // fetched. `gate_failures` already knows which — it was simply never asked on this path, so a
+        // name failing 2+ gates (invisible in the near-miss tail, which needs EXACTLY one) had no
+        // explanation anywhere in the tool. Four distinct verdicts now, formatted by the same
+        // `gate_review_lines` the pinned gate-review footer uses so the wording can't drift.
+        (None, Some(t)) if !t.is_empty() => Some(match quotes.iter().find(|q| q.ticker.eq_ignore_ascii_case(t)) {
+            None => format!("\n--explain: {t} wasn't scanned — not in the universe, or filtered out as not EU-buyable."),
+            Some(q) => match gate_failures(q, tuning) {
+                None => format!(
+                    "\n--explain: {t} isn't assessable as a growth candidate (leveraged / stablecoin / physical-commodity ETC, or unknown turnover)."
+                ),
+                // NOT "out-scored by the top n": `target` is looked up in the untrimmed `picks`, so a
+                // ranked-but-below-the-cut name still gets the score walkthrough above. Reaching here
+                // means it left `picks` entirely — the lane floor or a twin dedup.
+                Some(f) if f.is_empty() => format!(
+                    "\n--explain: {t} clears every growth gate but isn't ranked — its score fell to/below the lane floor (0.0), or a better-scoring twin (dual-class / currency listing) took its row."
+                ),
+                Some(f) => format!(
+                    "\n--explain: {t} is scanned but fails {} growth gate{}:\n{}",
+                    f.len(),
+                    if f.len() == 1 { "" } else { "s" },
+                    gate_review_lines(&[q], tuning, w.ticker).join("\n")
+                ),
+            },
+        }),
         _ => None,
     };
     // (round 68) the same top-n slice turnover_note just measured, handed to the caller so the
@@ -3031,6 +3072,21 @@ mod tests {
     assert_eq!(growth_near_miss(&quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]), &tuning).map(|(g, _)| g), Some("range")); // only range fails (75<80)
     assert!(growth_near_miss(&quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]), &tuning).is_none()); // range AND cagr -> two gates, not a near-miss
     assert!(growth_near_miss(&quote(5.0, &[("1Y", -50.0), ("5Y", 40.0), ("10Y", 200.0)]), &tuning).is_none()); // fails ONLY 1Y+ but by 50pts -> gross reject, not a near-miss
+
+    // (C) the TWO-gate sibling — the boundary the second screen tail turns on. Exactly 2, BOTH close.
+    // cagr(97%,10y)≈7.0%/yr: 1pp under the 8 floor = close; cagr(40%,10y)≈3.4%/yr = a gross miss.
+    let two = |dd: f64, c10: f64| growth_two_gate_miss(&quote(dd, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", c10)]), &tuning);
+    assert_eq!(two(25.0, 97.0).map(|(p, _)| p), Some(("range", "cagr")), "2 close gates -> surfaced, in gate order");
+    assert!(two(25.0, 97.0).unwrap().1.contains("range:") && two(25.0, 97.0).unwrap().1.contains("cagr:"), "both reasons printed");
+    assert!(two(25.0, 40.0).is_none(), "range close but cagr grossly missed -> a hard reject, not a near miss");
+    assert!(two(25.0, 200.0).is_none(), "ONE gate belongs to the block above, not this one");
+    assert!(two(5.0, 200.0).is_none(), "clears everything -> it ranks");
+    // three gates -> in NEITHER tail (nothing to eyeball: too far out, and 3 knobs to recover).
+    let mut three = quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 97.0)]);
+    three.age_years = Some(4.0);
+    let age3 = BuyHeuristic { growth_min_age_years: 5.0, ..BuyHeuristic::default() };
+    assert_eq!(gate_failures(&three, &age3).unwrap().len(), 3, "young + range + cagr");
+    assert!(growth_two_gate_miss(&three, &age3).is_none() && growth_near_miss(&three, &age3).is_none());
 
     // --- (#33) minimum-age gate (backtest-blind: age_years None -> pass; live -> gate) ---
     let age_t = BuyHeuristic { growth_min_age_years: 5.0, ..BuyHeuristic::default() };
@@ -3872,14 +3928,78 @@ mod tests {
         assert!(tickers.iter().any(|t| t == "AAPL"), "pinned gated name must still surface in the ranking");
         assert!(tickers.len() <= 5);
 
-        // an --explain for a ticker that never ranked -> the "not in the growth ranking" message branch.
+        // an --explain for a ticker that isn't in `quotes` at all -> the not-scanned branch.
         let (miss, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: Some("ZZZZ"), show_hold_core: false,
         });
-        assert!(miss.is_some_and(|m| m.contains("not in the growth ranking")));
+        assert!(miss.is_some_and(|m| m.contains("wasn't scanned")));
 
         let _ = std::fs::remove_file(crate::config::data_path(".folioman_turnover_watch.txt")); // gitignored cache render wrote
+    }
+
+    /// (QA) `--explain TICKER` for a name that did NOT rank must name WHICH of the four things
+    /// happened. All four printed ONE string before ("fails a growth gate, isn't EU-buyable, or wasn't
+    /// scanned") — the same non-answer whichever applied, which is how a name failing 2+ gates ended up
+    /// with no explanation anywhere in the tool (the near-miss tail needs EXACTLY one). This test is
+    /// what stops the four collapsing back into one.
+    #[test]
+    fn explain_names_the_verdict() {
+        let tuning = BuyHeuristic::default();
+        let w = Widths::default();
+        let (sectors, sector_of) = (Vec::<String>::new(), HashMap::<String, String>::new());
+        let (pinned, owned) = (Vec::<String>::new(), Owned::default());
+
+        // clears every growth gate; `cum8` sets the long CAGR (the 8Y rung is the ladder's, not 10Y).
+        let good = |t: &str, cum8: f64| {
+            let mut q = Quote::stub(t, "€100.00", "", &format!("{t} Corp"));
+            q.instrument_type = "EQUITY".into();
+            q.range_pct = 95.0;
+            q.avg_turnover_eur = Some(3.0e9);
+            q.age_years = Some(12.0);
+            q.perf = legs(&[("1Y", 10.0), ("5Y", 40.0), ("8Y", cum8)]);
+            q
+        };
+        let mut one_gate = good("ONEG", 300.0);
+        one_gate.range_pct = 75.0; // only range fails (75 < 80), closely
+        let mut two_gate = good("TWOG", 72.0); // 8Y 72% ≈ 7.0%/yr — 1pp under the 8.0 floor, close
+        two_gate.range_pct = 75.0; //           …and range too: exactly the pair that vanishes
+        let mut lev = good("LEVX", 300.0);
+        lev.name = "Some 3x Daily Leveraged ETP".into(); // structural reject -> gate_failures None
+        // dual-class twins (one Yahoo NAME, two tickers): the weaker leg clears every gate and is still
+        // dropped from `picks` by the twin dedup — the case that reads as "gated out" if the explain
+        // arm can't tell the two apart. Merely ranking below the printed cut is NOT this branch:
+        // `target` searches the UNTRIMMED picks, so such a name still gets the score walkthrough.
+        let (mut twin_a, mut twin_b) = (good("TWINA", 400.0), good("TWINB", 200.0));
+        twin_a.name = "Twin Corp".into();
+        twin_b.name = "Twin Corp".into();
+        let quotes = vec![good("STRONG", 400.0), good("WEAK", 250.0), twin_a, twin_b, one_gate, two_gate, lev];
+
+        let explain = |t: &str, n: usize| {
+            render(&quotes, n, &tuning, &w, RenderCtx {
+                nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
+                owned: &owned, explain: Some(t), show_hold_core: false,
+            })
+            .0
+            .unwrap_or_default()
+        };
+
+        assert!(explain("ZZZZ", 5).contains("wasn't scanned"), "absent from `quotes` = never fetched, not gated");
+        assert!(explain("LEVX", 5).contains("isn't assessable"), "leveraged -> no gates to almost pass");
+        let g1 = explain("ONEG", 5);
+        assert!(g1.contains("fails 1 growth gate:") && g1.contains("range"), "must NAME the gate: {g1}");
+        let g2 = explain("TWOG", 5);
+        assert!(g2.contains("fails 2 growth gates:"), "the case with no other home in the tool: {g2}");
+        assert!(g2.contains("range") && g2.contains("cagr"), "both gates named, not just the first: {g2}");
+        // gated-out and unranked-but-clean are DIFFERENT answers; the old catch-all gave one string.
+        assert!(gate_failures(&good("TWINB", 200.0), &tuning).is_some_and(|f| f.is_empty()), "fixture must clear every gate");
+        let tw = explain("TWINB", 5);
+        assert!(tw.contains("clears every growth gate"), "deduped as a twin, not rejected by a gate: {tw}");
+        // a name that IS ranked gets the score walkthrough instead — even below the printed cut,
+        // because `target` searches the untrimmed picks.
+        assert!(explain("WEAK", 1).contains("SCORE"), "ranked name -> score math, no verdict");
+
+        let _ = std::fs::remove_file(crate::config::data_path(".folioman_turnover_watch.txt"));
     }
 
     /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + per-tier cap ≤3, and the
