@@ -84,6 +84,12 @@ fn default_true() -> bool {
 #[serde(default, deny_unknown_fields)] // a typo'd knob must error, not silently fall back to the default
 pub struct Widths {
     pub name: usize,     // NAME column (check/screen/picks)
+    // (#43) NAME width for the ETF TABLE ONLY (screen/picks). 0 = off -> the ETF table uses `name` like
+    // everything else. ETF names run ~51 chars at the median against a stock table's ~15 ("Apple",
+    // "NVIDIA"), so one shared width cannot serve both: at `name: 28` only 3% of ETF names fit whole.
+    // Does NOT apply to `check` (one MIXED table — a per-row name width prints ragged columns) nor to
+    // the crypto lane (coin names are short). Display-only, never scored.
+    pub name_etf: usize,
     pub ticker: usize,   // TICKER column
     pub market: usize,   // MARKET column (check/picks)
     pub price: usize,    // PRICE(EUR) column (check/screen/picks)
@@ -103,7 +109,7 @@ pub struct Widths {
 
 impl Default for Widths {
     fn default() -> Self {
-        Widths { name: 26, ticker: 8, market: 11, price: 13, headline: 31, score: 5, columns: Vec::new(), column_widths: BTreeMap::new() }
+        Widths { name: 26, name_etf: 0, ticker: 8, market: 11, price: 13, headline: 31, score: 5, columns: Vec::new(), column_widths: BTreeMap::new() }
     }
 }
 

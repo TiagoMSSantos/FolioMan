@@ -1513,11 +1513,26 @@ fn display_name(name: &str) -> String {
     n.to_string()
 }
 
+/// (#43) Drop the "UCITS ETF" boilerplate token IN PLACE, keeping whatever follows. "UCITS" is in 100%
+/// of the 2463 cached ETF names and "ETF" in 96% — it carries no information, and it sits MID-string, so
+/// a tight NAME column spent its last 10 chars printing the noise instead of the fund. NOT a tail cut:
+/// what follows the token is the SHARE CLASS ("1C USD Hedged", "(Acc)"), and dropping that makes 52% of
+/// funds share one display name (Amundi Core S&P 500 Swap alone has 8 classes). Currency hedging appears
+/// nowhere else in the table — USE/REPL show only Acc/Dist — so the tail stays. Display-only.
+fn drop_ucits(n: &str) -> String {
+    let Some(i) = n.find(" UCITS") else { return n.to_string() };
+    let rest = &n[i + " UCITS".len()..];
+    let rest = rest.strip_prefix(" ETF").unwrap_or(rest);
+    let out = format!("{}{}", &n[..i], rest).trim().to_string();
+    if out.chars().count() >= 4 { out } else { n.to_string() } // same guard display_name uses
+}
+
 /// Display name for any quote — the raw Yahoo name minus per-class noise. Crypto: drop the quote-currency
 /// word ("Bitcoin EUR" -> "Bitcoin"; the ticker column already carries -EUR/-USD). ETF: drop the
 /// umbrella-company prefix ("iShares VII PLC - iShares NASDAQ 100 UCITS ETF" -> the fund part) — only
 /// when what follows " - " is the fund name (has ETF/UCITS), so share-class tails like "- USD Acc" never
-/// match. Everything else: strip one corporate legal suffix. Used by the picks table AND `check`'s
+/// match — THEN the "UCITS ETF" boilerplate token (`drop_ucits`), which that prefix strip leaves in the
+/// middle of the result. Everything else: strip one corporate legal suffix. Used by the picks table AND `check`'s
 /// summary line; lookups (BF TER name match) keep the full name.
 pub fn clean_name(quote: &Quote) -> String {
     let n = display_name(&quote.name);
@@ -1525,10 +1540,11 @@ pub fn clean_name(quote: &Quote) -> String {
     if is_crypto {
         n.strip_suffix(" USD").or_else(|| n.strip_suffix(" EUR")).map(str::to_string).unwrap_or(n)
     } else if quote.instrument_type.eq_ignore_ascii_case("ETF") {
-        match n.split_once(" - ") {
+        let fund = match n.split_once(" - ") {
             Some((_, fund)) if fund.contains("ETF") || fund.contains("UCITS") => fund.to_string(),
             _ => n,
-        }
+        };
+        drop_ucits(&fund) // (#43) then the boilerplate token, which the prefix strip leaves behind
     } else {
         n
     }
@@ -1904,7 +1920,19 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
         }
         mix_line("market mix", counts, "listing country ~ currency exposure; all-USA = one bet on the dollar too");
     }
-    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, w, pinned, owned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "buyback"], tuning);
+    // (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
+    // OWN NAME width. Inserted into `column_widths` rather than set on `w.name` because `col_width` reads
+    // that map FIRST — writing `name` would lose to any explicit `column_widths: { name: N }` the user
+    // already has. The three lane tables already print different column SETS (`hide` differs per call),
+    // so a differing NAME width costs no alignment that ever existed.
+    let etf_w = if w.name_etf > 0 {
+        let mut w2 = w.clone();
+        w2.column_widths.insert("name".into(), w.name_etf);
+        Cow::Owned(w2)
+    } else {
+        Cow::Borrowed(w)
+    };
+    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, &etf_w, pinned, owned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "buyback"], tuning);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
     print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, owned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom"], tuning);
@@ -2269,6 +2297,50 @@ mod tests {
         assert_eq!(display_name("VanEck Semiconductor UCITS ETF - USD Acc"), "VanEck Semiconductor UCITS ETF - USD Acc");
         assert_eq!(display_name("Bitcoin"), "Bitcoin"); // no suffix -> unchanged
         assert_eq!(display_name("Inc"), "Inc"); // guard: never strip to almost nothing
+    }
+
+    /// (#43) The ETF boilerplate strip. "UCITS ETF" is in ~100%/96% of real ETF names and sits MID-string,
+    /// so it must be deleted IN PLACE — the share-class tail after it is the only thing telling two rows
+    /// of the same fund apart, and cutting it collapses 52% of funds onto a shared display name.
+    #[test]
+    fn drop_ucits_deletes_the_token_and_keeps_the_share_class() {
+        // the point of the infix form: "1C USD Hedged" survives, so hedged/unhedged stay distinguishable
+        assert_eq!(drop_ucits("Amundi Core S&P 500 Swap UCITS ETF 1C USD Hedged"), "Amundi Core S&P 500 Swap 1C USD Hedged");
+        assert_eq!(drop_ucits("L&G Battery Value-Chain UCITS ETF"), "L&G Battery Value-Chain"); // trailing: no dangling space
+        assert_eq!(drop_ucits("VanEck Semiconductor UCITS ETF - USD Acc"), "VanEck Semiconductor - USD Acc");
+        assert_eq!(drop_ucits("Invesco Physical Gold UCITS"), "Invesco Physical Gold"); // "UCITS" alone (no " ETF")
+        assert_eq!(drop_ucits("SPDR S&P 500 ETF Trust"), "SPDR S&P 500 ETF Trust"); // no UCITS token -> untouched
+        assert_eq!(drop_ucits("SXR8 UCITS ETF"), "SXR8"); // 4 chars clears the guard
+        assert_eq!(drop_ucits("SXR UCITS ETF"), "SXR UCITS ETF"); // guard: stripping leaves <4 chars -> keep whole
+    }
+
+    /// (#43) `clean_name`'s ETF arm: the umbrella-prefix strip and the token drop COMPOSE, and the token
+    /// drop is ETF-scoped — an equity whose name happens to carry "UCITS" is left alone.
+    #[test]
+    fn clean_name_strips_etf_boilerplate_only_for_etfs() {
+        let mut etf = Quote::stub("SXR8.DE", "€1.00", "", "iShares VII PLC - iShares NASDAQ 100 UCITS ETF");
+        etf.instrument_type = "ETF".into();
+        assert_eq!(clean_name(&etf), "iShares NASDAQ 100"); // prefix strip THEN token drop
+        etf.name = "Amundi MSCI World UCITS ETF Acc".into();
+        assert_eq!(clean_name(&etf), "Amundi MSCI World Acc");
+        let mut equity = Quote::stub("UCT", "€1.00", "", "UCITS Holdings Corporation");
+        equity.instrument_type = "EQUITY".into();
+        assert_eq!(clean_name(&equity), "UCITS Holdings"); // legal-suffix strip only; token drop never runs
+    }
+
+    /// (#43) `name_etf` reaches the ETF table through `column_widths`, so it beats an explicit user
+    /// `column_widths: { name: N }` — the precedence `print_lane` depends on. 0 = off leaves both lanes equal.
+    #[test]
+    fn name_etf_width_overrides_the_shared_name_width() {
+        let spec = COLUMNS.iter().find(|c| c.key == "name").unwrap();
+        let mut w = Widths { name: 28, name_etf: 45, ..Widths::default() };
+        w.column_widths.insert("name".into(), 20); // an explicit user override of the SHARED width
+        assert_eq!(col_width(spec, &w), 20); // stock lane: the user's entry stands
+        let mut etf_w = w.clone(); // what print_lane builds for the ETF call
+        etf_w.column_widths.insert("name".into(), w.name_etf);
+        assert_eq!(col_width(spec, &etf_w), 45); // ETF lane: name_etf wins over that same entry
+        let off = Widths { name: 28, name_etf: 0, ..Widths::default() };
+        assert_eq!(col_width(spec, &off), 28); // 0 = off -> the shared width, byte-identical to before
     }
 
     /// `size_weights`: vol-target sizing — bigger slice for higher score / lower vol; sums to 100;
