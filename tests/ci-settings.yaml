@@ -241,6 +241,44 @@ buy_heuristic:
   #   choice is actually made. That is why both pins sat still through `4975f23`. Expected, not lucky.
   quality_weight: 0.15           # LIVE + MEASURED: reward per % return-on-capital (×cap = max bonus, ~6 at 40%)
   quality_cap: 40.0              # LIVE: cap the ROE % fed in (a buyback-levered 200% ROE doesn't dominate)
+  # (#42) "why does Apple print n/m as ROE" — asked 2026-07-27. The answer was a display rule reading the
+  #   WRONG AXIS, and chasing it found the score doing the same thing. Two thresholds existed for one
+  #   claim: the cell called ROE meaningless above 100, the score stopped believing it above quality_cap
+  #   40 — and the looser one was the one the user saw, so a name could be hidden while collecting the
+  #   full +6.0 quality reward.
+  #   LEVEL DOES NOT SEPARATE "earned a lot on its assets" from "has no equity left". The discriminator is
+  #   the EQUITY MULTIPLIER, ROE/ROA = assets/equity. Across the 447 cached filers with a positive ROE:
+  #     CL    ROE +3948  ROA 13.1  mult 302x   equity is 0.33% of assets — artifact
+  #     LYV   ROE  +183  ROA  2.2  mult  85x   artifact
+  #     GDDY  ROE  +407  ROA 10.9  mult  37x   artifact
+  #     BA    ROE   +41  ROA  1.3  mult  31x   artifact — and it PRINTED CLEAN under the old rule
+  #     AAPL  ROE  +152  ROA 31.2  mult 4.9x   p78 leverage on an elite ROA — HIDDEN under the old rule
+  #     ITW   ROE   +95  ROA 19.0  mult 5.0x   the SAME leverage as AAPL, printed clean
+  #     APP   ROE  +156  ROA 45.9  mult 3.4x   hidden
+  #   So `quality_return` now swaps ROE -> ROA on `roe/roa >= core::MAX_EQUITY_MULT` (20x, equity under
+  #   1/20th of assets, p97) in ADDITION to the existing negative-equity sign test, and the |ROE|>100 n/m
+  #   cell is DELETED — a number reaching the cell is now one that survived the multiplier check, and
+  #   hiding a figure the score is already acting on was the inconsistency, not the cure.
+  #   MEASURED, `backtest universe fund 12`, three binaries, one frozen config. All three scored the
+  #   IDENTICAL universe (on-sale 4612, growth 1272), so (#40) noise did not fire and the deltas are real:
+  #                        growth rho | edge | winsor      on-sale rho | edge | winsor
+  #     off (baseline)       +0.19  +140.0  +120.2           +0.05  +121.2  +57.9
+  #     mult >= 20 SHIPPED   +0.19  +140.0  +120.2           +0.04  +118.3  +55.0
+  #     mult >= 40           +0.19  +140.0  +120.2           +0.04  +118.3  +55.0
+  #   THE GROWTH LANE DOES NOT MOVE AT ALL — byte-identical, and the `quality(roe/roa)` held-book probe is
+  #   identical too (n=236, +15.4%/yr, excess +3.8, win 100%). The whole cost is -2.9 on-sale edge, sitting
+  #   entirely in one era (2011-05..2014-07: +179.7 -> +167.0), and it is CL/LYV/COR losing quality credit
+  #   they were earning on a collapsed denominator.
+  #   SHIPPED AT A MEASURED LOSS, deliberately, as a correctness fix rather than an edge claim — the
+  #   mirror of (#39), which was refused while edge-POSITIVE because its mechanism was wrong. Here the
+  #   mechanism is right and the price is 2.9 pts in a lane the fix was not aimed at.
+  #   BONUS RESULT: the known misfire is unpriced. Balance-sheet businesses sit in the artifact band and
+  #   are NOT artifacts (IBKR 37.9x, AMP 29.2x, PFG 28.7x, MET 26.2x, PRU 23.9x — for a broker the leverage
+  #   IS the business and ROA is ~0.5% by construction), and 20x sweeps them up. But mult>=40 swaps ZERO
+  #   financials and lands on the SAME numbers to the decimal, so those names never reach the scored pool.
+  #   The accepted risk costs nothing measurable. Do not re-litigate it without new pool coverage.
+  #   NOT A KNOB: `fund_factors(rows, cutoff, yrs)` takes no tuning, so a knob costs its signature and
+  #   every caller, and 20x is an accounting fact. Measured by rebuilding the const (INFINITY / 20 / 40).
 
   # === GROWTH LANE — THIS is the ranking `screen` actually prints. =============================
   # Proven compounders the on-sale lane can't surface: a name AT/NEAR its own ~10y high, with a

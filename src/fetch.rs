@@ -724,7 +724,7 @@ async fn fetch_ratios(client: &Client, urls: &Urls, ticker: &str) -> (Option<f64
 /// filer reports and trades in USD so nothing is converted, but a foreign private issuer need not (ASML
 /// keeps its books in EUR and its ADR trades USD), and dividing across two currencies would print a
 /// plausible-looking P/E that is wrong by the whole FX rate. The quality level is read off the SEC-derived
-/// `FundRow` (ROE, or ROA where equity is negative) and is a ratio, so it needs no conversion. None when there's no CIK or no rate, so the
+/// `FundRow` (ROE, or ROA where equity is negative or collapsed) and is a ratio, so it needs no conversion. None when there's no CIK or no rate, so the
 /// caller can fall back to FMP. Filling `pe_ratio` also un-blanks the PEG column, which derives from it
 /// downstream. The SEC fetch is itself disk-cached + budget-capped (see `fetch_fundamentals_sec`), so a
 /// wide `screen` cold-fetches once then reads free forever.
@@ -756,7 +756,7 @@ async fn fetch_ratios_sec(
         .filter(|e| *e > 0.0)
         .zip(price)
         .map(|(e, p)| p / e);
-    // ROE where equity is positive, ROA where it isn't — the SAME resolver the backtest scores through
+    // ROE where equity is a credible denominator, ROA where it isn't — the SAME resolver the backtest scores through
     // (core::fund_factors), so the live column and the validated factor can't drift apart.
     (pe, core::quality_return(latest.roe, latest.roa, latest.net_margin))
 }

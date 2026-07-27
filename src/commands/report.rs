@@ -219,11 +219,12 @@ fn render_annual(
         yoy(ff.rev_cagr), yoy(ff.eps_growth), pts(ff.rev_accel), pts(ff.margin_trend),
         level(ff.gross_margin), level(ff.op_margin), level(ff.roe), level(ff.quality), yoy(ff.buyback_yield),
     ));
-    // `quality` is what the score actually reads: ROE where equity is positive, ROA where it isn't.
-    // Printed BESIDE the raw ROE rather than replacing it — for a negative-equity filer the two differ
-    // wildly (HCA: roe -112.6, quality +9.0) and collapsing them would hide which denominator was used.
+    // `quality` is what the score actually reads: ROE where equity is a credible denominator, ROA where
+    // it isn't. Printed BESIDE the raw ROE rather than replacing it — the two can differ wildly (HCA:
+    // roe -112.6, quality +9.0; CL: roe +3948, quality +13.1) and collapsing them would hide which
+    // denominator was used.
     if ff.roe != ff.quality {
-        out.push_str("  (quality != roe: equity is negative, so the score reads return on ASSETS instead)\n");
+        out.push_str("  (quality != roe: equity is negative or bought down past 1/20th of assets, so the score reads return on ASSETS instead)\n");
     }
     out.push_str(&format!(
         "  survival (judgment — measured no-edge as gates): fcf_margin {}  interest_cover {}  net_cash_rev {}  margin_stability {}\n",

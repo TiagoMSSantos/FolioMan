@@ -1422,7 +1422,7 @@ pub struct FundFactors {
     pub eps_yoy: Option<f64>,      // last-1y EPS growth, % (the EPS-YoY column), off the row's OWN same-filing comparative -> split-proof
     pub net_margin: Option<f64>,   // current net margin level, % (the NET% column). Distinct from op_margin: below-the-line items (tax, interest, one-offs) live only here
     pub roe: Option<f64>,          // as-of return-on-equity level, % (quality of capital). SEC feed computes it per row (NetIncome ÷ StockholdersEquity); FMP free tier leaves it None. RAW — sweep-only; the SCORE reads `quality` below
-    pub quality: Option<f64>,      // as-of return-on-capital level, % — `quality_return(roe, roa, net_margin)`: ROE when equity is positive, else ROA. THE field the live screen and the backtest both score, so neither can drift from the other's definition
+    pub quality: Option<f64>,      // as-of return-on-capital level, % — `quality_return(roe, roa, net_margin)`: ROE when equity is a credible denominator (positive, and over 1/20th of assets), else ROA. THE field the live screen and the backtest both score, so neither can drift from the other's definition
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
     pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
     pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). PROBE-ONLY: set in the backtest loop from the native as-of close; left None by the live path (currency skew — see `earnings_yield` fn)
@@ -1676,8 +1676,8 @@ pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f
 /// return on assets when it is not, None when neither is usable.
 ///
 /// ROE is only meaningful when stockholders' equity is positive. Buyback-heavy filers (HCA, HLT) run
-/// NEGATIVE equity, turning a profitable year into a fake "-113%" (NI +$1.5B ÷ equity -$4B) that slips
-/// under the |ROE| > 100 n/m display rule. Equity's sign isn't carried on the row, but net income's is
+/// NEGATIVE equity, turning a profitable year into a fake "-113%" (NI +$1.5B ÷ equity -$4B) that read
+/// as a plausible printed number. Equity's sign isn't carried on the row, but net income's is
 /// (net margin), and NI÷equity flips sign exactly when equity < 0 — so a meaningful ROE must share net
 /// income's sign. That also catches the double-negative fake (loss year + negative equity => ROE > 0).
 ///
@@ -1689,12 +1689,40 @@ pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f
 /// ONE fn because both lanes must agree: the live screen (fetch.rs) and the backtest (fund_factors).
 /// A live-only filter is exactly the train-serve skew that let the factor sweep measure negative-equity
 /// fakes the live path rejects.
+///
+/// (#42) The sign test alone misses the other half: equity that is POSITIVE but has been bought back
+/// down to a rounding error. Colgate reports ROE +3948% on ROA 13.1% — its equity is 0.33% of assets —
+/// and every sign test passes it. The discriminator is the EQUITY MULTIPLIER, ROE/ROA = assets/equity,
+/// not the ROE LEVEL: measured across the 447 cached filers with a positive ROE, AAPL's +152% is a
+/// 4.9x multiplier (p78, ordinary) on a genuinely elite 31.2% ROA, the SAME multiplier as ITW's
+/// unremarkable +95%. Level conflates "earned a lot on its assets" with "has no equity left", so a
+/// level rule flags AAPL and APP (3.4x) while passing BA (+41% on 31x) and AMP (+54% on 29x).
+///
+/// KNOWN MISFIRE, accepted deliberately: balance-sheet businesses live in the same multiplier band and
+/// are not artifacts — IBKR 37.9x, AMP 29.2x, PFG 28.7x, MET 26.2x, PRU 23.9x. For a broker or insurer
+/// the leverage IS the business, ROE is the right measure, and ROA is ~0.5% by construction, so they
+/// land on a denominator that understates them. Nothing separates them from Colgate without sector
+/// data, which this path does not carry (`sector_matches` reads the NAME string, not a sector field).
+/// ROA understates them; it does not lie about them, which is the trade taken here.
 pub fn quality_return(roe: Option<f64>, roa: Option<f64>, net_margin: Option<f64>) -> Option<f64> {
+    // Both tests answer "is equity a credible denominator". Unjudgeable never blocks: no ROA means the
+    // multiplier can't be computed (the FMP path fills no ROA at all), so the sign test decides alone.
+    let credible = |r: f64| {
+        net_margin.is_none_or(|nm| (r >= 0.0) == (nm >= 0.0))
+            && !roa.is_some_and(|a| a > 0.0 && r / a >= MAX_EQUITY_MULT)
+    };
     match roe {
-        Some(r) if net_margin.is_none_or(|nm| (r >= 0.0) == (nm >= 0.0)) => Some(r),
-        _ => roa, // no ROE at all, or a sign-inconsistent one -> the denominator that can't go negative
+        Some(r) if credible(r) => Some(r),
+        _ => roa, // no ROE, a sign-inconsistent one, or a collapsed denominator -> return on ASSETS
     }
 }
+
+/// (#42) assets/equity above which equity stops being a credible denominator for ROE. 20x = equity
+/// under 5% of assets; p97 of the positive-ROE filers cached here, and the gap between the artifacts
+/// (CL 302x, LYV 84x, COR 51x, GDDY 37x, BA 31x, IT 25x, VRSK 20x) and the ordinary names below it.
+/// A constant, not a knob: `fund_factors` takes no tuning, so a knob costs its signature and every
+/// caller, and this is an accounting fact rather than a preference. Promote it if a sweep wants it.
+pub const MAX_EQUITY_MULT: f64 = 20.0;
 
 /// (FX) The rate in force ON `date`: the latest quote at or BEFORE it, never after. None before the
 /// series starts, so an early cutoff drops its price-joined factors instead of borrowing a later rate.
@@ -2468,6 +2496,25 @@ mod tests {
         // neither -> None (NEUTRAL in the score), never a fabricated 0
         assert_eq!(quality_return(None, None, Some(12.0)), None);
         assert_eq!(quality_return(Some(-112.6), None, Some(9.0)), None); // meaningless ROE, no fallback -> drop it
+
+        // (#42) COLLAPSED (but positive) equity — every sign test above passes these, which is the whole
+        // reason the multiplier test exists. Real cached SEC rows, so the numbers are the live ones.
+        assert_eq!(quality_return(Some(3948.1), Some(13.1), Some(11.0)), Some(13.1)); // CL, 302x
+        assert_eq!(quality_return(Some(406.8), Some(10.9), Some(12.0)), Some(10.9)); // GDDY, 37x
+        assert_eq!(quality_return(Some(41.0), Some(1.3), Some(2.0)), Some(1.3)); // BA, 31x — a MODEST ROE, caught on leverage
+        // ...and the names a LEVEL rule would wrongly hit. AAPL's 4.9x is the same leverage as ITW's
+        // 5.0x; both keep their ROE, which is the asymmetry the old |ROE|>100 cell could not see.
+        assert_eq!(quality_return(Some(151.9), Some(31.2), Some(26.9)), Some(151.9)); // AAPL, 4.9x
+        assert_eq!(quality_return(Some(95.0), Some(19.0), Some(14.0)), Some(95.0)); // ITW, 5.0x
+        assert_eq!(quality_return(Some(156.2), Some(45.9), Some(30.0)), Some(156.2)); // APP, 3.4x
+        // exactly AT the bar swaps (`>=`), a hair under keeps — the boundary, since 20x is a chosen line
+        assert_eq!(quality_return(Some(200.0), Some(10.0), Some(10.0)), Some(10.0));
+        assert_eq!(quality_return(Some(199.0), Some(10.0), Some(10.0)), Some(199.0));
+        // no ROA -> multiplier unjudgeable -> the sign test decides alone, exactly as before (#42)
+        assert_eq!(quality_return(Some(3948.1), None, Some(11.0)), Some(3948.1));
+        // a NON-POSITIVE ROA can't form a multiplier (assets are positive, so roa <= 0 means a LOSS, and
+        // the sign test already owns that case). Guard against a divide that would flip the comparison.
+        assert_eq!(quality_return(Some(-50.0), Some(-2.0), Some(-4.0)), Some(-50.0));
     }
 
     /// (Item 3) `composite_factor` = mean of the factors that are `Some`; <2 present -> None (a 1-factor

@@ -421,8 +421,8 @@ fn combine_damps(damps: &[f64]) -> f64 {
 
 /// (F) Profitability/QUALITY reward: trailing return on capital, the canonical quality factor
 /// (high-ROE firms out-compound long-run). `quote.roe` holds `core::quality_return` — ROE where equity
-/// is positive, ROA where it is negative — so a buyback-shrunk filer (HCA, HLT) scores on a real
-/// denominator instead of dropping to neutral. None (crypto/ETF/no fund coverage) → 0 = neutral;
+/// is a credible denominator, ROA where it is negative or bought down past 1/20th of assets — so a
+/// buyback-shrunk filer (HCA, CL) scores on a real denominator instead of on a collapsed one. None (crypto/ETF/no fund coverage) → 0 = neutral;
 /// negative clamps to 0 (no bonus, the gates handle bleeders). Shared by both lanes.
 ///
 /// No longer backtest-blind: the backtest loop fills `quote.roe` from the as-of `FundFactors.quality`,
@@ -485,7 +485,8 @@ fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: 
 /// - **value** — (E) P/E tilt: cheap lifts, rich dampens, unknown neutral (`ref_pe`). BACKTEST-BLIND:
 ///   no as-of P/E in the backtest, so this term is unvalidated there too — keep the tilt gentle.
 /// - **quality_reward** — (F) return-on-capital profitability tilt (`quality_weight`/`quality_cap`);
-///   the canonical quality factor (high-ROE firms out-compound). ROE, or ROA where equity is negative.
+///   the canonical quality factor (high-ROE firms out-compound). ROE, or ROA where equity is negative
+///   or collapsed.
 /// - **decline** — (B) value-trap dock when 1Y & 5Y both deeply negative.
 /// - **risk_reward** — (B/C) Sharpe-ish (CAGR/vol) + Calmar (CAGR/max-drawdown) bonus; return per unit of risk. On-sale lane uses its own `onsale_sharpe_weight`.
 /// - **trust** — halves anything without a long record (10Y for equities, 5Y for young-EUR-pair crypto).
@@ -1414,7 +1415,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true }, // % above the 200wk SMA (overextension)
     ColSpec { key: "pe", hdr: "P/E", width: 7, right: true },        // trailing P/E (FMP key only)
     ColSpec { key: "peg", hdr: "PEG", width: 6, right: true },       // P/E ÷ long CAGR — valuation vs growth (<1 = cheap for its growth)
-    ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true },     // trailing return on equity — or on ASSETS where equity is negative (`core::quality_return`), hence the slash: one column, two denominators, no per-row flag
+    ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true },     // trailing return on equity — or on ASSETS where equity is not a credible denominator, negative or collapsed (`core::quality_return`), hence the slash: one column, two denominators, no per-row flag
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true },       // trailing-1Y dividend yield
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true },       // ETF annual expense ratio % — the one cost that compounds against a decades hold (FMP key, ETFs only)
     ColSpec { key: "aum", hdr: "AUM", width: 6, right: true },       // ETF fund size (BF etp_search, EUR-approximate) — sub-scale funds get liquidated/merged mid-hold
@@ -1620,11 +1621,14 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             }
         }
         "roe" if stock_only_na => "—".to_string(),
-        // |ROE| > 100% is almost always a buyback-shrunk DENOMINATOR (AAPL "+152%"), not operating
-        // quality -> n/m (not meaningful). The score side is unaffected: the quality term clamps to
-        // quality_cap. NEGATIVE-equity filers never reach here — `quality_return` swapped them to ROA
-        // upstream, so HCA prints its real +9% rather than the fake -113% or the old blank.
-        "roe" => quote.roe.map_or("n/a".to_string(), |v| if v.abs() > 100.0 { "n/m".to_string() } else { format!("{v:+.0}%") }),
+        // (#42) The `|ROE| > 100 -> n/m` rule that used to live here is GONE, not relaxed: it read the
+        // ROE LEVEL, and level does not separate "earned a lot on its assets" from "bought its equity
+        // down to nothing". It hid AAPL (+152% on a 4.9x multiplier, the same leverage as ITW's printed
+        // +95%) while printing BA's +41% on 31x. `quality_return` now swaps the real artifacts to ROA
+        // upstream on the MULTIPLIER, so a number reaching this cell is one that survived that check —
+        // and hiding a figure the score is already acting on was the inconsistency, not the cure.
+        // NEGATIVE-equity filers likewise never reach here: HCA prints its real +9%, not a fake -113%.
+        "roe" => quote.roe.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
         // Read the Option `dividend_yields` already carries rather than `dividend_yield_1y`, whose
         // `unwrap_or(0.0)` collapses two different facts into one: Some(0.0) = pays NOTHING (MNST, and
         // it's a real, knowable 0.00%), None = no price or too little history to say. Printing both as
@@ -1813,7 +1817,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     // Column note, not a flag: one cell can hold either ratio and there is no per-row marker to hang it
     // on, so the table says so once. Only when the column is actually printed (ETF/crypto tables hide it).
     if cols.iter().any(|c| c.key == "roe") {
-        legend.push("ROE/A = return on equity, or on assets where equity is negative (buyback-shrunk filers: HCA, HLT)".into());
+        legend.push("ROE/A = return on equity, or on ASSETS where equity is negative or under 1/20th of assets (buyback-shrunk filers: HCA, CL)".into());
     }
     if !legend.is_empty() {
         println!("  ({})", legend.join("; "));
