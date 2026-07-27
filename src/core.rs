@@ -152,6 +152,7 @@ pub struct Quote {
     pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). DISPLAY-ONLY (`trcagr` column), never scored; ≈ life_cagr for Acc funds/non-payers
     pub history_proxied: bool,         // (history_proxy) closes bridged from a configured older same-strategy twin — CAGR/YRS describe the STRATEGY, not this listing; rendered as `~` so the bridge is never invisible
     pub stats_8y: Option<Stats8>,      // (S-8Y) the >8y price stats re-measured on the last 8 years, for the 8Y-pinned diagnostic column ONLY — never read by the live score. None = no history older than 8y (its whole record IS the window, so the full-window stats already are the 8y ones) / stub / backtest
+    pub sector: Option<String>,        // (#44) GICS sector, joined from the constituents CSVs (`fetch::sector_map`) — the sole input to the commodity flag/damp for stocks. Set on BOTH `screen` paths (the universe fetch and, since the explain mismatch, the explicit-args one). None for ETFs/crypto (funds carry no GICS; their path is name tokens), for `check` (its growth table is explicitly "derived from the table above — no extra fetch", a contract worth more than the flag), and in the BACKTEST pool -> `is_commodity` false there -> damp ×1.0 -> validated edge untouched, and unmeasurable by the same token
     pub aum_eur: Option<f64>,          // (AUM) fund size from the Börse Frankfurt universe payload, EUR-approximate (BF mixes fund currencies; ±FX is immaterial vs the order-of-magnitude gate). ETFs/ETPs only; None = not a fund / not in BF / backtest -> gate inert
     pub ter_fallback: Option<f64>,     // Yahoo quoteSummary TER (%) for funds with NO BF facts (venue/regulatory-only rows). Read ONLY via ter_shown() for display + H/CORE — kept out of expense_ratio because ter_damp SCORES that field (a merged run moved live ranks; scoring lane closed)
     pub aum_fallback: Option<f64>,     // Yahoo quoteSummary totalAssets for the same funds, quote-currency ≈ EUR. Read ONLY via aum_shown() for display + H/CORE — the closure-risk AUM gate stays on BF aum_eur
@@ -217,6 +218,7 @@ impl Quote {
             tr_cagr: None,
             history_proxied: false,
             stats_8y: None,
+            sector: None, // (#44) stamped in `screen` from the universe CSV; stubs/backtest stay None
             aum_eur: None,
             ter_fallback: None,
             aum_fallback: None,

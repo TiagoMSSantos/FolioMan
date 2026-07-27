@@ -930,6 +930,65 @@ buy_heuristic:
                                  #   reverting recent year. ETF-ONLY (expense_ratio is None for stocks/crypto -> x1.0). BACKTEST-BLIND:
                                  #   expense_ratio is None in the backtest pool -> x1.0 there, so the validated edge is byte-identical;
                                  #   this shapes only the LIVE ETF lane. false = off. (Magnitude: 0.10% TER -> x0.980, 0.65% -> x0.878.)
+  growth_commodity_damp: 0.8     # (#44) COMMODITY dock: scale the growth score of a row whose earnings are a SPREAD on a
+                                 #   traded input price — GICS Energy/Materials, or a fund whose name carries a commodity token
+                                 #   (picks::is_commodity). Such a name's long CAGR is a spot-price snapshot, not a compounding
+                                 #   record. 1.0 = off. The `c` rank flag prints either way; only the dock is knob-gated.
+                                 #
+                                 #   WHAT PROMPTED IT (live screen 2026-07-27, top-12 stocks):
+                                 #     rank 1  CF Industries   Materials  CAGR +20%  maxdd -62%  R2 0.76  score 22.3
+                                 #     rank 8  Marathon Petro  Energy     CAGR +19%  maxdd -81%  R2 0.68  score 10.1
+                                 #   CF is a nitrogen producer (P&L = gas cost vs urea price); MPC is a refiner on the crack
+                                 #   spread. They held the table's two LOWEST R2 and MPC its worst drawdown.
+                                 #
+                                 #   WHY NOT JUST READ R2, WHICH IS ALREADY A COLUMN: Amazon's R2 was 0.79 — BETWEEN the two.
+                                 #   R2 measures the SYMPTOM (a lumpy climb) and cannot tell a commodity cycle from a dot-com
+                                 #   crash. The sector names the CAUSE. Nor does the score already cover it: it prices lumpiness
+                                 #   TWICE (growth_smoothness_weight 5.0, growth_underwater_weight 0.3, both swept) and CF
+                                 #   cleared both and still ranked first.
+                                 #
+                                 #   THE ADJACENT NEGATIVE RESULT — the reason to hold this loosely. picks.rs records that (#1)
+                                 #   an R2-steadiness damp @0.5 and (#3) a momentum-confirm damp @0.3 were BOTH measured
+                                 #   edge-NEGATIVE (backtest universe ablation, 467 win: removing R2 lifted edge +45.6->+68.0,
+                                 #   rho +0.18->+0.20) because "R2 docks exactly the parabolic compounders this lane exists to
+                                 #   surface". A punish-the-lumpy-name damp has been tried here and it LOST. What differs: this
+                                 #   docks a SECTOR, not a SHAPE, so it fires on 2 of 12 rows and never touches NVDA/AMZN — the
+                                 #   cohort that killed the R2 version. That is an argument, not a measurement.
+                                 #
+                                 #   UNMEASURABLE BY CONSTRUCTION: `core::backtest_quote` builds every pool row from
+                                 #   `Quote::stub(tk, "", "", tk)` — sector None (nothing outside screen.rs ever writes the
+                                 #   field) and name == THE TICKER, not the fund's real name. So the damp is x1.0 in every
+                                 #   walk-forward -> the validated edge is untouched AND this knob can NEVER be swept, unlike
+                                 #   every weight around it. Same edge-blind class as growth_min_aum_etf/growth_max_vol_crypto.
+                                 #   Proven exhaustively, not sampled: `quote_is_etf` falls back to `is_etf(&quote.name)`, and
+                                 #   is_etf is a SUBSTRING match, so a ticker could in principle open the fund path. Ran the
+                                 #   real predicate over both caches — 3551 backtest-pool tickers (.long_history_cache.json)
+                                 #   and 8556 .isin_cache.json entries: 11 tickers DO satisfy quote_is_etf (the Polish
+                                 #   "ETFB*.WA" / "TVBETETF.RO" family, which literally contain "etf"), but ZERO satisfy
+                                 #   is_commodity — none carries a commodity TOKEN, and is_commodity token-splits where is_etf
+                                 #   substring-matches. Both leak vectors closed over the WHOLE pool.
+                                 #
+                                 #   AND THE A/B THAT WOULD HAVE LIED: ran `backtest universe` at 0.8 and 1.0 anyway. They
+                                 #   disagree — edge +58.3 vs +59.9, winsor +47.4 vs +49.0 — which reads as "the damp moved the
+                                 #   edge" and is NOT that. `backtest universe` re-fetches the live universe per run and the
+                                 #   venue feeds 504 at random: the 0.8 run lost Euronext Lisbon, the 1.0 run lost the Euronext
+                                 #   ETF list, so they scored 4878 vs 4868 tickers over 8421 vs 8408 cutoffs. Different pools.
+                                 #   A two-run A/B CANNOT prove inertness on this command — the pool noise is larger than any
+                                 #   effect being tested. Anyone re-testing this knob: read the fetch header and the ticker
+                                 #   count before believing a delta, on this row or any other.
+                                 #
+                                 #   WHY 0.8: it moves CF out of rank 1 (the thing that prompted the ask) without erasing it —
+                                 #   CF 22.3 -> 17.84 (rank 1 -> 4), MPC 10.1 -> 8.08 (rank 8 -> 9). Both sit under EUR 1B
+                                 #   turnover so liq_bonus is 0 and x0.8 on the pre-liq product IS x0.8 on the printed score.
+                                 #   0.5 was rejected: it puts MPC on 5.05 against a growth_min_score of 5.0, i.e. one tick from
+                                 #   vanishing — which defeats a flag whose whole purpose is to be SEEN. Set by judgement; if the
+                                 #   ranks stop looking right, return this to 1.0 and keep the flag, which costs nothing.
+                                 #
+                                 #   ACCEPTED NOISE: Materials is ~50/50. CF/Mosaic/Freeport/Newmont/Nucor/Dow/Lyondell ride the
+                                 #   cycle; Sherwin-Williams and PPG (branded paint), Linde and Air Products (industrial gas on
+                                 #   15y take-or-pay), Ecolab, Vulcan/Martin Marietta (aggregates, local monopoly pricing) do not.
+                                 #   Taken by direction: Energy-only would MISS CF, the rank-1 name this exists for, and the
+                                 #   branded/contracted Materials names are slow compounders this momentum lane never surfaces.
   growth_overext_floor: 0.05     # growth-score multiplier at full stretch. Tightened 0.2->0.15->0.05, each step a harder blow-off-top brake:
                                  #   buying right after a parabola = poor long-hold entry. The walk-forward sweep ranks 0.05 best: wide
                                  #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).

@@ -294,6 +294,35 @@ fn is_commodity_etf(quote: &Quote) -> bool {
     }
 }
 
+/// (#44) GICS sectors whose earnings are a SPREAD on a traded input price, so the long CAGR is a
+/// spot-price snapshot rather than a compounding record. Energy is ~90% clean (only the pipelines
+/// WMB/KMI/OKE are toll roads, not spread-takers). Materials is ~50/50 — CF, Mosaic, Freeport, Newmont,
+/// Nucor, Dow, LyondellBasell ride the cycle; Sherwin-Williams and PPG (branded paint), Linde and Air
+/// Products (industrial gas on 15-year take-or-pay), Ecolab, Vulcan/Martin Marietta (aggregates, local
+/// monopoly pricing) do not. That noise is ACCEPTED by direction: Energy-only would miss CF, which
+/// ranked FIRST on the live screen, and the branded/contracted Materials names are slow compounders this
+/// momentum lane never surfaces anyway.
+const COMMODITY_SECTORS: &[&str] = &["Energy", "Materials"];
+/// Funds carry no GICS, so the fund path is name tokens. MINER_TOKENS is reused here as an INCLUSION
+/// while `is_commodity_etf` uses it as an EXEMPTION — both are right: a miner basket holds
+/// earnings-bearing equities (so it keeps RANKING, not gated out like a physical ETC) but those earnings
+/// still ride the metal price (so it FLAGS). Known over-inclusion: "energy" fires on clean-energy
+/// equipment funds. "battery" is deliberately absent — L&G Battery Value-Chain stays unflagged.
+const COMMODITY_FUND_TOKENS: &[&str] = &["oil", "gas", "energy", "uranium", "lithium", "copper", "steel"];
+
+/// (#44) Does this row's growth depend on a commodity price? GICS sector for stocks, name tokens for
+/// funds. Unknown sector (crypto, `check`, `screen TICKER…`, the backtest pool) -> false, the same
+/// missing-data stance every gate here takes.
+fn is_commodity(quote: &Quote) -> bool {
+    quote.sector.as_deref().is_some_and(|s| COMMODITY_SECTORS.iter().any(|c| s.eq_ignore_ascii_case(c)))
+        || (quote_is_etf(quote) && {
+            let n = quote.name.to_lowercase();
+            // token match, not `contains` — same reason as is_commodity_etf: "Goldman" must not trip "gold"
+            let token = |t: &str| n.split(|c: char| !c.is_ascii_alphanumeric()).any(|x| x == t);
+            MINER_TOKENS.iter().chain(COMMODITY_FUND_TOKENS).any(|t| token(t))
+        })
+}
+
 /// Is this quote a pooled fund? Prefer Yahoo's own `instrumentType` ("ETF"), which is present even
 /// when the name string isn't a giveaway (ETF shortNames like "ISHARES III PLC ISHRS CORE MSCI"
 /// carry no marker). Falls back to the name-substring guess for rows with no meta (backtest stubs).
@@ -598,7 +627,8 @@ struct ScoreParts {
     damp: f64,         // geomean(trust, overext_damp)
     liq_bonus: f64,    // (L) turnover_weight × ln(max(turnover/1e9, 1))
     ter_damp: f64,     // (T) ETF cost drag (1−TER)^20; 1.0 for stocks/crypto/None or when growth_ter_drag off
-    score: f64,        // base × proximity × value × damp × ter_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp + liq_bonus when #8 growth_geomean_fold)
+    commodity_damp: f64, // (#44) growth_commodity_damp on a GICS Energy/Materials row or a commodity-named fund; 1.0 otherwise / knob off / sector unknown (backtest)
+    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp + liq_bonus when #8 growth_geomean_fold)
 }
 
 /// Score a quote as a MOMENTUM/GROWTH candidate — the MIRROR of `buy_score`. The on-sale lane fades
@@ -923,15 +953,27 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     } else {
         1.0
     };
+    // (#44) COMMODITY dock — same shape as ter_damp (multiplicative, knob-gated, backtest-blind), and
+    // for a related reason: a commodity-linked row's long CAGR is a spot-price snapshot, not compounding.
+    // Docks on the sector CAUSE, not the price SYMPTOM — which is the whole difference from the (#1)
+    // R²-steadiness damp recorded above as edge-NEGATIVE: R² docked the parabolic compounders this lane
+    // exists to surface, while this leaves every one of them untouched and fires on Energy/Materials only.
+    // Unmeasurable by construction (no sector in the pool), so it can never be swept — see the receipt.
+    // 1.0 = off; a configured 0.0 is ALSO off, so reaching for the house `0 = off` convention on a knob
+    // that inverts it can't silently zero every Energy row out of the table.
+    let commodity_damp = match tuning.growth_commodity_damp {
+        d if d > 0.0 && is_commodity(quote) => d,
+        _ => 1.0,
+    };
     let score = if tuning.growth_geomean_fold {
-        base * combine_damps(&[trust, overext_damp, proximity, value]) * ter_damp + liq_bonus
+        base * combine_damps(&[trust, overext_damp, proximity, value]) * ter_damp * commodity_damp + liq_bonus
     } else {
-        base * proximity * value * damp * ter_damp + liq_bonus
+        base * proximity * value * damp * ter_damp * commodity_damp + liq_bonus
     };
     Some(ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, smooth, underwater, base, proximity, value_raw, value, trust, overext,
-        overext_cap, overext_damp, damp, liq_bonus, ter_damp, score,
+        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, score,
     })
 }
 
@@ -1248,11 +1290,20 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     } else {
         String::new()
     };
+    // (#44) same treatment: print the commodity dock only when it actually bites, so a non-commodity
+    // row's SCORE line is byte-identical to the pre-(#44) one.
+    let commodity_frag = if p.commodity_damp < 1.0 {
+        s.push_str(&format!("  commodity    = growth_commodity_damp ({}) — CAGR tracks a mean-reverting input price = {:.3}\n",
+            quote.sector.as_deref().unwrap_or("commodity-named fund"), p.commodity_damp));
+        format!(" × {:.3}", p.commodity_damp)
+    } else {
+        String::new()
+    };
     if tuning.growth_geomean_fold {
-        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag}{commodity_frag} + {:.2} = {:.2}\n",
             p.base, p.trust, p.overext_damp, p.proximity, p.value, p.liq_bonus, p.score));
     } else {
-        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3}{ter_frag} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag} + {:.2} = {:.2}\n",
             p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
     }
     if (displayed - p.score).abs() > 1e-6 {
@@ -1388,7 +1439,7 @@ struct ColSpec {
 /// columns past the price/perf block (vol/maxdd/r2/abv-ma/pe/roe/div) are OFF unless listed. All are
 /// DISPLAY-ONLY — derived from already-fetched `Quote` fields, they never touch a score.
 const COLUMNS: &[ColSpec] = &[
-    ColSpec { key: "rank", hdr: "RANK", width: 6, right: false },
+    ColSpec { key: "rank", hdr: "RANK", width: 7, right: false }, // (#44) 6 -> 7: a 7th rank flag ("10*#!c~Ho" is possible) needs the room
     ColSpec { key: "name", hdr: "NAME", width: 0, right: false },
     ColSpec { key: "ticker", hdr: "TICKER", width: 0, right: false },
     ColSpec { key: "market", hdr: "MARKET", width: 0, right: false },
@@ -1796,8 +1847,14 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     // o = ALREADY HELD at the broker (round 110): the screen ranks candidates but can't otherwise
     // see your portfolio, so a top row you already own reads "covered", not "buy more". Display-only.
     let held = |quote: &Quote| if owned.holds(&quote.ticker) { "o" } else { "" };
+    // c = COMMODITY-LINKED (GICS Energy/Materials, or a fund named for a commodity): its earnings are a
+    // spread on a traded input price, so the long CAGR is a spot-price snapshot rather than compounding.
+    // R² cannot isolate this — it measures the SYMPTOM, and on the live screen Amazon's 0.79 sat BETWEEN
+    // the two commodity names (CF 0.76, MPC 0.68) — so the flag names the CAUSE. Printed whether or not
+    // growth_commodity_damp is set: the dock is optional, knowing what the row is never is.
+    let commodity = |quote: &Quote| if is_commodity(quote) { "c" } else { "" };
     let mark = |quote: &Quote, i: usize| {
-        format!("{}{}{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), bridged(quote), holdable(quote), held(quote))
+        format!("{}{}{}{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), commodity(quote), bridged(quote), holdable(quote), held(quote))
     };
     // pinned tickers that ranked BELOW the cut still print (with their real rank + "*") so you can
     // compare a holding against the tops above even when it doesn't make the top-N.
@@ -1805,7 +1862,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     let mut seen = String::new(); // rank-flag chars that actually printed, drives the legend line
     for (i, (quote, score)) in picks.iter().enumerate().take(n).chain(below_cut) {
         let m = mark(quote, i);
-        for flag in ['*', '#', '!', '~', 'H', 'o'] {
+        for flag in ['*', '#', '!', 'c', '~', 'H', 'o'] {
             if m.contains(flag) && !seen.contains(flag) {
                 seen.push(flag);
             }
@@ -1821,6 +1878,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         ("*", "pinned watchlist name"),
         ("#", "score used live fundamentals, not price-only"),
         ("!", "late-cycle: price >= cap above 200wk trend, brake floored — conviction is the SCORE, not the rank"),
+        ("c", "commodity-linked (GICS Energy/Materials, or a commodity-named fund) — earnings are a spread on a traded input price, so the CAGR is a spot-price snapshot, not compounding; scaled by growth_commodity_damp when set"),
         ("~", "history bridged from configured older twin (history_proxy) — CAGR/YRS describe the strategy, not this listing"),
         ("H", "hold-suitable: broad + cheap + physical + accumulating + large — a buy-and-hold-20yr core, independent of the momentum rank"),
         ("o", "already held (broker portfolio)"),
@@ -2314,6 +2372,49 @@ mod tests {
         assert_eq!(drop_ucits("SXR UCITS ETF"), "SXR UCITS ETF"); // guard: stripping leaves <4 chars -> keep whole
     }
 
+    /// (#44) `is_commodity`: GICS sector for stocks, name tokens for funds, and NOTHING for a row whose
+    /// sector is unknown — which is the backtest pool, `check` and `screen TICKER…`, all of which pass an
+    /// empty sector_of. That last case is what makes the damp backtest-blind by construction.
+    #[test]
+    fn is_commodity_reads_gics_for_stocks_and_tokens_for_funds() {
+        let mut q = Quote::stub("CF", "€111.14", "", "CF Industries Holdings");
+        q.instrument_type = "EQUITY".into();
+        assert!(!is_commodity(&q), "sector unknown -> never flagged (backtest / check / explicit-args)");
+        q.sector = Some("Materials".into());
+        assert!(is_commodity(&q)); // CF ranked FIRST live on a -62% maxdd
+        q.sector = Some("energy".into());
+        assert!(is_commodity(&q), "sector match is case-insensitive");
+        q.sector = Some("Information Technology".into());
+        assert!(!is_commodity(&q));
+        // the token path is FUND-only: a stock named "Energy Transfer" is judged on its GICS, not its name
+        let mut stock = Quote::stub("ET", "€1.00", "", "Energy Transfer Partners");
+        stock.instrument_type = "EQUITY".into();
+        assert!(!is_commodity(&stock));
+        // funds carry no GICS -> tokens. MINER_TOKENS is an INCLUSION here and an EXEMPTION in
+        // is_commodity_etf: a miner basket keeps RANKING (not gated like a physical ETC) but still FLAGS.
+        let mut fund = Quote::stub("GDX.L", "€1.00", "", "VanEck Gold Miners UCITS ETF");
+        fund.instrument_type = "ETF".into();
+        assert!(is_commodity(&fund) && !is_commodity_etf(&fund));
+        fund.name = "iShares S&P 500 Energy Sector UCITS ETF".into();
+        assert!(is_commodity(&fund));
+        fund.name = "iShares Core S&P 500 UCITS ETF".into();
+        assert!(!is_commodity(&fund));
+        fund.name = "Goldman Sachs Access UCITS ETF".into();
+        assert!(!is_commodity(&fund), "token boundary: 'Goldman' is not 'gold'");
+        fund.name = "L&G Battery Value-Chain UCITS ETF".into();
+        assert!(!is_commodity(&fund), "'battery' is deliberately in neither list");
+        // BACKTEST INERTNESS, the claim the ci-settings receipt rests on. `backtest_quote` builds
+        // `Quote::stub(tk, "", "", tk)`: sector None AND name == the ticker. The subtle part is that
+        // `quote_is_etf` falls back to `is_etf(&quote.name)`, a SUBSTRING match — so a ticker that
+        // literally contains "etf" DOES open the fund path (the Polish ETFB*.WA family; 11 such
+        // tickers are in the live pool). It stays inert only because is_commodity token-SPLITS: a
+        // ticker has no commodity token. Swap either match rule and the backtest stops being blind.
+        let etfish = Quote::stub("ETFBW20LV.WA", "", "", "ETFBW20LV.WA");
+        assert!(quote_is_etf(&etfish), "substring 'etf' in the ticker opens the fund path");
+        assert!(!is_commodity(&etfish), "...but no commodity TOKEN -> damp x1.0 in the backtest");
+        assert!(!is_commodity(&Quote::stub("CF", "", "", "CF")), "sector-less stub, the pool's shape");
+    }
+
     /// (#43) `clean_name`'s ETF arm: the umbrella-prefix strip and the token drop COMPOSE, and the token
     /// drop is ETF-scoped — an equity whose name happens to carry "UCITS" is left alone.
     #[test]
@@ -2562,6 +2663,7 @@ mod tests {
             // quotes; tests exercising that gate set avg_turnover_eur = None explicitly. €1B -> liq_bonus
             // ln(1e9/1e9)=0, so it stays rank-neutral for the relational score asserts.
             stats_8y: None, // (S-8Y) display-only diagnostic; None keeps `as_8y_window` the identity here
+            sector: None, // (#44) unknown sector -> is_commodity false -> damp inert, as in the backtest
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
             pe_ratio: None,
@@ -3018,6 +3120,27 @@ mod tests {
     let dear = growth_score(&etf(Some(0.65)), &ter_t).unwrap();
     assert!(undamped > cheap && cheap > dear, "higher TER docks the score more: {undamped} / {cheap} / {dear}");
     assert!((cheap / undamped - 0.999_f64.powi(20)).abs() < 1e-9); // 0.10% TER over 20y ≈ ×0.980
+
+    // --- (#44) commodity dock (GICS Energy/Materials + commodity-named funds; BACKTEST-BLIND) ---
+    let comm_t = BuyHeuristic { growth_commodity_damp: 0.8, ..BuyHeuristic::default() };
+    let sectored = |sector: Option<&str>| {
+        let mut q = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]);
+        q.sector = sector.map(str::to_string);
+        q.avg_turnover_eur = Some(5e8); // under €1B -> liq_bonus 0, so the ratio below is the damp EXACTLY
+        q
+    };
+    let plain = growth_score(&sectored(Some("Information Technology")), &tuning).unwrap();
+    assert_eq!(growth_score(&sectored(Some("Energy")), &tuning).unwrap(), plain); // knob off (1.0) -> byte-identical
+    assert_eq!(growth_score(&sectored(Some("Information Technology")), &comm_t).unwrap(), plain); // non-commodity untouched
+    // sector unknown = the backtest pool's state -> damp inert. THIS is why the knob can never be swept.
+    assert_eq!(growth_score(&sectored(None), &comm_t).unwrap(), plain);
+    let docked = growth_score(&sectored(Some("Energy")), &comm_t).unwrap();
+    assert!((docked / plain - 0.8).abs() < 1e-9, "liq_bonus 0 -> the ratio IS the damp: {docked} / {plain}");
+    assert!((growth_score(&sectored(Some("materials")), &comm_t).unwrap() / plain - 0.8).abs() < 1e-9); // case-insensitive
+    // this knob INVERTS the house `0 = off` convention (it multiplies), so a user reaching for 0 must
+    // get "off", never a silent zeroing of every Energy row out of the table.
+    let zeroed = BuyHeuristic { growth_commodity_damp: 0.0, ..BuyHeuristic::default() };
+    assert_eq!(growth_score(&sectored(Some("Energy")), &zeroed).unwrap(), plain);
     // (round 47) THE fallback invariant: Yahoo-sourced facts must never move the score — a first
     // merged implementation leaked them into ter_damp and shifted live ranks (PEA 3->9).
     let mut yh = etf(None);

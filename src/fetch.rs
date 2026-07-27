@@ -626,6 +626,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         roe,
         // (TER) ETF annual expense ratio % (ETFs w/ FMP_API_KEY only; None -> n/a column).
         expense_ratio: ter,
+        // (#44) GICS sector is NOT a quote-endpoint field — no Yahoo/FMP call here carries one. It is
+        // joined in `screen` from the universe CSV's sector_of map, so every quote leaves this fn None.
+        sector: None,
         // (AUM) fund size from the BF universe payload (ETFs/ETPs only; None -> gate inert, n/a column).
         aum_eur,
         // (round 47) Yahoo quoteSummary facts for funds WITHOUT BF facts — display/H-flag only via
@@ -2949,6 +2952,45 @@ pub async fn fetch_regulatory_etf_isins(client: &Client, urls: &Urls) -> Vec<Str
 /// can force-classify them as ETF — Yahoo mislabels some (e.g. structured products) as `EQUITY`, which
 /// would otherwise leak them into the stocks table past the sector filter — and the ticker -> GICS
 /// sector map (constituent-CSV stocks only) so the stocks table can print its sector mix.
+/// (Item 18/32) The equity ponds: S&P 500 plus any extra same-format constituent CSVs from config, each
+/// row a (Yahoo symbol, GICS sector). Sequential — 1-3 URLs, negligible next to the universe fan-out —
+/// and a failed/empty CSV just drops its pond instead of crashing. A CSV (Symbol first, sector col 3) and
+/// a Wikipedia constituents page (the only maintained source for e.g. the S&P MidCap 400) parse
+/// differently; the URL's host picks.
+///
+/// (#44) Split out of `fetch_universe` so the EXPLICIT-ARGS path (`screen CF`, `screen --explain CF`) can
+/// join sectors too. That path skips the universe fetch by design, which left `Quote.sector` None and made
+/// a commodity name explain UNDAMPED (22.25) while the full screen ranked it damped (17.84) — the one
+/// place the `c` flag most needs to reconcile. These are small documents, so paying for them on a
+/// one-name query is cheap; the heavy CoinGecko/ETF/Lisbon legs stay skipped.
+pub async fn constituent_ponds(client: &Client, urls: &Urls, sectors: &[String]) -> Vec<Vec<(String, String)>> {
+    let mut ponds: Vec<Vec<(String, String)>> = Vec::new();
+    for url in std::iter::once(&urls.sp500_csv).chain(urls.constituents_csv.iter()) {
+        let Some(text) = get_text(client, url).await else {
+            eprintln!("fetch: constituents CSV {url} unavailable — its stocks absent from the screen");
+            continue;
+        };
+        ponds.push(if url.contains("wikipedia.org") {
+            core::wiki_constituents(&text, sectors)
+        } else {
+            text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).collect()
+        });
+    }
+    ponds
+}
+
+/// (#44) Ticker -> GICS sector over those ponds, first pond winning (a dual-member keeps its real sector).
+/// The explicit-args entry point; `fetch_universe` builds the same map inline while it walks the ponds.
+pub async fn sector_map(client: &Client, urls: &Urls, sectors: &[String]) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for pond in constituent_ponds(client, urls, sectors).await {
+        for (sym, sector) in pond {
+            out.entry(sym).or_insert(sector);
+        }
+    }
+    out
+}
+
 pub async fn fetch_universe(
     client: &Client,
     urls: &Urls,
@@ -3009,18 +3051,7 @@ pub async fn fetch_universe(
     // (1–3 URLs, negligible vs the universe fan-out); a failed/empty CSV just drops its pond, never crashes.
     // (Item 32) each pond is a CSV (Symbol first, sector col 3) OR a Wikipedia constituents page
     // (the only maintained source for e.g. the S&P MidCap 400) — the URL's host picks the parser.
-    let mut ponds: Vec<Vec<(String, String)>> = Vec::new();
-    for url in std::iter::once(&urls.sp500_csv).chain(urls.constituents_csv.iter()) {
-        let Some(text) = get_text(client, url).await else {
-            eprintln!("fetch: constituents CSV {url} unavailable — its stocks absent from the screen");
-            continue;
-        };
-        ponds.push(if url.contains("wikipedia.org") {
-            core::wiki_constituents(&text, sectors)
-        } else {
-            text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).collect()
-        });
-    }
+    let ponds = constituent_ponds(client, urls, sectors).await;
     let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
     let mut out: Vec<String> = Vec::new();
     // crypto: CoinGecko market-cap-ranked array -> SYMBOL-<EUR|USD> (Yahoo crypto form).

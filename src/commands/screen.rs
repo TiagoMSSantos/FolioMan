@@ -686,7 +686,12 @@ pub async fn run(args: Vec<String>) {
     // etf_tickers = Xetra-ETF source set, used below to fix Yahoo mislabeling them as EQUITY.
     let explicit_args = !args.is_empty();
     let (mut universe, etf_tickers, sector_of) = if explicit_args {
-        (args, std::collections::HashSet::new(), std::collections::HashMap::new())
+        // (#44) this path skips the universe fetch by design, but it still JOINS sectors — 1-3 small CSVs.
+        // Without them a commodity name explains undamped here (CF 22.25) while the full screen ranks it
+        // damped (17.84), and `--explain` is exactly where that number has to reconcile. Unfiltered (`&[]`):
+        // this is a lookup map, not a universe filter, so a sector-restricted config must not hide the
+        // row's own sector.
+        (args, std::collections::HashSet::new(), fetch::sector_map(&client, &settings.urls, &[]).await)
     } else {
         fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &settings.sectors).await
     };
@@ -724,6 +729,10 @@ pub async fn run(args: Vec<String>) {
         if etf_tickers.contains(&quote.ticker) {
             quote.instrument_type = "ETF".into();
         }
+        // (#44) join the GICS sector the universe CSV already carries onto the quote, so `is_commodity`
+        // (the `c` flag + growth_commodity_damp) can read it without threading the map through
+        // growth_score and every backtest caller. Empty map on the explicit-args path -> None -> inert.
+        quote.sector = sector_of.get(&quote.ticker).cloned();
     }
     // (G) route the validated as-of fundamental onto the live quotes so the growth ranking weighs it —
     // only when the tilt is on (weight 0 default = no fetch, no change). Across the ~750-name universe the
