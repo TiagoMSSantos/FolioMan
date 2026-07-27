@@ -1952,6 +1952,13 @@ static BF_META: std::sync::OnceLock<HashMap<String, BfMeta>> = std::sync::OnceLo
 /// (lowercased BF fund name, meta) for ALL BF rows — same name-keyed fallback role as `BF_TER_NAMES`.
 static BF_META_NAMES: std::sync::OnceLock<Vec<(String, BfMeta)>> = std::sync::OnceLock::new();
 
+/// (#45) EVERY BF row name, lowercased, UNFILTERED — where `BF_META_NAMES` keeps only rows whose
+/// keyData parsed to something usable. The set difference between the two lists is exactly "BF has a
+/// row for this fund but it told us nothing", a cause that is otherwise indistinguishable from "the
+/// fund is not on BF at all": both surface as a `BfMeta::default()` and an `n/a` cell. Diagnostic-only
+/// — `bf_meta` must NOT read this, or a factless row would start shadowing the name fallback.
+static BF_ROW_NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
 /// Yahoo-name -> BF value via unique prefix (Yahoo drops BF's share-class suffix: "VanEck Semiconductor
 /// UCITS ETF" vs BF's "… - USD Acc"). None unless EXACTLY one BF fund name starts with the quote's name.
 fn bf_by_name<T: Clone>(list: &std::sync::OnceLock<Vec<(String, T)>>, name: &str) -> Option<T> {
@@ -2425,6 +2432,89 @@ fn bf_meta(ticker: &str, name: &str) -> BfMeta {
         .unwrap_or_default()
 }
 
+/// (#45) Why `bf_meta` came back empty for one fund. Four causes print an identical `n/a` today, and
+/// they call for four different responses — only `AmbiguousName` is a bug this codebase can fix.
+#[derive(PartialEq, Clone, Copy)]
+enum BfMetaMiss {
+    /// BF answered, the row just carried no `replicationMethod` (or wording `bf_row_meta` doesn't
+    /// know). The ~30% the field-coverage note predicts. Upstream omission — nothing to fix here.
+    NoReplField,
+    /// No BF row under this name at all: a venue-list / regulatory (FIRDS) extra, which `fetch_universe`
+    /// documents as factless by design. A Stockholm-only fund is not on Börse Frankfurt; no code fixes that.
+    NotOnBf,
+    /// BF holds the row and the lookup REFUSES it — 2+ BF names share this prefix (or the probe is under
+    /// `bf_by_name`'s 10-byte floor), so its uniqueness rule returns None rather than guess between share
+    /// classes. Data in hand, discarded. The one bucket where a fix needs no new data source.
+    AmbiguousName,
+    /// Exactly one BF row matches on a long-enough name, yet it parsed to `BfMeta::default()` — row
+    /// present, keyData empty. Detectable only because `BF_ROW_NAMES` keeps what `BF_META_NAMES` drops.
+    EmptyKeyData,
+}
+
+/// (#45) Classify one `n/a` replication cell. Mirrors `bf_meta`'s own lookup order so the verdict
+/// describes the lookup that actually ran, not a re-derivation of it.
+fn bf_meta_miss(ticker: &str, name: &str) -> BfMetaMiss {
+    // test the FACT-bearing fields, not `!= BfMeta::default()`: `dom` is stamped from the ISIN on every
+    // BF row (`m.dom = isin_domicile(...)` where BF_META_NAMES is built), so a `!= default` check is
+    // vacuously true for the whole feed and collapses all four causes into this one bucket. Caught by
+    // the first live run coming back 2345/2345 here — a split that clean is a bug, not a finding.
+    let m = bf_meta(ticker, name);
+    if m.use_of.is_some() || m.repl.is_some() || m.bench.is_some() {
+        return BfMetaMiss::NoReplField; // BF answered with facts — it just had no replication token
+    }
+    // count prefix hits the way `bf_by_name` matches (whole name, then the part after " - "), but
+    // COUNTING instead of demanding uniqueness — the count is the whole diagnostic.
+    let probe = |n: &str| -> Option<(usize, usize)> {
+        let n = n.trim().to_lowercase();
+        let hits = BF_ROW_NAMES.get()?.iter().filter(|bf| bf.starts_with(&n)).count();
+        (hits > 0).then_some((hits, n.len())) // bytes, matching bf_by_name's own `n.len() < 10`
+    };
+    let Some((hits, len)) = probe(name).or_else(|| name.split_once(" - ").and_then(|(_, f)| probe(f)))
+    else {
+        return BfMetaMiss::NotOnBf;
+    };
+    if hits >= 2 || len < 10 { BfMetaMiss::AmbiguousName } else { BfMetaMiss::EmptyKeyData }
+}
+
+/// (#45) Why USE/REPL read `n/a` across the ETF table, bucketed by cause. One pure pass over the quotes
+/// already in hand — no locks and no instrumentation inside the concurrent fetch path, since every
+/// input is a static that `fetch_universe` finished writing long before. `None` when nothing is missing.
+///
+/// Blind spot, stated: counts only rows tagged ETF, so a physical ETC that Yahoo labels EQUITY is not
+/// tallied — the same rows `bf_ter_exact`/`bf_aum_exact` exist to rescue.
+pub fn bf_meta_miss_report(quotes: &[Quote]) -> Option<String> {
+    let etfs = || quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("ETF"));
+    let (total, use_na) = (etfs().count(), etfs().filter(|q| q.use_of_profits.is_none()).count());
+    // sample cap per bucket: the three unfixable causes only need to be recognisable, but the fixable
+    // one IS the worklist — printing it in full is the difference between "50 somewhere" and 50 names.
+    let mut buckets: Vec<(BfMetaMiss, &str, usize, usize, Vec<&str>)> = vec![
+        (BfMetaMiss::NotOnBf, "not on BF (venue/regulatory extra — factless by design)", 3, 0, Vec::new()),
+        (BfMetaMiss::NoReplField, "BF row, no replicationMethod (upstream omission)", 3, 0, Vec::new()),
+        (BfMetaMiss::EmptyKeyData, "BF row, empty keyData", 3, 0, Vec::new()),
+        (BfMetaMiss::AmbiguousName, "ambiguous name -> lookup miss (FIXABLE: BF holds the row)", 80, 0, Vec::new()),
+    ];
+    for q in etfs().filter(|q| q.replication.is_none()) {
+        let cause = bf_meta_miss(&q.ticker, &q.name);
+        if let Some(b) = buckets.iter_mut().find(|b| b.0 == cause) {
+            b.3 += 1;
+            if b.4.len() < b.2 {
+                b.4.push(&q.ticker);
+            }
+        }
+    }
+    let repl_na: usize = buckets.iter().map(|b| b.3).sum();
+    if repl_na == 0 {
+        return None;
+    }
+    let mut s = format!("fetch: BF meta missing for {repl_na}/{total} ETFs — USE n/a {use_na}, REPL n/a {repl_na}");
+    for (_, label, cap, n, ex) in buckets.iter().filter(|b| b.3 > 0) {
+        // say when the list is truncated — a silent cut reads as "that's all of them"
+        let more = if n > cap { format!(", +{} more", n - cap) } else { String::new() };
+        s.push_str(&format!("\n  {label}: {n} ({}{more})", ex.join(", ")));
+    }
+    Some(s)
+}
+
 const BF_TER_KEYS: &[&str] = &["ter", "totalExpenseRatio", "ongoingCharges", "ongoingCharge", "totalExpenseRatioInPercent"];
 
 /// Pull the expense ratio out of one BF `etp_search` row. Tries the known key names (their schema drifts
@@ -2557,6 +2647,13 @@ pub async fn fetch_xetra_etfs(
                             (m != BfMeta::default())
                                 .then_some((r.pointer("/name/originalValue")?.as_str()?.trim().to_lowercase(), m))
                         })
+                        .collect(),
+                );
+                // (#45) the same names WITHOUT the `!= default` filter above, so the diagnostic can tell
+                // "no BF row" from "BF row, empty keyData". Same payload, no extra request.
+                let _ = BF_ROW_NAMES.set(
+                    arr.iter()
+                        .filter_map(|r| Some(r.pointer("/name/originalValue")?.as_str()?.trim().to_lowercase()))
                         .collect(),
                 );
                 if let Some(o) = arr.first().and_then(|r| r.as_object()) {
@@ -3162,6 +3259,58 @@ mod tests {
         assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF Dist"), Some(0.30)); // exact class
         assert_eq!(bf_ter_by_name("vaneck"), None); // too short
         assert_eq!(bf_ter_by_name("iShares Physical Gold ETC"), None); // not in list
+    }
+
+    /// (#45) The four causes behind one `REPL n/a`. The point of the split is that only AmbiguousName
+    /// is actionable — BF already holds that row and `bf_by_name`'s uniqueness rule throws it away —
+    /// so a bucket collapsing into NotOnBf would hide a fixable bug behind "upstream has no data".
+    /// Owns BF_ROW_NAMES/BF_META_NAMES: no other test seeds them, and OnceLock only takes the first set.
+    #[test]
+    fn bf_meta_miss_buckets() {
+        let _ = BF_ROW_NAMES.set(vec![
+            "vaneck semiconductor ucits etf - usd acc".into(),
+            "amundi stoxx europe 600 banks ucits etf acc".into(), // two share classes under
+            "amundi stoxx europe 600 banks ucits etf dist".into(), // ...one prefix -> ambiguous
+            "xtrackers msci world ucits etf 1c".into(),
+            "gold bullion securities".into(),
+        ]);
+        let _ = BF_META_NAMES.set(vec![
+            (
+                "vaneck semiconductor ucits etf - usd acc".into(),
+                BfMeta { use_of: Some("Acc"), repl: None, bench: Some("msci world".into()), dom: Some("IE".into()) },
+            ),
+            // dom-only: BF_META_NAMES keeps this row (its filter is `!= default`, and dom is stamped
+            // from the ISIN on EVERY row) while it carries no fund fact at all. Classifying on
+            // `!= default` would call this "BF answered" and hide the other three causes — the exact
+            // bug the first live run exposed, so this row is the regression pin.
+            ("xtrackers msci world ucits etf 1c".into(), BfMeta { dom: Some("LU".into()), ..Default::default() }),
+        ]);
+        let miss = |name: &str| bf_meta_miss("X.DE", name);
+        // BF answered (share class parsed) but shipped no replicationMethod — upstream omission
+        assert!(miss("VanEck Semiconductor UCITS ETF") == BfMetaMiss::NoReplField);
+        // no BF row prefixes this name at all -> venue/regulatory extra, unfixable
+        assert!(miss("XACT Bull 2 ETF") == BfMetaMiss::NotOnBf);
+        // 2 BF rows share the prefix -> bf_by_name refuses to guess. THE fixable bucket
+        assert!(miss("Amundi STOXX Europe 600 Banks UCITS ETF") == BfMetaMiss::AmbiguousName);
+        // exactly one row matches, yet BF_META_NAMES dropped it -> the row parsed to nothing
+        assert!(miss("Xtrackers MSCI World UCITS ETF 1C") == BfMetaMiss::EmptyKeyData);
+        // under bf_by_name's 10-byte floor: the row IS there, the lookup declines -> same bucket as
+        // ambiguity, NOT NotOnBf, which would misreport recoverable data as absent
+        assert!(miss("gold") == BfMetaMiss::AmbiguousName);
+
+        let etf = |t: &str, n: &str| {
+            let mut q = crate::core::Quote::stub(t, "", "", n);
+            q.instrument_type = "ETF".into();
+            q
+        };
+        let mut done = etf("OK.DE", "Whatever UCITS ETF");
+        done.replication = Some("Full");
+        assert_eq!(bf_meta_miss_report(&[done.clone()]), None, "nothing missing -> silent");
+        let report = bf_meta_miss_report(&[done, etf("XB.ST", "XACT Bull 2 ETF")]).unwrap();
+        assert!(report.contains("1/2 ETFs"), "counts misses over ETFs, not over the miss list: {report}");
+        assert!(report.contains("not on BF") && report.contains("XB.ST"), "names the cause + a sample: {report}");
+        // a stock is not an ETF row and must not be tallied
+        assert_eq!(bf_meta_miss_report(&[crate::core::Quote::stub("AAPL", "", "", "Apple Inc.")]), None);
     }
 
     /// (USE/REPL) BF keyData token parse: English translation preferred, originalValue fallback,

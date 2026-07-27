@@ -734,6 +734,13 @@ pub async fn run(args: Vec<String>) {
         // growth_score and every backtest caller. Empty map on the explicit-args path -> None -> inert.
         quote.sector = sector_of.get(&quote.ticker).cloned();
     }
+    // (#45) why the USE/REPL columns read n/a, bucketed by cause. Runs here because bf_meta is consulted
+    // per-quote inside the fetch above, long after fetch_universe (where the other BF diagnostics print)
+    // has returned — and because the ETF tagging it filters on is the loop directly above. Conditional,
+    // like the "no TER parsed from BF rows" line: silent when there is nothing to report.
+    if let Some(report) = fetch::bf_meta_miss_report(&quotes) {
+        eprintln!("{report}");
+    }
     // (G) route the validated as-of fundamental onto the live quotes so the growth ranking weighs it —
     // only when the tilt is on (weight 0 default = no fetch, no change). Across the ~750-name universe the
     // FMP daily budget caps cold fetches; the rest serve from the disk cache, warming over runs.
