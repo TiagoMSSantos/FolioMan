@@ -1841,6 +1841,23 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // bypass BOTH the score trim and the sector filter (`|| pinned`) — they're always shown.
     let keep = |quote: &Quote, s: f64, floor: f64, sector_ok: bool| (s > floor && sector_ok) || pinned.contains(quote.ticker.as_str());
     let stock: Vec<_> = stock.into_iter().filter(|(quote, s)| keep(quote, *s, min_score, true)).collect();
+    // (#41) REDUNDANCY skip, stocks only — the ETF lane is diversified by construction and crypto is one
+    // bet already. Runs HERE, after the score/sector trim and before the table is cut to `n`, so the rows
+    // it drops are replaced from below instead of leaving a short table. Every row here passed every gate;
+    // what this removes is the SECOND COPY of a bet, which is why it is not a gate and not a score term.
+    // Pinned tickers bypass it, exactly as they bypass the score trim — a pin means "always show me this".
+    let stock: Vec<_> = if tuning.growth_corr_cap > 0.0 {
+        let trails: Vec<&[f64]> = stock.iter().map(|(q, _)| q.trail_monthly.as_slice()).collect();
+        let kept = core::decorrelate_keep(&trails, n, tuning.growth_corr_cap);
+        stock
+            .iter()
+            .enumerate()
+            .filter(|(i, (q, _))| kept.contains(i) || pinned.contains(q.ticker.as_str()))
+            .map(|(_, row)| *row)
+            .collect()
+    } else {
+        stock
+    };
     let etf: Vec<_> = etf
         .into_iter()
         .filter(|(quote, s)| keep(quote, *s, etf_min_score, core::sector_matches(&quote.name, sectors)))
@@ -2490,6 +2507,7 @@ mod tests {
             fund: None,            // (G+) default off; the multi-term asserts set it explicitly
             age_years: None,       // display-only pair; never scored
             life_cagr: None,
+            trail_monthly: Vec::new(), // (#41) no trail -> unjudgeable -> the redundancy skip never blocks
             tr_cagr: None,         // (TR-CAGR) display-only; never scored
             history_proxied: false, // display-only marker; never scored
             aum_eur: None,          // (AUM) fund-size gate inert by default; its tests set it explicitly

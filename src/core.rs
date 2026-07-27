@@ -148,6 +148,7 @@ pub struct Quote {
     pub fund: Option<FundFactors>,
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history, via `core::life_cagr`. NOT display-only since (#3i)/(#3j): the `cagr` column, the `growth_min_cagr` whole-life bar, and the growth RANK when `use_life_cagr` is on. Filled in the backtest too (same fn, `[..=as_of]` slice) -> train==serve. None = <6mo history / non-positive first close / stub
+    pub trail_monthly: Vec<f64>,       // (#41) up to 36 trailing MONTH-over-MONTH returns (%), newest last, via `core::monthly_returns_tail`. Sole input to the growth_corr_cap redundancy skip. Built from the DAILY chart live and from the monthly slice in the backtest — the same fn, so a pair's correlation means the same thing in train and serve. Empty = no history / stub -> unjudgeable, and an unjudgeable pair never blocks
     pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). DISPLAY-ONLY (`trcagr` column), never scored; ≈ life_cagr for Acc funds/non-payers
     pub history_proxied: bool,         // (history_proxy) closes bridged from a configured older same-strategy twin — CAGR/YRS describe the STRATEGY, not this listing; rendered as `~` so the bridge is never invisible
     pub stats_8y: Option<Stats8>,      // (S-8Y) the >8y price stats re-measured on the last 8 years, for the 8Y-pinned diagnostic column ONLY — never read by the live score. None = no history older than 8y (its whole record IS the window, so the full-window stats already are the 8y ones) / stub / backtest
@@ -212,6 +213,7 @@ impl Quote {
             fund: None,
             age_years: None,
             life_cagr: None,
+            trail_monthly: Vec::new(),
             tr_cagr: None,
             history_proxied: false,
             stats_8y: None,
@@ -266,6 +268,66 @@ pub fn cagr(cumulative_pct: f64, years: f64) -> f64 {
 /// CAVEAT worth knowing before reading a backtest number off this: on the DAILY path the slice starts
 /// at the fetch window (~10y), so "life" there means "over the fetched window", not since listing.
 /// Only the MAX-monthly path (`backtest ... 12`, i.e. `years >= 8`) reaches the real listing date.
+/// (#41) Up to `k` trailing MONTH-over-MONTH returns (%), oldest first, newest last.
+///
+/// ONE definition for BOTH callers, for the same reason `life_cagr` is: the live fetch hands this a
+/// DAILY chart and the backtest hands it an already-MONTHLY slice, and a correlation is only meaningful
+/// if both sides resampled identically. Taking the LAST close in each calendar month makes the monthly
+/// case a no-op (one close per month is already its own last), so the two paths agree by construction
+/// rather than by two functions happening to match.
+///
+/// Non-positive closes are dropped before pairing — a zero close would make the ratio explode, and the
+/// resulting month gap is harmless to a correlation that already demands 12 overlapping points.
+pub fn monthly_returns_tail(dates: &[NaiveDate], closes: &[f64], k: usize) -> Vec<f64> {
+    let mut month_end: Vec<f64> = Vec::new();
+    let mut cur: Option<(i32, u32)> = None;
+    for (i, d) in dates.iter().enumerate() {
+        let c = match closes.get(i) {
+            Some(&c) if c > 0.0 => c,
+            _ => continue,
+        };
+        let key = (d.year(), d.month());
+        if cur == Some(key) {
+            *month_end.last_mut().expect("cur is Some only after a push") = c; // later close in the same month wins
+        } else {
+            month_end.push(c);
+            cur = Some(key);
+        }
+    }
+    let rets: Vec<f64> = month_end.windows(2).map(|w| (w[1] / w[0] - 1.0) * 100.0).collect();
+    rets[rets.len().saturating_sub(k)..].to_vec()
+}
+
+/// (#41) Correlation of two trailing monthly-return windows, ALIGNED on their most recent months and
+/// requiring 12 of overlap — the evidence bar every gate here uses. Distinct from `pearson`, which
+/// demands equal lengths and only 2 points: two names with different listing ages never have equal-length
+/// trails, and 2 months of overlap is not a verdict. The math itself is `pearson`'s, on the aligned tails.
+pub fn corr_tail(a: &[f64], b: &[f64]) -> Option<f64> {
+    let k = a.len().min(b.len());
+    if k < 12 {
+        return None;
+    }
+    pearson(&a[a.len() - k..], &b[b.len() - k..])
+}
+
+/// (#41) Greedy redundancy skip: walk `trails` in RANKED order and keep an entry only if its
+/// correlation with every already-kept entry stays under `cap`. Returns the kept INDICES so the caller
+/// keeps its own row type. Unjudgeable pairs (empty trail, <12mo overlap) never block — a brake acts on
+/// evidence, like every gate here. `n` bounds how many are kept. There is no in-band off value — a cap
+/// of 1.0 still drops a PERFECT twin (`rho >= cap`); the off-switch is the caller not calling this.
+pub fn decorrelate_keep(trails: &[&[f64]], n: usize, cap: f64) -> Vec<usize> {
+    let mut kept: Vec<usize> = Vec::new();
+    for (i, t) in trails.iter().enumerate() {
+        if kept.len() >= n {
+            break;
+        }
+        if !kept.iter().any(|&k| corr_tail(t, trails[k]).is_some_and(|c| c >= cap)) {
+            kept.push(i);
+        }
+    }
+    kept
+}
+
 pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
     let age = dates
         .first()
@@ -3019,6 +3081,47 @@ mod tests {
     zero_start[0] = 0.0;
     assert!(life_cagr(&mdates, &zero_start).is_none(), "non-positive first close has no growth factor");
     assert!(life_cagr(&[], &[]).is_none());
+
+    // (#41) month-end resampling: a DAILY series and the MONTHLY series of the same months must produce
+    // the SAME returns through this one fn — that equality IS the train==serve claim the live skip rests
+    // on, since fetch hands it daily bars and the backtest hands it monthly ones.
+    let daily_d: Vec<NaiveDate> = (0..3)
+        .flat_map(|m| (1..=3).map(move |day| NaiveDate::from_ymd_opt(2024, m + 1, day).unwrap()))
+        .collect();
+    let daily_c = vec![10.0, 11.0, 12.0, 20.0, 21.0, 24.0, 30.0, 33.0, 36.0]; // month-ends: 12, 24, 36
+    let monthly_d: Vec<NaiveDate> = (0..3).map(|m| NaiveDate::from_ymd_opt(2024, m + 1, 28).unwrap()).collect();
+    let from_daily = monthly_returns_tail(&daily_d, &daily_c, 36);
+    let from_monthly = monthly_returns_tail(&monthly_d, &[12.0, 24.0, 36.0], 36);
+    assert_eq!(from_daily.len(), 2, "3 month-ends -> 2 returns");
+    assert!((from_daily[0] - 100.0).abs() < 1e-9, "12 -> 24 is +100%");
+    assert!((from_daily[1] - 50.0).abs() < 1e-9, "24 -> 36 is +50%");
+    assert_eq!(from_daily, from_monthly, "daily and monthly inputs must resample identically");
+    assert_eq!(monthly_returns_tail(&daily_d, &daily_c, 1).len(), 1, "k caps the tail");
+    assert!(monthly_returns_tail(&[], &[], 36).is_empty());
+
+    // corr_tail: aligned on the tail, 12 months of evidence required, flat series unjudgeable.
+    let up: Vec<f64> = (0..14).map(|i| i as f64).collect();
+    let down: Vec<f64> = (0..14).map(|i| -(i as f64)).collect();
+    assert!((corr_tail(&up, &up).unwrap() - 1.0).abs() < 1e-9);
+    assert!((corr_tail(&up, &down).unwrap() + 1.0).abs() < 1e-9);
+    assert!(corr_tail(&up[..11], &down[..11]).is_none(), "under 12 overlapping months = no verdict");
+    assert!(corr_tail(&[7.0; 13], &up).is_none(), "a flat series correlates with nothing");
+
+    // decorrelate_keep: drops the SECOND COPY of a bet, keeps everything else. The comparison is on
+    // SIGNED rho, not |rho| — an anti-correlated name is diversification, not redundancy, so `down`
+    // survives next to `up`. That is deliberate and matches the CORR-CAP probe that measured the knee.
+    let twin: Vec<f64> = up.iter().map(|x| x * 2.0 + 1.0).collect(); // rho(up, twin) == 1
+    let zigzag: Vec<f64> = (0..14).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect(); // rho ~ -0.12
+    let trails: Vec<&[f64]> = vec![&up, &twin, &down, &zigzag, &[]];
+    assert_eq!(
+        decorrelate_keep(&trails, 10, 0.9),
+        vec![0, 2, 3, 4],
+        "twin dropped; anti-correlated, uncorrelated and no-trail rows all kept"
+    );
+    assert_eq!(decorrelate_keep(&trails, 2, 0.9), vec![0, 2], "n bounds how many survive");
+    // A name with NO trail is unjudgeable, and an unjudgeable pair never blocks — a brake may only act
+    // on evidence. Two empty trails must therefore BOTH survive, not collapse into one.
+    assert_eq!(decorrelate_keep(&[&[], &[]], 10, 0.9), vec![0, 1]);
     // fund_as_of point-in-time join: latest row FILED on/before the cutoff, NEVER a future filing
     // (the look-ahead guard). Rows out of order on purpose to prove order-independence.
     let frows = vec![

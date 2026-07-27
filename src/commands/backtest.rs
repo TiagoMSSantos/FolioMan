@@ -366,7 +366,7 @@ pub async fn run(args: Vec<String>) {
                             // (round 112) trailing monthly returns for the CORR-CAP probe — this is the only
                             // place with the raw series in scope. 36 months ≈ the 200wk trend window. A
                             // zero/non-finite close drops that month (rare; alignment slippage is acceptable
-                            // for a correlation probe, and pearson() demands 12 overlapping months anyway).
+                            // for a correlation probe, and corr_tail() demands 12 overlapping months anyway).
                             let lo = i.saturating_sub(36);
                             let trail: Vec<f64> = (lo..i)
                                 .filter(|&j| closes[j] > 0.0 && closes[j + 1].is_finite() && closes[j + 1] > 0.0)
@@ -1508,32 +1508,16 @@ fn drop_bottom_book(
     book_stats(&by, n, years)
 }
 
-/// (round 112) Pearson correlation of two trailing monthly-return windows, aligned on their most
-/// recent months. Fewer than 12 overlapping months = no verdict (None) — the same evidence bar as
-/// every gate; a flat (zero-variance) series is also unjudgeable.
-fn pearson(a: &[f64], b: &[f64]) -> Option<f64> {
-    let k = a.len().min(b.len());
-    if k < 12 {
-        return None;
-    }
-    let (a, b) = (&a[a.len() - k..], &b[b.len() - k..]);
-    let n = k as f64;
-    let (ma, mb) = (a.iter().sum::<f64>() / n, b.iter().sum::<f64>() / n);
-    let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
-    for i in 0..k {
-        let (x, y) = (a[i] - ma, b[i] - mb);
-        cov += x * y;
-        va += x * x;
-        vb += y * y;
-    }
-    (va > 0.0 && vb > 0.0).then(|| cov / (va * vb).sqrt())
-}
+// (#41) `corr_tail` lives in `core` and is now called by BOTH this probe (via core::decorrelate_keep)
+// and the live growth_corr_cap skip. It was defined here alone while the live table had no correlation
+// concept at all; shipping the skip without sharing the definition is how the two drift — the (#3j)
+// lesson applied before the drift rather than after.
 
 /// (round 112) CORR-CAP book — the DIVERSIFICATION axis: per bucket, walk the gated non-crypto
 /// names in growth_score order and keep one only if its trailing-return correlation with every
 /// already-kept name stays under `cap`; the first `n` kept are the book. Unjudgeable pairs (empty
-/// trail, <12mo overlap) are KEPT — a brake can only act on evidence, like every gate. `cap` >= 1.0
-/// keeps everything (pearson <= 1 by construction) -> reproduces the plain top-`n` book.
+/// trail, <12mo overlap) are KEPT — a brake can only act on evidence, like every gate. `cap` > 1.0
+/// keeps everything -> reproduces the plain top-`n` book (at exactly 1.0 a PERFECT twin still drops).
 fn corr_cap_book(
     samples: &[Sample],
     bd: &[chrono::NaiveDate],
@@ -1566,16 +1550,11 @@ fn corr_cap_book(
 /// name correlates >= `cap` with it; unjudgeable pairs (None) never block. cap = INFINITY keeps the
 /// plain top-`n` — the probe's identity row.
 fn greedy_decorrelate<'a>(ranked: &[(f64, &'a Sample)], n: usize, cap: f64) -> Vec<(f64, &'a Sample)> {
-    let mut kept: Vec<(f64, &Sample)> = Vec::new();
-    for &(score, s) in ranked {
-        if kept.len() >= n {
-            break;
-        }
-        if !kept.iter().any(|(_, k)| pearson(&s.trail, &k.trail).is_some_and(|c| c >= cap)) {
-            kept.push((score, s));
-        }
-    }
-    kept
+    // (#41) the walk itself now lives in `core::decorrelate_keep`, shared with the live growth_corr_cap
+    // skip so the probe and the table can never disagree about what "correlated" means. This wrapper is
+    // just the Sample <-> index adaptor.
+    let trails: Vec<&[f64]> = ranked.iter().map(|(_, s)| s.trail.as_slice()).collect();
+    core::decorrelate_keep(&trails, n, cap).into_iter().map(|i| ranked[i]).collect()
 }
 
 /// (round 112) CORR-CAP probe: is the top-10 ten copies of one bet? The same brake family as the
@@ -2505,18 +2484,19 @@ mod tests {
         assert_eq!(bench_drawdown_at(&dates, &closes, ymd(2019, 12, 31)), None); // predates the series
     }
 
-    /// (round 112) `pearson`: perfect co-movement -> +1, mirror -> −1, tails align when lengths
+    /// (round 112) `corr_tail`: perfect co-movement -> +1, mirror -> −1, tails align when lengths
     /// differ, and the evidence bar holds — <12 overlapping months or a flat series -> None.
     #[test]
     fn pearson_correlation() {
+        use crate::core::corr_tail;
         let t: Vec<f64> = (0..12).map(|i| if i % 2 == 0 { 1.0 } else { 2.0 }).collect();
         let anti: Vec<f64> = t.iter().map(|v| 3.0 - v).collect();
-        assert!((pearson(&t, &t).unwrap() - 1.0).abs() < 1e-9);
-        assert!((pearson(&t, &anti).unwrap() + 1.0).abs() < 1e-9);
+        assert!((corr_tail(&t, &t).unwrap() - 1.0).abs() < 1e-9);
+        assert!((corr_tail(&t, &anti).unwrap() + 1.0).abs() < 1e-9);
         let long: Vec<f64> = [vec![9.0; 12], t.clone()].concat(); // 24mo whose last 12 == t
-        assert!((pearson(&long, &t).unwrap() - 1.0).abs() < 1e-9); // aligned on the tail
-        assert!(pearson(&t[..11], &anti[..11]).is_none()); // <12 overlap -> no verdict
-        assert!(pearson(&[5.0; 12], &t).is_none()); // flat series -> no verdict
+        assert!((corr_tail(&long, &t).unwrap() - 1.0).abs() < 1e-9); // aligned on the tail
+        assert!(corr_tail(&t[..11], &anti[..11]).is_none()); // <12 overlap -> no verdict
+        assert!(corr_tail(&[5.0; 12], &t).is_none()); // flat series -> no verdict
     }
 
     /// (round 112) `greedy_decorrelate`: a clone of a kept name is skipped and the next diversifier

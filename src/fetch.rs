@@ -518,6 +518,12 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     let age_years = long_dates.first().zip(long_dates.last())
         .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25);
     let life_cagr = core::life_cagr(&long_dates, &long_closes);
+    // (#41) 36 trailing month-over-month returns for the growth_corr_cap redundancy skip. Built from the
+    // DAILY `chart`, not the merged long series: the merge is monthly-head + daily-tail, so its cadence
+    // changes mid-series, and only the tail covers the recent 36 months this needs anyway.
+    // `core::monthly_returns_tail` resamples to month-end, which is what makes this comparable to the
+    // backtest's already-monthly slice through the same fn.
+    let trail_monthly = core::monthly_returns_tail(&chart.dates, &chart.closes, 36);
     // (TR-CAGR) same endpoints + the whole-life dividend sum: closes are price-only, so a payer's CAGR
     // hides the cash it returned. LOWER BOUND — the payout is added, not reinvested (true total return
     // with reinvestment compounds higher). Display-only, same guards as life_cagr; ≈ CAGR for Acc funds.
@@ -659,6 +665,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         fund: None,        // (G+) same: `enrich_fund_factor` fills it on the paths that fetch fundamentals
         age_years,
         life_cagr,
+        trail_monthly,
         tr_cagr,
         history_proxied,
         stats_8y,
