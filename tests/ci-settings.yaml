@@ -107,7 +107,12 @@ buy_heuristic:
                                  #   this is the constant it replaced (a hardcoded 0.0 at both gate sites), so shipping it changes nothing
                                  #   FOR EQUITIES. It is written down because ONE thing did change with it: the gate used to carry a
                                  #   `!crypto` guard and no longer does — a coin now answers to this bar too (round 2026-07-27, by request).
-                                 #   THE BACKTEST CANNOT GRADE THAT. Every edge metric drops crypto before scoring (backtest.rs:1058 "equal-
+                                 #   THE EQUITY HALF IS MEASURED NEUTRAL, not assumed: `backtest universe fund 12` run on the pre-change and
+                                 #   post-change binaries is IDENTICAL line for line — 1642 windows, Spearman +0.18, edge +146.2, net +146.0,
+                                 #   winsorized +118.0, OOS +0.11|+0.11. The only line that moves is the bootstrap band, and that is
+                                 #   resampling noise: three runs of the SAME binary gave [+79.7…+179.1], [+82.1…+176.5], [+84.3…+180.5]
+                                 #   while every deterministic number stayed pinned. Do not read a moved band as a moved edge.
+                                 #   THE BACKTEST CANNOT GRADE THE CRYPTO HALF. Every edge metric drops crypto before scoring (backtest.rs:1058 "equal-
                                  #   weight, non-crypto"; :1075 `continue` on a coin; the `gated, non-crypto` pools at :1224/:1468/:1522/:1625),
                                  #   so an unchanged edge here is NOT evidence the crypto half is harmless — it is evidence the metric never
                                  #   looked. The check that means something is the live `screen` crypto lane, read by eye.
