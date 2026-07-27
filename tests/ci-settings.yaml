@@ -820,8 +820,50 @@ buy_heuristic:
   #   spread IS the noise floor — quote it before claiming any future PEG threshold beat another.
   #   Note what this sweep never tested: anything below 1.5. A live config asking for 1.0 is off the
   #   bottom of the measured range, and under the new definition it is stricter still.
-  #   SWEEP, growth_max_peg [NEW DEFINITION, 2026-07-27, same `backtest universe fund 12` frozen base]:
-  #     <<PENDING — filled in below by the re-measurement; do not quote the old curve as current>>
+  #   SWEEP, growth_max_peg [NEW DEFINITION, 2026-07-27] — seven `backtest universe fund 12` runs on
+  #   ONE frozen base, but NOT the base above: use_life_cagr true, growth_min_cagr 16 (was 15) and
+  #   growth_min_1y_pct -1e9 (the 1Y floor switched off live after the #41 work). So the absolute
+  #   points here are NOT comparable to run B's +139.7 — only the SHAPE within this table is.
+  #
+  #     ceiling  scored   edge     winsor   OOS e|l        90% band on edge     worst era   ->off n / fwd
+  #     off      1665    +137.4   +111.7   +0.11 | +0.10   [+79.4 … +172.2]      +37.7      —  (not binding)
+  #     1.0      1562    +143.0   +115.3   +0.11 | +0.11   [+97.9 … +189.3]      +60.9      103 / +72.5   LIVE
+  #     1.25     1596    +146.4   +117.4   +0.11 | +0.12   [+89.7 … +188.2]      +40.0       69 / +82.2
+  #     1.5      1625    +148.5   +119.9   +0.11 | +0.12   [+86.8 … +182.2]       +4.4       40 / +115.7
+  #     2.0      1642    +146.5   +118.3   +0.11 | +0.11   [+81.6 … +181.5]      +31.0       23 / +245.9
+  #     2.5      1650    +145.0   +117.4   +0.11 | +0.11   [+77.7 … +177.4]      +33.3       15 / +229.6
+  #     3.0      1652    +146.4   +118.6   +0.11 | +0.11   [+81.5 … +179.9]      +31.8       13 / +162.2
+  #
+  #   THE SHAPE SURVIVED THE REDEFINITION, and that is the headline: off is still the floor and still
+  #   alone down there (+137.4 vs +143..+148.5), exactly as the old curve read it (off +122.4 vs
+  #   +136..+149). Redefining the denominator moved every number and changed no conclusion.
+  #   THE THRESHOLD IS LESS RESOLVABLE THAN BEFORE, not more. The spread among ceilings COLLAPSED from
+  #   13 pts to 5.5 (+143.0..+148.5) — under the old noise floor this file already warned about, and
+  #   the seven 90% bands overlap almost completely. Nobody may claim a winner off this table.
+  #   1.5 peaks under BOTH definitions (+148.9 old, +148.5 new). Do not read that as confirmation: the
+  #   plateau is 3.5 pts wide across 1.25..3.0 and 1.5's own WORST ERA is +4.4, the weakest cell in the
+  #   whole table. A peak whose worst quarter nearly touches zero is not a robust peak.
+  #   THE LIVE 1.0 IS THE LOWEST *ON* VALUE (+143.0, 5.5 under peak) AND SIMULTANEOUSLY THE MOST ROBUST
+  #   ONE: the highest bootstrap lower bound (+97.9, the only one clearing +90) and the highest worst
+  #   era (+60.9, where every other run sits +4..+40). Headline edge and downside both matter and they
+  #   disagree, so this sweep does NOT justify moving the knob in either direction. LEFT AT 1.0.
+  #   CAVEAT ON THE ERA COLUMN before anyone leans on it: eras are QUARTILES of each run's own scored
+  #   set, so the boundaries move with n. 1.0's third era is 2004-11..2008-09; 1.5's is 2005-04..2009-10.
+  #   1.0 spreads the GFC across eras 3 and 4 while 1.5 concentrates it in era 3. Some of that +60.9
+  #   vs +4.4 is window alignment, not skill. Cross-run era comparison here is soft evidence, no more.
+  #   EVERY CEILING READS "TOO TIGHT" ON ITS OWN ->off ROW, and the excluded names' forward return RISES
+  #   with the ceiling: +72.5 (n=103) at 1.0 -> +115.7 (n=40) at 1.5 -> +245.9 (n=23) at 2.0. The more
+  #   extreme the PEG a run excludes, the better that excluded set did. Two honest readings and this
+  #   sweep cannot separate them: either high-PEG names genuinely carry return this gate throws away, or
+  #   n=13..40 windows of survivor-heavy extremes is a number too small to mean anything. Note the
+  #   direction contradicts the edge column, which prefers HAVING a ceiling — the gate improves the
+  #   RANKING among what it keeps while excluding names that then outperform. Both can be true.
+  #   WIDER CONTEXT, so nobody reads the PEG row as the main event: at the live config the GATE SWEEP
+  #   also shows growth_maxdd_cap ->off at +250.7 (n=71) and growth_min_range_pct -10 at +102.4 (n=123).
+  #   PEG is the THIRD-tightest gate, not the first. And the GATE AUDIT has read "gates ADD NOTHING"
+  #   (accepted -12.5 vs rejected +1.9, gap -14.5) both before and after this change — -13.6 / -24.9 /
+  #   -14.3 on the three preceding runs on record — so it is a standing property of the whole stack,
+  #   NOT something the PEG unification caused. Do not cite it as evidence about this knob.
   #   The on/off question is now priced EVERY run by the `growth_max_peg ->off` GATE SWEEP row
   #   (backtest.rs), so the part this sweep found decisive no longer needs six hand-edited configs.
   #   SWEEP, growth_min_net_margin — a clean monotone loser once you look past the headline:
