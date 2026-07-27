@@ -101,8 +101,47 @@ buy_heuristic:
                                  #   year is -33.5%, comfortably inside; GT -62 / BGB -60 out). Was -75, which let deep crashers rank
   max_1m_drop_pct: -20.0         # LIVE: reject if 1M % <= this (a hard monthly crash = falling knife) — both lanes
   max_1m_drop_pct_crypto: -35.0  # LIVE (crypto/FX): looser knife — a -20%/month alt is normal — both lanes
-  min_long_pct: 30.0             # [FOIL] on-sale only: reject unless EVERY 5Y/10Y/20Y leg is > this (growth uses a hardcoded >0% 5Y consistency gate instead)
+  min_long_pct: 30.0             # [FOIL] on-sale only: reject unless EVERY 5Y/10Y/20Y leg is > this (the growth lane has its own per-rung floors below)
   min_long_pct_crypto: -70.0     # [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -95%)
+  growth_min_5y_pct: 0.0         # LIVE: growth-lane 5Y CUMULATIVE-return floor — reject if the 5Y leg <= this. Like growth_min_1y_pct above,
+                                 #   this is the constant it replaced (a hardcoded 0.0 at both gate sites), so shipping it changes nothing
+                                 #   FOR EQUITIES. It is written down because ONE thing did change with it: the gate used to carry a
+                                 #   `!crypto` guard and no longer does — a coin now answers to this bar too (round 2026-07-27, by request).
+                                 #   THE BACKTEST CANNOT GRADE THAT. Every edge metric drops crypto before scoring (backtest.rs:1058 "equal-
+                                 #   weight, non-crypto"; :1075 `continue` on a coin; the `gated, non-crypto` pools at :1224/:1468/:1522/:1625),
+                                 #   so an unchanged edge here is NOT evidence the crypto half is harmless — it is evidence the metric never
+                                 #   looked. The check that means something is the live `screen` crypto lane, read by eye.
+                                 #   THE VIEW THIS OVERRODE, so it isn't rediscovered from scratch: both lanes had independently concluded a
+                                 #   -EUR 5Y is peak-anchored noise and the range gate is the right tool for bled coins. The foil lane STILL
+                                 #   holds that view — see its separate, much looser min_long_pct_crypto -70.0 two lines up. If the crypto
+                                 #   lane thins out unexpectedly, this knob going negative is the fix, and it loosens equities at the same
+                                 #   time, because it is now one shared number. Edge-affecting for equities -> re-validate before moving it.
+  growth_min_8y_pct: -1e9        # OFF here, but it is the rung that BITES — arm it in the local settings.yaml if wanted. MEASURED live
+                                 #   2026-07-27 at growth_max_peg 2.0, +50% bar: it rejects FOUR names, and all four sit against the fence —
+                                 #     AMGN 8Y +44.0% · GILD +40.7% · SCHW +48.2% · ULTA +49.2%
+                                 #   That is 4.4-5.1%/yr over 8 years from names that all clear a 16%/yr LIFE CAGR — precisely the pattern
+                                 #   this gate was asked for: a long record flattering a mediocre recent decade. Nothing else reads that
+                                 #   window (under use_life_cagr the leg check and the life check are the same number).
+                                 #   HOW MUCH IT BITES DEPENDS ON A KNOB 60 LINES AWAY. The same bar rejected NOBODY when first measured,
+                                 #   because that run had growth_max_peg 1.0 and only 5 stocks reached the ranking at all. Raising the PEG
+                                 #   ceiling to 2.0 admitted the wider cohort these four live in. Re-measure after ANY move to growth_max_peg
+                                 #   rather than quoting this line — the two gates compose, and the 8Y bar reads as dead until it isn't.
+                                 #   Note it is still ~4x slacker than a gate already in force: +50% over 8y is 5.20%/yr, while
+                                 #   growth_min_cagr 16.0 implies +228%. It bites anyway because it constrains a DIFFERENT window.
+                                 #   Ships off because the number is unvalidated, not because it is inert. The legs ARE backtest-visible for
+                                 #   equities (backtest_quote fills perf from the full [..=as_of] slice), unlike the age/AUM/turnover gates —
+                                 #   so sweep it before arming it in anger.
+  growth_min_20y_pct: -1e9       # OFF, and unlike the 8Y rung above this one really does reject NOBODY at the +200 requested — confirmed on
+                                 #   the same live run (5.65%/yr; growth_min_cagr 16.0 implies +1846% over 20y).
+                                 #   READ THIS BEFORE ARMING IT: the bar reaches LONG-LISTED STOCKS ONLY. No UCITS ETF and no coin in the
+                                 #   universe has 20 years of history, so their 20Y leg is `n/a` and is SKIPPED — a missing leg is never read
+                                 #   as a failed one (that rule is the request's "if value is not N/A", pinned by test). Consequence worth
+                                 #   stating plainly: this gate is harshest on the longest records and silent on the youngest, which is the
+                                 #   opposite of the intuition. It was asked for to catch a real pattern the CAGR gates miss — under
+                                 #   use_life_cagr the leg check and the life check are the SAME number, so nothing reads the 20Y window at
+                                 #   all, and a name whose great decades are early clears every bar on history it will not repeat. PGR is the
+                                 #   live case: +418% over its last 20y = 8.6%/yr, behind a 16%/yr life CAGR. At +200 it clears easily —
+                                 #   catching PGR needs a bar near the CAGR-implied level, which is a much bigger change and unmeasured.
   min_avg_turnover_eur: 500000   # LIVE: reject names with < this avg daily turnover (EUR) on THIS listing — both lanes.
                                  #   Set 2026-07-02 at 100K after zeroing the turnover SCORE tilt (which never docked
                                  #   junk): a hard gate is the honest tool for untradeable listings. 100K killed the real

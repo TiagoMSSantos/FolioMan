@@ -422,6 +422,18 @@ pub fn perf_pct(quote: &Quote, label: &str) -> Option<f64> {
     quote.perf.get(i).and_then(|o| o.as_ref()).map(|(_, p)| *p)
 }
 
+/// The growth lane's per-rung CUMULATIVE-return floors: `(perf label, near-miss tag, floor %)`.
+/// ONE definition, read by BOTH `score_parts` and `gate_failures` — those two must agree or a name is
+/// silently dropped from the ranking while the tail claims it passes (see picks.rs:745). Sharing the
+/// table makes them agree by construction instead of by two copies being kept in sync by hand.
+fn long_leg_floors(tuning: &BuyHeuristic) -> [(&'static str, &'static str, f64); 3] {
+    [
+        ("5Y", "5Y+", tuning.growth_min_5y_pct),
+        ("8Y", "8Y+", tuning.growth_min_8y_pct),
+        ("20Y", "20Y+", tuning.growth_min_20y_pct),
+    ]
+}
+
 /// Confidence multiplier — halve a name without a long PROVEN record. Equities should carry a 10Y
 /// leg; crypto can't (Yahoo's EUR crypto pairs are too young to ever show 10Y), so for them a 5Y leg
 /// is "proven enough". Without this, BTC is halved for a history gap that's purely an artifact of the
@@ -767,11 +779,18 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
             return None; // single-bar repricing artifact -> not a tradeable price history
         }
     }
-    if !crypto && perf_pct(quote, "5Y").is_some_and(|return_5y| return_5y <= 0.0) {
-        // (3) consistency: a near-high name negative over 5Y mooned-then-bled — its great 10Y CAGR is a
-        // stale endpoint, not a durable trend. Require the mid leg to hold too. (Crypto 5Y is
-        // peak-anchored noise; the range gate already excludes bled coins there, so skip it.)
-        return None;
+    // (3) consistency: a near-high name negative over 5Y mooned-then-bled — its great 10Y CAGR is a
+    // stale endpoint, not a durable trend. The 8Y/20Y rungs extend the same idea to the windows NO
+    // other gate reads: under `use_life_cagr` the leg check and the life check are the same number,
+    // so a name whose great decades are early clears every CAGR bar on history it will not repeat.
+    // A leg the quote lacks (`n/a`) is SKIPPED — missing history is not a weak return, and rejecting
+    // on it would cut every ETF and coin, none of which has a 20Y leg at all.
+    // Must stay the SAME table as the `gate_failures` copy — `long_leg_floors` IS that table, so the
+    // two cannot drift (picks.rs:745 explains what drift costs).
+    for (label, _, floor) in long_leg_floors(tuning) {
+        if perf_pct(quote, label).is_some_and(|p| p <= floor) {
+            return None;
+        }
     }
     // (#24) EXTREME-STRETCH gate: reject names too far above their 200wk SMA — past the brake cap the
     // damp saturates, so the brake alone can't remove a 5x-above-trend blow-off. Same-batch triple:
@@ -1146,11 +1165,10 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     if r1m <= knife {
         fails.push(("1M-knife", format!("1M {r1m:+.1}% (floor {knife:.1}%)"), r1m > knife - 8.0));
     }
-    if !crypto {
-        if let Some(r5) = perf_pct(quote, "5Y") {
-            if r5 <= 0.0 {
-                fails.push(("5Y+", format!("5Y {r5:+.1}% (need >0)"), r5 > -15.0));
-            }
+    // mirror of the `long_leg_floors` loop in `score_parts` — same table, so the two cannot disagree.
+    for (label, tag, floor) in long_leg_floors(tuning) {
+        if let Some(p) = perf_pct(quote, label).filter(|p| *p <= floor) {
+            fails.push((tag, format!("{label} {p:+.1}% (need >{floor:.0}%)"), p > floor - 15.0));
         }
     }
     if tuning.min_avg_turnover_eur > 0.0 && turnover < tuning.min_avg_turnover_eur {
@@ -3499,9 +3517,17 @@ mod tests {
     assert_eq!(core::above_long_ma_pct(&[100.0, 100.0, 50.0], 3), 0.0); // below the mean -> 0
     // (3) consistency: a near-high equity negative over 5Y (mooned-then-bled) is rejected despite a fat 10Y
     assert!(growth_score(&quote(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]), &tuning).is_none());
-    let mut bled_crypto = quote(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]); // ...but crypto 5Y is noise
+    // ...and since 2026-07-27, so is a COIN. This bar used to carry a `!crypto` guard on the view
+    // that a -EUR 5Y is peak-anchored noise (the FOIL lane still holds it, via its own looser
+    // `min_long_pct_crypto`). The growth lane now runs ONE floor for every lane, by request — so
+    // this fixture flipped from ranked to gated. The flip IS the change; it is not a regression.
+    let mut bled_crypto = quote(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]);
     bled_crypto.ticker = "ETH-EUR".into();
-    assert!(growth_score(&bled_crypto, &tuning).is_some());
+    assert!(growth_score(&bled_crypto, &tuning).is_none());
+    // the escape hatch that replaces the guard: one shared knob, so re-admitting a healthy coin
+    // mid-drawdown also loosens equities. Assert it actually works before anyone needs it at 3am.
+    let loose5 = BuyHeuristic { growth_min_5y_pct: -50.0, ..BuyHeuristic::default() };
+    assert!(growth_score(&bled_crypto, &loose5).is_some());
     // (4) NUPL factor: symmetric. euphoria (high NUPL) shrinks <1; capitulation (low NUPL) boosts >1;
     // neutral band / unknown = exactly 1.0.
     assert_eq!(nupl_factor(None, &tuning), 1.0);
@@ -3769,6 +3795,34 @@ mod tests {
     assert!(has("1M-knife"), "1M -30% vs a -20% floor must fire the knife reason");
     assert!(has("5Y+"), "5Y -5% must fire the 5Y+ reason");
     assert!(has("liquidity") && has("stretch") && has("lifetime") && has("maxdd"));
+
+    // (5Y/8Y/20Y floors) the per-rung CUMULATIVE-return gate. ONE table (`long_leg_floors`) read by
+    // score_parts AND gate_failures, so the pair below is the lockstep assert picks.rs:745 asks for.
+    // Fixture clears every other default gate with room: 20Y +500% = 9.4%/yr vs the 8%/yr CAGR floor.
+    let rungs = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("8Y", 300.0), ("20Y", 500.0)]);
+    assert!(growth_score(&rungs, &tuning).is_some(), "8Y/20Y ship OFF (-1e9) -> they must reject nothing");
+    for (knob, tag) in [
+        (BuyHeuristic { growth_min_8y_pct: 350.0, ..BuyHeuristic::default() }, "8Y+"),
+        (BuyHeuristic { growth_min_20y_pct: 600.0, ..BuyHeuristic::default() }, "20Y+"),
+    ] {
+        assert!(growth_score(&rungs, &knob).is_none(), "{tag}: a leg under its armed floor must be gated");
+        let why = gate_failures(&rungs, &knob).unwrap();
+        assert!(why.iter().any(|(g, _, _)| *g == tag), "{tag}: score_parts gated it but the tail doesn't say so");
+    }
+    // THE "if not N/A" RULE: the SAME name minus its 20Y leg clears the SAME armed bar. A leg the
+    // quote doesn't have is skipped, never read as a failed one — otherwise the 20Y floor would cut
+    // every ETF and every coin, none of which has 20 years of history to show.
+    let no20 = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("8Y", 300.0)]);
+    let g20 = BuyHeuristic { growth_min_20y_pct: 600.0, ..BuyHeuristic::default() };
+    assert!(growth_score(&no20, &g20).is_some(), "absent 20Y must be SKIPPED, not treated as a 0% return");
+    // (crypto) the `!crypto` guard came OFF the 5Y bar — a coin answers to it now. That is a
+    // deliberate behaviour change the backtest cannot see (its edge metrics all drop crypto), so
+    // pin it here: this assert failing means the guard came back.
+    // (the gating half of this is pinned by the ETH-EUR fixture above; this is the TAIL half — the
+    // footer has to name the rung, or a coin vanishes from the ranking with no reason printed.)
+    let mut coin = quote(5.0, &[("1Y", 10.0), ("5Y", -20.0), ("10Y", 40.0)]);
+    coin.ticker = "OKB-USD".into();
+    assert!(gate_failures(&coin, &tuning).unwrap().iter().any(|(g, _, _)| *g == "5Y+"));
     // the lifetime SECOND leg: window trend positive but listing-to-date CAGR negative (Greece pattern)
     let mut greece_gf = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     greece_gf.trend_cagr = Some(5.0);     // window trend fine

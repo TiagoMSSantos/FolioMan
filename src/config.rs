@@ -151,8 +151,11 @@ pub struct BuyHeuristic {
     pub min_1y_pct_crypto: f64,      // crypto/FX (-EUR/-USD): looser 1Y floor — they swing far harder. Used by BOTH lanes (the growth knob above is the equity leg only)
     pub max_1m_drop_pct: f64,        // equities: reject if 1M % <= this (a hard monthly crash = falling knife)
     pub max_1m_drop_pct_crypto: f64, // crypto/FX: looser knife — a -20%/month alt is normal, not broken
-    pub min_long_pct: f64,           // [FOIL] on-sale only: reject if any 5Y/10Y/20Y leg <= this (growth uses a hardcoded >0% 5Y gate)
+    pub min_long_pct: f64,           // [FOIL] on-sale only: reject if any 5Y/10Y/20Y leg <= this (the growth lane has its own per-rung `growth_min_{5,8,20}y_pct`, not this)
     pub min_long_pct_crypto: f64,    // [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -70%+)
+    pub growth_min_5y_pct: f64,      // GROWTH GATE: reject if the 5Y CUMULATIVE % <= this. Was a hardcoded 0.0 in both gate sites (same constant-to-knob move as `growth_min_1y_pct` above). A leg the quote does not have (`n/a`) is SKIPPED, never read as a failed bar — missing history is not a weak return. ALL LANES including crypto: the `!crypto` guard this gate used to carry came off deliberately, so a coin now answers to the same bar. That is NOT the old behaviour and the backtest cannot warn about it (every edge metric filters crypto out) — check the live crypto lane by eye after moving it. 0.0 = the shipped default and the equity behaviour that predates the knob
+    pub growth_min_8y_pct: f64,      // GROWTH GATE: same, 8Y rung. -1e9 = off (default), but this is the rung that actually BITES. Measured live 2026-07-27 at `growth_max_peg: 2.0`, +50% bar: rejects AMGN (8Y +44.0%), GILD (+40.7%), SCHW (+48.2%), ULTA (+49.2%) — 4.4-5.1%/yr over 8 years from names that all clear a 16%/yr LIFE CAGR, which is exactly the case no other gate reads. HOW MUCH IT BITES DEPENDS ON `growth_max_peg`: the same bar rejected nobody at a 1.0 ceiling, where only 5 stocks reached the ranking. Re-measure after any PEG move instead of quoting this comment
+    pub growth_min_20y_pct: f64,     // GROWTH GATE: same, 20Y rung. -1e9 = off (default). NOTE this bar reaches LONG-LISTED STOCKS ONLY: no UCITS ETF or coin in the universe has 20y of history, so their 20Y leg is `n/a` and skipped by construction. At +200 it also rejects nobody (2026-07-27); the case it exists for is a name whose life CAGR clears the bar on early decades while its recent 20y is ordinary — PGR compounds +8.6%/yr over its last 20y behind a 16%/yr life CAGR
     pub min_avg_turnover_eur: f64,   // reject if avg daily turnover (EUR) < this (thin/illiquid name); 0 = off
     pub endpoint_smooth_days: usize, // (#17/#18) MEASUREMENT endpoint for the LONG-horizon inputs (>=1Y perf/CAGR legs, range position, drawdown) = mean of the closes in the last N TRADING DAYS (1 = raw last close). Converted to bars by the run's cadence (core::measure_endpoint) so the span means the same calendar time live (daily) and in the monthly backtest -> train == serve. Short legs (1D/1W/1M knife), the displayed price and the overext brake stay RAW by design (brake smoothing measured worse). Edge-affecting -> validate `backtest 12 universe` (both OOS halves +) before changing
 
@@ -273,6 +276,9 @@ impl Default for BuyHeuristic {
             max_1m_drop_pct_crypto: -35.0, // alts routinely shed -20..-30% in a month without breaking
             min_long_pct: 0.0,
             min_long_pct_crypto: -70.0,    // -EUR 5Y is peak-anchored: allow deep pullbacks, cut true corpses (-70%+)
+            growth_min_5y_pct: 0.0,        // the value the growth lane hardcoded before this knob existed -> the equity default stays behaviour-neutral. (Crypto is NOT neutral: this bar reaches coins now, where the old gate skipped them.)
+            growth_min_8y_pct: -1e9,       // off: at the +50 asked for it rejects nobody, so shipping it as a default would only risk the validated edge for no live effect. settings.yaml sets a real bar
+            growth_min_20y_pct: -1e9,      // off, same reasoning (+200 rejects nobody today)
             min_avg_turnover_eur: 0.0,     // off by default; settings.yaml sets a real floor to drop thin names
             endpoint_smooth_days: 1,       // (#17/Step 4) 1 = raw last close (byte-identical, validated edge intact); e.g. 5 averages the last week's closes for measurement endpoints
             // score
