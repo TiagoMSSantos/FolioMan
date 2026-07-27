@@ -723,7 +723,10 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let return_1y = perf_pct(quote, "1Y")?;
     // equities must be climbing this year; crypto is allowed down to its looser 1Y floor so the market
     // base (Bitcoin, often red year-on-year) and near-BTC coins still appear, ranked vs BTC.
-    let y1_floor = if crypto { tuning.min_1y_pct_crypto } else { 0.0 };
+    // The equity leg reads `growth_min_1y_pct` (default 0.0 = the constant this replaced). Must stay
+    // the SAME expression as the `gate_failures` copy — the two disagreeing means a name is silently
+    // dropped from the ranking while the tail claims it passes, or vice versa.
+    let y1_floor = if crypto { tuning.min_1y_pct_crypto } else { tuning.growth_min_1y_pct };
     if return_1y <= y1_floor {
         return None; // not climbing (equities) / a corpse below the crypto floor -> no trend to ride
     }
@@ -1024,6 +1027,27 @@ pub fn growth_two_gate_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<((&'
     Some(((fails[0].0, fails[1].0), why)) // gate order is deterministic in gate_failures
 }
 
+/// Names whose ONLY failing gate is the 1Y floor — a proven long record having one down year.
+/// Returns `(1Y %, long CAGR %/yr, range %)` for `screen`'s down-year tail; `None` for anything else.
+///
+/// Deliberately ignores `is_close`, unlike its two siblings: the near-miss tail already shows the
+/// shallow half of this cohort (the `1Y+` margin is a hardcoded 10pp, so 0..-10% names land there and
+/// deeper ones land nowhere), and splitting one list at -10% hides exactly the names the floor costs
+/// most. The overlap with the tail above is accepted on purpose.
+///
+/// This list is NOT a buy list. It is the cohort round 5 measured at -108.1 pts forward
+/// peer-relative (n=284, 2026-07-03) before reverting the loosened floor — see `growth_min_1y_pct`.
+/// The caller prints that receipt under it.
+pub fn growth_down_year_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f64, f64, f64)> {
+    let fails = gate_failures(quote, tuning)?;
+    if fails.len() != 1 || fails[0].0 != "1Y+" {
+        return None;
+    }
+    // reachable only past every `?` in gate_failures above (it returned a 1Y+ fail, so both parsed)
+    let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years)?;
+    Some((perf_pct(quote, "1Y")?, long_cagr_from(quote, tuning, long_cum, long_years), quote.range_pct))
+}
+
 /// Every growth gate this quote FAILS, in gate order: (gate_name, human "why", is_close_miss).
 /// `None` = not assessable as a growth candidate at all (leveraged / stablecoin / unknown turnover /
 /// no 1Y data); a name with no 5y+ leg returns a single "history" fail (so a pinned young ETF explains
@@ -1060,7 +1084,7 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     let long_cagr = long_cagr_from(quote, tuning, long_cum, long_years);
     let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
     let min_cagr = if crypto { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
-    let y1_floor = if crypto { tuning.min_1y_pct_crypto } else { 0.0 };
+    let y1_floor = if crypto { tuning.min_1y_pct_crypto } else { tuning.growth_min_1y_pct }; // same expression as score_parts, deliberately
     let knife = if crypto { tuning.max_1m_drop_pct_crypto } else { tuning.max_1m_drop_pct };
     let r1m = perf_pct(quote, "1M").unwrap_or(0.0);
 
@@ -3717,6 +3741,30 @@ mod tests {
     assert!(growth_score(&down1y, &tuning).is_none(), "score path must enforce the 1Y floor");
     let up1y = quote(5.0, &[("1Y", 5.0), ("5Y", 200.0), ("10Y", 500.0)]);
     assert!(growth_score(&up1y, &tuning).is_some(), "control: same quote above the floor ranks");
+    // …and the equity floor is now the `growth_min_1y_pct` knob, whose default IS the 0.0 the two
+    // gate sites hardcoded — so the asserts above are simultaneously the neutral-default pin. Set it
+    // and the SAME quote must flip in BOTH sites: the ranking and the tail disagreeing is the bug.
+    let loosened = BuyHeuristic { growth_min_1y_pct: -10.0, ..BuyHeuristic::default() };
+    assert!(growth_score(&down1y, &loosened).is_some(), "the knob must reach score_parts, not just the tail");
+    assert!(!gate_failures(&down1y, &loosened).unwrap().iter().any(|(g, _, _)| *g == "1Y+"), "…and gate_failures with it");
+    // the knob is the EQUITY leg only — a coin still reads min_1y_pct_crypto (default -60 here).
+    let mut coin = quote(5.0, &[("1Y", -33.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    coin.ticker = "BTC-EUR".into();
+    let equity_strict = BuyHeuristic { growth_min_1y_pct: 0.0, ..BuyHeuristic::default() };
+    assert!(!gate_failures(&coin, &equity_strict).unwrap().iter().any(|(g, _, _)| *g == "1Y+"), "crypto keeps its own floor");
+
+    // (D) the down-year tail: ONLY the 1Y gate failing, at ANY depth — the shallow half is already in
+    // the near-miss tail (its `1Y+` margin is 10pp), and splitting the list there hides the deep names
+    // the floor actually costs. -40% must be selected precisely because growth_near_miss drops it.
+    let shallow = quote(5.0, &[("1Y", -7.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    let deep = quote(5.0, &[("1Y", -40.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    assert!(growth_down_year_miss(&shallow, &tuning).is_some_and(|(y1, cagr, _)| y1 == -7.0 && cagr > 0.0));
+    assert!(growth_down_year_miss(&deep, &tuning).is_some(), "the deep half is the whole point of this tail");
+    assert!(growth_near_miss(&deep, &tuning).is_none(), "…and it is exactly what the near-miss tail cannot show");
+    // a second failing gate, or none at all -> not this tail's business
+    assert!(growth_down_year_miss(&quote(25.0, &[("1Y", -7.0), ("5Y", 200.0), ("10Y", 500.0)]), &tuning).is_none(), "1Y+ AND range");
+    assert!(growth_down_year_miss(&up1y, &tuning).is_none(), "clears every gate -> it ranks");
+
     // crypto leg: min_1y_pct_crypto is a CRASH bar, not a swing bar (round 22, live −50): a −62%
     // year fires, a BTC-like −33% year does not.
     let ct = BuyHeuristic { min_1y_pct_crypto: -50.0, ..BuyHeuristic::default() };

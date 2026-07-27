@@ -6,7 +6,10 @@
 //! were dropped — their selection edge was zero-to-negative for a multi-decade hold.
 
 use crate::core::Quote;
-use crate::picks::{eu_buyable, exit_review_lines, gate_failures, growth_near_miss, growth_score, growth_two_gate_miss, render, RenderCtx};
+use crate::picks::{
+    eu_buyable, exit_review_lines, gate_failures, growth_down_year_miss, growth_near_miss, growth_score, growth_two_gate_miss, render,
+    RenderCtx,
+};
 use crate::{config, core, fetch, picks};
 
 /// (X) Watchlist gate-state persisted between `screen` runs so the EXIT-review footer can flag a
@@ -1371,6 +1374,31 @@ pub async fn run(args: Vec<String>) {
         for (q, _, why) in two.iter().take(TWO_GATE_CAP) {
             println!("  {:<8} {:<28.28} {why}", q.ticker, q.name);
         }
+    }
+
+    // (D) DOWN-YEAR tail: a proven long record rejected by the 1Y floor ALONE. The near-miss tail
+    // above only reaches -10% (the `1Y+` close margin), so a name like MSFT at -16.9% with a 22%/yr
+    // record was invisible everywhere. All lanes in one list, sorted by CAGR descending — index
+    // trackers have mediocre CAGR by construction, so the single stocks this is FOR float above them
+    // without a lane special-case, and the cap trims the trackers instead of the answer.
+    const DOWN_YEAR_CAP: usize = 15;
+    let mut down: Vec<(&Quote, f64, f64, f64)> = quotes
+        .iter()
+        .filter(|q| !settings.tickers.contains(&q.ticker)) // same pinned-skip as the blocks above
+        .filter_map(|q| growth_down_year_miss(q, &settings.buy_heuristic).map(|(y1, cagr, range)| (q, y1, cagr, range)))
+        .collect();
+    if !down.is_empty() {
+        down.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.ticker.cmp(&b.0.ticker)));
+        let mut seen_names = std::collections::HashSet::new();
+        down.retain(|(q, ..)| seen_names.insert(q.name.to_lowercase()));
+        let more = if down.len() > DOWN_YEAR_CAP { format!(" (top {DOWN_YEAR_CAP} of {})", down.len()) } else { String::new() };
+        println!("\nDown year — clears every other growth gate, rejected only by the 1Y floor{more}:");
+        for (q, y1, cagr, range) in down.iter().take(DOWN_YEAR_CAP) {
+            println!("  {:<8} {:<32.32} {y1:>7.1}% {cagr:>7.1}%/yr {range:>5.0}%", q.ticker, q.name);
+        }
+        // NOT a shortlist. This exact cohort was measured before the floor was put back, and printing
+        // it without the number invites buying the thing the gate exists to avoid.
+        println!("  (round 5: loosening this floor to -10 admitted n=284 names averaging -108.1 pts forward — knob `growth_min_1y_pct`, receipt in ci-settings)");
     }
 
     // (round 56) holdings-overlap footer: the buy candidates are the ranked ETF rows + the pinned

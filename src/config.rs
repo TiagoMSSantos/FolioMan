@@ -146,8 +146,9 @@ pub struct FundTerm {
 #[serde(default, deny_unknown_fields)] // a typo'd knob must error, not silently fall back to the default
 pub struct BuyHeuristic {
     // --- GATES: a candidate failing ANY of these is dropped before scoring ---
-    pub min_1y_pct: f64,             // [FOIL] on-sale only: reject if equity 1Y % <= this (growth uses a hardcoded 0% floor, not this)
-    pub min_1y_pct_crypto: f64,      // crypto/FX (-EUR/-USD): looser 1Y floor — they swing far harder
+    pub min_1y_pct: f64,             // [FOIL] on-sale only: reject if equity 1Y % <= this (the growth lane has its own `growth_min_1y_pct`, not this)
+    pub growth_min_1y_pct: f64,      // GROWTH GATE (equities): reject if 1Y % <= this. Was a hardcoded 0.0 in both gate sites; crypto keeps its own `min_1y_pct_crypto`. MEASURED and REVERTED once already (round 5, 2026-07-03): a -10 floor took the lane edge +106.6 -> +101.1 and -20 -> +94.4, and the n=284 names -10 NEWLY admits went on to average -108.1 pts forward peer-relative — down-1Y-near-high names are falling out of favour, not resting, which is the on-sale foil's losing profile. The knob is back so the cohort can be RE-MEASURED on current data (`growth_min_1y_pct -10` in the GATE SWEEP) rather than quoted from a receipt, not because the answer changed. Edge-affecting -> read that sweep row AND re-validate `backtest universe` (both OOS halves +) before moving it. 0.0 = today's behaviour (default)
+    pub min_1y_pct_crypto: f64,      // crypto/FX (-EUR/-USD): looser 1Y floor — they swing far harder. Used by BOTH lanes (the growth knob above is the equity leg only)
     pub max_1m_drop_pct: f64,        // equities: reject if 1M % <= this (a hard monthly crash = falling knife)
     pub max_1m_drop_pct_crypto: f64, // crypto/FX: looser knife — a -20%/month alt is normal, not broken
     pub min_long_pct: f64,           // [FOIL] on-sale only: reject if any 5Y/10Y/20Y leg <= this (growth uses a hardcoded >0% 5Y gate)
@@ -266,6 +267,7 @@ impl Default for BuyHeuristic {
         BuyHeuristic {
             // gates
             min_1y_pct: 0.0,
+            growth_min_1y_pct: 0.0,        // the value the growth lane hardcoded before this knob existed -> neutral default AND live behaviour at once. Loosening it is measured-negative (see the field doc); ci-settings ships 0.0 with the receipt
             min_1y_pct_crypto: -60.0,      // crypto routinely swings -40% in a year without breaking
             max_1m_drop_pct: -15.0,
             max_1m_drop_pct_crypto: -35.0, // alts routinely shed -20..-30% in a month without breaking
@@ -999,6 +1001,9 @@ mod tests {
         // the baseline source: code defaults serialize to a mapping with the real knob values
         let defaults = serde_yaml::to_value(BuyHeuristic::default()).unwrap();
         assert_eq!(defaults["growth_min_range_pct"].as_f64(), Some(80.0));
+        // the growth 1Y floor replaced a hardcoded 0.0, so its default must BE that constant — a
+        // non-zero default would silently move the live ranking the moment the knob shipped.
+        assert_eq!(defaults["growth_min_1y_pct"].as_f64(), Some(0.0));
     }
 
     /// The overlay wins field-by-field over the base, mappings merge DEEP (a partial `buy_heuristic:` only

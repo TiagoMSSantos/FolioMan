@@ -456,6 +456,7 @@ pub async fn run(args: Vec<String>) {
     let gate_loosen: Vec<Knob> = vec![
         knob("growth_min_range_pct -10", |t| t.growth_min_range_pct -= 10.0),
         knob("growth_min_cagr -4", |t| t.growth_min_cagr -= 4.0),
+        knob("growth_min_1y_pct -10", |t| t.growth_min_1y_pct -= 10.0), // restored with the knob: round 5 measured this exact row at n=284 / -108.1 pts fwd and reverted the loosened floor. Re-measured here on the current sample instead of quoted — a POSITIVE flip is the only thing that reopens the question
         knob("max_1m_drop_pct -10 (deeper)", |t| t.max_1m_drop_pct -= 10.0),
         knob("min_avg_turnover_eur ->0", |t| t.min_avg_turnover_eur = 0.0),
         knob("growth_max_above_ma ->off", |t| t.growth_max_above_ma = 0.0), // (#24) fwd return of the extreme-stretch names the gate excludes — validated -125.1 (n=267) at ship time; a POSITIVE flip here says re-probe the ceiling

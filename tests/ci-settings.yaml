@@ -70,7 +70,21 @@ inflation_adjust:
 # ============================================================================================
 buy_heuristic:
   # --- GATES (fail any one -> excluded before scoring) ---
-  min_1y_pct: -25.0              # [FOIL] on-sale only: reject if 1Y % <= this (growth uses a hardcoded 0% floor for equities, not this)
+  min_1y_pct: -25.0              # [FOIL] on-sale only: reject if 1Y % <= this (the growth lane reads growth_min_1y_pct below, not this)
+  growth_min_1y_pct: 0.0         # LIVE (equities): the growth lane's 1Y floor — reject if 1Y % <= this. 0.0 = must be climbing this year.
+                                 #   Was a hardcoded 0.0 until the knob was restored; this value is the constant it replaced, so shipping
+                                 #   it changes nothing. It is written down because the number is EARNED, not conservative-by-default.
+                                 #   MEASURED AND REVERTED ONCE (round 5, 2026-07-03, `.claude/growth_heuristic_plan.md:205`), on the same
+                                 #   question that brought the knob back — "aren't down-1Y-but-up-5Y names good growth candidates?":
+                                 #     same-batch triple: baseline edge +106.6 (OOS +0.11|+0.06) | floor -10 -> +101.1 | floor -20 -> +94.4
+                                 #     decisive: the n=284 names a -10 floor NEWLY ADMITS average -108.1 pts forward peer-relative.
+                                 #   Down-1Y-near-high names are falling out of favour, not resting — the on-sale foil's profile, and it
+                                 #   loses here too. README lists removing this floor under "measured dead — don't re-run these".
+                                 #   WHY THE KNOB EXISTS ANYWAY: so the cohort is re-measurable instead of quoted. `backtest universe`
+                                 #   prints a `growth_min_1y_pct -10` GATE SWEEP row (restored with the knob) giving n + mean fwd return
+                                 #   on TODAY's sample; `screen` prints a `Down year` tail naming the live names the floor drops. Read
+                                 #   both, then leave this at 0.0 unless the sweep flips POSITIVE — and even then, only after a full
+                                 #   `backtest universe` re-validation with both OOS halves positive. Edge-affecting.
   min_1y_pct_crypto: -50.0       # LIVE (crypto/FX -EUR/-USD): 1Y floor for the crypto growth lane — coins swing far harder than
                                  #   stocks, but a coin down worse than -50% on the year is a crash, not a swing (BTC's own bad
                                  #   year is -33.5%, comfortably inside; GT -62 / BGB -60 out). Was -75, which let deep crashers rank
