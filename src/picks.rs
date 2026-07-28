@@ -904,6 +904,13 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
             _ => {} // no fundamentals at all -> passes, like every other data gate
         }
     }
+    // (V) …and the other half of that "None is ambiguous": a filer that states no EPS in ANY filing, so
+    // the ceiling above can never be applied to it at all. Separate knob because it is a different claim
+    // — not "too expensive", but "cannot be priced" — and separate from `peg_yield.is_none()`, which
+    // would also swallow every ETF, coin and uncovered filer. See the config doc for the cohort.
+    if tuning.growth_require_peg && ff.is_some_and(|f| f.eps_never_reported) {
+        return None;
+    }
     // (#38) NET-MARGIN FLOOR on `fund.net_margin` — the as-of, point-in-time twin of the NET% column
     // (`net_margin_fy` is display-only and live-only, so it is unusable for a gate that has to be
     // measured). Read the knob doc before raising this: a floor here cuts low-margin INDUSTRIES
@@ -1258,6 +1265,12 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
             }
             _ => {}
         }
+    }
+    // (V) the twin of the `growth_require_peg` gate in `score_parts` — the two must stay the SAME
+    // expression, or the ranking and the printed tail disagree about why a name is gone. Never a
+    // near-miss: an absent number cannot be close to a ceiling.
+    if tuning.growth_require_peg && ff.is_some_and(|f| f.eps_never_reported) {
+        fails.push(("peg", "no PEG — filer tags no EPS".to_string(), false));
     }
     // (#38) the net-margin floor's reason, same 1.5-2pp near-miss convention as the CAGR legs.
     if tuning.growth_min_net_margin > 0.0 {
@@ -3132,6 +3145,31 @@ mod tests {
     // 0 = off admits the worst case above, and guards the 100.0/0.0 infinity from reaching the compare.
     with_peg(&mut pq, Some(1.0), Some(-1.0)); // PEG 100 AND loss-making
     assert!(growth_score(&pq, &BuyHeuristic::default()).is_some(), "growth_max_peg 0 must be OFF, not a bar at infinity");
+
+    // (V) `growth_require_peg` — the OTHER half of "None is ambiguous". A multi-class filer whose 10-K
+    // tags no per-share element ANYWHERE (BRK-B, ARES) has no PEG for the ceiling above to judge, so it
+    // walks past a gate that cut ODFL 2.49, ROST 2.27, WMT 2.38 and TDY 2.00 in the same run.
+    let req = BuyHeuristic { growth_require_peg: true, ..BuyHeuristic::default() };
+    pq.fund = Some(core::FundFactors { eps_never_reported: true, ..Default::default() });
+    assert!(growth_score(&pq, &BuyHeuristic::default()).is_some(), "OFF by default — shipping this knob must change nothing on its own");
+    assert!(growth_score(&pq, &req).is_none(), "armed: a filer that states no EPS anywhere cannot be priced -> gated");
+    // and it stands ALONE: nothing here reads `growth_max_peg`, so the two knobs can be set independently
+    assert!(growth_score(&pq, &BuyHeuristic { growth_max_peg: 2.0, ..req.clone() }).is_none());
+    // MIRROR LOCKSTEP — `gate_failures` is diagnostic-only, so a missing arm here means the name vanishes
+    // from the table with no printed reason at all. That silence is the bug this fills (the `_ => {}`).
+    let why = gate_failures(&pq, &req).expect("gated -> a reason");
+    assert!(
+        why.iter().any(|(g, m, close)| *g == "peg" && m.contains("tags no EPS") && !*close),
+        "the tail must name it, under the `peg` key, and NEVER as a near-miss — absent data can't be close to a ceiling: {why:?}"
+    );
+    // THE PREDICATE IS `eps_never_reported`, NOT `peg_yield.is_none()`. The latter is a far larger set,
+    // and each member of it is already handled — or deliberately not — somewhere else.
+    with_peg(&mut pq, None, Some(-1.0));
+    assert!(growth_score(&pq, &req).is_some(), "a LOSS-MAKER states an EPS; it is growth_max_peg's business and has its own message");
+    with_peg(&mut pq, None, None);
+    assert!(growth_score(&pq, &req).is_some(), "absent fundamentals still pass, like every data gate");
+    pq.fund = None;
+    assert!(growth_score(&pq, &req).is_some(), "no fund at all — every ETF and coin — must be untouched");
 
     // (#37) THE UNIFICATION PIN — the defect this whole change exists to kill. Until 2026-07-27 the
     // `peg` COLUMN computed `pe_ratio / long_cagr_from` while this gate read `peg_yield`, and the live

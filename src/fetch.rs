@@ -1676,10 +1676,185 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
         .collect()
 }
 
+/// EPS + weighted-average shares per fiscal year out of ONE 10-K's RAW XBRL INSTANCE. Pure -> unit-tested.
+///
+/// WHY THIS EXISTS AT ALL. `companyfacts`/`companyconcept` expose only UNDIMENSIONED facts. A multi-class
+/// filer tags every per-share figure against `StatementClassOfStockAxis`, so the API serves it NOTHING:
+/// V, HSY, STZ, BKR, ERIE and KKR all 404 on `EarningsPerShareDiluted` while happily serving revenue and
+/// net income. 8 of 509 cached US filers (1.6%) — see the caller for the two that are unfixable. The
+/// filing's own instance document keeps the dimensions, so the numbers are there, just not through the API.
+///
+/// WHICH CLASS: the one whose `shares x eps` lands CLOSEST to the same period's undimensioned net income.
+/// Self-verifying, and it has to be — a member-name allowlist would need to know that ERIE and V trade as
+/// `CommonClassAMember` while HSY and KKR tag `CommonStockMember`. ERIE is the case that decides the rule:
+/// its Class B is EPS 1,801 on 2,542 shares (product $0.005B) against Class A's 10.69 on 52.3M shares
+/// ($0.559B = net income exactly). CLOSEST, not a tolerance: KKR is legitimately 5.7% off because its
+/// `NetIncomeLoss` includes noncontrolling interests, and no fixed band both admits that and rejects a
+/// wrong class. Verified on 6/6: V 20.05B vs 20.058B, HSY 0.883/0.883, STZ 1.687/1.687, BKR 2.584/2.588,
+/// ERIE 0.559/0.559, KKR 2.236/2.37.
+///
+/// Same three rules as `parse_sec_facts` so the two agree: tag lists IN ORDER (diluted before basic — BKR
+/// tags both), the 350-380 day span = one fiscal year, and a missing line stays None. Namespace prefixes
+/// are matched loosely (`<context>` vs `<xbrli:context>`) because filers differ; attributes may be split
+/// across lines, hence regex rather than a literal find.
+fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<NaiveDate, (f64, Option<f64>)> {
+    use std::collections::BTreeMap;
+    let empty = BTreeMap::new();
+    // `[\w-]+:`, NOT `\w+:` — the two prefixes that matter, `us-gaap:` and `ifrs-full:`, both contain a
+    // HYPHEN, which `\w` does not match. With `\w` this parser silently found zero facts on every real
+    // filing; the unit test below is what caught it.
+    let (Ok(ctx_re), Ok(start_re), Ok(end_re), Ok(mem_re)) = (
+        regex::Regex::new(r#"(?s)<(?:[\w-]+:)?context id="([^"]+)"[^>]*>(.*?)</(?:[\w-]+:)?context>"#),
+        regex::Regex::new(r"<(?:[\w-]+:)?startDate>\s*([0-9-]+)"),
+        regex::Regex::new(r"<(?:[\w-]+:)?endDate>\s*([0-9-]+)"),
+        regex::Regex::new(r"<(?:[\w-]+:)?explicitMember[^>]*>\s*([^<]*?)\s*</"),
+    ) else {
+        return empty;
+    };
+    // context id -> (fiscal year end, its dimension members joined). Durations only: a balance-sheet
+    // context is instant and an interim one fails the span check, so neither can pollute an annual row.
+    let mut ctx: HashMap<&str, (NaiveDate, String)> = HashMap::new();
+    for c in ctx_re.captures_iter(xml) {
+        let (id, body) = (c.get(1).map_or("", |m| m.as_str()), c.get(2).map_or("", |m| m.as_str()));
+        let (Some(sd), Some(ed)) = (
+            start_re.captures(body).and_then(|m| NaiveDate::parse_from_str(&m[1], "%Y-%m-%d").ok()),
+            end_re.captures(body).and_then(|m| NaiveDate::parse_from_str(&m[1], "%Y-%m-%d").ok()),
+        ) else {
+            continue;
+        };
+        if !(350..=380).contains(&(ed - sd).num_days()) {
+            continue;
+        }
+        let mut dims: Vec<&str> = mem_re.captures_iter(body).filter_map(|m| m.get(1)).map(|m| m.as_str()).collect();
+        dims.sort_unstable(); // instance order is the filer's; sorted so one class keys identically everywhere
+        ctx.insert(id, (ed, dims.join("|")));
+    }
+    // (fiscal year end, dimension key) -> value, first tag in the list wins (US_GAAP_TAGS order is
+    // load-bearing: diluted before basic). `ni` is keyed on the year alone and takes ONLY the
+    // undimensioned fact — the consolidated bottom line every class's product is measured against.
+    let per_class = |names: &[&str], undimensioned_only: bool| -> BTreeMap<(NaiveDate, String), f64> {
+        let mut m: BTreeMap<(NaiveDate, String), f64> = BTreeMap::new();
+        for tag in names {
+            let Ok(re) = regex::Regex::new(&format!(r#"<(?:[\w-]+:)?{tag}\s[^>]*contextRef="([^"]+)"[^>]*>([^<]*)</"#)) else {
+                continue;
+            };
+            for f in re.captures_iter(xml) {
+                let (Some((end, dims)), Ok(val)) = (ctx.get(&f[1]), f[2].trim().parse::<f64>()) else {
+                    continue;
+                };
+                if undimensioned_only && !dims.is_empty() {
+                    continue;
+                }
+                m.entry((*end, dims.clone())).or_insert(val);
+            }
+        }
+        m
+    };
+    let eps = per_class(tags.eps, false);
+    let shares = per_class(tags.shares, false);
+    let ni = per_class(tags.ni, true);
+    let mut out = BTreeMap::new();
+    for ((end, dims), e) in &eps {
+        let sh = shares.get(&(*end, dims.clone())).copied();
+        // no net income for the year -> fall back to the biggest share count, which is the class the
+        // consolidated EPS is stated on wherever the check IS available. Unmeasured (all 6 have it).
+        let score = match (ni.get(&(*end, String::new())), sh) {
+            (Some(n), Some(s)) => (s * e - n).abs(),
+            (Some(_), None) => f64::INFINITY, // unscoreable, so it loses to any class that isn't
+            (None, Some(s)) => -s,
+            (None, None) => f64::INFINITY,
+        };
+        let better = out.get(end).is_none_or(|(_, _, best): &(f64, Option<f64>, f64)| score < *best);
+        if better {
+            out.insert(*end, (*e, sh, score));
+        }
+    }
+    out.into_iter().map(|(end, (e, sh, _))| (end, (e, sh))).collect()
+}
+
+/// The newest annual filing's dimensioned EPS/shares for a US ticker, by fiscal year end. DISK-CACHED
+/// (`.sec_cache/{ticker}_inst1.json`) INCLUDING THE EMPTY RESULT: BRK-B's instance is 13.5MB and KKR's
+/// 19.8MB, so re-downloading those to re-learn nothing is exactly the cost worth caching away.
+/// Budget-capped like every other SEC call. ceiling: ONE filing, so ~3 fiscal years of coverage; older
+/// as-of rows keep the None they already had. Walking more 10-Ks is the upgrade, at 2.4-19.8MB each.
+async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> std::collections::BTreeMap<NaiveDate, (f64, Option<f64>)> {
+    use std::sync::atomic::Ordering;
+    let cache = sec_cache_path(&format!("{ticker}_inst1"));
+    if let Some(c) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<(String, f64, Option<f64>)>>(&s).ok()) {
+        return c
+            .into_iter()
+            .filter_map(|(d, e, s)| NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok().map(|d| (d, (e, s))))
+            .collect(); // cache hit (empty included) -> no network, no budget spend
+    }
+    let mut found = std::collections::BTreeMap::new();
+    // a network failure below leaves `found` empty and STILL writes the negative cache — deliberate: the
+    // caller is the 1.6% tail, and a transient miss costs one blank column until the cache file is removed.
+    if let Some(cik) = sec_cik(client, urls, ticker).await {
+        if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) < SEC_FETCH_BUDGET {
+            if let Some(v) = sec_get_json(client, &urls.sec_submissions.replace("{cik}", &cik), &urls.sec_user_agent).await {
+                let recent = v.get("filings").and_then(|f| f.get("recent"));
+                let get = |k: &str, i: usize| recent?.get(k)?.as_array()?.get(i)?.as_str().map(str::to_string);
+                let newest = recent
+                    .and_then(|r| r.get("form"))
+                    .and_then(|f| f.as_array())
+                    .and_then(|forms| forms.iter().position(|f| f.as_str().is_some_and(is_annual_form)));
+                if let Some(i) = newest.filter(|_| SEC_FETCHES.fetch_add(1, Ordering::Relaxed) < SEC_FETCH_BUDGET) {
+                    if let (Some(acc), Some(doc)) = (get("accessionNumber", i), get("primaryDocument", i)) {
+                        // the EXTRACTED instance sitting beside the inline-XBRL 10-K: same folder, primary
+                        // document name with ".htm" swapped for "_htm.xml". ponytail: hardcoded like the
+                        // `yahoo_crumb` endpoints — lift into `Urls` only if a test needs to stub it.
+                        let url = format!(
+                            "https://www.sec.gov/Archives/edgar/data/{}/{}/{}_htm.xml",
+                            cik.trim_start_matches('0'),
+                            acc.replace('-', ""),
+                            doc.trim_end_matches(".htm")
+                        );
+                        if let Some(xml) = sec_get_text(client, &url, &urls.sec_user_agent).await {
+                            found = parse_sec_instance(&xml, &US_GAAP_TAGS);
+                            if found.is_empty() {
+                                found = parse_sec_instance(&xml, &IFRS_TAGS); // unmeasured: no 20-F filer is in today's cohort
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let serial: Vec<(String, f64, Option<f64>)> = found.iter().map(|(d, (e, s))| (d.format("%Y-%m-%d").to_string(), *e, *s)).collect();
+    if let Some(dir) = cache.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&cache, serde_json::to_string(&serial).unwrap_or_default());
+    found
+}
+
+/// Annual `FundRow`s for a US ticker from SEC XBRL company-facts, with the per-share lines the API drops
+/// filled back in from the filing itself. The fallback runs ONLY when the whole series has no EPS, so the
+/// 501 healthy filers pay nothing for it; the 8 that need it are all multi-class or partnership-structured.
+pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
+    let mut rows = fetch_sec_facts_rows(client, urls, ticker).await?;
+    if rows.iter().all(|r| r.eps.is_none()) {
+        let inst = fetch_sec_instance_eps(client, urls, ticker).await;
+        for r in rows.iter_mut() {
+            if let Some(&(eps, shares)) = inst.get(&r.period_end) {
+                r.eps = Some(eps);
+                r.shares = shares;
+                // the prior year off the SAME document — the split-proof comparative `eps_yoy_split_safe`
+                // prefers, free here because one 10-K carries all three years in one instance.
+                if let Some((_, &(pe, ps))) = inst.range(..r.period_end).next_back() {
+                    r.prior_eps = Some(pe);
+                    r.prior_shares = ps;
+                }
+            }
+        }
+    }
+    Some(rows)
+}
+
 /// Annual `FundRow`s for a US ticker from SEC XBRL company-facts. DISK-CACHED as compact parsed rows
 /// (`.sec_cache/{ticker}_facts.json`) — NOT the multi-MB raw payload — append-only history reused
 /// forever. Budget-capped (`SEC_FETCH_BUDGET`). None for a non-US/unknown ticker or no annual data.
-pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
+async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     use std::sync::atomic::Ordering;
     // "_facts9": cache-key bump when the parse gains concepts (facts3 added diluted-shares; facts4 added
     // the round-107 survival levels; facts5 added the EV/EBITDA levels; facts6 fixes the misspelled
@@ -3878,6 +4053,119 @@ mod tests {
         assert_eq!(parse_sec_facts(&lone)[0].prior_eps, None);
     }
 
+    /// (V) `parse_sec_instance` — the per-class EPS `companyfacts` refuses to serve. Fixture reproduces
+    /// the REAL shape of `v-20250930_htm.xml`: default-namespace contexts and facts whose attributes are
+    /// split across lines (a literal `<tag contextRef=` find matches NOTHING on the actual document,
+    /// which is why this parse is regex-based). Numbers are Visa's own, verified against the filing.
+    #[test]
+    fn sec_instance_picks_the_class_that_reconciles() {
+        let ctx = |id: &str, s: &str, e: &str, member: Option<&str>| {
+            let seg = member.map_or(String::new(), |m| {
+                format!(r#"<segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">{m}</xbrldi:explicitMember></segment>"#)
+            });
+            format!(
+                "<context id=\"{id}\"><entity><identifier>0001403161</identifier>{seg}</entity>\
+                 <period><startDate>{s}</startDate><endDate>{e}</endDate></period></context>"
+            )
+        };
+        // attributes on their own lines, exactly as SEC emits them
+        let fact = |tag: &str, cref: &str, val: &str| {
+            format!("<us-gaap:{tag}\n      contextRef=\"{cref}\"\n      decimals=\"2\"\n      id=\"f-1\">{val}</us-gaap:{tag}>")
+        };
+        let v = [
+            ctx("c-1", "2024-10-01", "2025-09-30", None), // undimensioned -> carries net income
+            ctx("c-2", "2024-10-01", "2025-09-30", Some("us-gaap:CommonClassAMember")),
+            ctx("c-3", "2024-10-01", "2025-09-30", Some("us-gaap:CommonClassBMember")),
+            ctx("c-4", "2023-10-01", "2024-09-30", None),
+            ctx("c-5", "2023-10-01", "2024-09-30", Some("us-gaap:CommonClassAMember")),
+            ctx("c-6", "2022-10-01", "2023-09-30", None),
+            ctx("c-7", "2022-10-01", "2023-09-30", Some("us-gaap:CommonClassAMember")),
+            ctx("c-q", "2025-07-01", "2025-09-30", Some("us-gaap:CommonClassAMember")), // a QUARTER
+            fact("NetIncomeLoss", "c-1", "20058000000"),
+            fact("NetIncomeLoss", "c-4", "19743000000"),
+            fact("NetIncomeLoss", "c-6", "17273000000"),
+            fact("EarningsPerShareDiluted", "c-2", "10.20"),
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-2", "1966000000"),
+            fact("EarningsPerShareDiluted", "c-3", "16.12"), // Class B: 16.12 x 90M = 1.45B, nowhere near 20.06B
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-3", "90000000"),
+            fact("EarningsPerShareDiluted", "c-5", "9.73"),
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-5", "2029000000"),
+            fact("EarningsPerShareDiluted", "c-7", "8.28"),
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-7", "2085000000"),
+            fact("EarningsPerShareDiluted", "c-q", "2.98"), // the 350-380 day rule must drop this
+        ]
+        .join("\n");
+        let got = parse_sec_instance(&v, &US_GAAP_TAGS);
+        let at = |d: &str| got.get(&NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap()).copied();
+        assert_eq!(got.len(), 3, "one entry per FISCAL YEAR — the quarterly context must not make a fourth");
+        assert_eq!(at("2025-09-30"), Some((10.20, Some(1_966_000_000.0))), "Class A: 1,966M x 10.20 = 20.05B = net income");
+        assert_eq!(at("2024-09-30"), Some((9.73, Some(2_029_000_000.0))));
+        assert_eq!(at("2023-09-30"), Some((8.28, Some(2_085_000_000.0))));
+        assert_eq!(at("2025-12-31"), None, "the quarter ends 2025-09-30 anyway; nothing else may appear");
+
+        // THE ASSERT THE RULE EXISTS FOR — ERIE, whose Class B is EPS 1,801 on 2,542 shares. It reads
+        // like the "real" per-share number and is off by a factor of 168 in aggregate. A member-name
+        // allowlist is what this forbids: ERIE and V trade as ClassA, HSY and KKR tag CommonStockMember,
+        // and no list knows that in advance. Class B is placed FIRST here so document order can't rescue
+        // it, and the whole fixture is `xbrli:`-prefixed to pin the namespace tolerance.
+        let erie = [
+            r#"<xbrli:context id="d1"><xbrli:entity><xbrli:identifier>x</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2024-01-01</xbrli:startDate><xbrli:endDate>2024-12-31</xbrli:endDate></xbrli:period></xbrli:context>"#.to_string(),
+            r#"<xbrli:context id="dB"><xbrli:entity><xbrli:identifier>x</xbrli:identifier><xbrli:segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">us-gaap:CommonClassBMember</xbrldi:explicitMember></xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2024-01-01</xbrli:startDate><xbrli:endDate>2024-12-31</xbrli:endDate></xbrli:period></xbrli:context>"#.to_string(),
+            r#"<xbrli:context id="dA"><xbrli:entity><xbrli:identifier>x</xbrli:identifier><xbrli:segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">us-gaap:CommonClassAMember</xbrldi:explicitMember></xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2024-01-01</xbrli:startDate><xbrli:endDate>2024-12-31</xbrli:endDate></xbrli:period></xbrli:context>"#.to_string(),
+            fact("NetIncomeLoss", "d1", "559000000"),
+            fact("EarningsPerShareDiluted", "dB", "1801.00"),
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "dB", "2542"),
+            fact("EarningsPerShareDiluted", "dA", "10.69"),
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "dA", "52305424"),
+        ]
+        .join("\n");
+        let got = parse_sec_instance(&erie, &US_GAAP_TAGS);
+        assert_eq!(
+            got.get(&NaiveDate::parse_from_str("2024-12-31", "%Y-%m-%d").unwrap()).copied(),
+            Some((10.69, Some(52_305_424.0))),
+            "Class B's 1,801 x 2,542 = $4.6M against a $559M bottom line — closest-product must reject it"
+        );
+
+        // ORDER IS LOAD-BEARING, same as `parse_sec_facts`: a filer tagging both diluted and basic in one
+        // instance (BKR does) must yield the DILUTED number.
+        let both = [
+            ctx("c-1", "2024-01-01", "2024-12-31", None),
+            fact("NetIncomeLoss", "c-1", "1000"),
+            fact("EarningsPerShareBasic", "c-1", "2.60"),
+            fact("EarningsPerShareDiluted", "c-1", "2.50"),
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-1", "400"),
+        ]
+        .join("\n");
+        assert_eq!(
+            parse_sec_instance(&both, &US_GAAP_TAGS).values().next().copied(),
+            Some((2.50, Some(400.0))),
+            "diluted is listed first in US_GAAP_TAGS.eps and must win, even though basic reconciles better here"
+        );
+
+        assert!(parse_sec_instance("", &US_GAAP_TAGS).is_empty()); // garbage in -> empty, never a panic
+        assert!(parse_sec_instance("<html>not xbrl at all</html>", &US_GAAP_TAGS).is_empty());
+    }
+
+    /// (V) The fallback's TRIGGER is the narrow one: it fires only when the whole companyfacts series has
+    /// no EPS anywhere. A filer the API serves normally must never reach it — that guard is what keeps
+    /// 501 of 509 names from paying for a multi-MB instance download.
+    #[test]
+    fn sec_instance_fallback_trigger_is_narrow() {
+        use serde_json::json;
+        let ann = |start: &str, end: &str, val: f64| json!({"start": start, "end": end, "val": val, "form": "10-K", "filed": "2026-02-01"});
+        let healthy = parse_sec_facts(&json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [ann("2025-01-01", "2025-12-31", 100.0)]}},
+            "EarningsPerShareDiluted": {"units": {"USD/shares": [ann("2025-01-01", "2025-12-31", 1.0)]}},
+        }}}));
+        assert!(!healthy.iter().all(|r| r.eps.is_none()), "an EPS-carrying filer must NOT trip the fallback");
+        // Visa's actual shape: revenue and net income present, not one per-share fact in the payload
+        let dimensioned = parse_sec_facts(&json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [ann("2024-10-01", "2025-09-30", 39_000_000_000.0)]}},
+            "NetIncomeLoss": {"units": {"USD": [ann("2024-10-01", "2025-09-30", 20_058_000_000.0)]}},
+        }}}));
+        assert!(!dimensioned.is_empty() && dimensioned.iter().all(|r| r.eps.is_none()), "…and this shape must");
+    }
+
     /// (IFRS) The other half of the foreign world files `ifrs-full`, whose concept names share almost
     /// nothing with us-gaap (`Revenue` not `Revenues`, `ProfitLoss` not `NetIncomeLoss`). Reading only
     /// `/facts/us-gaap` returned zero rows for every one of them.
@@ -4350,4 +4638,26 @@ pub async fn push(client: &Client, urls: &Urls, topic: &str, title: &str, msg: &
         .send()
         .await
         .is_ok_and(|resp| resp.status().is_success())
+}
+
+#[cfg(test)]
+mod tmp_instcheck {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn real_filings() {
+        let dir = std::env::var("INSTDIR").unwrap();
+        for f in std::fs::read_dir(&dir).unwrap() {
+            let p = f.unwrap().path();
+            let name = p.file_name().unwrap().to_string_lossy().to_string();
+            if !name.starts_with("inst_") && name != "v_inst.xml" { continue; }
+            let xml = std::fs::read_to_string(&p).unwrap();
+            let got = parse_sec_instance(&xml, &US_GAAP_TAGS);
+            println!("--- {name}: {} years", got.len());
+            for (d, (e, s)) in &got {
+                let prod = s.map(|s| s * e / 1e9);
+                println!("    {d}  eps={e}  shares={s:?}  shares*eps={prod:?} B");
+            }
+        }
+    }
 }

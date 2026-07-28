@@ -1544,6 +1544,14 @@ pub struct FundFactors {
     // lookback rows (higher = stabler). Margin LEVEL and 1y TREND are swept elsewhere; the
     // dispersion is what a peak-cycle name (fertilizer, refiner) hides behind a good level.
     pub margin_stability: Option<f64>,
+    // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
+    // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
+    // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
+    // loop and the live enrich), so a filer-level fact is identical on both sides at every cutoff. An
+    // as-of version would gate a name historically and pass it live — the exact train-serve skew the
+    // one-source rule exists to prevent. After the XBRL-instance fallback this is BRK-B and ARES only:
+    // they tag no per-share and no weighted-average element in the filing itself, so no source has it.
+    pub eps_never_reported: bool,
 }
 
 /// (Item 4) One open-market insider transaction parsed from an SEC Form 4: the transaction date (the
@@ -1729,6 +1737,9 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         interest_cover: now.and_then(|r| r.interest_cover),
         net_cash_rev: now.and_then(|r| r.net_cash_rev),
         margin_stability,
+        // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
+        // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
+        eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
     }
 }
 
@@ -2504,6 +2515,7 @@ mod tests {
             interest_cover: Some(13.0),
             net_cash_rev: Some(14.0),
             margin_stability: Some(15.0),
+            eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
         assert_eq!(select_fund_factor(&f, "margin_trend"), Some(5.0));
@@ -2795,6 +2807,36 @@ mod tests {
             .map(|r| FundRow { prior_eps: None, shares: Some(if r.period_end.year() == 2025 { 69.0 } else { 23.0 }), ..r.clone() })
             .collect();
         assert_eq!(fund_factors(&no_prior, cutoff, 5).eps_yoy, None, "+200% shares -> split guard blanks it");
+    }
+
+    /// (V) `eps_never_reported` is a FILER-level fact, read off the whole `rows` slice — deliberately NOT
+    /// through `fund_as_of` like every other field here. THE ANTI-SKEW ASSERT: an as-of version would say
+    /// "true" at an early cutoff and "false" at a late one for the same name, which gates it in the
+    /// backtest and passes it live. Both callers hand `fund_factors` the identical full series, so the
+    /// only way the two lanes can agree is for this to ignore the cutoff entirely.
+    #[test]
+    fn eps_never_reported_is_filer_level_not_as_of() {
+        let r = |y: i32, eps: Option<f64>| FundRow {
+            filed: NaiveDate::from_ymd_opt(y + 1, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y, 12, 31).unwrap(),
+            revenue: Some(100.0),
+            eps,
+            ..Default::default()
+        };
+        let early = NaiveDate::from_ymd_opt(2021, 6, 1).unwrap();
+        let late = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        // Visa's shape after the instance fallback: EPS only on the newest three years, because ONE 10-K
+        // is what the fallback reads. At `early` not a single EPS row is filed yet.
+        let partial = vec![r(2019, None), r(2020, None), r(2023, Some(8.28)), r(2024, Some(9.73)), r(2025, Some(10.20))];
+        assert!(!fund_factors(&partial, early, 5).eps_never_reported, "an as-of read would say TRUE here — that is the skew");
+        assert!(!fund_factors(&partial, late, 5).eps_never_reported);
+        // BRK-B / ARES: no per-share element in any filing, at any cutoff. THIS is what the gate cuts.
+        let none_ever = vec![r(2023, None), r(2024, None), r(2025, None)];
+        assert!(fund_factors(&none_ever, early, 5).eps_never_reported);
+        assert!(fund_factors(&none_ever, late, 5).eps_never_reported);
+        // no rows at all is NO COVERAGE, not "never reports" — every ETF, every coin, every uncovered
+        // filer lands here, and gating them would turn a data gap into a verdict.
+        assert!(!fund_factors(&[], late, 5).eps_never_reported, "an empty series must never read as a gate-able fact");
     }
 
     /// (round 109) `margin_stability` = negated sample stddev of net_margin over the as-of rows:
