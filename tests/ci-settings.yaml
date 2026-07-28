@@ -147,6 +147,26 @@ buy_heuristic:
                                  #   all, and a name whose great decades are early clears every bar on history it will not repeat. PGR is the
                                  #   live case: +418% over its last 20y = 8.6%/yr, behind a 16%/yr life CAGR. At +200 it clears easily —
                                  #   catching PGR needs a bar near the CAGR-implied level, which is a much bigger change and unmeasured.
+  perf_fill_coverage_pct: 90.0   # DISPLAY ONLY — this knob cannot move a rank, a score or a gate. 100.0 = off (the code default).
+                                 #   The problem: YRS rounds to nearest, a leg needs its full span minus 31d, so each rung has a ~5-month
+                                 #   band where the row contradicts itself — WTAI.MI at ~7.7y printed "YRS 8" beside "8Y n/a" (8Y needs 7.91y).
+                                 #   YRS now carries a decimal (7.7), and a cell inside that band prints the WHOLE-LIFE MEASURED return marked
+                                 #   `≈`. NOT a projection: `(1+CAGR)^N` re-renders two columns already on screen while READING as a
+                                 #   measurement, and on WTAI it swings 7.6x on which CAGR feeds it (+3141% at the +19% headline vs +414% at
+                                 #   the real recent 8.5%/yr). The value is deflated by live EU HICP like every other >=1Y cell (inflation_adjust
+                                 #   is on) — a nominal fill in a real column would be ~25pp wrong on an 8-year span.
+                                 #   MEASURED live 2026-07-28 at 90 — six cells fill, and note the count only became visible once YRS carried a
+                                 #   decimal (a rounded-YRS reading of the same table predicted three):
+                                 #     8Y  — WTAI.MI 7.7y (96%) ≈+176.7% · XAIX.DE 7.5y (94%) ≈+206.6% · PANX.PA 7.3y (91%) ≈+180.7%
+                                 #     20Y — NASD.L 18.5y (93%) ≈+1459% · EQQQ.MI 18.5y (93%) ≈+1233% · V 18.3y (92%) ≈+924.6%
+                                 #   The bar is doing real work at the boundary: XMTD.L 17.6y and XMUS.L 17.5y are both 88% of the 20Y rung and
+                                 #   stay n/a, as do XACT-BULL 16.7y, XLKS.L 16.6y, CSNDX.SW 16.5y and ANX.PA 16.1y.
+                                 #   WHY 90 AND NOT LOWER: 0A08.L (iShares JPM EM Bond, ranked in the 2026-07-27 run) sits at 87.6% of the 8Y
+                                 #   rung and its first close is a data artifact — CAGR +62%/yr against a 5Y of +17.3%, so its whole-life return
+                                 #   is ~+3900%. 90 blocks that by 2.4 points; anything under ~88 prints it as if it were an 8-year number.
+                                 #   PROOF IT CANNOT MOVE A RANK, both ways: the same binary run at 100.0 (off) and at 90.0 produced an
+                                 #   IDENTICAL ranking in all three lanes; and statically, `perf_fill` has exactly two callers (the perf cell and
+                                 #   the legend collector) while `life_return_pct` has exactly one reader (`perf_fill`) — no path into scoring.
   min_avg_turnover_eur: 500000   # LIVE: reject names with < this avg daily turnover (EUR) on THIS listing — both lanes.
                                  #   Set 2026-07-02 at 100K after zeroing the turnover SCORE tilt (which never docked
                                  #   junk): a hard gate is the honest tool for untradeable listings. 100K killed the real

@@ -150,6 +150,32 @@ fn short_8y_mark(quote: &Quote) -> &'static str {
     }
 }
 
+/// The `≈` stand-in for a rung the record ALMOST reaches, or `None` for "leave the cell `n/a`".
+///
+/// `YRS` rounds to nearest while a leg needs its full span minus 31d of slack, so every rung has a
+/// ~5-month band where the age column claims the years and the leg is blank: 8Y needs 7.91y but
+/// prints "8" from 7.50 (WTAI.MI, ~7.7y). This fills that band with the whole-life MEASURED return —
+/// never a projection: `(1+CAGR)^N` is a re-render of two columns already on screen that READS as a
+/// measurement, and on WTAI it swings 7.6x on which CAGR you feed it. Marked, for the same reason
+/// `short_8y_mark` marks rather than blanks: an unmarked cell would claim a judgement it never made.
+///
+/// Three ways to get `None`, and only one of them is "too young":
+/// - the real leg exists -> nothing to stand in for;
+/// - `cov` below the configured bar -> too little record to speak for the rung;
+/// - `cov >= 1.0` -> the record DOES span the rung and the leg is blank for some other reason (a zero
+///   past price at the anchor). Filling there is the fabricated-leg bug `core.rs` (H-cov) removed.
+///
+/// Display-only by construction: reads `life_return_pct`, which is not in `perf`, so `perf_pct` — and
+/// therefore every gate, `long_leg`, `spy_premium`, `twin_groups` — cannot see this number.
+fn perf_fill(quote: &Quote, label: &str, tuning: &BuyHeuristic) -> Option<f64> {
+    if perf_pct(quote, label).is_some() {
+        return None;
+    }
+    let days = HORIZONS.iter().find(|(l, _)| *l == label)?.1 as f64;
+    let cov = quote.age_years? * 365.25 / days;
+    (cov >= tuning.perf_fill_coverage_pct / 100.0 && cov < 1.0).then_some(quote.life_return_pct)?
+}
+
 /// How intact the long-term trend is, 0..1 — used to scale the on-sale discount so a decaying name's
 /// deep "discount" can't outrank a healthy compounder's modest pullback. `zero` (a negative %/yr
 /// CAGR) is where health hits 0; health reaches 1 at a flat/rising long trend.
@@ -1723,11 +1749,21 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // the ladder is 20Y -> 8Y -> 5Y on availability: ≥20y ranks on 20Y, ≥8y on 8Y, else 5Y. A
         // "+16%/yr over 20" and a "+16%/yr over 5" are NOT the same conviction, so pairing this with
         // `leg` makes the record length behind the headline number visible per row.
-        "yrs" => quote.age_years.map_or("n/a".to_string(), |y| format!("{y:.0}")),
+        // ONE decimal, not zero: rounding to nearest printed "8" for a 7.7y record while the 8Y leg —
+        // which needs 7.91y — sat blank in the same row, so the two columns read as contradicting.
+        "yrs" => quote.age_years.map_or("n/a".to_string(), |y| format!("{y:.1}")),
         "1h" => pct1(quote.intraday[0]),
         "6h" => pct1(quote.intraday[1]),
         "12h" => pct1(quote.intraday[2]),
-        "1d" | "1w" | "1m" | "1y" | "2y" | "5y" | "8y" | "10y" | "20y" => pct1(perf_pct(quote, &key.to_uppercase())),
+        "1d" | "1w" | "1m" | "1y" | "2y" | "5y" | "8y" | "10y" | "20y" => {
+            let label = key.to_uppercase();
+            match perf_pct(quote, &label) {
+                Some(p) => pct1(Some(p)),
+                // `≈` PREFIX, not suffix: it qualifies the number before it is read. Still fits the
+                // 8-wide column at the worst case (`≈+26522%`) because pct1 drops the decimal ≥1000%.
+                None => perf_fill(quote, &label, tuning).map_or("n/a".to_string(), |p| format!("≈{}", pct1(Some(p)))),
+            }
+        }
         "vol" => quote.volatility_pct.map_or("n/a".to_string(), |v| format!("{v:.1}%")),
         "maxdd" => {
             if quote.max_drawdown_pct > 0.0 {
@@ -1953,6 +1989,11 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         if tuning8.is_some() && !short_8y_mark(quote).is_empty() && !seen.contains('†') {
             seen.push('†');
         }
+        // `≈` rides a perf cell for the same reason — and only over the columns THIS table prints, so
+        // a layout without the long rungs never explains a mark it didn't show.
+        if !seen.contains('≈') && cols.iter().any(|c| perf_fill(quote, &c.key.to_uppercase(), tuning).is_some()) {
+            seen.push('≈');
+        }
         row(&m, quote, *score);
     }
     // Legend: explain only the flags THIS table used, so clean tables stay clean.
@@ -1970,6 +2011,13 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     .filter(|(flag, _)| seen.contains(flag))
     .map(|(flag, what)| format!("{flag} = {what}"))
     .collect();
+    // Carries the configured coverage, so it can't be a static entry in the table above.
+    if seen.contains('≈') {
+        legend.push(format!(
+            "≈ = record covers ≥{:.0}% of that horizon but not all of it — the cell is the whole-life MEASURED return under a longer label (not a projection), and is never scored",
+            tuning.perf_fill_coverage_pct
+        ));
+    }
     // Column note, not a flag: one cell can hold either ratio and there is no per-row marker to hang it
     // on, so the table says so once. Only when the column is actually printed (ETF/crypto tables hide it).
     if cols.iter().any(|c| c.key == "roe") {
@@ -2161,7 +2209,7 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>, owned: &O
     let mut any_owned = false;
     for q in cores.iter().take(n) {
         let cagr = q.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%"));
-        let yrs = q.age_years.map_or("—".to_string(), |a| format!("{a:.0}"));
+        let yrs = q.age_years.map_or("—".to_string(), |a| format!("{a:.1}")); // 1 decimal, as in the screen table
         let ter = q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%"));
         let own = if owned.holds(&q.ticker) { "o" } else { "" };
         any_owned |= !own.is_empty();
@@ -2790,6 +2838,7 @@ mod tests {
             fund: None,            // (G+) default off; the multi-term asserts set it explicitly
             age_years: None,       // display-only pair; never scored
             life_cagr: None,
+            life_return_pct: None,     // (perf_fill) display-only; the fill asserts set it explicitly
             trail_monthly: Vec::new(), // (#41) no trail -> unjudgeable -> the redundancy skip never blocks
             tr_cagr: None,         // (TR-CAGR) display-only; never scored
             history_proxied: false, // display-only marker; never scored
@@ -4214,7 +4263,7 @@ mod tests {
         q.above_ma_pct = 0.0;
         assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "0%");
         q.age_years = Some(11.0);
-        assert_eq!(cc("yrs", &q, 0.0, None, ""), "11");
+        assert_eq!(cc("yrs", &q, 0.0, None, ""), "11.0"); // 1 decimal: "8" for a 7.7y record contradicted its own blank 8Y
         q.intraday = [Some(0.12), Some(-0.34), Some(2.0)];
         assert_eq!(cc("1h", &q, 0.0, None, ""), "+0.1%");
         assert_eq!(cc("6h", &q, 0.0, None, ""), "-0.3%");
@@ -4227,6 +4276,30 @@ mod tests {
         assert_eq!(cc("8y", &q, 0.0, None, ""), "+290.1%");
         assert_eq!(cc("1w", &q, 0.0, None, ""), "n/a"); // absent leg
         assert_eq!(cc("bogus", &q, 0.0, None, ""), "?"); // unknown key fallback
+        // (perf_fill) the WTAI.MI shape: ~7.7y of record, so 1Y/5Y fill and 8Y/20Y are blank.
+        let mut wtai = Quote::stub("W", "€1", "", "WTAI");
+        wtai.perf = legs(&[("1Y", 12.0), ("5Y", 90.0)]);
+        wtai.age_years = Some(7.7);
+        wtai.life_return_pct = Some(282.0);
+        // DEFAULT is off, and off BY CONSTRUCTION — `cov >= 1.0 && cov < 1.0` is unsatisfiable, so no
+        // age and no life return can fill anything. `cc` uses BuyHeuristic::default().
+        assert_eq!(cc("8y", &wtai, 0.0, None, ""), "n/a", "100.0 = off: no blank cell is ever filled");
+        let on = BuyHeuristic { perf_fill_coverage_pct: 90.0, ..BuyHeuristic::default() };
+        // 7.7y is 96% of the 8Y rung (2920d) -> fills, marked. It is 39% of the 20Y rung -> stays blank:
+        // the bar is what separates "almost measured it" from "made it up".
+        assert_eq!(col_cell("8y", &wtai, 0.0, None, "", &on), "≈+282.0%");
+        assert_eq!(col_cell("20y", &wtai, 0.0, None, "", &on), "n/a");
+        // THE property the whole design rests on: the fill is display-only because it never entered
+        // `perf`, so `perf_pct` — and therefore every gate, `long_leg`, `spy_premium`, `twin_groups` —
+        // still reads the 8Y leg as absent. If this ever passes, a fabricated leg is being scored.
+        assert!(perf_pct(&wtai, "8Y").is_none(), "the fill must not have leaked into `perf`");
+        // a leg that EXISTS is never replaced by the fill, whatever the coverage says
+        assert_eq!(col_cell("5y", &wtai, 0.0, None, "", &on), "+90.0%");
+        // (H-cov) staying dead: this record SPANS 20 years and its 20Y leg is blank anyway (a zero past
+        // price at the anchor). cov >= 1.0 -> refuse. Filling here is the exact bug core.rs's guard removed.
+        let mut old = wtai.clone();
+        old.age_years = Some(25.0);
+        assert_eq!(col_cell("20y", &old, 0.0, None, "", &on), "n/a", "a 25y record's blank 20Y is a data gap, not youth");
         // `leg` = the CAGR the growth rank scores, NOT the whole-life `cagr` cell. Top of the 20/8/5
         // ladder wins, so +2600% over 20y -> 17.9%/yr, and `cagr` stays n/a (this stub has no life_cagr)
         // — the two columns disagreeing is the whole point of adding this one.

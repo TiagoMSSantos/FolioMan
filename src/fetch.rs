@@ -518,6 +518,10 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     let age_years = long_dates.first().zip(long_dates.last())
         .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25);
     let life_cagr = core::life_cagr(&long_dates, &long_closes);
+    // Same series and the same `infl` the perf legs get, so this stands in for a missing long rung in
+    // the SAME units the neighbouring cells are printed in (real, not nominal, whenever the legs are).
+    // Display-only — `picks::perf_fill` is its only reader.
+    let life_return_pct = core::life_return(&long_dates, &long_closes, infl);
     // (#41) 36 trailing month-over-month returns for the growth_corr_cap redundancy skip. Built from the
     // DAILY `chart`, not the merged long series: the merge is monthly-head + daily-tail, so its cadence
     // changes mid-series, and only the tail covers the recent 36 months this needs anyway.
@@ -668,6 +672,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         fund: None,        // (G+) same: `enrich_fund_factor` fills it on the paths that fetch fundamentals
         age_years,
         life_cagr,
+        life_return_pct,
         trail_monthly,
         tr_cagr,
         history_proxied,

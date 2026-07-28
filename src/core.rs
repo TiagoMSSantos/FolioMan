@@ -211,6 +211,7 @@ pub struct Quote {
     pub fund: Option<FundFactors>,
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history, via `core::life_cagr`. NOT display-only since (#3i)/(#3j): the `cagr` column, the `growth_min_cagr` whole-life bar, and the growth RANK when `use_life_cagr` is on. Filled in the backtest too (same fn, `[..=as_of]` slice) -> train==serve. None = <6mo history / non-positive first close / stub
+    pub life_return_pct: Option<f64>,  // whole-life CUMULATIVE real return (%) over that same full history, via `core::life_return`. DISPLAY-ONLY, and deliberately NOT an entry in `perf`: `picks::perf_fill` prints it (marked `≈`) in a long rung the record ALMOST reaches, and putting it in `perf` would hand it to `perf_pct` and therefore to every gate. None = <6mo history / non-positive first close / stub / BACKTEST (never rendered there)
     pub trail_monthly: Vec<f64>,       // (#41) up to 36 trailing MONTH-over-MONTH returns (%), newest last, via `core::monthly_returns_tail`. Sole input to the growth_corr_cap redundancy skip. Built from the DAILY chart live and from the monthly slice in the backtest — the same fn, so a pair's correlation means the same thing in train and serve. Empty = no history / stub -> unjudgeable, and an unjudgeable pair never blocks
     pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). DISPLAY-ONLY (`trcagr` column), never scored; ≈ life_cagr for Acc funds/non-payers
     pub history_proxied: bool,         // (history_proxy) closes bridged from a configured older same-strategy twin — CAGR/YRS describe the STRATEGY, not this listing; rendered as `~` so the bridge is never invisible
@@ -277,6 +278,7 @@ impl Quote {
             fund: None,
             age_years: None,
             life_cagr: None,
+            life_return_pct: None,
             trail_monthly: Vec::new(),
             tr_cagr: None,
             history_proxied: false,
@@ -403,6 +405,33 @@ pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
             Some(((last / first).powf(1.0 / age) - 1.0) * 100.0)
         }
         _ => None,
+    }
+}
+
+/// Whole-life CUMULATIVE return %, REAL (deflated) when `infl` is given — the same treatment
+/// `horizon_changes` gives its >=1Y legs, so this number is comparable to the cells it stands in for.
+/// Same reason for the smoothed endpoint: a long leg is measured against `measure_endpoint`, not the
+/// raw last close (`life_cagr` above predates that and keeps the raw one).
+///
+/// Deflated by the RECORD's own span, not by any rung's: it is the return actually earned over those
+/// years. The rung it later fills is up to ~5 months longer (the YRS/leg dead band), worth ~0.7pp of
+/// inflation — noise against the ~25pp nominal-vs-real gap this exists to close.
+///
+/// DISPLAY-ONLY: `picks::perf_fill`'s value, and nothing else. Never enters `Quote::perf`, so no gate,
+/// no `long_leg`, no `spy_premium` and no `twin_groups` can reach it.
+pub fn life_return(dates: &[NaiveDate], closes: &[f64], infl: Option<&BTreeMap<i32, f64>>) -> Option<f64> {
+    let age = dates
+        .first()
+        .zip(dates.last())
+        .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25)?;
+    let first = *closes.first()?;
+    if first <= 0.0 || age < 0.5 {
+        return None; // same guards as `life_cagr`: no divide by a junk first close, no <6mo "life"
+    }
+    let pct = (measure_endpoint(closes) - first) / first * 100.0;
+    match infl.and_then(|s| inflation_compounded(s, age.round() as usize)) {
+        Some(cum) => Some(real_pct(pct, cum)),
+        None => Some(pct), // nominal: no series, or no inflation data covering that many years
     }
 }
 
@@ -3177,6 +3206,20 @@ mod tests {
     let nc: Vec<f64> = (0..710).map(|k| 100.0 + k as f64).collect();
     let np = horizon_changes(&near, &nc, None, &BTreeMap::new(), None);
     assert!(np[HORIZONS.iter().position(|(h, _)| *h == "2Y").unwrap()].is_some(), "20d short is within the 31d grace");
+    // `life_return` — the value `picks::perf_fill` prints in the rungs the (H-cov) guard above blanks.
+    // Same 4y fixture: 100 -> 100*1.0005^1459, i.e. ~+107.4% over ~3.99 years.
+    let nominal = life_return(&young, &yc, None).unwrap();
+    assert!((nominal - 107.36).abs() < 0.1, "whole-life cumulative return, nominal: {nominal}");
+    // ...and REAL when a series is passed: the perf legs it stands in for are deflated (inflation_adjust
+    // is on live), so a nominal fill would print ~25pp too high in a real column. 4y at 10%/yr = +46.41%
+    // cumulative -> 2.0736/1.4641 - 1.
+    let infl: BTreeMap<i32, f64> = (2022..=2025).map(|y| (y, 10.0)).collect();
+    let real = life_return(&young, &yc, Some(&infl)).unwrap();
+    assert!((real - 41.63).abs() < 0.1, "deflated by the record's own span: {real}");
+    // guards mirror life_cagr: junk first close and <6mo of record both yield None, never a number
+    assert!(life_return(&young, &vec![0.0; 1460], None).is_none());
+    let stub_d = &young[..30];
+    assert!(life_return(stub_d, &yc[..30], None).is_none(), "<6mo is not a 'life'");
     // backtest_quote on a synthetic rising MONTHLY series (cadence=12): the cadence window math must
     // still populate volatility (from monthly returns) and put a monotone climber at the top of its
     // range. Guards the long-horizon path against a zero/oversized window silently nulling the metrics.
