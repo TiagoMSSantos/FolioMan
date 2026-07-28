@@ -1257,7 +1257,13 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
         match ff.and_then(|f| f.peg_yield) {
             Some(p) if p < bar => {
                 let peg = 100.0 / p; // p > 0 always: peg_yield is None unless BOTH factors are positive
-                fails.push(("peg", format!("PEG {peg:.2} (ceiling {:.2})", tuning.growth_max_peg), peg <= tuning.growth_max_peg + 0.5));
+                // RELATIVE margin (50% over), not the flat +0.5 this used to carry. PEG is a MULTIPLE and
+                // the ceiling's measured range is 1.25..3.0, so a fixed 0.5 meant "40% over" at the bottom
+                // of that range and "17% over" at the top — one knob, two meanings, and AAPL at 2.14 vs a
+                // 1.6 ceiling was filed as a gross reject for missing by 0.04. Same shape as the two other
+                // relative margins here (`aum` and `liquidity` both test `>= floor * 0.5`); the pp-quantity
+                // gates keep absolute margins, which is right for them and wrong for a ratio.
+                fails.push(("peg", format!("PEG {peg:.2} (ceiling {:.2})", tuning.growth_max_peg), peg <= tuning.growth_max_peg * 1.5));
             }
             None if ff.and_then(|f| f.eps_ttm).is_some_and(|e| e <= 0.0) => {
                 // never a near-miss: there is no PEG at all to be close with
@@ -1343,11 +1349,25 @@ pub fn gate_review_lines(quotes: &[&Quote], tuning: &BuyHeuristic, ticker_w: usi
                 return None;
             }
             let why = fails.iter().map(|(gate, why, _)| format!("{gate}: {why}")).collect::<Vec<_>>().join("; ");
+            // (N) the third tuple field is `is_close`, which this block used to compute and DISCARD — so a
+            // pinned name one notch outside a fence and one nowhere near it read identically, and the
+            // actionable half of this footer was invisible. ALL failing gates must be close: a name that is
+            // narrow on one and gross on another costs more than one knob to recover, which is not "narrow".
+            // Pinned names never reach the near-miss tail (screen.rs skips them so the same ticker can't
+            // print twice), so this line is the only place they can carry that signal.
+            //
             // (round 54) hold-core names fail the growth gates FOREVER BY DESIGN (a broad index fund
             // never clears a 14%/yr momentum bar) — without this tag the same three pinned funds read
-            // as unresolved warnings every single run.
-            let hold = if core::hold_suitable(q) { "  (hold-core H — growth gates don't apply)" } else { "" };
-            Some(format!("  {:<ticker_w$} {}{hold}", q.ticker, why))
+            // as unresolved warnings every single run. It WINS the slot over `narrow`: on the one cohort
+            // whose gates never apply, "loosen if wanted" is advice pointing at the wrong lane.
+            let tag = if core::hold_suitable(q) {
+                "  (hold-core H — growth gates don't apply)"
+            } else if fails.iter().all(|(.., close)| *close) {
+                "  (narrow — loosen if wanted)"
+            } else {
+                ""
+            };
+            Some(format!("  {:<ticker_w$} {}{tag}", q.ticker, why))
         })
         .collect()
 }
@@ -3165,6 +3185,24 @@ mod tests {
     with_peg(&mut pq, Some(1.0), Some(-1.0)); // PEG 100 AND loss-making
     assert!(growth_score(&pq, &BuyHeuristic::default()).is_some(), "growth_max_peg 0 must be OFF, not a bar at infinity");
 
+    // (N) the peg NEAR-MISS margin is RELATIVE — `<= ceiling * 1.5`, not the flat `+ 0.5` it carried
+    // before. The AAPL row is the case that forced it: PEG 2.14 against a 1.6 ceiling sat 0.04 outside a
+    // flat bar of 2.10 and was filed a GROSS reject, so a name one notch out vanished from the near-miss
+    // tail. `pq` clears every other gate at default tuning (asserted above), so peg is the lone failure
+    // and `growth_near_miss` — which needs EXACTLY one, and close — isolates this margin by itself.
+    let peg16 = BuyHeuristic { growth_max_peg: 1.6, ..BuyHeuristic::default() };
+    let at_peg = |q: &mut Quote, peg: f64| with_peg(q, Some(100.0 / peg), Some(5.0));
+    at_peg(&mut pq, 2.14);
+    assert_eq!(growth_near_miss(&pq, &peg16).map(|(g, _)| g), Some("peg"), "PEG 2.14 vs a 1.6 ceiling is ONE notch out — this fails if anyone restores `+ 0.5`");
+    // the bar pinned from BOTH sides, so the 1.5 multiplier cannot drift unnoticed (1.6 * 1.5 = 2.40)
+    at_peg(&mut pq, 2.39);
+    assert_eq!(growth_near_miss(&pq, &peg16).map(|(g, _)| g), Some("peg"), "just inside 50% over the ceiling is still close");
+    at_peg(&mut pq, 2.41);
+    assert!(growth_near_miss(&pq, &peg16).is_none(), "past 50% over is a gross reject, not a near-miss");
+    // and the margin still has a FAR side — it widened, it did not disappear
+    at_peg(&mut pq, 5.0);
+    assert!(growth_near_miss(&pq, &peg16).is_none(), "PEG 5.0 vs a 1.6 ceiling is a hard reject at any margin");
+
     // (V) `growth_require_peg` — the OTHER half of "None is ambiguous". A multi-class filer whose 10-K
     // tags no per-share element ANYWHERE (ARES, the sole residue) has no PEG for the ceiling to judge, so it
     // walks past a gate that cut ODFL 2.49, ROST 2.27, WMT 2.38 and TDY 2.00 in the same run.
@@ -3337,6 +3375,24 @@ mod tests {
     assert_eq!(review.len(), 1);
     assert!(review[0].contains("young"));
     assert!(gate_review_lines(&[&aged(Some(9.0))], &tuning, 8).is_empty());
+    // (N) the footer surfaces `is_close`, which it used to compute and discard. Pinned names never reach
+    // the near-miss tail (screen.rs skips them to stop the same ticker printing twice), so this line is
+    // the ONLY place a one-notch pinned name can say so. Range is the cleanest lever: floor 80, close
+    // margin 10 -> 25% off the high is narrow (range 75), 45% off is not (range 55), and both fail range
+    // ALONE so the marker isn't reading some other gate.
+    let legs = [("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)];
+    let narrow_q = gate_review_lines(&[&quote(25.0, &legs)], &tuning, 8);
+    assert_eq!(narrow_q.len(), 1);
+    assert!(narrow_q[0].contains("range") && narrow_q[0].contains("(narrow"), "a one-notch miss must say so: {}", narrow_q[0]);
+    let gross_q = gate_review_lines(&[&quote(45.0, &legs)], &tuning, 8);
+    assert_eq!(gross_q.len(), 1);
+    assert!(!gross_q[0].contains("(narrow"), "55% in range is a hard reject, not one knob away: {}", gross_q[0]);
+    // ALL failing gates must be close, not merely one of them — a name narrow on range and gross on the
+    // CAGR leg costs two knobs, so it is not "loosen if wanted". (Two fails also keep it out of the
+    // near-miss tail, which needs exactly one; the two-gate tail is where that cohort lives.)
+    let mixed = quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
+    assert_eq!(gate_failures(&mixed, &tuning).unwrap().len(), 2, "fixture must fail range AND cagr");
+    assert!(!gate_review_lines(&[&mixed], &tuning, 8)[0].contains("(narrow"));
 
     // --- (history_proxy hints) young ETF + older fund on the IDENTICAL benchmark -> one suggest-only line ---
     let mut yng = quote(5.0, &[("1Y", 10.0)]); // no 5y+ leg -> the "history" fail a twin can repair

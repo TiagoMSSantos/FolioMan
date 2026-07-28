@@ -1325,7 +1325,11 @@ pub async fn run(args: Vec<String>) {
                 .then_with(|| cagr_val(b.1, &b.2).partial_cmp(&cagr_val(a.1, &a.2)).unwrap_or(std::cmp::Ordering::Equal))
                 .then_with(|| a.0.ticker.cmp(&b.0.ticker))
         });
-        println!("\nNear-miss — rejected on ONE growth gate (not ranked above), loosen intentionally if wanted:");
+        // Header names all THREE predicates this block applies, not just the first: it needs exactly one
+        // failing gate AND a close miss AND a non-pinned name. Advertising only "ONE growth gate" made a
+        // pinned name failing one gate narrowly (AAPL, peg 2.14) look like it belonged here when it can
+        // never reach this code — the pinned filter above runs before closeness is ever tested.
+        println!("\nNear-miss — rejected NARROWLY on ONE growth gate (not ranked above; pinned names: see gate review), loosen intentionally if wanted:");
         // (round 54) one row per FUND: the same UCITS fund lists on several venues (L&G Gold Mining
         // printed as both AUCO.L and ETLX.DE) — the momentum tables dedup by underlying, this block
         // didn't. First occurrence wins = the closest venue, thanks to the sort above.
