@@ -441,6 +441,43 @@ buy_heuristic:
                                  #   worst era -11.7->-4.8 (nothing degraded). 0 = off.
   growth_min_score: 5.0          # hide growth rows scoring <= this; 0 = show all top_picks
   growth_min_score_etf: 4.0      # ETF-only floor. ETF scores structurally cap ~5.6 (accel~0: a diversified basket doesn't accelerate; quality/liq/fund all 0) so the stock-calibrated 5.0 floor (fine at 26% of the ~19 stock ceiling) sits at ~89% of the ETF ceiling and shows only a sliver. 4.0 = surface the diversified broad-tech tier (Nasdaq-100 / World-IT / S&P-IT wrappers score 4.5-5.6; TER column lets you pick the cheapest wrapper) while still trimming the young single-sector padding (Europe-Financials 3.2, 6y). DISPLAY-only -> validated edge untouched. Does NOT surface broad S&P500 core (VUAA/SPYL young=no 5y leg, AUM5 ~8% CAGR=market-beta<growth_min_cagr) — history/thesis wall, not this floor
+  # (#41) REDUNDANCY skip — ARMED 2026-07-28, receipt written here for the first time (the knob shipped
+  #   built, probe-shared and measured, then sat at the code default 0 = off with nothing recording why).
+  #   WHAT IT IS: walk the ranked STOCK rows and drop one whose 36-month trailing-return correlation with
+  #   an already-kept row reaches the cap, refilling from below so the table stays full length. Stocks
+  #   only — the ETF lane is diversified by construction and crypto is one bet already. Not a gate and not
+  #   a score term: every row it removes passed everything, which is why it runs AFTER the score/sector
+  #   trim rather than inside score_parts. It removes the SECOND COPY of a bet. Pinned tickers bypass it,
+  #   exactly as they bypass the score trim.
+  #   WHY THIS IS TRUSTWORTHY WHERE CROSS-RUN NUMBERS ARE NOT: `core::decorrelate_keep` is called by BOTH
+  #   the live skip (picks.rs) and the CORR-CAP probe (backtest.rs), so probe and served rule cannot
+  #   drift; and `report_corr_cap` runs on EVERY backtest, making this a WITHIN-run sweep — immune to the
+  #   (#40) live-universe noise that invalidates comparing two runs.
+  #   THE SWEEP, 2026-07-28, top-10 held 12y:
+  #     cap off  book +14.2%/yr  excess +6.1  worst -7.8  OOS +5.6/+6.7   [= plain top-10]
+  #     cap 0.8  book +14.2      excess +6.1  worst -7.8  OOS +5.6/+6.7   [indistinguishable from off]
+  #     cap 0.6  book +14.3      excess +6.2  worst -7.8  OOS +5.8/+6.6   [late OOS half DIPS below off]
+  #     cap 0.4  book +14.4      excess +6.3  worst -7.8  OOS +5.9/+6.8   [both halves up, worst flat]
+  #   The probe's own ship rule is "a cap lifting book or worst with OOS both + -> ship". Only 0.4 clears
+  #   it on this run. An EARLIER run put the knee at 0.6 (+13.9->+14.3, win 86->88%, OOS +4.9/+6.8 ->
+  #   +5.1/+7.2) and called 0.4 "the same plateau". Needs >=12 overlapping months to judge a pair; an
+  #   unjudgeable pair never blocks.
+  #   ...AND IT STAYS OFF ANYWAY. 0.4 was armed on that sweep and REVERTED the same day on live evidence:
+  #   the probe's number does not transfer to the live table, because the two run on differently-shaped
+  #   populations. The probe fills a top-10 book by walking a DEEP ranked list, so dropping a correlated
+  #   name pulls the next one up. The live stock table after the score floor and the sector caps is ~38
+  #   rows of heavily intra-correlated US large-cap growth, so `decorrelate_keep` exhausts its candidates
+  #   and returns FEWER than n. Measured live, same binary, same day, rows kept out of 38:
+  #     cap off 38   cap 0.8 -> 37 (ORLY)   cap 0.6 -> 35 (+GOOG MSFT)
+  #     cap 0.4 -> 29 (+AMZN CARR EBAY HCA META NXPI PGR)
+  #   So config.rs's "refilling from below" is true of the probe and FALSE of the live table. Arming 0.4
+  #   would hide MSFT/AMZN/META — and PGR/HCA, the two names the roic `neutral` fix in this same round
+  #   just repaired — to buy +0.2%/yr measured on a book that is not this table. 0.8 costs a row and the
+  #   probe calls it indistinguishable from off, so it buys nothing either.
+  #   AND THE JOB IS ALREADY DONE, NON-DESTRUCTIVELY: the "Holdings overlap" footer already tells you
+  #   which picks are effectively one concentrated bet, without deleting rows from a ranking whose whole
+  #   purpose is to show you the candidates. Re-open this only with a refill that walks past n.
+  growth_corr_cap: 0.0
   growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
   # (#2) VALUATION TILT — ENABLED 2026-07-12 after re-validation. History: the 2026-07-02 wide run
   #   (8175 cutoffs) had the earnings_yield lane LOSING to price-only (+140.4 vs +151.2) and the tilt
@@ -1052,14 +1089,18 @@ buy_heuristic:
   #   68.4%. MA 4->1 (116.9%, capped). GOOGL 6->9 at an honest 29.8%, passed by names that gained more.
   #   The direction is right everywhere the factor applies — the opposite of margin_swing, which cut the
   #   names it advertised protecting.
-  #   KNOWN ASYMMETRY, accepted: 114 of 509 cached filers (22% — banks, insurers, REITs, and HCA) file no
-  #   operating margin, so roic is None, contributes 0, and in a RANKING a 0 is a relative demotion of up
-  #   to weight x cap = 10 pts, not neutrality. PGR fell 1->10 and HCA 5->13 on absent data, not on
-  #   leverage. This is the shipped mechanism's design (`unwrap_or(0.0)`), NOT something roic introduces,
-  #   and it is SMALLER than what already ships: the primary tilt is 0.07 x cap 300 = up to +21 pts with
-  #   the identical all-or-nothing shape. Sized here so the next person does not rediscover it as a bug.
-  #   ROIC is not meaningful for those filers anyway — their capital structure IS the business — and they
-  #   keep scoring on `quality`, which still runs for all 509.
+  #   THE COVERAGE ASYMMETRY — recorded here as "accepted", now FIXED by `neutral` below. 114 of 509
+  #   cached filers (22.4% — banks, insurers, REITs, and also CVX/COP/DE/ADM/BMY/BIIB/HCA) file no
+  #   operating margin, so roic is None, contributed 0, and in a RANKING a 0 is a relative demotion of up
+  #   to weight x cap = 10 pts, not neutrality. PGR fell 1->10 and HCA 5->13 on ABSENT DATA, not on
+  #   leverage. Re-censused on the `_facts10` cache: `op_margin` is the ONLY missing leg (77.6%) — revenue
+  #   and net_margin and roe and roa all read 100%, net_debt 99.6% — so `core::roic_return`'s ROA fallback
+  #   branch fires ZERO times, because the bail is `op_margin?` and sits before it.
+  #   The old defence ("smaller than the primary tilt's 0.07 x cap 300 = 21 pts, identical shape") compared
+  #   unlike things and is withdrawn. The primary's misses are CROSS-CLASS — an ETF or a coin has no PEG,
+  #   and filling it from a filer median would flatter it — so all-or-nothing is right there. This term's
+  #   misses are WITHIN-class: US filers, same lane, same peers, one absent line item. That is a data gap,
+  #   and a data gap must not be scored as the worst possible business.
   #   NO credibility multiplier like MAX_EQUITY_MULT: only 6 names clear 150%, and a bar cutting MCK's
   #   artifact (1,639% on invested capital = 0.5% of assets) would take DECK (213% on 16%) with it, which
   #   is genuinely capital-light. The term's own `cap` already clamps both to any excellent business.
@@ -1067,6 +1108,16 @@ buy_heuristic:
     - factor: roic
       weight: 0.25           # the ablation peak above. 0.1 and 0.5 both still pay; 0.25 pays most
       cap: 40.0              # matches quality_cap — the band where return-on-capital still discriminates
+      # (N) what a MISSING roic scores, instead of the old hard 0. 17.3 is the MEDIAN roic of the 395
+      # covered filers under this same clamp(0,40) (mean 20.2; 19% clamp at the cap; 24 read negative).
+      # "Unknown" therefore ranks as TYPICAL rather than as worst, while a KNOWN-BAD roic still floors at
+      # 0 and ranks BELOW an unknown one — the clamp is outside the fill precisely to keep that ordering.
+      # BACKTEST-BLIND, same label as growth_min_age_years / growth_min_aum_etf / growth_turnover_weight,
+      # and blind for a reason worth stating: roic builds NO book on the as-of path (the held-book loop
+      # now prints `roic n=0 rows` instead of silently skipping it), so there is no OOS split to read and
+      # the census of today's filers is the only honest basis. If a later run gives roic as-of coverage,
+      # sweep this value the way (#43) swept the weight.
+      neutral: 17.3
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.

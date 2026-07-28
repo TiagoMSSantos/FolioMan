@@ -279,6 +279,25 @@ fn render_annual(
     }
     out.push('\n');
 
+    // (G+/N) the ADDITIONAL named tilts. These were invisible here while contributing real points: with
+    // the shipped `roic` term at weight 0.25, PGR carried +4.3 pts from a line this drill-in never
+    // mentioned. Mirrors picks.rs's `weight × clamp(value.unwrap_or(neutral), 0, cap)` exactly — one
+    // arithmetic, two printers — and says FILLED when the factor is absent and `neutral` stood in for
+    // it, because "unknown, scored as typical" and "measured this" must never read the same.
+    for t in &tuning.growth_fund_extra {
+        let v = core::select_fund_factor(&ff, &t.factor);
+        let used = v.unwrap_or(t.neutral);
+        out.push_str(&format!(
+            "  {} {} -> {} pts in growth_score (weight {:.2}, cap {:.0}{})\n",
+            t.factor,
+            v.map(|x| format!("{x:+.1}")).unwrap_or_else(|| format!("- FILLED at neutral {:.1}", t.neutral)),
+            pts(Some(t.weight * used.clamp(0.0, t.cap))),
+            t.weight,
+            t.cap,
+            if v.is_none() { ", not reported by this filer" } else { "" },
+        ));
+    }
+
     let has_table = !annual.is_empty();
     (out, has_table)
 }
@@ -540,6 +559,34 @@ mod tests {
         let (off, _) = render_annual("ACME", "FMP", &rows, today(), Some(100.0), None, &config::BuyHeuristic::default());
         assert!(off.contains("earnings_yield +2.0%"), "{off}");
         assert!(!off.contains("-> "), "weight-0 must not claim a score contribution: {off}");
+    }
+
+    /// (N) the `growth_fund_extra` terms print their own arithmetic, and a term filled from `neutral`
+    /// SAYS SO. Before this round the shipped roic term contributed real points with no line here at
+    /// all — PGR (no `op_margin`, so roic is None) carried +4.3 invisible points into its verdict.
+    /// "Unknown, scored as typical" and "measured this" must never render the same.
+    #[test]
+    fn fund_extra_line_marks_a_neutral_fill() {
+        let rows = vec![quarter(2024, 6, Some(100.0), Some(2.0))];
+        let tuned = config::BuyHeuristic {
+            growth_fund_extra: vec![config::FundTerm { factor: "roic".into(), weight: 0.25, cap: 40.0, neutral: 17.3 }],
+            ..Default::default()
+        };
+        let (out, _) = render_annual("ACME", "SEC", &rows, today(), Some(100.0), None, &tuned);
+        assert!(
+            out.contains("roic - FILLED at neutral 17.3 -> +4.3 pts in growth_score (weight 0.25, cap 40, not reported by this filer)"),
+            "{out}"
+        );
+        // the fill is still clamped by the term's own cap — mirrors picks.rs, which clamps AFTER filling
+        let capped = config::BuyHeuristic {
+            growth_fund_extra: vec![config::FundTerm { factor: "roic".into(), weight: 0.25, cap: 40.0, neutral: 1000.0 }],
+            ..Default::default()
+        };
+        let (cap_out, _) = render_annual("ACME", "SEC", &rows, today(), Some(100.0), None, &capped);
+        assert!(cap_out.contains("-> +10.0 pts in growth_score"), "{cap_out}");
+        // and the default empty list prints nothing at all
+        let (off, _) = render_annual("ACME", "SEC", &rows, today(), Some(100.0), None, &config::BuyHeuristic::default());
+        assert!(!off.contains("roic"), "an empty growth_fund_extra must stay silent: {off}");
     }
 
     /// (round 115) missing close -> "-", never a fabricated ratio.

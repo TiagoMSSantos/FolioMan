@@ -962,13 +962,20 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // on incompatible scales, so one shared clamp would silently flatten whichever is smaller.
     // `growth_fund_extra` is empty by default, and an empty sum is exactly 0.0, so the default lane is
     // byte-identical to the single-factor tilt. An unknown factor name reads None -> contributes 0.
+    // (N) a MISSING extra factor scores `t.neutral`, not 0. The line above says "don't penalise a
+    // missing/negative one" and the old `unwrap_or(0.0)` only delivered the NEGATIVE half: in a
+    // ranking, absent is not neutral — it is a demotion of up to `weight × cap`. 114 of 509 cached SEC
+    // filers (22.4%) report no `op_margin`, so roic is None for them and they were charged the full
+    // 0.25 × 40 = 10 pts against a covered-peer median of 17.3. `neutral` defaults to 0.0, so a term
+    // that doesn't set it behaves exactly as before and every recorded receipt still holds. The clamp
+    // stays OUTSIDE the fill on purpose: a known-bad value floors at 0 and ranks BELOW an unknown one.
     let fund = tuning.growth_fund_weight * quote.fund_factor.unwrap_or(0.0).clamp(0.0, tuning.growth_fund_cap)
         + tuning
             .growth_fund_extra
             .iter()
             .map(|t| {
                 let v = quote.fund.as_ref().and_then(|f| crate::core::select_fund_factor(f, &t.factor));
-                t.weight * v.unwrap_or(0.0).clamp(0.0, t.cap)
+                t.weight * v.unwrap_or(t.neutral).clamp(0.0, t.cap)
             })
             .sum::<f64>();
     // (M) 12-1 momentum tilt. Floor at 0: reward momentum, don't punish its absence (matches (G)/div).
@@ -3880,9 +3887,9 @@ mod tests {
     // clamp would flatten whichever is smaller. eps_yoy 200 is over its cap 50; the other two are not.
     let multi = BuyHeuristic {
         growth_fund_extra: vec![
-            crate::config::FundTerm { factor: "rev_yoy".into(), weight: 0.5, cap: 100.0 },
-            crate::config::FundTerm { factor: "eps_yoy".into(), weight: 0.1, cap: 50.0 },
-            crate::config::FundTerm { factor: "net_margin".into(), weight: 0.2, cap: 100.0 },
+            crate::config::FundTerm { factor: "rev_yoy".into(), weight: 0.5, cap: 100.0, neutral: 0.0 },
+            crate::config::FundTerm { factor: "eps_yoy".into(), weight: 0.1, cap: 50.0, neutral: 0.0 },
+            crate::config::FundTerm { factor: "net_margin".into(), weight: 0.2, cap: 100.0, neutral: 0.0 },
         ],
         ..BuyHeuristic::default()
     };
@@ -3890,17 +3897,51 @@ mod tests {
     assert!((score_parts(&with_facts, &multi).unwrap().fund - want).abs() < 1e-9);
     // an unknown name reads None and contributes 0 rather than erroring — same as the primary term
     let typo = BuyHeuristic {
-        growth_fund_extra: vec![crate::config::FundTerm { factor: "rev_yyo".into(), weight: 9.0, cap: 100.0 }],
+        growth_fund_extra: vec![crate::config::FundTerm { factor: "rev_yyo".into(), weight: 9.0, cap: 100.0, neutral: 0.0 }],
         ..BuyHeuristic::default()
     };
     assert_eq!(score_parts(&with_facts, &typo).unwrap().fund, 0.0);
-    // a quote with NO fundamentals under a configured term is neutral, not a panic
+    // a quote with NO fundamentals under a configured term contributes `neutral`, which is 0 here
     assert_eq!(score_parts(&none_fund, &multi).unwrap().fund, 0.0);
     // primary and extra ADD: same quote, primary term on top of the three extras
     let both = BuyHeuristic { growth_fund_weight: 0.5, ..multi.clone() };
     let mut with_both = with_facts.clone();
     with_both.fund_factor = Some(15.0);
     assert!((score_parts(&with_both, &both).unwrap().fund - (want + 0.5 * 15.0)).abs() < 1e-9);
+
+    // (N) a MISSING extra factor scores `neutral`, NOT 0. In a ranking an absent datum is not neutral:
+    // at 0 it is a demotion of up to `weight × cap`, and the shipped roic term (0.25 × 40) charged TEN
+    // POINTS to the 114 of 509 cached SEC filers (22.4%) that report no `op_margin` — banks, insurers
+    // and also CVX/COP/DE/ADM. Modelled here on `roic` with the shipped shape and the census median.
+    let roic_term = |neutral: f64| BuyHeuristic {
+        growth_fund_extra: vec![crate::config::FundTerm { factor: "roic".into(), weight: 0.25, cap: 40.0, neutral }],
+        ..BuyHeuristic::default()
+    };
+    let facts = |roic: Option<f64>| {
+        let mut q = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("10Y", 500.0)]);
+        q.fund = Some(core::FundFactors { roic, ..Default::default() });
+        q
+    };
+    let filled = roic_term(17.3); // census median of the 395 covered filers, clamp(0,40)
+    // the whole point: unknown now scores as TYPICAL, so a missing leg costs nothing against a
+    // median peer. This assert fails the moment anyone restores `unwrap_or(0.0)`.
+    assert_eq!(
+        growth_score(&facts(None), &filled).unwrap(),
+        growth_score(&facts(Some(17.3)), &filled).unwrap(),
+        "a missing factor must score as `neutral`, not as the worst possible value"
+    );
+    // ...and it is NOT a floor: a KNOWN-BAD roic clamps to 0 and ranks BELOW an unknown one. That
+    // ordering is the reason the clamp stays outside the fill.
+    assert!(
+        score_parts(&facts(Some(2.0)), &filled).unwrap().fund < score_parts(&facts(None), &filled).unwrap().fund,
+        "known-bad must rank under unknown"
+    );
+    // the fill still respects the cap — a neutral above it contributes weight × cap, not weight × neutral
+    assert_eq!(score_parts(&facts(None), &roic_term(1000.0)).unwrap().fund, 0.25 * 40.0);
+    // and `neutral` defaults to 0.0, so a term that omits it is byte-identical to the pre-(N) lane
+    let omitted: crate::config::FundTerm = serde_yaml::from_str("factor: roic\nweight: 0.25\ncap: 40.0\n").unwrap();
+    assert_eq!(omitted.neutral, 0.0, "an omitted `neutral` must deserialize to 0.0 — every recorded receipt depends on it");
+    assert_eq!(score_parts(&facts(None), &roic_term(0.0)).unwrap().fund, 0.0);
 
     // (D) dividend fold — magnitude + cap on the LIVE term (default weight 1.5, cap 6.0); isolate via ScoreParts.dividend.
     // dividend_yield_1y divides -> not bit-exact -> epsilon compare (matches the float-score convention above).

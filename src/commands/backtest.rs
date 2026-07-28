@@ -1326,6 +1326,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("margin_stability", |f| f.margin_stability),
     ];
     let mut any = false;
+    let mut skipped: Vec<String> = Vec::new();
     for (name, get) in factors {
         let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
         for s in samples {
@@ -1340,10 +1341,22 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         if let Some((b, _, e, w, wo, el, la)) = book_stats(&by, n, years) {
             any = true;
             println!("  {name:<14} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (n={rows})");
+        } else {
+            // (N) SAY SO when a listed factor builds no book. This loop used to print only on Some, so a
+            // factor with zero as-of coverage was indistinguishable from one nobody configured — and
+            // `roic`, the ONE shipped `growth_fund_extra` term (0.25 × 40 = ten live points), fell into
+            // that hole: no row here, no FUNDAMENTAL row, no ablation row, while receipt (#43) cites a
+            // three-run ablation this data path does not reproduce. A term that can't be graded must at
+            // least be visible. Printed tail only — it cannot move a rank.
+            skipped.push(format!("{name} n={rows}"));
         }
     }
     if !any {
         println!("  no fundamental coverage — needs `fund` + fund_source sec (free EDGAR) or an FMP key.");
+    } else if !skipped.is_empty() {
+        // only when SOME factor did build a book — that is when a missing row is ambiguous. With no
+        // coverage at all the line above already says so, and 18 identical "n=0" rows say nothing.
+        println!("  no book: {} — listed, NOT scored (a shipped tilt in here is ungradeable, not fine)", skipped.join(", "));
     }
     println!("  (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.");
     println!("   every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,");
