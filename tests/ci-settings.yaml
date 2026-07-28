@@ -382,6 +382,26 @@ buy_heuristic:
                                  #   surface — alts spend most of their life far below ATH yet still out-compound. The
                                  #   BTC-relative tilt below + the NUPL damp keep the wider crypto table honest. Stocks/ETFs
                                  #   keep the strict 80 gate above. Lower toward 0 for even more coins, raise toward 80 to tighten.
+  growth_min_range_pct_8y: 80.0  # GATE: the SAME 80 bar re-measured on the LAST 8 YEARS (`stats_8y.range_pct`).
+                                 #   WHY BOTH: `range_pct` is a PERCENTILE of today's price over the window's closes, so a
+                                 #   name whose old, much-lower closes sit in the ~10y chart clears 80 on the strength of
+                                 #   history that has nothing to do with the last 8 years. PGR ranked #1 (22.3 vs 20.9 next)
+                                 #   at 2Y -14.0%, 29.4% off its high, life CAGR +17%/yr powered by decades now outside the
+                                 #   window. Measured 2026-07-28 on the live screen: PGR 76%, TDG 75% — the only two names
+                                 #   the bar cut, and exactly the two worst 2Y in the lane (-14.0%, -10.9%; next is NXPI at
+                                 #   -3.6%, which scrapes through). ETF and crypto lanes came out byte-identical.
+                                 #   80 SPECIFICALLY, not "a bar": it is the level that makes this gate EQUAL the `S-8Y`
+                                 #   column's bare `n/a`. That column re-scores under an 8Y pin which neutralizes the CAGR
+                                 #   floors, and range is the only stat the pin swaps that any gate can newly reject on — so
+                                 #   at 80 the gate fires exactly when the cell blanks, and a ranked row can no longer print
+                                 #   `n/a` there. Any other level breaks that equality (picks.rs pins it in a test).
+                                 #   BACKTEST-BLIND: `stats_8y` is set only in fetch.rs; `backtest_quote` builds from
+                                 #   `Quote::stub`, so this gate cannot fire in a backtest — same standing as the age/AUM
+                                 #   gates. It is armed on the live read alone and CANNOT be A/B'd like the 70-vs-80 sweep
+                                 #   above. Code default is 0.0 (off), so this line is the whole of the shipped behaviour.
+  growth_min_range_pct_8y_crypto: 40.0 # GATE (crypto only): same split as the pair above, same 40. INERT on today's table —
+                                 #   BNB and BTC keep an S-8Y (29.0, 18.5) at 43-53% off their highs, because a coin's normal
+                                 #   life is far below ATH. Here so the crypto lane can never inherit the equity 80 by accident.
   growth_btc_outperf_weight: 0.3 # SCORE (crypto only): tilt a coin by its 1Y return vs BITCOIN's (the market base) — beats
                                  #   BTC -> boost, lags -> mild dock, bounded 0.5x..2x. BTC itself = 1.0x (the neutral anchor
                                  #   you read the others against). SCREEN/CHECK-only (backtest-blind, validated edge untouched). 0 = off.

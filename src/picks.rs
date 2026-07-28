@@ -748,6 +748,20 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if quote.range_pct < min_range {
         return None; // equities: NOT near its high -> the on-sale lane's job. crypto: looser floor (alts run below ATH)
     }
+    // (S-8Y) the SAME percentile bar on the LAST 8 YEARS. `range_pct` above is measured on the ~10y
+    // fetched chart, so a name whose old, much-lower closes prop up its percentile clears it while its
+    // recent 8 years read as a name in decline — PGR ranked #1 (score 22.3, next 20.9) at 2Y -14.0% and
+    // 29.4% off its high on exactly that gap: its +17%/yr life CAGR is powered by decades now outside
+    // the window. This bar IS what blanks the `S-8Y` column (see the knob doc for why range is the only
+    // swapped stat that can newly reject), so an armed gate and a blank cell can never disagree.
+    // `is_some_and`: no `stats_8y` = under 8y of record = its whole span IS the window, already judged
+    // by the bar above. Missing data is not a failed bar, same as every other gate here.
+    // LIVE-ONLY BY CONSTRUCTION: `stats_8y` is set only in fetch.rs, so this is inert in the backtest —
+    // the validated edge cannot move, and equally cannot vouch for this gate.
+    let min_range_8y = if crypto { tuning.growth_min_range_pct_8y_crypto } else { tuning.growth_min_range_pct_8y };
+    if min_range_8y > 0.0 && quote.stats_8y.as_ref().is_some_and(|s| s.range_pct < min_range_8y) {
+        return None; // near its 10y high only because the window is long enough to hide the last 8 years
+    }
     // a "20yr+ proven CAGR" candidate must HAVE a multi-year record. Crypto used to fall back to its
     // 1Y leg here — but that admitted no-history tokens (microNFT, freshly-listed scams with a
     // +100000% data-artifact year) into a lane that promises a proven long trend. Require a real >2Y
@@ -1171,6 +1185,15 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     }
     if quote.range_pct < min_range {
         fails.push(("range", format!("{:.0}% in range (need ≥{:.0}%)", quote.range_pct, min_range), quote.range_pct >= min_range - 10.0));
+    }
+    // (S-8Y) mirror of the 8y-window range bar. MUST stay the same expression as `score_parts`' copy —
+    // the two disagreeing means a name is silently dropped from the ranking while the tail claims it
+    // passes, or vice versa (see picks.rs:745). Same `is_close` convention as the 10y entry above.
+    let min_range_8y = if crypto { tuning.growth_min_range_pct_8y_crypto } else { tuning.growth_min_range_pct_8y };
+    if min_range_8y > 0.0 {
+        if let Some(s) = quote.stats_8y.as_ref().filter(|s| s.range_pct < min_range_8y) {
+            fails.push(("range8y", format!("{:.0}% in 8y range (need ≥{:.0}%)", s.range_pct, min_range_8y), s.range_pct >= min_range_8y - 10.0));
+        }
     }
     if long_cagr < min_cagr {
         // close = within 1.5 pp of the floor. 4.0 flooded the screen tail with ~55 "10%/yr vs a 14%
@@ -3864,6 +3887,33 @@ mod tests {
     let no20 = quote(0.0, &[("1Y", 60.0), ("5Y", 200.0), ("8Y", 300.0)]);
     let g20 = BuyHeuristic { growth_min_20y_pct: 600.0, ..BuyHeuristic::default() };
     assert!(growth_score(&no20, &g20).is_some(), "absent 20Y must be SKIPPED, not treated as a 0% return");
+
+    // (S-8Y range) the 8y-window percentile bar. `rungs` has range_pct 100 — it clears the LIVE bar
+    // with room, so anything that rejects below can only be reading `stats_8y`. That is the PGR shape:
+    // healthy on the ~10y chart, weak once the oldest years drop out.
+    let mut weak8 = rungs.clone();
+    weak8.stats_8y = Some(core::Stats8 { range_pct: 40.0, trend_r2: 0.9, max_drawdown_pct: 30.0, underwater_yrs: None });
+    assert!(growth_score(&weak8, &tuning).is_some(), "ships OFF (0.0) -> the 8y window must reject nobody");
+    let armed = BuyHeuristic { growth_min_range_pct_8y: 80.0, growth_min_range_pct_8y_crypto: 40.0, ..BuyHeuristic::default() };
+    assert!(growth_score(&weak8, &armed).is_none(), "40% of its 8y range vs an 80 bar must gate, despite a 100 live range");
+    let why = gate_failures(&weak8, &armed).unwrap();
+    assert!(why.iter().any(|(g, _, _)| *g == "range8y"), "score_parts gated it but the tail doesn't say so");
+    // THE EQUIVALENCE this gate was chosen for: it fires exactly when the S-8Y column blanks, so an
+    // armed ranking and the printed diagnostic can never disagree. If a future gate starts reading one
+    // of the OTHER stats `as_8y_window` swaps (trend_r2, maxdd, underwater), this assert is what catches
+    // the divergence — `tuning8` is reproduced here from the render site (picks.rs:1927).
+    let tuning8 = BuyHeuristic { fixed_cagr_years: 8, growth_min_cagr: f64::NEG_INFINITY, growth_min_cagr_crypto: f64::NEG_INFINITY, ..armed.clone() };
+    assert!(growth_score(&as_8y_window(&weak8), &tuning8).is_none(), "gate fired -> the S-8Y cell must be the n/a it mirrors");
+    // no `stats_8y` = under 8y of record: its whole span IS the window and the live bar already judged
+    // it. Missing data is not a failed bar — the same rule the 20Y floor above is pinned on.
+    assert!(growth_score(&rungs, &armed).is_some(), "absent stats_8y must be SKIPPED, not read as a 0% range");
+    // each class reads its OWN knob, like the 10y pair: 50% gates an equity at 80 and clears a coin at 40
+    let mut mid8 = rungs.clone();
+    mid8.stats_8y = Some(core::Stats8 { range_pct: 50.0, trend_r2: 0.9, max_drawdown_pct: 30.0, underwater_yrs: None });
+    assert!(growth_score(&mid8, &armed).is_none(), "equity: 50 < 80");
+    let mut coin8 = mid8.clone();
+    coin8.ticker = "ETH-EUR".into();
+    assert!(growth_score(&coin8, &armed).is_some(), "crypto: 50 >= its own 40 bar — the split must hold on this pair too");
     // (crypto) the `!crypto` guard came OFF the 5Y bar — a coin answers to it now. That is a
     // deliberate behaviour change the backtest cannot see (its edge metrics all drop crypto), so
     // pin it here: this assert failing means the guard came back.
