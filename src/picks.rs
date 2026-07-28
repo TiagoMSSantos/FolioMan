@@ -1404,7 +1404,26 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     s.push_str(&format!("    quality  = quality_weight × ROE                       = {:.2}\n", p.quality));
     let (keep, tier) = tax_keep(quote, tuning); // (D) same call dividend_reward scored on -> label can't drift
     s.push_str(&format!("    dividend = dividend_weight × min(1Y yield, cap) × keep = {:.2}   (PT tax keep {keep:.2} — {tier})\n", p.dividend));
-    s.push_str(&format!("    fund     = growth_fund_weight × clamp(fund_factor)    = {:.2}\n", p.fund));
+    // (G+) `p.fund` is the SUM of the primary tilt AND every `growth_fund_extra` term, so the one-line
+    // label is the whole story only while that list is EMPTY (the default, and then this is byte-identical
+    // to before). With extras configured the label would otherwise name a formula that did not produce the
+    // number printed next to it — break them out instead.
+    s.push_str(&format!(
+        "    fund     = {:<42} = {:.2}\n",
+        if tuning.growth_fund_extra.is_empty() { "growth_fund_weight × clamp(fund_factor)" } else { "primary tilt + the extras below" },
+        p.fund
+    ));
+    for t in &tuning.growth_fund_extra {
+        let v = quote.fund.as_ref().and_then(|f| crate::core::select_fund_factor(f, &t.factor));
+        let shown = v.map_or_else(|| "n/a".to_string(), |v| format!("{v:.1}"));
+        s.push_str(&format!(
+            "      + {:<16} {:.2} × {:<21} = {:.2}\n",
+            t.factor,
+            t.weight,
+            format!("clamp({shown}, 0, {:.0})", t.cap),
+            t.weight * v.unwrap_or(0.0).clamp(0.0, t.cap)
+        ));
+    }
     s.push_str(&format!("    mom121   = growth_mom121_weight × clamp(12-1 mom)     = {:.2}\n", p.mom121));
     s.push_str(&format!("    smooth   = growth_smoothness_weight × trend_r2 (R²)   = {:.2}\n", p.smooth));
     s.push_str(&format!("    underwtr = −growth_underwater_weight × underwater_yrs = {:.2}\n", p.underwater));

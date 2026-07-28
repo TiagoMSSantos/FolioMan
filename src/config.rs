@@ -945,12 +945,16 @@ mod tests {
         // factor name that still matched its receipt. Pin BOTH so neither can drift alone.
         assert_eq!(h.growth_fund_weight, 0.07, "{receipts}");
         assert_eq!(h.growth_fund_cap, 300.0, "cap is half the tilt magnitude — {receipts}");
-        // (G+) the multi-term tilt ships INERT. An empty list contributes exactly 0.0, which is what
-        // keeps every receipt above numerically valid; the first non-empty entry is a live rank change
-        // and must arrive with its own probe row (+rho, both OOS halves positive), same bar as the
-        // primary. See receipt (#3e): of the six factors it unblocked, only eps_growth cleared that bar
-        // at BOTH horizons — net_margin measured NEGATIVE on all four halves.
-        assert!(h.growth_fund_extra.is_empty(), "{receipts}");
+        // (G+) the multi-term tilt is no longer inert: (#43) ships ROIC as its first entry. The bar for a
+        // non-empty list was "+rho with both OOS halves positive, same as the primary" — roic cleared it
+        // on the DECISIVE instrument, the within-run ablation, paying at 0.1/0.25/0.5 (Δ-2.8/-6.2/-2.3)
+        // where the rejected interest_cover paid nothing (Δ+0.0/+0.0/+5.4), plus held-book OOS +3.3/+4.3.
+        // Pin factor, weight AND cap: weight × cap is ONE dial (receipt (#3)), so any of the three drifting
+        // alone re-ranks the live book under a config that still matches its receipt.
+        assert_eq!(h.growth_fund_extra.len(), 1, "{receipts}");
+        assert_eq!(h.growth_fund_extra[0].factor, "roic", "{receipts}");
+        assert_eq!(h.growth_fund_extra[0].weight, 0.25, "the measured ablation peak — {receipts}");
+        assert_eq!(h.growth_fund_extra[0].cap, 40.0, "matches quality_cap — {receipts}");
         // (D) revived 2026-07-25. This one canNOT carry the receipt the message above demands: the
         // backtest cannot reconstruct as-of dividends, so no walk-forward run grades it at any weight
         // (see commands/backtest.rs's module header). It is pinned as a JUDGMENT lever sized by

@@ -1275,8 +1275,9 @@ fn report_entry_state(
     verdict
 }
 
-/// Only the free SEC/income-statement factors are listed (roe + the round-107 survival levels are
-/// SEC-computed; roic stays premium-gated). Runs only under `fund` (else `s.fund` is None everywhere).
+/// Only the free SEC/income-statement factors are listed (roe, the round-107 survival levels and — since
+/// (#43) — roic are all SEC-computed; `FundRow::roic`, the PREMIUM field, is still never populated and is
+/// not what the roic row reads). Runs only under `fund` (else `s.fund` is None everywhere).
 fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let (bd, bc) = bench;
     if bd.len() < 2 {
@@ -1312,6 +1313,7 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         ("peg_yield", |f| f.peg_yield),            // GROWTH-AT-PRICE: earnings_yield · as-of CAGR (1/PEG). THE SHIPPED tilt since 2026-07-25 — the old "redundant with earnings_yield×CAGR already in the score" note was an assumption, never measured, and it was wrong on every view but this one
         ("buyback_yield", |f| f.buyback_yield),    // capital return
         ("quality(roe/roa)", |f| f.quality),       // quality of capital as SCORED: NetIncome ÷ StockholdersEquity, or ÷ Assets where equity is negative
+        ("roic", |f| f.roic),                      // (#43) the same question WITHOUT the leverage: EBIT ÷ (equity + net debt). Head-to-head against the row above is the whole point — if the two grade the same, the leverage adjustment bought nothing
         ("roe_raw", |f| f.roe),                    // the unfiltered ratio — a book built on this one holds the negative-equity fakes
         ("insider_net_buys_90d", |f| f.insider_net_buys_90d), // (Item 4) insider conviction — rows appear only under `backtest … insider`
         // (round 107) SURVIVAL levels (SEC-computed, high = safer) — swept as rank factors here,
@@ -1344,7 +1346,8 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         println!("  no fundamental coverage — needs `fund` + fund_source sec (free EDGAR) or an FMP key.");
     }
     println!("  (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.");
-    println!("   roe + the round-107 survival levels (fcf_margin/interest_cover/net_cash_rev) are SEC-computed; roic stays premium-gated.)");
+    println!("   every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,");
+    println!("   which is DERIVED (EBIT ÷ equity+net debt), not the premium `FundRow::roic` that never populates.)");
 
     // BLEND sweep: pure-value beat pure-score standalone — but pure-value alone risks value-traps the
     // gates miss, so find the growth_fund_weight KNEE where tilting growth_score toward the baked

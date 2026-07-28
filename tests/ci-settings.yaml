@@ -1021,6 +1021,52 @@ buy_heuristic:
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are
                              #   the neutral value and this fixture carries the live one.
+  # (#43) ROIC — the FIRST non-empty `growth_fund_extra` entry, so the mechanism stops being inert here.
+  #   WHAT IT IS: pre-tax EBIT / (equity + net debt), derived in core::roic_return from levels already
+  #   cached (no refetch, no cache-key bump). Equity is reconstructed as NI / ROE, which is signed right
+  #   by construction — a loss-maker has NI<0 AND ROE<0 so equity comes out positive, and genuine
+  #   negative equity is where those signs DISAGREE.
+  #   WHY, when `quality` already scores return-on-capital: ROE divides by equity ALONE. Over a 20-year
+  #   hold a business compounds at what it earns on ALL capital, borrowed included, and quality_cap 40
+  #   means everything above 40% ROE already scores identically — so the discriminating band is exactly
+  #   where the leverage gap lives.
+  #   ABLATION, three runs, weights 0.1/0.25/0.5 at cap 40. THE DECISIVE INSTRUMENT (within-run, so #40
+  #   immune) and all three scored 1098 windows — an IDENTICAL pool, which is the (#40) tell coming back
+  #   clean, so even the cross-run read is legal this time:
+  #        weight   fund_extra:roic      quality_weight (SHIPPED, 0.15)
+  #        0.1      edge Δ-2.8           Δ-1.9
+  #        0.25     edge Δ-6.2   <- peak Δ-5.6
+  #        0.5      edge Δ-2.3           Δ+4.5   <- the ROE term COSTS here; roic still pays
+  #   Negative Δ = removing the term costs edge = the term pays. It pays at EVERY weight, peaks at 0.25,
+  #   and beats the shipped ROE-based term at all three. Contrast the rejected `interest_cover` directly
+  #   above: Δ+0.0 / +0.0 / +5.4 — never paid, and cost at 0.5. Opposite result on the same instrument.
+  #   HELD-BOOK (same runs, identical n=178 across all three): book +15.4%/yr, excess +3.9, win 100%,
+  #   worst +0.1, OOS +3.3/+4.3 — beats quality(roe/roa) (+15.1/+3.5, OOS +2.7/+4.1) and roe_raw
+  #   (+15.1/+3.4, OOS +2.5/+4.1) on every column, within-run. It does NOT beat growth_score's +6.5
+  #   excess, so it is not a better standalone book SELECTOR; the ablation says it ADDS information to a
+  #   score that already reads price, momentum and PEG, which is the different and stronger claim — and
+  #   the exact claim interest_cover failed while topping this very table.
+  #   MECHANISM (live screen, roic on vs off, the check that rejected growth_max_margin_swing). Promotes
+  #   AZO 10->3 and ORLY 12->7: buybacks drove BOTH to negative equity, so ROE is garbage (-73%, -332%),
+  #   quality_return falls back to ROA (12.9%, 15.3%) and ROA understates them 4-5x. ROIC reads 70.6% and
+  #   68.4%. MA 4->1 (116.9%, capped). GOOGL 6->9 at an honest 29.8%, passed by names that gained more.
+  #   The direction is right everywhere the factor applies — the opposite of margin_swing, which cut the
+  #   names it advertised protecting.
+  #   KNOWN ASYMMETRY, accepted: 114 of 509 cached filers (22% — banks, insurers, REITs, and HCA) file no
+  #   operating margin, so roic is None, contributes 0, and in a RANKING a 0 is a relative demotion of up
+  #   to weight x cap = 10 pts, not neutrality. PGR fell 1->10 and HCA 5->13 on absent data, not on
+  #   leverage. This is the shipped mechanism's design (`unwrap_or(0.0)`), NOT something roic introduces,
+  #   and it is SMALLER than what already ships: the primary tilt is 0.07 x cap 300 = up to +21 pts with
+  #   the identical all-or-nothing shape. Sized here so the next person does not rediscover it as a bug.
+  #   ROIC is not meaningful for those filers anyway — their capital structure IS the business — and they
+  #   keep scoring on `quality`, which still runs for all 509.
+  #   NO credibility multiplier like MAX_EQUITY_MULT: only 6 names clear 150%, and a bar cutting MCK's
+  #   artifact (1,639% on invested capital = 0.5% of assets) would take DECK (213% on 16%) with it, which
+  #   is genuinely capital-light. The term's own `cap` already clamps both to any excellent business.
+  growth_fund_extra:
+    - factor: roic
+      weight: 0.25           # the ablation peak above. 0.1 and 0.5 both still pay; 0.25 pays most
+      cap: 40.0              # matches quality_cap — the band where return-on-capital still discriminates
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
