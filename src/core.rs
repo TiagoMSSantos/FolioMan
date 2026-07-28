@@ -1521,6 +1521,12 @@ pub struct FundFactors {
     pub net_margin: Option<f64>,   // current net margin level, % (the NET% column). Distinct from op_margin: below-the-line items (tax, interest, one-offs) live only here
     pub roe: Option<f64>,          // as-of return-on-equity level, % (quality of capital). SEC feed computes it per row (NetIncome ÷ StockholdersEquity); FMP free tier leaves it None. RAW — sweep-only; the SCORE reads `quality` below
     pub quality: Option<f64>,      // as-of return-on-capital level, % — `quality_return(roe, roa, net_margin)`: ROE when equity is a credible denominator (positive, and over 1/20th of assets), else ROA. THE field the live screen and the backtest both score, so neither can drift from the other's definition
+    // (#43) return on INVESTED capital, pre-tax — `roic_return`, derived from levels already cached. The
+    // leverage-free cousin of `quality` above: ROE divides by equity alone, this divides by equity + net
+    // debt, which is the return a 20-year hold actually compounds at. UNSCORED so far — exposed only so
+    // `growth_fund_extra` can price it; `quality` keeps its measured weight untouched until it earns one.
+    // NOT `FundRow::roic` (premium, never populated) — see the fn's doc for why they must not be mixed.
+    pub roic: Option<f64>,
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
     pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
     pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). PROBE-ONLY: set in the backtest loop from the native as-of close; left None by the live path (currency skew — see `earnings_yield` fn)
@@ -1717,6 +1723,9 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         // the SCORED quality level, resolved from the same as-of row. `roe` above stays raw so the
         // factor sweep can still price it standalone; everything that feeds the ranking reads this.
         quality: now.and_then(|r| quality_return(r.roe, r.roa, r.net_margin)),
+        // (#43) same as-of row, same look-ahead guard — every input is a LEVEL already on it, so this
+        // costs no fetch. Any missing leg -> None (neutral), never a fabricated 0.
+        roic: now.and_then(|r| roic_return(r.revenue, r.op_margin, r.net_margin, r.roe, r.roa, r.net_debt)),
         insider_net_buys_90d: None, // (Item 4) SEC-sourced, set in the backtest loop, not from FMP rows
         eps_ttm: now.and_then(|r| r.eps), // (Item 19) as-of EPS level; earnings_yield needs price, set by caller
         earnings_yield: None,             // (Item 19) needs the as-of price -> filled in the backtest loop, not here
@@ -1832,6 +1841,74 @@ pub fn quality_return(roe: Option<f64>, roa: Option<f64>, net_margin: Option<f64
 /// A constant, not a knob: `fund_factors` takes no tuning, so a knob costs its signature and every
 /// caller, and this is an accounting fact rather than a preference. Promote it if a sweep wants it.
 pub const MAX_EQUITY_MULT: f64 = 20.0;
+
+/// (#43) Return on INVESTED capital, pre-tax: EBIT ÷ (equity + net debt), %.
+///
+/// The one thing `quality` structurally cannot be. ROE divides by equity ALONE, so leverage inflates it:
+/// a 3x-levered 35% ROE is a ~12% ROIC business. Over a 20-year hold a company's compounding rate
+/// converges on the return it earns on ALL the capital it employs, borrowed included — and the
+/// discriminating band is exactly where `quality_cap: 40` still resolves detail, since above that
+/// ceiling every name already scores identically.
+///
+/// Reconstructed from levels already cached, so no refetch and no cache-key bump:
+/// ```text
+///   ebit   = op_margin/100 x revenue
+///   ni     = net_margin/100 x revenue
+///   equity = ni / (roe/100)     <- signed right by construction: a loss-maker has ni<0 AND roe<0, so
+///                                  equity comes out POSITIVE. Genuine negative equity is the case where
+///                                  those two signs DISAGREE, which is what makes this reconstruction
+///                                  worth more than a sign test.
+///   ic     = equity + net_debt
+/// ```
+///
+/// PRE-TAX deliberately. A flat tax rate is a constant multiplier, and a constant multiplier cannot
+/// reorder a ranking — only the term's weight/cap would absorb it. The assumption buys nothing measurable,
+/// so it is not made.
+///
+/// UNKNOWN OR NON-POSITIVE INVESTED CAPITAL -> EBIT/ASSETS, the same shape `quality_return` uses for
+/// ROE -> ROA. 18 of the 395 EBIT-computable filers cached here have bought back or leased their way to
+/// invested capital <= 0 (BKNG, PM, MAR, YUM, DPZ, HLT, LVS, VRSN, CRWD, FTNT, ZS, TEAM, ALNY, CAH, DVA,
+/// LYV, NRG, RF) — precisely the capital-light compounders this factor exists to find, so None-ing them
+/// out would be backwards. Assets is a denominator that cannot go non-positive.
+///
+/// Reads NOTHING from `FundRow::roic`: that field is FMP-premium and has no assignment anywhere in the
+/// tree, so it is None for every row the SEC path builds. Folding a filer-reported AFTER-tax ROIC into a
+/// derived PRE-tax series would put two scales in one factor and re-rank on which feed happened to cover
+/// a name. Derive for everyone or nobody.
+///
+/// COVERAGE: 395 of 509 cached filers. The 114 misses are banks, insurers and REITs, which file no
+/// operating margin -> no EBIT under any denominator. ROIC is not meaningful for them anyway (their
+/// capital structure IS the business); they keep scoring on the ROE-based `quality`, which still runs for
+/// all 509. No credibility multiplier like `MAX_EQUITY_MULT` here: only 6 names clear 150%, and a bar
+/// that cut MCK's artifact (1,639% on invested capital = 0.5% of assets) would take DECK (213% on 16%)
+/// with it, which is genuinely capital-light. Every `growth_fund_extra` term carries its own `cap`, which
+/// already clamps both to the same value as any excellent business.
+pub fn roic_return(
+    revenue: Option<f64>,
+    op_margin: Option<f64>,
+    net_margin: Option<f64>,
+    roe: Option<f64>,
+    roa: Option<f64>,
+    net_debt: Option<f64>,
+) -> Option<f64> {
+    let rev = revenue?;
+    let ebit = op_margin? / 100.0 * rev;
+    let ni = net_margin? / 100.0 * rev;
+    // A 0 in either return is a division by ZERO, not a zero return — filter, never fabricate.
+    let ic = match (roe.filter(|r| *r != 0.0), net_debt) {
+        (Some(r), Some(nd)) => Some(ni / (r / 100.0) + nd),
+        _ => None, // a missing leg means invested capital is UNKNOWN, which lands on the same branch as dead
+    };
+    let denom = match ic {
+        Some(ic) if ic > 0.0 => ic,
+        _ => {
+            let assets = ni / (roa.filter(|a| *a != 0.0)? / 100.0);
+            (assets > 0.0).then_some(assets)? // signs disagreeing = bad data, not a business
+        }
+    };
+    let roic = ebit / denom * 100.0;
+    roic.is_finite().then_some(roic)
+}
 
 /// (FX) The rate in force ON `date`: the latest quote at or BEFORE it, never after. None before the
 /// series starts, so an early cutoff drops its price-joined factors instead of borrowing a later rate.
@@ -2120,6 +2197,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "net_margin" => f.net_margin, // (NET%) margin LEVEL below the line; op_margin is the above-the-line twin
         "roe" => f.roe,                                   // RAW ROE (SEC feed; FMP free tier = None) — includes the negative-equity fakes; kept selectable only so the sweep's two rows stay comparable
         "quality" => f.quality,                           // quality of capital as the score reads it: ROE, or ROA where equity is negative
+        "roic" => f.roic,                                 // (#43) pre-tax EBIT ÷ (equity + net debt) — `quality` without the leverage inflation. Exposed for `growth_fund_extra` to price; unweighted until measured
         "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
         "earnings_yield" => f.earnings_yield,             // (Item 19) as-of valuation; PROBE-ONLY (None live)
         "ebitda_yield" => f.ebitda_yield,                 // (EV/EBITDA) capital-structure-neutral valuation; PROBE-ONLY (None live)
@@ -2502,6 +2580,7 @@ mod tests {
             net_margin: Some(21.0),
             roe: Some(11.0),
             quality: Some(18.0),
+            roic: Some(22.0),
             insider_net_buys_90d: Some(7.0),
             eps_ttm: Some(8.0),
             earnings_yield: Some(9.0),
@@ -2528,6 +2607,7 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "buyback_yield"), Some(10.0));
         assert_eq!(select_fund_factor(&f, "roe"), Some(11.0)); // RAW ROE; NOT in composite (a level, and the blend already failed the lane)
         assert_eq!(select_fund_factor(&f, "quality"), Some(18.0)); // the ROE/ROA resolution — a DIFFERENT field, so the two names can't collapse into one
+        assert_eq!(select_fund_factor(&f, "roic"), Some(22.0)); // (#43) the name `growth_fund_extra` selects on — a THIRD distinct field, not an alias of the two above
         assert_eq!(select_fund_factor(&f, "fcf_margin"), Some(12.0)); // (round 107) survival levels; NOT in composite either
         assert_eq!(select_fund_factor(&f, "interest_cover"), Some(13.0));
         assert_eq!(select_fund_factor(&f, "net_cash_rev"), Some(14.0));
@@ -2625,6 +2705,78 @@ mod tests {
         // a NON-POSITIVE ROA can't form a multiplier (assets are positive, so roa <= 0 means a LOSS, and
         // the sign test already owns that case). Guard against a divide that would flip the comparison.
         assert_eq!(quality_return(Some(-50.0), Some(-2.0), Some(-4.0)), Some(-50.0));
+    }
+
+    /// (#43) `roic_return`: EBIT ÷ (equity + net debt), with equity RECONSTRUCTED as NI ÷ ROE — every
+    /// number derived, none of them filed, so each branch is pinned against a hand-computed value. A
+    /// wrong branch here prints a plausible percentage, never an error.
+    #[test]
+    fn roic_return_derives_and_falls_back() {
+        let approx = |got: Option<f64>, want: f64| {
+            assert!(got.is_some_and(|g| (g - want).abs() < 1e-9), "got {got:?}, want {want}");
+        };
+        // THE THESIS, arithmetically. rev 1000, op 12% -> EBIT 120; net 7% -> NI 70; ROE 35% -> equity
+        // 200; +400 net debt -> invested capital 600 -> ROIC 20.0%. The same business reads 35% on ROE
+        // and 20% on ROIC, and the 15-point gap IS the borrowed capital `quality` cannot see.
+        approx(roic_return(Some(1000.0), Some(12.0), Some(7.0), Some(35.0), Some(5.0), Some(400.0)), 20.0);
+        // …and with NO leverage the two must agree, or the reconstruction is wrong: equity 200, net debt
+        // 0 -> IC 200 -> EBIT 120 / 200 = 60%, on the same 35% ROE. (EBIT > NI, so ROIC > ROE unlevered
+        // — the tax-and-interest wedge, not an error.)
+        approx(roic_return(Some(1000.0), Some(12.0), Some(7.0), Some(35.0), Some(5.0), Some(0.0)), 60.0);
+
+        // NEGATIVE INVESTED CAPITAL (BKNG shape): bought back past zero equity. NI 250 ÷ ROE −50% ->
+        // equity −500; +200 net debt -> IC −300 -> the EBIT/ASSETS branch. ROA 10% -> assets 2500 ->
+        // 300/2500 = 12.0%. Note the ROE here is a FAKE (profit ÷ negative equity), which is exactly
+        // the name this factor must not blank out.
+        approx(roic_return(Some(1000.0), Some(30.0), Some(25.0), Some(-50.0), Some(10.0), Some(200.0)), 12.0);
+        // net CASH deeper than equity reaches the same branch from the other side
+        approx(roic_return(Some(1000.0), Some(30.0), Some(25.0), Some(50.0), Some(10.0), Some(-800.0)), 12.0);
+
+        // BANK / INSURER / REIT: no operating margin filed -> no EBIT under ANY denominator -> None,
+        // NOT a fabricated 0. 114 of the 509 cached filers land here and keep scoring on `quality`.
+        assert_eq!(roic_return(Some(1000.0), None, Some(7.0), Some(35.0), Some(5.0), Some(400.0)), None);
+        assert_eq!(roic_return(None, Some(12.0), Some(7.0), Some(35.0), Some(5.0), Some(400.0)), None);
+        assert_eq!(roic_return(Some(1000.0), Some(12.0), None, Some(35.0), Some(5.0), Some(400.0)), None);
+
+        // ROE 0 is a division by ZERO, not a zero return: invested capital becomes UNKNOWN, which takes
+        // the same assets branch as dead capital rather than emitting an infinity.
+        approx(roic_return(Some(1000.0), Some(30.0), Some(25.0), Some(0.0), Some(10.0), Some(200.0)), 12.0);
+        // …and a missing net_debt leg likewise leaves IC unknown -> assets, not a fabricated unlevered 0
+        approx(roic_return(Some(1000.0), Some(30.0), Some(25.0), Some(50.0), Some(10.0), None), 12.0);
+        // no assets to fall back on either -> None
+        assert_eq!(roic_return(Some(1000.0), Some(30.0), Some(25.0), Some(0.0), None, Some(200.0)), None);
+        assert_eq!(roic_return(Some(1000.0), Some(30.0), Some(25.0), Some(0.0), Some(0.0), Some(200.0)), None);
+        // NI and ROA disagreeing in sign implies negative assets — impossible, so bad data -> None
+        assert_eq!(roic_return(Some(1000.0), Some(30.0), Some(25.0), Some(0.0), Some(-10.0), Some(200.0)), None);
+
+        // a genuine loss-maker keeps a real NEGATIVE ROIC (both signs agree -> equity stays POSITIVE):
+        // NI −50 ÷ ROE −25% -> equity +200, +300 net debt -> IC 500, EBIT −80 -> −16.0%
+        approx(roic_return(Some(1000.0), Some(-8.0), Some(-5.0), Some(-25.0), Some(4.0), Some(300.0)), -16.0);
+    }
+
+    /// (#43) `roic` rides the same `fund_as_of` join as every other level, so a filing made AFTER the
+    /// cutoff can never reach it — the look-ahead guard the whole backtest rests on.
+    #[test]
+    fn roic_is_as_of_and_selectable() {
+        let r = |y: i32, op: f64| FundRow {
+            filed: NaiveDate::from_ymd_opt(y, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y - 1, 12, 31).unwrap(),
+            revenue: Some(1000.0),
+            op_margin: Some(op),
+            net_margin: Some(7.0),
+            roe: Some(35.0),
+            roa: Some(5.0),
+            net_debt: Some(400.0),
+            ..Default::default()
+        };
+        let rows = vec![r(2023, 12.0), r(2024, 60.0)]; // the 2024 filing would print 100%, not 20%
+        let after = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let before = NaiveDate::from_ymd_opt(2023, 6, 1).unwrap();
+        assert_eq!(fund_factors(&rows, after, 5).roic.map(|v| v.round()), Some(100.0));
+        assert_eq!(fund_factors(&rows, before, 5).roic.map(|v| v.round()), Some(20.0), "the 2024 filing must not leak");
+        assert_eq!(fund_factors(&[], after, 5).roic, None); // no coverage -> neutral, never 0
+        // and the name `growth_fund_extra` routes on reaches the field
+        assert_eq!(select_fund_factor(&fund_factors(&rows, before, 5), "roic").map(|v| v.round()), Some(20.0));
     }
 
     /// (Item 3) `composite_factor` = mean of the factors that are `Some`; <2 present -> None (a 1-factor
