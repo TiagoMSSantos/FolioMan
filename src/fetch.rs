@@ -1681,17 +1681,34 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
 /// WHY THIS EXISTS AT ALL. `companyfacts`/`companyconcept` expose only UNDIMENSIONED facts. A multi-class
 /// filer tags every per-share figure against `StatementClassOfStockAxis`, so the API serves it NOTHING:
 /// V, HSY, STZ, BKR, ERIE and KKR all 404 on `EarningsPerShareDiluted` while happily serving revenue and
-/// net income. 8 of 509 cached US filers (1.6%) — see the caller for the two that are unfixable. The
+/// net income. 8 of 509 cached US filers (1.6%) — see the caller for the one that is unfixable. The
 /// filing's own instance document keeps the dimensions, so the numbers are there, just not through the API.
 ///
-/// WHICH CLASS: the one whose `shares x eps` lands CLOSEST to the same period's undimensioned net income.
-/// Self-verifying, and it has to be — a member-name allowlist would need to know that ERIE and V trade as
-/// `CommonClassAMember` while HSY and KKR tag `CommonStockMember`. ERIE is the case that decides the rule:
-/// its Class B is EPS 1,801 on 2,542 shares (product $0.005B) against Class A's 10.69 on 52.3M shares
-/// ($0.559B = net income exactly). CLOSEST, not a tolerance: KKR is legitimately 5.7% off because its
-/// `NetIncomeLoss` includes noncontrolling interests, and no fixed band both admits that and rejects a
-/// wrong class. Verified on 6/6: V 20.05B vs 20.058B, HSY 0.883/0.883, STZ 1.687/1.687, BKR 2.584/2.588,
-/// ERIE 0.559/0.559, KKR 2.236/2.37.
+/// WHICH CLASS, in two steps: keep the classes whose `shares x eps` RECONCILES with the same period's
+/// undimensioned net income, then take the one with the MOST SHARES. Both steps are load-bearing and each
+/// is decided by a real filer:
+///
+/// - RECONCILIATION is what a member-name allowlist cannot do. ERIE's Class B is EPS 1,801 on 2,542 shares
+///   (product $0.005B) against Class A's 10.69 on 52.3M ($0.559B = net income exactly) — and no allowlist
+///   knows in advance that ERIE and V trade as `CommonClassAMember` while HSY and KKR tag
+///   `CommonStockMember`. The 10% band is a SEPARATOR, not a precision claim: real classes land <=0.2% off
+///   and wrong ones >=75% off, with room for a filer whose `NetIncomeLoss` includes noncontrolling
+///   interests its per-share line excludes (KKR, 5.6%, and a sole candidate anyway).
+/// - MOST SHARES is what "closest product" cannot do, and getting it wrong is not a rounding error.
+///   Berkshire tags BOTH equivalent classes and BOTH reconcile: `EquivalentClassAMember` 46,563 on
+///   1,438,223 shares = $66.968B, `EquivalentClassBMember` 31.04 on 2,157,335,139 = $66.964B, against net
+///   income $66.968B. Closest-product picks Class A on floating-point noise, and BRK-B trades at ~1/1500
+///   of a Class A share. The corrupted quantity is P/E, and ONLY P/E: EPS *growth* is a ratio of two
+///   numbers in the same units, so it is scale-invariant and reads −24.8% either way. That is what made
+///   this survivable — a declining EPS has no usable PEG, so BRK-B never surfaced. One growing year and
+///   P/E 0.01 becomes PEG ~0.0004: through the `growth_max_peg` ceiling with a maxed `peg_yield` tilt.
+///   The rule is not a tiebreak: a per-class EPS restates the WHOLE company in that class's units, so the
+///   finest-grained unit carries the largest count — which is the widely-held, retail-traded line, the
+///   one whose price these numbers get divided into.
+///
+/// Verified on 7/7 against the real filings: BRK-B 31.04 (66.964B vs 66.968B), V 10.20 (20.05/20.058),
+/// HSY 4.34 (0.883/0.883), STZ 9.61 (1.687/1.687), BKR 2.60 (2.584/2.588), ERIE 10.69 (0.559/0.559),
+/// KKR 2.34 (2.236/2.37).
 ///
 /// Same three rules as `parse_sec_facts` so the two agree: tag lists IN ORDER (diluted before basic — BKR
 /// tags both), the 350-380 day span = one fiscal year, and a missing line stays None. Namespace prefixes
@@ -1753,33 +1770,57 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
     let eps = per_class(tags.eps, false);
     let shares = per_class(tags.shares, false);
     let ni = per_class(tags.ni, true);
-    let mut out = BTreeMap::new();
+    // every class that tagged an EPS this fiscal year, grouped so they can be compared against each other
+    let mut by_year: BTreeMap<NaiveDate, Vec<(f64, Option<f64>)>> = BTreeMap::new();
     for ((end, dims), e) in &eps {
-        let sh = shares.get(&(*end, dims.clone())).copied();
-        // no net income for the year -> fall back to the biggest share count, which is the class the
-        // consolidated EPS is stated on wherever the check IS available. Unmeasured (all 6 have it).
-        let score = match (ni.get(&(*end, String::new())), sh) {
-            (Some(n), Some(s)) => (s * e - n).abs(),
-            (Some(_), None) => f64::INFINITY, // unscoreable, so it loses to any class that isn't
-            (None, Some(s)) => -s,
-            (None, None) => f64::INFINITY,
-        };
-        let better = out.get(end).is_none_or(|(_, _, best): &(f64, Option<f64>, f64)| score < *best);
-        if better {
-            out.insert(*end, (*e, sh, score));
-        }
+        by_year.entry(*end).or_default().push((*e, shares.get(&(*end, dims.clone())).copied()));
     }
-    out.into_iter().map(|(end, (e, sh, _))| (end, (e, sh))).collect()
+    by_year
+        .into_iter()
+        .filter_map(|(end, cands)| {
+            let n = ni.get(&(end, String::new())).copied();
+            // RECONCILES = this class's `shares x eps` is the whole company. Wide band on purpose: on live
+            // data a real class lands <=0.2% off and a wrong one >=75% off, and 10% leaves room for a
+            // filer whose `NetIncomeLoss` carries noncontrolling interests the per-share line excludes
+            // (KKR, 5.6%). It is a SEPARATOR, not a precision claim.
+            let reconciles = |&(e, sh): &(f64, Option<f64>)| match (n, sh) {
+                (Some(n), Some(s)) => (s * e - n).abs() <= n.abs() * 0.10,
+                _ => false,
+            };
+            let most_shares = |a: &&(f64, Option<f64>), b: &&(f64, Option<f64>)| a.1.unwrap_or(0.0).total_cmp(&b.1.unwrap_or(0.0));
+            cands
+                .iter()
+                .filter(|c| reconciles(c))
+                .max_by(most_shares)
+                // nothing reconciles (no net income for the year, or a filer whose bottom line and
+                // per-share line genuinely disagree) -> the closest product, else the biggest class.
+                .or_else(|| {
+                    cands.iter().min_by(|a, b| {
+                        let dist = |c: &(f64, Option<f64>)| match (n, c.1) {
+                            (Some(n), Some(s)) => (s * c.0 - n).abs(),
+                            (None, Some(s)) => -s,
+                            _ => f64::INFINITY, // unscoreable, so it loses to any class that isn't
+                        };
+                        dist(a).total_cmp(&dist(b))
+                    })
+                })
+                .map(|&c| (end, c))
+        })
+        .collect()
 }
 
 /// The newest annual filing's dimensioned EPS/shares for a US ticker, by fiscal year end. DISK-CACHED
-/// (`.sec_cache/{ticker}_inst1.json`) INCLUDING THE EMPTY RESULT: BRK-B's instance is 13.5MB and KKR's
+/// (`.sec_cache/{ticker}_inst2.json`) INCLUDING THE EMPTY RESULT: BRK-B's instance is 13.5MB and KKR's
 /// 19.8MB, so re-downloading those to re-learn nothing is exactly the cost worth caching away.
 /// Budget-capped like every other SEC call. ceiling: ONE filing, so ~3 fiscal years of coverage; older
 /// as-of rows keep the None they already had. Walking more 10-Ks is the upgrade, at 2.4-19.8MB each.
+///
+/// The key carries a VERSION DIGIT because this cache has no TTL: a parse that was wrong when it was
+/// written stays wrong forever. `inst1` -> `inst2` retires the class picker that shipped BRK-B at EPS
+/// 46,563 (Class A) — see `parse_sec_instance`. Bump it again on any change to what that parser picks.
 async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> std::collections::BTreeMap<NaiveDate, (f64, Option<f64>)> {
     use std::sync::atomic::Ordering;
-    let cache = sec_cache_path(&format!("{ticker}_inst1"));
+    let cache = sec_cache_path(&format!("{ticker}_inst2"));
     if let Some(c) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<(String, f64, Option<f64>)>>(&s).ok()) {
         return c
             .into_iter()
@@ -4126,6 +4167,50 @@ mod tests {
             "Class B's 1,801 x 2,542 = $4.6M against a $559M bottom line — closest-product must reject it"
         );
 
+        // THE BERKSHIRE CASE — why "closest product" is not enough, and the assert that fails if anyone
+        // restores it. BRK tags BOTH equivalent classes and BOTH reconcile to the whole company: A is
+        // 46,563 x 1,438,223 = $66.968B, B is 31.04 x 2,157,335,139 = $66.964B, net income $66.968B.
+        // Closest-product picks A on floating-point noise. BRK-B trades at ~1/1500 of a Class A share, so
+        // that pick prints P/E 0.01 on a number the filing never stated about this ticker. It corrupts P/E
+        // and only P/E — EPS growth is a same-units ratio, so it is scale-invariant — which is why the
+        // live screen never showed it: BRK's EPS is currently FALLING (41.27 -> 31.04), and a negative
+        // grower has no PEG to tilt on. The first growing year turns that 0.01 into PEG ~0.0004.
+        let brk = [
+            ctx("c-1", "2025-01-01", "2025-12-31", None),
+            ctx("c-a", "2025-01-01", "2025-12-31", Some("brka:EquivalentClassAMember")),
+            ctx("c-b", "2025-01-01", "2025-12-31", Some("brka:EquivalentClassBMember")),
+            fact("NetIncomeLoss", "c-1", "66968000000"),
+            fact("EarningsPerShareDiluted", "c-a", "46563"),
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-a", "1438223"),
+            fact("EarningsPerShareDiluted", "c-b", "31.04"),
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-b", "2157335139"),
+        ]
+        .join("\n");
+        assert_eq!(
+            parse_sec_instance(&brk, &US_GAAP_TAGS).values().next().copied(),
+            Some((31.04, Some(2_157_335_139.0))),
+            "both classes reconcile — the MOST-SHARES rule must break the tie, or BRK-B prints EPS 46,563"
+        );
+
+        // …and when NOTHING reconciles, the closest product still decides (a filer whose bottom line and
+        // per-share line genuinely disagree). Neither class is within 10% of net income here.
+        let neither = [
+            ctx("c-1", "2025-01-01", "2025-12-31", None),
+            ctx("c-a", "2025-01-01", "2025-12-31", Some("us-gaap:CommonClassAMember")),
+            ctx("c-b", "2025-01-01", "2025-12-31", Some("us-gaap:CommonClassBMember")),
+            fact("NetIncomeLoss", "c-1", "1000"),
+            fact("EarningsPerShareDiluted", "c-a", "1.0"),
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-a", "500"), // 500, off by half
+            fact("EarningsPerShareDiluted", "c-b", "1.0"),
+            fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-b", "10000"), // 10000, off by 10x
+        ]
+        .join("\n");
+        assert_eq!(
+            parse_sec_instance(&neither, &US_GAAP_TAGS).values().next().copied(),
+            Some((1.0, Some(500.0))),
+            "no class reconciles -> closest product, NOT the biggest class"
+        );
+
         // ORDER IS LOAD-BEARING, same as `parse_sec_facts`: a filer tagging both diluted and basic in one
         // instance (BKR does) must yield the DILUTED number.
         let both = [
@@ -4638,26 +4723,4 @@ pub async fn push(client: &Client, urls: &Urls, topic: &str, title: &str, msg: &
         .send()
         .await
         .is_ok_and(|resp| resp.status().is_success())
-}
-
-#[cfg(test)]
-mod tmp_instcheck {
-    use super::*;
-    #[test]
-    #[ignore]
-    fn real_filings() {
-        let dir = std::env::var("INSTDIR").unwrap();
-        for f in std::fs::read_dir(&dir).unwrap() {
-            let p = f.unwrap().path();
-            let name = p.file_name().unwrap().to_string_lossy().to_string();
-            if !name.starts_with("inst_") && name != "v_inst.xml" { continue; }
-            let xml = std::fs::read_to_string(&p).unwrap();
-            let got = parse_sec_instance(&xml, &US_GAAP_TAGS);
-            println!("--- {name}: {} years", got.len());
-            for (d, (e, s)) in &got {
-                let prod = s.map(|s| s * e / 1e9);
-                println!("    {d}  eps={e}  shares={s:?}  shares*eps={prod:?} B");
-            }
-        }
-    }
 }

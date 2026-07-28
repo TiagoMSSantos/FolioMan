@@ -1549,8 +1549,8 @@ pub struct FundFactors {
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
     // loop and the live enrich), so a filer-level fact is identical on both sides at every cutoff. An
     // as-of version would gate a name historically and pass it live — the exact train-serve skew the
-    // one-source rule exists to prevent. After the XBRL-instance fallback this is BRK-B and ARES only:
-    // they tag no per-share and no weighted-average element in the filing itself, so no source has it.
+    // one-source rule exists to prevent. After the XBRL-instance fallback this is ARES alone: it tags
+    // no per-share and no weighted-average element in the filing itself, so no source has it.
     pub eps_never_reported: bool,
 }
 
@@ -2830,7 +2830,7 @@ mod tests {
         let partial = vec![r(2019, None), r(2020, None), r(2023, Some(8.28)), r(2024, Some(9.73)), r(2025, Some(10.20))];
         assert!(!fund_factors(&partial, early, 5).eps_never_reported, "an as-of read would say TRUE here — that is the skew");
         assert!(!fund_factors(&partial, late, 5).eps_never_reported);
-        // BRK-B / ARES: no per-share element in any filing, at any cutoff. THIS is what the gate cuts.
+        // ARES: no per-share element in any filing, at any cutoff. THIS is what the gate cuts.
         let none_ever = vec![r(2023, None), r(2024, None), r(2025, None)];
         assert!(fund_factors(&none_ever, early, 5).eps_never_reported);
         assert!(fund_factors(&none_ever, late, 5).eps_never_reported);

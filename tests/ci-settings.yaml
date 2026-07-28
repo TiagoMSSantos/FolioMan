@@ -1214,7 +1214,7 @@ buy_heuristic:
   calmar_cap: 2.0                # (C) cap that CAGR/max-drawdown ratio
 
   prefer_eur: true               # dedup currency twins (BTC-EUR/BTC-USD): keep EUR leg if true, else USD
-  growth_require_peg: true       # require a PEG to score a name. The growth_score reads PEG (1/PEG x 100) and the gate rejects PEG > growth_max_peg, so a missing PEG is a free pass. This knob forces a missing PEG to fail the gate. false = off
+  growth_require_peg: true       # require a PEG to score a name. The growth_score reads PEG (1/PEG x 100) and the gate rejects PEG > growth_max_peg, so a missing PEG is a free pass. This knob forces a missing PEG to fail the gate. Reads `fund.eps_never_reported` (filer-level, never as-of), NOT `peg_yield.is_none()` — the cohort is filers whose 10-K states no per-share element at all, 8 of 509 cached US names, seven of them now FIXED by the XBRL-instance fallback. Residue today: ARES alone. false = off
 
 # --- live-universe fetch breadth + pacing (so the backtest gate scans the same wide pool `screen` does) ---
 # How many symbols PER CLASS (crypto + stocks/ETFs) `screen` pulls from the live sources

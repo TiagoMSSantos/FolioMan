@@ -3147,7 +3147,7 @@ mod tests {
     assert!(growth_score(&pq, &BuyHeuristic::default()).is_some(), "growth_max_peg 0 must be OFF, not a bar at infinity");
 
     // (V) `growth_require_peg` — the OTHER half of "None is ambiguous". A multi-class filer whose 10-K
-    // tags no per-share element ANYWHERE (BRK-B, ARES) has no PEG for the ceiling above to judge, so it
+    // tags no per-share element ANYWHERE (ARES, the sole residue) has no PEG for the ceiling to judge, so it
     // walks past a gate that cut ODFL 2.49, ROST 2.27, WMT 2.38 and TDY 2.00 in the same run.
     let req = BuyHeuristic { growth_require_peg: true, ..BuyHeuristic::default() };
     pq.fund = Some(core::FundFactors { eps_never_reported: true, ..Default::default() });
