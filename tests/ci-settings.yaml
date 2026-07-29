@@ -261,6 +261,18 @@ buy_heuristic:
                                  #   0A08.L splice #1 pre-trim: an unbounded window maximizes exposure to
                                  #   glued-denomination history.) A local settings.yaml overlay carrying
                                  #   `use_life_cagr: true` silently reverses all of this — check yours.
+                                 #   (#3m) 2026-07-29 WHY WHOLE ROWS MOVE WITH THIS FLAG (asked once,
+                                 #   answered forever): it flips THE growth number (`long_cagr_from`,
+                                 #   picks.rs) and by (#14)/(#37) design that ONE value feeds the score,
+                                 #   the growth_min_cagr gate, trend, accel, sharpe, calmar, the LEG
+                                 #   column AND the PEG divisor — so SCORE/S-8Y/PEG/LEG/rank all move
+                                 #   together, on crypto too. Same-cache A/B: NVDA rank 2→13, PEG
+                                 #   1.25→1.12, score 12.8→13.3; the rank drop is dilution — life CAGR
+                                 #   walks MSFT/ORCL/GOOG/MA past the 19-floor that their 20Y rung
+                                 #   fails, tripling the gated field. The CAGR column is whole-life
+                                 #   DISPLAY (the "cagr" cell in picks.rs) and does not move with the
+                                 #   flag; small CAGR/PE/daily diffs between two manual screen runs are
+                                 #   live-quote drift between fetches, not the flag.
   life_cagr_max_years: 0.0       # (#3l) MEASURED OFF 2026-07-29: >0 swaps false-mode's 20/8/5Y rung ladder
                                  #   for a CAGR over the last min(age, N) years (true mode stays whole-life;
                                  #   a name the capped fn declines — <5y history — keeps its rung, so the
