@@ -208,9 +208,15 @@ buy_heuristic:
   # (A) Long-trend reward = the proven-compounder signal for a decades hold, now on the long leg's
   # CAGR (Compound Annual Growth Rate, %/yr — annualized so a 10Y and a 20Y leg compare fairly).
   long_trend_weight: 0.5         # [FOIL] on-sale reward per %/yr of long-leg CAGR (×cap below = max bonus, ~15)
-  long_trend_cap: 0.0            # LIVE+FOIL (SHARED): 0 = OFF. No ceiling on the CAGR fed into either lane's trend reward — the fastest compounder is now rewarded in full, linearly, however fast it ran. See (#3h): shipped BY DIRECTION, against the curve
-                                 #   history: #16 sweep 2026-06-28: 20/30/40/50/1000 all edge ≈ -100337360 (flat) → cap inert on that run; 2026-07-02 re-test 30→50 on `backtest 12 universe` DROPPED growth edge +103.2→+87.7 → 30 read protective (parabolic names mean-revert), kept 30; (#3g) 2026-07-26 full curve confirmed the ceiling wanted to go DOWN (25 +191.2) not up; (#3h) same day removed it anyway on request, measured cost -11.5 edge (+181.3 -> +169.8)
-                                 #   RESTORE: put any positive number back here (30 = the long-time value). One line, no code change — that is why the knob still exists rather than the clamp being deleted
+  long_trend_cap: 30.0           # LIVE+FOIL (SHARED). (#3k) 2026-07-29 RESTORED at 30 on the first-ever
+                                 #   20y-STRESS ladder (the goal horizon, corpses injected), trend weight at
+                                 #   its new 0.15: 15 +559.3 | 20 +579.7 | 25 +593.0 | 30 +623.5 (peak) |
+                                 #   40 +589.1 | uncapped-at-0.35 +552.5. Clean hump, peak 30. The old 12y
+                                 #   curve preferred 25 (+191.2 vs 30 +181.3) — measured at trend 0.35, on
+                                 #   the advisory horizon; 20y king overrules. Rank-1 med/h2h IDENTICAL
+                                 #   (+4.4 / 41%) across the whole ladder — the cap tunes lane edge only,
+                                 #   the argmax cure lives in the WEIGHT (see growth_trend_weight).
+                                 #   history: #16 sweep 2026-06-28: 20/30/40/50/1000 all edge ≈ -100337360 (flat) → cap inert on that run; 2026-07-02 re-test 30→50 on `backtest 12 universe` DROPPED growth edge +103.2→+87.7 → 30 read protective (parabolic names mean-revert), kept 30; (#3g) 2026-07-26 full curve confirmed the ceiling wanted to go DOWN (25 +191.2) not up; (#3h) same day removed it anyway on request, measured cost -11.5 edge at 12y; (#3k) restored on 20y-stress measurement
   health_zero_cagr: -10.0        # [FOIL] long-leg CAGR (%/yr) where on-sale trend_health hits 0; health=1 at flat/rising
 
   # --- (B) total-return inputs + (E) endpoint-robust CAGR + (#8) geomean shape — EDGE-AFFECTING, validate before trusting ---
@@ -247,6 +253,14 @@ buy_heuristic:
                                  #   the leg) — the term stops carrying information. "Life" is an unbounded
                                  #   window (5y for one row here, 46y for another), so it mostly encodes
                                  #   listing age. Keep the leg. Full receipt: (#3j) below.
+                                 #   (#3k) 2026-07-29 RE-CONDEMNED on the first stress grid — true at all
+                                 #   FOUR horizons, corpses injected, splice-trimmed data: 20y-s edge
+                                 #   +437.5 vs +552.5 (-115), 12y-s +144.6 vs +205.9 (-61), 8y-s top-10
+                                 #   excess +5.7 vs +6.4, 5yL-s edge +31.0 vs +40.5. Loses EVERY view it
+                                 #   was graded on. Do not re-propose. (It is also what ranked the corrupt
+                                 #   0A08.L splice #1 pre-trim: an unbounded window maximizes exposure to
+                                 #   glued-denomination history.) A local settings.yaml overlay carrying
+                                 #   `use_life_cagr: true` silently reverses all of this — check yours.
   # fixed_cagr_years still 0, but the reason has CHANGED and the old one is dead. It said "#15 is redundant
   # because use_trend_cagr overrides a pinned window with the whole-series slope" — use_trend_cagr was then
   # REVERTED two lines up, so #15 sat untested on a stale rationale. (#3j) finally measured it: pinning every
@@ -422,10 +436,11 @@ buy_heuristic:
                                  #   BTC -> boost, lags -> mild dock, bounded 0.5x..2x. BTC itself = 1.0x (the neutral anchor
                                  #   you read the others against). SCREEN/CHECK-only (backtest-blind, validated edge untouched). 0 = off.
   growth_min_cagr: 14.0          # GATE, TWO LEGS, one number: the long leg (20/8/5Y rung) AND (#3i) the whole-life CAGR
-                                 #   must BOTH compound >=14%/yr to count as a proven grower. The whole-life leg is
-                                 #   SCREEN-ONLY — backtest_quote leaves life_cagr None, so it never fires there and the
-                                 #   receipt below still measures the long leg alone. It can only REJECT, so the live pool
-                                 #   is a strict subset of the measured one. The gate, not a
+                                 #   must BOTH compound >=14%/yr to count as a proven grower. (STALE-FIXED
+                                 #   2026-07-29: this note said the life leg was screen-only because
+                                 #   "backtest_quote leaves life_cagr None" — false since 2026-07-27,
+                                 #   backtest_quote fills life_cagr, so the gate's BOTH-legs form is what
+                                 #   every grid below measured, train==serve.) The gate, not a
                                  #   weight, is what moves the signal (additive/multiplier knobs are inert; gates reshape the scored pool).
                                  #   12y MAX-monthly knee (the real 20y-hold horizon): 12->14 lifts GROWTH edge +91.1->+92.7 AND
                                  #   flips top-half peer-relative -5.2->+4.6 (the bought basket now BEATS its peers, not just loses less);
@@ -433,7 +448,24 @@ buy_heuristic:
                                  #   12 (rho +0.15 sym) but the 12y horizon — what the 20y goal actually targets — peaks at 14.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
-  growth_trend_weight: 0.35      # SCORE: reward per %/yr CAGR (uncapped since (#3h) set long_trend_cap to 0). CURVED at 12y (#3g): 0.15..0.45 is a flat plateau (+184.6/+185.9/+181.3/+183.3) whose whole spread sits inside the bootstrap band, and it cliffs above (0.55 +153.8, 1.00 +125.1). 0.35 is already in the plateau — no honest room to raise. The old note here ("raw long-CAGR mildly HURTS, ablation Δ+") is REFUTED: zeroing the term costs -61.4 edge, it is load-bearing
+  growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
+                                 #   (#3k) 2026-07-29 LOWERED 0.35 -> 0.15 — the WINNER'S-CURSE CURE. New
+                                 #   rank-slice/head-to-head instrumentation proved rank 1 was the WORST
+                                 #   slice of the top 20 at EVERY horizon (20y-stress: rank-1 med excess
+                                 #   +2.6 vs +6.4 for ranks 2-5; #1 beat the 11-20 book in only 5/22
+                                 #   windows, 23%): the argmax was owned by overextended names riding an
+                                 #   uncapped CAGR reward. Weight ladder at 20y-stress: 0.35 h2h 23% |
+                                 #   0.15 h2h 41%, rank-1 med +4.4 | 0.00 h2h 45%, rank-1 med +4.4 but
+                                 #   lane edge sags at 12y (+199 vs +218) and top-10 dips everywhere.
+                                 #   0.15 (bottom of the 12y plateau, see below) keeps ~80% of the cure
+                                 #   AND beats baseline lane edge at every stress horizon: 20y +593.0 vs
+                                 #   +552.5, 12y +218.3 vs +205.9, 8y +82.0 vs +62.8 (h2h 50%), 5yL +38.4
+                                 #   vs +40.5 (h2h 52%). Top-10 excess never below baseline (+6.1/+6.7/
+                                 #   +6.6/+7.6). CURVED at 12y (#3g): 0.15..0.45 is a flat plateau
+                                 #   (+184.6/+185.9/+181.3/+183.3) inside the bootstrap band, cliffs above
+                                 #   (0.55 +153.8, 1.00 +125.1) — so 12y cannot tell 0.15 from 0.35; the
+                                 #   20y-stress argmax quality can, and it picks 0.15. Zeroing outright
+                                 #   still costs edge (load-bearing), the term just must not DOMINATE.
   growth_accel_weight: 0.5       # SCORE: reward per pt the last year outpaced the long CAGR. accel INVERTS with horizon —
                                  #   the 5y proxy wanted it trimmed (mean-reverts: removing it +41.7 edge), but the 12y MAX-monthly
                                  #   horizon (the 20y-hold target) makes it a STRONG helper: removing it costs -55.5..-65.9 edge.
@@ -450,8 +482,16 @@ buy_heuristic:
                                  #   same-batch, rho intact at +0.13 — clean hump, knee at 5. A 6M-momentum twin swept in the same
                                  #   run was null at every weight and was NOT wired. 0 = off.
   growth_underwater_weight: 0.3  # SCORE: additive penalty per year of the LONGEST below-prior-peak stretch
-                                 #   (drawdown DURATION; the maxdd cap #26 only sees depth). Rebuilt in backtest_quote
-                                 #   (daily cadence) so validated END-TO-END. Standalone probe (universe fund, 2026-07-19):
+                                 #   (drawdown DURATION; the maxdd cap #26 only sees depth). MONTHLY-BLIND
+                                 #   (#3k) 2026-07-29: underwater_yrs is /252-session-based so core.rs keeps
+                                 #   it DAILY-ONLY — every monthly backtest (8y+, or `long`) leaves it None
+                                 #   and the term contributes 0 to every name. Proven empirically: zeroing
+                                 #   this weight reproduced the 20y-stress grid metric-for-metric (rho/edge/
+                                 #   top-10/rank-1/h2h all identical to the printed digit). It CANNOT be
+                                 #   validated at the 8/12/20y goal horizons; it still fires on the LIVE
+                                 #   screen (daily closes). Kept at 0.3 on the original daily receipt below —
+                                 #   a tie is not evidence against — but do not cite the monthly grids for it.
+                                 #   Rebuilt in backtest_quote (daily cadence). Standalone probe (universe fund, 2026-07-19):
                                  #   n=8571 rho +0.26 edge +27.9 OOS +0.40|+0.14 both +. Candidate lane run at 0.3 same-batch:
                                  #   edge +25.5->+27.5, winsorized +15.7->+17.7, rho intact +0.12, OOS -0.03|+0.26 -> -0.02|+0.27,
                                  #   worst era -11.7->-4.8 (nothing degraded). 0 = off.
@@ -542,6 +582,12 @@ buy_heuristic:
   #     - held-book by FACTOR (absolute, top-10 held 12y): peg_yield excess +4.8 (n=245) vs
   #       earnings_yield +5.0 (n=250). PEG LOSES this view, marginally, on a slightly different
   #       subsample. Both trail plain growth_score (+6.9) — neither is a better standalone selector.
+  #     - (#3k) 2026-07-29 rank-source arm, STRESS grid on trimmed data: composite stays the ranker.
+  #       12y-s composite +6.6 beats every factor (best gross_margin +5.1, n=120); 8y-s peg_yield
+  #       +6.6 vs composite +6.4 (n=425) = statistical tie; 20y-s factor table structurally EMPTY
+  #       (cutoffs end ~2006, SEC XBRL starts ~2007 — factors CANNOT be graded at the goal horizon).
+  #       An earlier "+6.9 factor vs +6.1 composite, ship the winner" reading came from the
+  #       contaminated config (use_life_cagr true, no splice trim, no stress) and is void.
   #     - as a GATE it is dead: the PEG-VALUE-GATE reject-bottom sweep is flat +6.8 -> +6.9 across
   #       0/10/25/40%. Shipped as a rank TILT only. The brake framing is closed on measurement.
   #     - the WINNER line genuinely does bounce with the cap (composite at 30, peg_yield at 300),

@@ -1559,7 +1559,7 @@ pub struct FundFactors {
     pub roic: Option<f64>,
     pub insider_net_buys_90d: Option<f64>, // (Item 4) open-market buys minus sales (Form 4 P−S) in the 90d before the cutoff; populated only under `backtest … insider`, derived in the backtest loop (not here — needs SEC, not FMP)
     pub eps_ttm: Option<f64>,      // (Item 19) the as-of EPS level (not a growth) — the numerator for earnings_yield
-    pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). PROBE-ONLY: set in the backtest loop from the native as-of close; left None by the live path (currency skew — see `earnings_yield` fn)
+    pub earnings_yield: Option<f64>, // (Item 19) EPS ÷ as-of price, % (valuation level, high = cheap). Set in the backtest loop from the native as-of close; the live path fills it only when `growth_fund_factor: earnings_yield` selects it (fetch.rs gates the fill to dodge the currency skew — see `earnings_yield` fn)
     // (EV/EBITDA probe) capital-structure-neutral value cousin of earnings_yield. The three as-of LEVELS
     // are price-free (set here from the latest filed row); ebitda_yield itself is EBITDA ÷ enterprise value
     // (EV = shares·price + net_debt), so it needs the as-of price -> filled in the backtest loop like
@@ -2229,7 +2229,7 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "quality" => f.quality,                           // quality of capital as the score reads it: ROE, or ROA where equity is negative
         "roic" => f.roic,                                 // (#43) pre-tax EBIT ÷ (equity + net debt) — `quality` without the leverage inflation. Exposed for `growth_fund_extra` to price; unweighted until measured
         "insider_net_buys_90d" => f.insider_net_buys_90d, // (Item 4) SEC Form-4 conviction, `backtest … insider`
-        "earnings_yield" => f.earnings_yield,             // (Item 19) as-of valuation; PROBE-ONLY (None live)
+        "earnings_yield" => f.earnings_yield,             // (Item 19) as-of valuation; live fill only when selected as the fund factor
         "ebitda_yield" => f.ebitda_yield,                 // (EV/EBITDA) capital-structure-neutral valuation; PROBE-ONLY (None live)
         "peg_yield" => f.peg_yield,                        // (PEG) 1/PEG = earnings_yield · CAGR, cheap-for-growth; THE SHIPPED live tilt (2026-07-25)
         "buyback_yield" => f.buyback_yield,               // as-of 1y share-count shrink (+ = buying back); backtest-testable candidate
