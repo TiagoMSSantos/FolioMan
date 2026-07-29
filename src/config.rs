@@ -252,6 +252,7 @@ pub struct BuyHeuristic {
     pub growth_underwater_weight: f64, // additive PENALTY per year of the longest below-prior-peak stretch (core::longest_underwater_yrs — the drawdown-DURATION twin of the maxdd depth cap). Price-only, reconstructed in backtest_quote on the daily cadence -> validated end-to-end. Standalone probe (backtest universe fund, 2026-07-19): n=8571 rho +0.26 edge +27.9 OOS +0.40|+0.14 both +; candidate lane run at 0.3 same-batch: edge +25.5->+27.5, rho intact, both OOS halves + worst era improved. 0 = off (DEFAULT); ci-settings ships the validated 0.3
     pub growth_value_weight: f64,    // (Item 20) authority of the BACKTEST-BLIND P/E multiplier (value_factor) in the GROWTH lane only: 1.0 = full ×0.5..1.5 swing (DEFAULT, unchanged), 0.0 = neutral (off). The validated edge was measured with this term OFF (pe_ratio is None in backtest), so it's a ±50% reorder the OOS split never saw — dial it down/off once the validated additive earnings_yield term (Item 19) carries valuation instead. Defaulted so an older settings.yaml is unchanged.
     pub growth_geomean_fold: bool,   // (#8) PROBE switch: fold proximity + value INTO the geomean damp instead of multiplying them raw onto base. Today score = base × proximity × value × geomean(trust, overext); THREE soft multipliers stack unbounded (a name at 0.7 × 0.8 × 0.85 keeps only 0.48 of base — nearly halved by three "slightly-off" signals). true = base × geomean(trust, overext, proximity, value): the SOFTEST term bounds the penalty (combine_damps), so no single soft signal dominates. Edge-affecting — it reshapes the live rank AND changes the geomean SLOT COUNT (the trust/overext exponent shifts from ½ to ¼), so DEFAULT false = unchanged; flip ONLY behind a green `backtest universe` with both OOS halves positive. Golden-rule-gated.
+    pub splice_max_weekly_rate: f64, // (splice) redenomination-splice trimmer: drop history BEFORE the last step whose implied WEEKLY growth factor exceeds this (or its 1/x mirror) — a vendor series gluing an MXN head onto a GBP tail (×19.6 in one step) otherwise feeds life_cagr/MAXDD/R² a fiction spanning the whole record (0A08.L printed +62%/yr life CAGR vs its true +6.7). Weekly RATE, not raw ratio, so a wide real gap (NVR ×26/92d = 1.28×/wk) survives; sub-week gaps clamp to 7d so one −10% day can't extrapolate to a trip. Applied at parse_chart (one site -> live + backtest see the same data, no train-serve skew) + the merged-series seam; crypto exempt (SHIB did a real 13×/wk). 0.0 = off (DEFAULT, no behavior change); ci-settings ships the measured 2.0. BACKTEST-BLIND in the receipt sense: it changes the INPUT universe, so before/after edges are two different measurements, not an A/B.
     pub use_adjusted_close: bool,    // (Item 21) PROBE switch: when true, parse_chart prefers Yahoo's adjclose (split+DIVIDEND adjusted) over raw close, so the long CAGR / range_pct near-high gate / drawdown / overext brake measure TOTAL return instead of price-only — fixes dividend-compounders that are mis-ranked (CAGR understates total return) or mis-EXCLUDED (nominal price below old high fails growth_min_range_pct). Flows to BOTH live + backtest (one parse site) so no train-serve skew. DEFAULT false = raw close, unchanged. Crypto/FX have no adjclose -> falls back to close (no effect). Adjusted close re-calibrates EVERY price threshold (range floor, overext, min_cagr, vol/SMA), so flip ONLY for a full `backtest universe` re-validation + gate re-sweep, then keep it only if both OOS halves still hold. Golden-rule-gated.
 
     // --- CRYPTO market-sentiment damp (Bitcoin NUPL): a whole-market greed gauge already fetched for
@@ -366,6 +367,7 @@ impl Default for BuyHeuristic {
             growth_underwater_weight: 0.0, // OFF by default (older settings.yaml unchanged); ci-settings ships the validated 0.3 (2026-07-19 probe + candidate lane run, see field doc)
             growth_value_weight: 1.0,      // (Item 20) FULL P/E-multiplier authority by default (=current behavior, no change). The validated edge never saw this term (pe_ratio None in backtest); dial toward 0 once the additive earnings_yield term (Item 19) validates and carries valuation honestly
             growth_geomean_fold: false,    // (#8) off: multiply proximity/value raw onto base (today's behaviour, validated edge intact). true folds them into the geomean (bounds the multiplicative stack) — validate via `backtest universe` both-OOS-positive before flipping
+            splice_max_weekly_rate: 0.0,   // (splice) OFF by default (older settings.yaml unchanged); ci-settings ships the measured 2.0 — the valley between the fastest real mover (3USL.L 1.87×/wk, a 3× leveraged ETP) and the slowest splice (COFF.L 2.06×/wk)
             use_adjusted_close: false,     // (Item 21) raw price-only close by default (= current behavior, validated edge intact). Flip to true ONLY for a full backtest re-validation + gate re-sweep — adjusted close shifts every price-calibrated threshold
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
@@ -800,6 +802,19 @@ pub fn use_adjusted_close() -> bool {
             .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
             .map(|s| s.buy_heuristic.use_adjusted_close)
             .unwrap_or(false)
+    })
+}
+
+/// (splice) free accessor twin of `use_adjusted_close` — `parse_chart` and the merged-series seam
+/// have no `tuning` handle, and the value must be identical for live + backtest (train==serve).
+pub fn splice_max_weekly_rate() -> f64 {
+    use std::sync::OnceLock;
+    static RATE: OnceLock<f64> = OnceLock::new();
+    *RATE.get_or_init(|| {
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+            .map(|s| s.buy_heuristic.splice_max_weekly_rate)
+            .unwrap_or(0.0)
     })
 }
 

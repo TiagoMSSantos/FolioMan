@@ -217,6 +217,22 @@ buy_heuristic:
   # All flow to LIVE screen AND the backtest (train==serve), so a `backtest 12 universe` measures them
   # honestly. UNVALIDATED at flip time — run .claude/run_me.sh steps B/E and REVERT any that drops rho/edge
   # or pushes an OOS half negative. Reversible (set back to false).
+  splice_max_weekly_rate: 2.0    # (splice) 2026-07-29: trim history BEFORE the last step whose implied
+                                 #   WEEKLY growth factor exceeds 2.0 (or drops under 0.5) — vendor series
+                                 #   that glue two denominations (0A08.L: MXN head, GBP tail, ×19.59 in 28d)
+                                 #   otherwise print fictional life CAGRs (+62%/yr vs the fund's true +6.7)
+                                 #   and fake −99% MAXDDs on the ÷100 GBp→GBP cluster. 2.0 sits in a MEASURED
+                                 #   VALLEY: fastest real survivor 3USL.L 1.87×/wk (3× leveraged ETP), slowest
+                                 #   splice COFF.L 2.06×/wk, nothing between; on the down half every real
+                                 #   crash clears the 0.5 mirror (NCLH 0.744 Mar-2020, CVNA 0.576) while the
+                                 #   redenominations land 0.32–0.35. Weekly RATE not raw ratio (NVR ×26/92d =
+                                 #   1.28×/wk survives); sub-week gaps clamp to 7d (a lone −10% day is 0.9,
+                                 #   not 0.9^7); crypto exempt (SHIB really did 13×/wk). Trims 138/3346
+                                 #   non-crypto series (4.1%); median trimmed series loses 72% of its record —
+                                 #   correct: leveraged ETPs that fell ~99% then reverse-split are two
+                                 #   instruments glued together, and growth_min_age_years gates the stubs.
+                                 #   BACKTEST-BLIND: changes the INPUT universe, so before/after edges are two
+                                 #   different measurements, never an A/B. 0.0 = off.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code
   use_adjusted_close: false      # (B) REVERTED 2026-06-28: backtest 12 universe edge unchanged (raw
                                  #   -100337371.5 vs adj -100337372.0), OOS halves identical (+0.09/-0.05).

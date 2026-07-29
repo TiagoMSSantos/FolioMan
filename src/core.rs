@@ -408,6 +408,36 @@ pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
     }
 }
 
+/// (splice) First index AFTER the last redenomination splice — the caller keeps `[start..]` of every
+/// parallel array. A splice is a currency/denomination glue joint in a vendor series (MXN head on a
+/// GBP tail, a ÷100 GBp→GBP step): one step of ×19.6 that no real asset does, which then feeds
+/// `life_cagr`/MAXDD/R² a fiction spanning the whole record. Detection is the implied WEEKLY growth
+/// factor, not the raw step ratio — cached bars are unevenly spaced and a raw ratio cannot tell a
+/// splice from a wide gap (NVR: ×26 across 92 days of real quarterly bars = 1.28×/wk, clean).
+/// `max(days, 7)` refuses to extrapolate a sub-week gap: one ordinary −10% day would otherwise read
+/// as 0.9^7 = 0.48/wk and trip the floor. Thresholds are symmetric in log space (`max` up, `1/max`
+/// down) because both halves lie: an UP splice fakes a chart-topping CAGR, a DOWN splice fakes a −99%
+/// collapse that silently gates a good name out. `max_weekly_rate <= 1.0` (the 0.0 "off" default
+/// included) trims nothing. Crypto is the CALLER's exemption — SHIB genuinely did 13×/wk.
+pub fn splice_trim_start(dates: &[NaiveDate], closes: &[f64], max_weekly_rate: f64) -> usize {
+    if max_weekly_rate <= 1.0 {
+        return 0;
+    }
+    let mut start = 0;
+    for i in 1..dates.len().min(closes.len()) {
+        let (prev, next) = (closes[i - 1], closes[i]);
+        if prev <= 0.0 || next <= 0.0 {
+            continue;
+        }
+        let days = ((dates[i] - dates[i - 1]).num_days() as f64).max(7.0);
+        let rate = (next / prev).powf(7.0 / days);
+        if rate > max_weekly_rate || rate < 1.0 / max_weekly_rate {
+            start = i; // keep the first post-splice close; a later splice overrides an earlier one
+        }
+    }
+    start
+}
+
 /// Whole-life CUMULATIVE return %, REAL (deflated) when `infl` is given — the same treatment
 /// `horizon_changes` gives its >=1Y legs, so this number is comparable to the cells it stands in for.
 /// Same reason for the smoothed endpoint: a long leg is measured against `measure_endpoint`, not the
@@ -2444,6 +2474,40 @@ pub fn extreme_flags(closes: &[f64], tol: f64) -> (bool, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (splice) the trimmer must cut a redenomination joint, not real market history: the 0A08.L
+    /// shape (×19.6 in 28 days) trims; the NVR shape (×26 across 92 days of real quarterly bars)
+    /// survives — that pair is the assert that fails if anyone reverts to a raw step-ratio test.
+    #[test]
+    fn splice_trim_start_cuts_redenominations() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // the real case: monthly bars, MXN head glued to a GBP tail at 2019-08-11 -> 2019-09-08
+        let dates = vec![ymd(2019, 5, 5), ymd(2019, 8, 11), ymd(2019, 9, 8), ymd(2026, 7, 24)];
+        let closes = vec![30.0, 30.53, 597.97, 650.0];
+        assert_eq!(splice_trim_start(&dates, &closes, 2.0), 2, "keep the first post-splice close");
+        // trimmed life CAGR is the fund's real single-digit number, not the +61%/yr fiction
+        let fiction = life_cagr(&dates, &closes).unwrap();
+        let real = life_cagr(&dates[2..], &closes[2..]).unwrap();
+        assert!(fiction > 50.0, "untrimmed fiction: {fiction}");
+        assert!(real < 10.0, "post-splice truth: {real}");
+        // a wide REAL gap is not a splice: ×26 over 92 days = 1.28×/wk, under the 2.0 bar
+        let gap_d = vec![ymd(2020, 1, 1), ymd(2020, 4, 2), ymd(2021, 1, 1)];
+        assert_eq!(splice_trim_start(&gap_d, &[10.0, 260.0, 300.0], 2.0), 0, "raw-ratio regression");
+        // sub-week clamp: one ordinary −10% DAY reads as 0.9/wk, not 0.9^7 = 0.48 tripping the floor
+        let day_d = vec![ymd(2024, 6, 3), ymd(2024, 6, 4), ymd(2024, 6, 5)];
+        assert_eq!(splice_trim_start(&day_d, &[100.0, 90.0, 91.0], 2.0), 0);
+        // the DOWN half: a ÷100 GBp->GBP step trims exactly like the ×19.6 one
+        let dn_d = vec![ymd(2019, 1, 6), ymd(2019, 2, 3), ymd(2019, 3, 3), ymd(2026, 1, 4)];
+        assert_eq!(splice_trim_start(&dn_d, &[500.0, 495.0, 4.95, 6.0], 2.0), 2);
+        // off (0.0) is inert — every recorded receipt still holds
+        assert_eq!(splice_trim_start(&dates, &closes, 0.0), 0);
+        // two splices -> the LAST one wins
+        let two_d = vec![ymd(2015, 1, 4), ymd(2015, 2, 1), ymd(2019, 8, 11), ymd(2019, 9, 8), ymd(2026, 7, 24)];
+        assert_eq!(splice_trim_start(&two_d, &[1.0, 100.0, 102.0, 2000.0, 2100.0], 2.0), 3);
+        // degenerate inputs: empty and single-point series trim nothing
+        assert_eq!(splice_trim_start(&[], &[], 2.0), 0);
+        assert_eq!(splice_trim_start(&dates[..1], &closes[..1], 2.0), 0);
+    }
 
     /// (consistency) rolling_positive_pct: an always-rising series scores 100%, always-falling
     /// 0%; exactly one window of history (or less) is None — no windows means NO CLAIM, never a

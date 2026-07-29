@@ -222,6 +222,24 @@ fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
         .unwrap_or_default();
     divs.sort_by_key(|(d, _)| *d);
 
+    // (splice) drop everything before the last redenomination splice — an MXN head glued onto a GBP
+    // tail feeds every downstream metric (life_cagr, MAXDD, R², year_returns) a fiction. One parse
+    // site = live + backtest see identical data, the same no-train-serve-skew argument adjclose uses
+    // above. All parallel arrays cut together; pre-splice dividends go too (they're denominated in
+    // the discarded currency — summing them into tr_cagr would mix units). Crypto exempt: a real
+    // 13×/wk week exists there (SHIB), so the trimmer would amputate genuine history.
+    if !crate::picks::is_currency_quoted(ticker) {
+        let start =
+            core::splice_trim_start(&dates, &closes, crate::config::splice_max_weekly_rate());
+        if start > 0 {
+            let cut = dates[start];
+            dates.drain(..start);
+            closes.drain(..start);
+            volumes.drain(..start);
+            divs.retain(|(d, _)| *d >= cut);
+        }
+    }
+
     Some(Chart {
         dates,
         closes,
@@ -489,7 +507,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // horizon_changes + dividend_sums; every other metric stays on the precise daily `chart`. Falls back
     // to daily-only (20Y stays n/a) if the monthly fetch failed.
     let cut = chart.dates[0];
-    let (long_dates, long_closes, long_divs) =
+    let (mut long_dates, mut long_closes, mut long_divs) =
         match chart_long_j.as_ref().and_then(|j| parse_chart(j, ticker)) {
             Some(lc) => {
                 let keep = lc.dates.iter().take_while(|d| **d < cut).count();
@@ -509,6 +527,19 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             }
             None => (chart.dates.clone(), chart.closes.clone(), chart.divs.clone()),
         };
+
+    // (splice) second pass over the MERGED series: each payload was trimmed inside parse_chart, but
+    // the monthly-head/daily-tail seam is a joint neither payload contains alone — a redenomination
+    // exactly there only becomes a visible step once the two are glued.
+    if !crate::picks::is_currency_quoted(ticker) {
+        let start = core::splice_trim_start(&long_dates, &long_closes, crate::config::splice_max_weekly_rate());
+        if start > 0 {
+            let cut_d = long_dates[start];
+            long_dates.drain(..start);
+            long_closes.drain(..start);
+            long_divs.retain(|(d, _)| *d >= cut_d);
+        }
+    }
 
     // Whole-life age + endpoint CAGR from the SAME merged series. `age_years` is display-only (`yrs`);
     // `life_cagr` feeds the `cagr` column, the `growth_min_cagr` whole-life bar, and — when
@@ -4330,11 +4361,14 @@ mod tests {
         // adjclose is PRESENT but differs from close: with use_adjusted_close defaulting false (no
         // settings.yaml in CI -> false), parse_chart must IGNORE it and use raw close (Item 21 inert
         // default — the validated edge is raw-close-calibrated; the flag is the only thing that flips it).
+        // (splice) closes stay under the trimmer's 2.0×/wk bar on purpose: splice_max_weekly_rate is
+        // config-dependent (0.0 in CI, ci-settings' 2.0 on a dev box), and the trim logic has its own
+        // core::splice_trim_start tests — this fixture must parse identically in both environments.
         let j = json!({"chart": {"result": [{
             "timestamp": [1577836800, 1577923200, 1578009600],
             "indicators": {
-                "quote": [{"close": [10.0, null, 30.0], "volume": [100, 200]}],
-                "adjclose": [{"adjclose": [9.0, null, 27.0]}]
+                "quote": [{"close": [10.0, null, 12.0], "volume": [100, 200]}],
+                "adjclose": [{"adjclose": [9.0, null, 10.8]}]
             },
             "meta": {"currency": "EUR", "instrumentType": "EQUITY"},
             "events": {"dividends": {
@@ -4343,7 +4377,7 @@ mod tests {
             }}
         }]}});
         let c = parse_chart(&j, "TST").unwrap();
-        assert_eq!(c.closes, vec![10.0, 30.0]); // null close bar dropped
+        assert_eq!(c.closes, vec![10.0, 12.0]); // null close bar dropped
         assert_eq!(c.dates.len(), 2);
         assert_eq!(c.dates[0], NaiveDate::from_ymd_opt(2020, 1, 1).unwrap());
         assert_eq!(c.dates[1], NaiveDate::from_ymd_opt(2020, 1, 3).unwrap());
