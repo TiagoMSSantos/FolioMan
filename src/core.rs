@@ -211,6 +211,7 @@ pub struct Quote {
     pub fund: Option<FundFactors>,
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history, via `core::life_cagr`. NOT display-only since (#3i)/(#3j): the `cagr` column, the `growth_min_cagr` whole-life bar, and the growth RANK when `use_life_cagr` is on. Filled in the backtest too (same fn, `[..=as_of]` slice) -> train==serve. None = <6mo history / non-positive first close / stub
+    pub capped_cagr: Option<f64>,      // (#3l) endpoint CAGR over the last min(age, life_cagr_max_years) years, via `core::capped_life_cagr` — the `use_life_cagr: false` rank source when the knob is >0, replacing the 20/8/5Y rung ladder. Filled at the same two sites as `life_cagr` (fetch + backtest_quote), same knob read via the free accessor -> train==serve. None = knob off / <5y of history (pool guard: the rung ladder never ranked a name without a 5Y leg, and the window swap must not widen the pool)
     pub life_return_pct: Option<f64>,  // whole-life CUMULATIVE real return (%) over that same full history, via `core::life_return`. DISPLAY-ONLY, and deliberately NOT an entry in `perf`: `picks::perf_fill` prints it (marked `≈`) in a long rung the record ALMOST reaches, and putting it in `perf` would hand it to `perf_pct` and therefore to every gate. None = <6mo history / non-positive first close / stub / BACKTEST (never rendered there)
     pub trail_monthly: Vec<f64>,       // (#41) up to 36 trailing MONTH-over-MONTH returns (%), newest last, via `core::monthly_returns_tail`. Sole input to the growth_corr_cap redundancy skip. Built from the DAILY chart live and from the monthly slice in the backtest — the same fn, so a pair's correlation means the same thing in train and serve. Empty = no history / stub -> unjudgeable, and an unjudgeable pair never blocks
     pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). DISPLAY-ONLY (`trcagr` column), never scored; ≈ life_cagr for Acc funds/non-payers
@@ -278,6 +279,7 @@ impl Quote {
             fund: None,
             age_years: None,
             life_cagr: None,
+            capped_cagr: None,
             life_return_pct: None,
             trail_monthly: Vec::new(),
             tr_cagr: None,
@@ -406,6 +408,27 @@ pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
         }
         _ => None,
     }
+}
+
+/// (#3l) `life_cagr` over the last min(age, `max_years`) years only — the `use_life_cagr: false`
+/// rank source when `life_cagr_max_years` > 0. Two guards, both deliberate:
+/// - `max_years <= 0.0` -> None (knob off; callers fall back to the rung ladder, byte-identical).
+/// - age < 5y -> None. The rung ladder never ranked a name without a 5Y leg, so swapping the
+///   WINDOW must not widen the ranked POOL — a 6-month-old on a bull tear would otherwise walk in
+///   with a "CAGR" no gate ever validated.
+/// The window starts at the first bar AT/AFTER `last − max_years`, so a name younger than the cap
+/// keeps its whole life (min(age, cap)) and the cut lands on a real close, never an interpolation.
+pub fn capped_life_cagr(dates: &[NaiveDate], closes: &[f64], max_years: f64) -> Option<f64> {
+    if max_years <= 0.0 {
+        return None;
+    }
+    let (first, last) = dates.first().zip(dates.last())?;
+    if (*last - *first).num_days() as f64 / 365.25 < 5.0 {
+        return None;
+    }
+    let cut = *last - chrono::Duration::days((max_years * 365.25) as i64);
+    let start = dates.partition_point(|d| *d < cut);
+    life_cagr(&dates[start..], &closes[start.min(closes.len())..])
 }
 
 /// (splice) First index AFTER the last redenomination splice — the caller keeps `[start..]` of every
@@ -2279,6 +2302,8 @@ pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: 
     // Read `core::life_cagr`'s caveat before trusting a number off this on the DAILY path: "life"
     // there is the ~10y fetch window. Horizon questions need `backtest ... 12` (MAX-monthly).
     quote.life_cagr = life_cagr(d, c);
+    // (#3l) same slice, same free-accessor knob as the live fetch -> train==serve, like the two above.
+    quote.capped_cagr = capped_life_cagr(d, c, crate::config::life_cagr_max_years());
     quote.max_drawdown_pct = max_drawdown_pct(c);
     // closes-derived risk stats for the standalone PRICE-RISK probes (backtest report only — no
     // score path reads roll*/worst*). The hit-rate/worst windows scale with the run's cadence
@@ -2507,6 +2532,40 @@ mod tests {
         // degenerate inputs: empty and single-point series trim nothing
         assert_eq!(splice_trim_start(&[], &[], 2.0), 0);
         assert_eq!(splice_trim_start(&dates[..1], &closes[..1], 2.0), 0);
+    }
+
+    /// (#3l) capped_life_cagr: the window clamps to the LAST `max_years`, so a 40y series with a
+    /// hot first decade reads LOWER capped than whole-life; a name younger than the cap keeps its
+    /// whole life (min(age, cap)); 0.0 is off (None -> callers fall back to the rung, byte-inert);
+    /// under 5y of history is None (pool guard — the rung ladder never ranked a name without a 5Y
+    /// leg, and the window swap must not admit 6-month names); the cut lands at the first bar
+    /// AT/AFTER `last − max_years`, never before it.
+    #[test]
+    fn capped_life_cagr_windows() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // 40y series, ×100 in the first decade then flat: whole life ~12%/yr, last 30y ~0%/yr
+        // (bar 1 sits at 1996-02-02, safely AFTER the 30y cut of 1996-01-06 — the cut date shifts
+        // by leap days, so the fixture leaves a month of slack rather than betting on the calendar)
+        let dates =
+            vec![ymd(1986, 1, 5), ymd(1996, 2, 2), ymd(2006, 1, 5), ymd(2016, 1, 5), ymd(2026, 1, 5)];
+        let closes = vec![1.0, 100.0, 100.0, 100.0, 100.0];
+        let whole = life_cagr(&dates, &closes).unwrap();
+        let capped = capped_life_cagr(&dates, &closes, 30.0).unwrap();
+        assert!(whole > 10.0, "whole-life carries the hot decade: {whole}");
+        assert!(capped.abs() < 0.1, "last 30y are flat: {capped}");
+        // window boundary: first bar at/after the cut starts the window -> the 1996 bar, not 2006
+        assert_eq!(capped, life_cagr(&dates[1..], &closes[1..]).unwrap());
+        // cap longer than the record = whole life (min(age, cap))
+        assert_eq!(capped_life_cagr(&dates, &closes, 60.0), life_cagr(&dates, &closes));
+        // 0.0 = off -> None, callers keep the rung CAGR (byte-inert default)
+        assert!(capped_life_cagr(&dates, &closes, 0.0).is_none());
+        // pool guard: a 4y-old name is declined even though life_cagr itself would price it
+        let young_d = vec![ymd(2022, 1, 5), ymd(2026, 1, 5)];
+        let young_c = vec![10.0, 30.0];
+        assert!(life_cagr(&young_d, &young_c).is_some());
+        assert!(capped_life_cagr(&young_d, &young_c, 30.0).is_none());
+        // degenerate: empty series
+        assert!(capped_life_cagr(&[], &[], 30.0).is_none());
     }
 
     /// (consistency) rolling_positive_pct: an always-rising series scores 100%, always-falling

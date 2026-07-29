@@ -261,6 +261,25 @@ buy_heuristic:
                                  #   0A08.L splice #1 pre-trim: an unbounded window maximizes exposure to
                                  #   glued-denomination history.) A local settings.yaml overlay carrying
                                  #   `use_life_cagr: true` silently reverses all of this — check yours.
+  life_cagr_max_years: 0.0       # (#3l) MEASURED OFF 2026-07-29: >0 swaps false-mode's 20/8/5Y rung ladder
+                                 #   for a CAGR over the last min(age, N) years (true mode stays whole-life;
+                                 #   a name the capped fn declines — <5y history — keeps its rung, so the
+                                 #   pool only moves through the growth_min_cagr gate reading a different
+                                 #   number). Motivation was the 8→20 dead band: an 18y-old name is ranked
+                                 #   on its 8Y window. Two arms on the shipped (#3k) config, stress grid:
+                                 #   N=20 20y-s: edge +536.6, top-10 +5.8(+5.6), rank1 +4.8|+3.7 win 81%,
+                                 #     h2h 54% — the only >50% h2h ever recorded, but the rank-1 MEDIAN
+                                 #     drops 0.7 and the lane edge 87 vs ship +623.5/+6.1(+5.8)/+4.4|+4.4/41%.
+                                 #   N=20 12y-s +182.7/+6.0(+5.9)/+2.9|+3.7/28% and 8y-s +75.6/+5.9(+6.5)/
+                                 #     +3.4|+3.0/47% lose EVERY metric vs ship (+221.7/+6.7(+6.8)/+3.2|+4.8/
+                                 #     33% and +79.2/+6.5(+7.3)/+3.9|+4.5/48%).
+                                 #   N=30: clamp never fires at the 20y-hold king (series ≤ ~25y), so its
+                                 #     king run IS whole-life under the shipped weights: edge +557.9, still
+                                 #     -66 vs the rung — (#3j)/(#3k) re-confirmed with modern weights.
+                                 #     12y-s +180.4/28%, 8y-s +74.8/47%: same losses as N=20.
+                                 #   Widening the window fixes the dead band and LOSES at every horizon
+                                 #   that can see it — the recent-window rung is the signal, not a proxy.
+                                 #   Keep 0.0. Inertness verified: knob-0 binary = ship metrics exactly.
   # fixed_cagr_years still 0, but the reason has CHANGED and the old one is dead. It said "#15 is redundant
   # because use_trend_cagr overrides a pinned window with the whole-series slope" — use_trend_cagr was then
   # REVERTED two lines up, so #15 sat untested on a stale rationale. (#3j) finally measured it: pinning every

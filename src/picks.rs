@@ -54,6 +54,8 @@ fn long_leg_fixed(quote: &Quote, fixed_years: u32) -> Option<(f64, f64)> {
 ///   - default          endpoint CAGR of `long_leg_fixed`'s rung (20/8/5Y, or the pinned window)
 ///   - `use_trend_cagr` (#14) endpoint-robust least-squares log-slope, precomputed at fetch/backtest build
 ///   - `use_life_cagr`  (#3j) whole-life CAGR since listing, ditto — no age cliff, no common window
+///   - `life_cagr_max_years` (#3l) false-mode only: last min(age, N) years, ditto — the rung ladder
+///     replaced by a continuous window (no 8->20 dead band), still capped so age can't dominate
 ///
 /// THE chokepoint, and the reason it is worth one: `score_parts` calls this ONCE and hands the result to
 /// every reader, so a knob flipped here moves all seven together — the `growth_min_cagr` gate, `trend`,
@@ -76,6 +78,11 @@ fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) ->
         quote.life_cagr.unwrap_or_else(|| core::cagr(cum, years))
     } else if tuning.use_trend_cagr {
         quote.trend_cagr.unwrap_or_else(|| core::cagr(cum, years))
+    } else if tuning.life_cagr_max_years > 0.0 {
+        // (#3l) false-mode window swap: last min(age, N) years instead of the 20/8/5Y rung. Same
+        // fallback rule as the life branch — a name the capped fn declines (knob off upstream,
+        // <5y history) keeps its rung CAGR, never a 0 that would fail the floor for the wrong reason.
+        quote.capped_cagr.unwrap_or_else(|| core::cagr(cum, years))
     } else {
         core::cagr(cum, years)
     }
@@ -2920,6 +2927,7 @@ mod tests {
             fund: None,            // (G+) default off; the multi-term asserts set it explicitly
             age_years: None,       // display-only pair; never scored
             life_cagr: None,
+            capped_cagr: None,     // (#3l) default off; the capped-window arm sets it via config
             life_return_pct: None,     // (perf_fill) display-only; the fill asserts set it explicitly
             trail_monthly: Vec::new(), // (#41) no trail -> unjudgeable -> the redundancy skip never blocks
             tr_cagr: None,         // (TR-CAGR) display-only; never scored
