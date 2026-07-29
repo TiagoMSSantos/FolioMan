@@ -1134,8 +1134,36 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         let cut = m / 2;
         let (early, late) = (mean(&excess[..cut]), mean(&excess[cut..]));
         println!(
-            "  top-{n:<2} book {:+.1}%/yr  vs S&P500 {:+.1}%/yr  ->  excess {:+.1} pts/yr   win {win:.0}% of {m}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}   rode {zeros} zeros/{held} holds",
-            mean(&book), mean(&spy), mean(&excess)
+            "  top-{n:<2} book {:+.1}%/yr  vs S&P500 {:+.1}%/yr  ->  excess {:+.1} (med {:+.1}) pts/yr   win {win:.0}% of {m}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}   rode {zeros} zeros/{held} holds",
+            mean(&book), mean(&spy), mean(&excess), median(excess.clone())
+        );
+    }
+    // (#45) RANK-SLICE ladder + same-window head-to-head. The cumulative top-N table above cannot
+    // answer "is #1 really better than #20": ann(mean of multiples) mechanically favors bigger books
+    // on fat-tailed outcomes (a 10-draw mean usually catches one lottery ticket, a 1-draw book
+    // can't), so top-1 trailing top-10 is diversification math, not a ranking verdict. DISJOINT
+    // slices and a direct same-window compare are the honest order test: if ranks 1 and 2-5 don't
+    // beat 11-20 HERE, the order at the top of the screen carries no signal.
+    let (slices, (h1, h25, hn)) = rank_slice_stats(&by_bucket);
+    println!("  rank-slice (DISJOINT books, excess vs {bench_sym}; mean|median across windows — median is lottery-ticket-immune):");
+    for (label, excess) in &slices {
+        if excess.is_empty() {
+            continue;
+        }
+        let ex_ann: Vec<f64> = excess.iter().map(|(bk, sp)| ann(*bk, years) - ann(*sp, years)).collect();
+        let win = ex_ann.iter().filter(|e| **e > 0.0).count() as f64 / ex_ann.len() as f64 * 100.0;
+        println!(
+            "    rank {label:<6} excess {:+.1}|{:+.1} pts/yr   win {win:.0}% of {}",
+            mean(&ex_ann),
+            median(ex_ann.clone()),
+            ex_ann.len()
+        );
+    }
+    if hn > 0 {
+        println!(
+            "    head-to-head same-window (no averaging artifact): #1 beat the 11-20 book in {h1}/{hn} ({:.0}%), the 2-5 book did in {h25}/{hn} ({:.0}%) — >50% = the top of the list is genuinely better than its middle",
+            h1 as f64 / hn as f64 * 100.0,
+            h25 as f64 / hn as f64 * 100.0
         );
     }
     // (Phase B) the never-sell tax edge, made visible: a hold pays capital-gains ONCE at the final
@@ -1150,6 +1178,55 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     }
     println!("  (BOOK = equal-weight terminal wealth annualized (winners carry it, a zero costs its 1/N weight); >0 beats S&P500.");
     println!("   NON-stress: picks are today's survivors (biased UP) vs the true index — run `stress` for the honest excess.)");
+}
+
+/// (#45) DISJOINT rank-slice books + same-window head-to-head, pure for testability. Per window
+/// (bucket): sort by score desc; slice `lo..hi` of that order becomes its own equal-weight book;
+/// each slice collects per-window (book cum %, bench cum %) pairs — the caller annualizes, so this
+/// fn stays years-free. Head-to-head counts windows (≥11 names) where the #1 name / the 2-5 book
+/// beat the 11-20 book on raw realized % — mean of multiples is monotone in mean of %, so no
+/// annualization is needed to ORDER them within one window.
+type SliceStats = (Vec<(&'static str, Vec<(f64, f64)>)>, (usize, usize, usize));
+fn rank_slice_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64, String)>>) -> SliceStats {
+    let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
+    const SLICES: [(usize, usize, &str); 5] =
+        [(0, 1, "1"), (1, 5, "2-5"), (5, 10, "6-10"), (10, 20, "11-20"), (20, 50, "21-50")];
+    let mut out: Vec<(&'static str, Vec<(f64, f64)>)> = SLICES.iter().map(|(_, _, l)| (*l, Vec::new())).collect();
+    let (mut h1, mut h25, mut hn) = (0usize, 0usize, 0usize);
+    for v in by_bucket.values() {
+        let mut vv = v.clone();
+        vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc — the screen's own order
+        for ((lo, hi, _), (_, series)) in SLICES.iter().zip(out.iter_mut()) {
+            if vv.len() <= *lo {
+                continue; // slice starts past this window's pool — no fake short book
+            }
+            let p = &vv[*lo..(*hi).min(vv.len())];
+            let bk = (mean(&p.iter().map(|x| 1.0 + x.1 / 100.0).collect::<Vec<_>>()) - 1.0) * 100.0;
+            let sp = (mean(&p.iter().map(|x| 1.0 + x.2 / 100.0).collect::<Vec<_>>()) - 1.0) * 100.0;
+            series.push((bk, sp));
+        }
+        if vv.len() > 10 {
+            hn += 1;
+            let mid = mean(&vv[10..20.min(vv.len())].iter().map(|x| x.1).collect::<Vec<_>>());
+            if vv[0].1 > mid {
+                h1 += 1;
+            }
+            if mean(&vv[1..5].iter().map(|x| x.1).collect::<Vec<_>>()) > mid {
+                h25 += 1;
+            }
+        }
+    }
+    (out, (h1, h25, hn))
+}
+
+/// Median of an owned sample. Callers skip empty slices, so the 0-length arm never reaches a print.
+fn median(mut v: Vec<f64>) -> f64 {
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let k = v.len();
+    if k == 0 {
+        return f64::NAN;
+    }
+    if k % 2 == 1 { v[k / 2] } else { (v[k / 2 - 1] + v[k / 2]) / 2.0 }
 }
 
 /// (Phase B) PT capital-gains rate; hardcoded — add a knob only if a second rate is ever needed.
@@ -2354,6 +2431,46 @@ mod tests {
     }
     fn sample(date: NaiveDate, realized: f64) -> Sample {
         Sample { date, realized, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None, trail: Vec::new() }
+    }
+
+    /// (#45) rank-slice ladder + head-to-head on a synthetic ranking with KNOWN outcomes — the
+    /// assert that fails if slices stop being disjoint, stop following score order, or the
+    /// head-to-head silently changes its comparison sets. Window A: 25 names, score descending,
+    /// realized stepped by rank block (rank1 +100, 2-5 +50, 6-10 +30, 11-20 +10, 21-25 0), bench
+    /// +10 everywhere. Window B: 8 names only — too small for a head-to-head (needs ≥11), and its
+    /// 21-50 slice must NOT exist rather than fake a short book.
+    #[test]
+    fn rank_slice_ladder_and_head_to_head() {
+        let mut by_bucket: std::collections::BTreeMap<i32, Vec<(f64, f64, f64, String)>> =
+            std::collections::BTreeMap::new();
+        let step = |rank: usize| match rank {
+            0 => 100.0,
+            1..=4 => 50.0,
+            5..=9 => 30.0,
+            10..=19 => 10.0,
+            _ => 0.0,
+        };
+        by_bucket.insert(1, (0..25).map(|r| (100.0 - r as f64, step(r), 10.0, format!("A{r}"))).collect());
+        by_bucket.insert(2, (0..8).map(|r| (100.0 - r as f64, step(r), 10.0, format!("B{r}"))).collect());
+        let (slices, (h1, h25, hn)) = rank_slice_stats(&by_bucket);
+        let get = |label: &str| slices.iter().find(|(l, _)| *l == label).unwrap().1.clone();
+        let close = |a: &(f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9;
+        // window A's slice books equal their block means; bench cum is +10 in every slice
+        assert_eq!(get("1").len(), 2, "both windows have a #1");
+        assert!(get("1").iter().all(|p| close(p, (100.0, 10.0))));
+        assert!(close(&get("2-5")[0], (50.0, 10.0)));
+        assert!(close(&get("6-10")[0], (30.0, 10.0)));
+        assert_eq!(get("11-20").len(), 1, "window B (8 names) has no rank-11");
+        assert!(close(&get("11-20")[0], (10.0, 10.0)));
+        assert_eq!(get("21-50").len(), 1, "window B must not fake a 21-50 book");
+        assert!(close(&get("21-50")[0], (0.0, 10.0)));
+        // window B's short tail: ranks 6-8 all sit in the 6-10 slice, clamped at its pool
+        assert!(close(&get("6-10")[1], (30.0, 10.0)));
+        // head-to-head: only window A qualifies (>10 names); #1 (+100) and 2-5 (+50) both beat 11-20 (+10)
+        assert_eq!((h1, h25, hn), (1, 1, 1));
+        // median: odd + even sample sizes, and the top-N table's clone-then-sort usage pattern
+        assert_eq!(median(vec![3.0, 1.0, 2.0]), 2.0);
+        assert_eq!(median(vec![4.0, 1.0, 2.0, 3.0]), 2.5);
     }
 
     /// (#40) benchmark math: `ann` inverts a 12y cumulative back to CAGR (and floors a wipeout at
