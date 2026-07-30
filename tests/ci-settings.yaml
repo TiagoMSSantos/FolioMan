@@ -96,10 +96,19 @@ buy_heuristic:
                                  #   READING THE SWEEP: its "<- TOO TIGHT" flag is NOT sample-size aware. The same run flags
                                  #   `growth_min_range_pct -10` at n=1 (+163.8) and `growth_maxdd_cap ->off` at n=1 (+75.7). Check n
                                  #   before believing any row in that table, including this one.
+                                 #   SWEPT SOLO 2026-07-30 (per-knob stress grid, floor removed at -1e6): the floor is HORIZON-SPLIT.
+                                 #   8y-s: removal WINS (edge +100.0 vs +79.2, top-10 +7.0 vs +6.5) — dip-buying pays inside a decade.
+                                 #   20y-s KING: lane edge CRASHES +623.5 -> +429.8 (−31%) — down-year names admitted into the top half
+                                 #   are secular decliners over 20y, the round-5 −108-pts cohort seen at lane level. The top-10 BOOK
+                                 #   actually ticks up (+6.4/+6.1 vs +6.1/+5.8), so the wound is below the buy line — but the 20y+ hold
+                                 #   goal keeps the floor. VERDICT: 0.0 stays; an overlay running -1e6 should return to 0.0.
   min_1y_pct_crypto: -50.0       # LIVE (crypto/FX -EUR/-USD): 1Y floor for the crypto growth lane — coins swing far harder than
                                  #   stocks, but a coin down worse than -50% on the year is a crash, not a swing (BTC's own bad
                                  #   year is -33.5%, comfortably inside; GT -62 / BGB -60 out). Was -75, which let deep crashers rank
   max_1m_drop_pct: -20.0         # LIVE: reject if 1M % <= this (a hard monthly crash = falling knife) — both lanes
+                                 #   SWEPT SOLO 2026-07-30 (off at -1e6, per-knob stress grid): noise (20y-s +629.8 vs +623.5,
+                                 #   12y-s −4.4, 8y-s −1.2, book metrics flat). The gate is FREE in backtest — keep −20 for the
+                                 #   live mid-crash month it exists to catch; an overlay running -1e6 gains nothing by it.
   max_1m_drop_pct_crypto: -35.0  # LIVE (crypto/FX): looser knife — a -20%/month alt is normal — both lanes
   min_long_pct: 30.0             # [FOIL] on-sale only: reject unless EVERY 5Y/10Y/20Y leg is > this (the growth lane has its own per-rung floors below)
   min_long_pct_crypto: -70.0     # [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -95%)
@@ -121,6 +130,9 @@ buy_heuristic:
                                  #   holds that view — see its separate, much looser min_long_pct_crypto -70.0 two lines up. If the crypto
                                  #   lane thins out unexpectedly, this knob going negative is the fix, and it loosens equities at the same
                                  #   time, because it is now one shared number. Edge-affecting for equities -> re-validate before moving it.
+                                 #   SWEPT SOLO 2026-07-30 (off at -1e6, per-knob stress grid): noise at every horizon (20y-s +614.1
+                                 #   vs +623.5, 12y-s +224.4 vs +221.7, 8y-s +82.4 vs +79.2; book metrics byte-identical). At 0.0 the
+                                 #   bar almost never binds once growth_min_cagr is in force. TIE — 0.0 stays.
   growth_min_8y_pct: -1e9        # OFF here, but it is the rung that BITES — arm it in the local settings.yaml if wanted. MEASURED live
                                  #   2026-07-27 at growth_max_peg 2.0, +50% bar: it rejects FOUR names, and all four sit against the fence —
                                  #     AMGN 8Y +44.0% · GILD +40.7% · SCHW +48.2% · ULTA +49.2%
@@ -136,6 +148,11 @@ buy_heuristic:
                                  #   Ships off because the number is unvalidated, not because it is inert. The legs ARE backtest-visible for
                                  #   equities (backtest_quote fills perf from the full [..=as_of] slice), unlike the age/AUM/turnover gates —
                                  #   so sweep it before arming it in anger.
+                                 #   SWEPT 2026-07-30 as asked (+50 bar, per-knob stress grid): NEAR-INERT there — 20y-s +624.2 vs
+                                 #   +623.5 with the book byte-identical, 12y-s −6.0 edge, 8y-s +1.4. The AMGN/GILD/SCHW/ULTA pattern
+                                 #   never assembles in the survivors-only pool (a name failing +50%/8y while clearing the CAGR and
+                                 #   range bars barely exists there). The backtest neither convicts nor acquits: arming it live at 50
+                                 #   stays a judgement call riding the live receipt above.
   growth_min_20y_pct: -1e9       # OFF, and unlike the 8Y rung above this one really does reject NOBODY at the +200 requested — confirmed on
                                  #   the same live run (5.65%/yr; growth_min_cagr 16.0 implies +1846% over 20y).
                                  #   READ THIS BEFORE ARMING IT: the bar reaches LONG-LISTED STOCKS ONLY. No UCITS ETF and no coin in the
@@ -147,6 +164,8 @@ buy_heuristic:
                                  #   all, and a name whose great decades are early clears every bar on history it will not repeat. PGR is the
                                  #   live case: +418% over its last 20y = 8.6%/yr, behind a 16%/yr life CAGR. At +200 it clears easily —
                                  #   catching PGR needs a bar near the CAGR-implied level, which is a much bigger change and unmeasured.
+                                 #   SWEPT 2026-07-30 (+200, per-knob stress grid): inert there too (+0.7 edge at king = a bottom-half
+                                 #   sliver; 8y-s byte-identical). Live and backtest agree the bar rejects ~nobody — cosmetic at 200.
   perf_fill_coverage_pct: 90.0   # DISPLAY ONLY — this knob cannot move a rank, a score or a gate. 100.0 = off (the code default).
                                  #   The problem: YRS rounds to nearest, a leg needs its full span minus 31d, so each rung has a ~5-month
                                  #   band where the row contradicts itself — WTAI.MI at ~7.7y printed "YRS 8" beside "8Y n/a" (8Y needs 7.91y).
@@ -439,6 +458,10 @@ buy_heuristic:
                                  #   AND better on both OOS halves (+0.07/+0.09 vs +0.06/+0.08). 70 fell short of
                                  #   its own ">=117 both-OOS+" keep-rule; the gate-sweep "70 too tight" flag was a
                                  #   small-sample mirage. 80 is the validated base.
+                                 #   RE-CONFIRMED 2026-07-30 from the other side: 50 swept solo on the stress grid LOSES edge at
+                                 #   every horizon (20y-s +573.0 vs +623.5, 12y-s +203.4 vs +221.7, 8y-s +76.0 vs +79.2) with no
+                                 #   book metric improving. 80 -> 70 -> 50 is monotone damage; the 80 bar is load-bearing. An
+                                 #   overlay running 50 should return to 80.
   growth_min_range_pct_crypto: 40.0 # GATE (crypto only): looser range floor (top 60% of its own range) so MORE coins
                                  #   surface — alts spend most of their life far below ATH yet still out-compound. The
                                  #   BTC-relative tilt below + the NUPL damp keep the wider crypto table honest. Stocks/ETFs
@@ -466,7 +489,7 @@ buy_heuristic:
   growth_btc_outperf_weight: 0.3 # SCORE (crypto only): tilt a coin by its 1Y return vs BITCOIN's (the market base) — beats
                                  #   BTC -> boost, lags -> mild dock, bounded 0.5x..2x. BTC itself = 1.0x (the neutral anchor
                                  #   you read the others against). SCREEN/CHECK-only (backtest-blind, validated edge untouched). 0 = off.
-  growth_min_cagr: 14.0          # GATE, TWO LEGS, one number: the long leg (20/8/5Y rung) AND (#3i) the whole-life CAGR
+  growth_min_cagr: 19.0          # GATE, TWO LEGS, one number: the long leg (20/8/5Y rung) AND (#3i) the whole-life CAGR
                                  #   must BOTH compound >=14%/yr to count as a proven grower. (STALE-FIXED
                                  #   2026-07-29: this note said the life leg was screen-only because
                                  #   "backtest_quote leaves life_cagr None" — false since 2026-07-27,
@@ -477,6 +500,18 @@ buy_heuristic:
                                  #   flips top-half peer-relative -5.2->+4.6 (the bought basket now BEATS its peers, not just loses less);
                                  #   16 overshoots (edge +86.3, top-half flat, pool thins 1987->1609). OOS both-positive. 5y proxy preferred
                                  #   12 (rho +0.15 sym) but the 12y horizon — what the 20y goal actually targets — peaks at 14.
+                                 #   RAISED 14 -> 19 (2026-07-30, user-proposed, per-knob stress grid vs the (#3k) ship baseline):
+                                 #   the SECOND winner's-curse cure. h2h >50% at ALL THREE horizons for the first time (20y-s 60%,
+                                 #   12y-s 69%, 8y-s 60% vs 41/33/48) with rank-1 quality UP everywhere — 20y-s +5.4|+5.3 win 81%
+                                 #   (vs +4.4|+4.4 78%), 12y-s +4.6|+5.3 (vs +3.2|+4.8), 8y-s +5.6|+6.1 with the worst window
+                                 #   HALVED −15.8 -> −9.2 — AND king lane edge UP +677.4 vs +623.5. THE PRICE, stated: pool thins
+                                 #   ~10% (36/51/59 windows vs 40/56/64), 12/8y lane edge −4/−7% (+212.9/+73.7), top-10 median
+                                 #   −0.1..−0.4. Arm F (capped-CAGR) failed exactly where this wins (rank-1 median at king).
+                                 #   The old 12y knee above ("16 overshoots") was measured under trend weight 0.35 PRE-(#3k);
+                                 #   at 0.15 the argmax leans on the gate instead of the trend reward, and the knee moves.
+                                 #   Intermediates 15-18 are UNSWEPT under the new regime. Pair-checked with growth_max_peg 1.6
+                                 #   (knob-K12 grid): interaction nil — king byte-identical to this arm solo, 12y-s +215.1 h2h 69%,
+                                 #   8y-s +71.8 h2h 57%. The pair IS the new ship baseline.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
@@ -1242,7 +1277,7 @@ buy_heuristic:
                                  #   worst-ever tail. BTC ~2.4%/day, so 3.0 keeps the base with headroom and cuts the wild alts
                                  #   (OKB 3.4, LEO 3.1). Crypto absent from the backtest pool -> edge-blind by construction;
                                  #   judgment gate validated by live-screen eyeball. 0 = off.
-  growth_max_peg: 2.0            # (#37) HARD valuation ceiling: reject an equity whose PEG exceeds this. Stored as PEG
+  growth_max_peg: 1.6            # (#37) HARD valuation ceiling: reject an equity whose PEG exceeds this. Stored as PEG
                                  #   (reads like the column and like the request), APPLIED to `fund.peg_yield` — which is
                                  #   1/PEG x 100 — as `peg_yield < 100/growth_max_peg`, so a HIGH peg_yield is cheap. Since
                                  #   2026-07-27 this IS the printed `peg` cell: one PEG, both dividing by the score's own
@@ -1254,6 +1289,11 @@ buy_heuristic:
                                  #   without separating. The on/off finding is the durable half; the threshold half must be
                                  #   re-measured, because life CAGR sits below trend CAGR so every ceiling now bites harder.
                                  #   2.0 stays as the asked-for value inside a plateau, not a fitted optimum. 0 = off.
+                                 #   TIGHTENED 2.0 -> 1.6 (2026-07-30, user's live value, per-knob stress grid): 8y-s edge +83.1
+                                 #   vs +79.2 with h2h 52% vs 48%; 12y/20y flat (the gate is near-blind at the 20y king — SEC
+                                 #   fundamentals start 2007, its cutoffs end 2006). Same [1.5, 4.0] plateau as above, but the
+                                 #   cheap end now measures mildly better and costs nothing anywhere. Shipped as a pair with
+                                 #   growth_min_cagr 19 (knob-K12 grid — interaction nil, see that receipt).
   growth_min_net_margin: 0.0     # (#38) net-margin floor on `fund.net_margin`. MEASURED AND REJECTED, kept at 0 with the
                                  #   receipt so it is not re-proposed: 5/10/15 all cost edge or era-stability, and combined
                                  #   with growth_max_peg it cancels that gate entirely and turns the newest era negative.
