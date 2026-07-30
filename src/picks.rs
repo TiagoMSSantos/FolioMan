@@ -374,6 +374,16 @@ fn is_commodity(quote: &Quote) -> bool {
         })
 }
 
+/// (#45) Non-EUR-quoted ETF line — the FX/venue dock's predicate, shared by the score damp and the
+/// `x` rank flag so the printed mark can never disagree with the arithmetic. Currency, not venue:
+/// Yahoo's `quote_currency` ("GBp"/"USD"/"SEK"…) is what a EUR buyer's broker must convert, and a
+/// EUR-quoted line on a non-eurozone venue costs no FX. None (every backtest stub) is innocent —
+/// the dock is backtest-blind by construction, like (#44).
+fn is_noneur_etf(quote: &Quote) -> bool {
+    quote_is_etf(quote)
+        && quote.quote_currency.as_deref().is_some_and(|c| !c.eq_ignore_ascii_case("EUR"))
+}
+
 /// Is this quote a pooled fund? Prefer Yahoo's own `instrumentType` ("ETF"), which is present even
 /// when the name string isn't a giveaway (ETF shortNames like "ISHARES III PLC ISHRS CORE MSCI"
 /// carry no marker). Falls back to the name-substring guess for rows with no meta (backtest stubs).
@@ -691,7 +701,8 @@ struct ScoreParts {
     liq_bonus: f64,    // (L) turnover_weight × ln(max(turnover/1e9, 1))
     ter_damp: f64,     // (T) ETF cost drag (1−TER)^20; 1.0 for stocks/crypto/None or when growth_ter_drag off
     commodity_damp: f64, // (#44) growth_commodity_damp on a GICS Energy/Materials row or a commodity-named fund; 1.0 otherwise / knob off / sector unknown (backtest)
-    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp + liq_bonus when #8 growth_geomean_fold)
+    fx_damp: f64,      // (#45) growth_fx_damp on an ETF whose live quote currency is not EUR; 1.0 otherwise / knob off / currency unknown (backtest)
+    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp + liq_bonus when #8 growth_geomean_fold)
 }
 
 /// Score a quote as a MOMENTUM/GROWTH candidate — the MIRROR of `buy_score`. The on-sale lane fades
@@ -1066,15 +1077,26 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
         d if d > 0.0 && is_commodity(quote) => d,
         _ => 1.0,
     };
+    // (#45) FX/venue dock — same shape as commodity_damp, for a cost instead of a signal defect: a
+    // non-EUR-quoted ETF line (GBp/USD/SEK/CHF) costs a EUR investor broker FX conversion plus the
+    // off-home spread that the EUR line of the same multi-listed fund does not. Tie-break sized, so
+    // it prefers the EUR twin without burying a genuinely stronger foreign listing. ETF-only:
+    // stocks are one all-USD lane (a uniform dock reorders nothing) and crypto -EUR legs quote EUR.
+    // None currency = unknown = innocent — which is every backtest quote, so this is backtest-blind
+    // by construction like (#44) and can never be swept.
+    let fx_damp = match tuning.growth_fx_damp {
+        d if d > 0.0 && is_noneur_etf(quote) => d,
+        _ => 1.0,
+    };
     let score = if tuning.growth_geomean_fold {
-        base * combine_damps(&[trust, overext_damp, proximity, value]) * ter_damp * commodity_damp + liq_bonus
+        base * combine_damps(&[trust, overext_damp, proximity, value]) * ter_damp * commodity_damp * fx_damp + liq_bonus
     } else {
-        base * proximity * value * damp * ter_damp * commodity_damp + liq_bonus
+        base * proximity * value * damp * ter_damp * commodity_damp * fx_damp + liq_bonus
     };
     Some(ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, smooth, underwater, base, proximity, value_raw, value, trust, overext,
-        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, score,
+        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, score,
     })
 }
 
@@ -1492,11 +1514,19 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     } else {
         String::new()
     };
+    // (#45) same treatment again: printed only when it bites.
+    let fx_frag = if p.fx_damp < 1.0 {
+        s.push_str(&format!("  fx           = growth_fx_damp ({} listing) — FX conversion + off-home spread for a EUR buyer = {:.3}\n",
+            quote.quote_currency.as_deref().unwrap_or("non-EUR"), p.fx_damp));
+        format!(" × {:.3}", p.fx_damp)
+    } else {
+        String::new()
+    };
     if tuning.growth_geomean_fold {
-        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag}{commodity_frag} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag}{commodity_frag}{fx_frag} + {:.2} = {:.2}\n",
             p.base, p.trust, p.overext_damp, p.proximity, p.value, p.liq_bonus, p.score));
     } else {
-        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag} + {:.2} = {:.2}\n",
             p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
     }
     if (displayed - p.score).abs() > 1e-6 {
@@ -2060,8 +2090,12 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     // the two commodity names (CF 0.76, MPC 0.68) — so the flag names the CAUSE. Printed whether or not
     // growth_commodity_damp is set: the dock is optional, knowing what the row is never is.
     let commodity = |quote: &Quote| if is_commodity(quote) { "c" } else { "" };
+    // x = non-EUR-quoted ETF line (GBp/USD/SEK…): a EUR buyer pays broker FX conversion + the
+    // off-home spread the EUR twin of the same fund doesn't. Printed whether or not growth_fx_damp
+    // is set — same rule as `c`: the dock is optional, knowing what the row is never is.
+    let fx_listed = |quote: &Quote| if is_noneur_etf(quote) { "x" } else { "" };
     let mark = |quote: &Quote, i: usize| {
-        format!("{}{}{}{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), commodity(quote), bridged(quote), holdable(quote), held(quote))
+        format!("{}{}{}{}{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), commodity(quote), fx_listed(quote), bridged(quote), holdable(quote), held(quote))
     };
     // pinned tickers that ranked BELOW the cut still print (with their real rank + "*") so you can
     // compare a holding against the tops above even when it doesn't make the top-N.
@@ -2069,7 +2103,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     let mut seen = String::new(); // rank-flag chars that actually printed, drives the legend line
     for (i, (quote, score)) in picks.iter().enumerate().take(n).chain(below_cut) {
         let m = mark(quote, i);
-        for flag in ['*', '#', '!', 'c', '~', 'H', 'o'] {
+        for flag in ['*', '#', '!', 'c', 'x', '~', 'H', 'o'] {
             if m.contains(flag) && !seen.contains(flag) {
                 seen.push(flag);
             }
@@ -2091,6 +2125,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         ("#", "score used live fundamentals, not price-only"),
         ("!", "late-cycle: price >= cap above 200wk trend, brake floored — conviction is the SCORE, not the rank"),
         ("c", "commodity-linked (GICS Energy/Materials, or a commodity-named fund) — earnings are a spread on a traded input price, so the CAGR is a spot-price snapshot, not compounding; scaled by growth_commodity_damp when set"),
+        ("x", "non-EUR-quoted ETF line — a EUR buyer pays FX conversion + off-home spread vs the EUR twin; scaled by growth_fx_damp when set"),
         ("~", "history bridged from configured older twin (history_proxy) — CAGR/YRS describe the strategy, not this listing"),
         ("H", "hold-suitable: broad + cheap + physical + accumulating + large — a buy-and-hold-20yr core, independent of the momentum rank"),
         ("o", "already held (broker portfolio)"),
@@ -3487,6 +3522,29 @@ mod tests {
     // get "off", never a silent zeroing of every Energy row out of the table.
     let zeroed = BuyHeuristic { growth_commodity_damp: 0.0, ..BuyHeuristic::default() };
     assert_eq!(growth_score(&sectored(Some("Energy")), &zeroed).unwrap(), plain);
+
+    // --- (#45) FX/venue dock (ETF + non-EUR quote currency; BACKTEST-BLIND: currency None -> ×1.0) ---
+    let fx_t = BuyHeuristic { growth_fx_damp: 0.98, ..BuyHeuristic::default() };
+    let listed = |ccy: Option<&str>, is_fund: bool| {
+        let mut q = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]);
+        if is_fund {
+            q.instrument_type = "ETF".to_string();
+        }
+        q.quote_currency = ccy.map(str::to_string);
+        q.avg_turnover_eur = Some(5e8); // under €1B -> liq_bonus 0, so the ratio below is the damp EXACTLY
+        q
+    };
+    let plain_etf = growth_score(&listed(Some("EUR"), true), &fx_t).unwrap();
+    assert_eq!(growth_score(&listed(Some("GBp"), true), &tuning).unwrap(), plain_etf); // knob off (1.0) -> byte-identical
+    // currency unknown = every backtest quote's state -> damp inert. THIS is why the knob can never be swept.
+    assert_eq!(growth_score(&listed(None, true), &fx_t).unwrap(), plain_etf);
+    assert!((growth_score(&listed(Some("GBp"), true), &fx_t).unwrap() / plain_etf - 0.98).abs() < 1e-9); // LSE pence line docked
+    assert!((growth_score(&listed(Some("SEK"), true), &fx_t).unwrap() / plain_etf - 0.98).abs() < 1e-9);
+    assert_eq!(growth_score(&listed(Some("eur"), true), &fx_t).unwrap(), plain_etf); // any casing of EUR is home
+    // a stock is never docked no matter its currency — the lane is all-USD, a uniform dock reorders nothing
+    assert_eq!(growth_score(&listed(Some("USD"), false), &fx_t).unwrap(), growth_score(&listed(Some("USD"), false), &tuning).unwrap());
+    let fx_zero = BuyHeuristic { growth_fx_damp: 0.0, ..BuyHeuristic::default() };
+    assert_eq!(growth_score(&listed(Some("GBp"), true), &fx_zero).unwrap(), plain_etf); // 0 = ALSO off, same inversion guard as (#44)
     // (round 47) THE fallback invariant: Yahoo-sourced facts must never move the score — a first
     // merged implementation leaked them into ter_damp and shifted live ranks (PEA 3->9).
     let mut yh = etf(None);

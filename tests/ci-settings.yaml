@@ -1353,6 +1353,27 @@ buy_heuristic:
                                  #   15y take-or-pay), Ecolab, Vulcan/Martin Marietta (aggregates, local monopoly pricing) do not.
                                  #   Taken by direction: Energy-only would MISS CF, the rank-1 name this exists for, and the
                                  #   branded/contracted Materials names are slow compounders this momentum lane never surfaces.
+  growth_fx_damp: 0.98           # (#45) FX/VENUE dock: scale the growth score of an ETF whose LIVE quote currency is not EUR
+                                 #   (Yahoo `quote_currency` — GBp/GBP/USD/SEK/CHF lines all count; picks::is_noneur_etf).
+                                 #   Prices what the ranking is otherwise blind to for a EUR buyer: broker FX conversion
+                                 #   (~0.25% each way) plus the off-home-venue spread — a cost the EUR line of the SAME
+                                 #   multi-listed fund does not carry. Currency, not country (user decision 2026-07-30): a
+                                 #   EUR-quoted line on a non-eurozone venue costs no FX and is NOT docked. ETF-only, also a
+                                 #   user decision — the stock lane is all-USD by nature, a uniform dock reorders nothing;
+                                 #   crypto's -EUR legs already quote EUR. The `x` rank flag prints either way; only the dock
+                                 #   is knob-gated, same split as `c`.
+                                 #   WHY 0.98: tie-break strength, the user's pick over 0.95/0.90 — ~0.5-0.8% round trip
+                                 #   amortized over a long hold is real but small, so it reorders near-equal scores (prefers
+                                 #   the EUR twin) without burying a genuinely stronger foreign listing. TER is NOT this
+                                 #   knob's job — growth_ter_drag above already prices the recurring cost.
+                                 #   UNMEASURABLE BY CONSTRUCTION, same class as (#44): `quote_currency` is written only by
+                                 #   the live fetch (fetch.rs chart meta); `core::backtest_quote` stubs leave it None, so the
+                                 #   damp is x1.0 in every walk-forward — validated edge untouched, knob can never be swept.
+                                 #   Set by judgement; if the ETF ranks stop looking right, return to 1.0 and keep the flag.
+                                 #   LIVE EFFECT (screen A/B 2026-07-30, warm cache): IITU.L 8.4->8.2, XLKS.L 8.2->8.1,
+                                 #   SEMI.AS 5.1->5.0 — note SEMI.AS is a Euronext AMSTERDAM line quoted in USD, the
+                                 #   currency-not-country rule catching what a venue rule would miss. EUR rows (VVSM.DE,
+                                 #   VUAA/SPYL/AUM5) and crypto identical; ranks unchanged at today's gaps (tie-break sized).
   growth_overext_floor: 0.05     # growth-score multiplier at full stretch. Tightened 0.2->0.15->0.05, each step a harder blow-off-top brake:
                                  #   buying right after a parabola = poor long-hold entry. The walk-forward sweep ranks 0.05 best: wide
                                  #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).
