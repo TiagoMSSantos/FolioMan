@@ -512,6 +512,18 @@ buy_heuristic:
                                  #   Intermediates 15-18 are UNSWEPT under the new regime. Pair-checked with growth_max_peg 1.6
                                  #   (knob-K12 grid): interaction nil — king byte-identical to this arm solo, 12y-s +215.1 h2h 69%,
                                  #   8y-s +71.8 h2h 57%. The pair IS the new ship baseline.
+                                 #   LADDER SWEPT 2026-08-01 (16/17/18/20/22 x {20,12,8} stress, cagr-*-s.txt) — 19 CONFIRMED,
+                                 #   no change, and it is a TWO-SIDED knee that loses in each direction for the OPPOSITE reason:
+                                 #   BELOW (16/17/18) the looser gate deepens the pool (38 vs 36 king windows) and holds lane edge
+                                 #   on a flat plateau (+641.2/+672.6/+682.8 vs +677.4 — spread inside noise), but rank-1 quality
+                                 #   degrades MONOTONICALLY: king h2h 45/48/50% vs 60%, rank-1 median +3.2/+2.5/+4.0 vs +5.3.
+                                 #   ABOVE (20/22) rank-1 stops paying (h2h 61%/57% — noise, and 22 falls BACK) while lane edge
+                                 #   craters −14%/−26% (+583.2/+503.8), top-10 mean −0.4/−0.6, and 12/8y degrade too (20 at 8y-s:
+                                 #   edge +56.4, h2h 39%). The gate starves the pool — 31/30 windows, 14 h2h pairs at 22.
+                                 #   NEAREST RIVAL IS 18, NOT 20: king edge +682.8 is nominally the ladder's best, 12y h2h 66%,
+                                 #   and 8y rank-1 +5.9|+6.3 BEATS this arm's +5.6|+6.1. It loses ONLY the primary metric, king
+                                 #   rank-1 (h2h 50% vs 60%, median +4.0 vs +5.3). Re-test 18 FIRST if the grading rule is ever
+                                 #   re-weighted toward the 8y lane. The "15-18 unswept" caveat above is now discharged.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.

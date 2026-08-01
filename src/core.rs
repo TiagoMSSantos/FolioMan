@@ -2685,6 +2685,11 @@ mod tests {
         assert_eq!(span_to_bars(105, 12), 5); // 12y backtest monthly: ~5 months = 5 bars
         assert_eq!(span_to_bars(1, 252), 1); // inert default stays raw…
         assert_eq!(span_to_bars(1, 12), 1); // …on both cadences (min 1)
+        // (#17) `measure_endpoint` feeds this the process-global `config::endpoint_smooth_days()`, so the
+        // WIRING can't be asserted without mutating global config mid-run. Pin the shipped-inert default
+        // instead: smoothing is edge-affecting (its own config receipt demands a 12y OOS re-validation
+        // before changing), and switching it on silently is exactly what this catches.
+        assert_eq!(crate::config::BuyHeuristic::default().endpoint_smooth_days, 1);
     }
 
     /// `select_fund_factor`: each config name maps to its FundFactors field; an unknown name -> None

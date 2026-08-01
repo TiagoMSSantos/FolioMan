@@ -2157,7 +2157,10 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// company — the best in EACH class surfaces. Class: currency-quoted ticker (`-USD`/`-EUR`) → crypto,
 /// else fund name (ETF/UCITS) → ETF, else stock. Currency twins already deduped in `ranked`.
 /// `kind` names the lane in each title ("buy candidates" / "growth candidates").
-fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned) {
+/// Split a ranked lane into its three printable tables and apply every DISPLAY trim (score floors,
+/// ETF sector filter, redundancy skip). Split out of `print_lane` so the trims are assertable: they
+/// are the only knobs in the tool whose effect used to exist purely as printed text.
+fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>) -> (Vec<(&'a Quote, f64)>, Vec<(&'a Quote, f64)>, Vec<(&'a Quote, f64)>) {
     let min_score = tuning.growth_min_score;
     // ETFs get their OWN, lower floor: 4 of the 7 score terms (accel/quality/liq/fund) are ~0 for a
     // diversified basket, so ETF scores structurally cap ~5.6 vs stocks ~19 — the shared growth_min_score
@@ -2194,6 +2197,11 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
         .into_iter()
         .filter(|(quote, s)| keep(quote, *s, etf_min_score, core::sector_matches(&quote.name, sectors)))
         .collect();
+    (stock, etf, crypto)
+}
+
+fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned) {
+    let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned);
     // Title carries the selected sector filter so the table says what it's showing ("all" = no filter).
     // Count shown = how many actually qualified (capped at n); "of {n} max" explains a short table —
     // it's not a quota, that's all that passed the gates + filter.
@@ -3651,6 +3659,9 @@ mod tests {
     let usd = dedup_currency_twins(vec![(&btc_e, 8.0), (&btc_u, 9.0)], false);
     assert_eq!(usd.len(), 1);
     assert_eq!(usd[0].0.ticker, "BTC-USD");
+    // both arms above pass the flag literally; this is the knob `ranked` actually reads (picks.rs `dedup_
+    // currency_twins(scored, tuning.prefer_eur)`) — a EUR-domiciled tool defaults to keeping the EUR leg.
+    assert!(BuyHeuristic::default().prefer_eur);
 
     let no_pin: HashSet<&str> = HashSet::new();
     // (B) ranked dedups dual-class share twins by identical company name (GOOG/GOOGL -> one row).
@@ -3794,6 +3805,11 @@ mod tests {
     assert!((nupl_factor(Some(1.0), &tuning) - tuning.nupl_damp_floor).abs() < 1e-9); // peak euphoria -> floor
     assert!(nupl_factor(Some(0.0), &tuning) > 1.0); // deep capitulation -> boost
     assert!((nupl_factor(Some(0.0), &tuning) - tuning.nupl_boost_ceiling).abs() < 1e-9); // NUPL 0 -> ceiling
+    assert_eq!(nupl_factor(Some(tuning.nupl_euphoria), &tuning), 1.0); // AT the band edge is not past it (`>`)
+    assert!(nupl_factor(Some(-0.5), &tuning) <= tuning.nupl_boost_ceiling + 1e-9); // deep-bear readings clamp
+    // each half independently disable-able — euphoria >= 1.0 kills the damp, capitulation <= 0 the boost.
+    assert_eq!(nupl_factor(Some(0.9), &BuyHeuristic { nupl_euphoria: 1.0, ..tuning.clone() }), 1.0);
+    assert_eq!(nupl_factor(Some(0.1), &BuyHeuristic { nupl_capitulation: 0.0, ..tuning.clone() }), 1.0);
     // (Item 17) crypto_adjust: equities pass through untouched (cfactor ignored); crypto is scaled by the
     // whole-market cfactor (btc_1y None -> btc_relative no-op, so the result isolates the NUPL scale). This
     // is what `size` must apply too, or its crypto sizes diverge from the screen tables.
@@ -3802,6 +3818,19 @@ mod tests {
     let mut coin = quote(5.0, &[("1Y", 20.0)]);
     coin.ticker = "BTC-EUR".into();
     assert!((crypto_adjust(&coin, 10.0, &tuning, 0.5, None) - 5.0).abs() < 1e-9); // crypto: 10 * cfactor 0.5
+    // ...and the OTHER half of the crypto tilt: growth_btc_outperf_weight, read against Bitcoin's own year.
+    // BTC vs itself is the neutral anchor (edge 0) whatever the weight; the bound is what stops one
+    // moonshot running away with the lane. Backtest-blind (crypto is dropped before every edge metric).
+    let tilt = |w: f64, coin_1y: f64| {
+        let mut alt = quote(5.0, &[("1Y", coin_1y)]);
+        alt.ticker = "ETH-EUR".into();
+        crypto_adjust(&alt, 10.0, &BuyHeuristic { growth_btc_outperf_weight: w, ..tuning.clone() }, 1.0, Some(20.0))
+    };
+    assert_eq!(tilt(0.0, 80.0), 10.0); // 0 = off: a +60pp outperformer is not tilted at all
+    assert!(tilt(1.0, 80.0) > 10.0 && tilt(1.0, -20.0) < 10.0); // beats BTC -> up; lags -> docked, not zeroed
+    assert_eq!(tilt(1.0, 20.0), 10.0); // exactly BTC's year = the neutral anchor
+    assert!((tilt(5.0, 500.0) - 20.0).abs() < 1e-9); // clamp 2.0x: one moonshot can't run away
+    assert!((tilt(5.0, -100.0) - 5.0).abs() < 1e-9); // clamp 0.5x: a laggard is docked, never zeroed
 
     // --- (A) trend consistency: R² of the log-price line, damps CAGR endpoint-luck ---
     assert!(core::trend_r2(&[1.0, 2.0, 4.0, 8.0, 16.0]) > 0.999); // perfect exponential -> R²≈1
@@ -4710,5 +4739,418 @@ mod tests {
         let mut btc = Quote::stub("BTC-USD", "€1", "", "Bitcoin");
         btc.perf = legs(&[("1Y", 40.0)]);
         assert!((crypto_adjust(&btc, 10.0, &tuning, 0.8, Some(40.0)) - 8.0).abs() < 1e-9);
+    }
+
+    /// A quote that clears every growth gate with room: near its high, a 24.6%/yr 5Y leg, climbing on
+    /// the year, calm on the month. Every fence test below moves ONE knob onto this fixture's own stat.
+    fn gate_fixture() -> Quote {
+        let mut q = Quote::stub("TEST", "€100.00", "", "Test Corp");
+        q.instrument_type = "EQUITY".into();
+        q.avg_turnover_eur = Some(1e9); // (#20) a KNOWN turnover — unknown is unassessable, not gated
+        q.range_pct = 90.0;
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0)]);
+        q
+    }
+
+    /// (QA) GATE FENCES, equity lane. The per-knob stress grid (2026-07-30) settled that the GATES, not
+    /// the weights, are what moves this lane — and not one of them had an assert at its own boundary, so
+    /// a `<` decaying into `<=` (or a knob read for the wrong lane) silently changes who is in the table
+    /// with the whole suite still green. One pair per gate: the fixture's own stat AS the fence (must
+    /// PASS — the bar is what it says, not one epsilon stricter) and a hair past it (must GATE).
+    #[test]
+    fn equity_gate_boundaries() {
+        let d = BuyHeuristic::default();
+        let leg = core::cagr(200.0, 5.0); // 24.57%/yr — what every CAGR fence here is measured against
+        let scored = |q: &Quote, t: &BuyHeuristic| growth_score(q, t).is_some();
+
+        // growth_min_cagr, LEG leg (picks.rs `long_cagr < min_cagr`)
+        assert!(scored(&gate_fixture(), &BuyHeuristic { growth_min_cagr: leg, ..d.clone() }));
+        assert!(!scored(&gate_fixture(), &BuyHeuristic { growth_min_cagr: leg + 0.01, ..d.clone() }));
+        // (#3i) the SAME knob's second leg: whole-life CAGR, judged independently of the rung above —
+        // a strong recent leg must not rescue a mediocre life. `None` life stays exempt (the backtest
+        // had no life_cagr before 2026-07-27, and absent history is not a failed bar).
+        let mut aged = gate_fixture();
+        aged.life_cagr = Some(leg - 5.0);
+        assert!(scored(&aged, &BuyHeuristic { growth_min_cagr: leg - 5.0, ..d.clone() }));
+        assert!(!scored(&aged, &BuyHeuristic { growth_min_cagr: leg - 4.99, ..d.clone() }),
+            "life-CAGR leg must gate on its own while the 5Y rung still clears");
+
+        // growth_min_range_pct (`range_pct < min_range`)
+        assert!(scored(&gate_fixture(), &BuyHeuristic { growth_min_range_pct: 90.0, ..d.clone() }));
+        assert!(!scored(&gate_fixture(), &BuyHeuristic { growth_min_range_pct: 90.01, ..d.clone() }));
+
+        // growth_min_1y_pct — `<=`, NOT `<`: at exactly the floor the name is OUT. The knob's receipt
+        // rests on that (a 0.0 floor means "must be climbing", so a flat year fails).
+        assert!(scored(&gate_fixture(), &BuyHeuristic { growth_min_1y_pct: 19.99, ..d.clone() }));
+        assert!(!scored(&gate_fixture(), &BuyHeuristic { growth_min_1y_pct: 20.0, ..d.clone() }),
+            "the 1Y floor rejects AT the bar, not just below it");
+
+        // max_1m_drop_pct (falling-knife, also `<=`)
+        assert!(scored(&gate_fixture(), &BuyHeuristic { max_1m_drop_pct: 1.99, ..d.clone() }));
+        assert!(!scored(&gate_fixture(), &BuyHeuristic { max_1m_drop_pct: 2.0, ..d.clone() }));
+
+        // growth_min_5y_pct — the CUMULATIVE leg floor, reached through `long_leg_floors` (`<=`)
+        assert!(scored(&gate_fixture(), &BuyHeuristic { growth_min_5y_pct: 199.99, ..d.clone() }));
+        assert!(!scored(&gate_fixture(), &BuyHeuristic { growth_min_5y_pct: 200.0, ..d.clone() }));
+
+        // (#26) growth_maxdd_cap — `>`, so the cap itself is survivable; 0 = off
+        let mut deep = gate_fixture();
+        deep.max_drawdown_pct = 50.0;
+        assert!(scored(&deep, &BuyHeuristic { growth_maxdd_cap: 50.0, ..d.clone() }));
+        assert!(!scored(&deep, &BuyHeuristic { growth_maxdd_cap: 49.99, ..d.clone() }));
+        assert!(scored(&deep, &BuyHeuristic { growth_maxdd_cap: 0.0, ..d.clone() }), "0 = off");
+
+        // (#24) growth_max_above_ma — the blow-off cut ABOVE the brake cap (also `>`, 0 = off)
+        let mut stretched = gate_fixture();
+        stretched.above_ma_pct = 100.0;
+        assert!(scored(&stretched, &BuyHeuristic { growth_max_above_ma: 100.0, ..d.clone() }));
+        assert!(!scored(&stretched, &BuyHeuristic { growth_max_above_ma: 99.99, ..d.clone() }));
+
+        // (#25) growth_require_lifetime_uptrend — rejects at exactly 0 (`<= 0.0`), either leg
+        let up = BuyHeuristic { growth_require_lifetime_uptrend: true, ..d.clone() };
+        let mut flat = gate_fixture();
+        flat.trend_cagr = Some(0.0);
+        assert!(!scored(&flat, &up));
+        flat.trend_cagr = Some(0.01);
+        assert!(scored(&flat, &up));
+        let mut sunk = gate_fixture();
+        sunk.life_cagr = Some(-1.0); // window trend fine, whole life negative -> still out
+        // growth_min_cagr neutralized on BOTH sides: since (#3i) that floor reads life_cagr too, so a
+        // -1.0 life fails it as well and the pair would be green while proving nothing about the flag.
+        let dock = BuyHeuristic { growth_min_cagr: f64::NEG_INFINITY, ..up.clone() };
+        assert!(!scored(&sunk, &dock));
+        assert!(scored(&sunk, &BuyHeuristic { growth_require_lifetime_uptrend: false, ..dock.clone() }),
+            "flag false = gate off");
+
+        // (#37) growth_max_peg — knob is a PEG, applied to `peg_yield` = 100/PEG, so the comparison
+        // flips: reject BELOW the bar. 1.6 -> bar 62.5.
+        let peg_t = BuyHeuristic { growth_max_peg: 1.6, ..d.clone() };
+        let with_fund = |peg_yield: Option<f64>, eps_ttm: Option<f64>| {
+            let mut q = gate_fixture();
+            q.fund = Some(core::FundFactors { peg_yield, eps_ttm, ..Default::default() });
+            q
+        };
+        assert!(scored(&with_fund(Some(62.5), Some(5.0)), &peg_t), "AT the ceiling is not over it");
+        assert!(!scored(&with_fund(Some(62.49), Some(5.0)), &peg_t));
+        // the one deliberate departure from "None passes": no peg_yield AND negative EPS = a name with
+        // no earnings to be cheap against, which must not walk through a valuation ceiling untested.
+        assert!(!scored(&with_fund(None, Some(-1.0)), &peg_t));
+        assert!(scored(&with_fund(None, Some(5.0)), &peg_t), "genuinely absent fundamentals still pass");
+        assert!(scored(&with_fund(Some(1.0), Some(5.0)), &BuyHeuristic { growth_max_peg: 0.0, ..d.clone() }),
+            "0 = off, however expensive");
+    }
+
+    /// (QA) GATE FENCES, crypto lane. Same fences, different knobs — and the split is the point: the
+    /// equity bar must never reach a coin and vice versa, which is exactly what a copy-paste of the
+    /// wrong `if crypto {}` arm would break (the lane picks its floor in six separate expressions).
+    #[test]
+    fn crypto_gate_boundaries() {
+        let d = BuyHeuristic::default();
+        let scored = |q: &Quote, t: &BuyHeuristic| growth_score(q, t).is_some();
+        let coin = || {
+            let mut q = gate_fixture();
+            q.ticker = "SOL-EUR".into(); // the `-EUR`/`-USD` pair suffix IS the crypto classifier
+            q.name = "Solana".into();
+            q.instrument_type = String::new();
+            q.range_pct = 50.0; // alts live far below ATH — the whole reason for the looser floor
+            q.perf = legs(&[("1M", -10.0), ("1Y", -20.0), ("5Y", 200.0)]);
+            q
+        };
+        let leg = core::cagr(200.0, 5.0);
+
+        // growth_min_range_pct_crypto, and the equity bar CANNOT reach the coin
+        assert!(scored(&coin(), &BuyHeuristic { growth_min_range_pct_crypto: 50.0, ..d.clone() }));
+        assert!(!scored(&coin(), &BuyHeuristic { growth_min_range_pct_crypto: 50.01, ..d.clone() }));
+        assert!(scored(&coin(), &BuyHeuristic { growth_min_range_pct: 95.0, ..d.clone() }),
+            "the strict equity range bar must not touch the crypto lane");
+
+        // min_1y_pct_crypto (`<=`) — the looser floor that keeps a red-year Bitcoin in the table
+        assert!(scored(&coin(), &BuyHeuristic { min_1y_pct_crypto: -20.01, ..d.clone() }));
+        assert!(!scored(&coin(), &BuyHeuristic { min_1y_pct_crypto: -20.0, ..d.clone() }));
+        assert!(scored(&coin(), &BuyHeuristic { growth_min_1y_pct: 50.0, ..d.clone() }),
+            "the equity 1Y floor must not touch the crypto lane");
+
+        // max_1m_drop_pct_crypto (`<=`) — a -20%/month alt is normal, so its knife sits lower
+        assert!(scored(&coin(), &BuyHeuristic { max_1m_drop_pct_crypto: -10.01, ..d.clone() }));
+        assert!(!scored(&coin(), &BuyHeuristic { max_1m_drop_pct_crypto: -10.0, ..d.clone() }));
+
+        // growth_min_cagr_crypto — its own floor, and the equity one stays out
+        assert!(scored(&coin(), &BuyHeuristic { growth_min_cagr_crypto: leg, ..d.clone() }));
+        assert!(!scored(&coin(), &BuyHeuristic { growth_min_cagr_crypto: leg + 0.01, ..d.clone() }));
+        assert!(scored(&coin(), &BuyHeuristic { growth_min_cagr: 99.0, ..d.clone() }),
+            "the equity CAGR gate must not touch the crypto lane");
+
+        // (#26) growth_maxdd_cap_crypto — coins crash >80% every cycle, so the bar is "no worse than
+        // Bitcoin" rather than the equity cap, which must stay off them entirely.
+        let mut crashed = coin();
+        crashed.max_drawdown_pct = 84.0;
+        assert!(scored(&crashed, &BuyHeuristic { growth_maxdd_cap_crypto: 84.0, ..d.clone() }));
+        assert!(!scored(&crashed, &BuyHeuristic { growth_maxdd_cap_crypto: 83.99, ..d.clone() }));
+        assert!(scored(&crashed, &BuyHeuristic { growth_maxdd_cap: 20.0, ..d.clone() }),
+            "the equity drawdown cap must not touch the crypto lane");
+    }
+
+    /// (QA) The SHIPPED tuning — the one every backtest receipt was graded under. Every other scoring
+    /// test builds from `BuyHeuristic::default()`, so the values `tests/ci-settings.yaml` actually serves
+    /// were never scored by any test: the whole file could stop being read and the suite would stay
+    /// green. Parsed straight from the fixture, NOT through `config::load()`, which merges the operator's
+    /// gitignored local overlay and would make this pin machine-dependent.
+    #[test]
+    fn shipped_config_pin() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ci-settings.yaml");
+        let raw: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(&path).expect("fixture readable")).unwrap();
+        let tuning: BuyHeuristic = serde_yaml::from_value(raw["buy_heuristic"].clone())
+            .expect("fixture's buy_heuristic parses as BuyHeuristic (deny_unknown_fields catches typos)");
+
+        // The gates the per-knob grid (2026-07-30) shipped. Moving one is a measurement, never an edit:
+        // re-run the stress grid, write the receipt, THEN update these numbers.
+        assert_eq!(tuning.growth_min_cagr, 19.0, "shipped CAGR gate moved — re-measure, then update this pin");
+        assert_eq!(tuning.growth_max_peg, 1.6, "shipped PEG ceiling moved — re-measure, then update this pin");
+        assert_eq!(tuning.growth_min_range_pct, 80.0, "80 is settled (70 and 50 both measured worse)");
+        assert_eq!(tuning.growth_min_1y_pct, 0.0, "removing this floor crashes the 20y lane edge -31%");
+
+        // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
+        // an empty table, which no value assert above would notice.
+        let mut strong = gate_fixture();
+        strong.perf = legs(&[("1M", 2.0), ("1Y", 30.0), ("5Y", 300.0), ("8Y", 500.0)]);
+        strong.life_cagr = Some(25.0);
+        strong.fund = Some(core::FundFactors { peg_yield: Some(80.0), eps_ttm: Some(5.0), ..Default::default() });
+        assert!(growth_score(&strong, &tuning).is_some(), "a 25%/yr cheap compounder must still rank");
+        let mut mediocre = gate_fixture();
+        mediocre.perf = legs(&[("1M", 2.0), ("1Y", 12.0), ("5Y", 80.0)]); // 12.5%/yr — fine, but not 19
+        assert!(growth_score(&mediocre, &tuning).is_none(), "a sub-gate compounder must be cut");
+    }
+
+    /// (QA) GROWTH SCORE TERMS: every weight/cap knob that had no test of its own. Each pair moves ONE
+    /// knob on a fixture built to excite that term and asserts the DIRECTION its receipt claims, plus the
+    /// house `0 = off` convention where the knob has one. A weight that stops being read still produces
+    /// plausible scores — only a comparison catches it.
+    #[test]
+    fn growth_term_knob_flips() {
+        let d = BuyHeuristic::default();
+        // 1Y ABOVE the 24.6%/yr 5Y leg so the acceleration term is live (it clamps at 0 from below).
+        let hot = || {
+            let mut q = gate_fixture();
+            q.perf = legs(&[("1M", 2.0), ("1Y", 40.0), ("5Y", 200.0)]);
+            q
+        };
+        let s = |q: &Quote, t: &BuyHeuristic| growth_score(q, t).expect("fixture clears every gate");
+
+        // growth_trend_weight — reward per %/yr of the (capped) leg CAGR. Code default 0.35; ci-settings
+        // ships 0.15 after (#3k) cut it as the winner's-curse cure. Both ends must stay load-bearing, so
+        // the assert walks the shipped value and the code default rather than pinning either.
+        let tw = |w: f64| s(&hot(), &BuyHeuristic { growth_trend_weight: w, ..d.clone() });
+        assert!(tw(0.35) > tw(0.15) && tw(0.15) > tw(0.0), "trend reward must be monotone in its weight");
+
+        // growth_accel_weight / growth_accel_cap — the 1Y-minus-CAGR term (raw accel = 40 − 24.57 = 15.43
+        // here, well under the 50 cap, so the cap arm below has to move the cap to see it).
+        let aw = |w: f64| s(&hot(), &BuyHeuristic { growth_accel_weight: w, ..d.clone() });
+        assert!(aw(0.5) > aw(0.2) && aw(0.2) > aw(0.0), "accel reward must be monotone in its weight");
+        let ac = |c: f64| s(&hot(), &BuyHeuristic { growth_accel_weight: 0.5, growth_accel_cap: c, ..d.clone() });
+        assert!(ac(50.0) > ac(5.0), "the cap must clamp an accel above it");
+        assert!((ac(50.0) - ac(500.0)).abs() < 1e-9, "a cap above the value cannot bite");
+
+        // (1) growth_overext_floor — how much score survives at FULL stretch above the 200wk SMA.
+        // Higher floor = weaker brake. 1.0 = brake off entirely.
+        let mut stretched = hot();
+        stretched.above_ma_pct = d.growth_overext_cap; // pinned at the cap -> the damp IS the floor
+        let of = |f: f64| s(&stretched, &BuyHeuristic { growth_overext_floor: f, ..d.clone() });
+        assert!(of(1.0) > of(0.2) && of(0.2) > of(0.05), "a higher floor must brake LESS");
+        // `above_ma_pct` reaches the score through the brake and nothing else, so floor 1.0 must make a
+        // maximally-stretched name score EXACTLY its at-trend twin. That identity is what "1.0 = off" means.
+        assert!((of(1.0) - s(&hot(), &d)).abs() < 1e-9, "floor 1.0 = brake off, not merely weaker");
+
+        // (M) growth_mom121_cap — clamps 12-1 momentum (here (1.40/1.02−1) = +37.3) before weighting.
+        // Inert at the shipped weight 0, so arm the weight to see the cap at all.
+        let mc = |c: f64| s(&hot(), &BuyHeuristic { growth_mom121_weight: 0.1, growth_mom121_cap: c, ..d.clone() });
+        assert!(mc(50.0) > mc(5.0), "the 12-1 cap must clamp a momentum above it");
+        assert!((s(&hot(), &BuyHeuristic { growth_mom121_cap: 5.0, ..d.clone() }) - s(&hot(), &d)).abs() < 1e-9,
+            "weight 0 = the whole term inert, cap included");
+
+        // (L) growth_turnover_weight — liquidity tilt, ln(turnover/€1B), added OUTSIDE the brake.
+        let mut liquid = hot();
+        liquid.avg_turnover_eur = Some(32e9); // an NVDA-class line -> ln(32) ≈ 3.47
+        let lw = |w: f64| s(&liquid, &BuyHeuristic { growth_turnover_weight: w, ..d.clone() });
+        assert!(lw(0.5) > lw(0.0), "the liquidity tilt must lift a deep-liquid line");
+        assert!((s(&hot(), &BuyHeuristic { growth_turnover_weight: 0.5, ..d.clone() }) - s(&hot(), &d)).abs() < 1e-9,
+            "at exactly €1B the ln ratio is 0 — the tilt lifts ABOVE €1B, it does not shift everything");
+
+        // (Item 20) growth_value_weight — dials the BLIND P/E multiplier toward neutral 1.0. A rich name
+        // scores HIGHER as the weight falls, which is the whole point of the knob (the validated edge was
+        // measured with this term off).
+        let mut rich = hot();
+        rich.pe_ratio = Some(40.0); // 2× ref_pe -> the damp end of value_factor
+        let vw = |w: f64| s(&rich, &BuyHeuristic { growth_value_weight: w, ..d.clone() });
+        assert!(vw(0.0) > vw(0.5) && vw(0.5) > vw(1.0), "less P/E authority = less damp on a rich name");
+
+        // (C) calmar_cap — clamps the CAGR/max-drawdown ratio inside risk_bonus.
+        let mut scarred = hot();
+        scarred.max_drawdown_pct = 50.0; // leg 24.6%/yr / 50 -> ratio 0.49
+        let cc = |c: f64| s(&scarred, &BuyHeuristic { calmar_weight: 1.0, calmar_cap: c, ..d.clone() });
+        assert!(cc(2.0) > cc(0.1), "the calmar cap must clamp a ratio above it");
+
+        // (#3l) life_cagr_max_years — false-mode window swap: the chokepoint reads `capped_cagr` instead
+        // of the 20/8/5Y rung. Shipped 0.0 (both arms LOST); the knob must still be WIRED, or the receipt
+        // that condemned it is unreproducible.
+        let mut capped = hot();
+        capped.capped_cagr = Some(40.0); // a hotter recent window than the 24.6%/yr rung
+        // NOT a direction assert: this CAGR is the chokepoint, so swapping it moves trend UP and accel
+        // (1Y − CAGR) DOWN at once. What must hold is that the knob is READ — the receipt that condemned
+        // both arms is unreproducible if it isn't.
+        assert!((s(&capped, &BuyHeuristic { life_cagr_max_years: 20.0, ..d.clone() }) - s(&capped, &d)).abs() > 1e-9,
+            "an armed cap window must feed the score its own CAGR");
+        assert!((s(&capped, &d) - s(&hot(), &d)).abs() < 1e-9, "0 = off: capped_cagr unread");
+    }
+
+    /// (QA) ON-SALE (foil) lane knobs — the other half of `buy_heuristic`'s untested surface. The foil
+    /// shares `long_trend_cap`, `calmar_*` and the tax knobs with the growth lane, so a knob edited "for
+    /// the growth lane" moves this one too; these asserts are what notices.
+    #[test]
+    fn foil_term_knob_flips() {
+        let d = BuyHeuristic::default();
+        // an on-sale candidate: 40 points down its own range (that, NOT the off-high %, is `cheapness`),
+        // still compounding, below its long SMA, paying a dividend.
+        let foil = || {
+            let mut q = Quote::stub("FOIL", "€50.00", "", "Foil Corp");
+            q.instrument_type = "EQUITY".into();
+            q.avg_turnover_eur = Some(1e9);
+            q.range_pct = 60.0; // cheapness = 100 − 60 = 40
+            q.below_ma_pct = 50.0;
+            q.price_eur = Some(50.0);
+            q.div_eur = vec![Some(2.0)]; // DIV_HORIZONS 1Y first -> a 4% trailing yield
+            q.perf = legs(&[("1D", 0.5), ("1W", 1.0), ("1M", 2.0), ("1Y", 5.0), ("5Y", 60.0), ("8Y", 100.0), ("10Y", 200.0)]);
+            q
+        };
+        let s = |q: &Quote, t: &BuyHeuristic| buy_score(q, t).expect("foil fixture clears every gate");
+
+        // (#4) discount_weight — the dip reward, demoted to 0.35 because deepest-dip ranking carries no
+        // selection skill. Still load-bearing, so it must still move the score.
+        let dw = |w: f64| s(&foil(), &BuyHeuristic { discount_weight: w, ..d.clone() });
+        assert!(dw(1.0) > dw(0.35) && dw(0.35) > dw(0.0), "dip reward monotone in its weight");
+
+        // discount_cap — clamps the (vol-normalized) dip. It ALSO drives `discount_frac`, so a bigger cap
+        // cuts the long-trend reward's fraction: assert the cap is read, not a direction it doesn't own.
+        let dc = |c: f64| s(&foil(), &BuyHeuristic { discount_cap: c, ..d.clone() });
+        assert!((dc(35.0) - dc(20.0)).abs() > 1e-9, "the dip cap must reach the score");
+        assert!((dc(35.0) - dc(35.0000001)).abs() < 1e-6);
+
+        // normal_volatility_pct — the divisor that makes a dip comparable across a calm stock and a wild
+        // coin. A calmer-than-normal name's dip is AMPLIFIED, so raising the reference lifts it further.
+        let mut calm = foil();
+        calm.volatility_pct = Some(1.0);
+        let nv = |n: f64| s(&calm, &BuyHeuristic { normal_volatility_pct: n, discount_cap: 100.0, ..d.clone() });
+        assert!(nv(4.0) > nv(2.0), "a higher reference vol amplifies a calm name's dip");
+
+        // (C) cheap_weight / cheap_cap — the below-SMA reward.
+        let cw = |w: f64| s(&foil(), &BuyHeuristic { cheap_weight: w, ..d.clone() });
+        assert!(cw(0.2) > cw(0.07) && cw(0.07) > cw(0.0));
+        let cc = |c: f64| s(&foil(), &BuyHeuristic { cheap_weight: 0.2, cheap_cap: c, ..d.clone() });
+        assert!(cc(60.0) > cc(10.0), "the cheap cap must clamp a below-SMA % above it");
+
+        // (D) dividend_weight — BEHAVIOUR, not just the parse test config.rs already has.
+        let dv = |w: f64| s(&foil(), &BuyHeuristic { dividend_weight: w, ..d.clone() });
+        assert!(dv(3.0) > dv(1.5) && dv(1.5) > dv(0.0), "the yield reward must be monotone in its weight");
+
+        // (B) onsale_sharpe_weight — SPLIT from the growth lane's `sharpe_weight` (growth wants 0.15,
+        // on-sale measured better at 0). The split is the thing worth pinning: moving one must not move
+        // the other's lane.
+        let mut volatile = foil();
+        volatile.volatility_pct = Some(2.0);
+        let ow = |w: f64| s(&volatile, &BuyHeuristic { onsale_sharpe_weight: w, ..d.clone() });
+        assert!(ow(0.3) > ow(0.0), "the on-sale Sharpe weight must reach the on-sale score");
+        assert!((s(&volatile, &BuyHeuristic { sharpe_weight: 0.9, ..d.clone() }) - s(&volatile, &d)).abs() < 1e-9,
+            "the GROWTH Sharpe weight must not touch the on-sale lane");
+
+        // long_trend_weight — the foil's own CAGR reward (scaled by how on-sale the name is).
+        let lw = |w: f64| s(&foil(), &BuyHeuristic { long_trend_weight: w, ..d.clone() });
+        assert!(lw(1.0) > lw(0.5) && lw(0.5) > lw(0.0));
+
+        // (B) sustained_decline_pct — the value-trap dock fires only when 1Y AND 5Y are BOTH under the
+        // bar. `min_long_pct` is neutralized so the bled fixture can reach the score at all.
+        let mut bled = foil();
+        bled.perf = legs(&[("1D", 0.5), ("1W", 1.0), ("1M", 2.0), ("1Y", -50.0), ("5Y", -50.0), ("8Y", 100.0), ("10Y", 200.0)]);
+        let open = BuyHeuristic { min_long_pct: -1e9, min_1y_pct: -1e9, ..d.clone() };
+        let docked = s(&bled, &BuyHeuristic { sustained_decline_pct: -40.0, ..open.clone() });
+        let undocked = s(&bled, &BuyHeuristic { sustained_decline_pct: -60.0, ..open.clone() });
+        assert!(docked < undocked, "a multi-year bleed under the bar must be docked");
+
+        // momentum_bounce / momentum_knife — pure arms first (no dip -> no timing at all), then the knob
+        // wiring through the score.
+        let mut dipped = foil();
+        dipped.perf = legs(&[("1D", 0.5), ("1W", 1.0), ("1M", -5.0), ("1Y", 5.0), ("5Y", 60.0), ("8Y", 100.0), ("10Y", 200.0)]);
+        assert_eq!(momentum_factor(&foil(), 1.5, 0.5), 1.0, "up on the month -> nothing to time");
+        assert_eq!(momentum_factor(&dipped, 1.5, 0.5), 1.5, "green week off a monthly dip -> bounce");
+        let mut only_today = dipped.clone();
+        only_today.perf = legs(&[("1D", 0.5), ("1W", -1.0), ("1M", -5.0), ("1Y", 5.0), ("5Y", 60.0), ("8Y", 100.0), ("10Y", 200.0)]);
+        assert_eq!(momentum_factor(&only_today, 1.5, 0.5), 1.25, "only today green -> half the premium");
+        let mut falling = dipped.clone();
+        falling.perf = legs(&[("1D", -0.5), ("1W", -1.0), ("1M", -5.0), ("1Y", 5.0), ("5Y", 60.0), ("8Y", 100.0), ("10Y", 200.0)]);
+        assert_eq!(momentum_factor(&falling, 1.5, 0.5), 0.5, "still falling -> the knife dock");
+        assert!(s(&dipped, &BuyHeuristic { momentum_bounce: 1.5, ..d.clone() }) > s(&dipped, &d),
+            "the bounce knob must reach the score (1.0 = neutral, as shipped)");
+        assert!(s(&falling, &BuyHeuristic { momentum_knife: 0.5, ..d.clone() }) < s(&falling, &d),
+            "the knife knob must reach the score");
+    }
+
+    /// (#41 / ETF floor) DISPLAY trims — the three knobs whose whole effect used to be printed text and
+    /// nothing else. `lane_split` exists so they can be asserted; before it, a wrong floor or a redundancy
+    /// skip that ate the table was visible only by reading a screen run by eye.
+    #[test]
+    fn lane_display_trims() {
+        let d = BuyHeuristic::default();
+        let none: HashSet<&str> = HashSet::new();
+        let all_sectors: Vec<String> = Vec::new();
+        // 36 monthly returns — corr_tail needs >=12 overlapping to judge a pair at all. TWIN mirrors LEAD
+        // exactly (rho +1.0); ANTI is its inverse (rho −1.0), so no cap can call ANTI a second copy.
+        let up: Vec<f64> = (0..36).map(|i| if i % 2 == 0 { 3.0 } else { -1.0 }).collect();
+        let down: Vec<f64> = up.iter().map(|v| -v).collect();
+        let stock = |t: &str, trail: &[f64]| {
+            let mut q = Quote::stub(t, "€100.00", "", &format!("{t} Corp"));
+            q.instrument_type = "EQUITY".into();
+            q.trail_monthly = trail.to_vec();
+            q
+        };
+        let (lead, twin, anti) = (stock("LEAD", &up), stock("TWIN", &up), stock("ANTI", &down));
+        let rows = || vec![(&lead, 12.0), (&twin, 11.0), (&anti, 10.0)];
+        let names = |v: &[(&Quote, f64)]| v.iter().map(|(q, _)| q.ticker.clone()).collect::<Vec<_>>();
+
+        // 0 = off: the skip never runs, every ranked row reaches the table.
+        let (s0, _, _) = lane_split(rows(), 10, &all_sectors, &d, &none);
+        assert_eq!(names(&s0), ["LEAD", "TWIN", "ANTI"], "cap 0 = off");
+        // armed: the perfect twin is dropped, the anti-correlated name is not.
+        let armed = BuyHeuristic { growth_corr_cap: 0.9, ..d.clone() };
+        let (s1, _, _) = lane_split(rows(), 10, &all_sectors, &armed, &none);
+        assert_eq!(names(&s1), ["LEAD", "ANTI"], "the SECOND copy of a bet goes, the diversifier stays");
+        // a pin outranks the skip, exactly as it outranks the score floor.
+        let pin_twin: HashSet<&str> = ["TWIN"].into_iter().collect();
+        let (s2, _, _) = lane_split(rows(), 10, &all_sectors, &armed, &pin_twin);
+        assert_eq!(names(&s2), ["LEAD", "TWIN", "ANTI"], "a pin means always show me this");
+        // THE reason this knob ships 0 (#41 receipt): decorrelate_keep stops at `n`, so once the pool runs
+        // out of uncorrelated candidates the skip TRUNCATES the table instead of refilling it.
+        let (s3, _, _) = lane_split(rows(), 1, &all_sectors, &armed, &none);
+        assert_eq!(names(&s3), ["LEAD"], "kept stops at n — no refill from below when nothing uncorrelated is left");
+
+        // ETF lane runs its OWN floor. Same score, two floors, opposite verdicts.
+        let mut fund = Quote::stub("VWCE.DE", "€120.00", "", "Vanguard FTSE All-World UCITS ETF");
+        fund.instrument_type = "ETF".into();
+        let etf_rows = || vec![(&fund, 4.0)];
+        let low = BuyHeuristic { growth_min_score: 5.0, growth_min_score_etf: 3.0, ..d.clone() };
+        let (_, e1, _) = lane_split(etf_rows(), 10, &all_sectors, &low, &none);
+        assert_eq!(e1.len(), 1, "the STOCK floor must not reach the ETF lane");
+        let high = BuyHeuristic { growth_min_score_etf: 5.0, ..low.clone() };
+        let (_, e2, _) = lane_split(etf_rows(), 10, &all_sectors, &high, &none);
+        assert!(e2.is_empty(), "its own floor does");
+        // ETFs carry no GICS sector, so the filter matches the fund NAME (stocks are pre-filtered at fetch).
+        let health: Vec<String> = vec!["health".into()];
+        assert!(lane_split(etf_rows(), 10, &health, &low, &none).1.is_empty(), "sector filter reads the fund name");
+        assert_eq!(lane_split(rows(), 10, &health, &low, &none).0.len(), 3, "…and never the stock lane");
+
+        // Crypto is trimmed by NOTHING here — the lane is ranked vs Bitcoin and shown whole.
+        let mut coin = Quote::stub("SOL-EUR", "€150.00", "", "Solana");
+        let (_, _, c) = lane_split(vec![(&coin, 0.1)], 10, &health, &high, &none);
+        assert_eq!(c.len(), 1, "no score floor, no sector filter, no redundancy skip on the crypto lane");
+        coin.trail_monthly = up.clone();
+        assert_eq!(lane_split(vec![(&coin, 0.1)], 10, &all_sectors, &armed, &none).2.len(), 1);
     }
 }
