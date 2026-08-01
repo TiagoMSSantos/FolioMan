@@ -4909,6 +4909,10 @@ mod tests {
         assert_eq!(tuning.growth_max_peg, 1.6, "shipped PEG ceiling moved — re-measure, then update this pin");
         assert_eq!(tuning.growth_min_range_pct, 80.0, "80 is settled (70 and 50 both measured worse)");
         assert_eq!(tuning.growth_min_1y_pct, 0.0, "removing this floor crashes the 20y lane edge -31%");
+        // ...and the one SCORE weight the Phase B re-fit moved. Pinned for the same reason as the gates:
+        // 0.65 is the cheap end of a rank-1 plateau that ends at 0.8 and collapses by 1.0, so a drift in
+        // either direction is a measurable regression, not a taste call.
+        assert_eq!(tuning.growth_accel_weight, 0.65, "shipped accel weight moved — re-measure, then update this pin");
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
         // an empty table, which no value assert above would notice.

@@ -544,7 +544,49 @@ buy_heuristic:
                                  #   (0.55 +153.8, 1.00 +125.1) — so 12y cannot tell 0.15 from 0.35; the
                                  #   20y-stress argmax quality can, and it picks 0.15. Zeroing outright
                                  #   still costs edge (load-bearing), the term just must not DOMINATE.
-  growth_accel_weight: 0.5       # SCORE: reward per pt the last year outpaced the long CAGR. accel INVERTS with horizon —
+                                 #   RE-FIT ON THE cagr-19 POOL 2026-08-01 (Phase B, pb-tw*-*-s.txt): 0.15 HOLDS, and
+                                 #   (#3k) is independently RE-VALIDATED on a pool it was not fitted on. 0.25 brings the
+                                 #   winner's curse straight back — king rank-1 median +3.4 vs +5.3, h2h 55% vs 60%, and
+                                 #   12y rank-1 +3.8|+4.5 vs +4.6|+5.3 — for king edge that is still DOWN (+662.9). 0.10
+                                 #   is a plateau wash: king rank-1 identical (+5.5|+5.3 81% h2h 60%) with lane edge -5%
+                                 #   (+645.1), 12y -3, 8y +3. No honest room in either direction; do not re-propose
+                                 #   without a NEW metric, the way growth_accel_weight earned its raise.
+  growth_accel_weight: 0.65      # SCORE: reward per pt the last year outpaced the long CAGR.
+                                 #   RAISED 0.5 -> 0.65 (2026-08-01, Phase B re-fit on the cagr-19 pool, pb-aw*-*-s.txt).
+                                 #   THE THIRD WINNER'S-CURSE CURE, and the only knob of the three re-fitted that moved.
+                                 #   Rank-1 quality UP at ALL THREE horizons: 20y-s +6.0|+6.6 win 83% h2h 65% (vs +5.4|+5.3
+                                 #   81% 60%), 12y-s +5.6|+5.9 69% (vs +4.6|+5.3 67%), 8y-s +6.6|+7.2 73% (vs +5.6|+6.1 69%).
+                                 #   King top-10 MEDIAN +6.1 vs +5.7; 8y lane edge +77.0 vs +71.8 (+7%).
+                                 #   THE PRICE, stated: king lane edge -29 (+648.2 vs +677.4, -4%, deep inside the ±260
+                                 #   bootstrap band), 12y flat (-2), 12/8y h2h -3/-2, 8y top-10 -0.2 mean / -0.5 med.
+                                 #   Same trade the cagr 19 ship took (it paid 12/8y edge -4/-7% for rank-1) — precedent, not
+                                 #   a new standard.
+                                 #   BRACKETED BOTH WAYS, unlike the 0.5 knee below: 0.3 / 0.5 / 0.65 / 0.8 / 1.0 give king
+                                 #   h2h 40 / 60 / 65 / 65 / 60% and rank-1 median +2.2 / +5.3 / +6.6 / +6.6 / +5.3. Rank-1
+                                 #   PLATEAUS across [0.65, 0.8] — byte-identical there — and 0.65 is the CHEAP end of that
+                                 #   plateau: king edge +648.2 vs 0.8's +627.3, and 8y +77.0 vs +68.4 (rank-1 med +7.2 vs
+                                 #   +6.1). At 1.0 rank-1 falls back AND edge craters (+542.3). Same "top of the plateau, at
+                                 #   its cheapest point" rule the PEG tilt shipped under.
+                                 #   SUPERSEDES the "0.65 regresses, the knee is 0.5" note below, and says why rather than
+                                 #   overwriting it: that hill-climb graded 12y LANE EDGE on the pre-(#3k), cagr-14 pool.
+                                 #   This grid grades 20y RANK-1 on the cagr-19 pool, where 12y edge is FLAT (+212.8 vs
+                                 #   +215.1), not regressed. Different objective, different pool, opposite verdict.
+                                 #   MECHANISM (reconciles the "accel HURTS" note further below): accel TRADES LANE EDGE FOR
+                                 #   RANK-1 QUALITY. At 0.3 king edge is the best of the accel arms (+668.6) and rank-1 the
+                                 #   worst measured anywhere (median +2.2, h2h 40%); at 0.65 edge gives back 29 pts and rank-1
+                                 #   is the best measured anywhere. Both old notes were right about their own metric.
+                                 #   ORTHOGONALITY (Phase B's other finding): growth_overext_floor is a pure LANE-EDGE lever
+                                 #   with ZERO rank-1 authority, this knob is the reverse. Tune them independently.
+                                 #   LIVE A/B (2026-08-01, full `screen` at 0.5 and 0.65 back to back): SAME NAMES, SAME ORDER
+                                 #   in every table — stocks (NVDA alone, 10.8 at both: its accel term sits at a clamp) and ETFs
+                                 #   (IITU.L / XLKS.L / SMH.L / SEMI.AS). What DID move is the ETF SCORES: 8.1->8.2, 7.8->7.9,
+                                 #   and the two semi funds 5.1->6.2 / 5.0->6.0. That second pair is the point: at 0.5 they cleared
+                                 #   growth_min_score_etf (5.0) by 0.1 and 0.0 — one datapoint from being trimmed off the table
+                                 #   entirely — and at 0.65 they carry a full point of margin. So this ship is backtest-measurable,
+                                 #   live-RANK-neutral today (the cagr-19 gate leaves one stock row, so rank-1 has nothing to
+                                 #   reorder), and live-STABILITY-positive on the ETF lane. The rank-stability and CORE-shortlist
+                                 #   deltas printed between the two runs are the state file the first run wrote, not the knob.
+                                 #   PRIOR RECEIPT, kept for the 12y-edge history: accel INVERTS with horizon —
                                  #   the 5y proxy wanted it trimmed (mean-reverts: removing it +41.7 edge), but the 12y MAX-monthly
                                  #   horizon (the 20y-hold target) makes it a STRONG helper: removing it costs -55.5..-65.9 edge.
                                  #   Hill-climbed at 12y: 0.2->0.35->0.5 edge +65.8->+84.5->+91.1; 0.65 regresses (+87.0, OOS-early
@@ -1431,6 +1473,22 @@ buy_heuristic:
                                  #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).
                                  #   The old "0.1 docks NVDA out" worry was regime-bound — at 0.05 today NVDA still scores 6.7 > min_score
                                  #   5 (it's -10.6% off-hi, not parabolic) and the displayed order is unchanged. 1.0 = brake off.
+                                 #   RE-FIT ON THE cagr-19 POOL 2026-08-01 (Phase B, pb-of*-*-s.txt): 0.05 HOLDS.
+                                 #   THE FINDING IS THE SHAPE, not the winner — this knob has ZERO rank-1 authority. King
+                                 #   rank-1 is byte-identical at EVERY value swept (0.02 / 0.05 / 0.10 / 0.20 all read
+                                 #   +5.3 median, win 81%, h2h 60%; 0.02 is +5.5 mean vs +5.4, noise) while lane edge falls
+                                 #   monotonically as the brake weakens: +684.4 / +677.4 / +631.6 / +553.8. It is a PURE
+                                 #   LANE-EDGE lever, and growth_accel_weight is its mirror (pure rank-1, edge-costing).
+                                 #   Tune the two independently — that orthogonality is why Phase B could ship accel
+                                 #   without re-opening this knob.
+                                 #   0.20 costs 18% of king edge and 19% at 8y (+58.4) for rank-1 that never moved —
+                                 #   consistent with the ablation table (removing the brake outright = -457 at 20y).
+                                 #   0.02 buys +7 at king (noise, inside the band) and SELLS 8% of 12y edge (+198.3 vs
+                                 #   +215.1) and 5pp of 8y h2h. 0.05 is the balance point; 0.10 just loses 7% of king.
+                                 #   NOTE the 0.10 king run first ABORTED (rc=134, `free(): invalid size` — glibc heap
+                                 #   corruption, half the report lost mid-file). Re-run ALONE it exited clean and
+                                 #   reproduced edge +631.6 EXACTLY, so the abort hit output teardown, not the maths.
+                                 #   Same session had rustc SIGSEGV under memory pressure: environmental, not config.
   growth_turnover_weight: 0.0    # (L) ZEROED 2026-07-02 after a live A/B (screen at 0.5 vs 0.0): the ln(turnover/€1B) tilt is
                                  #   BACKTEST-BLIND (backtest quotes carry no turnover) and the A/B showed it does NOT do its
                                  #   claimed job — it's reward-only, so illiquid junk (ROX.DE €11K/day) sat in the ETF table
