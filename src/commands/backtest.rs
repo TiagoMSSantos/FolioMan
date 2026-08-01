@@ -2140,11 +2140,36 @@ fn turnover_frac(scored: &[(&Sample, f64)]) -> f64 {
 /// 20% correction). Pure measurement — no ranking change. Returns the gap (accepted − rejected) for the
 /// test; None when either side has too few rows to mean. Generic over the scorer so it's unit-testable
 /// without building quotes that clear growth_score's gate maze (same pattern as `lane_metrics`).
+/// Mean AND median of a cohort's forward peer-relative returns. Both, always. `relative` over a
+/// multi-decade window is heavily right-skewed — one 40-bagger moves a 400-name mean by more than the
+/// other 399 combined — so the mean can sit on the far side of zero from the typical name. Every other
+/// slice in this report already prints both for exactly that reason (the rank-slice ladder says so in
+/// its own header: "median is lottery-ticket-immune"); these partition audits were the holdouts.
+/// Callers guard the empty case, so the `max(1)` only keeps the divide total.
+fn cohort_stats(v: &[f64]) -> (f64, f64) {
+    (v.iter().sum::<f64>() / v.len().max(1) as f64, median(v.to_vec()))
+}
+
+/// Directional verdict for a two-cohort gap, fired ONLY when mean and median agree on the sign. When
+/// they disagree the gap is tail-driven and NEITHER number is the answer on its own — so say that
+/// rather than silently picking one. The disagreement IS the finding: it means a handful of extreme
+/// names, not the cohort, is producing the headline.
+fn gap_verdict(mean_gap: f64, med_gap: f64, positive: &str, negative: &str) -> String {
+    match (mean_gap > 0.0, med_gap > 0.0) {
+        (true, true) => positive.to_string(),
+        (false, false) => negative.to_string(),
+        _ => format!(
+            "SPLIT — mean ({mean_gap:+.1}) and median ({med_gap:+.1}) disagree: the gap is driven by \
+             the tail, not the typical name. Read the median."
+        ),
+    }
+}
+
 fn gate_audit(
     samples: &[Sample],
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
     tuning: &BuyHeuristic,
-) -> Option<f64> {
+) -> Option<(f64, f64)> {
     let (accepted, rejected): (Vec<&Sample>, Vec<&Sample>) =
         samples.iter().partition(|s| scorer(&s.quote, tuning).is_some());
     println!("\n── GATE AUDIT (growth gates: do the names they EXCLUDE actually underperform?) ──");
@@ -2152,39 +2177,44 @@ fn gate_audit(
         println!("  {} accepted / {} rejected — too few on one side to compare.", accepted.len(), rejected.len());
         return None;
     }
-    let mean = |g: &[&Sample]| g.iter().map(|s| s.relative).sum::<f64>() / g.len() as f64;
-    let (a, r) = (mean(&accepted), mean(&rejected));
-    let gap = a - r;
-    println!("  accepted (passed gates): n={:<5} mean fwd peer-relative {a:+.1} pts", accepted.len());
-    println!("  rejected (failed gates): n={:<5} mean fwd peer-relative {r:+.1} pts", rejected.len());
-    let verdict = if gap > 0.0 {
-        "gates SELECT winners (accepted beat the rejected pool)"
-    } else {
-        "gates ADD NOTHING — the rejected names did as well or better; consider loosening them"
-    };
-    println!("  gap {gap:+.1} pts  ->  {verdict}");
-    Some(gap)
+    let rels = |g: &[&Sample]| g.iter().map(|s| s.relative).collect::<Vec<f64>>();
+    let (am, amed) = cohort_stats(&rels(&accepted));
+    let (rm, rmed) = cohort_stats(&rels(&rejected));
+    let (gap, gap_med) = (am - rm, amed - rmed);
+    println!("  accepted (passed gates): n={:<5} fwd peer-relative  mean {am:+.1} | med {amed:+.1} pts", accepted.len());
+    println!("  rejected (failed gates): n={:<5} fwd peer-relative  mean {rm:+.1} | med {rmed:+.1} pts", rejected.len());
+    let verdict = gap_verdict(
+        gap,
+        gap_med,
+        "gates SELECT winners (accepted beat the rejected pool)",
+        "gates ADD NOTHING — the rejected names did as well or better; consider loosening them",
+    );
+    println!("  gap  mean {gap:+.1} | med {gap_med:+.1} pts  ->  {verdict}");
+    Some((gap, gap_med))
 }
 
-/// (#10 helper) Mean forward peer-relative return of the names REJECTED under `base` tuning but ACCEPTED
-/// once loosened to `relaxed` (the set a looser gate NEWLY admits). `(count, mean)`, or None when
-/// loosening admits nobody. Pure + scorer-generic so the per-gate sweep is unit-testable without building
-/// quotes that clear growth_score's gate maze (same trick as `gate_audit`/`lane_metrics`).
-fn newly_admitted_mean(
+/// (#10 helper) Forward peer-relative return of the names REJECTED under `base` tuning but ACCEPTED
+/// once loosened to `relaxed` (the set a looser gate NEWLY admits). `(count, mean, median)`, or None when
+/// loosening admits nobody. Both statistics because these sets run tiny (n=4..50 in practice) and a
+/// single survivor can carry the mean on its own — see `cohort_stats`. Pure + scorer-generic so the
+/// per-gate sweep is unit-testable without building quotes that clear growth_score's gate maze (same
+/// trick as `gate_audit`/`lane_metrics`).
+fn newly_admitted_stats(
     samples: &[Sample],
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
     base: &BuyHeuristic,
     relaxed: &BuyHeuristic,
-) -> Option<(usize, f64)> {
-    let newly: Vec<&Sample> = samples
+) -> Option<(usize, f64, f64)> {
+    let newly: Vec<f64> = samples
         .iter()
         .filter(|s| scorer(&s.quote, base).is_none() && scorer(&s.quote, relaxed).is_some())
+        .map(|s| s.relative)
         .collect();
     if newly.is_empty() {
         return None;
     }
-    let mean = newly.iter().map(|s| s.relative).sum::<f64>() / newly.len() as f64;
-    Some((newly.len(), mean))
+    let (mean, med) = cohort_stats(&newly);
+    Some((newly.len(), mean, med))
 }
 
 /// (#10) WHICH growth gate is too tight? #9 gives the aggregate verdict; this breaks it down per gate.
@@ -2194,15 +2224,20 @@ fn newly_admitted_mean(
 /// re-validate (the lane OOS + #9's aggregate must still hold); ≤0 = the gate is correctly keeping junk
 /// out, leave it. Pure measurement, no ranking change; reuses the ablation `Knob` pattern + `growth_score`.
 fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob]) {
-    println!("\n── GATE SWEEP (loosen each gate one notch -> mean fwd return of the names it NEWLY admits) ──");
+    println!("\n── GATE SWEEP (loosen each gate one notch -> fwd return of the names it NEWLY admits) ──");
     println!("  positive = the gate was too tight (newly-admitted beat the field); ≤0 = it's keeping junk out.");
+    println!("  the TOO TIGHT flag needs mean AND median positive — one survivor can carry a mean on its own.");
     for (name, loosen) in gates {
         let mut t = tuning.clone();
         loosen(&mut t);
-        match newly_admitted_mean(samples, growth_score, tuning, &t) {
-            Some((n, mean)) => {
-                let tag = if mean > 0.0 { "  <- TOO TIGHT (loosen this gate)" } else { "" };
-                println!("  {name:<26} n={n:<4} mean fwd peer-relative {mean:+.1} pts{tag}");
+        match newly_admitted_stats(samples, growth_score, tuning, &t) {
+            Some((n, mean, med)) => {
+                let tag = match (mean > 0.0, med > 0.0) {
+                    (true, true) => "  <- TOO TIGHT (loosen this gate)",
+                    (false, false) => "",
+                    _ => "  <- SPLIT (tail-driven, read the median)",
+                };
+                println!("  {name:<26} n={n:<4} fwd peer-relative  mean {mean:+.1} | med {med:+.1} pts{tag}");
             }
             None => println!("  {name:<26} admits 0 new names (gate not binding on this sample)"),
         }
@@ -2406,19 +2441,34 @@ fn exit_cohorts(
 /// is a later gate failure a sell signal or a wobble to hold through? Compares the forward
 /// peer-relative return of names that newly FAILED a gate vs names that kept passing, both measured
 /// from the flip cutoff. A strongly negative gap = the gate review in `check` is an evidence-backed
-/// exit trigger; a flat gap = hold through it.
-fn exit_probe(samples: &[Sample], scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>, tuning: &BuyHeuristic) {
+/// exit trigger; a flat gap = hold through it. Reports mean AND median for the same reason `gate_audit`
+/// does, and matters more here: this verdict decides whether to SELL a held position, so a gap that
+/// exists only in the tail must not read as a sell signal. Returns `(mean gap, median gap)` for the test.
+fn exit_probe(
+    samples: &[Sample],
+    scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
+    tuning: &BuyHeuristic,
+) -> Option<(f64, f64)> {
     let (kept, failed) = exit_cohorts(samples, scorer, tuning);
     println!("\n── EXIT PROBE (growth lane: passed gates ~6mo ago -> what next?) ──");
     if kept.len() < 4 || failed.len() < 4 {
         println!("  too few flips to read (kept {} / newly-failed {}).", kept.len(), failed.len());
-        return;
+        return None;
     }
-    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
-    let (mk, mf) = (mean(&kept), mean(&failed));
-    println!("  kept passing   n={:<6} mean fwd peer-relative {mk:+.1} pts", kept.len());
-    println!("  newly FAILED   n={:<6} mean fwd peer-relative {mf:+.1} pts", failed.len());
-    println!("  gap {:+.1} pts  (strongly negative = gate failure is a SELL signal; ~0 = hold through)", mf - mk);
+    let ((mk, medk), (mf, medf)) = (cohort_stats(&kept), cohort_stats(&failed));
+    let (gap, gap_med) = (mf - mk, medf - medk);
+    println!("  kept passing   n={:<6} fwd peer-relative  mean {mk:+.1} | med {medk:+.1} pts", kept.len());
+    println!("  newly FAILED   n={:<6} fwd peer-relative  mean {mf:+.1} | med {medf:+.1} pts", failed.len());
+    // Sign convention is inverted vs `gate_audit`: here a NEGATIVE gap is the actionable one (the
+    // names that failed went on to do worse), so the two verdict strings swap places.
+    let verdict = gap_verdict(
+        gap,
+        gap_med,
+        "gate failure is NOT a sell signal — the newly-failed did as well or better; hold through it",
+        "gate failure is a SELL signal — the newly-failed went on to underperform the names that held",
+    );
+    println!("  gap  mean {gap:+.1} | med {gap_med:+.1} pts  ->  {verdict}");
+    Some((gap, gap_med))
 }
 
 #[cfg(test)]
@@ -2688,6 +2738,43 @@ mod tests {
         assert_eq!(failed, vec![3.0]);
     }
 
+    /// (Item 31) `exit_probe` turns those two cohorts into a SELL-or-HOLD verdict, so it carries the
+    /// same skew risk as `gate_audit` with a costlier wrong answer: acting on a tail-driven gap means
+    /// selling a held position on evidence that describes one name. Both stats, and the verdict only
+    /// on agreement. Sign convention is inverted here — a NEGATIVE gap is the actionable one.
+    #[test]
+    fn exit_probe_needs_both_stats_before_calling_a_sell() {
+        let scorer: fn(&Quote, &BuyHeuristic) -> Option<f64> =
+            |q, _| if q.drop_pct < 50.0 { Some(1.0) } else { None };
+        // Each ticker gets two cutoffs: the first always passes, the second passes (kept) or fails.
+        let pair = |tk: &str, fails: bool, rel: f64| {
+            let mut a = sample(ymd(2020, 1, 1), 0.0);
+            a.quote = Quote::stub(tk, "1", "", tk);
+            let mut b = sample(ymd(2020, 7, 1), 0.0);
+            b.quote = Quote::stub(tk, "1", "", tk);
+            b.quote.drop_pct = if fails { 99.0 } else { 0.0 };
+            b.relative = rel;
+            vec![a, b]
+        };
+        let build = |failed_rels: [f64; 4]| -> Vec<Sample> {
+            let kept = ["K1", "K2", "K3", "K4"].iter().flat_map(|t| pair(t, false, 0.0));
+            let failed = ["F1", "F2", "F3", "F4"]
+                .iter().zip(failed_rels).flat_map(|(t, r)| pair(t, true, r));
+            kept.chain(failed).collect()
+        };
+        // every newly-failed name underperformed the holders -> both stats agree -> real sell signal
+        let (gap, gap_med) = exit_probe(&build([-10.0, -12.0, -14.0, -16.0]), scorer, &BuyHeuristic::default()).unwrap();
+        assert!(gap < 0.0 && gap_med < 0.0, "unanimous underperformance -> both stats negative");
+        // THE TRAP: three of the four newly-failed names recovered; one collapsed hard enough to drag
+        // the MEAN negative on its own. Mean-only, this prints "SELL". The median says hold.
+        let (gap, gap_med) = exit_probe(&build([5.0, 6.0, 7.0, -900.0]), scorer, &BuyHeuristic::default()).unwrap();
+        assert!(gap < 0.0, "the one collapse carries the mean");
+        assert!(gap_med > 0.0, "three of four recovered — the typical name says hold");
+        assert!(gap_verdict(gap, gap_med, "hold", "sell").starts_with("SPLIT"), "must not call a sell on the tail");
+        // fewer than 4 on a side is no claim at all
+        assert!(exit_probe(&build([-1.0; 4])[..6], scorer, &BuyHeuristic::default()).is_none());
+    }
+
     /// Peer-bucket key + the de-meaning that turns realized returns into the SELECTION signal rho
     /// measures. If `bucket` or `demean` drift, rho would race calendar luck instead of skill.
     #[test]
@@ -2906,13 +2993,51 @@ mod tests {
         // winners (relative +) pass the gate; losers (relative −) fail -> accepted mean ≫ rejected -> +gap
         let good: Vec<Sample> = [(5.0, 1.0), (6.0, 1.0), (7.0, 1.0), (8.0, 1.0), (-5.0, -1.0), (-6.0, -1.0), (-7.0, -1.0), (-8.0, -1.0)]
             .iter().map(|&(r, d)| s_rel(r, d)).collect();
-        assert!(gate_audit(&good, dd_gate, &def).unwrap() > 0.0, "gate keeps winners -> positive gap");
+        let (gap, gap_med) = gate_audit(&good, dd_gate, &def).unwrap();
+        assert!(gap > 0.0 && gap_med > 0.0, "gate keeps winners -> both stats positive");
         // flip: the dd>0 (accepted) names now carry the LOW returns -> gate admits losers -> negative gap
         let bad: Vec<Sample> = [(-5.0, 1.0), (-6.0, 1.0), (-7.0, 1.0), (-8.0, 1.0), (5.0, -1.0), (6.0, -1.0), (7.0, -1.0), (8.0, -1.0)]
             .iter().map(|&(r, d)| s_rel(r, d)).collect();
-        assert!(gate_audit(&bad, dd_gate, &def).unwrap() < 0.0, "gate admits losers -> negative gap");
+        let (gap, gap_med) = gate_audit(&bad, dd_gate, &def).unwrap();
+        assert!(gap < 0.0 && gap_med < 0.0, "gate admits losers -> both stats negative");
         // <4 on one side (4 accepted / 1 rejected) -> None (the too-few guard)
         assert!(gate_audit(&good[..5], dd_gate, &def).is_none());
+
+        // THE CASE THE BARE MEAN GOT WRONG, and the reason this audit grew a median. Accepted holds
+        // four typical LOSERS and one 20-bagger; rejected is four flat names. Every accepted name but
+        // one underperformed, yet the outlier drags the accepted MEAN above the rejected mean, so a
+        // mean-only audit prints "gates SELECT winners". The median sees four losers and disagrees.
+        let skewed: Vec<Sample> = [(-5.0, 1.0), (-6.0, 1.0), (-7.0, 1.0), (-8.0, 1.0), (2000.0, 1.0),
+                                   (0.0, -1.0), (1.0, -1.0), (-1.0, -1.0), (0.0, -1.0)]
+            .iter().map(|&(r, d)| s_rel(r, d)).collect();
+        let (gap, gap_med) = gate_audit(&skewed, dd_gate, &def).unwrap();
+        assert!(gap > 0.0, "one 20-bagger carries the accepted MEAN above the rejected pool");
+        assert!(gap_med < 0.0, "the typical accepted name still lost — the median must not follow the tail");
+        // and the verdict must refuse to pick a side rather than quietly reporting the mean's answer
+        assert!(gap_verdict(gap, gap_med, "yes", "no").starts_with("SPLIT"), "disagreement must print SPLIT");
+    }
+
+    /// `gap_verdict` fires a directional verdict ONLY on agreement; either mismatch is a SPLIT. Exact
+    /// strings pass through untouched so the two call sites keep their own (opposite-sign) wording.
+    #[test]
+    fn gap_verdict_needs_both_stats_to_agree() {
+        assert_eq!(gap_verdict(1.0, 2.0, "yes", "no"), "yes");
+        assert_eq!(gap_verdict(-1.0, -2.0, "yes", "no"), "no");
+        assert!(gap_verdict(5.0, -1.0, "yes", "no").starts_with("SPLIT"), "mean + / median − -> SPLIT");
+        assert!(gap_verdict(-5.0, 1.0, "yes", "no").starts_with("SPLIT"), "mean − / median + -> SPLIT");
+        // exactly 0 counts as non-positive on both sides, so a dead-flat gap reads as the negative verdict
+        assert_eq!(gap_verdict(0.0, 0.0, "yes", "no"), "no");
+    }
+
+    /// `cohort_stats` returns (mean, median) and the two part ways on skew — the whole premise of the
+    /// change. Median of an even count averages the middle pair.
+    #[test]
+    fn cohort_stats_splits_mean_from_median() {
+        let (mean, med) = cohort_stats(&[-1.0, -1.0, -1.0, 400.0]);
+        assert!((mean - 99.25).abs() < 1e-9, "mean follows the outlier, got {mean}");
+        assert!((med + 1.0).abs() < 1e-9, "median ignores it, got {med}");
+        let (m2, med2) = cohort_stats(&[1.0, 3.0]);
+        assert!((m2 - 2.0).abs() < 1e-9 && (med2 - 2.0).abs() < 1e-9, "even count -> midpoint of the pair");
     }
 
     /// (#10) `newly_admitted_mean` must isolate exactly the names a LOOSER gate newly admits (rejected
@@ -2929,11 +3054,21 @@ mod tests {
         // (not "newly"); dd-1 stays rejected. relative == the first tuple field (s_rel).
         let s: Vec<Sample> = [(10.0, 1.0), (20.0, 2.0), (30.0, 3.0), (99.0, 6.0), (-5.0, -1.0)]
             .iter().map(|&(r, d)| s_rel(r, d)).collect();
-        let (n, mean) = newly_admitted_mean(&s, cagr_gate, &base, &relaxed).unwrap();
+        let (n, mean, med) = newly_admitted_stats(&s, cagr_gate, &base, &relaxed).unwrap();
         assert_eq!(n, 3, "only dd 1/2/3 are newly admitted (dd6 was already in)");
         assert!((mean - 20.0).abs() < 1e-9, "their relatives 10/20/30 -> mean 20, got {mean}");
+        assert!((med - 20.0).abs() < 1e-9, "odd count -> the middle value, got {med}");
         // loosening that admits nobody (relaxed == base) -> None
-        assert!(newly_admitted_mean(&s, cagr_gate, &base, &base).is_none());
+        assert!(newly_admitted_stats(&s, cagr_gate, &base, &base).is_none());
+
+        // Why the sweep's TOO TIGHT flag now needs BOTH stats: these newly-admitted sets run tiny
+        // (n=4..50 on real data), so one survivor is enough to push a mean positive while three of the
+        // four names it admits actually lost. Mean-only, that gate reads "loosen me".
+        let tail: Vec<Sample> = [(-9.0, 1.0), (-8.0, 2.0), (-7.0, 3.0), (900.0, 4.0), (99.0, 6.0)]
+            .iter().map(|&(r, d)| s_rel(r, d)).collect();
+        let (n, mean, med) = newly_admitted_stats(&tail, cagr_gate, &base, &relaxed).unwrap();
+        assert_eq!(n, 4);
+        assert!(mean > 0.0 && med < 0.0, "mean {mean} / median {med} must disagree here");
     }
 
     /// `tune` de-means each chronological split INDEPENDENTLY (`demean(&mut s[..cut])` / `s[cut..]`).

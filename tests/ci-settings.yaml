@@ -96,6 +96,13 @@ buy_heuristic:
                                  #   READING THE SWEEP: its "<- TOO TIGHT" flag is NOT sample-size aware. The same run flags
                                  #   `growth_min_range_pct -10` at n=1 (+163.8) and `growth_maxdd_cap ->off` at n=1 (+75.7). Check n
                                  #   before believing any row in that table, including this one.
+                                 #   PARTLY FIXED 2026-08-01: the sweep and the GATE AUDIT were reporting BARE MEANS of forward
+                                 #   peer-relative return — the most skew-prone quantity in the tool — while every other slice in
+                                 #   the report prints mean|median for exactly that reason. Both now print both, and the TOO TIGHT
+                                 #   flag needs BOTH positive; disagreement prints SPLIT instead of a verdict. This killed most of
+                                 #   the historical flags outright (see the PEG receipt at growth_max_peg for the full list). It
+                                 #   does NOT make the flag sample-size aware — small n is still small n — but it does mean a row
+                                 #   flagged TOO TIGHT is no longer one survivor carrying the average.
                                  #   SWEPT SOLO 2026-07-30 (per-knob stress grid, floor removed at -1e6): the floor is HORIZON-SPLIT.
                                  #   8y-s: removal WINS (edge +100.0 vs +79.2, top-10 +7.0 vs +6.5) — dip-buying pays inside a decade.
                                  #   20y-s KING: lane edge CRASHES +623.5 -> +429.8 (−31%) — down-year names admitted into the top half
@@ -458,6 +465,12 @@ buy_heuristic:
                                  #   AND better on both OOS halves (+0.07/+0.09 vs +0.06/+0.08). 70 fell short of
                                  #   its own ">=117 both-OOS+" keep-rule; the gate-sweep "70 too tight" flag was a
                                  #   small-sample mirage. 80 is the validated base.
+                                 #   THE MIRAGE IS NOW MEASURED, not just asserted (2026-08-01, sweep given a median): the
+                                 #   `growth_min_range_pct -10` row was mean-only, and the median reverses its sign at two of three
+                                 #   horizons — 20y-s mean +394.2 vs med -236.9 (n=10), 8y-s mean +54.6 vs med -3.1 (n=15). The
+                                 #   names that row admits are a few big winners on top of a losing majority, which is precisely
+                                 #   what "mirage" meant. It survives at 12y-s only (mean +76.6 | med +44.2, n=15) — still n=15,
+                                 #   still below anything worth acting on, and against two A/B'd sweeps that both said 80.
                                  #   RE-CONFIRMED 2026-07-30 from the other side: 50 swept solo on the stress grid LOSES edge at
                                  #   every horizon (20y-s +573.0 vs +623.5, 12y-s +203.4 vs +221.7, 8y-s +76.0 vs +79.2) with no
                                  #   book metric improving. 80 -> 70 -> 50 is monotone damage; the 80 bar is load-bearing. An
@@ -1167,6 +1180,25 @@ buy_heuristic:
   #   (accepted -12.5 vs rejected +1.9, gap -14.5) both before and after this change — -13.6 / -24.9 /
   #   -14.3 on the three preceding runs on record — so it is a standing property of the whole stack,
   #   NOT something the PEG unification caused. Do not cite it as evidence about this knob.
+  #   RESOLVED 2026-08-01 — and the answer is that the "gates ADD NOTHING" reading was an ARTIFACT.
+  #   Both the audit and the sweep were comparing BARE MEANS of forward peer-relative return; given a
+  #   median (backtest.rs `cohort_stats`), the audit's gap FLIPS SIGN at both long horizons: 20y-s mean
+  #   -531.5 vs med +76.3, 12y-s mean -23.4 vs med +78.2, 8y-s agreeing positive (+26.0 | +39.4). The
+  #   gates SELECT winners at every horizon on the typical name; the negative means came from a rejected
+  #   pool that is a mass of losers plus a few enormous survivors (rejected 20y-s: mean +43.6, med
+  #   -766.3). The "standing property of the whole stack" was a property of the STATISTIC. Every reading
+  #   above that leans on "gates ADD NOTHING" is void; the sentence telling you not to cite it as
+  #   evidence about this knob was right for the wrong reason.
+  #   THE TWO HONEST READINGS ABOVE ARE NOW SEPARATED, which is what the sweep could not do before. The
+  #   `->off` row is mean-only no longer: at 12y-s it reverses (mean +22.9 vs med -131.3) — the "high-PEG
+  #   names carry return" story is a tail there. At 8y-s it SURVIVES with both stats positive (mean
+  #   +195.3 | med +57.5, n=54) and 20y-s does not bind at all (0 new names). So the surviving claim is
+  #   narrow and specific: the 1.6 ceiling may be too tight WITHIN A DECADE, at no cost to the king
+  #   horizon, which is the ladder this knob has been owed since "the threshold half must be re-measured"
+  #   was written below. NOT the general "every ceiling reads TOO TIGHT" claim — that one died with the
+  #   mean. Companion flags that died the same way: growth_maxdd_cap ->off (12y mean +159.3 vs med
+  #   -154.2; 8y +129.1 vs -4.9) — its 2026-07-03 receipt was never contradicted after all — and
+  #   growth_min_cagr -4 at 12y (mean +9.4 vs med -127.8).
   #   The on/off question is now priced EVERY run by the `growth_max_peg ->off` GATE SWEEP row
   #   (backtest.rs), so the part this sweep found decisive no longer needs six hand-edited configs.
   #   SWEEP, growth_min_net_margin — a clean monotone loser once you look past the headline:
@@ -1366,6 +1398,10 @@ buy_heuristic:
                                  #   is survivors-only — the dot-com-wreck cohort this targets is mostly delisted and never enters.
                                  #   Shipped on live-table semantics + measured-harmless; a strongly POSITIVE sweep row on a future
                                  #   maintenance run is the signal to re-question it. Crypto exempt. false = off.
+                                 #   STILL NOT BINDING 2026-08-01: the `->off` row admits 0 new names at ALL THREE stress horizons,
+                                 #   so it prints "gate not binding on this sample" rather than any flag. Every name it would reject
+                                 #   is already rejected by something else. The re-question signal has not fired; it also cannot fire
+                                 #   on a survivors-only pool, so this stays a live-semantics judgment gate, not a measured one.
   growth_min_age_years: 0.0      # (#33) hard age floor on quote.age_years (whole-life listing age, the YRS column): reject a name
                                  #   younger than this many years. Shipped OFF (0.0) to DETECT EARLY WINNERS: a young strong grower
                                  #   (e.g. a fresh S&P 500 ETF, +21%/yr) still surfaces in the ranking, DOCKED by trust_factor (which
