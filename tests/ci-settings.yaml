@@ -1375,6 +1375,31 @@ buy_heuristic:
                                  #   without separating. The on/off finding is the durable half; the threshold half must be
                                  #   re-measured, because life CAGR sits below trend CAGR so every ceiling now bites harder.
                                  #   2.0 stays as the asked-for value inside a plateau, not a fitted optimum. 0 = off.
+                                 #   THE OWED RE-MEASURE IS DONE (2026-08-01, mp{20,25,off}-*-s.txt): 1.6 / 2.0 / 2.5 / off x
+                                 #   {20,12,8} stress. VERDICT: 1.6 HOLDS. No arm clears the bar, and two structural facts came
+                                 #   out of the ladder that matter more than the threshold:
+                                 #   (a) REDUNDANT AT THE KING HORIZON. At 20y-s all four arms are identical to the decimal —
+                                 #   accepted n=380, edge +648.2, top-10 +6.1 (+6.1), rank-1 +6.0|+6.6 win 83%, h2h 65% — and the
+                                 #   sweep row reads "admits 0 new names". NOT a coverage gap (20y as-of fundamentals cover
+                                 #   4458/4633 cutoffs): every name this ceiling would cut is ALREADY cut by growth_min_cagr 19 or
+                                 #   growth_min_range_pct 80, so PEG is never the sole blocker there. The king CANNOT vote on this
+                                 #   knob, which is why the locked grading rule can't decide it and 12/8y have to.
+                                 #   (b) ZERO RANK-1 AUTHORITY anywhere. Rank-1 is byte-identical across all four arms at all three
+                                 #   horizons (+6.0|+6.6 / +5.6|+5.9 / +6.6|+7.2). This is a pool-SIZE knob, not a ranking one —
+                                 #   same orthogonality lesson as growth_overext_floor vs growth_accel_weight.
+                                 #   WHAT THE 12/8y ARMS ACTUALLY SAY: 12y lane edge humps at 2.0 (+212.9 / +219.6 / +216.6 /
+                                 #   +204.3) but the top-10 book is IDENTICAL at every arm and the bootstrap LOWER bound gets worse
+                                 #   (+147.0 -> +143.7) — point estimate up, downside down, book unchanged, so no ship. 8y is the
+                                 #   mirror: lane edge falls monotonically (+77.1 / +76.5 / +72.1 / +71.9) while the BOOK improves
+                                 #   (top-10 med +6.2 / +6.7 / +6.7 / +6.8, OOS-late +5.9 / +6.0 / +6.0 / +6.2). Both bootstrap
+                                 #   lower bounds fall as the ceiling loosens.
+                                 #   That 8y split is EXACTLY the trade the paragraph above predicted — "the gate improves the
+                                 #   RANKING among what it keeps while excluding names that then outperform" — now measured with a
+                                 #   median instead of inferred from a mean. The sweep's 8y TOO TIGHT flag survives its median
+                                 #   (+195.3 | +57.5, n=54) and is REAL; it simply does not convert into a shippable number,
+                                 #   because what it buys (a slightly better 8y book) it pays for in lane edge and downside.
+                                 #   DO NOT RE-PROPOSE 2.0/2.5/off on sweep evidence alone: the sweep row measures the names a
+                                 #   looser ceiling admits, not what admitting them does to the book. The ladder is the answer.
                                  #   TIGHTENED 2.0 -> 1.6 (2026-07-30, user's live value, per-knob stress grid): 8y-s edge +83.1
                                  #   vs +79.2 with h2h 52% vs 48%; 12y/20y flat (the gate is near-blind at the 20y king — SEC
                                  #   fundamentals start 2007, its cutoffs end 2006). Same [1.5, 4.0] plateau as above, but the
