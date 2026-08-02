@@ -2409,16 +2409,22 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     });
     let mut seen: HashSet<&str> = HashSet::new();
     cores.retain(|q| seen.insert(q.name.as_str())); // one row per fund (VUAA.DE vs VUAA.L), best-ranked kept
-    // cap each breadth tier so all three index families show — else the many MSCI World trackers crowd
+    // cap each breadth tier so every index family shows — else the many MSCI World trackers crowd
     // out the S&P 500 and all-world cores. Sort is breadth-major, so a per-tier counter suffices.
-    let mut per_tier = [0u8; 3];
+    // Sized from core::HOLD_TIERS, NOT a literal: this was `[0u8; 3]` indexed by tier, so adding a
+    // fourth tier panicked on index-out-of-bounds instead of merely mis-printing.
+    let mut per_tier = [0u8; core::HOLD_TIERS];
     cores.retain(|q| {
         let t = core::hold_breadth_tier(&q.name) as usize;
         per_tier[t] += 1;
-        per_tier[t] <= 3
+        per_tier[t] <= HOLD_PER_TIER as u8
     });
     cores
 }
+
+/// Rows kept per breadth tier in the CORE list — enough to show an alternative issuer/venue per
+/// sleeve without one index family crowding out the others.
+pub const HOLD_PER_TIER: usize = 3;
 
 fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>, owned: &Owned) {
     let cores = hold_core_list(quotes);
@@ -2427,9 +2433,27 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>, owned: &O
     }
     let per_tier0 = cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 0).count();
     println!(
-        "\nbuy-and-hold CORE — broad one-fund-forever holds (the momentum ranking buries these at 0.0; \
-         ranked by breadth → domicile (IE first, withholding) → cheapest TER → largest AUM, NOT advice):"
+        "\nbuy-and-hold CORE — broad geographic sleeves (the momentum ranking buries these at 0.0; \
+         ranked broadest-first: all-world → developed → emerging → US → ex-US → Europe → Japan/Asia-Pac, \
+         then domicile (IE first, withholding) → cheapest TER → largest AUM. One all-world fund IS a \
+         whole book; the sleeves below it are for building one yourself. NOT advice):"
     );
+    // (round 118) supply per sleeve, BEFORE the cap. Without it the block is unreadable: three rows
+    // in a sleeve means "three shown of possibly forty", and an absent sleeve is indistinguishable
+    // from one the universe genuinely cannot fill (Japan/Asia-Pac in a EU-buyable pond). The old
+    // hardcoded 3-tier cap silently truncated for exactly this reason and nothing said so.
+    let mut supply = [0usize; core::HOLD_TIERS];
+    for q in quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)) {
+        supply[core::hold_breadth_tier(&q.name) as usize] += 1;
+    }
+    const SLEEVE: [&str; core::HOLD_TIERS] =
+        ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan/AsiaPac"];
+    let counts: Vec<String> = SLEEVE
+        .iter()
+        .zip(supply.iter())
+        .map(|(name, n)| format!("{name} {n}"))
+        .collect();
+    println!("  supply per sleeve (before the ≤{HOLD_PER_TIER}/sleeve cap): {}", counts.join(" · "));
     // (round 111) leading 1-char cell = the owned-position marker; this list is what a 20yr holder
     // actually buys, so "covered" matters most here. Blank when the overlay is off/empty.
     println!("  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
@@ -2555,7 +2579,10 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // every `screen` lane that carries cores (the wide run OR `screen etfs`), never `check`. Empty
     // cores early-return inside, so stock/crypto-only screen filters stay silent.
     if ctx.show_hold_core {
-        print_hold_core(quotes, 9, &pinned_set, ctx.owned); // up to 3 per breadth tier (all-world / world / S&P 500)
+        // n is DERIVED, never a second magic number: `hold_core_list` already caps 3 per tier, so a
+        // literal here silently truncated the lower tiers the moment tiers were added — which is the
+        // exact failure this list exists to avoid.
+        print_hold_core(quotes, core::HOLD_TIERS * HOLD_PER_TIER, &pinned_set, ctx.owned);
     }
     // gate review: pinned names are shown in their table even when a gate rejects them (score 0.0).
     // Say WHICH gate, so a 0.0 next to strong metrics isn't mistaken for a bug (VVSM stretch, VUAA/
@@ -4606,19 +4633,25 @@ mod tests {
         let mut quotes = vec![
             core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22), // tier 0
             core_etf("IWDA.DE", "iShares Core MSCI World UCITS ETF", 60e9, 0.20), // tier 1
-            // tier 2 (S&P 500): four DISTINCT names -> the cheapest three survive the per-tier cap.
+            core_etf("EIMI.DE", "iShares Core MSCI Emerging Markets IMI UCITS ETF", 20e9, 0.18), // tier 2
+            // tier 3 (S&P 500): four DISTINCT names -> the cheapest three survive the per-tier cap.
             core_etf("SPYL.DE", "SPDR S&P 500 UCITS ETF", 8e9, 0.03),
             core_etf("CSPX.DE", "iShares Core S&P 500 UCITS ETF", 70e9, 0.07),
             core_etf("VUAA.DE", "Vanguard S&P 500 UCITS ETF", 10e9, 0.07),
             core_etf("XDWL.DE", "Xtrackers S&P 500 UCITS ETF", 2e9, 0.09), // 4th S&P -> capped out
             core_etf("VUAA.L", "Vanguard S&P 500 UCITS ETF", 5e9, 0.15),  // dup NAME -> deduped
+            core_etf("MEUD.DE", "Xtrackers MSCI Europe UCITS ETF", 6e9, 0.12), // tier 5
             Quote::stub("AAPL", "€1", "", "Apple Inc."),                   // not a fund -> excluded
         ];
 
         let cores = hold_core_list(&quotes);
         assert_eq!(core::hold_breadth_tier(&cores[0].name), 0, "all-world sorts first (broadest)");
-        assert_eq!(cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 2).count(), 3, "S&P tier capped at 3");
-        assert_eq!(cores.len(), 5, "1 all-world + 1 world + 3 S&P (4th + dup dropped)");
+        assert_eq!(cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 3).count(), 3, "S&P tier capped at 3");
+        // (round 118) EM ranks ABOVE the US sleeve — DM+EM spans the planet, the S&P alone does not.
+        let tiers: Vec<u8> = cores.iter().map(|q| core::hold_breadth_tier(&q.name)).collect();
+        assert!(tiers.windows(2).all(|w| w[0] <= w[1]), "breadth-major order: {tiers:?}");
+        assert_eq!(cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 2).count(), 1, "EM sleeve present");
+        assert_eq!(cores.len(), 7, "1 all-world + 1 world + 1 EM + 3 S&P + 1 Europe (4th S&P + dup dropped)");
         let uniq: HashSet<&str> = cores.iter().map(|q| q.name.as_str()).collect();
         assert_eq!(uniq.len(), cores.len(), "one row per fund name");
         assert!(!cores.iter().any(|q| q.name == "Apple Inc."), "a single stock is never a hold core");

@@ -940,44 +940,93 @@ pub fn euronext_track_isins(payload: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Is this ETF name a BROAD market index (the kind you anchor a 20-year hold on), as opposed to a
-/// single-sector / thematic tilt? True = carries a broad-index token AND no sector/thematic token,
-/// so "S&P 500 Information Technology" (has "s&p 500" but also "information"/"technolog") is
-/// correctly NOT broad, while "Vanguard S&P 500 UCITS ETF" is. Name-token heuristic — lowercased,
-/// substring match, same style as the venue-list funnels above.
+/// Is this ETF name a GEOGRAPHIC market index (the kind you anchor a 20-year hold on), as opposed to
+/// a single-sector / thematic / factor tilt? True = carries a geography token AND no narrow token, so
+/// "S&P 500 Information Technology" (has "s&p 500" but also "information"/"technolog") is correctly
+/// NOT a core, while "Vanguard S&P 500 UCITS ETF" is. Name-token heuristic — lowercased, substring
+/// match, same style as the venue-list funnels above. See `GEO` for the rule and what it replaced.
 pub fn is_broad_index_name(name: &str) -> bool {
-    let n = name.to_lowercase();
-    const BROAD: [&str; 5] = ["s&p 500", "msci world", "ftse all-world", "all-country", "acwi"];
-    // sector/thematic/tilt tokens that disqualify a plain broad core: single sectors (Nasdaq-100 is a
-    // tech concentration), regional exclusions ("World ex USA" is a bet, not the whole market), ESG/SRI
-    // screens (a filtered subset), factor tilts (value/momentum/quality/min-vol/equal-weight), and
-    // currency-hedged classes (hedge-cost drag ≈ the interest-rate differential/yr — not the canonical hold).
-    // "minimum vol" + " pab": live CORE receipts — funds spell the tilt out ("MSCI World Minimum
-    // Volatility") or abbreviate the ESG screen ("MSCI World PAB" = Paris-Aligned Benchmark), and the
-    // "min vol"/"paris" tokens miss both. " pab" keeps its leading space so a name merely containing
-    // the letters (e.g. a provider string) can't false-positive.
-    const NARROW: [&str; 33] = [
-        "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
-        "sector", "select", "nasdaq", "small", "mid cap", "communicat", "biotech",
-        "world ex", "acwi ex", "ex-usa", "esg", "sri ", "socially responsible", "screened",
-        "sustainab", "paris", " pab", "climate", "islamic", "value", "momentum", "quality",
-        "equal weight", "min vol", "minimum vol", "hedged",
-    ];
-    BROAD.iter().any(|t| n.contains(t)) && !NARROW.iter().any(|t| n.contains(t))
+    geo_tier(&name.to_lowercase()).is_some()
 }
 
-/// Diversification tier of a broad-index fund, for ranking a single buy-and-hold-forever CORE (broader
-/// = one fund covers more of the world = better default). 0 = all-world / ACWI (whole planet, DM+EM),
-/// 1 = MSCI World (developed only), 2 = S&P 500 (US only). Assumes `is_broad_index_name` already held.
-pub fn hold_breadth_tier(name: &str) -> u8 {
-    let n = name.to_lowercase();
-    if n.contains("all-world") || n.contains("all-country") || n.contains("acwi") {
-        0
-    } else if n.contains("msci world") {
-        1
-    } else {
-        2 // s&p 500
+/// How many breadth tiers `hold_breadth_tier` can return. Anything sizing a per-tier array MUST read
+/// this — `hold_core_list` indexed a hardcoded `[0u8; 3]` by tier, so a fourth tier was an
+/// index-out-of-bounds panic rather than a display bug.
+pub const HOLD_TIERS: usize = 7;
+
+/// (round 118) The CORE admission rule, ONE table, read by both `is_broad_index_name` (does it match
+/// at all) and `hold_breadth_tier` (which tier) — they cannot drift apart the way two parallel lists
+/// would. A name qualifies iff it names a GEOGRAPHIC partition of the market and carries no NARROW
+/// token.
+///
+/// THE RULE IS GEOGRAPHY, NEVER INDUSTRY OR STYLE. A region is a sleeve you can hold for 20 years;
+/// an industry, a factor, a screen or a currency hedge is a bet on being right about something. That
+/// line is what keeps this list from growing without limit now that it admits slices at all.
+///
+/// THIS REPLACES "a regional exclusion is a bet, not the whole market", which is why `world ex`,
+/// `acwi ex` and `ex-usa` moved OUT of NARROW: US + World-ex-US is a perfectly good partition, and
+/// the old rule barred it while admitting MSCI World (developed only) and the S&P 500 (US only) —
+/// slices by any honest reading. The list stopped being "one fund forever" the day it had three
+/// tiers; this makes that explicit instead of pretending otherwise.
+///
+/// CAP-BREADTH WAS CONSIDERED AND REJECTED: admitting IMI / all-cap / small-cap as a "coverage"
+/// dimension cannot, by geography alone, tell "ACWI IMI" (broad, happens to include small caps) from
+/// "MSCI World Small Cap" (a size TILT). `small` and `mid cap` therefore stay in NARROW. Revisit only
+/// with an explicit completes-a-partition test, not by adding tokens.
+///
+/// ORDER MATTERS — first match wins, and a token that is a SUPERSTRING of another must come first.
+/// Two real collisions: "msci world ex usa" contains "msci world" (would rank an ex-US sleeve AS
+/// developed, i.e. above MSCI World itself), and "ftse developed europe" contains "ftse developed".
+/// Both are pinned by tests.
+const GEO: [(&str, u8); 22] = [
+    // 4 = ex-US sleeves. FIRST, because every one of them contains a broader token.
+    ("acwi ex", 4), ("world ex", 4), ("ex-usa", 4),
+    // 5 = Europe. "ftse developed europe" precedes the generic "ftse developed" below.
+    ("ftse developed europe", 5), ("msci europe", 5), ("stoxx europe 600", 5),
+    // 6 = Japan / Asia-Pacific
+    ("msci japan", 6), ("topix", 6), ("msci pacific", 6),
+    // 0 = the whole planet, DM+EM in one fund
+    ("all-world", 0), ("all-country", 0), ("acwi", 0), ("global all cap", 0),
+    ("solactive gbs global markets", 0),
+    // 1 = developed markets
+    ("msci world", 1), ("ftse developed", 1), ("solactive gbs developed markets", 1),
+    // 2 = emerging markets — ABOVE the US deliberately: DM+EM spans the planet, US alone does not
+    ("emerging", 2),
+    // 3 = the US
+    ("s&p 500", 3), ("msci usa", 3), ("crsp us total market", 3), ("russell 1000", 3),
+];
+
+/// sector/thematic/tilt tokens that disqualify a geographic core: single sectors (Nasdaq-100 is a
+/// tech concentration), ESG/SRI screens (a filtered subset), factor tilts
+/// (value/momentum/quality/min-vol/equal-weight), size tilts, and currency-hedged classes (hedge-cost
+/// drag ≈ the interest-rate differential/yr — not the canonical hold).
+/// "minimum vol" + " pab": live CORE receipts — funds spell the tilt out ("MSCI World Minimum
+/// Volatility") or abbreviate the ESG screen ("MSCI World PAB" = Paris-Aligned Benchmark), and the
+/// "min vol"/"paris" tokens miss both. " pab" keeps its leading space so a name merely containing
+/// the letters (e.g. a provider string) can't false-positive.
+const NARROW: [&str; 30] = [
+    "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
+    "sector", "select", "nasdaq", "small", "mid cap", "communicat", "biotech",
+    "esg", "sri ", "socially responsible", "screened",
+    "sustainab", "paris", " pab", "climate", "islamic", "value", "momentum", "quality",
+    "equal weight", "min vol", "minimum vol", "hedged",
+];
+
+/// The geographic tier of an ALREADY-lowercased name, or None when no geography token matches or a
+/// NARROW token disqualifies it. The single place the two public fns above agree.
+fn geo_tier(n: &str) -> Option<u8> {
+    if NARROW.iter().any(|t| n.contains(t)) {
+        return None;
     }
+    GEO.iter().find(|(t, _)| n.contains(t)).map(|(_, tier)| *tier)
+}
+
+/// Diversification tier of a broad-index fund, for ordering the buy-and-hold CORE broadest-first.
+/// 0 = all-world (whole planet), 1 = developed, 2 = emerging, 3 = US, 4 = ex-US, 5 = Europe,
+/// 6 = Japan/Asia-Pac. Assumes `is_broad_index_name` already held; a name that does not match lands
+/// in the last tier rather than panicking, and the CORE never prints it because the filter ran first.
+pub fn hold_breadth_tier(name: &str) -> u8 {
+    geo_tier(&name.to_lowercase()).unwrap_or(HOLD_TIERS as u8 - 1)
 }
 
 /// Is this quote a genuine buy-and-hold-20yr CORE holding — independent of the momentum SCORE, which
@@ -3473,11 +3522,40 @@ mod tests {
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(0.3e9)).as_deref(), Some("AUM €0.3B < €1B floor"));
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), None).as_deref(), Some("AUM unknown"));
 
-    // hold_breadth_tier: broadest (all-world/ACWI) sorts first, S&P 500 last
+    // hold_breadth_tier: broadest (all-world/ACWI) sorts first, then the geographic sleeves
     assert_eq!(hold_breadth_tier("Vanguard FTSE All-World UCITS ETF"), 0);
     assert_eq!(hold_breadth_tier("SPDR MSCI ACWI UCITS ETF"), 0);
     assert_eq!(hold_breadth_tier("iShares Core MSCI World UCITS ETF"), 1);
-    assert_eq!(hold_breadth_tier("Vanguard S&P 500 UCITS ETF"), 2);
+    assert_eq!(hold_breadth_tier("iShares Core MSCI Emerging Markets IMI UCITS ETF"), 2);
+    assert_eq!(hold_breadth_tier("Vanguard S&P 500 UCITS ETF"), 3);
+    assert_eq!(hold_breadth_tier("Xtrackers MSCI Europe UCITS ETF"), 5);
+    assert_eq!(hold_breadth_tier("iShares Core MSCI Japan IMI UCITS ETF"), 6);
+
+    // (round 118) the geography rule: a REGION is a sleeve, an INDUSTRY or a STYLE is not. EM is the
+    // whole point of the widening — it was structurally impossible before, at any TER or size.
+    assert!(is_broad_index_name("iShares Core MSCI Emerging Markets IMI UCITS ETF"));
+    assert!(is_broad_index_name("Amundi Prime Emerging Markets UCITS ETF"));
+    assert!(is_broad_index_name("Xtrackers MSCI Europe UCITS ETF"));
+    assert!(is_broad_index_name("Vanguard FTSE Developed World UCITS ETF"));
+    assert!(!is_broad_index_name("VanEck Semiconductor UCITS ETF"));
+    assert!(!is_broad_index_name("iShares S&P 500 Information Technology Sector UCITS ETF"));
+    assert!(!is_broad_index_name("iShares MSCI World Small Cap UCITS ETF")); // size TILT, deliberately still barred
+    assert!(!is_broad_index_name("iShares MSCI World EUR Hedged UCITS ETF"));
+    assert!(!is_broad_index_name("iShares MSCI World ESG Screened UCITS ETF"));
+    assert!(!is_broad_index_name("iShares MSCI World Minimum Volatility UCITS ETF"));
+
+    // the three tokens that FLIPPED: US + World-ex-US is a valid partition, so ex-US is now a sleeve.
+    assert!(is_broad_index_name("SPDR MSCI World ex USA UCITS ETF"));
+    // …and it must NOT inherit tier 1, which would rank an ex-US sleeve above MSCI World itself.
+    assert_eq!(hold_breadth_tier("SPDR MSCI World ex USA UCITS ETF"), 4);
+    assert_eq!(hold_breadth_tier("iShares MSCI ACWI ex US UCITS ETF"), 4);
+    // the other superstring collision: "ftse developed europe" must not read as plain "ftse developed"
+    assert_eq!(hold_breadth_tier("Vanguard FTSE Developed Europe UCITS ETF"), 5);
+    // every tier the table can emit stays inside an array sized by HOLD_TIERS (this is the panic)
+    for name in ["Vanguard FTSE All-World", "MSCI World", "MSCI Emerging", "S&P 500",
+                 "MSCI World ex USA", "MSCI Europe", "MSCI Japan", "not an index at all"] {
+        assert!((hold_breadth_tier(name) as usize) < HOLD_TIERS, "{name} tier out of range");
+    }
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"
