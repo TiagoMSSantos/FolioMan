@@ -101,14 +101,21 @@ async fn yahoo_history_parses() {
             continue; // endpoint throttled for this symbol — don't fail the suite
         }
         // endpoint is healthy (200 + contract present) -> a None now is a REAL parser break, not flakiness
-        let (dates, closes, ccy) = fetch::fetch_history(&client, &settings.urls, ticker)
+        let chart = fetch::fetch_history(&client, &settings.urls, ticker)
             .await
             .unwrap_or_else(|| panic!("{ticker}: 200 OK but fetch_history/parse_chart returned None — drift"));
+        let (dates, closes) = (&chart.dates, &chart.closes);
         assert!(!closes.is_empty(), "{ticker}: no closes");
         // (FX) the backtest decides whether to convert by comparing this to the filer's reporting
         // currency. An empty string compares unequal to everything, so a silent drop here would start
         // converting US names against themselves — assert the meta field actually arrives.
-        assert!(!ccy.is_empty(), "{ticker}: chart meta carried no currency");
+        assert!(!chart.currency.is_empty(), "{ticker}: chart meta carried no currency");
+        // the backtest classes every name from these two fields alone (`stamp_asset_class`), because
+        // `backtest_quote` rebuilds quotes from prices only. If Yahoo drops instrumentType, every fund
+        // silently falls back to the name guess and most of them re-class as single stocks — exactly
+        // the regression the class stamping exists to end. Fail here rather than in a quiet peer-mean.
+        assert!(!chart.instrument_type.is_empty(), "{ticker}: chart meta carried no instrumentType");
+        assert!(!chart.name.is_empty(), "{ticker}: chart meta carried no name");
         assert_eq!(dates.len(), closes.len(), "{ticker}: dates/closes length mismatch");
         assert!(dates.windows(2).all(|w| w[0] <= w[1]), "{ticker}: dates not ascending");
         assert!(closes.iter().all(|c| c.is_finite() && *c > 0.0), "{ticker}: bad close value");

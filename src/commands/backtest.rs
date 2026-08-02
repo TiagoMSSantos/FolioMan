@@ -130,6 +130,33 @@ fn bucket(d: chrono::NaiveDate) -> i32 {
     d.year() * 2 + d.month0() as i32 / 6
 }
 
+/// (#46) Fill the three fields `Quote::stub` leaves blank that decide a name's ASSET CLASS. The backtest
+/// reconstructs quotes from price history alone, and the stub sets `name` to the TICKER with an empty
+/// `instrument_type` — but `quote_is_etf` is exactly `instrument_type == "ETF" || is_etf(name)`, and
+/// `is_etf` substring-matches fund-name markers ("etf"/"ucits"/…) that no ticker carries. So before this,
+/// EVERY fund scored as a single stock: `demean`'s class split never separated funds from companies, and
+/// the ETF-scoped gates that read these fields — `is_commodity_etf` (the physical-gold/ETC bar),
+/// `is_commodity`'s fund-name branch, `sharpe_cap_etf` — silently no-op'd. (`growth_min_aum_etf` and
+/// `is_noneur_etf` stay inert regardless: `backtest_quote` never fills `aum_eur`/`quote_currency`.)
+///
+/// Yahoo's `meta.instrumentType` leads because a fund's shortName often carries no marker at all
+/// ("ISHARES III PLC ISHRS CORE MSCI"); the universe's own `etf_set` overrides it so a venue that omits
+/// the tag cannot drop a fund back into the stock class. Both come from data already fetched — no extra
+/// request. Crypto needs nothing here: `is_currency_quoted` reads the `-EUR`/`-USD` ticker suffix, which
+/// the stub does preserve, so coins were the one class that always classed correctly.
+fn stamp_asset_class(
+    quote: &mut Quote,
+    name: &str,
+    instrument_type: &str,
+    etf_set: &HashSet<String>,
+    sector_of: &HashMap<String, String>,
+) {
+    quote.name = name.to_string();
+    quote.instrument_type =
+        if etf_set.contains(&quote.ticker) { "ETF".to_string() } else { instrument_type.to_string() };
+    quote.sector = sector_of.get(&quote.ticker).cloned();
+}
+
 /// (#1) De-mean each cutoff's realized return WITHIN its ~6-month bucket AND asset class -> `relative`
 /// (the selection signal). Class-split because crypto's ~1e9-scale peer-relative returns otherwise share
 /// a pool with equities and swamp the de-meaned mean, pinning every growth-knob variant at the same edge
@@ -218,13 +245,20 @@ pub async fn run(args: Vec<String>) {
     core::set_measure_cadence(cadence);
     let min_history = if monthly { 36 } else { MIN_HISTORY }; // ~3y of bars before a cutoff to form the long trend
     let step = if monthly { 6 } else { STEP_SESSIONS }; // ~6 months between cutoffs
+    // (#46) the universe's own ETF ticker set and ticker->GICS sector map. Both were fetched and thrown
+    // away (`.0`) — they are the belt to the chart-meta braces below: a venue whose meta omits
+    // `instrumentType` must not silently drop a fund back into the stock class, and `is_commodity`
+    // reads `quote.sector`. Empty on the narrow path, which then behaves exactly as before.
+    let mut etf_set: HashSet<String> = HashSet::new();
+    let mut sector_of: HashMap<String, String> = HashMap::new();
     if wide && tickers.is_empty() {
         // (#2) widen to the live screen universe (crypto + S&P 500 + Xetra UCITS ETFs) for a far bigger
         // sample. Slower (one history fetch per name) but the only cure for 53-survivor-ticker noise.
         eprintln!("backtest: fetching the live screen universe (this is the slow, wide-sample path)…");
         // no sector filter (&[]): the backtest measures edge across the FULL sample, never a slice
-        tickers =
-            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &[]).await.0;
+        let universe =
+            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &[]).await;
+        (tickers, etf_set, sector_of) = universe;
     } else if tickers.is_empty() {
         tickers = settings.tickers.clone();
     }
@@ -249,7 +283,8 @@ pub async fn run(args: Vec<String>) {
     // (Item 11) hold-period / signal half-life sweep: which forward window gives the best NET edge?
     // Self-contained (own price-only fetch, cached -> cheap) so the validated dispatch below is untouched.
     if halflife {
-        hold_period_sweep(&client, &settings.urls, &tickers, monthly, cadence, min_history, step, tuning).await;
+        hold_period_sweep(&client, &settings.urls, &tickers, monthly, cadence, min_history, step, tuning, &etf_set, &sector_of)
+            .await;
         return;
     }
 
@@ -258,6 +293,8 @@ pub async fn run(args: Vec<String>) {
         .map(|tk| {
             let client = &client;
             let urls = &settings.urls;
+            let etf_set = &etf_set;
+            let sector_of = &sector_of;
             let factor = settings.buy_heuristic.growth_fund_factor.as_str(); // (G) config-selected as-of factor
             async move {
                 let fetched = if monthly {
@@ -265,10 +302,19 @@ pub async fn run(args: Vec<String>) {
                 } else {
                     fetch::fetch_history(client, urls, tk).await
                 };
-                let (dates, closes, native_ccy) = match fetched {
+                let chart = match fetched {
                     Some(x) => x,
                     None => return Vec::new(),
                 };
+                // (#46) the ASSET-CLASS fields, carried out of the same response the closes came from (no
+                // extra request). `backtest_quote` builds from `Quote::stub`, which leaves `name` as the
+                // TICKER and `instrument_type` empty — and `quote_is_etf` reads exactly those two, so
+                // before this every fund in the pool classified as a single stock. That silently merged
+                // ~4300 ETFs into the ~500-name stock peer-mean `demean` splits by, and no-op'd every
+                // ETF-scoped gate (the physical-gold/ETC bar among them). Yahoo's own `instrumentType`
+                // tag leads because an ETF shortName often carries no "ETF"/"UCITS" marker at all.
+                let (dates, closes, native_ccy) = (chart.dates, chart.closes, chart.currency);
+                let (cls_name, cls_type) = (chart.name, chart.instrument_type);
                 // (G) one cached fundamentals fetch per ticker (only when `fund`); as-of factors are then
                 // derived per cutoff from these rows with no further network. None -> the fund lane skips it.
                 let fund_rows = if fund { fetch::fetch_fundamentals_ranked(client, urls, tk).await } else { None };
@@ -307,6 +353,7 @@ pub async fn run(args: Vec<String>) {
                                 continue;
                             }
                             let mut quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
+                            stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
                             // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
                             // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
                             // fund_as_of(rows, cutoff - yrs*365)`). Passing the horizon meant `fund 12`
@@ -424,6 +471,25 @@ pub async fn run(args: Vec<String>) {
     println!("\nBacktest — WALK-FORWARD score vs {years}y-forward PEER-RELATIVE return (de-meaned per ~6mo cutoff):");
     println!("  cutoffs with a forward window: {}   tickers: {}", samples.len(), tickers.len());
 
+    // PER-CLASS CENSUS. The backtest reconstructs quotes from price history alone, so `name`/
+    // `instrument_type`/`sector` have to be stamped back on (stamp_asset_class) — without them every fund
+    // classes as a single stock and `demean` grades stocks against a peer-mean padded with index funds.
+    // A zero ETF count on the wide path means the stamping broke. Read the ratio, not the raw count:
+    // forward-window survival scales with listing age, so ETF density here is horizon-dependent (0.3% of
+    // cutoffs at 20y, 22% at 12y, 42% at 8y — 2026-08-02) and is NOT the ~87% the ticker list suggests.
+    // The crypto count is the honest measure of how much coin history survives a long forward window
+    // (~11y of history, so it thins to nothing: 0 scored cutoffs at every horizon measured).
+    let mut census = [(0usize, 0usize); 3]; // index = asset_class: 0 crypto, 1 ETF, 2 stock; (total, growth-scored)
+    for s in &samples {
+        let c = &mut census[picks::asset_class(&s.quote) as usize];
+        c.0 += 1;
+        c.1 += usize::from(picks::growth_score(&s.quote, tuning).is_some());
+    }
+    println!(
+        "  by class (growth-scored / cutoffs): crypto {}/{}   ETF {}/{}   stock {}/{}",
+        census[0].1, census[0].0, census[1].1, census[1].0, census[2].1, census[2].0
+    );
+
     let buy_knobs: Vec<Knob> = vec![
         knob("long_trend_weight", |tuning| tuning.long_trend_weight = 0.0),
         knob("discount_weight", |tuning| tuning.discount_weight = 0.0), // (#4) zero the dip reward — Δ>0 confirms dip-depth ranks backwards
@@ -519,8 +585,9 @@ pub async fn run(args: Vec<String>) {
     } else {
         fetch::fetch_history(&client, &settings.urls, bench_sym).await
     }
-    // (FX) an index LEVEL, never joined to a filing — nothing to convert, so drop the currency
-    .map(|(dates, closes, _)| (dates, closes))
+    // (FX) an index LEVEL, never joined to a filing — nothing to convert, so drop the currency. Nor is
+    // it ever scored, so it needs no asset-class stamp either: prices only.
+    .map(|c| (c.dates, c.closes))
     .unwrap_or_default();
     report_vs_benchmark(&samples, &bench, years, tuning);
     // (r40) relative strength vs the index — needs the benchmark, so it lives here, after the fetch.
@@ -592,6 +659,8 @@ async fn hold_period_sweep(
     min_history: usize,
     step: usize,
     tuning: &BuyHeuristic,
+    etf_set: &HashSet<String>,
+    sector_of: &HashMap<String, String>,
 ) {
     const HOLDS: [i64; 6] = [1, 2, 3, 5, 8, 10]; // forward windows (years) to compare
     eprintln!("backtest: hold-period sweep over {HOLDS:?}y windows ({} tickers)…", tickers.len());
@@ -602,10 +671,15 @@ async fn hold_period_sweep(
             } else {
                 fetch::fetch_history(client, urls, tk).await
             };
-            let (dates, closes, _) = match fetched { // (FX) price-only sweep — no filing joined, no currency needed
+            // (FX) price-only sweep — no filing joined, no currency needed. (#46) the class fields ARE
+            // needed: this walk de-means through the same `demean`, so it has to split classes the same
+            // way the validated path does or the two disagree on what a peer is.
+            let chart = match fetched {
                 Some(x) => x,
                 None => return Vec::new(),
             };
+            let (dates, closes) = (chart.dates, chart.closes);
+            let (cls_name, cls_type) = (chart.name, chart.instrument_type);
             let mut out = Vec::new();
             for &h in &HOLDS {
                 let mut i = min_history;
@@ -617,7 +691,8 @@ async fn hold_period_sweep(
                             // a zero/garbage close makes realized ±inf; one poisoned cutoff drags the
                             // whole demeaned bucket to -inf (short holds reach data the 12y path never walks)
                             if realized.is_finite() {
-                                let quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
+                                let mut quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
+                                stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
                                 out.push((h, Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() }));
                             }
                         }
@@ -3202,5 +3277,178 @@ mod tests {
         // series it carries no more meaning than the sign does. `use_life_cagr` is OFF here (default), so
         // this pin still measures the LEG-ranked lane; the knob is priced in the (#3j) universe runs.
         assert_eq!(got, "n=88 scored=24 rho=-0.029 edge=-26.2 winsor=-26.2 terciles=+31.2/+68.8/+54.2");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // ASSET-CLASS COVERAGE. `walk_forward_edge_pin` above is deliberately left byte-for-byte alone —
+    // its fixtures are stock-like, so its unchanged numbers are the check that the stock path did not
+    // move. The tests below cover the two classes it cannot see.
+    // ---------------------------------------------------------------------------------------------
+
+    /// Same synthetic trading calendar the pin builds inline (calendar days spread like ~252/yr,
+    /// strictly increasing since 365/252 > 1 day). Shared here rather than reaching into the pin, so
+    /// the pin stays untouched.
+    fn synth_calendar(n_bars: usize) -> Vec<NaiveDate> {
+        let d0 = ymd(2010, 1, 4);
+        (0..n_bars).map(|k| d0 + chrono::Duration::days(k as i64 * 365 / 252)).collect()
+    }
+    /// Closed-form price series: CAGR `g` plus a deterministic sine wobble, so ranks aren't degenerate
+    /// and vol/MA/R² differ per name. No RNG — these tests pin exact numbers.
+    fn synth_series(n_bars: usize, g: f64, amp: f64, ph: f64) -> Vec<f64> {
+        (0..n_bars)
+            .map(|k| {
+                let t = k as f64 / 252.0;
+                100.0 * (1.0 + g).powf(t) * (1.0 + amp * (t * 2.7 + ph).sin())
+            })
+            .collect()
+    }
+
+    /// The backtest rebuilds quotes from PRICE HISTORY ALONE: `core::backtest_quote` calls
+    /// `Quote::stub(ticker, "", "", ticker)`, leaving `name` = the ticker and `instrument_type` empty.
+    /// `picks::quote_is_etf` reads exactly those two fields, and no real fund ticker (`VWRA.L`,
+    /// `XDWD.L`, `SEMI.AS`) contains an `ETF_MARKERS` substring — so before `stamp_asset_class`, EVERY
+    /// fund in the pool classified as a single stock (~4300 of ~4950 live names). `demean` splits on
+    /// `picks::asset_class`, so the stock peer-mean every printed edge was measured against was ~87%
+    /// ETFs, and every ETF-scoped gate silently no-op'd. This test is the regression: drop the
+    /// stamping and the ETF/sector cases go red instead of quietly reverting to the old behaviour.
+    #[test]
+    fn stamp_asset_class_recovers_all_three_classes() {
+        let etf_set: HashSet<String> = ["VWRA.L".to_string()].into_iter().collect();
+        let sector_of: HashMap<String, String> =
+            [("NESN.SW".to_string(), "Consumer Staples".to_string())].into_iter().collect();
+        let stamped = |tk: &str, name: &str, ity: &str| {
+            let mut q = Quote::stub(tk, "1", "", tk);
+            stamp_asset_class(&mut q, name, ity, &etf_set, &sector_of);
+            q
+        };
+
+        // THE BUG ITSELF: an unstamped stub is a single stock whatever it really is.
+        let raw = Quote::stub("XDWD.L", "1", "", "XDWD.L");
+        assert_eq!(picks::asset_class(&raw), 2, "unstamped stub must class stock — the bug this fixes");
+
+        // Yahoo's own meta.instrumentType is the primary route: fund shortNames frequently carry no
+        // marker at all ("ISHARES III PLC ISHRS CORE MSCI"), which is why the name fallback missed them.
+        assert_eq!(picks::asset_class(&stamped("XDWD.L", "ISHARES III PLC ISHRS CORE MSCI", "ETF")), 1);
+        // belt-and-braces: fetch_universe's etf_set catches a fund whose meta is blank on this venue.
+        assert_eq!(picks::asset_class(&stamped("VWRA.L", "VANGUARD FUNDS PLC", "")), 1);
+        // the old name-substring fallback still fires when both of the above are missing.
+        assert_eq!(picks::asset_class(&stamped("X", "iShares Core MSCI World UCITS", "")), 1);
+        // crypto never needed the stamp (`is_currency_quoted` reads the TICKER) — it is the one class
+        // the stub always got right. Pinned so a future stamping change cannot break it.
+        assert_eq!(picks::asset_class(&stamped("BTC-EUR", "BTC-EUR", "CRYPTOCURRENCY")), 0);
+        // a real single stock stays a stock AND picks up the GICS sector `is_commodity` needs.
+        let nestle = stamped("NESN.SW", "Nestle S.A.", "EQUITY");
+        assert_eq!(picks::asset_class(&nestle), 2);
+        assert_eq!(nestle.sector.as_deref(), Some("Consumer Staples"));
+    }
+
+    /// The ETF-scoped gates were DEAD CODE in the backtest, not merely mis-grouped: with
+    /// `instrument_type` empty and `name` = the ticker, `is_commodity_etf` (picks.rs:338) could never
+    /// fire, so a physical-gold ETC — a metal peg with no earnings — scored as a proven compounder in
+    /// every number the backtest ever printed. Same prices, same reconstruction, stamped vs not.
+    #[test]
+    fn stamping_wires_up_the_etf_only_gates() {
+        let n = 13 * 252;
+        let dates = synth_calendar(n);
+        let closes = synth_series(n, 0.22, 0.04, 0.0);
+        let (etf_set, sector_of) = (HashSet::new(), HashMap::new());
+        let tuning = BuyHeuristic::default();
+
+        // the fixture must score BEFORE anything gates it, else a pass below proves nothing.
+        let mut etc = core::backtest_quote("SGLN.L", &dates, &closes, n - 1, 252);
+        assert!(growth_score(&etc, &tuning).is_some(), "fixture must score unstamped — the old behaviour");
+        stamp_asset_class(&mut etc, "iShares Physical Gold ETC", "ETF", &etf_set, &sector_of);
+        assert_eq!(picks::asset_class(&etc), 1);
+        assert!(growth_score(&etc, &tuning).is_none(), "physical-gold ETC must be gated once it classes as a fund");
+
+        // and the gate is SELECTIVE, not "every ETF drops out" — which would fake the pass above.
+        let mut broad = core::backtest_quote("XDWD.L", &dates, &closes, n - 1, 252);
+        stamp_asset_class(&mut broad, "Xtrackers MSCI World UCITS ETF", "ETF", &etf_set, &sector_of);
+        assert_eq!(picks::asset_class(&broad), 1);
+        assert!(growth_score(&broad, &tuning).is_some(), "a plain index ETF must keep scoring");
+    }
+
+    /// END-TO-END walk-forward over a universe carrying ALL THREE classes — the composition
+    /// `walk_forward_edge_pin` cannot reach. Every name runs the same closed-form generator, so any
+    /// per-class difference below comes from the CLASS SPLIT and not from the prices.
+    #[test]
+    fn mixed_class_walk_forward_pin() {
+        let n_bars = 13 * 252;
+        let dates = synth_calendar(n_bars);
+        let etf_set: HashSet<String> = HashSet::new();
+        let sector_of: HashMap<String, String> = HashMap::new();
+        // ticker, name, Yahoo instrumentType, CAGR, wobble amplitude, phase
+        let universe: [(&str, &str, &str, f64, f64, f64); 9] = [
+            ("WIN1", "Winner Industries AG", "EQUITY", 0.22, 0.04, 0.0),
+            ("MID1", "Middling Corp", "EQUITY", 0.10, 0.08, 2.0),
+            ("LOSE", "Sinking Corp", "EQUITY", -0.08, 0.10, 5.0),
+            ("XDWD.L", "Xtrackers MSCI World UCITS ETF", "ETF", 0.12, 0.05, 1.0),
+            ("VWRA.L", "Vanguard FTSE All-World UCITS ETF", "ETF", 0.09, 0.06, 3.0),
+            ("SEMI.AS", "VanEck Semiconductor UCITS ETF", "ETF", 0.19, 0.14, 0.5),
+            ("BTC-EUR", "BTC-EUR", "CRYPTOCURRENCY", 0.55, 0.30, 1.5),
+            ("ETH-EUR", "ETH-EUR", "CRYPTOCURRENCY", 0.35, 0.35, 4.0),
+            ("LTC-EUR", "LTC-EUR", "CRYPTOCURRENCY", -0.05, 0.25, 2.5),
+        ];
+        // run()'s exact cutoff walk, twice: once with the class fields stamped on, once without —
+        // the second is precisely the pre-fix behaviour, where every fund and coin is a "stock".
+        let years = 5i64;
+        let build = |stamp: bool| -> Vec<Sample> {
+            let mut out: Vec<Sample> = Vec::new();
+            for (tk, name, ity, g, amp, ph) in &universe {
+                let closes = synth_series(n_bars, *g, *amp, *ph);
+                let mut i = MIN_HISTORY;
+                while i < dates.len() {
+                    let target = dates[i] + chrono::Duration::days(years * 365);
+                    let Some(off) = dates[i..].iter().position(|d| *d >= target) else { break };
+                    let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
+                    let mut quote = core::backtest_quote(tk, &dates, &closes, i, 252);
+                    if stamp {
+                        stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
+                    }
+                    out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() });
+                    i += STEP_SESSIONS;
+                }
+            }
+            out
+        };
+
+        let mut samples = build(true);
+        demean(&mut samples);
+        // every (bucket, class) group nets to ~0 — demean's promise, now checked PER CLASS.
+        let mut sums: HashMap<(i32, u8), f64> = HashMap::new();
+        for s in &samples {
+            *sums.entry((bucket(s.date), picks::asset_class(&s.quote))).or_insert(0.0) += s.relative;
+        }
+        assert!(sums.values().all(|v| v.abs() < 1e-6), "per-(bucket,class) relatives must net to 0");
+        let classes: HashSet<u8> = sums.keys().map(|k| k.1).collect();
+        assert_eq!(classes.len(), 3, "all three classes must survive the pipeline, got {classes:?}");
+
+        // THE REGRESSION. Unstamped, the funds and coins de-mean against the STOCK peer-mean and land
+        // on different relatives. If these ever stop differing, the class split is dead again.
+        let mut pooled = build(false);
+        demean(&mut pooled);
+        assert!(pooled.iter().all(|s| picks::asset_class(&s.quote) != 1), "unstamped: no ETF can exist");
+        let moved = samples
+            .iter()
+            .zip(&pooled)
+            .filter(|(a, b)| (a.relative - b.relative).abs() > 1e-6)
+            .count();
+        assert!(moved > 0, "stamping must change the peer-relative returns — it groups demean");
+
+        let tuning = BuyHeuristic::default();
+        let (rho, edge) = lane_metrics(&samples, growth_score, &tuning);
+        let scored: Vec<(&Sample, f64)> =
+            samples.iter().filter_map(|s| growth_score(&s.quote, &tuning).map(|v| (s, v))).collect();
+        let n_of = |c: u8| samples.iter().filter(|s| picks::asset_class(&s.quote) == c).count();
+        let got = format!(
+            "n={} crypto={} etf={} stock={} moved={} scored={} rho={:.3} edge={:+.1}",
+            samples.len(), n_of(0), n_of(1), n_of(2), moved, scored.len(), rho.unwrap_or(f64::NAN), edge,
+        );
+        // golden values from the run that introduced this test. As with the pin above, the SIGNS carry
+        // no quality claim (synthetic series, 9 names) — only their exact stability matters.
+        // `moved=66` is the shape of the bug, not a round number: 33 ETF rows (which changed class) plus
+        // 33 stock rows (whose peer-mean LOST those ETFs). The 33 crypto rows are byte-identical in both
+        // runs — crypto is the one class the bare stub always classed correctly, so it had nothing to fix.
+        assert_eq!(got, "n=99 crypto=33 etf=33 stock=33 moved=66 scored=42 rho=0.211 edge=+5.6");
     }
 }

@@ -7,6 +7,57 @@
 #     watchlist (tickers), the table column layout (widths), and any local secret (a real ntfy_topic) or
 #     knob under test — EVERYTHING ELSE lives HERE. Overlay wins field-by-field. Edit shared config HERE.
 # Omitted knobs fall back to the code's #[serde(default)] (== the shipped defaults).
+#
+# ============================================================================================
+# ETF-CLASSIFICATION RECEIPT (2026-08-02) — READ BEFORE TRUSTING ANY PEER-RELATIVE EDGE BELOW
+# ============================================================================================
+# Every peer-relative edge number written into this file BEFORE this date was measured with ETFs
+# pooled into the STOCK peer-mean. `core::backtest_quote` builds `Quote::stub(ticker, "", "", ticker)`
+# — name = the ticker, instrument_type empty — and `picks::quote_is_etf` is exactly
+# `instrument_type == "ETF" || is_etf(name)`, where `is_etf` substring-matches "etf"/"ucits"/… markers
+# that no real fund TICKER carries (VWRA.L, XDWD.L, SEMI.AS). So every fund in the pool classified as a
+# single stock. `demean` splits on `picks::asset_class`, so the peer baseline each lane edge is graded
+# against mixed funds with companies. Fixed by `stamp_asset_class` (commands/backtest.rs), which fills
+# name/instrument_type/sector from the chart response the backtest ALREADY fetches — zero extra requests.
+#
+# HOW BIG: not the "~87% of the universe" the ticker count suggests. Forward-window survival scales with
+# listing age, and UCITS funds are young, so ETF density in the SCORED pool depends on the horizon. The
+# per-class census the report now prints, `universe fund <h> stress`:
+#     20y-s: crypto 0/4633     ETF 14/4633 (0.3%)    stock 4619/4633
+#     12y-s: crypto 0/11758    ETF 2624/11758 (22%)  stock 9134/11758
+#      8y-s: crypto 0/20575*   ETF 8650/20575 (42%)  stock 11907/20575        (*18 crypto cutoffs, 0 scored)
+#
+# WHAT MOVED (GROWTH lane, `universe fund <h> stress`, same session/binary/universe, before -> after):
+#     20y-s KING  rho +0.18 -> +0.18   edge +648.2 -> +661.2   winsor +570.7 -> +583.7   OOS +0.21/+0.17 -> +0.22/+0.17
+#     12y-s       rho +0.21 -> +0.12   edge +212.9 -> +148.1   winsor +168.3 -> +113.6   OOS +0.17/+0.19 -> +0.18/+0.01
+#      8y-s       rho +0.25 -> +0.16   edge  +77.1 ->  +42.9   winsor  +73.6 ->  +41.2   OOS +0.19/+0.19 -> +0.19/+0.08
+#
+# The damage tracks ETF density EXACTLY — 0.3% density, no change; 22%, edge -30%; 42%, edge -44%. That
+# dose-response is the evidence the fix is a fix and not a new bug. `windows scored` barely moves
+# (380->380, 576->576, 723->717), so no names dropped out: what changed is the YARDSTICK, not the pool.
+# The old 12y/8y numbers were inflated because a growth stock was being graded against a peer pool that
+# was a fifth-to-half broad index funds. Beating a basket of index trackers is easy for a momentum name;
+# beating other STOCKS is the real test, and that is what these lower numbers now measure.
+#
+# WHAT DID **NOT** MOVE: the held book — the rows actually bought. Identical at all three horizons:
+#   20y  growth_score book +13.3%/yr excess +6.1 win 97%   rank1 +6.0|+6.6 win 83% of 36
+#   12y  growth_score book +14.1%/yr excess +6.3 win 90%   rank1 +5.6|+5.9 win 69% of 51
+#    8y  growth_score book +14.0%/yr excess +6.4 win 88%   rank1 +6.6|+7.2 win 73% of 59
+# Held-book excess is measured against a BENCHMARK, not against the de-meaned peer pool, so the
+# contamination never reached it. The 12y/8y drop is a diagnostic correcting itself, not a portfolio
+# getting worse. The growth lane still beats the on-sale foil at every horizon (661 vs 413, 148 vs 46,
+# 43 vs 27), so the lane choice is unaffected too.
+#
+# GATES THAT WERE DEAD AND ARE NOW LIVE in the backtest (they read name/instrument_type/sector):
+#   is_commodity_etf (physical-gold/ETC), is_commodity (fund name tokens), sharpe_cap_etf.
+# STILL INERT there, for a different and unfixed reason — `backtest_quote` never fills their inputs:
+#   growth_min_aum_etf (aum_eur None), is_noneur_etf (quote_currency None), age/TER gates.
+#
+# DEBT, DELIBERATELY NOT PAID HERE: growth_min_cagr 19, growth_min_range_pct 80, growth_maxdd_cap 84,
+# growth_max_peg 1.6, growth_accel_weight 0.65 and every other knob receipt below were FITTED on the
+# contaminated peer-mean. The king horizon barely moved so they are not presumed wrong, but they are
+# no longer independently validated at 12y/8y. Re-sweep before citing a 12y/8y Δedge as evidence.
+# ============================================================================================
 tickers: []
 
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
@@ -133,8 +184,17 @@ buy_heuristic:
                                  #   months it exists for and earned its keep there. An overlay running -1e6 pays rank-1 for it.
                                  #   Live 2026-08-02 the knife is binding, in the near-miss list: VRT -23.4% vs the -20.0 floor.
   max_1m_drop_pct_crypto: -35.0  # LIVE (crypto/FX): looser knife — a -20%/month alt is normal — both lanes
-                                 #   STRUCTURALLY UNMEASURABLE by backtest (2026-08-02): crypto is absent from the backtest
-                                 #   pool, so no sweep can vote on it — same class as growth_maxdd_cap_crypto / growth_max_vol_crypto.
+                                 #   UNMEASURABLE by backtest (2026-08-02) — but NOT for the reason first written here.
+                                 #   CORRECTED 2026-08-02: the original text said "crypto is absent from the backtest pool".
+                                 #   That is FALSE. fetch_universe pushes CoinGecko SYMBOL-EUR tickers and the backtest applies
+                                 #   no crypto filter; coins are in fact the ONE class the backtest always classed correctly
+                                 #   (is_currency_quoted reads the ticker suffix, which Quote::stub preserves). The real
+                                 #   constraint is SAMPLE COUNT: coins carry ~11y of history, so almost none survives a long
+                                 #   FORWARD window. Now measured, from the per-class census line the report prints:
+                                 #     20y-s: crypto 0 cutoffs of 4633   12y-s: 0 of 11758   8y-s: 18 of 20575, 0 growth-scored.
+                                 #   So the conclusion stands and is now load-bearing on a number rather than folklore: zero
+                                 #   crypto cutoffs reach a scored forward window, so no sweep can vote on this knob.
+                                 #   Same class as growth_maxdd_cap_crypto / growth_max_vol_crypto (both corrected likewise).
                                  #   Settled by live screen A/B instead (-35 vs -100, everything else HEAD): the two crypto
                                  #   tables are IDENTICAL — same names, same order, same scores; the gate binds on NONE of the
                                  #   20-coin pool today. That is "today is not a crash month", NOT "the gate is dead", so it is
@@ -1387,12 +1447,18 @@ buy_heuristic:
                                  #   SOL -96...). Coins crash >90% every cycle, hence a separate looser bar than the equity 83.
                                  #   BACKTEST-BLIND in practice (almost no coin has the full 12y window, so the pool carries
                                  #   ~none) -> judgment gate like the turnover floor, validated by live-screen eyeball.
+                                 #   CONFIRMED 2026-08-02, and this block had the mechanism RIGHT where its two crypto
+                                 #   siblings had it wrong: it is the forward window, not absence from the pool. The census
+                                 #   line now prints the number — 12y-s: crypto 0 cutoffs of 11758; 8y-s: 18 of 20575, 0 scored.
                                  #   If a future bear drags BTC below -84, raise this just above BTC's new mark. 0 = off.
   growth_max_vol_crypto: 3.0     # (#36) crypto-only VOL cap = "reject coins swinging WILDER than Bitcoin day-to-day" — same
                                  #   philosophy as the maxdd bar, applied to daily-return stdev (the VOL column) instead of the
                                  #   worst-ever tail. BTC ~2.4%/day, so 3.0 keeps the base with headroom and cuts the wild alts
-                                 #   (OKB 3.4, LEO 3.1). Crypto absent from the backtest pool -> edge-blind by construction;
-                                 #   judgment gate validated by live-screen eyeball. 0 = off.
+                                 #   (OKB 3.4, LEO 3.1). Edge-blind by construction — CORRECTED 2026-08-02: not because
+                                 #   "crypto is absent from the backtest pool" (it is NOT; fetch_universe pushes SYMBOL-EUR
+                                 #   tickers and nothing filters them out), but because ~11y of coin history leaves zero
+                                 #   cutoffs with a scored forward window: 20y-s 0/4633, 12y-s 0/11758, 8y-s 18/20575 with 0
+                                 #   growth-scored. Judgment gate validated by live-screen eyeball. 0 = off.
   growth_max_peg: 1.6            # (#37) HARD valuation ceiling: reject an equity whose PEG exceeds this. Stored as PEG
                                  #   (reads like the column and like the request), APPLIED to `fund.peg_yield` — which is
                                  #   1/PEG x 100 — as `peg_yield < 100/growth_max_peg`, so a HIGH peg_yield is cheap. Since
@@ -1617,8 +1683,13 @@ buy_heuristic:
                                  #   prints + FX conversion), so ETF CAGR/vol above ~9 measures listing-line noise, not
                                  #   fund risk. Uncapped, that noise (0.15×Δsharpe ≈ 0.7 score) outvotes the real TER
                                  #   difference (2.2% over 20y) and ranks the COSTLIER identical wrapper higher. 9.0 ≈ the
-                                 #   noise floor observed across same-index wrapper trios. Stocks keep sharpe_cap; the
-                                 #   backtest pool holds stock constituents only -> validated edge byte-identical. 0 = off
+                                 #   noise floor observed across same-index wrapper trios. Stocks keep sharpe_cap.
+                                 #   CORRECTED 2026-08-02: "the backtest pool holds stock constituents only" was FALSE — the
+                                 #   pool is ~4311 ETFs of 4954 tickers. The cap read inert only because backtest_quote left
+                                 #   instrument_type/name blank so quote_is_etf never fired (see the ETF-CLASSIFICATION
+                                 #   receipt at the head of this file). Since the class stamping this cap DOES apply in the
+                                 #   backtest, at whatever ETF density the horizon carries: 20y-s 14 ETF cutoffs of 4633,
+                                 #   12y-s 2624 of 11758, 8y-s 8650 of 20575. 0 = off
   calmar_weight: 0.0             # (C) ZEROED. Calmar (CAGR/max-drawdown) is harmful at the 12y horizon: 1.0->0 lifts GROWTH
                                  #   edge +92.7->+98.0, rho +0.06->+0.07, top-half +4.6->+7.3 — all three improve. Over a 20y hold the
                                  #   deepest-drawdown names are often the biggest compounders; penalizing path-pain deselects them.

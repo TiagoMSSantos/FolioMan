@@ -125,14 +125,19 @@ async fn throttle() {
     }
 }
 
-struct Chart {
-    dates: Vec<NaiveDate>,
-    closes: Vec<f64>,
-    volumes: Vec<f64>, // parallel to closes (0.0 where no volume reported); liquidity proxy
-    currency: String,
-    name: String,
-    instrument_type: String, // Yahoo meta.instrumentType ("ETF"/"EQUITY"/...); "" if absent
-    divs: Vec<(NaiveDate, f64)>, // (ex-date, amount/share) from events.dividends
+/// Parsed chart response. `pub` (rather than the fetch-internal tuple it used to be reduced to) because
+/// the BACKTEST needs `name`/`instrument_type` to class a name: it reconstructs quotes from price
+/// history alone, and `Quote::stub` leaves both blank, so every fund used to classify as a single stock
+/// (`quote_is_etf` reads exactly these two fields). They come from the same response the backtest
+/// already fetches — surfacing them costs no extra request.
+pub struct Chart {
+    pub dates: Vec<NaiveDate>,
+    pub closes: Vec<f64>,
+    pub volumes: Vec<f64>, // parallel to closes (0.0 where no volume reported); liquidity proxy
+    pub currency: String,
+    pub name: String,
+    pub instrument_type: String, // Yahoo meta.instrumentType ("ETF"/"EQUITY"/...); "" if absent
+    pub divs: Vec<(NaiveDate, f64)>, // (ex-date, amount/share) from events.dividends
 }
 
 async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Value> {
@@ -340,11 +345,12 @@ async fn eur_rate_series(client: &Client, urls: &Urls, cur: &str, long: bool) ->
         } else {
             fetch_history(client, urls, &sym).await
         };
-        if let Some((dates, closes, _)) = hist {
+        if let Some(chart) = hist {
             return Some(
-                dates
+                chart
+                    .dates
                     .into_iter()
-                    .zip(closes)
+                    .zip(chart.closes)
                     .filter(|(_, px)| px.is_finite() && *px > 0.0) // a 0 close would invert to +inf
                     .map(|(d, px)| (d, if invert { scale / px } else { px * scale }))
                     .collect(),
@@ -4496,32 +4502,35 @@ pub fn fetch_concurrency() -> usize {
     })
 }
 
-/// Raw (dates, closes, listing currency) for one ticker — the 10y daily series, for the `backtest`
-/// command. Same single chart call the live path already makes (no EXTRA per-ticker fetch). None on
-/// fetch/parse fail or empty history.
+/// The parsed `Chart` for one ticker — the 10y daily series, for the `backtest` command. Same single
+/// chart call the live path already makes (no EXTRA per-ticker fetch). None on fetch/parse fail or empty
+/// history.
+///
+/// Returns the whole `Chart` rather than the `(dates, closes, currency)` triple it used to reduce to,
+/// because `name`/`instrument_type` are what let the backtest class a name at all (see `Chart`).
 ///
 /// (FX) the currency rides along because the closes alone are ambiguous: a foreign filer's ADR trades in
 /// one currency and reports in another, so joining these closes to SEC per-share lines needs proof both
-/// sides match FIRST. Price-only callers destructure it away.
-pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<NaiveDate>, Vec<f64>, String)> {
+/// sides match FIRST. Price-only callers ignore the field.
+pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option<Chart> {
     let j = chart_json(client, urls, ticker, "10y").await?;
     let chart = parse_chart(&j, ticker)?;
     if chart.closes.is_empty() {
         return None;
     }
-    Some((chart.dates, chart.closes, chart.currency))
+    Some(chart)
 }
 
-/// Raw (dates, closes, listing currency) from the MAX monthly history — the long-horizon `backtest`
-/// path. Decades of monthly bars (vs fetch_history's 10y daily), so forward windows of 10y+ exist for
-/// old names and a genuine multi-decade hold can be measured. Same single chart call quote_one already
-/// makes for the 20Y backfill (no new fetch type). None on fetch/parse fail or empty history.
-pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> Option<(Vec<NaiveDate>, Vec<f64>, String)> {
+/// The parsed `Chart` from the MAX monthly history — the long-horizon `backtest` path. Decades of
+/// monthly bars (vs fetch_history's 10y daily), so forward windows of 10y+ exist for old names and a
+/// genuine multi-decade hold can be measured. Same single chart call quote_one already makes for the 20Y
+/// backfill (no new fetch type). None on fetch/parse fail or empty history.
+pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Chart> {
     let chart = parse_chart(&chart_json_long(client, urls, ticker).await?, ticker)?;
     if chart.closes.is_empty() {
         return None;
     }
-    Some((chart.dates, chart.closes, chart.currency))
+    Some(chart)
 }
 
 /// One Quote per ticker, concurrent (≤`FETCH_CONCURRENCY` in flight), input order preserved.
