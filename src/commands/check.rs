@@ -125,7 +125,7 @@ pub async fn run(args: Vec<String>) {
         // (#45) same for crypto: `check` never calls `fetch_mvrv`, so `quote.mvrv` stays None and
         // `crypto_max_mvrv` passes every coin free. A coin `screen` would reject as expensive still
         // reports here — which is the point, since you asked about that coin by name.
-        fund_pe: &std::collections::HashMap::new(),
+        fund_pe: &crate::picks::FundPeMap::new(),
     });
 
     // held-name gate review: a watchlist name that would no longer clear today's growth gates is an

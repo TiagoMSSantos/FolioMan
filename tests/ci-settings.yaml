@@ -1579,10 +1579,10 @@ buy_heuristic:
                                  #   bench (~50 symbols of a ~4300-fund universe), so a universe-wide fund gate would mean
                                  #   thousands of crumbed quoteSummary calls. Sitting before the cut to n it refills from
                                  #   below instead of shortening the table (contrast the (#41) growth_corr_cap receipt,
-                                 #   where stopping at n is exactly why that knob ships 0). Funds with no P/E are never
-                                 #   trimmed; pinned tickers bypass it. Fund P/Es are propagated across a fund's sibling
-                                 #   VENUES (Xetra/Euronext/Lisbon all list the same UCITS fund) — without that the
-                                 #   ceiling would cut one listing and keep its twin.
+                                 #   where stopping at n is exactly why that knob ships 0). Funds with no P/E AND no
+                                 #   resolvable index twin are never trimmed; pinned tickers bypass it. Fund P/Es are
+                                 #   propagated across a fund's sibling VENUES (Xetra/Euronext/Lisbon all list the same
+                                 #   UCITS fund) — without that the ceiling would cut one listing and keep its twin.
                                  #   WHY IT EXISTS: growth_max_peg reads `quote.fund`, which is None for every fund, so
                                  #   funds walked past the tool's only valuation ceiling untested — the same missing-data
                                  #   hole growth_require_peg was added to close for equities.
@@ -1610,6 +1610,33 @@ buy_heuristic:
                                  #   NOT a mostly-decorative gate. Table went 1 row -> 4; the equity lane came out
                                  #   byte-identical and crypto moved only on live prices, as it must — neither path reads
                                  #   fund_pe. (Wider pool, for scale: 40 funds fetched, 14 served a P/E.)
+                                 #   THE "KEPT FOR WANT OF A P/E" ROW WAS THE HOLE, AND IT IS NOW CLOSED (2026-08-02).
+                                 #   XLKS.L did not lack the datum by accident: it is a SWAP-BASED (synthetic) ETF. It
+                                 #   holds a total-return swap, not equities, so Yahoo answers stockPosition 0.0 /
+                                 #   otherPosition 1.0 / holdings [] / every equityHoldings ratio a literal 0.0, and
+                                 #   parse_fund_pe rightly refuses to invert a zero. That is PERMANENT for such a fund —
+                                 #   it would have ridden the free pass forever, at rank #2, in the same run this trim
+                                 #   cut seven funds at PEG 2.57-3.80. Selection by absent data, one level down.
+                                 #   FIX: borrow the look-through P/E from a PHYSICAL fund tracking the same index
+                                 #   (screen::borrow_index_twins). XLKS.L <- SXLK.L 33.93 -> PEG 1.70, which PASSES 2.0
+                                 #   with room, so no table moved on the day it shipped; the gain is that the next swap
+                                 #   fund gets TESTED. Borrowed values act exactly like fetched ones and print with a `~`
+                                 #   plus the source ticker — an inference that can cut a fund must be traceable.
+                                 #   MATCHED BY NAME, NEVER BY COMPOSITION, and that is measured, not stylistic: a
+                                 #   synthetic fund's reported basket looks like COLLATERAL, not exposure. XLKS.L reads
+                                 #   Technology 0.912 / Financial Services 0.072 against twin SXLK.L's Technology 0.994 /
+                                 #   Communication Services 0.006, and PANX.PA misses ANX.PA the same way — a sector
+                                 #   fingerprint REJECTS both real pairs. Do not re-propose it; it was tried and it fails
+                                 #   on exactly the funds that need it.
+                                 #   SAFETY: bench-only (never the ~4250 unfetched funds, or this display trim silently
+                                 #   becomes the universe-wide gate the paragraph above rules out); sources must be
+                                 #   MEASURED, so no chaining; and candidates that DISAGREE refuse rather than guess.
+                                 #   Gate: screen::index_key_never_fuses_two_different_books groups all 46 P/E-bearing
+                                 #   funds by name key against real Yahoo longNames and fails if any key covers two
+                                 #   different ratios — 5 multi-fund keys, 0 heterogeneous. Live orphans that correctly
+                                 #   resolve to NOTHING and keep their n/a: JEDG.L (physical, Yahoo just has no ratio),
+                                 #   PANX.PA (a screened index, genuinely unique), XACT-BULL-2.ST (2x leveraged),
+                                 #   VBTC.DE (bitcoin ETP, no equity book at all).
                                  #   NOT BACKTEST-GRADEABLE, ever: the look-through P/E is a live snapshot with no
                                  #   history, so there is no as-of value to reconstruct at a cutoff. Judgement + live-run
                                  #   diff, like growth_min_age_years and growth_min_aum_etf. Unit-pinned instead

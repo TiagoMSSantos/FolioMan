@@ -224,6 +224,182 @@ fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) ->
         .collect()
 }
 
+/// (#37 funds) Issuer prefixes stripped before two fund names are compared for the same index.
+///
+/// Stripped as a PREFIX and only as a prefix, never as free-floating tokens, because `global`, `first`,
+/// `trust` and `street` are all real index words: removing them anywhere would fuse `FTSE Global All Cap`
+/// with `FTSE All Cap`, i.e. an all-cap world fund with an all-cap developed one. Applied in a loop, so
+/// `Amundi Index Solutions - Amundi MSCI World` sheds both leading `amundi`s and lands on `msci world`.
+const FUND_ISSUERS: &[&str] = &[
+    "amundi index solutions", "legal & general", "credit suisse", "goldman sachs", "state street",
+    "first trust", "bnp paribas easy", "bnp paribas", "jp morgan", "global x", "21shares", "abrdn",
+    "amundi", "comstage", "coinshares", "deka", "dws", "fidelity", "franklin", "han etf", "hsbc",
+    "invesco", "ishares", "jpmorgan", "l&g", "lyxor", "ossiam", "pimco", "rize", "spdr", "swisscanto",
+    "tabula", "ubs", "vaneck", "vanguard", "vontobel", "wisdomtree", "xtrackers",
+];
+
+/// (#37 funds) Wrapper, share-class and product-line tokens dropped anywhere in a fund name.
+///
+/// The product-line half (`core`, `prime`, `source`, `index`, `solutions`, `pea`, `eqqq`) is a
+/// DELIBERATE widening chosen 2026-08-02 over a conservative list, so `iShares Core S&P 500` pairs with
+/// `Invesco S&P 500` and `Amundi PEA Nasdaq-100` with `Invesco EQQQ Nasdaq-100` — both genuinely the same
+/// index behind different wrappers. Every token added here is a new way to fuse two different books,
+/// which is why `index_keys_are_pe_homogeneous` exists: it re-derives these keys over every fund that
+/// reports a P/E and fails if any key covers two different ratios.
+///
+/// `hedged` is deliberately NOT here. Leaving it in keeps `MSCI World EUR Hedged` unpaired with
+/// `MSCI World` — a missed twin, not a false one. Misses cost an `n/a`; false pairs cost a wrong number.
+const FUND_NOISE: &[&str] = &[
+    "ucits", "etf", "etfs", "etc", "etp", "fund", "index", "indices", "solutions", "core", "prime",
+    "source", "pea", "eqqq", "acc", "accumulating", "dist", "distributing", "inc", "1c", "1d", "1acc",
+    "2c", "eur", "usd", "gbp", "chf", "&",
+];
+
+/// (#37 funds) A fund name reduced to the SET of tokens that identify its index, or `None` if too little
+/// survives to be evidence of anything.
+///
+/// Set, not sequence: `Invesco Technology S&P US Select Sector` and `SPDR S&P U.S. Technology Select
+/// Sector` name the same index in a different word order, and that is exactly the pair this exists for.
+///
+/// The two-token floor is the same instinct as `bf_by_name`'s 10-byte floor — a one-token key like
+/// `{gold}` or `{semiconductor}` matches far too much to be called an index identity.
+fn index_key(name: &str) -> Option<Vec<String>> {
+    let flat: String = name
+        .to_lowercase()
+        .chars()
+        .filter_map(|c| match c {
+            '.' | ',' | '(' | ')' | '\'' => None,   // "u.s." -> "us"
+            '-' | '/' | '+' | ':' => Some(' '),      // "nasdaq-100" -> "nasdaq 100"
+            c => Some(c),                            // '&' survives, or "s&p" shatters
+        })
+        .collect();
+    let mut rest = flat.split_whitespace().collect::<Vec<_>>().join(" ");
+    // loop: multi-brand names ("Amundi Index Solutions - Amundi MSCI World") carry the issuer twice
+    while let Some(stripped) = FUND_ISSUERS
+        .iter()
+        .filter(|i| rest.strip_prefix(**i).is_some_and(|r| r.is_empty() || r.starts_with(' ')))
+        .max_by_key(|i| i.len())
+        .and_then(|i| rest.strip_prefix(i))
+    {
+        rest = stripped.trim_start().to_string();
+    }
+    let mut tokens: Vec<String> = rest
+        .split_whitespace()
+        .filter(|t| !FUND_NOISE.contains(t))
+        .map(str::to_string)
+        .collect();
+    tokens.sort();
+    tokens.dedup();
+    (tokens.len() >= 2).then_some(tokens)
+}
+
+/// (#37 funds) Copy each fetched P/E to the fund's OTHER venue listings.
+///
+/// One UCITS fund lists on Xetra + Euronext + Lisbon and the ETF table shows every listing (only crypto
+/// twins collapse upstream, in `dedup_currency_twins`), while `yahoo_top_holdings` is asked for one venue
+/// per name. Without this the (#37) ceiling would cut one listing and keep its twin — the same "the class
+/// with missing data gets the easier test" hole the trim exists to close.
+///
+/// Matched on the EXACT lowercased name, not on `index_key`: this is the same fund, so copying its own
+/// ratio across its own listings is bookkeeping. Provenance rides along unchanged, so a borrowed value
+/// stays marked borrowed on every venue it reaches.
+fn fill_venue_listings(fund_pe: &mut picks::FundPeMap, quotes: &[core::Quote]) {
+    let by_name: std::collections::HashMap<String, picks::FundPe> = quotes
+        .iter()
+        .filter_map(|q| fund_pe.get(&q.ticker).map(|p| (q.name.to_lowercase(), p.clone())))
+        .collect();
+    let siblings: Vec<(String, picks::FundPe)> = quotes
+        .iter()
+        .filter_map(|q| by_name.get(&q.name.to_lowercase()).map(|p| (q.ticker.clone(), p.clone())))
+        .collect();
+    fund_pe.extend(siblings);
+}
+
+/// (#37 funds) Borrow a look-through P/E for the funds that can never report one.
+///
+/// A swap-based (synthetic) ETF holds a total-return swap, not equities. Yahoo answers with
+/// `stockPosition 0.0`, `otherPosition 1.0`, no holdings and a literal `0.0` for every `equityHoldings`
+/// ratio, so `parse_fund_pe` correctly refuses it — there is nothing to invert. The exposure is still an
+/// ordinary index, and a PHYSICAL fund on that index does report the book, so the number is recoverable
+/// by identity even though it is unmeasurable for this fund.
+///
+/// MATCHED BY NAME, NEVER BY COMPOSITION, and that is a measured decision (2026-08-02). Yahoo's reported
+/// basket for a synthetic fund appears to be COLLATERAL, not exposure: XLKS.L reads Technology 0.912 /
+/// Financial Services 0.072 against its twin SXLK.L's Technology 0.994 / Communication Services 0.006,
+/// and PANX.PA misses ANX.PA the same way. A sector-fingerprint matcher REJECTS both real pairs. For
+/// exactly the funds that need a proxy, the payload describes the wrong portfolio.
+///
+/// Two guards, both load-bearing:
+/// - **Bench only.** Borrowing is attempted solely for funds that were fetched and came back empty.
+///   Filling in the ~4250 funds outside the bench would quietly promote a post-rank display trim into a
+///   universe-wide gate — the thing `growth_max_peg_etf`'s doc rules out on request-budget grounds.
+/// - **Disagreement refuses.** Several tickers sharing a key is normal (venue listings, rival wrappers on
+///   one index) and they should all report the same ratio, since Yahoo's fund P/E is index-level: six
+///   Nasdaq-100 funds all say 32.6797, four S&P 500 wrappers all say 26.8745. If candidates DISAGREE the
+///   key has fused two different books, and the honest answer is the `n/a` we started with. Same
+///   uniqueness-refusal rule as `bf_by_name` / `BfMetaMiss::AmbiguousName`.
+///
+/// Sources must be MEASURED (`from: None`), so a borrowed value can never itself be borrowed from.
+async fn borrow_index_twins(
+    client: &reqwest::Client,
+    bench: &[String],
+    fund_pe: &picks::FundPeMap,
+    quotes: &[core::Quote],
+) -> Vec<(String, picks::FundPe)> {
+    let quote_of = |t: &str| quotes.iter().find(|q| q.ticker == t);
+    // funds we ASKED about and got nothing for — never the rest of the universe
+    let orphans: Vec<(&str, Vec<String>)> = bench
+        .iter()
+        .filter(|t| !fund_pe.contains_key(*t))
+        .filter_map(|t| quote_of(t).and_then(|q| index_key(&q.name).map(|k| (t.as_str(), k))))
+        .collect();
+    if orphans.is_empty() {
+        return Vec::new();
+    }
+    // every ETF listing that shares one of those keys is a candidate source
+    let wanted: std::collections::HashSet<&Vec<String>> = orphans.iter().map(|(_, k)| k).collect();
+    let candidates: Vec<&core::Quote> = quotes
+        .iter()
+        .filter(|q| crate::picks::quote_is_etf(q))
+        .filter(|q| index_key(&q.name).is_some_and(|k| wanted.contains(&k)))
+        .collect();
+    // second pass: the twin is usually NOT in the bench, and `yahoo_top_holdings` only ever returns
+    // symbols it was asked for (`for s in syms`), so a cached-but-unrequested P/E stays invisible.
+    let mut todo: Vec<String> = candidates
+        .iter()
+        .map(|q| q.ticker.clone())
+        .filter(|t| !fund_pe.contains_key(t) && !bench.contains(t))
+        .collect();
+    todo.sort();
+    todo.dedup();
+    let extra = if todo.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        fetch::yahoo_top_holdings(client, &todo).await.1
+    };
+    let measured = |t: &str| -> Option<f64> {
+        extra
+            .get(t)
+            .and_then(|(_, _, pe)| *pe)
+            .or_else(|| fund_pe.get(t).filter(|f| f.from.is_none()).map(|f| f.pe))
+    };
+    orphans
+        .iter()
+        .filter_map(|(orphan, key)| {
+            let mut found: Vec<(&str, f64)> = candidates
+                .iter()
+                .filter(|q| index_key(&q.name).as_ref() == Some(key))
+                .filter_map(|q| measured(&q.ticker).map(|pe| (q.ticker.as_str(), pe)))
+                .collect();
+            found.sort_by(|a, b| a.0.cmp(b.0)); // deterministic source across runs
+            let (src, pe) = *found.first()?;
+            // rival wrappers on one index must agree; if they do not, the key fused two books
+            let agrees = found.iter().all(|(_, p)| (p - pe).abs() <= 0.01 * pe.abs());
+            agrees.then(|| ((*orphan).to_string(), picks::FundPe { pe, from: Some(src.to_string()) }))
+        })
+        .collect()
+}
+
 /// (fund valuation) One wrapped line of fund equity-book P/Es, CHEAPEST first — the number behind
 /// the header's "quality pricey because it keeps winning". Values arrive already inverted from
 /// `parse_fund_pe` (Yahoo serves reciprocals — see the fetch-side pin). Funds without the datum
@@ -233,30 +409,51 @@ fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) ->
 /// funds it CUT. This is the display half of that trim, and it lives here rather than in the `peg`
 /// COLUMN on purpose: the table shows survivors only, so a column could never explain a fund that
 /// vanished. `picks::fund_peg_yield` is the same fn the trim calls — one PEG, printed and acted on.
-fn fund_pe_line(fund_pe: &std::collections::HashMap<String, f64>, quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Option<String> {
+///
+/// (#37 funds) A `~` marks a P/E BORROWED from a physical index twin because the fund is swap-based and
+/// has no equity book (see `borrow_index_twins`). Borrowed values act — they can cut a fund from the
+/// table — so the sources are named in full at the end of the line. An inference that costs you a
+/// candidate has to be traceable to the fund it came from.
+fn fund_pe_line(fund_pe: &picks::FundPeMap, quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Option<String> {
     let bar = (tuning.growth_max_peg_etf > 0.0).then(|| 100.0 / tuning.growth_max_peg_etf);
-    let mut rows: Vec<(&String, f64, Option<f64>)> = fund_pe
+    let mut rows: Vec<(&String, &picks::FundPe, Option<f64>)> = fund_pe
         .iter()
-        .map(|(t, &pe)| {
+        .map(|(t, fp)| {
             // PEG needs the quote's long leg; a fetched fund with no quote in this run (pinned-only
             // symbol, CORE entry outside the universe) keeps its P/E and simply prints no PEG.
             let peg = quotes
                 .iter()
                 .find(|q| &q.ticker == t)
                 .and_then(|q| picks::fund_peg_yield(q, tuning, fund_pe));
-            (t, pe, peg)
+            (t, fp, peg)
         })
         .collect();
-    rows.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(b.0)));
+    rows.sort_by(|a, b| a.1.pe.total_cmp(&b.1.pe).then_with(|| a.0.cmp(b.0)));
     (!rows.is_empty()).then(|| {
-        rows.iter()
-            .map(|(t, p, peg)| match (peg, bar) {
-                (Some(y), Some(b)) if *y < b => format!("{t} {p:.0} (PEG {:.2} — cut)", 100.0 / y),
-                (Some(y), _) => format!("{t} {p:.0} (PEG {:.2})", 100.0 / y),
-                (None, _) => format!("{t} {p:.0}"),
+        let line = rows
+            .iter()
+            .map(|(t, fp, peg)| {
+                let (p, mark) = (fp.pe, if fp.from.is_some() { "~" } else { "" });
+                match (peg, bar) {
+                    (Some(y), Some(b)) if *y < b => format!("{t} {p:.0}{mark} (PEG {:.2} — cut)", 100.0 / y),
+                    (Some(y), _) => format!("{t} {p:.0}{mark} (PEG {:.2})", 100.0 / y),
+                    (None, _) => format!("{t} {p:.0}{mark}"),
+                }
             })
             .collect::<Vec<_>>()
-            .join(" · ")
+            .join(" · ");
+        let sources: Vec<String> = rows
+            .iter()
+            .filter_map(|(t, fp, _)| fp.from.as_ref().map(|s| format!("{t}←{s}")))
+            .collect();
+        match sources.is_empty() {
+            true => line,
+            false => format!(
+                "{line}\n  ~ = no equity book of its own (swap-based); P/E borrowed from a physical fund on \
+                 the same index — matched by name, not measured: {}",
+                sources.join(", ")
+            ),
+        }
     })
 }
 
@@ -942,7 +1139,7 @@ pub async fn run(args: Vec<String>) {
     // overlap footer below, i.e. AFTER the tables printed, because everything it fed was display-only.
     // The look-through P/E it carries is no longer display-only — it drives the ETF PEG trim inside
     // `lane_split` — so the fetch has to precede `render`. Yahoo topHoldings, weekly-cached.
-    let (holdings, mix) = {
+    let (holdings, mix, bench) = {
         let is_fund = |q: &&Quote| crate::picks::quote_is_etf(q) && !crate::picks::is_currency_quoted(&q.ticker);
         let mut ranked: Vec<(&Quote, f64)> = quotes
             .iter()
@@ -965,20 +1162,24 @@ pub async fn run(args: Vec<String>) {
             .collect();
         syms.sort();
         syms.dedup();
-        fetch::yahoo_top_holdings(&client, &syms).await
+        let (holdings, mix) = fetch::yahoo_top_holdings(&client, &syms).await;
+        (holdings, mix, syms)
     };
-    let mut fund_pe: std::collections::HashMap<String, f64> =
-        mix.iter().filter_map(|(t, (_, _, pe))| pe.map(|p| (t.clone(), p))).collect();
+    let mut fund_pe: picks::FundPeMap =
+        mix.iter().filter_map(|(t, (_, _, pe))| pe.map(|p| (t.clone(), picks::FundPe::from(p)))).collect();
     // The fetch above keeps ONE venue per fund name, but the ETF table shows every listing (only
     // crypto twins are collapsed upstream, in `dedup_currency_twins`) and the universe is Xetra +
     // Euronext + Lisbon, so a UCITS fund routinely appears two or three times. Propagate each fetched
     // P/E to that fund's other listings or the (#37) ceiling would cut one venue and keep its twin —
     // the same "the class with missing data gets the easier test" hole this trim exists to close.
-    let by_name: std::collections::HashMap<String, f64> =
-        quotes.iter().filter_map(|q| fund_pe.get(&q.ticker).map(|&p| (q.name.to_lowercase(), p))).collect();
-    let siblings: Vec<(String, f64)> =
-        quotes.iter().filter_map(|q| by_name.get(&q.name.to_lowercase()).map(|&p| (q.ticker.clone(), p))).collect();
-    fund_pe.extend(siblings);
+    fill_venue_listings(&mut fund_pe, &quotes);
+    // (#37 funds) then the swap-based funds, which report a literal 0.0 book and would otherwise ride the
+    // ceiling's free pass forever. Borrows a physical index twin's P/E; costs a second topHoldings pass
+    // only when something is actually missing. Re-run the venue fill afterwards so a borrowed value
+    // reaches the fund's other listings too — same hole, same fix, one level down.
+    let borrowed = borrow_index_twins(&client, &bench, &fund_pe, &quotes).await;
+    fund_pe.extend(borrowed);
+    fill_venue_listings(&mut fund_pe, &quotes);
     let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, RenderCtx {
         nupl,
         sectors: &settings.sectors,
@@ -2794,9 +2995,9 @@ mod tests {
     /// `lane_split` drops, and a fund with no quote in this run prints its P/E with no PEG.
     #[test]
     fn fund_pe_line_semantics() {
-        let mut m: HashMap<String, f64> = HashMap::new();
-        m.insert("IITU.L".into(), 33.93);
-        m.insert("SPYL.DE".into(), 24.2);
+        let mut m: picks::FundPeMap = HashMap::new();
+        m.insert("IITU.L".into(), 33.93.into());
+        m.insert("SPYL.DE".into(), 24.2.into());
         // no PEG anywhere without quotes: no long leg -> long_cagr_pct None -> peg_yield None.
         let off = config::BuyHeuristic::default();
         assert_eq!(fund_pe_line(&m, &[], &off).unwrap(), "SPYL.DE 24 · IITU.L 34");
@@ -2814,10 +3015,10 @@ mod tests {
             q
         };
         let quotes = vec![fund("DEAR.L"), fund("CHEAP.L"), fund("GHOST.L")];
-        let mut pe: HashMap<String, f64> = HashMap::new();
-        pe.insert("DEAR.L".into(), 25.0);
-        pe.insert("CHEAP.L".into(), 4.0);
-        pe.insert("ABSENT.L".into(), 12.0); // fetched, but not a quote in this run -> P/E only
+        let mut pe: picks::FundPeMap = HashMap::new();
+        pe.insert("DEAR.L".into(), 25.0.into());
+        pe.insert("CHEAP.L".into(), 4.0.into());
+        pe.insert("ABSENT.L".into(), 12.0.into()); // fetched, but not a quote in this run -> P/E only
         let on = config::BuyHeuristic { growth_max_peg_etf: 2.0, ..off.clone() };
         assert_eq!(
             fund_pe_line(&pe, &quotes, &on).unwrap(),
@@ -2828,6 +3029,123 @@ mod tests {
             fund_pe_line(&pe, &quotes, &off).unwrap(),
             "CHEAP.L 4 (PEG 0.40) · ABSENT.L 12 · DEAR.L 25 (PEG 2.50)"
         );
+
+        // (#37 funds) a BORROWED P/E must never read like a measured one: `~` on the value, and the
+        // source spelled out. This is the only signal you get that a number was inferred by a name
+        // match — and it can cut the fund, so it has to survive any reformatting of this line.
+        pe.insert("DEAR.L".into(), picks::FundPe { pe: 25.0, from: Some("TWIN.L".into()) });
+        let line = fund_pe_line(&pe, &quotes, &on).unwrap();
+        assert!(line.contains("DEAR.L 25~ (PEG 2.50 — cut)"), "borrowed value marked in place: {line}");
+        assert!(line.contains("DEAR.L←TWIN.L"), "and the source named: {line}");
+        assert!(!line.contains("CHEAP.L 4~"), "a measured value is never marked: {line}");
+    }
+
+    /// (#37 funds) THE GATE ON THE INDEX-TWIN MATCHER. It decides that two differently-named funds hold
+    /// the same book, and a wrong call feeds a fabricated P/E into a trim that removes funds from the
+    /// table — so it is pinned against REAL Yahoo `longName` strings, captured 2026-08-02, with the real
+    /// ratios beside them.
+    ///
+    /// The load-bearing assertion is the last one: group every fund that reports a P/E by `index_key` and
+    /// demand each group be P/E-HOMOGENEOUS. Funds tracking one index report one ratio (Yahoo's fund P/E
+    /// is index-level), so any key covering two different ratios has FUSED TWO DIFFERENT BOOKS. That is
+    /// the exact failure mode the 2026-08-02 decision to widen `FUND_NOISE` bought — every token added
+    /// there is a new way to fuse — and this is the check that makes the widening safe to revisit.
+    /// It found 5 multi-fund keys and 0 heterogeneous ones at authoring time.
+    #[test]
+    fn index_key_never_fuses_two_different_books() {
+        // (ticker, Yahoo longName, look-through P/E) — real rows from `.holdings_cache.json`.
+        let funds: &[(&str, &str, f64)] = &[
+            ("500X.AS", "State Street SPDR S&P 500 Leaders UCITS ETF", 25.5885),
+            ("ANX.PA", "Amundi Index Solutions - Amundi Nasdaq-100 Swap ETF EUR Acc", 32.6797),
+            ("ANXU.L", "Amundi Index Solutions - Amundi Nasdaq-100 Swap ETF USD Acc", 32.6797),
+            ("AUM5.DE", "Amundi Index Solutions - Amundi S&P 500 Swap UCITS ETF EUR Acc", 26.8745),
+            ("BATE.DE", "L&G Battery Value-Chain UCITS ETF", 19.9084),
+            ("CSNDX.SW", "iShares VII PLC - iShares NASDAQ 100 UCITS ETF", 32.6904),
+            ("CSSPX.MI", "iShares Core S&P 500 UCITS ETF USD (Acc)", 26.8817),
+            ("EQGB.L", "Invesco EQQQ NASDAQ-100 UCITS ETF (GBP Hdg)", 32.6797),
+            ("EQQQ.MI", "Invesco EQQQ NASDAQ-100 UCITS ETF", 32.6797),
+            ("ESIF.L", "iShares MSCI Europe Financials Sector UCITS ETF", 12.8584),
+            ("ETLX.DE", "L&G Gold Mining UCITS ETF", 11.9818),
+            ("EXA1.AS", "iShares EURO STOXX Banks 30-15 UCITS ETF (DE) EUR Acc", 11.8399),
+            ("EXXT.DE", "iShares NASDAQ-100 UCITS ETF (DE)", 32.6904),
+            ("FLXK.L", "Franklin FTSE Korea UCITS ETF", 19.7785),
+            ("GDX.L", "VanEck Gold Miners UCITS ETF", 13.5446),
+            ("GDXJ.L", "VanEck Junior Gold Miners UCITS ETF", 13.2679),
+            ("HMWA.L", "HSBC MSCI World UCITS ETF USD (Acc)", 24.2131),
+            ("IAUP.L", "iShares V PLC - iShares Gold Producers UCITS ETF USD (Acc)", 13.5263),
+            ("IITU.L", "iShares S&P 500 Information Technology Sector UCITS ETF USD (Acc)", 33.9328),
+            ("ITWN.MI", "iShares MSCI Taiwan UCITS ETF USD (Dist)", 31.3676),
+            ("JPNCHF.SW", "UBS Core MSCI Japan UCITS ETF hCHF acc", 18.6428),
+            ("LYBK.DE", "Amundi Euro Stoxx Banks UCITS ETF Acc", 11.8399),
+            ("NASD.L", "Amundi Core Nasdaq-100 Swap UCITS ETF Acc", 32.6797),
+            ("PUST.PA", "Amundi PEA Nasdaq-100 UCITS ETF Acc", 32.6797),
+            ("SEMI.AS", "iShares MSCI Global Semiconductors UCITS ETF USD Acc", 42.3908),
+            ("SMH.L", "VanEck Semiconductor UCITS ETF", 44.4050),
+            ("SPPW.DE", "State Street SPDR MSCI World UCITS ETF", 24.1721),
+            ("SPXE.L", "Invesco S&P 500 Scored & Screened ETF Acc", 26.0349),
+            ("SPYL.DE", "State Street SPDR S&P 500 UCITS ETF USD Acc", 26.8745),
+            ("SPYL.L", "State Street SPDR S&P 500 UCITS ETF USD Acc", 26.8745),
+            ("SSAC.L", "iShares MSCI ACWI UCITS ETF USD Acc", 23.1965),
+            ("SXLK.L", "State Street SPDR S&P U.S. Technology Select Sector UCITS ETF", 33.9328),
+            ("UETW.DE", "UBS Core MSCI World UCITS ETF USD acc", 24.2131),
+            ("VALW.L", "State Street SPDR MSCI World Value UCITS ETF", 14.7124),
+            ("VUAA.DE", "Vanguard S&P 500 UCITS ETF USD Accumulation", 26.9179),
+            ("VVSM.DE", "VanEck Semiconductor UCITS ETF", 44.4050),
+            ("VWRA.L", "Vanguard FTSE All-World UCITS ETF", 22.8938),
+            ("WITS.AS", "iShares MSCI World Information Technology Sector Advanced UCITS ETF USD Inc", 34.6380),
+            ("WTAI.MI", "WisdomTree Artificial Intelligence UCITS ETF - USD Acc", 34.8675),
+            ("XAIX.DE", "Xtrackers Artificial Intelligence & Big Data UCITS ETF 1C", 23.7473),
+            ("XDJE.DE", "Xtrackers Nikkei 225 UCITS ETF 2D EUR Hedged", 23.0044),
+            ("XDPU.MI", "Xtrackers S&P 500 UCITS ETF 4C - USD", 26.8745),
+            ("XDWT.L", "Xtrackers MSCI World Information Technology UCITS ETF 1C", 34.6500),
+            ("XMTD.L", "Xtrackers MSCI Taiwan UCITS ETF 1C", 31.3283),
+            ("XMUS.L", "Xtrackers MSCI USA Swap UCITS ETF 1C", 27.0051),
+            ("XUTC.L", "Xtrackers MSCI USA Information Technology UCITS ETF 1D", 33.9328),
+        ];
+
+        // the pair the whole mechanism exists for: a swap fund and the physical fund on its index,
+        // named by different issuers in a different word order.
+        assert_eq!(
+            index_key("Invesco Technology S&P US Select Sector UCITS ETF"),
+            index_key("State Street SPDR S&P U.S. Technology Select Sector UCITS ETF"),
+            "XLKS.L must resolve to SXLK.L — different issuer, different word order, one index"
+        );
+        // "State Street SPDR" is TWO stacked issuers and "Amundi Index Solutions - Amundi" is two more;
+        // the strip loop has to keep going or neither name ever reduces to its index.
+        assert_eq!(index_key("State Street SPDR S&P 500 UCITS ETF USD Acc"), index_key("iShares Core S&P 500 UCITS ETF USD (Acc)"));
+        assert_eq!(index_key("Amundi Index Solutions - Amundi Nasdaq-100 Swap ETF EUR Acc"), index_key("Amundi Core Nasdaq-100 Swap UCITS ETF Acc"));
+        // the product-line widening, earning its keep: a PEA wrapper IS the plain index fund.
+        assert_eq!(index_key("Amundi PEA Nasdaq-100 UCITS ETF Acc"), index_key("Invesco EQQQ NASDAQ-100 UCITS ETF"));
+
+        // refusals — each one costs an `n/a`, which is the cheap direction
+        assert_eq!(index_key("VanEck Semiconductor UCITS ETF"), None, "one token is not an index identity");
+        assert_ne!(
+            index_key("Invesco EQQQ NASDAQ-100 UCITS ETF (GBP Hdg)"),
+            index_key("Invesco EQQQ NASDAQ-100 UCITS ETF"),
+            "`hedged`/`hdg` stays: a missed twin beats a wrong one"
+        );
+        assert_ne!(
+            index_key("iShares MSCI World UCITS ETF"),
+            index_key("iShares MSCI World ex USA UCITS ETF"),
+            "a geographic exclusion is a different book, not a share class"
+        );
+
+        // THE GATE: one key, one book.
+        let mut by_key: HashMap<Vec<String>, Vec<(&str, f64)>> = HashMap::new();
+        for (t, name, pe) in funds {
+            if let Some(k) = index_key(name) {
+                by_key.entry(k).or_default().push((t, *pe));
+            }
+        }
+        let fused = by_key.values().filter(|v| v.len() > 1).count();
+        assert!(fused >= 5, "if the matcher stops pairing anything this test proves nothing (got {fused})");
+        for (k, v) in &by_key {
+            let (lo, hi) = v.iter().fold((f64::MAX, f64::MIN), |(l, h), (_, p)| (l.min(*p), h.max(*p)));
+            assert!(
+                hi - lo <= 0.01 * lo.abs(),
+                "key {k:?} fuses two different books: {v:?} — a token in FUND_NOISE/FUND_ISSUERS is too greedy"
+            );
+        }
     }
 
     /// (round 62) state-file parse fork: absent = normal first run (silent), present-but-garbage =

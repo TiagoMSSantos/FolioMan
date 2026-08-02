@@ -104,14 +104,48 @@ pub fn long_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     long_leg_fixed(quote, tuning.fixed_cagr_years).map(|(cum, years)| long_cagr_from(quote, tuning, cum, years))
 }
 
+/// (#37 funds) A fund's look-through equity-book P/E together with WHERE THE NUMBER CAME FROM.
+///
+/// `from: None` = Yahoo served this ratio for this fund, or it was copied across venue listings of the
+/// SAME fund (one UCITS fund lists on Xetra + Euronext + Lisbon; that copy is bookkeeping, not an
+/// inference).
+///
+/// `from: Some(src)` = BORROWED from an index twin. A swap-based (synthetic) ETF holds a total-return
+/// swap, not equities: Yahoo reports `stockPosition 0.0`, `otherPosition 1.0`, no holdings, and every
+/// `equityHoldings` ratio as a literal `0.0`, so `parse_fund_pe` correctly refuses it. There is no
+/// equity book to look through to — the number cannot be measured for this fund at any effort, only
+/// inferred from a physical fund tracking the same index.
+///
+/// The provenance is not decoration. A borrowed value ACTS: it feeds the `growth_max_peg_etf` trim
+/// exactly like a fetched one, so it can remove a fund from the printed table. Anything that can cost
+/// you a candidate has to say out loud that it was inferred, hence the `~` the `peg` cell appends and
+/// the source `fund_pe_line` names.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FundPe {
+    pub pe: f64,
+    pub from: Option<String>,
+}
+
+/// Look-through P/E per fund ticker. Aliased because it rides through six signatures.
+pub type FundPeMap = HashMap<String, FundPe>;
+
+impl From<f64> for FundPe {
+    /// A measured ratio — the common case, and what every fetch produces.
+    fn from(pe: f64) -> Self {
+        Self { pe, from: None }
+    }
+}
+
 /// A FUND's `peg_yield`, from its look-through equity-book P/E (`fund_pe`, keyed by ticker — already
 /// un-inverted by `parse_fund_pe`) over the same `long_cagr_pct` the equity ceiling and the `peg` column
 /// divide by. ONE fn for the trim in `lane_split` and the printed cell, for the same reason the equity
 /// side has one: until 2026-07-27 the cell computed its own PEG while the gate read another, and the tool
 /// cut a name at PEG 2.02 in the run it ranked one printing 2.51. None = no P/E for this fund (not in the
-/// fetched set, or Yahoo served none), which passes every trim — missing data is not a verdict.
-pub fn fund_peg_yield(quote: &Quote, tuning: &BuyHeuristic, fund_pe: &HashMap<String, f64>) -> Option<f64> {
-    core::peg_yield_from_pe(*fund_pe.get(&quote.ticker)?, long_cagr_pct(quote, tuning))
+/// fetched set, or Yahoo served none AND no index twin resolved), which passes every trim — missing data
+/// is not a verdict. Reads `.pe` without caring whether it was measured or borrowed: that is the point of
+/// borrowing, and `FundPe::from` carries the provenance to the places that must show it.
+pub fn fund_peg_yield(quote: &Quote, tuning: &BuyHeuristic, fund_pe: &FundPeMap) -> Option<f64> {
+    core::peg_yield_from_pe(fund_pe.get(&quote.ticker)?.pe, long_cagr_pct(quote, tuning))
 }
 
 /// (#3h) The long-leg CAGR as a trend reward takes it: clamped at `long_trend_cap`, unless the cap is
@@ -1872,7 +1906,7 @@ pub fn clean_name(quote: &Quote) -> String {
 /// already-fetched `Quote` fields — pure formatting, no scoring. Unknown key -> "?".
 /// `tuning` is read by the `leg` column alone (which rung, which CAGR flavour, which cap) so that cell
 /// can print the score's own number instead of re-deriving one; nothing here scores.
-fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, tuning: &BuyHeuristic, fund_pe: &HashMap<String, f64>) -> String {
+fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, tuning: &BuyHeuristic, fund_pe: &FundPeMap) -> String {
     // ≥1000% drops the decimal so a +26522% 20Y cell still fits its 8-char column instead of overflowing.
     let pct1 = |o: Option<f64>| {
         o.map_or("n/a".to_string(), |v| if v.abs() >= 1000.0 { format!("{v:+.0}%") } else { format!("{v:+.1}%") })
@@ -1968,10 +2002,16 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // equity arm below divides by. Routed through `fund_peg_yield` — the identical fn `lane_split`
         // trims on — so the printed number and the acted-on number are one value, not two that agree
         // today. That is the whole lesson of the APH/ODFL bug described above, applied to funds.
-        // `n/a` = this fund served no P/E (Yahoo omits it for some issuers); it is never trimmed then.
-        "peg" if is_etf => {
-            fund_peg_yield(quote, tuning, fund_pe).map_or("n/a".to_string(), |p| format!("{:.2}", 100.0 / p))
-        }
+        // `n/a` = this fund served no P/E and no index twin resolved; it is never trimmed then.
+        //
+        // A trailing `~` means the P/E was BORROWED from a physical fund tracking the same index,
+        // because this one is swap-based and has no equity book of its own (see `FundPe`). It is an
+        // inference, and it can cut this fund from the table, so it must never read like a measurement.
+        // `fund_pe_line` names the source ticker.
+        "peg" if is_etf => fund_peg_yield(quote, tuning, fund_pe).map_or("n/a".to_string(), |p| {
+            let borrowed = fund_pe.get(&quote.ticker).is_some_and(|f| f.from.is_some());
+            format!("{:.2}{}", 100.0 / p, if borrowed { "~" } else { "" })
+        }),
         "peg" => quote
             .fund
             .as_ref()
@@ -2080,7 +2120,7 @@ impl Owned {
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks). Columns +
 /// order come from `widths.columns` via [`active_columns`] (default = [`DEFAULT_COLUMNS`]).
 #[allow(clippy::too_many_arguments)]
-fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, owned: &Owned, hide: &[&str], tuning: &BuyHeuristic, fund_pe: &HashMap<String, f64>) {
+fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, owned: &Owned, hide: &[&str], tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
     println!("\n{title}");
     if picks.is_empty() {
         println!("  (none pass the gates)");
@@ -2221,7 +2261,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// Split a ranked lane into its three printable tables and apply every DISPLAY trim (score floors,
 /// ETF sector filter, redundancy skip). Split out of `print_lane` so the trims are assertable: they
 /// are the only knobs in the tool whose effect used to exist purely as printed text.
-fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, fund_pe: &HashMap<String, f64>) -> (Vec<(&'a Quote, f64)>, Vec<(&'a Quote, f64)>, Vec<(&'a Quote, f64)>) {
+fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, fund_pe: &FundPeMap) -> (Vec<(&'a Quote, f64)>, Vec<(&'a Quote, f64)>, Vec<(&'a Quote, f64)>) {
     let min_score = tuning.growth_min_score;
     // ETFs get their OWN, lower floor: 4 of the 7 score terms (accel/quality/liq/fund) are ~0 for a
     // diversified basket, so ETF scores structurally cap ~5.6 vs stocks ~19 — the shared growth_min_score
@@ -2271,6 +2311,13 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
     // A diversified basket compounds ~7%/yr against a ~23 book P/E; it cannot clear an equity bar.
     // Funds with no P/E in the payload are never trimmed (missing data is not a verdict — the rule
     // `fund_pe_line` already follows), and pinned tickers bypass this like every other display trim.
+    // NARROWED 2026-08-02: "no P/E" no longer means "swap-based". A synthetic ETF holds a total-return
+    // swap and reports a literal 0.0 book, so it used to ride the free pass PERMANENTLY — XLKS.L sat at
+    // rank #2 untested in the same run this trim cut seven funds at PEG 2.57-3.80, which is the very
+    // "selection by absent data" the paragraph above says the trim exists to prevent, reappearing one
+    // level down. Those funds now borrow a physical index twin's P/E (`FundPe.from`) and are trimmed on
+    // it like anyone else. The free pass survives only where NOTHING can be resolved — outside the
+    // bench, or a fund with no twin, e.g. JEDG.L, physical and simply absent from Yahoo's ratio feed.
     // NOTE this is a gate, NOT the `growth_fund_weight` tilt: that still reads `fund.peg_yield`, which
     // is None for every fund, so the tilt stays equity-scoped. Do not "fix" that by attaching a
     // synthetic FundFacts here — it would switch the tilt on for funds as a plumbing side effect.
@@ -2289,7 +2336,7 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
 }
 
 #[allow(clippy::too_many_arguments)]
-fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &HashMap<String, f64>) {
+fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap) {
     let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned, fund_pe);
     // Title carries the selected sector filter so the table says what it's showing ("all" = no filter).
     // Count shown = how many actually qualified (capped at n); "of {n} max" explains a short table —
@@ -2521,7 +2568,7 @@ pub struct RenderCtx<'a> {
     pub owned: &'a Owned,                // broker-held positions -> `o` overlay
     pub explain: Option<&'a str>,        // --explain TICKER (None = explain the #1 row)
     pub show_hold_core: bool,            // print the buy-and-hold CORE shortlist (screen hunts, not check)
-    pub fund_pe: &'a HashMap<String, f64>, // (#37 funds) look-through equity-book P/E per fund ticker,
+    pub fund_pe: &'a FundPeMap, // (#37 funds) look-through equity-book P/E per fund ticker,
     // already un-inverted by `parse_fund_pe`. Feeds the ETF PEG trim in `lane_split` and the printed
     // cell. EMPTY is the honest default (`check`, offline tests): no P/E anywhere -> nothing trimmed.
 }
@@ -5237,7 +5284,7 @@ mod tests {
         let d = BuyHeuristic::default();
         let none: HashSet<&str> = HashSet::new();
         let all_sectors: Vec<String> = Vec::new();
-        let no_pe: HashMap<String, f64> = HashMap::new(); // no look-through P/E -> the (#37) fund ceiling is a no-op
+        let no_pe: FundPeMap = HashMap::new(); // no look-through P/E -> the (#37) fund ceiling is a no-op
         // 36 monthly returns — corr_tail needs >=12 overlapping to judge a pair at all. TWIN mirrors LEAD
         // exactly (rho +1.0); ANTI is its inverse (rho −1.0), so no cap can call ANTI a second copy.
         let up: Vec<f64> = (0..36).map(|i| if i % 2 == 0 { 3.0 } else { -1.0 }).collect();
@@ -5316,9 +5363,9 @@ mod tests {
         let (dear, cheap, unknown) = (fund("DEAR.L"), fund("CHEAP.L"), fund("UNKNOWN.L"));
         let rows = || vec![(&dear, 9.0), (&unknown, 8.0), (&cheap, 7.0)];
         let names = |v: &[(&Quote, f64)]| v.iter().map(|(q, _)| q.ticker.clone()).collect::<Vec<_>>();
-        let mut pe: HashMap<String, f64> = HashMap::new();
-        pe.insert("DEAR.L".into(), 25.0);
-        pe.insert("CHEAP.L".into(), 4.0);
+        let mut pe: FundPeMap = HashMap::new();
+        pe.insert("DEAR.L".into(), 25.0.into());
+        pe.insert("CHEAP.L".into(), 4.0.into());
         // UNKNOWN.L deliberately absent: fetched no P/E (or ranked below the fetched bench).
         let on = BuyHeuristic { growth_max_peg_etf: 2.0, ..d.clone() };
 
