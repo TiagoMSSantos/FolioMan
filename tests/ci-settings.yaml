@@ -1538,6 +1538,70 @@ buy_heuristic:
                                  #   fundamentals start 2007, its cutoffs end 2006). Same [1.5, 4.0] plateau as above, but the
                                  #   cheap end now measures mildly better and costs nothing anywhere. Shipped as a pair with
                                  #   growth_min_cagr 19 (knob-K12 grid — interaction nil, see that receipt).
+                                 #   EXTENDED TO FUNDS 2026-08-02 — but on a SEPARATE number, `growth_max_peg_etf`
+                                 #   below, not this one. This knob and every receipt above it are equity-only and
+                                 #   unchanged; see that knob for the measurement that forced the split.
+  growth_max_peg_etf: 2.0        # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
+                                 #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
+                                 #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
+                                 #   picks::lane_split, not a gate in growth_score, and the asymmetry is forced by data:
+                                 #   that P/E comes only from yahoo_top_holdings, called for the ranked picks + a refill
+                                 #   bench (~50 symbols of a ~4300-fund universe), so a universe-wide fund gate would mean
+                                 #   thousands of crumbed quoteSummary calls. Sitting before the cut to n it refills from
+                                 #   below instead of shortening the table (contrast the (#41) growth_corr_cap receipt,
+                                 #   where stopping at n is exactly why that knob ships 0). Funds with no P/E are never
+                                 #   trimmed; pinned tickers bypass it. Fund P/Es are propagated across a fund's sibling
+                                 #   VENUES (Xetra/Euronext/Lisbon all list the same UCITS fund) — without that the
+                                 #   ceiling would cut one listing and keep its twin.
+                                 #   WHY IT EXISTS: growth_max_peg reads `quote.fund`, which is None for every fund, so
+                                 #   funds walked past the tool's only valuation ceiling untested — the same missing-data
+                                 #   hole growth_require_peg was added to close for equities.
+                                 #   WHY 2.0 AND NOT THE EQUITY 1.6 — MEASURED, not assumed. The shared 1.6 was built
+                                 #   first and run live 2026-08-02 against the full 4940-ticker universe. It cut EVERY
+                                 #   fund that reports the datum:
+                                 #     LYBK.DE  P/E 12  PEG 0.44  kept
+                                 #     SMH.L    P/E 44  PEG 1.69  cut   (semis, ~26%/yr)
+                                 #     SEMI.AS  P/E 42  PEG 1.76  cut   (~24%/yr)
+                                 #     IITU.L   P/E 34  PEG 1.78  cut   (US tech, ~19%/yr)
+                                 #     CSSPX.MI P/E 27  PEG 2.57  cut   (S&P 500, ~10%/yr)
+                                 #     VWRA.L   P/E 23  PEG 3.29  cut   (all-world, ~7%/yr)
+                                 #   The ETF table collapsed to ONE row, and that row (XLKS.L) survived only because it
+                                 #   has no look-through P/E — selection by ABSENT DATA, the precise inversion this trim
+                                 #   exists to prevent, and the same pathology the crypto half was rejected over.
+                                 #   A diversified basket compounds ~7%/yr against a ~23 book P/E; it cannot clear an
+                                 #   equity-grade PEG bar, and the ~12%/yr estimate used while designing this was wrong.
+                                 #   2.0 keeps the concentrated growth funds (semis 1.69, SEMI 1.76, US tech 1.78) and
+                                 #   cuts the broad expensive ones (S&P 2.57, all-world 3.29). That is the growth lane's
+                                 #   job — the buy-and-hold CORE shortlist is where broad cheap-forever funds belong, and
+                                 #   it is a separate list that this trim does not touch.
+                                 #   TRIMMED vs PASSED-FREE at 2.0 (same universe, live): the ETF lane held 10 funds after
+                                 #   the score/sector cut — 6 trimmed on a measured PEG, 3 kept on one (1.69/1.76/1.78),
+                                 #   and 1 kept for want of a P/E (XLKS.L). 9 of 10 verdicts rest on real data, so this is
+                                 #   NOT a mostly-decorative gate. Table went 1 row -> 4; the equity lane came out
+                                 #   byte-identical and crypto moved only on live prices, as it must — neither path reads
+                                 #   fund_pe. (Wider pool, for scale: 40 funds fetched, 14 served a P/E.)
+                                 #   NOT BACKTEST-GRADEABLE, ever: the look-through P/E is a live snapshot with no
+                                 #   history, so there is no as-of value to reconstruct at a cutoff. Judgement + live-run
+                                 #   diff, like growth_min_age_years and growth_min_aum_etf. Unit-pinned instead
+                                 #   (picks::etf_peg_ceiling_trims_and_refills, screen::fund_pe_line_semantics), and
+                                 #   growth_gate_reachability_pin's golden string is UNCHANGED by it — backtest_quote
+                                 #   fills no fund P/E, so nothing leaked into the price-only path.
+                                 #   CRYPTO WAS REJECTED ON MEASUREMENT (2026-08-02 DefiLlama spike). The plan was a
+                                 #   per-coin revenue proxy (api.llama.fi/overview/fees, dataType=dailyRevenue, joined to
+                                 #   CoinGecko ids via /v2/chains) feeding the same ceiling. The payload is fine —
+                                 #   `total1y` is a true trailing-365d figure, 365 of 461 chains carry a gecko_id — but
+                                 #   the ARITHMETIC kills it:
+                                 #     * coverage: 23 of the top 100 coins map to a revenue-bearing chain; 6 of those
+                                 #       (BTC, DOGE, ZEC, HBAR, ATOM) report zero, which None-outs. 83/100 pass FREE.
+                                 #     * magnitude: chain revenue/market-cap runs 0.001-1%, i.e. P/E in the thousands.
+                                 #       CAGR needed to clear a 1.6 ceiling: ETH 1,629 %/yr, SOL 828, SUI 1,860,
+                                 #       ADA 43,933, ALGO 55,480. Only TRX (49), ARB (27), POL (19) are in reach.
+                                 #   So it would reject essentially every major L1 that reports data and admit BTC, DOGE,
+                                 #   ZEC and the 77 that report none. Not a coverage problem a second source fixes: equity
+                                 #   PEG compares price to EARNINGS, and chain fee revenue is not that quantity. Do not
+                                 #   re-propose without a crypto-native cheapness measure AND a way to grade it (crypto
+                                 #   has 0 growth-scored cutoffs at every horizon: 20y-s 0/4633, 12y-s 0/11758, 8y-s
+                                 #   18/20575 with 0 scored — no sweep can ever vote on it). 0 = off.
   growth_min_net_margin: 0.0     # (#38) net-margin floor on `fund.net_margin`. MEASURED AND REJECTED, kept at 0 with the
                                  #   receipt so it is not re-proposed: 5/10/15 all cost edge or era-stability, and combined
                                  #   with growth_max_peg it cancels that gate entirely and turns the newest era negative.

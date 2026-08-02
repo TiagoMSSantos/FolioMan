@@ -104,6 +104,16 @@ pub fn long_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     long_leg_fixed(quote, tuning.fixed_cagr_years).map(|(cum, years)| long_cagr_from(quote, tuning, cum, years))
 }
 
+/// A FUND's `peg_yield`, from its look-through equity-book P/E (`fund_pe`, keyed by ticker — already
+/// un-inverted by `parse_fund_pe`) over the same `long_cagr_pct` the equity ceiling and the `peg` column
+/// divide by. ONE fn for the trim in `lane_split` and the printed cell, for the same reason the equity
+/// side has one: until 2026-07-27 the cell computed its own PEG while the gate read another, and the tool
+/// cut a name at PEG 2.02 in the run it ranked one printing 2.51. None = no P/E for this fund (not in the
+/// fetched set, or Yahoo served none), which passes every trim — missing data is not a verdict.
+pub fn fund_peg_yield(quote: &Quote, tuning: &BuyHeuristic, fund_pe: &HashMap<String, f64>) -> Option<f64> {
+    core::peg_yield_from_pe(*fund_pe.get(&quote.ticker)?, long_cagr_pct(quote, tuning))
+}
+
 /// (#3h) The long-leg CAGR as a trend reward takes it: clamped at `long_trend_cap`, unless the cap is
 /// OFF. `0` = off, the same convention `growth_maxdd_cap` / `growth_max_above_ma` / `fixed_cagr_years`
 /// already use.
@@ -2160,7 +2170,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
 /// Split a ranked lane into its three printable tables and apply every DISPLAY trim (score floors,
 /// ETF sector filter, redundancy skip). Split out of `print_lane` so the trims are assertable: they
 /// are the only knobs in the tool whose effect used to exist purely as printed text.
-fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>) -> (Vec<(&'a Quote, f64)>, Vec<(&'a Quote, f64)>, Vec<(&'a Quote, f64)>) {
+fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, fund_pe: &HashMap<String, f64>) -> (Vec<(&'a Quote, f64)>, Vec<(&'a Quote, f64)>, Vec<(&'a Quote, f64)>) {
     let min_score = tuning.growth_min_score;
     // ETFs get their OWN, lower floor: 4 of the 7 score terms (accel/quality/liq/fund) are ~0 for a
     // diversified basket, so ETF scores structurally cap ~5.6 vs stocks ~19 — the shared growth_min_score
@@ -2197,11 +2207,39 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
         .into_iter()
         .filter(|(quote, s)| keep(quote, *s, etf_min_score, core::sector_matches(&quote.name, sectors)))
         .collect();
+    // (#37 funds) the PEG CEILING finally reaches ETFs. It cannot live in `growth_score` beside the
+    // equity leg, and the asymmetry is forced by data, not taste: a fund's look-through P/E arrives only
+    // from `yahoo_top_holdings`, called for the ranked picks plus a refill bench (~50 symbols against a
+    // ~4300-fund universe), so a universe-wide fund gate would mean thousands of crumbed quoteSummary
+    // calls — the reason that fetch documents itself as display-only. Trimming HERE — after
+    // the score/sector cut, before the table is cut to `n` — buys the same ceiling with the rows below
+    // refilling the gap, exactly like the (#41) redundancy skip above. Its OWN number, not the equity
+    // `growth_max_peg`: the shared 1.6 was tried live 2026-08-02 and cut every fund that reports the
+    // datum (all-world 3.29, S&P 500 2.57, US tech 1.78, semis 1.69), leaving a one-row table whose
+    // only survivor was the fund with NO P/E — selection by absent data, the inversion this prevents.
+    // A diversified basket compounds ~7%/yr against a ~23 book P/E; it cannot clear an equity bar.
+    // Funds with no P/E in the payload are never trimmed (missing data is not a verdict — the rule
+    // `fund_pe_line` already follows), and pinned tickers bypass this like every other display trim.
+    // NOTE this is a gate, NOT the `growth_fund_weight` tilt: that still reads `fund.peg_yield`, which
+    // is None for every fund, so the tilt stays equity-scoped. Do not "fix" that by attaching a
+    // synthetic FundFacts here — it would switch the tilt on for funds as a plumbing side effect.
+    let etf: Vec<_> = if tuning.growth_max_peg_etf > 0.0 {
+        let bar = 100.0 / tuning.growth_max_peg_etf; // PEG 2.0 -> reject peg_yield < 50
+        etf.into_iter()
+            .filter(|(q, _)| {
+                pinned.contains(q.ticker.as_str())
+                    || fund_peg_yield(q, tuning, fund_pe).is_none_or(|p| p >= bar)
+            })
+            .collect()
+    } else {
+        etf
+    };
     (stock, etf, crypto)
 }
 
-fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned) {
-    let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned);
+#[allow(clippy::too_many_arguments)]
+fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &HashMap<String, f64>) {
+    let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned, fund_pe);
     // Title carries the selected sector filter so the table says what it's showing ("all" = no filter).
     // Count shown = how many actually qualified (capped at n); "of {n} max" explains a short table —
     // it's not a quota, that's all that passed the gates + filter.
@@ -2402,6 +2440,9 @@ pub struct RenderCtx<'a> {
     pub owned: &'a Owned,                // broker-held positions -> `o` overlay
     pub explain: Option<&'a str>,        // --explain TICKER (None = explain the #1 row)
     pub show_hold_core: bool,            // print the buy-and-hold CORE shortlist (screen hunts, not check)
+    pub fund_pe: &'a HashMap<String, f64>, // (#37 funds) look-through equity-book P/E per fund ticker,
+    // already un-inverted by `parse_fund_pe`. Feeds the ETF PEG trim in `lane_split` and the printed
+    // cell. EMPTY is the honest default (`check`, offline tests): no P/E anywhere -> nothing trimmed.
 }
 
 pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx: RenderCtx) -> (Option<String>, Vec<String>) {
@@ -2450,7 +2491,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
         None => picks.first(),
     };
     let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
-    print_lane(picks, n, w, "growth candidates", growth, ctx.sectors, ctx.sector_of, tuning, &pinned_set, ctx.owned);
+    print_lane(picks, n, w, "growth candidates", growth, ctx.sectors, ctx.sector_of, tuning, &pinned_set, ctx.owned, ctx.fund_pe);
     // buy-and-hold CORE shortlist: momentum floors broad index funds at 0.0, so surface the
     // one-fund-forever holds re-sorted by hold-suitability (breadth → domicile → TER → AUM) — the
     // right order for a 20yr hold, which the momentum table inverts. Caller-gated (display-only):
@@ -4421,7 +4462,7 @@ mod tests {
         // euphoric NUPL (>euphoria band) -> nupl_factor damps the crypto rows (the >1 branch).
         let (_text, tickers) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: Some(0.9), sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
-            owned: &owned, explain: None, show_hold_core: true,
+            owned: &owned, explain: None, show_hold_core: true, fund_pe: &HashMap::new(),
         });
         assert!(tickers.iter().any(|t| t == "AAPL"), "pinned gated name must still surface in the ranking");
         assert!(tickers.len() <= 5);
@@ -4429,7 +4470,7 @@ mod tests {
         // an --explain for a ticker that isn't in `quotes` at all -> the not-scanned branch.
         let (miss, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
-            owned: &owned, explain: Some("ZZZZ"), show_hold_core: false,
+            owned: &owned, explain: Some("ZZZZ"), show_hold_core: false, fund_pe: &HashMap::new(),
         });
         assert!(miss.is_some_and(|m| m.contains("wasn't scanned")));
 
@@ -4476,7 +4517,7 @@ mod tests {
         let explain = |t: &str, n: usize| {
             render(&quotes, n, &tuning, &w, RenderCtx {
                 nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
-                owned: &owned, explain: Some(t), show_hold_core: false,
+                owned: &owned, explain: Some(t), show_hold_core: false, fund_pe: &HashMap::new(),
             })
             .0
             .unwrap_or_default()
@@ -5105,6 +5146,7 @@ mod tests {
         let d = BuyHeuristic::default();
         let none: HashSet<&str> = HashSet::new();
         let all_sectors: Vec<String> = Vec::new();
+        let no_pe: HashMap<String, f64> = HashMap::new(); // no look-through P/E -> the (#37) fund ceiling is a no-op
         // 36 monthly returns — corr_tail needs >=12 overlapping to judge a pair at all. TWIN mirrors LEAD
         // exactly (rho +1.0); ANTI is its inverse (rho −1.0), so no cap can call ANTI a second copy.
         let up: Vec<f64> = (0..36).map(|i| if i % 2 == 0 { 3.0 } else { -1.0 }).collect();
@@ -5120,19 +5162,19 @@ mod tests {
         let names = |v: &[(&Quote, f64)]| v.iter().map(|(q, _)| q.ticker.clone()).collect::<Vec<_>>();
 
         // 0 = off: the skip never runs, every ranked row reaches the table.
-        let (s0, _, _) = lane_split(rows(), 10, &all_sectors, &d, &none);
+        let (s0, _, _) = lane_split(rows(), 10, &all_sectors, &d, &none, &no_pe);
         assert_eq!(names(&s0), ["LEAD", "TWIN", "ANTI"], "cap 0 = off");
         // armed: the perfect twin is dropped, the anti-correlated name is not.
         let armed = BuyHeuristic { growth_corr_cap: 0.9, ..d.clone() };
-        let (s1, _, _) = lane_split(rows(), 10, &all_sectors, &armed, &none);
+        let (s1, _, _) = lane_split(rows(), 10, &all_sectors, &armed, &none, &no_pe);
         assert_eq!(names(&s1), ["LEAD", "ANTI"], "the SECOND copy of a bet goes, the diversifier stays");
         // a pin outranks the skip, exactly as it outranks the score floor.
         let pin_twin: HashSet<&str> = ["TWIN"].into_iter().collect();
-        let (s2, _, _) = lane_split(rows(), 10, &all_sectors, &armed, &pin_twin);
+        let (s2, _, _) = lane_split(rows(), 10, &all_sectors, &armed, &pin_twin, &no_pe);
         assert_eq!(names(&s2), ["LEAD", "TWIN", "ANTI"], "a pin means always show me this");
         // THE reason this knob ships 0 (#41 receipt): decorrelate_keep stops at `n`, so once the pool runs
         // out of uncorrelated candidates the skip TRUNCATES the table instead of refilling it.
-        let (s3, _, _) = lane_split(rows(), 1, &all_sectors, &armed, &none);
+        let (s3, _, _) = lane_split(rows(), 1, &all_sectors, &armed, &none, &no_pe);
         assert_eq!(names(&s3), ["LEAD"], "kept stops at n — no refill from below when nothing uncorrelated is left");
 
         // ETF lane runs its OWN floor. Same score, two floors, opposite verdicts.
@@ -5140,21 +5182,64 @@ mod tests {
         fund.instrument_type = "ETF".into();
         let etf_rows = || vec![(&fund, 4.0)];
         let low = BuyHeuristic { growth_min_score: 5.0, growth_min_score_etf: 3.0, ..d.clone() };
-        let (_, e1, _) = lane_split(etf_rows(), 10, &all_sectors, &low, &none);
+        let (_, e1, _) = lane_split(etf_rows(), 10, &all_sectors, &low, &none, &no_pe);
         assert_eq!(e1.len(), 1, "the STOCK floor must not reach the ETF lane");
         let high = BuyHeuristic { growth_min_score_etf: 5.0, ..low.clone() };
-        let (_, e2, _) = lane_split(etf_rows(), 10, &all_sectors, &high, &none);
+        let (_, e2, _) = lane_split(etf_rows(), 10, &all_sectors, &high, &none, &no_pe);
         assert!(e2.is_empty(), "its own floor does");
         // ETFs carry no GICS sector, so the filter matches the fund NAME (stocks are pre-filtered at fetch).
         let health: Vec<String> = vec!["health".into()];
-        assert!(lane_split(etf_rows(), 10, &health, &low, &none).1.is_empty(), "sector filter reads the fund name");
-        assert_eq!(lane_split(rows(), 10, &health, &low, &none).0.len(), 3, "…and never the stock lane");
+        assert!(lane_split(etf_rows(), 10, &health, &low, &none, &no_pe).1.is_empty(), "sector filter reads the fund name");
+        assert_eq!(lane_split(rows(), 10, &health, &low, &none, &no_pe).0.len(), 3, "…and never the stock lane");
 
         // Crypto is trimmed by NOTHING here — the lane is ranked vs Bitcoin and shown whole.
         let mut coin = Quote::stub("SOL-EUR", "€150.00", "", "Solana");
-        let (_, _, c) = lane_split(vec![(&coin, 0.1)], 10, &health, &high, &none);
+        let (_, _, c) = lane_split(vec![(&coin, 0.1)], 10, &health, &high, &none, &no_pe);
         assert_eq!(c.len(), 1, "no score floor, no sector filter, no redundancy skip on the crypto lane");
         coin.trail_monthly = up.clone();
-        assert_eq!(lane_split(vec![(&coin, 0.1)], 10, &all_sectors, &armed, &none).2.len(), 1);
+        assert_eq!(lane_split(vec![(&coin, 0.1)], 10, &all_sectors, &armed, &none, &no_pe).2.len(), 1);
+    }
+
+    /// (#37 funds) the PEG CEILING on the ETF lane. Four claims, each one a way this could go wrong:
+    /// a dear fund is cut, a cheap one is kept, a fund with NO look-through P/E is kept (missing data
+    /// is not a verdict — the whole crypto half of this feature was dropped over exactly that rule
+    /// cutting the wrong cohort), and the table REFILLS from below instead of going short.
+    ///
+    /// Refill is not a mechanism here, it is the position of this trim: it runs before `print_picks`
+    /// cuts to `n`, so a dropped row is simply replaced by the next one. That is why it does NOT use
+    /// `decorrelate_keep` — see the (#41) receipt above for what a trim that stops at `n` costs.
+    #[test]
+    fn etf_peg_ceiling_trims_and_refills() {
+        let d = BuyHeuristic::default();
+        let none: HashSet<&str> = HashSet::new();
+        let all_sectors: Vec<String> = Vec::new();
+        // 5Y cumulative +61.051% = exactly 10.0 %/yr, so bar 50 (PEG 2.0) splits P/E 25 (peg_yield
+        // 40, cut) from P/E 4 (peg_yield 250, kept) with no float slop near the boundary.
+        let fund = |t: &str| {
+            let mut q = Quote::stub(t, "€100.00", "", &format!("{t} UCITS ETF"));
+            q.instrument_type = "ETF".into();
+            q.perf = vec![None; core::HORIZONS.len()];
+            q.perf[core::HORIZONS.iter().position(|(l, _)| *l == "5Y").unwrap()] = Some((String::new(), 61.051));
+            q
+        };
+        let (dear, cheap, unknown) = (fund("DEAR.L"), fund("CHEAP.L"), fund("UNKNOWN.L"));
+        let rows = || vec![(&dear, 9.0), (&unknown, 8.0), (&cheap, 7.0)];
+        let names = |v: &[(&Quote, f64)]| v.iter().map(|(q, _)| q.ticker.clone()).collect::<Vec<_>>();
+        let mut pe: HashMap<String, f64> = HashMap::new();
+        pe.insert("DEAR.L".into(), 25.0);
+        pe.insert("CHEAP.L".into(), 4.0);
+        // UNKNOWN.L deliberately absent: fetched no P/E (or ranked below the fetched bench).
+        let on = BuyHeuristic { growth_max_peg_etf: 2.0, ..d.clone() };
+
+        assert_eq!(names(&lane_split(rows(), 10, &all_sectors, &d, &none, &pe).1), ["DEAR.L", "UNKNOWN.L", "CHEAP.L"],
+            "ceiling 0 = off, same convention as every other gate");
+        assert_eq!(names(&lane_split(rows(), 10, &all_sectors, &on, &none, &pe).1), ["UNKNOWN.L", "CHEAP.L"],
+            "dear fund cut; no-P/E fund kept (missing data is not a verdict)");
+        // n=2 with one row cut: the table must still show 2, filled from below — not 1.
+        assert_eq!(lane_split(rows(), 2, &all_sectors, &on, &none, &pe).1.len(), 2,
+            "the trim runs BEFORE the cut to n, so a dropped row refills from below");
+        let pin_dear: HashSet<&str> = ["DEAR.L"].into_iter().collect();
+        assert_eq!(names(&lane_split(rows(), 10, &all_sectors, &on, &pin_dear, &pe).1), ["DEAR.L", "UNKNOWN.L", "CHEAP.L"],
+            "a pin means always show me this, here as everywhere else");
     }
 }

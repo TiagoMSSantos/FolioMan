@@ -119,6 +119,10 @@ pub async fn run(args: Vec<String>) {
         owned: &Default::default(),
         explain: explain.as_deref(),
         show_hold_core: false,
+        // `check` inspects named watchlist tickers and fetches no fund holdings, so there is no
+        // look-through P/E here and the ETF PEG trim is a no-op. Deliberate: check reports on the
+        // names you asked about, it does not cut them from a table.
+        fund_pe: &std::collections::HashMap::new(),
     });
 
     // held-name gate review: a watchlist name that would no longer clear today's growth gates is an

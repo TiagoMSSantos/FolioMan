@@ -2023,6 +2023,15 @@ pub fn peg_yield(eps: Option<f64>, cagr: Option<f64>, price: f64) -> Option<f64>
     Some(ey * g)
 }
 
+/// Same peg_yield, entered from a P/E instead of eps+price — the form a FUND's look-through valuation
+/// arrives in (`parse_fund_pe` reads `topHoldings.equityHoldings.priceToEarnings`; there is no per-share
+/// EPS for a basket). eps = 100/pe at a notional price of 100 reproduces `earnings_yield` exactly, so
+/// both None-outs above (non-positive earnings, non-positive growth) stay shared rather than re-derived
+/// — which is the whole point of routing through `peg_yield` instead of writing `100.0 / pe * cagr` here.
+pub fn peg_yield_from_pe(pe: f64, cagr: Option<f64>) -> Option<f64> {
+    peg_yield((pe > 0.0).then(|| 100.0 / pe), cagr, 100.0)
+}
+
 /// One fiscal year of an income statement, rolled up from the quarterly `FundRow`s — the `report`
 /// command's display row. Margins are %, revenue/eps in native units. `quarters` < 4 = an incomplete
 /// fiscal year (most-recent partial, or a non-December fiscal-year-end straddling the calendar split);

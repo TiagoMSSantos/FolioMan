@@ -228,12 +228,36 @@ fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) ->
 /// the header's "quality pricey because it keeps winning". Values arrive already inverted from
 /// `parse_fund_pe` (Yahoo serves reciprocals — see the fetch-side pin). Funds without the datum
 /// stay silent; `None` when nobody has it.
-fn fund_pe_line(mix: &std::collections::HashMap<String, fetch::FundMix>) -> Option<String> {
-    let mut rows: Vec<(&String, f64)> =
-        mix.iter().filter_map(|(t, (_, _, pe))| pe.map(|p| (t, p))).collect();
+///
+/// (#37 funds) now also carries the PEG that `growth_max_peg_etf` trims the ETF table on, and marks the
+/// funds it CUT. This is the display half of that trim, and it lives here rather than in the `peg`
+/// COLUMN on purpose: the table shows survivors only, so a column could never explain a fund that
+/// vanished. `picks::fund_peg_yield` is the same fn the trim calls — one PEG, printed and acted on.
+fn fund_pe_line(fund_pe: &std::collections::HashMap<String, f64>, quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Option<String> {
+    let bar = (tuning.growth_max_peg_etf > 0.0).then(|| 100.0 / tuning.growth_max_peg_etf);
+    let mut rows: Vec<(&String, f64, Option<f64>)> = fund_pe
+        .iter()
+        .map(|(t, &pe)| {
+            // PEG needs the quote's long leg; a fetched fund with no quote in this run (pinned-only
+            // symbol, CORE entry outside the universe) keeps its P/E and simply prints no PEG.
+            let peg = quotes
+                .iter()
+                .find(|q| &q.ticker == t)
+                .and_then(|q| picks::fund_peg_yield(q, tuning, fund_pe));
+            (t, pe, peg)
+        })
+        .collect();
     rows.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(b.0)));
-    (!rows.is_empty())
-        .then(|| rows.iter().map(|(t, p)| format!("{t} {p:.0}")).collect::<Vec<_>>().join(" · "))
+    (!rows.is_empty()).then(|| {
+        rows.iter()
+            .map(|(t, p, peg)| match (peg, bar) {
+                (Some(y), Some(b)) if *y < b => format!("{t} {p:.0} (PEG {:.2} — cut)", 100.0 / y),
+                (Some(y), _) => format!("{t} {p:.0} (PEG {:.2})", 100.0 / y),
+                (None, _) => format!("{t} {p:.0}"),
+            })
+            .collect::<Vec<_>>()
+            .join(" · ")
+    })
 }
 
 /// (r11) CAGR premium over the index on the longest SHARED leg — "10Y" first, else "5Y". Both
@@ -892,6 +916,52 @@ pub async fn run(args: Vec<String>) {
     if !hidden.is_empty() {
         eprintln!("(columns: config hides available: {} — add to the columns: block in settings.yaml to show)", hidden.join(", "));
     }
+    // (round 55) CORE membership diff needs this list; the holdings fetch below needs it too, and that
+    // now runs BEFORE render. Pure over `quotes`, so hoisting it changes nothing — the diff still prints
+    // in its own footer further down.
+    let core_now: Vec<String> =
+        crate::picks::hold_core_list(&quotes).iter().take(settings.top_picks).map(|q| q.ticker.clone()).collect();
+    // (round 56)/(#37 funds) fund holdings + composition, fetched ONCE here. This used to sit with the
+    // overlap footer below, i.e. AFTER the tables printed, because everything it fed was display-only.
+    // The look-through P/E it carries is no longer display-only — it drives the ETF PEG trim inside
+    // `lane_split` — so the fetch has to precede `render`. Yahoo topHoldings, weekly-cached.
+    let (holdings, mix) = {
+        let is_fund = |q: &&Quote| crate::picks::quote_is_etf(q) && !crate::picks::is_currency_quoted(&q.ticker);
+        let mut ranked: Vec<(&Quote, f64)> = quotes
+            .iter()
+            .filter(is_fund)
+            .filter_map(|q| growth_score(q, &settings.buy_heuristic).map(|s| (q, s)))
+            .collect();
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+        // one venue per fund name (the momentum table dedups the same way), then top rows + pinned + CORE.
+        // 2x top_picks, not top_picks: the PEG trim drops rows and the table refills from BELOW the cut,
+        // and a refilled row with no P/E fetched would pass the ceiling for free. The bench costs ~24
+        // extra weekly-cached symbols — still nowhere near a universe-wide fund gate.
+        let mut seen = std::collections::HashSet::new();
+        let mut syms: Vec<String> = ranked
+            .iter()
+            .filter(|(q, _)| seen.insert(q.name.to_lowercase()))
+            .take(settings.top_picks * 2)
+            .map(|(q, _)| q.ticker.clone())
+            .chain(quotes.iter().filter(is_fund).filter(|q| settings.tickers.contains(&q.ticker)).map(|q| q.ticker.clone()))
+            .chain(core_now.iter().cloned())
+            .collect();
+        syms.sort();
+        syms.dedup();
+        fetch::yahoo_top_holdings(&client, &syms).await
+    };
+    let mut fund_pe: std::collections::HashMap<String, f64> =
+        mix.iter().filter_map(|(t, (_, _, pe))| pe.map(|p| (t.clone(), p))).collect();
+    // The fetch above keeps ONE venue per fund name, but the ETF table shows every listing (only
+    // crypto twins are collapsed upstream, in `dedup_currency_twins`) and the universe is Xetra +
+    // Euronext + Lisbon, so a UCITS fund routinely appears two or three times. Propagate each fetched
+    // P/E to that fund's other listings or the (#37) ceiling would cut one venue and keep its twin —
+    // the same "the class with missing data gets the easier test" hole this trim exists to close.
+    let by_name: std::collections::HashMap<String, f64> =
+        quotes.iter().filter_map(|q| fund_pe.get(&q.ticker).map(|&p| (q.name.to_lowercase(), p))).collect();
+    let siblings: Vec<(String, f64)> =
+        quotes.iter().filter_map(|q| by_name.get(&q.name.to_lowercase()).map(|&p| (q.ticker.clone(), p))).collect();
+    fund_pe.extend(siblings);
     let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, RenderCtx {
         nupl,
         sectors: &settings.sectors,
@@ -900,6 +970,7 @@ pub async fn run(args: Vec<String>) {
         owned: &owned,
         explain: explain.as_deref(),
         show_hold_core: true,
+        fund_pe: &fund_pe,
     });
 
     // (round 114) live track record: journal today's ranked slice + the S&P close so `track` can
@@ -1263,8 +1334,7 @@ pub async fn run(args: Vec<String>) {
 
     // (round 55) CORE membership diff: joins/dropouts of the shortlist above since the last run.
     // Silent when the previous state predates the field (empty prev — everything would read as new).
-    let core_now: Vec<String> =
-        crate::picks::hold_core_list(&quotes).iter().take(settings.top_picks).map(|q| q.ticker.clone()).collect();
+    // `core_now` itself is built before render (the holdings fetch needs it).
     if let Some(prev) = &prior {
         if let Some(line) = membership_diff("CORE shortlist", &prev.date, &prev.core, &core_now) {
             println!("\n{line}");
@@ -1407,28 +1477,9 @@ pub async fn run(args: Vec<String>) {
 
     // (round 56) holdings-overlap footer: the buy candidates are the ranked ETF rows + the pinned
     // funds + the CORE shortlist, and "different" sector funds routinely hold the same top-10
-    // mega-caps — invisible from the names. Yahoo topHoldings, weekly-cached, display-only.
+    // mega-caps — invisible from the names. Payload fetched above (it now also feeds the ETF PEG trim,
+    // which has to run before the tables print); everything in this block stays display-only.
     {
-        let is_fund = |q: &&Quote| crate::picks::quote_is_etf(q) && !crate::picks::is_currency_quoted(&q.ticker);
-        let mut ranked: Vec<(&Quote, f64)> = quotes
-            .iter()
-            .filter(is_fund)
-            .filter_map(|q| growth_score(q, &settings.buy_heuristic).map(|s| (q, s)))
-            .collect();
-        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
-        // one venue per fund name (the momentum table dedups the same way), then top rows + pinned + CORE
-        let mut seen = std::collections::HashSet::new();
-        let mut syms: Vec<String> = ranked
-            .iter()
-            .filter(|(q, _)| seen.insert(q.name.to_lowercase()))
-            .take(settings.top_picks)
-            .map(|(q, _)| q.ticker.clone())
-            .chain(quotes.iter().filter(is_fund).filter(|q| settings.tickers.contains(&q.ticker)).map(|q| q.ticker.clone()))
-            .chain(core_now.iter().cloned())
-            .collect();
-        syms.sort();
-        syms.dedup();
-        let (holdings, mix) = fetch::yahoo_top_holdings(&client, &syms).await;
         let clusters = holdings_overlap_lines(&holdings);
         if !clusters.is_empty() {
             println!("\nHoldings overlap — picks that are effectively the same position (shared top-10 holdings, so buying several ≈ one concentrated bet):");
@@ -1462,8 +1513,8 @@ pub async fn run(args: Vec<String>) {
         }
         // (fund valuation) HOW pricey the pricey quality is: the fund book's P/E, same payload
         // as everything above. Display-only, never scored.
-        if let Some(pe) = fund_pe_line(&mix) {
-            println!("\nFund valuation — P/E of each fund's equity book (cheapest first): {pe}");
+        if let Some(pe) = fund_pe_line(&fund_pe, &quotes, &settings.buy_heuristic) {
+            println!("\nFund valuation — P/E of each fund's equity book, and the PEG the ceiling trims on (cheapest first): {pe}");
         }
     }
 
@@ -2718,15 +2769,48 @@ mod tests {
     }
 
     /// (fund valuation) cheapest-first ordering, pe-less funds silent, empty map -> None. The
-    /// values are post-inversion real ratios (fetch-side pin owns the reciprocal trap).
+    /// values are post-inversion real ratios (fetch-side pin owns the reciprocal trap) — a test that
+    /// hard-codes 33.93 rather than Yahoo's raw 0.02947 is the cheapest guard against someone
+    /// "fixing" the inversion back.
+    ///
+    /// (#37 funds) also pins the PEG half: the `— cut` marker must name exactly the funds
+    /// `lane_split` drops, and a fund with no quote in this run prints its P/E with no PEG.
     #[test]
     fn fund_pe_line_semantics() {
-        let mut m: HashMap<String, fetch::FundMix> = HashMap::new();
-        m.insert("IITU.L".into(), (Vec::new(), None, Some(33.93)));
-        m.insert("SPYL.DE".into(), (Vec::new(), None, Some(24.2)));
-        m.insert("NOPE.L".into(), (Vec::new(), None, None)); // silent
-        assert_eq!(fund_pe_line(&m).unwrap(), "SPYL.DE 24 · IITU.L 34");
-        assert_eq!(fund_pe_line(&HashMap::new()), None);
+        let mut m: HashMap<String, f64> = HashMap::new();
+        m.insert("IITU.L".into(), 33.93);
+        m.insert("SPYL.DE".into(), 24.2);
+        // no PEG anywhere without quotes: no long leg -> long_cagr_pct None -> peg_yield None.
+        let off = config::BuyHeuristic::default();
+        assert_eq!(fund_pe_line(&m, &[], &off).unwrap(), "SPYL.DE 24 · IITU.L 34");
+        assert_eq!(fund_pe_line(&HashMap::new(), &[], &off), None);
+
+        // 5Y cumulative +61.051% is exactly 10.0 %/yr, so the PEGs below are exact:
+        // P/E 25 -> peg_yield (100/25)*10 = 40 -> PEG 2.50, under the 50 bar (PEG 2.0) -> cut.
+        // P/E  4 -> peg_yield (100/4)*10 = 250 -> PEG 0.40, clear.
+        let fund = |t: &str| {
+            let mut q = core::Quote::stub(t, "€100.00", "", &format!("{t} UCITS ETF"));
+            q.instrument_type = "ETF".into();
+            q.perf = vec![None; core::HORIZONS.len()];
+            q.perf[core::HORIZONS.iter().position(|(l, _)| *l == "5Y").unwrap()] =
+                Some((String::new(), 61.051));
+            q
+        };
+        let quotes = vec![fund("DEAR.L"), fund("CHEAP.L"), fund("GHOST.L")];
+        let mut pe: HashMap<String, f64> = HashMap::new();
+        pe.insert("DEAR.L".into(), 25.0);
+        pe.insert("CHEAP.L".into(), 4.0);
+        pe.insert("ABSENT.L".into(), 12.0); // fetched, but not a quote in this run -> P/E only
+        let on = config::BuyHeuristic { growth_max_peg_etf: 2.0, ..off.clone() };
+        assert_eq!(
+            fund_pe_line(&pe, &quotes, &on).unwrap(),
+            "CHEAP.L 4 (PEG 0.40) · ABSENT.L 12 · DEAR.L 25 (PEG 2.50 — cut)"
+        );
+        // ceiling off (0) = no verdict to print, but the PEG itself still shows.
+        assert_eq!(
+            fund_pe_line(&pe, &quotes, &off).unwrap(),
+            "CHEAP.L 4 (PEG 0.40) · ABSENT.L 12 · DEAR.L 25 (PEG 2.50)"
+        );
     }
 
     /// (round 62) state-file parse fork: absent = normal first run (silent), present-but-garbage =
