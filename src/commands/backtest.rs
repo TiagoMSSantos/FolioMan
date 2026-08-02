@@ -157,6 +157,20 @@ fn stamp_asset_class(
     quote.sector = sector_of.get(&quote.ticker).cloned();
 }
 
+/// Per-asset-class sample census, indexed by `picks::asset_class`: `[crypto, ETF, stock]`, each
+/// `(cutoffs, of which growth-scored)`. Read the RATIO, never the raw count: forward-window survival
+/// scales with listing age, so ETF density is horizon-dependent (0.3% of cutoffs at 20y, 22% at 12y,
+/// 42% at 8y — 2026-08-02) and is NOT the ~87% the universe's ticker list suggests.
+fn class_census(samples: &[Sample], tuning: &BuyHeuristic) -> [(usize, usize); 3] {
+    let mut out = [(0usize, 0usize); 3];
+    for s in samples {
+        let c = &mut out[picks::asset_class(&s.quote) as usize];
+        c.0 += 1;
+        c.1 += usize::from(picks::growth_score(&s.quote, tuning).is_some());
+    }
+    out
+}
+
 /// (#1) De-mean each cutoff's realized return WITHIN its ~6-month bucket AND asset class -> `relative`
 /// (the selection signal). Class-split because crypto's ~1e9-scale peer-relative returns otherwise share
 /// a pool with equities and swamp the de-meaned mean, pinning every growth-knob variant at the same edge
@@ -479,16 +493,28 @@ pub async fn run(args: Vec<String>) {
     // cutoffs at 20y, 22% at 12y, 42% at 8y — 2026-08-02) and is NOT the ~87% the ticker list suggests.
     // The crypto count is the honest measure of how much coin history survives a long forward window
     // (~11y of history, so it thins to nothing: 0 scored cutoffs at every horizon measured).
-    let mut census = [(0usize, 0usize); 3]; // index = asset_class: 0 crypto, 1 ETF, 2 stock; (total, growth-scored)
-    for s in &samples {
-        let c = &mut census[picks::asset_class(&s.quote) as usize];
-        c.0 += 1;
-        c.1 += usize::from(picks::growth_score(&s.quote, tuning).is_some());
-    }
+    let census = class_census(&samples, tuning);
     println!(
         "  by class (growth-scored / cutoffs): crypto {}/{}   ETF {}/{}   stock {}/{}",
         census[0].1, census[0].0, census[1].1, census[1].0, census[2].1, census[2].0
     );
+    // (#46) STAMPING GUARD — same standing as the de-mean invariant above: cheap, runs in release.
+    // Reads the MECHANISM, not the count. A raw "ETF count > 0" check would false-fire at long horizons,
+    // where a fund legitimately cannot reach a forward window at all (20y-s yields 14 ETF cutoffs; a 25y
+    // run would yield none, UCITS funds dating from ~2000). This fires only when a name the universe
+    // KNOWS is a fund fails to class as one — which is precisely how ~4300 ETFs scored as single stocks
+    // for as long as this command has existed, with nothing anywhere to say so.
+    if let Some(bad) = samples
+        .iter()
+        .find(|s| etf_set.contains(&s.quote.ticker) && picks::asset_class(&s.quote) != 1)
+    {
+        panic!(
+            "class stamping broke: {} is in the universe's ETF set but classed {} — every fund is \
+             scoring as a single stock and the peer-relative numbers below are contaminated",
+            bad.quote.ticker,
+            picks::asset_class(&bad.quote)
+        );
+    }
 
     let buy_knobs: Vec<Knob> = vec![
         knob("long_trend_weight", |tuning| tuning.long_trend_weight = 0.0),
@@ -642,6 +668,51 @@ pub async fn run(args: Vec<String>) {
     }
 }
 
+/// One ticker's cutoff walk for the hold-period sweep: for each forward window in `holds`, step through
+/// history and pair every cutoff with its realized forward return. Pure and separate from the async
+/// fetch above it purely so it can be TESTED — `hold_period_sweep` is network + println only, so this
+/// walk (the second of the two scoring loops in this file) had no coverage at all.
+///
+/// Note it de-means through the same `demean` as `run`, so it must class names the same way or the two
+/// disagree on what a peer is: hence the shared `stamp_asset_class` rather than a local copy.
+#[allow(clippy::too_many_arguments)]
+fn sweep_cutoffs(
+    tk: &str,
+    dates: &[chrono::NaiveDate],
+    closes: &[f64],
+    name: &str,
+    instrument_type: &str,
+    holds: &[i64],
+    min_history: usize,
+    step: usize,
+    cadence: usize,
+    etf_set: &HashSet<String>,
+    sector_of: &HashMap<String, String>,
+) -> Vec<(i64, Sample)> {
+    let mut out = Vec::new();
+    for &h in holds {
+        let mut i = min_history;
+        while i < dates.len() {
+            let target = dates[i] + chrono::Duration::days(h * 365);
+            match dates[i..].iter().position(|d| *d >= target) {
+                Some(off) => {
+                    let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
+                    // a zero/garbage close makes realized ±inf; one poisoned cutoff drags the
+                    // whole demeaned bucket to -inf (short holds reach data the 12y path never walks)
+                    if realized.is_finite() {
+                        let mut quote = core::backtest_quote(tk, dates, closes, i, cadence);
+                        stamp_asset_class(&mut quote, name, instrument_type, etf_set, sector_of);
+                        out.push((h, Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() }));
+                    }
+                }
+                None => break,
+            }
+            i += step;
+        }
+    }
+    out
+}
+
 /// (Item 11) Hold-period / signal half-life sweep. Re-runs the price-only walk-forward over several
 /// forward windows from the SAME fetched history (fetched once per ticker, then sliced per window), and
 /// prints each window's gross edge, turnover, and NET edge (gross − turnover×ROUND_TRIP_BPS). The right
@@ -678,30 +749,10 @@ async fn hold_period_sweep(
                 Some(x) => x,
                 None => return Vec::new(),
             };
-            let (dates, closes) = (chart.dates, chart.closes);
-            let (cls_name, cls_type) = (chart.name, chart.instrument_type);
-            let mut out = Vec::new();
-            for &h in &HOLDS {
-                let mut i = min_history;
-                while i < dates.len() {
-                    let target = dates[i] + chrono::Duration::days(h * 365);
-                    match dates[i..].iter().position(|d| *d >= target) {
-                        Some(off) => {
-                            let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
-                            // a zero/garbage close makes realized ±inf; one poisoned cutoff drags the
-                            // whole demeaned bucket to -inf (short holds reach data the 12y path never walks)
-                            if realized.is_finite() {
-                                let mut quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
-                                stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
-                                out.push((h, Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() }));
-                            }
-                        }
-                        None => break,
-                    }
-                    i += step;
-                }
-            }
-            out
+            sweep_cutoffs(
+                tk, &chart.dates, &chart.closes, &chart.name, &chart.instrument_type, &HOLDS,
+                min_history, step, cadence, etf_set, sector_of,
+            )
         })
         .buffer_unordered(fetch::fetch_concurrency())
         .collect()
@@ -3303,6 +3354,171 @@ mod tests {
             .collect()
     }
 
+    /// Every growth knob, paired with a probe value cranked past anything a fixture can reach: floors go
+    /// absurdly HIGH, caps absurdly LOW (but never to the knob's own "0 = off" sentinel), multipliers to
+    /// a value that is neither of their two off-states. Cranking to an impossible value is what makes an
+    /// INERT verdict mean "unreachable" rather than "my fixture happened to sit on the safe side".
+    #[allow(clippy::type_complexity)]
+    const GATE_PROBES: &[(&str, fn(&mut BuyHeuristic, f64), f64)] = &[
+        // equity/shared hard gates
+        ("growth_min_cagr", |t, v| t.growth_min_cagr = v, 1e9),
+        ("growth_min_range_pct", |t, v| t.growth_min_range_pct = v, 1e9),
+        ("growth_min_1y_pct", |t, v| t.growth_min_1y_pct = v, 1e9),
+        ("growth_min_5y_pct", |t, v| t.growth_min_5y_pct = v, 1e9),
+        ("growth_min_8y_pct", |t, v| t.growth_min_8y_pct = v, 1e9),
+        ("growth_min_20y_pct", |t, v| t.growth_min_20y_pct = v, 1e9),
+        ("growth_maxdd_cap", |t, v| t.growth_maxdd_cap = v, 1e-6),
+        ("growth_max_above_ma", |t, v| t.growth_max_above_ma = v, 1e-6),
+        ("max_1m_drop_pct", |t, v| t.max_1m_drop_pct = v, 1e9),
+        ("growth_max_peg", |t, v| t.growth_max_peg = v, 1e-6),
+        ("growth_require_lifetime_uptrend", |t, v| t.growth_require_lifetime_uptrend = v != 0.0, 1.0),
+        // crypto twins
+        ("growth_min_cagr_crypto", |t, v| t.growth_min_cagr_crypto = v, 1e9),
+        ("growth_min_range_pct_crypto", |t, v| t.growth_min_range_pct_crypto = v, 1e9),
+        ("min_1y_pct_crypto", |t, v| t.min_1y_pct_crypto = v, 1e9),
+        ("max_1m_drop_pct_crypto", |t, v| t.max_1m_drop_pct_crypto = v, 1e9),
+        ("growth_maxdd_cap_crypto", |t, v| t.growth_maxdd_cap_crypto = v, 1e-6),
+        ("growth_max_vol_crypto", |t, v| t.growth_max_vol_crypto = v, 1e-6),
+        // ETF-scoped
+        ("sharpe_cap_etf", |t, v| t.sharpe_cap_etf = v, 1e-6),
+        ("growth_min_aum_etf", |t, v| t.growth_min_aum_etf = v, 1e9),
+        ("growth_ter_drag", |t, v| t.growth_ter_drag = v != 0.0, 1.0),
+        // score multipliers and tilts
+        ("growth_commodity_damp", |t, v| t.growth_commodity_damp = v, 0.5),
+        ("growth_fx_damp", |t, v| t.growth_fx_damp = v, 0.5),
+        ("growth_turnover_weight", |t, v| t.growth_turnover_weight = v, 1.0),
+        // known-unreachable by construction — pinned so the claim stops being folklore
+        ("growth_min_age_years", |t, v| t.growth_min_age_years = v, 1e9),
+        ("growth_min_range_pct_8y", |t, v| t.growth_min_range_pct_8y = v, 1e9),
+    ];
+
+    /// WHICH GROWTH KNOBS CAN MOVE A BACKTEST NUMBER AT ALL, per asset class.
+    ///
+    /// `config.rs` carries ~10 hand-written claims of the form "BACKTEST-BLIND by construction" /
+    /// "edge-blind" / "LIVE-ONLY BY CONSTRUCTION". Nothing has ever verified one, and they are wrong
+    /// often enough to matter: `sharpe_cap_etf` said "the backtest pool holds stock constituents only"
+    /// (the pool is ~4311 ETFs of 4954), and `growth_commodity_damp` said the pool "carries no sector
+    /// and no real fund names" — true until the class stamping landed, false the moment it did. Both
+    /// were load-bearing: knobs get set by judgement precisely BECAUSE they are believed unsweepable.
+    ///
+    /// The whole question reduces to one fact nobody wrote down: `core::backtest_quote` fills 18 fields
+    /// (perf, drawdown_pct, range_pct, volatility_pct, downside_dev_pct, below/above_ma_pct, trend_r2,
+    /// trend_cagr, life_cagr, capped_cagr, max_drawdown_pct, roll5y/10y_pos_pct, worst_5y/10y_pct,
+    /// underwater_yrs on the daily path, and a sentinel avg_turnover_eur) and leaves the rest at
+    /// `Quote::stub` defaults, so any gate reading an unfilled field can never fire. This pin turns
+    /// that into an assertion, in BOTH directions — a live gate going silently dead is the ETF bug's
+    /// exact shape, and a false "inert" claim is how the receipts rotted.
+    ///
+    /// SCOPE: the PRICE-ONLY reconstruction. `backtest ... fund` additionally attaches `quote.fund`
+    /// (backtest.rs:422), so the fundamentals knobs are live on THAT path — `growth_max_peg` reads
+    /// INERT below and config.rs's "MEASURABLE (peg_yield is filled in the backtest)" is still right;
+    /// the two statements are about different runs, not in conflict.
+    ///
+    /// Reads as "the score MOVED", not "the ranking moved". `growth_turnover_weight` is the case where
+    /// those differ: `backtest_quote` sets a uniform sentinel turnover, so the knob shifts every name by
+    /// the same constant — reachable, but rank-neutral and so still unsweepable for edge. LIVE here
+    /// means "can change a number", never "is safe to tune on".
+    ///
+    /// EVERY INERT VERDICT, WITH ITS CAUSE — hand-checked against the fill list above, because an INERT
+    /// entry is about to be cited as evidence that a knob cannot be swept, and three distinct causes
+    /// hide behind the one word:
+    ///   (a) FIELD NEVER FILLED — dead on this path, no fixture can rescue it. `growth_min_aum_etf`
+    ///       (aum_eur), `growth_ter_drag` (expense_ratio), `growth_fx_damp` (quote_currency),
+    ///       `growth_min_age_years` (age_years), `growth_min_range_pct_8y` (stats_8y). None of those
+    ///       five is assigned anywhere in this file; `growth_max_peg` (quote.fund) joins them on the
+    ///       price-only path only, per SCOPE above.
+    ///   (b) SCOPED TO ANOTHER CLASS — correct by construction, and the thing round 1's bug broke: the
+    ///       `if crypto {…} else {…}` selectors (maxdd cap, 1M knife, 1Y/range/CAGR floors, vol cap),
+    ///       the `!crypto` guards (above-MA ceiling, lifetime uptrend), `sharpe_cap_etf` off a fund,
+    ///       and the commodity damp on a coin (no GICS sector, not a fund name).
+    ///   (c) REACHABLE BUT DOMINATED — `growth_require_lifetime_uptrend`. Its fields ARE filled, so it
+    ///       is not dead; it cannot bite because `growth_min_cagr` rejects the same names first. A
+    ///       fixture built to trip it (crash −95%, recover to just under the start price, life_cagr
+    ///       −0.2%/yr with a +1349% 20Y leg) fails the floor at `cagr-life -0.2%/yr (need ≥8.0%)` and
+    ///       never reaches the gate. Lower `growth_min_cagr` below 0 and this knob wakes up.
+    #[test]
+    fn growth_gate_reachability_pin() {
+        // 25y, not the ~13y the other tests use: `growth_min_20y_pct` reads a 20Y leg, and `perf_pct`
+        // returns None for a leg the history is too short to carry. On a 13y fixture that knob reads
+        // INERT — a fixture artifact indistinguishable, in the golden string, from a structurally dead
+        // gate. The whole point of this pin is that the two never get confused, so the fixture has to
+        // be old enough to carry every leg the gates ask for.
+        let n = 25 * 252;
+        let dates = synth_calendar(n);
+        // amp 0.25 / phase 1.0 is chosen, not arbitrary. The wobble has to be deep enough that the
+        // series actually DIPS — at the amp the other tests use, the 22%/yr drift dominates the sine
+        // everywhere, `max_drawdown_pct` is 0.00, and every drawdown-reading cap reads INERT because
+        // nothing can be below a cap of zero. The phase then places the endpoint on a rising leg, so
+        // the fixture still clears the 1Y floor and scores. Measured here: maxdd 26.0, above-MA 26.5,
+        // vol 0.19, 20Y leg +4296% — each of those is an input some gate below compares against.
+        let closes = synth_series(n, 0.22, 0.25, 1.0);
+        let etf_set: HashSet<String> = HashSet::new();
+        // an Energy sector on the stock: `is_commodity` reads `quote.sector`, which only exists in the
+        // backtest since the class stamping. Without it the commodity damp reads inert for want of a
+        // sector rather than for want of reachability — the exact confusion this pin exists to end.
+        let sector_of: HashMap<String, String> =
+            [("XOM".to_string(), "Energy".to_string())].into_iter().collect();
+        let d = BuyHeuristic::default();
+
+        let fixture = |tk: &str, name: &str, ity: &str| -> Sample {
+            let mut quote = core::backtest_quote(tk, &dates, &closes, n - 1, 252);
+            stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
+            Sample { date: dates[n - 1], realized: 0.0, relative: 0.0, quote, fund: None, trail: Vec::new() }
+        };
+        // A PANEL per class, not one fixture: a knob reads LIVE if ANY member moves. `is_commodity`'s
+        // fund leg is name-driven, so a single broad-market ETF would report the commodity damp INERT
+        // for the whole ETF class — true of that fund, false of the class. The clean-energy name trips
+        // the `energy` token WITHOUT tripping `is_commodity_etf` (no "physical"/"commodit"/`etc`/metal
+        // token), so it stays rankable and gets damped rather than structurally rejected.
+        let panel: [(&str, Vec<Sample>); 3] = [
+            ("crypto", vec![fixture("BTC-EUR", "BTC-EUR", "CRYPTOCURRENCY")]),
+            (
+                "etf   ",
+                vec![
+                    fixture("XDWD.L", "Xtrackers MSCI World UCITS ETF", "ETF"),
+                    fixture("INRG.L", "iShares Global Clean Energy UCITS ETF", "ETF"),
+                ],
+            ),
+            ("stock ", vec![fixture("XOM", "Exxon Mobil Corp", "EQUITY")]),
+        ];
+
+        let mut out = String::new();
+        for (label, members) in &panel {
+            for s in members {
+                // PRECONDITION. A fixture that is already gated out scores None under every probe, which
+                // reads as "every knob is inert" — a table of confident lies. Assert it scores FIRST.
+                assert!(
+                    growth_score(&s.quote, &d).is_some(),
+                    "{label} fixture {} must score under default tuning, else every INERT verdict below is meaningless",
+                    s.quote.ticker
+                );
+                assert_eq!(picks::asset_class(&s.quote), match label.trim() { "crypto" => 0, "etf" => 1, _ => 2 });
+            }
+            let (mut live, mut inert) = (Vec::new(), Vec::new());
+            for (name, set, probe) in GATE_PROBES {
+                let moved = members
+                    .iter()
+                    .any(|s| dim_active(std::slice::from_ref(s), growth_score, &d, *set, *probe));
+                if moved { live.push(*name) } else { inert.push(*name) }
+            }
+            out += &format!("{label} LIVE  {}\n{label} INERT {}\n", live.join(" "), inert.join(" "));
+        }
+        // golden inventory. A knob moving between LIVE and INERT is a REAL event — either a gate stopped
+        // firing (the ETF bug), or a receipt somewhere now states the opposite of the truth. Re-read the
+        // knob's comment in config.rs before re-pinning; the point of this test is to force that read.
+        assert_eq!(
+            out,
+            concat!(
+                "crypto LIVE  growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_min_cagr_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto growth_turnover_weight\n",
+                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_require_lifetime_uptrend sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_age_years growth_min_range_pct_8y\n",
+                "etf    LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct sharpe_cap_etf growth_commodity_damp growth_turnover_weight\n",
+                "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years growth_min_range_pct_8y\n",
+                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_commodity_damp growth_turnover_weight\n",
+                "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years growth_min_range_pct_8y\n",
+            )
+        );
+    }
+
     /// The backtest rebuilds quotes from PRICE HISTORY ALONE: `core::backtest_quote` calls
     /// `Quote::stub(ticker, "", "", ticker)`, leaving `name` = the ticker and `instrument_type` empty.
     /// `picks::quote_is_etf` reads exactly those two fields, and no real fund ticker (`VWRA.L`,
@@ -3450,5 +3666,142 @@ mod tests {
         // 33 stock rows (whose peer-mean LOST those ETFs). The 33 crypto rows are byte-identical in both
         // runs — crypto is the one class the bare stub always classed correctly, so it had nothing to fix.
         assert_eq!(got, "n=99 crypto=33 etf=33 stock=33 moved=66 scored=42 rho=0.211 edge=+5.6");
+    }
+
+    /// Does a coin reconstructed by `backtest_quote` actually take the CRYPTO branch of every forked
+    /// gate — or does it merely happen to pass the equity one?
+    ///
+    /// `picks.rs` already unit-tests these gates, but on hand-built quotes with the fields assigned
+    /// directly. That is a different question from the one that decides whether a backtest number means
+    /// anything: whether the RECONSTRUCTION fills the fields the crypto branch reads. Round 1 is the
+    /// standing proof that "obviously it works" beliefs about this exact reconstruction survive for
+    /// years — `growth_min_cagr`'s own receipt shipped calling its life-CAGR leg unreachable in the
+    /// backtest, on the false premise that `backtest_quote` could not supply `life_cagr`.
+    ///
+    /// Each pair asserts BOTH directions, which is what makes it unfakeable: the crypto knob gates the
+    /// coin AND the equity twin leaves it alone; the equity knob gates the stock AND the crypto twin
+    /// leaves it alone. A quote taking the wrong branch fails one side or the other.
+    #[test]
+    fn each_class_reads_its_own_gate_leg() {
+        // same non-degenerate series the reachability pin uses, and for the same reason: the maxdd
+        // fork below compares against `max_drawdown_pct`, which is exactly 0.00 on a series whose
+        // drift never lets it dip. A cap probe cannot bite a zero, so the fork would assert nothing.
+        let n = 25 * 252;
+        let dates = synth_calendar(n);
+        let closes = synth_series(n, 0.22, 0.25, 1.0);
+        let (etf_set, sector_of) = (HashSet::new(), HashMap::new());
+        let d = BuyHeuristic::default();
+        let build = |tk: &str, name: &str, ity: &str| {
+            let mut q = core::backtest_quote(tk, &dates, &closes, n - 1, 252);
+            stamp_asset_class(&mut q, name, ity, &etf_set, &sector_of);
+            q
+        };
+        let coin = build("BTC-EUR", "BTC-EUR", "CRYPTOCURRENCY");
+        let stock = build("XOM", "Exxon Mobil Corp", "EQUITY");
+        assert_eq!((picks::asset_class(&coin), picks::asset_class(&stock)), (0, 2));
+        assert!(growth_score(&coin, &d).is_some() && growth_score(&stock, &d).is_some());
+
+        // (crypto setter, equity setter, probe) — floors crank up, caps crank down, both past anything
+        // the fixture can reach, so a gate that CAN see this quote must bite.
+        #[allow(clippy::type_complexity)]
+        let forks: &[(&str, fn(&mut BuyHeuristic, f64), fn(&mut BuyHeuristic, f64), f64)] = &[
+            ("1Y floor", |t, v| t.min_1y_pct_crypto = v, |t, v| t.growth_min_1y_pct = v, 1e9),
+            ("1M knife", |t, v| t.max_1m_drop_pct_crypto = v, |t, v| t.max_1m_drop_pct = v, 1e9),
+            ("range floor", |t, v| t.growth_min_range_pct_crypto = v, |t, v| t.growth_min_range_pct = v, 1e9),
+            ("CAGR floor", |t, v| t.growth_min_cagr_crypto = v, |t, v| t.growth_min_cagr = v, 1e9),
+            ("maxdd cap", |t, v| t.growth_maxdd_cap_crypto = v, |t, v| t.growth_maxdd_cap = v, 1e-6),
+        ];
+        for (label, set_crypto, set_equity, probe) in forks {
+            let tuned = |set: &fn(&mut BuyHeuristic, f64)| {
+                let mut t = d.clone();
+                set(&mut t, *probe);
+                t
+            };
+            let (ct, et) = (tuned(set_crypto), tuned(set_equity));
+            assert!(growth_score(&coin, &ct).is_none(), "{label}: crypto knob must gate the coin");
+            assert!(growth_score(&coin, &et).is_some(), "{label}: equity knob must NOT reach the coin");
+            assert!(growth_score(&stock, &et).is_none(), "{label}: equity knob must gate the stock");
+            assert!(growth_score(&stock, &ct).is_some(), "{label}: crypto knob must NOT reach the stock");
+        }
+
+        // sharpe_cap_etf has no twin — it is a cap that applies to funds only. Same shape: it must move
+        // the ETF's score and leave the other two classes byte-identical.
+        let etf = build("XDWD.L", "Xtrackers MSCI World UCITS ETF", "ETF");
+        assert_eq!(picks::asset_class(&etf), 1);
+        let capped = BuyHeuristic { sharpe_cap_etf: 1e-6, ..d.clone() };
+        assert_ne!(growth_score(&etf, &capped), growth_score(&etf, &d), "sharpe_cap_etf must reach a fund");
+        assert_eq!(growth_score(&stock, &capped), growth_score(&stock, &d), "…and no stock");
+        assert_eq!(growth_score(&coin, &capped), growth_score(&coin, &d), "…and no coin");
+    }
+
+    /// `hold_period_sweep` is network + println only, so its per-ticker walk — the SECOND of the two
+    /// scoring loops in this file — had no coverage at all. `sweep_cutoffs` is that walk, extracted
+    /// unchanged. `run()` was deliberately left alone, so `walk_forward_edge_pin` proves the extraction
+    /// touched nothing else.
+    #[test]
+    fn sweep_cutoffs_walks_every_hold_and_stamps_classes() {
+        // ~13y so the longest hold below still has a full forward window after MIN_HISTORY (750 bars,
+        // ~3y) of warm-up — at 6y the 5y hold yields nothing and the test would assert on an empty set.
+        let n = 13 * 252;
+        let dates = synth_calendar(n);
+        let closes = synth_series(n, 0.12, 0.05, 1.0);
+        let etf_set: HashSet<String> = ["VWRA.L".to_string()].into_iter().collect();
+        let sector_of = HashMap::new();
+        let holds = [1i64, 2, 5];
+        let walk = |c: &[f64]| {
+            sweep_cutoffs("VWRA.L", &dates, c, "VANGUARD FUNDS PLC", "", &holds, MIN_HISTORY, STEP_SESSIONS, 252, &etf_set, &sector_of)
+        };
+        let got = walk(&closes);
+
+        // every hold produces cutoffs, and a longer hold can only yield FEWER (it needs more forward
+        // history) — the shape that makes the per-hold edge rows comparable at all.
+        for &h in &holds {
+            assert!(got.iter().any(|(w, _)| *w == h), "{h}y hold produced no cutoffs");
+        }
+        let n_of = |h: i64| got.iter().filter(|(w, _)| *w == h).count();
+        assert!(n_of(1) >= n_of(2) && n_of(2) >= n_of(5), "longer holds must not yield more cutoffs");
+        // the stamping reached it — via etf_set here, since instrument_type is deliberately left blank.
+        assert!(got.iter().all(|(_, s)| picks::asset_class(&s.quote) == 1), "sweep must class funds as ETFs");
+
+        // a zero close poisons `realized` to ±inf, and one such row drags a whole de-meaned bucket to
+        // -inf. Short holds reach early data the 12y path never walks, which is where this bites.
+        let mut poisoned = closes.clone();
+        poisoned[MIN_HISTORY] = 0.0;
+        let after = walk(&poisoned);
+        assert!(after.iter().all(|(_, s)| s.realized.is_finite()), "non-finite realized must be dropped");
+        assert!(after.len() < got.len(), "the poisoned cutoffs must actually have been dropped");
+    }
+
+    /// The census is the diagnostic every conclusion in the ETF-classification receipt rests on, and the
+    /// original bug survived years precisely because no class count was ever printed or checked.
+    #[test]
+    fn class_census_counts_scored_and_total_per_class() {
+        let n = 13 * 252;
+        let dates = synth_calendar(n);
+        let (etf_set, sector_of) = (HashSet::new(), HashMap::new());
+        let d = BuyHeuristic::default();
+        let mk = |tk: &str, name: &str, ity: &str, g: f64| {
+            let closes = synth_series(n, g, 0.04, 0.0);
+            let mut quote = core::backtest_quote(tk, &dates, &closes, n - 1, 252);
+            stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
+            Sample { date: dates[n - 1], realized: 0.0, relative: 0.0, quote, fund: None, trail: Vec::new() }
+        };
+        // one compounder and one sinking laggard per class: the scored counts must come out BELOW the
+        // totals, else this would pass just as happily against a fn that returned the totals twice.
+        let samples = [
+            mk("BTC-EUR", "BTC-EUR", "CRYPTOCURRENCY", 0.30),
+            mk("DEAD-EUR", "DEAD-EUR", "CRYPTOCURRENCY", -0.30),
+            mk("XDWD.L", "Xtrackers MSCI World UCITS ETF", "ETF", 0.14),
+            mk("BAD.L", "Sinking UCITS ETF", "ETF", -0.30),
+            mk("WIN", "Winner Industries AG", "EQUITY", 0.22),
+            mk("LOSE", "Sinking Corp", "EQUITY", -0.30),
+        ];
+        let census = class_census(&samples, &d);
+        assert_eq!([census[0].0, census[1].0, census[2].0], [2, 2, 2], "totals per class");
+        assert_eq!([census[0].1, census[1].1, census[2].1], [1, 1, 1], "only the compounder scores");
+        // and it is indexed BY picks::asset_class, not by insertion order
+        assert_eq!(class_census(&samples[..2], &d)[0].0, 2, "crypto lands at index 0");
+        assert_eq!(class_census(&samples[2..4], &d)[1].0, 2, "ETF lands at index 1");
+        assert_eq!(class_census(&samples[4..], &d)[2].0, 2, "stock lands at index 2");
     }
 }

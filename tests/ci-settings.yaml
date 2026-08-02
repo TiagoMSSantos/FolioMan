@@ -33,6 +33,7 @@
 #      8y-s       rho +0.25 -> +0.16   edge  +77.1 ->  +42.9   winsor  +73.6 ->  +41.2   OOS +0.19/+0.19 -> +0.19/+0.08
 #
 # The damage tracks ETF density EXACTLY — 0.3% density, no change; 22%, edge -30%; 42%, edge -44%. That
+# (but see TWO-CAUSE ATTRIBUTION below: the "after" column bundles a second change, now separated)
 # dose-response is the evidence the fix is a fix and not a new bug. `windows scored` barely moves
 # (380->380, 576->576, 723->717), so no names dropped out: what changed is the YARDSTICK, not the pool.
 # The old 12y/8y numbers were inflated because a growth stock was being graded against a peer pool that
@@ -48,10 +49,46 @@
 # getting worse. The growth lane still beats the on-sale foil at every horizon (661 vs 413, 148 vs 46,
 # 43 vs 27), so the lane choice is unaffected too.
 #
+# TWO-CAUSE ATTRIBUTION (added 2026-08-02, correcting the single-cause reading above)
+# ----------------------------------------------------------------------------------------------
+# The "after" column bundles TWO changes that shipped in the SAME commit, not one:
+#   (1) the de-mean now groups by a CORRECT asset class, so a stock is graded against stocks;
+#   (2) `growth_commodity_damp` (0.8 in this file) went from inert to LIVE, because the same stamping
+#       that fixed the class also supplies the `sector` and real fund `name` that `picks::is_commodity`
+#       reads. Its own doc in config.rs asserted it "can never be swept" — that was true until it wasn't.
+# Attributing the whole move to (1) was therefore unproven. A CONTROL run — `growth_commodity_damp: 1.0`,
+# every other knob at this file, same binary/universe/session — separates them. GROWTH lane, edge:
+#
+#   horizon   base (pre-fix)   ctrl (split only)   etf (split+damp)   split alone   damp alone
+#    20y-s KING   +648.2            +653.9              +661.2           +5.7         +7.3
+#    12y-s        +212.9            +141.2              +148.1          -71.7         +6.9
+#     8y-s         +77.1             +42.0               +42.9          -35.1         +0.9
+#   rho:  20y +0.18/+0.18/+0.18   12y +0.21/+0.09/+0.12   8y +0.25/+0.15/+0.16
+#   winsor ctrl: +576.4 / +106.9 / +40.3     OOS ctrl: +0.21|+0.17 / +0.16|-0.02 / +0.19|+0.06
+#
+# WHAT THIS CHANGES, and what it does not:
+#   - The 12y/8y collapse IS the peer-mean split. The split ALONE costs MORE than the net move
+#     (-71.7 vs a net -64.8 at 12y; -35.1 vs -34.2 at 8y) — the damp cushions it. The receipt above
+#     is not just directionally right there, it UNDERSTATES the contamination.
+#   - The 20y KING improvement is mostly the DAMP (+7.3 of +13.0), not the split (+5.7). The original
+#     "the king horizon barely moved" line stands, but its cause was misattributed.
+#   - `growth_commodity_damp` is edge-POSITIVE at every horizon measured. This is the FIRST measurement
+#     the knob has ever had; it was set to 0.8 by judgement precisely because it was believed unsweepable.
+#     At 12y it also lifts OOS-late from -0.02 to +0.01, i.e. off the wrong side of zero.
+# DEBT: the damp is now sweepable and has NOT been swept — 0.8 remains an unfitted judgement value that
+# happens to measure positive. Sweep it before treating 0.8 as validated.
+#
 # GATES THAT WERE DEAD AND ARE NOW LIVE in the backtest (they read name/instrument_type/sector):
 #   is_commodity_etf (physical-gold/ETC), is_commodity (fund name tokens), sharpe_cap_etf.
 # STILL INERT there, for a different and unfixed reason — `backtest_quote` never fills their inputs:
 #   growth_min_aum_etf (aum_eur None), is_noneur_etf (quote_currency None), age/TER gates.
+# BOTH LISTS ARE NOW PINNED, not prose: `growth_gate_reachability_pin` (commands/backtest.rs) probes
+# every growth knob against a stock/ETF/crypto fixture built through the real reconstruction and asserts
+# the full LIVE/INERT table per class. It also separates the three reasons a knob reads INERT — field
+# never filled, scoped to another class, or reachable-but-dominated (which is what
+# `growth_require_lifetime_uptrend` turns out to be: `growth_min_cagr` rejects its cohort first).
+# Change a gate's reachability and that test fails, which is the point — these claims rotted silently
+# for years precisely because nothing asserted them.
 #
 # DEBT, DELIBERATELY NOT PAID HERE: growth_min_cagr 19, growth_min_range_pct 80, growth_maxdd_cap 84,
 # growth_max_peg 1.6, growth_accel_weight 0.65 and every other knob receipt below were FITTED on the
