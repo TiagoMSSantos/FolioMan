@@ -649,7 +649,13 @@ buy_heuristic:
                                  #   −0.1..−0.4. Arm F (capped-CAGR) failed exactly where this wins (rank-1 median at king).
                                  #   The old 12y knee above ("16 overshoots") was measured under trend weight 0.35 PRE-(#3k);
                                  #   at 0.15 the argmax leans on the gate instead of the trend reward, and the knee moves.
-                                 #   Intermediates 15-18 are UNSWEPT under the new regime. Pair-checked with growth_max_peg 1.6
+                                 #   Intermediates 15-18: SWEPT — see the LADDER and RUNG-15 blocks below (16/17/18 on
+                                 #   2026-08-01, 15 on 2026-08-02). Nothing below 19 ships. THIS LINE READ "UNSWEPT" FOR A DAY
+                                 #   after its own discharge note landed 14 lines further down; a later session read this line,
+                                 #   missed the discharge, and built a whole plan around re-running a ladder that already existed
+                                 #   (caught before the redundant arms ran — but only just).
+                                 #   If this gate is ever re-laddered, update THIS line too, not only the block below.
+                                 #   Pair-checked with growth_max_peg 1.6
                                  #   (knob-K12 grid): interaction nil — king byte-identical to this arm solo, 12y-s +215.1 h2h 69%,
                                  #   8y-s +71.8 h2h 57%. The pair IS the new ship baseline.
                                  #   LADDER SWEPT 2026-08-01 (16/17/18/20/22 x {20,12,8} stress, cagr-*-s.txt) — 19 CONFIRMED,
@@ -664,6 +670,30 @@ buy_heuristic:
                                  #   and 8y rank-1 +5.9|+6.3 BEATS this arm's +5.6|+6.1. It loses ONLY the primary metric, king
                                  #   rank-1 (h2h 50% vs 60%, median +4.0 vs +5.3). Re-test 18 FIRST if the grading rule is ever
                                  #   re-weighted toward the 8y lane. The "15-18 unswept" caveat above is now discharged.
+                                 #   RUNG 15 ADDED 2026-08-02 (bt_15_{20,12,8}.txt vs controls ctrl-20-s / bt_19_12 / ctrl-8-s,
+                                 #   same 4945-ticker universe) — the interval is CLOSED 15..22, and 15 extends the below-19
+                                 #   pattern to its end point. It wins the LANE at 12y and the DOWNSIDE everywhere, and still
+                                 #   loses, because it gives back exactly what 14->19 bought:
+                                 #     20y-s  edge +643.1 vs +653.9, boot LOWER +408.4 vs +341.7, winsor +590.6 vs +576.4,
+                                 #            top-10 +6.1|+6.0 vs +6.1|+6.1 — but rank-1 +4.9|+4.3 vs +6.0|+6.6, h2h 50% vs 65%
+                                 #     12y-s  edge +167.1 vs +148.1, boot LOWER +100.5 vs +87.3, winsor +139.2 vs +113.6,
+                                 #            late-OOS +0.08 vs +0.01 — but rank-1 +4.3|+5.2, h2h 43% vs 66% (BELOW 50%: #1 is
+                                 #            worse than the 11-20 book — the winner's curse (#3k) cures, walking back in)
+                                 #     8y-s   edge +37.8 vs +42.0, winsor +13.3 vs +40.3 (collapses), late-OOS -0.16 vs +0.06
+                                 #            (NEGATIVE), worst window -15.8 vs -9.2 — rank-1 +4.8|+5.5 vs +6.6|+7.2, h2h 56%
+                                 #   King h2h below 19 is now monotone: 16/17/18/15 = 45/48/50/50% vs 65%. A DEEPER POOL WITH A
+                                 #   BETTER DOWNSIDE AND A ROTTEN ARGMAX IS A NO-SHIP — the same asymmetry that sank growth_max_peg
+                                 #   2.0, read from the other side: there the point estimate rose while the lower bound fell; here
+                                 #   the lower bound rises while the argmax rots. Both fail because the bar is ALL clauses, not any.
+                                 #   ETF-BLIND, and this gate is why (see class_census, backtest.rs): growth pass rate is
+                                 #   ETF 0/14, 4/2618, 17/8628 at 20/12/8y vs stock 380/4619, 572/9134, 700/11907. A 19%/yr floor
+                                 #   sits in the RIGHT TAIL of the stock return distribution while a diversified fund IS that
+                                 #   distribution's mean, so no broad fund can clear it — live, the broad sleeves run +11..+15%/yr
+                                 #   and only narrow tech/semis are over the line. At 15 the ETF counts only reach 0/14, 12/2618,
+                                 #   128/8628. CONSEQUENCE: this ladder graded ~99% STOCKS. It never voted on funds and cannot.
+                                 #   The ranked ETF table is a SECTOR-TILT lane by construction; broad buy-and-hold breadth lives
+                                 #   in the hold CORE (picks.rs hold_core_list), which bypasses growth_score entirely — that is
+                                 #   the design, not a gap to close by lowering this floor.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.

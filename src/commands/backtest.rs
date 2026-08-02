@@ -161,6 +161,24 @@ fn stamp_asset_class(
 /// `(cutoffs, of which growth-scored)`. Read the RATIO, never the raw count: forward-window survival
 /// scales with listing age, so ETF density is horizon-dependent (0.3% of cutoffs at 20y, 22% at 12y,
 /// 42% at 8y — 2026-08-02) and is NOT the ~87% the universe's ticker list suggests.
+///
+/// THE SECOND RATIO IS THE IMPORTANT ONE, and it is why this census exists (measured 2026-08-02). The
+/// PASS rate — growth-scored over cutoffs — is not remotely equal across classes at the shipped gates:
+///
+///   20y   ETF 0/14      12y   ETF 4/2618   (0.15%)   8y   ETF 17/8628   (0.20%)
+///         stock 380/4619       stock 572/9134 (6.3%)       stock 700/11907 (5.9%)
+///
+/// So EVERY ETF-facing number this backtest prints rests on 0-17 rows, and the 20y lane cannot speak
+/// about funds AT ALL (14 ETF cutoffs exist in total). Do not read an ETF conclusion off this harness
+/// without checking this line first.
+///
+/// NOT an age/history artifact — that was the first hypothesis and it is wrong. At 8y there are 8628
+/// ETF cutoffs, every one past the warmup with a full forward window, and the pass rate is still 0.2%.
+/// The cause is `growth_min_cagr` (19.0), whose floor sits in the RIGHT TAIL of the stock return
+/// distribution while a diversified fund IS that distribution's mean — structurally, a fund cannot be
+/// in its own tail. Confirmed by moving the knob alone: at 15 the ETF counts go 0/14, 12/2618 (0.46%),
+/// 128/8628 (1.48%). Live, the broad sleeves run +11..+15%/yr and the only ETFs over the floor are
+/// narrow tech/semis. This is a property of what a growth floor MEANS, not a bug to fix.
 fn class_census(samples: &[Sample], tuning: &BuyHeuristic) -> [(usize, usize); 3] {
     let mut out = [(0usize, 0usize); 3];
     for s in samples {
