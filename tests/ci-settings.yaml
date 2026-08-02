@@ -113,10 +113,33 @@ buy_heuristic:
                                  #   stocks, but a coin down worse than -50% on the year is a crash, not a swing (BTC's own bad
                                  #   year is -33.5%, comfortably inside; GT -62 / BGB -60 out). Was -75, which let deep crashers rank
   max_1m_drop_pct: -20.0         # LIVE: reject if 1M % <= this (a hard monthly crash = falling knife) — both lanes
-                                 #   SWEPT SOLO 2026-07-30 (off at -1e6, per-knob stress grid): noise (20y-s +629.8 vs +623.5,
-                                 #   12y-s −4.4, 8y-s −1.2, book metrics flat). The gate is FREE in backtest — keep −20 for the
-                                 #   live mid-crash month it exists to catch; an overlay running -1e6 gains nothing by it.
+                                 #   SWEPT SOLO 2026-07-30 (off at -1e6, per-knob stress grid): read as noise (20y-s +629.8 vs
+                                 #   +623.5, 12y-s −4.4, 8y-s −1.2, book metrics flat) and receipted "FREE in backtest".
+                                 #   THAT READING WAS WRONG — it came off the mean-only gate audit ca8e404 retired, and it
+                                 #   looked only at lane/book aggregates, which is precisely where this gate does NOT show up.
+                                 #   RE-SWEPT SOLO 2026-08-02 at -100 (= off for an equity: a stock cannot fall 100% in a
+                                 #   month), post-accel-0.65, same-session baselines at all three horizons, medians read:
+                                 #     the knife BINDS — it admits +5 windows at EVERY horizon (20y 380->385, 12y 576->581,
+                                 #     8y 723->728), so it was never a no-op; the 2026-07-30 aggregates just could not see it.
+                                 #     the cost lands on RANK 1 — the row actually bought — while the top-10 book is FLAT at
+                                 #     all three (20y +6.1 med +6.1 win 97%, 12y +6.3/+6.5 90%, 8y +6.4/+6.2 88%, unmoved):
+                                 #       20y-s rank-1 med +6.6 -> +6.2   12y-s +5.9 -> +5.5   8y-s +7.2 -> +7.5
+                                 #     bought with a +3.0 lane edge at 20y (+648.2 -> +651.2) and −4.3 at 8y (+77.1 -> +72.8).
+                                 #   Fails "rank-1 quality up or held at the king horizon" -> -20 KEPT. The gate sweep says the
+                                 #   same from the other side: loosening ONE notch admits n=4 whose median is -125.2 pts.
+                                 #   And "the backtest can't see the live mid-crash month this exists for" is RETIRED as an
+                                 #   argument — core::backtest_quote rebuilds a real 1M leg from the [..=as_of] slice at every
+                                 #   cutoff, so 2008/2020/2022 crash months ARE scored. The gate was measured over exactly the
+                                 #   months it exists for and earned its keep there. An overlay running -1e6 pays rank-1 for it.
+                                 #   Live 2026-08-02 the knife is binding, in the near-miss list: VRT -23.4% vs the -20.0 floor.
   max_1m_drop_pct_crypto: -35.0  # LIVE (crypto/FX): looser knife — a -20%/month alt is normal — both lanes
+                                 #   STRUCTURALLY UNMEASURABLE by backtest (2026-08-02): crypto is absent from the backtest
+                                 #   pool, so no sweep can vote on it — same class as growth_maxdd_cap_crypto / growth_max_vol_crypto.
+                                 #   Settled by live screen A/B instead (-35 vs -100, everything else HEAD): the two crypto
+                                 #   tables are IDENTICAL — same names, same order, same scores; the gate binds on NONE of the
+                                 #   20-coin pool today. That is "today is not a crash month", NOT "the gate is dead", so it is
+                                 #   not evidence to loosen. Kept at -35 on the equity twin's result above: loosening a 1M knife
+                                 #   buys nothing at the top of the book and costs rank-1 quality where it can be measured.
   min_long_pct: 30.0             # [FOIL] on-sale only: reject unless EVERY 5Y/10Y/20Y leg is > this (the growth lane has its own per-rung floors below)
   min_long_pct_crypto: -70.0     # [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -95%)
   growth_min_5y_pct: 0.0         # LIVE: growth-lane 5Y CUMULATIVE-return floor — reject if the 5Y leg <= this. Like growth_min_1y_pct above,
@@ -336,6 +359,13 @@ buy_heuristic:
   # (A) Hide ranked rows scoring <= this so the per-class tables stop padding to top_picks with
   # near-the-high names (score ~1-2 = not really "on sale"). Fewer rows when few names qualify.
   min_score: -20.0               # [FOIL] on-sale trim. (The LIVE growth equivalent is growth_min_score below.) 0 = show all
+                                 #   EVERY NEGATIVE VALUE IS THE SAME VALUE (read off the code 2026-08-02, no run needed):
+                                 #   `ranked` trims with `*s > min_score.max(0.0)` (picks.rs), so the floor is CLAMPED AT 0
+                                 #   and -20, -100 and -1e6 all mean the identical "show everything above 0". Turning this
+                                 #   more negative is not a knob turn and no backtest can separate the settings. The -20 here
+                                 #   is therefore cosmetic — it documents intent, not behaviour. To actually admit
+                                 #   negative-scored on-sale rows, the clamp has to go first; that is a code change, not config.
+                                 #   (Deliberately NOT done: the trim's whole job is dropping near-the-high padding rows.)
 
   # (C) Structural-cheap reward: how far below the ~200wk trend line (SMA = Simple Moving Average) the
   # price sits. Complements the OFF-HI drawdown (distance below the peak) with "cheap vs the long trend".
