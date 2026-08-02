@@ -853,6 +853,23 @@ pub async fn run(args: Vec<String>) {
     // Bitcoin NUPL: whole-market crypto sentiment gauge. Fetched BEFORE render so it can damp the
     // crypto rows (high NUPL = euphoric top), then also printed as the footer line.
     let nupl = fetch::fetch_nupl(&client, &settings.urls).await;
+    // (#45) per-coin MVRV, the same quantity as the NUPL above with one row per coin instead of
+    // Bitcoin's alone. Stamped onto the quotes HERE rather than inside `fetch::quotes` because it is
+    // one bulk request for the whole crypto lane — per-quote it would be an HTTP call per coin. Must
+    // precede `render`: `crypto_max_mvrv` is a real gate in `growth_score`, not a display trim, so an
+    // unstamped quote would rank as though the ceiling did not exist.
+    let mvrv = fetch::fetch_mvrv(&client, &settings.urls, &universe).await;
+    let mvrv_hits = quotes.iter().filter(|q| mvrv.contains_key(&q.ticker)).count();
+    for quote in &mut quotes {
+        quote.mvrv = mvrv.get(&quote.ticker).copied();
+    }
+    // Coverage is thin BY DESIGN of the source, so state it rather than letting a column of n/a imply
+    // a broken fetch: the coins without a value pass the ceiling untested, which is the house
+    // missing-data rule and also the main reason this gate is mild in practice.
+    let coins = quotes.iter().filter(|q| crate::picks::is_currency_quoted(&q.ticker)).count();
+    if coins > 0 {
+        println!("Crypto valuation: {mvrv_hits} of {coins} coins carry an MVRV (the rest pass the ceiling free)");
+    }
 
     // (round 110/111) owned-position overlay: what you already hold at the brokers, so the tables
     // can mark covered rows with `o`. Stocks/ETFs from Trading212, crypto from Binance; each broker

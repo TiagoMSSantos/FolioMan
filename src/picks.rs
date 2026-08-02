@@ -904,6 +904,28 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     {
         return None;
     }
+    // (#45) CRYPTO VALUATION CEILING — the class-native twin of the PEG ceiling just below, and the
+    // first crypto cheapness measure to survive measurement (the (#37) DefiLlama revenue proxy was
+    // rejected: chain "P/E" in the thousands, ETH needing 1,629 %/yr to clear a 1.6 bar). MVRV = market
+    // cap / realized cap — what the market pays over what its holders actually paid. Compared DIRECTLY,
+    // not reciprocally like `peg_yield`: on this scale expensive is already high.
+    //
+    // Explicitly `crypto`-scoped rather than relying on a None field, unlike the fundamentals gates
+    // below: `quote.mvrv` really is None for every non-coin, but the scope is a fact about the metric
+    // (realized cap is on-chain), not an accident of which fetches filled which struct.
+    //
+    // The shipped 2.0 is NOT a fresh judgement. `nupl_euphoria` (0.5) already declares where crypto
+    // greed begins, and NUPL = 1 - 1/MVRV, so NUPL 0.5 IS MVRV 2.0. The damp and this gate share one
+    // threshold: a coin above it is both score-damped and rejected. That double charge is deliberate —
+    // the alternative is two numbers that both mean "expensive" and drift apart, which is exactly the
+    // failure the PEG cell below documents.
+    //
+    // DO NOT lower this toward 1.0 without re-reading the `discount_weight` receipt: the walk-forward
+    // backtest found deepest-dip ranking BACKWARDS, and below ~1.0 this ceiling inverts into precisely
+    // that — it would cut BTC (1.19 live) and keep the most bled alts (ICP 0.28, CRO 0.26).
+    if crypto && tuning.crypto_max_mvrv > 0.0 && quote.mvrv.is_some_and(|m| m > tuning.crypto_max_mvrv) {
+        return None;
+    }
     // (#37)/(#38) VALUATION + MARGIN gates, both off (0) by default. No `!crypto` guard, unlike the two
     // above: coins and ETFs carry no `quote.fund` at all, so the None arms already scope these to
     // equities. Adding the guard "for consistency" would be a second thing to keep true for no gain.
@@ -1291,6 +1313,16 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     if crypto && tuning.growth_max_vol_crypto > 0.0 {
         if let Some(v) = quote.volatility_pct.filter(|&v| v > tuning.growth_max_vol_crypto) {
             fails.push(("volatile", format!("{v:.1}%/day swing (cap {:.1}%)", tuning.growth_max_vol_crypto), v <= tuning.growth_max_vol_crypto + 0.5));
+        }
+    }
+    // (#45) the MVRV ceiling's reason — the twin of the `crypto && crypto_max_mvrv` gate in
+    // `score_parts`; the two must stay the SAME expression or the ranking and this footer disagree
+    // about why a coin vanished. No unit conversion needed (unlike the PEG below): the knob, the gate
+    // and the MVRV column are all the same number, so what the footer quotes is what was compared.
+    // RELATIVE near-miss margin (50% over), matching the PEG leg — MVRV is a multiple, not a pp count.
+    if crypto && tuning.crypto_max_mvrv > 0.0 {
+        if let Some(m) = quote.mvrv.filter(|m| *m > tuning.crypto_max_mvrv) {
+            fails.push(("mvrv", format!("MVRV {m:.2} (ceiling {:.2})", tuning.crypto_max_mvrv), m <= tuning.crypto_max_mvrv * 1.5));
         }
     }
     // (#37) the PEG ceiling's reason. Convert the gating value BACK to a PEG (100/peg_yield) so the
@@ -1699,6 +1731,7 @@ const COLUMNS: &[ColSpec] = &[
     ColSpec { key: "abv-ma", hdr: "ABV-MA", width: 8, right: true }, // % above the 200wk SMA (overextension)
     ColSpec { key: "pe", hdr: "P/E", width: 7, right: true },        // trailing P/E (FMP key only)
     ColSpec { key: "peg", hdr: "PEG", width: 6, right: true },       // (#37) 100/peg_yield — THE PEG: what growth_max_peg cuts on. Annual EPS ÷ the score's CAGR, so it won't exactly equal the TTM-based P/E cell ÷ CAGR
+    ColSpec { key: "mvrv", hdr: "MVRV", width: 6, right: true },     // (#45) CRYPTO's valuation cell — market cap / realized cap, what `crypto_max_mvrv` cuts on. NOT a PEG and deliberately not in that column: MVRV has no earnings term (realized cap values each coin at the price it last moved), so it is a P/B analogue. <1 = the market sits below its own aggregate cost basis
     ColSpec { key: "roe", hdr: "ROE/A", width: 7, right: true },     // trailing return on equity — or on ASSETS where equity is not a credible denominator, negative or collapsed (`core::quality_return`), hence the slash: one column, two denominators, no per-row flag
     ColSpec { key: "div", hdr: "DIV", width: 7, right: true },       // trailing-1Y dividend yield
     ColSpec { key: "ter", hdr: "TER", width: 6, right: true },       // ETF annual expense ratio % — the one cost that compounds against a decades hold (FMP key, ETFs only)
@@ -1839,7 +1872,7 @@ pub fn clean_name(quote: &Quote) -> String {
 /// already-fetched `Quote` fields — pure formatting, no scoring. Unknown key -> "?".
 /// `tuning` is read by the `leg` column alone (which rung, which CAGR flavour, which cap) so that cell
 /// can print the score's own number instead of re-deriving one; nothing here scores.
-fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, tuning: &BuyHeuristic) -> String {
+fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, tuning: &BuyHeuristic, fund_pe: &HashMap<String, f64>) -> String {
     // ≥1000% drops the decimal so a +26522% 20Y cell still fits its 8-char column instead of overflowing.
     let pct1 = |o: Option<f64>| {
         o.map_or("n/a".to_string(), |v| if v.abs() >= 1000.0 { format!("{v:+.0}%") } else { format!("{v:+.1}%") })
@@ -1850,8 +1883,9 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
     let is_crypto = is_currency_quoted(&quote.ticker) || quote.instrument_type.eq_ignore_ascii_case("CRYPTOCURRENCY");
     let is_etf = quote.instrument_type.eq_ignore_ascii_case("ETF");
     let is_equity = quote.instrument_type.eq_ignore_ascii_case("EQUITY");
-    let stock_only_na = is_etf || is_crypto; // P/E, PEG, ROE don't apply here
+    let stock_only_na = is_etf || is_crypto; // P/E, ROE don't apply here (PEG now splits equity/fund — see below)
     let etf_only_na = is_equity || is_crypto; // TER doesn't apply here
+    let crypto_only_na = is_equity || is_etf; // MVRV doesn't apply here — realized cap is an on-chain quantity
     match key {
         "rank" => mark.to_string(),
         "name" => clean_name(quote),
@@ -1928,12 +1962,28 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         //
         // `n/a` here is not missing data. It is the gate saying it cannot price this name — loss-maker,
         // non-positive growth, or no long leg — and `gate_failures` names that case in words.
-        "peg" if stock_only_na => "—".to_string(),
+        "peg" if is_crypto => "—".to_string(),
+        // (#37 funds) the ETF leg of the same cell. A fund has no per-share EPS, so its PEG is built
+        // from the look-through equity-book P/E (`parse_fund_pe`) over the SAME `long_cagr_pct` the
+        // equity arm below divides by. Routed through `fund_peg_yield` — the identical fn `lane_split`
+        // trims on — so the printed number and the acted-on number are one value, not two that agree
+        // today. That is the whole lesson of the APH/ODFL bug described above, applied to funds.
+        // `n/a` = this fund served no P/E (Yahoo omits it for some issuers); it is never trimmed then.
+        "peg" if is_etf => {
+            fund_peg_yield(quote, tuning, fund_pe).map_or("n/a".to_string(), |p| format!("{:.2}", 100.0 / p))
+        }
         "peg" => quote
             .fund
             .as_ref()
             .and_then(|f| f.peg_yield)
             .map_or("n/a".to_string(), |p| format!("{:.2}", 100.0 / p)),
+        // (#45) MVRV — market cap / realized cap, the coin's price against what its holders actually
+        // paid. This is what `crypto_max_mvrv` cuts on, printed verbatim. It is NOT a PEG and must not
+        // be folded into that column: there is no earnings term, so it reads as a P/B, not a P/E ÷ g.
+        // Same quantity as the `Bitcoin NUPL` footer, per coin instead of market-wide (NUPL = 1 - 1/MVRV).
+        // `n/a` = no on-chain data for this coin (most of the top 100) — it passes the ceiling free.
+        "mvrv" if crypto_only_na => "—".to_string(),
+        "mvrv" => quote.mvrv.map_or("n/a".to_string(), |v| format!("{v:.2}")),
         "roe" if stock_only_na => "—".to_string(),
         // (#42) The `|ROE| > 100 -> n/m` rule that used to live here is GONE, not relaxed: it read the
         // ROE LEVEL, and level does not separate "earned a lot on its assets" from "bought its equity
@@ -2029,7 +2079,8 @@ impl Owned {
 
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks). Columns +
 /// order come from `widths.columns` via [`active_columns`] (default = [`DEFAULT_COLUMNS`]).
-fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, owned: &Owned, hide: &[&str], tuning: &BuyHeuristic) {
+#[allow(clippy::too_many_arguments)]
+fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, owned: &Owned, hide: &[&str], tuning: &BuyHeuristic, fund_pe: &HashMap<String, f64>) {
     println!("\n{title}");
     if picks.is_empty() {
         println!("  (none pass the gates)");
@@ -2065,7 +2116,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         let alt = tuning8.as_ref().and_then(|t| growth_score(&as_8y_window(quote), t));
         let line = cols
             .iter()
-            .map(|c| fmt_cell(&col_cell(c.key, quote, score, alt, mark, tuning), col_width(c, w), c.right))
+            .map(|c| fmt_cell(&col_cell(c.key, quote, score, alt, mark, tuning, fund_pe), col_width(c, w), c.right))
             .collect::<Vec<_>>()
             .join(" ");
         println!("  {line}");
@@ -2245,13 +2296,15 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // it's not a quota, that's all that passed the gates + filter.
     let secs = if sectors.is_empty() { "all".to_string() } else { sectors.join(", ") };
     let head = |len: usize| if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") };
-    // P/E, PEG, ROE, REV-YoY, EPS-YoY, NET% are equity-only; TER/AUM/USE/REPL are ETF-only. Hide the
-    // always-"—" columns per class: stocks drop the fund columns, ETFs drop the equity fundamentals,
-    // crypto drops both.
+    // P/E, ROE, REV-YoY, EPS-YoY, NET% are equity-only; TER/AUM/USE/REPL are ETF-only; MVRV is
+    // crypto-only. PEG spans equity AND funds now — one header, two constructions (per-share EPS vs
+    // look-through book P/E), both over the same CAGR. Hide the always-"—" columns per class: stocks
+    // drop the fund + coin columns, ETFs drop the equity fundamentals but KEEP their PEG, crypto drops
+    // every equity/fund column and keeps MVRV.
     // the ranking explainer prints ONCE here — repeating the same ~340-char paragraph in all three
     // table titles (incl. the crypto sentence over the stocks table) tripled the noise.
     println!("\n{kind} — {desc}");
-    print_picks(&format!("{} stocks [sectors: {secs}]:", head(stock.len())), &stock, n, w, pinned, owned, &["ter", "aum", "use", "repl"], tuning);
+    print_picks(&format!("{} stocks [sectors: {secs}]:", head(stock.len())), &stock, n, w, pinned, owned, &["ter", "aum", "use", "repl", "mvrv"], tuning, fund_pe);
     // (#27) cluster concentration: a top-20 stock table is usually ~3 correlated trades, not 20
     // independent bets — count the SHOWN rows per GICS sector so "semis-heavy" is a number, not a
     // vibe. Display-only; empty map (`check`, explicit-args screen) skips the sector line. Names
@@ -2290,10 +2343,14 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     } else {
         Cow::Borrowed(w)
     };
-    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, &etf_w, pinned, owned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "buyback"], tuning);
+    // `peg` is NOT hidden here any more (#37 funds): the ETF lane is trimmed on a real fund PEG, and a
+    // table that acts on a number while refusing to print it is how the ETF ceiling's first cull looked
+    // like an unexplained one-row table. `pe` stays hidden — a fund's book P/E is a look-through
+    // aggregate, not the row's own multiple, and it already has the footer line.
+    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, &etf_w, pinned, owned, &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv"], tuning, fund_pe);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
-    print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, owned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom"], tuning);
+    print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, owned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom"], tuning, fund_pe);
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -2634,7 +2691,7 @@ mod tests {
     /// flavour, `long_trend_cap`) are then asserted against the defaults the screen actually runs with,
     /// not against a hand-built config that could drift from them.
     fn cc(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str) -> String {
-        col_cell(key, quote, score, alt, mark, &BuyHeuristic::default())
+        col_cell(key, quote, score, alt, mark, &BuyHeuristic::default(), &HashMap::new())
     }
 
     /// (round 110) owned-overlay base normalizers: Trading212 `BASE_MARKET_EQ` and Yahoo
@@ -2993,6 +3050,7 @@ mod tests {
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
             pe_ratio: None,
+            mvrv: None, // (#45) no MVRV -> the crypto ceiling passes these fixtures free; the gate's own tests set it
             roe: None,
             expense_ratio: None, // (TER) display-only, never scored; tests don't exercise it
             // for tests, mirror the on-sale magnitude: a deeper drawdown = deeper in its range.
@@ -3335,7 +3393,7 @@ mod tests {
     with_peg(&mut pq, Some(40.0), Some(5.0)); // peg_yield 40 -> PEG 2.50, over the 2.0 ceiling
     pq.pe_ratio = Some(20.0); // old formula: 20 / 21.5%/yr 10Y leg = PEG 0.93 -> would have printed "cheap"
     assert!(growth_score(&pq, &peg_t).is_none(), "gate must cut PEG 2.50");
-    assert_eq!(col_cell("peg", &pq, 0.0, None, "", &peg_t), "2.50", "column must SHOW the 2.50 the gate cut on, not 0.93 from pe_ratio");
+    assert_eq!(col_cell("peg", &pq, 0.0, None, "", &peg_t, &HashMap::new()), "2.50", "column must SHOW the 2.50 the gate cut on, not 0.93 from pe_ratio");
     let (_, why, _) = gate_failures(&pq, &peg_t).expect("gated name yields failures").into_iter().find(|(g, ..)| *g == "peg").expect("the peg gate must name itself");
     assert!(why.contains("PEG 2.50"), "footer and column must quote ONE number, got {why:?}");
 
@@ -4627,19 +4685,19 @@ mod tests {
         let on = BuyHeuristic { perf_fill_coverage_pct: 90.0, ..BuyHeuristic::default() };
         // 7.7y is 96% of the 8Y rung (2920d) -> fills, marked. It is 39% of the 20Y rung -> stays blank:
         // the bar is what separates "almost measured it" from "made it up".
-        assert_eq!(col_cell("8y", &wtai, 0.0, None, "", &on), "≈+282.0%");
-        assert_eq!(col_cell("20y", &wtai, 0.0, None, "", &on), "n/a");
+        assert_eq!(col_cell("8y", &wtai, 0.0, None, "", &on, &HashMap::new()), "≈+282.0%");
+        assert_eq!(col_cell("20y", &wtai, 0.0, None, "", &on, &HashMap::new()), "n/a");
         // THE property the whole design rests on: the fill is display-only because it never entered
         // `perf`, so `perf_pct` — and therefore every gate, `long_leg`, `spy_premium`, `twin_groups` —
         // still reads the 8Y leg as absent. If this ever passes, a fabricated leg is being scored.
         assert!(perf_pct(&wtai, "8Y").is_none(), "the fill must not have leaked into `perf`");
         // a leg that EXISTS is never replaced by the fill, whatever the coverage says
-        assert_eq!(col_cell("5y", &wtai, 0.0, None, "", &on), "+90.0%");
+        assert_eq!(col_cell("5y", &wtai, 0.0, None, "", &on, &HashMap::new()), "+90.0%");
         // (H-cov) staying dead: this record SPANS 20 years and its 20Y leg is blank anyway (a zero past
         // price at the anchor). cov >= 1.0 -> refuse. Filling here is the exact bug core.rs's guard removed.
         let mut old = wtai.clone();
         old.age_years = Some(25.0);
-        assert_eq!(col_cell("20y", &old, 0.0, None, "", &on), "n/a", "a 25y record's blank 20Y is a data gap, not youth");
+        assert_eq!(col_cell("20y", &old, 0.0, None, "", &on, &HashMap::new()), "n/a", "a 25y record's blank 20Y is a data gap, not youth");
         // `leg` = the CAGR the growth rank scores, NOT the whole-life `cagr` cell. Top of the 20/8/5
         // ladder wins, so +2600% over 20y -> 17.9%/yr, and `cagr` stays n/a (this stub has no life_cagr)
         // — the two columns disagreeing is the whole point of adding this one.
@@ -4657,7 +4715,7 @@ mod tests {
         // `long_cagr.min(0.0)` is 0.0 for every positive CAGR, so the cell would read "+0%" and BOTH
         // trend terms would be silently gutted while the table still printed plausible scores.
         let uncapped = BuyHeuristic { long_trend_cap: 0.0, ..BuyHeuristic::default() };
-        assert_eq!(col_cell("leg", &hot, 0.0, None, "", &uncapped), "+38%");
+        assert_eq!(col_cell("leg", &hot, 0.0, None, "", &uncapped, &HashMap::new()), "+38%");
         // (#37) `peg` prints `fund.peg_yield` and NOTHING else — the number `growth_max_peg` cuts on.
         // It used to compute `pe_ratio / long_cagr_from` here, a second PEG that disagreed with the gate
         // (APH cut at 2.02 in the run that ranked ODFL printing 2.51). `pe_ratio` is deliberately left
@@ -4673,7 +4731,7 @@ mod tests {
         // and it is INERT to the CAGR switch, because peg_yield already resolved it via long_cagr_pct.
         // The old cell moved 0.53 -> 2.00 across this same flip; a cell that still moves is re-deriving.
         let on_life = BuyHeuristic { use_life_cagr: true, ..BuyHeuristic::default() };
-        assert_eq!(col_cell("peg", &peg, 0.0, None, "", &on_life), "2.50");
+        assert_eq!(col_cell("peg", &peg, 0.0, None, "", &on_life, &HashMap::new()), "2.50");
         // no peg_yield -> n/a. NOT "missing data": the gate declined to price it (loss-maker / no growth).
         peg.fund = Some(core::FundFactors { peg_yield: None, ..Default::default() });
         assert_eq!(cc("peg", &peg, 0.0, None, ""), "n/a");
@@ -5241,5 +5299,74 @@ mod tests {
         let pin_dear: HashSet<&str> = ["DEAR.L"].into_iter().collect();
         assert_eq!(names(&lane_split(rows(), 10, &all_sectors, &on, &pin_dear, &pe).1), ["DEAR.L", "UNKNOWN.L", "CHEAP.L"],
             "a pin means always show me this, here as everywhere else");
+
+        // (#37 funds) TRAIN==SERVE for the printed cell: the ETF `peg` column must show the SAME number
+        // the trim above cut on. This is the fund half of the APH/ODFL pin at the top of this file — the
+        // cell and the gate came apart once already, and only a test comparing them catches it.
+        assert_eq!(col_cell("peg", &dear, 0.0, None, "", &on, &pe), "2.50", "P/E 25 over 10 %/yr");
+        assert_eq!(col_cell("peg", &cheap, 0.0, None, "", &on, &pe), "0.40", "P/E 4 over 10 %/yr");
+        assert_eq!(col_cell("peg", &unknown, 0.0, None, "", &on, &pe), "n/a",
+            "no P/E fetched -> n/a, never a number and never the class-N/A dash");
+        // and the ceiling's own arithmetic agrees with the cell it prints: 2.50 > 2.0 is why DEAR.L went.
+        assert!(100.0 / fund_peg_yield(&dear, &on, &pe).unwrap() > on.growth_max_peg_etf);
+    }
+
+    /// (#45) The CRYPTO valuation ceiling, and the three things about it that are easy to get backwards.
+    ///
+    /// MVRV is compared DIRECTLY, unlike `growth_max_peg` which is applied to a reciprocal — on this
+    /// scale expensive is already high, so a mistaken reciprocal here would silently invert the gate
+    /// into "only buy the most expensive coins". The 2.0/1.19 pair below is the live BTC reading, so a
+    /// regression that flips the comparison fails on the exact number the receipts quote.
+    #[test]
+    fn crypto_mvrv_ceiling_gates_only_coins_with_data() {
+        let coin = |t: &str, mvrv: Option<f64>| {
+            let mut q = Quote::stub(t, "€100.00", "", t);
+            q.instrument_type = "CRYPTOCURRENCY".into();
+            q.perf = vec![None; core::HORIZONS.len()];
+            for (label, cum) in [("1Y", 40.0), ("5Y", 400.0), ("8Y", 900.0)] {
+                q.perf[core::HORIZONS.iter().position(|(l, _)| *l == label).unwrap()] = Some((String::new(), cum));
+            }
+            q.range_pct = 90.0;
+            q.avg_turnover_eur = Some(1e9);
+            q.mvrv = mvrv;
+            q
+        };
+        let on = BuyHeuristic { crypto_max_mvrv: 2.0, ..BuyHeuristic::default() };
+        let off = BuyHeuristic::default();
+        let (dear, cheap, blank) = (coin("DEAR-EUR", Some(3.29)), coin("BTC-EUR", Some(1.19)), coin("BNB-EUR", None));
+
+        // PRECONDITION — all three must score with the ceiling off, or every verdict below is vacuous.
+        for q in [&dear, &cheap, &blank] {
+            assert!(growth_score(q, &off).is_some(), "{} must score with the ceiling off", q.ticker);
+        }
+        assert!(growth_score(&dear, &on).is_none(), "MVRV 3.29 is over the 2.0 ceiling");
+        assert!(growth_score(&cheap, &on).is_some(), "MVRV 1.19 is under it — this is BTC's live reading");
+        assert!(growth_score(&blank, &on).is_some(), "no MVRV passes free: ~17 of the top 100 carry one");
+
+        // the footer must name the gate and quote the SAME number, in the same units as the knob
+        let why = gate_failures(&dear, &on).expect("a gated coin yields failures").into_iter()
+            .find(|(g, ..)| *g == "mvrv").expect("the mvrv gate must name itself");
+        assert!(why.1.contains("MVRV 3.29") && why.1.contains("2.00"), "got {:?}", why.1);
+        assert!(!why.2, "3.29 is more than 1.5x the ceiling — not a near-miss");
+        // a coin just over the line IS a near-miss, on the same relative margin the PEG leg uses
+        let edge = coin("EDGE-EUR", Some(2.5));
+        let (_, _, near) = gate_failures(&edge, &on).unwrap().into_iter().find(|(g, ..)| *g == "mvrv").unwrap();
+        assert!(near, "2.5 is within 1.5x of a 2.0 ceiling");
+
+        // CLASS SCOPE: an equity carrying the same field is untouched — the gate is about coins, not
+        // about which structs happen to have the column filled.
+        let mut stock = coin("XOM", Some(3.29));
+        stock.ticker = "XOM".into();
+        stock.instrument_type = "EQUITY".into();
+        assert!(growth_score(&stock, &on).is_some(), "the ceiling is crypto-scoped, not field-scoped");
+
+        // the MVRV cell: value for a coin, class-N/A dash off one, n/a for a coin with no datum
+        let no_pe = HashMap::new();
+        assert_eq!(col_cell("mvrv", &cheap, 0.0, None, "", &on, &no_pe), "1.19");
+        assert_eq!(col_cell("mvrv", &blank, 0.0, None, "", &on, &no_pe), "n/a");
+        assert_eq!(col_cell("mvrv", &stock, 0.0, None, "", &on, &no_pe), "—");
+        // ...and MVRV never leaks into the PEG column. They are different quantities (P/B vs P/E ÷ g)
+        // and the whole reason MVRV got its own column is that one header cannot mean both.
+        assert_eq!(col_cell("peg", &cheap, 0.0, None, "", &on, &no_pe), "—");
     }
 }

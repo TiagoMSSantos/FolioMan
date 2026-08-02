@@ -122,6 +122,9 @@ pub async fn run(args: Vec<String>) {
         // `check` inspects named watchlist tickers and fetches no fund holdings, so there is no
         // look-through P/E here and the ETF PEG trim is a no-op. Deliberate: check reports on the
         // names you asked about, it does not cut them from a table.
+        // (#45) same for crypto: `check` never calls `fetch_mvrv`, so `quote.mvrv` stays None and
+        // `crypto_max_mvrv` passes every coin free. A coin `screen` would reject as expensive still
+        // reports here — which is the point, since you asked about that coin by name.
         fund_pe: &std::collections::HashMap::new(),
     });
 

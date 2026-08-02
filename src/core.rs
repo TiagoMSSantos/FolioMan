@@ -190,6 +190,7 @@ pub struct Quote {
     pub below_ma_pct: f64,             // % below the ~200-week SMA (structural "cheap vs long trend"); 0 if at/above or history too short
     pub above_ma_pct: f64,             // % ABOVE the ~200-week SMA (overextension "how far it ran"); 0 if at/below or history too short. Growth-lane brake on blow-off tops
     pub pe_ratio: Option<f64>,         // trailing P/E for the valuation tilt; None for crypto/ETF/no-earnings/no source (-> neutral)
+    pub mvrv: Option<f64>,             // (#45) CRYPTO ONLY — market cap / realized cap (CoinMetrics `CapMVRVCur`). The coin's price against what its holders actually paid; <1 = the market sits below its own aggregate cost basis. This is the per-coin form of the Bitcoin-only NUPL already fetched (NUPL = 1 - 1/MVRV), and what `crypto_max_mvrv` gates on. None for every non-coin, and for most coins — CoinMetrics serves ~17 of the top 100. BACKTEST-BLIND in practice: `backtest_quote` never fills it, and no crypto row is growth-scored at any cutoff anyway
     pub roe: Option<f64>,              // (F) trailing return-on-equity (%) — the core profitability/QUALITY factor; None for crypto/ETF/no-earnings/no source (-> neutral). BACKTEST-BLIND (point-in-time, can't reconstruct as-of)
     pub expense_ratio: Option<f64>,    // (TER) ETF annual expense ratio (%); None for stocks/crypto/no source. DISPLAY-ONLY (`ter` column) — the one cost that compounds against a decades hold
     pub range_pct: f64,                // percentile rank (0..100) of the last close in its own ~10y history; 100=at high. picks discount = 100-this
@@ -262,6 +263,7 @@ impl Quote {
             below_ma_pct: 0.0,
             above_ma_pct: 0.0,
             pe_ratio: None,
+            mvrv: None,
             roe: None,
             expense_ratio: None,
             range_pct: 0.0,

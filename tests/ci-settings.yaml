@@ -1602,6 +1602,13 @@ buy_heuristic:
                                  #   re-propose without a crypto-native cheapness measure AND a way to grade it (crypto
                                  #   has 0 growth-scored cutoffs at every horizon: 20y-s 0/4633, 12y-s 0/11758, 8y-s
                                  #   18/20575 with 0 scored — no sweep can ever vote on it). 0 = off.
+                                 #   SUPERSEDED IN PART 2026-08-02, and read the split carefully: crypto DOES have a
+                                 #   valuation gate now, `crypto_max_mvrv` above, on MVRV from CoinMetrics. Exactly HALF
+                                 #   the bar written on the line above was cleared. The measure arrived — MVRV is
+                                 #   crypto-native, runs 0.26-1.37 instead of the thousands this revenue proxy produced,
+                                 #   and cross-checks against the tool's own NUPL footer. The GRADING did not, and
+                                 #   cannot: the backtest still scores zero crypto rows. So `crypto_max_mvrv` ships on
+                                 #   judgement, and the sentence above still stands for anything built on fee revenue.
   growth_min_net_margin: 0.0     # (#38) net-margin floor on `fund.net_margin`. MEASURED AND REJECTED, kept at 0 with the
                                  #   receipt so it is not re-proposed: 5/10/15 all cost edge or era-stability, and combined
                                  #   with growth_max_peg it cancels that gate entirely and turns the newest era negative.
@@ -1763,6 +1770,53 @@ buy_heuristic:
   nupl_damp_floor: 0.5           # crypto-score multiplier at NUPL 1.0 (peak euphoria); 1.0 = damp off
   nupl_capitulation: 0.25        # NUPL below this starts BOOSTING crypto (~0.25 = fear/accumulation); 0 = boost off
   nupl_boost_ceiling: 1.3        # crypto-score multiplier at NUPL 0 (deep capitulation); 1.0 = boost off. BACKTEST-BLIND judgment lever — keep mild
+  crypto_max_mvrv: 2.0           # (#45) CRYPTO's valuation CEILING — reject a coin whose MVRV (market cap / realized cap)
+                                 #   exceeds this. MVRV is the price the market pays over the price its holders actually
+                                 #   paid; <1 = the whole market sits below its own cost basis. Printed in the new MVRV
+                                 #   column, crypto tables only.
+                                 #   IT IS NOT A PEG, and is deliberately NOT in the PEG column: realized cap has no
+                                 #   earnings term, so MVRV reads as a P/B, not a P/E ÷ growth. Folding it into `peg`
+                                 #   would recreate "two numbers, one name" — see the picks.rs `peg` cell receipt for
+                                 #   what that cost last time (the tool cut APH at 2.02 in the run it ranked ODFL at 2.51).
+                                 #   WHY 2.0 — IT IS NOT A NEW JUDGEMENT. `nupl_euphoria: 0.5` above already declares
+                                 #   where crypto greed starts, and NUPL = 1 - 1/MVRV, so NUPL 0.5 IS MVRV 2.0. The damp
+                                 #   and this ceiling now share ONE threshold. Consequence, accepted deliberately: a coin
+                                 #   above 2.0 is both score-damped AND rejected, i.e. one fact charged twice. The
+                                 #   alternative was two numbers that both mean "expensive" and drift apart.
+                                 #   DO NOT LOWER TOWARD 1.0. Below ~1.0 the ceiling inverts into dip-buying — it would
+                                 #   cut BTC (1.19 live) and keep the most bled alts (ICP 0.28, CRO 0.26) — and the
+                                 #   `discount_weight` receipt records that the walk-forward backtest found deepest-dip
+                                 #   ranking BACKWARDS. At 2.0 nothing in the live top 100 is cut (dearest is XLM 1.37),
+                                 #   so this ships INERT and bites in the next bull. That inertness is the design.
+                                 #   SOURCE: CoinMetrics community tier, `CapMVRVCur`, daily. Two requests per run and
+                                 #   the first is mandatory: the timeseries endpoint 400s the ENTIRE batch over one
+                                 #   unsupported asset (measured on cc, pyusd, rlusd, usde), so the catalog is fetched
+                                 #   first as an allowlist. It must be the /v4/catalog/ path, NOT /v4/catalog-all/ —
+                                 #   the latter lists pro-tier assets and re-admits the ones that break the call. Ids
+                                 #   are the bare lowercase symbols, so there is no id table to join and keep current.
+                                 #   TWO URL DETAILS THAT ARE LOAD-BEARING, both found by a live run returning n/a for
+                                 #   BTC ITSELF. (1) `limit_per_asset=1`: the series runs oldest-first from 2011-12-31
+                                 #   and the endpoint has no `reverse` param, so without it the page is spent on 2012
+                                 #   rows and no current value survives. (2) A DATE CHECK IN CODE on every row, because
+                                 #   `limit_per_asset=1` returns each asset's LAST row — for an asset CoinMetrics
+                                 #   STOPPED covering that is a fossil, not a quote: bnb ends 2019-04-22 at 1.88 and dot
+                                 #   ends 2022-06-03 at 0.52, and both come back looking exactly as current as btc's.
+                                 #   Rows older than 10 days are dropped, so a dead-coverage coin reads as no data (and
+                                 #   passes free) instead of being gated on a seven-year-old valuation.
+                                 #   VALIDATED AGAINST THE TOOL'S OWN FOOTER: BTC MVRV 1.19 -> NUPL 1 - 1/1.19 = 0.160,
+                                 #   against a live `Bitcoin NUPL: 0.166` line the same run. Two independent sources,
+                                 #   same quantity — this knob is the per-coin form of a gauge already shipped.
+                                 #   COVERAGE IS THIN AND THE GATE IS BUILT AROUND THAT: 17 of the live CoinGecko top
+                                 #   100 non-pegged coins carry a value. Missing MVRV PASSES (house missing-data rule).
+                                 #   Misses include BNB, SOL, TRX, AVAX, SUI, HBAR, NEAR, XMR — and BNB is currently
+                                 #   RANK 1 of the crypto table, so today the printed table shows one n/a and one value.
+                                 #   The screen prints the hit rate each run ("Crypto valuation: N of M coins ...").
+                                 #   UNSWEEPABLE, and NOT for the usual reason. The data has daily history to
+                                 #   2011-12-31, so it is not backtest-blind for want of a past value; the backtest POOL
+                                 #   growth-scores zero crypto rows at every horizon (20y-s 0/4633, 12y-s 0/11758, 8y-s
+                                 #   18 cutoffs with 0 scored). No sweep can vote on any crypto knob, this one included.
+                                 #   `growth_gate_reachability_pin` reads it INERT for all three classes: `backtest_quote`
+                                 #   never fills `quote.mvrv`, so it is cause (a) — field never filled. 0 = off (default).
 
   # RISK-ADJUSTED-RETURN tilts (B/C) — Sharpe ratio (return ÷ volatility) and Calmar ratio (return ÷
   # worst peak-to-trough drawdown), from the SAME closes already fetched, ZERO extra network cost.

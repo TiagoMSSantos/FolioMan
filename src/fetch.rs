@@ -666,6 +666,10 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         above_ma_pct: core::above_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
         // (E) trailing P/E (equities w/ FMP_API_KEY only; None -> neutral value tilt).
         pe_ratio: pe,
+        // (#45) MVRV is stamped LATER, in the screen enrichment block, not here: it comes from one bulk
+        // CoinMetrics request for the whole crypto lane, so fetching it per-quote would be one HTTP
+        // call per coin for a number the batch already has. None here = "not filled yet", never "no data".
+        mvrv: None,
         // (F) trailing ROE % (equities w/ FMP_API_KEY only; None -> neutral quality tilt).
         roe,
         // (TER) ETF annual expense ratio % (ETFs w/ FMP_API_KEY only; None -> n/a column).
@@ -2048,6 +2052,106 @@ pub async fn fetch_fundamentals_ranked(client: &Client, urls: &Urls, ticker: &st
 /// Latest Bitcoin NUPL (net unrealized profit/loss) from bitcoin-data.com. None on failure.
 pub async fn fetch_nupl(client: &Client, urls: &Urls) -> Option<f64> {
     get_json(client, &urls.nupl).await?.get("nupl")?.as_f64()
+}
+
+/// (#45) Per-coin MVRV (market cap / realized cap) from CoinMetrics' community tier, keyed by OUR
+/// ticker ("BTC-EUR" -> 1.19). The same quantity `fetch_nupl` returns for Bitcoin alone, one row per
+/// coin: NUPL = 1 - 1/MVRV, verified live at BTC MVRV 1.19 -> 0.160 against a footer reading 0.166.
+///
+/// TWO requests, and the first one is not optional. The timeseries endpoint rejects the ENTIRE batch
+/// with a 400 if a single requested asset is unsupported on this tier — measured against `cc`,
+/// `pyusd`, `rlusd` and `usde`, each of which killed a whole 28-asset query. So the catalog is fetched
+/// first and used as an allowlist. It must be the `catalog` path, not `catalog-all`: the latter
+/// enumerates pro-tier coverage and re-admits exactly the assets that break the call.
+///
+/// Mapping is the bare lowercase symbol — CoinMetrics ids ARE the symbols ("btc", "eth", "ada"), so
+/// unlike the rejected DefiLlama proxy there is no id table to join and keep current.
+///
+/// Empty map on ANY failure, which reads downstream as "no MVRV for anything" and lets every coin pass
+/// the ceiling free. Coverage is thin by nature (~17 of the top 100 carry a value, and BNB, SOL, TRX,
+/// AVAX, SUI and XMR are among the misses), so the gate is designed around absence, not around a
+/// fetch that is expected to succeed.
+pub async fn fetch_mvrv(client: &Client, urls: &Urls, tickers: &[String]) -> HashMap<String, f64> {
+    let mut out = HashMap::new();
+    let Some(catalog) = get_json(client, &urls.coinmetrics_catalog).await else { return out };
+    // catalog -> metrics[0].frequencies[freq == "1d"].assets
+    let supported: std::collections::HashSet<String> = catalog
+        .get("data")
+        .and_then(|d| d.get(0))
+        .and_then(|m| m.get("frequencies"))
+        .and_then(|f| f.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|f| f.get("frequency").and_then(Value::as_str) == Some("1d"))
+        .filter_map(|f| f.get("assets").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|a| a.as_str().map(str::to_string))
+        .collect();
+    // our crypto tickers -> the CoinMetrics ids we are allowed to ask for, and back again
+    let mut want: Vec<(String, String)> = tickers
+        .iter()
+        .filter(|t| crate::picks::is_currency_quoted(t))
+        .map(|t| (crate::picks::underlying(t).to_lowercase(), t.clone()))
+        .filter(|(id, _)| supported.contains(id))
+        .collect();
+    want.sort();
+    want.dedup();
+    if want.is_empty() {
+        return out;
+    }
+    let ids: Vec<&str> = {
+        let mut v: Vec<&str> = want.iter().map(|(id, _)| id.as_str()).collect();
+        v.dedup();
+        v
+    };
+    let url = urls.coinmetrics_mvrv.replace("{assets}", &ids.join(","));
+    let Some(body) = get_json(client, &url).await else { return out };
+    let cutoff = (chrono::Utc::now().date_naive() - chrono::Duration::days(MVRV_MAX_AGE_DAYS)).to_string();
+    let by_id = mvrv_rows(&body, &cutoff);
+    for (id, ticker) in &want {
+        if let Some(m) = by_id.get(id.as_str()) {
+            out.insert(ticker.clone(), *m);
+        }
+    }
+    out
+}
+
+/// (#45) How stale an MVRV row may be and still count. Generous for a daily series — the point is not
+/// freshness-to-the-day, it is telling "yesterday's value" apart from "coverage ended in 2019".
+const MVRV_MAX_AGE_DAYS: i64 = 10;
+
+/// (#45) One MVRV timeseries body -> newest value per CoinMetrics asset id, stale rows dropped.
+///
+/// The date check is load-bearing, not hygiene. `limit_per_asset=1` returns each asset's LAST row,
+/// which is the current one only while CoinMetrics still covers that asset: bnb stops at 2019-04-22
+/// and dot at 2022-06-03. Without this filter BNB — today's rank 1 — would print a seven-year-old
+/// 1.88 and be gated on it, and a wrong number is worse than a missing one. A dropped row leaves the
+/// coin absent from the map, so it passes the ceiling free exactly like a coin with no data at all.
+///
+/// Filtered here rather than with a `start_time=` URL param so the rule survives someone hand-editing
+/// `urls.coinmetrics_mvrv` in settings.yaml. ISO-8601 sorts lexically, so the date prefixes compare
+/// as plain strings — no parsing.
+fn mvrv_rows<'a>(body: &'a Value, cutoff: &str) -> HashMap<&'a str, f64> {
+    let mut by_id: HashMap<&str, f64> = HashMap::new();
+    for row in body.get("data").and_then(Value::as_array).into_iter().flatten() {
+        let (Some(asset), Some(v), Some(t)) = (
+            row.get("asset").and_then(Value::as_str),
+            row.get("CapMVRVCur"),
+            row.get("time").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if t.len() < 10 || &t[..10] < cutoff {
+            continue;
+        }
+        // the API serves numbers as STRINGS ("0.96110917"); accept a bare number too, in case that changes
+        if let Some(m) = v.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| v.as_f64()) {
+            if m > 0.0 {
+                by_id.insert(asset, m);
+            }
+        }
+    }
+    by_id
 }
 
 /// Sign one Börse Frankfurt API request the same way their web client does (reverse-engineered from
@@ -3462,6 +3566,36 @@ pub async fn fetch_universe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#45) The MVRV staleness guard, on the exact shapes the live endpoint returns. `btc` is a
+    /// covered asset (row = today), `bnb` and `dot` are dropped ones whose LAST row is years old —
+    /// and `limit_per_asset=1` hands those back looking just as authoritative as btc's. Dropping
+    /// them is the whole job: absent from the map = passes `crypto_max_mvrv` free, same as no data,
+    /// whereas keeping them would gate BNB (rank 1 of the crypto table) on a 2019 valuation.
+    #[test]
+    fn mvrv_rows_drops_assets_coinmetrics_stopped_covering() {
+        use serde_json::json;
+        let body = json!({"data": [
+            {"asset": "btc", "time": "2026-08-01T00:00:00.000000000Z", "CapMVRVCur": "1.188728646019947622"},
+            {"asset": "eth", "time": "2026-08-01T00:00:00.000000000Z", "CapMVRVCur": 0.898_481_8},
+            {"asset": "bnb", "time": "2019-04-22T00:00:00.000000000Z", "CapMVRVCur": "1.88"},
+            {"asset": "dot", "time": "2022-06-03T00:00:00.000000000Z", "CapMVRVCur": "0.52"},
+            {"asset": "junk", "time": "2026-08-01T00:00:00.000000000Z", "CapMVRVCur": "0"},
+            {"asset": "nodate", "CapMVRVCur": "1.10"},
+        ]});
+        let rows = mvrv_rows(&body, "2026-07-22");
+        assert_eq!(rows.len(), 2, "only the two fresh, positive rows survive: {rows:?}");
+        assert!((rows["btc"] - 1.188_728_646).abs() < 1e-6); // string payload parsed
+        assert!((rows["eth"] - 0.898_481_8).abs() < 1e-9); // bare number accepted too
+        for gone in ["bnb", "dot", "junk", "nodate"] {
+            assert!(!rows.contains_key(gone), "{gone} must not reach the gate");
+        }
+        // and the guard is a real cut, not an artifact of the fixture: with a cutoff old enough to
+        // admit them, the very same body yields the stale values the live API really serves.
+        let loose = mvrv_rows(&body, "2000-01-01");
+        assert!((loose["bnb"] - 1.88).abs() < 1e-9);
+        assert!((loose["dot"] - 0.52).abs() < 1e-9);
+    }
 
     /// Signing + concurrency + throttle asserts (no live calls). White-box via `use super::*`.
     #[test]
