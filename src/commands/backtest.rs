@@ -576,6 +576,12 @@ pub async fn run(args: Vec<String>) {
         knob("growth_max_above_ma ->off", |t| t.growth_max_above_ma = 0.0), // (#24) fwd return of the extreme-stretch names the gate excludes — validated -125.1 (n=267) at ship time; a POSITIVE flip here says re-probe the ceiling
         knob("growth_require_lifetime_uptrend ->off", |t| t.growth_require_lifetime_uptrend = false), // (#25) fwd return of the lifetime-downtrend names the gate excludes; n=0 while the gate is off
         knob("growth_maxdd_cap ->off", |t| t.growth_maxdd_cap = 0.0), // (#26) fwd return of the deep-drawdown names the gate excludes; n=0 while the gate is off
+        // READ THIS ROW BACKWARDS FROM ITS NEIGHBOURS. Every other row REMOVES a gate and prices the
+        // cohort that gate had been excluding. This one ADDS a rung to `long_leg`'s ladder, so the
+        // cohort it admits was never gated at all — those names had no long CAGR, so they were
+        // unscorable (the `history` reason, 1949 of 4748 EU-buyable names live). Same arithmetic, but
+        // "newly admitted" here means "newly MEASURABLE", not "newly forgiven".
+        knob("growth_min_leg_years ->2 (admits the 2Y rung)", |t| t.growth_min_leg_years = 2.0),
         knob("growth_max_peg ->off", |t| t.growth_max_peg = 0.0), // (#37) fwd return of the names the valuation ceiling excludes — the ceiling's own keep. The ci-settings curve (1.5..4.0) came from six hand-edited configs; this prices the on/off question every run, which is the part that sweep found decisive
     ];
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, &buy_knobs);
@@ -3390,6 +3396,9 @@ mod tests {
         ("max_1m_drop_pct", |t, v| t.max_1m_drop_pct = v, 1e9),
         ("growth_max_peg", |t, v| t.growth_max_peg = v, 1e-6),
         ("growth_require_lifetime_uptrend", |t, v| t.growth_require_lifetime_uptrend = v != 0.0, 1.0),
+        // a floor, so it probes HIGH: no listing carries a 1e9-year leg, so every rung is skipped,
+        // `long_leg` returns None and nothing is scorable. LIVE everywhere is the correct verdict.
+        ("growth_min_leg_years", |t, v| t.growth_min_leg_years = v, 1e9),
         // crypto twins
         ("growth_min_cagr_crypto", |t, v| t.growth_min_cagr_crypto = v, 1e9),
         ("growth_min_range_pct_crypto", |t, v| t.growth_min_range_pct_crypto = v, 1e9),
@@ -3531,11 +3540,11 @@ mod tests {
         assert_eq!(
             out,
             concat!(
-                "crypto LIVE  growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_min_cagr_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto growth_turnover_weight\n",
+                "crypto LIVE  growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_min_leg_years growth_min_cagr_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto growth_turnover_weight\n",
                 "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_require_lifetime_uptrend crypto_max_mvrv sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_age_years growth_min_range_pct_8y\n",
-                "etf    LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct sharpe_cap_etf growth_commodity_damp growth_turnover_weight\n",
+                "etf    LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_min_leg_years sharpe_cap_etf growth_commodity_damp growth_turnover_weight\n",
                 "etf    INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years growth_min_range_pct_8y\n",
-                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_commodity_damp growth_turnover_weight\n",
+                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_min_leg_years growth_commodity_damp growth_turnover_weight\n",
                 "stock  INERT growth_max_peg growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years growth_min_range_pct_8y\n",
             )
         );

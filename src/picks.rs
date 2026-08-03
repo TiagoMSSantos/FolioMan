@@ -24,8 +24,26 @@ use std::collections::{HashMap, HashSet};
 /// bootstrap bands ([+95.9 … +205.5] vs [+105.8 … +217.3]), the sample shrinks 1542 -> 1488 windows
 /// (a shorter leg compounds less, so more names fall under growth_min_cagr), and the newest era is
 /// worse (+100.2 -> +80.5). Accepted on direction and unanimity, not on significance.
-fn long_leg(quote: &Quote) -> Option<(f64, f64)> {
-    for (label, years) in [("20Y", 20.0), ("8Y", 8.0), ("5Y", 5.0)] {
+///
+/// `min_leg_years` (`growth_min_leg_years`) sets the SHORTEST rung this may return. At the shipped
+/// 5.0 the 2Y rung below is skipped and this is byte-identical to the 20/8/5 ladder above. At 2.0 a
+/// name with only a 2-year record gets a real CAGR instead of `None` — i.e. it stops dying on the
+/// `history` gate, which is the single largest cohort the growth lane rejects (1949 of 4748
+/// EU-buyable names, 2026-08-03) and the only one no other knob can reach.
+///
+/// 2Y is the only rung available to add: `core::HORIZONS` has no 3Y leg, and `Quote.perf` is a Vec
+/// positionally aligned to it, so inserting one is a re-fetch and a re-verification of every
+/// `perf_pct` site — not a config change.
+///
+/// Admitting a rung is NOT the same as trusting it. `trust_factor` still requires a 10Y leg for
+/// equities, so every 2Y-rung name is scored at 0.5; and `growth_min_cagr`'s whole-life leg still
+/// applies, which for a 2-year-old listing is roughly the same number. Both are damps. Neither is a
+/// substitute for the grid — a 19%/yr bar over two years is a far lower bar than over twenty.
+fn long_leg(quote: &Quote, min_leg_years: f64) -> Option<(f64, f64)> {
+    for (label, years) in [("20Y", 20.0), ("8Y", 8.0), ("5Y", 5.0), ("2Y", 2.0)] {
+        if years < min_leg_years {
+            continue;
+        }
         if let Some(p) = perf_pct(quote, label) {
             return Some((p, years));
         }
@@ -39,13 +57,13 @@ fn long_leg(quote: &Quote) -> Option<(f64, f64)> {
 /// two are ranked head-to-head. `fixed_years` = 0 -> off (longest available leg, today's behaviour).
 /// If the pinned leg is missing (short-history name) we fall back to the longest available leg; that
 /// name is a `trust_factor` 0.5 anyway, so it can't out-rank a genuinely proven compounder on this.
-fn long_leg_fixed(quote: &Quote, fixed_years: u32) -> Option<(f64, f64)> {
+fn long_leg_fixed(quote: &Quote, fixed_years: u32, min_leg_years: f64) -> Option<(f64, f64)> {
     if fixed_years == 0 {
-        return long_leg(quote);
+        return long_leg(quote, min_leg_years);
     }
     match perf_pct(quote, &format!("{fixed_years}Y")) {
         Some(p) => Some((p, fixed_years as f64)),
-        None => long_leg(quote), // pinned leg absent -> longest leg, docked by trust_factor
+        None => long_leg(quote, min_leg_years), // pinned leg absent -> longest leg, docked by trust_factor
     }
 }
 
@@ -101,7 +119,7 @@ fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) ->
 /// cell prints `n/a` and the gate declines to price the name, which is the honest outcome — the
 /// alternative is inventing a growth figure to divide by.
 pub fn long_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
-    long_leg_fixed(quote, tuning.fixed_cagr_years).map(|(cum, years)| long_cagr_from(quote, tuning, cum, years))
+    long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years).map(|(cum, years)| long_cagr_from(quote, tuning, cum, years))
 }
 
 /// (#37 funds) A fund's look-through equity-book P/E together with WHERE THE NUMBER CAME FROM.
@@ -657,8 +675,11 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     }
     // longest >2Y leg (crypto is younger, so fall back to its 1Y leg): cumulative for the gate,
     // annualized (CAGR) for the score.
-    let (long_cum, long_years) =
-        long_leg(quote).or_else(|| if crypto { perf_pct(quote, "1Y").map(|p| (p, 1.0)) } else { None })?;
+    // 5.0, NOT `tuning.growth_min_leg_years`: that knob is the GROWTH lane's ladder floor, and this is
+    // the on-sale foil. Wiring it here too would move both lanes at once, and the backtest reports them
+    // head-to-head — the comparison has to hold one side still to mean anything.
+    let (long_cum, long_years) = long_leg(quote, 5.0)
+        .or_else(|| if crypto { perf_pct(quote, "1Y").map(|p| (p, 1.0)) } else { None })?;
     if crypto && long_cum <= tuning.min_long_pct_crypto {
         return None; // crypto corpse: a >2Y leg this deep (e.g. -95%) is a dead coin, not a dip
     }
@@ -829,7 +850,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // +100000% data-artifact year) into a lane that promises a proven long trend. Require a real >2Y
     // leg for crypto too: trust_factor already treats 5Y as "proven enough" for young EUR pairs, so
     // this just promotes that bar from a soft halving to a hard gate (BTC/ETH/XMR/… all have 5Y).
-    let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years)?; // (#15) pin the CAGR window
+    let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years)?; // (#15) pin the CAGR window
     let long_cagr = long_cagr_from(quote, tuning, long_cum, long_years); // (#14) the `LEG` column shows this
     let min_cagr = if crypto { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
     if long_cagr < min_cagr {
@@ -1230,7 +1251,7 @@ pub fn growth_down_year_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f6
         return None;
     }
     // reachable only past every `?` in gate_failures above (it returned a 1Y+ fail, so both parsed)
-    let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years)?;
+    let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years)?;
     Some((perf_pct(quote, "1Y")?, long_cagr_from(quote, tuning, long_cum, long_years), quote.range_pct))
 }
 
@@ -1280,11 +1301,12 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     // the leg is missing AND the age gate fires, return the young reason alone instead of dropping it.
     let young_fail = |a: f64| ("young", format!("{a:.0}y listed (need ≥{:.0}y)", tuning.growth_min_age_years), a >= tuning.growth_min_age_years - 1.0);
     let too_young = tuning.growth_min_age_years > 0.0 && quote.age_years.is_some_and(|a| a < tuning.growth_min_age_years);
-    let Some((long_cum, long_years)) = long_leg_fixed(quote, tuning.fixed_cagr_years) else {
-        // No 5y+ leg -> the name can't be ranked at all (score_parts `?`-bails here too -> a silent 0.0).
-        // ALWAYS explain it, so a pinned young ETF (VUAA 2y, SPYL 3y) prints a reason instead of a mystery
-        // 0.0 in the screen's gate-review footer. Prefer the actionable "young" wording when the age gate
-        // is the floor that fired; otherwise a plain "history" note (nothing to tune, it just needs more time).
+    let Some((long_cum, long_years)) = long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years) else {
+        // No leg at or above `growth_min_leg_years` (5y+ at the shipped value) -> the name can't be ranked
+        // at all (score_parts `?`-bails here too -> a silent 0.0). ALWAYS explain it, so a pinned young ETF
+        // (VUAA 2y, SPYL 3y) prints a reason instead of a mystery 0.0 in the screen's gate-review footer.
+        // Prefer the actionable "young" wording when the age gate is the floor that fired; otherwise a plain
+        // "history" note (nothing to tune AT THE SHIPPED SETTING — the knob exists, it is just not graded).
         if too_young {
             return Some(vec![young_fail(quote.age_years.unwrap())]);
         }
@@ -1478,7 +1500,7 @@ pub fn bridge_hint_lines(subjects: &[&Quote], pool: &[Quote], tuning: &BuyHeuris
                     t.ticker != q.ticker
                         && quote_is_etf(t)
                         && t.benchmark.as_deref() == Some(bench)
-                        && long_leg_fixed(t, tuning.fixed_cagr_years).is_some() // twin must HAVE the record
+                        && long_leg_fixed(t, tuning.fixed_cagr_years, tuning.growth_min_leg_years).is_some() // twin must HAVE the record
                 })
                 .max_by(|a, b| a.age_years.unwrap_or(0.0).total_cmp(&b.age_years.unwrap_or(0.0)))?;
             Some(format!(
@@ -1980,7 +2002,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // Goes through `capped_trend`, so it tracks `long_trend_cap` whatever it is set to — 0 (shipped)
         // prints the raw leg CAGR, a positive cap prints the clamped one. The cell must never re-derive
         // this: matching the arithmetic is the only reason the column exists.
-        "leg" => long_leg_fixed(quote, tuning.fixed_cagr_years).map_or("n/a".to_string(), |(c, y)| {
+        "leg" => long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years).map_or("n/a".to_string(), |(c, y)| {
             format!("{:+.0}%", capped_trend(long_cagr_from(quote, tuning, c, y), tuning))
         }),
         "trcagr" => quote.tr_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
@@ -2994,10 +3016,21 @@ mod tests {
             .collect();
         let mut q = Quote::stub("T", "", "", "n");
         q.perf = perf;
-        assert_eq!(long_leg_fixed(&q, 0), Some((900.0, 20.0))); // off -> longest leg (20Y)
-        assert_eq!(long_leg_fixed(&q, 10), Some((200.0, 10.0))); // pinned -> the 10Y leg
+        assert_eq!(long_leg_fixed(&q, 0, 5.0), Some((900.0, 20.0))); // off -> longest leg (20Y)
+        assert_eq!(long_leg_fixed(&q, 10, 5.0), Some((200.0, 10.0))); // pinned -> the 10Y leg
         q.perf[HORIZONS.iter().position(|(l, _)| *l == "10Y").unwrap()] = None; // drop 10Y
-        assert_eq!(long_leg_fixed(&q, 10), Some((900.0, 20.0))); // pinned leg absent -> longest leg fallback
+        assert_eq!(long_leg_fixed(&q, 10, 5.0), Some((900.0, 20.0))); // pinned leg absent -> longest leg fallback
+        // `growth_min_leg_years`: a name whose ONLY leg is 2Y is unrankable at the shipped 5.0 (it
+        // reports the `history` gate) and gets a real, short CAGR at 2.0. This is the whole knob.
+        let mut young = Quote::stub("Y", "", "", "n");
+        young.perf = HORIZONS
+            .iter()
+            .map(|(l, _)| (*l == "2Y").then(|| ("x".to_string(), 44.0)))
+            .collect();
+        assert_eq!(long_leg(&young, 5.0), None, "at 5.0 the 2Y rung must not exist — today's ladder");
+        assert_eq!(long_leg(&young, 2.0), Some((44.0, 2.0)), "at 2.0 the 2Y rung carries the leg");
+        // and the knob must never PROMOTE a short rung over a long one it already had
+        assert_eq!(long_leg(&q, 2.0), Some((900.0, 20.0)), "longest rung still wins when present");
     }
 
     /// (screen columns) `active_columns` resolves config -> ordered ColSpecs (empty = default layout;
@@ -3389,7 +3422,7 @@ mod tests {
     // NOT the shared `strong` fixture: its 10Y +200% backfills the 8Y rung at 11.6%/yr, under the floor,
     // so the leg gate would reject first and this would test nothing. 10Y +400% -> 17.5%/yr, clear of 14.
     let mut miner = quote(2.0, &[("1Y", 30.0), ("5Y", 99.0), ("10Y", 400.0)]);
-    assert!(long_leg(&miner).map(|(c, y)| core::cagr(c, y)).unwrap() >= 14.0, "the LEG must clear the floor, else this tests the wrong gate");
+    assert!(long_leg(&miner, 5.0).map(|(c, y)| core::cagr(c, y)).unwrap() >= 14.0, "the LEG must clear the floor, else this tests the wrong gate");
     miner.life_cagr = Some(9.0);
     assert!(growth_score(&miner, &life).is_none()); // strong leg, mediocre whole life -> rejected
     miner.life_cagr = Some(20.0);
@@ -3415,7 +3448,7 @@ mod tests {
     goog.life_cagr = Some(23.0);
     let leg17 = BuyHeuristic { growth_min_cagr: 17.0, ..BuyHeuristic::default() };
     let life17 = BuyHeuristic { use_life_cagr: true, ..leg17.clone() };
-    assert!((long_leg(&goog).map(|(c, y)| core::cagr(c, y)).unwrap() - 16.23).abs() < 0.05, "the 20Y rung is the fixture's point");
+    assert!((long_leg(&goog, 5.0).map(|(c, y)| core::cagr(c, y)).unwrap() - 16.23).abs() < 0.05, "the 20Y rung is the fixture's point");
     assert!(growth_score(&goog, &leg17).is_none(), "knob off: the 16.2%/yr leg fails a floor of 17");
     assert!(growth_score(&goog, &life17).is_some(), "knob on: the 23%/yr whole life clears it");
 
@@ -5217,6 +5250,7 @@ mod tests {
         assert_eq!(tuning.growth_max_peg, 1.6, "shipped PEG ceiling moved — re-measure, then update this pin");
         assert_eq!(tuning.growth_min_range_pct, 80.0, "80 is settled (70 and 50 both measured worse)");
         assert_eq!(tuning.growth_min_1y_pct, 0.0, "removing this floor crashes the 20y lane edge -31%");
+        assert_eq!(tuning.growth_min_leg_years, 5.0, "the 2Y rung ships only once the grid clears it — receipt beside the knob");
         // ...and the one SCORE weight the Phase B re-fit moved. Pinned for the same reason as the gates:
         // 0.65 is the cheap end of a rank-1 plateau that ends at 0.8 and collapses by 1.0, so a drift in
         // either direction is a measurable regression, not a taste call.

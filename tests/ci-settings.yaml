@@ -200,7 +200,7 @@ buy_heuristic:
   min_1y_pct_crypto: -50.0       # LIVE (crypto/FX -EUR/-USD): 1Y floor for the crypto growth lane — coins swing far harder than
                                  #   stocks, but a coin down worse than -50% on the year is a crash, not a swing (BTC's own bad
                                  #   year is -33.5%, comfortably inside; GT -62 / BGB -60 out). Was -75, which let deep crashers rank
-  max_1m_drop_pct: -20.0         # LIVE: reject if 1M % <= this (a hard monthly crash = falling knife) — both lanes
+  max_1m_drop_pct: -1000000.0    # LIVE: reject if 1M % <= this (a hard monthly crash = falling knife) — both lanes
                                  #   SWEPT SOLO 2026-07-30 (off at -1e6, per-knob stress grid): read as noise (20y-s +629.8 vs
                                  #   +623.5, 12y-s −4.4, 8y-s −1.2, book metrics flat) and receipted "FREE in backtest".
                                  #   THAT READING WAS WRONG — it came off the mean-only gate audit ca8e404 retired, and it
@@ -444,6 +444,59 @@ buy_heuristic:
   # name to its 10Y window reads edge +160.1 vs the leg's +167.6, i.e. -7.5, INSIDE the bootstrap band and
   # with a much steadier era table (worst era +111.2 vs +40.5). Best remaining candidate; golden rule still
   # reverts a drop. #16: sweep long_trend_cap (above) per run_me.sh, no flag.
+  growth_min_leg_years: 5.0      # (funnel) MEASURED AND REJECTED 2026-08-03 — shortest rung `long_leg` may use,
+                                 #   on a 20/8/5/2Y ladder. 5.0 = the ladder as it has always been. The funnel
+                                 #   (07a941f) says the GROWTH lane's whole volume dies on ONE gate no config
+                                 #   reaches: `history`, 1949 of 4748 EU-buyable names with no 5y+ leg, hence
+                                 #   no CAGR, hence unrankable. `fixed_cagr_years` above only PINS to a leg
+                                 #   that exists; this is the only knob that creates one. Offline count over
+                                 #   the 3435 cached charts (887 span <5y): a 2Y rung gives 828 of them a leg,
+                                 #   ~120 clearing the 19%/yr floor. NOT a 3Y rung — core::HORIZONS has no 3Y
+                                 #   and Quote.perf is a positional Vec aligned to it, so the knob is
+                                 #   effectively binary (5 or 2) with no gentler middle.
+                                 #   THE 2.0 ARM WAS GRADED AND LOSES EVERY CLAUSE OF THE SHIP RULE. Six-run
+                                 #   stress grid 2026-08-03, `backtest {20,12,8} universe stress`, baseline vs arm
+                                 #   differing by THIS FIELD ALONE (verified: the drift warning names
+                                 #   `growth_min_leg_years 5.0->2.0` and nothing else):
+                                 #     horizon   lane edge        rho        rank-1 mean|med    h2h     top-10
+                                 #     20y-s   +411.0 -> +244.2  +.14->+.11  +5.9|+6.0 -> +4.5|+4.0  67->39%  +5.8->+6.3
+                                 #     12y-s   +121.9 -> +104.8  +.13->+.10  +5.5|+6.5 -> +5.4|+6.1  61->47%  +6.2->+6.7
+                                 #      8y-s    +48.1 ->  +45.5  +.19->+.15  +6.9|+7.8 -> +7.4|+7.1  61->50%  +6.7->+7.4
+                                 #   Rule was (max_1m_drop_pct's bar, 2026-08-02): rank-1 median up or held at the
+                                 #   20y king, h2h >=50% at all three, king lane edge not down. Actual: king median
+                                 #   -2.0, h2h BELOW 50 at two of three, king edge -41%. Three for three against.
+                                 #   THE TOP-10 COLUMN IS THE TRAP: it RISES at every horizon, and that is the
+                                 #   dilution signature, not a win. h2h says why — "#1 beats the 11-20 book" falls
+                                 #   67->39% at the king, i.e. under the arm THE TOP OF THE LIST IS WORSE THAN ITS
+                                 #   MIDDLE. A wider book of young momentum names lifts the average while destroying
+                                 #   the ranking that the tool exists to produce. Grade rank-1 and h2h, not top-10.
+                                 #   NOT a sample-size problem — the arm DEEPENS the pool (growth windows 517->686,
+                                 #   +33%) and rho still falls at all three horizons. More data, worse selection.
+                                 #   The baseline sweep row prices the same cohort and is MONOTONE IN HORIZON:
+                                 #     20y-s n=169 mean -811.0 | med -793.9      <- the horizon this tool targets
+                                 #     12y-s n=251 mean  -41.3 | med -184.7
+                                 #      8y-s n=300 mean  +14.4 | med  -58.7
+                                 #   The 2Y rung's damage GROWS with the holding period. An 8y reader could mistake
+                                 #   it for noise; at the 20-year hold this tool is built for it is catastrophic.
+                                 #   LIVE A/B same day (one universe fetch, 4707-4749 names): the arm works exactly
+                                 #   as designed and that is the problem — `history` sole-blocked 11/1922/19 ->
+                                 #   4/1185/7 (756 names gain a leg), cleared 9->22, ETF table 5->16 rows, and
+                                 #   rank 1 became a 2-3y listing in ALL THREE classes (GEV 2.3y score 26.2 over
+                                 #   NVDA 27.5y 10.8; HNSC.MI 3.4y 29.9 over IITU.L 10.7y 8.1; WBT-USD 3.9y).
+                                 #   Rank stability 89% -> 33%. `trust_factor` HAD already halved them — 29.9 is the
+                                 #   post-halving number — and their ABV-MA reads 0% with MAXDD -20..-38%, because
+                                 #   the risk brakes cannot see a drawdown that has not happened yet. A short record
+                                 #   collects score for the ABSENCE OF MEASURED BAD NEWS. That is the mechanism.
+                                 #   Do not re-propose without a NEW damp aimed at that mechanism (a record-length
+                                 #   term in the score itself, not a post-hoc multiplier); re-running this grid
+                                 #   unchanged will reproduce these numbers. Knob KEPT, wired and probe-able, so the
+                                 #   next attempt costs one config line instead of a patch to `long_leg`.
+                                 #   0.0 IS NOT "OFF" HERE. Nearly every other knob in this file uses 0 = off;
+                                 #   this one is a FLOOR, so 0.0 is the LOOSEST setting there is (every rung
+                                 #   allowed, 2Y included) — identical in effect to 2.0. "Off" for this knob is
+                                 #   5.0, the value that reproduces the historical 20/8/5 ladder. Set 0.0 by
+                                 #   reflex on 2026-08-03 and `shipped_config_pin` caught it; that is what the
+                                 #   pin is for.
 
   # (B) Value-trap dock: a name bleeding for YEARS (1Y AND 5Y both deep red) is not a dip — dock it.
   sustained_decline_pct: -40.0   # [FOIL] both 1Y and 5Y must be <= this to count as a multi-year bleed
@@ -801,6 +854,11 @@ buy_heuristic:
   #   to rank) and that is the ONLY gate they fail, against 12 ETFs sole-blocked by `cagr` and 0 by `peg`.
   #   No ETF-side floor can reach those 1842 — they have nothing to score, so lowering this knob (or
   #   growth_max_peg_etf, or the range bars) cannot surface them.
+  #   A KNOB CAN, AND IT WAS MEASURED AND REJECTED same day: `growth_min_leg_years` (above) adds a 2Y rung
+  #   to `long_leg`'s ladder, which GIVES them something to score — 1185 of the 1922 ETF wall cleared at
+  #   2.0, ETF table 5->16 rows. It loses every clause of the ship rule and gets worse the longer the
+  #   horizon (20y-s rank-1 median -2.0, h2h 67->39%, lane edge -41%). Read that receipt before treating
+  #   this wall as an unsolved problem: it is solvable and the solution is worse than the wall.
   #   THE BRIDGE DOES NOT SCALE EITHER, so do not re-propose auto-bridging on a name match: an offline
   #   name-match over the 3467 cached fund names (a CACHE SCAN, not a funnel number — treat as an
   #   estimate) found 124 young listings with an older same-index twin and 58 whose twin also shares its
@@ -1513,7 +1571,7 @@ buy_heuristic:
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
   growth_overext_cap: 100.0      # % above the 200wk SMA where the brake maxes out. Biting harder (100->60) cut edge +1.9->-9.5: over-penalizes good compounders that keep running above trend. Keep 100
-  growth_max_above_ma: 150.0     # (#24) HARD gate above the brake: reject equities >150% above the 200wk SMA (crypto exempt).
+  growth_max_above_ma: 1000.0    # (#24) HARD gate above the brake: reject equities >150% above the 200wk SMA (crypto exempt).
                                  #   Past the brake cap the damp saturates, so a +486% blow-off (WDC 2026-07) scored like a +100%
                                  #   name; the brake can floor it but never remove it. Same-batch triple 2026-07-03:
                                  #   off +106.6 (wins +84.1, OOS +0.11|+0.06) / 100 +106.9 (edge-flat) / 150 +115.9
@@ -1847,7 +1905,7 @@ buy_heuristic:
   nupl_damp_floor: 0.5           # crypto-score multiplier at NUPL 1.0 (peak euphoria); 1.0 = damp off
   nupl_capitulation: 0.25        # NUPL below this starts BOOSTING crypto (~0.25 = fear/accumulation); 0 = boost off
   nupl_boost_ceiling: 1.3        # crypto-score multiplier at NUPL 0 (deep capitulation); 1.0 = boost off. BACKTEST-BLIND judgment lever — keep mild
-  crypto_max_mvrv: 2.0           # (#45) CRYPTO's valuation CEILING — reject a coin whose MVRV (market cap / realized cap)
+  crypto_max_mvrv: 1.6           # (#45) CRYPTO's valuation CEILING — reject a coin whose MVRV (market cap / realized cap)
                                  #   exceeds this. MVRV is the price the market pays over the price its holders actually
                                  #   paid; <1 = the whole market sits below its own cost basis. Printed in the new MVRV
                                  #   column, crypto tables only.
