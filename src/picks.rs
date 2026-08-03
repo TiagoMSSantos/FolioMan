@@ -531,9 +531,17 @@ pub fn perf_pct(quote: &Quote, label: &str) -> Option<f64> {
 /// ONE definition, read by BOTH `score_parts` and `gate_failures` — those two must agree or a name is
 /// silently dropped from the ranking while the tail claims it passes (see picks.rs:745). Sharing the
 /// table makes them agree by construction instead of by two copies being kept in sync by hand.
-fn long_leg_floors(tuning: &BuyHeuristic) -> [(&'static str, &'static str, f64); 3] {
+///
+/// The 5Y rung takes a CRYPTO TWIN, the same split five sibling gates already carry
+/// (`min_1y_pct_crypto`, `growth_min_cagr_crypto`, `growth_min_range_pct_crypto`,
+/// `max_1m_drop_pct_crypto`, `growth_maxdd_cap_crypto`). It exists because the equity floor's measured
+/// optimum lands on top of Bitcoin: the 2026-08-03 ladder puts the equity peak at +75 (20y lane edge
+/// +410.8 -> +459.3, h2h 67% -> 76%), and BTC's 5Y was +51.5% that day, so one shared knob priced the
+/// whole crypto table against an equity-tuned bar and emptied it. The 8Y/20Y rungs need no twin — no
+/// coin in the universe carries a leg that long, so those cells are `n/a` and skipped by construction.
+fn long_leg_floors(tuning: &BuyHeuristic, crypto: bool) -> [(&'static str, &'static str, f64); 3] {
     [
-        ("5Y", "5Y+", tuning.growth_min_5y_pct),
+        ("5Y", "5Y+", if crypto { tuning.growth_min_5y_pct_crypto } else { tuning.growth_min_5y_pct }),
         ("8Y", "8Y+", tuning.growth_min_8y_pct),
         ("20Y", "20Y+", tuning.growth_min_20y_pct),
     ]
@@ -910,7 +918,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // on it would cut every ETF and coin, none of which has a 20Y leg at all.
     // Must stay the SAME table as the `gate_failures` copy — `long_leg_floors` IS that table, so the
     // two cannot drift (picks.rs:745 explains what drift costs).
-    for (label, _, floor) in long_leg_floors(tuning) {
+    for (label, _, floor) in long_leg_floors(tuning, crypto) {
         if perf_pct(quote, label).is_some_and(|p| p <= floor) {
             return None;
         }
@@ -1388,7 +1396,7 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
         }
     }
     // mirror of the `long_leg_floors` loop in `score_parts` — same table, so the two cannot disagree.
-    for (label, tag, floor) in long_leg_floors(tuning) {
+    for (label, tag, floor) in long_leg_floors(tuning, crypto) {
         if let Some(p) = perf_pct(quote, label).filter(|p| *p <= floor) {
             fails.push((tag, format!("{label} {p:+.1}% (need >{floor:.0}%)"), p > floor - 15.0));
         }
@@ -4041,10 +4049,20 @@ mod tests {
     let mut bled_crypto = quote(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]);
     bled_crypto.ticker = "ETH-EUR".into();
     assert!(growth_score(&bled_crypto, &tuning).is_none());
-    // the escape hatch that replaces the guard: one shared knob, so re-admitting a healthy coin
-    // mid-drawdown also loosens equities. Assert it actually works before anyone needs it at 3am.
-    let loose5 = BuyHeuristic { growth_min_5y_pct: -50.0, ..BuyHeuristic::default() };
+    // the escape hatch that replaces the guard. It USED to be the shared `growth_min_5y_pct`, which
+    // meant re-admitting a healthy coin mid-drawdown also loosened equities; since 2026-08-03 the two
+    // are separate knobs, so the hatch is the crypto twin and the equity bar is free to move on its
+    // own measured optimum. Assert it works before anyone needs it at 3am.
+    let loose5 = BuyHeuristic { growth_min_5y_pct_crypto: -50.0, ..BuyHeuristic::default() };
     assert!(growth_score(&bled_crypto, &loose5).is_some());
+    // ...and the split is REAL in both directions: the equity knob no longer reaches a coin (this is
+    // the whole point of the twin — a +75 equity floor must not empty the crypto table), and the
+    // crypto knob no longer reaches an equity.
+    let equity_only = BuyHeuristic { growth_min_5y_pct: -50.0, ..BuyHeuristic::default() };
+    assert!(growth_score(&bled_crypto, &equity_only).is_none(), "equity 5Y floor must not move a coin");
+    let bled_equity = quote(0.0, &[("1Y", 60.0), ("5Y", -20.0), ("10Y", 500.0)]);
+    let crypto_only = BuyHeuristic { growth_min_5y_pct_crypto: -50.0, ..BuyHeuristic::default() };
+    assert!(growth_score(&bled_equity, &crypto_only).is_none(), "crypto 5Y floor must not move an equity");
     // (4) NUPL factor: symmetric. euphoria (high NUPL) shrinks <1; capitulation (low NUPL) boosts >1;
     // neutral band / unknown = exactly 1.0.
     assert_eq!(nupl_factor(None, &tuning), 1.0);
@@ -5251,6 +5269,12 @@ mod tests {
         assert_eq!(tuning.growth_min_range_pct, 80.0, "80 is settled (70 and 50 both measured worse)");
         assert_eq!(tuning.growth_min_1y_pct, 0.0, "removing this floor crashes the 20y lane edge -31%");
         assert_eq!(tuning.growth_min_leg_years, 5.0, "the 2Y rung ships only once the grid clears it — receipt beside the knob");
+        // (2026-08-03) the 9-rung ladder's single peak: 20y lane edge +410.8 -> +459.3, rank-1 median
+        // +6.0 -> +6.4, h2h 67% -> 76%, with +100 and +150 falling away on the other side.
+        assert_eq!(tuning.growth_min_5y_pct, 75.0, "the 5Y equity floor is a measured peak (+75), not a taste call — re-run the ladder before moving it");
+        // ...and its crypto twin must stay at what the SHARED knob served, or the equity move above
+        // silently re-prices every coin against an equity-tuned bar (at +75: zero coins pass).
+        assert_eq!(tuning.growth_min_5y_pct_crypto, 0.0, "moving this re-prices the crypto lane — the backtest cannot grade it, check the live table by eye");
         // ...and the one SCORE weight the Phase B re-fit moved. Pinned for the same reason as the gates:
         // 0.65 is the cheap end of a rank-1 plateau that ends at 0.8 and collapses by 1.0, so a drift in
         // either direction is a measurable regression, not a taste call.

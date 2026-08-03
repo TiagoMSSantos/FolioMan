@@ -159,7 +159,15 @@ inflation_adjust:
 buy_heuristic:
   # --- GATES (fail any one -> excluded before scoring) ---
   min_1y_pct: -25.0              # [FOIL] on-sale only: reject if 1Y % <= this (the growth lane reads growth_min_1y_pct below, not this)
-  growth_min_1y_pct: 0.0         # LIVE (equities): the growth lane's 1Y floor — reject if 1Y % <= this. 0.0 = must be climbing this year.
+  growth_min_1y_pct: 0.0         # RE-MEASURED AND RE-CONFIRMED 2026-08-03 (5-rung stress ladder). Loosening this is the single most
+                                 #   expensive thing in the whole grid, and it is MONOTONE — every step down costs 20y lane edge:
+                                 #     +10 (tighter) +397.4 | 0.0 SHIPPED +410.8 | -10 +331.9 | -25 +316.2 | off(-1e9) +287.5
+                                 #   rho falls with it (+0.16 / +0.14 / +0.13 / +0.12 / +0.12). Tightening to +10 does not rescue it
+                                 #   either: 20y edge -13.4 and rank-1 median +6.0 -> +5.3, so 0.0 is a genuine peak, not an endpoint.
+                                 #   This reproduces the round-5 (2026-07-03) receipt independently on current data — do not re-propose
+                                 #   loosening it without a NEW mechanism; two grids five weeks apart now say the same thing.
+                                 #   ---- original note ----
+                                 #   LIVE (equities): the growth lane's 1Y floor — reject if 1Y % <= this. 0.0 = must be climbing this year.
                                  #   Was a hardcoded 0.0 until the knob was restored; this value is the constant it replaced, so shipping
                                  #   it changes nothing. It is written down because the number is EARNED, not conservative-by-default.
                                  #   MEASURED AND REVERTED ONCE (round 5, 2026-07-03, `.claude/growth_heuristic_plan.md:205`), on the same
@@ -239,7 +247,33 @@ buy_heuristic:
                                  #   buys nothing at the top of the book and costs rank-1 quality where it can be measured.
   min_long_pct: 30.0             # [FOIL] on-sale only: reject unless EVERY 5Y/10Y/20Y leg is > this (the growth lane has its own per-rung floors below)
   min_long_pct_crypto: -70.0     # [FOIL] on-sale only: reject if the >2Y leg <= this CUMULATIVE % (a corpse, e.g. -95%)
-  growth_min_5y_pct: 0.0         # LIVE: growth-lane 5Y CUMULATIVE-return floor — reject if the 5Y leg <= this. Like growth_min_1y_pct above,
+  growth_min_5y_pct: 75.0        # LIVE (EQUITIES + ETFs ONLY since 2026-08-03 — coins answer to growth_min_5y_pct_crypto below).
+                                 #   MEASURED AND SHIPPED 2026-08-03, 9-rung stress ladder, `backtest {20,12,8} universe stress`, one
+                                 #   verified field per arm. THE ONLY WIN IN A 78-RUN GRID over five gate knobs, and it is a TIGHTENING:
+                                 #     rung   20y edge   rho    rank-1 med   h2h    n
+                                 #     off     +408.0   +0.14     +6.0       67%   523
+                                 #     -25     +408.1   +0.14     +6.0       67%   523
+                                 #     0 (was) +410.8   +0.14     +6.0       67%   520
+                                 #     +25     +419.6   +0.14     +6.0       67%   514
+                                 #     +50     +417.5   +0.15     +6.4       71%   503
+                                 #     +75     +459.3   +0.17     +6.4       76%   490   <- SHIPPED (single peak)
+                                 #     +100    +396.0   +0.14     +6.4       81%   468
+                                 #     +150    +232.1   +0.10     +4.4       67%   407
+                                 #   Repeats at the other horizons: 12y edge +123.0 -> +133.6, 8y +47.8 -> +61.9, 8y rank-1 +6.9|+7.8 ->
+                                 #   +7.2|+8.2. Clears the 2026-08-02 ship rule (rank-1 median UP at the 20y king, h2h >=50% at all three,
+                                 #   king edge up) AND neighbour consistency (+50 moves the same way on every clause). The MECHANISM is
+                                 #   legible rather than a lucky rung: h2h climbs monotonically 67 -> 71 -> 76 -> 81 across the tightening
+                                 #   rungs, i.e. the bar strips weak names out of the MIDDLE of the list, which is what should widen the
+                                 #   #1-vs-11-20 gap. Edge peaks at +75 and falls after as the sample thins (n 520 -> 407).
+                                 #   DRIFT CONTROL: the baseline was re-run at the END of the 3h13m grid and is byte-identical to the start
+                                 #   (same n, edge, rho, rank-1, h2h at all three horizons), so none of the above is universe drift.
+                                 #   WHAT IT DOES NOT DO: today's live equity/ETF tables are IDENTICAL at 0.0, +50 and +75 (DELL NVDA /
+                                 #   IITU.L XLKS.L SMH.L SEMI.AS LYBK.DE). The gain is selection quality across 490 historical cutoffs,
+                                 #   NOT a change to tonight's picks. Do not expect to see this knob in the table.
+                                 #   WHY THE CRYPTO TWIN EXISTS: at +75 the shared knob printed "Top 0 of 20 max crypto — (none pass the
+                                 #   gates)" (BTC 5Y +51.5%, BNB +63.1% that day). See growth_min_5y_pct_crypto below.
+                                 #   ---- the pre-2026-08-03 history of this knob, kept because it explains the shape above ----
+                                 #   LIVE: growth-lane 5Y CUMULATIVE-return floor — reject if the 5Y leg <= this. Like growth_min_1y_pct above,
                                  #   this is the constant it replaced (a hardcoded 0.0 at both gate sites), so shipping it changes nothing
                                  #   FOR EQUITIES. It is written down because ONE thing did change with it: the gate used to carry a
                                  #   `!crypto` guard and no longer does — a coin now answers to this bar too (round 2026-07-27, by request).
@@ -260,7 +294,27 @@ buy_heuristic:
                                  #   SWEPT SOLO 2026-07-30 (off at -1e6, per-knob stress grid): noise at every horizon (20y-s +614.1
                                  #   vs +623.5, 12y-s +224.4 vs +221.7, 8y-s +82.4 vs +79.2; book metrics byte-identical). At 0.0 the
                                  #   bar almost never binds once growth_min_cagr is in force. TIE — 0.0 stays.
-  growth_min_8y_pct: -1e9        # OFF here, but it is the rung that BITES — arm it in the local settings.yaml if wanted. MEASURED live
+  growth_min_5y_pct_crypto: 0.0  # CRYPTO twin of the 5Y floor above (added 2026-08-03). 0.0 = EXACTLY what the shared knob served before
+                                 #   the split, so adding the twin changed no coin's standing — the split exists so the EQUITY bar could go
+                                 #   to its measured +75 optimum without pricing coins against an equity-tuned number.
+                                 #   THE COST IT AVOIDS, measured live: at a shared +75 the crypto table read "Top 0 of 20 max crypto —
+                                 #   (none pass the gates)". BTC-EUR 5Y was +51.5% and BNB-EUR +63.1% on 2026-08-03, so an equity floor set
+                                 #   anywhere above ~+51 empties the lane. Even +50 clears BTC by only 1.5 points.
+                                 #   UNGRADEABLE BY THE BACKTEST, like every crypto knob: each edge metric drops coins before scoring
+                                 #   (backtest.rs:1224/1456/1519/1560/1610/1728/1781/1872), so no run can vote on this number. `GATE_PROBES`
+                                 #   pins it crypto-LIVE / etf+stock-INERT, which is the reachability claim, not an edge claim. If the crypto
+                                 #   lane thins unexpectedly, THIS is the knob to take negative — and it no longer loosens equities when you do.
+  growth_min_8y_pct: -1e9        # MEASURED AND REJECTED 2026-08-03 (5-rung stress ladder, +25/+50/+100/+150 vs off): stays OFF.
+                                 #   Standalone it is noise — rank-1 is IDENTICAL to baseline at every rung AND every horizon, and at the
+                                 #   20y king the pool barely moves (n 520 -> 520/520/520/518). Best rung (+150) bought 8y edge +47.8 -> +54.8
+                                 #   while changing nothing about who ranks where.
+                                 #   COMBINED-ARM VERDICT (the reason it ships off rather than "harmless"): stacked on top of the shipped
+                                 #   growth_min_5y_pct 75.0 it SUBTRACTS at the horizon that matters — 20y edge +459.3 (5Y alone) -> +454.1
+                                 #   (both), rank-1 and h2h unchanged, and it trims exactly ONE extra 20y window (490 -> 489). The 5Y floor
+                                 #   already rejects almost everything this rung would; a second near-redundant gate is cost without gain.
+                                 #   Do not re-propose without a NEW mechanism — a rung that moves n by 1 cannot carry an edge claim.
+                                 #   ---- earlier note, still true ----
+                                 #   OFF here, but it is the rung that BITES — arm it in the local settings.yaml if wanted. MEASURED live
                                  #   2026-07-27 at growth_max_peg 2.0, +50% bar: it rejects FOUR names, and all four sit against the fence —
                                  #     AMGN 8Y +44.0% · GILD +40.7% · SCHW +48.2% · ULTA +49.2%
                                  #   That is 4.4-5.1%/yr over 8 years from names that all clear a 16%/yr LIFE CAGR — precisely the pattern
@@ -280,7 +334,14 @@ buy_heuristic:
                                  #   never assembles in the survivors-only pool (a name failing +50%/8y while clearing the CAGR and
                                  #   range bars barely exists there). The backtest neither convicts nor acquits: arming it live at 50
                                  #   stays a judgement call riding the live receipt above.
-  growth_min_20y_pct: -1e9       # OFF, and unlike the 8Y rung above this one really does reject NOBODY at the +200 requested — confirmed on
+  growth_min_20y_pct: -1e9       # MEASURED INERT 2026-08-03 (5-rung stress ladder: +200/+400/+800/+1500 vs off). All four rungs returned
+                                 #   BYTE-IDENTICAL numbers to baseline at all three horizons — edge delta +0.0, n unchanged 520/735/925,
+                                 #   every book metric the same. Even a +1500% 20-year cumulative bar rejects nothing, because a 20Y leg the
+                                 #   quote does not have is SKIPPED, never failed, and essentially nothing in the backtest pool carries one.
+                                 #   So this knob cannot be graded by ANY value: it is not "measured neutral", it is unreachable. Setting it
+                                 #   is harmless and pointless. Leave it off unless the fetch window ever grows real 20Y legs.
+                                 #   ---- original note ----
+                                 #   OFF, and unlike the 8Y rung above this one really does reject NOBODY at the +200 requested — confirmed on
                                  #   the same live run (5.65%/yr; growth_min_cagr 16.0 implies +1846% over 20y).
                                  #   READ THIS BEFORE ARMING IT: the bar reaches LONG-LISTED STOCKS ONLY. No UCITS ETF and no coin in the
                                  #   universe has 20 years of history, so their 20Y leg is `n/a` and is SKIPPED — a missing leg is never read
@@ -640,7 +701,15 @@ buy_heuristic:
   # Proven compounders the on-sale lane can't surface: a name AT/NEAR its own ~10y high, with a
   # strong proven long-term CAGR, still climbing. Gated hard (near-high + proven CAGR + positive 1Y +
   # not crashing) and P/E-tilted so it isn't just top-chasing. Every knob below is LIVE. ===========
-  growth_min_range_pct: 80.0     # GATE: must sit in the top 20% of its own ~10y range. SETTLED 2026-07-02:
+  growth_min_range_pct: 80.0     # RE-CONFIRMED 2026-08-03 (5-rung stress ladder: 90/80/70/60/50). 80 stays, and BOTH directions lose:
+                                 #     90 -> 20y edge +428.7 (up) BUT rank-1 median +6.0 -> +4.4 and h2h 67% -> 62% — fails the ship rule
+                                 #                     on clause 1, so the higher lane edge is bought by a WORSE top of the list
+                                 #     70 -> +381.8 | 60 -> +380.9 | 50 -> +381.0  (all ~-29 vs the shipped +410.8)
+                                 #   Note 70/60/50 are the same config in practice (n 530/532/532): below 70 the bar admits essentially
+                                 #   nothing further, so loosening past it pays the full -29 pts for no additional names. The 50 that was
+                                 #   requested is therefore strictly dominated by 70, which is itself dominated by 80.
+                                 #   ---- original note ----
+                                 #   GATE: must sit in the top 20% of its own ~10y range. SETTLED 2026-07-02:
                                  #   A/B'd 70 vs 80 on `backtest 12 universe` — 80 WINS: edge +109.8 vs +103.2
                                  #   AND better on both OOS halves (+0.07/+0.09 vs +0.06/+0.08). 70 fell short of
                                  #   its own ">=117 both-OOS+" keep-rule; the gate-sweep "70 too tight" flag was a
