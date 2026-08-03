@@ -716,7 +716,8 @@ pub fn data_path(name: &str) -> PathBuf {
 }
 
 /// Deep-merge `over` INTO `base`: for two mappings, recurse key-by-key (so a partial `buy_heuristic:`
-/// override only replaces the knobs it names); for anything else, `over` wins outright.
+/// override only replaces the knobs it names); a null overlay value overrides NOTHING; for anything
+/// else, `over` wins outright.
 fn merge_yaml(base: &mut serde_yaml::Value, over: serde_yaml::Value) {
     match (base, over) {
         (serde_yaml::Value::Mapping(b), serde_yaml::Value::Mapping(o)) => {
@@ -729,6 +730,12 @@ fn merge_yaml(base: &mut serde_yaml::Value, over: serde_yaml::Value) {
                 }
             }
         }
+        // A bare `key:` with nothing under it — every knob commented out — names no knobs, so by the
+        // contract above it replaces no knobs. Without this arm null is "anything else" and wins
+        // outright, deleting the whole base subtree: on 2026-08-03 a commented-out `buy_heuristic:`
+        // in the overlay swapped all ~200 tuned gates for the code defaults (min_cagr 19->8, PEG/maxdd/
+        // vol caps OFF) and ranked a plausible-looking table off them, with no warning anywhere.
+        (_, serde_yaml::Value::Null) => {}
         (b, o) => *b = o,
     }
 }
@@ -764,12 +771,29 @@ fn merged_config() -> Option<serde_yaml::Value> {
     Some(merged)
 }
 
+/// The tuned gates ARE the product. `BuyHeuristic` derives `Default`, so an absent/null/empty
+/// `buy_heuristic` deserializes CLEAN into the code defaults — `growth_min_cagr` 8.0, the PEG/maxdd/
+/// vol caps all 0.0 = off — and ranks a plausible-looking table off an unconfigured heuristic. That
+/// is not a degraded result, it is a wrong one, so `load` refuses rather than warns.
+fn gates_configured(merged: &serde_yaml::Value) -> bool {
+    merged.get("buy_heuristic").and_then(|v| v.as_mapping()).is_some_and(|m| !m.is_empty())
+}
+
 /// Read + parse the settings (base + overlay). Panics with a clear message if missing/invalid —
 /// config errors are a startup problem the user must fix, not something to fail soft on.
 pub fn load() -> Settings {
     let path = settings_path();
     let merged =
         merged_config().unwrap_or_else(|| panic!("cannot read/parse config {}", path.display()));
+    assert!(
+        gates_configured(&merged),
+        "config {} resolved to NO buy_heuristic — every gate would silently fall back to its code \
+         default (growth_min_cagr 8.0, PEG/maxdd/vol caps off) and the ranking would be junk. \
+         Either tests/ci-settings.yaml is unreachable from here (it is the canonical base; run from \
+         the repo, or point FOLIOMAN_CONFIG at a self-contained config), or the overlay carries a \
+         bare `buy_heuristic:` with every knob commented out — delete that line, or give it a knob.",
+        path.display()
+    );
     let s = serde_yaml::from_value(merged)
         .unwrap_or_else(|e| panic!("invalid config ({} over tests/ci-settings.yaml): {e}", path.display()));
     // (round 113) QA tripwire: the measured edge lives in specific validated knob values, and the
@@ -1119,5 +1143,27 @@ mod tests {
         assert_eq!(base["b"]["x"].as_u64(), Some(10)); // sibling under a merged mapping kept
         assert_eq!(base["b"]["y"].as_u64(), Some(99)); // overlay scalar wins
         assert_eq!(base["c"].as_u64(), Some(3)); // new overlay key added
+
+        // ...and the same contract read the other way: a key the overlay names but leaves EMPTY names
+        // no knobs under it, so it replaces none of them. `b:` with its children commented out used to
+        // delete the whole subtree — the shape that served a defaults-only ranking on 2026-08-03.
+        let mut base: serde_yaml::Value =
+            serde_yaml::from_str("a: 1\nb:\n  x: 10\n  y: 20\n").expect("base");
+        merge_yaml(&mut base, serde_yaml::from_str("b:\nc: 3\n").expect("over"));
+        assert_eq!(base["b"]["x"].as_u64(), Some(10));
+        assert_eq!(base["b"]["y"].as_u64(), Some(20));
+        assert_eq!(base["c"].as_u64(), Some(3)); // the rest of the overlay still applies
+    }
+
+    /// `load` refuses a config that resolves to no gates at all, in every shape that reaches it:
+    /// the base file unreachable (key absent), or a bare `buy_heuristic:` in the overlay (null/empty).
+    /// Serde would take all three without a word and hand back `BuyHeuristic::default()`.
+    #[test]
+    fn gates_configured_rejects_empty_heuristic() {
+        let y = |s: &str| serde_yaml::from_str::<serde_yaml::Value>(s).expect("yaml");
+        assert!(gates_configured(&y("buy_heuristic:\n  growth_min_cagr: 19.0\n")));
+        assert!(!gates_configured(&y("buy_heuristic:\n"))); // bare key -> null
+        assert!(!gates_configured(&y("buy_heuristic: {}\n"))); // named, but empty
+        assert!(!gates_configured(&y("monthly_deploy_eur: 2200\n"))); // no base found
     }
 }
