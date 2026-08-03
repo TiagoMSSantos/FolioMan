@@ -8,6 +8,18 @@
 #     knob under test — EVERYTHING ELSE lives HERE. Overlay wins field-by-field. Edit shared config HERE.
 # Omitted knobs fall back to the code's #[serde(default)] (== the shipped defaults).
 #
+# A/B'ING A KNOB — WHERE YOU PUT THE ARM FILE CHANGES THE ANSWER (learned the hard way 2026-08-03).
+# `config::data_path` (config.rs:707) resolves the on-disk caches from the config file's GRANDPARENT
+# directory. `tests/<x>-ci-settings.yaml` has an empty grandparent, so it falls through to the CWD and
+# reads the repo-root caches. An arm parked in /tmp or a job dir resolves to THAT tree instead — a cold,
+# separate cache. A cold `.long_history_skip.json` makes `screen` fetch the monthly series it would
+# otherwise skip, which moved the universe by 42 names and rewrote most of the gate funnel. `backtest` is
+# immune (measured: same config, both dirs, byte-identical), `screen` is NOT. So: keep every arm at
+# `tests/<something>-ci-settings.yaml` (the `ci-settings.yaml` suffix also makes it self-contained, since
+# `ci_base_yaml` returns an empty base for that name), and bracket the arm with a repeat of the shipped
+# config — consecutive same-config screens still drift by a few names, and that drift is the noise floor
+# any claimed effect has to clear.
+#
 # ============================================================================================
 # ETF-CLASSIFICATION RECEIPT (2026-08-02) — READ BEFORE TRUSTING ANY PEER-RELATIVE EDGE BELOW
 # ============================================================================================
@@ -737,6 +749,12 @@ buy_heuristic:
                                  #   surface — alts spend most of their life far below ATH yet still out-compound. The
                                  #   BTC-relative tilt below + the NUPL damp keep the wider crypto table honest. Stocks/ETFs
                                  #   keep the strict 80 gate above. Lower toward 0 for even more coins, raise toward 80 to tighten.
+                                 #   MEASURED AND REJECTED 2026-08-03 at 50 (live A/B, both arms on the SAME cache dir, bracketed
+                                 #   by a repeat of the shipped arm to size the noise): 50 blocks 7 MORE coins at this gate, and
+                                 #   changes the ranked crypto table by NOTHING — BNB/BTC #1/#2 either way. Its sole-blocked
+                                 #   column is EMPTY in both arms: no coin dies here alone, so the 7 are already dead upstream.
+                                 #   Backtest cannot grade this knob (crypto is filtered out of every edge metric), which is why
+                                 #   the evidence is a name diff and not an edge number. Keep 40: same table, looser bar.
   growth_min_range_pct_8y: 80.0  # GATE: the SAME 80 bar re-measured on the LAST 8 YEARS (`stats_8y.range_pct`).
                                  #   WHY BOTH: `range_pct` is a PERCENTILE of today's price over the window's closes, so a
                                  #   name whose old, much-lower closes sit in the ~10y chart clears 80 on the strength of
@@ -754,9 +772,19 @@ buy_heuristic:
                                  #   `Quote::stub`, so this gate cannot fire in a backtest — same standing as the age/AUM
                                  #   gates. It is armed on the live read alone and CANNOT be A/B'd like the 70-vs-80 sweep
                                  #   above. Code default is 0.0 (off), so this line is the whole of the shipped behaviour.
+                                 #   MEASURED AND REJECTED 2026-08-03 at 50 (live A/B, shared cache dir, noise-bracketed): 50 is
+                                 #   the BIGGEST funnel move of any knob tested all day — 96 fewer stocks and 82 fewer ETFs die
+                                 #   here — and it still changes the ranked tables by NOTHING. Sole-blocked is EMPTY at this gate
+                                 #   in both arms: all ~178 extra survivors are already dead at cagr/peg/1Y+/liquidity, so letting
+                                 #   them past this bar only moves where they die. A gate whose whole effect is invisible should
+                                 #   stay at the STRICTER value — 80 keeps the 8Y re-measure meaningful for the day the upstream
+                                 #   gates loosen. Big funnel delta + zero table delta is the signature of a redundant bar.
   growth_min_range_pct_8y_crypto: 40.0 # GATE (crypto only): same split as the pair above, same 40. INERT on today's table —
                                  #   BNB and BTC keep an S-8Y (29.0, 18.5) at 43-53% off their highs, because a coin's normal
                                  #   life is far below ATH. Here so the crypto lane can never inherit the equity 80 by accident.
+                                 #   MEASURED AND REJECTED 2026-08-03 at 50 (live A/B, shared cache dir, noise-bracketed): blocks
+                                 #   4 more coins, sole-blocked EMPTY, ranked crypto table unchanged. Same verdict as its two
+                                 #   siblings above and for the same reason — no coin dies here alone. Keep 40.
   growth_btc_outperf_weight: 0.3 # SCORE (crypto only): tilt a coin by its 1Y return vs BITCOIN's (the market base) — beats
                                  #   BTC -> boost, lags -> mild dock, bounded 0.5x..2x. BTC itself = 1.0x (the neutral anchor
                                  #   you read the others against). SCREEN/CHECK-only (backtest-blind, validated edge untouched). 0 = off.
