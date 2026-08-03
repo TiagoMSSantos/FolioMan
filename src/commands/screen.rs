@@ -245,7 +245,7 @@ fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) ->
 ///
 /// Reads `gate_failures` only — pure, one pass, no fetch. Empty input prints nothing.
 fn funnel_lines(quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Vec<String> {
-    const NAME_CAP: usize = 6; // enough to recognise the cohort, short enough to stay one line
+    const NAME_CAP: usize = 26; // enough to recognise the cohort, short enough to stay one line
     let class_of = |q: &core::Quote| {
         if picks::is_currency_quoted(&q.ticker) {
             2
