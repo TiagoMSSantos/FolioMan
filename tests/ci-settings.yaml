@@ -455,7 +455,7 @@ buy_heuristic:
 
   # (A) Hide ranked rows scoring <= this so the per-class tables stop padding to top_picks with
   # near-the-high names (score ~1-2 = not really "on sale"). Fewer rows when few names qualify.
-  min_score: -20.0               # [FOIL] on-sale trim. (The LIVE growth equivalent is growth_min_score below.) 0 = show all
+  min_score: -100.0              # [FOIL] on-sale trim. (The LIVE growth equivalent is growth_min_score below.) 0 = show all
                                  #   EVERY NEGATIVE VALUE IS THE SAME VALUE (read off the code 2026-08-02, no run needed):
                                  #   `ranked` trims with `*s > min_score.max(0.0)` (picks.rs), so the floor is CLAMPED AT 0
                                  #   and -20, -100 and -1e6 all mean the identical "show everything above 0". Turning this
@@ -602,6 +602,15 @@ buy_heuristic:
                                  #   every horizon (20y-s +573.0 vs +623.5, 12y-s +203.4 vs +221.7, 8y-s +76.0 vs +79.2) with no
                                  #   book metric improving. 80 -> 70 -> 50 is monotone damage; the 80 bar is load-bearing. An
                                  #   overlay running 50 should return to 80.
+                                 #   AND KEEPING IT COSTS NOTHING — measured 2026-08-03 by the screen's gate
+                                 #   funnel over 4718 EU-buyable names: this bar REJECTS 780 (220 stocks, 541
+                                 #   ETFs, 19 coins) and is the SOLE blocker of exactly ZERO of them. Every one
+                                 #   also fails `history` or `cagr`. Same story for its 8y twin (566 rejected /
+                                 #   0 sole), `5Y+` (1009 / 0) and `lifetime` (612 / 0): four gates, 2967
+                                 #   rejections, no rows owed to any of them. So "loosen the range gate to see
+                                 #   more names" is answered — it returns nothing. The gates that DO cost rows
+                                 #   are the ones with a non-zero sole column (2026-08-03: cagr 13, peg 8,
+                                 #   maxdd 2, 1Y+ 2), and each of those has its own receipt below saying no.
   growth_min_range_pct_crypto: 40.0 # GATE (crypto only): looser range floor (top 60% of its own range) so MORE coins
                                  #   surface — alts spend most of their life far below ATH yet still out-compound. The
                                  #   BTC-relative tilt below + the NUPL damp keep the wider crypto table honest. Stocks/ETFs
@@ -785,8 +794,19 @@ buy_heuristic:
                                  #   n=8571 rho +0.26 edge +27.9 OOS +0.40|+0.14 both +. Candidate lane run at 0.3 same-batch:
                                  #   edge +25.5->+27.5, winsorized +15.7->+17.7, rho intact +0.12, OOS -0.03|+0.26 -> -0.02|+0.27,
                                  #   worst era -11.7->-4.8 (nothing degraded). 0 = off.
-  growth_min_score: 5.0          # hide growth rows scoring <= this; 0 = show all top_picks
-  growth_min_score_etf: 4.0      # ETF-only floor. ETF scores structurally cap ~5.6 (accel~0: a diversified basket doesn't accelerate; quality/liq/fund all 0) so the stock-calibrated 5.0 floor (fine at 26% of the ~19 stock ceiling) sits at ~89% of the ETF ceiling and shows only a sliver. 4.0 = surface the diversified broad-tech tier (Nasdaq-100 / World-IT / S&P-IT wrappers score 4.5-5.6; TER column lets you pick the cheapest wrapper) while still trimming the young single-sector padding (Europe-Financials 3.2, 6y). DISPLAY-only -> validated edge untouched. Does NOT surface broad S&P500 core (VUAA/SPYL young=no 5y leg, AUM5 ~8% CAGR=market-beta<growth_min_cagr) — history/thesis wall, not this floor
+  growth_min_score: -100.0       # hide growth rows scoring <= this; 0 = show all top_picks
+  growth_min_score_etf: -100.0   # ETF-only floor. ETF scores structurally cap ~5.6 (accel~0: a diversified basket doesn't accelerate; quality/liq/fund all 0) so the stock-calibrated 5.0 floor (fine at 26% of the ~19 stock ceiling) sits at ~89% of the ETF ceiling and shows only a sliver. 4.0 = surface the diversified broad-tech tier (Nasdaq-100 / World-IT / S&P-IT wrappers score 4.5-5.6; TER column lets you pick the cheapest wrapper) while still trimming the young single-sector padding (Europe-Financials 3.2, 6y). DISPLAY-only -> validated edge untouched. Does NOT surface broad S&P500 core (VUAA/SPYL young=no 5y leg, AUM5 ~8% CAGR=market-beta<growth_min_cagr) — history/thesis wall, not this floor
+  # (funnel) THE ETF WALL IS `history`, NOT THIS FLOOR — the line above said it in words, now it is a
+  #   number. Screen gate funnel, 2026-08-03, 4718 EU-buyable names: 1842 ETFs fail `history` (no 5y+ leg
+  #   to rank) and that is the ONLY gate they fail, against 12 ETFs sole-blocked by `cagr` and 0 by `peg`.
+  #   No ETF-side floor can reach those 1842 — they have nothing to score, so lowering this knob (or
+  #   growth_max_peg_etf, or the range bars) cannot surface them.
+  #   THE BRIDGE DOES NOT SCALE EITHER, so do not re-propose auto-bridging on a name match: an offline
+  #   name-match over the 3467 cached fund names (a CACHE SCAN, not a funnel number — treat as an
+  #   estimate) found 124 young listings with an older same-index twin and 58 whose twin also shares its
+  #   currency, i.e. splice-legal. All 58 are broad World/S&P500/EM wrappers, which then meet
+  #   growth_min_cagr 19.0 and die there anyway. ~58 candidates, ~0 new rows, and a wrong twin silently
+  #   corrupts CAGR for good — `history_proxy` stays hand-curated.
   # (#41) REDUNDANCY skip — ARMED 2026-07-28, receipt written here for the first time (the knob shipped
   #   built, probe-shared and measured, then sat at the code default 0 = off with nothing recording why).
   #   WHAT IT IS: walk the ranked STOCK rows and drop one whose 36-month trailing-return correlation with

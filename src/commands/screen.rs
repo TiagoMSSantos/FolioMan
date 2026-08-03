@@ -224,6 +224,92 @@ fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) ->
         .collect()
 }
 
+/// (funnel) Where the growth lane's candidates died: per gate, how many names failed it and how many
+/// it blocked ALONE, split stocks | ETFs | crypto, naming a few of the sole-blocked tickers.
+///
+/// The SOLE-BLOCKER column is the only one that decides anything. A gate can reject thousands of
+/// names and still cost the table nothing, because every one of them also fails something else —
+/// loosening it then buys zero rows. Raw fail counts cannot tell you that, and they are what an
+/// eyeball on the config sees, so the tightest-LOOKING knob is routinely mistaken for the binding
+/// one. This block exists to answer "which knob would actually give me more rows" with a number.
+///
+/// Names are NOT filtered to close misses, unlike the near-miss tail printed after it: the point is
+/// to see the gross single-gate rejects too, which that tail deliberately hides.
+///
+/// One row reads differently by construction: `history` always shows sole == fail, because
+/// `gate_failures` returns that reason ALONE and stops — nothing else was even measured. It is an
+/// honest single-gate death, just not one any knob in `buy_heuristic` can move (only `history_proxy`).
+///
+/// `cleared` counts names clearing every GATE — an upper bound on printed rows, not a row count: the
+/// score floor, sector filter, fund-PEG trim, currency dedup and `top_picks` cap all sit downstream.
+///
+/// Reads `gate_failures` only — pure, one pass, no fetch. Empty input prints nothing.
+fn funnel_lines(quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Vec<String> {
+    const NAME_CAP: usize = 6; // enough to recognise the cohort, short enough to stay one line
+    let class_of = |q: &core::Quote| {
+        if picks::is_currency_quoted(&q.ticker) {
+            2
+        } else if picks::quote_is_etf(q) {
+            1
+        } else {
+            0
+        }
+    };
+    let mut fails: std::collections::HashMap<&'static str, [usize; 3]> = std::collections::HashMap::new();
+    let mut sole: std::collections::HashMap<&'static str, [usize; 3]> = std::collections::HashMap::new();
+    let mut blocked: std::collections::HashMap<&'static str, Vec<&str>> = std::collections::HashMap::new();
+    let mut refused: std::collections::BTreeMap<&'static str, usize> = std::collections::BTreeMap::new();
+    let (mut cleared, mut failed) = (0usize, 0usize);
+
+    for q in quotes {
+        let class = class_of(q);
+        match gate_failures(q, tuning) {
+            // structural reject, or (no structural reason) the missing-1Y bail one line further in
+            None => *refused.entry(picks::refusal_reason(q).unwrap_or("no-1Y")).or_default() += 1,
+            Some(f) if f.is_empty() => cleared += 1,
+            Some(f) => {
+                failed += 1;
+                for (gate, ..) in &f {
+                    fails.entry(gate).or_default()[class] += 1;
+                }
+                if let [(gate, ..)] = f[..] {
+                    sole.entry(gate).or_default()[class] += 1;
+                    blocked.entry(gate).or_default().push(&q.ticker);
+                }
+            }
+        }
+    }
+    if quotes.is_empty() {
+        return Vec::new();
+    }
+    let total = |m: &std::collections::HashMap<&'static str, [usize; 3]>, g: &str| m.get(g).map_or(0, |c| c.iter().sum::<usize>());
+    let mut gates: Vec<&'static str> = fails.keys().copied().collect();
+    // sole-blockers first (the actionable order), fails as tiebreak, name last so runs are stable
+    gates.sort_by(|a, b| total(&sole, b).cmp(&total(&sole, a)).then_with(|| total(&fails, b).cmp(&total(&fails, a))).then_with(|| a.cmp(b)));
+
+    let mut out = vec![
+        "Gate funnel — where the growth candidates died (failed / blocked by THIS gate alone):".to_string(),
+        format!("  {:<10}{:>12}{:>12}{:>12}   sole-blocked", "gate", "stocks", "ETFs", "crypto"),
+    ];
+    for gate in gates {
+        let (f, s) = (fails[gate], sole.get(gate).copied().unwrap_or_default());
+        let cell = |i: usize| format!("{} / {}", f[i], s[i]);
+        let mut names = blocked.remove(gate).unwrap_or_default();
+        names.sort_unstable();
+        let more = names.len().saturating_sub(NAME_CAP);
+        let shown = names.iter().take(NAME_CAP).copied().collect::<Vec<_>>().join(", ");
+        let tail = if more > 0 { format!(" +{more}") } else { String::new() };
+        out.push(format!("  {gate:<10}{:>12}{:>12}{:>12}   {shown}{tail}", cell(0), cell(1), cell(2)));
+    }
+    let refused_n: usize = refused.values().sum();
+    if refused_n > 0 {
+        out.push(format!("  refused (not assessable): {}", refused.iter().map(|(why, n)| format!("{why} {n}")).collect::<Vec<_>>().join(" · ")));
+    }
+    // the reconciliation line: a funnel whose arithmetic doesn't close can't be trusted to aim a knob
+    out.push(format!("  scanned {} = refused {refused_n} + failed {failed} + cleared {cleared} (cleared ≥ rows printed: score/sector/cap trims come after)", quotes.len()));
+    out
+}
+
 /// (#37 funds) Issuer prefixes stripped before two fund names are compared for the same index.
 ///
 /// Stripped as a PREFIX and only as a prefix, never as free-floating tokens, because `global`, `first`,
@@ -1590,6 +1676,17 @@ pub async fn run(args: Vec<String>) {
         );
         eprintln!("{warn}");
         journal(&run_date, &[warn]);
+    }
+
+    // (A2) GATE FUNNEL: the counts behind the tails below. Printed first because it is the only thing
+    // here that answers "which gate is actually costing me rows" — the name-level tails show WHO died,
+    // this shows WHERE, and the sole-blocker column is what a knob change would actually buy.
+    let funnel = funnel_lines(&quotes, &settings.buy_heuristic);
+    if !funnel.is_empty() {
+        println!();
+        for line in funnel {
+            println!("{line}");
+        }
     }
 
     // (B) NEAR-MISS tail: names the growth lane rejected on EXACTLY one gate — a compounder one notch
@@ -2984,6 +3081,75 @@ mod tests {
         assert_eq!(got[1].0, "FB.L");
         assert!((got[0].1 - 36e6).abs() < 1.0);
         assert!(small_aum_names(&["BIG.L".into(), "NVDA".into()], &quotes).is_empty()); // clean book = silent
+    }
+
+    /// (funnel) The tally's four claims: the arithmetic CLOSES (`scanned = refused + failed +
+    /// cleared` — a funnel that doesn't reconcile is silently losing names and can't aim a knob),
+    /// a 1-fail name is the only kind that lands in sole-blocked, a 2-fail name lands in the fail
+    /// counts of BOTH gates and in neither sole column, a refusal lands only in its own bucket, and
+    /// a gate nobody failed does not print at all.
+    #[test]
+    fn funnel_semantics() {
+        // ci-settings ships these; the code defaults are 0.0 (= off), which would gate nothing. The
+        // crypto cap is its own knob — set it too, or the coin below clears and the lanes don't split.
+        let t = config::BuyHeuristic {
+            growth_maxdd_cap: 84.0,
+            growth_maxdd_cap_crypto: 84.0,
+            growth_max_above_ma: 150.0,
+            ..config::BuyHeuristic::default()
+        };
+        let q = |ticker: &str, name: &str, kind: &str| {
+            let mut x = Quote::stub(ticker, "€100.00", "", name);
+            x.instrument_type = kind.into();
+            x.avg_turnover_eur = Some(1e9);
+            x.range_pct = 90.0;
+            x.perf = core::HORIZONS
+                .iter()
+                .map(|(l, _)| match *l {
+                    "1M" => Some((l.to_string(), 2.0)),
+                    "1Y" => Some((l.to_string(), 20.0)),
+                    "5Y" => Some((l.to_string(), 200.0)),
+                    _ => None,
+                })
+                .collect();
+            x
+        };
+        let clean = q("CLEAN", "Clean Corp", "EQUITY");
+        let mut dd = q("DEEP", "Deep Corp", "EQUITY");
+        dd.max_drawdown_pct = 95.0; // one gate, alone
+        let mut both = q("BOTH.L", "Both Fund UCITS ETF", "ETF");
+        both.max_drawdown_pct = 95.0;
+        both.above_ma_pct = 400.0; // two gates -> blamed for neither
+        let mut coin = q("SOL-EUR", "Solana", "CRYPTOCURRENCY");
+        coin.max_drawdown_pct = 95.0;
+        let lev = q("LEVX.L", "Some Index 2x Daily Leveraged", "ETF"); // refused, never a fail
+        let quotes = vec![clean, dd, both, coin, lev];
+
+        let lines = funnel_lines(&quotes, &t);
+        let row = |gate: &str| lines.iter().find(|l| l.trim_start().starts_with(gate)).cloned();
+        let last = lines.last().unwrap();
+        assert!(last.contains("scanned 5 = refused 1 + failed 3 + cleared 1"), "arithmetic must close: {last}");
+        assert!(lines.iter().any(|l| l.contains("refused (not assessable): leveraged 1")), "{lines:#?}");
+
+        // the three `fail / sole` cells in column order: stocks, ETFs, crypto
+        let cells = |row: &str| {
+            row.split_whitespace()
+                .collect::<Vec<_>>()
+                .windows(3)
+                .filter(|w| w[1] == "/")
+                .map(|w| format!("{}/{}", w[0], w[2]))
+                .collect::<Vec<_>>()
+        };
+        let maxdd = row("maxdd").expect("maxdd row prints");
+        assert_eq!(cells(&maxdd), ["1/1", "1/0", "1/1"], "the 2-fail fund is COUNTED (ETFs 1) and not BLAMED (sole 0): {maxdd}");
+        assert!(maxdd.contains("DEEP") && maxdd.contains("SOL-EUR"), "sole-blocked names printed: {maxdd}");
+        assert!(!maxdd.contains("BOTH.L"), "a 2-fail name must never be named as sole-blocked: {maxdd}");
+        let stretch = row("stretch").expect("stretch row prints");
+        assert_eq!(cells(&stretch), ["0/0", "1/0", "0/0"], "same fund, its second gate — a fail with no sole blame: {stretch}");
+
+        assert!(row("cagr").is_none(), "a gate nobody failed must not print: {lines:#?}");
+        assert!(!lines.iter().any(|l| l.contains("LEVX")), "a refusal is not a gate failure: {lines:#?}");
+        assert!(funnel_lines(&[], &t).is_empty());
     }
 
     /// (fund valuation) cheapest-first ordering, pe-less funds silent, empty map -> None. The

@@ -1234,16 +1234,44 @@ pub fn growth_down_year_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f6
     Some((perf_pct(quote, "1Y")?, long_cagr_from(quote, tuning, long_cum, long_years), quote.range_pct))
 }
 
+/// WHY a quote is not assessable as a growth candidate at all — the structural half of
+/// `gate_failures`' `None`, named so a caller can report WHICH refusal it was instead of a silent drop.
+///
+/// Exists for the screen's gate funnel: a tally whose denominator doesn't reconcile
+/// (`scanned = refused + failed + ranked`) can't be trusted to aim a knob at anything. `gate_failures`
+/// calls this as its own early-out rather than re-testing the same four conditions, so the funnel's
+/// refused bucket and the ranking's refusal cannot disagree.
+///
+/// NOT exhaustive of `None`: `gate_failures` also bails on a missing 1Y leg, one line further down and
+/// only reachable once a long leg exists. That case is `gate_failures() == None` while this returns
+/// `Some`-less — i.e. the funnel reads "refused with no structural reason" as the missing-1Y case, which
+/// is exact because these are the only two ways out.
+pub fn refusal_reason(quote: &Quote) -> Option<&'static str> {
+    if is_leveraged(&quote.name) {
+        return Some("leveraged");
+    }
+    if is_commodity_etf(quote) {
+        return Some("commodity");
+    }
+    if is_currency_quoted(&quote.ticker) && is_stablecoin(&quote.ticker) {
+        return Some("stablecoin");
+    }
+    if quote.avg_turnover_eur.is_none() {
+        return Some("no-turnover");
+    }
+    None
+}
+
 /// Every growth gate this quote FAILS, in gate order: (gate_name, human "why", is_close_miss).
 /// `None` = not assessable as a growth candidate at all (leveraged / stablecoin / unknown turnover /
-/// no 1Y data); a name with no 5y+ leg returns a single "history" fail (so a pinned young ETF explains
-/// its 0.0 rather than vanishing); empty vec = clears every gate. Shared by the near-miss tail above and
-/// `check`'s held-name gate review, so a held name that would no longer rank gets flagged with the
-/// same wording the screen tail uses.
+/// no 1Y data — see `refusal_reason`); a name with no 5y+ leg returns a single "history" fail (so a
+/// pinned young ETF explains its 0.0 rather than vanishing); empty vec = clears every gate. Shared by
+/// the near-miss tail above and `check`'s held-name gate review, so a held name that would no longer
+/// rank gets flagged with the same wording the screen tail uses.
 pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'static str, String, bool)>> {
     let crypto = is_currency_quoted(&quote.ticker);
     // not a near-miss CANDIDATE: structural rejects / missing data have nothing to "almost pass"
-    if is_leveraged(&quote.name) || is_commodity_etf(quote) || (crypto && is_stablecoin(&quote.ticker)) {
+    if refusal_reason(quote).is_some() {
         return None;
     }
     let turnover = quote.avg_turnover_eur?; // unknown turnover -> not assessable as a compounder
@@ -1322,6 +1350,20 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     }
     if r1m <= knife {
         fails.push(("1M-knife", format!("1M {r1m:+.1}% (floor {knife:.1}%)"), r1m > knife - 8.0));
+    }
+    // (#23) the DEGENERATE-SERIES gate's reason — the one `score_parts` gate this mirror never carried,
+    // which made a single-bar repricing count as "clears every gate" in any tally built on this fn. Same
+    // expression as the copy in `score_parts`, deliberately.
+    //
+    // `is_close` is FALSE and always will be: a thin listing that repriced once is not a name one notch
+    // outside a fence, so it stays out of the near-miss tail (which needs a close fail) — and a name
+    // failing this PLUS one close gate correctly drops out of the two-gate tail, which needs both close.
+    if let (Some(d1), Some(w1), Some(m1)) =
+        (perf_pct(quote, "1D"), perf_pct(quote, "1W"), perf_pct(quote, "1M"))
+    {
+        if d1.abs() > 0.5 && (d1 - w1).abs() < 1e-6 && (d1 - m1).abs() < 1e-6 {
+            fails.push(("artifact", format!("1D/1W/1M all {d1:+.1}% — single-bar repricing, not a price history"), false));
+        }
     }
     // mirror of the `long_leg_floors` loop in `score_parts` — same table, so the two cannot disagree.
     for (label, tag, floor) in long_leg_floors(tuning) {
@@ -5067,6 +5109,93 @@ mod tests {
         assert!(!scored(&crashed, &BuyHeuristic { growth_maxdd_cap_crypto: 83.99, ..d.clone() }));
         assert!(scored(&crashed, &BuyHeuristic { growth_maxdd_cap: 20.0, ..d.clone() }),
             "the equity drawdown cap must not touch the crypto lane");
+    }
+
+    /// (funnel) `gate_failures` MIRRORS `score_parts` rather than sharing its gates — a duplication
+    /// picks.rs justifies with "drift only mislabels the tail, never the rank". That justification dies
+    /// the moment the screen's gate funnel aims a knob at the mirror's counts: a mislabel then aims the
+    /// knob wrong. So pin the equivalence directly.
+    ///
+    /// ONE claim, both directions: a quote clears every gate (`Some([])`) if and only if the scorer
+    /// ranks it (`Some(score)`). Refusals satisfy it too — both sides read `None`, so `false == false`.
+    ///
+    /// The (#23) row is why this test exists: until 2026-08-03 the mirror had no artifact leg, so a
+    /// single-bar repricing read as "clears every gate" here while the scorer rejected it.
+    #[test]
+    fn gate_failures_agrees_with_the_scorer() {
+        let d = BuyHeuristic::default();
+        let clean = gate_fixture();
+
+        let mut leveraged = gate_fixture();
+        leveraged.name = "Some Index 2x Daily Leveraged".into();
+        let mut commodity = gate_fixture();
+        commodity.instrument_type = "ETF".into();
+        commodity.name = "WisdomTree Physical Gold UCITS ETF".into();
+        let mut stable = gate_fixture();
+        stable.ticker = "USDT-EUR".into();
+        let mut no_turnover = gate_fixture();
+        no_turnover.avg_turnover_eur = None;
+        let mut no_1y = gate_fixture();
+        no_1y.perf = legs(&[("1M", 2.0), ("5Y", 200.0)]); // long leg present, 1Y absent -> the other None arm
+        let mut no_history = gate_fixture();
+        no_history.perf = legs(&[("1M", 2.0), ("1Y", 20.0)]);
+        // (#23) 1D == 1W == 1M, all past the |1D| > 0.5 guard: one bar moved in a whole month
+        let mut artifact = gate_fixture();
+        artifact.perf = legs(&[("1D", 212.9), ("1W", 212.9), ("1M", 212.9), ("1Y", 20.0), ("5Y", 200.0)]);
+        let mut deep = gate_fixture();
+        deep.max_drawdown_pct = 95.0;
+        let mut stretched = gate_fixture();
+        stretched.above_ma_pct = 400.0;
+
+        let cases: &[(&str, &Quote)] = &[
+            ("clean", &clean), ("leveraged", &leveraged), ("commodity", &commodity),
+            ("stablecoin", &stable), ("no-turnover", &no_turnover), ("no-1y", &no_1y),
+            ("no-history", &no_history), ("artifact", &artifact), ("deep drawdown", &deep),
+            ("stretched", &stretched),
+        ];
+        // knob sets chosen to move the fence ACROSS the fixture, so both verdicts flip inside the grid
+        let tunings: &[(&str, BuyHeuristic)] = &[
+            ("default", d.clone()),
+            ("shipped-ish", BuyHeuristic {
+                growth_min_cagr: 19.0, growth_min_range_pct: 80.0, growth_maxdd_cap: 84.0,
+                growth_max_above_ma: 150.0, growth_min_1y_pct: 0.0, ..d.clone()
+            }),
+            ("everything off", BuyHeuristic {
+                growth_min_cagr: 0.0, growth_min_range_pct: 0.0, growth_maxdd_cap: 0.0,
+                growth_max_above_ma: 0.0, growth_min_1y_pct: -1e9, growth_min_5y_pct: -1e9,
+                growth_require_lifetime_uptrend: false, ..d.clone()
+            }),
+        ];
+
+        for (tname, t) in tunings {
+            for (qname, q) in cases {
+                let clears = gate_failures(q, t).is_some_and(|f| f.is_empty());
+                let ranks = growth_score(q, t).is_some();
+                assert_eq!(clears, ranks,
+                    "{qname} under {tname}: gate_failures says clears={clears}, scorer says ranks={ranks} \
+                     — the mirror drifted from score_parts, so the gate funnel's counts are wrong");
+            }
+        }
+
+        // the refusal bucket must name the cause, and must fire for exactly the structural four
+        assert_eq!(refusal_reason(&clean), None);
+        assert_eq!(refusal_reason(&leveraged), Some("leveraged"));
+        assert_eq!(refusal_reason(&commodity), Some("commodity"));
+        assert_eq!(refusal_reason(&stable), Some("stablecoin"));
+        assert_eq!(refusal_reason(&no_turnover), Some("no-turnover"));
+        // the missing-1Y bail is NOT structural: gate_failures refuses it, refusal_reason does not —
+        // which is exactly how the funnel tells the two apart (see refusal_reason's doc).
+        assert_eq!(refusal_reason(&no_1y), None);
+        assert!(gate_failures(&no_1y, &d).is_none());
+        // and a no-history name is a FAIL, not a refusal — it explains itself in the table
+        assert_eq!(refusal_reason(&no_history), None);
+        assert_eq!(
+            gate_failures(&no_history, &d).map(|f| f.iter().map(|(g, ..)| *g).collect::<Vec<_>>()),
+            Some(vec!["history"])
+        );
+        // (#23) the artifact leg is present, and is never a near miss
+        let art = gate_failures(&artifact, &d).unwrap();
+        assert!(art.iter().any(|(g, _, close)| *g == "artifact" && !*close));
     }
 
     /// (QA) The SHIPPED tuning — the one every backtest receipt was graded under. Every other scoring
