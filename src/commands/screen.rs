@@ -236,6 +236,12 @@ fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) ->
 /// Names are NOT filtered to close misses, unlike the near-miss tail printed after it: the point is
 /// to see the gross single-gate rejects too, which that tail deliberately hides.
 ///
+/// They are ordered BY CLASS — stocks · ETFs · crypto, matching the three numeric cells left of them
+/// — because a flat alphabetical sort buried the one sole-blocked stock on the `cagr` row third in a
+/// list of ETFs. `NAME_CAP` is shared across the three, spent in that order, so a row with more than
+/// `NAME_CAP` sole-blockers shows nothing for its LAST class: today `history` only, whose ~1900 ETFs
+/// eat the budget and leave its ~19 coins unsampled. The cells still carry every count regardless.
+///
 /// One row reads differently by construction: `history` always shows sole == fail, because
 /// `gate_failures` returns that reason ALONE and stops — nothing else was even measured. It is an
 /// honest single-gate death, just not one any knob in `buy_heuristic` can move (only `history_proxy`).
@@ -257,7 +263,8 @@ fn funnel_lines(quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Vec<St
     };
     let mut fails: std::collections::HashMap<&'static str, [usize; 3]> = std::collections::HashMap::new();
     let mut sole: std::collections::HashMap<&'static str, [usize; 3]> = std::collections::HashMap::new();
-    let mut blocked: std::collections::HashMap<&'static str, Vec<&str>> = std::collections::HashMap::new();
+    // (class, ticker) so the sample sorts class-major from the same sort_unstable — see the doc above
+    let mut blocked: std::collections::HashMap<&'static str, Vec<(usize, &str)>> = std::collections::HashMap::new();
     let mut refused: std::collections::BTreeMap<&'static str, usize> = std::collections::BTreeMap::new();
     let (mut cleared, mut failed) = (0usize, 0usize);
 
@@ -274,7 +281,7 @@ fn funnel_lines(quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Vec<St
                 }
                 if let [(gate, ..)] = f[..] {
                     sole.entry(gate).or_default()[class] += 1;
-                    blocked.entry(gate).or_default().push(&q.ticker);
+                    blocked.entry(gate).or_default().push((class, &q.ticker));
                 }
             }
         }
@@ -297,7 +304,17 @@ fn funnel_lines(quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Vec<St
         let mut names = blocked.remove(gate).unwrap_or_default();
         names.sort_unstable();
         let more = names.len().saturating_sub(NAME_CAP);
-        let shown = names.iter().take(NAME_CAP).copied().collect::<Vec<_>>().join(", ");
+        let mut shown = String::new();
+        let mut prev: Option<usize> = None;
+        for (class, ticker) in names.iter().take(NAME_CAP) {
+            shown.push_str(match prev {
+                None => "",
+                Some(p) if p == *class => ", ",
+                _ => " · ", // class boundary: stocks · ETFs · crypto, the dot the `refused` line uses
+            });
+            shown.push_str(ticker);
+            prev = Some(*class);
+        }
         let tail = if more > 0 { format!(" +{more}") } else { String::new() };
         out.push(format!("  {gate:<10}{:>12}{:>12}{:>12}   {shown}{tail}", cell(0), cell(1), cell(2)));
     }
@@ -3115,20 +3132,26 @@ mod tests {
             x
         };
         let clean = q("CLEAN", "Clean Corp", "EQUITY");
-        let mut dd = q("DEEP", "Deep Corp", "EQUITY");
+        // ZDEEP sorts LAST alphabetically and AAA.L first, so a flat sort would print AAA.L, SOL-EUR,
+        // ZDEEP — the ordering this test exists to reject. Class order must beat the alphabet.
+        let mut dd = q("ZDEEP", "Deep Corp", "EQUITY");
         dd.max_drawdown_pct = 95.0; // one gate, alone
+        let mut dd2 = q("YDEEP", "Deeper Corp", "EQUITY"); // second stock -> pins the intra-class ", "
+        dd2.max_drawdown_pct = 95.0;
+        let mut dd_etf = q("AAA.L", "Deep Fund UCITS ETF", "ETF");
+        dd_etf.max_drawdown_pct = 95.0;
         let mut both = q("BOTH.L", "Both Fund UCITS ETF", "ETF");
         both.max_drawdown_pct = 95.0;
         both.above_ma_pct = 400.0; // two gates -> blamed for neither
         let mut coin = q("SOL-EUR", "Solana", "CRYPTOCURRENCY");
         coin.max_drawdown_pct = 95.0;
         let lev = q("LEVX.L", "Some Index 2x Daily Leveraged", "ETF"); // refused, never a fail
-        let quotes = vec![clean, dd, both, coin, lev];
+        let quotes = vec![clean, dd, dd2, dd_etf, both, coin, lev];
 
         let lines = funnel_lines(&quotes, &t);
         let row = |gate: &str| lines.iter().find(|l| l.trim_start().starts_with(gate)).cloned();
         let last = lines.last().unwrap();
-        assert!(last.contains("scanned 5 = refused 1 + failed 3 + cleared 1"), "arithmetic must close: {last}");
+        assert!(last.contains("scanned 7 = refused 1 + failed 5 + cleared 1"), "arithmetic must close: {last}");
         assert!(lines.iter().any(|l| l.contains("refused (not assessable): leveraged 1")), "{lines:#?}");
 
         // the three `fail / sole` cells in column order: stocks, ETFs, crypto
@@ -3141,8 +3164,10 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let maxdd = row("maxdd").expect("maxdd row prints");
-        assert_eq!(cells(&maxdd), ["1/1", "1/0", "1/1"], "the 2-fail fund is COUNTED (ETFs 1) and not BLAMED (sole 0): {maxdd}");
-        assert!(maxdd.contains("DEEP") && maxdd.contains("SOL-EUR"), "sole-blocked names printed: {maxdd}");
+        assert_eq!(cells(&maxdd), ["2/2", "2/1", "1/1"], "the 2-fail fund is COUNTED (ETFs 2) and not BLAMED (sole 1): {maxdd}");
+        // class-major ordering, `, ` inside a class and ` · ` between classes — all three at once.
+        // A flat alphabetical sort would read "AAA.L, SOL-EUR, YDEEP, ZDEEP" here.
+        assert!(maxdd.ends_with("YDEEP, ZDEEP · AAA.L · SOL-EUR"), "names run stocks · ETFs · crypto, not alphabetically: {maxdd}");
         assert!(!maxdd.contains("BOTH.L"), "a 2-fail name must never be named as sole-blocked: {maxdd}");
         let stretch = row("stretch").expect("stretch row prints");
         assert_eq!(cells(&stretch), ["0/0", "1/0", "0/0"], "same fund, its second gate — a fail with no sole blame: {stretch}");
