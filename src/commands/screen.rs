@@ -7,7 +7,7 @@
 
 use crate::core::Quote;
 use crate::picks::{
-    eu_buyable, exit_review_lines, gate_failures, growth_down_year_miss, growth_near_miss, growth_score, growth_two_gate_miss, render,
+    eu_buyable, exit_review_lines, gate_failures, growth_down_year_miss, growth_near_miss, growth_score, render,
     RenderCtx,
 };
 use crate::{config, core, fetch, picks};
@@ -324,6 +324,95 @@ fn funnel_lines(quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Vec<St
     }
     // the reconciliation line: a funnel whose arithmetic doesn't close can't be trusted to aim a knob
     out.push(format!("  scanned {} = refused {refused_n} + failed {failed} + cleared {cleared} (cleared ≥ rows printed: score/sector/cap trims come after)", quotes.len()));
+    out
+}
+
+const MULTI_GATE_CAP: usize = 15; // hardcoded like the near-miss margins — a cosmetic tail, not a tuned knob
+
+/// Tails (C) and (C3): names failing EXACTLY `n` growth gates, every one of them close. Blocks are kept
+/// SEPARATE per arity rather than merged because a one-gate name costs one knob to recover, a two-gate
+/// name two and a three-gate name three — mixing them hides which are cheap. One fn, one call per block,
+/// so the blocks cannot drift apart the way three pasted copies would.
+///
+/// `empty_note` is emitted when nothing qualifies. `None` = vanish (what the near-miss and two-gate
+/// blocks have always done); `Some` is for a block whose whole point is that these names were invisible,
+/// where a silently absent block reproduces the ambiguity it exists to remove.
+///
+/// Returns lines (leading blank included) rather than printing, same as `funnel_lines` — the caller
+/// prints, so the dedup/histogram/cap logic below is reachable from a test.
+fn multi_gate_lines(quotes: &[Quote], pinned: &[String], tuning: &config::BuyHeuristic, n: usize, lead: &str, empty_note: Option<&str>) -> Vec<String> {
+    let mut hits: Vec<(&Quote, Vec<&'static str>, String)> = quotes
+        .iter()
+        .filter(|q| !pinned.contains(&q.ticker)) // pinned-skip: the gate-review footer covers them
+        .filter_map(|q| picks::growth_n_gate_miss(q, tuning, n).map(|(gates, why)| (q, gates, why)))
+        .collect();
+    // one row per FUND/name (the same UCITS fund lists on several venues) — and dedup BEFORE the
+    // histogram so the counts match the rows they summarise.
+    let mut seen_names = std::collections::HashSet::new();
+    hits.retain(|(q, ..)| seen_names.insert(q.name.to_lowercase()));
+    if hits.is_empty() {
+        return empty_note.map(|note| vec![String::new(), note.to_string()]).unwrap_or_default();
+    }
+    // commonest gate COMBINATION first. The histogram is the actionable summary and it survives the cap:
+    // "peg & cagr 30" names the knobs doing the work even when the list below is truncated.
+    let mut freq: std::collections::HashMap<Vec<&'static str>, usize> = std::collections::HashMap::new();
+    for (_, gates, _) in &hits {
+        *freq.entry(gates.clone()).or_default() += 1;
+    }
+    hits.sort_by(|a, b| {
+        freq[&b.1].cmp(&freq[&a.1]).then_with(|| a.1.cmp(&b.1)).then_with(|| a.0.ticker.cmp(&b.0.ticker))
+    });
+    let mut combos: Vec<_> = freq.iter().collect();
+    combos.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    // " & " not "+": one gate is literally named `1Y+`, so a `+` join printed `1Y++peg`.
+    let hist = combos.iter().take(3).map(|(gates, n)| format!("{} {n}", gates.join(" & "))).collect::<Vec<_>>().join(", ");
+    // say when the list is cut — a silent truncation reads as "that's all of them"
+    let more = if hits.len() > MULTI_GATE_CAP { format!("top {MULTI_GATE_CAP} of {}; ", hits.len()) } else { String::new() };
+    let mut out = vec![String::new(), format!("{lead} ({more}commonest: {hist}):")];
+    for (q, _, why) in hits.iter().take(MULTI_GATE_CAP) {
+        out.push(format!("  {:<8} {:<28.28} {why}", q.ticker, q.name));
+    }
+    out
+}
+
+const LEG_FLOOR_CAP: usize = 15;
+
+/// Tail (E): every name a long-leg cumulative floor rejects, whatever ELSE it also fails. The one tail
+/// with no closeness and no arity filter, because at `growth_min_5y_pct: 75.0` each of those empties the
+/// list — the 5Y bar fails 2161 names and sole-blocks zero, and the names worth seeing (AMZN +24.7% vs
+/// +75) miss it grossly. Every block above needs a narrow miss, a small failure count, or both, so the
+/// tightest live gate in the tool had no name-level table at all.
+///
+/// Sorted by long CAGR DESCENDING, same trick tail (D) uses: index trackers have mediocre CAGR by
+/// construction, so they sink below the cap unaided and the cap trims trackers instead of the answer —
+/// no lane special-case. Vanishes when the floor rejects nobody, which is also how the 8Y block
+/// self-suppresses while `growth_min_8y_pct` sits at -1e9 (measured and rejected 2026-08-03).
+fn leg_floor_lines(quotes: &[Quote], pinned: &[String], tuning: &config::BuyHeuristic, tag: &str, label: &str, knob: &str, floor: f64) -> Vec<String> {
+    let mut hits: Vec<(&Quote, f64, String, Vec<&'static str>)> = quotes
+        .iter()
+        .filter(|q| !pinned.contains(&q.ticker)) // same pinned-skip as the blocks above
+        .filter_map(|q| picks::growth_leg_floor_miss(q, tuning, tag).map(|(cagr, why, others)| (q, cagr, why, others)))
+        .collect();
+    if hits.is_empty() {
+        return Vec::new();
+    }
+    hits.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.ticker.cmp(&b.0.ticker)));
+    let mut seen_names = std::collections::HashSet::new();
+    hits.retain(|(q, ..)| seen_names.insert(q.name.to_lowercase()));
+    let more = if hits.len() > LEG_FLOOR_CAP { format!("top {LEG_FLOOR_CAP} of {}; ", hits.len()) } else { String::new() };
+    let mut out = vec![
+        String::new(),
+        // "a floor", not "the floor": crypto answers to its own twin knob (0.0 vs the equity 75.0), so a
+        // header claiming ONE bar would misread every coin row. Each row quotes the bar it was judged on.
+        format!("{label} floor — every name a {label} cumulative floor rejects, best long record first ({more}they fail other gates too, so no tail above can reach them; equity and crypto floors differ, each row quotes its own):"),
+    ];
+    for (q, cagr, why, others) in hits.iter().take(LEG_FLOOR_CAP) {
+        let also = if others.is_empty() { String::new() } else { format!(" · also: {}", others.join(", ")) };
+        out.push(format!("  {:<8} {:<28.28} {cagr:>7.1}%/yr  {why}{also}", q.ticker, q.name));
+    }
+    // the knob and its LIVE value, never a hardcoded threshold — the block exists to make a gate's cost
+    // visible, and a footer naming a number the run didn't use would misdirect the very edit it invites.
+    out.push(format!("  (knob `{knob}` {floor:.0} — loosening it re-admits these; receipt in ci-settings)"));
     out
 }
 
@@ -1744,42 +1833,36 @@ pub async fn run(args: Vec<String>) {
     // (C) TWO-GATE tail: names failing EXACTLY two gates, both close. The block above needs exactly
     // ONE failing gate, so a name one notch outside two fences vanished from the whole tool — no table
     // row, no near-miss line, and (before the --explain fix) no way to ask. That is how MSFT went
-    // missing with no explanation. Kept a SEPARATE block rather than merged: a one-gate name costs one
-    // knob to recover, a two-gate name costs two, and mixing them hides which are cheap.
-    const TWO_GATE_CAP: usize = 15; // hardcoded like the near-miss margins — a cosmetic tail, not a tuned knob
-    let mut two: Vec<(&Quote, (&'static str, &'static str), String)> = quotes
-        .iter()
-        .filter(|q| !settings.tickers.contains(&q.ticker)) // same pinned-skip as above: gate review covers them
-        .filter_map(|q| growth_two_gate_miss(q, &settings.buy_heuristic).map(|(pair, why)| (q, pair, why)))
-        .collect();
-    if !two.is_empty() {
-        // one row per FUND/name, same reason as the block above (one UCITS fund, several venues) — and
-        // dedup BEFORE the histogram so the counts match the rows they summarise.
-        let mut seen_names = std::collections::HashSet::new();
-        two.retain(|(q, ..)| seen_names.insert(q.name.to_lowercase()));
-        // commonest gate PAIR first. The histogram is the actionable summary and it survives the cap:
-        // "peg+cagr 30" names the two knobs doing the work even when the list below is truncated.
-        let mut freq: std::collections::HashMap<(&str, &str), usize> = std::collections::HashMap::new();
-        for (_, pair, _) in &two {
-            *freq.entry(*pair).or_default() += 1;
-        }
-        two.sort_by(|a, b| {
-            freq[&b.1].cmp(&freq[&a.1]).then_with(|| a.1.cmp(&b.1)).then_with(|| a.0.ticker.cmp(&b.0.ticker))
-        });
-        let mut pairs: Vec<_> = freq.iter().collect();
-        pairs.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-        // " & " not "+": one gate is literally named `1Y+`, so a `+` join printed `1Y++peg`.
-        let hist = pairs.iter().take(3).map(|((x, y), n)| format!("{x} & {y} {n}")).collect::<Vec<_>>().join(", ");
-        // say when the list is cut — a silent truncation reads as "that's all of them"
-        let more = if two.len() > TWO_GATE_CAP { format!("top {TWO_GATE_CAP} of {}; ", two.len()) } else { String::new() };
-        // NOT "would need both knobs loosened": with `use_life_cagr` on, `cagr` and `cagr-life` read the
-        // SAME number, so that pair (the bulk of the live list) is one fact counted twice and one knob
-        // to recover. The header states what is always true — these are invisible above — and lets the
-        // histogram say which pairs.
-        println!("\nTwo gates — one notch outside TWO fences, so the near-miss tail above (which needs exactly one) can't show them ({more}commonest: {hist}):");
-        for (q, _, why) in two.iter().take(TWO_GATE_CAP) {
-            println!("  {:<8} {:<28.28} {why}", q.ticker, q.name);
-        }
+    // missing with no explanation.
+    //
+    // NOT "would need both knobs loosened": with `use_life_cagr` on, `cagr` and `cagr-life` read the
+    // SAME number, so that pair (the bulk of the live list) is one fact counted twice and one knob to
+    // recover. The header states what is always true — these are invisible above — and lets the
+    // histogram say which pairs.
+    for l in multi_gate_lines(
+        &quotes,
+        &settings.tickers,
+        &settings.buy_heuristic,
+        2,
+        "Two gates — one notch outside TWO fences, so the near-miss tail above (which needs exactly one) can't show them",
+        None, // vanish when empty, as this block always has
+    ) {
+        println!("{l}");
+    }
+
+    // (C3) THREE-GATE tail: same predicate one arity further out. Prints a line when empty, unlike
+    // every sibling: the reason this block exists is that the cohort was invisible, and a block that
+    // silently disappears leaves "none this run" and "not looked at" indistinguishable — the exact
+    // ambiguity it was added to remove.
+    for l in multi_gate_lines(
+        &quotes,
+        &settings.tickers,
+        &settings.buy_heuristic,
+        3,
+        "Three gates — one notch outside THREE fences, so neither tail above (which need exactly one or two) can show them",
+        Some("Three gates — no name is within one notch of three fences this run."),
+    ) {
+        println!("{l}");
     }
 
     // (D) DOWN-YEAR tail: a proven long record rejected by the 1Y floor ALONE. The near-miss tail
@@ -1805,6 +1888,21 @@ pub async fn run(args: Vec<String>) {
         // NOT a shortlist. This exact cohort was measured before the floor was put back, and printing
         // it without the number invites buying the thing the gate exists to avoid.
         println!("  (round 5: loosening this floor to -10 admitted n=284 names averaging -108.1 pts forward — knob `growth_min_1y_pct`, receipt in ci-settings)");
+    }
+
+    // (E) LONG-LEG FLOOR tails: what the 5Y and 8Y cumulative bars cost, by name. Every block above
+    // filters on a narrow miss, a small failure count, or both, and the 5Y bar satisfies neither — it
+    // fails 2161 names, sole-blocks ZERO, and the names worth seeing miss it grossly (AMZN +24.7%
+    // against a +75 bar). So the tightest live gate in the tool was the one with no table. Printed last
+    // because it is the loosest and longest list. The 8Y call is silent at `growth_min_8y_pct: -1e9` and
+    // starts working the day that knob is set — same helper, one line.
+    for (tag, label, knob, floor) in [
+        ("5Y+", "5Y", "growth_min_5y_pct", settings.buy_heuristic.growth_min_5y_pct),
+        ("8Y+", "8Y", "growth_min_8y_pct", settings.buy_heuristic.growth_min_8y_pct),
+    ] {
+        for l in leg_floor_lines(&quotes, &settings.tickers, &settings.buy_heuristic, tag, label, knob, floor) {
+            println!("{l}");
+        }
     }
 
     // (round 56) holdings-overlap footer: the buy candidates are the ranked ETF rows + the pinned
@@ -2812,6 +2910,59 @@ mod tests {
             ]
         );
         assert!(headline_rows(&[], &titles).is_empty());
+    }
+
+    /// The gate tails: the n-arity block (2 and 3), the long-leg floor block, and the four behaviours
+    /// that are easy to break silently — dedup by FUND NAME before the histogram (so its counts match
+    /// the rows), the pinned skip, the empty note that ONLY the three-gate block carries, and the floor
+    /// block admitting a GROSS miss beside a second failing gate (the AMZN case every other tail drops).
+    #[test]
+    fn gate_tail_blocks() {
+        // 8Y is the long leg here (the ladder is 20/8/5), so 5Y is free to sit under its own floor
+        // without moving the CAGR — which is the whole shape of the case this block exists for.
+        let q = |ticker: &str, name: &str, range: f64, age: f64, l: &[(&str, f64)]| {
+            let mut quote = Quote::stub(ticker, "€1.00", "", name);
+            quote.avg_turnover_eur = Some(1e9); // else "no-turnover" -> not assessable at all
+            quote.range_pct = range;
+            quote.age_years = Some(age);
+            quote.perf = core::HORIZONS
+                .iter()
+                .map(|(lab, _)| l.iter().find(|(pl, _)| pl == lab).map(|(_, v)| ("x".to_string(), *v)))
+                .collect();
+            quote
+        };
+        let tuning = config::BuyHeuristic {
+            growth_min_5y_pct: 75.0,
+            growth_min_age_years: 5.0,
+            ..config::BuyHeuristic::default()
+        };
+        // AMZN: 5Y +25 against a +75 bar = a GROSS miss, plus `range` — two gates, one of them gross.
+        // 8Y +214% ≈ 15%/yr clears the CAGR floor, so it is a genuine compounder the 5Y bar rejects.
+        let amzn = |t: &str| q(t, "Amazon.com, Inc.", 75.0, 20.0, &[("1Y", 10.0), ("5Y", 25.0), ("8Y", 214.0)]);
+        // three CLOSE gates: young (4 vs 5), range (75 vs 80), cagr (7.0%/yr vs 8.0). 5Y +100 clears
+        // its floor deliberately — a fourth failure would drop this out of the n=3 block.
+        let three = q("THR", "Three Gate Co", 75.0, 4.0, &[("1Y", 10.0), ("5Y", 100.0), ("8Y", 71.8)]);
+        let pinned = q("PIN", "Pinned Co", 75.0, 20.0, &[("1Y", 10.0), ("5Y", 25.0), ("8Y", 214.0)]);
+        let quotes = vec![amzn("AMZN"), amzn("AMZN.DE"), three, pinned];
+        let pins = vec!["PIN".to_string()];
+
+        let two = multi_gate_lines(&quotes, &pins, &tuning, 2, "TWO", None);
+        assert!(two.is_empty(), "AMZN fails two gates but misses 5Y grossly -> a hard reject, not a near miss: {two:?}");
+        let three_block = multi_gate_lines(&quotes, &pins, &tuning, 3, "THREE", Some("none this run"));
+        assert_eq!(three_block[1], "THREE (commonest: young & range & cagr 1):", "gates joined with \" & \", never \"+\" (one gate is named `1Y+`)");
+        assert_eq!(three_block.len(), 3, "one row, and the pinned name is not it: {three_block:?}");
+        assert!(three_block[2].contains("THR") && three_block[2].contains("young:") && three_block[2].contains("cagr:"));
+        // the empty note is the point of this block: "none this run" and "not looked at" must differ
+        assert_eq!(multi_gate_lines(&[], &pins, &tuning, 3, "THREE", Some("none this run")), vec!["", "none this run"]);
+        assert!(multi_gate_lines(&[], &pins, &tuning, 2, "TWO", None).is_empty(), "the two-gate block still vanishes when empty");
+
+        let floor = leg_floor_lines(&quotes, &pins, &tuning, "5Y+", "5Y", "growth_min_5y_pct", tuning.growth_min_5y_pct);
+        assert_eq!(floor.len(), 4, "blank + header + ONE deduped Amazon row + footer, pinned skipped: {floor:?}");
+        assert!(floor[2].contains("AMZN ") && floor[2].contains("5Y +25.0%") && floor[2].contains("· also: range"));
+        assert!(!floor[2].contains("AMZN.DE"), "one row per FUND — the second venue is the same name");
+        assert!(floor[3].contains("growth_min_5y_pct` 75"), "the footer names the knob at its LIVE value: {}", floor[3]);
+        // floor off -> the gate never fails -> the block self-suppresses (this is the shipped 8Y case)
+        assert!(leg_floor_lines(&quotes, &pins, &tuning, "8Y+", "8Y", "growth_min_8y_pct", tuning.growth_min_8y_pct).is_empty());
     }
 
     /// (r14) hedged detection: whole-word only — "UnHedged"/"Hedge" must never flag (the

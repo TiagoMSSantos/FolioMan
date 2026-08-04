@@ -1224,22 +1224,23 @@ pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'stati
     }
 }
 
-/// The TWO-gate sibling of `growth_near_miss`: a name one notch outside EXACTLY two fences, both
-/// close. `None` for everything else — 0, 1 or ≥3 failures, or 2 where either is a gross miss (a
-/// hard reject, not a near miss). Returns ((gate_a, gate_b), the joined "why", both gates named) for
-/// `screen`'s second tail.
+/// The MULTI-gate sibling of `growth_near_miss`: a name one notch outside EXACTLY `n` fences, every
+/// one of them close. `None` for everything else — a different failure count, or one where any fail is
+/// a gross miss (a hard reject, not a near miss). Returns (the failing gates in gate order, the joined
+/// "why") for `screen`'s second and third tails.
 ///
 /// Exists because the one-gate block above is the whole reason a name like MSFT could vanish from the
 /// tool entirely: no table row (it fails a gate), no near-miss line (it fails two), and so no way to
 /// see it at all. One gate costs one knob to recover and two cost two, which is why they print as
-/// separate blocks rather than one merged list.
-pub fn growth_two_gate_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<((&'static str, &'static str), String)> {
+/// separate blocks rather than one merged list — the ARITY is the parameter, so a caller adds a block
+/// per recovery cost instead of pasting this predicate again.
+pub fn growth_n_gate_miss(quote: &Quote, tuning: &BuyHeuristic, n: usize) -> Option<(Vec<&'static str>, String)> {
     let fails = gate_failures(quote, tuning)?;
-    if fails.len() != 2 || !fails.iter().all(|(.., close)| *close) {
+    if fails.len() != n || !fails.iter().all(|(.., close)| *close) {
         return None;
     }
     let why = fails.iter().map(|(g, w, _)| format!("{g}: {w}")).collect::<Vec<_>>().join("; ");
-    Some(((fails[0].0, fails[1].0), why)) // gate order is deterministic in gate_failures
+    Some((fails.iter().map(|(g, ..)| *g).collect(), why)) // gate order is deterministic in gate_failures
 }
 
 /// Names whose ONLY failing gate is the 1Y floor — a proven long record having one down year.
@@ -1261,6 +1262,29 @@ pub fn growth_down_year_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f6
     // reachable only past every `?` in gate_failures above (it returned a 1Y+ fail, so both parsed)
     let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years)?;
     Some((perf_pct(quote, "1Y")?, long_cagr_from(quote, tuning, long_cum, long_years), quote.range_pct))
+}
+
+/// Every name a given long-leg floor rejects, whatever ELSE it also fails — the loosest tail in the
+/// file, and the only view of a gate that sole-blocks nobody. `tag` is a `long_leg_floors` tag ("5Y+",
+/// "8Y+"); the perf label is the tag without its `+`. Returns (long CAGR %/yr, that gate's own "why",
+/// the OTHER gates the name fails). `None` = not assessable as a growth candidate, or it clears this floor.
+///
+/// Deliberately ignores BOTH `is_close` and the failure count, unlike all three siblings above, because
+/// at `growth_min_5y_pct: 75.0` every one of those filters empties the list: the 5Y bar fails 2161 names
+/// and sole-blocks ZERO (funnel 2026-08-03: `5Y+ 423/0 1709/0 29/0`), and the names worth seeing miss it
+/// grossly, not narrowly — AMZN at +24.7% against a +75 bar is invisible in the near-miss tail (needs one
+/// gate), the two-gate tail (needs both close) and the down-year tail (needs a sole blocker) alike.
+///
+/// Returns the STORED `why` rather than reformatting the comparison: that is what keeps the per-class
+/// floor right for free, since crypto answers to `growth_min_5y_pct_crypto` and a caller quoting one
+/// number in its header would be lying about the coins.
+pub fn growth_leg_floor_miss(quote: &Quote, tuning: &BuyHeuristic, tag: &str) -> Option<(f64, String, Vec<&'static str>)> {
+    let fails = gate_failures(quote, tuning)?;
+    let hit = fails.iter().position(|(g, ..)| *g == tag)?; // clears this floor (or the floor is off) -> not in this list
+    // reachable only past every `?` in gate_failures above (it returned a long-leg fail, so the leg parsed)
+    let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years)?;
+    let others = fails.iter().enumerate().filter(|(i, _)| *i != hit).map(|(_, (g, ..))| *g).collect();
+    Some((long_cagr_from(quote, tuning, long_cum, long_years), fails[hit].1.clone(), others))
 }
 
 /// WHY a quote is not assessable as a growth candidate at all — the structural half of
@@ -3646,18 +3670,28 @@ mod tests {
 
     // (C) the TWO-gate sibling — the boundary the second screen tail turns on. Exactly 2, BOTH close.
     // cagr(97%,10y)≈7.0%/yr: 1pp under the 8 floor = close; cagr(40%,10y)≈3.4%/yr = a gross miss.
-    let two = |dd: f64, c10: f64| growth_two_gate_miss(&quote(dd, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", c10)]), &tuning);
-    assert_eq!(two(25.0, 97.0).map(|(p, _)| p), Some(("range", "cagr")), "2 close gates -> surfaced, in gate order");
+    let two = |dd: f64, c10: f64| growth_n_gate_miss(&quote(dd, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", c10)]), &tuning, 2);
+    assert_eq!(two(25.0, 97.0).map(|(p, _)| p), Some(vec!["range", "cagr"]), "2 close gates -> surfaced, in gate order");
     assert!(two(25.0, 97.0).unwrap().1.contains("range:") && two(25.0, 97.0).unwrap().1.contains("cagr:"), "both reasons printed");
     assert!(two(25.0, 40.0).is_none(), "range close but cagr grossly missed -> a hard reject, not a near miss");
     assert!(two(25.0, 200.0).is_none(), "ONE gate belongs to the block above, not this one");
     assert!(two(5.0, 200.0).is_none(), "clears everything -> it ranks");
-    // three gates -> in NEITHER tail (nothing to eyeball: too far out, and 3 knobs to recover).
+    // three gates -> its OWN tail (n=3), and in neither of the two above: the arity is the parameter,
+    // and a block per arity is a block per recovery cost (3 close gates = 3 knobs).
     let mut three = quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 97.0)]);
     three.age_years = Some(4.0);
     let age3 = BuyHeuristic { growth_min_age_years: 5.0, ..BuyHeuristic::default() };
     assert_eq!(gate_failures(&three, &age3).unwrap().len(), 3, "young + range + cagr");
-    assert!(growth_two_gate_miss(&three, &age3).is_none() && growth_near_miss(&three, &age3).is_none());
+    let hit3 = growth_n_gate_miss(&three, &age3, 3).expect("3 close gates -> the n=3 tail");
+    assert_eq!(hit3.0, vec!["young", "range", "cagr"], "every failing gate named, in gate order");
+    assert!(hit3.1.contains("young:") && hit3.1.contains("range:") && hit3.1.contains("cagr:"), "all three reasons printed: {}", hit3.1);
+    assert!(growth_n_gate_miss(&three, &age3, 2).is_none() && growth_near_miss(&three, &age3).is_none());
+    // ...but a GROSS miss among the three is a hard reject, not a near miss — the whole content of the
+    // "every failure must be close" rule, and nothing else pins it.
+    let mut gross3 = quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]); // cagr 3.4%/yr vs 8 = gross
+    gross3.age_years = Some(4.0);
+    assert_eq!(gate_failures(&gross3, &age3).unwrap().len(), 3, "same three gates, one missed grossly");
+    assert!(growth_n_gate_miss(&gross3, &age3, 3).is_none());
 
     // --- (#33) minimum-age gate (backtest-blind: age_years None -> pass; live -> gate) ---
     let age_t = BuyHeuristic { growth_min_age_years: 5.0, ..BuyHeuristic::default() };
@@ -4480,6 +4514,30 @@ mod tests {
     // a second failing gate, or none at all -> not this tail's business
     assert!(growth_down_year_miss(&quote(25.0, &[("1Y", -7.0), ("5Y", 200.0), ("10Y", 500.0)]), &tuning).is_none(), "1Y+ AND range");
     assert!(growth_down_year_miss(&up1y, &tuning).is_none(), "clears every gate -> it ranks");
+
+    // (E) the long-leg floor tail: EVERY name the 5Y bar rejects, however grossly and whatever else it
+    // also fails. The AMZN case — +25% against a +75 bar (gross) PLUS a second failing gate — is what
+    // every tail above drops, so a closeness or arity filter here would return the list to empty.
+    let floor5 = BuyHeuristic { growth_min_5y_pct: 75.0, growth_min_age_years: 5.0, ..BuyHeuristic::default() };
+    let mut amzn = quote(25.0, &[("1Y", 10.0), ("5Y", 25.0), ("10Y", 500.0)]); // 5Y gross-fails; range 75<80 too
+    amzn.age_years = Some(20.0);
+    let (cagr, why, others) = growth_leg_floor_miss(&amzn, &floor5, "5Y+").expect("the 5Y bar rejects it -> this tail");
+    assert!(cagr > 0.0 && why.contains("5Y +25.0%") && why.contains("need >75%"), "the row quotes the leg and the bar: {why}");
+    assert_eq!(others, vec!["range"], "the OTHER gates are named, so the row says what else must give");
+    assert!(growth_near_miss(&amzn, &floor5).is_none() && growth_n_gate_miss(&amzn, &floor5, 2).is_none(), "…and no tail above can reach it");
+    assert!(growth_leg_floor_miss(&amzn, &tuning, "5Y+").is_none(), "at the 0.0 default a +25% 5Y clears the bar -> nothing to list");
+    assert!(growth_leg_floor_miss(&amzn, &floor5, "8Y+").is_none(), "growth_min_8y_pct is -1e9: the 8Y block prints nothing until it is set");
+    let clears = quote(5.0, &[("1Y", 10.0), ("5Y", 200.0), ("10Y", 500.0)]);
+    assert!(growth_leg_floor_miss(&clears, &floor5, "5Y+").is_none(), "clears the floor -> not in this list");
+    // per-class floor stays wired: a coin answers to growth_min_5y_pct_crypto, not the equity bar
+    let mut coin5 = quote(25.0, &[("1Y", 10.0), ("5Y", 25.0), ("10Y", 500.0)]);
+    coin5.ticker = "BTC-EUR".into();
+    assert!(growth_leg_floor_miss(&coin5, &floor5, "5Y+").is_none(), "crypto twin is 0.0 -> +25% clears it");
+    let coin_strict = BuyHeuristic { growth_min_5y_pct_crypto: 75.0, ..floor5.clone() };
+    assert!(
+        growth_leg_floor_miss(&coin5, &coin_strict, "5Y+").is_some_and(|(_, w, _)| w.contains("need >75%")),
+        "…and when the crypto knob IS set, the row quotes that number, not the equity one"
+    );
 
     // crypto leg: min_1y_pct_crypto is a CRASH bar, not a swing bar (round 22, live −50): a −62%
     // year fires, a BTC-like −33% year does not.
