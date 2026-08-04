@@ -2284,8 +2284,10 @@ fn long_skip_save() {
 /// the exact same parse path as a live fetch — output identical by construction, including the
 /// adjusted-close config flag. Gitignored (~tens of MB, self-prunes on TTL); loaded once per
 /// process, written once per fan-out, same pattern as `.long_history_skip.json` above.
-const LONG_CACHE_FILE: &str = ".long_history_cache.json";
-const LONG_CACHE_TTL_DAYS: i64 = 7;
+/// `pub` alongside the TTL for `backtest_edge_holds`, which decides whether to run a full wide
+/// backtest or skip green by asking whether THIS file is fresh enough to serve it.
+pub const LONG_CACHE_FILE: &str = ".long_history_cache.json";
+pub const LONG_CACHE_TTL_DAYS: i64 = 7;
 static LONG_CACHE: std::sync::OnceLock<HashMap<String, (NaiveDate, Value)>> = std::sync::OnceLock::new();
 /// This run's live fetches (collected concurrently, written ONCE in `quotes`).
 static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Value)>> = std::sync::Mutex::new(Vec::new());

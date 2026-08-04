@@ -174,6 +174,9 @@ jobs:
         with:
           shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
       - name: integration + live API drift nets (skip-on-throttle, fail-on-drift)
+        # `--test '*'` also picks up backtest_edge_holds, which no longer carries #[ignore]. It
+        # green-skips HERE — debug profile, and a runner has no persisted .long_history_cache.json —
+        # which is what keeps this job inside 25 min. The backtest-gate job below forces it to run.
         run: FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo test --locked --test '*' -- --nocapture
 
   # Walk-forward gate. Runs the REAL `backtest 12 universe` over the live universe and checks the shipped
@@ -182,9 +185,9 @@ jobs:
   # contract as the drift nets — a throttle (nonzero exit / <500 tickers resolved) SKIPS green, only a
   # genuine COLLAPSE (GROWTH edge <= 0, or both out-of-sample halves negative) FAILS. So a red is never
   # the market, only broken code/tuning. ci-settings.yaml mirrors the real settings.yaml `buy_heuristic`,
-  # so the gate scores with the tuning actually shipped. It is the ONE case in tests/network.rs still
-  # carrying #[ignore] + its own FOLIOMAN_BACKTEST_GATE: 3000+ tickers is the test, so it can't be made
-  # cheap enough to join the always-on nets in integration-tests, and it belongs in this job's budget.
+  # so the gate scores with the tuning actually shipped. FOLIOMAN_BACKTEST_GATE=1 means FORCE, not
+  # opt-in: the test skips itself on a debug build or a cold history cache, and a runner is always both,
+  # so without the flag this job would skip too and the gate would quietly stop gating.
   backtest-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 45   # cold release build + the wide-universe walk-forward fetch
@@ -194,7 +197,9 @@ jobs:
         with:
           shared-key: folioman-ci   # same warm cache as the other jobs
       - name: walk-forward edge gate (skip-on-throttle, fail-on-collapse)
-        run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_BACKTEST_GATE=1 cargo test --locked --release --test network backtest_edge_holds -- --ignored --nocapture
+        # no `--ignored`: with #[ignore] gone that filter selects NOTHING and the job becomes a silent
+        # no-op — the same trap that killed network-smoke.
+        run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_BACKTEST_GATE=1 cargo test --locked --release --test network backtest_edge_holds -- --nocapture
 
   # Actions housekeeping: each main run supersedes the history, so delete this workflow's older
   # COMPLETED runs (logs + artifacts go with them). Main-only by the `if`: a PR ref is the merge ref

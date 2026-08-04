@@ -49,6 +49,11 @@ const FUND_LOOKBACK_YRS: i64 = 5;
 /// the method's proof.
 pub(crate) const VERDICT_FILE: &str = ".backtest_verdict.json";
 
+/// Fewest resolved tickers a wide run must carry before it may overwrite [`VERDICT_FILE`]. Same floor
+/// `backtest_edge_holds` applies to its own sample: below it, the pool is a throttle artefact rather
+/// than the method's proof. A healthy run resolves ~4900.
+const MIN_VERDICT_TICKERS: usize = 500;
+
 /// The unconditional held-book verdict of one wide backtest run: the "all entries" row of the
 /// entry-state table (full gated pool, growth_score ranking, equal-weight top-10, held `years`
 /// forward, vs the index) plus the run date and a fingerprint of the tuning that earned it.
@@ -652,7 +657,12 @@ pub async fn run(args: Vec<String>) {
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
     // the watchlist's ~50-survivor sample is not the method's proof, and must never overwrite it.
     // The screen's method footer reads this file back.
-    if wide {
+    //
+    // `wide` alone was not enough. A wide run that Yahoo THROTTLED resolves a few hundred names
+    // instead of ~4900, and that thin sample overwrote the journal just as surely as a watchlist run
+    // would have — the same hazard the comment above warns about, reached by a different route. Hold
+    // it to the same ≥500 floor `backtest_edge_holds` uses to decide its own sample is trustworthy.
+    if wide && tickers.len() >= MIN_VERDICT_TICKERS {
         if let Some((book, excess, win, worst, oos_early, oos_late, windows)) = verdict {
             write_verdict(&Verdict {
                 date: chrono::Local::now().date_naive().to_string(),
@@ -667,6 +677,13 @@ pub async fn run(args: Vec<String>) {
                 tuning_fp: tuning_fingerprint(tuning),
             });
         }
+    } else if wide {
+        // say so — a silent non-write reads as "the journal is broken", not "this sample was too thin"
+        eprintln!(
+            "backtest: verdict NOT journaled — only {} tickers resolved (need {MIN_VERDICT_TICKERS}); \
+             the screen footer keeps citing the previous run",
+            tickers.len()
+        );
     }
     // (round 112) the DIVERSIFICATION dimension: does de-correlating the held book beat plain rank order?
     report_corr_cap(&samples, &bench, years, tuning);

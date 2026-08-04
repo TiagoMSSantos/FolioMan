@@ -13,14 +13,17 @@
 //! Every raw probe goes through `fetch::throttle`, the same pacer production uses, so the file cannot
 //! open an unpaced side channel. Whole run is ~10 Yahoo calls against the 4757 a single `screen` does.
 //!
-//! ONE test is still gated: `backtest_edge_holds` shells `backtest 12 universe` over 3000+ live
-//! tickers (CI budgets 45 minutes). Its fan-out IS the test, so it cannot be made cheap, and what it
-//! measures is REGIME — whether the shipped edge still holds on today's market. The deterministic half
-//! of its old job (did a code or knob edit change the scoring) split off into
-//! `shipped_tuning_scores_fixture_unchanged` in src/commands/backtest.rs, which runs offline on every
-//! `cargo test`. So this keeps `#[ignore]` + its own `FOLIOMAN_BACKTEST_GATE`:
+//! NOTHING in this file is `#[ignore]`. The last holdout, `backtest_edge_holds`, shells
+//! `backtest 12 universe` over ~4900 live tickers and measures REGIME — whether the shipped edge still
+//! holds on today's market. It now runs under the same skip-when-you-can't contract as everything else:
+//! release profile + a warm `.long_history_cache.json` and it runs (~127s, almost no network); debug or
+//! cold and it prints why and skips green. `FOLIOMAN_BACKTEST_GATE=1` FORCES it past both guards — that
+//! is how the nightly job runs it on a runner, which is always debug-cold-cache territory:
 //!
-//!     FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --ignored
+//!     FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --nocapture
+//!
+//! The deterministic half of its old job (did a code or knob edit change the scoring) split off into
+//! `shipped_tuning_scores_fixture_unchanged` in src/commands/backtest.rs, offline, 0.02s.
 
 // note: separate test crate, so the lib's crate-root allow doesn't reach here. Same call: docs render fine.
 #![allow(clippy::doc_lazy_continuation)]
@@ -309,26 +312,58 @@ async fn euribor_parses() {
     assert!((-2.0..10.0).contains(&rate), "implausible 3M Euribor: {rate}%");
 }
 
-/// Nightly walk-forward gate. Shells the release binary's `backtest 12 universe` over the LIVE
-/// universe and asserts the committed default tuning still yields a POSITIVE validated edge.
-/// Same skip-vs-fail contract as the probes above: a throttle (spawn error / nonzero exit /
-/// too-few-tickers) SKIPS green; only a genuine COLLAPSE (GROWTH edge <= 0, or BOTH out-of-sample
-/// halves negative) FAILS. It scores with the real tuning mirrored into ci-settings.yaml's
-/// `buy_heuristic`, so a red here means a scoring-code change or a knob edit broke the validated edge.
+/// Walk-forward regime gate. Shells `backtest 12 universe` over the LIVE universe and asserts the
+/// committed default tuning still yields a POSITIVE validated edge. Same skip-vs-fail contract as the
+/// probes above: a throttle (spawn error / nonzero exit / too-few-tickers) SKIPS green; only a genuine
+/// COLLAPSE (GROWTH edge <= 0, or BOTH out-of-sample halves negative) FAILS. It scores with the real
+/// tuning mirrored into ci-settings.yaml's `buy_heuristic`.
 ///
 /// REGIME ONLY. The other half of what this used to cover — "did an edit to the scoring code or a knob
-/// change what the shipped tuning does" — is deterministic and now runs offline on every `cargo test`
-/// as `shipped_tuning_scores_fixture_unchanged` (src/commands/backtest.rs). What is left here is the
-/// question no fixture can answer: does the edge still hold on TODAY's market. That one is worth
-/// 3000+ live tickers; the other never was.
+/// change what the shipped tuning does" — is deterministic and runs offline on every `cargo test` as
+/// `shipped_tuning_scores_fixture_unchanged` (src/commands/backtest.rs). What is left here is the
+/// question no fixture can answer: does the edge still hold on TODAY's market.
+///
+/// NO LONGER `#[ignore]`. It runs whenever it can afford to and skips green when it cannot, which is
+/// the contract every other net in this file uses. Two guards decide, and BOTH are bypassed by
+/// `FOLIOMAN_BACKTEST_GATE` — that variable used to mean "opt in", it now means **force**:
+///
+/// - **Release only.** Measured on the same warm cache: 127s release, 355s debug (2.8x), and
+///   `CARGO_BIN_EXE_folioman` is whichever profile the test was built in. A plain `cargo test` would
+///   otherwise pay six minutes for a walk-forward the release job does in two.
+/// - **Warm history cache only.** With `.long_history_cache.json` fresh the run reads its ~3900
+///   monthly payloads off disk; cold, it would fetch every one of them. A fresh clone must not
+///   discover that by doing it.
+///
+/// CI has no persisted cache, so the second guard is why the force flag exists: without it the nightly
+/// `backtest-gate` job would skip too and the gate would quietly stop gating.
 #[test]
-#[ignore = "multi-minute live universe backtest; nightly only. FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --ignored"]
 fn backtest_edge_holds() {
-    // its own env var, not the ignore attribute alone: `-- --ignored` runs every ignored test in this
-    // file, so anything that ever gets gated here again would drag a multi-minute universe backtest
-    // along with it. Only the nightly backtest-gate job sets FOLIOMAN_BACKTEST_GATE.
-    if std::env::var("FOLIOMAN_BACKTEST_GATE").is_err() {
+    let forced = std::env::var("FOLIOMAN_BACKTEST_GATE").is_ok();
+    if !forced && cfg!(debug_assertions) {
+        eprintln!(
+            "backtest-gate SKIPPED — debug build; the wide walk-forward is 127s release / 355s debug. \
+             Run `cargo test --release`, or set FOLIOMAN_BACKTEST_GATE=1 to force it"
+        );
         return;
+    }
+    // ponytail: size+mtime, not a parse. Deciding whether to skip by deserializing 88 MB of JSON costs
+    // more than either wrong guess — a wrong "warm" just fetches the misses, a wrong "cold" just skips.
+    if !forced {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fetch::LONG_CACHE_FILE);
+        let fresh = std::fs::metadata(path).ok().and_then(|m| {
+            let age = m.modified().ok()?.elapsed().ok()?;
+            // 20 MB ~ 600 tickers; a populated cache is ~125 MB for ~3900. Below that the run would fetch.
+            Some(age.as_secs() < fetch::LONG_CACHE_TTL_DAYS as u64 * 86_400 && m.len() > 20_000_000)
+        });
+        if fresh != Some(true) {
+            eprintln!(
+                "backtest-gate SKIPPED — {} is missing, stale (>{}d) or too small to serve ~4900 \
+                 tickers. Run `folioman screen` to warm it, or set FOLIOMAN_BACKTEST_GATE=1 to fetch live",
+                fetch::LONG_CACHE_FILE,
+                fetch::LONG_CACHE_TTL_DAYS
+            );
+            return;
+        }
     }
     // pull the first signed number that follows `marker` in `hay` (e.g. "edge +117.1" -> 117.1).
     fn num_after(hay: &str, marker: &str) -> Option<f64> {
@@ -343,6 +378,10 @@ fn backtest_edge_holds() {
 
     let out = match std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
         .args(["backtest", "12", "universe"])
+        // pin the child to the committed fixture. Without it a local run scores with the gitignored
+        // config/settings.yaml overlay and the gate grades a PER-MACHINE tuning — green on your knobs
+        // says nothing about what ships. CI already exports this; setting it here makes the two agree.
+        .env("FOLIOMAN_CONFIG", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml"))
         .output()
     {
         Ok(o) => o,
