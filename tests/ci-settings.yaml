@@ -435,6 +435,13 @@ buy_heuristic:
                                  #   the advisory horizon; 20y king overrules. Rank-1 med/h2h IDENTICAL
                                  #   (+4.4 / 41%) across the whole ladder — the cap tunes lane edge only,
                                  #   the argmax cure lives in the WEIGHT (see growth_trend_weight).
+                                 #   (#47) 2026-08-03 arm C1 pushed it the OTHER way, 30 -> 60, on the same 20y-stress king:
+                                 #   lane edge -115.5 (+337.3 vs +452.8), 12y -1.2, 8y -13.1. Rank-1 median IDENTICAL at all
+                                 #   three (+6.4/+7.2/+8.2), which reconfirms the "cap tunes lane edge only" line above on a
+                                 #   THIRD independent pool. King h2h did rise 76% -> 81% (the best reading in that 27-run
+                                 #   grid) — recorded, not shipped: it is one metric moving against edge, cap, AND the (#3g)
+                                 #   curve that already found the optimum BELOW 30. Uncapping is now measured in both
+                                 #   directions and loses in both. 30 STANDS.
                                  #   history: #16 sweep 2026-06-28: 20/30/40/50/1000 all edge ≈ -100337360 (flat) → cap inert on that run; 2026-07-02 re-test 30→50 on `backtest 12 universe` DROPPED growth edge +103.2→+87.7 → 30 read protective (parabolic names mean-revert), kept 30; (#3g) 2026-07-26 full curve confirmed the ceiling wanted to go DOWN (25 +191.2) not up; (#3h) same day removed it anyway on request, measured cost -11.5 edge at 12y; (#3k) restored on 20y-stress measurement
   health_zero_cagr: -10.0        # [FOIL] long-leg CAGR (%/yr) where on-sale trend_health hits 0; health=1 at flat/rising
 
@@ -880,7 +887,64 @@ buy_heuristic:
                                  #   is a plateau wash: king rank-1 identical (+5.5|+5.3 81% h2h 60%) with lane edge -5%
                                  #   (+645.1), 12y -3, 8y +3. No honest room in either direction; do not re-propose
                                  #   without a NEW metric, the way growth_accel_weight earned its raise.
+                                 #   RE-PROPOSED AND REFUSED 2026-08-03 (#47, arm C2, 0.15 -> 0.40, `{20,12,8} universe
+                                 #   stress`). A new metric WAS brought — 20y-king rank-1 median on the stress pool — and it
+                                 #   comes back NEUTRAL (+6.4, identical to baseline) while the curse shows up one horizon
+                                 #   down exactly as this receipt predicts: 12y rank-1 median -1.4, 8y h2h 66% -> 53%. Lane
+                                 #   edge is UP at all three (+28/+32/+25) and that is not enough, per the rank-1-wins rule
+                                 #   this knob was shipped under; the gains are inside the bootstrap band besides. 0.15 STANDS,
+                                 #   now bracketed at 0.10 / 0.15 / 0.25 / 0.40. Full grid at growth_accel_weight (#47).
   growth_accel_weight: 0.65      # SCORE: reward per pt the last year outpaced the long CAGR.
+                                 #   (#47) "DOES A HIGHER CAGR DESERVE A BETTER RANK?" — asked 2026-08-03. Answer, measured:
+                                 #   NO, on all four levers proposed. NOTHING SHIPPED. Values below are UNCHANGED; this is a
+                                 #   null receipt, recorded so the question is not re-opened without a new metric.
+                                 #   THE ARITHMETIC IS REAL. trend = 0.15·min(cagr,30) rewards CAGR; accel =
+                                 #   0.65·clamp(1Y−cagr,0,50) subtracts it. For any name whose last year outpaced its long
+                                 #   run — the whole cohort this lane hunts — d(base)/d(cagr) = 0.15 − 0.65 = −0.50 per %/yr.
+                                 #   Above long_trend_cap the trend term saturates and the slope worsens to −0.65; at the
+                                 #   accel clamp it flattens to 0 (where NVDA sits, per the LIVE A/B below). peg_yield offsets
+                                 #   ~+0.28/pt at a 4% earnings yield for stocks with fundamentals; nothing offsets it for
+                                 #   ETFs or coins. Term ceilings say the same: trend maxes at 4.5 pts, accel at 32.5.
+                                 #   MEASURED: 27 runs, `backtest {20,12,8} universe stress`, 9 arms one field apart, each
+                                 #   arm a full copy of THIS file under FOLIOMAN_CONFIG (its grandparent is the repo root, so
+                                 #   the warm cache serves all of them). A drift-control repeat of baseline came back
+                                 #   BYTE-IDENTICAL at all three horizons, so every delta below is the knob, not the pipeline.
+                                 #   Primary metric = rank-1 MEDIAN excess at the 20y king (lottery-ticket-immune), with h2h
+                                 #   #1-vs-11-20 >= 50% required at all three horizons. Baseline: 20y +6.2|+6.4 87% h2h 76%
+                                 #   edge +452.8 | 12y +5.8|+7.2 74% 63% +127.9 | 8y +7.2|+8.2 76% 66% +65.0.
+                                 #     arm                                 20y r1med (Δ) h2h edge |  12y Δ  |  8y Δ
+                                 #     A  accel 0.65->0 + mom121 0->0.65     +4.3 (-2.1) 57% +389 |  -1.4   |  -1.2
+                                 #     B1 mom121 0->0.20 (additive)          +4.6 (-1.8) 71% +371 |  -0.7   |  -0.4
+                                 #     B2 mom121 0->0.40                     +4.6 (-1.8) 71% +338 |  -0.7   |  -0.8
+                                 #     B3 mom121 0->0.65                     +4.3 (-2.1) 62% +298 |  -1.4   |  -1.7
+                                 #     C1 long_trend_cap 30->60              +6.4 ( 0.0) 81% +337 |   0.0   |   0.0
+                                 #     C2 growth_trend_weight 0.15->0.40     +6.4 ( 0.0) 76% +481 |  -1.4   |   0.0
+                                 #     D  growth_trust_ladder off->on        +4.6 (-1.8) 71% +407 |  -0.3   |  -1.7
+                                 #   VERDICT. Not one arm RAISES rank-1 median at the king; five lower it at all three
+                                 #   horizons. The slope is real arithmetic with NO realised cost at the shipped clamp — the
+                                 #   subtraction is not what is limiting argmax quality, so removing it buys nothing and costs
+                                 #   the accel term's measured (#3k-era) rank-1 authority. A and B are the direct disproof:
+                                 #   12-1 momentum is a strictly WORSE substitute (A) and a strictly worse ADDITION (B1..B3,
+                                 #   monotone damage in the weight), which also re-answers "is accel just momentum?" — no.
+                                 #   C1/C2 are the two halves of "reward CAGR harder", kept separate so a win could be
+                                 #   attributed; both come back rank-1 NEUTRAL at the king. C1 lifts king h2h to 81% (best in
+                                 #   the grid) for -115 edge — which RECONFIRMS (#3g)/(#3h): the cap's edge wants to come DOWN,
+                                 #   not up, and 60 is on the far side of the measured optimum. C2 lifts lane edge at all three
+                                 #   (+28/+32/+25) and is still refused, because it reproduces the exact winner's curse (#3k)
+                                 #   shipped 0.15 to cure — 12y rank-1 median -1.4 and 8y h2h 66% -> 53% — and (#3k) closes with
+                                 #   "do not re-propose without a NEW metric". The new metric was applied and it says no. Every
+                                 #   C2 gain also sits deep inside the baseline's own [+199.8 … +691.4] bootstrap band.
+                                 #   D is the graded record ladder (see growth_trust_ladder): the binary 10Y trust cliff really
+                                 #   does throw away resolution, and grading it costs rank-1 at every horizon anyway.
+                                 #   THE FOURTH LEVER — "rank a name better the FARTHER it sits below its high" (OFF-HI, i.e.
+                                 #   drawdown_pct) — was NOT run, because two shipped receipts already answer it and a third
+                                 #   arm would only re-buy them: rewarding dip depth IS the on-sale lane, which this repo keeps
+                                 #   as a FOIL precisely because `backtest` shows dip-buying has negative multi-decade edge
+                                 #   (see discount_weight, "deepest-dip ranking is BACKWARDS on peer-relative selection", and
+                                 #   growth_min_range_pct, "80 -> 70 -> 50 is monotone damage"). The softer reading — loosen the
+                                 #   near-high gate so a dipped compounder can appear — is answered by the funnel instead: the
+                                 #   range gate rejects 780 names and is the SOLE blocker of exactly zero, so loosening it
+                                 #   returns nobody. That funnel claim is now pinned offline (`sole_blocking_gates_are_pinned`).
                                  #   RAISED 0.5 -> 0.65 (2026-08-01, Phase B re-fit on the cagr-19 pool, pb-aw*-*-s.txt).
                                  #   THE THIRD WINNER'S-CURSE CURE, and the only knob of the three re-fitted that moved.
                                  #   Rank-1 quality UP at ALL THREE horizons: 20y-s +6.0|+6.6 win 83% h2h 65% (vs +5.4|+5.3

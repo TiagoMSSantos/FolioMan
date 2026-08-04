@@ -564,6 +564,10 @@ pub async fn run(args: Vec<String>) {
         knob("growth_smoothness_weight", |tuning| tuning.growth_smoothness_weight = 0.0), // (E) Δ shows the trend-smoothness reward's through-the-lane edge; ~0 when weight is 0 (default)
         knob("growth_underwater_weight", |tuning| tuning.growth_underwater_weight = 0.0), // Δ shows the drawdown-duration penalty's through-the-lane edge; ~0 when weight is 0 (default)
         knob("quality_weight", |tuning| tuning.quality_weight = 0.0), // Δ prices the ROE/ROA quality reward. Absent until the term was un-blinded above — it read exactly 0.0 by construction, not by measurement. Needs `fund` (price-only lanes have no quality level -> ~0)
+        // (#47) ablates TOWARD the ladder, not toward zero — the other rows here zero a weight, but this
+        // knob's "off" IS the shipped state, so zeroing it would print a guaranteed 0.0 row. Δ is what
+        // the graded 20/8/5 record ladder is worth against the single 10Y cliff.
+        knob("growth_trust_ladder→on", |tuning| tuning.growth_trust_ladder = true),
     ];
     // (G+) one row per CONFIGURED extra fundamental term, so each is priced separately rather than as
     // one all-extras-at-once Δ. That distinction is the whole point: receipt (#3d) found quality and
@@ -2102,7 +2106,14 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
         // search winner that does carry a cap prints under "weights (searched dims only)" and still has to
         // beat TEST. The off-vs-on comparison belongs to `weight_curve`, which ladders 0 explicitly.
         ("long_trend_cap", |t| t.long_trend_cap, |t, v| t.long_trend_cap = v, 15.0, 60.0),
-        ("growth_accel_weight", |t| t.growth_accel_weight, |t, v| t.growth_accel_weight = v, 0.0, 0.6),
+        // band widened 0.6 -> 1.0 (#47): the SHIPPED value is 0.65, so the old band could not draw it and
+        // every proposal the search made was structurally weaker than what ships. Bands must bracket the
+        // default, as every other dim here does.
+        ("growth_accel_weight", |t| t.growth_accel_weight, |t, v| t.growth_accel_weight = v, 0.0, 1.0),
+        // (#47) the accel term's CEILING, never searched before. It is half of that term's authority —
+        // a name 60 pts above its long run scores identically to one 50 pts above — so leaving it fixed
+        // while searching the weight only ever explored one of the two knobs that set the same thing.
+        ("growth_accel_cap", |t| t.growth_accel_cap, |t, v| t.growth_accel_cap = v, 20.0, 80.0),
         ("sharpe_weight", |t| t.sharpe_weight, |t, v| t.sharpe_weight = v, 0.0, 4.0),
         ("calmar_weight", |t| t.calmar_weight, |t, v| t.calmar_weight = v, 0.0, 3.0),
         ("growth_overext_floor", |t| t.growth_overext_floor, |t, v| t.growth_overext_floor = v, 0.01, 0.5),
@@ -4006,5 +4017,46 @@ mod tests {
             "tightening growth_min_cagr 19 -> 25 changed nothing: the pin is inert and would not catch \
              a knob regression either"
         );
+    }
+
+    /// (#47) WHICH GATES ARE LOAD-BEARING. Most of the ~20 growth gates sole-block nobody — every name
+    /// they reject also fails something else, so removing them would return zero rows. Those are free,
+    /// and the receipts say so. The review found nothing that detects the day one of them stops being
+    /// free: a knob edit elsewhere can promote a decorative bar into the thing costing you rows, and the
+    /// only place that shows up today is a live `screen` funnel nobody diffs.
+    ///
+    /// So pin the SET, not the counts. Counts are fixture trivia; the set is the claim the receipts make.
+    /// Reuses `synthetic_samples()` deliberately — a second pool would need its own receipts and would
+    /// drift from the one the score pin above already grades.
+    #[test]
+    fn sole_blocking_gates_are_pinned() {
+        let samples = synthetic_samples();
+        let sole = |t: &BuyHeuristic| {
+            let mut s: std::collections::BTreeSet<&'static str> = Default::default();
+            for x in &samples {
+                if let Some([(gate, ..)]) = picks::gate_failures(&x.quote, t).as_deref() {
+                    s.insert(gate);
+                }
+            }
+            s.into_iter().collect::<Vec<_>>()
+        };
+        // NOT the live set. The live funnel sole-blocks `cagr peg maxdd 1Y+`; this pool carries no
+        // fundamentals (so `peg` can never fire alone) and it does carry short-history names (so
+        // `history`/`cagr-life` do). The pin grades THIS pool against itself — the point is that the
+        // set is stable, not that a fixture reproduces the market.
+        assert_eq!(
+            sole(&shipped_tuning()),
+            ["1Y+", "cagr", "cagr-life", "history"],
+            "a different set of gates is now sole-blocking this fixture. If you moved a knob, a bar just \
+             became load-bearing (or stopped being) — check the live `screen` funnel's sole-blocked column \
+             before moving this pin. If you moved no knob, a gate's CODE changed."
+        );
+
+        // Same reason the sibling pin carries one: a set nothing perturbs is a test that passes forever.
+        // A gate that sole-blocks nobody here is exactly the kind the review says nothing watches, so
+        // tighten one and require it to ENTER the set.
+        let mut tighter = shipped_tuning();
+        tighter.growth_maxdd_cap = 10.0;
+        assert!(sole(&tighter).contains(&"maxdd"), "tightening growth_maxdd_cap to 10% did not make it sole-block anyone: the pin is inert");
     }
 }
