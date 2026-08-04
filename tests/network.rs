@@ -1,14 +1,23 @@
 //! LIVE smoke tests — the only thing that catches a real API changing shape under the parsers
-//! (Yahoo chart schema, FX, the full Quote build). They hit the network, so they're DOUBLE-gated:
-//! `#[ignore]` (skipped by `cargo test` / the blocking CI jobs) AND an env guard. Run on demand:
+//! (Yahoo chart schema, FX, the full Quote build). READ-ONLY endpoints only — never a broker/order call.
 //!
-//!     FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored
-//!
-//! Crucially they tell a transient hiccup apart from real drift, so a red here MEANS something:
+//! They run on EVERY `cargo test`, unguarded, because they tell a transient hiccup apart from real
+//! drift — so a red here MEANS something:
 //!   - transport error / HTTP 429 / 5xx / 401 / 403 / Yahoo's own error envelope  -> SKIP (environmental)
 //!   - HTTP 200 but the fields the parser needs are gone                          -> FAIL (API drift)
-//! That's why CI doesn't swallow the failure: a rate-limit just skips (green), only genuine drift goes red.
-//! READ-ONLY endpoints only — never a broker/order call.
+//! Offline is just the transport-error arm, so a plane, a VPN or a dead endpoint skips GREEN. That
+//! classifier is what makes an always-on live test safe; without it these would need a gate.
+//! Skips print to stderr, which `cargo test` swallows on a pass — use `-- --nocapture` to read them
+//! (CI does), or a net that has been silently skipping for months looks exactly like a passing one.
+//!
+//! Every raw probe goes through `fetch::throttle`, the same pacer production uses, so the file cannot
+//! open an unpaced side channel. Whole run is ~10 Yahoo calls against the 4757 a single `screen` does.
+//!
+//! ONE test is still gated: `backtest_edge_holds` shells `backtest 12 universe` over 3000+ live
+//! tickers (CI budgets 45 minutes). Its fan-out IS the test, so it cannot be made cheap, and it is an
+//! edge gate rather than an API-shape net. It keeps `#[ignore]` + its own `FOLIOMAN_BACKTEST_GATE`:
+//!
+//!     FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --ignored
 
 // note: separate test crate, so the lib's crate-root allow doesn't reach here. Same call: docs render fine.
 #![allow(clippy::doc_lazy_continuation)]
@@ -16,35 +25,36 @@
 use folioman::{config, fetch};
 use serde_json::Value;
 
-fn opted_in() -> bool {
-    let on = std::env::var("FOLIOMAN_NET_TESTS").is_ok();
-    if on {
-        // (tests round 4) Stamp the pull so `screen` can nag when the nets go stale — a net nobody
-        // runs catches nothing. Once per process; a run that ends in SKIPPED lines still counts
-        // (the family executed and a human saw the skips). Never fails a probe.
-        static STAMP: std::sync::Once = std::sync::Once::new();
-        STAMP.call_once(|| {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let _ = std::fs::write(config::data_path(config::NET_STAMP_FILE), now.to_string());
-        });
-    }
-    on
+/// (tests round 4) Stamp the pull so `screen` can nag when the nets go stale — a net nobody runs
+/// catches nothing. Once per process; a run that ends in SKIPPED lines still counts (the family
+/// executed and a human saw the skips). Never fails a probe.
+///
+/// Kept after the env gate was dropped: the nag still means something for someone who runs `screen`
+/// daily and `cargo test` never.
+fn stamp_run() {
+    static STAMP: std::sync::Once = std::sync::Once::new();
+    STAMP.call_once(|| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = std::fs::write(config::data_path(config::NET_STAMP_FILE), now.to_string());
+    });
 }
 
 enum Probe {
-    Healthy,      // 200 + the chart contract is present -> safe to run the real parser assertions
-    Skip(String), // environmental (throttle/transport/bad-symbol envelope) -> no-op, don't fail
-    Drift(String), // 200 OK but the shape parse_chart depends on is gone -> a real regression
+    Healthy(Value), // 200 + the chart contract is present -> the body to hand the real parser
+    Skip(String),   // environmental (throttle/transport/bad-symbol envelope) -> no-op, don't fail
+    Drift(String),  // 200 OK but the shape parse_chart depends on is gone -> a real regression
 }
 
 /// Status-aware probe of the live Yahoo chart endpoint. Separates "the network/API is having a moment"
 /// (skip) from "the contract the parser relies on changed" (fail) — the distinction the CI shell can't make.
 async fn probe_yahoo(ticker: &str) -> Probe {
+    stamp_run();
     let urls = config::load().urls;
     let url = urls.yahoo_chart.replace("{ticker}", ticker).replace("{range}", "1y");
+    fetch::throttle().await; // same pacer production uses — no unpaced side channel from the tests
     let resp = match fetch::client().get(&url).send().await {
         Ok(r) => r,
         Err(e) => return Probe::Skip(format!("transport error: {e}")),
@@ -68,7 +78,7 @@ async fn probe_yahoo(ticker: &str) -> Probe {
         .is_some_and(|a| !a.is_empty());
     let has_close = body.pointer("/chart/result/0/indicators/quote/0/close").is_some();
     if has_ts && has_close {
-        Probe::Healthy
+        Probe::Healthy(body)
     } else if !body.pointer("/chart/error").is_none_or(|e| e.is_null()) {
         Probe::Skip(format!("Yahoo error envelope: {}", body.pointer("/chart/error").unwrap()))
     } else {
@@ -76,34 +86,34 @@ async fn probe_yahoo(ticker: &str) -> Probe {
     }
 }
 
-/// Resolve a probe: returns false (caller should `return`) when skipped, true when healthy, panics on drift.
-fn healthy_or_skip(p: Probe, ctx: &str) -> bool {
+/// Resolve a probe: `None` (caller should `return`/`continue`) when skipped, the healthy body when
+/// healthy, panics on drift. Returning the BODY is what lets a caller assert against the very response
+/// it just classified, instead of issuing a second request that may land on a different verdict.
+fn healthy_or_skip(p: Probe, ctx: &str) -> Option<Value> {
     match p {
-        Probe::Healthy => true,
+        Probe::Healthy(body) => Some(body),
         Probe::Skip(why) => {
             eprintln!("network smoke [{ctx}] SKIPPED — {why}");
-            false
+            None
         }
         Probe::Drift(why) => panic!("API DRIFT [{ctx}]: {why}"),
     }
 }
 
 #[tokio::test]
-#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
 async fn yahoo_history_parses() {
-    if !opted_in() {
-        return;
-    }
-    let settings = config::load();
-    let client = fetch::client();
     for ticker in ["AAPL", "BTC-USD"] {
-        if !healthy_or_skip(probe_yahoo(ticker).await, ticker) {
+        let Some(body) = healthy_or_skip(probe_yahoo(ticker).await, ticker) else {
             continue; // endpoint throttled for this symbol — don't fail the suite
-        }
-        // endpoint is healthy (200 + contract present) -> a None now is a REAL parser break, not flakiness
-        let chart = fetch::fetch_history(&client, &settings.urls, ticker)
-            .await
-            .unwrap_or_else(|| panic!("{ticker}: 200 OK but fetch_history/parse_chart returned None — drift"));
+        };
+        // Parse the body the probe ALREADY fetched, not a fresh `fetch_history` GET. One request per
+        // ticker instead of two (three, counting `chart_json`'s retry), and — the part that matters —
+        // the response asserted on is the same one classified healthy, so a throttle landing between
+        // probe and fetch can no longer masquerade as parser drift and red the build.
+        // The probe's range is 1y rather than fetch_history's 10y: same schema, smaller payload, and
+        // every field below lives in the meta, so the shorter window tests the identical contract.
+        let chart = fetch::parse_chart(&body, ticker)
+            .unwrap_or_else(|| panic!("{ticker}: 200 OK but parse_chart returned None — drift"));
         let (dates, closes) = (&chart.dates, &chart.closes);
         assert!(!closes.is_empty(), "{ticker}: no closes");
         // (FX) the backtest decides whether to convert by comparing this to the filer's reporting
@@ -123,13 +133,11 @@ async fn yahoo_history_parses() {
 }
 
 #[tokio::test]
-#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
 async fn fx_rate_resolves() {
-    if !opted_in() {
-        return;
-    }
-    // FX resolves via the same Yahoo chart endpoint (USDEUR=X) -> gate on its health first.
-    if !healthy_or_skip(probe_yahoo("USDEUR=X").await, "FX USDEUR=X") {
+    // FX resolves via the same Yahoo chart endpoint (USDEUR=X) -> gate on its health first. The body
+    // is discarded here on purpose: `eur_rate` owns cache lookup + rate selection, not just the parse,
+    // so this one genuinely needs the real call rather than the probe's payload.
+    if healthy_or_skip(probe_yahoo("USDEUR=X").await, "FX USDEUR=X").is_none() {
         return;
     }
     let settings = config::load();
@@ -139,16 +147,15 @@ async fn fx_rate_resolves() {
 }
 
 #[tokio::test]
-#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
 async fn full_quote_build() {
-    if !opted_in() {
-        return;
-    }
-    if !healthy_or_skip(probe_yahoo("AAPL").await, "full_quote_build") {
+    if healthy_or_skip(probe_yahoo("AAPL").await, "full_quote_build").is_none() {
         return;
     }
     let settings = config::load();
-    let tickers = vec!["AAPL".to_string(), "BTC-USD".to_string()];
+    // ONE ticker, not two. A full `fetch::quotes` build is the most expensive call in this file (10y
+    // chart + monthly-max series + fundamentals + FX, per name) and this test is about the assembly
+    // path, which one name exercises exactly as well. BTC-USD keeps its coverage in the chart net above.
+    let tickers = vec!["AAPL".to_string()];
     let quotes = fetch::quotes(
         &fetch::client(), &settings.urls, &fetch::fx_cache(), &tickers,
         settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, None,
@@ -170,11 +177,8 @@ async fn full_quote_build() {
 /// `.holdings_cache.json`. Same contract as the probes above: environmental -> skip, 200-but-empty
 /// on a major equity ETF -> FAIL (drift).
 #[tokio::test]
-#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
 async fn yahoo_top_holdings_parses() {
-    if !opted_in() {
-        return;
-    }
+    stamp_run();
     // a symbol the screen actually prints (sector-tech table) — the exact payload class the footers eat
     const SYM: &str = "IITU.L";
     match fetch::top_holdings_live(&fetch::client(), SYM).await {
@@ -202,11 +206,8 @@ async fn yahoo_top_holdings_parses() {
 /// cache instead of the wire. Environmental (CIK map down/throttle) -> skip; fetched-but-unparsable
 /// on a major US filer -> FAIL (drift).
 #[tokio::test]
-#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
 async fn sec_facts_parse() {
-    if !opted_in() {
-        return;
-    }
+    stamp_run();
     match fetch::sec_facts_live(&fetch::client(), &config::load().urls, "AAPL").await {
         Err(why) => eprintln!("network smoke [SEC facts AAPL] SKIPPED — {why}"),
         Ok(rows) => {
@@ -231,11 +232,8 @@ async fn sec_facts_parse() {
 /// nothing red. Same contract as the topHoldings net: crumb/transport/throttle -> skip;
 /// 200-but-factless on a major equity ETF -> FAIL (drift).
 #[tokio::test]
-#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
 async fn yahoo_fund_facts_parse() {
-    if !opted_in() {
-        return;
-    }
+    stamp_run();
     match fetch::fund_facts_live(&fetch::client(), "IITU.L").await {
         Err(why) => eprintln!("network smoke [fund facts IITU.L] SKIPPED — {why}"),
         Ok((ter, aum)) => {
@@ -257,6 +255,8 @@ async fn yahoo_fund_facts_parse() {
 /// SKIP; anything else is left to the real parser — a healthy endpoint plus a None parse is the
 /// drift verdict. (probe_yahoo stays separate: it also checks the chart contract + error envelope.)
 async fn probe_url(url: &str, ctx: &str) -> bool {
+    stamp_run();
+    fetch::throttle().await; // paced like every other outbound call in the project
     let resp = match fetch::client().get(url).send().await {
         Ok(r) => r,
         Err(e) => {
@@ -280,11 +280,7 @@ async fn probe_url(url: &str, ctx: &str) -> bool {
 /// None path is silent BY DESIGN (the factor just stays neutral) — so a bitcoin-data.com payload
 /// reshape would quietly disable the euphoria brake forever. Healthy endpoint + None parse = red.
 #[tokio::test]
-#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
 async fn nupl_parses() {
-    if !opted_in() {
-        return;
-    }
     let settings = config::load();
     if !probe_url(&settings.urls.nupl, "NUPL").await {
         return;
@@ -299,11 +295,7 @@ async fn nupl_parses() {
 /// its own doc) for the check footer's Certificados de Aforro baseline; a page redesign = silent
 /// permanent None. Healthy endpoint + no parsable rate = red.
 #[tokio::test]
-#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored"]
 async fn euribor_parses() {
-    if !opted_in() {
-        return;
-    }
     let settings = config::load();
     if !probe_url(&settings.urls.euribor, "Euribor 3M").await {
         return;

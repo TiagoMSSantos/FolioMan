@@ -113,10 +113,14 @@ jobs:
   # Summary table + HTML land even on a red (if: always()) so you can see WHICH lines fell.
   # Own cache key: llvm-cov builds with -C instrument-coverage, so its target artifacts must not
   # poison the shared plain-build cache the other jobs restore.
-  # Scope: lib unit tests + the tests/ integration suite. cli.rs drives the COMPILED binary via
-  # CARGO_BIN_EXE_folioman, and cargo-llvm-cov instruments that binary too — so main.rs dispatch,
-  # arg parsing and the `trade` confirm guards are counted (they read as 0% under a bare --lib).
-  # network.rs cases are #[ignore]d and no --ignored is passed here, so this stays fully offline.
+  # Scope: lib unit tests + tests/cli.rs. cli.rs drives the COMPILED binary via CARGO_BIN_EXE_folioman,
+  # and cargo-llvm-cov instruments that binary too — so main.rs dispatch, arg parsing and the `trade`
+  # confirm guards are counted (they read as 0% under a bare --lib).
+  # Target scope is EXPLICIT (--lib --test cli) to keep this job fully OFFLINE. It used to come free:
+  # tests/network.rs was #[ignore]d, so a bare llvm-cov never ran it. Those nets are unguarded now, and
+  # an online coverage job would make the ratchet below flap on the weather — a Yahoo outage covers the
+  # skip arms instead of the parse arms, TOTAL moves, and a BLOCKING gate reds for a reason that has
+  # nothing to do with the commit. Naming the targets keeps the number deterministic.
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -134,7 +138,7 @@ jobs:
           # collect + HTML + the floor gate in one shot; --fail-under-lines is the LAST check, so the
           # HTML/profdata are already written when it trips. Capture its exit (|| guards `set -e`) so the
           # summary still lands on a red — that's exactly when you need to see which lines fell.
-          cargo llvm-cov --locked --html --fail-under-lines "${COVERAGE_MIN}" || gate=$?
+          cargo llvm-cov --locked --lib --test cli --html --fail-under-lines "${COVERAGE_MIN}" || gate=$?
           {
             echo '```text'
             cargo llvm-cov report --summary-only
@@ -149,41 +153,38 @@ jobs:
           path: target/llvm-cov/html
           retention-days: 14
 
+  # Everything under tests/ — INCLUDING the live API drift nets in tests/network.rs, which stopped being
+  # #[ignore]d and now run here (the separate network-smoke job they used to need is gone; its
+  # `-- --ignored` filter would have quietly reduced it to a no-op once nothing was ignored any more).
+  #
+  # So this job is online, and BLOCKING is still the right call: the nets self-classify (see
+  # tests/network.rs) — a 429/5xx/transport hiccup SKIPS green, only a 200-OK-but-broken response
+  # FAILS — so the only way this reds is a real regression, API drift or broken code.
+  #
+  # --nocapture because skip reasons print to stderr, which cargo test swallows on a pass: without it a
+  # net that has been silently skipping for months looks identical in the log to one that is asserting.
+  # FOLIOMAN_CONFIG because config/settings.yaml is gitignored (private ntfy topic) — point config::load()
+  # at the checked-in, secret-free fixture.
   integration-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
-      - run: cargo test --locked --test '*'   # everything under tests/ (tests/network.rs cases are #[ignore]d -> skipped here, stays offline)
-
-  # live API smoke tests — hit Yahoo/FX to catch the API changing shape under the parsers. The tests
-  # self-classify (see tests/network.rs): a 429/5xx/transport hiccup SKIPS (green), only a 200-OK-but-
-  # -broken response FAILS. BLOCKING (no continue-on-error): because a throttle just skips, the only way
-  # this job goes red is a real regression — API drift or broken code — which SHOULD fail the pipeline.
-  # config/settings.yaml is gitignored (private ntfy topic), so FOLIOMAN_CONFIG points config::load() at
-  # the checked-in, secret-free tests/ci-settings.yaml fixture.
-  network-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # same warm cache as the other jobs
-      - name: live API smoke tests (skip-on-throttle, fail-on-drift)
-        run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_NET_TESTS=1 cargo test --locked --test network -- --ignored
+          shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
+      - name: integration + live API drift nets (skip-on-throttle, fail-on-drift)
+        run: FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo test --locked --test '*' -- --nocapture
 
   # Walk-forward gate. Runs the REAL `backtest 12 universe` over the live universe and checks the shipped
   # tuning still yields a POSITIVE validated edge. Runs on push/PR + nightly cron + manual dispatch. The
   # wide fetch is slow and drifts by the day, so this is NON-blocking by design: same skip-vs-fail
-  # contract as network-smoke — a throttle (nonzero exit / <500 tickers resolved) SKIPS green, only a
+  # contract as the drift nets — a throttle (nonzero exit / <500 tickers resolved) SKIPS green, only a
   # genuine COLLAPSE (GROWTH edge <= 0, or both out-of-sample halves negative) FAILS. So a red is never
   # the market, only broken code/tuning. ci-settings.yaml mirrors the real settings.yaml `buy_heuristic`,
-  # so the gate scores with the tuning actually shipped. Its own FOLIOMAN_BACKTEST_GATE opt-in keeps the
-  # multi-minute backtest out of the per-PR network-smoke sweep (which runs every ignored test).
+  # so the gate scores with the tuning actually shipped. It is the ONE case in tests/network.rs still
+  # carrying #[ignore] + its own FOLIOMAN_BACKTEST_GATE: 3000+ tickers is the test, so it can't be made
+  # cheap enough to join the always-on nets in integration-tests, and it belongs in this job's budget.
   backtest-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 45   # cold release build + the wide-universe walk-forward fetch

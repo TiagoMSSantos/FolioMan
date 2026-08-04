@@ -99,7 +99,10 @@ pub fn fetch_stats() -> (u64, u64, u64) {
     (HTTP_CALLS.load(Relaxed), LONG_CACHE_HITS.load(Relaxed), LONG_SKIPS.load(Relaxed))
 }
 
-async fn throttle() {
+/// `pub` so the network drift net's raw status probes go through the SAME gate as production instead
+/// of opening a second, unpaced path that exists only in tests — which also makes them visible to
+/// `fetch_stats`, where an unpaced call is invisible by construction.
+pub async fn throttle() {
     HTTP_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (gate, interval) = THROTTLE.get_or_init(|| {
         let rps = crate::config::load().fetch_requests_per_second;
@@ -174,7 +177,13 @@ async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<V
 }
 
 /// Parse a Yahoo chart payload into aligned dates+closes (null closes dropped) + meta.
-fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
+///
+/// `pub` for the network drift net, which health-probes the chart endpoint and then has to assert the
+/// parser still eats what came back. Handing it THIS fn instead of `fetch_history` means the body it
+/// classified as healthy is the body it parses — one GET instead of two, and no window in which the
+/// endpoint is healthy at probe time and throttled at fetch time (which read as drift and failed the
+/// build for an environmental reason).
+pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     let result = j.get("chart")?.get("result")?.get(0)?;
     let ts = result.get("timestamp")?.as_array()?;
     let quote0 = result.get("indicators")?.get("quote")?.get(0)?;
@@ -2625,6 +2634,10 @@ async fn quote_summary_json(client: &Client, sym: &str, modules: &str) -> Result
     let url = format!(
         "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules={modules}&crumb={crumb}"
     );
+    // the one outbound call in this file that never went through the pacer. Every quoteSummary read
+    // (fund facts, topHoldings, composition) rides this fn, and the screen's fund pass fires it once
+    // per fund — an unpaced burst against the endpoint that already answers 429 the most readily.
+    throttle().await;
     let resp = client
         .get(&url)
         .header("Cookie", &cookie)
