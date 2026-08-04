@@ -14,8 +14,11 @@
 //! open an unpaced side channel. Whole run is ~10 Yahoo calls against the 4757 a single `screen` does.
 //!
 //! ONE test is still gated: `backtest_edge_holds` shells `backtest 12 universe` over 3000+ live
-//! tickers (CI budgets 45 minutes). Its fan-out IS the test, so it cannot be made cheap, and it is an
-//! edge gate rather than an API-shape net. It keeps `#[ignore]` + its own `FOLIOMAN_BACKTEST_GATE`:
+//! tickers (CI budgets 45 minutes). Its fan-out IS the test, so it cannot be made cheap, and what it
+//! measures is REGIME — whether the shipped edge still holds on today's market. The deterministic half
+//! of its old job (did a code or knob edit change the scoring) split off into
+//! `shipped_tuning_scores_fixture_unchanged` in src/commands/backtest.rs, which runs offline on every
+//! `cargo test`. So this keeps `#[ignore]` + its own `FOLIOMAN_BACKTEST_GATE`:
 //!
 //!     FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --ignored
 
@@ -312,12 +315,18 @@ async fn euribor_parses() {
 /// too-few-tickers) SKIPS green; only a genuine COLLAPSE (GROWTH edge <= 0, or BOTH out-of-sample
 /// halves negative) FAILS. It scores with the real tuning mirrored into ci-settings.yaml's
 /// `buy_heuristic`, so a red here means a scoring-code change or a knob edit broke the validated edge.
+///
+/// REGIME ONLY. The other half of what this used to cover — "did an edit to the scoring code or a knob
+/// change what the shipped tuning does" — is deterministic and now runs offline on every `cargo test`
+/// as `shipped_tuning_scores_fixture_unchanged` (src/commands/backtest.rs). What is left here is the
+/// question no fixture can answer: does the edge still hold on TODAY's market. That one is worth
+/// 3000+ live tickers; the other never was.
 #[test]
-#[ignore = "live network; run with FOLIOMAN_NET_TESTS=1 cargo test --test network backtest_edge_holds -- --ignored"]
+#[ignore = "multi-minute live universe backtest; nightly only. FOLIOMAN_BACKTEST_GATE=1 cargo test --release --test network backtest_edge_holds -- --ignored"]
 fn backtest_edge_holds() {
-    // dedicated opt-in (NOT the shared FOLIOMAN_NET_TESTS): the per-PR network-smoke job runs every
-    // ignored test in this file, and this one shells a multi-minute universe backtest — keep it out of
-    // that path. Only the nightly backtest-gate job sets FOLIOMAN_BACKTEST_GATE, so PRs skip fast.
+    // its own env var, not the ignore attribute alone: `-- --ignored` runs every ignored test in this
+    // file, so anything that ever gets gated here again would drag a multi-minute universe backtest
+    // along with it. Only the nightly backtest-gate job sets FOLIOMAN_BACKTEST_GATE.
     if std::env::var("FOLIOMAN_BACKTEST_GATE").is_err() {
         return;
     }

@@ -317,6 +317,7 @@ pub async fn run(args: Vec<String>) {
     if halflife {
         hold_period_sweep(&client, &settings.urls, &tickers, monthly, cadence, min_history, step, tuning, &etf_set, &sector_of)
             .await;
+        fetch::long_cache_save(); // this path fetches too — flush before the early return
         return;
     }
 
@@ -467,6 +468,10 @@ pub async fn run(args: Vec<String>) {
         .buffer_unordered(fetch::fetch_concurrency())
         .collect()
         .await;
+    // every network read this command makes is done by here, so one flush covers all three remaining
+    // exits below. The monthly payloads are the expensive part of a wide run and `screen` shares the
+    // same file, so whichever ran first pays and the other reads free for a week.
+    fetch::long_cache_save();
 
     let mut samples: Vec<Sample> = per_ticker.into_iter().flatten().collect();
     if samples.len() < 4 {
@@ -3840,5 +3845,149 @@ mod tests {
         assert_eq!(class_census(&samples[..2], &d)[0].0, 2, "crypto lands at index 0");
         assert_eq!(class_census(&samples[2..4], &d)[1].0, 2, "ETF lands at index 1");
         assert_eq!(class_census(&samples[4..], &d)[2].0, 2, "stock lands at index 2");
+    }
+
+    /// 40 years of monthly bars, one grid, ten shapes: five compounders that clear the shipped gates in
+    /// a known order, one that earns its CAGR through a −55% pit, and four that should never score.
+    /// Deterministic — closes are `base * rate^(i/12)`, so R² is ~1 everywhere and the score ordering
+    /// reduces to the CAGR terms, which is exactly the ordering the forward returns have too.
+    fn synthetic_universe() -> (Vec<NaiveDate>, Vec<(&'static str, Vec<f64>)>) {
+        const BARS: usize = 480;
+        let dates: Vec<NaiveDate> = (0..BARS)
+            .map(|i| {
+                let (y, m) = (1985 + (i / 12) as i32, (i % 12) as u32 + 1);
+                NaiveDate::from_ymd_opt(y, m, 1).unwrap()
+            })
+            .collect();
+        // `rate` = annual growth factor; `phase` decorrelates the CYCLE from the rate; `pit` = the
+        // drawdown-and-recovery name.
+        //
+        // The ripple is not decoration. A pure exponential is PERMANENTLY extended above its 200wk MA
+        // by an amount that is a strict function of its rate, so extension and CAGR are perfectly
+        // collinear — and the shipped over-extension brake then docks precisely the fastest compounder.
+        // Measured on the first draft of this fixture: score ran backwards (30%/yr scored 9.16, 20%/yr
+        // scored 9.91) and the lane edge came out −614.9 at rho −0.58. That is a pathology of constant-
+        // rate curves, not of the scorer; real compounders oscillate around their trend and are extended
+        // or not depending on WHERE IN THE CYCLE they are. Giving each name its own phase restores that.
+        let series = |rate: f64, phase: f64, pit: bool| -> Vec<f64> {
+            (0..BARS)
+                .map(|i| {
+                    let t = i as f64;
+                    // ±18% cycle, 40-month period — big enough to move the near-high gate and the MA
+                    // distance, far too small to overturn 12 years of compounding in the forward window.
+                    let cycle = 1.0 + 0.18 * ((t + phase) * std::f64::consts::TAU / 40.0).sin();
+                    let base = 100.0 * rate.powf(t / 12.0) * cycle;
+                    // triangular −55% dip over bars 180..240, fully recovered after: a real maxdd and a
+                    // real underwater stretch on a name whose long CAGR still clears the bar.
+                    if pit && (180..=240).contains(&i) {
+                        base * (1.0 - 0.55 * (1.0 - ((t - 210.0) / 30.0).abs()))
+                    } else {
+                        base
+                    }
+                })
+                .collect()
+        };
+        let names = vec![
+            ("CMPA", series(1.30, 0.0, false)), // five compounders, rates apart, cycles out of step
+            ("CMPB", series(1.26, 13.0, false)),
+            ("CMPC", series(1.22, 27.0, false)),
+            ("CMPD", series(1.20, 7.0, false)),
+            ("DRAW", series(1.24, 33.0, true)), // passes on the flat stretches, gated inside the pit
+            ("MODE", series(1.12, 20.0, false)), // < growth_min_cagr 19 -> never scores
+            ("SLOW", series(1.06, 3.0, false)),
+            ("FLAT", series(1.01, 17.0, false)),
+            ("FADE", series(0.97, 30.0, false)), // fails the lifetime uptrend too
+            ("SINK", series(0.92, 11.0, false)),
+        ];
+        (dates, names)
+    }
+
+    /// Build the walk-forward sample set the wide `backtest 12 universe` builds, from synthetic prices
+    /// instead of live ones — same `sweep_cutoffs`, same `demean`, same monthly params `run` uses.
+    fn synthetic_samples() -> Vec<Sample> {
+        let (dates, names) = synthetic_universe();
+        let (etf_set, sector_of) = (HashSet::new(), HashMap::new());
+        let mut samples: Vec<Sample> = names
+            .iter()
+            .flat_map(|(tk, closes)| {
+                // holds=[12] / min_history 36 / step 6 / cadence 12 — `run`'s monthly branch verbatim
+                sweep_cutoffs(tk, &dates, closes, tk, "", &[12], 36, 6, 12, &etf_set, &sector_of)
+                    .into_iter()
+                    .map(|(_, s)| s)
+            })
+            .collect();
+        demean(&mut samples);
+        samples
+    }
+
+    /// The SHIPPED tuning, not the code defaults. `BuyHeuristic::default()` is deliberately neutral —
+    /// its field docs read "0 = off (DEFAULT); ci-settings ships 5.0" — so a test that scored with it
+    /// would grade a tuning nobody runs. Same raw-parse the config pins use (no merge, no
+    /// FOLIOMAN_CONFIG, no race with the other tests in this file).
+    fn shipped_tuning() -> BuyHeuristic {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
+        let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
+        let s: config::Settings = serde_yaml::from_str(&text).expect("parse tests/ci-settings.yaml");
+        s.buy_heuristic
+    }
+
+    /// The OFFLINE half of the backtest gate. `backtest_edge_holds` (tests/network.rs) asserts two
+    /// different things at once — "a scoring-code change or a default-tuning edit broke the edge" AND
+    /// "the edge still holds on today's market" — and prices the first at the second's cost: 3000+ live
+    /// tickers, nightly, so a scoring regression surfaces the next morning. This is the first half,
+    /// deterministic and network-free, so it runs on every `cargo test`. Regime drift stays nightly;
+    /// that is the one question a fixture genuinely cannot answer.
+    ///
+    /// WHY THE EDGE IS PINNED AND NOT ASSERTED POSITIVE. The obvious assert here is `edge > 0`, and it
+    /// is not available honestly. This fixture is a PERSISTENCE world: each name's forward 12y return
+    /// follows the same rate its history was built from. The shipped score docks over-extension, and a
+    /// steady compounder's distance above its 200wk MA is a function of its rate — the MA lags ~2 years,
+    /// so price/MA settles near rate² (1.69 at 30%/yr vs 1.44 at 20%/yr), permanently and regardless of
+    /// where in any cycle the name sits. So the score ranks the SLOWER compounders higher here (measured:
+    /// 13.1 at 30%/yr rising to 18.0 at 20%/yr) and the lane edge is negative by construction. That is
+    /// not a defect in the scorer — the brake is a shipped, validated knob and the live +117 edge comes
+    /// from a market where extension really does precede mean reversion. It is a property of persistence
+    /// worlds, and no arrangement of steady compounders escapes it.
+    ///
+    /// Which means the SIGN of a synthetic edge is chosen by whoever picks the price shapes. Asserting
+    /// `edge > 0` would only prove the fixture was bent until it went green. Pinning the VALUE is the
+    /// non-circular assert, and it is strictly the stronger one: it fails on any scoring change, not
+    /// just on one big enough to flip a sign.
+    #[test]
+    fn shipped_tuning_scores_fixture_unchanged() {
+        let samples = synthetic_samples();
+        let tuning = shipped_tuning();
+        let gated = |t: &BuyHeuristic| samples.iter().filter(|s| growth_score(&s.quote, t).is_some()).count();
+
+        // GATE PIN. Moves when a knob changes what passes: re-validate with a live `backtest universe`
+        // (both OOS halves positive) BEFORE moving it, exactly as the ci-settings receipts require.
+        assert_eq!(
+            gated(&tuning),
+            158,
+            "the shipped gates admit a different slice of the fixture than they did — if you moved a \
+             knob, re-validate with a live `backtest universe` (both OOS halves positive) and then \
+             move this pin; if you didn't, a gate's CODE changed and that is the regression"
+        );
+
+        // SCORE PIN. Same receipt rule. Tolerance is wide enough that reassociating a float sum is not a
+        // red build and narrow enough that a real term change is: the value is ~-520 in units of pts.
+        let (rho, edge) = lane_metrics(&samples, growth_score, &tuning);
+        assert!(rho.is_some(), "too few scored samples to correlate — the fixture stopped reaching the lane");
+        assert!(
+            (edge - -520.2).abs() < 0.5,
+            "GROWTH edge on the fixture moved to {edge:+.1} pts (pinned -520.2) — the score arithmetic \
+             changed. Re-validate with a live `backtest universe` before moving this pin; see the note \
+             above for why the sign is not the thing being asserted"
+        );
+
+        // The pin above is only worth having if it CAN move — a count nothing perturbs is a test that
+        // passes forever. Raising the CAGR floor past two of the five compounders must drop it.
+        let mut tighter = shipped_tuning();
+        tighter.growth_min_cagr = 25.0;
+        assert!(
+            gated(&tighter) < gated(&tuning),
+            "tightening growth_min_cagr 19 -> 25 changed nothing: the pin is inert and would not catch \
+             a knob regression either"
+        );
     }
 }

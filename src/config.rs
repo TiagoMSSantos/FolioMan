@@ -1013,9 +1013,9 @@ mod tests {
         );
     }
 
-    /// The CI network fixture must parse into Settings (else the network-smoke job panics for a non-API
-    /// reason — the exact bug this guards), AND serde defaults must fill the omitted fields (the contract
-    /// that lets a minimal / older settings.yaml load). Offline + deterministic.
+    /// The CI network fixture must parse into Settings (else `integration-tests` and `backtest-gate`
+    /// panic for a non-API reason — the exact bug this guards), AND serde defaults must fill the omitted
+    /// fields (the contract that lets a minimal / older settings.yaml load). Offline + deterministic.
     #[test]
     fn ci_fixture_parses_with_defaults() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");

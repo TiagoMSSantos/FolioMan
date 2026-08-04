@@ -167,13 +167,31 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
 /// span passes ~10y anyway (which silently breaks 1D/1W/1M), so ask for 1mo explicitly and use this
 /// ONLY to back-fill horizons older than the ~10y daily window (the 20Y column / long dividend sums).
 /// Short/mid horizons, turnover, SMA, range and R² all stay on the precise daily series.
+///
+/// (round 53) 7-day raw-JSON disk cache — monthly bars only change on month boundaries, so within the
+/// TTL the cached payload IS what Yahoo would return. The cache lives HERE rather than in `quote_one`
+/// (where it started) because `fetch_history_long` is the other caller and it was walking straight
+/// past a file `screen` had just filled: a wide `backtest universe` re-downloaded ~3000 payloads that
+/// were already on disk, minutes old. Both callers hardcode the same max/1mo URL, so one entry serves
+/// either. Flushed by `long_cache_save`, which every command that uses this must call once at the end.
 async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Value> {
+    let today = chrono::Local::now().date_naive();
+    if let Some((recorded, v)) = long_cache_load().get(ticker) {
+        if long_cache_fresh(Some(recorded), today) {
+            LONG_CACHE_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Some(v.clone());
+        }
+    }
     let url = urls
         .yahoo_chart
         .replace("{ticker}", ticker)
         .replace("{range}", "max")
         .replace("interval=1d", "interval=1mo");
-    get_json(client, &url).await
+    let fetched = get_json(client, &url).await;
+    if let Some(v) = &fetched {
+        LONG_CACHE_NEW.lock().unwrap().push((ticker.to_string(), v.clone()));
+    }
+    fetched
 }
 
 /// Parse a Yahoo chart payload into aligned dates+closes (null closes dropped) + meta.
@@ -420,19 +438,10 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
                 LONG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return None;
             }
-            // (round 53) 7-day raw-JSON disk cache — monthly bars only change on month boundaries,
-            // so within the TTL the cached payload IS what Yahoo would return.
-            if let Some((recorded, v)) = long_cache_load().get(ticker) {
-                if long_cache_fresh(Some(recorded), today) {
-                    LONG_CACHE_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    return Some(v.clone());
-                }
-            }
-            let fetched = chart_json_long(client, urls, ticker).await;
-            if let Some(v) = &fetched {
-                LONG_CACHE_NEW.lock().unwrap().push((ticker.to_string(), v.clone()));
-            }
-            fetched
+            // the 7-day disk cache used to sit here; it now lives inside `chart_json_long` so the
+            // backtest's `fetch_history_long` shares it. The too-young skip above stays — it's a
+            // different mechanism (never-fetch, not fetch-once) and only `quote_one` records it.
+            chart_json_long(client, urls, ticker).await
         },
         // news headlines are displayed ONLY by `check`/`alert`; `screen`/`perf` ignore them, so skip the
         // per-name Yahoo search there (~25% fewer requests across a 3800-name screen -> proportionally faster).
@@ -2298,7 +2307,11 @@ fn long_cache_fresh(recorded: Option<&NaiveDate>, today: NaiveDate) -> bool {
 
 /// Persist: still-fresh old entries keep their ORIGINAL date (so the TTL actually expires), this
 /// run's fetches stamp today. Stale entries drop out — the file self-prunes.
-fn long_cache_save() {
+///
+/// `pub` for `backtest`, the other command that pulls monthly history: without its own flush a wide
+/// run reads the cache but never contributes to it, so tickers `screen` never touches (the stress
+/// losers, the benchmark) would re-download on every run forever.
+pub fn long_cache_save() {
     let today = chrono::Local::now().date_naive();
     let new = LONG_CACHE_NEW.lock().unwrap();
     if new.is_empty() && long_cache_load().iter().all(|(_, (d, _))| long_cache_fresh(Some(d), today)) {
