@@ -575,6 +575,11 @@ pub async fn run(args: Vec<String>) {
         // now has a line pricing it.
         knob("proximity", |tuning| tuning.growth_proximity_weight = 0.0),
         knob("growth_dividend*", |tuning| tuning.dividend_weight = 0.0),
+        // (#49) ablates TOWARD no-extra-dock, like the ladder row above and unlike the zeroing rows:
+        // 0.7 is the 5Y rung, i.e. a young name treated exactly like a 5-year one. Δ is what docking
+        // the 2Y/1Y rungs BELOW the 5Y one is worth. Reads 0.0 unless the loaded tuning has the ladder
+        // on AND a floor below 5 — with neither, no young-rung name is scored at all.
+        knob("growth_trust_young→0.7 (no extra dock)", |tuning| tuning.growth_trust_young = 0.7),
     ];
     // (G+) one row per CONFIGURED extra fundamental term, so each is priced separately rather than as
     // one all-extras-at-once Δ. That distinction is the whole point: receipt (#3d) found quality and
@@ -662,6 +667,32 @@ pub async fn run(args: Vec<String>) {
          1.0 = SHIPPED (raw multiply: a name at 80% of range keeps 0.80 of its score, one at the high keeps 1.00).\n  \
          0.0 = term OFF (everyone ×1.00). NEGATIVE = INVERTED — the name furthest below its high scores HIGHEST\n  \
          (at −1.0 the 80%-of-range name is multiplied by 1.20). Clamped at 0, so no rung can produce a negative factor.",
+    );
+    // (#49) how hard to dock a name for a SHORT record. The (#47) ladder graded 20/8/5 and then stopped,
+    // handing every shorter record the same flat 0.5 the old cliff gave a 9.9-year one — so "reward the
+    // longer record" was never actually tested at the young end. This sweeps that bottom.
+    // SOUNDNESS: weight_curve re-scores a set fixed at the loaded tuning, valid only if the swept knob
+    // cannot change WHO is admitted. It cannot: `trust` is a pure score multiplier, and every gate in
+    // `score_parts` — including the `history` bail at `long_leg_fixed(..)?` — returns before trust is
+    // computed. The knob that DOES move admission is `growth_min_leg_years`, which is why the floor
+    // moves in ARMS and only the dock is swept here.
+    // FLAT LINE EXPECTED at the shipped tuning: with the ladder off and the floor at 5 there is no
+    // young-rung name in the pool, so every row reads identically. That is the null, not a failure —
+    // this curve is informative only inside a floor-2 or floor-1 arm.
+    // TIE-BACK: the 0.7 row must reproduce the ablation's `growth_trust_young→0.7` row above, and the
+    // row at the loaded value must reproduce the lane headline.
+    weight_curve(
+        "growth_trust_young",
+        &samples,
+        tuning,
+        |t, v| t.growth_trust_young = v,
+        tuning.growth_trust_young,
+        &[0.7, 0.5, 0.4, 0.3, 0.2, 0.1],
+        "TRUST multiplier for the ladder's bottom rungs: 2Y record ×w, 1Y record ×w/2. Lower = harsher dock.\n  \
+         0.7 = the 5Y rung, i.e. NO extra dock for being young (the control).\n  \
+         0.5 = DEFAULT, and the flat half-score the floor-2 arm already ran with AND LOST (rank-1 +6.0 → +4.0,\n  \
+         h2h 67% → 39%) — it sits in this ladder as the reproduction of the known-bad point.\n  \
+         READ ONLY AS A SCREEN: prints rho/edge/OOS, never rank-1 or h2h, so it cannot settle the ship rule.",
     );
     gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
     gate_sweep(&samples, tuning, &gate_loosen); // (#10) which specific gate is too tight?

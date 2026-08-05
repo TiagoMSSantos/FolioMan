@@ -31,16 +31,22 @@ use std::collections::{HashMap, HashSet};
 /// `history` gate, which is the single largest cohort the growth lane rejects (1949 of 4748
 /// EU-buyable names, 2026-08-03) and the only one no other knob can reach.
 ///
-/// 2Y is the only rung available to add: `core::HORIZONS` has no 3Y leg, and `Quote.perf` is a Vec
-/// positionally aligned to it, so inserting one is a re-fetch and a re-verification of every
-/// `perf_pct` site — not a config change.
+/// 2Y and 1Y are the only rungs available to add: `core::HORIZONS` has no 3Y leg, and `Quote.perf`
+/// is a Vec positionally aligned to it, so inserting one is a re-fetch and a re-verification of
+/// every `perf_pct` site — not a config change.
+///
+/// (#49) 1Y is the bottom rung, and it carries a SECOND penalty nobody configured. A 1Y-rung name
+/// has `long_cagr == return_1y` by construction, so `accel = return_1y − long_cagr` is identically
+/// ZERO — the heaviest term in the growth score (weight 0.65 shipped) is structurally dead for
+/// exactly these names. That is on top of whatever `trust_factor` docks them. Read the young-dock
+/// curve knowing the dock is not the only thing holding these names down.
 ///
 /// Admitting a rung is NOT the same as trusting it. `trust_factor` still requires a 10Y leg for
 /// equities, so every 2Y-rung name is scored at 0.5; and `growth_min_cagr`'s whole-life leg still
 /// applies, which for a 2-year-old listing is roughly the same number. Both are damps. Neither is a
 /// substitute for the grid — a 19%/yr bar over two years is a far lower bar than over twenty.
 fn long_leg(quote: &Quote, min_leg_years: f64) -> Option<(f64, f64)> {
-    for (label, years) in [("20Y", 20.0), ("8Y", 8.0), ("5Y", 5.0), ("2Y", 2.0)] {
+    for (label, years) in [("20Y", 20.0), ("8Y", 8.0), ("5Y", 5.0), ("2Y", 2.0), ("1Y", 1.0)] {
         if years < min_leg_years {
             continue;
         }
@@ -581,7 +587,18 @@ fn long_leg_floors(tuning: &BuyHeuristic, crypto: bool) -> [(&'static str, &'sta
 ///
 /// Tiers are hardcoded. A knob per rung is four more numbers needing four more receipts, and the
 /// ladder has to earn its place before it earns a shape.
-fn trust_factor(quote: &Quote, crypto: bool, fixed_years: u32, ladder: bool) -> f64 {
+///
+/// (#49) ONE exception to that, at the BOTTOM: `young`. The ladder as first built stopped at
+/// `none => 0.50`, which meant it did not dock a 2-year record any harder than a 7-year one — the
+/// old cliff's flat half-score for both. That is precisely the distinction the young rungs need, so
+/// the bottom two tiers are driven by a single swept number: the 2Y rung takes `young`, the 1Y rung
+/// `young / 2.0` (half the record, half the trust). One knob, two rungs — the "no knob per rung"
+/// bargain above survives, and only the number that actually decides the outcome is swept.
+///
+/// `young` is dead weight unless BOTH the ladder is on AND `growth_min_leg_years` admits a rung
+/// below 5 — at the shipped floor no 2Y/1Y-rung name exists to dock, so its curve prints a flat
+/// line. That is the expected baseline reading, not a bug.
+fn trust_factor(quote: &Quote, crypto: bool, fixed_years: u32, ladder: bool, young: f64) -> f64 {
     if ladder {
         // longest leg present wins; `fixed_cagr_years` deliberately does NOT pin this one — the ladder
         // asks how long the record IS, which is a fact about the name, not about the view chosen for it.
@@ -589,7 +606,8 @@ fn trust_factor(quote: &Quote, crypto: bool, fixed_years: u32, ladder: bool) -> 
             _ if perf_pct(quote, "20Y").is_some() => 1.0,
             _ if perf_pct(quote, "8Y").is_some() => 0.85,
             _ if perf_pct(quote, "5Y").is_some() => 0.70,
-            _ => 0.5,
+            _ if perf_pct(quote, "2Y").is_some() => young,
+            _ => young / 2.0, // 1Y-only (or no leg at all): half the record, half the trust
         };
     }
     let needed = if crypto {
@@ -766,7 +784,13 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
         + quality_reward(quote, tuning); // (F) return-on-capital tilt — MEASURED since the backtest fills quote.roe: zeroing it costs this lane -48.7 edge and flips rho negative (see ci-settings (F))
     let value = value_factor(quote, tuning.ref_pe); // (E) cheap lifts, rich dampens, unknown neutral
     let decline = sustained_decline_factor(quote, tuning); // (B) multi-year-bleed dock
-    let trust = trust_factor(quote, crypto, tuning.fixed_cagr_years, tuning.growth_trust_ladder); // (A) equities need a 10Y leg (the pinned window when fixed_cagr_years is set); crypto: only 5Y. (#47) or the graded 20/8/5 ladder
+    let trust = trust_factor(
+        quote,
+        crypto,
+        tuning.fixed_cagr_years,
+        tuning.growth_trust_ladder,
+        tuning.growth_trust_young,
+    ); // (A) equities need a 10Y leg (the pinned window when fixed_cagr_years is set); crypto: only 5Y. (#47) or the graded 20/8/5 ladder, (#49) with the 2Y/1Y rungs under it
     // (#4) geomean the pure penalties so several mild damps can't compound to ~0; value (a tilt that
     // can exceed 1.0) stays a direct multiplier.
     Some(base * value * combine_damps(&[decline, trust]))
@@ -1146,7 +1170,13 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // is None in the backtest), so this knob lets valuation move to the validated additive earnings_yield
     // term (Item 19) once it probes +, without a recompile. On-sale `buy_score` keeps full value_factor.
     let value = 1.0 + tuning.growth_value_weight * (value_raw - 1.0);
-    let trust = trust_factor(quote, crypto, tuning.fixed_cagr_years, tuning.growth_trust_ladder); // (A) equities need a 10Y leg (the pinned window when fixed_cagr_years is set); crypto: only 5Y. (#47) or the graded 20/8/5 ladder
+    let trust = trust_factor(
+        quote,
+        crypto,
+        tuning.fixed_cagr_years,
+        tuning.growth_trust_ladder,
+        tuning.growth_trust_young,
+    ); // (A) equities need a 10Y leg (the pinned window when fixed_cagr_years is set); crypto: only 5Y. (#47) or the graded 20/8/5 ladder, (#49) with the 2Y/1Y rungs under it
     // (1) overextension brake: how far the price has run ABOVE its own 200wk SMA. Far above trend =
     // stretched/blow-off, so taper the score toward `growth_overext_floor` at the cap. This is the
     // generic brake the P/E tilt can't provide for crypto/ETFs (no earnings) — works on price alone.
@@ -4187,20 +4217,20 @@ mod tests {
 
     // (A) crypto trust: a young EUR pair (5Y but no 10Y, like BTC-EUR) is NOT halved — 5Y is proven
     // enough for crypto; an equity still needs a 10Y leg, a barely-listed coin (1Y only) is still cut.
-    assert!((trust_factor(&quote(20.0, &[("1Y", 30.0), ("5Y", 200.0)]), true, 0, false) - 1.0).abs() < 1e-9);
-    assert_eq!(trust_factor(&quote(20.0, &[("1Y", 30.0)]), true, 0, false), 0.5); // crypto, only 1Y -> unproven
-    assert_eq!(trust_factor(&quote(5.0, &[("5Y", 40.0)]), false, 0, false), 0.5); // equity, no 10Y -> halved
-    assert!((trust_factor(&quote(5.0, &[("10Y", 40.0)]), false, 0, false) - 1.0).abs() < 1e-9);
+    assert!((trust_factor(&quote(20.0, &[("1Y", 30.0), ("5Y", 200.0)]), true, 0, false, 0.5) - 1.0).abs() < 1e-9);
+    assert_eq!(trust_factor(&quote(20.0, &[("1Y", 30.0)]), true, 0, false, 0.5), 0.5); // crypto, only 1Y -> unproven
+    assert_eq!(trust_factor(&quote(5.0, &[("5Y", 40.0)]), false, 0, false, 0.5), 0.5); // equity, no 10Y -> halved
+    assert!((trust_factor(&quote(5.0, &[("10Y", 40.0)]), false, 0, false, 0.5) - 1.0).abs() < 1e-9);
     // (#15) the trust leg follows the pinned window: under an 8Y view an 8Y record is a FULL record
     // (not halved), while a name that can't even show 8Y still is. fixed_years=0 keeps the 10Y rule,
     // which is what makes the live ranking (fixed_cagr_years: 0) bit-identical to before the pin existed.
-    assert!((trust_factor(&quote(5.0, &[("8Y", 120.0)]), false, 8, false) - 1.0).abs() < 1e-9);
-    assert_eq!(trust_factor(&quote(5.0, &[("8Y", 120.0)]), false, 0, false), 0.5); // same name, unpinned -> no 10Y -> halved
-    assert_eq!(trust_factor(&quote(5.0, &[("5Y", 40.0)]), false, 8, false), 0.5); // pinned, but no 8Y leg either
+    assert!((trust_factor(&quote(5.0, &[("8Y", 120.0)]), false, 8, false, 0.5) - 1.0).abs() < 1e-9);
+    assert_eq!(trust_factor(&quote(5.0, &[("8Y", 120.0)]), false, 0, false, 0.5), 0.5); // same name, unpinned -> no 10Y -> halved
+    assert_eq!(trust_factor(&quote(5.0, &[("5Y", 40.0)]), false, 8, false, 0.5), 0.5); // pinned, but no 8Y leg either
     // end-to-end: a 5Y-only crypto (BTC-EUR shape) is admitted to the growth lane and NOT trust-halved
     let mut btc_young = quote(20.0, &[("1Y", 30.0), ("5Y", 200.0)]); // no 10Y leg, like the young EUR pair
     btc_young.ticker = "BTC-EUR".into();
-    assert!((trust_factor(&btc_young, true, 0, false) - 1.0).abs() < 1e-9);
+    assert!((trust_factor(&btc_young, true, 0, false, 0.5) - 1.0).abs() < 1e-9);
     assert!(growth_score(&btc_young, &tuning).is_some());
 
     // (#47) the graded record ladder. Longest leg present wins; `fixed_years` does NOT pin it (the
@@ -4209,22 +4239,23 @@ mod tests {
         (vec![("1Y", 10.0), ("5Y", 40.0), ("8Y", 90.0), ("20Y", 900.0)], 1.0),
         (vec![("1Y", 10.0), ("5Y", 40.0), ("8Y", 90.0)], 0.85),
         (vec![("1Y", 10.0), ("5Y", 40.0)], 0.70),
-        (vec![("1Y", 10.0)], 0.5),
+        (vec![("1Y", 10.0), ("2Y", 20.0)], 0.5),  // (#49) 2Y rung = `young`
+        (vec![("1Y", 10.0)], 0.25),               // (#49) 1Y rung = `young`/2 — was a flat 0.5 pre-(#49)
     ];
     for (legs, want) in &rungs {
         let q = quote(20.0, legs);
-        assert!((trust_factor(&q, false, 0, true) - want).abs() < 1e-9, "equity rung {legs:?} -> {want}");
+        assert!((trust_factor(&q, false, 0, true, 0.5) - want).abs() < 1e-9, "equity rung {legs:?} -> {want}");
         // ONE SHARED LADDER: a coin answers to the same rungs, unlike the cliff arm where crypto has
         // its own 5Y rule. This is the demotion the plan accepted, pinned so it can't drift back.
-        assert!((trust_factor(&q, true, 0, true) - want).abs() < 1e-9, "crypto rung {legs:?} -> {want}");
+        assert!((trust_factor(&q, true, 0, true, 0.5) - want).abs() < 1e-9, "crypto rung {legs:?} -> {want}");
         // the ladder ignores the pin, so an 8Y-pinned view reads the same rung as an unpinned one
-        assert!((trust_factor(&q, false, 8, true) - want).abs() < 1e-9, "pinned rung {legs:?} -> {want}");
+        assert!((trust_factor(&q, false, 8, true, 0.5) - want).abs() < 1e-9, "pinned rung {legs:?} -> {want}");
     }
     // a 10Y leg alone is NOT a rung — it falls to the 8Y tier it clears, which is the whole point:
     // the cliff spent all its resolution on 10Y and could not tell 10y from 46y.
-    assert!((trust_factor(&quote(20.0, &[("5Y", 40.0), ("8Y", 90.0), ("10Y", 200.0)]), false, 0, true) - 0.85).abs() < 1e-9);
+    assert!((trust_factor(&quote(20.0, &[("5Y", 40.0), ("8Y", 90.0), ("10Y", 200.0)]), false, 0, true, 0.5) - 0.85).abs() < 1e-9);
     // and the cliff arm disagrees with the ladder on exactly that name -> the knob is not inert
-    assert!((trust_factor(&quote(20.0, &[("5Y", 40.0), ("8Y", 90.0), ("10Y", 200.0)]), false, 0, false) - 1.0).abs() < 1e-9);
+    assert!((trust_factor(&quote(20.0, &[("5Y", 40.0), ("8Y", 90.0), ("10Y", 200.0)]), false, 0, false, 0.5) - 1.0).abs() < 1e-9);
 
     // (#47) DEFAULT IS BYTE-IDENTICAL. The knob ships false, so every score must be unchanged from the
     // pre-ladder lane — this is the assertion that lets the shipped edge stay uncontested until an arm
@@ -4241,6 +4272,52 @@ mod tests {
     // ...and the ladder DOES move a score, so `false` is a real choice rather than a dead branch
     let on = BuyHeuristic { growth_trust_ladder: true, ..BuyHeuristic::default() };
     assert_ne!(growth_score(&young, &on), growth_score(&young, &BuyHeuristic::default()));
+
+    // (#49) THE 1Y RUNG. `long_leg`'s ladder gained a bottom step, so a name whose only record is one
+    // year now has a long CAGR to be judged on instead of dying unscorable on the `history` gate.
+    // `growth_min_leg_years` stays a FLOOR, so each setting admits exactly the rungs at or above it.
+    let one_year = quote(20.0, &[("1Y", 30.0)]);
+    let two_year = quote(20.0, &[("1Y", 30.0), ("2Y", 60.0)]);
+    assert_eq!(long_leg(&one_year, 1.0), Some((30.0, 1.0))); // floor 1 -> the 1Y rung is reachable
+    assert_eq!(long_leg(&one_year, 2.0), None); // floor 2 -> excluded, as before (#49)
+    assert_eq!(long_leg(&one_year, 5.0), None); // shipped floor -> still unscorable
+    assert_eq!(long_leg(&two_year, 2.0), Some((60.0, 2.0))); // floor 2 admits 2Y and stops there
+    assert_eq!(long_leg(&two_year, 1.0), Some((60.0, 2.0))); // LONGEST available, not shortest — floor, not pin
+    // THE SECOND PENALTY, unconfigured and easy to forget: a 1Y-rung name's long CAGR IS its 1Y return,
+    // so `accel = clamp(return_1y − long_cagr, ..)` is identically ZERO and the heaviest term in the
+    // score (growth_accel_weight 0.65) is structurally dead for exactly this cohort. Read the young-dock
+    // curve knowing the dock is not the only thing holding these names down.
+    let floor1 = BuyHeuristic { growth_min_leg_years: 1.0, ..BuyHeuristic::default() };
+    assert!((long_cagr_pct(&one_year, &floor1).unwrap() - 30.0).abs() < 1e-9); // == the 1Y leg -> accel term is 0
+    assert!(long_cagr_pct(&one_year, &BuyHeuristic::default()).is_none()); // ...and nothing at all at floor 5
+
+    // (#49) the young dock. 2Y rung takes the knob, 1Y rung takes half of it.
+    let dock = |w: f64, q: &Quote| trust_factor(q, false, 0, true, w);
+    assert!((dock(0.4, &two_year) - 0.4).abs() < 1e-9);
+    assert!((dock(0.4, &one_year) - 0.2).abs() < 1e-9);
+    assert!(dock(0.1, &two_year) < dock(0.5, &two_year)); // lower knob = harsher dock, both rungs
+    assert!(dock(0.1, &one_year) < dock(0.5, &one_year));
+    // the ORDER the whole round is about: longer record, more trust, no ties across the ladder
+    let five_year = quote(20.0, &[("1Y", 30.0), ("5Y", 200.0)]);
+    assert!(dock(0.4, &five_year) > dock(0.4, &two_year) && dock(0.4, &two_year) > dock(0.4, &one_year));
+
+    // DEFAULT IS BYTE-IDENTICAL, twice over. At the shipped floor the knob cannot reach anything —
+    // `score_parts` bails on `long_leg_fixed(..)?` before trust is computed — so even the ladder arm is
+    // unmoved by it, which is what keeps arm D's (#47) grid reproducible against this code.
+    for w in [0.1, 0.5, 0.9] {
+        let tweaked = BuyHeuristic { growth_trust_young: w, ..BuyHeuristic::default() };
+        assert_eq!(growth_score(&veteran, &tweaked), growth_score(&veteran, &BuyHeuristic::default()));
+        assert_eq!(growth_score(&young, &tweaked), growth_score(&young, &BuyHeuristic::default()));
+        let ladder_arm = BuyHeuristic { growth_trust_young: w, ..on.clone() };
+        assert_eq!(growth_score(&young, &ladder_arm), growth_score(&young, &on), "arm D must not move");
+    }
+    // ...and it is NOT inert once the floor lets a young name in — the arm this round exists to measure
+    let armed = |w: f64| BuyHeuristic {
+        growth_min_leg_years: 2.0, growth_trust_ladder: true, growth_trust_young: w,
+        growth_min_cagr: -100.0, growth_min_range_pct: 0.0, ..BuyHeuristic::default()
+    };
+    let (harsh, mild) = (growth_score(&two_year, &armed(0.1)), growth_score(&two_year, &armed(0.5)));
+    assert!(harsh.is_some() && harsh < mild, "floor 2 + ladder: the young dock must bite ({harsh:?} vs {mild:?})");
 
     // (#48) the proximity authority knob. `quote(dd, ..)` sets range_pct = 100 − dd, so this name sits
     // at 80% of its 10y range — the exact bottom of the shipped gate, where the knob has its widest say.

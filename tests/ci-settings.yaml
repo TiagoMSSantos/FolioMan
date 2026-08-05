@@ -592,8 +592,9 @@ buy_heuristic:
                                  #   that exists; this is the only knob that creates one. Offline count over
                                  #   the 3435 cached charts (887 span <5y): a 2Y rung gives 828 of them a leg,
                                  #   ~120 clearing the 19%/yr floor. NOT a 3Y rung — core::HORIZONS has no 3Y
-                                 #   and Quote.perf is a positional Vec aligned to it, so the knob is
-                                 #   effectively binary (5 or 2) with no gentler middle.
+                                 #   and Quote.perf is a positional Vec aligned to it, so the knob has only
+                                 #   three settings (5, 2, 1) and no gentler middle. (#49) added the 1Y rung;
+                                 #   it is near-inert, see growth_trust_young below.
                                  #   THE 2.0 ARM WAS GRADED AND LOSES EVERY CLAUSE OF THE SHIP RULE. Six-run
                                  #   stress grid 2026-08-03, `backtest {20,12,8} universe stress`, baseline vs arm
                                  #   differing by THIS FIELD ALONE (verified: the drift warning names
@@ -637,6 +638,95 @@ buy_heuristic:
                                  #   5.0, the value that reproduces the historical 20/8/5 ladder. Set 0.0 by
                                  #   reflex on 2026-08-03 and `shipped_config_pin` caught it; that is what the
                                  #   pin is for.
+                                 #   (#49) RE-PROPOSED AND REFUSED AGAIN 2026-08-05, this time WITH the record-
+                                 #   length ladder underneath it. See growth_trust_young below for the grid.
+
+  growth_trust_young: 0.5        # (#49) MEASURED AND NOT SHIPPED — the 2Y rung of `growth_trust_ladder`; the 1Y
+                                 #   rung takes half of it. 0.5 reproduces the (#47) ladder's flat `none -> 0.50`
+                                 #   bottom exactly, so this line is the DEFAULT written down, not a change.
+                                 #   THE QUESTION: rank young assets too (so a promising new name can surface),
+                                 #   but score a name higher the LONGER its proven record — 2+ < 5+ < 8+ < 20+,
+                                 #   with a <=1y record ranked yet penalized. Motivation is the PT tax line: at
+                                 #   28% on equities the real hold is 8+ or 20+ years, so the screen must rank
+                                 #   for those horizons and nothing shorter.
+                                 #   WHY IT WAS WORTH A RUN. Both halves had been measured and refused, but only
+                                 #   SEPARATELY, and each refusal disabled the other half:
+                                 #     - `growth_min_leg_years: 2.0` (above) ran with the ladder OFF, so every
+                                 #       newly-admitted 2-year name took the old cliff's flat 0.5 — the SAME dock
+                                 #       as a 7-year name. Its own receipt says so: "a 2Y-rung name arrives at
+                                 #       half score — a damp, not a substitute for measuring this."
+                                 #     - `growth_trust_ladder` arm D ran at floor 5, so NO young name existed in
+                                 #       the pool for the ladder to dock. Its bottom rung never fired.
+                                 #   Admit-and-grade together was the one arrangement nobody had run. To run it
+                                 #   the ladder needed a bottom (this knob) and `long_leg` needed a 1Y rung
+                                 #   (added; legal because 1Y is in core::HORIZONS, unlike the impossible 3Y).
+                                 #   THE GRID — 9 runs, `backtest {20,12,8} universe stress`, 2026-08-05. Arms
+                                 #   are full copies of this file differing by TWO lines (floor + ladder:true),
+                                 #   diff-verified. Baseline re-run on the new binary as the drift control and
+                                 #   reproduced every metric of the 2026-08-04 baseline EXACTLY (rho/edge/winsor/
+                                 #   OOS identical at all three horizons; only the unseeded bootstrap band moved)
+                                 #   — that is the proof the code change is byte-identical at the default.
+                                 #     arm            horizon  lane edge   rho    rank-1 mean|med   h2h          top-10
+                                 #     baseline         20y     +452.8   +0.16   +6.2|+6.4        16/21 (76%)   +5.8
+                                 #     F2 floor2+ladder 20y     +250.9   +0.12   +4.7|+4.0         9/23 (39%)   +6.2
+                                 #     F1 floor1+ladder 20y     +250.9   +0.12   +4.7|+4.0         9/23 (39%)   +6.2
+                                 #     baseline         12y     +127.9   +0.07   +5.8|+7.2        19/30 (63%)   +6.4
+                                 #     F2               12y      +94.4   +0.06   +5.4|+5.9        18/35 (51%)   +6.9
+                                 #     F1               12y      +94.4   +0.06   +5.4|+5.9        18/35 (51%)   +6.9
+                                 #     baseline          8y      +65.0   +0.17   +7.2|+8.2        25/38 (66%)   +7.0
+                                 #     F2                8y      +50.8   +0.14   +7.0|+5.8        20/43 (47%)   +7.7
+                                 #     F1                8y      +53.2   +0.14   +7.0|+5.8        20/43 (47%)   +7.7
+                                 #   Pre-registered DUAL MANDATE (fixed before any number existed): at 20y AND 8y,
+                                 #   rank-1 median >= baseline and h2h >= 50%, then top-N book up at both. Actual:
+                                 #   rank-1 median -2.4 at 20y and -2.4 at 8y, h2h 39% and 47% — BOTH gates fail at
+                                 #   BOTH mandated horizons. Nothing ships.
+                                 #   THE LADDER DID NOT RESCUE THE FLOOR. Against the 2026-08-03 floor-2 arm that
+                                 #   ran WITHOUT it (20y +244.2 edge, +4.5|+4.0, 39% h2h), adding the graded dock
+                                 #   bought +6.7 lane edge and EXACTLY NOTHING on rank-1 (+4.0 -> +4.0) or h2h
+                                 #   (39% -> 39%). The hypothesis this round was built on is refuted precisely: a
+                                 #   post-hoc score multiplier does not repair a bad admission. That is what the
+                                 #   growth_min_leg_years receipt above already demanded — "a record-length term in
+                                 #   the score itself, NOT a post-hoc multiplier" — and this is the run that
+                                 #   confirms the demand was right. Anything shaped like this knob will fail too.
+                                 #   NO DOCK VALUE RESCUES IT EITHER. The curve sweeps 0.7..0.1 inside each arm
+                                 #   (sound: trust is a pure score multiplier and every gate in `score_parts`
+                                 #   returns before it, so admission is invariant to it — the FLOOR is what moves
+                                 #   admission, which is why the floor moved in arms and only the dock was swept):
+                                 #     w      20y edge   12y edge   8y edge    8y OOS 2nd half
+                                 #     0.70    +249.9     +109.4     +59.0        +0.12
+                                 #     0.50    +250.9      +94.4     +50.8        +0.10
+                                 #     0.40    +294.7      +87.9     +58.2        +0.09
+                                 #     0.30    +308.3      +90.1     +59.5        +0.07
+                                 #     0.20    +298.5      +91.3     +57.1        +0.05
+                                 #     0.10    +335.3      +76.6     +60.9        +0.04
+                                 #   HORIZON-CONFLICTED and OVERFIT AT THE HARSH END: 20y wants the harshest dock
+                                 #   (+335.3 at 0.10) while 12y wants the softest (+109.4 at 0.70), and at 8y rho
+                                 #   decays monotonically +0.15 -> +0.12 while the SECOND OOS half collapses +0.12
+                                 #   -> +0.04. The harsh rungs are fitting the first half of the sample. And the
+                                 #   best cell in the whole table (+335.3) is still 26% BELOW the baseline it is
+                                 #   trying to beat (+452.8), so no value of this knob buys back what admitting the
+                                 #   young names costs. TIE-BACK EXACT: the 0.70 curve row reproduces the
+                                 #   `growth_trust_young->0.7` ablation row at all three horizons (+249.9/+109.4/
+                                 #   +59.0), and at the shipped floor the curve prints a FLAT line (no young-rung
+                                 #   name survives the `history` gate to be docked) — the expected null.
+                                 #   THE 1Y RUNG IS NEAR-INERT, which is its own finding. F1 and F2 are identical
+                                 #   to the digit at 20y and 12y and differ by 5 scored windows out of 1158 at 8y.
+                                 #   `horizon_changes` fills the 2Y leg whenever 2y of history exists, so the 1Y
+                                 #   rung only ever catches a name with 1-2y of record that ALSO survives the full
+                                 #   forward horizon — a cohort that barely exists. The rung is kept (it is what
+                                 #   makes `growth_min_leg_years: 1.0` mean anything) but it buys no coverage.
+                                 #   IT IS ALSO NOT THE ONLY DOCK ON A 1Y NAME, which matters for reading the
+                                 #   curve: that name's long CAGR IS its 1Y return, so `accel` — weight 0.65, the
+                                 #   heaviest term in the score — is structurally ZERO for it. Pinned by a test.
+                                 #   THE TOP-10 TRAP REPRODUCED, third time now: top-10 excess RISES in every arm
+                                 #   at every horizon (+5.8->+6.2, +6.4->+6.9, +7.0->+7.7) while rank-1 and h2h
+                                 #   collapse. Read h2h. At 8y the arm's mean rank-1 is nearly flat (+7.2->+7.0)
+                                 #   but its MEDIAN drops +8.2->+5.8 — fatter tails, worse typical outcome, which
+                                 #   is the wrong trade for a buy-and-hold book.
+                                 #   Knob KEPT at the default so the null stays reproducible via the ablation row
+                                 #   and the curve, exactly as growth_trust_ladder is kept. Do not re-propose the
+                                 #   admit-young idea as another multiplier; the next attempt has to change what
+                                 #   gets ADMITTED or how the score is BUILT, not what it is multiplied by.
 
   # (B) Value-trap dock: a name bleeding for YEARS (1Y AND 5Y both deep red) is not a dip — dock it.
   sustained_decline_pct: -40.0   # [FOIL] both 1Y and 5Y must be <= this to count as a multi-year bleed
