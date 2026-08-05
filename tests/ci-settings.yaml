@@ -651,12 +651,21 @@ buy_heuristic:
                                  #   to its ranks 11-20. That is an INVERTED ranking, not a weak one, and it is the
                                  #   direct cost of the loose floor. Arm E — this line alone — does nearly all of
                                  #   arm A's work; the range revert adds ~3 h2h pts at 20y and nothing at 8y.
-                                 #   THE TRADE IS COUNT, AND IT IS REAL: live names 25 -> 8 (stocks 2 -> 1, ETFs
-                                 #   20 -> 5, coins 3 -> 2), because 15 of those ETFs are under 5 years old. Paired
-                                 #   with `growth_max_peg: 2.0` it is 12 (stocks 2 -> 5). Age is the tell — LIVE's
+                                 #   THE COUNT TRADE DEPENDS ENTIRELY ON WHAT IT IS PAIRED WITH — corrected same day
+                                 #   after the pairing was actually measured instead of assumed:
+                                 #     leg 5 alone                 25 -> 8   (stocks 2 -> 1, ETFs 20 -> 5, coins 3 -> 2)
+                                 #     leg 5 + peg 2.0             25 -> 12  (stocks 2 -> 5)
+                                 #     leg 5 + peg off             25 -> 23  (stocks 2 -> 16)
+                                 #   The ETF loss (20 -> 5) is fixed at 15 young funds and is the real cost; the stock
+                                 #   side is set by `growth_max_peg`, not by this knob. Reporting "this line costs you
+                                 #   names" without naming the PEG rung it was paired with overstates it by 11 stocks.
+                                 #   Age is the tell — LIVE's
                                  #   ranked ages run 2.4, 27.5, 3.4, 2.1, 2.2, 2.3, 2.3, 2.3, 3.1, 3.4, 1.7, 2.1,
                                  #   16.6, 1.8, 5.7, 8.7, 11.8, 4.0 (median under 3 years) on a list meant to be
-                                 #   held 20; E+PEG gives AAPL 41.7y, AMZN 29.2y, NVDA 27.5y, DELL 10.0y, VRT 8.0y.
+                                 #   held 20; leg 5 + peg off gives 16 stocks whose YOUNGEST is CRWD at 7.2y (MPWR
+                                 #   21.7, AAPL 41.7, AMZN 29.2, LRCX 42.3, DELL 10.0, TSLA 16.1, VRT 8.0, LITE 11.0,
+                                 #   VST 9.8, NVDA 27.5, ANET 12.1, AVGO 16.9, FTNT 16.7, HWM 9.8, PANW 14.0). The
+                                 #   floor removes exactly ARM 2.9y, GEV 2.4y and SNDK 1.5y from that table.
                                  #   So the two symptoms — "only 2 stocks" and "rank 1 is a 2.4-year listing" — are
                                  #   ONE setting pulling both ways: it does not add stocks (it adds young ETFs) and
                                  #   it inverts the order. The count problem lives at `growth_max_peg`, not here.
@@ -2007,6 +2016,22 @@ buy_heuristic:
                                  #   DEPENDS ON A KNOB 60 LINES AWAY" warning above, now measured from the other side:
                                  #   quoting (a) "PEG is never the sole blocker" as a LIVE fact is wrong. It is a
                                  #   backtest-pool fact, and the live funnel disagrees with it flatly.
+                                 #   CONFIRMED A THIRD TIME AT FULL-OFF, 2026-08-05. `growth_max_peg: 0.0` +
+                                 #   `growth_max_peg_etf: 0.0` on top of the leg-floor revert, vs the same arm at 1.6:
+                                 #   the two backtests differ by ONE line, the drift warning naming the arm file. 20y
+                                 #   rank-1 +6.2|+6.7 h2h 65% n=723; 8y +6.5|+8.2 h2h 58% n=1221 — identical both
+                                 #   horizons. So the whole range 1.6 -> off is invisible to the backtest, not just the
+                                 #   1.6 -> 2.0 step. `growth_max_peg_etf` is not binding at a 5y leg floor either
+                                 #   (ETF table stays at 5 rows across every rung below).
+                                 #   THE LIVE LADDER, measured at `growth_min_leg_years: 5.0` — this is the only
+                                 #   evidence this knob has, and it is a pure count curve:
+                                 #     peg    stocks   names it lets in
+                                 #     1.6      1      (ci default)
+                                 #     2.0      5      AAPL AMZN DELL VRT
+                                 #     2.5      9      ANET AVGO FTNT HWM
+                                 #     3.0     10      VST
+                                 #     off     16      MPWR LRCX TSLA LITE PANW CRWD
+                                 #   There is a knee at 3.0: the last six names cost the entire gate. All 16 are 7y+.
                                  #   CONSEQUENCE FOR ANY FUTURE ROUND: this knob's cost cannot be graded by `backtest`.
                                  #   Deciding it needs a live funnel plus a judgement about paying up for growth, not a grid.
                                  #   EXTENDED TO FUNDS 2026-08-02 — but on a SEPARATE number, `growth_max_peg_etf`
