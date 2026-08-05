@@ -640,6 +640,26 @@ buy_heuristic:
                                  #   pin is for.
                                  #   (#49) RE-PROPOSED AND REFUSED AGAIN 2026-08-05, this time WITH the record-
                                  #   length ladder underneath it. See growth_trust_young below for the grid.
+                                 #   (#50) AND NOW MEASURED FROM THE OTHER END — 2026-08-05, on a live overlay that
+                                 #   ships `growth_min_leg_years: 0`. Question was "why do only 2 stocks rank"; the
+                                 #   answer is that THIS LINE IS THE ONE THAT MATTERS, and it is the whole fix:
+                                 #     arm     what moved from LIVE       20y med|h2h|edge     8y med|h2h|edge
+                                 #     LIVE    (overlay as shipped)      +4.3| 48%|+183.1    +7.1| 49%|+57.7
+                                 #     E       leg 0 -> 5 ONLY           +6.7| 65%|+265.0    +8.2| 58%|+59.5
+                                 #     A       E + range 50 -> 80        +6.7| 68%|+287.0    +8.4| 57%|+65.5
+                                 #   LIVE's h2h is BELOW 50% at all three horizons (48/46/49) — its own #1 pick loses
+                                 #   to its ranks 11-20. That is an INVERTED ranking, not a weak one, and it is the
+                                 #   direct cost of the loose floor. Arm E — this line alone — does nearly all of
+                                 #   arm A's work; the range revert adds ~3 h2h pts at 20y and nothing at 8y.
+                                 #   THE TRADE IS COUNT, AND IT IS REAL: live names 25 -> 8 (stocks 2 -> 1, ETFs
+                                 #   20 -> 5, coins 3 -> 2), because 15 of those ETFs are under 5 years old. Paired
+                                 #   with `growth_max_peg: 2.0` it is 12 (stocks 2 -> 5). Age is the tell — LIVE's
+                                 #   ranked ages run 2.4, 27.5, 3.4, 2.1, 2.2, 2.3, 2.3, 2.3, 3.1, 3.4, 1.7, 2.1,
+                                 #   16.6, 1.8, 5.7, 8.7, 11.8, 4.0 (median under 3 years) on a list meant to be
+                                 #   held 20; E+PEG gives AAPL 41.7y, AMZN 29.2y, NVDA 27.5y, DELL 10.0y, VRT 8.0y.
+                                 #   So the two symptoms — "only 2 stocks" and "rank 1 is a 2.4-year listing" — are
+                                 #   ONE setting pulling both ways: it does not add stocks (it adds young ETFs) and
+                                 #   it inverts the order. The count problem lives at `growth_max_peg`, not here.
 
   growth_trust_young: 0.5        # (#49) MEASURED AND NOT SHIPPED — the 2Y rung of `growth_trust_ladder`; the 1Y
                                  #   rung takes half of it. 0.5 reproduces the (#47) ladder's flat `none -> 0.50`
@@ -902,6 +922,20 @@ buy_heuristic:
                                  #   more names" is answered — it returns nothing. The gates that DO cost rows
                                  #   are the ones with a non-zero sole column (2026-08-03: cagr 13, peg 8,
                                  #   maxdd 2, 1Y+ 2), and each of those has its own receipt below saying no.
+                                 #   (#50) BUT "AN OVERLAY RUNNING 50 SHOULD RETURN TO 80" IS NOT UNCONDITIONAL — 2026-08-05.
+                                 #   Every sweep above moved this bar at the SHIPPED `growth_min_leg_years: 5.0`. Reverted
+                                 #   ALONE on a live overlay that also runs `growth_min_leg_years: 0` (arm D: range 50->80
+                                 #   and its 8y twin, leg floor left at 0), it LOSES at both mandated horizons: 20y h2h
+                                 #   48% -> 40% and edge +183.1 -> +173.8; 8y h2h 49% -> 47%. Rank-1 median is flat at 20y
+                                 #   (+4.3) and up at 8y (+7.1 -> +8.1), so it fails the dual mandate outright. Live count
+                                 #   unchanged: 2 stocks / 20 ETFs / 3 coins either way.
+                                 #   WHY: with the leg floor at 0 the pool is dominated by 1Y/2Y-rung names, and the range
+                                 #   bar cannot tell a 2-year name near its high from a 20-year one — it just deletes the
+                                 #   older names' drawdown tolerance while the young cohort sails through. Revert both
+                                 #   together (arm A) and it is fine (20y h2h 68%), but arm E — leg floor alone, range left
+                                 #   at 50 — already gets 65%, so the range revert is worth ~3 h2h pts ON TOP of the leg
+                                 #   floor and is NEGATIVE without it. Order matters: leg floor first, this second.
+                                 #   Do not quote line 895 at an overlay without checking its `growth_min_leg_years`.
   growth_min_range_pct_crypto: 40.0 # GATE (crypto only): looser range floor (top 60% of its own range) so MORE coins
                                  #   surface — alts spend most of their life far below ATH yet still out-compound. The
                                  #   BTC-relative tilt below + the NUPL damp keep the wider crypto table honest. Stocks/ETFs
@@ -1957,6 +1991,24 @@ buy_heuristic:
                                  #   fundamentals start 2007, its cutoffs end 2006). Same [1.5, 4.0] plateau as above, but the
                                  #   cheap end now measures mildly better and costs nothing anywhere. Shipped as a pair with
                                  #   growth_min_cagr 19 (knob-K12 grid — interaction nil, see that receipt).
+                                 #   (#50) THE BACKTEST CANNOT VOTE ON THIS KNOB UNDER A LOOSE LEG FLOOR — measured
+                                 #   2026-08-05 on the live overlay (growth_min_leg_years 0, range 50). 1.6 -> 2.0 came
+                                 #   back BYTE-IDENTICAL at all three horizons: rank-1 +4.7|+4.3, h2h 48%, edge +183.1,
+                                 #   n=914 — not "small delta", the same digits. Repeated on top of the leg-floor revert
+                                 #   (arm E+C vs E at 20y): identical again, +6.2|+6.7 h2h 65% edge +265.0 n=723. So (b)
+                                 #   "zero rank-1 authority" is the weak form; the strong form is that under a deep pool
+                                 #   this knob is invisible to every backtest metric there is.
+                                 #   MEANWHILE IT IS THE LARGEST SOLE-BLOCK IN THE LIVE FUNNEL. Same day, same overlay:
+                                 #   peg fails 411 stocks and SOLE-blocks 17 — AAPL, AMZN, ANET, ARM, AVGO, CRWD, DELL,
+                                 #   FTNT, HWM, LITE, LRCX, MPWR, PANW, SNDK, TSLA, VRT, VST — against cagr 512/1 and
+                                 #   cagr-life 484/2. The CAGR gates fail more names but almost never alone; PEG is the
+                                 #   marginal binding gate on the live universe. AMZN misses by 0.02 (PEG 1.62 vs 1.60).
+                                 #   Raising to 2.0 took the live stock table 2 -> 6 names. This is the "HOW MUCH IT BITES
+                                 #   DEPENDS ON A KNOB 60 LINES AWAY" warning above, now measured from the other side:
+                                 #   quoting (a) "PEG is never the sole blocker" as a LIVE fact is wrong. It is a
+                                 #   backtest-pool fact, and the live funnel disagrees with it flatly.
+                                 #   CONSEQUENCE FOR ANY FUTURE ROUND: this knob's cost cannot be graded by `backtest`.
+                                 #   Deciding it needs a live funnel plus a judgement about paying up for growth, not a grid.
                                  #   EXTENDED TO FUNDS 2026-08-02 — but on a SEPARATE number, `growth_max_peg_etf`
                                  #   below, not this one. This knob and every receipt above it are equity-only and
                                  #   unchanged; see that knob for the measurement that forced the split.
