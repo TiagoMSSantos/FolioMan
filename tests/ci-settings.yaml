@@ -465,7 +465,67 @@ buy_heuristic:
                                  #   instruments glued together, and growth_min_age_years gates the stubs.
                                  #   BACKTEST-BLIND: changes the INPUT universe, so before/after edges are two
                                  #   different measurements, never an A/B. 0.0 = off.
-  growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code
+  growth_proximity_weight: 1.0   # (#48) SLOPE of the distance-below-own-high dock: score ×(1 + w·(range_pct/100 − 1)).
+                                 #   1.0 = the raw `range_pct/100` multiply the lane has always shipped. Written here
+                                 #   EXPLICITLY (it is also the code default, so this line changes no behaviour) because
+                                 #   until 2026-08-05 this was the last backtest-reachable term in the growth lane with
+                                 #   NO KNOB — it appeared in no ablation table and no curve ever run, while being worth
+                                 #   up to 20% of the whole score. It now has a knob, an ablation row and a curve.
+                                 #
+                                 #   THE QUESTION IT WAS BUILT TO ANSWER: "shouldn't a name FURTHER below its high rank
+                                 #   HIGHER?" — i.e. should w be NEGATIVE. There was real evidence on both sides. FOR:
+                                 #   entry windows classed by the BENCHMARK's drawdown, same top-10 book held 20y, give
+                                 #   near-high +11.6%/yr (excess +5.2, n=21) vs drawdown ≤−15% +14.0%/yr (excess +6.0,
+                                 #   n=11) — but that is a DEPLOYMENT finding (identical book in every row), not a
+                                 #   selection one. AGAINST: the range-GATE ladder is monotone the other way (90 +428.7 |
+                                 #   80 +410.8 [shipped] | 70 +381.8 | 60 +380.9 | 50 +381.0), and the on-sale lane's
+                                 #   `discount_weight` ablation is Δ+35.8 — zeroing the dip reward IMPROVES that lane.
+                                 #   So the GATE stayed at 80 (measured) and only the SLOPE was swept (unmeasured).
+                                 #
+                                 #   METHOD, 9 runs `{20,12,8} universe stress`: an 8-rung curve [−1.0 −0.5 0.0 0.5 1.0
+                                 #   1.5 2.0 3.0] as a screen, then ARMS at −1.0 and 0.0 for the rank-1/head-to-head the
+                                 #   curve cannot print (it emits only rho/edge/winsor/OOS — a curve-only design could
+                                 #   not have judged a rank-1 ship rule at all). SOUNDNESS: weight_curve re-scores a set
+                                 #   fixed at the shipped tuning, valid only if the swept knob cannot change WHO is
+                                 #   admitted — it cannot, the range gate reads `quote.range_pct` directly, before and
+                                 #   independently of this multiplier. TIE-BACKS, all six exact: each arm's edge equals
+                                 #   its curve rung (off +404.6/+151.7/+63.8, −1.0 +413.7/+150.4/+62.9), the curve's 0.0
+                                 #   row equals the ablation `proximity` row, and its 1.0 row equals the lane headline.
+                                 #
+                                 #   VERDICT: NOTHING SHIPS, 1.0 stands — and the reason is not that the alternatives
+                                 #   lose narrowly, it is that THIS KNOB HAS ZERO RANK-1 AUTHORITY. At the 20y king the
+                                 #   served top-10 AND top-50 books are IDENTICAL at w = −1.0 / 0.0 / 1.0: +12.6%/yr,
+                                 #   excess +5.4 (med +5.2), win 97% of 39, worst −0.5, OOS +5.1/+5.7, 4 zeros/481 holds.
+                                 #   So is rank-1: +6.4 median, win 87% of 39, h2h 16/21 (76%) in all three arms. The
+                                 #   knob is NOT inert — ranks 2-50 visibly reorder (the 21-50 slice moves +0.9 -> +0.2)
+                                 #   — it just never reaches the argmax. Same trap `growth_overext_floor` records ("ZERO
+                                 #   rank-1 authority") and `growth_max_peg` states in words ("the king CANNOT vote").
+                                 #
+                                 #   arm          20y r1 med / h2h / edge      12y edge      8y edge
+                                 #   1.0 SHIPPED  +6.4  76%  +452.8            +127.9        +65.0
+                                 #   0.0 off      +6.4  76%  +404.6 (−48.2)    +151.7 (+23.8) +63.8 (−1.2)
+                                 #   −1.0 invert  +6.4  76%  +413.7 (−39.1)    +150.4 (+22.5) +62.9 (−2.1)
+                                 #
+                                 #   Two things that table says beyond the null. (a) HORIZON-CONFLICTED on lane edge:
+                                 #   the term PAYS +48.2 at 20y and COSTS 23.8 at 12y. The 20y king decides, so it stays
+                                 #   on — but nobody should quote "proximity is worth +48" without the 12y sign flip.
+                                 #   (b) INSIDE THE NOISE anyway: the whole 8-rung ladder spans ~50 edge at 20y against a
+                                 #   bootstrap band [+201.5 … +673.7] that is 472 wide; 24 against 102 at 12y; 10 against
+                                 #   56 at 8y. rho is flat (+0.17/+0.15/+0.21) at essentially every rung and both OOS
+                                 #   halves stay positive throughout. Every rung is a coin-flip on edge alone.
+                                 #
+                                 #   ON THE NEGATIVE RUNGS SPECIFICALLY: inverting is uniformly slightly WORSE than
+                                 #   simply neutralizing, at all three horizons. If the 12y result were ever acted on,
+                                 #   the move would be w -> 0 (stop paying for proximity), never w < 0 (pay backwards).
+                                 #   And a cost no metric here can see: at w=−1 the #1 pick is by construction the name
+                                 #   sitting CLOSEST to the rejection line (81% of range against an 80% gate), one bad
+                                 #   week from leaving the table — an inverted slope concentrates the book at the
+                                 #   boundary of its own admitted set. Prediction was recorded BEFORE the run that the
+                                 #   negative rungs would lose; they did.
+                                 #
+                                 #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
+                                 #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
+  growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
   use_adjusted_close: false      # (B) REVERTED 2026-06-28: backtest 12 universe edge unchanged (raw
                                  #   -100337371.5 vs adj -100337372.0), OOS halves identical (+0.09/-0.05).
                                  #   No improvement → golden rule reverts. Flip true only if a re-run lifts edge.

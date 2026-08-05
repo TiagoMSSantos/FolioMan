@@ -791,7 +791,7 @@ struct ScoreParts {
     smooth: f64,       // (E) growth_smoothness_weight × trend_r2
     underwater: f64,   // −growth_underwater_weight × underwater_yrs (drawdown-duration penalty; 0 when off/None)
     base: f64,         // sum of the nine terms above
-    proximity: f64,    // range_pct / 100
+    proximity: f64,    // (#48) 1 + growth_proximity_weight × (range_pct/100 − 1); = range_pct/100 at the shipped w=1
     value_raw: f64,    // (E) raw P/E value_factor (ref_pe/PE clamped)
     value: f64,        // 1 + growth_value_weight × (value_raw − 1)
     trust: f64,        // (A) history-completeness damp
@@ -1081,7 +1081,13 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // ---- SCORE ----
     let trend = capped_trend(long_cagr, tuning); // proven compounding; long_trend_cap 0 = uncapped (shipped)
     let accel = (return_1y - long_cagr).clamp(0.0, tuning.growth_accel_cap); // last year outpacing the long run = building
-    let proximity = quote.range_pct / 100.0; // 0.7..1.0 — closer to the high = stronger confirmation
+    // (#48) distance from the name's own 10y high, blended toward neutral by its authority knob:
+    // w=1 is the raw `range_pct/100` multiply (0.8..1.0 inside the shipped gate — closer to the high
+    // = stronger confirmation), w=0 turns the term off, w<0 inverts it so the name furthest below its
+    // high scores highest. Clamped at 0 because `combine_damps` fractional-exponents its inputs and a
+    // negative factor there is NaN — unreachable at the shipped gate, guarded at the boundary anyway.
+    let proximity =
+        (1.0 + tuning.growth_proximity_weight * (quote.range_pct / 100.0 - 1.0)).max(0.0);
     let risk_reward = risk_bonus(quote, long_cagr, tuning.sharpe_weight, tuning.calmar_weight, tuning); // (B/C) growth lane's Sharpe weight
     // (M) 12-1 momentum: trailing-year return EXCLUDING the last month (skip the short-term-reversal
     // month — Jegadeesh-Titman). Price-only, so it's validated end-to-end (backtest_quote has 1Y/1M),
@@ -1684,8 +1690,8 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     s.push_str(&format!("    smooth   = growth_smoothness_weight × trend_r2 (R²)   = {:.2}\n", p.smooth));
     s.push_str(&format!("    underwtr = −growth_underwater_weight × underwater_yrs = {:.2}\n", p.underwater));
     s.push_str(&format!("    base (sum)                                            = {:.2}\n", p.base));
-    s.push_str(&format!("  proximity    = range_pct / 100                          = {:.1} / 100 = {:.3}\n",
-        p.proximity * 100.0, p.proximity));
+    s.push_str(&format!("  proximity    = 1 + growth_proximity_weight × (range−1)  = 1 + {:.2} × ({:.3}−1) = {:.3}\n",
+        tuning.growth_proximity_weight, quote.range_pct / 100.0, p.proximity));
     s.push_str(&format!("  value        = 1 + growth_value_weight × (P/E factor−1) = 1 + {:.2} × ({:.2}−1) = {:.3}\n",
         tuning.growth_value_weight, p.value_raw, p.value));
     s.push_str(&format!("  trust        = history-completeness damp                = {:.3}\n", p.trust));
@@ -4235,6 +4241,45 @@ mod tests {
     // ...and the ladder DOES move a score, so `false` is a real choice rather than a dead branch
     let on = BuyHeuristic { growth_trust_ladder: true, ..BuyHeuristic::default() };
     assert_ne!(growth_score(&young, &on), growth_score(&young, &BuyHeuristic::default()));
+
+    // (#48) the proximity authority knob. `quote(dd, ..)` sets range_pct = 100 − dd, so this name sits
+    // at 80% of its 10y range — the exact bottom of the shipped gate, where the knob has its widest say.
+    let off_hi = quote(20.0, &[("1Y", 30.0), ("5Y", 200.0), ("10Y", 600.0)]);
+    assert_eq!(off_hi.range_pct, 80.0);
+    let prox = |w: f64| BuyHeuristic { growth_proximity_weight: w, ..BuyHeuristic::default() };
+    // DEFAULT IS BYTE-IDENTICAL: w=1 must reproduce the raw `range_pct/100` multiply the lane shipped
+    // with, so the validated edge stays uncontested. Checked at the gate edge AND at the high, since
+    // the blend is only pinned by two points.
+    let at_high = quote(0.0, &[("1Y", 30.0), ("5Y", 200.0), ("10Y", 600.0)]); // range_pct 100
+    for q in [&off_hi, &at_high] {
+        assert_eq!(growth_score(q, &BuyHeuristic::default()), growth_score(q, &prox(1.0)),
+            "the shipped default must be the raw proximity multiply, exactly");
+    }
+    // and the knob is NOT inert: off (×1.00) beats shipped (×0.80), inverted (×1.20) beats off, and a
+    // steeper slope (×0.60) is worse than shipped. Ordering, not magnitudes — the run prices those.
+    let s = |w: f64| growth_score(&off_hi, &prox(w)).expect("off_hi clears every gate at 80% of range");
+    assert!(s(-1.0) > s(0.0), "w=−1 must LIFT a name below its high: {} vs {}", s(-1.0), s(0.0));
+    assert!(s(0.0) > s(1.0), "w=0 removes the dock, so it must beat the shipped dock");
+    assert!(s(1.0) > s(2.0), "a steeper slope must dock the same name harder");
+    // a name AT its high is untouched by any rung — the blend pivots on range_pct = 100, so every
+    // ladder value agrees there. This is what makes the knob a slope and not a level shift.
+    let base_hi = growth_score(&at_high, &BuyHeuristic::default());
+    for w in [-1.0, 0.0, 0.5, 3.0] {
+        assert_eq!(growth_score(&at_high, &prox(w)), base_hi, "w={w} moved a name at its own high");
+    }
+    // the NaN guard. `combine_damps` is product().powf(1/n), so a negative factor there yields NaN and
+    // silently poisons the whole score. Unreachable at the shipped gate, so it is forced here: a name
+    // at 50% of range under w=3 would compute 1 + 3×(−0.5) = −0.5 without the clamp.
+    let bled = quote(50.0, &[("1Y", 30.0), ("5Y", 200.0), ("10Y", 600.0)]); // range_pct 50
+    let open_gate = BuyHeuristic { growth_min_range_pct: 0.0, growth_proximity_weight: 3.0, ..BuyHeuristic::default() };
+    let clamped = growth_score(&bled, &open_gate).expect("gate opened, so it scores");
+    assert!(clamped.is_finite(), "proximity clamp let a NaN through: {clamped}");
+    let neutral = growth_score(&bled, &BuyHeuristic { growth_proximity_weight: 0.0, ..open_gate.clone() }).unwrap();
+    assert!(clamped < neutral, "a clamped proximity must still be the harshest rung, not a free pass");
+    // same fixture through the geomean-fold branch, which is where the NaN would actually be born:
+    // combine_damps is product().powf(1/n), and (−0.5)^(1/4) is NaN, not a small number.
+    let folded = BuyHeuristic { growth_geomean_fold: true, ..open_gate.clone() };
+    assert!(growth_score(&bled, &folded).expect("scores").is_finite(), "geomean fold ate a negative proximity");
 
     // (S-8Y) the pin re-runs the CAGR floor on the 8-year window, so a name whose full record clears
     // the floor but whose 8Y window doesn't gets NO pinned score — that was the bare "n/a" in the

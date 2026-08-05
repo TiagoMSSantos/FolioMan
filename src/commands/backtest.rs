@@ -568,6 +568,13 @@ pub async fn run(args: Vec<String>) {
         // knob's "off" IS the shipped state, so zeroing it would print a guaranteed 0.0 row. Δ is what
         // the graded 20/8/5 record ladder is worth against the single 10Y cliff.
         knob("growth_trust_ladder→on", |tuning| tuning.growth_trust_ladder = true),
+        // (#48) the last two backtest-reachable growth terms that had no ablation row. `proximity` was
+        // invisible because it had no knob to turn (see growth_proximity_weight); the growth lane's
+        // dividend term shares `dividend_weight` with the on-sale lane, which had a row there and none
+        // here. With these the growth ablation table is COMPLETE — every term that can move the number
+        // now has a line pricing it.
+        knob("proximity", |tuning| tuning.growth_proximity_weight = 0.0),
+        knob("growth_dividend*", |tuning| tuning.dividend_weight = 0.0),
     ];
     // (G+) one row per CONFIGURED extra fundamental term, so each is priced separately rather than as
     // one all-extras-at-once Δ. That distinction is the whole point: receipt (#3d) found quality and
@@ -629,6 +636,32 @@ pub async fn run(args: Vec<String>) {
          so these rows price only its GROWTH-lane effect. That lane is the one `screen` ranks on; the on-sale\n  \
          side feeds `buy_score`, a backtest foil that is never printed — so a growth-lane read is the one\n  \
          that decides, and the foil only needs to not break.",
+    );
+    // (#48) the proximity slope. Swept as a curve rather than as arms because the ablation prices only
+    // removal (w=0) and the question here is DIRECTION: whether the lane should keep paying up for names
+    // near their high, pay more, or pay the opposite way. Negative rungs are in the ladder deliberately —
+    // "further below the high should rank higher" is a real hypothesis with real evidence on BOTH sides
+    // (market-level, entering on a benchmark drawdown beat entering at highs: +14.0%/yr vs +11.6%/yr,
+    // same book; name-level, the range-gate ladder is monotone the other way: 90 +428.7 | 80 +410.8 |
+    // 70 +381.8 | 60 +380.9), and the only way to settle it is to price the slope inside the gate the
+    // ladder never moves. SOUNDNESS: weight_curve re-scores a set fixed at the shipped tuning, which is
+    // valid only if the swept knob cannot change WHO is admitted — it cannot, because the range gate
+    // compares `quote.range_pct` against `growth_min_range_pct` directly, before and independently of
+    // this multiplier. TIE-BACK: the 0.0 row must reproduce the ablation's `proximity` row above, and
+    // the 1.0 row the lane headline; if either disagrees the curve is measuring something else.
+    // READ ONLY AS A SCREEN: this prints rho/edge/OOS and NOT rank-1 or head-to-head, so it can rank
+    // candidate values but cannot settle a rank-1 ship rule. Confirm a winner with arms before shipping.
+    weight_curve(
+        "growth_proximity_weight",
+        &samples,
+        tuning,
+        |t, v| t.growth_proximity_weight = v,
+        tuning.growth_proximity_weight,
+        &[-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0],
+        "SLOPE of the distance-below-own-high dock: score ×(1 + w·(range_pct/100 − 1)).\n  \
+         1.0 = SHIPPED (raw multiply: a name at 80% of range keeps 0.80 of its score, one at the high keeps 1.00).\n  \
+         0.0 = term OFF (everyone ×1.00). NEGATIVE = INVERTED — the name furthest below its high scores HIGHEST\n  \
+         (at −1.0 the 80%-of-range name is multiplied by 1.20). Clamped at 0, so no rung can produce a negative factor.",
     );
     gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
     gate_sweep(&samples, tuning, &gate_loosen); // (#10) which specific gate is too tight?
