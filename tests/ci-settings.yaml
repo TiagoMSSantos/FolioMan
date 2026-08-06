@@ -613,10 +613,33 @@ buy_heuristic:
   #   go 2 -> 18: CASY CAT DECK FICO FIX FLEX IBKR JBL KLAC LLY MCK PH STLD TPL TRGP TT URI WSM — names
   #   that now clear the 8-year bar and die on a lifetime average. That is the NEXT round and it is a
   #   CODE question, not this knob. Do not read those 18 as an argument against the pin.
-  #   STILL 0 HERE: this is a LIVE-TABLE result. `long_cagr_from` is the score's chokepoint (the gate,
-  #   trend, accel, sharpe, calmar, trend_health and the LEG column all read it), so it ships only on
-  #   `backtest {20,12,8} universe stress` clearing the 2026-08-02 ship rule. If 8 fails, 10 is the next
-  #   arm — it is the rung (#3j) already priced — not a retreat to the age ladder.
+  #   GRADED AND REFUSED THE SAME DAY — 5, 8 AND 10 ALL NO-SHIP. `backtest {20,12,8} universe stress`,
+  #   one-field arms (each printed `fixed_cagr_years 0->N` and nothing else; control is this file, which
+  #   prints no warning at all; baseline re-run at the end of the grid was byte-identical to the first
+  #   control except the bootstrap band, which resamples). 20y KING, ctrl -> pin:
+  #     pin    lane edge          rank-1 MEDIAN     h2h 20/12/8y      verdict
+  #     10     +452.8 -> +437.7   +6.4 -> +6.0      76 / 61 / 64      NO-SHIP (nearest miss)
+  #      8     +452.8 -> +432.3   +6.4 -> +4.6      71 / 63 / 50      NO-SHIP
+  #      5     +452.8 -> +258.6   +6.4 -> +4.0      48 / 50 / 50      NO-SHIP (fails h2h too)
+  #   IT IS THE (#3k) WINNER'S CURSE AGAIN, AND THE DOSE-RESPONSE PROVES THE MECHANISM. 20y rank-1
+  #   median runs +6.4 / +6.0 / +4.6 / +4.0 for window length none / 10 / 8 / 5 — MONOTONE in how much
+  #   the pin SHORTENS an old name's leg. A 20Y rung averages two decades and is smooth; hand `trend` and
+  #   `accel` a shorter leg and the argmax rides the extra noise. Three points on a line, not a fluke.
+  #   THE PIN IS GOOD FOR EVERY SLICE EXCEPT THE ONE THAT COUNTS — at 8: bootstrap LOWER bound +32.0
+  #   /+13.9/+18.7 across the three horizons, rank 11-20 median +0.3/+1.1/+1.5, 12y and 8y lane edge
+  #   +35.9/+8.4. Deeper pool, better downside, rotten argmax = NO-SHIP, the same asymmetry that sank
+  #   rung 15 at growth_min_cagr and growth_max_peg 2.0. The bar is ALL clauses, not any.
+  #   THE LEGAL SET IS NOW CLOSED: 1 (accel identically zero), 2 (cohort mean -811.0 fwd at 20y), 5, 8,
+  #   10 all refused; 20 falls back for almost every name, so it is not a pin at all. NOTHING TO RE-RUN
+  #   HERE. Do not re-open this knob without a NEW reason — an earlier session burned a round rebuilding
+  #   a ladder that already existed (see growth_min_cagr), and this is exactly that trap's shape.
+  #   THE LIVE WIN IS STILL REAL, AND THAT IS THE POINT: the pin buys +5 stocks and a readable PEG, and
+  #   costs argmax quality, because ONE knob moves BOTH. `fixed_cagr_years` pins the whole score —
+  #   the gate, trend, accel, sharpe, calmar, trend_health AND the LEG column — but the defect at the
+  #   top of this receipt is ONLY in `growth_max_peg`'s denominator. The measurement says the damage
+  #   lives in trend/accel at rank 1, NOT in the PEG gate. So the surgical fix is a SEPARATE window for
+  #   the PEG denominator alone, leaving the ranking legs on the age ladder that the backtest keeps
+  #   voting for. That is next round's code change and it is the only version of this idea still alive.
   #   LEGAL VALUES ARE ONLY THOSE IN core::HORIZONS: 1, 2, 5, 8, 10, 20. A 3/4/6/7/12 misses the
   #   `perf_pct("{N}Y")` lookup, falls back to the age ladder, and the knob SILENTLY DOES NOTHING.
   #   1 and 2 are refused on prior measurement, not taste: at a 1Y pin `accel = 1Y - long_cagr` is
@@ -1108,8 +1131,11 @@ buy_heuristic:
                                  #   NOT A REASON TO DROP THE 19: the ladder above priced this number and it is a two-sided
                                  #   knee. It is a reason to ask whether leg 2 should read a WINDOW rather than a lifetime, and
                                  #   that is a CODE question (life_cagr is computed, not configured), so it is the next round's
-                                 #   target, not this one's. Anyone re-laddering this gate on a PINNED column must re-measure
-                                 #   from scratch — the ladder above was swept on the age-chosen leg, i.e. on a different knob.
+                                 #   target, not this one's. THE 15..22 LADDER ABOVE STANDS UNTOUCHED: the pin was REFUSED
+                                 #   the same day (5/8/10 all NO-SHIP), so this gate is still measured on the same
+                                 #   age-chosen leg it was swept on. The 18 sole-blocks were a LIVE-table observation under
+                                 #   an arm that did not ship — they describe the defect, not today's funnel. Only if a
+                                 #   future round pins the ranking legs for real does this ladder need re-measuring.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
@@ -2161,11 +2187,17 @@ buy_heuristic:
                                  #   this gate is still the growth lane's ONLY valuation control (growth_value_weight
                                  #   0.0), so it is still the whole brake, and 2.0 is still the rung. What dies: do not
                                  #   cite the AAPL/AMZN admissions as evidence a ceiling is calibrated.
-                                 #   THE DENOMINATOR, NOT THE CEILING, WAS THE BINDING PROBLEM — see the (#51) receipt
+                                 #   THE DENOMINATOR, NOT THE CEILING, IS THE BINDING PROBLEM — see the (#51) receipt
                                  #   at `fixed_cagr_years` (~line 588). Pinning every name to one 8Y window admits MORE
                                  #   names at EVERY rung of this knob, 1.6 included (1 -> 3), without loosening it, and
-                                 #   drops AMZN on its own record. Grade this knob only against a PINNED column from
-                                 #   now on; a sweep run on the age ladder is sweeping two variables at once.
+                                 #   drops AMZN on its own record.
+                                 #   BUT THE PIN DID NOT SHIP — 5, 8 and 10 all failed the ship rule the same day, on
+                                 #   rank-1 quality, because `fixed_cagr_years` moves the ranking legs too. SO THIS KNOB
+                                 #   IS STILL GRADED ON THE AGE LADDER, and the stale denominator above is still LIVE in
+                                 #   every PEG this file produces. Read the column knowing an old name's PEG may be
+                                 #   divided by a rate it stopped delivering a decade ago; do NOT tune this ceiling to
+                                 #   compensate, because a ceiling cannot fix a denominator — it only trades away names.
+                                 #   The fix is a separate window for the PEG denominator ALONE (next round, code).
   growth_max_peg_etf: 2.0        # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
