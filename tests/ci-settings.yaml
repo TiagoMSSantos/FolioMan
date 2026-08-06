@@ -584,6 +584,47 @@ buy_heuristic:
   # name to its 10Y window reads edge +160.1 vs the leg's +167.6, i.e. -7.5, INSIDE the bootstrap band and
   # with a much steadier era table (worst era +111.2 vs +40.5). Best remaining candidate; golden rule still
   # reverts a drop. #16: sweep long_trend_cap (above) per run_me.sh, no flag.
+  # (#51) THE DEFECT THIS KNOB FIXES, NAMED 2026-08-06, and it is NOT the one (#3j) measured. (#3j) asked
+  #   whether a common window RANKS better and got -7.5 edge. The question nobody asked is whether the
+  #   AGE-CHOSEN window makes the `peg` COLUMN UNREADABLE, and it does, because `growth_max_peg` divides
+  #   by `long_cagr_pct` — the rung `long_leg` picked, i.e. 20Y for an old name and 8Y for a young one.
+  #   TWO ROWS, ONE COLUMN, ONE CEILING, DIFFERENT QUESTIONS (live 2026-08-06, peg 2.5 / leg 5):
+  #     VRT   8.0y -> 8Y rung  +47.9%/yr   its last 5y: +65.4%/yr   printed PEG 1.70
+  #     AMZN 29.2y -> 20Y rung +23.4%/yr   its last 5y:  +4.7%/yr   printed PEG 1.63
+  #   AMZN divides its P/E by a rate it last delivered around 2015 and prints CHEAPER than a name
+  #   compounding six times faster today. That is not a valuation number, it is an age number.
+  #   MEASURED LIVE AT 8 (screen-pin8.txt vs screen-peg2.5-leg5.txt, ONE-FIELD delta, verified by the
+  #   off-validated warning line: `fixed_cagr_years 0->8` and nothing else):
+  #     ceiling   no pin                        pin 8
+  #     1.6         1  NVDA                       3  NVDA 0.84, EME 0.97, GOOG 1.53
+  #     2.0         5                             6  + DELL 1.62, VRT 1.72, AAPL 1.94
+  #     2.5         9                            14  + LRCX 2.01, AMAT 2.10, HWM 2.22, ASML 2.31,
+  #                                                    APH 2.33, FTNT 2.39, ANET 2.42, AVGO 2.50
+  #   MORE NAMES AT EVERY RUNG, INCLUDING THE MEASURED BASE 1.6 — this is the first thing tried in three
+  #   rounds that widens the stock table without loosening a single gate. AMZN leaves at every rung (8Y
+  #   +11.2%/yr, under growth_min_cagr) — dropped on its own record, not by a blunt cumulative floor.
+  #   The entrants are the age cliff's own documented victims: GOOG was cut at 16.23%/yr on its 20Y rung
+  #   against 21.4%/yr on 8Y (the GOOGL diagnosis ~line 1645 below), ASML at 18.5%/yr.
+  #   ETF AND CRYPTO TABLES ARE BYTE-IDENTICAL (5 and 2 rows either way): growth_min_cagr 19 already
+  #   walls funds out, so this is a STOCKS-ONLY effect. 3 ETF rows print `†` = no 8Y leg, pin fell back,
+  #   correctly flagged; NO stock row fell back.
+  #   THE PIN MOVES ONE OF growth_min_cagr's TWO LEGS AND CREATES A NEW BOTTLENECK. Leg 1 is `long_cagr`
+  #   (pinned). Leg 2 is `quote.life_cagr` (whole-life) and NO config can pin it. `cagr-life` sole-blocks
+  #   go 2 -> 18: CASY CAT DECK FICO FIX FLEX IBKR JBL KLAC LLY MCK PH STLD TPL TRGP TT URI WSM — names
+  #   that now clear the 8-year bar and die on a lifetime average. That is the NEXT round and it is a
+  #   CODE question, not this knob. Do not read those 18 as an argument against the pin.
+  #   STILL 0 HERE: this is a LIVE-TABLE result. `long_cagr_from` is the score's chokepoint (the gate,
+  #   trend, accel, sharpe, calmar, trend_health and the LEG column all read it), so it ships only on
+  #   `backtest {20,12,8} universe stress` clearing the 2026-08-02 ship rule. If 8 fails, 10 is the next
+  #   arm — it is the rung (#3j) already priced — not a retreat to the age ladder.
+  #   LEGAL VALUES ARE ONLY THOSE IN core::HORIZONS: 1, 2, 5, 8, 10, 20. A 3/4/6/7/12 misses the
+  #   `perf_pct("{N}Y")` lookup, falls back to the age ladder, and the knob SILENTLY DOES NOTHING.
+  #   1 and 2 are refused on prior measurement, not taste: at a 1Y pin `accel = 1Y - long_cagr` is
+  #   identically zero, deleting the score's heaviest term (weight 0.65, picks.rs #49), and the 2Y
+  #   cohort measures mean -811.0 forward at the 20y horizon (growth_min_leg_years below).
+  #   BOUNDARY IS 7.91y, NOT 8.00 — `horizon_changes` (core.rs) blanks a leg only when the series starts
+  #   more than 31 days after the 2920-day target. The slack is deliberate: pre-daily-window history is
+  #   monthly, so an exact test would blank an old name's leg over bar PLACEMENT rather than missing data.
   growth_min_leg_years: 5.0      # (funnel) MEASURED AND REJECTED 2026-08-03 — shortest rung `long_leg` may use,
                                  #   on a 20/8/5/2Y ladder. 5.0 = the ladder as it has always been. The funnel
                                  #   (07a941f) says the GROWTH lane's whole volume dies on ONE gate no config
@@ -1056,6 +1097,19 @@ buy_heuristic:
                                  #   The ranked ETF table is a SECTOR-TILT lane by construction; broad buy-and-hold breadth lives
                                  #   in the hold CORE (picks.rs hold_core_list), which bypasses growth_score entirely — that is
                                  #   the design, not a gap to close by lowering this floor.
+                                 #   ONLY ONE OF THE TWO LEGS IS PINNABLE, AND THE OTHER IS NOW THE BOTTLENECK (2026-08-06).
+                                 #   Leg 1 is `long_cagr`, which `fixed_cagr_years` CAN pin to a chosen window. Leg 2 is
+                                 #   `quote.life_cagr`, ALWAYS whole-life, and NO config reaches it. Pinning to 8 (the (#51)
+                                 #   receipt at `fixed_cagr_years`) moved leg 1 and left leg 2 where it was, so the live
+                                 #   `cagr-life` SOLE-BLOCK count went 2 -> 18: CASY CAT DECK FICO FIX FLEX IBKR JBL KLAC LLY
+                                 #   MCK PH STLD TPL TRGP TT URI WSM. Those names clear 19%/yr over the last 8 years and die
+                                 #   on a lifetime average that includes a decade they no longer resemble — the SAME stale-window
+                                 #   defect the pin was built to remove, surviving on the leg the pin cannot reach.
+                                 #   NOT A REASON TO DROP THE 19: the ladder above priced this number and it is a two-sided
+                                 #   knee. It is a reason to ask whether leg 2 should read a WINDOW rather than a lifetime, and
+                                 #   that is a CODE question (life_cagr is computed, not configured), so it is the next round's
+                                 #   target, not this one's. Anyone re-laddering this gate on a PINNED column must re-measure
+                                 #   from scratch — the ladder above was swept on the age-chosen leg, i.e. on a different knob.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
@@ -2097,6 +2151,21 @@ buy_heuristic:
                                  #   EXTENDED TO FUNDS 2026-08-02 — but on a SEPARATE number, `growth_max_peg_etf`
                                  #   below, not this one. This knob and every receipt above it are equity-only and
                                  #   unchanged; see that knob for the measurement that forced the split.
+                                 #   PARTIAL RETRACTION 2026-08-06 — "at 2.0 four of five names are under P/E 38"
+                                 #   ABOVE IS WITHDRAWN AS AN ARGUMENT FOR 2.0. Two of those five, AAPL and AMZN, were
+                                 #   admitted on a STALE DENOMINATOR. This gate divides by `long_cagr_pct`, which is the
+                                 #   rung the AGE ladder picked, so AMZN (29.2y) was priced on its 20Y rate +23.4%/yr
+                                 #   while its actual last 5 years ran +4.7%/yr. It printed PEG 1.63 — CHEAPER than VRT
+                                 #   at 1.70, which compounds six times faster today. The P/E half of that sentence was
+                                 #   true; the PEG half was measuring how long ago the company was good. What survives:
+                                 #   this gate is still the growth lane's ONLY valuation control (growth_value_weight
+                                 #   0.0), so it is still the whole brake, and 2.0 is still the rung. What dies: do not
+                                 #   cite the AAPL/AMZN admissions as evidence a ceiling is calibrated.
+                                 #   THE DENOMINATOR, NOT THE CEILING, WAS THE BINDING PROBLEM — see the (#51) receipt
+                                 #   at `fixed_cagr_years` (~line 588). Pinning every name to one 8Y window admits MORE
+                                 #   names at EVERY rung of this knob, 1.6 included (1 -> 3), without loosening it, and
+                                 #   drops AMZN on its own record. Grade this knob only against a PINNED column from
+                                 #   now on; a sweep run on the age ladder is sweeping two variables at once.
   growth_max_peg_etf: 2.0        # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
