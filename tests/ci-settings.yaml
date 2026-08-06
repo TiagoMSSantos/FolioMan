@@ -655,17 +655,20 @@ buy_heuristic:
                                  #   after the pairing was actually measured instead of assumed:
                                  #     leg 5 alone                 25 -> 8   (stocks 2 -> 1, ETFs 20 -> 5, coins 3 -> 2)
                                  #     leg 5 + peg 2.0             25 -> 12  (stocks 2 -> 5)
-                                 #     leg 5 + peg off             25 -> 23  (stocks 2 -> 16)
+                                 #     leg 5 + peg off             25 -> 23  (stocks 2 -> 16)  <- NOT a recommendation,
+                                 #                                                                see growth_max_peg
                                  #   The ETF loss (20 -> 5) is fixed at 15 young funds and is the real cost; the stock
                                  #   side is set by `growth_max_peg`, not by this knob. Reporting "this line costs you
                                  #   names" without naming the PEG rung it was paired with overstates it by 11 stocks.
+                                 #   The peg-off row is here to make that arithmetic legible, NOT as a config: it is
+                                 #   retracted at growth_max_peg (rank 1 becomes MPWR at P/E 96 with earnings -60.6%,
+                                 #   and 0.0 also unarms the loss-maker screen). The shipped pairing is peg 2.0.
                                  #   Age is the tell — LIVE's
                                  #   ranked ages run 2.4, 27.5, 3.4, 2.1, 2.2, 2.3, 2.3, 2.3, 3.1, 3.4, 1.7, 2.1,
                                  #   16.6, 1.8, 5.7, 8.7, 11.8, 4.0 (median under 3 years) on a list meant to be
-                                 #   held 20; leg 5 + peg off gives 16 stocks whose YOUNGEST is CRWD at 7.2y (MPWR
-                                 #   21.7, AAPL 41.7, AMZN 29.2, LRCX 42.3, DELL 10.0, TSLA 16.1, VRT 8.0, LITE 11.0,
-                                 #   VST 9.8, NVDA 27.5, ANET 12.1, AVGO 16.9, FTNT 16.7, HWM 9.8, PANW 14.0). The
-                                 #   floor removes exactly ARM 2.9y, GEV 2.4y and SNDK 1.5y from that table.
+                                 #   held 20; leg 5 + peg 2.0 gives AAPL 41.7y, AMZN 29.2y, NVDA 27.5y, DELL 10.0y and
+                                 #   VRT 8.0y — five names, all with growing earnings, none under 8 years of record.
+                                 #   The floor removes ARM 2.9y, GEV 2.4y and SNDK 1.5y from the stock table.
                                  #   So the two symptoms — "only 2 stocks" and "rank 1 is a 2.4-year listing" — are
                                  #   ONE setting pulling both ways: it does not add stocks (it adds young ETFs) and
                                  #   it inverts the order. The count problem lives at `growth_max_peg`, not here.
@@ -1257,6 +1260,17 @@ buy_heuristic:
   #   purpose is to show you the candidates. Re-open this only with a refill that walks past n.
   growth_corr_cap: 0.0
   growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
+  # (#50) WHAT THIS 0.0 COSTS DOWNSTREAM, recorded 2026-08-06 because no receipt said it: with this
+  #   term off, `growth_max_peg` is the GROWTH LANE'S ONLY VALUATION CONTROL. Nothing else in
+  #   `score_parts` reads a P/E. That is why the PEG rung has to be chosen on the raw P/E column and
+  #   not on the PEG number alone — there is no soft brake behind the hard gate to catch what it lets
+  #   through. Two knobs, coupled, in different halves of this file; neither receipt mentioned the
+  #   other until now. See `growth_max_peg` for the ladder and the 2.0 recommendation.
+  #   NOTE ALSO that `value_factor` SATURATES: (value_ref_pe / pe).clamp(0.5, 1.5) at ref 20.0 is
+  #   already pinned at the 0.5 floor by P/E 40, so even at weight 1.0 it cannot separate a P/E 70
+  #   compounder from a P/E 300 one. Re-enabling this term does NOT by itself make a loose PEG rung
+  #   safe; the clamp or the ref would have to move too, and both are backtest-blind (pe_ratio is
+  #   None in backtest_quote, which is the whole reason this ships at 0).
   # (#2) VALUATION TILT — ENABLED 2026-07-12 after re-validation. History: the 2026-07-02 wide run
   #   (8175 cutoffs) had the earnings_yield lane LOSING to price-only (+140.4 vs +151.2) and the tilt
   #   shipped OFF. Three later independent-pool wide runs (2× full S&P 500 on 8320/8380 cutoffs, then
@@ -2004,9 +2018,16 @@ buy_heuristic:
                                  #   2026-08-05 on the live overlay (growth_min_leg_years 0, range 50). 1.6 -> 2.0 came
                                  #   back BYTE-IDENTICAL at all three horizons: rank-1 +4.7|+4.3, h2h 48%, edge +183.1,
                                  #   n=914 — not "small delta", the same digits. Repeated on top of the leg-floor revert
-                                 #   (arm E+C vs E at 20y): identical again, +6.2|+6.7 h2h 65% edge +265.0 n=723. So (b)
-                                 #   "zero rank-1 authority" is the weak form; the strong form is that under a deep pool
-                                 #   this knob is invisible to every backtest metric there is.
+                                 #   (arm E+C vs E at 20y): identical again, +6.2|+6.7 h2h 65% edge +265.0 n=723.
+                                 #   AND THE REASON IS PRINTED IN THE RUN, so do not read those nulls as a green light —
+                                 #   corrected 2026-08-06 after I did exactly that. The gate audit says:
+                                 #     growth_max_peg ->off   admits 0 new names (gate not binding on this sample)
+                                 #   Fundamentals ARE loaded (backtest.rs:446 sets quote.fund; the fund_extra:roic probe
+                                 #   moves edge -61.0 in the same run), so this is NOT structural blindness — it is that
+                                 #   the backtest's sample contains no name this gate was rejecting at 1.6. Loosening
+                                 #   admits nobody THERE while admitting 15 on the live universe. Byte-identical is
+                                 #   therefore ZERO EVIDENCE, not a measured null, and it is evidence in NEITHER
+                                 #   direction. (b) "zero rank-1 authority" has the same caveat and always did.
                                  #   MEANWHILE IT IS THE LARGEST SOLE-BLOCK IN THE LIVE FUNNEL. Same day, same overlay:
                                  #   peg fails 411 stocks and SOLE-blocks 17 — AAPL, AMZN, ANET, ARM, AVGO, CRWD, DELL,
                                  #   FTNT, HWM, LITE, LRCX, MPWR, PANW, SNDK, TSLA, VRT, VST — against cagr 512/1 and
@@ -2020,20 +2041,59 @@ buy_heuristic:
                                  #   `growth_max_peg_etf: 0.0` on top of the leg-floor revert, vs the same arm at 1.6:
                                  #   the two backtests differ by ONE line, the drift warning naming the arm file. 20y
                                  #   rank-1 +6.2|+6.7 h2h 65% n=723; 8y +6.5|+8.2 h2h 58% n=1221 — identical both
-                                 #   horizons. So the whole range 1.6 -> off is invisible to the backtest, not just the
-                                 #   1.6 -> 2.0 step. `growth_max_peg_etf` is not binding at a 5y leg floor either
-                                 #   (ETF table stays at 5 rows across every rung below).
-                                 #   THE LIVE LADDER, measured at `growth_min_leg_years: 5.0` — this is the only
-                                 #   evidence this knob has, and it is a pure count curve:
-                                 #     peg    stocks   names it lets in
-                                 #     1.6      1      (ci default)
-                                 #     2.0      5      AAPL AMZN DELL VRT
-                                 #     2.5      9      ANET AVGO FTNT HWM
-                                 #     3.0     10      VST
-                                 #     off     16      MPWR LRCX TSLA LITE PANW CRWD
-                                 #   There is a knee at 3.0: the last six names cost the entire gate. All 16 are 7y+.
-                                 #   CONSEQUENCE FOR ANY FUTURE ROUND: this knob's cost cannot be graded by `backtest`.
-                                 #   Deciding it needs a live funnel plus a judgement about paying up for growth, not a grid.
+                                 #   horizons. So the whole range 1.6 -> off is un-sampled, not just the 1.6 -> 2.0 step.
+                                 #   `growth_max_peg_etf` is not binding at a 5y leg floor either (ETF table stays at 5
+                                 #   rows across every rung below).
+                                 #   THE LIVE LADDER, measured at `growth_min_leg_years: 5.0` — the only evidence this
+                                 #   knob has. Read the P/E and EPS-YoY columns, NOT the count:
+                                 #     peg    stocks   name it lets in       P/E     PEG    EPS-YoY
+                                 #     1.6      1      NVDA                  33.6    1.40    +66.7%
+                                 #     2.0      5      AMZN                  32.6    1.63    +29.7%
+                                 #                     DELL                  36.9    1.69    +36.1%
+                                 #                     VRT                   69.8    1.70   +166.4%
+                                 #                     AAPL                  37.7    1.85    +22.7%
+                                 #     2.5      9      HWM                   67.6    2.21    +32.0%
+                                 #                     FTNT                  63.6    2.46     +7.1%
+                                 #                     AVGO                  69.6    2.47   +287.8%
+                                 #                     ANET                  67.8    2.48    +23.3%
+                                 #     3.0     10      VST                   23.5    2.78    -68.9%
+                                 #     off     16      LRCX                  58.1    3.74    +43.1%
+                                 #                     MPWR                  96.2    4.54    -60.6%
+                                 #                     TSLA                 297.7    7.52    -47.1%
+                                 #                     PANW                 315.4    9.26    -56.0%
+                                 #                     LITE                 145.5   62.93   -104.6%
+                                 #                     CRWD                   n/a     n/a   +983.3%
+                                 #   OFF IS NOT AN ENDPOINT — RECOMMENDED ON 2026-08-05 AND RETRACTED 2026-08-06. At off
+                                 #   the RANK-1 STOCK IS MPWR: P/E 96.2, earnings down 60.6%, score 22.2. A valuation gate
+                                 #   set to 0.0 puts the worst-priced name in the book at the top of it. Every name above
+                                 #   PEG 2.5 except LRCX has earnings falling 47-105%; every name at or below 2.5 is
+                                 #   growing. The count knee at 3.0 is real but it is the WRONG reading of this table.
+                                 #   OFF ALSO UNARMS THE LOSS-MAKER SCREEN. `None if eps_ttm <= 0 => return None`
+                                 #   (picks.rs) sits INSIDE the `if growth_max_peg > 0.0` guard, so 0.0 disables the
+                                 #   no-earnings rejection as a side effect of disabling the ceiling. CRWD — PEG `n/a`,
+                                 #   admitted at no other rung — is the proof. Two gates, one switch. Never fires at a
+                                 #   non-zero rung, so it is recorded here rather than fixed in code.
+                                 #   THE DENOMINATOR IS A PRICE CAGR, WHICH IS WHY THIS NUMBER MISLEADS. core::peg_yield
+                                 #   is (P/E) / long_cagr_pct, and long_cagr_pct is the score's LONG-LEG PRICE CAGR, not
+                                 #   an earnings growth rate. So the textbook "PEG > 1 is expensive" does not transfer,
+                                 #   and a name is rated CHEAPER for having already run up: VRT at P/E 69.8 with a +51%
+                                 #   CAGR prints 1.70, while AAPL at P/E 37.7 with +21% prints 1.85. Apple at 38x
+                                 #   earnings scores as pricier than Vertiv at 70x. Partly a momentum term in valuation
+                                 #   clothing — pair any reading of this column with the raw P/E next to it.
+                                 #   2.0 IS THE DEFENDABLE RUNG, AND THE REASON IS THAT THIS GATE IS THE ONLY VALUATION
+                                 #   CONTROL THE GROWTH LANE HAS. `growth_value_weight` ships 0.0 (below) — the P/E
+                                 #   multiplier is OFF, deliberately, because the walk-forward never saw pe_ratio. So
+                                 #   nothing downstream docks a rich name: `value_factor` is written to saturate at
+                                 #   P/E 40 anyway ((value_ref_pe/pe).clamp(0.5, 1.5) at ref 20.0, so P/E 70 and P/E 300
+                                 #   would score the same dock), but at weight 0 it never even runs. THIS KNOB IS THE
+                                 #   WHOLE BRAKE. Set it where the raw P/E is still defensible on its own, because
+                                 #   nothing else is looking: at 2.0 four of five names are under P/E 38; at 2.5 five of
+                                 #   nine are P/E 63-70. Not that the 2.5 names are bad — all four have growing earnings
+                                 #   — but there is no second line of defence behind them. Raising this knob above ~2.0
+                                 #   is only defendable together with a working P/E term, which today does not exist.
+                                 #   CONSEQUENCE FOR ANY FUTURE ROUND: this knob's cost cannot be graded by `backtest` —
+                                 #   the gate audit line above tells you so directly, in any run. Decide it on a live
+                                 #   funnel plus the P/E column, never on a grid, and never on a byte-identical null.
                                  #   EXTENDED TO FUNDS 2026-08-02 — but on a SEPARATE number, `growth_max_peg_etf`
                                  #   below, not this one. This knob and every receipt above it are equity-only and
                                  #   unchanged; see that knob for the measurement that forced the split.
