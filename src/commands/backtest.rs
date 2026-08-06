@@ -54,13 +54,23 @@ pub(crate) const VERDICT_FILE: &str = ".backtest_verdict.json";
 /// than the method's proof. A healthy run resolves ~4900.
 const MIN_VERDICT_TICKERS: usize = 500;
 
-/// The unconditional held-book verdict of one wide backtest run: the "all entries" row of the
-/// entry-state table (full gated pool, growth_score ranking, equal-weight top-10, held `years`
-/// forward, vs the index) plus the run date and a fingerprint of the tuning that earned it.
+/// Basket size the journal grades on. NOT the top-10 the entry-state table ranks by: the footer must
+/// quote the basket a reader can actually buy off the screen, and top-3 is the measured peak of the
+/// top-N ladder at EVERY horizon (8y 16.1 vs 15.0/14.9/14.4 for top-1/5/10/20; 12y 15.2; 20y 13.7),
+/// with roughly HALF top-1's worst window. See the SHIP RULE v2 block in `tests/ci-settings.yaml`.
+pub(crate) const VERDICT_TOP: usize = 3;
+
+/// The unconditional held-book verdict of one wide backtest run at ONE horizon: the "all entries"
+/// row of the entry-state table (full gated pool, growth_score ranking, equal-weight top-[`VERDICT_TOP`],
+/// held `years` forward, vs the index) plus the run date and a fingerprint of the tuning that earned it.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Verdict {
     pub(crate) date: String,
     pub(crate) years: i64,
+    /// Basket size these numbers were earned on. Defaulted for files written before the journal
+    /// carried it — those were top-10 by construction, so saying 10 is a fact, not a guess.
+    #[serde(default = "legacy_top")]
+    pub(crate) top: usize,
     pub(crate) windows: usize,
     pub(crate) book: f64,
     pub(crate) excess: f64,
@@ -71,28 +81,53 @@ pub(crate) struct Verdict {
     pub(crate) tuning_fp: String,
 }
 
+fn legacy_top() -> usize {
+    10
+}
+
+/// Every horizon a wide run has journaled, keyed by hold years (ascending). One file, one writer,
+/// one reader — the track pattern the single-verdict version had, kept while the file gained rows.
+/// Before this, a `backtest 8` run ERASED the 20y verdict and the footer silently switched horizon.
+pub(crate) type Journal = std::collections::BTreeMap<i64, Verdict>;
+
 /// The ONE fingerprint both surfaces use (backtest stamps it, screen compares it) — a tuning
 /// knob changed since the run means the cited numbers were never earned by the current settings.
 pub(crate) fn tuning_fingerprint(t: &BuyHeuristic) -> String {
     serde_json::to_string(t).unwrap_or_default()
 }
 
-/// Malformed/corrupt JSON is None — a broken file must SILENCE the screen line, never
+/// Malformed/corrupt JSON is an EMPTY journal — a broken file must SILENCE the screen line, never
 /// fabricate a verdict. (Kept pure and separate from the fs read so the failure mode is tested.)
-pub(crate) fn parse_verdict(raw: &str) -> Option<Verdict> {
-    serde_json::from_str(raw).ok()
+/// A pre-journal file holds one bare [`Verdict`]; adopt it under its own horizon rather than going
+/// dark until the next wide run.
+pub(crate) fn parse_journal(raw: &str) -> Journal {
+    if let Ok(j) = serde_json::from_str::<Journal>(raw) {
+        return j;
+    }
+    serde_json::from_str::<Verdict>(raw)
+        .map(|v| Journal::from([(v.years, v)]))
+        .unwrap_or_default()
 }
 
+/// The LONGEST journaled horizon. "Buy now, hold 8+ years" grades hardest at the long end, and the
+/// long end is the one a short run must not be able to quietly replace.
 pub(crate) fn read_verdict() -> Option<Verdict> {
-    parse_verdict(&std::fs::read_to_string(config::data_path(VERDICT_FILE)).ok()?)
+    let raw = std::fs::read_to_string(config::data_path(VERDICT_FILE)).ok()?;
+    parse_journal(&raw).into_values().next_back()
 }
 
-fn write_verdict(v: &Verdict) {
-    let ok = serde_json::to_string(v)
-        .ok()
-        .and_then(|s| std::fs::write(config::data_path(VERDICT_FILE), s).ok());
+/// Merge, never replace: a `backtest 8` run updates the 8y row and leaves 12y/20y standing.
+fn write_verdict(v: Verdict) {
+    let path = config::data_path(VERDICT_FILE);
+    let mut j = std::fs::read_to_string(&path).map(|s| parse_journal(&s)).unwrap_or_default();
+    let years = v.years;
+    j.insert(years, v);
+    let ok = serde_json::to_string(&j).ok().and_then(|s| std::fs::write(&path, s).ok());
     match ok {
-        Some(()) => eprintln!("backtest: method verdict journaled — the screen footer will cite it"),
+        Some(()) => eprintln!(
+            "backtest: {years}y method verdict journaled ({} horizons on file) — the screen footer cites the longest",
+            j.len()
+        ),
         None => eprintln!("WARNING: could not write {VERDICT_FILE} — the screen's method line stays absent/stale"),
     }
 }
@@ -107,9 +142,9 @@ pub(crate) fn verdict_line(v: &Verdict, drift: bool) -> String {
         " (rerun: `folioman backtest universe`)"
     };
     format!(
-        "Method backtest (run {}, wide universe, top-10 held {}y, {} windows): book {:+.1}%/yr, \
+        "Method backtest (run {}, wide universe, top-{} held {}y, {} windows): book {:+.1}%/yr, \
          {:+.1}pp/yr vs index, win {:.0}%, worst {:+.1}, OOS {:+.1}/{:+.1}{tail}",
-        v.date, v.years, v.windows, v.book, v.excess, v.win, v.worst, v.oos_early, v.oos_late
+        v.date, v.top, v.years, v.windows, v.book, v.excess, v.win, v.worst, v.oos_early, v.oos_late
     )
 }
 
@@ -732,9 +767,10 @@ pub async fn run(args: Vec<String>) {
     // it to the same ≥500 floor `backtest_edge_holds` uses to decide its own sample is trustworthy.
     if wide && tickers.len() >= MIN_VERDICT_TICKERS {
         if let Some((book, excess, win, worst, oos_early, oos_late, windows)) = verdict {
-            write_verdict(&Verdict {
+            write_verdict(Verdict {
                 date: chrono::Local::now().date_naive().to_string(),
                 years,
+                top: VERDICT_TOP,
                 windows,
                 book,
                 excess,
@@ -1580,10 +1616,19 @@ fn report_entry_state(
             );
         }
     }
-    let verdict = book_stats(&base, n, years).map(|(b, _, e, w, wo, el, la)| {
+    if let Some((b, _, e, w, wo, el, la)) = book_stats(&base, n, years) {
         println!(
             "  {:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}) [unconditional]",
             "all entries", base.len()
+        );
+    }
+    // The JOURNALED row, and the only one the screen footer quotes: the top-VERDICT_TOP basket a
+    // reader can actually buy, not the top-10 the table above ranks by. Printed so the footer's
+    // numbers are auditable inside the run that earned them.
+    let verdict = book_stats(&base, VERDICT_TOP, years).map(|(b, _, e, w, wo, el, la)| {
+        println!(
+            "  {:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}) [unconditional, JOURNALED]",
+            format!("all entries (top-{VERDICT_TOP})"), base.len()
         );
         (b, e, w, wo, el, la, base.len())
     });
@@ -1600,7 +1645,10 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     if bd.len() < 2 {
         return;
     }
-    let n = 10; // the measured held-book optimum
+    // NOT the measured optimum — the top-N ladder peaks at 3 at every horizon (see VERDICT_TOP).
+    // 10 is kept HERE on purpose: these rows compare candidates against EACH OTHER, so they want the
+    // wider, better-estimated book. The journaled verdict is the one that must match the buy policy.
+    let n = 10;
     // baseline: rank the FUND-COVERED gated picks by growth_score. Restricting to fund-covered rows
     // (same universe the factors see) makes the excess head-to-head fair — otherwise the score baseline
     // spans ETF/foreign buckets the SEC factors can't reach and the SPY leg differs.
@@ -1904,7 +1952,10 @@ fn report_corr_cap(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>
     if bd.len() < 2 || !samples.iter().any(|s| s.trail.len() >= 12) {
         return; // no trails (stub/short-history run) -> no fabricated rows
     }
-    let n = 10; // the measured held-book optimum
+    // NOT the measured optimum — the top-N ladder peaks at 3 at every horizon (see VERDICT_TOP).
+    // 10 is kept HERE on purpose: these rows compare candidates against EACH OTHER, so they want the
+    // wider, better-estimated book. The journaled verdict is the one that must match the buy policy.
+    let n = 10;
     println!("\n── CORR-CAP probe: greedy top-{n} by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held {years}y ──");
     for cap in [f64::INFINITY, 0.8, 0.6, 0.4] {
         if let Some((b, _, e, w, wo, el, la)) = corr_cap_book(samples, bd, bc, years, tuning, n, cap) {
@@ -2831,15 +2882,11 @@ mod tests {
         assert!(RISK_FACTORS.iter().all(|(_, f)| f(&Quote::stub("Y", "1", "", "Y")).is_none()));
     }
 
-    /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back
-    /// exactly what backtest wrote), corrupt/empty JSON is None (a broken file silences the footer,
-    /// never fabricates a verdict), and verdict_line's drift arm swaps the rerun-pointer for the ⚠
-    /// stale-settings warning (citing stale numbers as current would mislead the buy decision).
-    #[test]
-    fn verdict_journal_semantics() {
-        let v = Verdict {
+    fn stub_verdict(years: i64, top: usize) -> Verdict {
+        Verdict {
             date: "2026-07-19".into(),
-            years: 12,
+            years,
+            top,
             windows: 84,
             book: 14.3,
             excess: 6.9,
@@ -2848,24 +2895,55 @@ mod tests {
             oos_early: 5.1,
             oos_late: 7.4,
             tuning_fp: "{\"a\":1}".into(),
-        };
-        let json = serde_json::to_string(&v).unwrap();
-        let back = parse_verdict(&json).expect("roundtrip parses");
-        assert_eq!((back.date.as_str(), back.years, back.windows), ("2026-07-19", 12, 84));
+        }
+    }
+
+    /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back
+    /// exactly what backtest wrote), corrupt/empty JSON is an empty journal (a broken file silences
+    /// the footer, never fabricates a verdict), and verdict_line's drift arm swaps the rerun-pointer
+    /// for the ⚠ stale-settings warning (citing stale numbers as current would mislead the buy
+    /// decision). The line must name the BASKET too — top-3 and top-10 are different claims.
+    #[test]
+    fn verdict_journal_semantics() {
+        let v = stub_verdict(12, VERDICT_TOP);
+        let json = serde_json::to_string(&Journal::from([(v.years, stub_verdict(12, VERDICT_TOP))])).unwrap();
+        let back = parse_journal(&json).into_values().next_back().expect("roundtrip parses");
+        assert_eq!((back.date.as_str(), back.years, back.top, back.windows), ("2026-07-19", 12, 3, 84));
         assert!((back.book - 14.3).abs() < 1e-9 && (back.excess - 6.9).abs() < 1e-9);
         assert_eq!(back.tuning_fp, "{\"a\":1}");
 
-        assert!(parse_verdict("not json").is_none());
-        assert!(parse_verdict("").is_none());
-        assert!(parse_verdict("{\"date\":\"x\"}").is_none()); // missing fields -> None, not a default
+        assert!(parse_journal("not json").is_empty());
+        assert!(parse_journal("").is_empty());
+        assert!(parse_journal("{\"date\":\"x\"}").is_empty()); // missing fields -> empty, not a default
+        assert!(parse_journal("{\"20\":{\"date\":\"x\"}}").is_empty()); // half-written row, same rule
 
         let fresh = verdict_line(&v, false);
-        assert!(fresh.contains("run 2026-07-19, wide universe, top-10 held 12y, 84 windows"));
+        assert!(fresh.contains("run 2026-07-19, wide universe, top-3 held 12y, 84 windows"), "{fresh}");
         assert!(fresh.contains("book +14.3%/yr, +6.9pp/yr vs index, win 71%, worst -8.2, OOS +5.1/+7.4"));
         assert!(fresh.contains("(rerun: `folioman backtest universe`)") && !fresh.contains('⚠'));
         let drifted = verdict_line(&v, true);
         assert!(drifted.contains("⚠ settings changed since"));
         assert!(!drifted.contains("(rerun:"));
+    }
+
+    /// The journal is keyed by horizon so a short run can't erase the long one, and the footer quotes
+    /// the LONGEST row on file — "buy now, hold 8+ years" is graded at the hard end. A pre-journal
+    /// file (one bare Verdict, no `top`) is adopted under its own horizon as the top-10 it was.
+    #[test]
+    fn verdict_journal_is_keyed_by_horizon() {
+        let j = Journal::from([(8, stub_verdict(8, 3)), (20, stub_verdict(20, 3)), (12, stub_verdict(12, 3))]);
+        let round = parse_journal(&serde_json::to_string(&j).unwrap());
+        assert_eq!(round.len(), 3);
+        assert_eq!(round.into_values().next_back().unwrap().years, 20, "footer must cite the longest hold");
+
+        // legacy single-verdict file: adopted, not discarded, and honestly labelled top-10.
+        let legacy = r#"{"date":"2026-08-05","years":20,"windows":39,"book":12.9,"excess":5.8,
+            "win":82.0,"worst":-0.5,"oos_early":5.0,"oos_late":7.9,"tuning_fp":"{}"}"#;
+        let adopted = parse_journal(legacy);
+        assert_eq!(adopted.len(), 1);
+        let only = adopted.into_values().next_back().unwrap();
+        assert_eq!((only.years, only.top), (20, 10));
+        assert!(verdict_line(&only, false).contains("top-10 held 20y"));
     }
 
     #[test]
