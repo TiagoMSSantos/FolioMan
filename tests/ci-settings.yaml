@@ -106,6 +106,69 @@
 # growth_max_peg 1.6, growth_accel_weight 0.65 and every other knob receipt below were FITTED on the
 # contaminated peer-mean. The king horizon barely moved so they are not presumed wrong, but they are
 # no longer independently validated at 12y/8y. Re-sweep before citing a 12y/8y Δedge as evidence.
+#
+# ============================ SHIP RULE v2 — 2026-08-06 =====================================
+# THE PRIMARY METRIC CHANGES FROM rank-1 TO top-3, AND EVERY RECEIPT BELOW PREDATES THE CHANGE.
+#
+#   PRIMARY   top-3 excess (mean AND median) up or held, at 20y AND 8y
+#   GUARD     rank-1 h2h >= 50% at 20y, 12y and 8y   (winner's-curse guard, NOT the judge)
+#   GUARD     top-3 worst window not worse
+#   TIE       horizons disagree -> UNRESOLVED -> NO SHIP. "20y king overrules" is RETIRED.
+#
+#   PRECEDENCE IS GUARD > PRIMARY > TIE, and it is not a formality. A broken guard REFUSES outright;
+#   it is never softened into "unresolved" because the primary happened to split. `fixed_cagr_years: 5`
+#   is the worked case: its top-3 medians split by horizon (20y +0.1, 8y -0.6) which reads like a tie,
+#   but its rank-1 h2h fell to 48/50/50 — the argmax stopped beating ranks 11-20 — so it is REFUSED,
+#   full stop. Apply the three tiers in order and stop at the first that fires.
+#   "UNRESOLVED" ALSO REQUIRES A REAL DISAGREEMENT: one horizon UP and the other DOWN. A flat horizon
+#   is not a disagreeing one, so an arm that is flat at 8y and up at 20y but loses the primary is a
+#   plain NO-SHIP (see `fixed_cagr_years: 8`). The three states carry different follow-ups —
+#   UNRESOLVED invites a better arm, NO-SHIP and REFUSED close the question — so do not blur them.
+#
+# WHY. The old primary, "rank-1 median at the 20y king", grades a ONE-STOCK portfolio. Nobody holds
+# one stock; the money goes into a basket. `backtest` already prints top-N for N=1..50, so this costs
+# no code — only the discipline to read the row that matches the policy.
+# THE YARDSTICK WAS CARRYING THE VERDICTS. Re-grading the 2026-08-06 fixed_cagr_years grid on top-3
+# instead of rank-1, same files, zero new runs (20y stress, median excess pts/yr):
+#     arm        top-3 med   rank-1 med   worst window t3 / r1
+#     control       +6.6        +6.4          -0.5 / -10.6
+#     pin 8         +6.9        +4.6          -1.0 / -10.6
+#     pin 10        +6.9        +6.0          -0.5 / -10.6
+#     pin 5         +6.7        +4.0          -3.8 /  -7.5
+#   Rank-1 spreads those arms over 2.4 pts and refused all three the same morning. Top-3 spreads them
+#   over 0.3. THE FAILURE WAS CONDITIONAL ON BUYING ONE NAME. Nothing about the arms changed.
+# AND top-3 IS THE BETTER-MEASURED SLICE, not merely the friendlier one: rank-1 is ONE name per
+#   window, the noisiest cut in the grid. Its worst window is roughly DOUBLE top-3's at every horizon
+#   (-10.6 vs -0.5 at 20y, -19.9 vs -7.8 at 12y, -19.2 vs -9.2 at 8y), and top-1 also WINS LESS OFTEN
+#   (87/74/76% vs 97/87/82%). Concentrating into the single argmax was never the better book.
+# RANK-1 IS DEMOTED, NOT DROPPED. It exists to catch a rotten argmax hidden behind two good names —
+#   the (#3k) winner's curse. That is why its h2h stays MANDATORY. A top-3 that passes while rank-1
+#   h2h sits under 50% is an inverted ranking wearing a basket as a disguise.
+# "20y KING OVERRULES" IS RETIRED, and it should never have been the tie-break: the 20y lane is the
+#   BLURRIEST in the grid. Its 90% bootstrap band is +/-78% of its own estimate on 21 h2h pairs;
+#   8y is +/-40% on 38 pairs. Structural, not fixable — a 20y forward window needs data from 20y ago,
+#   so there are simply fewer of them. Ties now read UNRESOLVED. See `growth_proximity_weight` and
+#   `long_trend_cap`, both decided by the retired rule against contrary 12y/8y evidence.
+# DISCLOSURE, because the order of events matters: the re-grade above was run BEFORE this rule was
+#   written, so `fixed_cagr_years: 10` was already known to improve under it. Choosing a yardstick
+#   after seeing whom it favours is the classic overfit path. The defence is that the justification
+#   is STRUCTURAL — nobody holds one stock, and that argument stands with the numbers hidden — but
+#   the peek is recorded here rather than left for someone to discover.
+# WHAT THIS RE-OPENS: every knob below was graded on rank-1, so every rung is re-openable in
+#   principle. NOT re-opened wholesale — that is the maximum-overfit move. Re-test one arm at a time,
+#   on this rule, and record the UNRESOLVED verdicts too so nobody re-runs them.
+# THE BUY SURFACE NOW QUOTES THE SAME BASKET (backtest.rs `VERDICT_TOP = 3`). The screen's method
+#   footer used to cite top-10 at whatever horizon ran LAST, because `.backtest_verdict.json` held one
+#   row and every wide run overwrote it — so a `backtest 8` erased the 20y proof and the footer changed
+#   horizon silently. The journal is now keyed by hold-years and MERGES, the footer cites top-3 at the
+#   LONGEST row on file, and it names the basket. If a rule change ever moves the graded basket, move
+#   VERDICT_TOP with it or the footer starts advertising a book the rule no longer grades.
+# HORIZONS ARE NOT COMPARABLE TO EACH OTHER — a cross-horizon CAGR gap is an ERA artifact. A 20y hold
+#   can only START 1971..2006-07 (it needs 20 years of future left); an 8y hold starts 1971..2018-07.
+#   Those extra 12 years of start dates cover the 2010s run, which is why top-3 prints +16.1%/yr at
+#   8y against +13.7%/yr at 20y. It is NOT a shorter-hold premium. The 8y lane's own edge-by-era
+#   DECLINES (+46.6 -> +23.5 -> +22.3 -> +14.8), so the richer recent book is market, not method.
+#   Compare an arm to its control WITHIN a horizon. Never compare horizons to pick one.
 # ============================================================================================
 tickers: []
 
@@ -432,7 +495,14 @@ buy_heuristic:
                                  #   its new 0.15: 15 +559.3 | 20 +579.7 | 25 +593.0 | 30 +623.5 (peak) |
                                  #   40 +589.1 | uncapped-at-0.35 +552.5. Clean hump, peak 30. The old 12y
                                  #   curve preferred 25 (+191.2 vs 30 +181.3) — measured at trend 0.35, on
-                                 #   the advisory horizon; 20y king overrules. Rank-1 med/h2h IDENTICAL
+                                 #   the advisory horizon; 20y king overrules [RETIRED TIE-BREAK — see
+                                 #   SHIP RULE v2 at the top of this file. This rung was chosen by a rule
+                                 #   that no longer exists, on the blurriest lane in the grid, against a
+                                 #   12y curve pointing the other way. Under v2 that reads UNRESOLVED.
+                                 #   RE-OPENABLE, deliberately NOT re-opened here: the receipt below says
+                                 #   the cap tunes lane edge only and leaves rank-1 identical at every
+                                 #   rung, so it is a weak lever — re-test 25 only if something else
+                                 #   makes it worth 6 runs]. Rank-1 med/h2h IDENTICAL
                                  #   (+4.4 / 41%) across the whole ladder — the cap tunes lane edge only,
                                  #   the argmax cure lives in the WEIGHT (see growth_trend_weight).
                                  #   (#47) 2026-08-03 arm C1 pushed it the OTHER way, 30 -> 60, on the same 20y-stress king:
@@ -509,6 +579,15 @@ buy_heuristic:
                                  #   Two things that table says beyond the null. (a) HORIZON-CONFLICTED on lane edge:
                                  #   the term PAYS +48.2 at 20y and COSTS 23.8 at 12y. The 20y king decides, so it stays
                                  #   on — but nobody should quote "proximity is worth +48" without the 12y sign flip.
+                                 #   [SHIP RULE v2, 2026-08-06: "the 20y king decides" IS RETIRED. This is the clearest
+                                 #   case in the file of the retired tie-break doing real work — the term pays at 20y
+                                 #   and COSTS at BOTH shorter horizons (-23.8 at 12y, -1.2 at 8y), which under v2 is
+                                 #   UNRESOLVED, i.e. it would not ship today on this evidence. It is NOT reverted here,
+                                 #   for the reason clause (b) below already gives: the whole ladder is inside the
+                                 #   bootstrap band and rank-1 med/h2h are IDENTICAL (+6.4 / 76%) at 1.0, 0.0 AND -1.0.
+                                 #   A knob with zero rank-1 authority and a coin-flip lane edge is not worth 6 runs to
+                                 #   revert. Recorded so the NEXT reader knows this rung rests on a retired rule, not on
+                                 #   a measurement that survives the current one. Re-open only alongside a real cause.]
                                  #   (b) INSIDE THE NOISE anyway: the whole 8-rung ladder spans ~50 edge at 20y against a
                                  #   bootstrap band [+201.5 … +673.7] that is 472 wide; 24 against 102 at 12y; 10 against
                                  #   56 at 8y. rho is flat (+0.17/+0.15/+0.21) at essentially every rung and both OOS
@@ -633,6 +712,32 @@ buy_heuristic:
   #   10 all refused; 20 falls back for almost every name, so it is not a pin at all. NOTHING TO RE-RUN
   #   HERE. Do not re-open this knob without a NEW reason — an earlier session burned a round rebuilding
   #   a ladder that already existed (see growth_min_cagr), and this is exactly that trap's shape.
+  #   *** THAT "CLOSED" WAS EARNED UNDER A RULE THAT NO LONGER EXISTS — amended SAME DAY, hours later,
+  #   when the primary metric moved from rank-1 to top-3 (SHIP RULE v2, top of file). Every refusal
+  #   above was decided on the rank-1 median. Re-graded on the basket actually bought, same files,
+  #   no new runs (excess pts/yr, mean|median):
+  #     arm      20y t3        12y t3        8y t3         verdict under v2
+  #     control  +6.5|+6.6     +7.3|+7.8     +8.1|+8.5     —
+  #     pin 10   +6.6|+6.9     +7.5|+8.0     +7.6|+8.2     UNRESOLVED (wins 20y AND 12y, loses 8y)
+  #     pin 8    +6.5|+6.9     +7.1|+7.6     +7.7|+8.5     NO-SHIP (8y mean -0.4, 20y worst -1.0)
+  #     pin 5    +6.0|+6.7     +6.9|+7.5     +7.6|+7.9     REFUSED — h2h guard broke (48/50/50)
+  #   PIN 10 IS NOT THE DISASTER RANK-1 CALLED IT: it beats control on book, excess, median AND win%
+  #   at 20y (+13.8 vs +13.7, 97% vs 97%, worst -0.5 = -0.5) and at 12y (+15.4 vs +15.2, 89% vs 87%).
+  #   It fails ONLY at 8y (worst window -11.1 vs -9.2). Under v2 that is UNRESOLVED, so it STILL DOES
+  #   NOT SHIP — the tie-break is no-ship, not king-wins.
+  #   THE THREE ARMS LAND IN THREE DIFFERENT STATES, and the next session must not flatten them:
+  #     pin 10  UNRESOLVED — the primary metric SPLITS by horizon (20y/12y up, 8y down). Re-openable
+  #             by an arm that fixes the 8y worst window without giving back 20y/12y. None proposed.
+  #     pin 8   NO-SHIP    — no split to resolve: 8y median is FLAT (+8.5 = +8.5), so the horizons
+  #             never disagree; it simply loses on 8y mean and on the 20y worst window. Measured,
+  #             refused, closed. (An earlier draft of this block called it UNRESOLVED. Wrong: a flat
+  #             median is not a disagreeing one. The mechanical grade is the record.)
+  #     pin 5   REFUSED    — the winner's-curse GUARD broke (rank-1 h2h 48/50/50, i.e. the argmax
+  #             stops beating ranks 11-20 at all). A broken guard refuses OUTRIGHT; it is never
+  #             softened into "unresolved" by the primary metric or the tie-break. Precedence:
+  #             GUARD > PRIMARY > TIE.
+  #   STILL NOTHING TO RE-RUN — the numbers above are the re-grade of the SAME output files, and
+  #   re-running these three arms reproduces them.
   #   THE LIVE WIN IS STILL REAL, AND THAT IS THE POINT: the pin buys +5 stocks and a readable PEG, and
   #   costs argmax quality, because ONE knob moves BOTH. `fixed_cagr_years` pins the whole score —
   #   the gate, trend, accel, sharpe, calmar, trend_health AND the LEG column — but the defect at the
@@ -1096,6 +1201,17 @@ buy_heuristic:
                                  #   and 8y rank-1 +5.9|+6.3 BEATS this arm's +5.6|+6.1. It loses ONLY the primary metric, king
                                  #   rank-1 (h2h 50% vs 60%, median +4.0 vs +5.3). Re-test 18 FIRST if the grading rule is ever
                                  #   re-weighted toward the 8y lane. The "15-18 unswept" caveat above is now discharged.
+                                 #   *** THAT PRE-REGISTRATION FIRED 2026-08-06. The grading rule DID change — SHIP RULE v2
+                                 #   at the top of this file makes top-3 primary at 20y AND 8y and retires "20y king
+                                 #   overrules". 18 lost on exactly one clause, the 20y rank-1 argmax, which v2 demotes to a
+                                 #   guard. So 18 is now a LIVE candidate on the file's own instruction, not a new idea.
+                                 #   RE-RUN AND VERDICT: see the (#52) block appended below — it was measured the same day
+                                 #   the rule changed, `backtest {20,12,8} universe stress`, one-field arm
+                                 #   (`growth_min_cagr 19.0->18.0`, drift-verified). Do NOT re-run it from this line;
+                                 #   read that block. THE WHOLE 15..22 LADDER above was swept on rank-1, so every rung is
+                                 #   re-openable in principle — deliberately NOT re-opened wholesale, because re-sweeping
+                                 #   an entire ladder against a fresh objective is how a file overfits itself. One arm at
+                                 #   a time, verdicts recorded either way.
                                  #   RUNG 15 ADDED 2026-08-02 (bt_15_{20,12,8}.txt vs controls ctrl-20-s / bt_19_12 / ctrl-8-s,
                                  #   same 4945-ticker universe) — the interval is CLOSED 15..22, and 15 extends the below-19
                                  #   pattern to its end point. It wins the LANE at 12y and the DOWNSIDE everywhere, and still
@@ -1136,6 +1252,34 @@ buy_heuristic:
                                  #   age-chosen leg it was swept on. The 18 sole-blocks were a LIVE-table observation under
                                  #   an arm that did not ship — they describe the defect, not today's funnel. Only if a
                                  #   future round pins the ranking legs for real does this ladder need re-measuring.
+                                 #
+                                 #   (#52) 2026-08-06 — 18 RE-TESTED ON SHIP RULE v2, AND IT IS A WASH. NO-SHIP; 19 STANDS.
+                                 #   The pre-registration above ("re-test 18 FIRST if the grading rule is ever re-weighted
+                                 #   toward the 8y lane") HAS NOW FIRED AND IS SPENT. Three fresh wide runs,
+                                 #   `backtest {20,12,8} universe stress`, one-field arm growth_min_cagr 19.0->18.0,
+                                 #   drift-verified by the off-validated warning; a 4th run re-ran the BASELINE at 20y and
+                                 #   reproduced control to the last digit (+13.7 book / +6.5|+6.6 / worst -0.5 / 39 windows),
+                                 #   so nothing below is grid drift. Control -> arm:
+                                 #     lane   t3 book      t3 mean|med    t3 worst   win%     r1 med    h2h      lane edge
+                                 #     20y    13.7->13.6   6.5|6.6 -> 6.4|6.6   -0.5=-0.5   97=97   6.4->6.0  76->62  452.8->422.6
+                                 #     12y    15.2->15.3   7.3|7.8 -> 7.4|8.0   -7.8=-7.8   87=87   7.2->6.5  63->61  127.9->143.8
+                                 #     8y     16.1->15.9   8.1|8.5 -> 8.0|8.6   -9.2=-9.2   82->84  8.2->8.9  66->67   65.0= 65.0
+                                 #   PRIMARY FAILS BY 0.1 AT BOTH GRADED HORIZONS (t3 mean -0.1 at 20y and at 8y) while the
+                                 #   medians are flat/+0.1. Guards all hold: h2h 62/61/67 stays over 50 and no worst window
+                                 #   moves. So this is NOT the rank-1 catastrophe the old rule saw — under v2 it is simply
+                                 #   NOTHING. Say that plainly rather than dressing 0.1 up as a finding: those deltas are far
+                                 #   inside the noise (the 20y bootstrap band is +/-78% of its own estimate on 21 h2h pairs).
+                                 #   THE REFUSAL IS "18 BUYS NOTHING", NOT "18 IS BAD". It moves the basket by less than a
+                                 #   rounding tick and pays for it in the guards' DIRECTION — 20y rank-1 h2h -14 points and
+                                 #   lane edge -30 — which is the same below-19 pattern the 15..22 ladder already mapped,
+                                 #   just muted. A knob that costs argmax quality to buy zero basket return is not a trade.
+                                 #   12y IS THE ARM'S BEST LANE AND 12y DOES NOT VOTE — t3 median +7.8 -> +8.0 and lane edge
+                                 #   +127.9 -> +143.8, its only real win. Recorded HERE so a future session finds it already
+                                 #   known: v2 grades 20y AND 8y, 12y is a consistency read only, and picking the horizon that
+                                 #   flatters an arm is the exact move v2 exists to stop.
+                                 #   DO NOT RE-RUN 18. The runs happened; this is their verdict. What would be genuinely new
+                                 #   is the leg-2 question two paragraphs up (should `life_cagr` read a window instead of a
+                                 #   lifetime) — that is a CODE change, and no floor value can substitute for it.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
