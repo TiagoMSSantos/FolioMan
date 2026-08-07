@@ -163,6 +163,24 @@
 #   horizon silently. The journal is now keyed by hold-years and MERGES, the footer cites top-3 at the
 #   LONGEST row on file, and it names the basket. If a rule change ever moves the graded basket, move
 #   VERDICT_TOP with it or the footer starts advertising a book the rule no longer grades.
+# SURVIVORSHIP IS UNCORRECTED IN THIS RULE'S PRIMARY METRIC, AND `stress` DOES NOT FIX IT (2026-08-07).
+#   `STRESS_TICKERS` (commands/backtest.rs) is 27 hand-picked crashed/bankrupt names against ~4900
+#   survivors — 0.55% of the pool — and it is worth knowing exactly where that correction lands.
+#   Clean same-config A/B: the CI gate shells the wide run with the SAME `FOLIOMAN_CONFIG` this file is,
+#   differing from the grid ONLY in the `stress` keyword. 12y top-3 held book:
+#     with stress     +15.2 book | +7.3 excess | win 87% | worst -7.8 | 54 windows
+#     without stress  15.1629    | 7.2584      | 87.037% | -7.7544    | 54 windows
+#   Injecting every corpse moves the graded number by less than 0.05pp on every statistic. The run says
+#   why in its own output: top-3 "rode 0 zeros/138 holds" while top-10 rode 1/387 (NOK, an injected
+#   corpse). Corpses score BADLY — that is the gates working — so they land in the bottom half, widen
+#   the top-half-minus-bottom-half LANE EDGE, and never enter the book.
+#   CONSEQUENCE, STATED WHERE THE RULE IS STATED: `stress` grades the lane, not the basket. The top-3
+#   number this rule ships on — and that the screen footer quotes — carries FULL survivorship bias.
+#   Do not cite a `stress` run as if it had corrected the held book; it corrected a different metric.
+#   NOT FIXED HERE, and the reason is not laziness: the honest fix is point-in-time index membership
+#   (a data-vendor problem), and expanding a hand-list cannot reach it — a bigger list of names that
+#   score badly still never enters the top 3. What WOULD move it is a loser set that scores WELL at the
+#   cutoff and dies after, which is the hard half of the problem and nobody has assembled one.
 # HORIZONS ARE NOT COMPARABLE TO EACH OTHER — a cross-horizon CAGR gap is an ERA artifact. A 20y hold
 #   can only START 1971..2006-07 (it needs 20 years of future left); an 8y hold starts 1971..2018-07.
 #   Those extra 12 years of start dates cover the 2010s run, which is why top-3 prints +16.1%/yr at
@@ -608,6 +626,26 @@ buy_heuristic:
   use_adjusted_close: false      # (B) REVERTED 2026-06-28: backtest 12 universe edge unchanged (raw
                                  #   -100337371.5 vs adj -100337372.0), OOS halves identical (+0.09/-0.05).
                                  #   No improvement → golden rule reverts. Flip true only if a re-run lifts edge.
+                                 #   *** THAT VERDICT IS NOT SAFE TO CITE (2026-08-07). READ THE NUMBERS: the
+                                 #   edge it compared was -100,337,371 vs -100,337,372. Today the same metric on
+                                 #   the same command reads +452.8. The sibling knob reverted on that SAME grid
+                                 #   says what was wrong with it — see `use_trend_cagr` directly below: "Crypto's
+                                 #   1e9-scale peer-rel swamps this sample → knob inert + edge straddles 0
+                                 #   (noise)". `demean` now splits the peer mean by (bucket, ASSET_CLASS), which
+                                 #   is what ended the swamping. An "unchanged" read at 1e8 scale is not evidence
+                                 #   of no effect; it is evidence the instrument was broken. THE TOTAL-RETURN
+                                 #   QUESTION IS THEREFORE OPEN, not closed, and this line is why.
+                                 #   BUT DO NOT JUST FLIP IT — there is a trap that would manufacture a fake win.
+                                 #   Adjusted close makes the BOOK total-return while the benchmark stays a PRICE
+                                 #   index (^GSPC has no dividends to adjust, so its adjclose IS its close). The
+                                 #   excess would jump by roughly the book's own yield and read as free alpha.
+                                 #   A real test needs a total-return benchmark first, and ^SP500TR only starts
+                                 #   1988 — which guts the 20y window range the ship rule grades on. That is the
+                                 #   actual blocker, and it is a DATA problem, not a knob problem.
+                                 #   MEANWHILE the cheaper half of the same question got answered instead: (#53)
+                                 #   plumbed as-of dividends into the SCORE without touching realized returns, so
+                                 #   `dividend_weight` is graded while both legs stay price-only and the excess
+                                 #   stays apples-to-apples. See the dividend_weight receipt below.
   use_trend_cagr: false          # (E,#14) REVERTED 2026-06-28: slope CAGR edge -100337434.4 vs endpoint
                                  #   -100337336.3 (WORSE), OOS halves identical. Crypto's 1e9-scale peer-rel
                                  #   swamps this sample → knob inert + edge straddles 0 (noise). Keep endpoint.
@@ -959,17 +997,50 @@ buy_heuristic:
   #   HISTORY: shipped 1.5, demoted to 0 on 2026-07-15 because it is BACKTEST-BLIND and its rationale
   #   (price-only CAGR misses reinvested dividends) was tested DIRECTLY by the use_adjusted_close
   #   total-return probe, which came back NO-EDGE (reverted false 2026-06-28).
-  #   WHY IT COMES BACK, AND WHY WITHOUT A RECEIPT: `backtest_quote` cannot reconstruct as-of dividends
-  #   (module header, commands/backtest.rs), so NO walk-forward run can grade this term at ANY weight —
-  #   the usual "re-validate, both OOS halves positive" receipt is not pending here, it is IMPOSSIBLE.
-  #   dividend_weight is not even in the growth_knobs ablation list. It therefore ships as an explicitly
-  #   blind judgment lever, the same class as quality_weight:0.15 and nupl_boost_ceiling, and is sized
-  #   accordingly: 0.5 peaks the term at +2.25 (6% yield × cap), comfortably under quality's +6 blind
-  #   ceiling and far under the old 1.5's +9 — that magnitude is exactly what got it cut.
-  #   HONEST SIZING: the TAX scaling below is worth ~0.06 pts on a 5–19 pt score at a 4% yield. Reviving
-  #   the term at all is the ranking change; the tax rule rides along as a correctness fix, not an edge
-  #   claim. Acceptance is an eyeballed top-N, not a backtest. Set 0.0 to go back to the 2026-07-15 state.
-  #   Read by BOTH lanes.
+  #   (#53) RETRACTION 2026-08-07 — "IMPOSSIBLE" WAS FALSE, AND THE TERM IS NOW MEASURED.
+  #   This block used to say a walk-forward grade was not merely pending but IMPOSSIBLE, because
+  #   `backtest_quote` could not reconstruct as-of dividends, and it cited that to ship the term ungraded
+  #   and to keep it out of the growth ablation list. It was never true. `Chart.divs` carries
+  #   (ex-date, amount) for the whole history and arrives in the SAME response as the closes — it was
+  #   simply dropped on the floor at the fetch destructure in commands/backtest.rs. `dividends_in_window`
+  #   and `dividend_sums` already existed and already did the work. Plumbing it cost one extra parameter
+  #   on `backtest_quote`, and look-ahead safety is STRUCTURAL: that function already slices
+  #   `&dates[..=as_of]` and `dividends_in_window` anchors on `*dates.last()`, so an as-of yield cannot
+  #   reach a future ex-date by construction. "Impossible" should have been read as "unplumbed" the first
+  #   time; the price of not checking was a scoring term shipping on argument alone.
+  #   THE MEASUREMENT (walk-forward, wide universe of 4982 tickers, `dividend_weight` 0.0 vs the shipped
+  #   0.5, both arms on THIS config, differing in that one value):
+  #                        20y (0.0 / 0.5)          8y (0.0 / 0.5)
+  #     top-3 excess       +6.5 (med +6.6)  BOTH    +8.1 (med +8.5)  BOTH
+  #     win of windows     97% of 39        BOTH    82% of 62        BOTH
+  #     worst window       -0.5             BOTH    -9.2             BOTH
+  #     OOS early/late     +5.0/+7.9        BOTH    +7.6/+8.7        BOTH
+  #     rank-1 h2h guard   76% (16/21)      BOTH    63% (24/38)      BOTH
+  #   Not "inside the noise band" — IDENTICAL, field for field, at both SHIP RULE v2 primary horizons.
+  #   The term does not change which names reach the basket the screen footer quotes.
+  #   IT IS LIVE, NOT INERT — the distinction that had to be settled before this could be written, since
+  #   an unplumbed term and a useless one both print "no change". The `dividend_weight` CURVE separates
+  #   (20y growth-lane edge +451.4 at 0.0 vs +459.5 at 0.5), so scores genuinely move; the movement is
+  #   just all in the TAIL, below the top-3 anyone buys. Before the plumbing that curve was necessarily
+  #   FLAT — no divs meant a 0% yield for every name, so every weight scored identically. It no longer is.
+  #   And the tail movement FLIPS SIGN across horizons: the `growth_dividend` ablation (term OFF) reads
+  #   edge -8.1 at 20y (term helps), +3.2 at 12y and +4.3 at 8y (term hurts), against a 20y bootstrap band
+  #   of [+210.6 … +703.8]. Spearman moves +0.00 at all three. That is SHIP RULE v2's TIE arm: the
+  #   horizons disagree -> UNRESOLVED -> nothing ships.
+  #   VERDICT: 0.5 STANDS — not because it won, but because it provably costs NOTHING on the graded metric
+  #   while keeping the after-tax yield visible in the ranking a human reads. It has moved from a BLIND
+  #   judgment lever to a MEASURED-INERT one. DO NOT RE-PLUMB THIS: the answer is on file, and the next
+  #   person to notice "dividends are missing from the backtest" should read this block instead of the
+  #   module header they will otherwise trust.
+  #   STILL UNGRADED, and NOT fixable by this plumbing: the backtest carries no `domicile`, so `tax_keep`
+  #   takes the non-EU arm for every ticker. The EU-vs-other englobamento split below is therefore still
+  #   an untested judgment call — what got graded here is `dividend_weight`, not the tax rule.
+  #   ALSO BY DESIGN: realized returns stay price-only on BOTH legs, so the excess vs ^GSPC stays
+  #   apples-to-apples. This measured whether yield helps SELECT, never total-return performance.
+  #   SIZING, unchanged: 0.5 peaks the term at +2.25 (6% yield × cap), under quality's +6 blind ceiling
+  #   and far under the old 1.5's +9 — that magnitude is exactly what got it cut. The TAX scaling below is
+  #   worth ~0.06 pts on a 5-19 pt score at a 4% yield. Read by BOTH lanes.
+  #   Set 0.0 to go back to the 2026-07-15 state; the backtest says the top-3 will not notice.
   dividend_weight: 0.5           # LIVE: reward per % of trailing-1Y yield, AFTER the tax keep-rate (0 = OFF)
   dividend_cap: 6.0              # LIVE: cap the yield % fed in — applied BEFORE the keep-rate (see below)
 
