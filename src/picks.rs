@@ -1403,6 +1403,71 @@ pub fn pin_dropped(quote: &Quote, tuning: &BuyHeuristic) -> Option<PinDrop> {
     Some(PinDrop { broke, why, still, pinned: leg(tuning)?, free: leg(&free_t)? })
 }
 
+/// WHY this name is not in the ranking, in one line, ALWAYS — the display-layer total function over
+/// `gate_failures`' three outcomes. `None` (structural refusal / no 1Y leg) becomes the refusal word
+/// instead of a silent skip, which is the whole point: that bucket is the one a reader can never
+/// otherwise see, and "it printed nothing" is indistinguishable from "the tool has no idea".
+///
+/// Deliberately a WRAPPER and not a change to `gate_failures`' contract. Folding refusals into the
+/// fail vec was the obvious move and is wrong: `sole_blocking_gates_are_pinned` (backtest.rs) pins the
+/// set of gates that sole-block anything, and every refused name would arrive as a new sole-blocker —
+/// breaking a measured receipt to improve a footer. The funnel already attributes that bucket in
+/// aggregate (screen.rs, `refusal_reason(q).unwrap_or("no-1Y")`); this names it per-quote.
+pub fn unranked_reason(quote: &Quote, tuning: &BuyHeuristic) -> String {
+    match gate_failures(quote, tuning) {
+        // `refusal_reason` covers three of the four ways out; the fourth (missing 1Y leg) is the only
+        // remaining `?`-bail in `gate_failures`, so this fallback is exact rather than a guess.
+        None => refusal_reason(quote).unwrap_or("no 1Y history").to_string(),
+        Some(f) if f.is_empty() => "clears every gate".to_string(),
+        Some(f) => f.iter().map(|(g, w, _)| format!("{g}: {w}")).collect::<Vec<_>>().join("; "),
+    }
+}
+
+/// (#55) A name with a PROVEN long record that still didn't rank: (long CAGR %/yr, that leg's years,
+/// every gate it fails). `None` = it ranks, it has no long record, or its record doesn't clear the
+/// lane's own CAGR floor.
+///
+/// Exists because AMZN can fail two gates and be named by NOTHING. Every other tail in this file keys
+/// on a shape it doesn't have: the funnel names only SOLE-blockers (AMZN is counted in the `cagr` and
+/// `peg` rows and named in neither), near-miss needs exactly one failing gate, the two-gate tail needs
+/// BOTH close (PEG 3.37 against a 1.60 ceiling is gross, not close), the down-year tail needs a sole
+/// `1Y+` blocker, and the leg-floor tails need that specific floor to fire. So the one cohort a reader
+/// actually asks about — great record, gone anyway — was reachable only by `--explain TICKER`, i.e.
+/// only if you already suspected the name.
+///
+/// The cut is the RECORD, not size or turnover. A turnover cut ranks by fame: it prints the same
+/// mega-caps every run whether or not any came close, and carries no information after the first read.
+/// A record cut answers the question being asked, is self-limiting, and goes quiet as names decay.
+///
+/// Measured UNPINNED on purpose (`fixed_cagr_years: 0`), reusing `pin_dropped`'s counterfactual: the
+/// pin is exactly what makes a long-record name look ordinary, so measuring the record through the pin
+/// would let the pin hide the names this list exists to surface. Compared against the SAME per-class
+/// floor `gate_failures` uses, so "proven" here means the lane's own definition of proven, not a
+/// second opinion invented for a footer.
+pub const PROVEN_MIN_YEARS: f64 = 5.0;
+
+pub fn proven_but_unranked(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f64, f64, String)> {
+    let fails = gate_failures(quote, tuning)?; // refusals stay out: a 3x ETF is excluded on purpose
+    if fails.is_empty() {
+        return None; // ranks -> not missing
+    }
+    let free_t = BuyHeuristic { fixed_cagr_years: 0, ..tuning.clone() };
+    let (cum, years) = long_leg_fixed(quote, 0, tuning.growth_min_leg_years)?; // no long leg -> nothing proven
+    // THIS BLOCK DEFINES ITS OWN "LONG", and must: `growth_min_leg_years` is a rank-side knob a user is
+    // free to zero (the live overlay does), and at 0 `long_leg` hands back a 1Y rung — which turned the
+    // first live run into a list of 900%/yr one-year coins under a header promising a proven record.
+    // `.max` rather than a bare 5.0 so raising the knob still tightens this list.
+    if years < tuning.growth_min_leg_years.max(PROVEN_MIN_YEARS) {
+        return None;
+    }
+    let cagr = long_cagr_from(quote, &free_t, cum, years);
+    let floor = if is_currency_quoted(&quote.ticker) { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
+    if cagr < floor {
+        return None; // no proven record -> the gates are simply right about it, nothing to explain
+    }
+    Some((cagr, years, unranked_reason(quote, tuning)))
+}
+
 /// Every name a given long-leg floor rejects, whatever ELSE it also fails — the loosest tail in the
 /// file, and the only view of a gate that sole-blocks nobody. `tag` is a `long_leg_floors` tag ("5Y+",
 /// "8Y+"); the perf label is the tag without its `+`. Returns (long CAGR %/yr, that gate's own "why",
@@ -1683,19 +1748,23 @@ pub fn bridge_hint_lines(subjects: &[&Quote], pool: &[Quote], tuning: &BuyHeuris
 }
 
 /// Per-name "TICKER  gate: why; gate: why" lines for a gate-review footer: every name in `quotes`
-/// that FAILS at least one growth gate (not-assessable names — leveraged/stablecoin/missing data —
-/// are skipped). Shared by `check` (the whole watchlist) and `screen` (its pinned names, which
+/// that is NOT in the ranking — one that fails a growth gate, or one that isn't assessable at all
+/// (leveraged/stablecoin/missing data, named by `unranked_reason` rather than skipped, as they were
+/// through round 54). Shared by `check` (the whole watchlist) and `screen` (its pinned names, which
 /// bypass the score trim and print as 0.0 — this says which gate they tripped). Empty vec -> the
 /// caller prints no block, so clean tables stay clean.
 pub fn gate_review_lines(quotes: &[&Quote], tuning: &BuyHeuristic, ticker_w: usize) -> Vec<String> {
     quotes
         .iter()
         .filter_map(|q| {
-            let fails = gate_failures(q, tuning)?;
-            if fails.is_empty() {
+            // (#55) refusals used to `?`-skip out of here, so a pinned name that turned leveraged or lost
+            // its turnover feed printed NOTHING — the one bucket a review footer most needs to name, since
+            // there is no gate to look up and no knob to loosen. `unranked_reason` gives it the structural
+            // word instead. Only a name that CLEARS every gate still stays silent, so clean tables stay clean.
+            let fails = gate_failures(q, tuning);
+            if fails.as_ref().is_some_and(|f| f.is_empty()) {
                 return None;
             }
-            let why = fails.iter().map(|(gate, why, _)| format!("{gate}: {why}")).collect::<Vec<_>>().join("; ");
             // (N) the third tuple field is `is_close`, which this block used to compute and DISCARD — so a
             // pinned name one notch outside a fence and one nowhere near it read identically, and the
             // actionable half of this footer was invisible. ALL failing gates must be close: a name that is
@@ -1707,14 +1776,13 @@ pub fn gate_review_lines(quotes: &[&Quote], tuning: &BuyHeuristic, ticker_w: usi
             // never clears a 14%/yr momentum bar) — without this tag the same three pinned funds read
             // as unresolved warnings every single run. It WINS the slot over `narrow`: on the one cohort
             // whose gates never apply, "loosen if wanted" is advice pointing at the wrong lane.
-            let tag = if core::hold_suitable(q) {
-                "  (hold-core H — growth gates don't apply)"
-            } else if fails.iter().all(|(.., close)| *close) {
-                "  (narrow — loosen if wanted)"
-            } else {
-                ""
+            let tag = match fails.as_deref() {
+                None => "", // structural refusal: no gate was reached, so neither tag can be true
+                Some(_) if core::hold_suitable(q) => "  (hold-core H — growth gates don't apply)",
+                Some(f) if f.iter().all(|(.., close)| *close) => "  (narrow — loosen if wanted)",
+                Some(_) => "",
             };
-            Some(format!("  {:<ticker_w$} {}{tag}", q.ticker, why))
+            Some(format!("  {:<ticker_w$} {}{tag}", q.ticker, unranked_reason(q, tuning)))
         })
         .collect()
 }
@@ -5392,6 +5460,70 @@ mod tests {
         let d = pin_dropped(&q, &both).expect("a pin-broken fence must still list, even when another fence also fails");
         assert!(d.broke.contains(&"cagr") && !d.broke.contains(&"range"), "only the pin's own damage is its bill, got {:?}", d.broke);
         assert!(d.still.contains(&"range"), "the fence that fails at 0 too must be reported, got {:?}", d.still);
+    }
+
+    /// (#55) `proven_but_unranked` must name the cohort NO other tail can reach: a great long record,
+    /// two failing gates, one of them gross. That shape is invisible to the funnel (names sole-blockers
+    /// only), to near-miss (one gate), to the two-gate tail (both must be close) and to the leg-floor
+    /// tails — which is how AMZN went missing with the tool knowing exactly why. Asserted here along
+    /// with the two ways to make the list useless: admitting names with no record, and letting the CAGR
+    /// pin shrink it. Also pins `unranked_reason`'s total-ness, since a blank reason is the original bug.
+    #[test]
+    fn proven_but_unranked_names_the_records_no_other_tail_reaches() {
+        let mut q = gate_fixture();
+        // the AMZN shape: strong over 20Y, ordinary over the pinned 8Y window
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 300.0), ("20Y", 20000.0)]);
+        let free_cagr = core::cagr(20000.0, 20.0); // ~30.0%/yr — the record, measured unpinned
+        let pinned_cagr = core::cagr(300.0, 8.0); // ~18.9%/yr — what the pin sees instead
+
+        // a floor between the two legs, so the name fails `cagr` under the pin, plus a GROSS second
+        // fence — the combination every existing tail declines to print.
+        let t = BuyHeuristic {
+            fixed_cagr_years: 8,
+            growth_min_cagr: (pinned_cagr + free_cagr) / 2.0,
+            growth_min_range_pct: q.range_pct + 40.0,
+            ..BuyHeuristic::default()
+        };
+        assert!(growth_score(&q, &t).is_none(), "fixture must actually be missing from the ranking");
+        let (cagr, years, why) = proven_but_unranked(&q, &t).expect("a proven record that didn't rank must be named");
+        assert!((cagr - free_cagr).abs() < 1e-6 && years == 20.0, "record must be the UNPINNED longest leg, got {cagr} on {years}Y");
+        assert!(why.contains("cagr") && why.contains("range"), "every failing gate must be named, got {why}");
+
+        // the pin must not be able to shrink this list: same name, same floor, no pin -> still listed
+        // (it now fails only `range`). If this ever regresses, the block goes quiet exactly when the
+        // user has turned on the knob that makes long records look ordinary.
+        let unpinned = BuyHeuristic { fixed_cagr_years: 0, ..t.clone() };
+        assert!(proven_but_unranked(&q, &unpinned).is_some(), "the pin must not gate membership of this list");
+
+        // no proven record -> not this list's business, however many gates it fails
+        let mut weak = gate_fixture();
+        weak.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 10.0)]); // ~1.9%/yr
+        assert!(proven_but_unranked(&weak, &t).is_none(), "a weak record failing gates is the gates being right");
+
+        // SHORT record, spectacular number: the live-config shape (`growth_min_leg_years: 0` admits a 2Y
+        // rung) that filled the first run with 900%/yr one-year coins. A huge CAGR over 2 years is not a
+        // proven record, and this block's own floor — not the rank-side knob — has to be what says so.
+        let mut young = gate_fixture();
+        young.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("2Y", 900.0)]); // ~216%/yr over 2Y
+        let loose_leg = BuyHeuristic { growth_min_leg_years: 0.0, ..t.clone() };
+        assert!(growth_score(&young, &loose_leg).is_none(), "fixture must be unranked, else this proves nothing");
+        assert!(proven_but_unranked(&young, &loose_leg).is_none(), "a 2Y rung is not a proven long record at any CAGR");
+        // and the floor tracks a STRICTER knob rather than pinning itself at 5
+        let strict_leg = BuyHeuristic { growth_min_leg_years: 10.0, ..unpinned.clone() };
+        assert!(proven_but_unranked(&q, &strict_leg).is_some(), "a 20Y leg still clears a 10Y floor");
+        // ranks -> nothing to explain
+        let clean = BuyHeuristic { growth_min_cagr: 0.0, growth_min_range_pct: 0.0, ..t.clone() };
+        assert!(growth_score(&q, &clean).is_some() && proven_but_unranked(&q, &clean).is_none(), "a ranked name is not missing");
+
+        // `unranked_reason` is TOTAL: every way out of `gate_failures` gets a word, including the two
+        // that return None and used to print nothing at all.
+        let mut lev = gate_fixture();
+        lev.name = "Direxion Daily 3X Bull".into();
+        assert_eq!(unranked_reason(&lev, &t), "leveraged", "a structural refusal must say which one");
+        let mut no1y = gate_fixture();
+        no1y.perf = legs(&[("1M", 2.0), ("5Y", 200.0)]); // long leg present, 1Y absent -> the other None
+        assert_eq!(unranked_reason(&no1y, &t), "no 1Y history");
+        assert_eq!(unranked_reason(&q, &clean), "clears every gate", "a ranked name still gets a sentence");
     }
 
     /// (QA) GATE FENCES, equity lane. The per-knob stress grid (2026-07-30) settled that the GATES, not

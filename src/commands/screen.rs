@@ -1950,6 +1950,43 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (#55) PROVEN-RECORD tail: names whose long CAGR clears the lane's own floor and which still did
+    // not rank. The one cohort a reader actually asks about ("great record, where did it go?") and the
+    // only one no other block could name: the funnel names SOLE-blockers, near-miss needs exactly one
+    // gate, the two-gate tail needs both close, the down-year tail needs a sole `1Y+`, and the leg-floor
+    // tails need their own floor to fire. AMZN at 8 fails `cagr` AND `peg`, with PEG 3.37 against a 1.60
+    // ceiling — gross, not narrow — so it is counted in two funnel rows and named in none of them.
+    // Printed after the pin block because the pin's bill is the more specific claim about the same names.
+    {
+        const PROVEN_CAP: usize = 20;
+        let mut proven: Vec<(&Quote, f64, f64, String)> = quotes
+            .iter()
+            // Same reason as the pin block above for keeping `settings.tickers` in: the gates apply to a
+            // pinned name too, so a watchlist compounder scoring None vanishes exactly like any other.
+            .filter_map(|q| picks::proven_but_unranked(q, &settings.buy_heuristic).map(|(c, y, w)| (q, c, y, w)))
+            .collect();
+        if !proven.is_empty() {
+            // LONGEST record first, best CAGR within it. Sorting by CAGR alone was measured and dropped:
+            // it buries the 20Y names under 5Y momentum (live 2026-08-07, the whole top of the list was
+            // 5Y coins and a 42%/yr 5Y run), and the longest record is precisely the strongest version of
+            // the claim this block makes. The rungs are few (20/10/8/5), so this reads as cohorts.
+            proven.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| b.1.total_cmp(&a.1)).then_with(|| a.0.ticker.cmp(&b.0.ticker)));
+            let more = if proven.len() > PROVEN_CAP { format!(" (top {PROVEN_CAP} of {})", proven.len()) } else { String::new() };
+            println!("\nDidn't rank despite a proven long record (≥{:.0}Y leg){more}:", picks::PROVEN_MIN_YEARS);
+            for (q, cagr, years, why) in proven.iter().take(PROVEN_CAP) {
+                println!("  {:<8} {:<26.26} {cagr:>6.1}%/yr on {years:.0}Y   {why}", q.ticker, q.name);
+            }
+            // Two claims worth stating, both load-bearing. The record is measured UNPINNED, so a reader
+            // running a pin can trust that the pin did not quietly shrink this list. And a name absent
+            // from EVERY block above is not unexplained — `--explain` has always answered per name; this
+            // tail only removes the requirement that you suspect the name first.
+            println!(
+                "  (record measured on the longest leg regardless of `fixed_cagr_years`, so the pin cannot hide a name\n   \
+                 from this list. For any other name: `screen --explain TICKER`.)"
+            );
+        }
+    }
+
     // (round 56) holdings-overlap footer: the buy candidates are the ranked ETF rows + the pinned
     // funds + the CORE shortlist, and "different" sector funds routinely hold the same top-10
     // mega-caps — invisible from the names. Payload fetched above (it now also feeds the ETF PEG trim,

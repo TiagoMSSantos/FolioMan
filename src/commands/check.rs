@@ -130,7 +130,9 @@ pub async fn run(args: Vec<String>) {
 
     // held-name gate review: a watchlist name that would no longer clear today's growth gates is an
     // exit-review candidate — the screen would never surface it again, so `check` has to say so.
-    // Not-assessable names (leveraged / stablecoin / missing data) are skipped, not flagged.
+    // (#55) Not-assessable names (leveraged / stablecoin / missing data) are flagged too, with the
+    // structural word in place of a gate — a held name whose turnover feed died is the loudest case
+    // here, and it used to be the one that printed nothing at all.
     let all: Vec<&core::Quote> = quotes.iter().collect();
     let flagged = picks::gate_review_lines(&all, &settings.buy_heuristic, ticker_w);
     if !flagged.is_empty() {
