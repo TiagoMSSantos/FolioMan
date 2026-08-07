@@ -177,6 +177,9 @@ jobs:
         # `--test '*'` also picks up backtest_edge_holds, which no longer carries #[ignore]. It
         # green-skips HERE — debug profile, and a runner has no persisted .long_history_cache.json —
         # which is what keeps this job inside 25 min. The backtest-gate job below forces it to run.
+        # The same glob is what runs backtest_fixture (the frozen-data golden pin, ~24s in debug, and
+        # the only end-to-end net over real data). Do NOT replace this glob with an explicit list: a
+        # new tests/*.rs file joins no job on its own, so the glob is the thing that keeps them wired.
         run: FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo test --locked --test '*' -- --nocapture
 
   # Walk-forward gate. Runs the REAL `backtest {20,12,8} universe` over the live universe and checks the

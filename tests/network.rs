@@ -383,7 +383,14 @@ fn backtest_edge_holds() {
 
     /// One horizon, end to end. `true` = it was actually graded; `false` = it skipped (environmental).
     /// Every skip path returns green, per this file's skip-on-throttle contract.
-    fn grade_horizon(years: i64) -> bool {
+    ///
+    /// `forced` is the `FOLIOMAN_BACKTEST_GATE` read above, threaded in because this is a nested `fn`
+    /// and cannot capture it. It separates the two skip families: an ENVIRONMENTAL skip (throttle,
+    /// cold cache, spawn failure) stays green even in CI, but a STRUCTURAL skip — the run completed
+    /// and a block the gate greps for simply isn't there — is a report change that silently disarms
+    /// half the gate, so under the force flag (i.e. CI) it panics instead of printing a note nobody
+    /// reads. A laptop still skips green on all of them.
+    fn grade_horizon(years: i64, forced: bool) -> bool {
         let out = match std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
             .args(["backtest", &years.to_string(), "universe"])
             // pin the child to the committed fixture. Without it a local run scores with the gitignored
@@ -427,8 +434,32 @@ fn backtest_edge_holds() {
                 return false;
             }
         };
-        // first "edge <n> pts" inside the block is the top-vs-bottom-half validated edge.
-        let edge = num_after(growth, "edge").expect("a completed GROWTH run prints its edge");
+        // (#57) HEALTH GATE, before any assert. `tickers:` above counts the universe LIST, not the
+        // quotes that actually RESOLVED, so a throttled run clears it with 500+ names and still gates
+        // in almost nothing. Measured on a deliberately network-starved wide run: it passed the
+        // `tickers:` guard, printed "only 1 windows passed this lane's gates", and `report_lane` then
+        // printed no headline at all — so the `edge` grep below silently latched onto a number from a
+        // LATER section and the gate graded garbage. The lane's own scored count is the honest signal.
+        //
+        // This skips GREEN even under `forced`, unlike the structural panics below: an outage really is
+        // the environmental case this file's skip-on-throttle contract exists for. What the panics below
+        // catch is the opposite — a HEALTHY run whose report shape changed.
+        const MIN_SCORED: f64 = 20.0; // report_lane itself refuses under 4; a healthy wide run scores hundreds
+        match num_after(growth, "windows scored:") {
+            Some(n) if n >= MIN_SCORED => {}
+            other => {
+                eprintln!(
+                    "backtest-gate {years}y SKIPPED — GROWTH lane scored {} windows (<{MIN_SCORED:.0}). The \
+                     universe list resolved but hardly anything gated in: thin data, not a verdict",
+                    other.map_or_else(|| "no".to_string(), |n| format!("{n:.0}"))
+                );
+                return false;
+            }
+        }
+        // the top-vs-bottom-half validated edge. Anchored on the headline's own `->  edge`, not a bare
+        // "edge": the word recurs in the ablation, the era table and the entry-state block, so a bare
+        // marker reads whichever one happens to come first if the headline is ever missing.
+        let edge = num_after(growth, "->  edge").expect("a completed GROWTH run prints its headline edge");
         assert!(
             edge > 0.0,
             "{years}y: GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy baseline ~+117 at 12y) — a \
@@ -450,17 +481,54 @@ fn backtest_edge_holds() {
                 );
                 eprintln!("backtest-gate {years}y OK — GROWTH edge {edge:+.1} pts, top-3 excess {x:+.1} pts/yr");
             }
-            // no assert: a run can complete the GROWTH lane and still print no held-book block (too few
-            // gated picks with a benchmark window). That is a thin sample, not a collapse.
+            // A run CAN complete the GROWTH lane and print no held-book block — too few gated picks
+            // with a ^GSPC window. That is exactly what the health gate above now filters out, and it
+            // is why this panic is safe to add and would NOT have been before it: past that gate the
+            // lane scored >= MIN_SCORED windows, so the absence of the row is not thinness, it is a
+            // renamed or moved row that just switched off the half of the gate SHIP RULE v2 votes on.
+            // `tests/backtest_fixture.rs` pins this string offline so a rename reds there first; this
+            // is the backstop for the case that pin is bypassed.
+            None if forced => panic!(
+                "{years}y: GROWTH completed (edge {edge:+.1}) but NO `top-3 ` held-book row parsed. Under \
+                 FOLIOMAN_BACKTEST_GATE this is a report-format regression, not a thin sample: the top-3 \
+                 excess assert — the metric SHIP RULE v2 grades and the screen footer quotes — was skipped"
+            ),
             None => eprintln!("backtest-gate {years}y OK — GROWTH edge {edge:+.1} pts (no top-3 held-book row parsed)"),
         }
+        // (#57) null model: the shipped tuning vs the SAME code with the tuning off. Assertable where
+        // the raw edge is not — both arms score the same samples over the same window, so market drift
+        // cancels out of the delta. A knob edit that ranks no better than no tuning at all leaves the
+        // `edge > 0` check above perfectly green.
+        match num_after(growth, "tuning adds") {
+            Some(lift) => {
+                assert!(
+                    lift > 0.0,
+                    "{years}y: the shipped tuning adds only {lift:+.1} pts over BuyHeuristic::default() — no \
+                     tuning at all ranks as well or better. Lane edge {edge:+.1} still passes the collapse \
+                     check, which is exactly why this A/B exists. Re-tune, or revert the knob change."
+                );
+                eprintln!("backtest-gate {years}y null-model lift {lift:+.1} pts");
+            }
+            None if forced => panic!(
+                "{years}y: GROWTH completed but printed no `tuning adds` line — the null-model A/B was skipped"
+            ),
+            None => eprintln!("backtest-gate {years}y — no null-model line parsed"),
+        }
         // whole out-of-sample backwards (BOTH halves negative) = the edge doesn't generalize -> collapse.
-        if let (Some(early), Some(late)) = (num_after(growth, "early rho"), num_after(growth, "late rho")) {
-            assert!(
-                !(early < 0.0 && late < 0.0),
-                "{years}y: both out-of-sample halves negative (early {early:+.2}, late {late:+.2}) — edge is in-sample only"
-            );
-            eprintln!("backtest-gate {years}y OOS early {early:+.2} / late {late:+.2}");
+        match (num_after(growth, "early rho"), num_after(growth, "late rho")) {
+            (Some(early), Some(late)) => {
+                assert!(
+                    !(early < 0.0 && late < 0.0),
+                    "{years}y: both out-of-sample halves negative (early {early:+.2}, late {late:+.2}) — edge is in-sample only"
+                );
+                eprintln!("backtest-gate {years}y OOS early {early:+.2} / late {late:+.2}");
+            }
+            // same reasoning as the top-3 arm: the split is unconditional once >=4 windows scored, so
+            // in CI a missing rho is a renamed line disarming the generalization check, not thin data.
+            _ if forced => panic!(
+                "{years}y: GROWTH completed but printed no `early rho`/`late rho` — the out-of-sample check was skipped"
+            ),
+            _ => {}
         }
         // (#29) re-probe WARNING for the shipped hard gates: each GATE SWEEP row prints the mean forward
         // peer-relative return of the cohort that gate excludes. All three shipped NEGATIVE-or-noise
@@ -492,8 +560,19 @@ fn backtest_edge_holds() {
     // The first run pays the wide fetch, the other two read it off disk (~127s each). Three horizons
     // cost about +4 min, not 3x. Do NOT "optimize" this back to a single run, and do NOT add a 5y rung:
     // below 8 the run switches to daily cadence and pays a SECOND full fetch.
-    let graded = [20, 12, 8].into_iter().filter(|y| grade_horizon(*y)).count();
+    let graded = [20, 12, 8].into_iter().filter(|y| grade_horizon(*y, forced)).count();
     if graded == 0 {
+        // (#57) CI reaches here only if all three horizons skipped, and under the force flag every
+        // environmental skip has already been ruled out except a genuine outage. Printing a note and
+        // exiting 0 is the failure this file's own header blames for network-smoke silently rotting
+        // twice: a month of throttling and the nightly gate stops gating with a green check mark.
+        assert!(
+            !forced,
+            "backtest-gate: all 3 horizons skipped under FOLIOMAN_BACKTEST_GATE — NOTHING was gated. The \
+             force flag exists so CI cannot skip; reaching here means the run itself is broken or the \
+             data is unusable (spawn failure, nonzero exit, <500 tickers, or a GROWTH lane too thin to \
+             score). Read the per-horizon SKIPPED lines above — they say which."
+        );
         eprintln!("backtest-gate SKIPPED — every horizon skipped (throttle/cold cache); NOTHING was gated this run");
     } else {
         eprintln!("backtest-gate DONE — {graded}/3 horizons graded on SHIP RULE v2 (lane edge + top-3 held book + OOS)");

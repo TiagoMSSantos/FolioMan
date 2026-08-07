@@ -53,17 +53,44 @@ pub fn client_long() -> Client {
         .expect("failed to build order HTTP client")
 }
 
+/// (#56) HARD OFFLINE SWITCH. `FOLIOMAN_OFFLINE=1` makes every outbound helper below return `None`
+/// without opening a socket, and makes the long-history disk cache immortal and read-only (see
+/// `long_cache_fresh` / `long_cache_save`). Exists so the frozen-data backtest pin is deterministic
+/// BY CONSTRUCTION rather than by luck: a fixture ticker missing from the committed cache must show
+/// up as a changed sample count, never as a silent live fetch that quietly re-baselines the golden.
+///
+/// Guarded HERE, at the three helpers, rather than at the ~dozen call sites — every remote read in
+/// the project funnels through one of them, so this is both the smaller diff and the stronger claim.
+/// A `None` from these is already the fetch-failed path every caller handles, so nothing downstream
+/// needs to learn a new state.
+///
+/// Read once: the variable cannot change mid-process, and a per-call `var()` would sit inside the
+/// wide fetch's hot loop.
+pub fn offline() -> bool {
+    static OFFLINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFFLINE.get_or_init(|| std::env::var("FOLIOMAN_OFFLINE").is_ok_and(|v| !v.is_empty()))
+}
+
 async fn get_json(client: &Client, url: &str) -> Option<Value> {
+    if offline() {
+        return None;
+    }
     throttle().await;
     client.get(url).send().await.ok()?.json::<Value>().await.ok()
 }
 
 async fn get_text(client: &Client, url: &str) -> Option<String> {
+    if offline() {
+        return None;
+    }
     throttle().await;
     client.get(url).send().await.ok()?.text().await.ok()
 }
 
 async fn post_json(client: &Client, url: &str, body: &Value) -> Option<Value> {
+    if offline() {
+        return None;
+    }
     throttle().await;
     client.post(url).json(body).send().await.ok()?.json::<Value>().await.ok()
 }
@@ -2303,8 +2330,13 @@ fn long_cache_load() -> &'static HashMap<String, (NaiveDate, Value)> {
 }
 
 /// The reuse decision, pure for testability: cached within the TTL -> serve from disk, no refetch.
+///
+/// (#56) OFFLINE makes a present entry immortal. A committed fixture cache is stamped with the date it
+/// was generated, so the TTL would expire it a week later and the frozen-data pin would start trying to
+/// fetch — which `offline()` already blocks, but as an empty result rather than the recorded history.
+/// Only PRESENCE is overridden; a ticker absent from the file is still a miss.
 fn long_cache_fresh(recorded: Option<&NaiveDate>, today: NaiveDate) -> bool {
-    recorded.is_some_and(|d| (today - *d).num_days() <= LONG_CACHE_TTL_DAYS)
+    recorded.is_some_and(|d| offline() || (today - *d).num_days() <= LONG_CACHE_TTL_DAYS)
 }
 
 /// Persist: still-fresh old entries keep their ORIGINAL date (so the TTL actually expires), this
@@ -2314,6 +2346,9 @@ fn long_cache_fresh(recorded: Option<&NaiveDate>, today: NaiveDate) -> bool {
 /// run reads the cache but never contributes to it, so tickers `screen` never touches (the stress
 /// losers, the benchmark) would re-download on every run forever.
 pub fn long_cache_save() {
+    if offline() {
+        return; // (#56) the committed fixture cache is READ-ONLY — a test run must never rewrite it
+    }
     let today = chrono::Local::now().date_naive();
     let new = LONG_CACHE_NEW.lock().unwrap();
     if new.is_empty() && long_cache_load().iter().all(|(_, (d, _))| long_cache_fresh(Some(d), today)) {

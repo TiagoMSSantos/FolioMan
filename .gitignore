@@ -64,5 +64,9 @@ config/settings.yaml
 # tickers whose MAX-monthly history added no bars beyond the daily window (30-day TTL)
 .long_history_skip.json
 .long_history_cache.json
+# ...except the frozen 200-ticker copy. No leading slash above, so that pattern matches at ANY depth
+# and would swallow the fixture too — and an ignored fixture is an unrunnable pin: tests/backtest_fixture.rs
+# is the only end-to-end net over real data, and it must work on a fresh clone and in CI.
+!tests/fixture/.long_history_cache.json
 .holdings_cache.json
 .screen_alerts.log

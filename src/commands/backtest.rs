@@ -2402,7 +2402,13 @@ fn bootstrap_edge_ci(
     lo_p: f64,
     hi_p: f64,
 ) -> Option<(f64, f64)> {
-    let mut buckets: HashMap<i32, Vec<usize>> = HashMap::new();
+    // BTreeMap, not HashMap: the draw below indexes `keys` with the seeded PRNG, so key ORDER is half
+    // the seed. Rust randomizes HashMap iteration per process, which made this band — and the
+    // "STRADDLES 0 -> noise" verdict read off it — differ run to run on identical data, in flat
+    // contradiction of the "reproducible" claim above. Caught by the frozen-data pin
+    // (tests/backtest_fixture.rs), which is the only thing that runs the same data twice.
+    // Same idiom `turnover_frac` below already uses for its own date buckets.
+    let mut buckets: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
     for (i, s) in samples.iter().enumerate() {
         buckets.entry(bucket(s.date)).or_default().push(i);
     }
@@ -2697,6 +2703,21 @@ fn report_lane(
     let wedge = winsor_edge(&scored);
     let wtag = if wedge <= 0.0 && base_edge > 0.0 { "  <- raw edge is an OUTLIER ARTIFACT (leans on extreme rows)" } else { "" };
     println!("  winsorized edge (1/99 clamp): {wedge:+.1} pts{wtag}");
+    // (#57) NULL MODEL: the same code with the tuning switched off — `BuyHeuristic::default()`, the
+    // deliberately-neutral code defaults (growth_min_cagr 8.0, every PEG/maxdd/vol cap 0.0 = off).
+    // The raw edge above cannot be asserted against a fixed threshold because it moves with the market;
+    // this DELTA can, because both arms score the SAME samples over the SAME window, so regime drift
+    // cancels out of the difference. A shipped tuning that ranks no better than no tuning is a
+    // regression the nightly gate's `edge > 0` collapse check reads as perfectly green.
+    // Note this is a fair fight, not the ablation: the null arm re-applies its OWN gates (looser, so
+    // more rows), because the gates ARE part of the tuning being graded.
+    let (null_rho, null_edge) = lane_metrics(samples, scorer, &BuyHeuristic::default());
+    let lift = base_edge - null_edge;
+    let ltag = if lift <= 0.0 { "  <- the tuning is NOT EARNING ITS KEEP" } else { "" };
+    println!(
+        "  vs null model (tuning off): rho {}  edge {null_edge:+.1} pts  ->  tuning adds {lift:+.1} pts{ltag}",
+        null_rho.map_or("n/a".to_string(), |v| format!("{v:+.2}"))
+    );
 
     // out-of-sample early vs late (scored is date-ordered)
     let mid = scored.len() / 2;
