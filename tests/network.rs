@@ -312,11 +312,16 @@ async fn euribor_parses() {
     assert!((-2.0..10.0).contains(&rate), "implausible 3M Euribor: {rate}%");
 }
 
-/// Walk-forward regime gate. Shells `backtest 12 universe` over the LIVE universe and asserts the
-/// committed default tuning still yields a POSITIVE validated edge. Same skip-vs-fail contract as the
-/// probes above: a throttle (spawn error / nonzero exit / too-few-tickers) SKIPS green; only a genuine
-/// COLLAPSE (GROWTH edge <= 0, or BOTH out-of-sample halves negative) FAILS. It scores with the real
-/// tuning mirrored into ci-settings.yaml's `buy_heuristic`.
+/// Walk-forward regime gate. Shells `backtest {20,12,8} universe` over the LIVE universe and asserts
+/// the committed default tuning still yields a POSITIVE validated edge AND a positive top-3 held book
+/// at each horizon. Same skip-vs-fail contract as the probes above: a throttle (spawn error / nonzero
+/// exit / too-few-tickers) SKIPS green, per horizon; only a genuine COLLAPSE (GROWTH edge <= 0, top-3
+/// excess <= 0, or BOTH out-of-sample halves negative) FAILS. It scores with the real tuning mirrored
+/// into ci-settings.yaml's `buy_heuristic`.
+///
+/// COLLAPSE DETECTOR, NOT A SHIP GATE. Thresholds are `> 0`, never "not worse than last time": market
+/// drift must never redden the build (see the job comment in ci.yml). Deciding whether a knob may move
+/// is SHIP RULE v2's job, and it is graded by a human on a same-day A/B, not here.
 ///
 /// REGIME ONLY. The other half of what this used to cover — "did an edit to the scoring code or a knob
 /// change what the shipped tuning does" — is deterministic and runs offline on every `cargo test` as
@@ -376,81 +381,121 @@ fn backtest_edge_holds() {
         tok.trim_start_matches('+').parse().ok()
     }
 
-    let out = match std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
-        .args(["backtest", "12", "universe"])
-        // pin the child to the committed fixture. Without it a local run scores with the gitignored
-        // config/settings.yaml overlay and the gate grades a PER-MACHINE tuning — green on your knobs
-        // says nothing about what ships. CI already exports this; setting it here makes the two agree.
-        .env("FOLIOMAN_CONFIG", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml"))
-        .output()
-    {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("backtest-gate SKIPPED — could not spawn binary: {e}");
-            return;
+    /// One horizon, end to end. `true` = it was actually graded; `false` = it skipped (environmental).
+    /// Every skip path returns green, per this file's skip-on-throttle contract.
+    fn grade_horizon(years: i64) -> bool {
+        let out = match std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
+            .args(["backtest", &years.to_string(), "universe"])
+            // pin the child to the committed fixture. Without it a local run scores with the gitignored
+            // config/settings.yaml overlay and the gate grades a PER-MACHINE tuning — green on your knobs
+            // says nothing about what ships. CI already exports this; setting it here makes the two agree.
+            .env("FOLIOMAN_CONFIG", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml"))
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("backtest-gate {years}y SKIPPED — could not spawn binary: {e}");
+                return false;
+            }
+        };
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            eprintln!("backtest-gate {years}y SKIPPED — nonzero exit {}; stderr tail: {}", out.status, err.lines().last().unwrap_or(""));
+            return false; // a mid-fetch crash is environmental here; lint/unit/build jobs catch real code breakage offline
         }
-    };
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        eprintln!("backtest-gate SKIPPED — nonzero exit {}; stderr tail: {}", out.status, err.lines().last().unwrap_or(""));
-        return; // a mid-fetch crash is environmental here; lint/unit/build jobs catch real code breakage offline
-    }
-    // search stdout AND stderr — robust to whichever stream the report/diagnostics land on.
-    let stdout = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    // throttle guard: the wide universe fetch resolves ~3000+ tickers healthy; a tiny count means
-    // Yahoo/Börse-Frankfurt throttled most requests -> the de-meaned sample is unreliable -> SKIP.
-    match num_after(&stdout, "tickers:") {
-        Some(n) if n >= 500.0 => {}
-        Some(n) => {
-            eprintln!("backtest-gate SKIPPED — only {n} tickers resolved (throttled/unavailable)");
-            return;
+        // search stdout AND stderr — robust to whichever stream the report/diagnostics land on.
+        let stdout = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        // throttle guard: the wide universe fetch resolves ~3000+ tickers healthy; a tiny count means
+        // Yahoo/Börse-Frankfurt throttled most requests -> the de-meaned sample is unreliable -> SKIP.
+        match num_after(&stdout, "tickers:") {
+            Some(n) if n >= 500.0 => {}
+            Some(n) => {
+                eprintln!("backtest-gate {years}y SKIPPED — only {n} tickers resolved (throttled/unavailable)");
+                return false;
+            }
+            None => {
+                eprintln!("backtest-gate {years}y SKIPPED — no ticker count in output (run didn't complete)");
+                return false;
+            }
         }
-        None => {
-            eprintln!("backtest-gate SKIPPED — no ticker count in output (run didn't complete)");
-            return;
-        }
-    }
-    // isolate the GROWTH lane's report (there's also an ON-SALE block earlier with its own edge).
-    let growth = match stdout.split("── GROWTH").nth(1) {
-        Some(g) => g,
-        None => {
-            eprintln!("backtest-gate SKIPPED — no GROWTH section (run didn't complete)");
-            return;
-        }
-    };
-    // first "edge <n> pts" inside the block is the top-vs-bottom-half validated edge.
-    let edge = num_after(growth, "edge").expect("a completed GROWTH run prints its edge");
-    assert!(
-        edge > 0.0,
-        "GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy baseline ~+117) — a scoring-code \
-         change or a default-tuning edit broke the walk-forward edge; fix it before merging"
-    );
-    // whole out-of-sample backwards (BOTH halves negative) = the edge doesn't generalize -> collapse.
-    if let (Some(early), Some(late)) = (num_after(growth, "early rho"), num_after(growth, "late rho")) {
+        // isolate the GROWTH lane's report (there's also an ON-SALE block earlier with its own edge).
+        // Everything after this marker, so the `vs S&P500` held-book block below is inside it too.
+        let growth = match stdout.split("── GROWTH").nth(1) {
+            Some(g) => g,
+            None => {
+                eprintln!("backtest-gate {years}y SKIPPED — no GROWTH section (run didn't complete)");
+                return false;
+            }
+        };
+        // first "edge <n> pts" inside the block is the top-vs-bottom-half validated edge.
+        let edge = num_after(growth, "edge").expect("a completed GROWTH run prints its edge");
         assert!(
-            !(early < 0.0 && late < 0.0),
-            "both out-of-sample halves negative (early {early:+.2}, late {late:+.2}) — edge is in-sample only"
+            edge > 0.0,
+            "{years}y: GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy baseline ~+117 at 12y) — a \
+             scoring-code change or a default-tuning edit broke the walk-forward edge; fix it before merging"
         );
-        eprintln!("backtest-gate OK — GROWTH edge {edge:+.1} pts, OOS early {early:+.2} / late {late:+.2}");
-    } else {
-        eprintln!("backtest-gate OK — GROWTH edge {edge:+.1} pts (no OOS line parsed)");
-    }
-    // (#29) re-probe WARNING for the shipped hard gates: each GATE SWEEP row prints the mean forward
-    // peer-relative return of the cohort that gate excludes. All three shipped NEGATIVE-or-noise
-    // (stretch −125.1 n=267, maxdd −16.5 n=171, lifetime +30.2 on a noise-level n=10) — a strongly
-    // POSITIVE flip with a real sample means the gate is discarding winners in the current regime and
-    // its threshold should be re-probed (same-batch pair). WARN only, never assert: loosening a gate
-    // is a measured human decision, not a red build.
-    for gate in ["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"] {
-        if let Some(line) = growth.lines().find(|l| l.contains(gate)) {
-            if let (Some(n), Some(mean)) = (num_after(line, "n="), num_after(line, "peer-relative")) {
-                if n >= 30.0 && mean > 20.0 {
-                    eprintln!(
-                        "backtest-gate WARNING — `{gate}` excluded cohort now averages {mean:+.1} pts fwd (n={n:.0}); \
-                         the gate may be discarding winners in this regime — re-probe its threshold before trusting it"
-                    );
+        // (SHIP RULE v2) the metric the screen footer actually quotes. The lane edge above grades the
+        // top-HALF against the bottom-HALF, which can stay healthy while the small book a reader buys
+        // goes backwards — that gap is exactly why the rule moved. Row format:
+        //   top-3  book +13.7%/yr  vs S&P500 +7.2%/yr  ->  excess +6.5 (med +6.6) pts/yr  win 97% of 39 …
+        // `starts_with("top-3 ")` after trimming, so "top-30"/"top-35" can never match it.
+        let t3 = growth.lines().find(|l| l.trim_start().starts_with("top-3 ")).and_then(|l| num_after(l, "excess"));
+        match t3 {
+            Some(x) => {
+                assert!(
+                    x > 0.0,
+                    "{years}y: the TOP-3 held book went NEGATIVE vs the index ({x:+.1} pts/yr) — SHIP RULE v2 \
+                     grades this basket and the screen footer quotes it, so this is a real collapse, not a lane \
+                     statistic. Lane edge was still {edge:+.1}, which is why edge alone is not enough."
+                );
+                eprintln!("backtest-gate {years}y OK — GROWTH edge {edge:+.1} pts, top-3 excess {x:+.1} pts/yr");
+            }
+            // no assert: a run can complete the GROWTH lane and still print no held-book block (too few
+            // gated picks with a benchmark window). That is a thin sample, not a collapse.
+            None => eprintln!("backtest-gate {years}y OK — GROWTH edge {edge:+.1} pts (no top-3 held-book row parsed)"),
+        }
+        // whole out-of-sample backwards (BOTH halves negative) = the edge doesn't generalize -> collapse.
+        if let (Some(early), Some(late)) = (num_after(growth, "early rho"), num_after(growth, "late rho")) {
+            assert!(
+                !(early < 0.0 && late < 0.0),
+                "{years}y: both out-of-sample halves negative (early {early:+.2}, late {late:+.2}) — edge is in-sample only"
+            );
+            eprintln!("backtest-gate {years}y OOS early {early:+.2} / late {late:+.2}");
+        }
+        // (#29) re-probe WARNING for the shipped hard gates: each GATE SWEEP row prints the mean forward
+        // peer-relative return of the cohort that gate excludes. All three shipped NEGATIVE-or-noise
+        // (stretch −125.1 n=267, maxdd −16.5 n=171, lifetime +30.2 on a noise-level n=10) — a strongly
+        // POSITIVE flip with a real sample means the gate is discarding winners in the current regime and
+        // its threshold should be re-probed (same-batch pair). WARN only, never assert: loosening a gate
+        // is a measured human decision, not a red build.
+        for gate in ["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"] {
+            if let Some(line) = growth.lines().find(|l| l.contains(gate)) {
+                if let (Some(n), Some(mean)) = (num_after(line, "n="), num_after(line, "peer-relative")) {
+                    if n >= 30.0 && mean > 20.0 {
+                        eprintln!(
+                            "backtest-gate WARNING {years}y — `{gate}` excluded cohort now averages {mean:+.1} pts fwd (n={n:.0}); \
+                             the gate may be discarding winners in this regime — re-probe its threshold before trusting it"
+                        );
+                    }
                 }
             }
         }
+        true
+    }
+
+    // (SHIP RULE v2, 2026-08-06) ONE horizon is no longer enough. The rule grades top-3 at 20y AND 8y
+    // with 12y as the consistency read, so a gate that only ever ran 12y was guarding a lane the rule
+    // does not vote on. 20 leads: hardest lane, and the horizon the screen footer quotes.
+    //
+    // This is NEARLY FREE, and the reason must not be lost — `monthly = long || years >= 8`
+    // (commands/backtest.rs), so all three take the MONTHLY path and share ONE .long_history_cache.json.
+    // The first run pays the wide fetch, the other two read it off disk (~127s each). Three horizons
+    // cost about +4 min, not 3x. Do NOT "optimize" this back to a single run, and do NOT add a 5y rung:
+    // below 8 the run switches to daily cadence and pays a SECOND full fetch.
+    let graded = [20, 12, 8].into_iter().filter(|y| grade_horizon(*y)).count();
+    if graded == 0 {
+        eprintln!("backtest-gate SKIPPED — every horizon skipped (throttle/cold cache); NOTHING was gated this run");
+    } else {
+        eprintln!("backtest-gate DONE — {graded}/3 horizons graded on SHIP RULE v2 (lane edge + top-3 held book + OOS)");
     }
 }

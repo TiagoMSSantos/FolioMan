@@ -179,18 +179,25 @@ jobs:
         # which is what keeps this job inside 25 min. The backtest-gate job below forces it to run.
         run: FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo test --locked --test '*' -- --nocapture
 
-  # Walk-forward gate. Runs the REAL `backtest 12 universe` over the live universe and checks the shipped
-  # tuning still yields a POSITIVE validated edge. Runs on push/PR + nightly cron + manual dispatch. The
-  # wide fetch is slow and drifts by the day, so this is NON-blocking by design: same skip-vs-fail
-  # contract as the drift nets — a throttle (nonzero exit / <500 tickers resolved) SKIPS green, only a
-  # genuine COLLAPSE (GROWTH edge <= 0, or both out-of-sample halves negative) FAILS. So a red is never
-  # the market, only broken code/tuning. ci-settings.yaml mirrors the real settings.yaml `buy_heuristic`,
-  # so the gate scores with the tuning actually shipped. FOLIOMAN_BACKTEST_GATE=1 means FORCE, not
-  # opt-in: the test skips itself on a debug build or a cold history cache, and a runner is always both,
-  # so without the flag this job would skip too and the gate would quietly stop gating.
+  # Walk-forward gate. Runs the REAL `backtest {20,12,8} universe` over the live universe and checks the
+  # shipped tuning still yields a POSITIVE validated edge AND a positive top-3 held book. Runs on
+  # push/PR + nightly cron + manual dispatch. The wide fetch is slow and drifts by the day, so this is
+  # NON-blocking by design: same skip-vs-fail contract as the drift nets — a throttle (nonzero exit /
+  # <500 tickers resolved) SKIPS green, only a genuine COLLAPSE (GROWTH edge <= 0, top-3 excess <= 0, or
+  # both out-of-sample halves negative) FAILS. So a red is never the market, only broken code/tuning.
+  # ci-settings.yaml mirrors the real settings.yaml `buy_heuristic`, so the gate scores with the tuning
+  # actually shipped. FOLIOMAN_BACKTEST_GATE=1 means FORCE, not opt-in: the test skips itself on a debug
+  # build or a cold history cache, and a runner is always both, so without the flag this job would skip
+  # too and the gate would quietly stop gating.
+  #
+  # THREE HORIZONS, ONE FETCH. SHIP RULE v2 grades top-3 at 20y and 8y with 12y as the consistency read,
+  # so gating only 12y guarded a lane the rule does not vote on. All three are >= 8y, which takes the
+  # MONTHLY path and shares one .long_history_cache.json — the first run pays the wide fetch, the other
+  # two read it off disk (~127s each). That is why this costs ~+4 min and not 3x. Do not collapse it
+  # back to a single run to "save time"; the saving is small and the coverage loss is the whole point.
   backtest-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45   # cold release build + the wide-universe walk-forward fetch
+    timeout-minutes: 60   # cold release build + one wide-universe fetch + three walk-forward horizons
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
