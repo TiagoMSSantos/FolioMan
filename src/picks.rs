@@ -698,8 +698,11 @@ fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: 
 ///   scaled by **discount_frac** = discount/`discount_cap`
 ///   so a proven compounder only earns it when actually pulled back — at its high the reward → 0.
 /// - **cheap_reward** — (C) reward for sitting below the ~200wk SMA (`cheap_weight`, `cheap_cap`).
-/// - **dividend_reward** — (D) reward for trailing yield (`dividend_weight`, `dividend_cap`). BACKTEST-BLIND:
-///   the price-only backtest can't reconstruct as-of dividends, so this term is unvalidated — keep its weight small.
+/// - **dividend_reward** — (D) reward for trailing yield (`dividend_weight`, `dividend_cap`). NO LONGER
+///   BACKTEST-BLIND (#53): `Chart.divs` was always in the payload and is now plumbed into
+///   `backtest_quote`, so the ablation row and the `dividend_weight` curve grade it for real. The TAX
+///   split is still blind — a backtest quote has no `domicile`, so `tax_keep` reads the non-EU arm for
+///   every name; `tax_keep_eu` vs `tax_keep_other` remains a judgment call, not a measured one.
 /// - **value** — (E) P/E tilt: cheap lifts, rich dampens, unknown neutral (`ref_pe`). BACKTEST-BLIND:
 ///   no as-of P/E in the backtest, so this term is unvalidated there too — keep the tilt gentle.
 /// - **quality_reward** — (F) return-on-capital profitability tilt (`quality_weight`/`quality_cap`);

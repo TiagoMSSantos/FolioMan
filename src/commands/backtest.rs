@@ -17,8 +17,15 @@
 //!   compounders still climbing). The higher rho is the lane actually selecting winners on this data.
 //! - **(#1/#6) ablation**: per lane, switch each score weight OFF, recompute the pooled correlation,
 //!   show the change. A term whose removal barely moves the correlation carries no ranking signal here
-//!   — a prune candidate. dividend/PE read ~0 BY CONSTRUCTION (#6): `backtest_quote` can't reconstruct
-//!   as-of dividends or P/E, so those weights are inert in the backtest and CANNOT be validated by it.
+//!   — a prune candidate. P/E reads ~0 BY CONSTRUCTION (#6): `backtest_quote` can't reconstruct an
+//!   as-of P/E, so that weight is inert here and CANNOT be validated by this command.
+//! - **(#53) DIVIDENDS ARE NO LONGER IN THAT LIST.** This header claimed as-of dividends were
+//!   unreconstructable too, and `dividend_weight`'s receipt cited that claim to ship the term ungraded.
+//!   It was never true: `Chart.divs` carries (ex-date, amount) for the whole history, arrives in the
+//!   same response as the closes, and was simply dropped at the fetch site. `backtest_quote` now takes
+//!   it and derives the as-of trailing yield through `core::dividend_sums`, whose window anchors on the
+//!   cutoff slice — so there is no look-ahead to guard against by hand. If you are about to write
+//!   "the backtest cannot see X", check whether X is already in the payload first.
 //! - **(#5) survivorship**: the universe is names that SURVIVED to today, so realized returns are
 //!   biased UP. Flagged in the footer — treat the edge as optimistic, never a forecast.
 //!
@@ -388,6 +395,11 @@ pub async fn run(args: Vec<String>) {
                 // tag leads because an ETF shortName often carries no "ETF"/"UCITS" marker at all.
                 let (dates, closes, native_ccy) = (chart.dates, chart.closes, chart.currency);
                 let (cls_name, cls_type) = (chart.name, chart.instrument_type);
+                // (D) the dividend event list rode in on this SAME response and used to be dropped right
+                // here — which is the whole reason the module header below claimed as-of dividends were
+                // unreconstructable and `dividend_weight` shipped ungraded. `backtest_quote` slices it
+                // to the cutoff, so no look-ahead arrives with it.
+                let divs = chart.divs;
                 // (G) one cached fundamentals fetch per ticker (only when `fund`); as-of factors are then
                 // derived per cutoff from these rows with no further network. None -> the fund lane skips it.
                 let fund_rows = if fund { fetch::fetch_fundamentals_ranked(client, urls, tk).await } else { None };
@@ -425,7 +437,7 @@ pub async fn run(args: Vec<String>) {
                                 i += step;
                                 continue;
                             }
-                            let mut quote = core::backtest_quote(tk, &dates, &closes, i, cadence);
+                            let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence);
                             stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
                             // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
                             // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
@@ -609,7 +621,10 @@ pub async fn run(args: Vec<String>) {
         // here. With these the growth ablation table is COMPLETE — every term that can move the number
         // now has a line pricing it.
         knob("proximity", |tuning| tuning.growth_proximity_weight = 0.0),
-        knob("growth_dividend*", |tuning| tuning.dividend_weight = 0.0),
+        // (#53) the `*` used to mean "reads 0.0 by construction, not by measurement" — dividends were
+        // never plumbed into `backtest_quote`, so this row was decorative. They are now, so this Δ is a
+        // real number and the dividend_weight CURVE below prices the whole slope.
+        knob("growth_dividend", |tuning| tuning.dividend_weight = 0.0),
         // (#49) ablates TOWARD no-extra-dock, like the ladder row above and unlike the zeroing rows:
         // 0.7 is the 5Y rung, i.e. a young name treated exactly like a 5-year one. Δ is what docking
         // the 2Y/1Y rungs BELOW the 5Y one is worth. Reads 0.0 unless the loaded tuning has the ladder
@@ -729,6 +744,33 @@ pub async fn run(args: Vec<String>) {
          h2h 67% → 39%) — it sits in this ladder as the reproduction of the known-bad point.\n  \
          READ ONLY AS A SCREEN: prints rho/edge/OOS, never rank-1 or h2h, so it cannot settle the ship rule.",
     );
+    // (#53) the term that shipped BLIND. `dividend_weight` was sized by argument alone because the
+    // receipt held that a walk-forward could never grade it — `backtest_quote` was said to be unable to
+    // reconstruct as-of dividends. It never had to reconstruct them: `Chart.divs` arrives in the same
+    // response and was being dropped at the fetch site. With it plumbed, this curve is the first
+    // measurement the term has ever had.
+    // SOUNDNESS: weight_curve re-scores a FIXED admitted set, which is only valid if the swept knob
+    // cannot change WHO is admitted. It cannot — `dividend_reward` is a purely additive term applied
+    // after every gate in `score_parts`, and the `min_score`/`growth_min_score` trims live in
+    // `picks::rank_picks`/`growth_picks` (the LIVE screen path), not inside `growth_score`, which is
+    // what the backtest calls.
+    // WHAT A FLAT LINE MEANS HERE: that yield carries no SELECTION signal — NOT that the plumbing
+    // failed. Check the `growth_dividend*` ablation row first: if that also reads 0.0 the term is still
+    // inert and the plumbing is broken; if it reads non-zero and this curve is flat, that is a result.
+    // TAX IS NOT GRADED BY THIS: a backtest quote has no `domicile`, so `tax_keep` takes the non-EU arm
+    // for every name. This prices the WEIGHT; the EU-vs-other englobamento split stays a judgment call.
+    weight_curve(
+        "dividend_weight",
+        &samples,
+        tuning,
+        |t, v| t.dividend_weight = v,
+        tuning.dividend_weight,
+        &[0.0, 0.25, 0.5, 1.0, 1.5, 3.0],
+        "REWARD per % of trailing-1Y yield, after the PT keep-rate: score += w · min(yield, cap) · keep.\n  \
+         0.5 = SHIPPED (revived 2026-07-25 on argument, never measured until now). 0.0 = term OFF, the\n  \
+         2026-07-15 state. 1.5 = the ORIGINAL weight, cut for being oversized on a blind term.\n  \
+         READ ONLY AS A SCREEN: prints rho/edge/OOS, never rank-1 or h2h, so it cannot settle the ship rule.",
+    );
     gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
     gate_sweep(&samples, tuning, &gate_loosen); // (#10) which specific gate is too tight?
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
@@ -830,6 +872,7 @@ fn sweep_cutoffs(
     tk: &str,
     dates: &[chrono::NaiveDate],
     closes: &[f64],
+    divs: &[(chrono::NaiveDate, f64)],
     name: &str,
     instrument_type: &str,
     holds: &[i64],
@@ -850,7 +893,7 @@ fn sweep_cutoffs(
                     // a zero/garbage close makes realized ±inf; one poisoned cutoff drags the
                     // whole demeaned bucket to -inf (short holds reach data the 12y path never walks)
                     if realized.is_finite() {
-                        let mut quote = core::backtest_quote(tk, dates, closes, i, cadence);
+                        let mut quote = core::backtest_quote(tk, dates, closes, divs, i, cadence);
                         stamp_asset_class(&mut quote, name, instrument_type, etf_set, sector_of);
                         out.push((h, Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() }));
                     }
@@ -900,7 +943,7 @@ async fn hold_period_sweep(
                 None => return Vec::new(),
             };
             sweep_cutoffs(
-                tk, &chart.dates, &chart.closes, &chart.name, &chart.instrument_type, &HOLDS,
+                tk, &chart.dates, &chart.closes, &chart.divs, &chart.name, &chart.instrument_type, &HOLDS,
                 min_history, step, cadence, etf_set, sector_of,
             )
         })
@@ -3485,7 +3528,7 @@ mod tests {
                 let target = dates[i] + chrono::Duration::days(years * 365);
                 let Some(off) = dates[i..].iter().position(|d| *d >= target) else { break };
                 let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
-                let quote = core::backtest_quote(tk, &dates, closes, i, 252);
+                let quote = core::backtest_quote(tk, &dates, closes, &[], i, 252);
                 samples.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() });
                 i += STEP_SESSIONS;
             }
@@ -3668,7 +3711,7 @@ mod tests {
         let d = BuyHeuristic::default();
 
         let fixture = |tk: &str, name: &str, ity: &str| -> Sample {
-            let mut quote = core::backtest_quote(tk, &dates, &closes, n - 1, 252);
+            let mut quote = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252);
             stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
             Sample { date: dates[n - 1], realized: 0.0, relative: 0.0, quote, fund: None, trail: Vec::new() }
         };
@@ -3783,14 +3826,14 @@ mod tests {
         let tuning = BuyHeuristic::default();
 
         // the fixture must score BEFORE anything gates it, else a pass below proves nothing.
-        let mut etc = core::backtest_quote("SGLN.L", &dates, &closes, n - 1, 252);
+        let mut etc = core::backtest_quote("SGLN.L", &dates, &closes, &[], n - 1, 252);
         assert!(growth_score(&etc, &tuning).is_some(), "fixture must score unstamped — the old behaviour");
         stamp_asset_class(&mut etc, "iShares Physical Gold ETC", "ETF", &etf_set, &sector_of);
         assert_eq!(picks::asset_class(&etc), 1);
         assert!(growth_score(&etc, &tuning).is_none(), "physical-gold ETC must be gated once it classes as a fund");
 
         // and the gate is SELECTIVE, not "every ETF drops out" — which would fake the pass above.
-        let mut broad = core::backtest_quote("XDWD.L", &dates, &closes, n - 1, 252);
+        let mut broad = core::backtest_quote("XDWD.L", &dates, &closes, &[], n - 1, 252);
         stamp_asset_class(&mut broad, "Xtrackers MSCI World UCITS ETF", "ETF", &etf_set, &sector_of);
         assert_eq!(picks::asset_class(&broad), 1);
         assert!(growth_score(&broad, &tuning).is_some(), "a plain index ETF must keep scoring");
@@ -3829,7 +3872,7 @@ mod tests {
                     let target = dates[i] + chrono::Duration::days(years * 365);
                     let Some(off) = dates[i..].iter().position(|d| *d >= target) else { break };
                     let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
-                    let mut quote = core::backtest_quote(tk, &dates, &closes, i, 252);
+                    let mut quote = core::backtest_quote(tk, &dates, &closes, &[], i, 252);
                     if stamp {
                         stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
                     }
@@ -3904,7 +3947,7 @@ mod tests {
         let (etf_set, sector_of) = (HashSet::new(), HashMap::new());
         let d = BuyHeuristic::default();
         let build = |tk: &str, name: &str, ity: &str| {
-            let mut q = core::backtest_quote(tk, &dates, &closes, n - 1, 252);
+            let mut q = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252);
             stamp_asset_class(&mut q, name, ity, &etf_set, &sector_of);
             q
         };
@@ -3961,7 +4004,7 @@ mod tests {
         let sector_of = HashMap::new();
         let holds = [1i64, 2, 5];
         let walk = |c: &[f64]| {
-            sweep_cutoffs("VWRA.L", &dates, c, "VANGUARD FUNDS PLC", "", &holds, MIN_HISTORY, STEP_SESSIONS, 252, &etf_set, &sector_of)
+            sweep_cutoffs("VWRA.L", &dates, c, &[], "VANGUARD FUNDS PLC", "", &holds, MIN_HISTORY, STEP_SESSIONS, 252, &etf_set, &sector_of)
         };
         let got = walk(&closes);
 
@@ -3994,7 +4037,7 @@ mod tests {
         let d = BuyHeuristic::default();
         let mk = |tk: &str, name: &str, ity: &str, g: f64| {
             let closes = synth_series(n, g, 0.04, 0.0);
-            let mut quote = core::backtest_quote(tk, &dates, &closes, n - 1, 252);
+            let mut quote = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252);
             stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
             Sample { date: dates[n - 1], realized: 0.0, relative: 0.0, quote, fund: None, trail: Vec::new() }
         };
@@ -4081,7 +4124,7 @@ mod tests {
             .iter()
             .flat_map(|(tk, closes)| {
                 // holds=[12] / min_history 36 / step 6 / cadence 12 — `run`'s monthly branch verbatim
-                sweep_cutoffs(tk, &dates, closes, tk, "", &[12], 36, 6, 12, &etf_set, &sector_of)
+                sweep_cutoffs(tk, &dates, closes, &[], tk, "", &[12], 36, 6, 12, &etf_set, &sector_of)
                     .into_iter()
                     .map(|(_, s)| s)
             })

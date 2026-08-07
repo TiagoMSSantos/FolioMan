@@ -2330,9 +2330,30 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
 /// slices, so the backtest scores a name exactly as the live tool would have on that day. note:
 /// dividends / turnover / P/E / ROE are NOT reconstructed (no clean as-of source), so those score
 /// terms go neutral here; the backtest validates the PRICE-based heuristic, which is the bulk of it.
-pub fn backtest_quote(ticker: &str, dates: &[NaiveDate], closes: &[f64], as_of: usize, cadence: usize) -> Quote {
+pub fn backtest_quote(
+    ticker: &str,
+    dates: &[NaiveDate],
+    closes: &[f64],
+    divs: &[(NaiveDate, f64)],
+    as_of: usize,
+    cadence: usize,
+) -> Quote {
     let (d, c) = (&dates[..=as_of], &closes[..=as_of]);
     let mut quote = Quote::stub(ticker, "", "", ticker);
+    // (D) as-of dividends. The module header used to say a walk-forward could not reconstruct these,
+    // and the `dividend_weight` receipt called grading the term IMPOSSIBLE on that basis — both were
+    // wrong. `Chart.divs` carries (ex-date, amount) for the whole history and the backtest fetch simply
+    // dropped it; nothing had to be computed that `dividend_sums` doesn't already compute.
+    //
+    // LOOK-AHEAD SAFETY IS STRUCTURAL, not a filter written here: `dividends_in_window` anchors on
+    // `dates.last()` and keeps only `ex_date <= last`, and `d` is the `[..=as_of]` slice — so a payout
+    // after the cutoff cannot reach the score. Pass the full `dates` here and it silently would.
+    //
+    // Native currency on BOTH sides (`rate: None`, close as the price), and the yield is a ratio, so
+    // the units cancel and no FX is needed. `price_eur` is read by exactly two things in picks.rs —
+    // the dividend score term and the `div` display column — so filling it moves nothing else.
+    quote.div_eur = dividend_sums(divs, d, None);
+    quote.price_eur = c.last().copied();
     quote.perf = horizon_changes(d, c, None, &BTreeMap::new(), None); // calendar-based -> cadence-agnostic
     quote.drawdown_pct = pct_from_high(c); // all-time anchor as of the `as_of` index
     quote.range_pct = price_pct_rank(c);
@@ -3637,7 +3658,7 @@ mod tests {
     let mdates: Vec<NaiveDate> =
         (0..60).map(|m| NaiveDate::from_ymd_opt(2015, 1, 1).unwrap() + chrono::Duration::days(30 * m)).collect();
     let mcloses: Vec<f64> = (0..60).map(|m| 100.0 * 1.01_f64.powi(m)).collect();
-    let mq = backtest_quote("X", &mdates, &mcloses, mdates.len() - 1, 12);
+    let mq = backtest_quote("X", &mdates, &mcloses, &[], mdates.len() - 1, 12);
     assert!(mq.volatility_pct.is_some());
     assert!(mq.range_pct > 90.0); // rising every bar -> sits at its range high
     // (#3j) whole-life CAGR over the SAME `[..=as_of]` slice. THE anti-inert assert: while this stayed
