@@ -1905,6 +1905,51 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (#54) What the CAGR PIN costs, by name. Silent at `fixed_cagr_years: 0` (the shipped default), so
+    // this block only exists for someone who has deliberately turned the pin on and is owed the bill.
+    // Unlike every tail above it does NOT key on a gate — the pin moves the CAGR that seven readers
+    // consume, so its casualties surface through different fences and only the counterfactual is common
+    // to them. Sorted by what the pin took, worst first: that ordering puts the names whose long record
+    // the pin is discarding hardest at the top, which is the whole question a reader has here.
+    {
+        const PIN_CAP: usize = 15;
+        let pin_years = settings.buy_heuristic.fixed_cagr_years;
+        let mut pinned: Vec<(&Quote, picks::PinDrop)> = quotes
+            .iter()
+            // DELIBERATELY NOT skipping `settings.tickers`, unlike every sibling tail above. Those skip
+            // watchlist names because a pinned row is printed in the table anyway, so a second line about
+            // it is noise. That reasoning inverts here: PIN exempts a name from the sector and score CUTS,
+            // never from the GATES, so a pinned name whose `growth_score` is None still vanishes outright —
+            // and a watchlist name silently missing is the exact symptom this block was written for.
+            .filter_map(|q| picks::pin_dropped(q, &settings.buy_heuristic).map(|d| (q, d)))
+            .collect();
+        if !pinned.is_empty() {
+            pinned.sort_by(|a, b| {
+                let (la, lb) = (a.1.free.0 - a.1.pinned.0, b.1.free.0 - b.1.pinned.0); // CAGR the pin gave up
+                lb.total_cmp(&la).then_with(|| a.0.ticker.cmp(&b.0.ticker))
+            });
+            let more = if pinned.len() > PIN_CAP { format!(" (top {PIN_CAP} of {})", pinned.len()) } else { String::new() };
+            println!("\nDropped by the CAGR pin (`fixed_cagr_years: {pin_years}`) — gates that pass on the longest leg{more}:");
+            for (q, d) in pinned.iter().take(PIN_CAP) {
+                let ((pc, py), (fc, fy)) = (d.pinned, d.free);
+                println!("  {:<8} {:<26.26} {pc:>6.1}%/yr on {py:.0}Y vs {fc:>6.1}%/yr on {fy:.0}Y   {}", q.ticker, q.name, d.why);
+                // Honesty line: without it a reader sets the knob to 0, the name still does not appear,
+                // and the block looks broken. It is not — the pin was one of several fences.
+                if !d.still.is_empty() {
+                    println!("           └ setting 0 is NOT enough — also fails at 0: {}", d.still.join(", "));
+                }
+            }
+            // The pin is a COMPARABILITY choice: it judges every name over the same window so their CAGRs
+            // are commensurable. A name here was not judged bad — it was declined a judgment on its own
+            // longest record. Say that, or the list reads as a rejection list and gets treated as one.
+            println!(
+                "  (not a quality verdict: the pin scores every name over the SAME {pin_years}Y window, so a longer\n   \
+                 record is discarded rather than failed. Set `fixed_cagr_years: 0` to rank on the longest leg — \n   \
+                 that is the knob's own trade, receipt at `fixed_cagr_years` in ci-settings.)"
+            );
+        }
+    }
+
     // (round 56) holdings-overlap footer: the buy candidates are the ranked ETF rows + the pinned
     // funds + the CORE shortlist, and "different" sector funds routinely hold the same top-10
     // mega-caps — invisible from the names. Payload fetched above (it now also feeds the ETF PEG trim,

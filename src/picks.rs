@@ -1331,6 +1331,78 @@ pub fn growth_down_year_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f6
     Some((perf_pct(quote, "1Y")?, long_cagr_from(quote, tuning, long_cum, long_years), quote.range_pct))
 }
 
+/// (#54) What the CAGR PIN costs, BY NAME: names failing at least one gate under the pin that the SAME
+/// name would clear on its longest leg. `None` when the pin is off, when the name ranks under the pin,
+/// when the pin breaks nothing new, or when it is not assessable at all.
+///
+/// KEYED ON "WHAT THE PIN BROKE", NOT ON "WOULD IT RANK AT 0" — and that distinction was measured, not
+/// guessed. The first cut of this required the name to clear EVERY gate unpinned, so the list could
+/// promise "these rank at 0". Run against the live universe with `fixed_cagr_years: 8` it printed
+/// NOTHING, including for AMZN — the name the block exists for — because AMZN's PEG misses its ceiling
+/// on both sides of the counterfactual (PEG is P/E over this same CAGR, ~1.63 unpinned against a 1.60
+/// bar). A definition that answers "the pin cost you nothing" while the pin is visibly halving a name's
+/// CAGR is answering the wrong question. So the predicate is now per-GATE, and `still` carries the
+/// fences that fail at 0 as well, letting the caller print an honest "setting 0 is not enough" instead
+/// of silently omitting the row.
+///
+/// WHY THIS IS A COUNTERFACTUAL AND NOT A GATE TAIL — the four blocks above all key on WHICH gate fired,
+/// which cannot represent this one. `fixed_cagr_years` does not reject anything itself: `long_leg_fixed`
+/// falls back to the longest leg when the pinned window is absent, so it never returns None on account of
+/// the pin. What it does is change the CAGR's VALUE, and `long_cagr_from` is the chokepoint feeding SEVEN
+/// readers — the `growth_min_cagr` gate, `trend`, `accel`, `sharpe`, `calmar`, `trend_health` and `peg`
+/// (which divides by it). So the pin's casualties come out of different gates name by name, and the only
+/// thing they share is the counterfactual. Asking "who fails the cagr gate" would miss every name the pin
+/// pushed through `peg` or `calmar` instead, and would also indict names that fail that gate anyway.
+///
+/// THE CASE THAT PROMPTED IT: at `fixed_cagr_years: 8`, AMZN is scored on its 8Y leg (+15.0%/yr,
+/// 2018-07 -> 2026-07) rather than its 20Y one (+30.4%/yr, $1.34 -> $271.58). A 15.4pp haircut moves it
+/// past several fences at once, and because the miss is both gross and multi-gate it appears in NONE of
+/// the tails above — no table row, no near-miss line, no down-year line. It simply vanished, which is
+/// exactly the failure mode `growth_n_gate_miss` was written to end and this extends to the pin.
+///
+/// THE PIN IS A COMPARABILITY CHOICE, NOT A QUALITY JUDGMENT, and the caller must say so under the list:
+/// a name here is not one the tool judged bad, it is one the tool declined to judge on its own longest
+/// record. Whether that trade is worth making is `fixed_cagr_years`' own receipt, not this block's.
+///
+/// ponytail: evaluates the gates twice per name rather than threading a second CAGR through the scorer.
+/// This is a printed footer over a few thousand quotes, so the second pass is free at this scale, and it
+/// keeps the edge-validated path untouched — the same bargain `growth_near_miss` already took.
+pub struct PinDrop {
+    pub broke: Vec<&'static str>, // gates that fail PINNED and would pass on the longest leg
+    pub why: String,              // ...and their reasons, joined — the pin's own bill
+    pub still: Vec<&'static str>, // gates failing at 0 too: setting the knob back is NOT enough
+    pub pinned: (f64, f64),       // (CAGR %/yr, window years) under the pin
+    pub free: (f64, f64),         // (CAGR %/yr, window years) on the longest leg
+}
+
+pub fn pin_dropped(quote: &Quote, tuning: &BuyHeuristic) -> Option<PinDrop> {
+    if tuning.fixed_cagr_years == 0 {
+        return None; // no pin -> nothing to attribute to it
+    }
+    let pinned_fails = gate_failures(quote, tuning)?;
+    if pinned_fails.is_empty() {
+        return None; // ranks WITH the pin -> not a casualty
+    }
+    let free_t = BuyHeuristic { fixed_cagr_years: 0, ..tuning.clone() };
+    let still: Vec<&'static str> = gate_failures(quote, &free_t)?.iter().map(|(g, ..)| *g).collect();
+    let broke: Vec<&'static str> =
+        pinned_fails.iter().map(|(g, ..)| *g).filter(|g| !still.contains(g)).collect();
+    if broke.is_empty() {
+        return None; // it fails the same fences either way -> the pin is not what broke it
+    }
+    let why = pinned_fails
+        .iter()
+        .filter(|(g, ..)| broke.contains(g))
+        .map(|(g, w, _)| format!("{g}: {w}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let leg = |t: &BuyHeuristic| {
+        long_leg_fixed(quote, t.fixed_cagr_years, t.growth_min_leg_years)
+            .map(|(cum, years)| (long_cagr_from(quote, t, cum, years), years))
+    };
+    Some(PinDrop { broke, why, still, pinned: leg(tuning)?, free: leg(&free_t)? })
+}
+
 /// Every name a given long-leg floor rejects, whatever ELSE it also fails — the loosest tail in the
 /// file, and the only view of a gate that sole-blocks nobody. `tag` is a `long_leg_floors` tag ("5Y+",
 /// "8Y+"); the perf label is the tag without its `+`. Returns (long CAGR %/yr, that gate's own "why",
@@ -5272,6 +5344,54 @@ mod tests {
         q.range_pct = 90.0;
         q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0)]);
         q
+    }
+
+    /// (#54) `pin_dropped` must name exactly the cohort the CAGR pin costs, and nobody else. The pin
+    /// rejects nothing directly — `long_leg_fixed` falls back to the longest leg when the pinned window
+    /// is absent — so the ONLY way to attribute a missing row to it is the counterfactual, and there are
+    /// two ways to get that wrong: indict a name that fails unpinned anyway, or miss one that fails only
+    /// under the pin. Both are asserted here, along with silence at the shipped `fixed_cagr_years: 0`.
+    #[test]
+    fn pin_dropped_names_only_the_pins_casualties() {
+        let mut q = gate_fixture();
+        // a long record the pin discards: strong over 20Y, ordinary over the pinned 8Y window — the
+        // AMZN shape (+30.4%/yr on its 20Y leg, +15.0%/yr on its 8Y one)
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 300.0), ("20Y", 20000.0)]);
+        let pinned_cagr = core::cagr(300.0, 8.0); // ~18.9%/yr
+        let free_cagr = core::cagr(20000.0, 20.0); // ~30.0%/yr
+        assert!(free_cagr > pinned_cagr + 5.0, "fixture must actually have a record the pin throws away");
+
+        // a floor BETWEEN the two legs: clears on the 20Y record, fails on the pinned 8Y one
+        let base = BuyHeuristic { growth_min_cagr: (pinned_cagr + free_cagr) / 2.0, ..BuyHeuristic::default() };
+        let pin8 = BuyHeuristic { fixed_cagr_years: 8, ..base.clone() };
+        assert!(growth_score(&q, &base).is_some(), "unpinned, the 20Y record clears the floor");
+        assert!(growth_score(&q, &pin8).is_none(), "pinned to 8Y it must vanish — else there is nothing to report");
+
+        let d = pin_dropped(&q, &pin8).expect("the pin is what broke the cagr fence");
+        assert!(d.broke.contains(&"cagr"), "must name the fence the pin broke, got {:?}", d.broke);
+        assert!(d.still.is_empty(), "nothing else fails at 0, so no 'not enough' note is owed");
+        assert_eq!((d.pinned.1, d.free.1), (8.0, 20.0), "must quote the pinned window against the longest leg");
+        assert!(
+            (d.pinned.0 - pinned_cagr).abs() < 1e-6 && (d.free.0 - free_cagr).abs() < 1e-6,
+            "both CAGRs must be the scorer's own numbers"
+        );
+
+        // silent at the shipped default — this block must cost nothing when the pin is off
+        assert!(pin_dropped(&q, &base).is_none(), "no pin -> nothing to attribute to it");
+        // the SAME fence fails either way -> the pin broke nothing new, so it must not be indicted
+        let strict = BuyHeuristic { growth_min_cagr: free_cagr + 1.0, ..pin8.clone() };
+        assert!(pin_dropped(&q, &strict).is_none(), "cagr fails at 0 too -> the pin did not break it");
+        // still ranks under the pin -> never a casualty
+        let loose = BuyHeuristic { growth_min_cagr: 0.0, ..pin8.clone() };
+        assert!(pin_dropped(&q, &loose).is_none(), "ranks with the pin -> not a casualty");
+
+        // THE AMZN SHAPE, and the reason the strict "would rank at 0" predicate was abandoned: a name the
+        // pin genuinely damages while ANOTHER fence blocks it on both sides. It must still be listed, and
+        // it must carry the "setting 0 is not enough" note naming that other fence.
+        let both = BuyHeuristic { growth_min_range_pct: q.range_pct + 1.0, ..pin8.clone() };
+        let d = pin_dropped(&q, &both).expect("a pin-broken fence must still list, even when another fence also fails");
+        assert!(d.broke.contains(&"cagr") && !d.broke.contains(&"range"), "only the pin's own damage is its bill, got {:?}", d.broke);
+        assert!(d.still.contains(&"range"), "the fence that fails at 0 too must be reported, got {:?}", d.still);
     }
 
     /// (QA) GATE FENCES, equity lane. The per-knob stress grid (2026-07-30) settled that the GATES, not
