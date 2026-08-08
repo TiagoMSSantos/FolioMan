@@ -2512,10 +2512,13 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
 /// BOXED, not a plain `fn` pointer: `growth_fund_extra` is a config-driven LIST, so its ablation rows
 /// have to be generated per configured term and each needs to capture its own index — which a fn
 /// pointer cannot do. Owned `String` for the same reason (the names carry the factor).
-type Knob = (String, Box<dyn Fn(&mut BuyHeuristic)>);
+/// `+ Sync` because `report_lane` ablates the arms in parallel. Every knob below is a closure over
+/// nothing, or over a `String`, so this costs nothing to satisfy — but a future knob that captured a
+/// `Cell` or an `Rc` would stop compiling here rather than race.
+type Knob = (String, Box<dyn Fn(&mut BuyHeuristic) + Sync>);
 
 /// Terse constructor so the knob tables below stay one line per knob.
-fn knob(name: impl Into<String>, f: impl Fn(&mut BuyHeuristic) + 'static) -> Knob {
+fn knob(name: impl Into<String>, f: impl Fn(&mut BuyHeuristic) + Sync + 'static) -> Knob {
     (name.into(), Box::new(f))
 }
 
@@ -2583,20 +2586,29 @@ fn bootstrap_edge_ci(
         })
         .collect();
 
-    let mut edges: Vec<f64> = Vec::with_capacity(iters);
-    // Hoisted and `clear`ed rather than reallocated per draw — same contents, one allocation.
-    let mut pool: Vec<(&Sample, f64)> = Vec::new();
-    for _ in 0..iters {
-        pool.clear();
-        for _ in 0..keys.len() {
-            let k = keys[(next() % keys.len() as u64) as usize];
-            pool.extend_from_slice(&scored[&k]);
-        }
-        if pool.len() >= 4 {
-            let (t, b) = edge_halves(&pool);
-            edges.push(t - b);
-        }
-    }
+    // DRAW SERIALLY, SCORE IN PARALLEL. `next()` is one xorshift stream consumed exactly once per
+    // bucket per draw, so which buckets a draw gets has to be decided in draw order — materialise that
+    // decision first, and the expensive half (`edge_halves`, a sort plus two means over ~all samples,
+    // 1000 times) becomes a pure function of one draw with nothing shared.
+    let draws: Vec<Vec<i32>> =
+        (0..iters).map(|_| (0..keys.len()).map(|_| keys[(next() % keys.len() as u64) as usize]).collect()).collect();
+    // `map_init` keeps the pool hoisted the way the serial loop did — one buffer per worker, cleared
+    // per draw, instead of a fresh ~280 KB allocation 1000 times. `collect` preserves draw order (and
+    // the sort below would make that moot anyway; it costs nothing to keep).
+    let mut edges: Vec<f64> = draws
+        .par_iter()
+        .map_init(Vec::new, |pool: &mut Vec<(&Sample, f64)>, ks| {
+            pool.clear();
+            for k in ks {
+                pool.extend_from_slice(&scored[k]);
+            }
+            (pool.len() >= 4).then(|| {
+                let (t, b) = edge_halves(pool);
+                t - b
+            })
+        })
+        .flatten()
+        .collect();
     // `<` vs `<=` here is deliberately LEFT UNPINNED by the mutation audit, and the reason is worth
     // stating: in practice `edges.len()` is either ~`iters` (the lane scores, every draw yields >=4 rows)
     // or 0 (the gate rejects everything), never exactly `iters / 2`. Both spellings therefore decide
@@ -2793,24 +2805,33 @@ fn weight_curve(
     };
     println!("\n── {knob_name} CURVE (growth lane, n={}) ──", scored.len());
     println!("  {note}");
-    for &x in ladder {
-        let mut t = tuning.clone();
-        set(&mut t, x);
-        let re: Vec<(&Sample, f64)> =
-            scored.iter().map(|(s, v)| (*s, growth_score(&s.quote, &t).unwrap_or(*v))).collect();
-        let (top, bot) = edge_halves(&re);
-        let rho = core::spearman(&re.iter().map(|(_, v)| *v).collect::<Vec<_>>(), &rels)
-            .map_or("n/a".to_string(), |v| format!("{v:+.2}"));
-        // "off", not "term off": 0 zeroes a WEIGHT's term, but on a CAP knob it removes the ceiling and
-        // leaves the term running at full size. One label that is true for both kinds of knob.
-        let tag = if x == shipped { "  [SHIPPED]" } else if x == 0.0 { "  [off]" } else { "" };
-        println!(
-            "  {x:<6.2} rho {rho}  edge {:+.1}  winsor {:+.1}  OOS {} | {}{tag}",
-            top - bot,
-            winsor_edge(&re),
-            split_rho(&re[..mid]),
-            split_rho(&re[mid..])
-        );
+    // One rung per core, same argument as the ablation arms in `report_lane`: every rung re-scores the
+    // same fixed `scored` set against its own clone, sharing nothing. Rows are formatted in parallel
+    // and printed in ladder order, so the curve reads identically at any thread count.
+    let rows: Vec<String> = ladder
+        .par_iter()
+        .map(|&x| {
+            let mut t = tuning.clone();
+            set(&mut t, x);
+            let re: Vec<(&Sample, f64)> =
+                scored.iter().map(|(s, v)| (*s, growth_score(&s.quote, &t).unwrap_or(*v))).collect();
+            let (top, bot) = edge_halves(&re);
+            let rho = core::spearman(&re.iter().map(|(_, v)| *v).collect::<Vec<_>>(), &rels)
+                .map_or("n/a".to_string(), |v| format!("{v:+.2}"));
+            // "off", not "term off": 0 zeroes a WEIGHT's term, but on a CAP knob it removes the ceiling and
+            // leaves the term running at full size. One label that is true for both kinds of knob.
+            let tag = if x == shipped { "  [SHIPPED]" } else if x == 0.0 { "  [off]" } else { "" };
+            format!(
+                "  {x:<6.2} rho {rho}  edge {:+.1}  winsor {:+.1}  OOS {} | {}{tag}",
+                top - bot,
+                winsor_edge(&re),
+                split_rho(&re[..mid]),
+                split_rho(&re[mid..])
+            )
+        })
+        .collect();
+    for r in rows {
+        println!("{r}");
     }
     println!("  (flat across a range -> the tilt can carry more weight; a clear peak -> the shipped value IS the");
     println!("   ceiling. Read `winsor` beside `edge`: a rise that only shows raw is leaning on extreme rows.");
@@ -2920,17 +2941,27 @@ fn report_lane(
     // but ~0/+Δrho is a trap — don't delete it on the rho reading alone.
     let base_rho = rho.unwrap_or(0.0);
     println!("  ablation (Δ vs full: rho {base_rho:+.2}, edge {base_edge:+.1}):");
-    for (name, mutate) in knobs {
-        let mut t2 = tuning.clone();
-        mutate(&mut t2);
-        let abl: Vec<(&Sample, f64)> =
-            scored.iter().map(|(s, v)| (*s, scorer(&s.quote, &t2).unwrap_or(*v))).collect();
-        let (et, eb) = edge_halves(&abl);
-        let dedge = (et - eb) - base_edge;
-        match core::spearman(&abl.iter().map(|(_, v)| *v).collect::<Vec<_>>(), &rels) {
-            Some(v) => println!("    {:<20} rho {v:+.2} Δ{:+.2}   edge {:+.1} Δ{dedge:+.1}", name, v - base_rho, et - eb),
-            None => println!("    {:<20} rho n/a   edge {:+.1} Δ{dedge:+.1}", name, et - eb),
-        }
+    // One arm per core. Each arm re-scores the same fixed `scored` rows against its own clone of the
+    // tuning and touches nothing shared — the comment above already says so ("re-score the SAME gated
+    // rows"), which is exactly the property that makes this safe. Formatted into strings and printed
+    // afterwards in `knobs` order, so the table reads identically at any thread count.
+    let rows: Vec<String> = knobs
+        .par_iter()
+        .map(|(name, mutate)| {
+            let mut t2 = tuning.clone();
+            mutate(&mut t2);
+            let abl: Vec<(&Sample, f64)> =
+                scored.iter().map(|(s, v)| (*s, scorer(&s.quote, &t2).unwrap_or(*v))).collect();
+            let (et, eb) = edge_halves(&abl);
+            let dedge = (et - eb) - base_edge;
+            match core::spearman(&abl.iter().map(|(_, v)| *v).collect::<Vec<_>>(), &rels) {
+                Some(v) => format!("    {:<20} rho {v:+.2} Δ{:+.2}   edge {:+.1} Δ{dedge:+.1}", name, v - base_rho, et - eb),
+                None => format!("    {:<20} rho n/a   edge {:+.1} Δ{dedge:+.1}", name, et - eb),
+            }
+        })
+        .collect();
+    for r in rows {
+        println!("{r}");
     }
 }
 
