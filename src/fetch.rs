@@ -210,7 +210,12 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
 /// `long_cache_load`). The live arm is wrapped too, which also kills the second deep copy this used to
 /// make when handing the fetch to `LONG_CACHE_NEW`. Both arms still carry the RAW payload, so both
 /// converge on one `parse_chart` exactly as before — see the format note on `long_cache_save`.
-async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Arc<RawValue>> {
+///
+/// `pub` for `backtest`'s two wide fan-outs, which want the payload UNPARSED so the 5057 parses can
+/// happen inside their rayon walk instead of on the single thread that polls a `buffer_unordered`
+/// stream. They own the `parse_chart_raw` call and the empty-`closes` skip that `fetch_history_long`
+/// applies for everyone else.
+pub async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Arc<RawValue>> {
     let today = chrono::Local::now().date_naive();
     if let Some((recorded, v)) = long_cache_load().get(ticker) {
         if long_cache_fresh(Some(recorded), today) {

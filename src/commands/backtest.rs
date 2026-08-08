@@ -41,6 +41,8 @@ use crate::{config, core, fetch, picks};
 use chrono::Datelike;
 use futures::stream::{self, StreamExt};
 use rayon::prelude::*;
+use serde_json::value::RawValue;
+use std::sync::Arc;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// How many years of filed statements the as-of fundamental factors look BACK over — deliberately a
@@ -245,6 +247,30 @@ struct Sample {
     quote: Quote,
     fund: Option<core::FundFactors>, // (G) as-of fundamentals at this cutoff (None unless `fund` + FMP key + cached)
     trail: Vec<f64>, // (round 112) up to 36 trailing monthly returns % at the cutoff — CORR-CAP probe input; empty = can't judge
+}
+
+/// A ticker's history between the fetch and the walk, in whichever form it arrived.
+///
+/// The point of the split is WHERE the parse happens. Both wide fan-outs below are `buffer_unordered`
+/// streams, which one task polls on one thread; the walks that follow them are 8-way under rayon. A
+/// `Raw` payload has not been parsed yet, so its `parse` lands in the walk and spreads over the cores.
+/// `Parsed` is the cases that cannot defer — the daily arm (network-bound, no disk cache, nothing to
+/// gain) and a `fund` run (the FX branch needs the currency before the walk starts).
+enum Hist {
+    Raw(Arc<RawValue>),
+    Parsed(fetch::Chart),
+}
+
+impl Hist {
+    /// The deferred parse. `None` = unparseable, or parsed to no bars — which is exactly the pair of
+    /// conditions `fetch_history_long` folds into its own `None`, kept here so both paths drop the
+    /// same tickers.
+    fn parse(self, ticker: &str) -> Option<fetch::Chart> {
+        match self {
+            Hist::Raw(r) => fetch::parse_chart_raw(&r, ticker).filter(|c| !c.closes.is_empty()),
+            Hist::Parsed(c) => Some(c),
+        }
+    }
 }
 
 /// (#1) Cross-sectional peer-group key: the ~6-month bucket a cutoff falls in (2 buckets/year). Names
@@ -522,10 +548,15 @@ pub async fn run(args: Vec<String>) {
             let client = &client;
             let urls = &settings.urls;
             async move {
-                let chart = if monthly {
-                    fetch::fetch_history_long(client, urls, tk).await
-                } else {
-                    fetch::fetch_history(client, urls, tk).await
+                // Deferred where it can be: a monthly payload rides into the rayon walk still in its
+                // bytes, because parsing 5057 of them is most of a wide run's CPU and THIS loop is one
+                // task on one thread. `fund` opts out — the FX branch below needs the quote currency,
+                // which means parsing here anyway, and parsing twice would be worse than not deferring.
+                // The daily arm has no disk cache, so it is network-bound and there is nothing to save.
+                let hist = match (monthly, fund) {
+                    (true, false) => fetch::chart_json_long(client, urls, tk).await.map(Hist::Raw),
+                    (true, true) => fetch::fetch_history_long(client, urls, tk).await.map(Hist::Parsed),
+                    (false, _) => fetch::fetch_history(client, urls, tk).await.map(Hist::Parsed),
                 }?;
                 // (G) one cached fundamentals fetch per ticker (only when `fund`); as-of factors are then
                 // derived per cutoff from these rows with no further network. None -> the fund lane skips it.
@@ -538,17 +569,24 @@ pub async fn run(args: Vec<String>) {
                 // ponytail: one uncached FX chart pair per foreign ticker (~2 extra fetches each). Share a
                 // series cache across tickers if the foreign slice ever shows up in the run time.
                 let filer_ccy = fund_rows.as_ref().and_then(|r| r.last().and_then(|x| x.currency.clone()));
-                let fx = match filer_ccy.as_deref() {
-                    Some(f) if core::needs_fx(&chart.currency, f) => {
+                // `Hist::Raw` reaches here only when `fund` is off, and `filer_ccy` is `Some` only when
+                // it is on, so the None arm below is unreachable for a deferred payload — the two are
+                // gated by the same flag in the match above, which is why nothing has to parse to decide.
+                let quote_ccy = match &hist {
+                    Hist::Parsed(c) => Some(c.currency.clone()),
+                    Hist::Raw(_) => None,
+                };
+                let fx = match (quote_ccy.as_deref(), filer_ccy.as_deref()) {
+                    (Some(q), Some(f)) if core::needs_fx(q, f) => {
                         // same `monthly` the closes came from: rates and prices must span the same era
-                        Some(fetch::fx_factor_series(client, urls, &chart.currency, f, monthly).await)
+                        Some(fetch::fx_factor_series(client, urls, q, f, monthly).await)
                     }
                     _ => None, // same books, or a side unknown -> leave the close alone (legacy path)
                 };
                 // (Item 4) one cached SEC Form-4 fetch per ticker (only when `insider`); net buys are then
                 // derived per cutoff from these transactions with no further network. None -> factor skips.
                 let insider_txns = if insider { fetch::fetch_insider_history(client, urls, tk).await } else { None };
-                Some((tk, chart, fund_rows, fx, insider_txns))
+                Some((tk, hist, fund_rows, fx, insider_txns))
             }
         })
         .buffer_unordered(fetch::fetch_concurrency())
@@ -565,7 +603,14 @@ pub async fn run(args: Vec<String>) {
     let per_ticker: Vec<Vec<Sample>> = fetched
         .into_par_iter()
         .flatten()
-        .map(|(tk, chart, fund_rows, fx, insider_txns)| {
+        .map(|(tk, hist, fund_rows, fx, insider_txns)| {
+            // the deferred parse, now on all 8 threads. `None` (bad payload, or no bars) contributes an
+            // empty Vec, which the `flatten` below drops — the same nothing the fetch-side `?` used to
+            // contribute by dropping the ticket before it got here.
+            let chart = match hist.parse(tk) {
+                Some(c) => c,
+                None => return Vec::new(),
+            };
             // (#46) the ASSET-CLASS fields, carried out of the same response the closes came from (no
             // extra request). `backtest_quote` builds from `Quote::stub`, which leaves `name` as the
             // TICKER and `instrument_type` empty — and `quote_is_etf` reads exactly those two, so
@@ -1073,18 +1118,33 @@ async fn hold_period_sweep(
 ) {
     const HOLDS: [i64; 6] = [1, 2, 3, 5, 8, 10]; // forward windows (years) to compare
     eprintln!("backtest: hold-period sweep over {HOLDS:?}y windows ({} tickers)…", tickers.len());
-    let per_ticker: Vec<Vec<(i64, Sample)>> = stream::iter(tickers.iter())
+    // FETCH FIRST, WALK SECOND, for the same reason the validated path does it (see the long note
+    // there): this stream is polled by ONE task, so leaving `sweep_cutoffs` inside it ran six forward
+    // windows per ticker on one thread of eight. `buffer_unordered` yields completion order and rayon's
+    // `collect` preserves its input order, so `all` below sees the sequence it always did — and the
+    // halflife golden is what verifies that, since `demean` and the pooled stats read that order.
+    let fetched: Vec<_> = stream::iter(tickers.iter())
         .map(|tk| async move {
-            let fetched = if monthly {
-                fetch::fetch_history_long(client, urls, tk).await
+            // (FX) price-only sweep — no filing joined, no currency needed, so a monthly payload can
+            // stay in its bytes until the walk. (#46) the class fields ARE needed: this walk de-means
+            // through the same `demean`, so it has to split classes the same way the validated path
+            // does or the two disagree on what a peer is.
+            let hist = if monthly {
+                fetch::chart_json_long(client, urls, tk).await.map(Hist::Raw)
             } else {
-                fetch::fetch_history(client, urls, tk).await
+                fetch::fetch_history(client, urls, tk).await.map(Hist::Parsed)
             };
-            // (FX) price-only sweep — no filing joined, no currency needed. (#46) the class fields ARE
-            // needed: this walk de-means through the same `demean`, so it has to split classes the same
-            // way the validated path does or the two disagree on what a peer is.
-            let chart = match fetched {
-                Some(x) => x,
+            hist.map(|h| (tk, h))
+        })
+        .buffer_unordered(fetch::fetch_concurrency())
+        .collect()
+        .await;
+    let per_ticker: Vec<Vec<(i64, Sample)>> = fetched
+        .into_par_iter()
+        .flatten()
+        .map(|(tk, hist)| {
+            let chart = match hist.parse(tk) {
+                Some(c) => c,
                 None => return Vec::new(),
             };
             sweep_cutoffs(
@@ -1092,9 +1152,7 @@ async fn hold_period_sweep(
                 min_history, step, cadence, etf_set, sector_of,
             )
         })
-        .buffer_unordered(fetch::fetch_concurrency())
-        .collect()
-        .await;
+        .collect();
     let all: Vec<(i64, Sample)> = per_ticker.into_iter().flatten().collect();
 
     println!("\n── HOLD-PERIOD SWEEP (growth lane, net of cost) ──");
