@@ -12,3 +12,24 @@
 # this flag comes back out rather than the golden being re-blessed.
 [build]
 rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+# `cargo t` — the offline test loop. Measured on this tree, one source edit then the full non-network
+# suite (--lib + backtest_fixture + cli, 242 tests):
+#
+#   cargo test --release -j 1 ...   400.8 s   of which 2.2 s is the tests running
+#   cargo t                         6 - 9 s   of which 2.4 s is the tests running
+#
+# (the 6-9 s spread is which file was edited — a leaf like picks.rs invalidates fewer codegen units
+# than core.rs does; `--release` is flat because it has no incremental cache to hit)
+#
+# The suite was never slow — 2.2 s. `--release` was, because `lto = true` fat-links the whole crate
+# THREE times (one harness per target) and turns incremental compilation off. The `mutants` profile
+# inherits `dev`, so incremental is back on, and opt-level 2 costs the tests 0.2 s versus opt-level 3.
+# Plain `dev` is the wrong trade in the other direction: opt-level 0 runs the same 242 tests in 15.4 s.
+#
+# Not a new profile: `[profile.mutants]` in Cargo.toml already tuned exactly this trade-off for the
+# mutation gate, and one profile that both uses is one set of artifacts to keep warm.
+#
+# `network.rs` is deliberately not in the alias — it is live-API bound and belongs in its own run.
+[alias]
+t = "test --profile mutants --lib --test backtest_fixture --test cli"

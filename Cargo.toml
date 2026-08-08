@@ -33,6 +33,10 @@ lto = true
 # rebuild — the mutation run is then 80% arithmetic that optimises away for free. `opt-level = 2`
 # with no debuginfo turns that into a build-bound run. Not `release`: `lto = true` there costs more
 # link time per mutant than it saves.
+#
+# The same trade-off is what the offline test loop wants, so `cargo t` (.cargo/config.toml) runs on
+# this profile too — 6-9s for the whole non-network suite against 400.8s under `--release`. The name
+# is now load-bearing for both; renaming it would also need the `--profile mutants` in ci.yml.
 [profile.mutants]
 inherits = "dev"
 opt-level = 2
