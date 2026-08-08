@@ -398,6 +398,34 @@ fn parse_args(args: &[String]) -> Args {
     a_
 }
 
+/// Trailing monthly returns in percent over the 36 months ending at `i`, for the CORR-CAP probe.
+/// 36 ≈ the 200wk trend window; a zero/non-finite close drops that month (rare — alignment slippage
+/// is acceptable for a correlation probe, and `corr_tail()` demands 12 overlapping months anyway).
+///
+/// Split out of the async walk in [`run`] for the same reason [`parse_args`] was: inline, nothing
+/// could reach it. The filter only has an opinion about prices no healthy series contains, and every
+/// offline pin runs on fixture closes that are all positive and finite — so the mutation audit
+/// reported both `&&`->`||` and `>`->`>=` here surviving, and both are real. `||` admits a zero
+/// close, and `closes[j + 1] / 0.0` is `inf`: an infinite monthly "return" fed straight into the
+/// correlation, which is exactly the corruption the filter exists to prevent.
+///
+/// The base close is checked for finiteness too, which the inline version did NOT do — it tested
+/// only `> 0.0`, and `f64::INFINITY > 0.0` is `true`, so an infinite base close divided into a
+/// finite one and booked a **-100% month**: a fabricated total wipeout, finite enough to slip past
+/// any "no inf" assertion. That is the doc line above ("a zero/non-finite close drops that month")
+/// finally being true of the base as well as the forward close, not new hardening. Real closes are
+/// finite, so no golden moves.
+///
+/// Panics if `closes.len() <= i`, same as the indexing it replaced. The caller only reaches this
+/// with a full forward window left.
+fn trailing_returns(closes: &[f64], i: usize) -> Vec<f64> {
+    let ok = |p: f64| p.is_finite() && p > 0.0;
+    (i.saturating_sub(36)..i)
+        .filter(|&j| ok(closes[j]) && ok(closes[j + 1]))
+        .map(|j| (closes[j + 1] / closes[j] - 1.0) * 100.0)
+        .collect()
+}
+
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
@@ -597,15 +625,8 @@ pub async fn run(args: Vec<String>) {
                             // term switched off. Price-free level (no FX, unlike the three yields above),
                             // through the same fund_as_of look-ahead guard.
                             quote.roe = fund.as_ref().and_then(|f| f.quality);
-                            // (round 112) trailing monthly returns for the CORR-CAP probe — this is the only
-                            // place with the raw series in scope. 36 months ≈ the 200wk trend window. A
-                            // zero/non-finite close drops that month (rare; alignment slippage is acceptable
-                            // for a correlation probe, and corr_tail() demands 12 overlapping months anyway).
-                            let lo = i.saturating_sub(36);
-                            let trail: Vec<f64> = (lo..i)
-                                .filter(|&j| closes[j] > 0.0 && closes[j + 1].is_finite() && closes[j + 1] > 0.0)
-                                .map(|j| (closes[j + 1] / closes[j] - 1.0) * 100.0)
-                                .collect();
+                            // (round 112) this is the only place with the raw series in scope.
+                            let trail = trailing_returns(&closes, i);
                             out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund, trail });
                         }
                         None => break, // no full forward window left -> stop walking this ticker
@@ -3135,6 +3156,39 @@ mod tests {
             oos_early: 5.1,
             oos_late: 7.4,
             tuning_fp: "{\"a\":1}".into(),
+        }
+    }
+
+    /// The CORR-CAP trailing window, and the four-term price filter the goldens structurally cannot
+    /// reach: every fixture close is positive and finite, so the filter never has to refuse anything,
+    /// and the audit duly reported its `&&`, `>` and `is_finite` mutants all surviving. Each poke
+    /// below is a price no healthy series contains, and each one must silently cost TWO rows — the
+    /// month that divides BY it, and the month that divides INTO it.
+    #[test]
+    fn trailing_returns_clamps_its_window_and_refuses_bad_prices() {
+        // Exactly 1% per month, so every clean return is 1.0 and any admitted junk stands out.
+        let clean: Vec<f64> = (0..50).map(|k| 1.01_f64.powi(k)).collect();
+
+        assert_eq!(trailing_returns(&clean, 40).len(), 36, "36 months back");
+        assert_eq!(trailing_returns(&clean, 10).len(), 10, "clamp at the series start, never underflow");
+        assert!(trailing_returns(&clean, 0).is_empty(), "no history at index 0");
+        for r in trailing_returns(&clean, 40) {
+            assert!((r - 1.0).abs() < 1e-9, "a 1%/month series must yield 1.0, got {r}");
+        }
+
+        // Each of these is admitted by SOME single-term mutation of the filter, and each produces a
+        // number that would go straight into a correlation:
+        //   0.0 base    -> `>`->`>=` or `&&`->`||` admits it, and x / 0.0 is +inf
+        //   0.0 forward -> `>`->`>=` on the forward term books a FINITE -100%, so "no inf" misses it
+        //   inf         -> `is_finite`->`true` admits it; inf as a base books -100%, as a forward +inf
+        //   NaN         -> caught by `is_finite`; every comparison against it is false
+        for bad in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+            let mut c = clean.clone();
+            c[20] = bad;
+            let got = trailing_returns(&c, 40);
+            assert_eq!(got.len(), 34, "close {bad} must drop both months touching it, not just one");
+            assert!(got.iter().all(|r| r.is_finite()), "close {bad} leaked a non-finite return: {got:?}");
+            assert!(got.iter().all(|r| *r > -100.0), "close {bad} booked a fabricated wipeout: {got:?}");
         }
     }
 

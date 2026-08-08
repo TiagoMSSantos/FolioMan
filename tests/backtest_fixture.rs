@@ -92,8 +92,23 @@
 //! `merge_verdict`, `latest_verdict`) and pinning them in src/commands/backtest.rs; 14 of those
 //! mutants were then re-checked one by one and all 14 die.
 //!
-//! What is left alive is documented where it lives, not here: the two `std::fs` one-liners in
-//! `read_verdict`/`write_verdict`, the `FMP_API_KEY` advisory print, and `bootstrap_edge_ci`'s
+//! That shard finished at **65 caught / 25 missed / 2 unviable / 2 timeout of 94** — 72%, measured
+//! against the PRE-FIX tree (cargo-mutants copies the source at launch), so the pins above are not
+//! in it. The two timeouts are `run()` mutants that hang rather than answer, which is neither a kill
+//! nor a miss. Every survivor at line 400+ sits in `run()`'s async per-ticker walk, and they fall
+//! into three groups, none of them a suite gap the goldens could close:
+//!  - **Reachable, and now pinned.** The CORR-CAP trailing filter had four survivors. Extracted as
+//!    `trailing_returns` and pinned; that pin also fixed a real defect the extraction exposed — see
+//!    its doc comment. All 14 of its mutants were re-checked and all 14 die.
+//!  - **Equivalent.** `while i < dates.len()` -> `<=`: at `i == len()` the forward-index lookup
+//!    returns `None` and the loop breaks anyway, so both spellings do the same thing. Nothing to pin.
+//!  - **Behind a live network lane.** The `needs_fx` match guard and the `closes[i] * r` FX
+//!    conversion need a non-USD filer, i.e. `fund` + a real `FMP_API_KEY`; the `i += step` inside the
+//!    `!realized.is_finite()` skip needs a garbage close in the series. The fixture cache is USD and
+//!    clean, by construction, so no offline pin can reach any of them.
+//!
+//! What is otherwise left alive is documented where it lives, not here: the two `std::fs` one-liners
+//! in `read_verdict`/`write_verdict`, the `FMP_API_KEY` advisory print, and `bootstrap_edge_ci`'s
 //! `edges.len() < iters / 2`. Killing any of them needs process-global state (`FOLIOMAN_CONFIG`, the
 //! environment) that would race every other test in the binary.
 //!
