@@ -1138,7 +1138,11 @@ pub async fn run(args: Vec<String>) {
     } else {
         None
     };
-    let mut quotes = fetch::quotes(&client, &settings.urls, &fx_cache, &universe, settings.dip_days, settings.high_days, true, false, &settings.anchor_windows, eu_infl.as_ref()).await; // intraday on (picks shows 1h/6h/12h), news off (screen never prints headlines)
+    // intraday ONLY when the table actually prints 1h/6h/12h — it was hardcoded on, and it costs one
+    // extra Yahoo chart request PER NAME (~65s of pacer sleep on a full universe) to fill three display
+    // cells nothing scores on. news off (screen never prints headlines).
+    let intraday = picks::wants_intraday(&settings.widths.columns);
+    let mut quotes = fetch::quotes(&client, &settings.urls, &fx_cache, &universe, settings.dip_days, settings.high_days, intraday, false, &settings.anchor_windows, eu_infl.as_ref()).await;
     // anything from the Xetra ETF feed IS an ETF, even if Yahoo tags it EQUITY (structured products
     // like BNP Paribas Issuance) — force it so it can't leak into the stocks table past the sector filter
     for quote in &mut quotes {

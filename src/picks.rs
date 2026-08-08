@@ -2102,6 +2102,22 @@ fn active_columns(cfg: &[String]) -> Vec<&'static ColSpec> {
     keys.iter().filter_map(|k| COLUMNS.iter().find(|c| c.key.eq_ignore_ascii_case(k))).collect()
 }
 
+/// Does the configured layout print an intraday column?
+///
+/// `screen` pays a WHOLE EXTRA Yahoo chart request per name (`range=5d&interval=60m`) to fill
+/// `Quote::intraday`, and these three cells are the only thing in the codebase that reads it —
+/// nothing scores or gates on it. Every outbound request is spaced `1/fetch_requests_per_second`
+/// apart by the global pacer, so on a 3847-name universe that leg is ~3847 requests ≈ 65s of pure
+/// sleep, ~24% of the run, for two or three display cells. Hide them and stop paying for them.
+///
+/// Routed through [`active_columns`] rather than scanning `cfg` directly so the empty-means-DEFAULT
+/// rule and the case-insensitive key match stay defined in exactly one place: `DEFAULT_COLUMNS` DOES
+/// carry 1h/6h/12h, so an unconfigured layout still fetches, and only an explicit list that omits all
+/// three turns the fetch off.
+pub fn wants_intraday(cfg: &[String]) -> bool {
+    active_columns(cfg).iter().any(|c| matches!(c.key, "1h" | "6h" | "12h"))
+}
+
 /// (round 12) Master column keys ABSENT from an explicit `widths.columns` config, master order,
 /// case-insensitive (same matching as `active_columns`). Screen nags on these once per run: a
 /// hand-maintained columns list silently hides every column added after it was written (dom was
@@ -3270,6 +3286,24 @@ mod tests {
         assert_eq!(long_leg(&young, 2.0), Some((44.0, 2.0)), "at 2.0 the 2Y rung carries the leg");
         // and the knob must never PROMOTE a short rung over a long one it already had
         assert_eq!(long_leg(&q, 2.0), Some((900.0, 20.0)), "longest rung still wins when present");
+    }
+
+    /// `wants_intraday` decides whether `screen` spends an EXTRA Yahoo chart request per name, so a
+    /// wrong answer either blanks three columns or burns ~3847 requests (~65s of pacer sleep) on a
+    /// universe run printing nothing. Both directions pinned, plus the two ways a key can fail to
+    /// match — because "no intraday column configured" and "I misspelled the intraday column" must
+    /// both resolve to NOT fetching rather than to a silent half-state.
+    #[test]
+    fn intraday_is_fetched_only_when_a_column_prints_it() {
+        assert!(wants_intraday(&[]), "empty config = DEFAULT_COLUMNS, which carries 1h/6h/12h");
+        for k in ["1h", "6h", "12h"] {
+            assert!(wants_intraday(&["rank".to_string(), k.to_string()]), "{k} alone must fetch");
+        }
+        // same case-insensitive match `active_columns` uses — a config saying `6H` still prints, so it must pay
+        assert!(wants_intraday(&["6H".to_string()]));
+        let no_intra: Vec<String> = ["rank", "name", "cagr", "1d", "1y", "score"].iter().map(|s| s.to_string()).collect();
+        assert!(!wants_intraday(&no_intra), "an explicit layout without them must not pay for them");
+        assert!(!wants_intraday(&["1hour".to_string()]), "an unknown key is dropped, never a false fetch");
     }
 
     /// (screen columns) `active_columns` resolves config -> ordered ColSpecs (empty = default layout;
