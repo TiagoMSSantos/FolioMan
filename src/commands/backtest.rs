@@ -2823,20 +2823,35 @@ fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob]) {
     println!("\n── GATE SWEEP (loosen each gate one notch -> fwd return of the names it NEWLY admits) ──");
     println!("  positive = the gate was too tight (newly-admitted beat the field); ≤0 = it's keeping junk out.");
     println!("  the TOO TIGHT flag needs mean AND median positive — one survivor can carry a mean on its own.");
-    for (name, loosen) in gates {
-        let mut t = tuning.clone();
-        loosen(&mut t);
-        match newly_admitted_stats(samples, growth_score, tuning, &t) {
-            Some((n, mean, med)) => {
-                let tag = match (mean > 0.0, med > 0.0) {
-                    (true, true) => "  <- TOO TIGHT (loosen this gate)",
-                    (false, false) => "",
-                    _ => "  <- SPLIT (tail-driven, read the median)",
-                };
-                println!("  {name:<26} n={n:<4} fwd peer-relative  mean {mean:+.1} | med {med:+.1} pts{tag}");
+    // Each row re-scores EVERY sample twice (once at the shipped tuning, once loosened), so at wide-run
+    // sample counts the ten gates cost ~24 ms apiece — 237 ms, which measured as the largest single
+    // stage in a wide run after the cache load and the walk itself. They are also completely
+    // independent: `newly_admitted_stats` is a pure filter+mean+median over a borrowed slice, with no
+    // shared state and no PRNG, so nothing here is order-sensitive the way the bootstrap stages are.
+    // Format into rows and print after: `par_iter().collect()` preserves input order, so the rows land
+    // in the gate order they always did — printing from inside the workers is what would scramble them.
+    // (The base scoring is still repeated per gate; hoisting it would save about half again, and is the
+    // next thing to try if this stage ever matters.)
+    let rows: Vec<String> = gates
+        .par_iter()
+        .map(|(name, loosen)| {
+            let mut t = tuning.clone();
+            loosen(&mut t);
+            match newly_admitted_stats(samples, growth_score, tuning, &t) {
+                Some((n, mean, med)) => {
+                    let tag = match (mean > 0.0, med > 0.0) {
+                        (true, true) => "  <- TOO TIGHT (loosen this gate)",
+                        (false, false) => "",
+                        _ => "  <- SPLIT (tail-driven, read the median)",
+                    };
+                    format!("  {name:<26} n={n:<4} fwd peer-relative  mean {mean:+.1} | med {med:+.1} pts{tag}")
+                }
+                None => format!("  {name:<26} admits 0 new names (gate not binding on this sample)"),
             }
-            None => println!("  {name:<26} admits 0 new names (gate not binding on this sample)"),
-        }
+        })
+        .collect();
+    for row in rows {
+        println!("{row}");
     }
 }
 
