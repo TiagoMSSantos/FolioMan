@@ -201,12 +201,18 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
 /// past a file `screen` had just filled: a wide `backtest universe` re-downloaded ~3000 payloads that
 /// were already on disk, minutes old. Both callers hardcode the same max/1mo URL, so one entry serves
 /// either. Flushed by `long_cache_save`, which every command that uses this must call once at the end.
-async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Value> {
+/// `Arc<Value>`, not `Value`: a cache hit used to DEEP-COPY the whole parsed payload — every decade of
+/// monthly bars, per ticker, ~4900 times on a wide `backtest universe` — only for `parse_chart` to read
+/// it once and drop it. Nobody mutates the payload, so a refcount bump is the same thing minus the copy.
+/// The live arm is wrapped too, which also kills the second deep copy this used to make when handing
+/// the fetch to `LONG_CACHE_NEW`. The cached bytes are still the RAW payload, so both arms converge on
+/// one `parse_chart` exactly as before — see the format note on `long_cache_save`.
+async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Arc<Value>> {
     let today = chrono::Local::now().date_naive();
     if let Some((recorded, v)) = long_cache_load().get(ticker) {
         if long_cache_fresh(Some(recorded), today) {
             LONG_CACHE_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Some(v.clone());
+            return Some(Arc::clone(v));
         }
     }
     let url = urls
@@ -214,9 +220,9 @@ async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<V
         .replace("{ticker}", ticker)
         .replace("{range}", "max")
         .replace("interval=1d", "interval=1mo");
-    let fetched = get_json(client, &url).await;
+    let fetched = get_json(client, &url).await.map(Arc::new);
     if let Some(v) = &fetched {
-        LONG_CACHE_NEW.lock().unwrap().push((ticker.to_string(), v.clone()));
+        LONG_CACHE_NEW.lock().unwrap().push((ticker.to_string(), Arc::clone(v)));
     }
     fetched
 }
@@ -2315,16 +2321,16 @@ fn long_skip_save() {
 /// backtest or skip green by asking whether THIS file is fresh enough to serve it.
 pub const LONG_CACHE_FILE: &str = ".long_history_cache.json";
 pub const LONG_CACHE_TTL_DAYS: i64 = 7;
-static LONG_CACHE: std::sync::OnceLock<HashMap<String, (NaiveDate, Value)>> = std::sync::OnceLock::new();
+static LONG_CACHE: std::sync::OnceLock<HashMap<String, (NaiveDate, Arc<Value>)>> = std::sync::OnceLock::new();
 /// This run's live fetches (collected concurrently, written ONCE in `quotes`).
-static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Value)>> = std::sync::Mutex::new(Vec::new());
+static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Arc<Value>)>> = std::sync::Mutex::new(Vec::new());
 
-fn long_cache_load() -> &'static HashMap<String, (NaiveDate, Value)> {
+fn long_cache_load() -> &'static HashMap<String, (NaiveDate, Arc<Value>)> {
     LONG_CACHE.get_or_init(|| {
         std::fs::read_to_string(crate::config::data_path(LONG_CACHE_FILE))
             .ok()
             .and_then(|s| serde_json::from_str::<HashMap<String, (String, Value)>>(&s).ok())
-            .map(|m| m.into_iter().filter_map(|(t, (d, v))| Some((t, (d.parse().ok()?, v)))).collect())
+            .map(|m| m.into_iter().filter_map(|(t, (d, v))| Some((t, (d.parse().ok()?, Arc::new(v))))).collect())
             .unwrap_or_default()
     })
 }
@@ -2357,10 +2363,12 @@ pub fn long_cache_save() {
     let mut m: HashMap<&str, (String, &Value)> = long_cache_load()
         .iter()
         .filter(|(_, (d, _))| long_cache_fresh(Some(d), today))
-        .map(|(t, (d, v))| (t.as_str(), (d.to_string(), v)))
+        // `&**v` unwraps the Arc to a plain `&Value`: serde only serializes `Arc<T>` under its `rc`
+        // feature, and the file format must not change — this writes exactly the same bytes as before.
+        .map(|(t, (d, v))| (t.as_str(), (d.to_string(), &**v)))
         .collect();
     for (t, v) in new.iter() {
-        m.insert(t.as_str(), (today.to_string(), v));
+        m.insert(t.as_str(), (today.to_string(), &**v));
     }
     let _ = std::fs::write(crate::config::data_path(LONG_CACHE_FILE), serde_json::to_string(&m).unwrap_or_default());
 }
@@ -4723,7 +4731,8 @@ pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option
 /// genuine multi-decade hold can be measured. Same single chart call quote_one already makes for the 20Y
 /// backfill (no new fetch type). None on fetch/parse fail or empty history.
 pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Chart> {
-    let chart = parse_chart(&chart_json_long(client, urls, ticker).await?, ticker)?;
+    let json = chart_json_long(client, urls, ticker).await?;
+    let chart = parse_chart(&json, ticker)?;
     if chart.closes.is_empty() {
         return None;
     }
