@@ -61,6 +61,61 @@ pub(crate) const VERDICT_FILE: &str = ".backtest_verdict.json";
 /// than the method's proof. A healthy run resolves ~4900.
 const MIN_VERDICT_TICKERS: usize = 500;
 
+/// Every string `tests/network.rs::backtest_edge_holds` locates a graded number by. The gate has no
+/// parser — it string-searches this report — so each of these is load-bearing, and TEN OF THE
+/// FOURTEEN fail SOFT when one goes missing:
+///
+/// - `tickers:`, `── GROWTH`, `windows scored:` — `return false`, i.e. SKIP, i.e. **GREEN**. These
+///   three are deliberately soft: they are the throttle guard, and a live wide run that Yahoo
+///   throttles must skip rather than red. The bug is not the softness, it is that a RENAME is
+///   indistinguishable from a THROTTLE — both print "SKIPPED", both pass, and the gate then grades
+///   nothing at all, forever, silently.
+/// - `n=`, `peer-relative`, and the three `growth_*_->off` labels — the gate re-probe WARN just
+///   stops firing.
+/// - `top-3 `, `excess`, `tuning adds`, `early rho`, `late rho` — panic only under `forced`.
+/// - `->  edge` — the only one that is hard unconditionally (`.expect`).
+///
+/// So the honest place to enforce them is OFFLINE, against the golden, where there is no network to
+/// blame for their absence: `tests/backtest_fixture.rs::gate_markers_are_all_in_the_golden`. Both
+/// test crates read THIS slice, so the gate's search strings and the assertion that they still exist
+/// cannot drift apart into two independent copies.
+/// Named rather than indexed: `tests/network.rs` reads these by name, so a slip picks a
+/// non-existent symbol (compile error) instead of the wrong string (a test that still passes while
+/// grading the wrong line).
+pub mod markers {
+    pub const TICKERS: &str = "tickers:";
+    pub const GROWTH_SECTION: &str = "── GROWTH";
+    pub const WINDOWS_SCORED: &str = "windows scored:";
+    pub const LANE_EDGE: &str = "->  edge";
+    pub const TOP3_ROW: &str = "top-3 ";
+    pub const EXCESS: &str = "excess";
+    pub const TUNING_ADDS: &str = "tuning adds";
+    pub const EARLY_RHO: &str = "early rho";
+    pub const LATE_RHO: &str = "late rho";
+    pub const COHORT_N: &str = "n=";
+    pub const PEER_RELATIVE: &str = "peer-relative";
+    /// The three shipped hard gates the re-probe WARN sweeps, by their GATE SWEEP row labels.
+    pub const ABLATED_GATES: &[&str] =
+        &["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"];
+}
+
+pub const GATE_MARKERS: &[&str] = &[
+    markers::TICKERS,
+    markers::GROWTH_SECTION,
+    markers::WINDOWS_SCORED,
+    markers::LANE_EDGE,
+    markers::TOP3_ROW,
+    markers::EXCESS,
+    markers::TUNING_ADDS,
+    markers::EARLY_RHO,
+    markers::LATE_RHO,
+    markers::COHORT_N,
+    markers::PEER_RELATIVE,
+    markers::ABLATED_GATES[0],
+    markers::ABLATED_GATES[1],
+    markers::ABLATED_GATES[2],
+];
+
 /// Basket size the journal grades on. NOT the top-10 the entry-state table ranks by: the footer must
 /// quote the basket a reader can actually buy off the screen, and top-3 is the measured peak of the
 /// top-N ladder at EVERY horizon (8y 16.1 vs 15.0/14.9/14.4 for top-1/5/10/20; 12y 15.2; 20y 13.7),
@@ -118,17 +173,38 @@ pub(crate) fn parse_journal(raw: &str) -> Journal {
 
 /// The LONGEST journaled horizon. "Buy now, hold 8+ years" grades hardest at the long end, and the
 /// long end is the one a short run must not be able to quietly replace.
-pub(crate) fn read_verdict() -> Option<Verdict> {
-    let raw = std::fs::read_to_string(config::data_path(VERDICT_FILE)).ok()?;
-    parse_journal(&raw).into_values().next_back()
+///
+/// Pure half, split out for the same reason [`parse_journal`] is: `data_path` resolves through
+/// `FOLIOMAN_CONFIG`, which is process-global, so any test that drove the real fs would race every
+/// other test in this binary. The fs shell below is then two lines with no decisions in it.
+fn latest_verdict(raw: &str) -> Option<Verdict> {
+    parse_journal(raw).into_values().next_back()
 }
 
-/// Merge, never replace: a `backtest 8` run updates the 8y row and leaves 12y/20y standing.
+/// DELIBERATELY UNPINNED, along with [`write_verdict`] below, and the reason is the split above.
+/// Both are now pure fs shells: resolve a path, hand the bytes to a tested pure function, hand the
+/// result back. A mutation audit still reports `read_verdict -> None` and `write_verdict -> ()` as
+/// surviving, and that is honest — nothing asserts the fs call happens. Killing them needs a test
+/// that drives `config::data_path`, which resolves through the process-global `FOLIOMAN_CONFIG`; one
+/// such test already exists in config.rs and is documented as the only one, because a second would
+/// race it. Two untested `std::fs` one-liners is the cheaper failure mode than a racy suite.
+pub(crate) fn read_verdict() -> Option<Verdict> {
+    latest_verdict(&std::fs::read_to_string(config::data_path(VERDICT_FILE)).ok()?)
+}
+
+/// Merge, never replace: a `backtest 8` run updates the 8y row and leaves 12y/20y standing. Pure
+/// half of [`write_verdict`] — `None` means "no file yet", which must start a fresh journal rather
+/// than being confused with a corrupt one (both end up empty here, but for stated reasons).
+fn merge_verdict(existing: Option<&str>, v: Verdict) -> Journal {
+    let mut j = existing.map(parse_journal).unwrap_or_default();
+    j.insert(v.years, v);
+    j
+}
+
 fn write_verdict(v: Verdict) {
     let path = config::data_path(VERDICT_FILE);
-    let mut j = std::fs::read_to_string(&path).map(|s| parse_journal(&s)).unwrap_or_default();
     let years = v.years;
-    j.insert(years, v);
+    let j = merge_verdict(std::fs::read_to_string(&path).ok().as_deref(), v);
     let ok = serde_json::to_string(&j).ok().and_then(|s| std::fs::write(&path, s).ok());
     match ok {
         Some(()) => eprintln!(
@@ -281,36 +357,58 @@ const STRESS_TICKERS: &[&str] = &[
     "BBBYQ", "FRCB", "SIVBQ", "SBNY", "WEWKQ",
 ];
 
+/// Everything the command line says, and nothing it doesn't. Split out of [`run`] purely so it can be
+/// tested: the parse used to be an inline `for` loop inside a fn that opens sockets, so NOTHING in the
+/// repo exercised it. The mutation audit made that concrete — the arms recognising `universe`, `long`,
+/// `fund` and `insider` could each be turned off and every golden stayed green, because the frozen-data
+/// pins only ever pass `12`, `20`, `8`, `tune`, `halflife` and `stress`. Silently losing `universe` is
+/// the expensive one: the nightly gate's whole job is the WIDE run, and `wide` also gates the verdict
+/// journal the screen footer cites.
+#[derive(Debug, Default, PartialEq)]
+struct Args {
+    years: i64,
+    wide: bool,
+    long: bool,
+    fund: bool,
+    tune: bool,
+    insider: bool,
+    halflife: bool,
+    stress: bool,
+    tickers: Vec<String>,
+}
+
+/// First purely-numeric arg = holdout years; the keyword `universe` = test the live screen universe
+/// (#2: a much wider sample than the ~50-name watchlist -> less single-name luck); everything else =
+/// explicit tickers to test.
+fn parse_args(args: &[String]) -> Args {
+    let mut a_ = Args { years: 5, ..Default::default() };
+    for a in args {
+        match a.parse::<i64>() {
+            Ok(y) if a_.tickers.is_empty() && y > 0 => a_.years = y,
+            _ if a.eq_ignore_ascii_case("universe") => a_.wide = true,
+            _ if a.eq_ignore_ascii_case("long") => a_.long = true,
+            _ if a.eq_ignore_ascii_case("fund") => a_.fund = true,
+            _ if a.eq_ignore_ascii_case("tune") => a_.tune = true,
+            _ if a.eq_ignore_ascii_case("insider") => a_.insider = true, // (Item 4) also pull SEC Form-4 net buys
+            _ if a.eq_ignore_ascii_case("halflife") => a_.halflife = true, // (Item 11) hold-period net-edge sweep
+            _ if a.eq_ignore_ascii_case("stress") => a_.stress = true,   // (#6) inject crashed/delisted losers
+            _ => a_.tickers.push(a.clone()),
+        }
+    }
+    a_
+}
+
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
     let tuning = &settings.buy_heuristic;
 
-    // first purely-numeric arg = holdout years; the keyword `universe` = test the live screen universe
-    // (#2: a much wider sample than the ~50-name watchlist -> less single-name luck); everything else =
-    // explicit tickers to test.
-    let mut years: i64 = 5;
-    let mut wide = false;
-    let mut long = false;
-    let mut fund = false;
-    let mut tune = false;
-    let mut insider = false;
-    let mut halflife = false;
-    let mut stress = false;
-    let mut tickers: Vec<String> = Vec::new();
-    for a in &args {
-        match a.parse::<i64>() {
-            Ok(y) if tickers.is_empty() && y > 0 => years = y,
-            _ if a.eq_ignore_ascii_case("universe") => wide = true,
-            _ if a.eq_ignore_ascii_case("long") => long = true,
-            _ if a.eq_ignore_ascii_case("fund") => fund = true,
-            _ if a.eq_ignore_ascii_case("tune") => tune = true,
-            _ if a.eq_ignore_ascii_case("insider") => insider = true, // (Item 4) also pull SEC Form-4 net buys
-            _ if a.eq_ignore_ascii_case("halflife") => halflife = true, // (Item 11) hold-period net-edge sweep
-            _ if a.eq_ignore_ascii_case("stress") => stress = true,   // (#6) inject crashed/delisted losers
-            _ => tickers.push(a.clone()),
-        }
-    }
+    let Args { years, wide, long, fund, tune, insider, halflife, stress, mut tickers } = parse_args(&args);
+    // DELIBERATELY UNPINNED (mutation audit, round 3): both halves of this `&&` survive. It guards an
+    // eprintln and nothing else — no branch below reads the result — so the worst a wrong spelling does
+    // is print, or fail to print, one advisory line. Killing it means mutating the process environment
+    // from a test, which is global state shared with every other test in this binary; `config.rs` has
+    // the one such test and documents itself as the only one for that reason. Not worth a racy suite.
     if fund && std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty()).is_none() {
         eprintln!("backtest: `fund` set but FMP_API_KEY is empty — the fundamental lane will be empty (price lanes still run).");
     }
@@ -2943,6 +3041,21 @@ mod tests {
         assert!(close(&get("6-10")[1], (30.0, 10.0)));
         // head-to-head: only window A qualifies (>10 names); #1 (+100) and 2-5 (+50) both beat 11-20 (+10)
         assert_eq!((h1, h25, hn), (1, 1, 1));
+
+        // EXACTLY ON THE BOUNDARY. Windows A and B (25 and 8 names) straddle every slice start but
+        // land on none of them, so `vv.len() <= lo` and `vv.len() < lo` decide identically above —
+        // the mutation audit flagged that guard as unkilled for precisely that reason. A window with
+        // exactly 10 names sits ON the 11-20 slice's `lo`, and there the two spellings diverge:
+        // `<` lets the slice through, `&vv[10..10]` is EMPTY, and `mean` of nothing is 0.0, which
+        // this function's `(mean - 1.0) * 100.0` renders as a **-100% book** — a fabricated total
+        // wipeout row in the ladder, not a missing one. That is the "no fake short book" the guard's
+        // own comment promises, and it now has a test standing on it.
+        by_bucket.insert(3, (0..10).map(|r| (100.0 - r as f64, step(r), 10.0, format!("C{r}"))).collect());
+        let (slices, _) = rank_slice_stats(&by_bucket);
+        let get = |label: &str| slices.iter().find(|(l, _)| *l == label).unwrap().1.clone();
+        assert_eq!(get("11-20").len(), 1, "a 10-name window sits ON the 11-20 slice start and must contribute NOTHING");
+        assert_eq!(get("6-10").len(), 3, "all three windows still reach the 6-10 slice");
+        assert!(get("11-20").iter().all(|p| p.0 > -100.0), "an empty slice must be skipped, never booked as -100%");
         // median: odd + even sample sizes, and the top-N table's clone-then-sort usage pattern
         assert_eq!(median(vec![3.0, 1.0, 2.0]), 2.0);
         assert_eq!(median(vec![4.0, 1.0, 2.0, 3.0]), 2.5);
@@ -3023,6 +3136,122 @@ mod tests {
             oos_late: 7.4,
             tuning_fp: "{\"a\":1}".into(),
         }
+    }
+
+    /// EVERY arm of the command line, because until the mutation audit none of them had a caller.
+    /// The parse lived inline in `run()`, which opens sockets, so nothing in the repo could reach it:
+    /// turning off the arms that recognise `universe`, `long`, `fund` or `insider` left all six
+    /// frozen-data goldens green, since those only ever pass `12`/`20`/`8`/`tune`/`halflife`/`stress`.
+    ///
+    /// `universe` is the one that matters most. It gates the WIDE run — the nightly gate's entire
+    /// subject — and it also gates the verdict journal (`wide && tickers.len() >= MIN_VERDICT_TICKERS`)
+    /// that the screen footer quotes. Lose that keyword and `backtest 12 universe` quietly becomes a
+    /// backtest of one ticker literally named "universe".
+    #[test]
+    fn args_parse_every_keyword() {
+        let p = |s: &str| parse_args(&s.split_whitespace().map(String::from).collect::<Vec<_>>());
+
+        // default: no args at all
+        assert_eq!(p(""), Args { years: 5, ..Default::default() });
+
+        // each keyword on its own, so one arm going dead cannot hide behind another
+        assert!(p("universe").wide, "`universe` must set wide — the nightly gate IS the wide run");
+        assert!(p("long").long);
+        assert!(p("fund").fund);
+        assert!(p("tune").tune);
+        assert!(p("insider").insider);
+        assert!(p("halflife").halflife);
+        assert!(p("stress").stress);
+        // case-insensitive, as every arm claims via eq_ignore_ascii_case
+        assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife);
+
+        // the numeric arm: first positive integer wins, and it is NOT a ticker
+        assert_eq!(p("12").years, 12);
+        assert!(p("12").tickers.is_empty());
+        assert_eq!(p("12 universe").years, 12);
+        assert!(p("12 universe").wide);
+
+        // `tickers.is_empty()` guards the numeric arm: once a ticker has been seen, a later number is
+        // a TICKER, not a re-read of the horizon. Both halves of that `&&` are load-bearing, and the
+        // audit flagged the whole condition as replaceable by `true` and by `||` without any golden
+        // noticing, so each half gets its own assertion.
+        let after = p("AAPL 12");
+        assert_eq!(after.years, 5, "a number AFTER a ticker must not silently re-set the horizon");
+        assert_eq!(after.tickers, vec!["AAPL", "12"]);
+        // `y > 0`: zero and negative horizons are not horizons. `12 -3` keeps 12 and treats -3 as a name.
+        assert_eq!(p("0").years, 5, "a zero horizon must be rejected, not accepted as 0 years");
+        assert_eq!(p("0").tickers, vec!["0"]);
+        assert_eq!(p("-3").years, 5);
+
+        // everything unrecognised is a ticker, in order, unchanged
+        let mixed = p("AAPL MSFT tune 20");
+        assert!(mixed.tune);
+        assert_eq!(mixed.years, 5, "20 arrives after two tickers, so it is a name too");
+        assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
+
+        // all flags at once still parse independently
+        let all = p("8 universe long fund tune insider halflife stress");
+        assert_eq!(
+            all,
+            Args { years: 8, wide: true, long: true, fund: true, tune: true, insider: true, halflife: true, stress: true, tickers: vec![] }
+        );
+    }
+
+    /// The verdict journal's OTHER half — the merge and the horizon pick, which had no test caller
+    /// at all until the mutation audit said so out loud. `parse_journal` right next door was already
+    /// covered (its mutants die); `tuning_fingerprint`, `read_verdict` and `write_verdict` all
+    /// survived every mutation, meaning the suite could not tell them from stubs returning nothing.
+    ///
+    /// What that costs is not abstract. `screen.rs` reads the journal for its method footer and
+    /// compares the stored `tuning_fp` against a live `tuning_fingerprint(&settings.buy_heuristic)`
+    /// to decide whether to print the numbers or a ⚠ stale-settings warning. Make the fingerprint
+    /// constant and the comparison is dead in BOTH directions — drift never fires, or always fires —
+    /// and the footer quotes numbers the current knobs never earned. Make the merge replace instead
+    /// of merge and a `backtest 8` run erases the 20y row, which is the exact regression the journal
+    /// was introduced to end.
+    #[test]
+    fn verdict_journal_merges_and_fingerprints() {
+        // MERGE, NEVER REPLACE. An 8y write must leave 12y and 20y standing.
+        let on_file = serde_json::to_string(&Journal::from([
+            (20, stub_verdict(20, VERDICT_TOP)),
+            (12, stub_verdict(12, VERDICT_TOP)),
+        ]))
+        .unwrap();
+        let merged = merge_verdict(Some(&on_file), stub_verdict(8, VERDICT_TOP));
+        assert_eq!(merged.keys().copied().collect::<Vec<_>>(), vec![8, 12, 20], "an 8y write erased a longer horizon");
+
+        // Same horizon twice = the newer run wins. Merge must not mean "keep the stale one".
+        let mut newer = stub_verdict(12, VERDICT_TOP);
+        newer.book = 99.0;
+        let replaced = merge_verdict(Some(&on_file), newer);
+        assert_eq!(replaced.len(), 2);
+        assert!((replaced[&12].book - 99.0).abs() < 1e-9, "re-running a horizon must overwrite its row");
+
+        // No file yet -> a fresh one-row journal, not a panic and not an empty write.
+        assert_eq!(merge_verdict(None, stub_verdict(12, VERDICT_TOP)).len(), 1);
+        // Corrupt file -> the new row still lands. A broken journal must not also swallow this run.
+        assert_eq!(merge_verdict(Some("not json"), stub_verdict(12, VERDICT_TOP)).len(), 1);
+
+        // THE LONGEST HORIZON, not the first. BTreeMap orders ascending, so this is `next_back`, and
+        // a `next` here would quietly make the footer cite the SHORTEST run on file.
+        let three = serde_json::to_string(&Journal::from([
+            (8, stub_verdict(8, VERDICT_TOP)),
+            (12, stub_verdict(12, VERDICT_TOP)),
+            (20, stub_verdict(20, VERDICT_TOP)),
+        ]))
+        .unwrap();
+        assert_eq!(latest_verdict(&three).expect("parses").years, 20);
+        assert!(latest_verdict("not json").is_none(), "a corrupt journal must silence the footer");
+
+        // THE FINGERPRINT, which is the entire contract screen.rs's drift check rests on: same
+        // tuning -> same string (or the footer warns on every run and the warning stops meaning
+        // anything), one knob moved -> different string (or it never warns and cites stale numbers).
+        let base = BuyHeuristic::default();
+        assert_eq!(tuning_fingerprint(&base), tuning_fingerprint(&BuyHeuristic::default()), "same tuning must fingerprint the same");
+        let mut moved = BuyHeuristic::default();
+        moved.growth_trend_weight += 0.01;
+        assert_ne!(tuning_fingerprint(&base), tuning_fingerprint(&moved), "a moved knob must change the fingerprint");
+        assert!(!tuning_fingerprint(&base).is_empty(), "an empty fingerprint compares unequal to everything -> drift warns forever");
     }
 
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back

@@ -28,6 +28,7 @@
 // note: separate test crate, so the lib's crate-root allow doesn't reach here. Same call: docs render fine.
 #![allow(clippy::doc_lazy_continuation)]
 
+use folioman::commands::backtest::markers;
 use folioman::{config, fetch};
 use serde_json::Value;
 
@@ -414,7 +415,7 @@ fn backtest_edge_holds() {
         let stdout = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         // throttle guard: the wide universe fetch resolves ~3000+ tickers healthy; a tiny count means
         // Yahoo/Börse-Frankfurt throttled most requests -> the de-meaned sample is unreliable -> SKIP.
-        match num_after(&stdout, "tickers:") {
+        match num_after(&stdout, markers::TICKERS) {
             Some(n) if n >= 500.0 => {}
             Some(n) => {
                 eprintln!("backtest-gate {years}y SKIPPED — only {n} tickers resolved (throttled/unavailable)");
@@ -427,7 +428,7 @@ fn backtest_edge_holds() {
         }
         // isolate the GROWTH lane's report (there's also an ON-SALE block earlier with its own edge).
         // Everything after this marker, so the `vs S&P500` held-book block below is inside it too.
-        let growth = match stdout.split("── GROWTH").nth(1) {
+        let growth = match stdout.split(markers::GROWTH_SECTION).nth(1) {
             Some(g) => g,
             None => {
                 eprintln!("backtest-gate {years}y SKIPPED — no GROWTH section (run didn't complete)");
@@ -445,7 +446,7 @@ fn backtest_edge_holds() {
         // the environmental case this file's skip-on-throttle contract exists for. What the panics below
         // catch is the opposite — a HEALTHY run whose report shape changed.
         const MIN_SCORED: f64 = 20.0; // report_lane itself refuses under 4; a healthy wide run scores hundreds
-        match num_after(growth, "windows scored:") {
+        match num_after(growth, markers::WINDOWS_SCORED) {
             Some(n) if n >= MIN_SCORED => {}
             other => {
                 eprintln!(
@@ -459,7 +460,7 @@ fn backtest_edge_holds() {
         // the top-vs-bottom-half validated edge. Anchored on the headline's own `->  edge`, not a bare
         // "edge": the word recurs in the ablation, the era table and the entry-state block, so a bare
         // marker reads whichever one happens to come first if the headline is ever missing.
-        let edge = num_after(growth, "->  edge").expect("a completed GROWTH run prints its headline edge");
+        let edge = num_after(growth, markers::LANE_EDGE).expect("a completed GROWTH run prints its headline edge");
         assert!(
             edge > 0.0,
             "{years}y: GROWTH validated edge COLLAPSED to {edge:+.1} pts (healthy baseline ~+117 at 12y) — a \
@@ -469,8 +470,9 @@ fn backtest_edge_holds() {
         // top-HALF against the bottom-HALF, which can stay healthy while the small book a reader buys
         // goes backwards — that gap is exactly why the rule moved. Row format:
         //   top-3  book +13.7%/yr  vs S&P500 +7.2%/yr  ->  excess +6.5 (med +6.6) pts/yr  win 97% of 39 …
-        // `starts_with("top-3 ")` after trimming, so "top-30"/"top-35" can never match it.
-        let t3 = growth.lines().find(|l| l.trim_start().starts_with("top-3 ")).and_then(|l| num_after(l, "excess"));
+        // TOP3_ROW carries a TRAILING SPACE (`"top-3 "`) and is matched with starts_with after
+        // trimming, so "top-30"/"top-35" can never match it. Do not "tidy" that space away.
+        let t3 = growth.lines().find(|l| l.trim_start().starts_with(markers::TOP3_ROW)).and_then(|l| num_after(l, markers::EXCESS));
         match t3 {
             Some(x) => {
                 assert!(
@@ -499,7 +501,7 @@ fn backtest_edge_holds() {
         // the raw edge is not — both arms score the same samples over the same window, so market drift
         // cancels out of the delta. A knob edit that ranks no better than no tuning at all leaves the
         // `edge > 0` check above perfectly green.
-        match num_after(growth, "tuning adds") {
+        match num_after(growth, markers::TUNING_ADDS) {
             Some(lift) => {
                 assert!(
                     lift > 0.0,
@@ -515,7 +517,7 @@ fn backtest_edge_holds() {
             None => eprintln!("backtest-gate {years}y — no null-model line parsed"),
         }
         // whole out-of-sample backwards (BOTH halves negative) = the edge doesn't generalize -> collapse.
-        match (num_after(growth, "early rho"), num_after(growth, "late rho")) {
+        match (num_after(growth, markers::EARLY_RHO), num_after(growth, markers::LATE_RHO)) {
             (Some(early), Some(late)) => {
                 assert!(
                     !(early < 0.0 && late < 0.0),
@@ -536,9 +538,9 @@ fn backtest_edge_holds() {
         // POSITIVE flip with a real sample means the gate is discarding winners in the current regime and
         // its threshold should be re-probed (same-batch pair). WARN only, never assert: loosening a gate
         // is a measured human decision, not a red build.
-        for gate in ["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"] {
+        for gate in markers::ABLATED_GATES {
             if let Some(line) = growth.lines().find(|l| l.contains(gate)) {
-                if let (Some(n), Some(mean)) = (num_after(line, "n="), num_after(line, "peer-relative")) {
+                if let (Some(n), Some(mean)) = (num_after(line, markers::COHORT_N), num_after(line, markers::PEER_RELATIVE)) {
                     if n >= 30.0 && mean > 20.0 {
                         eprintln!(
                             "backtest-gate WARNING {years}y — `{gate}` excluded cohort now averages {mean:+.1} pts fwd (n={n:.0}); \

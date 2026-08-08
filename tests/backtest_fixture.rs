@@ -15,11 +15,10 @@
 //! deterministic net at all. Five scalars catch five regressions; a golden block also catches the row
 //! that changed, the row that vanished and the row that appeared.
 //!
-//! IT DOUBLES AS THE MARKER CONTRACT. `backtest_edge_holds` finds its numbers by string-searching:
-//! `tickers:`, `windows scored:`, `->  edge`, `tuning adds`, `top-3 `, `early rho`/`late rho`. Every
-//! one of them is in this golden (verified against it, not assumed), so a report rename reds HERE —
-//! offline, in seconds — before it can silently blind the nightly gate. That matters because the
-//! nightly gate's own reaction to a missing marker is to SKIP, which is green.
+//! IT DOUBLES AS THE MARKER CONTRACT, and that is now an ASSERTION rather than a paragraph — see
+//! `gate_markers_are_all_in_the_golden` below, which checks all 14 of `backtest::GATE_MARKERS`
+//! against the 12y golden. This paragraph used to make the claim in prose and name 7 of the 14;
+//! nothing executable enforced it, and `tests/network.rs` held its own second copy of the strings.
 //! Renaming a report line therefore means re-blessing this golden, and the diff is the review.
 //!
 //! DETERMINISM IS STRUCTURAL, not hoped for. `FOLIOMAN_OFFLINE=1` makes every outbound helper in
@@ -77,9 +76,35 @@
 //!       -F 'edge_halves|winsor_edge|lane_metrics|turnover_frac|percentile|bootstrap_edge_ci|demean|book_stats|exit_cohorts|cohort_stats|edge_terciles|spearman' \
 //!       -E 'book_stats .* with Some' --profile mutants --copy-target=false -j 1 -- --test backtest_fixture
 //! The `-E` drops 2187 mutants that only permute `book_stats`'s 7-tuple return; `--profile mutants`
-//! (Cargo.toml) is opt-level 2, which turns a 50s-per-mutant run into a ~15s one. The WHOLE module,
-//! for an overnight run — 2400+ mutants, hours, and NOT a superset anybody has graded yet:
-//!     cargo mutants -f src/commands/backtest.rs --profile mutants --copy-target=false -j 1 -- --test backtest_fixture
+//! (Cargo.toml) is opt-level 2, which turns a 50s-per-mutant run into a ~15s one.
+//!
+//! ROUND 3 WIDENED THE AUDIT PAST THOSE TWELVE FUNCTIONS, and the class it found was not arithmetic
+//! at all. Grading a 10% slice of the whole module (944 gradeable mutants once the tuple-return
+//! permutations are excluded; ~16s each, so the full sweep is ~4.5h and only ever runs as a slice):
+//!     cargo mutants -f src/commands/backtest.rs -E 'replace .* -> .* with Some' \
+//!       --profile mutants --copy-target=false -j 1 --shard 0/10 -- --lib --test backtest_fixture
+//! The survivors were the VERDICT JOURNAL and the ARGUMENT PARSER — code the goldens run through but
+//! never vary. `tuning_fingerprint` could return a constant (killing the screen footer's stale-tuning
+//! warning in both directions), `read_verdict`/`write_verdict` could become stubs, and every arm of
+//! `backtest`'s command line — `universe`, `long`, `fund`, `insider` — could stop being recognised,
+//! all with six green goldens, because these pins only ever pass `12`/`20`/`8`/`tune`/`halflife`/
+//! `stress` and none of them reads a verdict. Fixed by splitting the pure halves out (`parse_args`,
+//! `merge_verdict`, `latest_verdict`) and pinning them in src/commands/backtest.rs; 14 of those
+//! mutants were then re-checked one by one and all 14 die.
+//!
+//! What is left alive is documented where it lives, not here: the two `std::fs` one-liners in
+//! `read_verdict`/`write_verdict`, the `FMP_API_KEY` advisory print, and `bootstrap_edge_ci`'s
+//! `edges.len() < iters / 2`. Killing any of them needs process-global state (`FOLIOMAN_CONFIG`, the
+//! environment) that would race every other test in the binary.
+//!
+//! A guard class ALSO stays deliberately unpinned: the ~10 `report_*`/`emit_*` too-few-rows guards
+//! (`bd.len() < 2`, `scored.len() < 8`, …). Those functions return `()` and print, so the golden IS
+//! their natural pin — and it structurally cannot reach their boundaries, because every lane here
+//! carries hundreds of rows. Pinning them means splitting compute from render across a dozen report
+//! functions, which is a far larger change than the bug it would catch.
+//!
+//! CI grades the DIFF, not a slice: `.github/workflows/ci.yml`'s `mutants` job runs
+//! `cargo mutants --in-diff` on every push, so new code must be killed by tests that land with it.
 //!
 //! KNOWN GAPS, stated rather than implied:
 //! - the run takes the NARROW path (an explicit `tickers:` list), which leaves `etf_set`/`sector_of`
@@ -275,6 +300,44 @@ fn backtest_halflife_report_is_pinned() {
 #[test]
 fn backtest_stress_report_is_pinned() {
     pin(&["12", "stress"], "backtest-12-stress.golden");
+}
+
+/// THE MARKER CONTRACT, as an assertion rather than a claim.
+///
+/// `tests/network.rs::backtest_edge_holds` has no parser — it string-searches this report for every
+/// number it grades. Until now, "every marker is in the golden" was prose in this file's module doc,
+/// verified once by hand and never again. It was also incomplete: it named 7 of the 14.
+///
+/// The failure this closes is specific. Ten of the fourteen markers fail SOFT in the gate, and three
+/// of those (`tickers:`, `── GROWTH`, `windows scored:`) make it `return false` — SKIP — which is
+/// GREEN. Those three are soft on purpose: they are the throttle guard, and a live wide run that
+/// Yahoo throttles must skip rather than red. The problem is that a RENAME and a THROTTLE are then
+/// indistinguishable — same "SKIPPED" line, same green — so a renamed report row silently switches
+/// the gate off and nothing ever says so.
+///
+/// This test can tell them apart because it has no network to blame: the report is generated offline
+/// from a frozen cache, so a missing marker has exactly one cause.
+///
+/// Deliberately checked against the 12y golden ONLY. The other five modes print subsets (`tune` and
+/// `halflife` have no GROWTH lane at all), and the gate itself only ever runs the wide 20/12/8y
+/// report — asserting the full set against a mode that structurally cannot carry it would be a
+/// failing test dressed as coverage.
+#[test]
+fn gate_markers_are_all_in_the_golden() {
+    let golden_path = fixture_dir().join("backtest-12.golden");
+    let golden = std::fs::read_to_string(&golden_path).expect("read backtest-12.golden");
+    let missing: Vec<_> = folioman::commands::backtest::GATE_MARKERS
+        .iter()
+        .filter(|m| !golden.contains(**m))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "tests/network.rs greps the backtest report for these strings and {missing:?} no longer \
+         appear in {}. The nightly gate's reaction to a missing marker is to SKIP, which is GREEN — \
+         so this rename would have disarmed the gate silently. Either restore the report wording, or \
+         update backtest::markers AND re-bless the goldens in the same commit.",
+        golden_path.display()
+    );
 }
 
 /// Rebuild `tests/fixture/.long_history_cache.json` from a warm real one. `#[ignore]`d: it needs the

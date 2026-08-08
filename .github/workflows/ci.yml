@@ -5,9 +5,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    - cron: "0 4 * * *"   # nightly 04:00 UTC — drives the backtest-gate job below (guarded by `if:`)
   workflow_dispatch: {}    # let it be run on demand from the Actions tab
+
+# NO `schedule:`. Every job below already runs on push and PR — none of them was ever gated behind
+# `if: github.event_name == 'schedule'` — so the nightly cron added a second daily run of the same
+# thing and nothing else. The rule this file now keeps is that a push runs the WHOLE suite and gets
+# an answer in minutes, rather than some checks arriving the next morning.
+# What that costs, stated rather than buried: `audit` no longer catches a newly-published RustSec
+# advisory on a quiet day. It still runs on every push and PR; it just needs a push to run.
 
 # Tame flaky crates.io fetches. The "[16] Error in the HTTP2 framing layer" curl failure is HTTP/2
 # multiplexing choking mid-download; CARGO_HTTP_MULTIPLEXING=false forces HTTP/1.1 and dodges it.
@@ -81,8 +86,8 @@ jobs:
   # RustSec advisory gate: a networked CLI whose whole job is fetching remote payloads should not
   # sit on a dependency with a known CVE. Audits the COMMITTED Cargo.lock — the exact resolution
   # every job builds — so a red is always about the tree we actually ship, deterministically.
-  # BLOCKING: an advisory in the tree is a real defect, and the nightly cron means a newly published
-  # CVE reddens within a day, not whenever the next code push happens. Escape hatch if an advisory
+  # BLOCKING: an advisory in the tree is a real defect. Runs on every push and PR (it has no `if:`),
+  # so no commit ever lands on a tree with a known CVE. Escape hatch if an advisory
   # is ever unfixable (no patched release, not exploitable here): commit an `audit.toml` with an
   # `[advisories] ignore = ["RUSTSEC-..."]` entry and a comment saying why.
   audit:
@@ -184,7 +189,7 @@ jobs:
 
   # Walk-forward gate. Runs the REAL `backtest {20,12,8} universe` over the live universe and checks the
   # shipped tuning still yields a POSITIVE validated edge AND a positive top-3 held book. Runs on
-  # push/PR + nightly cron + manual dispatch. The wide fetch is slow and drifts by the day, so this is
+  # push/PR + manual dispatch. The wide fetch is slow and drifts by the day, so this is
   # NON-blocking by design: same skip-vs-fail contract as the drift nets — a throttle (nonzero exit /
   # <500 tickers resolved) SKIPS green, only a genuine COLLAPSE (GROWTH edge <= 0, top-3 excess <= 0, or
   # both out-of-sample halves negative) FAILS. So a red is never the market, only broken code/tuning.
@@ -211,19 +216,98 @@ jobs:
         # no-op — the same trap that killed network-smoke.
         run: FOLIOMAN_CONFIG=tests/ci-settings.yaml FOLIOMAN_BACKTEST_GATE=1 cargo test --locked --release --test network backtest_edge_holds -- --nocapture
 
+  # MUTATION GATE — "is the code you just wrote actually covered", asked of the diff and nothing else.
+  #
+  # The suite reports whether tests PASS. It cannot report whether they would NOTICE a change, and the
+  # difference is not academic here: a measured audit of this repo found `tuning_fingerprint`,
+  # `read_verdict`, `write_verdict` and the WHOLE of `backtest`'s argument parser could each be
+  # replaced with a stub and every test, including six frozen-data goldens, stayed green. cargo-mutants
+  # makes exactly those edits and fails if the suite sleeps through them.
+  #
+  # WHY --in-diff AND NOT A SHARD. Grading the whole backtest module is ~944 mutants at ~16s each —
+  # hours, so it can only ever be a slice, and a FIXED slice re-proves the same lines on every push
+  # while never reaching the rest. `--in-diff` grades the lines this push actually touched: a docs-only
+  # commit costs seconds, a real one costs minutes (measured locally: a 1114-line commit = 26 mutants,
+  # ~7 min; a 3-commit span = 90). Cost tracks the change, and the gate means something specific —
+  # code you add has to be killed by tests you add with it.
+  #
+  # fetch-depth: 0 because the default shallow clone has no base commit to diff against.
+  # --baseline skip because unit-tests and integration-tests above already prove the tree is green;
+  # re-proving it here would cost a full build+test per run for nothing.
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # --in-diff needs the base commit; the default depth-1 clone has no parent
+      - uses: taiki-e/install-action@cargo-mutants
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: folioman-ci   # same warm cache as the other jobs
+      - name: mutation gate — changed code must be covered by the suite
+        env:
+          # push: the commit before this one. PR: the merge base. Both can be all-zeros or empty on a
+          # branch's first push, where there is no "before" — the step below falls back to HEAD^.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE}" ] || [ "${BASE}" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            BASE=$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)
+          fi
+          git diff "${BASE}" HEAD > push.diff
+          # Count first, into the summary: a slow run then reads as "big diff", not as a hang. `--list`
+          # only parses, so this costs seconds.
+          #
+          # The error is NOT discarded, and that is deliberate. `--in-diff` hard-errors with "Diff
+          # content doesn't match source file" when the diff and the tree disagree, and piping its
+          # stderr to /dev/null turns that error into a count of zero — which this step would then read
+          # as "nothing to grade" and PASS. A gate that goes green because its input was unreadable is
+          # the same class of bug as the marker SKIPs this round set out to close, so: listing failure
+          # is a RED, and only a genuine empty list is a pass.
+          if ! cargo mutants --list --in-diff push.diff > mutant-list.txt 2> mutant-list.err; then
+            echo "cargo mutants --list failed — grading nothing is NOT a pass:" >&2
+            cat mutant-list.err >&2
+            exit 1
+          fi
+          n=$(wc -l < mutant-list.txt)
+          {
+            echo '```text'
+            echo "base ${BASE}"
+            echo "${n} mutants in the changed lines"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # A push that touches no Rust generates nothing to grade. That is a PASS, not an error —
+          # without this guard a README-only commit would red the build.
+          if [ "${n}" -eq 0 ]; then
+            echo "no mutants in the diff — nothing to grade" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # --lib + the frozen-data goldens are the killing suite: both are offline and deterministic.
+          # network.rs is deliberately NOT in it — a mutant "surviving" because Yahoo throttled would be
+          # a false red, which is the one thing a blocking gate must never produce.
+          cargo mutants --in-diff push.diff --profile mutants --baseline skip -j 1 \
+            -- --lib --test backtest_fixture
+      - uses: actions/upload-artifact@v7
+        if: always()   # the survivor list is the whole point of a red — keep it
+        with:
+          name: mutants-out
+          path: mutants.out
+          retention-days: 14
+
   # Actions housekeeping: each main run supersedes the history, so delete this workflow's older
   # COMPLETED runs (logs + artifacts go with them). Main-only by the `if`: a PR ref is the merge ref
   # (refs/pull/…), so PR runs neither trigger the cleanup nor lose their own history while iterating.
   # --status completed keeps any still-running run (including this one) untouched; per-id `|| true`
-  # so one undeletable run never reddens the pipeline. NIGHTLY (scheduled) runs are where the
-  # backtest-gate's gate-re-probe WARNs print, so the newest 5 of those survive until read instead
-  # of being wiped by the next morning's push.
+  # so one undeletable run never reddens the pipeline. The event-based filtering this used to do —
+  # skip `schedule` runs, keep the newest 5 of them because that is where backtest-gate's re-probe
+  # WARNs printed — went with the cron: there are no scheduled runs left to retain.
   #
   # CANCELLED runs (the concurrency `cancel-in-progress` kills a superseded commit's in-flight run)
   # carry no useful logs but clutter the Actions tab, and `--status completed` does NOT match them —
-  # a cancelled run's status is `cancelled`, not `completed`. So sweep them in their own pass, all of
-  # them regardless of event (a half-run nightly has nothing worth keeping). This runs on every main
-  # push + the nightly cron, so a burst of superseded pushes is cleared on the next run to finish.
+  # a cancelled run's status is `cancelled`, not `completed`. So sweep them in their own pass. This
+  # runs on every main push, so a burst of superseded pushes is cleared on the next run to finish.
   cleanup-runs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -234,10 +318,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status completed --limit 200 --json databaseId,event -q '.[] | select(.event != "schedule") | .databaseId'); do
-            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
-          done
-          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status completed --limit 200 --json databaseId,event -q '[.[] | select(.event == "schedule")] | .[5:] | .[].databaseId'); do
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status completed --limit 200 --json databaseId -q '.[].databaseId'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
           for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status cancelled --limit 200 --json databaseId -q '.[].databaseId'); do
