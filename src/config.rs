@@ -21,6 +21,8 @@ pub struct Settings {
     pub fetch_concurrency_multiplier: usize, // in-flight fetches = CPU cores × this (default 8); raise to scan faster, lower if Yahoo 429s
     #[serde(default = "default_fetch_requests_per_second")]
     pub fetch_requests_per_second: f64, // global outbound-request pacer (req/s); spaces launches so the fan-out can't burst-429 (default 10). 0 = no pacing
+    #[serde(default)]
+    pub compute_threads: usize, // worker threads for the CPU-bound halves of `backtest` — the per-ticker walk, the knob sweeps and the `tune` search. 0 (DEFAULT) = every logical core. This is NOT `fetch_concurrency_multiplier`: that one sizes in-flight NETWORK requests and wants to be much larger than the core count, this one sizes actual compute and wants to be at most it. Set it to cap FolioMan while you use the machine for something else; `RAYON_NUM_THREADS=n` still works as a one-off override whenever this is left at 0. Thread count must never change a printed number — the walk collects in ticker order and every seeded PRNG stream stays serial — and `tests/backtest_fixture.rs` pins that: the frozen-data goldens are generated single-threaded and must reproduce byte-for-byte at any setting
     #[serde(default = "default_true")]
     pub universe_prefer_eur: bool, // crypto in the live universe quoted in EUR (BTC-EUR) if true, else USD
     #[serde(default)]

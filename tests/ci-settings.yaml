@@ -2773,6 +2773,16 @@ fetch_concurrency_multiplier: 8
 # 0 disables pacing (a 64-wide burst then drops valid names — e.g. NVDA — so don't).
 fetch_requests_per_second: 60.0
 
+# Worker threads for the CPU-bound half of `backtest` — the per-ticker walk, the knob sweeps and the
+# `tune` search. NOT the two knobs above: those size in-flight NETWORK requests and want to be far
+# larger than the core count, this one sizes actual compute and wants to be at most it. 0 (the
+# default, and what CI uses) = every logical core; `RAYON_NUM_THREADS=n` still overrides for one run
+# whenever this is 0. Set it to cap FolioMan while you use the machine for something else.
+# It must never change a printed number — the walk collects in ticker order and every seeded PRNG
+# stream stays serial — and tests/backtest_fixture.rs pins that: the goldens are generated
+# single-threaded and must reproduce byte-for-byte at any setting.
+compute_threads: 0
+
 # Quote the live-universe crypto in EUR (BTC-EUR) if true, else USD (BTC-USD). Mirrors
 # buy_heuristic.prefer_eur but for what `screen` fetches. US stocks/ETFs have no EUR listing.
 universe_prefer_eur: true

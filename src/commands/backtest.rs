@@ -40,6 +40,7 @@ use crate::picks::{buy_score, growth_score};
 use crate::{config, core, fetch, picks};
 use chrono::Datelike;
 use futures::stream::{self, StreamExt};
+use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// How many years of filed statements the as-of fundamental factors look BACK over — deliberately a
@@ -428,6 +429,16 @@ fn trailing_returns(closes: &[f64], i: usize) -> Vec<f64> {
 
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
+    // `compute_threads: 0` (the default) deliberately builds NO pool: rayon's own default is already
+    // every logical core, and leaving it untouched is what keeps `RAYON_NUM_THREADS` working as a
+    // one-off override. Only an explicit cap needs a global pool. Here rather than in `main` because
+    // `config::load()` PANICS on an unreadable config and `main` currently reaches `help` without
+    // touching it; here rather than in `screen`/`sim` because this is the only command with rayon in
+    // it. `build_global` is once-per-process and errors on a second call — ignored, since the second
+    // caller is the test binary running two backtests in one process, where the first pool is fine.
+    if settings.compute_threads > 0 {
+        let _ = rayon::ThreadPoolBuilder::new().num_threads(settings.compute_threads).build_global();
+    }
     let client = fetch::client();
     let tuning = &settings.buy_heuristic;
 
@@ -2415,13 +2426,24 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     // search on TRAIN: keep the draw with the best train edge among those that also rank right (rho>0) —
     // the same "positive selection" bar the project keeps a knob by, but chosen WITHOUT seeing the test.
     let draws = 500;
+    // Drawn serially, scored in parallel, folded serially. The split matters: `next()` is a single
+    // xorshift stream and `best` keeps the FIRST config to strictly beat the running max, so both the
+    // draw sequence and every tie-break have to stay in draw order. Only `lane_metrics` moves — it is
+    // a pure function of `(train, t)` with no shared state, and it is where the time goes (~3.9s of a
+    // 6.75s `backtest 12 tune`). 500 `BuyHeuristic` clones held at once is a few hundred KB.
+    let proposals: Vec<BuyHeuristic> = (0..draws)
+        .map(|_| {
+            let mut t = default.clone();
+            for &(_, _, set, lo, hi) in &active {
+                set(&mut t, lo + next() * (hi - lo));
+            }
+            t
+        })
+        .collect();
+    let scored: Vec<(Option<f64>, f64)> =
+        proposals.par_iter().map(|t| lane_metrics(train, growth_score, t)).collect();
     let mut best: Option<(f64, BuyHeuristic)> = None; // (train edge, config)
-    for _ in 0..draws {
-        let mut t = default.clone();
-        for &(_, _, set, lo, hi) in &active {
-            set(&mut t, lo + next() * (hi - lo));
-        }
-        let (rho, edge) = lane_metrics(train, growth_score, &t);
+    for (t, (rho, edge)) in proposals.into_iter().zip(scored) {
         if rho.unwrap_or(0.0) > 0.0 && best.as_ref().is_none_or(|(e, _)| edge > *e) {
             best = Some((edge, t));
         }
