@@ -26,3 +26,13 @@ zip = { version = "2", default-features = false, features = ["deflate"] }  # FIR
 [profile.release]
 opt-level = 3
 lto = true
+
+# Killing-suite profile for `cargo mutants`. The report pin (tests/backtest_fixture.rs) replays 200
+# tickers of history six times, which at `dev`'s opt-level 0 costs 38s per mutant against an 11s
+# rebuild — the mutation run is then 80% arithmetic that optimises away for free. `opt-level = 2`
+# with no debuginfo turns that into a build-bound run. Not `release`: `lto = true` there costs more
+# link time per mutant than it saves.
+[profile.mutants]
+inherits = "dev"
+opt-level = 2
+debug = false

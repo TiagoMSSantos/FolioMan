@@ -37,17 +37,62 @@
 //!   else in the repo runs the same data twice); the fix was `BTreeMap`.
 //! - debug and release output byte-identical, so the golden is profile-independent — blessing in
 //!   release cannot red a debug CI job.
-//! - runtime 1.8s release / 24s debug. The 200-ticker recipe below is kept at that debug cost
-//!   deliberately: this is the ONLY end-to-end net over real data, and trimming it to hit a stopwatch
-//!   target would trade the branches it covers for seconds on a suite that already runs minutes.
+//! - runtime 3.3s release for all six pins (11.1s if they ran sequentially — the harness overlaps
+//!   them). The 200-ticker recipe below is kept at its debug cost deliberately: this is the ONLY
+//!   end-to-end net over real data, and trimming it to hit a stopwatch target would trade the branches
+//!   it covers for seconds on a suite that already runs minutes.
+//! - the 20y and 8y goldens differ from the 12y one on 143 of 226 lines, so the horizon rungs are
+//!   genuinely different code, not a re-print. The `stress` golden differs on only 8 of 226 — it is
+//!   near-duplicate and is documented as such on its own test rather than oversold here.
 //!
-//! Trip-verified, because a pin nothing perturbs is a test that passes forever: nudging
-//! `growth_accel_weight` 0.65 -> 0.66 in tests/ci-settings.yaml (a 1.5% move on ONE knob) reds this at
-//! line 31 — `Spearman +0.19` -> `+0.18`. Reverted.
+//! Trip-verified, because a pin nothing perturbs is a test that passes forever. Nudging
+//! `growth_accel_weight` 0.65 -> 0.66 in tests/ci-settings.yaml — a 1.5% move on ONE knob — reds FIVE
+//! of the six: 12y and stress at `Spearman +0.19 -> +0.18`, 8y at `edge +0.9 -> -7.5`, 20y in the
+//! bootstrap band, halflife at `8y hold edge +0.9 -> -7.5`.
 //!
-//! KNOWN GAP, stated rather than implied: the run takes the NARROW path (an explicit `tickers:` list),
-//! which leaves `etf_set`/`sector_of` empty (backtest.rs, `(#46)`). The chart-meta class stamping is
-//! covered; the index-membership braces over it are not.
+//! `tune` did NOT move on that nudge, and the honest reading is a SENSITIVITY FLOOR, not an inert pin:
+//! it scores a 70/30 chronological split that is re-de-meaned per half, and 1.5% on one weight lands
+//! under its printed precision. Probed further to prove it can move at all — `growth_trend_weight`
+//! 0.15 -> 0.30 reds it on line 3 (`rho +0.26 -> +0.32`, `edge +144.5 -> +243.4`). So the tune golden
+//! catches knob-scale changes and code changes, not hairline ones. Both perturbations reverted.
+//!
+//! MEASURED WITH MUTATION TESTING, because "it catches regressions" is a claim, not a number. 217
+//! mutants over the twelve functions the printed numbers flow through (`edge_halves`, `winsor_edge`,
+//! `lane_metrics`, `turnover_frac`, `percentile`, `bootstrap_edge_ci`, `demean`, `book_stats`,
+//! `exit_cohorts`, `cohort_stats`, `edge_terciles`, `core::spearman`), graded with THESE SIX GOLDENS
+//! AS THE ONLY KILLING SUITE: **200 caught, 16 missed, 1 unviable — 92.6%**. So the pin does not
+//! merely pass; a change to almost any arithmetic behind the report reds it.
+//!
+//! Every one of the 16 survivors is a TOO-FEW-ROWS GUARD (`len < 4`, `n < 3`, `tops.len() < 2`) or a
+//! defensive clamp. That is the shape of what a golden over healthy data cannot see, and it is a
+//! property of the approach rather than a hole to plug here: every lane this fixture scores carries
+//! hundreds of rows, so `< 4` and `<= 4` produce byte-identical reports. Those boundaries belong in
+//! unit tests and now have them (`spread_guards_hold_at_their_boundary`, and the additions to
+//! `book_stats_topn_held_book` / `percentile_nearest_rank` in src/commands/backtest.rs). Re-graded
+//! against the full lib suite the count went **4/16 -> 15/16 killed**; the one left alive is
+//! documented in place at `bootstrap_edge_ci`'s `edges.len() < iters / 2`.
+//!
+//! Reproducing the audit (~56 min, `-j 1` — this box OOMs its linker on concurrent cargo builds):
+//!     cargo mutants -f src/commands/backtest.rs -f src/core.rs \
+//!       -F 'edge_halves|winsor_edge|lane_metrics|turnover_frac|percentile|bootstrap_edge_ci|demean|book_stats|exit_cohorts|cohort_stats|edge_terciles|spearman' \
+//!       -E 'book_stats .* with Some' --profile mutants --copy-target=false -j 1 -- --test backtest_fixture
+//! The `-E` drops 2187 mutants that only permute `book_stats`'s 7-tuple return; `--profile mutants`
+//! (Cargo.toml) is opt-level 2, which turns a 50s-per-mutant run into a ~15s one. The WHOLE module,
+//! for an overnight run — 2400+ mutants, hours, and NOT a superset anybody has graded yet:
+//!     cargo mutants -f src/commands/backtest.rs --profile mutants --copy-target=false -j 1 -- --test backtest_fixture
+//!
+//! KNOWN GAPS, stated rather than implied:
+//! - the run takes the NARROW path (an explicit `tickers:` list), which leaves `etf_set`/`sector_of`
+//!   empty (backtest.rs, `(#46)`). The chart-meta class stamping is covered; the index-membership
+//!   braces over it are not. Closing it needs the WIDE path, which needs a live index-member fetch.
+//! - the DAILY-cadence path (`backtest 5` — `years < 8 && !long`) has no end-to-end coverage and
+//!   deliberately gets none here. `fetch_history` goes through `chart_json` (fetch.rs), which has NO
+//!   disk cache — only `chart_json_long` does — so every pin above is monthly by construction.
+//!   Fixturing the daily path means adding a cache to the fetch layer for tests alone, which is a
+//!   worse trade than the gap. `backtest 8` sits ON the boundary and pins the `MAX monthly` label, so
+//!   a change to the `years >= 8` threshold still reds.
+//! - these six pins cover the modes that run OFFLINE. `fund` and `insider` need live APIs and
+//!   `universe` needs a live index fetch, so none of the three is pinned.
 //!
 //! Re-blessing after an INTENDED change:
 //!     FOLIOMAN_BLESS=1 cargo test --release --test backtest_fixture -- --nocapture
@@ -93,10 +138,6 @@ const FIXTURE_TICKERS: &[&str] = &[
     "XACT-NORDEN.ST", "XACT-SVERIGE.ST", "XISP.DE", "XLM-EUR", "XMEM.L", "^GSPC",
 ];
 
-/// Hold horizon the golden is pinned at. 12 is >= 8, so the run takes the MONTHLY path — the same
-/// branch the wide nightly gate uses (`monthly = long || years >= 8`), and the one with decades of bars.
-const PIN_YEARS: &str = "12";
-
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -108,26 +149,35 @@ fn fixture_dir() -> PathBuf {
     repo().join("tests/fixture")
 }
 
-/// Everything the golden must not carry: wall-clock stamps, timings and machine paths. Nothing else is
-/// stripped — a line dropped here is a line no longer pinned, so keep this list as short as it can be.
+/// The ONE thing the golden must not carry: an absolute machine path, which differs per checkout and
+/// would make a locally-blessed golden unmatchable in CI. That is portability, not determinism.
+///
+/// Round 1 filtered three more things. All three are gone, because a line dropped here is a line NO
+/// LONGER PINNED and an inert filter is worse than none — if such a line ever does appear it gets
+/// silently swallowed instead of reddening. Measured across all six pinned runs:
+/// - `elapsed` — matches nothing; `backtest` never prints a timing.
+/// - `run 20` — aimed at the verdict line, which (a) actually starts `Method backtest (run …`, (b) is
+///   rendered by `verdict_line` for the SCREEN footer, not by this command, and (c) is gated behind
+///   `wide && >= MIN_VERDICT_TICKERS` (500), which no fixture run reaches at 200/208 tickers. The
+///   clock (`chrono::Local::now`) only ever reaches the WRITTEN JSON verdict, never stdout.
+/// - `backtest: N tickers, …` — fully deterministic, and dropping it discarded both the ticker count
+///   and the `MAX monthly` / `10y daily` label. That label is the visible read on
+///   `monthly = long || years >= 8`, which is the whole reason the 8y and 20y goldens exist. Pinned now.
 fn normalize(raw: &str) -> String {
     raw.lines()
-        .filter(|l| {
-            let t = l.trim_start();
-            // the verdict's display date (chrono::Local::now) and the progress/timing chatter
-            !(t.starts_with("backtest: ") && t.contains("tickers,"))
-                && !t.contains("elapsed")
-                && !t.contains("run 20")
-                && !t.contains(env!("CARGO_MANIFEST_DIR"))
-        })
+        .filter(|l| !l.contains(env!("CARGO_MANIFEST_DIR")))
         .map(str::trim_end)
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// THE PIN. Runs the real binary over the frozen cache and diffs the whole report against the golden.
-#[test]
-fn backtest_report_is_pinned_on_frozen_data() {
+/// THE PIN. Runs the real binary over the frozen cache and diffs the whole report against a golden.
+///
+/// Each mode gets its OWN `#[test]` rather than a loop inside one, purely so the test harness runs
+/// them concurrently: sequential the six runs are 11.1s release / ~150s debug, in parallel it is the
+/// slowest single run (~3.5s / ~47s). Peak RSS is 38 MB per run, so six at once is ~230 MB — this
+/// repo's OOM history is the linker, not test processes.
+fn pin(args: &[&str], golden_name: &str) {
     let cache = fixture_dir().join(".long_history_cache.json");
     assert!(
         cache.is_file(),
@@ -137,7 +187,8 @@ fn backtest_report_is_pinned_on_frozen_data() {
     );
 
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
-        .args(["backtest", PIN_YEARS])
+        .arg("backtest")
+        .args(args)
         .env("FOLIOMAN_CONFIG", fixture_dir().join("config/settings.yaml"))
         .env("FOLIOMAN_OFFLINE", "1") // no socket may be opened; a fixture miss must not become a live fetch
         .output()
@@ -149,7 +200,7 @@ fn backtest_report_is_pinned_on_frozen_data() {
         String::from_utf8_lossy(&out.stderr)
     ));
 
-    let golden_path = fixture_dir().join("backtest-12.golden");
+    let golden_path = fixture_dir().join(golden_name);
     if std::env::var("FOLIOMAN_BLESS").is_ok_and(|v| !v.is_empty()) {
         std::fs::write(&golden_path, &got).expect("write golden");
         eprintln!("BLESSED {} ({} lines) — review the diff before committing", golden_path.display(), got.lines().count());
@@ -168,13 +219,62 @@ fn backtest_report_is_pinned_on_frozen_data() {
             None => format!("identical prefix, length differs: golden {} lines, got {}", wl.len(), gl.len()),
         };
         panic!(
-            "the backtest report changed on FROZEN data — the market cannot have moved, so this is a \
+            "`backtest {}` changed on FROZEN data — the market cannot have moved, so this is a \
              code or knob change.\n{detail}\n\nIf it was intended: re-validate with a live \
              `folioman backtest universe` (both OOS halves positive) exactly as the ci-settings \
              receipts require, then re-bless with \
-             `FOLIOMAN_BLESS=1 cargo test --release --test backtest_fixture`."
+             `FOLIOMAN_BLESS=1 cargo test --release --test backtest_fixture`.",
+            args.join(" ")
         );
     }
+}
+
+/// 12 is >= 8, so this takes the MONTHLY path — the same branch the wide nightly gate uses
+/// (`monthly = long || years >= 8`) and the one with decades of bars.
+#[test]
+fn backtest_report_is_pinned_on_frozen_data() {
+    pin(&["12"], "backtest-12.golden");
+}
+
+/// 20y is the horizon SHIP RULE v2 leads on and the screen footer quotes. Longest forward window ->
+/// fewest cutoffs survive it, so it exercises the thin end of the rung ladder.
+#[test]
+fn backtest_20y_report_is_pinned() {
+    pin(&["20"], "backtest-20.golden");
+}
+
+/// 8y sits exactly ON the `years >= 8` monthly boundary. If that threshold is ever edited, this run
+/// drops to daily cadence and the pinned `MAX monthly history` label flips — which is precisely the
+/// regression the label is now kept in the golden to catch.
+#[test]
+fn backtest_8y_report_is_pinned() {
+    pin(&["8"], "backtest-8.golden");
+}
+
+/// The knob search. This one carries the most weight of the five: `tune_growth`'s doc promises
+/// "Seeded xorshift64 (no `rand` dep) so a re-run is identical" — the SAME reproducibility claim
+/// `bootstrap_edge_ci` made and broke on `HashMap` iteration order (fixed in the round that added
+/// this file). Nothing verified it until now, and `tune`'s entire job is telling a human whether to
+/// move a shipped knob.
+#[test]
+fn backtest_tune_report_is_pinned() {
+    pin(&["12", "tune"], "backtest-12-tune.golden");
+}
+
+/// The hold-period sweep — which forward window to actually hold. A wholly separate code path
+/// (`hold_period_sweep` -> `sweep_cutoffs`), and the only report in the tool with no other net.
+#[test]
+fn backtest_halflife_report_is_pinned() {
+    pin(&["12", "halflife"], "backtest-12-halflife.golden");
+}
+
+/// Survivorship stress: crashed/delisted losers folded into the pool. Frankly the weakest of the
+/// five — the injection+dedup logic is already unit-tested (`stress_injection_dedups`) and the
+/// resulting report is ~97% the 12y one. Pinned anyway because it costs 2.5s and settles the
+/// question, but do not read it as covering something the 12y golden does not.
+#[test]
+fn backtest_stress_report_is_pinned() {
+    pin(&["12", "stress"], "backtest-12-stress.golden");
 }
 
 /// Rebuild `tests/fixture/.long_history_cache.json` from a warm real one. `#[ignore]`d: it needs the

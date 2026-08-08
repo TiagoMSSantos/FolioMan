@@ -2439,6 +2439,12 @@ fn bootstrap_edge_ci(
             edges.push(t - b);
         }
     }
+    // `<` vs `<=` here is deliberately LEFT UNPINNED by the mutation audit, and the reason is worth
+    // stating: in practice `edges.len()` is either ~`iters` (the lane scores, every draw yields >=4 rows)
+    // or 0 (the gate rejects everything), never exactly `iters / 2`. Both spellings therefore decide
+    // identically for every caller. Landing on the boundary takes a hand-built sample set where precisely
+    // half the seeded draws gate out, which would pin an accident of this PRNG's stream rather than any
+    // contract — and would then have to be re-tuned every time the seed or the draw order moved.
     if edges.len() < iters / 2 {
         return None; // too many draws gated out to too few rows -> no trustworthy band
     }
@@ -2779,7 +2785,13 @@ fn exit_cohorts(
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
     tuning: &BuyHeuristic,
 ) -> (Vec<f64>, Vec<f64>) {
-    let mut by_ticker: HashMap<&str, Vec<&Sample>> = HashMap::new();
+    // BTreeMap, not HashMap: the two Vecs below are filled by ITERATING this map, so its per-process
+    // random order would be baked into their element order. Same family as the `bootstrap_edge_ci` bug
+    // (see the comment there) — found by auditing for it after that one, not by a failing test, because
+    // the consumers here take a mean/median and float addition is only ALMOST associative: the wobble
+    // sits below the printed decimal today. That makes it invisible, not absent, and it would surface
+    // the moment a consumer starts caring about order. Cheap to just not have.
+    let mut by_ticker: BTreeMap<&str, Vec<&Sample>> = BTreeMap::new();
     for s in samples {
         by_ticker.entry(s.quote.ticker.as_str()).or_default().push(s);
     }
@@ -2843,6 +2855,57 @@ mod tests {
     }
     fn sample(date: NaiveDate, realized: f64) -> Sample {
         Sample { date, realized, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None, trail: Vec::new() }
+    }
+
+    /// The too-few-rows guards of `winsor_edge` (<4), `edge_terciles` (<3), `lane_metrics` (<4 scored)
+    /// and `bootstrap_edge_ci` (<4 buckets), checked ONE ROW EITHER SIDE of each exact boundary.
+    ///
+    /// The frozen-data report pin (tests/backtest_fixture.rs) structurally cannot reach any of them:
+    /// every lane it scores carries hundreds of rows, so `< 4` and `<= 4` produce byte-identical
+    /// reports there. The mutation audit is what surfaced them — flipping each of these four guards
+    /// left all six goldens green. What the guard buys is that a spread read off two or three rows
+    /// never reaches the human as a number: NaN/None renders as `n/a`, a computed value renders as if
+    /// it meant something, and the whole point of the winsorized edge and the tercile monotonicity
+    /// check is to warn that an edge rests on too few rows.
+    #[test]
+    fn spread_guards_hold_at_their_boundary() {
+        // One row per YEAR, so the four rows are also four distinct ~6mo buckets: `bootstrap_edge_ci`
+        // guards on bucket count where the other three guard on row count.
+        let rows: Vec<Sample> = [(2020, -10.0), (2021, 0.0), (2022, 5.0), (2023, 20.0)]
+            .iter()
+            .map(|&(y, rel)| Sample { relative: rel, ..sample(ymd(y, 1, 1), rel) })
+            .collect();
+        // score = index, so each function's internal sort is well-defined rather than tie-broken.
+        let pairs = |n: usize| -> Vec<(&Sample, f64)> {
+            rows[..n].iter().enumerate().map(|(i, s)| (s, i as f64)).collect()
+        };
+        assert!(winsor_edge(&pairs(3)).is_nan(), "3 rows is too few to winsorize");
+        assert!(winsor_edge(&pairs(4)).is_finite(), "4 rows is exactly enough to winsorize");
+        assert!(edge_terciles(&pairs(2)).0.is_nan(), "2 rows is too few for terciles");
+        assert!(edge_terciles(&pairs(3)).0.is_finite(), "3 rows is exactly enough for terciles");
+
+        // These two gate on rows that SCORED, so they need a scorer; a constant one keeps every row and
+        // leaves the guard as the only thing under test.
+        fn keeps_every_row(_: &Quote, _: &BuyHeuristic) -> Option<f64> {
+            Some(0.0)
+        }
+        let t = BuyHeuristic::default();
+        assert_eq!(lane_metrics(&rows[..3], keeps_every_row, &t).1, 0.0, "3 scored rows -> no edge");
+        assert_ne!(lane_metrics(&rows[..4], keeps_every_row, &t).1, 0.0, "4 scored rows -> an edge");
+        let ci = |n: usize| bootstrap_edge_ci(&rows[..n], keeps_every_row, &t, 8, 5.0, 95.0);
+        assert!(ci(3).is_none(), "3 buckets is too few to resample");
+        assert!(ci(4).is_some(), "4 buckets is exactly enough to resample");
+
+        // Enough buckets, but the gate rejects every row, so every draw is empty. That is the second
+        // way the bootstrap declines to publish a band, and it must stay None rather than hand back a
+        // band computed from an empty edge distribution (which percentile() renders as NaN, not `n/a`).
+        fn scores_nothing(_: &Quote, _: &BuyHeuristic) -> Option<f64> {
+            None
+        }
+        assert!(
+            bootstrap_edge_ci(&rows, scores_nothing, &t, 8, 5.0, 95.0).is_none(),
+            "every draw gated out -> no band, not a NaN band"
+        );
     }
 
     /// (#45) rank-slice ladder + head-to-head on a synthetic ranking with KNOWN outcomes — the
@@ -3025,6 +3088,16 @@ mod tests {
         assert!((win - 50.0).abs() < 1e-6 && (worst + 50.0).abs() < 1e-6);
         assert!((early - 100.0).abs() < 1e-6 && (late + 50.0).abs() < 1e-6);
         assert!(book_stats(&std::collections::BTreeMap::new(), 1, 1).is_none()); // empty -> None
+
+        // A bucket whose book leg lands EXACTLY on its bench leg is a tie, and a tie is not a win.
+        // This pins `> 0.0` against `>= 0.0` in the win-rate filter, which the frozen-data report pin
+        // structurally cannot see: on real prices an excess is a continuous float and never lands on
+        // exactly zero, so both spellings print the same win%. Only a hand-built tie separates them.
+        // Found by the mutation audit, not by a failing test — see tests/backtest_fixture.rs.
+        let mut tie: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+        tie.insert(0, vec![(1.0, 20.0, 20.0)]);
+        let (.., win, _, _, _) = book_stats(&tie, 1, 1).unwrap();
+        assert!(win.abs() < 1e-9, "an exact tie must not count as a win: win {win}");
     }
 
     /// (round 106) `union_book`: dedupe by ticker (an overlapping pick takes ONE slot), value leg
@@ -3249,6 +3322,10 @@ mod tests {
         assert_eq!(percentile(&s, 5.0), 5.0);
         assert_eq!(percentile(&s, 95.0), 95.0);
         assert!(percentile(&[], 50.0).is_nan());
+        // p above 100 clamps to the last element instead of indexing past the end. Unreachable from the
+        // shipped callers (all pass 1/5/50/95/99), so the clamp is dead code the report pin can never
+        // exercise — the mutation audit flags it as unkilled, and this is the only way to observe it.
+        assert_eq!(percentile(&s, 150.0), 100.0);
     }
 
     /// (Item 9) `turnover_frac` = 1 − mean Jaccard of consecutive buckets' top-half tickers. Two ~6mo

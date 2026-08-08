@@ -1,6 +1,6 @@
 
 Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned per ~6mo cutoff):
-  cutoffs with a forward window: 1271   tickers: 200
+  cutoffs with a forward window: 1271   tickers: 208
   by class (growth-scored / cutoffs): crypto 0/0   ETF 0/85   stock 80/1186
 
 ── ON-SALE (buy_score) ──
@@ -217,10 +217,12 @@ Caveats:
   • Peer-relative (#1): returns are de-meaned per ~6mo cutoff, so rho is SELECTION vs same-period
     peers (regime beta removed). A near-empty bucket has a weak peer set -> its rows count for less.
   • In-sample: knobs were hand-tuned on today's data; even the OOS split shares the regime.
-  • Survivorship (#5): the universe is names that SURVIVED to today — dead tickers never enter,
-    so realized returns are biased UP. Treat the edge as optimistic. Re-run with `stress` to inject losers.
+  • Survivorship (#6 STRESS ON): crashed/delisted losers were INJECTED into the pool, so this
+    run partly corrects the upward bias. Compare its rho/edge to a plain run: a big drop = the
+    edge leaned on survivors; holding up (both OOS halves still +) = the edge is real.
   • Price-only (#6): no as-of dividends or P/E reconstructed; the * term above is inert here.
   • Overlapping 6-mo windows share price paths -> samples aren't independent; rho is directional.
   • Long-horizon (MAX monthly): only names alive for the FULL 12y window enter, so
     survivorship bias is WORSE than the daily path, and vol/MA are monthly-bar approximations.
-backtest: 200 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…
+backtest: STRESS — injecting 8 crashed/delisted losers (any Yahoo no longer serves are skipped)
+backtest: 208 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…
