@@ -506,37 +506,27 @@ pub async fn run(args: Vec<String>) {
     }
 
     // (#3) per ticker, score at many cutoffs and pair each with its YEARS-forward realized return.
-    let per_ticker: Vec<Vec<Sample>> = stream::iter(tickers.iter())
+    //
+    // FETCH FIRST, WALK SECOND. The two halves want opposite things: the fetch is network-bound and
+    // `buffer_unordered` is exactly right for it, the walk is pure CPU — and a `buffer_unordered`
+    // stream is polled by ONE task, so until this split the whole walk ran on one thread of eight.
+    // ORDER IS PRESERVED, which is the part that matters: `fetched` comes out in completion order
+    // exactly as `per_ticker` used to, and rayon's `collect` keeps its input order, so the flatten
+    // below sees the same sequence — the `sort_by_key(date)` after it is STABLE and inherits this
+    // order for same-date ties, which `bootstrap_edge_ci`'s pools then depend on. (Live, completion
+    // order now turns on fetch latency alone instead of fetch+walk; both are network-dependent and
+    // neither is pinned. The pinned offline path resolves every future without yielding, so
+    // completion order there is input order, before and after.)
+    let fetched: Vec<_> = stream::iter(tickers.iter())
         .map(|tk| {
             let client = &client;
             let urls = &settings.urls;
-            let etf_set = &etf_set;
-            let sector_of = &sector_of;
-            let factor = settings.buy_heuristic.growth_fund_factor.as_str(); // (G) config-selected as-of factor
             async move {
-                let fetched = if monthly {
+                let chart = if monthly {
                     fetch::fetch_history_long(client, urls, tk).await
                 } else {
                     fetch::fetch_history(client, urls, tk).await
-                };
-                let chart = match fetched {
-                    Some(x) => x,
-                    None => return Vec::new(),
-                };
-                // (#46) the ASSET-CLASS fields, carried out of the same response the closes came from (no
-                // extra request). `backtest_quote` builds from `Quote::stub`, which leaves `name` as the
-                // TICKER and `instrument_type` empty — and `quote_is_etf` reads exactly those two, so
-                // before this every fund in the pool classified as a single stock. That silently merged
-                // ~4300 ETFs into the ~500-name stock peer-mean `demean` splits by, and no-op'd every
-                // ETF-scoped gate (the physical-gold/ETC bar among them). Yahoo's own `instrumentType`
-                // tag leads because an ETF shortName often carries no "ETF"/"UCITS" marker at all.
-                let (dates, closes, native_ccy) = (chart.dates, chart.closes, chart.currency);
-                let (cls_name, cls_type) = (chart.name, chart.instrument_type);
-                // (D) the dividend event list rode in on this SAME response and used to be dropped right
-                // here — which is the whole reason the module header below claimed as-of dividends were
-                // unreconstructable and `dividend_weight` shipped ungraded. `backtest_quote` slices it
-                // to the cutoff, so no look-ahead arrives with it.
-                let divs = chart.divs;
+                }?;
                 // (G) one cached fundamentals fetch per ticker (only when `fund`); as-of factors are then
                 // derived per cutoff from these rows with no further network. None -> the fund lane skips it.
                 let fund_rows = if fund { fetch::fetch_fundamentals_ranked(client, urls, tk).await } else { None };
@@ -549,102 +539,16 @@ pub async fn run(args: Vec<String>) {
                 // series cache across tickers if the foreign slice ever shows up in the run time.
                 let filer_ccy = fund_rows.as_ref().and_then(|r| r.last().and_then(|x| x.currency.clone()));
                 let fx = match filer_ccy.as_deref() {
-                    Some(f) if core::needs_fx(&native_ccy, f) => {
+                    Some(f) if core::needs_fx(&chart.currency, f) => {
                         // same `monthly` the closes came from: rates and prices must span the same era
-                        Some(fetch::fx_factor_series(client, urls, &native_ccy, f, monthly).await)
+                        Some(fetch::fx_factor_series(client, urls, &chart.currency, f, monthly).await)
                     }
                     _ => None, // same books, or a side unknown -> leave the close alone (legacy path)
                 };
                 // (Item 4) one cached SEC Form-4 fetch per ticker (only when `insider`); net buys are then
                 // derived per cutoff from these transactions with no further network. None -> factor skips.
                 let insider_txns = if insider { fetch::fetch_insider_history(client, urls, tk).await } else { None };
-                let mut out = Vec::new();
-                let mut i = min_history;
-                while i < dates.len() {
-                    // forward index: first session at least `years` past the as-of date
-                    let target = dates[i] + chrono::Duration::days(years * 365);
-                    match dates[i..].iter().position(|d| *d >= target) {
-                        Some(off) => {
-                            let fwd = i + off;
-                            // record EVERY cutoff with a forward window (not just gated ones) so the
-                            // peer-mean spans the whole period universe; each lane filters by its own gates.
-                            let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
-                            if !realized.is_finite() {
-                                // zero/garbage close -> ±inf poisons the demeaned bucket; skip the cutoff
-                                i += step;
-                                continue;
-                            }
-                            let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence);
-                            stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
-                            // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
-                            // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
-                            // fund_as_of(rows, cutoff - yrs*365)`). Passing the horizon meant `fund 12`
-                            // demanded twelve years of filed statements before every cutoff — SEC XBRL
-                            // starts ~2007 and a 12y run's cutoffs end 2014-07, so rev_cagr / rev_accel /
-                            // eps_growth were None on EVERY sample and printed "n/a (only 0 cutoffs)".
-                            // Their sweep lines then read exactly the price-only baseline, which looks
-                            // like "measured, no edge" and was actually "never measured at all".
-                            let mut fund =
-                                fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], FUND_LOOKBACK_YRS));
-                            // (Item 4) attach the as-of net insider buys (90d before the cutoff, transaction-
-                            // date guarded) onto the SAME FundFactors; build one if the FMP lane is off so
-                            // `insider` works standalone (no FMP key needed).
-                            if let Some(txns) = insider_txns.as_ref() {
-                                fund.get_or_insert_with(Default::default).insider_net_buys_90d =
-                                    core::insider_net_buys(txns, dates[i], 90);
-                            }
-                            // (Item 19) as-of earnings yield from the as-of close, in the SAME currency the
-                            // EPS beside it is reported in. (FX) `fx` is None for every same-currency name,
-                            // so `px` is the raw close on that path — no rate, no multiply, unchanged. A
-                            // cutoff older than the FX series has no honest rate: None the three factors
-                            // rather than borrow a later one, which would be look-ahead in a walk-forward lane.
-                            if let Some(f) = fund.as_mut() {
-                                let px = match fx.as_ref() {
-                                    None => Some(closes[i]),
-                                    Some(s) => core::rate_as_of(s, dates[i]).map(|r| closes[i] * r),
-                                };
-                                f.earnings_yield = px.and_then(|p| core::earnings_yield(f.eps_ttm, p));
-                                // (EV/EBITDA) same close, same currency discipline: EV = shares·px + net_debt,
-                                // all as-of. Still PROBE-ONLY — never the live score's weighed factor.
-                                f.ebitda_yield = px.and_then(|p| core::ev_ebitda_yield(f.ebitda_ttm, f.shares_ttm, f.net_debt, p));
-                                // (PEG) 1/PEG = earnings_yield · as-of CAGR. This one IS shipped live now
-                                // (growth_fund_factor "peg_yield"), and the live enrich converts the same way —
-                                // so train and serve compute the identical ratio instead of differing by an FX rate.
-                                //
-                                // (#37) the CAGR is `long_cagr_pct` — the score's own, honouring use_life_cagr /
-                                // use_trend_cagr / fixed_cagr_years — not the raw `quote.trend_cagr` this read
-                                // until 2026-07-27. backtest_quote fills `perf`, `life_cagr` AND `trend_cagr` at
-                                // this cutoff, so every arm of that switch is reconstructable as-of and
-                                // train==serve still holds. Keep this in lockstep with fetch.rs's enrich.
-                                f.peg_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, picks::long_cagr_pct(&quote, tuning), p));
-                            }
-                            // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
-                            // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
-                            // in settings.yaml to whichever report_fund_lane (below) shows +rho + both-half OOS,
-                            // no recompile. Price-only backtest (no `fund`/key) leaves this None -> growth_score
-                            // neutral -> validated edge untouched.
-                            quote.fund_factor = fund.as_ref().and_then(|f| core::select_fund_factor(f, factor));
-                            // (G+) the whole struct, for `growth_fund_extra`'s named terms. Cloned here
-                            // rather than moved: `fund` is kept on the Sample so the factor sweep can
-                            // re-select from it without rebuilding.
-                            quote.fund = fund.clone();
-                            // UN-BLIND the quality term. `backtest_quote` builds from `Quote::stub` (roe
-                            // None) and fills only closes-derived fields, so before this line
-                            // `quality_reward` was 0.15 × 0 for EVERY sample in EVERY lane — the term was
-                            // shipped live but structurally invisible to the walk-forward that is supposed
-                            // to price it. Every prior measurement of `quality_weight` was taken with the
-                            // term switched off. Price-free level (no FX, unlike the three yields above),
-                            // through the same fund_as_of look-ahead guard.
-                            quote.roe = fund.as_ref().and_then(|f| f.quality);
-                            // (round 112) this is the only place with the raw series in scope.
-                            let trail = trailing_returns(&closes, i);
-                            out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund, trail });
-                        }
-                        None => break, // no full forward window left -> stop walking this ticker
-                    }
-                    i += step;
-                }
-                out
+                Some((tk, chart, fund_rows, fx, insider_txns))
             }
         })
         .buffer_unordered(fetch::fetch_concurrency())
@@ -654,6 +558,117 @@ pub async fn run(args: Vec<String>) {
     // exits below. The monthly payloads are the expensive part of a wide run and `screen` shares the
     // same file, so whichever ran first pays and the other reads free for a week.
     fetch::long_cache_save();
+
+    let etf_set = &etf_set;
+    let sector_of = &sector_of;
+    let factor = settings.buy_heuristic.growth_fund_factor.as_str(); // (G) config-selected as-of factor
+    let per_ticker: Vec<Vec<Sample>> = fetched
+        .into_par_iter()
+        .flatten()
+        .map(|(tk, chart, fund_rows, fx, insider_txns)| {
+            // (#46) the ASSET-CLASS fields, carried out of the same response the closes came from (no
+            // extra request). `backtest_quote` builds from `Quote::stub`, which leaves `name` as the
+            // TICKER and `instrument_type` empty — and `quote_is_etf` reads exactly those two, so
+            // before this every fund in the pool classified as a single stock. That silently merged
+            // ~4300 ETFs into the ~500-name stock peer-mean `demean` splits by, and no-op'd every
+            // ETF-scoped gate (the physical-gold/ETC bar among them). Yahoo's own `instrumentType`
+            // tag leads because an ETF shortName often carries no "ETF"/"UCITS" marker at all.
+            let (dates, closes) = (chart.dates, chart.closes);
+            let (cls_name, cls_type) = (chart.name, chart.instrument_type);
+            // (D) the dividend event list rode in on this SAME response and used to be dropped right
+            // here — which is the whole reason the module header below claimed as-of dividends were
+            // unreconstructable and `dividend_weight` shipped ungraded. `backtest_quote` slices it
+            // to the cutoff, so no look-ahead arrives with it.
+            let divs = chart.divs;
+            let mut out = Vec::new();
+            let mut i = min_history;
+            while i < dates.len() {
+                // forward index: first session at least `years` past the as-of date
+                let target = dates[i] + chrono::Duration::days(years * 365);
+                match dates[i..].iter().position(|d| *d >= target) {
+                    Some(off) => {
+                        let fwd = i + off;
+                        // record EVERY cutoff with a forward window (not just gated ones) so the
+                        // peer-mean spans the whole period universe; each lane filters by its own gates.
+                        let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
+                        if !realized.is_finite() {
+                            // zero/garbage close -> ±inf poisons the demeaned bucket; skip the cutoff
+                            i += step;
+                            continue;
+                        }
+                        let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence);
+                        stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
+                        // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
+                        // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
+                        // fund_as_of(rows, cutoff - yrs*365)`). Passing the horizon meant `fund 12`
+                        // demanded twelve years of filed statements before every cutoff — SEC XBRL
+                        // starts ~2007 and a 12y run's cutoffs end 2014-07, so rev_cagr / rev_accel /
+                        // eps_growth were None on EVERY sample and printed "n/a (only 0 cutoffs)".
+                        // Their sweep lines then read exactly the price-only baseline, which looks
+                        // like "measured, no edge" and was actually "never measured at all".
+                        let mut fund =
+                            fund_rows.as_ref().map(|r| core::fund_factors(r, dates[i], FUND_LOOKBACK_YRS));
+                        // (Item 4) attach the as-of net insider buys (90d before the cutoff, transaction-
+                        // date guarded) onto the SAME FundFactors; build one if the FMP lane is off so
+                        // `insider` works standalone (no FMP key needed).
+                        if let Some(txns) = insider_txns.as_ref() {
+                            fund.get_or_insert_with(Default::default).insider_net_buys_90d =
+                                core::insider_net_buys(txns, dates[i], 90);
+                        }
+                        // (Item 19) as-of earnings yield from the as-of close, in the SAME currency the
+                        // EPS beside it is reported in. (FX) `fx` is None for every same-currency name,
+                        // so `px` is the raw close on that path — no rate, no multiply, unchanged. A
+                        // cutoff older than the FX series has no honest rate: None the three factors
+                        // rather than borrow a later one, which would be look-ahead in a walk-forward lane.
+                        if let Some(f) = fund.as_mut() {
+                            let px = match fx.as_ref() {
+                                None => Some(closes[i]),
+                                Some(s) => core::rate_as_of(s, dates[i]).map(|r| closes[i] * r),
+                            };
+                            f.earnings_yield = px.and_then(|p| core::earnings_yield(f.eps_ttm, p));
+                            // (EV/EBITDA) same close, same currency discipline: EV = shares·px + net_debt,
+                            // all as-of. Still PROBE-ONLY — never the live score's weighed factor.
+                            f.ebitda_yield = px.and_then(|p| core::ev_ebitda_yield(f.ebitda_ttm, f.shares_ttm, f.net_debt, p));
+                            // (PEG) 1/PEG = earnings_yield · as-of CAGR. This one IS shipped live now
+                            // (growth_fund_factor "peg_yield"), and the live enrich converts the same way —
+                            // so train and serve compute the identical ratio instead of differing by an FX rate.
+                            //
+                            // (#37) the CAGR is `long_cagr_pct` — the score's own, honouring use_life_cagr /
+                            // use_trend_cagr / fixed_cagr_years — not the raw `quote.trend_cagr` this read
+                            // until 2026-07-27. backtest_quote fills `perf`, `life_cagr` AND `trend_cagr` at
+                            // this cutoff, so every arm of that switch is reconstructable as-of and
+                            // train==serve still holds. Keep this in lockstep with fetch.rs's enrich.
+                            f.peg_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, picks::long_cagr_pct(&quote, tuning), p));
+                        }
+                        // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
+                        // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it
+                        // in settings.yaml to whichever report_fund_lane (below) shows +rho + both-half OOS,
+                        // no recompile. Price-only backtest (no `fund`/key) leaves this None -> growth_score
+                        // neutral -> validated edge untouched.
+                        quote.fund_factor = fund.as_ref().and_then(|f| core::select_fund_factor(f, factor));
+                        // (G+) the whole struct, for `growth_fund_extra`'s named terms. Cloned here
+                        // rather than moved: `fund` is kept on the Sample so the factor sweep can
+                        // re-select from it without rebuilding.
+                        quote.fund = fund.clone();
+                        // UN-BLIND the quality term. `backtest_quote` builds from `Quote::stub` (roe
+                        // None) and fills only closes-derived fields, so before this line
+                        // `quality_reward` was 0.15 × 0 for EVERY sample in EVERY lane — the term was
+                        // shipped live but structurally invisible to the walk-forward that is supposed
+                        // to price it. Every prior measurement of `quality_weight` was taken with the
+                        // term switched off. Price-free level (no FX, unlike the three yields above),
+                        // through the same fund_as_of look-ahead guard.
+                        quote.roe = fund.as_ref().and_then(|f| f.quality);
+                        // (round 112) this is the only place with the raw series in scope.
+                        let trail = trailing_returns(&closes, i);
+                        out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund, trail });
+                    }
+                    None => break, // no full forward window left -> stop walking this ticker
+                }
+                i += step;
+            }
+            out
+        })
+        .collect();
 
     let mut samples: Vec<Sample> = per_ticker.into_iter().flatten().collect();
     if samples.len() < 4 {
