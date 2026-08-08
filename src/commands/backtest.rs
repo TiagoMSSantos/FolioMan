@@ -2542,16 +2542,33 @@ fn bootstrap_edge_ci(
         state ^= state << 17;
         state
     };
+    // SCORE ONCE PER SAMPLE, not once per sample per draw. `scorer` is a plain `fn` of
+    // `samples[i].quote` and `tuning`, both fixed for this whole call, so the value it returns for a
+    // given `i` is identical on every one of `iters` draws — and the draw loop below used to call it
+    // afresh each time. Measured on a 5057-ticker offline run: 11,779 cutoffs × 1000 iters ≈ 11.8M
+    // calls, of which 11,779 were distinct. That redundancy alone was 91% of the whole command's
+    // runtime (27.0s of 29.6s).
+    //
+    // The pool each draw sees is unchanged BY CONSTRUCTION: same bucket order, same `filter_map` order
+    // inside a bucket, same values, and `next()` is still called exactly once per bucket per draw in
+    // the same sequence — so the PRNG stream, and therefore every band this returns, is untouched.
+    let scored: BTreeMap<i32, Vec<(&Sample, f64)>> = buckets
+        .iter()
+        .map(|(k, idxs)| {
+            let rows =
+                idxs.iter().filter_map(|&i| Some((&samples[i], scorer(&samples[i].quote, tuning)?))).collect();
+            (*k, rows)
+        })
+        .collect();
+
     let mut edges: Vec<f64> = Vec::with_capacity(iters);
+    // Hoisted and `clear`ed rather than reallocated per draw — same contents, one allocation.
+    let mut pool: Vec<(&Sample, f64)> = Vec::new();
     for _ in 0..iters {
-        let mut pool: Vec<(&Sample, f64)> = Vec::new();
+        pool.clear();
         for _ in 0..keys.len() {
             let k = keys[(next() % keys.len() as u64) as usize];
-            for &i in &buckets[&k] {
-                if let Some(v) = scorer(&samples[i].quote, tuning) {
-                    pool.push((&samples[i], v));
-                }
-            }
+            pool.extend_from_slice(&scored[&k]);
         }
         if pool.len() >= 4 {
             let (t, b) = edge_halves(&pool);

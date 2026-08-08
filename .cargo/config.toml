@@ -1,0 +1,14 @@
+# Build for a CPU that actually exists. The default target is baseline `x86-64` — SSE2, no AVX2, no
+# FMA — which on a float-heavy codebase leaves most of the vector width unused.
+#
+# `x86-64-v3` (AVX2 + FMA + BMI), not `native`: it is a fixed, named target, so a build is reproducible
+# across machines and a `Swatinem/rust-cache` artifact restored onto a different CI runner cannot
+# SIGILL. `native` would bake in whatever the building box happens to be. Every CPU since Haswell
+# (2013) and Excavator (2015) is v3; that includes this laptop and every GitHub-hosted runner.
+#
+# This must NOT change results. Rust emits no `contract` or `reassoc` fast-math flags, so LLVM may not
+# fuse a mul+add into an FMA nor reassociate a sum — it can only widen operations whose order is
+# already provably unchanged. The six frozen-data goldens are what verify that claim; if one moves,
+# this flag comes back out rather than the golden being re-blessed.
+[build]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
