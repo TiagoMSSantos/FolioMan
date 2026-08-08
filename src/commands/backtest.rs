@@ -44,6 +44,7 @@ use rayon::prelude::*;
 use serde_json::value::RawValue;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 /// How many years of filed statements the as-of fundamental factors look BACK over — deliberately a
 /// constant, and deliberately not the run's forward hold horizon (see the call site). 5 is not a new
@@ -244,7 +245,12 @@ struct Sample {
     date: chrono::NaiveDate,
     realized: f64, // raw forward return %
     relative: f64, // (#1) realized minus its cutoff-bucket peer mean -> SELECTION, not regime beta
-    quote: Quote,
+    // `Arc`, because Samples are BULK-CLONED and a Quote is 69 fields of mostly-heap Strings. The fund
+    // lane alone does `samples.to_vec()` once per factor and once per weight rung, and
+    // `hold_period_sweep` builds six Samples per cutoff that differ only in `realized`. Sharing makes
+    // those a refcount bump. The three sites that write `quote.fund_factor` use `Arc::make_mut`, so
+    // they still get a private copy — same cost as the deep clone they already paid, just moved.
+    quote: Arc<Quote>,
     fund: Option<core::FundFactors>, // (G) as-of fundamentals at this cutoff (None unless `fund` + FMP key + cached)
     trail: Vec<f64>, // (round 112) up to 36 trailing monthly returns % at the cutoff — CORR-CAP probe input; empty = can't judge
 }
@@ -705,7 +711,7 @@ pub async fn run(args: Vec<String>) {
                         quote.roe = fund.as_ref().and_then(|f| f.quality);
                         // (round 112) this is the only place with the raw series in scope.
                         let trail = trailing_returns(&closes, i);
-                        out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund, trail });
+                        out.push(Sample { date: dates[i], realized, relative: 0.0, quote: Arc::new(quote), fund, trail });
                     }
                     None => break, // no full forward window left -> stop walking this ticker
                 }
@@ -1073,6 +1079,14 @@ fn sweep_cutoffs(
     sector_of: &HashMap<String, String>,
 ) -> Vec<(i64, Sample)> {
     let mut out = Vec::new();
+    // The cutoff's Quote does not depend on the hold window — only `realized` does — yet this used to
+    // rebuild it from the raw series once per window, so every cutoff paid `backtest_quote` six times
+    // and kept six copies of an identical 69-field struct. Memoised per cutoff index and shared by
+    // `Arc`, it is computed once and pointed at six times. Indexed by `i` rather than keyed, because
+    // the windows walk the same cutoffs in the same order and a flat `Vec` is the cheapest possible
+    // lookup. Order is untouched: within a window this still emits ascending `i`, which is what the
+    // stable `sort_by_key(date)` and `demean` downstream inherit.
+    let mut quotes: Vec<Option<Arc<Quote>>> = vec![None; dates.len()];
     for &h in holds {
         let mut i = min_history;
         while i < dates.len() {
@@ -1083,8 +1097,13 @@ fn sweep_cutoffs(
                     // a zero/garbage close makes realized ±inf; one poisoned cutoff drags the
                     // whole demeaned bucket to -inf (short holds reach data the 12y path never walks)
                     if realized.is_finite() {
-                        let mut quote = core::backtest_quote(tk, dates, closes, divs, i, cadence);
-                        stamp_asset_class(&mut quote, name, instrument_type, etf_set, sector_of);
+                        let quote = quotes[i]
+                            .get_or_insert_with(|| {
+                                let mut q = core::backtest_quote(tk, dates, closes, divs, i, cadence);
+                                stamp_asset_class(&mut q, name, instrument_type, etf_set, sector_of);
+                                Arc::new(q)
+                            })
+                            .clone();
                         out.push((h, Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() }));
                     }
                 }
@@ -1153,13 +1172,23 @@ async fn hold_period_sweep(
             )
         })
         .collect();
-    let all: Vec<(i64, Sample)> = per_ticker.into_iter().flatten().collect();
+    // Split ONCE, by move. This used to build one combined `Vec` of every (window, sample) pair and
+    // then, per window, scan the whole thing again and CLONE its share back out — six full passes and a
+    // second copy of the data, on top of the combined vec the original was still holding. Pushing into
+    // per-window buckets as the pairs arrive costs one pass and no clone; a window's samples keep the
+    // order they had in the combined vec, which is what the stable sort below inherits.
+    let mut by_hold: Vec<Vec<Sample>> = vec![Vec::new(); HOLDS.len()];
+    for (w, smp) in per_ticker.into_iter().flatten() {
+        if let Some(slot) = HOLDS.iter().position(|&h| h == w) {
+            by_hold[slot].push(smp);
+        }
+    }
 
     println!("\n── HOLD-PERIOD SWEEP (growth lane, net of cost) ──");
     println!("  pick the hold with the highest NET edge; if they're flat, the longest (cheapest) wins.");
-    for &h in &HOLDS {
+    for (slot, &h) in HOLDS.iter().enumerate() {
         // own bucket (de-mean is per-window: a 1y and a 5y forward over the same cutoff aren't comparable)
-        let mut s: Vec<Sample> = all.iter().filter(|(w, _)| *w == h).map(|(_, smp)| smp.clone()).collect();
+        let mut s: Vec<Sample> = std::mem::take(&mut by_hold[slot]);
         if s.len() < 4 {
             println!("  {h}y hold  — only {} cutoffs, too few to read", s.len());
             continue;
@@ -1395,7 +1424,8 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
     let eval = |factor: Option<&str>| -> (f64, Option<f64>, Option<f64>, f64) {
         let mut s = samples.to_vec();
         for smp in &mut s {
-            smp.quote.fund_factor = factor.and_then(|n| smp.fund.as_ref().and_then(|f| core::select_fund_factor(f, n)));
+            Arc::make_mut(&mut smp.quote).fund_factor =
+                factor.and_then(|n| smp.fund.as_ref().and_then(|f| core::select_fund_factor(f, n)));
         }
         demean(&mut s[..cut]);
         demean(&mut s[cut..]);
@@ -1452,7 +1482,8 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
             println!("  -> validated growth_fund_weight for {w}: {weight:.3} (at growth_fund_cap {:.0})", default.growth_fund_cap);
             let mut s = samples.to_vec();
             for smp in &mut s {
-                smp.quote.fund_factor = smp.fund.as_ref().and_then(|f| core::select_fund_factor(f, w));
+                Arc::make_mut(&mut smp.quote).fund_factor =
+                    smp.fund.as_ref().and_then(|f| core::select_fund_factor(f, w));
             }
             demean(&mut s); // peer-relative is the bootstrap's metric; `relative` depends only on date+realized
             let mut tun = default.clone();
@@ -1485,7 +1516,7 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
         let curve = |w: f64| -> (f64, Option<f64>, Option<f64>) {
             let mut s = samples.to_vec();
             for smp in &mut s {
-                smp.quote.fund_factor =
+                Arc::make_mut(&mut smp.quote).fund_factor =
                     smp.fund.as_ref().and_then(|f| core::select_fund_factor(f, configured));
             }
             demean(&mut s[..cut]);
@@ -3131,7 +3162,7 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
     fn sample(date: NaiveDate, realized: f64) -> Sample {
-        Sample { date, realized, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None, trail: Vec::new() }
+        Sample { date, realized, relative: 0.0, quote: Arc::new(Quote::stub("X", "1", "", "X")), fund: None, trail: Vec::new() }
     }
 
     /// The too-few-rows guards of `winsor_edge` (<4), `edge_terciles` (<3), `lane_metrics` (<4 scored)
@@ -3624,8 +3655,9 @@ mod tests {
             |q, _| if q.drop_pct < 50.0 { Some(1.0) } else { None };
         let mk = |tk: &str, m: u32, drop: f64, rel: f64| {
             let mut s = sample(ymd(2020, m, 1), 0.0);
-            s.quote = Quote::stub(tk, "1", "", tk);
-            s.quote.drop_pct = drop;
+            let mut q = Quote::stub(tk, "1", "", tk);
+            q.drop_pct = drop;
+            s.quote = Arc::new(q);
             s.relative = rel;
             s
         };
@@ -3652,10 +3684,11 @@ mod tests {
         // Each ticker gets two cutoffs: the first always passes, the second passes (kept) or fails.
         let pair = |tk: &str, fails: bool, rel: f64| {
             let mut a = sample(ymd(2020, 1, 1), 0.0);
-            a.quote = Quote::stub(tk, "1", "", tk);
+            a.quote = Arc::new(Quote::stub(tk, "1", "", tk));
             let mut b = sample(ymd(2020, 7, 1), 0.0);
-            b.quote = Quote::stub(tk, "1", "", tk);
-            b.quote.drop_pct = if fails { 99.0 } else { 0.0 };
+            let mut bq = Quote::stub(tk, "1", "", tk);
+            bq.drop_pct = if fails { 99.0 } else { 0.0 };
+            b.quote = Arc::new(bq);
             b.relative = rel;
             vec![a, b]
         };
@@ -3712,8 +3745,8 @@ mod tests {
     /// stocks must NOT move the stocks' peer-mean — else crypto's scale swamps the equity edge to noise.
     #[test]
     fn demean_splits_by_asset_class() {
-        let stock = |r: f64| Sample { date: ymd(2020, 2, 1), realized: r, relative: 0.0, quote: Quote::stub("X", "1", "", "X"), fund: None, trail: Vec::new() };
-        let crypto = |r: f64| Sample { date: ymd(2020, 2, 1), realized: r, relative: 0.0, quote: Quote::stub("BTC-USD", "1", "", "Bitcoin"), fund: None, trail: Vec::new() };
+        let stock = |r: f64| Sample { date: ymd(2020, 2, 1), realized: r, relative: 0.0, quote: Arc::new(Quote::stub("X", "1", "", "X")), fund: None, trail: Vec::new() };
+        let crypto = |r: f64| Sample { date: ymd(2020, 2, 1), realized: r, relative: 0.0, quote: Arc::new(Quote::stub("BTC-USD", "1", "", "Bitcoin")), fund: None, trail: Vec::new() };
         let mut s = [stock(10.0), stock(30.0), crypto(1e9)];
         demean(&mut s);
         assert!((s[0].relative - -10.0).abs() < 1e-9); // stock peer-mean = 20, unmoved by the crypto
@@ -3730,7 +3763,7 @@ mod tests {
     fn s_rel(relative: f64, dd: f64) -> Sample {
         let mut q = Quote::stub("X", "1", "", "X");
         q.drawdown_pct = dd;
-        Sample { date: ymd(2020, 1, 1), realized: relative, relative, quote: q, fund: None, trail: Vec::new() }
+        Sample { date: ymd(2020, 1, 1), realized: relative, relative, quote: Arc::new(q), fund: None, trail: Vec::new() }
     }
 
     /// `lane_metrics` is what the tune search ranks configs by, so its rho/edge must have the right SIGN:
@@ -3777,7 +3810,7 @@ mod tests {
             date: ymd(2020, m, 1),
             realized: 0.0,
             relative: 0.0,
-            quote: Quote::stub(t, "1", "", t),
+            quote: Arc::new(Quote::stub(t, "1", "", t)),
             fund: None,
             trail: Vec::new(),
         };
@@ -3798,7 +3831,7 @@ mod tests {
         let mut samples: Vec<Sample> = (0..100)
             .map(|i| {
                 let r = (i as f64 - 50.0) / 25.0;
-                Sample { date: ymd(2020, 1, 1), realized: r, relative: r, quote: Quote::stub("X", "1", "", "X"), fund: None, trail: Vec::new() }
+                Sample { date: ymd(2020, 1, 1), realized: r, relative: r, quote: Arc::new(Quote::stub("X", "1", "", "X")), fund: None, trail: Vec::new() }
             })
             .collect();
         samples[99].relative = 500.0; // a 500-pt blow-up in the highest-scored row
@@ -4068,7 +4101,7 @@ mod tests {
                 let Some(off) = dates[i..].iter().position(|d| *d >= target) else { break };
                 let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
                 let quote = core::backtest_quote(tk, &dates, closes, &[], i, 252);
-                samples.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() });
+                samples.push(Sample { date: dates[i], realized, relative: 0.0, quote: Arc::new(quote), fund: None, trail: Vec::new() });
                 i += STEP_SESSIONS;
             }
         }
@@ -4252,7 +4285,7 @@ mod tests {
         let fixture = |tk: &str, name: &str, ity: &str| -> Sample {
             let mut quote = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252);
             stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
-            Sample { date: dates[n - 1], realized: 0.0, relative: 0.0, quote, fund: None, trail: Vec::new() }
+            Sample { date: dates[n - 1], realized: 0.0, relative: 0.0, quote: Arc::new(quote), fund: None, trail: Vec::new() }
         };
         // A PANEL per class, not one fixture: a knob reads LIVE if ANY member moves. `is_commodity`'s
         // fund leg is name-driven, so a single broad-market ETF would report the commodity damp INERT
@@ -4415,7 +4448,7 @@ mod tests {
                     if stamp {
                         stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
                     }
-                    out.push(Sample { date: dates[i], realized, relative: 0.0, quote, fund: None, trail: Vec::new() });
+                    out.push(Sample { date: dates[i], realized, relative: 0.0, quote: Arc::new(quote), fund: None, trail: Vec::new() });
                     i += STEP_SESSIONS;
                 }
             }
@@ -4578,7 +4611,7 @@ mod tests {
             let closes = synth_series(n, g, 0.04, 0.0);
             let mut quote = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252);
             stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
-            Sample { date: dates[n - 1], realized: 0.0, relative: 0.0, quote, fund: None, trail: Vec::new() }
+            Sample { date: dates[n - 1], realized: 0.0, relative: 0.0, quote: Arc::new(quote), fund: None, trail: Vec::new() }
         };
         // one compounder and one sinking laggard per class: the scored counts must come out BELOW the
         // totals, else this would pass just as happily against a fn that returned the totals twice.
