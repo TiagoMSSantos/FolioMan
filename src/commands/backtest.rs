@@ -42,7 +42,7 @@ use chrono::Datelike;
 use futures::stream::{self, StreamExt};
 use rayon::prelude::*;
 use serde_json::value::RawValue;
-use std::sync::Arc;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// How many years of filed statements the as-of fundamental factors look BACK over — deliberately a
@@ -257,7 +257,7 @@ struct Sample {
 /// `Parsed` is the cases that cannot defer — the daily arm (network-bound, no disk cache, nothing to
 /// gain) and a `fund` run (the FX branch needs the currency before the walk starts).
 enum Hist {
-    Raw(Arc<RawValue>),
+    Raw(Cow<'static, RawValue>),
     Parsed(fetch::Chart),
 }
 

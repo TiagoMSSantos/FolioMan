@@ -15,6 +15,7 @@ use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde_json::value::RawValue;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant, SystemTime};
@@ -202,25 +203,28 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
 /// past a file `screen` had just filled: a wide `backtest universe` re-downloaded ~3000 payloads that
 /// were already on disk, minutes old. Both callers hardcode the same max/1mo URL, so one entry serves
 /// either. Flushed by `long_cache_save`, which every command that uses this must call once at the end.
-/// `Arc<RawValue>`, not `Value`: a cache hit used to DEEP-COPY the whole parsed payload — every decade
-/// of monthly bars, per ticker, ~4900 times on a wide `backtest universe` — only for `parse_chart` to
-/// read it once and drop it. Nobody mutates the payload, so a refcount bump is the same thing minus the
-/// copy. `RawValue` goes one further: it is the payload's BYTE SPAN, so loading the cache never builds
-/// the 5057 inner trees at all and the parse happens once, where the caller wants it (see
-/// `long_cache_load`). The live arm is wrapped too, which also kills the second deep copy this used to
-/// make when handing the fetch to `LONG_CACHE_NEW`. Both arms still carry the RAW payload, so both
-/// converge on one `parse_chart` exactly as before — see the format note on `long_cache_save`.
+/// `RawValue`, not `Value`: a cache hit used to DEEP-COPY the whole parsed payload — every decade of
+/// monthly bars, per ticker, ~4900 times on a wide `backtest universe` — only for `parse_chart` to read
+/// it once and drop it. `RawValue` is the payload's BYTE SPAN, so loading the cache never builds the
+/// 5057 inner trees at all and the parse happens once, where the caller wants it (see
+/// `long_cache_load`). Both arms carry the RAW payload, so both converge on one `parse_chart` exactly
+/// as before — see the format note on `long_cache_save`.
+///
+/// `Cow`, because the two arms genuinely differ in ownership and pretending otherwise costs a copy: a
+/// cache hit is a pointer into the mapped-in file buffer that outlives everything (`Borrowed`, free),
+/// while a live fetch is a fresh allocation this run made (`Owned`). An `Arc` would have forced the
+/// borrowed arm to allocate just to have something to refcount.
 ///
 /// `pub` for `backtest`'s two wide fan-outs, which want the payload UNPARSED so the 5057 parses can
 /// happen inside their rayon walk instead of on the single thread that polls a `buffer_unordered`
 /// stream. They own the `parse_chart_raw` call and the empty-`closes` skip that `fetch_history_long`
 /// applies for everyone else.
-pub async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Arc<RawValue>> {
+pub async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Cow<'static, RawValue>> {
     let today = chrono::Local::now().date_naive();
     if let Some((recorded, v)) = long_cache_load().get(ticker) {
         if long_cache_fresh(Some(recorded), today) {
             LONG_CACHE_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Some(Arc::clone(v));
+            return Some(Cow::Borrowed(v));
         }
     }
     let url = urls
@@ -230,11 +234,11 @@ pub async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Opti
         .replace("interval=1d", "interval=1mo");
     // via `Value` deliberately: `get_json` already parses to validate the body, and re-serializing that
     // tree is what keeps a freshly fetched entry byte-for-byte what `long_cache_save` used to write.
-    let fetched = get_json(client, &url).await.and_then(|v| serde_json::value::to_raw_value(&v).ok()).map(Arc::from);
+    let fetched = get_json(client, &url).await.and_then(|v| serde_json::value::to_raw_value(&v).ok());
     if let Some(v) = &fetched {
-        LONG_CACHE_NEW.lock().unwrap().push((ticker.to_string(), Arc::clone(v)));
+        LONG_CACHE_NEW.lock().unwrap().push((ticker.to_string(), v.clone()));
     }
-    fetched
+    fetched.map(Cow::Owned)
 }
 
 /// `parse_chart` against a payload still in its raw bytes — the one place the deferred parse happens.
@@ -2340,22 +2344,32 @@ fn long_skip_save() {
 /// backtest or skip green by asking whether THIS file is fresh enough to serve it.
 pub const LONG_CACHE_FILE: &str = ".long_history_cache.json";
 pub const LONG_CACHE_TTL_DAYS: i64 = 7;
-static LONG_CACHE: std::sync::OnceLock<HashMap<String, (NaiveDate, Arc<RawValue>)>> = std::sync::OnceLock::new();
+static LONG_CACHE: std::sync::OnceLock<HashMap<String, (NaiveDate, &'static RawValue)>> = std::sync::OnceLock::new();
 /// This run's live fetches (collected concurrently, written ONCE in `quotes`).
-static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Arc<RawValue>)>> = std::sync::Mutex::new(Vec::new());
+static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Box<RawValue>)>> = std::sync::Mutex::new(Vec::new());
 
 /// `RawValue`, not `Value`: this file is 129.7 MB and EVERY command that touches long history pays this
 /// function up front, serially, before any work starts — it was the entire 0.98 s fixed cost of a
-/// `backtest`, 46% of a wide run and 100% of a one-ticker one. `Box<RawValue>` makes serde find each
-/// payload's extent and copy the span, skipping the per-number/string/array node allocations that built
+/// `backtest`, 46% of a wide run and 100% of a one-ticker one. `RawValue` makes serde find each
+/// payload's extent and skip it, instead of allocating the per-number/string/array nodes that built
 /// 5057 trees a run to read a handful. Whoever actually wants a ticker parses it then, via
 /// `parse_chart_raw` — same bytes, same `serde_json`, same `parse_chart`, so the parity rule above holds.
-fn long_cache_load() -> &'static HashMap<String, (NaiveDate, Arc<RawValue>)> {
+///
+/// BORROWED, not `Box`: entries point INTO the file buffer rather than owning a copy of their span, so
+/// the 129.7 MB is not memcpy'd a second time (and not freed at exit either). `fs::read` over
+/// `read_to_string` drops a third pass — `String` will not exist until Rust has proven all 129.7 MB is
+/// valid UTF-8, and serde validates the parts that matter as it goes anyway.
+///
+/// The leak is deliberate and is what makes the borrow sound: `LONG_CACHE` is a `OnceLock` static that
+/// is already alive for the whole process, so the buffer it points into has to be too. Nothing here
+/// grows per call — it happens once, and "freeing" it would only ever happen at exit.
+fn long_cache_load() -> &'static HashMap<String, (NaiveDate, &'static RawValue)> {
     LONG_CACHE.get_or_init(|| {
-        std::fs::read_to_string(crate::config::data_path(LONG_CACHE_FILE))
+        std::fs::read(crate::config::data_path(LONG_CACHE_FILE))
             .ok()
-            .and_then(|s| serde_json::from_str::<HashMap<String, (String, Box<RawValue>)>>(&s).ok())
-            .map(|m| m.into_iter().filter_map(|(t, (d, v))| Some((t, (d.parse().ok()?, Arc::from(v))))).collect())
+            .map(|b| &*Box::leak(b.into_boxed_slice()))
+            .and_then(|b| serde_json::from_slice::<HashMap<String, (String, &'static RawValue)>>(b).ok())
+            .map(|m| m.into_iter().filter_map(|(t, (d, v))| Some((t, (d.parse().ok()?, v)))).collect())
             .unwrap_or_default()
     })
 }
@@ -2388,8 +2402,8 @@ pub fn long_cache_save() {
     let mut m: HashMap<&str, (String, &RawValue)> = long_cache_load()
         .iter()
         .filter(|(_, (d, _))| long_cache_fresh(Some(d), today))
-        // `&**v` unwraps the Arc to a plain `&RawValue`: serde only serializes `Arc<T>` under its `rc`
-        // feature, and the file format must not change — this writes exactly the same bytes as before.
+        // `&**v` reborrows as a plain `&RawValue` — the file format must not change, and this writes
+        // exactly the same bytes as before whichever side the span came from.
         // A carried-over entry re-emits the span serde normalised when it was first written; a new one
         // was normalised by `to_raw_value` in `chart_json_long`. Either way, same bytes as the old
         // parse-and-reserialize round trip.
