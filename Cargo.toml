@@ -13,7 +13,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "rustls-tls", "cookies"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }  # `raw_value` = the long-history cache holds byte spans, not parsed trees (see `long_cache_load`)
 serde_yaml = "0.9"   # archived upstream but stable; swap for serde_norway if it ever breaks
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

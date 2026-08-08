@@ -13,6 +13,7 @@ use crate::core::{
 use chrono::{DateTime, NaiveDate};
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
+use serde_json::value::RawValue;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -201,13 +202,15 @@ async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> 
 /// past a file `screen` had just filled: a wide `backtest universe` re-downloaded ~3000 payloads that
 /// were already on disk, minutes old. Both callers hardcode the same max/1mo URL, so one entry serves
 /// either. Flushed by `long_cache_save`, which every command that uses this must call once at the end.
-/// `Arc<Value>`, not `Value`: a cache hit used to DEEP-COPY the whole parsed payload — every decade of
-/// monthly bars, per ticker, ~4900 times on a wide `backtest universe` — only for `parse_chart` to read
-/// it once and drop it. Nobody mutates the payload, so a refcount bump is the same thing minus the copy.
-/// The live arm is wrapped too, which also kills the second deep copy this used to make when handing
-/// the fetch to `LONG_CACHE_NEW`. The cached bytes are still the RAW payload, so both arms converge on
-/// one `parse_chart` exactly as before — see the format note on `long_cache_save`.
-async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Arc<Value>> {
+/// `Arc<RawValue>`, not `Value`: a cache hit used to DEEP-COPY the whole parsed payload — every decade
+/// of monthly bars, per ticker, ~4900 times on a wide `backtest universe` — only for `parse_chart` to
+/// read it once and drop it. Nobody mutates the payload, so a refcount bump is the same thing minus the
+/// copy. `RawValue` goes one further: it is the payload's BYTE SPAN, so loading the cache never builds
+/// the 5057 inner trees at all and the parse happens once, where the caller wants it (see
+/// `long_cache_load`). The live arm is wrapped too, which also kills the second deep copy this used to
+/// make when handing the fetch to `LONG_CACHE_NEW`. Both arms still carry the RAW payload, so both
+/// converge on one `parse_chart` exactly as before — see the format note on `long_cache_save`.
+async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Arc<RawValue>> {
     let today = chrono::Local::now().date_naive();
     if let Some((recorded, v)) = long_cache_load().get(ticker) {
         if long_cache_fresh(Some(recorded), today) {
@@ -220,11 +223,22 @@ async fn chart_json_long(client: &Client, urls: &Urls, ticker: &str) -> Option<A
         .replace("{ticker}", ticker)
         .replace("{range}", "max")
         .replace("interval=1d", "interval=1mo");
-    let fetched = get_json(client, &url).await.map(Arc::new);
+    // via `Value` deliberately: `get_json` already parses to validate the body, and re-serializing that
+    // tree is what keeps a freshly fetched entry byte-for-byte what `long_cache_save` used to write.
+    let fetched = get_json(client, &url).await.and_then(|v| serde_json::value::to_raw_value(&v).ok()).map(Arc::from);
     if let Some(v) = &fetched {
         LONG_CACHE_NEW.lock().unwrap().push((ticker.to_string(), Arc::clone(v)));
     }
     fetched
+}
+
+/// `parse_chart` against a payload still in its raw bytes — the one place the deferred parse happens.
+///
+/// Separate from `parse_chart` because that one is also the network drift net's entry point, which
+/// holds an already-parsed `Value`. A failed parse is `None`, the same as a failed fetch, which is the
+/// arm every caller already handles.
+pub fn parse_chart_raw(raw: &RawValue, ticker: &str) -> Option<Chart> {
+    parse_chart(&serde_json::from_str::<Value>(raw.get()).ok()?, ticker)
 }
 
 /// Parse a Yahoo chart payload into aligned dates+closes (null closes dropped) + meta.
@@ -565,7 +579,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // to daily-only (20Y stays n/a) if the monthly fetch failed.
     let cut = chart.dates[0];
     let (mut long_dates, mut long_closes, mut long_divs) =
-        match chart_long_j.as_ref().and_then(|j| parse_chart(j, ticker)) {
+        match chart_long_j.as_deref().and_then(|j| parse_chart_raw(j, ticker)) {
             Some(lc) => {
                 let keep = lc.dates.iter().take_while(|d| **d < cut).count();
                 // (round 51) monthly series contributed nothing (young listing) — flag the ticker so
@@ -2321,16 +2335,22 @@ fn long_skip_save() {
 /// backtest or skip green by asking whether THIS file is fresh enough to serve it.
 pub const LONG_CACHE_FILE: &str = ".long_history_cache.json";
 pub const LONG_CACHE_TTL_DAYS: i64 = 7;
-static LONG_CACHE: std::sync::OnceLock<HashMap<String, (NaiveDate, Arc<Value>)>> = std::sync::OnceLock::new();
+static LONG_CACHE: std::sync::OnceLock<HashMap<String, (NaiveDate, Arc<RawValue>)>> = std::sync::OnceLock::new();
 /// This run's live fetches (collected concurrently, written ONCE in `quotes`).
-static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Arc<Value>)>> = std::sync::Mutex::new(Vec::new());
+static LONG_CACHE_NEW: std::sync::Mutex<Vec<(String, Arc<RawValue>)>> = std::sync::Mutex::new(Vec::new());
 
-fn long_cache_load() -> &'static HashMap<String, (NaiveDate, Arc<Value>)> {
+/// `RawValue`, not `Value`: this file is 129.7 MB and EVERY command that touches long history pays this
+/// function up front, serially, before any work starts — it was the entire 0.98 s fixed cost of a
+/// `backtest`, 46% of a wide run and 100% of a one-ticker one. `Box<RawValue>` makes serde find each
+/// payload's extent and copy the span, skipping the per-number/string/array node allocations that built
+/// 5057 trees a run to read a handful. Whoever actually wants a ticker parses it then, via
+/// `parse_chart_raw` — same bytes, same `serde_json`, same `parse_chart`, so the parity rule above holds.
+fn long_cache_load() -> &'static HashMap<String, (NaiveDate, Arc<RawValue>)> {
     LONG_CACHE.get_or_init(|| {
         std::fs::read_to_string(crate::config::data_path(LONG_CACHE_FILE))
             .ok()
-            .and_then(|s| serde_json::from_str::<HashMap<String, (String, Value)>>(&s).ok())
-            .map(|m| m.into_iter().filter_map(|(t, (d, v))| Some((t, (d.parse().ok()?, Arc::new(v))))).collect())
+            .and_then(|s| serde_json::from_str::<HashMap<String, (String, Box<RawValue>)>>(&s).ok())
+            .map(|m| m.into_iter().filter_map(|(t, (d, v))| Some((t, (d.parse().ok()?, Arc::from(v))))).collect())
             .unwrap_or_default()
     })
 }
@@ -2360,11 +2380,14 @@ pub fn long_cache_save() {
     if new.is_empty() && long_cache_load().iter().all(|(_, (d, _))| long_cache_fresh(Some(d), today)) {
         return; // nothing new, nothing stale — skip rewriting tens of MB
     }
-    let mut m: HashMap<&str, (String, &Value)> = long_cache_load()
+    let mut m: HashMap<&str, (String, &RawValue)> = long_cache_load()
         .iter()
         .filter(|(_, (d, _))| long_cache_fresh(Some(d), today))
-        // `&**v` unwraps the Arc to a plain `&Value`: serde only serializes `Arc<T>` under its `rc`
+        // `&**v` unwraps the Arc to a plain `&RawValue`: serde only serializes `Arc<T>` under its `rc`
         // feature, and the file format must not change — this writes exactly the same bytes as before.
+        // A carried-over entry re-emits the span serde normalised when it was first written; a new one
+        // was normalised by `to_raw_value` in `chart_json_long`. Either way, same bytes as the old
+        // parse-and-reserialize round trip.
         .map(|(t, (d, v))| (t.as_str(), (d.to_string(), &**v)))
         .collect();
     for (t, v) in new.iter() {
@@ -4732,7 +4755,7 @@ pub async fn fetch_history(client: &Client, urls: &Urls, ticker: &str) -> Option
 /// backfill (no new fetch type). None on fetch/parse fail or empty history.
 pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> Option<Chart> {
     let json = chart_json_long(client, urls, ticker).await?;
-    let chart = parse_chart(&json, ticker)?;
+    let chart = parse_chart_raw(&json, ticker)?;
     if chart.closes.is_empty() {
         return None;
     }
