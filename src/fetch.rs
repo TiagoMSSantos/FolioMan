@@ -1290,11 +1290,23 @@ fn sec_cache_path(ticker: &str) -> std::path::PathBuf {
     crate::config::data_path(".sec_cache").join(format!("{}.json", ticker.replace(['/', '\\'], "_")))
 }
 
+// The SEC transport pair. `offline()` is checked HERE, in the two functions every SEC path funnels
+// through, for the same reason `get_json`/`get_text` check it: OFFLINE has to mean no socket, and the
+// eight call sites above are easy to add a ninth to without noticing. Without this an offline run
+// still reached sec.gov whenever the local `.sec_cache` missed — which is precisely the case a frozen
+// -data pin hits on a machine that has never run live, so the pin's hermeticity depended on the
+// developer's cache being warm.
 async fn sec_get_text(client: &Client, url: &str, ua: &str) -> Option<String> {
+    if offline() {
+        return None;
+    }
     throttle().await;
     client.get(url).header("User-Agent", ua).send().await.ok()?.text().await.ok()
 }
 async fn sec_get_json(client: &Client, url: &str, ua: &str) -> Option<Value> {
+    if offline() {
+        return None;
+    }
     throttle().await;
     client.get(url).header("User-Agent", ua).send().await.ok()?.json::<Value>().await.ok()
 }
