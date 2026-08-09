@@ -4810,6 +4810,122 @@ mod tests {
         let got = post_json(&client, &url, &serde_json::json!({ "q": "ping" })).await.expect("json");
         assert_eq!(got["isin"], "LU0378438732");
     }
+
+    /// Every `Urls` field pointed at ONE loopback stub. Setting all of them is the safety property, not
+    /// a chore: a fetch under test can only reach the address it was handed, so a field the test author
+    /// did not think about still cannot leave the machine. `Urls` has 32 required fields, no
+    /// `serde(default)` and `deny_unknown_fields`, so adding a field fails here — loudly, in one place —
+    /// instead of quietly leaving a live production endpoint reachable from a unit test.
+    ///
+    /// Built by deserializing rather than by struct literal so a renamed field is a test failure with
+    /// the field name in it, and so this stays one line per field.
+    fn stub_urls(base: &str) -> Urls {
+        const FIELDS: [&str; 31] = [
+            "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
+            "pt_cpi", "eu_hicp", "eu_hicp_old", "coingecko_markets", "sp500_csv", "nupl",
+            "coinmetrics_catalog", "coinmetrics_mvrv", "ntfy", "fundamentals", "fundamentals_quality",
+            "fundamentals_history", "fund_expense", "bf_etf_search", "bf_salt", "euronext_lisbon",
+            "euronext_track", "six_funds", "esma_firds", "fca_firds", "sec_ticker_cik",
+            "sec_submissions", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
+        ];
+        let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
+        yaml.push_str(&format!("constituents_csv: [\"{base}\"]\n")); // the one non-String field
+        serde_yaml::from_str(&yaml).expect("stub urls")
+    }
+
+    /// Both cache paths fold `/` and `\` into the FILENAME. Without that a ticker is a path: the cache
+    /// key comes from a fetched constituent list, so `../../x` would write outside the cache directory
+    /// on a machine that never typed it. Nothing covered this pair at all.
+    ///
+    /// Asserted on `file_name()` only — `config::data_path` anchors to whichever repo root it finds,
+    /// which differs between a dev box and CI, and the guard under test is the replacement, not the
+    /// anchor. `data_path` itself never calls `config::load()`, so this is safe with no settings.yaml.
+    #[test]
+    fn cache_paths_sanitise_path_separators() {
+        let name = |p: std::path::PathBuf| p.file_name().expect("filename").to_string_lossy().into_owned();
+        assert_eq!(name(fund_cache_path("BRK/B")), "BRK_B.json");
+        assert_eq!(name(sec_cache_path("BRK/B")), "BRK_B.json");
+        assert_eq!(name(fund_cache_path(r"A\B")), "A_B.json");
+        assert_eq!(name(sec_cache_path(r"A\B")), "A_B.json");
+        // the traversal the replacement exists for: no parent-directory hop survives it
+        assert_eq!(name(sec_cache_path("../../etc/passwd")), ".._.._etc_passwd.json");
+    }
+
+    /// Three lines, and the whole crypto NUPL gate reads through them.
+    #[tokio::test]
+    async fn fetch_nupl_reads_the_field() {
+        let (base, client) = stub_server(r#"{"nupl": 0.42}"#);
+        assert_eq!(fetch_nupl(&client, &stub_urls(&base)).await, Some(0.42));
+    }
+
+    /// At most three titles, and an item carrying its title under `content` counts as one — the shape
+    /// Yahoo switched to, which is why `headline_titles` looks in both places.
+    #[tokio::test]
+    async fn fetch_news_takes_three_titles() {
+        let (base, client) = stub_server(
+            r#"{"news":[{"title":"one"},{"content":{"title":"two"}},{"title":"three"},{"title":"four"}]}"#,
+        );
+        assert_eq!(fetch_news(&client, &stub_urls(&base), "TST").await, ["one", "two", "three"]);
+    }
+
+    /// The intraday close array out of Yahoo's nested shape, nulls dropped.
+    #[tokio::test]
+    async fn intraday_closes_reads_the_close_array() {
+        let (base, client) =
+            stub_server(r#"{"chart":{"result":[{"indicators":{"quote":[{"close":[1.5,null,2.5]}]}}]}}"#);
+        assert_eq!(intraday_closes(&client, &stub_urls(&base), "TST").await, Some(vec![1.5, 2.5]));
+    }
+
+    /// The as-of FX series on the FIRST pair tried (`{CUR}EUR=X`, uninverted), so the rate lands as
+    /// quoted. One stubbed connection is the assertion, not a limitation: the second pair is
+    /// unreachable, which proves the first hit short-circuits the loop instead of always trying both.
+    ///
+    /// No `adjclose` in the payload on purpose — `parse_chart` prefers it when `use_adjusted_close` is
+    /// on, and that knob is config-dependent, so including it would make this test read differently on
+    /// a dev box than in CI.
+    #[tokio::test]
+    async fn eur_rate_series_maps_dates_to_rates() {
+        let (base, client) = stub_server(
+            r#"{"chart":{"result":[{"timestamp":[1577836800,1577923200],"indicators":{"quote":[{"close":[0.9,0.0]}]}}]}}"#,
+        );
+        let got = eur_rate_series(&client, &stub_urls(&base), "USD", false).await.expect("series");
+        assert_eq!(got.len(), 1, "a 0.0 close is dropped — inverted it would be +inf: {got:?}");
+        assert_eq!(got[&NaiveDate::from_ymd_opt(2020, 1, 1).unwrap()], 0.9);
+    }
+
+    /// USD 10.00 at 0.5 EUR/USD is EUR 5.00. One stubbed response covers it because the EUR leg
+    /// returns 1.0 without fetching — the short-circuit that keeps the common path off the network.
+    #[tokio::test]
+    async fn price_in_converts_via_eur() {
+        let (base, client) = stub_server(
+            r#"{"chart":{"result":[{"timestamp":[1577836800],"indicators":{"quote":[{"close":[0.5]}]}}]}}"#,
+        );
+        let got = price_in(&client, &stub_urls(&base), &fx_cache(), 10.0, "USD", "EUR").await;
+        assert_eq!(got, Some(5.0));
+    }
+
+    /// One CSV pond, header skipped, sector filter applied. `constituents_csv` is emptied so the
+    /// single-shot stub is the only endpoint in play — with it populated the second leg would fail and
+    /// print an unavailability warning that says nothing about the parse being tested.
+    #[tokio::test]
+    async fn constituent_ponds_parses_a_csv_pond() {
+        let (base, client) = stub_server("Symbol,Name,Sector\nAAPL,Apple,Technology\nXOM,Exxon,Energy");
+        let mut urls = stub_urls(&base);
+        urls.constituents_csv.clear();
+        let ponds = constituent_ponds(&client, &urls, &["Technology".to_string()]).await;
+        assert_eq!(ponds.len(), 1, "one endpoint served -> one pond");
+        assert_eq!(ponds[0], [("AAPL".to_string(), "Technology".to_string())], "Energy filtered out");
+    }
+
+    /// `sector_map` flattens those ponds ticker -> sector.
+    #[tokio::test]
+    async fn sector_map_flattens_the_ponds() {
+        let (base, client) = stub_server("Symbol,Name,Sector\nAAPL,Apple,Technology");
+        let mut urls = stub_urls(&base);
+        urls.constituents_csv.clear();
+        let map = sector_map(&client, &urls, &["Technology".to_string()]).await;
+        assert_eq!(map.get("AAPL").map(String::as_str), Some("Technology"));
+    }
 }
 
 /// At most this many quote fetches in flight at once. Unbounded `join_all` over the ~750-ticker
