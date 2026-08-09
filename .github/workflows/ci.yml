@@ -289,11 +289,15 @@ jobs:
   mutants:
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests]
-    # 20 is the CEILING THE GATE IS DESIGNED AROUND, not a guess at how long it takes. A typical
-    # diff finishes in a few minutes; anything that would not fit is sharded down by the BUDGET
-    # check below rather than being allowed to run into the timeout. So this number reddening means
-    # the budget arithmetic is wrong and needs re-timing — not that it should be raised. Raising it
-    # is what the previous round did (30 -> 45) and the job was cancelled at 45 one commit later.
+    # 20 is the CEILING THE GATE IS DESIGNED AROUND, not a guess at how long it takes. Measured
+    # capacity at that ceiling is 24 mutants (see the BUDGET block for where that number comes from);
+    # anything larger is sharded down rather than allowed to run into the timeout.
+    #
+    # This should no longer be reachable: the step wraps cargo-mutants in its own shorter `timeout`,
+    # so an overrun ends the run cleanly and still reports what it graded. Reaching THIS limit now
+    # means something hung outside cargo-mutants — a stuck checkout or cache restore — and raising
+    # the number would not fix it. Raising it is what the previous round did (30 -> 45) and the job
+    # was cancelled at 45 one commit later.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -312,8 +316,12 @@ jobs:
           # CARGO_INCREMENTAL=0 to keep its cache small, which is right for every other job here and
           # wrong for this one. folioman is one large crate (fetch.rs 8160 lines, picks.rs 9864,
           # core.rs 5958), so with incremental off each mutant recompiles ALL of it at opt-level 2 —
-          # ~86s measured, against ~25s incremental. That single difference is what cancelled the
+          # ~86s measured locally, against ~25s incremental. That difference is what cancelled the
           # 45-minute run on 038a4b1: 33 mutants x 86s is 47 minutes of build alone.
+          #
+          # Keep the override, but do not trust its magnitude: on a 4-vCPU runner an incremental
+          # rebuild costs 65.7s, not 25s (measured, see the BUDGET block). Incremental IS working;
+          # the local figure simply does not transfer.
           #
           # Safe here specifically because the trees are throwaway. An interrupted run can leave a
           # corrupted incremental cache (`rust-lld: undefined hidden symbol: anon...llvm...` on the
@@ -363,19 +371,30 @@ jobs:
           # Round-robin so the slice spreads across every file the diff touched — `slice` sharding
           # would spend the whole budget on whichever file sorts first and never reach the rest.
           #
-          # HOW BUDGET WAS DERIVED. Measured on an 8-core dev box, copy mode, `-j 2`, incremental on:
-          # a one-off ~300s COLD build per tree (the fresh scratch path defeats cargo's cached
-          # fingerprints), then ~12s build + 0.4s test per mutant, two at a time — about 6s of wall
-          # clock each. An ubuntu-latest runner has 4 vCPUs, so assume ~2x: ~600s cold, ~12s each.
-          # Against a 20-minute job, less ~2 minutes of checkout/install/cache-restore:
-          #   (18*60 - 600) / 12 ~= 40
-          # The cold start is a FIXED cost, which is why the budget is far below what the per-mutant
-          # rate alone suggests. Re-time BOTH halves off the first green run before touching this.
+          # WHERE BUDGET COMES FROM — MEASURED ON A RUNNER, not derived. Two earlier rounds guessed
+          # this number from local timings and were cancelled; the numbers below are read off the
+          # mutants.out artifact of run 31328239009, which survived its own cancellation intact.
+          #
+          #   setup before this step      11s        (job 18:09:40 -> step 18:09:52)
+          #   COLD build per tree        423s        first mutant in each of the 2 trees
+          #   build per mutant            65.7s      mean of the other 22 Build phases
+          #   test per mutant              1.3s      mean of 24 Test phases
+          #
+          # So the run is 98.6% compiler (2291s of build against 32s of test) and the cold start
+          # alone is a third of the window. Work per mutant is 67s across 2 workers = 33.5s of wall
+          # clock, and the cold start covers the first mutant in each tree:
+          #   mutants(T) = 2 + (T - 423) / 33.5
+          #   mutants(1197s) = 25.1        actually graded: 24
+          # 16 is what fits the step's own 17-minute `timeout` with that model's 5% error absorbed:
+          #   423 + 16 * 33.5 = 959s
+          #
+          # Re-measure from the artifact after any change here — that habit is the fix, the constant
+          # is only its output. Read Build/Test phase durations out of mutants.out/outcomes.json.
           #
           # An ARRAY, not a string: an unquoted "$SHARD" would need word-splitting to become three
           # arguments, and quoting it would pass one empty argument in the common case where no shard
           # is wanted. `"${SHARD[@]}"` expands to nothing at all when empty, and needs no splitting.
-          BUDGET=40
+          BUDGET=16
           SHARD=()
           if [ "${n}" -gt "${BUDGET}" ]; then
             shards=$(( (n + BUDGET - 1) / BUDGET ))
@@ -387,13 +406,12 @@ jobs:
           # network.rs is deliberately NOT in it — a mutant "surviving" because Yahoo throttled would be
           # a false red, which is the one thing a blocking gate must never produce.
           #
-          # WHY NOT --in-place, despite it looking faster. It measured ~19s per mutant locally
-          # against copy mode's 90.7s, but that comparison was confounded: the local runs had
-          # incremental compilation ON and CI does not, so almost all of that 5x was incremental
-          # rather than path reuse. On a runner --in-place bought nearly nothing, and it COST the
-          # one thing that helps here — it REJECTS `--jobs` ("cannot be used with"), because one
-          # tree cannot hold two mutants at once. So the 45-minute run graded 33 mutants serially
-          # on a 4-vCPU runner with three cores idle, and was cancelled.
+          # WHY NOT --in-place, despite it looking faster. It REJECTS `--jobs` ("cannot be used
+          # with"), because one tree cannot hold two mutants at once, so it is serial. Settled
+          # against the runner measurements above: in-place skips the 423s cold start (it reuses
+          # rust-cache's warm target at the original path) but then costs the full 65.7s per mutant
+          # with no parallelism — 17.6 mutants in the window, against copy mode's 24. The 45-minute
+          # run graded 33 serially on a 4-vCPU runner with three cores idle, and was cancelled.
           #
           # Copy mode gives each parallel job its own tree, which is what makes `-j` legal at all.
           #
@@ -408,8 +426,52 @@ jobs:
           # oversubscribing the runner's 4 vCPUs. Two is enough because one cargo cannot saturate
           # four cores on a single crate's codegen — measured locally, `-j 2` more than halved the
           # per-mutant wall clock even after paying a second tree's cold start.
-          cargo mutants "${SHARD[@]}" --in-diff push.diff -j 2 --copy-target=false \
-            --profile mutants --baseline skip -- --lib --test backtest_fixture
+          #
+          # THE GATE MUST ALWAYS PRODUCE A VERDICT, and until now it could fail to. Run 31328239009
+          # was killed by timeout-minutes while holding a complete, PASSING mutants.out (24 caught,
+          # 0 missed) and still went red with no survivor list — indistinguishable from never having
+          # run, which is the failure the oversize fallback above exists to prevent.
+          #
+          # SIGINT is the fix: cargo-mutants stops cleanly and finishes writing its result files.
+          # Confirmed twice — interrupted at 206/218 locally and cancelled at 24/31 on the runner,
+          # both leaving complete caught/missed files, because those files are appended as each
+          # mutant finishes rather than written at the end. So an overrun now degrades to "graded 16
+          # mutants, 0 survived" instead of to silence. 17m leaves ~3 minutes under timeout-minutes
+          # for the 11s setup and the artifact upload.
+          #
+          # `--timeout 20` because the default is 300s and the log warns about it on every run. The
+          # measured test phase is 1.3s, so this is 15x headroom, and it caps what a single hanging
+          # mutant can cost at 20s rather than a quarter of the whole window.
+          rc=0
+          timeout --signal=INT --kill-after=60s 17m \
+            cargo mutants "${SHARD[@]}" --in-diff push.diff -j 2 --copy-target=false \
+              --timeout 20 --profile mutants --baseline skip -- --lib --test backtest_fixture || rc=$?
+          # THE FILES ARE THE VERDICT, not the exit code: under `timeout` the code conflates
+          # "mutants survived" (2), "interrupted" (124) and any internal error, so it is reported
+          # for diagnosis and nothing is decided from it.
+          #
+          # Same rule as the --list guard above — a gate that goes green because its own output was
+          # missing is the bug this job exists to prevent. No result files is a RED, and so is a run
+          # that graded nothing. This -f check is also what guarantees the glob below expands, so
+          # keep it first: `cat` on an unmatched glob would abort the step under `set -o pipefail`.
+          if [ ! -f mutants.out/missed.txt ]; then
+            echo "cargo mutants wrote no verdict (exit ${rc}) — grading nothing is NOT a pass" >&2
+            exit 1
+          fi
+          graded=$(cat mutants.out/*.txt | wc -l)   # caught + missed + timeout + unviable
+          missed=$(wc -l < mutants.out/missed.txt)
+          # Not "of ${n}" — when sharded, n counts the whole diff and this run only ever saw a slice
+          # of it. The shard line above already says which.
+          echo "graded ${graded} mutants, ${missed} survived (exit ${rc})" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "${graded}" -eq 0 ]; then
+            echo "nothing was graded — treating as a failure, not a pass" >&2
+            exit 1
+          fi
+          if [ "${missed}" -gt 0 ]; then
+            tee -a "$GITHUB_STEP_SUMMARY" < mutants.out/missed.txt >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v7
         if: always()   # the survivor list is the whole point of a red — keep it
         with:
