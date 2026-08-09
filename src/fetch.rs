@@ -2640,6 +2640,13 @@ async fn yahoo_fund_facts_fill(
         .buffer_unordered(fetch_concurrency())
         .collect()
         .await;
+    // DELIBERATELY UNPINNED (mutation audit, round 5), all three mutants on the two lines below: the
+    // `||`, and both replacements for the `+=`. `got` is read by one `eprintln!` and nothing else, and
+    // this whole block is unreachable without a LIVE Yahoo handshake — the `yahoo_crumb` call above
+    // hardcodes `https://fc.yahoo.com` and takes no `Urls`, so `stub_urls` cannot redirect it and a
+    // unit test can only make it fail closed (`YQ_AUTH.set(None)`), which returns before here.
+    // Killing them needs a real socket, which no test in this binary may open. The cache-served path
+    // above it — the half that decides actual returned values — is pinned.
     let mut got = 0usize;
     for (sym, ter, aum) in fetched.into_iter().flatten() {
         if ter.is_some() || aum.is_some() {
@@ -3905,6 +3912,12 @@ mod tests {
         assert_eq!(top[0].1, Some(0.07), "a BF row keeps its TER through the merge");
         assert_eq!(top[2].1, None, "a venue-list extra carries no BF facts");
         assert!(!carries_fund_facts(&top[2].3), "…and no meta either");
+        // and the other direction, which the line above cannot reach: a lone domicile IS a fact. A
+        // `carries_fund_facts` stuck at false stores nothing in the symbol-keyed meta map and drops
+        // every USE/REPL/DOM cell in the ETF tables, while the run diagnostic still reports the rows
+        // as parsed. `dom` alone is the weakest case, so it is the one worth pinning.
+        assert!(carries_fund_facts(&BfMeta { dom: Some("IE".into()), ..BfMeta::default() }));
+        assert!(carries_fund_facts(&BfMeta { use_of: Some("Acc"), ..BfMeta::default() }));
     }
 
     /// The 30-day negative cache, at the exact day it expires and on both sides of it.
@@ -5257,16 +5270,19 @@ mod tests {
         let path = crate::config::data_path(FUND_FACTS_CACHE_PATH);
         let today = chrono::Utc::now().date_naive();
         let stale = today - chrono::Duration::days(30);
+        let exactly_a_week = today - chrono::Duration::days(7);
         // Yahoo's cached numbers are deliberately DIFFERENT from the BF ones below, so a leak across
         // the firewall shows up as the wrong value rather than as a passing coincidence.
         std::fs::write(
             &path,
             serde_json::json!({
-                "HOLE.DE":    [today.to_string(), 0.20, 5.0e8],
-                "BFHAS.DE":   [today.to_string(), 0.30, 1.0e9],
-                "HALFBF.DE":  [today.to_string(), 0.40, 7.0e8],
-                "STALE.DE":   [stale.to_string(), 0.99, 9.9e9],
-                "TERONLY.DE": [today.to_string(), 0.15, serde_json::Value::Null],
+                "HOLE.DE":     [today.to_string(), 0.20, 5.0e8],
+                "BFHAS.DE":    [today.to_string(), 0.30, 1.0e9],
+                "HALFBF.DE":   [today.to_string(), 0.40, 7.0e8],
+                "AUMONLY.DE":  [today.to_string(), 0.25, 2.5e8],
+                "STALE.DE":    [stale.to_string(), 0.99, 9.9e9],
+                "EXACT7.DE":   [exactly_a_week.to_string(), 0.77, 7.7e8],
+                "TERONLY.DE":  [today.to_string(), 0.15, serde_json::Value::Null],
             })
             .to_string(),
         )
@@ -5277,11 +5293,15 @@ mod tests {
         // the assertions below.
         let bf_ter: HashMap<String, f64> =
             [("BFHAS.DE".to_string(), 0.11), ("HALFBF.DE".to_string(), 0.12)].into_iter().collect();
-        let bf_aum: HashMap<String, f64> = [("BFHAS.DE".to_string(), 2.0e9)].into_iter().collect();
-        let syms: Vec<String> = ["HOLE.DE", "BFHAS.DE", "HALFBF.DE", "STALE.DE", "TERONLY.DE"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        // AUMONLY.DE is HALFBF.DE's mirror — BF holds its AUM but not its TER. Both halves are needed:
+        // each of the two `!`s in the short-circuit is invisible against the other fund alone.
+        let bf_aum: HashMap<String, f64> =
+            [("BFHAS.DE".to_string(), 2.0e9), ("AUMONLY.DE".to_string(), 3.0e9)].into_iter().collect();
+        let syms: Vec<String> =
+            ["HOLE.DE", "BFHAS.DE", "HALFBF.DE", "AUMONLY.DE", "STALE.DE", "EXACT7.DE", "TERONLY.DE"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
 
         let (ter, aum) = yahoo_fund_facts_fill(&client, &syms, &bf_ter, &bf_aum).await;
 
@@ -5302,10 +5322,22 @@ mod tests {
         assert!(!ter.contains_key("HALFBF.DE"), "BF holds this TER — Yahoo's 0.40 must not override it");
         assert_eq!(aum.get("HALFBF.DE"), Some(&7.0e8), "but the AUM hole must still be filled");
 
+        // ...and the mirror: BF holds the AUM, so the TER hole is Yahoo's to fill. Without this fund
+        // the first `!` of the short-circuit is free — deleting it only changes what happens to a
+        // fund BF answered on the TER side, which HALFBF.DE is not.
+        assert_eq!(ter.get("AUMONLY.DE"), Some(&0.25), "BF has no TER for it — the hole must be filled");
+        assert!(!aum.contains_key("AUMONLY.DE"), "but BF holds this AUM — Yahoo's must not override it");
+
         // older than the 7-day TTL -> NOT served from cache; it goes to the fetch list, which fails
         // closed here. A stale TER served as fresh is a wrong number that never expires.
         assert!(!ter.contains_key("STALE.DE"), "a cache entry past the TTL must not be served");
         assert!(!aum.contains_key("STALE.DE"));
+
+        // EXACTLY 7 days old, which is the boundary itself: the TTL is `< 7`, so this entry is spent.
+        // Thirty days cannot pin that — every widening of the comparison still rejects it — and the
+        // consequence of a `<=` is a fund whose facts are re-served for one extra day each cycle.
+        assert!(!ter.contains_key("EXACT7.DE"), "seven days is the TTL, not inside it");
+        assert!(!aum.contains_key("EXACT7.DE"));
 
         // fresh, TER present, AUM absent -> the half that exists fills and the half that does not
         // stays ABSENT. A missing AUM defaulting to 0 would read as a fund below every size gate.
