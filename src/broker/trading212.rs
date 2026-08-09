@@ -48,6 +48,17 @@ pub async fn owned_positions(client: &Client) -> Result<Vec<(String, f64)>, Stri
     extract_positions(&port)
 }
 
+/// Trading212 encodes order direction by the SIGN of the quantity: buy = +qty, sell = -qty. Split
+/// out of `order` so the branch is testable — the transport around it posts to a hardcoded
+/// production URL and cannot be exercised without pointing a real-money client somewhere else.
+fn signed_qty(side: &str, qty: f64) -> f64 {
+    if side == "sell" {
+        -qty
+    } else {
+        qty
+    }
+}
+
 /// Pure extraction, offline-testable (like `render_summary`).
 fn extract_positions(port: &Value) -> Result<Vec<(String, f64)>, String> {
     Ok(port
@@ -267,6 +278,19 @@ mod tests {
         assert!(out.contains("holdings: (none)"), "{out}");
     }
 
+    /// T212 encodes buy/sell as the SIGN of the quantity, so this one branch is the difference
+    /// between acquiring and liquidating a position — and it had no test. Pins today's behaviour
+    /// exactly, including the else-arm: any side that is not the literal `sell` is a BUY. The `trade`
+    /// command confirm-gates the call and validates the side before here, so the else-arm is not
+    /// reachable in practice; it is pinned because a mutant that flips it is silent otherwise.
+    #[test]
+    fn sell_is_the_only_negative_side() {
+        assert_eq!(signed_qty("sell", 3.0), -3.0);
+        assert_eq!(signed_qty("buy", 3.0), 3.0);
+        assert_eq!(signed_qty("SELL", 3.0), 3.0, "match is exact-case: uppercase is NOT a sell");
+        assert_eq!(signed_qty("anything-else", 3.0), 3.0);
+    }
+
     /// A row whose amounts fail to parse is skipped (with a stderr warning), never shown as 0.00.
     #[test]
     fn unparsable_position_row_is_skipped_not_zero() {
@@ -284,9 +308,18 @@ mod tests {
 /// Trading212 market order via the **live** (production = real money) API. `ticker` must be
 /// in Trading212 form, e.g. `AAPL_US_EQ`. buy = +qty, sell = -qty (T212 encodes direction
 /// by sign). Key is the raw `Authorization` header value.
+///
+/// UNGRADEABLE, hence the skip, and here the reason is sharper than for a read endpoint: killing
+/// `-> Ok(String::new())` means proving this function POSTS. Against a hardcoded
+/// `live.trading212.com` that is a real market order, and the obvious alternative — asserting it
+/// errors with no credential — holds only while `TRADING212_API_KEY` is unset, so the same test
+/// that passes in CI would place an order on a machine that has the key. There is no offline test
+/// of this function that is safe to write. `signed_qty` carries the one branch that can be pinned,
+/// and is.
+#[mutants::skip]
 pub async fn order(client: &Client, side: &str, ticker: &str, qty: f64) -> Result<String, String> {
     let key = env_var("TRADING212_API_KEY")?;
-    let signed = if side == "sell" { -qty } else { qty };
+    let signed = signed_qty(side, qty);
     let resp = client
         .post("https://live.trading212.com/api/v0/equity/orders/market")
         .header("Authorization", key)

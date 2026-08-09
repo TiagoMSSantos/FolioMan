@@ -65,11 +65,26 @@ fn extract_amounts(balances: &[Value]) -> Vec<(String, f64)> {
 }
 
 /// Free + invested balances (read-only). Splits stable/fiat (cash) from the rest (holdings).
+///
+/// UNGRADEABLE, hence the skip: what is left here after `render_balances` was split out is a
+/// credential read and a signed GET against a hardcoded `api.binance.com`. Killing
+/// `-> Ok(String::new())` needs either a live socket, or a test that asserts this errors — which
+/// only holds while `BINANCE_API_KEY` is unset, so it would pass in CI and fetch for real on a
+/// machine that has keys. Neither belongs in the offline suite. The half that carries the logic is
+/// pinned below.
+#[mutants::skip]
 pub async fn summary(client: &Client) -> Result<String, String> {
-    let balances = account_balances(client).await?;
+    Ok(render_balances(&account_balances(client).await?))
+}
+
+/// Pure balances→text rendering, split from the fetch so the dust/drift handling is testable offline
+/// (like `extract_amounts`). The URL is hardcoded to `api.binance.com`, so the fetch half cannot be
+/// reached by a test without pointing a real-money client somewhere else — this is the half worth
+/// pinning anyway.
+fn render_balances(balances: &[Value]) -> String {
     let mut cash = Vec::new();
     let mut holdings = Vec::new();
-    for b in &balances {
+    for b in balances {
         let asset = b.get("asset").and_then(|v| v.as_str()).unwrap_or("?");
         let num = |k: &str| b.get(k).and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok());
         // an unparsable amount must not render as 0.0 — that reads as "no money here"
@@ -94,7 +109,7 @@ pub async fn summary(client: &Client) -> Result<String, String> {
             format!("\n  {label}:\n{}", v.join("\n"))
         }
     };
-    Ok(format!("{}{}", block("cash", &cash), block("holdings", &holdings)))
+    format!("{}{}", block("cash", &cash), block("holdings", &holdings))
 }
 
 /// HMAC-SHA256(secret, msg) as lowercase hex — Binance's request signature scheme.
@@ -163,6 +178,34 @@ mod tests {
             json!({ "asset": "SOL", "free": "oops", "locked": "0" }),
         ];
         assert_eq!(extract_amounts(&rows), vec![("BTC".to_string(), 0.75)]);
+    }
+
+    /// Rendering: stable/fiat lands under `cash` and everything else under `holdings`, dust and
+    /// zero rows drop, and an unparsable amount SKIPS the row rather than printing it as 0 — "free 0"
+    /// against a real balance is the reading this must never produce.
+    #[test]
+    fn render_balances_splits_cash_from_holdings() {
+        let out = render_balances(&[
+            json!({ "asset": "BTC", "free": "0.5", "locked": "0.25" }),
+            json!({ "asset": "USDT", "free": "1000", "locked": "0" }),
+            json!({ "asset": "ETH", "free": "0", "locked": "0" }),
+            json!({ "asset": "SOL", "free": "oops", "locked": "0" }),
+        ]);
+        let (cash, holdings) = out.split_once("\n  holdings").expect("both blocks present");
+        assert!(cash.contains("USDT"), "{out}");
+        assert!(!cash.contains("BTC"), "{out}");
+        assert!(holdings.contains("BTC"), "{out}");
+        assert!(!out.contains("ETH"), "zero balance is dust: {out}");
+        assert!(!out.contains("SOL"), "unparsable row must skip, not render 0: {out}");
+    }
+
+    /// Both empty arms — an account with nothing in it prints "(none)" twice, never an empty block
+    /// that reads as a truncated response.
+    #[test]
+    fn render_balances_empty_prints_none_for_both() {
+        let out = render_balances(&[]);
+        assert!(out.contains("cash: (none)"), "{out}");
+        assert!(out.contains("holdings: (none)"), "{out}");
     }
 
     /// Signing self-check against a known HMAC-SHA256 test vector.
