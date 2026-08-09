@@ -4736,6 +4736,47 @@ mod tests {
         assert_eq!(parse_yahoo_fund_facts(&json!({})), (None, None));
         assert_eq!(parse_yahoo_fund_facts(&json!({"quoteSummary": {"result": []}})), (None, None));
     }
+
+    /// One canned HTTP/1.1 response on an ephemeral loopback port, accepted exactly once. The SEC
+    /// transport pair is two lines of `reqwest` each and had no test at all, which the mutation gate
+    /// found the moment the offline guard made those lines part of a diff: `sec_get_text` could
+    /// return `""` forever and the whole suite stayed green. Serving a real socket is what separates
+    /// "fetched it" from "returned a stub", and it needs no mock crate to do it.
+    ///
+    /// `no_proxy` because `reqwest` reads `HTTP_PROXY` from the environment and a proxy set on a dev
+    /// box would otherwise swallow the loopback request.
+    fn stub_server(body: &'static str) -> (String, Client) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("accept");
+            let _ = std::io::Read::read(&mut sock, &mut [0u8; 2048]); // drain the request line+headers
+            let resp = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+            let _ = std::io::Write::write_all(&mut sock, resp.as_bytes());
+        });
+        let client = Client::builder().no_proxy().build().expect("test client");
+        (format!("http://{addr}/"), client)
+    }
+
+    /// `sec_get_text` hands back the body verbatim — the Form-4 XML `between()` then scans. Not
+    /// covered, deliberately: the `offline()` early return. `offline()` is a process-wide `OnceLock`
+    /// over `FOLIOMAN_OFFLINE`, so setting it here would race every other test in this binary, and
+    /// the mutant it would kill does not exist — a stubbed `-> None` is indistinguishable from a
+    /// correct offline `None`.
+    #[tokio::test]
+    async fn sec_get_text_returns_the_body() {
+        let (url, client) = stub_server("<ownershipDocument/>");
+        let got = sec_get_text(&client, &url, "folioman-test").await;
+        assert_eq!(got.as_deref(), Some("<ownershipDocument/>"));
+    }
+
+    /// `sec_get_json` parses it — every CIK, submissions and companyfacts read is this call.
+    #[tokio::test]
+    async fn sec_get_json_parses_the_body() {
+        let (url, client) = stub_server(r#"{"cik":"0000320193"}"#);
+        let got = sec_get_json(&client, &url, "folioman-test").await.expect("json");
+        assert_eq!(got["cik"], "0000320193");
+    }
 }
 
 /// At most this many quote fetches in flight at once. Unbounded `join_all` over the ~750-ticker
