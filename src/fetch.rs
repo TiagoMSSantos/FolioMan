@@ -3125,6 +3125,102 @@ fn use_from_name(name: &str) -> Option<&'static str> {
     }
 }
 
+/// One ETF as it travels through `fetch_xetra_etfs`: ISIN (later the Yahoo symbol), TER, AUM, meta.
+type BfRow = (String, Option<f64>, Option<f64>, BfMeta);
+
+/// Does this row carry any BF fact worth storing, or is it an all-`None` shell?
+///
+/// The same test is written at both ends of `fetch_xetra_etfs` — once when capturing name-keyed meta
+/// from the BF payload, once when filling the symbol-keyed map — so it is one function now.
+/// Inverting it stores an empty `BfMeta` for every fund, which reads downstream as "BF answered,
+/// facts genuinely absent" and permanently silences the name-keyed fallback that would have found
+/// them. `dom` counts: a venue-only fund with nothing but a domicile is still worth a cell.
+fn carries_fund_facts(m: &BfMeta) -> bool {
+    *m != BfMeta::default()
+}
+
+/// Merge the venue-list and regulatory ISINs into BF's own top-`cap` rows, dropping any BF already
+/// returned, and report how many extras each group contributed.
+///
+/// Pure, and split out because all three of its decisions survive inline. Dropping either `!` re-adds
+/// every ISIN BF already answered, so the same fund is searched twice, occupies two universe slots
+/// and blows past the cap the caller asked for. Turning the `-` into `+` corrupts `extra_n`, the
+/// figure the run diagnostic prints to separate "BF returned nothing" from "the venue lists are
+/// thin" — the two failures that empty the ETF tables in exactly the same way.
+fn merge_isin_lists(
+    rows: Vec<BfRow>,
+    extra_isins: Vec<String>,
+    speculative_isins: Vec<String>,
+    cap: usize,
+) -> (Vec<BfRow>, usize, std::collections::HashSet<String>) {
+    let total = rows.len();
+    let bf_isins: std::collections::HashSet<String> = rows.iter().map(|(isin, ..)| isin.clone()).collect();
+    let mut top: Vec<BfRow> = rows.into_iter().take(cap).collect();
+    top.extend(
+        extra_isins
+            .into_iter()
+            .filter(|isin| !bf_isins.contains(isin))
+            .map(|isin| (isin, None, None, BfMeta::default())),
+    );
+    let extra_n = top.len() - total.min(cap);
+    // speculative (regulatory-only) ISINs last; the set doubles as the negative-cache eligibility
+    // check inside the resolution closure (caller already removed venue-list overlaps).
+    let spec_set: std::collections::HashSet<String> =
+        speculative_isins.into_iter().filter(|isin| !bf_isins.contains(isin)).collect();
+    top.extend(spec_set.iter().cloned().map(|isin| (isin, None, None, BfMeta::default())));
+    (top, extra_n, spec_set)
+}
+
+/// Is this a regulatory-only ISIN whose 30-day "definitively not on Yahoo" entry is still fresh?
+///
+/// Both halves are load-bearing in opposite directions, which is why this is a named function.
+/// Dropping the `speculative` conjunct extends the negative cache to venue-listed funds, which are
+/// never written into it — harmless today, a silent 30-day blackout the moment anything else is.
+/// Widening the comparison (`<` -> `<=` or `>`, or `-` -> `+`) either brands a good ISIN dead
+/// roughly forever, or expires every entry immediately and restores the ~1k dead searches per run
+/// this cache exists to stop. A malformed or missing date is NOT blocking: re-searching once is
+/// cheaper than a permanent false negative.
+fn neg_cache_blocks(speculative: bool, cached: Option<&String>, today: NaiveDate) -> bool {
+    speculative
+        && cached.is_some_and(|d| {
+            NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok_and(|d| (today - d).num_days() < 30)
+        })
+}
+
+/// Yahoo's fallback symbol for an ISIN whose only indexed listing is Stuttgart is `<ISIN>.SG` — a
+/// chart-less venue, so every such resolution is a guaranteed dead fetch (716 of the 783 old "no
+/// Yahoo data" gate-outs). A real liquid listing (`.DE`/`.MI`/`.L`/`.AS`…) would have ranked first,
+/// so there is nothing to rescue.
+///
+/// Inverting this keeps ONLY the dead venue and discards every tradable listing, emptying the ETF
+/// tables while every diagnostic still reports a healthy resolution count.
+/// note: only `.SG` shows up in practice; add the suffix here if another appears.
+fn usable_symbol(sym: &str) -> bool {
+    !sym.ends_with(".SG")
+}
+
+/// Yahoo returned no symbol — is that a definitive miss worth negative-caching for 30 days?
+///
+/// ONLY when the payload is search-shaped (carries a `quotes` array). A rate-limit or error JSON is
+/// also symbol-less, and letting it through here brands a perfectly good ISIN dead for a month on
+/// nothing but a throttled request — the cache is keyed by ISIN, so the fund vanishes from the
+/// universe until the TTL lapses. Forcing it true does exactly that; forcing it false leaks the dead
+/// searches back. Non-speculative ISINs are never negative-cached at all.
+fn definitive_miss(speculative: bool, v: &Value) -> bool {
+    speculative && v.get("quotes").is_some_and(|q| q.is_array())
+}
+
+/// Did the BF rows arrive but parse to no TER at all? Then a field name moved and the operator needs
+/// the first row's key list to repair `bf_row_ter`.
+///
+/// Extracted rather than tested through its `eprintln!`: capturing stderr in-process needs an
+/// unstable API, and asserting on the message text breaks the next time anyone rewords it. Flipping
+/// the `==` or dropping the `!` fires the "fix your parser" advice on every healthy run, which
+/// trains the operator to ignore the one run where it is true.
+fn no_ter_parsed(ter_n: usize, first_keys: &str) -> bool {
+    ter_n == 0 && !first_keys.is_empty()
+}
+
 /// The EU-buyable UCITS ETF universe: ask Börse Frankfurt for the top-`cap` ETFs by turnover (real
 /// EU-listed, PRIIPs-compliant funds — unlike the US-domiciled NASDAQ-Trader ETFs an EU broker can't
 /// sell), then resolve each ISIN to a Yahoo symbol via Yahoo search (first hit = the liquid EU
@@ -3176,7 +3272,7 @@ pub async fn fetch_xetra_etfs(
                         .filter_map(|r| {
                             let mut m = bf_row_meta(r);
                             m.dom = isin_domicile(r.get("isin")?.as_str()?);
-                            (m != BfMeta::default())
+                            carries_fund_facts(&m)
                                 .then_some((r.pointer("/name/originalValue")?.as_str()?.trim().to_lowercase(), m))
                         })
                         .collect(),
@@ -3213,21 +3309,8 @@ pub async fn fetch_xetra_etfs(
     // thousands of Yahoo searches (which DO rate-limit). Euronext-only ISINs append after the cut so
     // BF's turnover ranking (and the cap semantics) stay untouched.
     let total = rows.len();
-    let bf_isins: std::collections::HashSet<String> = rows.iter().map(|(isin, ..)| isin.clone()).collect();
-    let mut top: Vec<(String, Option<f64>, Option<f64>, BfMeta)> = rows.into_iter().take(cap).collect();
-    top.extend(
-        extra_isins
-            .into_iter()
-            .filter(|isin| !bf_isins.contains(isin))
-            .map(|isin| (isin, None, None, BfMeta::default())),
-    );
-    let extra_n = top.len() - total.min(cap);
-    // speculative (regulatory-only) ISINs last; the set doubles as the negative-cache eligibility
-    // check inside the resolution closure (caller already removed venue-list overlaps).
-    let spec_set: std::collections::HashSet<String> =
-        speculative_isins.into_iter().filter(|isin| !bf_isins.contains(isin)).collect();
+    let (top, extra_n, spec_set) = merge_isin_lists(rows, extra_isins, speculative_isins, cap);
     let reg_n = spec_set.len();
-    top.extend(spec_set.iter().cloned().map(|isin| (isin, None, None, BfMeta::default())));
     if top.is_empty() {
         return Vec::new();
     }
@@ -3262,12 +3345,7 @@ pub async fn fetch_xetra_etfs(
                 return Ok((sym.clone(), ter, aum, meta, None));
             }
             let speculative = spec_ref.contains(&isin);
-            if speculative
-                && neg_ref.get(&isin).is_some_and(|d| {
-                    NaiveDate::parse_from_str(d, "%Y-%m-%d")
-                        .is_ok_and(|d| (today - d).num_days() < 30)
-                })
-            {
+            if neg_cache_blocks(speculative, neg_ref.get(&isin), today) {
                 return Err(None); // known-dead ISIN, TTL not expired — skip the search
             }
             let url = urls
@@ -3279,17 +3357,9 @@ pub async fn fetch_xetra_etfs(
                 return Err(None); // transport error — never a negative, retried next run
             };
             match v.pointer("/quotes/0/symbol").and_then(|s| s.as_str()) {
-                // Yahoo's fallback symbol for an ISIN whose only listing it indexes is Stuttgart is
-                // `<ISIN>.SG` — a chart-less venue, so EVERY such resolution is a guaranteed dead
-                // fetch (716 of the 783 old "no Yahoo data" gate-outs). A real liquid listing
-                // (.DE/.MI/.L/.AS…) would have ranked first, so there's nothing to rescue: drop it.
-                // note: only .SG shows up in practice; add the suffix here if another appears.
-                Some(sym) if !sym.ends_with(".SG") => Ok((sym.to_string(), ter, aum, meta, Some(isin))),
-                Some(_) => Err(None),
-                // definitive miss ONLY when the payload is search-shaped (carries a `quotes`
-                // array) — a rate-limit/error JSON must not brand a good ISIN dead for 30 days
-                None => Err((speculative && v.get("quotes").is_some_and(|q| q.is_array()))
-                    .then(|| isin.clone())),
+                Some(sym) if usable_symbol(sym) => Ok((sym.to_string(), ter, aum, meta, Some(isin))),
+                Some(_) => Err(None), // Stuttgart-only — see usable_symbol
+                None => Err(definitive_miss(speculative, &v).then(|| isin.clone())),
             }
         })
         .buffer_unordered(fetch_concurrency())
@@ -3341,7 +3411,7 @@ pub async fn fetch_xetra_etfs(
             if let Some(a) = aum {
                 aum_map.insert(sym.clone(), a);
             }
-            if meta != BfMeta::default() {
+            if carries_fund_facts(&meta) {
                 meta_map.insert(sym.clone(), meta);
             }
             sym
@@ -3360,7 +3430,7 @@ pub async fn fetch_xetra_etfs(
     // conclusive diagnostic: distinguishes "BF gave 0 ISINs" from "BF ok but Yahoo bridge resolved
     // none" — the two ways the ETF tables silently empty.
     eprintln!("fetch: Börse Frankfurt returned {total} ETF ISINs (kept top {} by turnover) + {extra_n} venue-list extras + {reg_n} regulatory extras; {} resolved to Yahoo tickers ({} from cache, TER for {ter_n})", total.min(cap), tickers.len(), tickers.len() - fresh_n);
-    if ter_n == 0 && !first_keys.is_empty() {
+    if no_ter_parsed(ter_n, &first_keys) {
         eprintln!("fetch: no TER parsed from BF rows — add the right key to bf_row_ter. First-row fields: {first_keys}");
     }
     if tickers.is_empty() {
@@ -3808,6 +3878,72 @@ mod tests {
         assert_eq!(between_all("<a>1</a><a>2</a>", "<a>", "</a>"), vec!["1", "2"]);
         assert_eq!(between_all("<a>1</a><a>2", "<a>", "</a>"), vec!["1"]); // trailing unmatched open dropped
         assert!(between_all("<a>1", "<a>", "</a>").is_empty()); // open, no close -> break arm, empty
+    }
+
+    /// The venue and regulatory ISINs merge in behind BF's top-`cap` cut, deduped against every ISIN
+    /// BF returned — including the ones the cap threw away.
+    ///
+    /// `IE00C` is the case that carries this test: BF returned it, the cap cut it, and it arrives
+    /// again on the speculative list. Deduping against `top` instead of `rows` would re-admit it as a
+    /// factless speculative fund, and the negative cache would then be free to brand a fund BF itself
+    /// listed as "not on Yahoo" for 30 days.
+    #[test]
+    fn merging_venue_isins_dedupes_against_every_bf_row_not_just_the_kept_ones() {
+        let bf = |isin: &str, ter: Option<f64>| (isin.to_string(), ter, None, BfMeta::default());
+        let rows = vec![bf("IE00A", Some(0.07)), bf("IE00B", Some(0.12)), bf("IE00C", Some(0.20))];
+        let (top, extra_n, spec_set) = merge_isin_lists(
+            rows,
+            vec!["IE00B".into(), "LU00X".into()], // IE00B is BF's own and must not come back
+            vec!["IE00C".into(), "FR00Y".into()], // IE00C is BF's own too, despite being cut by the cap
+            2,
+        );
+        let isins: Vec<&str> = top.iter().map(|(i, ..)| i.as_str()).collect();
+        assert_eq!(isins, ["IE00A", "IE00B", "LU00X", "FR00Y"], "BF's top-2 first, then extras, then speculative");
+        assert_eq!(extra_n, 1, "one venue-list extra survived the dedupe — the diagnostic prints this");
+        assert_eq!(spec_set.len(), 1);
+        assert!(spec_set.contains("FR00Y") && !spec_set.contains("IE00C"));
+        assert_eq!(top[0].1, Some(0.07), "a BF row keeps its TER through the merge");
+        assert_eq!(top[2].1, None, "a venue-list extra carries no BF facts");
+        assert!(!carries_fund_facts(&top[2].3), "…and no meta either");
+    }
+
+    /// The 30-day negative cache, at the exact day it expires and on both sides of it.
+    #[test]
+    fn the_negative_cache_expires_on_the_thirtieth_day() {
+        let today = NaiveDate::from_ymd_opt(2026, 8, 9).expect("today");
+        let at = |days: i64| (today - chrono::Duration::days(days)).to_string();
+        assert!(neg_cache_blocks(true, Some(&at(29)), today), "29 days old — still dead, do not re-search");
+        assert!(!neg_cache_blocks(true, Some(&at(30)), today), "30 days is the TTL itself: expired, search again");
+        assert!(!neg_cache_blocks(true, Some(&at(31)), today));
+        assert!(!neg_cache_blocks(false, Some(&at(1)), today), "venue-listed funds are never negative-cached");
+        assert!(!neg_cache_blocks(true, None, today), "never seen before");
+        // an unparseable entry must fail OPEN — one wasted search beats a permanent false negative
+        assert!(!neg_cache_blocks(true, Some(&"not-a-date".to_string()), today));
+    }
+
+    /// Yahoo's answer is triaged three ways, and the two failure arms differ in consequence: a
+    /// Stuttgart-only symbol is dropped for this run, a definitive miss is remembered for 30 days.
+    #[test]
+    fn only_a_search_shaped_payload_may_brand_an_isin_dead() {
+        assert!(usable_symbol("XDWD.DE"));
+        assert!(usable_symbol("SWDA.L"));
+        assert!(!usable_symbol("IE00B4L5Y983.SG"), "Stuttgart is chart-less — a guaranteed dead fetch");
+        assert!(usable_symbol("MSG"), "the suffix is a venue, not a substring");
+
+        let quotes = serde_json::json!({"quotes": []});
+        let throttled = serde_json::json!({"finance": {"error": {"code": "Too Many Requests"}}});
+        assert!(definitive_miss(true, &quotes), "search answered, ISIN genuinely absent");
+        assert!(!definitive_miss(true, &throttled), "a rate-limit must never cost a fund 30 days");
+        assert!(!definitive_miss(true, &serde_json::json!({"quotes": "unexpected"})), "shape must be an array");
+        assert!(!definitive_miss(false, &quotes), "only regulatory-sourced ISINs are cached negative");
+    }
+
+    /// The "your parser broke" advice fires only when BF actually sent rows AND none yielded a TER.
+    #[test]
+    fn the_parser_diagnostic_stays_quiet_on_a_healthy_run() {
+        assert!(no_ter_parsed(0, "isin,name,keyData.ter"), "rows arrived, not one TER — the key moved");
+        assert!(!no_ter_parsed(412, "isin,name,keyData.ter"), "TERs parsed — nothing to fix");
+        assert!(!no_ter_parsed(0, ""), "BF sent nothing at all; that is the OTHER diagnostic's job");
     }
 
     /// Name-keyed TER fallback: unique fund-name prefix hits, ambiguous share-class prefixes and
