@@ -130,7 +130,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      COVERAGE_MIN: "80"   # ARMED floor. Measured line coverage 83.98% (2026-08-09, config-less, at the scope below). Ratchet UP as tests grow; never lower it. Read the current "TOTAL" line % off this job's step summary.
+      COVERAGE_MIN: "80"   # ARMED floor. Measured line coverage 83.90% (2026-08-09, config-less, at the scope below). Ratchet UP as tests grow; never lower it. Read the current "TOTAL" line % off this job's step summary.
+      # The scope below is load-bearing for THIS number: without --test backtest_fixture the same tree
+      # measures 79.20% and the job fails the floor it was set against.
       # History, because the gap is the lesson: this sat at 62 against a 63.23% measurement from
       # 2026-07-13 and was never moved, while actual coverage drifted to 73.13% — eleven points of
       # slack, i.e. ~2000 covered lines could have been deleted with the gate still green. A floor
@@ -150,7 +152,13 @@ jobs:
           # collect + HTML + the floor gate in one shot; --fail-under-lines is the LAST check, so the
           # HTML/profdata are already written when it trips. Capture its exit (|| guards `set -e`) so the
           # summary still lands on a red — that's exactly when you need to see which lines fell.
-          cargo llvm-cov --locked --lib --test cli --html --fail-under-lines "${COVERAGE_MIN}" || gate=$?
+          #
+          # --test backtest_fixture is in scope because integration-tests ALREADY runs it on every push:
+          # leaving it out did not make the number stricter, it made it wrong, hiding ~860 lines of
+          # commands/backtest.rs that CI executes anyway (53.87% -> 81.75% the moment it was counted).
+          # It is safe here for the same reason it is safe there — FOLIOMAN_OFFLINE, frozen fixture data,
+          # deterministic goldens. tests/network.rs stays OUT: it makes live calls.
+          cargo llvm-cov --locked --lib --test cli --test backtest_fixture --html --fail-under-lines "${COVERAGE_MIN}" || gate=$?
           {
             echo '```text'
             cargo llvm-cov report --summary-only
