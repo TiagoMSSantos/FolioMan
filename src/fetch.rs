@@ -4777,6 +4777,31 @@ mod tests {
         let got = sec_get_json(&client, &url, "folioman-test").await.expect("json");
         assert_eq!(got["cik"], "0000320193");
     }
+
+    /// The general transport trio, same shape and same reason as the SEC pair above — and the funnel
+    /// every other fetch in this file goes through, so they are the likeliest lines here to be edited
+    /// next. `get_json` in particular READS as covered under `cargo llvm-cov` while being nothing of
+    /// the sort: the frozen-data fixture runs offline, so it only ever executes the `offline()` early
+    /// return. Coverage says the line ran; only these say it fetched.
+    #[tokio::test]
+    async fn get_json_parses_the_body() {
+        let (url, client) = stub_server(r#"{"chart":{"result":[]}}"#);
+        let got = get_json(&client, &url).await.expect("json");
+        assert!(got["chart"]["result"].is_array(), "{got}");
+    }
+
+    #[tokio::test]
+    async fn get_text_returns_the_body() {
+        let (url, client) = stub_server("ISIN,name\nIE00B4L5Y983,IWDA");
+        assert_eq!(get_text(&client, &url).await.as_deref(), Some("ISIN,name\nIE00B4L5Y983,IWDA"));
+    }
+
+    #[tokio::test]
+    async fn post_json_parses_the_body() {
+        let (url, client) = stub_server(r#"{"isin":"LU0378438732"}"#);
+        let got = post_json(&client, &url, &serde_json::json!({ "q": "ping" })).await.expect("json");
+        assert_eq!(got["isin"], "LU0378438732");
+    }
 }
 
 /// At most this many quote fetches in flight at once. Unbounded `join_all` over the ~750-ticker

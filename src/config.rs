@@ -1176,4 +1176,36 @@ mod tests {
         assert!(!gates_configured(&y("buy_heuristic: {}\n"))); // named, but empty
         assert!(!gates_configured(&y("monthly_deploy_eur: 2200\n"))); // no base found
     }
+
+    /// The `#[serde(default = "…")]` fallbacks, pinned to the numbers their field comments promise.
+    /// These fire only for a key the config OMITS, so the committed settings + the CI fixture between
+    /// them keep most of them from ever running — which is exactly how a stubbed `default_universe_size`
+    /// returning 0 would reach a user with an older settings.yaml and silently empty their universe.
+    /// Called directly rather than round-tripped through YAML: `Settings`/`Urls` are
+    /// `deny_unknown_fields` with a dozen required keys each, and a fixture that big would pin the
+    /// fixture, not the defaults.
+    #[test]
+    fn serde_defaults_are_the_documented_values() {
+        assert_eq!(default_top_picks(), 5);
+        assert_eq!(default_stale_days(), 7);
+        assert_eq!(default_universe_size(), 100);
+        assert_eq!(default_fetch_concurrency_multiplier(), 8);
+        assert_eq!(default_fetch_requests_per_second(), 10.0);
+        assert!(default_true());
+    }
+
+    /// The URL fallbacks that exist so an older settings.yaml still loads. Pinned on host + the
+    /// `{placeholder}` tokens the fetchers substitute — a default that loses `{ticker}` fetches the
+    /// same page for every symbol, which reads as data rather than as an error.
+    #[test]
+    fn defaulted_urls_keep_their_host_and_placeholders() {
+        let fundamentals = default_fundamentals_url();
+        assert!(fundamentals.starts_with("https://financialmodelingprep.com/"), "{fundamentals}");
+        assert!(fundamentals.contains("{ticker}") && fundamentals.contains("{key}"), "{fundamentals}");
+        let quality = default_fundamentals_quality_url();
+        assert!(quality.starts_with("https://financialmodelingprep.com/"), "{quality}");
+        assert!(quality.contains("{ticker}") && quality.contains("{key}"), "{quality}");
+        assert!(default_eu_hicp_old().contains("prc_hicp_manr"), "the TERMINATED dataset, not the live one");
+        assert!(default_euronext_lisbon_url().contains("mics=XLIS"), "Lisbon MIC scope is the whole point");
+    }
 }

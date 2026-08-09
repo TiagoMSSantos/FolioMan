@@ -4003,4 +4003,15 @@ mod tests {
     assert_eq!(infl_series_stale(&frozen, day(2026, 3, 1)), Some(2025)); // grace ends in March
     assert_eq!(infl_series_stale(&BTreeMap::new(), day(2026, 7, 19)), None);
     }
+
+    /// `ca_premium_range` renders the permanence ladder for the footer. All three arms, because the
+    /// slice patterns are the whole function: a one-band series must print the flat form, not a
+    /// `lo→hi` range against itself, and a laddered one must show FIRST→LAST rather than any
+    /// interior band.
+    #[test]
+    fn ca_premium_range_covers_its_three_arms() {
+        assert_eq!(ca_premium_range(&[]), "—");
+        assert_eq!(ca_premium_range(&[(1, 2.0)]), "+2.00%");
+        assert_eq!(ca_premium_range(&[(1, 0.5), (3, 1.0), (5, 2.5)]), "+0.50→+2.50%");
+    }
 }

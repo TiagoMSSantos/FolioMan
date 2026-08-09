@@ -74,3 +74,19 @@ pub async fn summary(_client: &Client) -> Result<String, String> {
          (e.g. pytr)."
         .into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `summary` is deliberately unimplemented, and that has to stay LOUD. A stub returning `Ok`
+    /// would print an empty account as though TR held nothing — the failure mode this whole file's
+    /// doc argues against. No network, no credentials: the error is the entire function.
+    #[tokio::test]
+    async fn summary_is_an_explicit_not_implemented() {
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let err = summary(&client).await.unwrap_err();
+        assert!(err.contains("not implemented"), "{err}");
+        assert!(err.contains("websocket"), "must say WHY, so nobody re-attempts it blind: {err}");
+    }
+}
