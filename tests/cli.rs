@@ -334,6 +334,12 @@ fn alert_without_prices_records_no_dips() {
 
 /// The exit-code contract: asked about one equity, produced zero statement tables -> exit 1, so a cron
 /// can tell total failure from a partial run. The market line alone does not count as success.
+///
+/// Doubles as the ONLY test of `FOLIOMAN_OFFLINE` against the Yahoo quoteSummary path. That path
+/// signs its own requests and so bypassed the `get_json`/`get_text` guard: this test went green on a
+/// box that cannot reach Yahoo and red on CI, which can — CI's `report AAA` fetched a live fund
+/// profile and exited 0. `fetch::yahoo_crumb` carries the guard now. Keep the ticker a REAL fund
+/// (AAA is one): a made-up symbol would pass whether or not the guard exists.
 #[test]
 fn report_equity_without_statements_exit_1() {
     let (code, stdout, _) = run_isolated("report-offline", "{}\n", &[], &["report", "AAA"]);

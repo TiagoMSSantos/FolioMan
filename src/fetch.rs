@@ -2257,7 +2257,16 @@ fn borse_frankfurt_sign(url: &str, salt: &str) -> [(&'static str, String); 3] {
 
 /// Signed POST to a Börse Frankfurt endpoint -> JSON. None on any failure (the whole ETF leg then
 /// degrades to empty — never a crash; the rest of the universe still builds).
+///
+/// UNGRADEABLE, hence the skip: a signed POST against a live endpoint, with the same `offline()`
+/// pinning problem as `yahoo_crumb`.
+#[mutants::skip]
 async fn borse_frankfurt_post(client: &Client, url: &str, salt: &str, body: &Value) -> Option<Value> {
+    // second of the three seams that bypassed `get_json`/`get_text` — this one because it signs its
+    // own headers. `None` is already the fetch-failed path the caller handles.
+    if offline() {
+        return None;
+    }
     let mut req = client.post(url).header("Accept", "application/json, text/plain, */*").json(body);
     for (k, v) in borse_frankfurt_sign(url, salt) {
         req = req.header(k, v);
@@ -2483,7 +2492,24 @@ fn isin_domicile(isin: &str) -> Option<String> {
 /// process, best-effort: a race just repeats the two-request handshake, first `set` wins.
 /// ponytail: endpoints hardcoded — lift into `Urls` only if a test ever needs to stub them.
 static YQ_AUTH: std::sync::OnceLock<Option<(String, String)>> = std::sync::OnceLock::new();
+/// UNGRADEABLE, hence the skip: two live GETs against hardcoded Yahoo hosts. The one branch a test
+/// could pin is the `offline()` guard, and pinning it needs `FOLIOMAN_OFFLINE` set for the whole
+/// process — which a `--lib` test cannot do without `std::env::set_var`, and one of those invalidates
+/// every env-based CI repro in this binary. `tests/cli.rs` pins it from a child process, which is
+/// outside the mutation gate's killing suite.
+#[mutants::skip]
 async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
+    // Restated here because the quoteSummary pair (this handshake + `quote_summary_json`) is the one
+    // outbound path in this file that does NOT ride `get_json`/`get_text` — so the guard those two
+    // carry never applied to it. Checked before the `YQ_AUTH` read so an offline run never caches a
+    // None that a later online call in the same process would inherit.
+    //
+    // The gap was not theoretical: `FOLIOMAN_OFFLINE=1 folioman report AAA` fetched live fund facts
+    // off Yahoo and printed a fund profile, so a test asserting the no-data path passed on a box that
+    // cannot reach Yahoo and failed on CI, which can.
+    if offline() {
+        return None;
+    }
     if let Some(v) = YQ_AUTH.get() {
         return v.clone();
     }
@@ -3444,7 +3470,17 @@ pub async fn fetch_euronext_etf_isins(client: &Client, urls: &Urls) -> Vec<Strin
 /// SIX-only funds measured 2026-07-06: ~258 after the name funnel — the FU segment also carries
 /// Swiss MUTUAL funds, which `core::six_fund_isins` drops so they can't reach the ETF table
 /// mislabeled). One plain unsigned GET, whole list in one page. Degrades to empty + a diagnostic.
+///
+/// UNGRADEABLE, hence the skip: one live GET plus a `core::six_fund_isins` call that is pinned where
+/// it lives. Same `offline()` pinning problem as `yahoo_crumb`.
+#[mutants::skip]
 pub async fn fetch_six_etf_isins(client: &Client, urls: &Urls) -> Vec<String> {
+    // third seam that bypassed `get_json`/`get_text` — this one because it needs a 60s per-request
+    // timeout. Returns before the diagnostic below: offline is not a SIX outage, and saying so would
+    // train the reader to ignore the line that reports a real one.
+    if offline() {
+        return Vec::new();
+    }
     // 60s per-request override, same lesson as the Euronext pages (client default is 15s total)
     let payload = match client.get(&urls.six_funds).timeout(StdDuration::from_secs(60)).send().await {
         Ok(r) => r.json::<Value>().await.ok(),
