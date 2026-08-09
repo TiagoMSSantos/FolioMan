@@ -721,6 +721,18 @@ pub const NET_STAMP_FILE: &str = ".folioman_net_stamp";
 /// config-less checkouts like CI anchor too); a bare binary with no repo keeps the old
 /// cwd-relative behaviour.
 pub fn data_path(name: &str) -> PathBuf {
+    // Under `cargo test --lib` this ALWAYS re-roots into a scratch dir (see `test_data_root`), so a
+    // unit test that reaches a caching fetcher cannot write a dot-file into the working tree. In
+    // every other build it is a `None` that inlines away. The real probe is `anchored_path`, which
+    // the anchor test calls directly — testing `data_path` there would grade the override instead.
+    if let Some(p) = test_root_override(name) {
+        return p;
+    }
+    anchored_path(name)
+}
+
+/// The anchor probe itself, split from [`data_path`] so it stays reachable under test.
+fn anchored_path(name: &str) -> PathBuf {
     for cfg in [settings_path(), ci_settings_path()] {
         if cfg.is_file() {
             if let Some(root) = cfg.parent().and_then(Path::parent) {
@@ -989,6 +1001,42 @@ pub fn endpoint_smooth_days() -> usize {
     })
 }
 
+/// Scratch anchor for `cargo test --lib`. `fetch.rs`'s caching fetchers all resolve their cache
+/// through [`data_path`], which points at the repo root — so before this existed, a unit test that
+/// called one wrote `.isin_cache.json` and friends into the working tree, and the only way to
+/// redirect it was `std::env::set_var`. That is process-global, shared with every other test in this
+/// binary, and is exactly what hid a config-less breakage twice. Hence a value, not an env var.
+///
+/// ONE root per process (`OnceLock`), so tests here share a directory and must use distinct
+/// filenames — the ceiling, and the reason it is cheap. It lives under `target/`, which is
+/// gitignored, and `CARGO_MANIFEST_DIR` is used because `CARGO_TARGET_TMPDIR` is not defined for
+/// unit tests, only for integration tests (see `tests/cli.rs`).
+///
+/// Deliberately unconditional under test rather than opt-in: opt-in would race, because the moment
+/// any test initialised the root, a test asserting the REAL anchor would start failing depending on
+/// thread order. `anchored_path` is what that test targets instead.
+#[cfg(test)]
+static DATA_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub fn test_data_root() -> &'static PathBuf {
+    DATA_ROOT.get_or_init(|| {
+        let p = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/target/lib-test-data"));
+        std::fs::create_dir_all(&p).expect("create the lib-test scratch root");
+        p
+    })
+}
+
+#[cfg(test)]
+fn test_root_override(name: &str) -> Option<PathBuf> {
+    Some(test_data_root().join(name))
+}
+
+#[cfg(not(test))]
+fn test_root_override(_name: &str) -> Option<PathBuf> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -997,9 +1045,12 @@ mod tests {
     /// cwd — the scatter this prevents was seen live: cron cwd=$HOME plus runs from a sibling
     /// repo left diverged cache copies outside the repo. Both test layouts (private overlay
     /// present locally, only the committed fixture in CI) must resolve to a dir with Cargo.toml.
+    /// Calls `anchored_path`, NOT `data_path`: under test the latter always answers from the
+    /// scratch root, so asserting on it would grade the override and never the anchor this exists
+    /// to protect.
     #[test]
     fn data_path_anchors_to_repo_root() {
-        let p = data_path(".probe.json");
+        let p = anchored_path(".probe.json");
         assert!(p.ends_with(".probe.json"), "{p:?}");
         let root = p.parent().expect("anchored path has a parent");
         assert!(root.join("Cargo.toml").is_file(), "expected the repo root, got {root:?}");

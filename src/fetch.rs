@@ -4773,6 +4773,18 @@ mod tests {
         assert_eq!(parse_yahoo_fund_facts(&json!({"quoteSummary": {"result": []}})), (None, None));
     }
 
+    /// Pin the pacer OFF. MUST be called by any test that can reach the transport: `throttle()`
+    /// hard-calls `config::load()`, and `config/settings.yaml` is the gitignored local overlay, so
+    /// it is absent on CI and on any fresh clone. That call no longer panics — it prints and
+    /// `exit(1)`s, which in a test binary kills the whole PROCESS instead of failing one test, so
+    /// forgetting this is worse than it used to be. A zero interval returns before the config read,
+    /// and it keeps these tests independent of the operator's `fetch_requests_per_second`, which
+    /// would otherwise sleep between them at whatever rate that box is configured for.
+    /// `set` losing the race to another test is fine — both write the same value.
+    fn pin_throttle() {
+        let _ = THROTTLE.set((Mutex::new(Instant::now()), StdDuration::ZERO));
+    }
+
     /// One canned HTTP/1.1 response on an ephemeral loopback port, accepted exactly once. The SEC
     /// transport pair is two lines of `reqwest` each and had no test at all, which the mutation gate
     /// found the moment the offline guard made those lines part of a diff: `sec_get_text` could
@@ -4782,14 +4794,7 @@ mod tests {
     /// `no_proxy` because `reqwest` reads `HTTP_PROXY` from the environment and a proxy set on a dev
     /// box would otherwise swallow the loopback request.
     fn stub_server(body: &'static str) -> (String, Client) {
-        // Pin the pacer OFF before any caller reaches the transport. `throttle()` hard-calls
-        // `config::load()`, which PANICS on an unreadable config — and `config/settings.yaml` is the
-        // gitignored local overlay, so it is absent on CI and on any fresh clone. Skipping this is
-        // what made these tests pass here and fail there. A zero interval returns before the config
-        // read, and it also keeps them independent of the operator's `fetch_requests_per_second`,
-        // which would otherwise sleep between them at whatever rate that box is configured for.
-        // `set` losing the race to another test is fine — both write the same value.
-        let _ = THROTTLE.set((Mutex::new(Instant::now()), StdDuration::ZERO));
+        pin_throttle();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().expect("local addr");
         std::thread::spawn(move || {
@@ -4867,6 +4872,73 @@ mod tests {
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\n")); // the one non-String field
         serde_yaml::from_str(&yaml).expect("stub urls")
+    }
+
+    /// The scratch-root seam itself, asserted directly. Every other test here depends on it silently:
+    /// delete `config::test_root_override` and they all still pass, having written their caches into
+    /// the working tree — which surfaces as a dirty `git status` on someone else's branch, days later.
+    #[test]
+    fn unit_tests_write_caches_into_the_scratch_root() {
+        let p = crate::config::data_path(REGULATORY_ISINS_PATH);
+        assert!(
+            p.starts_with(crate::config::test_data_root()),
+            "a unit-test cache must not land in the repo: {}",
+            p.display()
+        );
+    }
+
+    /// The regulatory ETF list's disk cache, both branches — reachable for the first time now that
+    /// `config::data_path` re-roots into a scratch dir under test.
+    ///
+    /// ONE test, two phases, because both phases own the same `.regulatory_isins.json` in the one
+    /// shared scratch root: as two `#[test]`s they would race each other.
+    ///
+    /// The seeded ISINs are in REVERSE sort order, and that is the whole discriminator. The fresh
+    /// branch returns `cached.isins` verbatim; every other path through this function ends in
+    /// `sort()`. Assert on order and a broken freshness check is a failure — assert on the set and
+    /// the test passes either way, because the dead registry below makes the fallback return the
+    /// same ISINs.
+    #[tokio::test]
+    async fn regulatory_isins_serve_a_fresh_cache_and_never_shrink() {
+        pin_throttle();
+        let path = crate::config::data_path(REGULATORY_ISINS_PATH);
+        // port 1 is privileged and unbound: every request refuses instantly, no timeout to wait out
+        let urls = stub_urls("http://127.0.0.1:1/");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let today = chrono::Utc::now().date_naive();
+
+        // 1. cache under 7 days old -> served as-is, registries never consulted
+        std::fs::write(
+            &path,
+            format!(r#"{{"fetched":"{today}","isins":["LU0378437502","IE00B4L5Y983"]}}"#),
+        )
+        .expect("seed fresh cache");
+        let got = fetch_regulatory_etf_isins(&client, &urls).await;
+        assert_eq!(got, ["LU0378437502", "IE00B4L5Y983"], "a fresh cache must be returned unsorted");
+
+        // 2. stale cache + dead registries -> the last-good copy survives. A venue outage must never
+        //    silently shrink the universe: that reads as a working screen with names missing from it,
+        //    which nobody notices, unlike a screen that errors.
+        let old = today - chrono::Duration::days(30);
+        std::fs::write(&path, format!(r#"{{"fetched":"{old}","isins":["IE00B4L5Y983"]}}"#))
+            .expect("seed stale cache");
+        let got = fetch_regulatory_etf_isins(&client, &urls).await;
+        assert_eq!(got, ["IE00B4L5Y983"], "a failed refresh must keep the last-good list");
+    }
+
+    /// The macro series cache trio (CPI/HICP), untested until the scratch root existed. A same-day
+    /// copy is what keeps repeated `screen` runs under the keyless request caps, so a silently broken
+    /// cache does not fail — it just starts getting throttled.
+    ///
+    /// Its own filename, because the scratch root is shared with every other test in this binary.
+    #[test]
+    fn macro_cache_round_trips_and_reports_freshness() {
+        let v = serde_json::json!({"Results": {"series": [{"data": [{"year": "2025"}]}]}});
+        macro_cache_write("test_macro_trio", &v);
+        assert_eq!(macro_cache_read("test_macro_trio"), Some(v));
+        assert!(macro_cache_fresh("test_macro_trio"), "just written, so inside the TTL");
+        assert!(!macro_cache_fresh("test_macro_absent"), "a missing file is not fresh");
+        assert_eq!(macro_cache_read("test_macro_absent"), None);
     }
 
     /// Both cache paths fold `/` and `\` into the FILENAME. Without that a ticker is a path: the cache
