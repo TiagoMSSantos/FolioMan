@@ -4926,6 +4926,99 @@ mod tests {
         assert_eq!(got, ["IE00B4L5Y983"], "a failed refresh must keep the last-good list");
     }
 
+    /// `fetch_sec_facts_rows`' SHELL — the disk cache, the CIK gate and the two `then_some` guards.
+    /// `parse_sec_facts` itself is already pinned by the six tests above; what was never covered is
+    /// the orchestration wrapped around it, and that is where a break is invisible: a ticker whose
+    /// fundamentals quietly stop loading still prints a row, it just ranks on nothing.
+    ///
+    /// ONE test, four phases, because it owns two pieces of process-wide state: `CIK_MAP` (an
+    /// `OnceLock` filled from `.sec_cache/_tickers.json` on the FIRST `sec_cik` call in the binary —
+    /// no other test here touches it) and the single `.sec_cache` dir under the shared scratch root.
+    /// Split into four `#[test]`s they would race on both.
+    #[tokio::test]
+    async fn sec_facts_rows_serve_the_cache_before_the_socket() {
+        pin_throttle();
+        let dir = crate::config::data_path(".sec_cache");
+        std::fs::create_dir_all(&dir).expect("scratch .sec_cache");
+        // Seeded BEFORE any `sec_cik` call, because `CIK_MAP::get_or_init` reads this file exactly
+        // once per process. AAPL resolves; "NOSUCH" is absent on purpose.
+        std::fs::write(dir.join("_tickers.json"), r#"{"0":{"ticker":"AAPL","cik_str":320193}}"#)
+            .expect("seed cik map");
+
+        // One cached row, every field distinct so a mis-wired mapping shows up as a wrong number
+        // rather than as a coincidence.
+        let row = |filed: &str, period_end: &str| SecCacheRow {
+            filed: filed.into(),
+            period_end: period_end.into(),
+            revenue: Some(1000.0),
+            gross_margin: Some(40.0),
+            op_margin: Some(20.0),
+            net_margin: Some(15.0),
+            eps: Some(3.0),
+            roe: Some(15.0),
+            shares: Some(50.0),
+            fcf_margin: Some(20.0),
+            interest_cover: Some(4.0),
+            net_cash_rev: Some(0.1),
+            ebitda: Some(280.0),
+            net_debt: Some(-100.0),
+            currency: Some("USD".into()),
+            roa: Some(5.0),
+            prior_eps: Some(2.0),
+            prior_shares: Some(52.0),
+        };
+        let cache = sec_cache_path("CACHED_facts10");
+        let write = |rows: &[SecCacheRow]| {
+            std::fs::write(&cache, serde_json::to_string(rows).expect("serialise")).expect("seed");
+        };
+
+        // 1. cache hit -> served without a socket, and an UNPARSEABLE date is dropped rather than
+        //    defaulted. A row that silently became 1970-01-01 would sort to the front and be read as
+        //    this filer's oldest history.
+        write(&[row("2021-11-01", "2021-09-30"), row("not-a-date", "2022-09-30")]);
+        let urls = stub_urls("http://127.0.0.1:1/"); // port 1 is unbound: any socket refuses instantly
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let got = fetch_sec_facts_rows(&client, &urls, "CACHED").await.expect("cache hit");
+        assert_eq!(got.len(), 1, "the row with the bad date must be dropped, not defaulted");
+        assert_eq!(got[0].filed, NaiveDate::from_ymd_opt(2021, 11, 1).unwrap());
+        assert_eq!(got[0].period_end, NaiveDate::from_ymd_opt(2021, 9, 30).unwrap());
+        assert_eq!(got[0].revenue, Some(1000.0));
+        assert_eq!(got[0].eps, Some(3.0));
+        assert_eq!(got[0].prior_eps, Some(2.0), "the YoY denominator must survive the round trip");
+        assert_eq!(got[0].prior_shares, Some(52.0));
+        assert_eq!(got[0].currency.as_deref(), Some("USD"), "(FX) money lines are meaningless without it");
+        assert_eq!(got[0].net_debt, Some(-100.0), "a NEGATIVE net debt is net cash, not a missing value");
+
+        // 2. every cached row unparseable -> None, NOT an empty Vec. `Some(vec![])` reads downstream
+        //    as "SEC has no fundamentals for this filer" and pins the gap; None refetches.
+        write(&[row("not-a-date", "2022-09-30")]);
+        assert!(fetch_sec_facts_rows(&client, &urls, "CACHED").await.is_none());
+
+        // 3. no cache + a ticker absent from the CIK map -> None before any request. This is the
+        //    non-US path every ".DE"/"-USD" name takes on a wide screen, so it must not cost a socket.
+        assert!(fetch_sec_facts_rows(&client, &urls, "NOSUCH").await.is_none());
+
+        // 4. cold ticker that DOES resolve -> fetched, parsed, and written back to the cache. The
+        //    write is the half with no other cover: drop it and every run refetches every ticker,
+        //    which is silent until SEC starts rate-limiting.
+        //
+        //    The remove is load-bearing: the scratch root OUTLIVES the run, so on every rerun after
+        //    the first this phase would take the phase-1 cache path, never open the socket, and pass
+        //    without testing anything. A test that only works once is a test that works never.
+        let _ = std::fs::remove_file(sec_cache_path("AAPL_facts10"));
+        let (base, client) = stub_server(
+            r#"{"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+                {"start": "2020-10-01", "end": "2021-09-30", "val": 1000.0, "form": "10-K", "filed": "2021-11-01"}
+            ]}}}}}"#,
+        );
+        let live = stub_urls(&base);
+        let got = fetch_sec_facts_rows(&client, &live, "AAPL").await.expect("parsed rows");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].revenue, Some(1000.0));
+        let written = std::fs::read_to_string(sec_cache_path("AAPL_facts10")).expect("cache written");
+        assert!(written.contains("2021-09-30"), "the parse must be cached, not just returned: {written}");
+    }
+
     /// The macro series cache trio (CPI/HICP), untested until the scratch root existed. A same-day
     /// copy is what keeps repeated `screen` runs under the keyless request caps, so a silently broken
     /// cache does not fail — it just starts getting throttled.
