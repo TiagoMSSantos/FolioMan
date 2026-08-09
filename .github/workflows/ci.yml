@@ -130,7 +130,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      COVERAGE_MIN: "62"   # ARMED floor. Measured line coverage 63.23% (2026-07-13, lib+integration scope, after the picks render-seam tests took picks.rs to ~97%); floor set ~1pt under for CI-toolchain measurement wobble so it arms without flapping. Ratchet UP toward the live % as tests grow; never lower it. Read the current "TOTAL" line % off this job's step summary.
+      COVERAGE_MIN: "80"   # ARMED floor. Measured line coverage 83.98% (2026-08-09, config-less, at the scope below). Ratchet UP as tests grow; never lower it. Read the current "TOTAL" line % off this job's step summary.
+      # History, because the gap is the lesson: this sat at 62 against a 63.23% measurement from
+      # 2026-07-13 and was never moved, while actual coverage drifted to 73.13% — eleven points of
+      # slack, i.e. ~2000 covered lines could have been deleted with the gate still green. A floor
+      # that is not re-measured stops being a floor. Measure it the way this job does before moving it:
+      #   FOLIOMAN_CONFIG=/nonexistent/none.yaml cargo llvm-cov --locked --lib --test cli --test backtest_fixture --summary-only
+      # (the FOLIOMAN_CONFIG spelling reproduces THIS job's config-less state — config/settings.yaml is
+      # gitignored, so a local run with one present measures a tree CI does not have.)
     steps:
       - uses: actions/checkout@v7
       - run: rustup component add llvm-tools-preview
