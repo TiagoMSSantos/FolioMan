@@ -4791,6 +4791,15 @@ mod tests {
         let _ = THROTTLE.set((Mutex::new(Instant::now()), StdDuration::ZERO));
     }
 
+    /// The SECOND `config::load()` landmine on the transport, and the one `pin_throttle` does not
+    /// cover: `fetch_concurrency()` reads `fetch_concurrency_multiplier`, so it `exit(1)`s the whole
+    /// test process when `settings.yaml` is absent — which is CI, and any fresh clone. Only tests
+    /// reaching a `buffer_unordered` fan-out (`fetch_universe`, `fetch_xetra_etfs`) hit it, and only
+    /// with no config, so it passes locally and kills the binary on CI. Pin it with both.
+    fn pin_fetch_concurrency() {
+        let _ = FETCH_CONCURRENCY.set(1);
+    }
+
     /// One canned HTTP/1.1 response on an ephemeral loopback port, accepted exactly once. The SEC
     /// transport pair is two lines of `reqwest` each and had no test at all, which the mutation gate
     /// found the moment the offline guard made those lines part of a diff: `sec_get_text` could
@@ -5183,6 +5192,46 @@ mod tests {
         //    here silently dropped BRK-B/BF-B from the very factor the backtest validated them with.
         //    That is a train-serve skew which reads as "this name has no fundamentals", not as a bug.
         assert!(quotes[3].fund.is_some(), "BRK-B is a share class, not a currency pair");
+    }
+
+    /// The round-36 rule, asserted where it is actually enforced: a venue outage must NEVER shrink
+    /// the universe. Every fetcher here is pointed at an unbound port, which is the outage — and the
+    /// last-good `.venue_isins.json` must come through it BYTE-IDENTICAL. A run that overwrote it
+    /// with the empty result would leave the ETF tables permanently short with no error anywhere:
+    /// the screen still prints, the names are simply gone, and the next run inherits the damage.
+    ///
+    /// Asserted on the FILE rather than on the return value on purpose. The recovered ISINs feed
+    /// `fetch_xetra_etfs`, which is also down here, so nothing about the fallback reaches the
+    /// returned universe — the persisted store is the only place the rule is observable without a
+    /// working Börse Frankfurt.
+    ///
+    /// Note for whoever adds the next test in this binary: `fetch_xetra_etfs` runs as part of this
+    /// call and its five trailing `OnceLock`s (`BF_TER`, `BF_AUM`, `BF_META`, `YH_TER`, `YH_AUM`) are
+    /// set UNCONDITIONALLY, so after this test they hold empty maps for the rest of the process. No
+    /// committed test reads them today. The name-keyed lists are safe: those `.set()`s sit inside the
+    /// POST-success branch, which a dead venue never reaches, so `bf_ter_name_lookup` and
+    /// `bf_meta_miss_buckets` keep ownership of theirs.
+    #[tokio::test]
+    async fn a_venue_outage_never_shrinks_the_stored_universe() {
+        pin_throttle();
+        pin_fetch_concurrency(); // this call fans out — see the helper for why it is not optional
+        let store = crate::config::data_path(VENUE_ISINS_PATH);
+        let seeded = r#"{"euronext":["LU0378437502","IE00B4L5Y983"],"six":["CH0044328745"]}"#;
+        std::fs::write(&store, seeded).expect("seed venue store");
+
+        // every venue down: port 1 is privileged and unbound, so each request refuses at once and
+        // the whole call returns in milliseconds instead of waiting out a timeout.
+        let urls = stub_urls("http://127.0.0.1:1/");
+        let client = Client::builder().no_proxy().build().expect("test client");
+
+        let (universe, etf_set, sectors) = fetch_universe(&client, &urls, 10, true, &[]).await;
+
+        let after = std::fs::read_to_string(&store).expect("store must survive the outage");
+        assert_eq!(after, seeded, "a dead venue must not overwrite the last-good ISIN list");
+        // and the degraded run reports nothing rather than something wrong
+        assert!(universe.is_empty(), "no venue answered, so no universe: {universe:?}");
+        assert!(etf_set.is_empty());
+        assert!(sectors.is_empty());
     }
 
     /// The macro series cache trio (CPI/HICP), untested until the scratch root existed. A same-day
