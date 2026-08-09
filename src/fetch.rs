@@ -5348,6 +5348,12 @@ mod tests {
         for t in ["AAA", "BBB"] {
             std::fs::write(fmp.join(format!("{t}.json")), &rows).expect("seed fmp cache");
             std::fs::write(sec.join(format!("{t}_facts10.json")), &sec_rows).expect("seed sec cache");
+            // The SEC roll-forward TTM sidecar, deliberately DISAGREEING with the 4.0 above. It is
+            // consulted only when the selected factor is `earnings_yield`, and the default is
+            // `rev_accel` — so 9.0 must never reach `eps_ttm` below. Inverting that gate would let
+            // the TTM roll override the annual EPS for every factor, which is a train-serve skew:
+            // the live tilt would score on a number the backtest cannot reconstruct as-of.
+            std::fs::write(sec.join(format!("{t}_ttmeps2.json")), "9.0").expect("seed ttm sidecar");
         }
 
         let urls = stub_urls("http://127.0.0.1:1/"); // port 1 is unbound: any stray fetch refuses at once
@@ -5382,6 +5388,65 @@ mod tests {
         //    here silently dropped BRK-B/BF-B from the very factor the backtest validated them with.
         //    That is a train-serve skew which reads as "this name has no fundamentals", not as a bug.
         assert!(quotes[3].fund.is_some(), "BRK-B is a share class, not a currency pair");
+    }
+
+    /// `LIVE_TTL` is a WEEKLY refetch, and every mutant on its `7 * 24 * 3600` shortens it: `7 + 24 *
+    /// 3600` is about a day, `7 * 24 + 3600` about an hour, and both `/` forms integer-divide to 0,
+    /// which evicts unconditionally. So the load-bearing assertion here is the one that KEEPS a
+    /// three-day-old cache — every shortened TTL throws it away, and only the real week keeps it.
+    ///
+    /// It matters because the eviction is silent and self-healing in the wrong direction: a TTL of
+    /// one hour still produces correct rankings, it just refetches every name on every run, which on
+    /// a live key is how a screen quietly burns its whole daily budget on data it already had.
+    ///
+    /// `evict_if_stale` reads the file's mtime, so the ages are set with `File::set_modified` rather
+    /// than waiting a week. Uses its own tickers so it never races the test above over `.fmp_cache`.
+    #[tokio::test]
+    async fn the_live_fundamentals_cache_is_evicted_after_a_week_not_a_day() {
+        pin_throttle();
+        std::fs::create_dir_all(crate::config::data_path(".fmp_cache")).expect("scratch .fmp_cache");
+        let filed = chrono::Local::now().date_naive() - chrono::Duration::days(30);
+        let rows = format!(
+            r#"[{{"filingDate":"{filed}","date":"{filed}","revenue":1000.0,"grossProfit":400.0,"operatingIncome":200.0,"netIncome":150.0,"eps":4.0,"weightedAverageShsOutDil":50.0}}]"#
+        );
+        let aged = |t: &str, days: u64| {
+            let p = fund_cache_path(t);
+            std::fs::write(&p, &rows).expect("seed live cache");
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&p)
+                .expect("reopen to age")
+                .set_modified(SystemTime::now() - StdDuration::from_secs(days * 24 * 3600))
+                .expect("backdate mtime");
+            p
+        };
+        let fresh = aged("TTLFRESH", 3); // inside the week — must survive
+        let stale = aged("TTLSTALE", 8); // past it — must be dropped
+
+        // The insider lane has its OWN eviction, reached only when the selected factor IS
+        // `insider_net_buys_90d`. The default is not, so this long-stale file must go untouched:
+        // inverting that gate makes every run evict the SEC cache for every name, which is invisible
+        // in the output and just refetches the world. `.sec_cache/<ticker>.json` is the insider
+        // sidecar — `fetch_fundamentals_ranked` reads `<ticker>_facts10.json`, a different file.
+        std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
+        let insider = sec_cache_path("TTLSTALE");
+        std::fs::write(&insider, "[]").expect("seed insider sidecar");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&insider)
+            .expect("reopen to age")
+            .set_modified(SystemTime::now() - StdDuration::from_secs(60 * 24 * 3600))
+            .expect("backdate mtime");
+
+        let urls = stub_urls("http://127.0.0.1:1/"); // port 1 is unbound: the refetch refuses at once
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let mut quotes: Vec<core::Quote> =
+            ["TTLFRESH", "TTLSTALE"].iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+        enrich_fund_factor(&client, &urls, &mut quotes, &crate::config::BuyHeuristic::default()).await;
+
+        assert!(fresh.exists(), "three days is INSIDE the weekly TTL — any shorter one evicts this");
+        assert!(!stale.exists(), "eight days is past it — a stale newest-quarter must be dropped");
+        assert!(insider.exists(), "the insider lane is not selected — its cache must not be touched at all");
     }
 
     /// The round-36 rule, asserted where it is actually enforced: a venue outage must NEVER shrink
