@@ -2597,6 +2597,12 @@ async fn yahoo_fund_facts_fill(
     let mut todo: Vec<String> = Vec::new();
     for s in syms {
         let (miss_ter, miss_aum) = (!bf_ter.contains_key(s), !bf_aum.contains_key(s));
+        // DELIBERATELY UNPINNED (mutation audit, round 5). This short-circuit is an OPTIMISATION, not
+        // the firewall: the per-field `miss_ter`/`miss_aum` guards below already refuse to overwrite a
+        // BF answer, so deleting this branch changes no returned value — only the number of symbols
+        // that reach the fetch list. Killing it means observing that a fully-answered fund is never
+        // fetched, and `yahoo_crumb` hardcodes `https://fc.yahoo.com` (no `Urls`, so `stub_urls`
+        // cannot redirect it), which leaves no way to count requests without a live socket.
         if !miss_ter && !miss_aum {
             continue; // BF already answered — Yahoo is only consulted for the holes
         }
@@ -5017,6 +5023,80 @@ mod tests {
         assert_eq!(got[0].revenue, Some(1000.0));
         let written = std::fs::read_to_string(sec_cache_path("AAPL_facts10")).expect("cache written");
         assert!(written.contains("2021-09-30"), "the parse must be cached, not just returned: {written}");
+    }
+
+    /// `yahoo_fund_facts_fill`'s CACHE lane — the whole function bar the fetch itself, and the lane a
+    /// real `screen` run spends almost all its time in once the weekly cache is warm.
+    ///
+    /// Seeding `YQ_AUTH` is a HERMETICITY guard, not a shortcut. `yahoo_crumb` hardcodes
+    /// `https://fc.yahoo.com` and takes no `Urls`, so `stub_urls` cannot redirect it, and `offline()`
+    /// is false in this binary — any symbol reaching the fetch list would open a REAL connection to
+    /// Yahoo from a unit test. `YQ_AUTH` is read before that request, so a seeded `None` makes the
+    /// handshake fail closed and the function returns whatever the cache already gave it. No other
+    /// test here touches `YQ_AUTH`, and holding it makes the rest of this binary safer, not riskier.
+    ///
+    /// Owns `.fund_facts_cache.json` in the shared scratch root, hence one test rather than four.
+    #[tokio::test]
+    async fn yahoo_fund_facts_fill_serves_the_cache_for_bf_holes_only() {
+        pin_throttle();
+        let _ = YQ_AUTH.set(None); // fail the crumb handshake without a socket — see above
+        let path = crate::config::data_path(FUND_FACTS_CACHE_PATH);
+        let today = chrono::Utc::now().date_naive();
+        let stale = today - chrono::Duration::days(30);
+        // Yahoo's cached numbers are deliberately DIFFERENT from the BF ones below, so a leak across
+        // the firewall shows up as the wrong value rather than as a passing coincidence.
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "HOLE.DE":    [today.to_string(), 0.20, 5.0e8],
+                "BFHAS.DE":   [today.to_string(), 0.30, 1.0e9],
+                "HALFBF.DE":  [today.to_string(), 0.40, 7.0e8],
+                "STALE.DE":   [stale.to_string(), 0.99, 9.9e9],
+                "TERONLY.DE": [today.to_string(), 0.15, serde_json::Value::Null],
+            })
+            .to_string(),
+        )
+        .expect("seed fund-facts cache");
+
+        let client = Client::builder().no_proxy().build().expect("test client");
+        // HALFBF.DE is in bf_ter but NOT bf_aum — the only shape that separates the two guards, see
+        // the assertions below.
+        let bf_ter: HashMap<String, f64> =
+            [("BFHAS.DE".to_string(), 0.11), ("HALFBF.DE".to_string(), 0.12)].into_iter().collect();
+        let bf_aum: HashMap<String, f64> = [("BFHAS.DE".to_string(), 2.0e9)].into_iter().collect();
+        let syms: Vec<String> = ["HOLE.DE", "BFHAS.DE", "HALFBF.DE", "STALE.DE", "TERONLY.DE"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let (ter, aum) = yahoo_fund_facts_fill(&client, &syms, &bf_ter, &bf_aum).await;
+
+        // a BF hole with a fresh entry -> filled from cache, no request
+        assert_eq!(ter.get("HOLE.DE"), Some(&0.20));
+        assert_eq!(aum.get("HOLE.DE"), Some(&5.0e8));
+
+        // BF answered BOTH -> Yahoo is never consulted for it. This is the scoring firewall the
+        // function exists to hold: `expense_ratio`/`aum_eur` feed the score and the AUM gate, Yahoo
+        // facts are display + H/CORE only. A first merged run moved live ranks (PEA 3->9, 7.3->6.8).
+        assert!(!ter.contains_key("BFHAS.DE"), "a BF-answered fund must not pick up Yahoo's TER");
+        assert!(!aum.contains_key("BFHAS.DE"), "nor its AUM");
+
+        // BF answered ONE side only. This is the shape that makes the firewall observable at all:
+        // a fund BF fully answers is skipped wholesale by the `continue` above, so the per-field
+        // guards never run on it and either guard alone looks sufficient. Here both run — the TER
+        // must stay BF's and the AUM must come from Yahoo, in the SAME call.
+        assert!(!ter.contains_key("HALFBF.DE"), "BF holds this TER — Yahoo's 0.40 must not override it");
+        assert_eq!(aum.get("HALFBF.DE"), Some(&7.0e8), "but the AUM hole must still be filled");
+
+        // older than the 7-day TTL -> NOT served from cache; it goes to the fetch list, which fails
+        // closed here. A stale TER served as fresh is a wrong number that never expires.
+        assert!(!ter.contains_key("STALE.DE"), "a cache entry past the TTL must not be served");
+        assert!(!aum.contains_key("STALE.DE"));
+
+        // fresh, TER present, AUM absent -> the half that exists fills and the half that does not
+        // stays ABSENT. A missing AUM defaulting to 0 would read as a fund below every size gate.
+        assert_eq!(ter.get("TERONLY.DE"), Some(&0.15));
+        assert!(!aum.contains_key("TERONLY.DE"), "a missing AUM must stay missing, never 0");
     }
 
     /// The macro series cache trio (CPI/HICP), untested until the scratch root existed. A same-day
