@@ -130,9 +130,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      COVERAGE_MIN: "80"   # ARMED floor. Measured line coverage 83.90% (2026-08-09, config-less, at the scope below). Ratchet UP as tests grow; never lower it. Read the current "TOTAL" line % off this job's step summary.
+      COVERAGE_MIN: "86"   # ARMED floor. Measured line coverage 86.69% (2026-08-09, config-less, at the scope below, on 2c07f98). Ratchet UP as tests grow; never lower it. Read the current "TOTAL" line off this job's LOG (the step prints it) or its step summary.
+      # The measurement's COMMIT is recorded above because its age is what makes it wrong. The 80 this
+      # replaced was set against 83.90% at 5c923ae and read as "3.9 points of slack", but twelve commits
+      # touching src/tests had landed since — the real number was 86.69%, so the slack was 6.7.
+      # NO SUBTRACTED MARGIN, deliberately: this is line coverage over frozen fixtures with no network
+      # and no randomness, so it cannot move on its own and any drop is a real regression. Rounding
+      # DOWN to the whole percent is the only headroom (here 0.69pt) and it is enough. If a future
+      # measurement lands just above an integer (<~0.2), take the next integer down instead — at that
+      # width a local-vs-CI difference in rustc or llvm-cov codegen reds the build on nothing.
       # The scope below is load-bearing for THIS number: without --test backtest_fixture the same tree
-      # measures 79.20% and the job fails the floor it was set against.
+      # measures ~4 points lower and the job fails the floor it was set against.
       # History, because the gap is the lesson: this sat at 62 against a 63.23% measurement from
       # 2026-07-13 and was never moved, while actual coverage drifted to 73.13% — eleven points of
       # slack, i.e. ~2000 covered lines could have been deleted with the gate still green. A floor
@@ -159,6 +167,12 @@ jobs:
           # It is safe here for the same reason it is safe there — FOLIOMAN_OFFLINE, frozen fixture data,
           # deterministic goldens. tests/network.rs stays OUT: it makes live calls.
           cargo llvm-cov --locked --lib --test cli --test backtest_fixture --html --fail-under-lines "${COVERAGE_MIN}" || gate=$?
+          # TOTAL to STDOUT as well as the summary below. The summary is NOT retrievable with
+          # `gh run view --log`, so checking the floor used to need either a local llvm-cov or the web
+          # UI — which is why it went six points stale. One line makes the next ratchet a log grep.
+          # Runs after the gate on purpose (`gate=$?` already caught the failure), so a RED prints the
+          # number that failed. Cheap: it only re-reads the profdata just written.
+          cargo llvm-cov report --summary-only | tail -1
           {
             echo '```text'
             cargo llvm-cov report --summary-only
