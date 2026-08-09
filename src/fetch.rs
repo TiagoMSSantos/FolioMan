@@ -5099,6 +5099,92 @@ mod tests {
         assert!(!aum.contains_key("TERONLY.DE"), "a missing AUM must stay missing, never 0");
     }
 
+    /// `enrich_fund_factor`'s per-quote lane, opening NO socket. `fetch_fundamentals_history` treats a
+    /// seeded `.fmp_cache/{ticker}.json` as a hit — no key, no budget, no request — and FMP rows carry
+    /// no reporting currency, so `fund_ccy` is None, the price join takes `close_native` untouched and
+    /// the FX lookup never fires either. The default `growth_fund_factor` ("rev_accel") is neither
+    /// `insider_net_buys_90d` nor `earnings_yield`, so those two conditional fetches stay shut as well.
+    ///
+    /// BOTH source caches are seeded, and that is the point rather than belt-and-braces:
+    /// `fetch_fundamentals_ranked` routes on `config::fund_source()`, which reads the operator's
+    /// GITIGNORED `settings.yaml` — "sec" on this box, the "fmp" default on CI, and a process-wide
+    /// `OnceLock` either way. Seeding one cache writes a test that passes on whichever machine
+    /// happens to agree with it. Both paths are made to yield the same eps, so the assertions below
+    /// hold under either routing.
+    ///
+    /// Owns `.fmp_cache` and the AAA/BBB entries of `.sec_cache` in the shared scratch root.
+    #[tokio::test]
+    async fn enrich_fund_factor_skips_currency_quotes_and_divides_by_the_native_close() {
+        pin_throttle();
+        let fmp = crate::config::data_path(".fmp_cache");
+        let sec = crate::config::data_path(".sec_cache");
+        std::fs::create_dir_all(&fmp).expect("scratch .fmp_cache");
+        std::fs::create_dir_all(&sec).expect("scratch .sec_cache");
+        // `fund_factors` takes `eps_ttm` from the NEWEST row's eps, so one row settles the arithmetic.
+        let filed = chrono::Local::now().date_naive() - chrono::Duration::days(30);
+        let rows = format!(
+            r#"[{{"filingDate":"{filed}","date":"{filed}","revenue":1000.0,"grossProfit":400.0,"operatingIncome":200.0,"netIncome":150.0,"eps":4.0,"weightedAverageShsOutDil":50.0}}]"#
+        );
+        let sec_rows = serde_json::to_string(&[SecCacheRow {
+            filed: filed.to_string(),
+            period_end: filed.to_string(),
+            revenue: Some(1000.0),
+            gross_margin: Some(40.0),
+            op_margin: Some(20.0),
+            net_margin: Some(15.0),
+            eps: Some(4.0), // the same eps the FMP row carries — see the note above
+            roe: Some(15.0),
+            shares: Some(50.0),
+            fcf_margin: Some(20.0),
+            interest_cover: Some(4.0),
+            net_cash_rev: Some(0.1),
+            ebitda: Some(280.0),
+            net_debt: Some(-100.0),
+            currency: None, // as for the FMP rows: unknown books currency -> no FX lookup, no socket
+            roa: Some(5.0),
+            prior_eps: Some(2.0),
+            prior_shares: Some(52.0),
+        }])
+        .expect("serialise sec rows");
+        for t in ["AAA", "BBB"] {
+            std::fs::write(fmp.join(format!("{t}.json")), &rows).expect("seed fmp cache");
+            std::fs::write(sec.join(format!("{t}_facts10.json")), &sec_rows).expect("seed sec cache");
+        }
+
+        let urls = stub_urls("http://127.0.0.1:1/"); // port 1 is unbound: any stray fetch refuses at once
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let tuning = crate::config::BuyHeuristic::default();
+
+        let mut quotes: Vec<core::Quote> = ["AAA", "BBB", "BTC-EUR", "BRK-B"]
+            .iter()
+            .map(|t| core::Quote::stub(t, "1.00", "", t))
+            .collect();
+        quotes[0].close_native = Some(100.0);
+        quotes[1].close_native = Some(200.0); // identical statements, twice the price
+        quotes[2].close_native = Some(100.0);
+        quotes[3].close_native = Some(100.0);
+
+        enrich_fund_factor(&client, &urls, &mut quotes, &tuning).await;
+
+        // 1. the same statements against twice the price must HALVE the earnings yield. Asserting the
+        //    ratio rather than a literal pins the wiring — that the divisor is the native close — with
+        //    out restating `core::earnings_yield`'s formula here, where it would agree by construction.
+        let yield_of = |q: &core::Quote| q.fund.as_ref().and_then(|f| f.earnings_yield);
+        let (a, b) = (yield_of(&quotes[0]).expect("AAA yield"), yield_of(&quotes[1]).expect("BBB yield"));
+        assert!((a - 2.0 * b).abs() < 1e-9, "twice the price must halve the yield: {a} vs {b}");
+        assert_eq!(quotes[0].fund.as_ref().and_then(|f| f.eps_ttm), Some(4.0), "the newest row's eps");
+
+        // 2. a currency-quoted ticker is skipped WHOLE — no budget slot spent probing an instrument
+        //    that has no income statement, and `fund` stays None rather than becoming an empty struct.
+        assert!(quotes[2].fund.is_none(), "crypto has no income statement to enrich");
+        assert!(quotes[2].fund_factor.is_none());
+
+        // 3. ...and a SHARE CLASS is not. `is_currency_quoted` is a suffix check; a `contains('-')`
+        //    here silently dropped BRK-B/BF-B from the very factor the backtest validated them with.
+        //    That is a train-serve skew which reads as "this name has no fundamentals", not as a bug.
+        assert!(quotes[3].fund.is_some(), "BRK-B is a share class, not a currency pair");
+    }
+
     /// The macro series cache trio (CPI/HICP), untested until the scratch root existed. A same-day
     /// copy is what keeps repeated `screen` runs under the keyless request caps, so a silently broken
     /// cache does not fail — it just starts getting throttled.
