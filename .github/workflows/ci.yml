@@ -285,7 +285,11 @@ jobs:
   mutants:
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests]
-    timeout-minutes: 30
+    # 45, not 30, and the reason is the `--in-place` below rather than a slow day: in-place raises
+    # what a minute buys by ~5x, so the same clock now grades a diff large enough to be worth
+    # grading. At 30 this job could red on the timeout instead of on a survivor, which is a gate
+    # failing for a reason unrelated to the code. Do not tidy it back down without re-timing.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -336,7 +340,22 @@ jobs:
           # --lib + the frozen-data goldens are the killing suite: both are offline and deterministic.
           # network.rs is deliberately NOT in it — a mutant "surviving" because Yahoo throttled would be
           # a false red, which is the one thing a blocking gate must never produce.
-          cargo mutants --in-diff push.diff --profile mutants --baseline skip -j 1 \
+          #
+          # --in-place mutates the checkout instead of copying it to a scratch dir. Measured on the
+          # dev box: copy mode spends 86s of its 90.7s per mutant in `rustc`, because the copied
+          # target/ lands at a different path and is rebuilt from cold. In place it reuses the
+          # rust-cache-restored target/ at the path it was saved from: ~19s per mutant, ~5x.
+          # Concretely, this job's budget goes from grading ~20 mutants to ~140.
+          # The runner checkout is throwaway, so mutating it costs nothing.
+          #
+          # `-j 1` is GONE because --in-place REJECTS it ("cannot be used with --jobs") — one tree
+          # cannot hold two mutants at once. Serial either way, so nothing was lost.
+          #
+          # If this job is ever cancelled mid-build it can leave a corrupted incremental cache
+          # (seen locally: `rust-lld: undefined hidden symbol: anon...llvm...` on the next build).
+          # Harmless here only because Swatinem/rust-cache does not save on a failed job — if
+          # `cache-on-failure` is ever turned on, a timed-out run could poison the shared cache.
+          cargo mutants --in-place --in-diff push.diff --profile mutants --baseline skip \
             -- --lib --test backtest_fixture
       - uses: actions/upload-artifact@v7
         if: always()   # the survivor list is the whole point of a red — keep it
