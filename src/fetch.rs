@@ -5173,6 +5173,60 @@ mod tests {
     /// `yahoo_fund_facts_fill`'s CACHE lane — the whole function bar the fetch itself, and the lane a
     /// real `screen` run spends almost all its time in once the weekly cache is warm.
     ///
+    /// The two ISIN-cache writes at the end of `fetch_xetra_etfs`. Both guards return nothing and the
+    /// function hands back only a ticker list, so the FILES are the only place they are observable —
+    /// same stance as the SEC cache test above.
+    ///
+    /// Börse Frankfurt is pointed at the unbound port 1 deliberately, and that is what makes this
+    /// test safe to run beside the others: a dead POST leaves `rows` empty, so the four name-keyed
+    /// `OnceLock`s (`BF_TER_NAMES`, `BF_AUM_NAMES`, `BF_META_NAMES`, `BF_ROW_NAMES`) that
+    /// `bf_ter_name_lookup` and `bf_meta_miss_buckets` already own are never written. Only
+    /// `urls.yahoo_search` is redirected to the stub, so each phase spends exactly the ONE connection
+    /// `stub_server` grants. The trailing `BF_TER`/`BF_AUM`/`BF_META`/`YH_TER`/`YH_AUM` sets do land,
+    /// but only ever as empty maps here, which every reader treats identically to unset.
+    ///
+    /// Two phases, one test: they share both cache files under the scratch root, and that root
+    /// OUTLIVES the run — so each phase deletes what it is about to assert on. Without that, the
+    /// second run of the suite would grade files the first run left behind and pass on nothing.
+    #[tokio::test]
+    async fn fresh_resolutions_are_cached_and_definitive_misses_are_remembered() {
+        pin_throttle();
+        pin_fetch_concurrency(); // this call fans out — see the helper for why it is not optional
+        let _ = YQ_AUTH.set(None); // yahoo_fund_facts_fill runs at the end; keep its crumb off the wire
+        let pos = crate::config::data_path(ISIN_CACHE_PATH);
+        let neg = crate::config::data_path(ISIN_NEG_CACHE_PATH);
+        let stub_at = |body: &'static str| {
+            let (base, client) = stub_server(body);
+            let mut urls = stub_urls("http://127.0.0.1:1/"); // everything else refuses instantly
+            urls.yahoo_search = format!("{base}?q={{ticker}}&quotesCount=0&newsCount=3");
+            (urls, client)
+        };
+
+        // 1. A fresh resolution is remembered forever, and NOTHING is written to the negative cache:
+        //    no ISIN was definitively missing, so that file must not even appear.
+        let _ = std::fs::remove_file(&pos);
+        let _ = std::fs::remove_file(&neg);
+        let (urls, client) = stub_at(r#"{"quotes":[{"symbol":"POS.DE"}]}"#);
+        let tickers = fetch_xetra_etfs(&client, &urls, 10, vec!["LU00POS".into()], vec![]).await;
+        assert_eq!(tickers, ["POS.DE"]);
+        let cached: HashMap<String, String> =
+            serde_json::from_str(&std::fs::read_to_string(&pos).expect("positive cache written")).expect("json");
+        assert_eq!(cached.get("LU00POS").map(String::as_str), Some("POS.DE"), "ISIN->symbol is stable, so it is kept");
+        assert!(!neg.exists(), "nothing was definitively missing — the negative cache must stay absent");
+
+        // 2. A search-shaped payload with no symbol IS definitive: remembered, dated today, for 30
+        //    days. Clearing the positive cache first is what makes its guard observable in the
+        //    direction phase 1 cannot reach — with no fresh resolution the file must not reappear.
+        let _ = std::fs::remove_file(&pos);
+        let (urls, client) = stub_at(r#"{"quotes":[]}"#);
+        let tickers = fetch_xetra_etfs(&client, &urls, 10, vec![], vec!["LU00DEAD".into()]).await;
+        assert!(tickers.is_empty(), "the search answered, with nothing in it: {tickers:?}");
+        let dead: HashMap<String, String> =
+            serde_json::from_str(&std::fs::read_to_string(&neg).expect("negative cache written")).expect("json");
+        assert_eq!(dead.get("LU00DEAD"), Some(&chrono::Utc::now().date_naive().to_string()), "dated, so it can expire");
+        assert!(!pos.exists(), "no fresh resolution — the positive cache must not be rewritten");
+    }
+
     /// Seeding `YQ_AUTH` is a HERMETICITY guard, not a shortcut. `yahoo_crumb` hardcodes
     /// `https://fc.yahoo.com` and takes no `Urls`, so `stub_urls` cannot redirect it, and `offline()`
     /// is false in this binary — any symbol reaching the fetch list would open a REAL connection to
