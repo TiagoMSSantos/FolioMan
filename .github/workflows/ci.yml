@@ -246,6 +246,10 @@ jobs:
   # ~7 min; a 3-commit span = 90). Cost tracks the change, and the gate means something specific —
   # code you add has to be killed by tests you add with it.
   #
+  # A shard DOES appear below, and it does not contradict that: it is a fallback that engages only
+  # when one push's diff exceeds the time budget, and it shards THAT diff rather than the module. The
+  # gate still only ever grades code this push touched. See the BUDGET check in the step.
+  #
   # fetch-depth: 0 because the default shallow clone has no base commit to diff against.
   # --baseline skip because unit-tests and integration-tests above already prove the tree is green;
   # re-proving it here would cost a full build+test per run for nothing.
@@ -285,11 +289,12 @@ jobs:
   mutants:
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests]
-    # 45, not 30, and the reason is the `--in-place` below rather than a slow day: in-place raises
-    # what a minute buys by ~5x, so the same clock now grades a diff large enough to be worth
-    # grading. At 30 this job could red on the timeout instead of on a survivor, which is a gate
-    # failing for a reason unrelated to the code. Do not tidy it back down without re-timing.
-    timeout-minutes: 45
+    # 20 is the CEILING THE GATE IS DESIGNED AROUND, not a guess at how long it takes. A typical
+    # diff finishes in a few minutes; anything that would not fit is sharded down by the BUDGET
+    # check below rather than being allowed to run into the timeout. So this number reddening means
+    # the budget arithmetic is wrong and needs re-timing — not that it should be raised. Raising it
+    # is what the previous round did (30 -> 45) and the job was cancelled at 45 one commit later.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -303,6 +308,19 @@ jobs:
           # push: the commit before this one. PR: the merge base. Both can be all-zeros or empty on a
           # branch's first push, where there is no "before" — the step below falls back to HEAD^.
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          # THE load-bearing setting in this job, and it is an OVERRIDE: Swatinem/rust-cache exports
+          # CARGO_INCREMENTAL=0 to keep its cache small, which is right for every other job here and
+          # wrong for this one. folioman is one large crate (fetch.rs 8160 lines, picks.rs 9864,
+          # core.rs 5958), so with incremental off each mutant recompiles ALL of it at opt-level 2 —
+          # ~86s measured, against ~25s incremental. That single difference is what cancelled the
+          # 45-minute run on 038a4b1: 33 mutants x 86s is 47 minutes of build alone.
+          #
+          # Safe here specifically because the trees are throwaway. An interrupted run can leave a
+          # corrupted incremental cache (`rust-lld: undefined hidden symbol: anon...llvm...` on the
+          # next build, seen locally), but copy mode builds in scratch dirs and rust-cache never
+          # saves incremental dirs, so nothing outlives the job. Do NOT set this on a job that runs
+          # --in-place, where the poisoned cache is the checkout itself.
+          CARGO_INCREMENTAL: 1
         run: |
           set -euo pipefail
           if [ -z "${BASE}" ] || [ "${BASE}" = "0000000000000000000000000000000000000000" ] \
@@ -337,26 +355,61 @@ jobs:
             echo "no mutants in the diff — nothing to grade" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          # OVERSIZE FALLBACK. A refactor push can generate hundreds of mutants, and the honest
+          # failure there is a graded slice, not a cancellation: a job killed by the timeout produces
+          # NO survivor list and no verdict, which is indistinguishable from never having run. This
+          # only engages above the budget, so an ordinary push is still graded in full.
+          #
+          # Round-robin so the slice spreads across every file the diff touched — `slice` sharding
+          # would spend the whole budget on whichever file sorts first and never reach the rest.
+          #
+          # HOW BUDGET WAS DERIVED. Measured on an 8-core dev box, copy mode, `-j 2`, incremental on:
+          # a one-off ~300s COLD build per tree (the fresh scratch path defeats cargo's cached
+          # fingerprints), then ~12s build + 0.4s test per mutant, two at a time — about 6s of wall
+          # clock each. An ubuntu-latest runner has 4 vCPUs, so assume ~2x: ~600s cold, ~12s each.
+          # Against a 20-minute job, less ~2 minutes of checkout/install/cache-restore:
+          #   (18*60 - 600) / 12 ~= 40
+          # The cold start is a FIXED cost, which is why the budget is far below what the per-mutant
+          # rate alone suggests. Re-time BOTH halves off the first green run before touching this.
+          #
+          # An ARRAY, not a string: an unquoted "$SHARD" would need word-splitting to become three
+          # arguments, and quoting it would pass one empty argument in the common case where no shard
+          # is wanted. `"${SHARD[@]}"` expands to nothing at all when empty, and needs no splitting.
+          BUDGET=40
+          SHARD=()
+          if [ "${n}" -gt "${BUDGET}" ]; then
+            shards=$(( (n + BUDGET - 1) / BUDGET ))
+            SHARD=(--shard "1/${shards}" --sharding round-robin)
+            echo "${n} mutants exceeds the ${BUDGET} budget — grading shard 1/${shards}" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
           # --lib + the frozen-data goldens are the killing suite: both are offline and deterministic.
           # network.rs is deliberately NOT in it — a mutant "surviving" because Yahoo throttled would be
           # a false red, which is the one thing a blocking gate must never produce.
           #
-          # --in-place mutates the checkout instead of copying it to a scratch dir. Measured on the
-          # dev box: copy mode spends 86s of its 90.7s per mutant in `rustc`, because the copied
-          # target/ lands at a different path and is rebuilt from cold. In place it reuses the
-          # rust-cache-restored target/ at the path it was saved from: ~19s per mutant, ~5x.
-          # Concretely, this job's budget goes from grading ~20 mutants to ~140.
-          # The runner checkout is throwaway, so mutating it costs nothing.
+          # WHY NOT --in-place, despite it looking faster. It measured ~19s per mutant locally
+          # against copy mode's 90.7s, but that comparison was confounded: the local runs had
+          # incremental compilation ON and CI does not, so almost all of that 5x was incremental
+          # rather than path reuse. On a runner --in-place bought nearly nothing, and it COST the
+          # one thing that helps here — it REJECTS `--jobs` ("cannot be used with"), because one
+          # tree cannot hold two mutants at once. So the 45-minute run graded 33 mutants serially
+          # on a 4-vCPU runner with three cores idle, and was cancelled.
           #
-          # `-j 1` is GONE because --in-place REJECTS it ("cannot be used with --jobs") — one tree
-          # cannot hold two mutants at once. Serial either way, so nothing was lost.
+          # Copy mode gives each parallel job its own tree, which is what makes `-j` legal at all.
           #
-          # If this job is ever cancelled mid-build it can leave a corrupted incremental cache
-          # (seen locally: `rust-lld: undefined hidden symbol: anon...llvm...` on the next build).
-          # Harmless here only because Swatinem/rust-cache does not save on a failed job — if
-          # `cache-on-failure` is ever turned on, a timed-out run could poison the shared cache.
-          cargo mutants --in-place --in-diff push.diff --profile mutants --baseline skip \
-            -- --lib --test backtest_fixture
+          # `--copy-target=false` because copying it BUYS NOTHING HERE. cargo-mutants builds each
+          # tree at a fresh scratch path, and cargo keys its fingerprints on absolute paths, so a
+          # copied target/ is rebuilt from cold anyway. Measured on the same 14 mutants: 719s of
+          # total build with the copy, 750s without — 4%, against copying the whole target/ (12G on
+          # the dev box) twice. Skipping it also retires the ENOSPC risk that `-j` would otherwise
+          # add on a runner with ~14G free, and ENOSPC mid-run grades nothing at all.
+          #
+          # `-j 2`: `--jobserver` (default true, capped at NCPUS) keeps the two child cargos from
+          # oversubscribing the runner's 4 vCPUs. Two is enough because one cargo cannot saturate
+          # four cores on a single crate's codegen — measured locally, `-j 2` more than halved the
+          # per-mutant wall clock even after paying a second tree's cold start.
+          cargo mutants "${SHARD[@]}" --in-diff push.diff -j 2 --copy-target=false \
+            --profile mutants --baseline skip -- --lib --test backtest_fixture
       - uses: actions/upload-artifact@v7
         if: always()   # the survivor list is the whole point of a red — keep it
         with:
