@@ -4746,6 +4746,14 @@ mod tests {
     /// `no_proxy` because `reqwest` reads `HTTP_PROXY` from the environment and a proxy set on a dev
     /// box would otherwise swallow the loopback request.
     fn stub_server(body: &'static str) -> (String, Client) {
+        // Pin the pacer OFF before any caller reaches the transport. `throttle()` hard-calls
+        // `config::load()`, which PANICS on an unreadable config — and `config/settings.yaml` is the
+        // gitignored local overlay, so it is absent on CI and on any fresh clone. Skipping this is
+        // what made these tests pass here and fail there. A zero interval returns before the config
+        // read, and it also keeps them independent of the operator's `fetch_requests_per_second`,
+        // which would otherwise sleep between them at whatever rate that box is configured for.
+        // `set` losing the race to another test is fine — both write the same value.
+        let _ = THROTTLE.set((Mutex::new(Instant::now()), StdDuration::ZERO));
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().expect("local addr");
         std::thread::spawn(move || {

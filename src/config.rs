@@ -645,13 +645,21 @@ fn default_bf_salt() -> String {
 /// Locate `config/settings.yaml` next to the exe or up the tree, mirroring the old
 /// Python "run from any cwd" behaviour. Falls back to `config/settings.yaml` relative
 /// to the current directory.
+/// Step 0 of `settings_path`, split out so it is testable WITHOUT mutating process-global env. The
+/// test that used to cover this called `std::env::set_var`, which every concurrently-running test
+/// that reaches `load()` races — and once one did, pointing `FOLIOMAN_CONFIG` at a bogus path to
+/// simulate CI stopped working, because this test overwrote it mid-run. That is not hypothetical: it
+/// is why a config-less breakage reached CI twice. Empty = ignored, so `FOLIOMAN_CONFIG=` forces the
+/// discovery walk rather than resolving to `""`.
+fn override_path(var: Option<&str>) -> Option<PathBuf> {
+    var.filter(|p| !p.is_empty()).map(PathBuf::from)
+}
+
 fn settings_path() -> PathBuf {
     // 0. explicit override: CI points this at a checked-in fixture (tests/ci-settings.yaml) because the
     //    real config/settings.yaml is gitignored and absent there. Empty = ignore.
-    if let Ok(p) = std::env::var("FOLIOMAN_CONFIG") {
-        if !p.is_empty() {
-            return PathBuf::from(p);
-        }
+    if let Some(p) = override_path(std::env::var("FOLIOMAN_CONFIG").ok().as_deref()) {
+        return p;
     }
     // 1. next to / above the executable (installed binary layout)
     if let Ok(exe) = std::env::current_exe() {
@@ -1086,15 +1094,20 @@ mod tests {
         assert_eq!(h.growth_value_weight, 0.0, "blind tilt stays consolidated to 0 — {receipts}");
     }
 
-    /// FOLIOMAN_CONFIG overrides the discovery walk (how CI points at the fixture). No other test reads
-    /// this var, so the set/remove is isolated.
+    /// FOLIOMAN_CONFIG overrides the discovery walk (how CI points at the fixture). Asserted on the
+    /// pure half, NOT by setting the variable: `set_var` is process-global, so the old version of this
+    /// test raced every other test that reaches `load()` and — worse — silently overwrote the variable
+    /// for anyone using it to simulate CI's config-less run. The `settings_path` -> env wiring itself
+    /// stays graded end-to-end by tests/backtest_fixture.rs, which sets FOLIOMAN_CONFIG on the child it
+    /// spawns and is in the mutation gate's killing suite.
     #[test]
     fn env_override_wins() {
-        std::env::set_var("FOLIOMAN_CONFIG", "tests/ci-settings.yaml");
-        assert_eq!(settings_path(), PathBuf::from("tests/ci-settings.yaml"));
-        std::env::set_var("FOLIOMAN_CONFIG", ""); // empty -> ignored, falls back to discovery
-        assert_ne!(settings_path(), PathBuf::from(""));
-        std::env::remove_var("FOLIOMAN_CONFIG");
+        assert_eq!(
+            override_path(Some("tests/ci-settings.yaml")),
+            Some(PathBuf::from("tests/ci-settings.yaml"))
+        );
+        assert_eq!(override_path(Some("")), None, "empty -> ignored, falls back to discovery");
+        assert_eq!(override_path(None), None, "unset -> discovery");
     }
 
     /// Pins the deny_unknown_fields guard: a typo'd top-level key must ERROR naming the field, never
