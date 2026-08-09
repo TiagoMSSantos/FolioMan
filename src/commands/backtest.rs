@@ -459,17 +459,80 @@ fn trailing_returns(closes: &[f64], i: usize) -> Vec<f64> {
         .collect()
 }
 
+/// The rayon pool size to force, or `None` to leave rayon alone.
+///
+/// `compute_threads: 0` (the default) deliberately builds NO pool: rayon's own default is already
+/// every logical core, and leaving it untouched is what keeps `RAYON_NUM_THREADS` working as a
+/// one-off override. Only an explicit cap needs a global pool.
+///
+/// All three comparison mutants survived inline, and `>=` is the one that matters: it pins the pool
+/// at `num_threads(0)` on the DEFAULT config — the setting nobody edits — which is the shape of a
+/// silent whole-machine performance regression rather than a wrong number.
+fn thread_cap(compute_threads: usize) -> Option<usize> {
+    (compute_threads > 0).then_some(compute_threads)
+}
+
+/// Fewest samples worth correlating. Named so the floor is one thing with one test, not a bare `4`
+/// sitting inside `run` where nothing could reach it — the mutation audit reported both `<`->`<=`
+/// and `<`->`==` surviving there.
+const MIN_SAMPLES: usize = 4;
+
+/// Too thin to correlate. `<=` here would throw away a legitimate 4-sample run; `==` would let a
+/// 1-sample run through to `corr()` and print a correlation drawn from a single point.
+fn too_few_samples(n: usize) -> bool {
+    n < MIN_SAMPLES
+}
+
+/// Does this run get to overwrite `.backtest_verdict.json`, which the screen's method footer quotes?
+///
+/// Both halves survived the audit and both are real. `&&`->`||` lets a plain watchlist run
+/// (`backtest 12 AAPL`) publish a verdict over the nightly wide one. `>=`->`<` inverts the floor, so
+/// the ONLY runs that publish are the thin ones the floor exists to reject — a Yahoo-throttled wide
+/// run resolving a few hundred names instead of ~4900 is indistinguishable from a healthy one in the
+/// file, and the footer goes on citing it for days.
+fn may_write_verdict(wide: bool, resolved: usize) -> bool {
+    wide && resolved >= MIN_VERDICT_TICKERS
+}
+
+/// The two flags that turn on the fundamental/insider reports. Named because it gates two separate
+/// blocks in [`run`] and `||`->`&&` survived at both: with `&&`, `backtest 12 fund` silently prints
+/// none of the fundamental lane, and a run that looks like it worked has simply skipped the output
+/// it was asked for.
+fn fund_lane_on(fund: bool, insider: bool) -> bool {
+    fund || insider
+}
+
+/// Which currency pair, if any, this ticker's closes must be converted through. `None` = same books,
+/// or one side unknown; leave the close alone.
+///
+/// Split out because the guard is unreachable offline: every frozen-data golden is same-currency, so
+/// forcing the guard to `true` OR to `false` left all six green. `true` would convert a USD close
+/// into USD through a fetched rate; `false` would report a EUR close against USD fundamentals.
+fn fx_pair<'a>(quote_ccy: Option<&'a str>, filer_ccy: Option<&'a str>) -> Option<(&'a str, &'a str)> {
+    match (quote_ccy, filer_ccy) {
+        (Some(q), Some(f)) if core::needs_fx(q, f) => Some((q, f)),
+        _ => None,
+    }
+}
+
+/// The close moved into the filer's books, or `None` when no honest as-of rate exists.
+///
+/// One multiply, extracted only because it is a money path with no offline cover: `*`->`+` and
+/// `*`->`/` both survived, and either turns every cross-currency earnings yield into a number with
+/// no meaning while the run still prints and still exits 0.
+fn px_in_filer_ccy(close: f64, rate: Option<f64>) -> Option<f64> {
+    rate.map(|r| close * r)
+}
+
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
-    // `compute_threads: 0` (the default) deliberately builds NO pool: rayon's own default is already
-    // every logical core, and leaving it untouched is what keeps `RAYON_NUM_THREADS` working as a
-    // one-off override. Only an explicit cap needs a global pool. Here rather than in `main` because
-    // `config::load()` PANICS on an unreadable config and `main` currently reaches `help` without
-    // touching it; here rather than in `screen`/`sim` because this is the only command with rayon in
-    // it. `build_global` is once-per-process and errors on a second call — ignored, since the second
-    // caller is the test binary running two backtests in one process, where the first pool is fine.
-    if settings.compute_threads > 0 {
-        let _ = rayon::ThreadPoolBuilder::new().num_threads(settings.compute_threads).build_global();
+    // Here rather than in `main` because `config::load()` exits 1 on an unreadable config and `main`
+    // currently reaches `help` without touching it; here rather than in `screen`/`sim` because this is
+    // the only command with rayon in it. `build_global` is once-per-process and errors on a second
+    // call — ignored, since the second caller is the test binary running two backtests in one
+    // process, where the first pool is fine.
+    if let Some(n) = thread_cap(settings.compute_threads) {
+        let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
     }
     let client = fetch::client();
     let tuning = &settings.buy_heuristic;
@@ -582,12 +645,10 @@ pub async fn run(args: Vec<String>) {
                     Hist::Parsed(c) => Some(c.currency.clone()),
                     Hist::Raw(_) => None,
                 };
-                let fx = match (quote_ccy.as_deref(), filer_ccy.as_deref()) {
-                    (Some(q), Some(f)) if core::needs_fx(q, f) => {
-                        // same `monthly` the closes came from: rates and prices must span the same era
-                        Some(fetch::fx_factor_series(client, urls, q, f, monthly).await)
-                    }
-                    _ => None, // same books, or a side unknown -> leave the close alone (legacy path)
+                let fx = match fx_pair(quote_ccy.as_deref(), filer_ccy.as_deref()) {
+                    // same `monthly` the closes came from: rates and prices must span the same era
+                    Some((q, f)) => Some(fetch::fx_factor_series(client, urls, q, f, monthly).await),
+                    None => None, // same books, or a side unknown -> leave the close alone (legacy path)
                 };
                 // (Item 4) one cached SEC Form-4 fetch per ticker (only when `insider`); net buys are then
                 // derived per cutoff from these transactions with no further network. None -> factor skips.
@@ -633,6 +694,10 @@ pub async fn run(args: Vec<String>) {
             let divs = chart.divs;
             let mut out = Vec::new();
             let mut i = min_history;
+            // DELIBERATELY UNPINNED (mutation audit, round 4): `<`->`<=` survives here, and killing
+            // it needs a fixture whose walk lands exactly on `dates.len()` — a golden-data change,
+            // not a test. The mutant is also self-limiting: `dates[i]` on the next line panics
+            // immediately rather than returning a wrong number.
             while i < dates.len() {
                 // forward index: first session at least `years` past the as-of date
                 let target = dates[i] + chrono::Duration::days(years * 365);
@@ -643,7 +708,13 @@ pub async fn run(args: Vec<String>) {
                         // peer-mean spans the whole period universe; each lane filters by its own gates.
                         let realized = (closes[fwd] / closes[i] - 1.0) * 100.0;
                         if !realized.is_finite() {
-                            // zero/garbage close -> ±inf poisons the demeaned bucket; skip the cutoff
+                            // zero/garbage close -> ±inf poisons the demeaned bucket; skip the cutoff.
+                            // DELIBERATELY UNPINNED: both mutants of this `+=` survive, because every
+                            // fixture close is finite and positive (`trailing_returns` documents the
+                            // same property) so this branch is never taken offline. Reaching it means
+                            // seeding a zero close into a committed golden, which would move six
+                            // reports to grade one increment. The identical `+=` on the main path
+                            // below IS caught.
                             i += step;
                             continue;
                         }
@@ -674,7 +745,7 @@ pub async fn run(args: Vec<String>) {
                         if let Some(f) = fund.as_mut() {
                             let px = match fx.as_ref() {
                                 None => Some(closes[i]),
-                                Some(s) => core::rate_as_of(s, dates[i]).map(|r| closes[i] * r),
+                                Some(s) => px_in_filer_ccy(closes[i], core::rate_as_of(s, dates[i])),
                             };
                             f.earnings_yield = px.and_then(|p| core::earnings_yield(f.eps_ttm, p));
                             // (EV/EBITDA) same close, same currency discipline: EV = shares·px + net_debt,
@@ -722,7 +793,7 @@ pub async fn run(args: Vec<String>) {
         .collect();
 
     let mut samples: Vec<Sample> = per_ticker.into_iter().flatten().collect();
-    if samples.len() < 4 {
+    if too_few_samples(samples.len()) {
         println!(
             "backtest: only {} cutoffs had a full {years}y forward window — too few to correlate.",
             samples.len()
@@ -775,6 +846,13 @@ pub async fn run(args: Vec<String>) {
     // run would yield none, UCITS funds dating from ~2000). This fires only when a name the universe
     // KNOWS is a fund fails to class as one — which is precisely how ~4300 ETFs scored as single stocks
     // for as long as this command has existed, with nothing anywhere to say so.
+    //
+    // DELIBERATELY UNPINNED (mutation audit, round 4): `!=`->`==` survives, i.e. the guard inverted
+    // to panic on a CORRECTLY classed fund. It survives because `etf_set` is empty in every frozen
+    // golden — the set comes from the live universe fetch — so the predicate short-circuits before
+    // the comparison and no offline run evaluates it at all. Killing it means building `Sample`s by
+    // hand with a populated `etf_set`, which grades this line by reimplementing the pipeline that
+    // produces it. `stamp_asset_class` is pinned directly instead, one call up.
     if let Some(bad) = samples
         .iter()
         .find(|s| etf_set.contains(&s.quote.ticker) && picks::asset_class(&s.quote) != 1)
@@ -970,7 +1048,7 @@ pub async fn run(args: Vec<String>) {
     gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
     gate_sweep(&samples, tuning, &gate_loosen); // (#10) which specific gate is too tight?
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
-    if fund || insider {
+    if fund_lane_on(fund, insider) {
         report_fund_lane(&samples);
         sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
     }
@@ -1003,7 +1081,7 @@ pub async fn run(args: Vec<String>) {
     // instead of ~4900, and that thin sample overwrote the journal just as surely as a watchlist run
     // would have — the same hazard the comment above warns about, reached by a different route. Hold
     // it to the same ≥500 floor `backtest_edge_holds` uses to decide its own sample is trustworthy.
-    if wide && tickers.len() >= MIN_VERDICT_TICKERS {
+    if may_write_verdict(wide, tickers.len()) {
         if let Some((book, excess, win, worst, oos_early, oos_late, windows)) = verdict {
             write_verdict(Verdict {
                 date: chrono::Local::now().date_naive().to_string(),
@@ -1029,7 +1107,7 @@ pub async fn run(args: Vec<String>) {
     }
     // (round 112) the DIVERSIFICATION dimension: does de-correlating the held book beat plain rank order?
     report_corr_cap(&samples, &bench, years, tuning);
-    if fund || insider {
+    if fund_lane_on(fund, insider) {
         // (#44 Phase C) grade the FREE fundamental factors on the ABSOLUTE held-book, not peer-relative.
         report_book_by_factor(&samples, &bench, years, tuning);
         // (round 106) the no-borrow structural lever: growth book + value book held side by side.
@@ -3379,6 +3457,52 @@ mod tests {
             assert!(got.iter().all(|r| r.is_finite()), "close {bad} leaked a non-finite return: {got:?}");
             assert!(got.iter().all(|r| *r > -100.0), "close {bad} booked a fabricated wipeout: {got:?}");
         }
+    }
+
+    /// The four `run` predicates the round-4 mutation audit found unreachable. Each was an operator
+    /// sitting inline in a 600-line async body that opens sockets, so no offline pin could touch it —
+    /// 10 of the 19 survivors were these. One test, because they are one finding.
+    #[test]
+    fn run_predicates_hold_their_thresholds() {
+        // the rayon cap: 0 means "leave rayon alone", never "a pool of zero threads"
+        assert_eq!(thread_cap(0), None, "the default must not pin a pool");
+        assert_eq!(thread_cap(1), Some(1));
+        assert_eq!(thread_cap(8), Some(8));
+
+        // the correlation floor: 4 is enough, 3 is not
+        assert!(too_few_samples(3));
+        assert!(!too_few_samples(MIN_SAMPLES), "the floor is inclusive — 4 samples correlate");
+        assert!(!too_few_samples(500));
+
+        // the verdict journal: wide AND deep. A watchlist run must never publish over the nightly
+        // one, and a throttled wide run that resolved too few names must not either.
+        assert!(may_write_verdict(true, MIN_VERDICT_TICKERS));
+        assert!(!may_write_verdict(false, MIN_VERDICT_TICKERS), "a watchlist run must not publish");
+        assert!(!may_write_verdict(true, MIN_VERDICT_TICKERS - 1), "a thin wide run is a throttled one");
+
+        // the fundamental lane: either flag turns it on, not both
+        assert!(fund_lane_on(true, false));
+        assert!(fund_lane_on(false, true));
+        assert!(fund_lane_on(true, true));
+        assert!(!fund_lane_on(false, false));
+    }
+
+    /// The cross-currency path, which no frozen-data golden reaches: every fixture ticker quotes and
+    /// files in one currency, so the FX guard and the conversion itself were both unpinned.
+    #[test]
+    fn fx_converts_only_across_books_and_only_by_multiplying() {
+        // same books, or a side unknown -> no conversion at all
+        assert_eq!(fx_pair(Some("USD"), Some("USD")), None);
+        assert_eq!(fx_pair(Some("USD"), None), None);
+        assert_eq!(fx_pair(None, Some("EUR")), None);
+        assert_eq!(fx_pair(None, None), None);
+        // genuinely different books -> the pair, in (quote, filer) order
+        assert_eq!(fx_pair(Some("EUR"), Some("USD")), Some(("EUR", "USD")));
+
+        // the multiply. `+` and `/` both survived here: at a rate near 1.0 the wrong operator still
+        // prints a plausible number, so the rate is deliberately far from 1.
+        assert_eq!(px_in_filer_ccy(50.0, Some(4.0)), Some(200.0));
+        assert_eq!(px_in_filer_ccy(50.0, None), None, "no as-of rate must not fall back to the raw close");
     }
 
     /// EVERY arm of the command line, because until the mutation audit none of them had a caller.
