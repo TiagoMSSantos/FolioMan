@@ -234,8 +234,22 @@ jobs:
   # fetch-depth: 0 because the default shallow clone has no base commit to diff against.
   # --baseline skip because unit-tests and integration-tests above already prove the tree is green;
   # re-proving it here would cost a full build+test per run for nothing.
+  #
+  # `needs:` is what MAKES that sentence true. It was an assumption before, and jobs run in parallel,
+  # so it was false: on 04a74e4 the killing suite panicked in 5 tests and this gate still reported
+  # "7 caught, 0 missed" and went GREEN. cargo-mutants scores a mutant CAUGHT when the suite FAILS, so
+  # a suite that fails unconditionally catches everything, and --baseline skip removes the one check
+  # that would have refused to grade. A vacuous pass is indistinguishable from a real one — the same
+  # failure class the --list guard below already argues against.
+  #
+  # These two jobs cover exactly the two targets graded, at zero build cost: --lib from unit-tests
+  # (same config-less env this job runs in), and --test backtest_fixture from integration-tests (that
+  # target sets FOLIOMAN_CONFIG on the child it spawns, so both jobs run it identically). Gating on
+  # integration-tests does NOT couple this blocking gate to network weather: tests/network.rs skips
+  # green on any environmental failure and never fails a probe.
   mutants:
     runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
