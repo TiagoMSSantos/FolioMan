@@ -5133,10 +5133,25 @@ mod tests {
         assert_eq!(got.len(), 1, "the row with the bad date must be dropped, not defaulted");
         assert_eq!(got[0].filed, NaiveDate::from_ymd_opt(2021, 11, 1).unwrap());
         assert_eq!(got[0].period_end, NaiveDate::from_ymd_opt(2021, 9, 30).unwrap());
+        // EVERY field, not just the interesting ones. This is a rehydration mapping, so its failure
+        // mode is a field that silently comes back None — and nothing downstream can tell "the filer
+        // never reported it" from "the cache read dropped it". The quality term simply goes blank for
+        // that name, on every run, until someone reads the JSON by hand. The seeded values are all
+        // distinct so a crossed pair of fields reads as a wrong number rather than as a coincidence.
         assert_eq!(got[0].revenue, Some(1000.0));
+        assert_eq!(got[0].gross_margin, Some(40.0));
+        assert_eq!(got[0].op_margin, Some(20.0));
+        assert_eq!(got[0].net_margin, Some(15.0));
         assert_eq!(got[0].eps, Some(3.0));
+        assert_eq!(got[0].shares, Some(50.0));
         assert_eq!(got[0].prior_eps, Some(2.0), "the YoY denominator must survive the round trip");
         assert_eq!(got[0].prior_shares, Some(52.0));
+        assert_eq!(got[0].roe, Some(15.0));
+        assert_eq!(got[0].roa, Some(5.0));
+        assert_eq!(got[0].fcf_margin, Some(20.0));
+        assert_eq!(got[0].interest_cover, Some(4.0));
+        assert_eq!(got[0].net_cash_rev, Some(0.1));
+        assert_eq!(got[0].ebitda, Some(280.0));
         assert_eq!(got[0].currency.as_deref(), Some("USD"), "(FX) money lines are meaningless without it");
         assert_eq!(got[0].net_debt, Some(-100.0), "a NEGATIVE net debt is net cash, not a missing value");
 
