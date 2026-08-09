@@ -247,6 +247,26 @@ jobs:
   # target sets FOLIOMAN_CONFIG on the child it spawns, so both jobs run it identically). Gating on
   # integration-tests does NOT couple this blocking gate to network weather: tests/network.rs skips
   # green on any environmental failure and never fails a probe.
+  #
+  # AND IT STOPS AT TWO. A verdict here can only be wrong in three ways, all already covered: the tree
+  # doesn't compile (unit-tests reds, since cargo test has to build it), --lib is red (unit-tests), or
+  # backtest_fixture is red (integration-tests runs --test '*'). Nothing else reaches a verdict. build
+  # compiles the bin alone — strictly less than unit-tests already compiles. coverage runs --lib again
+  # plus --test cli, which is not in the killing suite. lint, audit, actionlint and cleanup-runs cannot
+  # make a mutant's verdict wrong at all.
+  #
+  # The reason to stop is not runtime — every one of those finishes inside integration-tests' ~1m20s,
+  # so adding them would be nearly free. It is that `needs` SKIPS a job on failure instead of failing
+  # it, so each extra dependency is one more way to LOSE the grade on a push. audit is the sharpest
+  # case: it reds on third-party advisories published by someone else, which would silently stop this
+  # gate from grading your commit.
+  #
+  # Known residual, documented rather than chased: unit-tests runs the `test` profile (inherits dev,
+  # opt-level 0) while this job grades under --profile mutants (opt-level 2), so the guard proves the
+  # suite green at a different opt-level than the one grading it. Both inherit dev, so debug-assertions
+  # and overflow-checks are on in each; Rust permits no float reassociation and target-cpu=x86-64-v3
+  # applies to both; and the goldens already pass under both profiles. Small — but it IS the same
+  # assumed-not-enforced shape that made `--baseline skip` safe-looking, so it is written down.
   mutants:
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests]
