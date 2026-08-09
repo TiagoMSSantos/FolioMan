@@ -797,23 +797,42 @@ fn gates_configured(merged: &serde_yaml::Value) -> bool {
     merged.get("buy_heuristic").and_then(|v| v.as_mapping()).is_some_and(|m| !m.is_empty())
 }
 
-/// Read + parse the settings (base + overlay). Panics with a clear message if missing/invalid —
+/// A startup config problem, reported and exited on. NOT a panic: a typo in `settings.yaml` is the
+/// user's file being wrong, and `thread 'main' panicked at` plus a backtrace hint reads as a crash
+/// in the tool — it sends the reader to the source instead of to line 12 of their YAML.
+///
+/// Diverging (`-> !`) is what lets `load` keep its infallible signature, so none of its 13 call
+/// sites change. A `Result` here would be an abstraction with exactly one implementation: every one
+/// of those callers is a command entry point that could only print this and exit.
+fn config_fatal(path: &Path, detail: &str) -> ! {
+    eprintln!("folioman: cannot use config {}", path.display());
+    eprintln!("  {detail}");
+    eprintln!("  fix that file, or point FOLIOMAN_CONFIG at a self-contained one");
+    std::process::exit(1);
+}
+
+/// Read + parse the settings (base + overlay). Exits 1 with a clear message if missing/invalid —
 /// config errors are a startup problem the user must fix, not something to fail soft on.
 pub fn load() -> Settings {
     let path = settings_path();
-    let merged =
-        merged_config().unwrap_or_else(|| panic!("cannot read/parse config {}", path.display()));
-    assert!(
-        gates_configured(&merged),
-        "config {} resolved to NO buy_heuristic — every gate would silently fall back to its code \
-         default (growth_min_cagr 8.0, PEG/maxdd/vol caps off) and the ranking would be junk. \
-         Either tests/ci-settings.yaml is unreachable from here (it is the canonical base; run from \
-         the repo, or point FOLIOMAN_CONFIG at a self-contained config), or the overlay carries a \
-         bare `buy_heuristic:` with every knob commented out — delete that line, or give it a knob.",
-        path.display()
-    );
-    let s = serde_yaml::from_value(merged)
-        .unwrap_or_else(|e| panic!("invalid config ({} over tests/ci-settings.yaml): {e}", path.display()));
+    let Some(merged) = merged_config() else {
+        config_fatal(&path, "unreadable, or not valid YAML");
+    };
+    if !gates_configured(&merged) {
+        config_fatal(
+            &path,
+            "resolved to NO buy_heuristic — every gate would silently fall back to its code \
+             default (growth_min_cagr 8.0, PEG/maxdd/vol caps off) and the ranking would be junk. \
+             Either tests/ci-settings.yaml is unreachable from here (it is the canonical base; run \
+             from the repo, or point FOLIOMAN_CONFIG at a self-contained config), or the overlay \
+             carries a bare `buy_heuristic:` with every knob commented out — delete that line, or \
+             give it a knob.",
+        );
+    }
+    let s = match serde_yaml::from_value(merged) {
+        Ok(s) => s,
+        Err(e) => config_fatal(&path, &format!("invalid over tests/ci-settings.yaml: {e}")),
+    };
     // (round 113) QA tripwire: the measured edge lives in specific validated knob values, and the
     // overlay wins the merge silently — a leftover experiment serves an UNVALIDATED ranking with no
     // trace. Name every moved knob once per process, on stderr so tables and receipts stay clean.
