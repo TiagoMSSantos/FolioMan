@@ -5844,10 +5844,14 @@ mod tests {
         // ...and its crypto twin must stay at what the SHARED knob served, or the equity move above
         // silently re-prices every coin against an equity-tuned bar (at +75: zero coins pass).
         assert_eq!(tuning.growth_min_5y_pct_crypto, 0.0, "moving this re-prices the crypto lane — the backtest cannot grade it, check the live table by eye");
-        // ...and the one SCORE weight the Phase B re-fit moved. Pinned for the same reason as the gates:
-        // 0.65 is the cheap end of a rank-1 plateau that ends at 0.8 and collapses by 1.0, so a drift in
-        // either direction is a measurable regression, not a taste call.
-        assert_eq!(tuning.growth_accel_weight, 0.65, "shipped accel weight moved — re-measure, then update this pin");
+        // ...and the one SCORE weight the growth re-fits keep moving. This pin exists to force the
+        // conversation, and it has now done so twice: 0.65 came from a joint fit that also set the
+        // smoothness weight, and when (#62) zeroed smoothness the fit's other terms were left standing
+        // on a config that no longer existed. The re-measurement landed on 0.50 (#63). It is a
+        // single-point rank-1 median spike, bracketed at 0.35 / 0.65 / 0.80, so drift in either
+        // direction is a measurable regression rather than a taste call — but re-read the receipt
+        // before trusting the number, not just this line.
+        assert_eq!(tuning.growth_accel_weight, 0.50, "shipped accel weight moved — re-measure, then update this pin");
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
         // an empty table, which no value assert above would notice.

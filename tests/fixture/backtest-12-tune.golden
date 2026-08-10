@@ -1,6 +1,6 @@
 
 ══ TUNE — growth lane, honest out-of-sample (889 train / 382 test cutoffs, 500 draws) ══
-  shipped default      TEST: rho +0.31  edge +144.5  terciles -244.3/-268.1/-436.5 monotone
+  shipped default      TEST: rho +0.24  edge +144.5  terciles -244.3/-268.1/-436.5 monotone
   inert on this sample (skipped, kept at default): growth_fund_weight
   search winner       TRAIN: rho +0.38  edge +183.6
   search winner        TEST: rho -0.12  edge -48.1  terciles -380.3/-279.7/-285.9 SCRAMBLED   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)

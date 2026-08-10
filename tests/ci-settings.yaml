@@ -1485,7 +1485,7 @@ buy_heuristic:
                                  #   edge is UP at all three (+28/+32/+25) and that is not enough, per the rank-1-wins rule
                                  #   this knob was shipped under; the gains are inside the bootstrap band besides. 0.15 STANDS,
                                  #   now bracketed at 0.10 / 0.15 / 0.25 / 0.40. Full grid at growth_accel_weight (#47).
-  growth_accel_weight: 0.65      # SCORE: reward per pt the last year outpaced the long CAGR.
+  growth_accel_weight: 0.50      # SCORE: reward per pt the last year outpaced the long CAGR.
                                  #   (#47) "DOES A HIGHER CAGR DESERVE A BETTER RANK?" — asked 2026-08-03. Answer, measured:
                                  #   NO, on all four levers proposed. NOTHING SHIPPED. Values below are UNCHANGED; this is a
                                  #   null receipt, recorded so the question is not re-opened without a new metric.
@@ -1579,6 +1579,113 @@ buy_heuristic:
                                  #   rho LIKES accel (rank helper) but the 5y EDGE ablation showed it HURTS the 5y profit
                                  #   spread — recent 1Y-vs-CAGR pop is the noisiest, most mean-reverting growth signal at 5y
                                  #   (hot-streak chasing). 0.2 lifts wide 5y edge +43.7->+50.5 / 3y +24.3->+28.5.
+  # (#63) 0.65 -> 0.50 on 2026-08-10. NOT a new opinion about this knob — a re-measurement forced by the
+  #   fact that 0.65 was fitted as one term of a JOINT fit whose other term no longer ships. Phase B
+  #   (2026-08-01) moved growth_accel_weight 0.5->0.65, growth_trend_weight, and growth_overext_floor
+  #   TOGETHER, with growth_smoothness_weight at 5.0. (#62) zeroed smoothness yesterday. The two terms
+  #   pull OPPOSITE ways — smoothness paid trend_r2 (straight-line), accel pays a recent pop (lumpy, low
+  #   R²) — so 0.65 was the value that survived a counterweight that has since been removed. This round
+  #   re-verifies the plateau on the config that actually ships.
+  #   THE GRID — `backtest {20,12,8} universe`, 4997 tickers, 12 runs, this knob the only thing changed.
+  #   Graded on (#47)'s rule, FIXED BEFORE ANY RUN: PRIMARY = rank-1 MEDIAN at the 20y king; GATE = h2h
+  #   #1-vs-11-20 >= 50% at all three; re-weights must make rank-1 RISE, not merely hold; lane edge and
+  #   rho read against each arm's OWN null floor and never vote.
+  #     20y king   rank-1 mean|MED   win%   h2h #1 vs 11-20   rho    lane edge   own null floor
+  #     0.35       +6.1|+6.4         87%    76%               +0.17  +466.5      -216.7
+  #     0.50  <--  +6.6|+7.0         90%    76%               +0.15  +414.4      -185.3
+  #     0.65 ctl   +6.4|+6.4         90%    67%               +0.13  +418.1      (baseline)
+  #     0.80       +6.4|+6.4         90%    71%               +0.11  +329.7      -157.4
+  #     12y: ctl +6.5|+7.8 60% +125.5 · 0.50 +6.7|+7.8 60% +146.4 · 0.35 +6.3|+7.8 67% +158.0 · 0.80 +6.5|+7.8 63% +121.6
+  #      8y: ctl +7.4|+8.2 58%  +45.2 · 0.50 +7.6|+8.4 63%  +56.9 · 0.35 +7.2|+8.2 58%  +70.1 · 0.80 +7.4|+8.2 55%  +44.9
+  #   0.50 is the only arm that raises the primary metric (+6.4 -> +7.0), passes the gate at all three
+  #   horizons (76/60/63%), and is BRACKETED BOTH WAYS — Phase B's own standard. The control reproduced
+  #   the committed baseline to the digit (481/668/852 windows, +418.1/+125.5/+45.2), so this is a batch,
+  #   not drift.
+  #   THE FRAGILITY, stated because a receipt that hides it is worthless: the primary metric is a
+  #   SINGLE-POINT MEDIAN SPIKE on n=39 king windows. 0.35, 0.65 and 0.80 all read +6.4; only 0.50 reads
+  #   +7.0. One window moving reverses it. What supports it is that it is not alone — rank-1 MEAN, win%,
+  #   h2h, OOS-early and top-3 all move WITH it at multiple horizons, while 0.35 has rank-1 mean DOWN at
+  #   all three. A spike with five corroborating columns is worth more than a spike alone, and less than
+  #   a plateau. If this is ever re-measured and +7.0 does not reappear, revert on that.
+  #   THE COLUMN THAT ARGUES FOR 0.35: it owns lane edge (+466.5/+158.0/+70.1), rho (+0.17), OOS
+  #   (+0.16|+0.21) and top-3 at most horizons. That is not a contradiction, it is the MECHANISM already
+  #   documented above — accel TRADES LANE EDGE FOR RANK-1 QUALITY — reproduced a third time. A reader
+  #   who valued the held book over the single top pick would ship 0.35. The rule says rank-1 primary,
+  #   the rule was fixed before the runs, so 0.50 ships. Both readings are defensible; only one is ours.
+  #   THE OLD 12y HILL-CLIMB WAS RIGHT ABOUT THE NUMBER. The "knee is 0.5" note above was superseded by
+  #   Phase B for a good reason (different pool, different objective). This round lands back on 0.5 from
+  #   a third direction — 20y rank-1 on the cagr-19 pool — so all that is left of the supersession is
+  #   its explanation, not its verdict.
+  #   LIVE A/B (full `screen`, back to back, state file restored between runs so the rank-stability and
+  #   CORE-shortlist deltas are readable). Stocks: NVDA #1 at 5.6 in BOTH — unchanged. Crypto: BNB 7.3,
+  #   BTC 6.8, unchanged. The ETF lane REORDERS, and the reorder is the whole point:
+  #     ETF        1Y      leg CAGR   raw accel      0.65   0.50    Δ
+  #     SMH.L      +89.2%  +27%       62 -> CAPPED    5.6    4.6   -1.0
+  #     SEMI.AS   +102.1%  +25%       77 -> CAPPED    5.5    4.5   -1.0
+  #     IITU.L     +21.0%  +19%        2               4.9    4.8   -0.1
+  #     XLKS.L     +22.3%  +20%        2               4.6    4.4   -0.2
+  #   Both semis sit AT growth_accel_cap (50), so cutting the weight 0.15 strips 7.5 raw points from each
+  #   — the most this term can ever give — and they lose a full point, identically. The two names whose
+  #   1Y is within 2pts of their long CAGR lose ~0.1, which is the drift between two runs minutes apart
+  #   (prices and the 1H/6H/12H columns all moved). Hot-streak names lose lift, steady compounders do
+  #   not. That is this knob's job description.
+  #   AND IT RESTORES THE ORDER PHASE B SHIPPED. Phase B ran a live A/B at THIS SAME PAIR (0.5 vs 0.65)
+  #   and recorded "SAME NAMES, SAME ORDER" with IITU.L #1 at both. Today at 0.65 that order is INVERTED
+  #   (SMH.L first). At fixed accel 0.65, across the smoothness removal: IITU.L 8.2->4.9 and XLKS.L
+  #   7.9->4.6, but SMH.L only 6.2->5.6 and SEMI.AS 6.0->5.5. Killing a 5.0 x trend_r2 term cost the two
+  #   straight-line names FIVE TIMES what it cost the two lumpy semis, which is what flipped the lane.
+  #   So the live reorder here is not new instability, it is the Phase B ordering coming back. CAVEAT,
+  #   because those two runs are 9 days apart and not a controlled pair: read the -3.3/-3.3 vs -0.6/-0.5
+  #   split as direction and rough magnitude, not as a measurement.
+  #   PHASE B'S TRIMMING CONCERN IS MOOT AND ITS RECEIPT ABOVE SHOULD BE READ WITH THIS: it worried that
+  #   at 0.5 the semis "cleared growth_min_score_etf (5.0) by 0.1 and 0.0 — one datapoint from being
+  #   trimmed off the table entirely". growth_min_score and growth_min_score_etf BOTH ship at -100.0
+  #   today. The floors are disarmed; nothing is trimmable at any of these scores. If either floor is
+  #   ever re-armed above ~4.5, re-read that concern, because it becomes live again.
+  #   CI COLLAPSE GATE checked on this arm's own output before shipping: growth edge +414.4/+146.4/+56.9
+  #   all > 0, top-3 excess +6.4/+7.1/+8.0 all > 0, and both OOS halves positive at every horizon
+  #   (+0.15|+0.19, +0.07|+0.17, +0.15|+0.14 — up on all six against the control's +0.12|+0.17,
+  #   +0.05|+0.17, +0.13|+0.13).
+  #   NOT RE-OPENED THIS ROUND, recorded so the runs are not spent twice. accel -> 0: never swept, but
+  #   the sweep above collapses monotonically toward zero (rank-1 median +6.6/+5.3/+2.2 and king h2h
+  #   65/60/40% at 0.65/0.5/0.3), so zero is off the end of a cliff, and the ablation's "removing accel
+  #   lifts edge" is the documented trade working as recorded, not a finding. growth_trend_weight
+  #   0.15->0.35: wide curve strongly favourable (edge +418->+540, +125->+160, +45->+77, both OOS halves
+  #   rising) but the knob is defended at four bracket points and curve rows print no rank-1 and no h2h,
+  #   so they cannot settle a ship rule. sharpe_weight still owes the re-sweep (#62) named.
+  #   THE GOLDENS MOVED, and they prove the change rather than merely absorbing it. The fixture config
+  #   deep-merges over this file, so all six move; every one kept its exact line count, values only.
+  #   (a) The growth_accel_weight ABLATION ROW IS BYTE-IDENTICAL at all three horizons — rho
+  #   +0.21/+0.46/+0.19, edge +83.9/+414.2/+24.2, not one digit. That row is "this knob at ZERO", which
+  #   cannot depend on what the shipped weight is, so it is a fixed point and it held. Only the Δ shrank,
+  #   and the identity endpoint − headline = Δ closes exactly (+83.9 − +11.0 = +72.9, +24.2 − −10.3 =
+  #   +34.5). A code bug would have moved the endpoint.
+  #   (b) Predicting the headline by LINEAR INTERPOLATION toward that endpoint — 0.65->0.50 is 23.1% of
+  #   the way to zero — gives rho +0.15/+0.30/+0.16. Measured: +0.16/+0.30/+0.15. Edge is the noisy
+  #   column on 80/52/102 windows and lands looser (12y -5.5 -> +11.0, 8y -54.3 -> -10.3, 20y unmoved).
+  #   (c) The ON-SALE lane is byte-identical in all three full reports. accel is growth-only, and that is
+  #   now shown structurally rather than asserted.
+  #   (d) `12 stress` carries a growth_trend_weight sweep, and cutting accel SHIFTED THAT WHOLE SWEEP UP
+  #   EXACTLY ONE ROW, edge and winsor columns reproducing BIT-IDENTICALLY: new 0.15 (+11.0/+5.6) IS old
+  #   0.25; new 0.25 (+90.2/+84.8) IS old 0.35; new 0.35 (+108.8/+103.4) IS old 0.55; new 0.55
+  #   (+67.9/+62.5) IS old 0.70. On frozen data these two terms are NEAR-SUBSTITUTES — base =
+  #   growth_trend_weight·CAGR + growth_accel_weight·accel, and cutting accel 0.15 buys what raising
+  #   trend ~0.10 buys. READ THE REFUSED trend 0.15->0.35 LEAD IN THAT LIGHT: it is not independent of
+  #   this ship, and re-running it now would be re-measuring a distance that has already partly closed.
+  #   Stress OOS moves +0.29|+0.02 -> +0.32|+0.04, both halves up.
+  #   THE TWO FIXTURE COLUMNS THAT ARGUE AGAINST, logged because the previous receipt praised one of them
+  #   by name: `12 tune`, the only honestly out-of-sample instrument here, drops the shipped default's
+  #   TEST rho +0.31 -> +0.24 at an unchanged edge (+144.5) and byte-identical terciles — giving back
+  #   more than the +0.26 -> +0.31 that (#62) claimed as a gain. And `12 halflife` is mixed, not good:
+  #   3y +0.2 -> +22.0, 5y +49.7 -> +62.2 and 8y -54.3 -> -10.3 improve, but 1y +15.9 -> +13.7, 2y
+  #   +37.7 -> +30.2 and 10y -4.2 -> -43.3 get worse, the last of those badly. Neither column votes —
+  #   80 hand-picked large caps at 52-102 windows is not the grader, the wide universe is — but a reader
+  #   re-opening this knob should know the fixture did not agree with the wide run everywhere.
+  #   ONE CLEAN MECHANICAL WIN in the same file: halflife TURNOVER falls at EVERY hold length
+  #   (60->59, 62->61, 61->60, 63->61, 62->57, 68->61). accel is the most time-varying input in the
+  #   score, so damping it makes the ranking steadier across rebalances. That is a cost reduction that
+  #   needs no horizon to be true.
+  #   THE PIN MOVED WITH IT: src/picks.rs shipped_config_pin() asserts this value by parsing this file.
   growth_accel_cap: 50.0         # SCORE: cap that 1Y-minus-CAGR acceleration term
   growth_smoothness_weight: 0.0  # (E) SCORE: reward per unit of trend_r2 (R² of the log-price trend fit, 0..1) — pays the
                                  #   straight-line compounder over the equal-CAGR rollercoaster. Reconstructed in backtest_quote,
