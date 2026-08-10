@@ -5,27 +5,27 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 
 ── ON-SALE (buy_score) ──
   windows scored: 526
-  Spearman(score, peer-relative): -0.24   [+1 winners-first, 0 none, − backwards]
-  top-half peer-relative -103.5 pts  vs  bottom-half +55.9 pts  ->  edge -159.4 pts
-  90% bootstrap band on edge: [-211.9 … -108.4] pts  (below 0 -> backwards)
-  net of cost: edge -159.4 − turnover 67% × 20bps = net -159.5 pts  <- NET ≤ 0: too churny to trade
-  winsorized edge (1/99 clamp): -166.9 pts
-  vs null model (tuning off): rho -0.32  edge -289.4 pts  ->  tuning adds +129.9 pts
-  out-of-sample (split 2006-05-01): early rho -0.18  |  late rho -0.29
+  Spearman(score, peer-relative): -0.07   [+1 winners-first, 0 none, − backwards]
+  top-half peer-relative -32.1 pts  vs  bottom-half -15.5 pts  ->  edge -16.6 pts
+  90% bootstrap band on edge: [-86.1 … +38.6] pts  (STRADDLES 0 -> noise)
+  net of cost: edge -16.6 − turnover 75% × 20bps = net -16.7 pts  <- NET ≤ 0: too churny to trade
+  winsorized edge (1/99 clamp): -25.7 pts
+  vs null model (tuning off): rho -0.32  edge -289.4 pts  ->  tuning adds +272.8 pts
+  out-of-sample (split 2006-05-01): early rho -0.02  |  late rho -0.12
   edge by era (chronological quarters):
-    1971-01-01 .. 2001-03-01  n=131    edge -115.9 pts
-    2001-03-01 .. 2006-05-01  n=132    edge -176.5 pts
-    2006-05-01 .. 2009-05-01  n=131    edge -125.7 pts
-    2009-07-31 .. 2014-07-01  n=132    edge -244.4 pts
-  ablation (Δ vs full: rho -0.24, edge -159.4):
-    long_trend_weight    rho -0.27 Δ-0.03   edge -196.8 Δ-37.4
-    discount_weight      rho -0.30 Δ-0.06   edge -225.6 Δ-66.2
-    cheap_weight         rho -0.25 Δ-0.01   edge -209.0 Δ-49.6
-    dividend_weight*     rho -0.07 Δ+0.17   edge -16.6 Δ+142.8
-    onsale_sharpe_weight rho -0.24 Δ+0.00   edge -159.4 Δ+0.0
-    calmar_weight        rho -0.24 Δ+0.00   edge -159.4 Δ+0.0
-    quality_weight       rho -0.24 Δ+0.00   edge -159.4 Δ+0.0
-    tax_split ->off      rho -0.24 Δ-0.00   edge -159.4 Δ+0.0
+    1971-01-01 .. 2001-03-01  n=131    edge -12.2 pts
+    2001-03-01 .. 2006-05-01  n=132    edge -59.1 pts
+    2006-05-01 .. 2009-05-01  n=131    edge +32.4 pts
+    2009-07-31 .. 2014-07-01  n=132    edge -129.5 pts
+  ablation (Δ vs full: rho -0.07, edge -16.6):
+    long_trend_weight    rho -0.07 Δ+0.00   edge -41.8 Δ-25.3
+    discount_weight      rho -0.05 Δ+0.02   edge +13.3 Δ+29.8
+    cheap_weight         rho -0.08 Δ-0.01   edge -16.6 Δ-0.0
+    onsale_dividend_weight rho -0.07 Δ+0.00   edge -16.6 Δ+0.0
+    onsale_sharpe_weight rho -0.07 Δ+0.00   edge -16.6 Δ+0.0
+    calmar_weight        rho -0.07 Δ+0.00   edge -16.6 Δ+0.0
+    quality_weight       rho -0.07 Δ+0.00   edge -16.6 Δ+0.0
+    tax_split ->off      rho -0.07 Δ+0.00   edge -16.6 Δ+0.0
 
 ── GROWTH (growth_score) ──
   windows scored: 80
@@ -221,7 +221,7 @@ Caveats:
   • In-sample: knobs were hand-tuned on today's data; even the OOS split shares the regime.
   • Survivorship (#5): the universe is names that SURVIVED to today — dead tickers never enter,
     so realized returns are biased UP. Treat the edge as optimistic. Re-run with `stress` to inject losers.
-  • Price-only (#6): no as-of dividends or P/E reconstructed; the * term above is inert here.
+  • Price-only (#6): no as-of P/E reconstructed, so the `value` multiplier is ×1.0 here; as-of DIVIDENDS are live since #53 and every dividend row below is real.
   • Overlapping 6-mo windows share price paths -> samples aren't independent; rho is directional.
   • Long-horizon (MAX monthly): only names alive for the FULL 12y window enter, so
     survivorship bias is WORSE than the daily path, and vol/MA are monthly-bar approximations.

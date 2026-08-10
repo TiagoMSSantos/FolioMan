@@ -286,8 +286,12 @@ fn dividend_yield_1y(quote: &Quote) -> f64 {
 /// the on-sale lane's `tax_split ->off` ablation — see `is_eu_payer` for why it was never blind either.
 /// That row reads Δ+0.0: at the shipped 0.76-vs-0.72 the split does not move the ranking, while the
 /// WEIGHT it scales moves it by Δ+142.8. Size the weight with care; the split is a rounding detail.
-fn dividend_reward(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
-    tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap) * tax_keep(quote, tuning).0
+/// (#61) The WEIGHT is a parameter because the two lanes disagree about it — growth wants it, on-sale
+/// wants zero — exactly as `risk_bonus` takes its Sharpe weight for the same reason. Everything else
+/// here (the cap, the tax keep-rate, the cap-then-scale order) is shared deliberately: the lanes
+/// differ on how much a dividend is worth, never on what a dividend after Portuguese tax IS.
+fn dividend_reward(quote: &Quote, weight: f64, tuning: &BuyHeuristic) -> f64 {
+    weight * dividend_yield_1y(quote).min(tuning.dividend_cap) * tax_keep(quote, tuning).0
 }
 
 /// (D) Is this row an EU-resident *company* payer for Art. 40.º-A purposes — the ONE predicate behind
@@ -717,7 +721,9 @@ fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: 
 ///   scaled by **discount_frac** = discount/`discount_cap`
 ///   so a proven compounder only earns it when actually pulled back — at its high the reward → 0.
 /// - **cheap_reward** — (C) reward for sitting below the ~200wk SMA (`cheap_weight`, `cheap_cap`).
-/// - **dividend_reward** — (D) reward for trailing yield (`dividend_weight`, `dividend_cap`). NO LONGER
+/// - **dividend_reward** — (D) reward for trailing yield (`onsale_dividend_weight` since (#61) — this
+///   lane's own weight, SHIPPED AT 0, because paying for yield ranked the lane backwards; `dividend_cap`
+///   and the tax keep-rate stay shared with growth). NO LONGER
 ///   BACKTEST-BLIND (#53): `Chart.divs` was always in the payload and is now plumbed into
 ///   `backtest_quote`, so the ablation row and the `dividend_weight` curve grade it for real. The TAX
 ///   split is graded too (#58), and the `domicile` this line used to blame was never read by anything:
@@ -796,7 +802,7 @@ pub fn buy_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     let discount_frac = (discount / tuning.discount_cap).clamp(0.0, 1.0); // 0 = at its high, 1 = deeply discounted
     let long_reward = tuning.long_trend_weight * capped_trend(long_cagr, tuning) * discount_frac; // (A) cap 0 = uncapped
     let cheap_reward = tuning.cheap_weight * quote.below_ma_pct.min(tuning.cheap_cap); // (C)
-    let dividend_reward = dividend_reward(quote, tuning); // (D) net of PT tax — see the fn
+    let dividend_reward = dividend_reward(quote, tuning.onsale_dividend_weight, tuning); // (D/#61) net of PT tax — see the fn. This lane's OWN weight: shipped 0.0, because paying for yield here ranked the lane BACKWARDS
 
     let risk_reward = risk_bonus(quote, long_cagr, tuning.onsale_sharpe_weight, tuning.calmar_weight, tuning); // (B/C) on-sale lane's own Sharpe weight
     let base = tuning.discount_weight * discount * health * momentum // (#4) demoted: dip-depth ranks backwards on peer-relative backtest
@@ -1147,7 +1153,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let trend_term = tuning.growth_trend_weight * trend;
     let accel_term = tuning.growth_accel_weight * accel;
     let quality = quality_reward(quote, tuning); // (F) return-on-capital tilt — MEASURED (Δ-12.6 edge here, Δ-48.7 in the buy lane), and it OVERLAPS the (G) tilt below: see ci-settings (#3d)
-    let dividend = dividend_reward(quote, tuning); // (D) total-return tilt, NET of Portuguese tax (EU payers keep more — Art. 40.º-A CIRS; see dividend_reward). Closes are price-only (no adjclose) so divs are missing from the CAGR. SIGHTED since #53 (as-of divs are plumbed; weight AND tax split both curve-graded), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
+    let dividend = dividend_reward(quote, tuning.dividend_weight, tuning); // (D) total-return tilt, NET of Portuguese tax (EU payers keep more — Art. 40.º-A CIRS; see dividend_reward). Closes are price-only (no adjclose) so divs are missing from the CAGR. SIGHTED since #53 (as-of divs are plumbed; weight AND tax split both curve-graded), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
     // (G) as-of FUNDAMENTAL tilt. Like the (D)/(F) terms above — all sighted now — this one IS validatable: the
     // backtest attaches the as-of factor to quote.fund_factor so `backtest <set> fund` can ablate it.
     // Floor at 0 (only reward the factor, don't penalise a missing/negative one) and cap the artifact.
@@ -5981,9 +5987,14 @@ mod tests {
         let cc = |c: f64| s(&foil(), &BuyHeuristic { cheap_weight: 0.2, cheap_cap: c, ..d.clone() });
         assert!(cc(60.0) > cc(10.0), "the cheap cap must clamp a below-SMA % above it");
 
-        // (D) dividend_weight — BEHAVIOUR, not just the parse test config.rs already has.
-        let dv = |w: f64| s(&foil(), &BuyHeuristic { dividend_weight: w, ..d.clone() });
+        // (D/#61) onsale_dividend_weight — BEHAVIOUR, not just the parse test config.rs already has.
+        // SPLIT from the growth lane's `dividend_weight` for the same reason, and with the same two
+        // assertions, as the `onsale_sharpe_weight` pair below: wide at 12y this lane ranked BACKWARDS
+        // while paying for trailing yield (rho -0.14 -> +0.03, edge -65.0 -> +85.7 at weight 0).
+        let dv = |w: f64| s(&foil(), &BuyHeuristic { onsale_dividend_weight: w, ..d.clone() });
         assert!(dv(3.0) > dv(1.5) && dv(1.5) > dv(0.0), "the yield reward must be monotone in its weight");
+        assert!((s(&foil(), &BuyHeuristic { dividend_weight: 9.0, ..d.clone() }) - s(&foil(), &d)).abs() < 1e-9,
+            "the GROWTH dividend weight must not touch the on-sale lane");
 
         // (B) onsale_sharpe_weight — SPLIT from the growth lane's `sharpe_weight` (growth wants 0.15,
         // on-sale measured better at 0). The split is the thing worth pinning: moving one must not move

@@ -1057,7 +1057,38 @@ buy_heuristic:
   #   and far under the old 1.5's +9 — that magnitude is exactly what got it cut. The TAX scaling below is
   #   worth ~0.06 pts on a 5-19 pt score at a 4% yield. Read by BOTH lanes.
   #   Set 0.0 to go back to the 2026-07-15 state; the backtest says the top-3 will not notice.
-  dividend_weight: 0.5           # LIVE: reward per % of trailing-1Y yield, AFTER the tax keep-rate (0 = OFF)
+  dividend_weight: 0.5           # LIVE: reward per % of trailing-1Y yield, AFTER the tax keep-rate (0 = OFF). GROWTH LANE ONLY since (#61)
+  onsale_dividend_weight: 0.0    # [FOIL] (#61) ON-SALE lane's own yield weight. ZEROED, and this is the
+                                 #   largest single measured improvement in the file. Split from the growth
+                                 #   lane for the same reason `onsale_sharpe_weight` was split from
+                                 #   `sharpe_weight` — one shared knob serving two lanes that want opposite
+                                 #   values — and the same fix, at ~6x the size (that one bought +23.7).
+                                 #   MEASURED 2026-08-10, wide `12 universe` on 4997 tickers, n=4623 on-sale
+                                 #   windows, admission byte-identical (cutoffs 11673 both runs):
+                                 #     dial          shipped 0.5              this arm 0.0
+                                 #     rho           -0.14                    +0.03
+                                 #     edge          -65.0                    +85.7
+                                 #     90% band      [-109.8 … -17.9] BELOW 0 [+50.6 … +126.7] CLEARS 0
+                                 #     net of cost   -65.1 "too churny"       +85.6
+                                 #     eras          -69.6/-7.0/-142.6/-85.5  +45.4/+123.7/+24.2/+83.5
+                                 #   Read the eras row twice: ALL FOUR flip sign. This lane ranked BACKWARDS
+                                 #   — its band sat entirely below zero, i.e. the names it liked underperformed
+                                 #   the ones it did not — and paying for trailing yield was the reason.
+                                 #   NOT A NEW DISCOVERY, WHICH IS THE UNCOMFORTABLE PART: the `dividend_weight*`
+                                 #   ablation row printed Δ+150.7 in every wide on-sale table for as long as the
+                                 #   row has existed, and this arm reproduces it to the decimal (-65.0 + 150.7 =
+                                 #   +85.7). It went unread because a footnote asserted the term was inert in a
+                                 #   price-only run; that footnote was stale from (#53) and is now fixed.
+                                 #   WHY A YIELD TILT RANKS BACKWARDS HERE, offered as mechanism and not proof:
+                                 #   this lane already rewards being cheap and beaten-down, and high trailing
+                                 #   yield on a fallen price is the same fact a third time — it is a dividend
+                                 #   YIELD, so the denominator is the very drop `discount_weight` is paying for.
+                                 #   `discount_weight` ablates at Δ-88.9 (removing it HURTS), so the lane wants
+                                 #   the dip; it just must not buy the dip twice.
+                                 #   THE PORTUGUESE TAX MODEL IS UNAFFECTED. `tax_keep_eu`/`tax_keep_other` scale
+                                 #   the GROWTH lane's dividend term, which keeps `dividend_weight: 0.5`, and
+                                 #   growth is the lane `screen` ranks on. Nothing about Art. 40.º-A is retired.
+                                 #   0.5 = the pre-split shared value, i.e. the arm's control.
   dividend_cap: 6.0              # LIVE: cap the yield % fed in — applied BEFORE the keep-rate (see below)
 
   # (D/PT) Portuguese dividend tax, as two after-tax KEEP fractions. Art. 40.º-A CIRS englobates only

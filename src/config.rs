@@ -130,7 +130,10 @@ impl Default for Widths {
 /// dividend_reward(D)`, then `score = base × value(E) × geomean(decline(B), trust)`.
 ///
 /// The `dividend` term in BOTH lanes is scored NET of Portuguese tax — see `picks::dividend_reward`
-/// and the `tax_keep_eu` / `tax_keep_other` knobs below.
+/// and the `tax_keep_eu` / `tax_keep_other` knobs below. (#61) The two lanes now carry SEPARATE
+/// weights, and ci-settings ships this one at `onsale_dividend_weight: 0.0`, so in practice the tax
+/// model shapes the GROWTH lane alone — which is the lane `screen` ranks on and the lane it was
+/// built for. The mechanism stays wired in both so the split remains a knob, not a deletion.
 /// GATES exclude a candidate outright; SCORE knobs rank the survivors. Mirrors `config/settings.yaml`.
 /// (G+) One additional fundamental tilt term: which `FundFactors` field, how much per point, and the
 /// clamp applied before weighting. What the score adds is `weight × clamp(value, 0, cap)` — the same
@@ -206,6 +209,7 @@ pub struct BuyHeuristic {
     pub cheap_weight: f64,           // (C) reward per % the price sits below its ~200wk SMA (structural "cheap vs trend")
     pub cheap_cap: f64,              // (C) cap on that below-SMA % fed into the cheap reward
     pub dividend_weight: f64,        // (D) reward per % of trailing-1Y dividend yield (reinvested divs dominate long-run total return)
+    pub onsale_dividend_weight: f64, // (#61) ON-SALE lane's OWN dividend weight — split from the growth lane for the same reason `onsale_sharpe_weight` was, and with the same shape: one shared knob was serving two lanes that want opposite values. The wide 12y ablation says the on-sale lane wants ZERO and says it loudly — zeroing the shared knob moved that lane from rho -0.14 / edge -65.0, a 90% band of [-109.8 … -17.9] entirely BELOW zero and all four eras negative, to rho +0.03 / edge +85.7, a band of [+50.6 … +126.7] entirely above it and all four eras positive. A lane that ranked BACKWARDS ranks forwards without it. The growth lane keeps `dividend_weight` and therefore keeps the whole Art. 40.º-A tax model, which is the lane that model was built for and the lane `screen` ranks on. DEFAULT 1.5 = `dividend_weight`'s default, so the default build is byte-identical to the pre-split lane and only a configured value changes behaviour; ci-settings ships 0.0. Kept as a knob rather than deleting the on-sale dividend term outright so the null stays reproducible via the `onsale_dividend_weight` ablation row
     pub dividend_cap: f64,           // (D) cap on the yield % fed into the dividend reward
     pub tax_keep_eu: f64,            // (D/PT) fraction of a dividend KEPT after Portuguese tax when the payer is an EU company — Art. 40.º-A CIRS englobates only 50% of dividends from an EU-resident company meeting the Parent-Subsidiary Directive conditions. HAND-SET from your own IRS position (bracket, englobamento yes/no, source withholding you actually eat): no tax law is encoded in this codebase, the two knobs ARE the model. 1.0 = off (DEFAULT — the lane is byte-identical to the pre-tax version). ponytail: ONE rate blends source withholding from 12.8% (France) to 35% (Finland) — that 22-pt within-EU spread is ~3× the EU-vs-US gap this term exists to capture, so a single number is a real approximation, not a rounding. Upgrade path if it bites: a per-market map keyed on `Quote.market` — PRICED (#58) AND IT DOES NOT PAY: the coarse EU-vs-other split such a map would refine ablates at Δ+0.0 edge in the walk-forward, so a finer cut of the same term cannot buy more than nothing. Build it only to make the after-tax yield a human reads more truthful, never for edge
     pub tax_keep_other: f64,         // (D/PT) same keep-fraction for EVERY other market AND for funds of any domicile: an OICVM/ETF distribution is not a Parent-Subsidiary-Directive company's *lucro*, so it draws no 50% exclusion however EU-listed the wrapper is. 1.0 = off (DEFAULT)
@@ -341,6 +345,7 @@ impl Default for BuyHeuristic {
             cheap_weight: 0.07,            // (#4) ~+4 at the cap (halved from 0.15) — "structural cheap" is another dip term the backtest doesn't reward; demoted toward the trend/quality factors
             cheap_cap: 60.0,               // (C) cap the below-SMA % fed into the cheap reward
             dividend_weight: 1.5,          // (D) ~+9 at the cap for a 6% yielder
+            onsale_dividend_weight: 1.5,   // (#61) ON-SALE lane. Deliberately EQUAL to `dividend_weight` above, not 0.0: the split's measurement was made against ci-settings, so ci-settings is where the 0.0 ships and the default build stays byte-identical to the pre-split lane. If `dividend_weight`'s default ever moves, move this with it or the "byte-identical" claim silently stops being true
             dividend_cap: 6.0,             // (D) cap the trailing yield % fed into the dividend reward
             tax_keep_eu: 1.0,              // (D/PT) 1.0 = no tax haircut -> byte-identical to the pre-tax lane; ci-settings.yaml ships the live rate
             tax_keep_other: 1.0,           // (D/PT) same: neutral out-of-the-box, the fixture carries the operator's number

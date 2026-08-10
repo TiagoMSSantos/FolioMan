@@ -869,7 +869,14 @@ pub async fn run(args: Vec<String>) {
         knob("long_trend_weight", |tuning| tuning.long_trend_weight = 0.0),
         knob("discount_weight", |tuning| tuning.discount_weight = 0.0), // (#4) zero the dip reward — Δ>0 confirms dip-depth ranks backwards
         knob("cheap_weight", |tuning| tuning.cheap_weight = 0.0),
-        knob("dividend_weight*", |tuning| tuning.dividend_weight = 0.0),
+        // (#61) THIS ROW USED TO ZERO `dividend_weight` and was the loudest row in the on-sale table
+        // (Δ+150.7). It now zeroes the lane's own split knob, because after the split zeroing the
+        // shared one would move this lane by exactly nothing and print a confident Δ+0.0 saying so.
+        // The growth list keeps its `growth_dividend` row on `dividend_weight`, which is still that
+        // lane's live weight. At the shipped `onsale_dividend_weight: 0.0` this row is the NULL of an
+        // already-off term and reads Δ+0.0 by construction — that zero is the split holding, not the
+        // term being inert, and it is why the knob was kept rather than the term deleted.
+        knob("onsale_dividend_weight", |tuning| tuning.onsale_dividend_weight = 0.0),
         knob("onsale_sharpe_weight", |tuning| tuning.onsale_sharpe_weight = 0.0),
         knob("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
         knob("quality_weight", |tuning| tuning.quality_weight = 0.0), // shared with the growth lane — one knob, so it must be ablatable in both
@@ -1200,7 +1207,11 @@ pub async fn run(args: Vec<String>) {
         println!("  • Survivorship (#5): the universe is names that SURVIVED to today — dead tickers never enter,");
         println!("    so realized returns are biased UP. Treat the edge as optimistic. Re-run with `stress` to inject losers.");
     }
-    println!("  • Price-only (#6): no as-of dividends or P/E reconstructed; the * term above is inert here.");
+    // (#61) WAS "no as-of dividends or P/E reconstructed; the * term above is inert here", and the
+    // dividend half of that was false — `#53` plumbed as-of divs (`picks.rs` says so at the growth
+    // lane's own dividend term) and the row it called inert was the largest in the table at Δ+150.7.
+    // A footnote claiming a term cannot be graded is the exact thing that stops anyone grading it.
+    println!("  • Price-only (#6): no as-of P/E reconstructed, so the `value` multiplier is ×1.0 here; as-of DIVIDENDS are live since #53 and every dividend row below is real.");
     println!("  • Overlapping 6-mo windows share price paths -> samples aren't independent; rho is directional.");
     if monthly {
         println!("  • Long-horizon (MAX monthly): only names alive for the FULL {years}y window enter, so");
