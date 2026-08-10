@@ -720,7 +720,7 @@ fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: 
 /// - **dividend_reward** — (D) reward for trailing yield (`dividend_weight`, `dividend_cap`). NO LONGER
 ///   BACKTEST-BLIND (#53): `Chart.divs` was always in the payload and is now plumbed into
 ///   `backtest_quote`, so the ablation row and the `dividend_weight` curve grade it for real. The TAX
-///   split is graded too (#54), and the `domicile` this line used to blame was never read by anything:
+///   split is graded too (#58), and the `domicile` this line used to blame was never read by anything:
 ///   `tax_keep` branches on `is_eu_payer`, i.e. `market` (from the ticker suffix) and `instrument_type`
 ///   (from `stamp_asset_class`) — both live in the backtest, both the same inputs the live screen uses.
 /// - **value** — (E) P/E tilt: cheap lifts, rich dampens, unknown neutral (`ref_pe`). BACKTEST-BLIND:

@@ -873,7 +873,7 @@ pub async fn run(args: Vec<String>) {
         knob("onsale_sharpe_weight", |tuning| tuning.onsale_sharpe_weight = 0.0),
         knob("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
         knob("quality_weight", |tuning| tuning.quality_weight = 0.0), // shared with the growth lane — one knob, so it must be ablatable in both
-        // (#54) The englobamento SPLIT off — both arms set equal, which is this knob's real "off" (0.0
+        // (#58) The englobamento SPLIT off — both arms set equal, which is this knob's real "off" (0.0
         // would mean an EU dividend is worth nothing, a different question). Prices the SPLIT; the row
         // above prices the dividend WEIGHT. The two are not the same measurement and the weight is the
         // one that moves: dropping it costs Δ+142.8 edge, while equalising the arms costs Δ+0.0 — the

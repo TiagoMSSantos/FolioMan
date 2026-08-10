@@ -1032,9 +1032,25 @@ buy_heuristic:
   #   judgment lever to a MEASURED-INERT one. DO NOT RE-PLUMB THIS: the answer is on file, and the next
   #   person to notice "dividends are missing from the backtest" should read this block instead of the
   #   module header they will otherwise trust.
-  #   STILL UNGRADED, and NOT fixable by this plumbing: the backtest carries no `domicile`, so `tax_keep`
-  #   takes the non-EU arm for every ticker. The EU-vs-other englobamento split below is therefore still
-  #   an untested judgment call — what got graded here is `dividend_weight`, not the tax rule.
+  #   (#58) RETRACTED — three lines stood here claiming the tax split was "STILL UNGRADED, and NOT fixable
+  #   by this plumbing: the backtest carries no `domicile`". Wrong the same way this block's own IMPOSSIBLE
+  #   was wrong, one step further on: NOTHING on this path ever read a `domicile`. `tax_keep` branches on
+  #   `picks::is_eu_payer`, i.e. `market` (filled by `core::market_of` from the ticker suffix inside
+  #   `Quote::stub`) and `instrument_type` (filled by `backtest::stamp_asset_class` from Yahoo's meta plus
+  #   the universe's `etf_set`). Both are present in the backtest, and both are the SAME inputs the live
+  #   screen scores on — which is the whole bar for gradeability.
+  #   THE MEASUREMENT: the `tax_split ->off` ablation — both arms set EQUAL, which is this knob's real "off"
+  #   (0.0 would mean an EU dividend is worth nothing, a different question) — reads edge Δ+0.0 at 12y, 20y
+  #   and stress, Δ+0.5 at 8y, rho Δ-0.00. The dividend WEIGHT the split scales ablates at Δ+142.8 in the
+  #   same table. The split is a rounding detail next to the term it multiplies, which is what the SIZING
+  #   note below already implied at ~0.06 pts. VERDICT: 0.76/0.72 STANDS, measured-inert, same as the weight.
+  #   WHERE IT IS MEASURED, and why not in the growth lane: sample. The growth gates admit 4 EU payers out
+  #   of 80 scored rows on the fixture, so a growth-lane sweep of a tax knob is flat for want of rows
+  #   WHATEVER the truth; the on-sale lane scores 526 windows. Reading it across lanes is legitimate because
+  #   `tax_keep` is shared by both by construction (see `picks::dividend_reward`). Caveat, stated honestly:
+  #   the on-sale lane is a FOIL that ranks backwards on purpose, so a NON-ZERO result there would have
+  #   needed care to interpret. A Δ+0.0 does not. A growth-lane `weight_curve` for this knob was built, run
+  #   and DELETED — 17 lines of golden output to report the same Δ+0.0 that one ablation row reports.
   #   ALSO BY DESIGN: realized returns stay price-only on BOTH legs, so the excess vs ^GSPC stays
   #   apples-to-apples. This measured whether yield helps SELECT, never total-return performance.
   #   SIZING, unchanged: 0.5 peaks the term at +2.25 (6% yield × cap), under quality's +6 blind ceiling
@@ -1060,7 +1076,11 @@ buy_heuristic:
   #   OICVM distribution is not a PSD company's *lucro*, so no exclusion.
   #   CEILING: one EU rate blends source withholding from 12.8% (France) to 35% (Finland). That 22-pt
   #   within-EU spread is ~3× the EU-vs-US gap this models — a real approximation, accepted knowingly.
-  #   Upgrade path if it bites: a per-market map keyed on Quote.market.
+  #   Upgrade path if it bites: a per-market map keyed on Quote.market. THAT PATH IS NOW PRICED AND IT DOES
+  #   NOT PAY (#58): the coarse EU-vs-other split such a map would refine measures Δ+0.0 edge, so a finer cut
+  #   of the same term cannot buy more than nothing. DO NOT BUILD IT FOR EDGE. The one justification left
+  #   standing is truthfulness — a per-market map makes the after-tax yield a HUMAN reads closer to what
+  #   they actually keep — and that argument has to be made on its own terms, not on the backtest's.
   tax_keep_eu: 0.76              # LIVE: fraction kept from an EU company's dividend (englobamento, 50% excluded)
   tax_keep_other: 0.72           # LIVE: fraction kept from every other payer, and from any fund
 
