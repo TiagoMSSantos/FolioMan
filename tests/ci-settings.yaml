@@ -1058,6 +1058,29 @@ buy_heuristic:
   #   worth ~0.06 pts on a 5-19 pt score at a 4% yield. Read by BOTH lanes.
   #   Set 0.0 to go back to the 2026-07-15 state; the backtest says the top-3 will not notice.
   dividend_weight: 0.5           # LIVE: reward per % of trailing-1Y yield, AFTER the tax keep-rate (0 = OFF). GROWTH LANE ONLY since (#61)
+  # (#62) MEASURED AT ZERO WIDE, ON PURPOSE, AND KEPT — so that nobody spends the six runs again. Same
+  #   batch and same rule as the `growth_smoothness_weight` deletion above; this arm zeroed the GROWTH
+  #   half only (post-(#61), so the on-sale flip is not mixed in) at 20/12/8y, n identical at 481/668/852:
+  #     horizon   lane edge          rank-1 mean|med          h2h vs 11-20 book     null floor
+  #     20y       +459.5 -> +451.4   +6.2|+6.4 -> +6.2|+6.4   16/21 -> 16/21 (76%)       93.3
+  #     12y       +132.0 -> +135.2   +5.8|+7.2 -> +5.8|+7.2   17/30 -> 18/30 (57->60%)   15.4
+  #      8y        +59.3 ->  +63.6   +7.2|+8.2 -> +7.2|+8.2   24/38 -> 24/38 (63%)       16.0
+  #   BY THE LETTER OF THE DELETION RULE THIS ARM PASSES — the book never degrades, h2h is >=50% at all
+  #   three, and the one negative edge move (-8.1 at 20y) is 11x under that horizon's floor while 12y and
+  #   8y come back POSITIVE. It is kept anyway, for two reasons that are not "the number was close".
+  #   ONE: the rank-1 column is BYTE-IDENTICAL at all three horizons. Not "held" — identical to the
+  #   printed digit, twice over, mean and median. A term with zero rank-1 authority cannot be graded by a
+  #   test whose verdict IS rank-1; the run did not find the term worthless, it found the instrument
+  #   blind to it. (#60)'s symmetry rule applies unchanged: under-floor means UNRESOLVED, not disproved,
+  #   and that cuts against deleting exactly as hard as it cuts against shipping.
+  #   TWO: after (#61) zeroed the on-sale half, this weight is the LAST live consumer of the Portuguese
+  #   englobamento model (tax_keep_eu / tax_keep_other / the 50% Art. 40.º-A EU exclusion). Zeroing it
+  #   would retire that model by side effect of a metric that just told us it cannot see this term. The
+  #   model's claim was never "after-tax yield predicts return" — it was "the yield shown to a human
+  #   should be the yield that human keeps", which is (#58)'s standing verdict on the per-market map and
+  #   is not a claim the backtest is entitled to refuse.
+  #   So: 0.5 stays. If it is ever revisited, the number to beat is above and the argument to beat is the
+  #   truthfulness one, not the edge one.
   onsale_dividend_weight: 0.0    # [FOIL] (#61) ON-SALE lane's own yield weight. ZEROED, and this is the
                                  #   largest single measured improvement in the file. Split from the growth
                                  #   lane for the same reason `onsale_sharpe_weight` was split from
@@ -1149,6 +1172,32 @@ buy_heuristic:
   #   `quality_reward`'s arithmetic — but never `core::quality_return`, which is where the ROE/ROA
   #   choice is actually made. That is why both pins sat still through `4975f23`. Expected, not lucky.
   quality_weight: 0.15           # LIVE + MEASURED: reward per % return-on-capital (×cap = max bonus, ~6 at 40%)
+  # (#62) GRADED AT ZERO AND KEPT — and the interesting part is WHY the grade is thin and always will be.
+  #   This term reads Δ+0.0 in every price-only run: `backtest_quote` fills no fundamentals, so the
+  #   ablation row is measuring nothing and three of the four wide horizons are structurally blind to it.
+  #   The ONLY run that can see it is `12 universe fund`, so that is the run, quality_weight 0.15 -> 0.0,
+  #   n=655 growth windows in both (admission unmoved):
+  #     dial        shipped 0.15                  arm 0.00
+  #     rho         +0.15                         +0.14
+  #     edge        +161.9                        +154.6      (Δ-7.3, vs that run's 37.3 null floor)
+  #     90% band    [+103.6 … +234.8]             [+103.2 … +224.9]
+  #     OOS         +0.08 | +0.15                 +0.08 | +0.15   (identical)
+  #     rank-1      +6.3|+7.2, win 76% of 54      +6.2|+7.2, win 76% of 54
+  #     h2h         17/29 (59%)                   17/29 (59%)     (identical)
+  #   Reproduces the ablation row's -7.3 to the decimal, 5x under the floor, with the rank-1 MEDIAN, the
+  #   win rate and the h2h all identical. On its own that reads like the smoothness result — free to
+  #   remove — and the on-sale half agrees even harder: in the pre-(#61) fund baseline, ablating quality
+  #   LIFTS the on-sale lane +28.1 (edge -93.1 -> -65.0), i.e. it was ranking that lane backwards too.
+  #   IT IS KEPT ANYWAY BECAUSE ONE HORIZON IS NOT THREE, and one horizon is all this term can ever have.
+  #   The 20y fund table is structurally EMPTY (SEC XBRL starts 2007; 20y cutoffs end 2006) and the 8y
+  #   fund run was not made. The deletion rule was written as "holds at all three horizons" precisely so
+  #   that a single lane-edge reading could not move a live term, and `quality_weight` is live on real
+  #   fundamentals in every `screen` the operator runs — a population this backtest never sees.
+  #   THE MISSING RUN, if anyone wants to settle it: `8 universe fund` for a second growth horizon, and a
+  #   post-(#61) `12 universe fund` for the on-sale half, which is currently CONFOUNDED — the +28.1 above
+  #   was measured before the dividend split, and the arm's own on-sale lane came back byte-identical to
+  #   the price-only run (+85.7 / net +85.6 / [+50.6 … +126.7]) because quality was on-sale's only
+  #   fundamental consumer, so zeroing it collapses that lane onto the fund-less one exactly.
   quality_cap: 40.0              # LIVE: cap the ROE % fed in (a buyback-levered 200% ROE doesn't dominate)
   # (#42) "why does Apple print n/m as ROE" — asked 2026-07-27. The answer was a display rule reading the
   #   WRONG AXIS, and chasing it found the score doing the same thing. Two thresholds existed for one
@@ -1531,11 +1580,86 @@ buy_heuristic:
                                  #   spread — recent 1Y-vs-CAGR pop is the noisiest, most mean-reverting growth signal at 5y
                                  #   (hot-streak chasing). 0.2 lifts wide 5y edge +43.7->+50.5 / 3y +24.3->+28.5.
   growth_accel_cap: 50.0         # SCORE: cap that 1Y-minus-CAGR acceleration term
-  growth_smoothness_weight: 5.0  # (E) SCORE: reward per unit of trend_r2 (R² of the log-price trend fit, 0..1) — pays the
+  growth_smoothness_weight: 0.0  # (E) SCORE: reward per unit of trend_r2 (R² of the log-price trend fit, 0..1) — pays the
                                  #   straight-line compounder over the equal-CAGR rollercoaster. Reconstructed in backtest_quote,
                                  #   so validated END-TO-END (not backtest-blind): 2/5/10/20 sweep gave Δedge +5.4/+13.2/+10.3/-38.0
                                  #   same-batch, rho intact at +0.13 — clean hump, knee at 5. A 6M-momentum twin swept in the same
                                  #   run was null at every weight and was NOT wired. 0 = off.
+  # (#62) ZEROED 2026-08-10, on the first measurement this term has ever had AT ZERO. Read the sweep
+  #   above once more: it is 2/5/10/20. The knee at 5 is a local optimum AMONG NONZERO WEIGHTS — that
+  #   sweep asked how heavy the term should be and never asked whether it should exist, and the answer
+  #   to the second question is not contained in the answer to the first.
+  #   THE ARM — `backtest {20,12,8} universe` on 4997 tickers, this knob the only thing changed, run on
+  #   the post-(#61) binary so the on-sale split is not moving underneath it. Growth `windows scored`
+  #   came back identical at 481/668/852 in all three pairs, so admission did not shift:
+  #     horizon   lane edge          rank-1 mean|med          win%     h2h vs 11-20 book        null floor
+  #     20y       +459.5 -> +418.1   +6.2|+6.4 -> +6.4|+6.4   87 ->90  16/21 -> 14/21 (76->67%)      93.3
+  #     12y       +132.0 -> +125.5   +5.8|+7.2 -> +6.5|+7.8   74 ->76  17/30 -> 18/30 (57->60%)      15.4
+  #      8y        +59.3 ->  +45.2   +7.2|+8.2 -> +7.4|+8.2   76 ->74  24/38 -> 22/38 (63->58%)      16.0
+  #   Every lane-edge cost (-41.4 / -6.5 / -14.1) sits UNDER its own horizon's (#60) null floor — under
+  #   what deleting an information-free CONSTANT costs at that horizon — so the edge column carries no
+  #   information here and does not vote. What votes is the book, and the book gets BETTER: rank-1 mean
+  #   rises at all three horizons, the median rises at 12y and holds at 20y and 8y, win% rises at two of
+  #   three, and every h2h move is ±2 windows out of 21/30/38.
+  #   THE ONE COLUMN THAT ARGUES THE OTHER WAY, recorded here because a receipt that logged only the
+  #   favourable half would be worthless — the TOP-3 held book, which is also what ci.yml's collapse gate
+  #   grades, moves DOWN at all three horizons while rank-1 moves up:
+  #     horizon   top-3 excess mean|med          win%        worst
+  #     20y       +6.5|+6.6 -> +6.4|+6.6         97% -> 97%  -0.5 -> -0.5
+  #     12y       +7.3|+7.8 -> +7.0|+6.9         87% -> 87%  -7.8 -> -7.8
+  #      8y       +8.1|+8.5 -> +7.9|+8.4         82% -> 82%  -9.2 -> -9.2
+  #   -0.1 / -0.3 / -0.2 on the mean, inside the rule's own ~0.3 pts/yr tolerance, and the win rate and
+  #   the worst drawdown are BYTE-IDENTICAL at all three — the book's risk shape did not move at all. The
+  #   single excursion is the 12y median at -0.9. So the honest summary is not "strictly better": it is
+  #   sharper at rank 1 and a hair flatter across the top 3, bought for a lane-edge cost that is under
+  #   the noise floor. If this is ever reverted, that -0.9 is the number to revert on.
+  #   THIS IS THE SECOND R² TERM TO LOSE HERE. The old R²-steadiness DAMP was deleted on the same kind of
+  #   evidence — see sharpe_weight's block below, "disabling it had nearly DOUBLED wide 5y edge
+  #   +50.5->+95.6" — and picks.rs (#1) recorded the mechanism: "R2 docks exactly the parabolic
+  #   compounders this lane exists to surface". This knob is that damp's MIRROR IMAGE: same input, sign
+  #   flipped, paying the straight line instead of docking the lumpy one. It loses for the same reason.
+  #   A lane whose entire thesis is the parabolic compounder should not be pricing path shape in either
+  #   direction, and it now prices it in neither.
+  #   WHAT THIS OWES sharpe_weight, and do not skip this. sharpe_weight was cut 0.15 -> 0.05 on 2026-07-04
+  #   EXPLICITLY BECAUSE this term had just shipped ("trend_r2 carries the same calm-compounder signal,
+  #   so Sharpe's marginal value shrank"). That justification is now gone, and the 0.05/0/0.10-vs-0.15
+  #   sweep that set the value was run WITH smoothness at 5.0 and has never been repeated without it.
+  #   Re-sweeping sharpe_weight is the obvious next run. It is an ADDITION and so owes the addition ship
+  #   rule (rank-1 must RISE, not merely hold), which is why it is NOT being done on this receipt.
+  #   THE GOLDENS MOVED AND THE FIXTURE LOOKS WORSE — read this before reacting to that diff. The 12y
+  #   fixture growth edge goes +66.7 -> -5.5 and its net turns "too churny to trade". That is NOT a second
+  #   opinion contradicting the wide runs above; it is the SAME measurement the old golden already
+  #   printed. Each new headline reproduces, BIT-IDENTICALLY, the row the previous golden carried for
+  #   exactly this change:
+  #     20y  old ablation `growth_smoothness_weight rho +0.25  edge -39.8`  ->  new headline rho +0.25  edge -39.8
+  #     12y  old ablation `growth_smoothness_weight rho +0.13  edge  -5.5`  ->  new headline rho +0.13  edge  -5.5
+  #      8y  old ablation `growth_smoothness_weight rho +0.15  edge -54.3`  ->  new headline rho +0.15  edge -54.3
+  #   and the knob's own ablation row now reads Δ+0.00, as it must once the knob is already zero. The
+  #   ON-SALE lane is byte-identical in all four full reports. One knob moved, nothing else did.
+  #   WHY THE FIXTURE NUMBER IS NOT THE GRADE: (#59) proved that in THIS fixture `growth_smoothness_weight`
+  #   was indistinguishable from a constant — its Δ tied the `null: base −4.3` row to the tenth of a point
+  #   at 20y AND 12y (-261.8 / -72.2), because 5.0 × trend_r2 ≈ 4.33 and trend_r2 barely varies across 80
+  #   hand-picked large caps. Removing a constant from `base` rescales everything `base` is multiplied by
+  #   (trust × overext × proximity × value), which is why the headline moved. Across 4997 real tickers
+  #   trend_r2 is NOT near-constant, the term is not a constant, and the wide table above is the grade.
+  #   WHAT THE FIXTURE GAINED, which the same diff shows: its null floor COLLAPSED 72.2 -> 7.6 at 12y and
+  #   261.8 -> 43.9 at 20y, so every remaining term is now measured against a 9.5x / 6.0x quieter ruler.
+  #   `overext_brake` — (#60)'s sole surviving carrier of rho — goes from 1.4x its floor to 2.6x at 12y and
+  #   2.1x to 5.8x at 20y. And `12 tune`, the only honestly out-of-sample instrument in the fixture (889
+  #   train / 382 test cutoffs, 500 draws), IMPROVED: shipped-default TEST rho +0.26 -> +0.31 at an edge
+  #   unchanged at +144.5, while the overfit search winner collapsed +115.3 -> -48.1, so "SHIP NOTHING"
+  #   now wins by 192.6 points instead of 29.2.
+  #   A LEAD THIS OPENED, not acted on: with the pseudo-constant gone, the `growth_trend_weight` curve
+  #   stops being a monotone ramp and grows a knee — 0.35/0.45 +90.2, 0.55 +108.8, then DOWN to +67.9 at
+  #   0.70 and +63.5 at 1.00, against +5.5 at the shipped 0.15. That is a weight_curve row on n=80 with a
+  #   band straddling 0: it prints no rank-1 and no h2h, so it CANNOT settle a ship rule and is a lead for
+  #   a wide run, not a licence to move the knob.
+  #   THE FIELD STAYS WIRED, deliberately. config.rs already defaults it to 0.0, so this line was the only
+  #   thing switching it on anywhere and one value is the entire revert. The sweep's hump is still true of
+  #   nonzero weights: an operator who wants a calm-path tilt back should set 5, not 2 and not 20.
+  #   THE CI COLLAPSE GATE STAYS GREEN with margin — checked against ci.yml's own three conditions on the
+  #   live universe before shipping: GROWTH edge +418.1/+125.5/+45.2 (>0), top-3 excess +6.4/+7.0/+7.9
+  #   (>0), and BOTH out-of-sample halves positive at every horizon (+0.12|+0.17, +0.05|+0.17, +0.13|+0.13).
   growth_underwater_weight: 0.3  # SCORE: additive penalty per year of the LONGEST below-prior-peak stretch
                                  #   (drawdown DURATION; the maxdd cap #26 only sees depth). MONTHLY-BLIND
                                  #   (#3k) 2026-07-29: underwater_yrs is /252-session-based so core.rs keeps
@@ -2811,6 +2935,12 @@ buy_heuristic:
                                  #   edge +148.0/+147.0/+145.8 vs +137.2 at 0.15 (same batch, rho +0.13 flat). 0.05 = measured max;
                                  #   kept NON-zero deliberately: the ETF lane (absent from backtest) leans on the Sharpe leg for its
                                  #   risk reward and the sharpe_cap_etf fix, so zeroing would be an unmeasured live ETF regression. 0 = off
+                                 #   (#62) THE 0.15 -> 0.05 CUT'S PREMISE IS NOW STALE, so do not read 0.05 as a settled optimum:
+                                 #   the re-sweep above cut this weight because `growth_smoothness_weight` "carries the same
+                                 #   calm-compounder signal", and that knob was ZEROED on 2026-08-10 (see its block). The whole
+                                 #   0.05/0/0.10-vs-0.15 plateau was measured with smoothness at 5.0 and has never been repeated
+                                 #   without it. Re-sweeping this is the obvious next run; it is an ADDITION, so it owes the
+                                 #   addition ship rule (rank-1 must RISE, not merely hold), and 0.05 stands until it clears that.
   onsale_sharpe_weight: 0.0      # [FOIL] (B) ON-SALE lane's own Sharpe weight, split from growth because the shared knob conflicted:
                                  #   ablation showed growth wants 0.15 but on-sale wants 0 — zeroing it lifts the on-sale 12y edge
                                  #   +39.2->+62.9 (Δ+23.7) while growth keeps 0.15. 0 = off (the swept on-sale optimum)

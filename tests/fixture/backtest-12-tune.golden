@@ -1,17 +1,17 @@
 
 ══ TUNE — growth lane, honest out-of-sample (889 train / 382 test cutoffs, 500 draws) ══
-  shipped default      TEST: rho +0.26  edge +144.5  terciles -229.2/-280.1/-436.5 monotone
+  shipped default      TEST: rho +0.31  edge +144.5  terciles -244.3/-268.1/-436.5 monotone
   inert on this sample (skipped, kept at default): growth_fund_weight
-  search winner       TRAIN: rho +0.41  edge +177.9
-  search winner        TEST: rho +0.14  edge +115.3  terciles -229.2/-400.6/-285.9 SCRAMBLED   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
+  search winner       TRAIN: rho +0.38  edge +183.6
+  search winner        TEST: rho -0.12  edge -48.1  terciles -380.3/-279.7/-285.9 SCRAMBLED   (train ≫ test ⇒ overfit; SCRAMBLED terciles ⇒ edge rests on extremes only)
   weights (searched dims only):
-    growth_trend_weight    0.696
-    long_trend_cap         16.946
-    growth_accel_weight    0.741
-    growth_accel_cap       53.619
-    sharpe_weight          3.174
-    calmar_weight          0.244
-    growth_overext_floor   0.060
-    growth_mom121_weight   0.033
-  -> winner does NOT beat the default on the held-out TEST edge (+115.3 vs +144.5); the shipped knobs already generalise. SHIP NOTHING.
+    growth_trend_weight    0.419
+    long_trend_cap         58.546
+    growth_accel_weight    0.160
+    growth_accel_cap       27.896
+    sharpe_weight          3.820
+    calmar_weight          0.293
+    growth_overext_floor   0.065
+    growth_mom121_weight   0.053
+  -> winner does NOT beat the default on the held-out TEST edge (-48.1 vs +144.5); the shipped knobs already generalise. SHIP NOTHING.
 backtest: 200 tickers, WALK-FORWARD scoring every ~6mo with a 12y forward holdout each (MAX monthly history)…
