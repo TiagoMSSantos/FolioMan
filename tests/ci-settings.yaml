@@ -2659,6 +2659,53 @@ buy_heuristic:
                                  #   table goes EMPTY, because it is the only row in it. That is the accepted, known cost of this
                                  #   ship and not a surprise to diagnose later; the 7.7% empty-slot rate above is the same fact
                                  #   measured historically. Do not raise the ceiling to keep one name — re-run the nine.
+                                 # (#65) THE HALF-LIFE DISSENT ABOVE IS CLOSED, AND IT WAS WRONG. The receipt above named the
+                                 #   fixture's long-hold collapse as the first thing to test: 3y +22.0 -> -0.1, 8y -10.3 -> -107.3,
+                                 #   10y -43.3 -> -168.3 when this gate went on. Tested 2026-08-10 on 4997 tickers, and it does not
+                                 #   reproduce. Four runs, `backtest 12 universe halflife` at {this config, gate off} x {plain,
+                                 #   stress}. `wide` and `halflife` have always been independent flags and nobody had ever combined
+                                 #   them; `years` reaches that path only through `monthly = long || years >= 8` and HOLDS is a
+                                 #   const, so 8/12/20 are byte-identical there and one run per arm is the whole experiment.
+                                 #   FIRST, THE INSTRUMENT WAS UNREADABLE AND NOW IS NOT. The sweep printed edge/turnover/net and
+                                 #   no floor at all, which under (#60) means none of its numbers could be sized. It now prints the
+                                 #   same (#59) null per hold. That mattered more than expected here, because a gate changes the
+                                 #   scored POOL, so the two arms are not measuring the same names and each needs its own ruler.
+                                 #   net edge, and each arm's own null, per hold:
+                                 #     hold    ship edge | null      gate-off edge | null      ship exc   off exc     Δ
+                                 #      1y        +4.2 | +2.9            +3.8 | +2.3              +1.3      +1.5    -0.2
+                                 #      2y        -0.7 | -2.4            -0.8 | -2.4              +1.7      +1.6    +0.1
+                                 #      3y        -3.1 | -4.6            -1.9 | -4.7              +1.5      +2.8    -1.3
+                                 #      5y       +28.9 | +21.8          +28.3 | +18.6             +7.1      +9.7    -2.6
+                                 #      8y       +41.3 | +26.8          +56.9 | +48.2            +14.5      +8.7    +5.8
+                                 #     10y       +69.0 | +58.6          +90.4 | +73.4            +10.4     +17.0    -6.6
+                                 #   READ THE RAW GAP AGAINST THE NULL GAP, WHICH IS THE WHOLE POINT OF ADDING THE COLUMN. At 8y
+                                 #   the gate's edge is 15.6 below gate-off — but the information-free constant's edge is 21.4
+                                 #   below it on the same two pools. The score fell LESS than a constant did, so at 8y the gate is
+                                 #   ahead once the pool change is priced out. At 10y the raw gap is 21.4 against a null gap of
+                                 #   14.8, leaving a genuine residual of -6.6. Those two residuals have OPPOSITE SIGNS on adjacent
+                                 #   hold lengths, and both are an order of magnitude under their own floors (27 to 73). Under
+                                 #   (#60) that is unresolved, not a finding. The fixture's version was ~3x its own floor (-97.0
+                                 #   and -125.0 against 39.0/41.2), which is why it looked real at n=86 and n=73.
+                                 #   THE STRESS ARMS REPLICATE IT TO 0.1 pts (+5.7 at 8y, -6.5 at 10y), so this is not sampling
+                                 #   noise in the usual sense — it is a stable feature of two different pools that happens to carry
+                                 #   no consistent direction. Survivorship was the hypothesis this round was built to test and it
+                                 #   is not the explanation either way: injecting the 27 losers moves every number by under a point.
+                                 #   THE FIXTURE HAD THE SIGN OF THE WHOLE PHENOMENON WRONG, which is the part worth remembering.
+                                 #   It reported long holds as the WORST and deeply negative (net -107.4 and -168.4). Wide, net edge
+                                 #   rises MONOTONICALLY with hold length in all four arms — +4.1/+28.7/+41.1/+68.9 here, and
+                                 #   +3.6/+28.2/+56.7/+90.2 with the gate off — and 10y is the best hold by a wide margin, clearing
+                                 #   its floor in every arm. The sweep's own header says to pick the highest net edge and prefer the
+                                 #   longest on a tie; wide, that answer is unambiguous and it agrees with the after-tax deferral
+                                 #   column rather than contradicting it. The two long-hold readings in this repo no longer disagree.
+                                 #   Middle holds carry nothing: 2y and 3y sit under floor in all four arms. Turnover is flat at
+                                 #   77-81% across every hold and arm, so `net` never differs from `edge` by more than 0.2 and the
+                                 #   cost correction decides nothing here.
+                                 #   INSTRUMENT CROSS-CHECK, exact and unplanned: this sweep's 8y bucket scores n=713 with the gate
+                                 #   on and n=852 with it off — the same two window counts (#64)'s `backtest 8 universe` reported for
+                                 #   the stretch arm and the control. Two unrelated code paths, agreeing to the unit on both configs.
+                                 #   NOTHING CHANGED THIS ROUND. The rule was fixed before the runs: revert only if the gate is worse
+                                 #   at BOTH ends, keep if it trades short holds for long ones, and neither fired — there is no
+                                 #   above-floor long-hold gap to trade against. 150 stands on (#64)'s evidence, undisturbed.
   growth_maxdd_cap: 84.0         # (#26) reject equities whose worst-EVER peak-to-trough loss exceeds 83% (magnitude; crypto
                                  #   exempt — BTC itself is -83%). A >83% wipeout survivor is a lottery ticket, not a compounder.
                                  #   Same-batch pair 2026-07-03: off +119.5 (wins +91.5, OOS +0.13|+0.08) / on +128.4 (wins

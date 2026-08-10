@@ -1347,8 +1347,26 @@ async fn hold_period_sweep(
         }
     }
 
+    // (#65) NULL CALIBRATION, the same construction and the same 4.325 as the ablation table's row —
+    // see the long (#59) note there for why a CONSTANT inside `base` is not a no-op. Without it these
+    // rows cannot be read: (#60) fixed the rule that a Δ no larger than this carries size, not signal,
+    // and this sweep is the one report that shipped with no ruler at all. It matters most across
+    // CONFIGS, because a gate change moves the scored POOL, so each arm has to be read against its own
+    // floor rather than against the other arm.
+    let null_tuning = {
+        let mut t = tuning.clone();
+        t.growth_fund_extra.push(crate::config::FundTerm {
+            factor: "__null__".into(),
+            weight: -1.0,
+            cap: 100.0,
+            neutral: 4.325,
+        });
+        t
+    };
+
     println!("\n── HOLD-PERIOD SWEEP (growth lane, net of cost) ──");
     println!("  pick the hold with the highest NET edge; if they're flat, the longest (cheapest) wins.");
+    println!("  `null` is the information-free floor for THAT hold — an edge no bigger is not a signal.");
     for (slot, &h) in HOLDS.iter().enumerate() {
         // own bucket (de-mean is per-window: a 1y and a 5y forward over the same cutoff aren't comparable)
         let mut s: Vec<Sample> = std::mem::take(&mut by_hold[slot]);
@@ -1368,7 +1386,16 @@ async fn hold_period_sweep(
         let edge = t - b;
         let turn = turnover_frac(&scored);
         let net = edge - turn * ROUND_TRIP_BPS / 100.0;
-        println!("  {h}y hold  edge {edge:+.1}  turnover {:.0}%  net {net:+.1} pts", turn * 100.0);
+        // same samples, same halves, only the score changes — so this reads as edge, in the same units
+        let null_scored: Vec<(&Sample, f64)> =
+            s.iter().filter_map(|x| growth_score(&x.quote, &null_tuning).map(|v| (x, v))).collect();
+        let (nt, nb) = edge_halves(&null_scored);
+        println!(
+            "  {h}y hold  edge {edge:+.1}  turnover {:.0}%  net {net:+.1} pts   null {:+.1}  n={}",
+            turn * 100.0,
+            nt - nb,
+            scored.len()
+        );
     }
 }
 
