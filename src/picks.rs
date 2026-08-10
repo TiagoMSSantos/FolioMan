@@ -2022,10 +2022,13 @@ fn ranked<'a>(
     // — score-equal names are otherwise ordered by ticker, which buried a deep-liquid compounder (NVDA,
     // €32B) under a tiny-turnover twin (AMETEK, €244M) at the top-50 cutoff. Tie-break is edge-neutral
     // (the backtest scores are unchanged; only the arbitrary intra-tie order moves).
+    // (#66) `total_cmp`, not `partial_cmp().unwrap()`: `unwrap_or` supplies a value for None and says
+    // nothing about NaN, so a single NaN score or turnover took the whole screen down with it. Ordering
+    // is unchanged on every finite input — the only difference is -0.0 sorting below +0.0 instead of
+    // tying — which is why the goldens stay bit-identical across this swap.
     picks.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap()
-            .then(b.0.avg_turnover_eur.unwrap_or(0.0).partial_cmp(&a.0.avg_turnover_eur.unwrap_or(0.0)).unwrap())
+        b.1.total_cmp(&a.1)
+            .then(b.0.avg_turnover_eur.unwrap_or(0.0).total_cmp(&a.0.avg_turnover_eur.unwrap_or(0.0)))
     });
     // (B) collapse dual-class share twins (GOOG/GOOGL, BRK.A/BRK.B): same company = identical Yahoo
     // name; after the best-first sort, keep the first (higher-scoring/more-liquid) leg, drop the rest.
@@ -2803,8 +2806,8 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
         core::hold_breadth_tier(&a.name)
             .cmp(&core::hold_breadth_tier(&b.name))
             .then(dom_rank(a).cmp(&dom_rank(b)))
-            .then(a.ter_shown().unwrap_or(9.9).partial_cmp(&b.ter_shown().unwrap_or(9.9)).unwrap())
-            .then(b.aum_shown().unwrap_or(0.0).partial_cmp(&a.aum_shown().unwrap_or(0.0)).unwrap())
+            .then(a.ter_shown().unwrap_or(9.9).total_cmp(&b.ter_shown().unwrap_or(9.9)))
+            .then(b.aum_shown().unwrap_or(0.0).total_cmp(&a.aum_shown().unwrap_or(0.0)))
     });
     let mut seen: HashSet<&str> = HashSet::new();
     cores.retain(|q| seen.insert(q.name.as_str())); // one row per fund (VUAA.DE vs VUAA.L), best-ranked kept
@@ -2812,11 +2815,18 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // out the S&P 500 and all-world cores. Sort is breadth-major, so a per-tier counter suffices.
     // Sized from core::HOLD_TIERS, NOT a literal: this was `[0u8; 3]` indexed by tier, so adding a
     // fourth tier panicked on index-out-of-bounds instead of merely mis-printing.
-    let mut per_tier = [0u8; core::HOLD_TIERS];
+    // (#66) …and the ELEMENT type was the same bug a second time, on the same line. The counter is
+    // incremented once per distinct fund NAME in a tier and was a `u8`, so the 256th name in one tier
+    // wrapped it to 0 and the tier silently admitted three more rows. The two profiles disagree about
+    // what that means, which is why no test could have caught it: `[profile.mutants]` inherits `dev`
+    // and has overflow-checks ON, so `cargo t` would have panicked — while `[profile.release]`, the
+    // binary that actually runs the daily screen, sets only opt-level and lto, leaving them OFF to wrap
+    // in silence. A `usize` counter cannot reach either outcome and costs nothing.
+    let mut per_tier = [0usize; core::HOLD_TIERS];
     cores.retain(|q| {
         let t = core::hold_breadth_tier(&q.name) as usize;
         per_tier[t] += 1;
-        per_tier[t] <= HOLD_PER_TIER as u8
+        per_tier[t] <= HOLD_PER_TIER
     });
     cores
 }
@@ -5265,6 +5275,40 @@ mod tests {
         let no_world: Vec<Quote> =
             quotes.iter().filter(|q| core::hold_breadth_tier(&q.name) != 0).cloned().collect();
         print_hold_core(&no_world, 9, &HashSet::new(), &Owned::default());
+    }
+
+    /// (#66) The per-tier counter must survive more names in one tier than a `u8` can hold. It was
+    /// `[0u8; HOLD_TIERS]`, incremented once per distinct fund NAME, so the 256th name in a tier wrapped
+    /// it back to 0 and the tier silently admitted three more rows. 300 distinct S&P 500 names is the
+    /// smallest input that crosses the boundary; the cap must still read exactly HOLD_PER_TIER.
+    ///
+    /// This pin is the ONLY cover for that arithmetic, because the two profiles disagree about it: under
+    /// `cargo t` (mutants profile, inherits dev) overflow-checks are on and the pre-fix line PANICS here,
+    /// while `--release` leaves them off and would have wrapped in silence with no test able to see it.
+    #[test]
+    fn hold_core_tier_cap_survives_more_than_255_names_in_one_tier() {
+        let quotes: Vec<Quote> = (0..300)
+            .map(|i| core_etf(&format!("S{i:03}.DE"), &format!("Issuer{i:03} S&P 500 UCITS ETF"), 1e9, 0.10))
+            .collect();
+        let cores = hold_core_list(&quotes);
+        assert_eq!(cores.len(), HOLD_PER_TIER, "one tier, 300 distinct names -> the cap, not a wrapped counter");
+    }
+
+    /// (#66) A NaN sort key must order rather than take the screen down. `unwrap_or` supplies a value
+    /// for None and says nothing about NaN, so `partial_cmp(..).unwrap()` on the turnover tie-break
+    /// panicked on any quote carrying one. The scorer here is constant, which forces every pair past the
+    /// score comparator and onto the tie-break — the exact leg that used to panic.
+    #[test]
+    fn nan_tie_break_key_orders_instead_of_panicking() {
+        let mut quotes = vec![
+            core_etf("AAA.DE", "Alpha FTSE All-World UCITS ETF", 1e9, 0.10),
+            core_etf("BBB.DE", "Beta FTSE All-World UCITS ETF", 1e9, 0.10),
+        ];
+        for q in &mut quotes {
+            q.avg_turnover_eur = Some(f64::NAN);
+        }
+        let out = ranked(&quotes, &BuyHeuristic::default(), |_, _| Some(1.0), 0.0, &HashSet::new());
+        assert_eq!(out.len(), 2, "a NaN tie-break key must order, not panic");
     }
 
     /// (QA) `col_cell` VALUE arms the `screen_columns_config` test leaves at n/a (it uses a bare stub):
