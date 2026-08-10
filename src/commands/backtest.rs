@@ -952,6 +952,41 @@ pub async fn run(args: Vec<String>) {
             neutral: 4.325,
         });
     }));
+    // (#60) THE WIDE FLOORS, measured 2026-08-09 on `backtest {20,12,8} universe` plus one `12 universe fund`,
+    // pinned to tests/ci-settings.yaml, ~4997 tickers. The row above is only a ruler once you know how long it
+    // is, and it is a DIFFERENT length at every horizon:
+    //
+    //   horizon    growth n   null Δedge   lane edge   90% band
+    //   20y        481        -93.3        +459.5      [+207.4 … +700.1]  clears 0
+    //   12y        668        -15.4        +132.0      [ +90.1 … +198.5]  clears 0
+    //   8y         852        -16.0         +59.3      [ +24.6 …  +84.7]  clears 0
+    //   12y fund   655        -37.3        +161.9      [+103.6 … +234.8]  clears 0
+    //
+    // TWO RESULTS THAT VALIDATE THE INSTRUMENT ITSELF. (a) `null` and `fund_extra:roic` print BIT-IDENTICAL Δs
+    // on all three fund-less horizons at n=481/668/852 — the equality the comment above predicts, now confirmed
+    // far off the fixture. (b) Under `fund` they finally SEPARATE: roic Δ-36.4 against null Δ-37.3. That 0.9 pts
+    // is the entire informational content of roic on real data, exactly where the prediction above put it.
+    //
+    // WHAT THE FLOORS SAY. Read every wide ablation against its OWN horizon's null and one term survives
+    // everywhere: `overext_brake`, at 3.4-5.5x the floor (Δ-419.4/-85.1/-54.9) and the only row that moves rho
+    // (Δ-0.18/-0.13/-0.19 — strip the brake and rho collapses to ~0, so the brake IS the ranking). Everything
+    // else sits at or under an information-free constant at every horizon: trend -103.6/+0.8/-14.3, accel
+    // +46.3/-28.1/-0.1, smoothness -41.4/-6.4/-14.1, trust ladder -65.8/+3.9/-0.3, proximity -30.7/+22.4/+6.0,
+    // dividend -8.1/+3.2/+4.3, sharpe +3.0/-4.3/-0.0. Six rows are bit-zero BY CONSTRUCTION, not by failure:
+    // calmar and mom121 ship at 0.0, underwater is daily-cadence-gated in core.rs, and quality/fund only wake
+    // under `fund` (Δ-7.3/+3.7 there, both far under that run's 37.3 floor).
+    //
+    // WHAT IT DOES NOT LICENCE, which matters more than what it does. A floor is a LANE-EDGE test, and this
+    // repo's own receipts establish twice over that lane edge cannot SHIP a growth knob — growth_trend_weight
+    // and growth_proximity_weight both demand a rank-1/head-to-head move and both refused a lane-edge case.
+    // The symmetry is binding: evidence too weak to ship a term is too weak to KILL one, so "under the floor"
+    // is NOT a deletion warrant. It says how much of the score's MAGNITUDE a term owns and nothing more;
+    // everything under it is unresolved here, not disproved.
+    //
+    // AND THE FIXTURE CANNOT STAND IN FOR THIS. At n=80 the 12y fixture band is [-40.6 … +175.1], straddling 0,
+    // with OOS decaying +0.35 -> +0.06; wide at n=668 the same lane reads [+90.1 … +198.5] and OOS IMPROVING
+    // +0.09 -> +0.17. The cheap harness calls the growth lane noise because it cannot resolve it. Grade growth
+    // changes on `universe`, and read the goldens for what they are: a pin on the arithmetic, not a verdict.
     // (#10) loosen each numeric growth GATE one notch, relative to the loaded tuning (respects settings.yaml
     // overrides). The sweep reports the mean forward return of the names each loosening newly admits.
     let gate_loosen: Vec<Knob> = vec![

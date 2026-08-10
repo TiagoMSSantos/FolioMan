@@ -2290,6 +2290,17 @@ buy_heuristic:
                                  #   +98.3, OOS +0.14|+0.11 — BOTH halves up); the n=171 names it excludes average -16.5 pts
                                  #   fwd vs peers. Second gate-beats-damp case (after #24): Calmar as a continuous damp was
                                  #   measured harmful, yet the hard tail cut pays — damp-verdicts don't transfer to gates.
+                                 #   (#60) FLAGGED "TOO TIGHT" AT TWO HORIZONS AND REFUSED, 2026-08-09, `{20,12,8} universe`
+                                 #   on ~4997 tickers. The gate sweep's own flag fires at 12y (n=34, newly-admitted fwd
+                                 #   peer-relative mean +125.9 | med +62.3) and at 8y (n=57, +324.2 | +7.0) — both mean AND
+                                 #   median positive, which is the sweep's bar for "loosen this". At the 20y king the SAME
+                                 #   loosening admits n=10 that run mean -1079.5 | med -983.9. That is not a narrow
+                                 #   disagreement to be split, it is a sign flip of ~1000 pts, and it is the horizon this
+                                 #   gate exists for: over 20 years a >84% wipeout marks a broken company, over 8 it can
+                                 #   mark a recovery. SHIP RULE v2 TIE arm — nothing ships, 84.0 stands. Recorded because
+                                 #   the flag WILL fire again on any 12y or 8y sweep and reads like a free win on its own.
+                                 #   TO REOPEN: an ETF/equity-split bar, or 20y evidence that the n=10 tail is survivorship
+                                 #   rather than signal. Do not act on a short-horizon flag alone.
                                  #   0 = off.
   growth_maxdd_cap_crypto: 84.0  # (#26) crypto's own maxdd bar = "reject coins that wiped out WORSE than Bitcoin" (BTC -83%,
                                  #   so 84 keeps BTC and cuts the deeper-wipeout alts: ZEC -98, TRX -96, XMR -93, XRP -96,
