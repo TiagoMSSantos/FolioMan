@@ -321,6 +321,40 @@ buy_heuristic:
                                  #   cutoff, so 2008/2020/2022 crash months ARE scored. The gate was measured over exactly the
                                  #   months it exists for and earned its keep there. An overlay running -1e6 pays rank-1 for it.
                                  #   Live 2026-08-02 the knife is binding, in the near-miss list: VRT -23.4% vs the -20.0 floor.
+                                 # (#64) THE SHIPPED VALUE IS -1e6 AND THIS BLOCK ARGUES FOR -20. That contradiction is real,
+                                 #   it is seven days old, and this receipt resolves it as "unresolved", which is the honest
+                                 #   answer. `d58db7a` (2026-08-03) set -20.0 -> -1000000.0 BY HAND in a commit about wiring a 2Y
+                                 #   CAGR rung, and flagged it in its own message as ungraded. The gate sweep could not catch it
+                                 #   because the sweep only LOOSENS, and this was a loosening. No test caught it because
+                                 #   `shipped_config_pin` did not cover it. It does now, pinned at the shipped -1e6 with this
+                                 #   receipt named, so the next person to move it has to argue with these numbers first.
+                                 #   RE-MEASURED 2026-08-10 as one arm of the nine wide runs described at `growth_max_above_ma`,
+                                 #   under the rule fixed before any run: PRIMARY is the EXCLUDED cohort, which must be negative on
+                                 #   BOTH mean and median to justify excluding it; GUARD is that rank-1 MEDIAN at the 20y king must
+                                 #   not fall. Restoring -20 PASSES THE GUARD and FAILS THE PRIMARY.
+                                 #     guard, rank-1 mean|MED: 20y +6.6|+7.0 -> +6.6|+7.3 with h2h 76% -> 81%; 12y +6.7|+7.8 ->
+                                 #       +6.8|+7.8 with h2h 60% -> 63%; 8y +7.6|+8.4 -> +7.3|+8.2, the one horizon that falls.
+                                 #     primary, the excluded cohort: 20y n=4 mean +118.6 | med -143.1 — SPLIT, and split the wrong
+                                 #       way at the king. 12y n=4 -98.9 | -192.6 and 8y n=4 -25.0 | -49.5 both pass. One name in
+                                 #       four is a large enough winner to carry the 20y mean on its own, which is the exact failure
+                                 #       mode the sweep's own note warns about and the reason this bar reads BOTH moments.
+                                 #   READ THE n. Four names is not a cohort, and the sweep row that prints them is the -20..-30
+                                 #   band only (the probe subtracts 10 from the shipped value), so everything below -30 — the
+                                 #   2008/2020-shaped months this gate exists for — is excluded by BOTH arms and never observed.
+                                 #   Under (#60)'s symmetry rule that makes -20 UNRESOLVED, not disproved. -1e6 stands because
+                                 #   nothing cleared the bar to move it, NOT because -1e6 was shown to be right.
+                                 #   TWO COHERENCE CHECKS, both clean, which is why the numbers above are worth anything at n=4.
+                                 #   Footprint: the knife costs exactly 5 windows at every horizon (481->476, 668->663, 852->847),
+                                 #   reproducing the "+5 windows at EVERY horizon" the 2026-08-02 solo sweep found. Sign by horizon:
+                                 #   that sweep had off worse at 20y and 12y and BETTER at 8y; this batch has the knife better at
+                                 #   20y, flat at 12y and worse at 8y — the same three signs from the opposite direction, eight days
+                                 #   and three re-fits apart. Everything else is invisible: rho +0.15 both, 20y top-3 +6.4 (+6.6)
+                                 #   identical, and every edge delta (-5.2 / +1.3 / +2.6) sits under its own null floor (185.3 /
+                                 #   56.5 / 8.7). A gate touching 1% of windows cannot move a lane aggregate, so those flats are
+                                 #   the instrument's silence, not evidence.
+                                 #   TO REOPEN: this needs an instrument that scores the below--30 tail, not another nine runs of
+                                 #   the same shape. Until then the live argument above — VRT caught at -23.4% on 2026-08-02 — is
+                                 #   the only thing on the -20 side, and it is a live eyeball, not a grade.
   max_1m_drop_pct_crypto: -35.0  # LIVE (crypto/FX): looser knife — a -20%/month alt is normal — both lanes
                                  #   UNMEASURABLE by backtest (2026-08-02) — but NOT for the reason first written here.
                                  #   CORRECTED 2026-08-02: the original text said "crypto is absent from the backtest pool".
@@ -2537,7 +2571,7 @@ buy_heuristic:
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
   growth_overext_cap: 100.0      # % above the 200wk SMA where the brake maxes out. Biting harder (100->60) cut edge +1.9->-9.5: over-penalizes good compounders that keep running above trend. Keep 100
-  growth_max_above_ma: 1000.0    # (#24) HARD gate above the brake: reject equities >150% above the 200wk SMA (crypto exempt).
+  growth_max_above_ma: 150.0     # (#24) HARD gate above the brake: reject equities >150% above the 200wk SMA (crypto exempt).
                                  #   Past the brake cap the damp saturates, so a +486% blow-off (WDC 2026-07) scored like a +100%
                                  #   name; the brake can floor it but never remove it. Same-batch triple 2026-07-03:
                                  #   off +106.6 (wins +84.1, OOS +0.11|+0.06) / 100 +106.9 (edge-flat) / 150 +115.9
@@ -2546,6 +2580,85 @@ buy_heuristic:
                                  #   names near a high BEAT the field +61/+64): an ugly PAST is fine, an extreme PRESENT
                                  #   stretch is a measured loser. 150 > brake cap on purpose — the 100..150 band stays in the
                                  #   table (marked `!`), only the blow-off tail is cut. 0 = off.
+                                 # (#64) RESTORED to 150 on 2026-08-10 after seven days switched off. `d58db7a` (2026-08-03)
+                                 #   set this to 1000.0 BY HAND, in a commit whose subject is about wiring a 2Y CAGR rung, and
+                                 #   said so in its own message: "set by hand and NOT graded by any run above ... two of the
+                                 #   three carry same-file receipts arguing the other way". This block was one of the two. The
+                                 #   repo's own instrument could not catch it: the GATE SWEEP only ever LOOSENS a knob and asks
+                                 #   what the loosening newly admits, so a knob moved in the loosening direction is the one case
+                                 #   it structurally cannot flag. Nor did any test — `shipped_config_pin` covered eight knobs and
+                                 #   not this one. Both holes are closed in the same commit; the pin is the real fix.
+                                 #   NINE wide runs, three configs x `backtest {20,12,8} universe` on 4997 tickers, this knob the
+                                 #   only thing changed (the falling-knife arm ran beside it and was refused; see max_1m_drop_pct).
+                                 #   Ship rule fixed BEFORE any run, and deliberately the mirror of the sweep's own published bar
+                                 #   ("too tight needs mean AND median positive — one survivor can carry a mean on its own"):
+                                 #   PRIMARY is the EXCLUDED cohort's forward peer-relative return, which must be negative on BOTH
+                                 #   moments to justify excluding it. GUARD is that rank-1 MEDIAN at the 20y king must not FALL —
+                                 #   not "must rise", because a gate protects the tail rather than the argmax. Lane edge, rho and
+                                 #   OOS are recorded against each arm's own null floor and never vote. A window-count drop is
+                                 #   EXPECTED here and is a result, not a discard trigger: a gate admits fewer windows by design.
+                                 #   The control reproduced the committed post-(#63) baseline to the digit at all three horizons
+                                 #   (20y n=481 edge +414.4 rank-1 +6.6|+7.0; 12y n=668 +146.4 +6.7|+7.8; 8y n=852 +56.9 +7.6|+8.4),
+                                 #   so this is one batch rather than drift.
+                                 #   PRIMARY, all six numbers negative on real n — 20y n=127 mean -786.0 | med -778.1;
+                                 #   12y n=134 -154.6 | -209.7; 8y n=140 -79.3 | -120.7. The 2026-07-03 measurement said -125.1
+                                 #   average on n=267; this reproduces the sign and the order of magnitude three separate times on
+                                 #   a pool rebuilt by (#61)'s on-sale split, (#62)'s smoothness zeroing and (#63)'s accel cut.
+                                 #   GUARD, rank-1 mean|MED: 20y +6.6|+7.0 -> +6.8|+8.0, h2h 76% -> 76%. It rises rather than
+                                 #   merely holding. 12y +6.7|+7.8 -> +6.6|+7.7 with h2h 60% -> 66%; 8y +7.6|+8.4 -> +7.6|+8.6
+                                 #   with h2h 63% -> 62%.
+                                 #   THE COSTS, recorded rather than dropped. Scored windows fall 481->355, 668->535, 852->713.
+                                 #   Three of the 39 king windows lose their rank-1 name outright (39 -> 36): 7.7% of the time this
+                                 #   gate hands back an empty top slot. The 12y rank-1 median slips -0.1 and its top-3 median drops
+                                 #   +7.4 -> +6.9. The 8y lane edge falls +56.9 -> +41.3, and that -15.6 is far ABOVE the 8y null
+                                 #   floor of 8.7, so it is a real degradation and not noise; the 8y final era flips +3.5 -> -11.0.
+                                 #   Against that, the 20y edge gain (+236.5) sits UNDER its own null floor of 290.6 and therefore
+                                 #   does NOT count as a win, and the rho gain (+0.07) only just clears the 0.06 floor. Both OOS
+                                 #   split dates moved (20y 1999-12-01 -> 2000-07-01, 8y 2005-04-01 -> 2006-08-01) because the
+                                 #   window count changed, so no OOS figure here is strictly like-for-like.
+                                 #   ONE MECHANISM WORTH THE NEXT ROUND'S ATTENTION: at 8y the `overext_brake` ablation Δ collapses
+                                 #   from -35.5 to -5.6. The hard gate is now doing the work the soft brake was doing — they price
+                                 #   the same stretch — so shipping this partly SUBSTITUTES for the one term that clears its null
+                                 #   floor on both columns at all three horizons. Read `growth_overext_cap` in that light.
+                                 #   LIVE A/B 2026-08-10, both runs against the same restored `.screen_state.json`: every shown row
+                                 #   is identical. NVDA holds rank 1 at score 5.6 in both, the ETF lane keeps IITU.L/SMH.L/SEMI.AS/
+                                 #   XLKS.L in order, BNB and BTC do not move; the only deltas are price drift between two runs
+                                 #   minutes apart. The gate funnel gains one row reading `stretch 20 / 0` stocks, `0 / 0` ETFs,
+                                 #   `0 / 0` crypto — equity-only, exactly as the line above claims, which is why SMH.L survives at
+                                 #   +183% above its own 200wk SMA. Named rejects: VRT +163%, LRCX +183%, FIX +221%, DELL +306%,
+                                 #   LITE +368%, MU +392% — every one of them ALSO fails `peg` today, so on the live pool this gate
+                                 #   currently removes nothing that was not already removed. It is bought for the backtested tail,
+                                 #   not for anything it does to today's table. (The rank-stability line differs 17% vs 100% between
+                                 #   the two runs; that is the documented state-file artifact, not this knob.)
+                                 #   THE GOLDENS DIAGNOSE THE CHANGE RATHER THAN ABSORBING IT, and they hand over the single
+                                 #   most on-thesis result of the round. Cutoffs are byte-identical in every report (552 / 1186 /
+                                 #   1546), as are the ETF counts (0/11, 0/85, 1/184) and crypto (0/0, 0/9) — a third independent
+                                 #   confirmation, after the wide runs and the live funnel, that this gate is equity-only. Stock
+                                 #   growth-scored drops by EXACTLY 16 in all four full reports (52->36, 80->64, 80->64, 101->85):
+                                 #   the same 16 of the fixture's 80 large caps, at every horizon. And the row that vanishes from
+                                 #   three of them is the ZERO-NAMES row. `top-10 zero names (20y): AIG@b3997(-94%), NOK@b4000(-92%),
+                                 #   C@b4000(-91%), AIG@b4000(-98%)` is gone, `rode 4 zeros/51 holds` becomes `rode 0 zeros/35`, and
+                                 #   the 12y and stress reports lose the same four. The gate deletes the pre-2008 blow-offs that
+                                 #   later lost 90%+ of their value. That is the exact cohort this block was written for, named.
+                                 #   Everything downstream follows: 20y top-1 excess +2.1 -> +3.2 with worst -17.3 -> -3.2 and OOS
+                                 #   early +3.5 -> +6.8; 12y top-10 +0.2 -> +0.9; 8y top-10 +4.6 -> +5.2 (median +3.8 -> +6.9); the
+                                 #   tune split's held-out TEST rho flips sign, -0.12 -> +0.12, though it still says SHIP NOTHING.
+                                 #   The 8y report keeps its two zeros (FRCB, -100% in 2023) — a bank that failed without ever
+                                 #   running 150% above its own trend, which is the honest limit of what a stretch gate can catch.
+                                 #   ONE FIXTURE COLUMN ARGUES BACK, AND IT IS THE ROUND'S STRONGEST COUNTER-SIGNAL. The half-life
+                                 #   table degrades at EVERY hold length, and badly at the long end: 1y +13.7 -> +11.8, 2y +30.2 ->
+                                 #   +23.6, 3y +22.0 -> -0.1, 5y +62.2 -> +55.4, 8y -10.3 -> -107.3, 10y -43.3 -> -168.3. Under the
+                                 #   rule fixed before the runs it does not vote — 80 hand-picked large caps, and this arm scores
+                                 #   only 64 of them — but it is not dismissed either, because it comes with a mechanism that is
+                                 #   plausible and untested: a ceiling removes the names that STAY stretched for years, and a long
+                                 #   hold is precisely what pays for those. The wide runs rebalance annually and cannot see it.
+                                 #   Note the after-tax deferral edge moves the other way at all three horizons (+1.3 -> +1.5,
+                                 #   +0.8 -> +1.0, +1.1 -> +1.3), so the two long-hold readings in this repo disagree. THAT is the
+                                 #   first thing to test next, ahead of anything else listed here.
+                                 #   TO REOPEN: NVDA sits at +147% — THREE POINTS under the fence. When it crosses, the live stock
+                                 #   table goes EMPTY, because it is the only row in it. That is the accepted, known cost of this
+                                 #   ship and not a surprise to diagnose later; the 7.7% empty-slot rate above is the same fact
+                                 #   measured historically. Do not raise the ceiling to keep one name — re-run the nine.
   growth_maxdd_cap: 84.0         # (#26) reject equities whose worst-EVER peak-to-trough loss exceeds 83% (magnitude; crypto
                                  #   exempt — BTC itself is -83%). A >83% wipeout survivor is a lottery ticket, not a compounder.
                                  #   Same-batch pair 2026-07-03: off +119.5 (wins +91.5, OOS +0.13|+0.08) / on +128.4 (wins
@@ -3030,6 +3143,38 @@ buy_heuristic:
                                  #   18 cutoffs with 0 scored). No sweep can vote on any crypto knob, this one included.
                                  #   `growth_gate_reachability_pin` reads it INERT for all three classes: `backtest_quote`
                                  #   never fills `quote.mvrv`, so it is cause (a) — field never filled. 0 = off (default).
+  # (#64) THE SHIPPED VALUE IS 1.6, NOT THE 2.0 EVERYTHING ABOVE ARGUES FOR. Recorded 2026-08-10,
+  #   seven days late. It was set by hand on 2026-08-03 in d58db7a — a commit about wiring a 2Y CAGR
+  #   rung — alongside two gates that were switched OFF the same way. That commit's own message named
+  #   all three as "set by hand and NOT graded by any run above", and said "two of the three carry
+  #   same-file receipts arguing the other way". This is the third. The other two are graded and
+  #   answered in their own blocks; this one cannot be graded and so gets prose instead.
+  #   WHAT IT COSTS TO BE AT 1.6. The "WHY 2.0" argument above is an argument for AGREEMENT, not for
+  #   2.0 as such: `nupl_euphoria: 0.5` marks where crypto greed starts, NUPL = 1 - 1/MVRV, so NUPL
+  #   0.5 IS MVRV 2.0, and at 2.0 the damp and the ceiling were ONE threshold. At 1.6 they are two.
+  #   The thing that block set out to prevent — "two numbers that both mean expensive, drifting
+  #   apart" — has now happened, and 1.6 is the drift. That is the honest cost and it is not paid for
+  #   by any measurement.
+  #   WHY IT STANDS ANYWAY. It is STRICTER, and every stated risk on this knob is a LOOSENING risk:
+  #   "DO NOT LOWER TOWARD 1.0" guards the inversion into dip-buying, and 1.6 moves away from 2.0 but
+  #   is still 0.41 clear of BTC's live 1.19 rather than the 0.81 it had at 2.0. Reverting to 2.0
+  #   would LOOSEN a ceiling on judgement alone, in the same round that TIGHTENS two other gates on
+  #   evidence. Two opposite directions in one commit, neither measured, is worse than one documented
+  #   inconsistency.
+  #   IT IS INERT TODAY, WHICH IS WHY THE CHANGE WAS INVISIBLE. The live gate funnel carries NO mvrv
+  #   row at all (2026-08-10): zero coins blocked at 1.6, exactly as the block predicted for 2.0
+  #   ("nothing in the live top 100 is cut ... so this ships INERT and bites in the next bull").
+  #   Both values are inert on today's pool, so nothing observable distinguishes them and the hand
+  #   edit could not have been caught by looking. Coverage is the reason: the run prints "19 of 77
+  #   coins carry an MVRV (the rest pass the ceiling free)", and missing MVRV PASSES by house rule.
+  #   NO RUN CAN EVER SETTLE THIS, and that is measured, not assumed: 0 crypto rows are growth-scored
+  #   at every horizon (20y-s 0/4633, 12y-s 0/11758, 8y-s 18 cutoffs with 0 scored), so the arms this
+  #   round spent on the two sibling gates would have been wasted here. Settled the way its three
+  #   siblings were — `max_1m_drop_pct_crypto`, `growth_maxdd_cap_crypto`, `growth_max_vol_crypto` —
+  #   by live screen eyeball plus a receipt, which is the most this class of knob can ever have.
+  #   TO REOPEN: the next bull, when the ceiling stops being inert. At that point the 1.6-vs-2.0 gap
+  #   becomes observable in the funnel for the first time, and the coins landing between them are the
+  #   evidence this block has never had. Until then, do not spend runs on it.
 
   # RISK-ADJUSTED-RETURN tilts (B/C) — Sharpe ratio (return ÷ volatility) and Calmar ratio (return ÷
   # worst peak-to-trough drawdown), from the SAME closes already fetched, ZERO extra network cost.

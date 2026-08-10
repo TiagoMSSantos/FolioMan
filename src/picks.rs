@@ -5853,6 +5853,17 @@ mod tests {
         // before trusting the number, not just this line.
         assert_eq!(tuning.growth_accel_weight, 0.50, "shipped accel weight moved — re-measure, then update this pin");
 
+        // The two GATES that went missing. Both were switched off by hand in d58db7a, a commit about
+        // something else, which said so in its own message — and nothing failed, for seven days, because
+        // this test covered eight knobs and neither of these. The repo's gate sweep could not catch it
+        // either: it only ever loosens a knob and grades what the loosening admits, so a knob moved in
+        // the loosening direction is the one case the instrument is structurally blind to. These two
+        // asserts are that blind spot's only cover. They pin OPPOSITE outcomes of the same measurement
+        // round — one gate was restored, one was refused — so neither number is a default worth trusting
+        // on sight; the (#64) receipts beside both knobs carry the runs.
+        assert_eq!(tuning.growth_max_above_ma, 150.0, "the stretch gate is measured, not a taste call — its excluded cohort is negative on both moments at all three horizons, and the live table clears it by 3 points");
+        assert_eq!(tuning.max_1m_drop_pct, -1000000.0, "the knife ships OFF and its own block argues for -20 — that is unresolved, not settled; read the (#64) receipt before moving it either way");
+
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
         // an empty table, which no value assert above would notice.
         let mut strong = gate_fixture();
