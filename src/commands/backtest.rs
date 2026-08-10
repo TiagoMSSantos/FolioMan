@@ -873,6 +873,17 @@ pub async fn run(args: Vec<String>) {
         knob("onsale_sharpe_weight", |tuning| tuning.onsale_sharpe_weight = 0.0),
         knob("calmar_weight", |tuning| tuning.calmar_weight = 0.0),
         knob("quality_weight", |tuning| tuning.quality_weight = 0.0), // shared with the growth lane — one knob, so it must be ablatable in both
+        // (#54) The englobamento SPLIT off — both arms set equal, which is this knob's real "off" (0.0
+        // would mean an EU dividend is worth nothing, a different question). Prices the SPLIT; the row
+        // above prices the dividend WEIGHT. The two are not the same measurement and the weight is the
+        // one that moves: dropping it costs Δ+142.8 edge, while equalising the arms costs Δ+0.0 — the
+        // shipped 0.76-vs-0.72 gap is 4 points on a term whose whole weight is 0.5.
+        //
+        // IT LIVES IN THIS LANE, not the growth one, for sample: the growth gates admit 4 EU payers out
+        // of 80 scored rows on the fixture, so a growth-lane sweep of this knob is flat for want of rows
+        // whatever the true effect. This lane scores 526 windows. A `weight_curve` here was tried and
+        // deleted — 17 lines of golden output to report the same Δ+0.0 this one line reports.
+        knob("tax_split ->off", |tuning| tuning.tax_keep_eu = tuning.tax_keep_other),
     ];
     let growth_knobs: Vec<Knob> = vec![
         knob("growth_trend_weight", |tuning| tuning.growth_trend_weight = 0.0),
@@ -1031,8 +1042,10 @@ pub async fn run(args: Vec<String>) {
     // WHAT A FLAT LINE MEANS HERE: that yield carries no SELECTION signal — NOT that the plumbing
     // failed. Check the `growth_dividend*` ablation row first: if that also reads 0.0 the term is still
     // inert and the plumbing is broken; if it reads non-zero and this curve is flat, that is a result.
-    // TAX IS NOT GRADED BY THIS: a backtest quote has no `domicile`, so `tax_keep` takes the non-EU arm
-    // for every name. This prices the WEIGHT; the EU-vs-other englobamento split stays a judgment call.
+    // TAX IS NOT GRADED BY THIS CURVE — it prices the WEIGHT, with the keep-rate held at whatever the
+    // config ships. The split itself is graded by the on-sale lane's `tax_split ->off` ablation, which
+    // is where enough EU payers survive the gates to resolve it. (This line used to blame a missing
+    // `domicile`; nothing on this path ever read one — see `picks::is_eu_payer`.)
     weight_curve(
         "dividend_weight",
         &samples,

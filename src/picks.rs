@@ -279,19 +279,38 @@ fn dividend_yield_1y(quote: &Quote) -> f64 {
 /// The EU rate reaches STOCKS only: a fund distribution is not a Parent-Subsidiary-Directive
 /// company's *lucro*, so an EU-listed UCITS draws no exclusion and takes `tax_keep_other`.
 ///
-/// BACKTEST-BLIND by construction — `backtest_quote` cannot reconstruct as-of dividends (see the
-/// module header of `commands/backtest.rs`), so no walk-forward run can grade this term at any
-/// weight. It ships as a judgment lever sized by argument, which is why `dividend_weight` stays well
-/// under the lane's other blind ceilings.
+/// NO LONGER BACKTEST-BLIND, in either half. This doc used to say `backtest_quote` could not
+/// reconstruct as-of dividends and that therefore no walk-forward could grade the term at any weight;
+/// `#53` disproved the premise (`Chart.divs` was always in the payload, the backtest fetch simply
+/// dropped it) and the `dividend_weight` curve now prices the WEIGHT. The tax split is graded too, by
+/// the on-sale lane's `tax_split ->off` ablation — see `is_eu_payer` for why it was never blind either.
+/// That row reads Δ+0.0: at the shipped 0.76-vs-0.72 the split does not move the ranking, while the
+/// WEIGHT it scales moves it by Δ+142.8. Size the weight with care; the split is a rounding detail.
 fn dividend_reward(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
     tuning.dividend_weight * dividend_yield_1y(quote).min(tuning.dividend_cap) * tax_keep(quote, tuning).0
+}
+
+/// (D) Is this row an EU-resident *company* payer for Art. 40.º-A purposes — the ONE predicate behind
+/// the englobamento split, named so the paragraph below has somewhere to live.
+///
+/// NOT BLIND IN THE BACKTEST, contrary to what three comments here and in `commands/backtest.rs` used
+/// to claim. Neither input is `domicile`: `market` is filled by `core::market_of` from the ticker
+/// suffix inside `Quote::stub`, and `instrument_type` is filled by `backtest::stamp_asset_class` from
+/// Yahoo's `meta.instrumentType` plus the universe's `etf_set`. Both are the SAME inputs the live
+/// screen scores on, which is the whole bar for gradeability — see the `tax_split ->off` ablation row.
+///
+/// The real approximation is elsewhere and is documented at `core::EU_MARKETS`: `market` is the
+/// LISTING VENUE, not the payer's tax residence, so an Irish-domiciled S&P 500 name reads "USA" and is
+/// under-credited. That direction is conservative and it is a data limit, not a blind term.
+fn is_eu_payer(quote: &Quote) -> bool {
+    !quote_is_etf(quote) && core::is_eu_market(&quote.market)
 }
 
 /// (D) Which after-tax keep-fraction applies to this row, plus the tier label the score breakdown
 /// prints. One source for the EU/other decision so `explain_growth_score` can never label a row
 /// differently from how `dividend_reward` actually scored it.
 fn tax_keep(quote: &Quote, tuning: &BuyHeuristic) -> (f64, &'static str) {
-    if !quote_is_etf(quote) && core::is_eu_market(&quote.market) {
+    if is_eu_payer(quote) {
         (tuning.tax_keep_eu, "EU payer, 50% englobado")
     } else {
         (tuning.tax_keep_other, "non-EU or fund")
@@ -701,8 +720,9 @@ fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: 
 /// - **dividend_reward** — (D) reward for trailing yield (`dividend_weight`, `dividend_cap`). NO LONGER
 ///   BACKTEST-BLIND (#53): `Chart.divs` was always in the payload and is now plumbed into
 ///   `backtest_quote`, so the ablation row and the `dividend_weight` curve grade it for real. The TAX
-///   split is still blind — a backtest quote has no `domicile`, so `tax_keep` reads the non-EU arm for
-///   every name; `tax_keep_eu` vs `tax_keep_other` remains a judgment call, not a measured one.
+///   split is graded too (#54), and the `domicile` this line used to blame was never read by anything:
+///   `tax_keep` branches on `is_eu_payer`, i.e. `market` (from the ticker suffix) and `instrument_type`
+///   (from `stamp_asset_class`) — both live in the backtest, both the same inputs the live screen uses.
 /// - **value** — (E) P/E tilt: cheap lifts, rich dampens, unknown neutral (`ref_pe`). BACKTEST-BLIND:
 ///   no as-of P/E in the backtest, so this term is unvalidated there too — keep the tilt gentle.
 /// - **quality_reward** — (F) return-on-capital profitability tilt (`quality_weight`/`quality_cap`);
@@ -841,7 +861,7 @@ struct ScoreParts {
 /// ```text
 ///   base  = growth_trend_weight × capped_trend(long_cagr)   [cap 0 = uncapped, shipped]
 ///         + growth_accel_weight × clamp(1Y − long_cagr, 0, growth_accel_cap)   // recent outpaces long => accelerating
-///         + quality_reward                                                     // (F) ROE profitability tilt (BACKTEST-BLIND, small)
+///         + quality_reward                                                     // (F) ROE profitability tilt (SIGHTED, ablation-graded; see below)
 ///   score = base × proximity × value(E) × geomean(trust, overext)   // (#4) geomean of the penalties
 /// ```
 ///
@@ -1118,7 +1138,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let risk_reward = risk_bonus(quote, long_cagr, tuning.sharpe_weight, tuning.calmar_weight, tuning); // (B/C) growth lane's Sharpe weight
     // (M) 12-1 momentum: trailing-year return EXCLUDING the last month (skip the short-term-reversal
     // month — Jegadeesh-Titman). Price-only, so it's validated end-to-end (backtest_quote has 1Y/1M),
-    // unlike the BACKTEST-BLIND div/ROE/fund tilts. Missing 1M -> skip-month = 0. Guard the denominator
+    // unlike the still-blind value/TER tilts (div and ROE are sighted now). Missing 1M -> skip-month = 0. Guard the denominator
     // against a near-total-wipeout 1M (>= -99%) so the ratio can't blow up.
     let r1m = perf_pct(quote, "1M").unwrap_or(0.0);
     let mom121 = ((1.0 + return_1y / 100.0) / (1.0 + r1m / 100.0).max(0.01) - 1.0) * 100.0;
@@ -1127,8 +1147,8 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let trend_term = tuning.growth_trend_weight * trend;
     let accel_term = tuning.growth_accel_weight * accel;
     let quality = quality_reward(quote, tuning); // (F) return-on-capital tilt — MEASURED (Δ-12.6 edge here, Δ-48.7 in the buy lane), and it OVERLAPS the (G) tilt below: see ci-settings (#3d)
-    let dividend = dividend_reward(quote, tuning); // (D) total-return tilt, NET of Portuguese tax (EU payers keep more — Art. 40.º-A CIRS; see dividend_reward). Closes are price-only (no adjclose) so divs are missing from the CAGR. BACKTEST-BLIND (no as-of divs), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
-    // (G) as-of FUNDAMENTAL tilt. Unlike the still-blind terms above (dividends), this one IS validatable: the
+    let dividend = dividend_reward(quote, tuning); // (D) total-return tilt, NET of Portuguese tax (EU payers keep more — Art. 40.º-A CIRS; see dividend_reward). Closes are price-only (no adjclose) so divs are missing from the CAGR. SIGHTED since #53 (as-of divs are plumbed; weight AND tax split both curve-graded), small (near-high growers are low-yield). 52w-high anchor was sweep-tested here too and REGRESSED the 12y edge at every weight -> dropped
+    // (G) as-of FUNDAMENTAL tilt. Like the (D)/(F) terms above — all sighted now — this one IS validatable: the
     // backtest attaches the as-of factor to quote.fund_factor so `backtest <set> fund` can ablate it.
     // Floor at 0 (only reward the factor, don't penalise a missing/negative one) and cap the artifact.
     // weight 0 (default) -> this whole term is 0 -> growth_score is byte-identical to the pre-(G) lane.
@@ -1911,7 +1931,7 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     if (displayed - p.score).abs() > 1e-6 {
         s.push_str(&format!("  crypto NUPL + BTC-relative adjustment: {:.2} → {displayed:.2} (the table value)\n", p.score));
     }
-    s.push_str("  (BACKTEST-BLIND terms — quality/dividend/fund(if FMP-only)/value — were never in the\n   walk-forward; the validated edge is the price-only trend/accel/risk path. NOT advice.)\n");
+    s.push_str("  (BACKTEST-BLIND terms — value/TER/fund(if FMP-only) — were never in the\n   walk-forward; quality, dividends and the PT tax split ARE graded there. NOT advice.)\n");
     Some(s)
 }
 

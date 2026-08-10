@@ -25,6 +25,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
     onsale_sharpe_weight rho -0.24 Δ+0.00   edge -159.4 Δ+0.0
     calmar_weight        rho -0.24 Δ+0.00   edge -159.4 Δ+0.0
     quality_weight       rho -0.24 Δ+0.00   edge -159.4 Δ+0.0
+    tax_split ->off      rho -0.24 Δ-0.00   edge -159.4 Δ+0.0
 
 ── GROWTH (growth_score) ──
   windows scored: 80
