@@ -2244,11 +2244,32 @@ buy_heuristic:
       # covered filers under this same clamp(0,40) (mean 20.2; 19% clamp at the cap; 24 read negative).
       # "Unknown" therefore ranks as TYPICAL rather than as worst, while a KNOWN-BAD roic still floors at
       # 0 and ranks BELOW an unknown one — the clamp is outside the fill precisely to keep that ordering.
-      # BACKTEST-BLIND, same label as growth_min_age_years / growth_min_aum_etf / growth_turnover_weight,
-      # and blind for a reason worth stating: roic builds NO book on the as-of path (the held-book loop
-      # now prints `roic n=0 rows` instead of silently skipping it), so there is no OOS split to read and
-      # the census of today's filers is the only honest basis. If a later run gives roic as-of coverage,
-      # sweep this value the way (#43) swept the weight.
+      # roic builds NO book on the as-of path (the held-book loop prints `roic n=0 rows` instead of
+      # silently skipping it), so there is no OOS split to read and the census of today's filers is the
+      # only honest basis. If a later run gives roic as-of coverage, sweep this value the way (#43) swept
+      # the weight.
+      # (#59) NOT "BACKTEST-BLIND", which is what this block used to call it, filed alongside
+      # growth_min_age_years / growth_min_aum_etf / growth_turnover_weight. Those three are inert. This
+      # one is not, and the distinction is the DATA is absent while the FILL is live: `quote.fund` is None
+      # on every offline row, so `unwrap_or(neutral)` fires every time and the term adds a hard constant
+      # 0.25 × 17.3 = 4.325 to `base` for the whole sample. A constant inside `base` is NOT rank-neutral,
+      # because `base` is then multiplied by trust × overext × proximity × value — it reaches the score as
+      # 4.325 × multiplier and so ranks by the multiplier stack. The `fund_extra:roic` ablation row has
+      # been measuring that fill, never roic.
+      # PROVEN, not argued: the `null: base −4.3 (calibration)` row removes the SAME 4.325 through a
+      # factor name that matches nothing, and the two rows print identical rho and identical Δedge at all
+      # four horizons — Δ-72.2 (12y, stress), Δ-261.8 (20y), Δ-56.1 (8y). Identical to the tenth of a
+      # point is what "carries no information" looks like.
+      # WHAT THAT COSTS THE TABLE ABOVE IT, and this is the uncomfortable part: those Δs are the NOISE
+      # FLOOR, and most of the growth ablation sits under it. At 20y `growth_trend_weight` — the lane's
+      # headline long-CAGR reward — reads Δ-251.6 against a null of Δ-261.8, i.e. SMALLER than a constant,
+      # and `growth_smoothness_weight` reads Δ-261.8, i.e. exactly the null (smooth = 5.0 × trend_r2 ≈
+      # 4.33, the same magnitude by arithmetic accident). At 8y NOTHING in the table clears the null. At
+      # 12y only `overext_brake` does (Δ-101.1 vs Δ-72.2).
+      # READ THAT AS A STATEMENT ABOUT THE FIXTURE, NOT A VERDICT ON THE TERMS. This harness cannot
+      # resolve them: n=80 at 12y, a 90% band of [-40.6 … +175.1] that straddles 0, and OOS decaying
+      # +0.35 -> +0.06. "Indistinguishable from a constant of its own size HERE" is not "worthless" — it
+      # is the fixture declining to answer. A term's real grade needs `backtest universe`.
       neutral: 17.3
   # (1) Overextension brake: how far ABOVE its own 200wk SMA a growth name has run. The P/E tilt
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the

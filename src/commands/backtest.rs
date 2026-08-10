@@ -926,6 +926,32 @@ pub async fn run(args: Vec<String>) {
             tun.growth_fund_extra[i].weight = 0.0;
         }));
     }
+    // (#59) NULL CALIBRATION — the SCALE for every row above, and the only row here that is guaranteed
+    // to carry no information. It strips a flat 4.325 pts off `base` for every scored row: the factor
+    // name matches no arm of `core::select_fund_factor`, so the lookup is None in EVERY mode (fund runs
+    // included) and the term is always its `neutral` fill, never data.
+    //
+    // WHY A CONSTANT IS NOT A NO-OP, which is the whole point of the row. `base` is a SUM that is then
+    // MULTIPLIED by trust × overext × proximity × value, so a constant c added inside it reaches the
+    // score as c × multiplier and ranks by the multiplier stack. The identical argument holds the other
+    // way for `liq_bonus`, which is added OUTSIDE the brake and IS rank-neutral — `picks.rs` states it
+    // there and that statement is correct; it just does not transfer across the multiplication.
+    //
+    // HOW TO READ IT: any ablation above whose Δ is not clearly larger than this row's is a term whose
+    // SIZE, not whose SIGNAL, the fixture is measuring. Placed last so it sits next to `fund_extra:roic`,
+    // its exact twin: 4.325 is that term's shipped constant (0.25 × neutral 17.3), and with `quote.fund`
+    // None on every offline row the two knobs remove the SAME quantity. So on any fund-less run these two
+    // rows MUST print the same rho and the same Δedge — an equality the goldens pin. If they ever differ
+    // offline, this row's premise is broken. Under a real `fund` run they SHOULD differ, and the gap is
+    // roic finally speaking.
+    growth_knobs.push(knob("null: base −4.3 (calibration)", |tun| {
+        tun.growth_fund_extra.push(crate::config::FundTerm {
+            factor: "__null__".into(),
+            weight: -1.0,
+            cap: 100.0,
+            neutral: 4.325,
+        });
+    }));
     // (#10) loosen each numeric growth GATE one notch, relative to the loaded tuning (respects settings.yaml
     // overrides). The sweep reports the mean forward return of the names each loosening newly admits.
     let gate_loosen: Vec<Knob> = vec![

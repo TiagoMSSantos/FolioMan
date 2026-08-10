@@ -1163,6 +1163,13 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // 0.25 × 40 = 10 pts against a covered-peer median of 17.3. `neutral` defaults to 0.0, so a term
     // that doesn't set it behaves exactly as before and every recorded receipt still holds. The clamp
     // stays OUTSIDE the fill on purpose: a known-bad value floors at 0 and ranks BELOW an unknown one.
+    // (#59) BUT the fill is a live scoring term wherever the factor is UNCOVERED. With the factor
+    // missing for every row — any run without `fund` — this sum is the constant `weight × neutral`, and
+    // a constant here is NOT rank-neutral: it is added to `base` below and `base` is then multiplied by
+    // trust × overext × proximity × value, so it reaches the score as `constant × multiplier` and ranks
+    // by the multipliers. The `liq_bonus` note further down makes the opposite call for the opposite
+    // reason and is right: that one is added OUTSIDE the brake, where a constant really is inert. The
+    // test of rank-neutrality is WHICH SIDE OF THE MULTIPLICATION the term lands on, nothing else.
     let fund = tuning.growth_fund_weight * quote.fund_factor.unwrap_or(0.0).clamp(0.0, tuning.growth_fund_cap)
         + tuning
             .growth_fund_extra

@@ -152,6 +152,15 @@ pub struct FundTerm {
     /// and ranks BELOW an unknown one, which is the correct ordering.
     /// Field-level default only: a term may omit `neutral` (-> 0.0 = the pre-(N) behaviour, so every
     /// recorded receipt stays numerically exact), but omitting `weight` or `cap` is still a config bug.
+    /// (#59) A NON-ZERO `neutral` IS A SCORING TERM WHEREVER THE FACTOR IS UNCOVERED, not a no-op: with
+    /// the factor missing for every row (any run without `fund`), this term collapses to the constant
+    /// `weight × neutral` on the whole sample. That constant is NOT rank-neutral, because it lands
+    /// inside `growth_score`'s additive `base`, which is then MULTIPLIED by trust × overext × proximity
+    /// × value — so it reaches the score as `constant × multiplier` and ranks by the multiplier stack.
+    /// (Contrast `liq_bonus`, added OUTSIDE that multiplication, where the same constant genuinely is
+    /// rank-neutral and `picks.rs` correctly says so.) Measured: the shipped roic fill moves the fixture
+    /// growth lane by Δ-72.2/-261.8/-56.1 edge at 12y/20y/8y while carrying no information at all — see
+    /// the `null: base −4.3 (calibration)` ablation row, which reproduces those numbers exactly.
     #[serde(default)]
     pub neutral: f64,
 }
