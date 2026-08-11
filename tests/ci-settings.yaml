@@ -157,6 +157,18 @@
 # WHAT THIS RE-OPENS: every knob below was graded on rank-1, so every rung is re-openable in
 #   principle. NOT re-opened wholesale — that is the maximum-overfit move. Re-test one arm at a time,
 #   on this rule, and record the UNRESOLVED verdicts too so nobody re-runs them.
+# LIMITATION FOUND 2026-08-11 (#71) — THE PRIMARY CANNOT GRADE A FUNDAMENTAL KNOB. It requires 20y AND
+#   8y, and at 20y there is no fundamental data at all: all 17 standalone factor probes report zero
+#   cutoffs, and the growth_fund_weight ablation reads D+0.00 rho / D+0.0 edge, exactly inert. Twelve
+#   runs of `backtest 20 universe fund` across four weights came back byte-identical down to the OOS
+#   split. So growth_fund_weight, growth_fund_factor, growth_fund_cap, growth_max_peg,
+#   growth_require_peg and quality_weight ALL read "held at 20y" for free, and the primary collapses to
+#   a single horizon without saying so. A fundamental arm that "passes" has passed on 8y alone.
+#   This is structural and not a bug to fix: a 20y forward window needs cutoffs from ~2005 and the SEC
+#   XBRL company-facts era begins later. Grade fundamental knobs on 12y AND 8y, state that the 20y half
+#   is unmeasured rather than held, and require the result to survive a basket-size check (top-1/3/5/10)
+#   in place of the horizon agreement the rule normally gets. See the (#71) receipt on
+#   growth_fund_weight for the worked case.
 # THE BUY SURFACE NOW QUOTES THE SAME BASKET (backtest.rs `VERDICT_TOP = 3`). The screen's method
 #   footer used to cite top-10 at whatever horizon ran LAST, because `.backtest_verdict.json` held one
 #   row and every wide run overwrote it — so a `backtest 8` erased the 20y proof and the footer changed
@@ -2032,6 +2044,83 @@ buy_heuristic:
                              #   What the score sees is weight x clamp(value, 0, cap): 0.07 x 300 = 21 pts max,
                              #   7.0 pts at PEG 1, 3.5 at PEG 2 (was 1.8 / 0.9 at the argmax weight).
                              #   Move weight and cap TOGETHER or the magnitude drifts silently.
+  # (#71) GRADED UNDER SHIP RULE v2 — 2026-08-11, and it HOLDS at 0.07. Read this before (#3b)-(#3e)
+  #   below: those are the pre-v2 history, measured on the fund lane's own held-out TEST edge. This is
+  #   the first time the knob has been put to the rule that decides everything else in this file.
+  #   WHY THE ROUND WAS OWED. The wide `universe` run that graded (#69) and (#70) carries NO
+  #   fundamentals — `fund_lane_on` (backtest.rs:501) gates the as-of fill, so without the `fund`
+  #   keyword `quote.fund`, `quote.fund_factor` and `quote.roe` are None on every row. This knob,
+  #   growth_fund_factor, growth_fund_cap, growth_max_peg and growth_require_peg therefore contributed
+  #   NOTHING to any number v2 had ever judged. Twenty-one graded wide runs were blind to all of them.
+  #   METHOD. Twelve runs, `growth_fund_weight in {0, 0.05, 0.07, 0.12}` x `backtest {20,12,8} universe
+  #   fund`, one knob moved, rule fixed before the first run, ~2.5 min each off a warm .sec_cache.
+  #   Data conditions identical in all twelve: 4997 tickers, growth-scored 351/511/637, cutoffs with
+  #   as-of fundamentals 4394/8456/10956, and the Yahoo crumb fallback failed in every run alike.
+  #     horizon   arm      top-3 mean|med    win%   h2h    worst
+  #     20y       ALL FOUR   +6.3|+5.7        97%   74%    -0.5     <- byte-identical, see BLACKOUT
+  #     12y       0.00       +6.7|+6.9        84%   63%    -7.8
+  #     12y       0.05       +6.6|+6.9        84%   67%    -7.8
+  #     12y       0.07 ctl   +6.8|+6.9        84%   67%    -7.8
+  #     12y       0.12       +6.9|+7.1        86%   67%    -7.8
+  #     8y        0.00       +7.1|+8.0        81%   57%    -9.2
+  #     8y        0.05       +7.3|+8.0        81%   63%    -9.2
+  #     8y        0.07 ctl   +7.3|+7.8        83%   63%    -9.2
+  #     8y        0.12       +7.3|+7.8        83%   63%    -9.2
+  #   VERDICT. No guard is broken by any arm — the worst window is identical at every horizon (the tilt
+  #   never touches the tail) and h2h stays >=57% throughout. 0.00 FAILS THE PRIMARY: 8y top-3 mean
+  #   +7.1 vs +7.3. That is the round's one robust result, and it is robust in the strong sense — off
+  #   loses the mean at EVERY basket size at 8y (top-1 -0.2, top-3 -0.2, top-5 -0.3, top-10 -0.2), loses
+  #   both moments at 12y top-1 (+6.5|+7.7 vs +6.8|+7.6), drops 8y rank-1 h2h 63% -> 57%, and drops the
+  #   8y top-3 late OOS half +8.0 -> +7.7. THE TILT EARNS ITS PLACE.
+  #   0.05 and 0.12 pass the letter of the primary and are NOT shipped, for two stated reasons.
+  #   (1) Neither survives a basket-size robustness check. 0.05's whole case is 8y top-3 median +0.2 —
+  #   but the same comparison is +0.1 at top-1 mean, flat at top-5, -0.1 at top-10 mean, and it COSTS a
+  #   winning window (83% -> 81%). 0.12's gains sit entirely at 12y, which the primary does not judge;
+  #   at both judged horizons it is flat. Signs that flicker across basket sizes are noise, and every
+  #   difference here is <=0.2 pts/yr at one-decimal printing precision.
+  #   (2) Half the primary could not be evaluated at all — see the blackout below. An arm cannot
+  #   discharge "up or held at 20y AND 8y" on 8y evidence alone.
+  #   THE 20y FUNDAMENTAL BLACKOUT, and it is a RULE-LEVEL finding, not a knob one. All four arms are
+  #   byte-identical at 20y down to the OOS split, because at 20y EVERY ONE of the 17 standalone factor
+  #   probes reports "n/a (only 0 cutoffs carry this factor)" — peg_yield included. The run's own
+  #   ablation confirms it independently: `growth_fund_weight rho +0.23 D+0.00 edge +707.3 D+0.0`,
+  #   exactly zero, against D+0.03/+15.9 at 12y and D+0.01/-2.6 at 8y. Note the header two lines above
+  #   the probes still reads "cutoffs with as-of fundamentals: 4394 / 4588": that counter is
+  #   `s.fund.is_some()` (backtest.rs:1431), i.e. a FundRow was ATTACHED, while the probes count
+  #   samples whose derived field is Some. At 20y-era cutoffs the attached rows carry no usable
+  #   derived values, so 96% "coverage" and zero usable factors are both true and not in conflict.
+  #   CONSEQUENCE, which outlives this knob: Ship Rule v2's PRIMARY requires 20y AND 8y, so it can
+  #   never be discharged non-vacuously by ANY fundamental knob — growth_fund_factor, growth_fund_cap,
+  #   growth_max_peg, growth_require_peg and quality_weight all inherit this. Every such arm will read
+  #   "held at 20y" for free. Do not mistake that for evidence. See the note beside Ship Rule v2 above.
+  #   THE FUND LANE'S OWN COLUMNS DISAGREED AGAIN, and were pre-committed as non-voting before the runs.
+  #   At 8y the sweep verdict prints "no factor beats price-only with both OOS halves + — keep
+  #   growth_fund_weight 0. SHIP NOTHING." and its curve reads tilt-off -75.0 vs shipped -77.4, i.e. the
+  #   tilt COSTS 2.4 edge. The graded top-3 book says the exact opposite at the same cutoffs in the same
+  #   run: off is the worst arm at every basket size. That is the FIFTH time a lane-level metric has
+  #   disagreed with book quality, after (#63) accel, (#69) an ablation delta, (#70) an edge curve, and
+  #   (#3d) itself. Lane edge is a top-half-vs-bottom-half spread over hundreds of windows and is blind
+  #   to the top-3 book. USE THESE COLUMNS TO CHOOSE AN ARM, NEVER TO GRADE ONE.
+  #   THIS RESOLVES (#3d)'s OPEN DECISION. That receipt left three options and favoured (a)
+  #   `growth_fund_weight -> 0` as "the best measured corner, +202.3, and the sweep's own verdict". On
+  #   the graded book, option (a) is the WORST of the four arms and the only one that fails the primary.
+  #   (#3d)'s finding stands as measured — PEG and quality DO double-count on lane edge — but the
+  #   conclusion it pointed at does not survive top-3. Option (c), zeroing quality in the growth lane
+  #   only, is still untested and is now the live lead; it is a code change, not a tuning one.
+  #   (#3b)'s REVERT RULE IS EXPLICITLY NOT TRIPPED. It says drop to 0.05 "at the first sign of
+  #   late-half degradation in a future wide run". This is that wide run, and the late half IMPROVES
+  #   with the tilt on: the 8y curve's OOS halves go -0.06|-0.07 at weight 0 to -0.05|+0.10 at 0.07, a
+  #   sign flip in the late half, and the graded 8y top-3 late OOS is +8.0 shipped vs +7.7 off.
+  #   AND THE 0.08 CLIFF DOES NOT REPRODUCE. (#3b) measured -71 edge in one step at 0.08 and (#3c)
+  #   warned the cliff is a ceiling on weight x value that moves with the sample. It moved: the 12y
+  #   curve now reads 0.050/0.060/0.070/0.080/0.090/0.100 all at +227.6 exactly, and the graded 0.12 arm
+  #   is flat at 8y and 20y and UP at 12y. Nothing was shipped on this, but the standing warning that
+  #   0.08 is one step from a cliff is no longer supported on the current sample.
+  #   NOT RE-MEASURED HERE, deliberately: (#3d) warns the (#3b) curve is now a slice through a two-term
+  #   interaction with quality_weight and must not be re-run to "re-find the plateau". This round did
+  #   not re-run it as evidence — it graded the shipped configuration as it actually ships, one knob
+  #   moved, which is the question v2 asks. The arms are therefore PEG's marginal value at
+  #   quality_weight 0.15, not PEG's standalone value. Do not read them as the latter.
   # (#3b) WEIGHT CURVE — wide same-batch 12y, `backtest universe fund 12`, at growth_fund_cap 300. The
   #   factor sweep only ever reported its argmax, which cannot tell a peak from a plateau; the curve
   #   print added the same day shows the whole shape (held-out TEST edge):

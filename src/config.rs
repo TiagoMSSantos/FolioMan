@@ -1151,7 +1151,14 @@ mod tests {
         // runs ~0-500 (100 = PEG 1) where the old earnings_yield ran ~0-15, so carrying the previous
         // 1.0/30 pair over would have shipped a tilt ~55x hotter than the sweep ever measured, under a
         // factor name that still matched its receipt. Pin BOTH so neither can drift alone.
-        assert_eq!(h.growth_fund_weight, 0.07, "{receipts}");
+        // (#71) 2026-08-11: graded under Ship Rule v2 for the first time — twelve `backtest {20,12,8}
+        // universe fund` runs at 0 / 0.05 / 0.07 / 0.12 — and 0.07 HELD. Note the generic message above
+        // does not apply to this knob: "both OOS halves positive" is the FUND LANE's criterion, and at 8y
+        // that lane prints "keep growth_fund_weight 0. SHIP NOTHING." while the graded top-3 book makes
+        // weight 0 the worst of the four arms (8y mean +7.1 vs +7.3, at every basket size, h2h 63%->57%).
+        // Grade this one on top-3, and only on 12y+8y — 20y carries zero fundamental coverage, so its
+        // ablation is D+0.00 and every arm ties there for free. Read the (#71) receipt before moving it.
+        assert_eq!(h.growth_fund_weight, 0.07, "0.07 held a v2 grid — 0 fails the primary; do NOT zero this on the fund lane's own SHIP NOTHING line, which grades the lane and not the book. {receipts}");
         assert_eq!(h.growth_fund_cap, 300.0, "cap is half the tilt magnitude — {receipts}");
         // (G+) the multi-term tilt is no longer inert: (#43) ships ROIC as its first entry. The bar for a
         // non-empty list was "+rho with both OOS halves positive, same as the primary" — roic cleared it
