@@ -5915,6 +5915,14 @@ mod tests {
         // is exactly why it needs an assert rather than a receipt alone.
         assert_eq!(tuning.growth_overext_cap, 100.0, "the brake cap is graded under v2 — 150 is a NO-SHIP and 200 REFUSED on the rank-1 h2h guard; read the (#69) receipt before moving it");
 
+        // (#70) Pinned because the ARGUMENT for raising it is sound and the MEASUREMENT still refuses
+        // it — the combination most likely to get hand-edited by a reader who reasons it through and
+        // stops there. `accel` subtracts `long_cagr`, so this weight minus `growth_accel_weight` is the
+        // lane's slope in CAGR: 0.15 − 0.50 = −0.35 per %/yr, i.e. the lane penalises the compounding it
+        // hunts, and lifting this knob genuinely raises rho, lane edge and OOS at all three horizons.
+        // The graded top-3 book gets worse anyway. Three rungs refused on the worst-window guard.
+        assert_eq!(tuning.growth_trend_weight, 0.15, "0.15 survived a v2 grid — 0.35/0.55/0.70 all REFUSED on the top-3 worst window, and 0.35 also breaks the 8y h2h guard; read the (#70) receipt, and note that rising lane edge is not a reason to move this");
+
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
         // an empty table, which no value assert above would notice.
         let mut strong = gate_fixture();

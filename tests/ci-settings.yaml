@@ -1519,7 +1519,87 @@ buy_heuristic:
                                  #   edge is UP at all three (+28/+32/+25) and that is not enough, per the rank-1-wins rule
                                  #   this knob was shipped under; the gains are inside the bootstrap band besides. 0.15 STANDS,
                                  #   now bracketed at 0.10 / 0.15 / 0.25 / 0.40. Full grid at growth_accel_weight (#47).
+                                 #   (#70) RE-GRADED UNDER SHIP RULE v2 ON 2026-08-11. ALL THREE RUNGS REFUSED; 0.15 STANDS.
+                                 #   THE ROUND WAS OWED, and by this knob more than any other: (#47) refused 0.40 on 12y
+                                 #   rank-1 MEDIAN and 8y h2h 66->53%, and v2 demoted the first to a non-judge and set the
+                                 #   second's bar at >=50%, which 53% clears. This is the one knob in the file refused
+                                 #   PRECISELY on what v2 retired. Its config had also moved twice since: (#62) zeroed
+                                 #   smoothness, (#63) cut accel 0.65->0.50, and (#63) recorded that the accel cut shifted
+                                 #   this knob's whole sweep up one row. And both (#62) and (#63) logged its wide curve as an
+                                 #   explicit lead ("a lead for a wide run, not a licence to move the knob").
+                                 #   THE ARM WAS STRUCTURAL, NOT FITTED. accel subtracts long_cagr, so for any name inside
+                                 #   the accel clamp — the accelerating cohort this lane exists to hunt — d(base)/d(CAGR) =
+                                 #   growth_trend_weight - growth_accel_weight = 0.15 - 0.50 = -0.35 per %/yr. Past CAGR 30
+                                 #   the trend term saturates on long_trend_cap and it worsens to -0.50. Term ceilings agree:
+                                 #   trend maxes at 0.15x30 = 4.5 pts, accel at 0.50x50 = 25. THE LANE PENALISES A HIGHER
+                                 #   LONG-RUN CAGR, and raising this weight to 0.55 flips the slope to +0.05.
+                                 #   TWELVE WIDE RUNS, {0.15,0.35,0.55,0.70} x `backtest {20,12,8} universe`, 4997 tickers,
+                                 #   this knob the only thing changed, rule fixed BEFORE the first run. Control is 0.15 run as
+                                 #   its own probe. Data conditions identical per horizon (windows 36/51/59; growth-scored
+                                 #   351/524/692 in every arm). DRIFT CONTROL: the 0.15 arm reproduces (#69)'s cap-100 control
+                                 #   at 20y BYTE-FOR-BYTE across the entire top-3 line, OOS and hold count included.
+                                 #     horizon  w     top3 mean  top3 med  worst  win%  rank-1 h2h  lane edge  winsor   rho
+                                 #     20y      0.15      +6.3      +5.7   -0.5    97%     74%        +707.3   +627.2  +0.23  <- ctl
+                                 #     20y      0.35      +6.3      +6.4   -3.5    94%     58%        +734.1   +654.0  +0.25
+                                 #     20y      0.55      +6.1      +6.4   -3.5    94%     53%        +779.2   +694.2  +0.25
+                                 #     20y      0.70      +6.1      +6.4   -3.5    94%     58%        +782.3   +697.2  +0.25
+                                 #     12y      0.15      +6.8      +6.9   -7.8    84%     63%        +177.5   +148.5  +0.17  <- ctl
+                                 #     12y      0.35      +6.7      +6.9   -7.8    84%     67%        +185.9   +156.2  +0.18
+                                 #     12y      0.55      +6.6      +6.9   -7.8    84%     63%        +180.2   +150.6  +0.19
+                                 #     12y      0.70      +6.5      +6.9   -7.8    84%     59%        +187.4   +157.7  +0.19
+                                 #      8y      0.15      +7.7      +8.3   -9.2    81%     60%         +43.9    +43.3  +0.18  <- ctl
+                                 #      8y      0.35      +7.3      +7.9   -9.2    81%     46%         +70.1    +69.4  +0.21
+                                 #      8y      0.55      +7.3      +8.0   -9.2    81%     51%         +78.9    +75.8  +0.21
+                                 #      8y      0.70      +6.9      +7.3   -9.2    81%     51%         +86.6    +83.4  +0.21
+                                 #   REFUSED, all three rungs, on the TOP-3 WORST-WINDOW GUARD at 20y: -0.5 -> -3.5 at every
+                                 #   rung. A broken guard refuses outright and is never softened, so the round stops there.
+                                 #   0.35 breaks a SECOND guard — 8y rank-1 h2h 46%, under the 50% bar — which is (#47)'s own
+                                 #   66->53% finding reproduced and deepened on the new pool, at a rung BELOW the 0.40 it
+                                 #   refused. The primary would have failed anyway: 8y top-3 loses BOTH moments at every rung,
+                                 #   monotonically past 0.35 (+7.7|+8.3 -> +7.3|+7.9 -> +7.3|+8.0 -> +6.9|+7.3).
+                                 #   THE SIZE OF THE BREAK, stated because a receipt that hides it is worthless: win% 97 -> 94
+                                 #   on n=36 is EXACTLY ONE WINDOW flipping from win to loss, and that one window loses 3.5.
+                                 #   The rule was fixed before the runs and a broken guard is a refusal, so this closes the
+                                 #   question — but the honest magnitude is one window, not a collapse. What makes it a real
+                                 #   effect rather than noise is that it lands at -3.5 IDENTICALLY at 0.35, 0.55 and 0.70:
+                                 #   one name enters the top 3 as soon as the weight clears some threshold and stays there.
+                                 #   THE MECHANISM, and it is the part worth keeping. THE CURVE WAS RIGHT ABOUT WHAT IT
+                                 #   MEASURES AND STILL DOES NOT GRADE. Lane edge rose at all three horizons exactly as the
+                                 #   (#62)/(#63) curve promised (20y +707->+782, 12y +178->+187, 8y +44->+87), winsor tracked
+                                 #   it point for point so it is not leaning on extreme rows, rho rose at all three, and
+                                 #   OOS-early rose. Every column that motivated this round did what it said. The graded book
+                                 #   got WORSE anyway. Lane edge is a top-half-vs-bottom-half spread over ~350-700 windows and
+                                 #   is BLIND TO THE TOP-3 BOOK'S TAIL: rewarding CAGR harder pulls high-CAGR names up the
+                                 #   whole list, which widens that spread, and simultaneously puts one name in the top 3 that
+                                 #   gives back 3.5 pts/yr in the worst window. At 20y it even improves the top-3 MEDIAN
+                                 #   (+5.7 -> +6.4) while costing the mean and the tail — better typical window, worse bad one.
+                                 #   THIRD TIME A LANE-LEVEL METRIC HAS DISAGREED WITH BOOK QUALITY HERE, and the pattern is
+                                 #   now worth naming: (#63) accel trades lane edge for rank-1 quality; (#69) an ablation Δ
+                                 #   tracks a term's MAGNITUDE contribution to `base`, not its ranking authority; (#70) an edge
+                                 #   CURVE tracks lane spread, not the graded basket's tail. None of the three is a proxy for
+                                 #   the book. Use them to CHOOSE an arm, never to grade one.
+                                 #   AND THE NEGATIVE SLOPE IS NOT, BY ITSELF, A DEFECT. d(base)/d(CAGR) = -0.35 is real
+                                 #   arithmetic and correcting it does exactly what theory says — rho and edge both rise. It
+                                 #   just does not buy a better basket. Do not re-propose this knob on the slope argument
+                                 #   alone; it has now been brought, measured, and refused on the metric that ships.
   growth_accel_weight: 0.50      # SCORE: reward per pt the last year outpaced the long CAGR.
+                                 #   (#70) RE-GRADED UNDER SHIP RULE v2 ON 2026-08-11 AND CONFIRMED AT 0.50, zero new runs.
+                                 #   (#63) below shipped this value on 2026-08-10 graded on (#47)'s rank-1 rule — the primary
+                                 #   v2 had retired FOUR DAYS EARLIER. Re-grading its twelve surviving run files on top-3, the
+                                 #   way v2 itself re-graded `fixed_cagr_years` (same files, no new compute):
+                                 #     arm        20y t3 mean|med   12y          8y            h2h 20/12/8   worst
+                                 #     0.65 ctl   +6.4|+6.6         +7.0|+6.9    +7.9|+8.4     67/60/58      -0.5/-7.8/-9.2
+                                 #     0.35       +6.5|+6.6         +7.2|+7.8    +7.9|+8.3     76/67/58      identical
+                                 #     0.50 <--   +6.4|+6.6         +7.1|+7.4    +8.0|+8.7     76/60/63      identical
+                                 #     0.80       +6.5|+6.6         +7.0|+6.9    +7.7|+8.2     71/63/55      identical
+                                 #   0.50 holds the primary at 20y and takes BOTH moments up at 8y, with both guards passing
+                                 #   and the worst window byte-identical everywhere. 0.35 fails the primary on 8y median, 0.80
+                                 #   on both 8y moments. So the knob survives a rule it was not graded under.
+                                 #   IT ALSO SURVIVES ITS OWN ESCAPE CLAUSE, and that is the part to read: (#63) hedged that
+                                 #   0.35 "owns lane edge, rho, OOS and top-3 at most horizons" and that a re-measurement
+                                 #   failing to reproduce its +7.0 rank-1 spike should trigger a revert. On top-3 — the metric
+                                 #   that now decides — 0.35 does NOT own it: it loses the 8y median outright. The clause is
+                                 #   discharged, not merely unexercised.
                                  #   (#47) "DOES A HIGHER CAGR DESERVE A BETTER RANK?" — asked 2026-08-03. Answer, measured:
                                  #   NO, on all four levers proposed. NOTHING SHIPPED. Values below are UNCHANGED; this is a
                                  #   null receipt, recorded so the question is not re-opened without a new metric.
@@ -3287,6 +3367,15 @@ buy_heuristic:
                                  #   0.05/0/0.10-vs-0.15 plateau was measured with smoothness at 5.0 and has never been repeated
                                  #   without it. Re-sweeping this is the obvious next run; it is an ADDITION, so it owes the
                                  #   addition ship rule (rank-1 must RISE, not merely hold), and 0.05 stands until it clears that.
+                                 #   (#70) MEASURED INERT AT THE SHIPPED VALUE, which sharpens what that re-sweep is asking.
+                                 #   Read off the (#63)/(#70) wide runs: this term's ablation — the whole knob to ZERO — moves
+                                 #   rho by Δ-0.00 at all three horizons and edge by Δ +0.0 / +2.7 / -5.1, every one of those
+                                 #   far under its own horizon's (#60) null floor (93.3 / 15.4 / 16.0), i.e. under what deleting
+                                 #   an information-free CONSTANT costs there. At 0.05 this term is carrying nothing the wide
+                                 #   backtest can see. That does NOT settle the sweep — inert at 0.05 is not inert at 0.15, and
+                                 #   the ETF lane it was deliberately kept nonzero for is absent from `backtest` entirely — but
+                                 #   it does mean the open question is whether to RAISE this knob, never whether it is currently
+                                 #   earning its place. Nobody needs to spend runs re-confirming that it is quiet today.
   onsale_sharpe_weight: 0.0      # [FOIL] (B) ON-SALE lane's own Sharpe weight, split from growth because the shared knob conflicted:
                                  #   ablation showed growth wants 0.15 but on-sale wants 0 — zeroing it lifts the on-sale 12y edge
                                  #   +39.2->+62.9 (Δ+23.7) while growth keeps 0.15. 0 = off (the swept on-sale optimum)
