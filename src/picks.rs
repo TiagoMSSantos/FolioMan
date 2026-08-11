@@ -5908,6 +5908,13 @@ mod tests {
         assert_eq!(tuning.growth_max_above_ma, 150.0, "the stretch gate is measured, not a taste call — its excluded cohort is negative on both moments at all three horizons, and the live table clears it by 3 points");
         assert_eq!(tuning.max_1m_drop_pct, -1000000.0, "the knife ships OFF and its own block argues for -20 — that is unresolved, not settled; read the (#64) receipt before moving it either way");
 
+        // (#69) The SOFT brake, pinned beside the hard gate it was suspected of duplicating. The gate
+        // above truncates everything past 150; this decides the ORDER of what survives, and the two are
+        // not interchangeable — nine wide runs graded {100,150,200} under Ship Rule v2 and both looser
+        // rungs lost. Loosening is the dangerous direction and the one the gate sweep cannot see, which
+        // is exactly why it needs an assert rather than a receipt alone.
+        assert_eq!(tuning.growth_overext_cap, 100.0, "the brake cap is graded under v2 — 150 is a NO-SHIP and 200 REFUSED on the rank-1 h2h guard; read the (#69) receipt before moving it");
+
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
         // an empty table, which no value assert above would notice.
         let mut strong = gate_fixture();

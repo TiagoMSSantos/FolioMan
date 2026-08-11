@@ -2571,6 +2571,53 @@ buy_heuristic:
   # can't brake crypto/ETFs (no earnings); this can — it's price-only. Taper the score toward the
   # floor as price stretches above trend, killing blow-off-top chasing.
   growth_overext_cap: 100.0      # % above the 200wk SMA where the brake maxes out. Biting harder (100->60) cut edge +1.9->-9.5: over-penalizes good compounders that keep running above trend. Keep 100
+                                 # (#69) RE-GRADED UNDER SHIP RULE v2 ON 2026-08-11 AND HELD AT 100. This closes the question
+                                 #   `growth_max_above_ma` opened above ("ONE MECHANISM WORTH THE NEXT ROUND'S ATTENTION ...
+                                 #   Read `growth_overext_cap` in that light"): the answer is that the hard gate does NOT
+                                 #   substitute for the soft brake, and the ablation collapse that suggested it was measuring
+                                 #   the wrong thing.
+                                 #   WHY THE ROUND WAS OWED, beyond that: every rung of this knob was graded on rank-1, the
+                                 #   primary v2 retired, and the receipt one line above is a pure lane-edge argument. So the
+                                 #   knob had never been judged on the slice that now judges it.
+                                 #   THE ARM WAS STRUCTURAL, NOT FITTED, and it is worth stating because it was WRONG. The
+                                 #   brake is one linear ramp, damp = 1 - (min(above_ma, cap)/cap) x (1 - floor), so at cap 100
+                                 #   with the gate at 150 EVERY name in the 100..150 band saturates at floor 0.05: a +101% name
+                                 #   and a +149% name score identically, though (#24) keeps that band in the table on purpose.
+                                 #   Setting cap = gate would have graded the band instead of flattening it. It measured worse.
+                                 #   NINE WIDE RUNS, cap {100,150,200} x `backtest {20,12,8} universe` on 4997 tickers, floor
+                                 #   held at 0.05 so exactly one knob moved. Data conditions identical within each horizon
+                                 #   (cutoffs 4588 / 11885 / 20791, same window counts 36 / 51 / 59). Ship rule fixed BEFORE
+                                 #   the first run. Control is cap 100 run as its own probe, never a bare-config run.
+                                 #     horizon  cap   top3 mean  top3 med  worst  rank-1 h2h  win%
+                                 #     20y      100       +6.3      +5.7   -0.5      74%       97%   <- control
+                                 #     20y      150       +6.3      +5.2   -0.5      74%       97%
+                                 #     20y      200       +6.3      +5.0   -0.5      47%       97%
+                                 #     12y      100       +6.8      +6.9   -7.8      63%       84%   <- control
+                                 #     12y      150       +6.5      +6.3   -7.8      52%       82%
+                                 #     12y      200       +6.3      +6.3   -7.8      41%       82%
+                                 #      8y      100       +7.7      +8.3   -9.2      60%       81%   <- control
+                                 #      8y      150       +7.1      +7.8   -9.2      54%       80%
+                                 #      8y      200       +6.7      +7.9   -9.2      40%       80%
+                                 #   cap 200 is REFUSED: the rank-1 h2h guard breaks at ALL THREE horizons (47/41/40, under the
+                                 #   50% bar), and a broken guard refuses outright rather than softening to unresolved.
+                                 #   cap 150 is a plain NO-SHIP, not UNRESOLVED: the primary loses at 20y (median +5.7 -> +5.2)
+                                 #   and at 8y (mean +7.7 -> +7.1, median +8.3 -> +7.8), and NO horizon goes up, so there is no
+                                 #   real disagreement to be unresolved about. Both guards actually pass for 150 — h2h 74/52/54
+                                 #   and worst window identical at every horizon — it simply does not earn the primary.
+                                 #   THE MECHANISM, which is the part worth keeping: weakening the cap degrades rank-1 h2h
+                                 #   MONOTONICALLY at every horizon (20y 74/74/47, 12y 63/52/41, 8y 60/54/40) while top-3
+                                 #   median falls with it. The gate and the brake are NOT redundant — the gate TRUNCATES above
+                                 #   150 and the brake ORDERS what remains, and the 100..150 band still needs crushing for the
+                                 #   top of the list to hold. The (#64) note read an ablation Δ collapse (-35.5 -> -5.6 at 8y)
+                                 #   as evidence of redundancy; it is not, for the reason recorded at the head of this file —
+                                 #   an ablation Δ tracks how much MAGNITUDE a term contributes to `base`, largely independent
+                                 #   of how much it KNOWS. Ranking authority is what the brake carries, and only a rank metric
+                                 #   can see it.
+                                 #   AND THE FLOOR'S "ZERO RANK-1 AUTHORITY" DOES NOT GENERALIZE TO THE CAP. That receipt
+                                 #   (`growth_overext_floor`) found rank-1 byte-identical at every floor swept. The cap moves
+                                 #   h2h by 27pp. They are different levers on one ramp: the floor sets how deep the penalty
+                                 #   goes at saturation, the cap sets how much of the admitted range is saturated at all.
+                                 #   Do not cite one knob's rank-blindness as the other's.
   growth_max_above_ma: 150.0     # (#24) HARD gate above the brake: reject equities >150% above the 200wk SMA (crypto exempt).
                                  #   Past the brake cap the damp saturates, so a +486% blow-off (WDC 2026-07) scored like a +100%
                                  #   name; the brake can floor it but never remove it. Same-batch triple 2026-07-03:
