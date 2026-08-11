@@ -25,9 +25,24 @@ zip = { version = "2", default-features = false, features = ["deflate"] }  # FIR
 rayon = "1"          # CPU parallelism for the backtest walk + sweeps; tokio's pool is for I/O and `buffer_unordered` is one task on one thread
 mutants = "0.0.4"   # no-op attribute shim: `#[mutants::skip]` marks the handful of functions cargo-mutants CANNOT grade (see src/broker/*.rs). Compiles to nothing, pulls in nothing
 
+# No `unsafe` in this crate and none wanted. Declared here rather than as `#![forbid(unsafe_code)]`
+# in lib.rs because `src/main.rs` is a separate crate root that an inner attribute in the library
+# would not reach; the table covers every target, including tests, from one place.
+[lints.rust]
+unsafe_code = "forbid"
+
 [profile.release]
 opt-level = 3
 lto = true
+# (#68) On, because the two profiles disagreed about integer overflow and only the wrong one was
+# tested. `[profile.mutants]` inherits `dev`, so overflow-checks were already on under `cargo t` —
+# while this profile, which builds both the daily screen and CI's `backtest-gate`, set only the two
+# lines above and left them off. Every integer bug was therefore a loud panic in the suite and a
+# silent wrap in the artifact that handles money. (#66) was exactly that: a per-tier counter typed
+# `u8` that wrapped at 256 and let the tier admit three more rows, unobservable from any test.
+# Costs nothing measurable here — overflow-checks instruments integer add/sub/mul/neg/shift, and the
+# backtest's hot loop is `f64`, which is not instrumented at all.
+overflow-checks = true
 
 # Killing-suite profile for `cargo mutants`. The report pin (tests/backtest_fixture.rs) replays 200
 # tickers of history six times, which at `dev`'s opt-level 0 costs 38s per mutant against an 11s

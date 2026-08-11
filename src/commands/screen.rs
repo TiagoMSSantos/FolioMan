@@ -1083,6 +1083,18 @@ fn meta_alerts(
     out
 }
 
+/// (#68) UNGRADEABLE BY THE MUTATION GATE, and skipped so that stays a stated fact rather than a
+/// trap. `run` is reachable from `main.rs` and nowhere else, so the only test that exercises it is
+/// `screen_ranks_and_journals_offline` in the cli suite — which `ci.yml`'s mutants job deliberately
+/// does not run, grading `--lib --test backtest_fixture` alone. `replace run with ()` therefore
+/// cannot be killed there: graded 2026-08-11 against exactly that selection, 1 mutant, 1 MISSED.
+///
+/// Without the attribute the gate is armed against every future edit in this function, because
+/// `--in-diff` grades whole functions and any one-line change drags all of `run` into scope — which
+/// is how a `saturating_sub` on a diagnostic line came to red a mutation job. The alternative was
+/// adding `--test cli` to the gate; it was declined on cost, the gate being 98.6% compiler against a
+/// measured ~24-mutant ceiling per 20-minute job.
+#[mutants::skip]
 pub async fn run(args: Vec<String>) {
     let started = std::time::Instant::now();
     let run_date = chrono::Local::now().date_naive().to_string();
@@ -1124,10 +1136,16 @@ pub async fn run(args: Vec<String>) {
     } else {
         let crypto = universe.iter().filter(|t| crate::picks::is_currency_quoted(t)).count();
         let etfs = universe.iter().filter(|t| etf_tickers.contains(*t)).count();
+        // (#68) `saturating_sub`, because the two counts are not disjoint by construction: they are
+        // independent filters over the same universe, and a ticker carrying a `-USD`/`-EUR` suffix
+        // that is ALSO in the Xetra set is counted by both. That made the stock count wrap to a
+        // nonsense figure — harmless while `[profile.release]` left overflow-checks off, a panic now
+        // that it doesn't. A diagnostic line must not be able to kill the run it is describing, so
+        // the count saturates: worst case it reads 0 stocks, which is visibly wrong rather than fatal.
         eprintln!(
             "screen: {} tickers in universe ({crypto} crypto + {} stocks + {etfs} ETFs)",
             universe.len(),
-            universe.len() - crypto - etfs
+            universe.len().saturating_sub(crypto).saturating_sub(etfs)
         );
     }
 
