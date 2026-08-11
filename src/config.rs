@@ -992,6 +992,38 @@ pub fn fund_source() -> String {
     .clone()
 }
 
+/// Process-once read of `compute_threads` for sizing the process's thread pools, WITHOUT the fatal
+/// path. SOFT — a missing/invalid config yields 0, which every caller reads as "let the pool pick".
+///
+/// The softness is the whole point and not a convenience. `load()` calls `config_fatal` and exits 1
+/// on an unreadable config, but the tokio runtime is built before `main` dispatches, and `main` must
+/// still reach `help` on a broken config — the exact reason `load()` lives inside each command's `run`
+/// rather than in `main` (see `commands::backtest::run`). Calling `load()` here would turn every
+/// invocation, `folioman help` included, into an exit 1.
+///
+/// Deliberately NOT sharing `commands::backtest::thread_cap`, which encodes the same `0 = auto`
+/// sentinel for the rayon pool. Its only call site sits inside `backtest::run`, a command entry with
+/// no `#[mutants::skip]`, and `cargo mutants --in-diff` grades whole functions — so reusing it would
+/// drag an ungradeable entry point into the mutation gate to save two lines.
+///
+/// Skipped because its answer is the AMBIENT config, which the `--lib` suite cannot choose: CI has no
+/// `config/settings.yaml` (gitignored) and the fixture pins the knob at 0, so `replace -> 0` is
+/// unkillable there rather than merely unkilled. The decision itself takes the config as an argument
+/// and is graded — see [`compute_threads_of`]. Measured: without this split the gate lists exactly
+/// these two mutants and MISSES the first.
+#[mutants::skip]
+pub fn compute_threads() -> usize {
+    use std::sync::OnceLock;
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| compute_threads_of(merged_config()))
+}
+
+/// The knob out of an already-merged config: 0 — "let the pool size itself" — when there is no config
+/// or it does not parse. Split from [`compute_threads`] purely so this half is reachable from a test.
+fn compute_threads_of(cfg: Option<serde_yaml::Value>) -> usize {
+    cfg.and_then(|v| serde_yaml::from_value::<Settings>(v).ok()).map_or(0, |s| s.compute_threads)
+}
+
 /// (#17/Step 4) Process-once read of the measurement-endpoint smoothing window (closes averaged for
 /// the "current price" used by perf %/CAGR/range/drawdown and the hard gates). SOFT — a missing/invalid
 /// config yields 1 (the raw last close, today's validated behaviour), so it never panics in unit tests
@@ -1279,6 +1311,31 @@ mod tests {
         assert!(!gates_configured(&y("buy_heuristic:\n"))); // bare key -> null
         assert!(!gates_configured(&y("buy_heuristic: {}\n"))); // named, but empty
         assert!(!gates_configured(&y("monthly_deploy_eur: 2200\n"))); // no base found
+    }
+
+    /// `compute_threads` is read to size the tokio runtime BEFORE `main` dispatches, so unlike every
+    /// other knob it cannot go through `load()` — that exits 1 on a bad config, and `folioman help`
+    /// has to keep working on one. This pins the soft half: a config that is absent or not a config
+    /// at all answers 0 ("size the pool yourself") instead of exiting or panicking.
+    ///
+    /// The present-config arm reads the committed fixture and moves only the one key, because
+    /// `Settings` is `deny_unknown_fields` with a dozen required keys — a synthetic mapping big
+    /// enough to parse would pin the mapping rather than the lookup.
+    #[test]
+    fn compute_threads_falls_back_to_auto_instead_of_exiting() {
+        let fixture = ci_settings_path();
+        let text = std::fs::read_to_string(&fixture).expect("the committed fixture is readable");
+        let mut cfg: serde_yaml::Value = serde_yaml::from_str(&text).expect("the fixture is YAML");
+        cfg.as_mapping_mut()
+            .expect("the fixture is a mapping")
+            .insert("compute_threads".into(), serde_yaml::Value::from(6u64));
+        assert_eq!(compute_threads_of(Some(cfg)), 6, "a configured cap must survive the read");
+        assert_eq!(compute_threads_of(None), 0, "no config = let the pool pick, NOT an exit");
+        assert_eq!(
+            compute_threads_of(Some(serde_yaml::Value::Bool(true))),
+            0,
+            "a config that cannot be a Settings is the same soft 0, not a panic before main runs"
+        );
     }
 
     /// The `#[serde(default = "…")]` fallbacks, pinned to the numbers their field comments promise.
