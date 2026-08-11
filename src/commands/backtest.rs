@@ -1454,7 +1454,7 @@ fn report_fund_lane(samples: &[Sample]) {
         let rels: Vec<f64> = pairs.iter().map(|(s, _)| s.relative).collect();
         let rho = core::spearman(&sc, &rels).map_or("n/a".to_string(), |v| format!("{v:+.2}"));
         let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
-        v.sort_by(|a, b| b.1.total_cmp(&a.1));
+        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         let half = v.len() / 2;
         let edge = mean(&v[..half]) - mean(&v[v.len() - half..]);
         let mid = pairs.len() / 2; // pairs preserve the date order of `samples` -> early-vs-late OOS
@@ -1521,7 +1521,7 @@ fn emit_probe(name: &str, pairs: &[(&Sample, f64)]) {
     let rels: Vec<f64> = pairs.iter().map(|(s, _)| s.relative).collect();
     let rho = core::spearman(&sc, &rels).map_or("n/a".to_string(), |v| format!("{v:+.2}"));
     let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
-    v.sort_by(|a, b| b.1.total_cmp(&a.1));
+    v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     let half = v.len() / 2;
     let edge = mean(&v[..half]) - mean(&v[v.len() - half..]);
     let mid = pairs.len() / 2; // pairs preserve the date order of `samples` -> early-vs-late OOS
@@ -1573,7 +1573,7 @@ fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], b
     results
         .iter()
         .filter(|(_, edge, a, b)| *edge > baseline && a.is_some_and(|v| v > 0.0) && b.is_some_and(|v| v > 0.0))
-        .max_by(|x, y| x.1.total_cmp(&y.1))
+        .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
         .map(|(name, ..)| *name)
 }
 
@@ -1729,7 +1729,7 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
         // shows the cliff exists but not where it starts, which is the number that decides safety.
         let mut ladder =
             vec![0.0, 0.005, shipped, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.25, 0.5];
-        ladder.sort_by(|a, b| a.total_cmp(b));
+        ladder.sort_by(|a, b| a.partial_cmp(b).unwrap());
         ladder.dedup();
         println!(
             "\n── growth_fund_weight CURVE for `{configured}` (held-out TEST, growth_fund_cap {:.0}) ──",
@@ -1844,7 +1844,7 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         let mut multiples: Vec<f64> = Vec::new();
         for (b, v) in &by_bucket {
             let mut vv = v.clone();
-            vv.sort_by(|a, b| b.0.total_cmp(&a.0)); // score desc
+            vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc
             let take = n.min(vv.len());
             if take == 0 {
                 continue;
@@ -1938,7 +1938,7 @@ fn rank_slice_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f
     let (mut h1, mut h25, mut hn) = (0usize, 0usize, 0usize);
     for v in by_bucket.values() {
         let mut vv = v.clone();
-        vv.sort_by(|a, b| b.0.total_cmp(&a.0)); // score desc — the screen's own order
+        vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc — the screen's own order
         for ((lo, hi, _), (_, series)) in SLICES.iter().zip(out.iter_mut()) {
             if vv.len() <= *lo {
                 continue; // slice starts past this window's pool — no fake short book
@@ -1964,7 +1964,7 @@ fn rank_slice_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f
 
 /// Median of an owned sample. Callers skip empty slices, so the 0-length arm never reaches a print.
 fn median(mut v: Vec<f64>) -> f64 {
-    v.sort_by(|a, b| a.total_cmp(b));
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let k = v.len();
     if k == 0 {
         return f64::NAN;
@@ -1995,7 +1995,7 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
     let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
     for v in by_bucket.values() {
         let mut vv = v.clone();
-        vv.sort_by(|a, b| b.0.total_cmp(&a.0)); // rank_key desc
+        vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // rank_key desc
         let take = n.min(vv.len());
         if take == 0 {
             continue;
@@ -2342,7 +2342,7 @@ fn drop_bottom_book(
             if vals.is_empty() {
                 None
             } else {
-                vals.sort_by(|a, b| a.total_cmp(b));
+                vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 Some(vals[(((p / 100.0) * vals.len() as f64) as usize).min(vals.len() - 1)]) // P-th percentile floor
             }
         } else {
@@ -2391,7 +2391,7 @@ fn corr_cap_book(
     }
     let mut by: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
     for (bk, ranked) in &mut buckets {
-        ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+        ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
         for (score, s) in greedy_decorrelate(ranked, n, cap) {
             let br = benchmark_fwd(bd, bc, s.date, years).unwrap();
             by.entry(*bk).or_default().push((score, s.realized, br));
@@ -2441,12 +2441,10 @@ fn report_corr_cap(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>
 /// (mean pick terminal multiple, mean bench terminal multiple, book size, overlap count).
 fn union_book(rows: &[(String, f64, Option<f64>, f64, f64)], g: usize, v: usize) -> Option<(f64, f64, usize, usize)> {
     let mut by_score: Vec<&(String, f64, Option<f64>, f64, f64)> = rows.iter().collect();
-    by_score.sort_by(|a, b| b.1.total_cmp(&a.1));
+    by_score.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     let mut picked: Vec<&(String, f64, Option<f64>, f64, f64)> = by_score.into_iter().take(g).collect();
     let mut by_ey: Vec<&(String, f64, Option<f64>, f64, f64)> = rows.iter().filter(|r| r.2.is_some()).collect();
-    // (#66) the one sort in this file whose key is an `Option<f64>`, which has no `total_cmp` — the
-    // line above filters `is_some()`, so compare the inner values and keep the same descending order.
-    by_ey.sort_by(|a, b| b.2.unwrap_or(f64::MIN).total_cmp(&a.2.unwrap_or(f64::MIN)));
+    by_ey.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
     let mut overlap = 0;
     for r in by_ey.into_iter().take(v) {
         if picked.iter().any(|p| p.0 == r.0) {
@@ -2568,7 +2566,7 @@ fn report_two_style_book(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
 /// `report_lane`, the ablation, and `tune`.
 fn edge_halves(pairs: &[(&Sample, f64)]) -> (f64, f64) {
     let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
-    v.sort_by(|a, b| b.1.total_cmp(&a.1));
+    v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     let half = v.len() / 2;
     let mean = |s: &[&(&Sample, f64)]| s.iter().map(|x| x.0.relative).sum::<f64>() / s.len().max(1) as f64;
     (mean(&v[..half]), mean(&v[v.len() - half..]))
@@ -2583,11 +2581,11 @@ fn winsor_edge(pairs: &[(&Sample, f64)]) -> f64 {
         return f64::NAN;
     }
     let mut rels: Vec<f64> = pairs.iter().map(|x| x.0.relative).collect();
-    rels.sort_by(|a, b| a.total_cmp(b));
+    rels.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let (lo, hi) = (percentile(&rels, 1.0), percentile(&rels, 99.0));
     // (score, clamped-relative), sorted by score desc -> same half split as edge_halves.
     let mut v: Vec<(f64, f64)> = pairs.iter().map(|x| (x.1, x.0.relative.clamp(lo, hi))).collect();
-    v.sort_by(|a, b| b.0.total_cmp(&a.0));
+    v.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
     let half = v.len() / 2;
     let mean = |s: &[(f64, f64)]| s.iter().map(|x| x.1).sum::<f64>() / s.len().max(1) as f64;
     mean(&v[..half]) - mean(&v[v.len() - half..])
@@ -2600,7 +2598,7 @@ fn winsor_edge(pairs: &[(&Sample, f64)]) -> f64 {
 /// small for 10 stable buckets. <3 rows -> all-NaN (no spread to read).
 fn edge_terciles(pairs: &[(&Sample, f64)]) -> (f64, f64, f64) {
     let mut v: Vec<&(&Sample, f64)> = pairs.iter().collect();
-    v.sort_by(|a, b| b.1.total_cmp(&a.1));
+    v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     let n = v.len();
     if n < 3 {
         return (f64::NAN, f64::NAN, f64::NAN);
@@ -2914,7 +2912,7 @@ fn bootstrap_edge_ci(
     if edges.len() < iters / 2 {
         return None; // too many draws gated out to too few rows -> no trustworthy band
     }
-    edges.sort_by(|a, b| a.total_cmp(b));
+    edges.sort_by(|a, b| a.partial_cmp(b).unwrap());
     Some((percentile(&edges, lo_p), percentile(&edges, hi_p)))
 }
 
@@ -2931,7 +2929,7 @@ fn turnover_frac(scored: &[(&Sample, f64)]) -> f64 {
     let tops: Vec<HashSet<&str>> = by_bucket
         .into_values()
         .map(|mut rows| {
-            rows.sort_by(|a, b| b.1.total_cmp(&a.1));
+            rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
             rows[..rows.len() / 2].iter().map(|(t, _)| *t).collect::<HashSet<&str>>()
         })
         .filter(|s| !s.is_empty())
@@ -3808,6 +3806,86 @@ mod tests {
         tie.insert(0, vec![(1.0, 20.0, 20.0)]);
         let (.., win, _, _, _) = book_stats(&tie, 1, 1).unwrap();
         assert!(win.abs() < 1e-9, "an exact tie must not count as a win: win {win}");
+    }
+
+    /// (#67) The two BOOK PROBES that no test has ever touched: `drop_bottom_book` (the fund-factor
+    /// floor) and `corr_cap_book` (the diversification cap). Both are fund-lane code, and every golden
+    /// runs fund-less, so the frozen-data pins execute neither — they were invisible until a diff
+    /// touched them and the mutation gate graded five surviving mutants in `drop_bottom_book` alone.
+    ///
+    /// WHAT THIS PINS, and why it is two asserts rather than a table of numbers. Both functions return
+    /// `Option<(f64 x 7)>`, so cargo-mutants enumerates 3^7 constant tuples per function — 2188 mutants
+    /// each, 4376 for the pair, which is 65% of everything a diff touching this file can generate. An
+    /// empty pool returning None kills every `Some(<const>)` mutant at once, because a constant Some
+    /// cannot report a book for a pool that has no rows; a populated pool returning Some kills the
+    /// `None` mutant. The pair is complete against that whole class, and a hand-computed 7-tuple would
+    /// add nothing to it — the arithmetic already belongs to `book_stats`, which owns its own pin.
+    #[test]
+    fn book_probes_reject_an_empty_pool_and_report_a_populated_one() {
+        // Same construction as `walk_forward_edge_pin`: a closed-form series on a synthetic ~252/yr
+        // calendar, which is the only shape known to clear growth_score's gates without a network.
+        let n_bars = 13 * 252;
+        let d0 = ymd(2010, 1, 4);
+        let dates: Vec<NaiveDate> =
+            (0..n_bars).map(|k| d0 + chrono::Duration::days(k as i64 * 365 / 252)).collect();
+        let series = |g: f64, amp: f64, ph: f64| -> Vec<f64> {
+            (0..n_bars)
+                .map(|k| {
+                    let t = k as f64 / 252.0;
+                    100.0 * (1.0 + g).powf(t) * (1.0 + amp * (t * 2.7 + ph).sin())
+                })
+                .collect()
+        };
+        let universe: [(&str, Vec<f64>); 4] = [
+            ("WIN1", series(0.22, 0.04, 0.0)),
+            ("WIN2", series(0.17, 0.06, 1.0)),
+            ("MID1", series(0.10, 0.08, 2.0)),
+            ("LOSE", series(-0.08, 0.10, 5.0)),
+        ];
+        let years = 5;
+        let mut samples: Vec<Sample> = Vec::new();
+        for (rank, (tk, closes)) in universe.iter().enumerate() {
+            let mut i = MIN_HISTORY;
+            while i < dates.len() {
+                let target = dates[i] + chrono::Duration::days(years * 365);
+                let Some(off) = dates[i..].iter().position(|d| *d >= target) else { break };
+                let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
+                let quote = core::backtest_quote(tk, &dates, closes, &[], i, 252);
+                samples.push(Sample {
+                    date: dates[i],
+                    realized,
+                    relative: 0.0,
+                    // a distinct factor level per name so the percentile floor has something to cut on,
+                    // and a distinct trail so the correlation walk has something to judge
+                    fund: Some(core::FundFactors { rev_cagr: Some(rank as f64 * 10.0), ..Default::default() }),
+                    trail: (0..24).map(|m| (m as f64 * (rank as f64 + 1.0)).sin()).collect(),
+                    quote: Arc::new(quote),
+                });
+                i += STEP_SESSIONS;
+            }
+        }
+        demean(&mut samples);
+        let tuning = BuyHeuristic::default();
+        let (bd, bc) = (dates.clone(), universe[2].1.clone()); // MID1 as the benchmark leg
+
+        // populated -> Some. Kills the `-> None` mutant in both.
+        assert!(
+            drop_bottom_book(&samples, &bd, &bc, years, &tuning, 2, 50.0, |f| f.rev_cagr).is_some(),
+            "a scored pool with fund factors must produce a book"
+        );
+        assert!(
+            corr_cap_book(&samples, &bd, &bc, years, &tuning, 2, f64::INFINITY).is_some(),
+            "an uncapped correlation walk must reproduce the plain top-n book"
+        );
+        // empty -> None. Kills all 2187 `-> Some(<const tuple>)` mutants in each.
+        assert!(
+            drop_bottom_book(&[], &bd, &bc, years, &tuning, 2, 50.0, |f| f.rev_cagr).is_none(),
+            "no rows cannot yield a book"
+        );
+        assert!(
+            corr_cap_book(&[], &bd, &bc, years, &tuning, 2, f64::INFINITY).is_none(),
+            "no rows cannot yield a book"
+        );
     }
 
     /// (round 106) `union_book`: dedupe by ticker (an overlapping pick takes ONE slot), value leg
