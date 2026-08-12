@@ -1202,6 +1202,17 @@ mod tests {
         assert_eq!(h.growth_fund_extra[0].factor, "roic", "{receipts}");
         assert_eq!(h.growth_fund_extra[0].weight, 0.25, "the measured ablation peak — {receipts}");
         assert_eq!(h.growth_fund_extra[0].cap, 40.0, "matches quality_cap — {receipts}");
+        // (#72) 2026-08-12: graded under Ship Rule v2 and HELD at 0.15 — ten `backtest {8,12} universe
+        // fund` runs at 0 / 0.075 / 0.15 / 0.30 plus a 20y pair. Pinned here, with the fund tilt it
+        // interacts with ((#3d)), because NOTHING ELSE GUARDS IT: `backtest_fixture` runs offline and
+        // never exercises `fund`, so `quote.roe` is None there and this term is inert at any weight —
+        // the goldens cannot move when it does. Two things the message above gets wrong for this knob:
+        // "both OOS halves positive" is a LANE criterion, and the standalone ROE probe is NEGATIVE at
+        // both graded horizons (rho -0.04 / -0.03) while the graded book does not move at all; and the
+        // deletion rule wants three horizons, which this term can never have (20y carries no
+        // fundamentals — measured here at the extremes, not assumed). Read the (#72) receipt first: the
+        // live lead is a code round on the ON-SALE lane, which currently has no graded book to judge.
+        assert_eq!(h.quality_weight, 0.15, "0.15 held a v2 grid — every arm from 0 to 0.30 ties on the book, so this value is held rather than proven; do NOT zero it on the on-sale lane's ablation, which is lane edge and has been wrong five times. {receipts}");
         // (D) revived 2026-07-25. This one canNOT carry the receipt the message above demands: the
         // backtest cannot reconstruct as-of dividends, so no walk-forward run grades it at any weight
         // (see commands/backtest.rs's module header). It is pinned as a JUDGMENT lever sized by

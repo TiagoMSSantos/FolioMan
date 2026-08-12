@@ -1244,6 +1244,64 @@ buy_heuristic:
   #   was measured before the dividend split, and the arm's own on-sale lane came back byte-identical to
   #   the price-only run (+85.7 / net +85.6 / [+50.6 … +126.7]) because quality was on-sale's only
   #   fundamental consumer, so zeroing it collapses that lane onto the fund-less one exactly.
+  # (#72) GRADED UNDER SHIP RULE v2 — 2026-08-12, and it HOLDS at 0.15. (#62)'s MISSING RUN above is
+  #   DISCHARGED: the 8y horizon was run, the 12y was re-run post-(#61), and the 20y half was measured
+  #   rather than assumed. Ten runs, `backtest {8,12} universe fund` x four weights plus a 20y pair,
+  #   one field moved (the tool's own drift line reads `quality_weight 0.15->X` and nothing else).
+  #   Data conditions identical across all ten: 4997 tickers, growth-scored 351/511/637 at 20/12/8y,
+  #   cutoffs with as-of fundamentals 4394/8456/10956, crumb fallback failed in every run.
+  #   THE GRADED BOOK (top-N excess pts/yr, mean|median; the run's ENTRY-STATE block names it "the same
+  #   top-10 growth book", i.e. this table is the GROWTH lane's):
+  #     8y   n=59 windows, 35 h2h pairs           12y  n=51 windows, 27 h2h pairs
+  #     arm     t1        t3        t5      t10   h2h    |  t1        t3        t5      t10   h2h
+  #     0.00  +7.9|+8.6 +7.3|+7.8 +6.8|+7.4 +6.2|+6.0 63% | +6.8|+7.6 +6.8|+6.9 +6.5|+6.1 +6.1|+6.0 67%
+  #     0.075 +7.9|+8.6 +7.3|+7.8 +6.8|+7.4 +6.3|+6.0 63% | +6.8|+7.6 +6.8|+6.9 +6.6|+6.1 +6.1|+6.0 67%
+  #     0.15c +7.9|+8.6 +7.3|+7.8 +6.8|+7.4 +6.3|+6.0 63% | +6.8|+7.6 +6.8|+6.9 +6.6|+6.1 +6.1|+6.0 67%
+  #     0.30  +7.9|+8.6 +7.3|+8.0 +6.8|+7.4 +6.2|+6.2 60% | +6.8|+7.6 +6.6|+6.9 +6.5|+6.1 +6.2|+6.0 67%
+  #   Worst window is IDENTICAL in all four arms at both horizons (-9.2 at 8y, -7.8 at 12y), and rank-1
+  #   never moves at all. THE TERM IS INERT ON THE BOOK: a 4x swing in the weight, from off to double
+  #   the shipped value, moves no basket size at either graded horizon by more than 0.2.
+  #   THE VERDICT, rule applied in order. Guards hold everywhere (h2h 60-67%, no worst window moves).
+  #   0.00 and 0.075 HOLD the primary to the decimal but buy nothing, and 0.00 additionally owes the
+  #   DELETION rule, which wants all three horizons and can only ever have two here — the same reason
+  #   (#62) kept it, now with the second horizon actually run instead of merely named. 0.30 FAILS the
+  #   primary (12y t3 mean +6.8 -> +6.6) and also fails the ADDITION bar pre-registered before the runs
+  #   (rank-1 must RISE; it is flat at both horizons and the 8y h2h falls 63 -> 60). Nothing ships.
+  #   THE 20y BLACKOUT IS NOW MEASURED FOR THIS KNOB, not inherited from (#71): the two EXTREME arms,
+  #   0.00 and 0.30, come back identical on every graded number at 20y (t1 +6.4|+6.2, t3 +6.3|+5.7,
+  #   t5 +6.2|+6.0, t10 +5.9|+6.1, h2h 74%, worst -0.5, OOS +4.7/+7.8). The only textual difference is
+  #   the drift warning plus a transient Euronext-list fetch note in one run, which did not reach the
+  #   graded pool (ETF counts 0/15 in both). So the widest possible arm gap is a no-op at 20y.
+  #   AND IT IS NOT A COVERAGE PROBLEM AT THE GRADED HORIZONS — this is what separates this round from
+  #   (#71). ROE is richly populated where it is graded: the standalone probe reads n=4096 at 8y and
+  #   n=1845 at 12y. The term is being measured, and it is measured as powerless: standalone it scores
+  #   rho -0.04 edge +1.3 OOS -0.01|-0.06 at 8y and rho -0.03 edge -166.9 OOS +0.02|-0.07 at 12y, i.e.
+  #   NEGATIVE rank correlation with forward return at both. Novy-Marx's profitability premium does not
+  #   show up in this pool at these horizons. It is kept anyway, on the same grounds as (#62): the
+  #   deletion rule cannot be discharged on two horizons, and deleting it is worth nothing on the book.
+  #   THE ON-SALE LANE IS WHERE THE MOVEMENT IS, and it flips (#3d)'s option (c) around. Ablating
+  #   quality at the shipped weight LIFTS the on-sale lane at both horizons — 8y rho +0.02 -> +0.13
+  #   (Δ+0.11), edge +25.6 -> +29.7; 12y rho -0.06 -> +0.03 (Δ+0.09), edge +60.6 -> +105.7 (Δ+45.0,
+  #   about 3x that horizon's 15.4 null floor) — while the GROWTH lane reads Δ-3.6 edge at BOTH
+  #   horizons, under each one's floor. (#3d) proposed zeroing quality in the GROWTH lane only; the
+  #   measurement says the lane that wants it gone is the OTHER one.
+  #   READ THE +45.0 CORRECTLY: it is a MODE SWITCH, not a dose-response. The on-sale lane edge across
+  #   the four arms is 8y 29.7/31.9/25.6/26.0 and 12y 105.7/58.1/60.6/66.5 — NOT monotone, and 0.075
+  #   is worse than the shipped 0.15 at 12y. Zero is discontinuous because quality is that lane's ONLY
+  #   fundamental consumer ((#62)), so zeroing it drops the lane onto the price-only ranking entirely;
+  #   verified here, every on-sale ablation row in the 0.00 arm reads Δ+0.0. The finding is "on-sale
+  #   ranks better with no fundamentals at all", which (#62) also saw pre-(#61) at +28.1, reproduced
+  #   post-(#61) and larger. It is not "less quality is better".
+  #   WHICH IS WHY NOTHING SHIPPED FOR THE ON-SALE LANE EITHER, and the reason is structural: THE RUN
+  #   PRINTS EXACTLY ONE top-N BOOK AND IT IS THE GROWTH ONE. Every number above about on-sale is lane
+  #   edge, pre-committed as NON-VOTING before the runs and wrong five times already ((#63) accel,
+  #   (#69) ablation Δ, (#70) edge curve, (#3d), (#71)). So Ship Rule v2 cannot grade an on-sale change
+  #   at all today — not for lack of data, but because the metric it judges on does not exist for that
+  #   lane. THE NEXT ROUND IS THEREFORE A CODE ROUND, and in this order: print an on-sale top-N book,
+  #   THEN split the knob (`onsale_quality_weight: 0.0`, the shape `onsale_sharpe_weight` and
+  #   `onsale_dividend_weight` already use — that split was made on exactly this evidence, "growth
+  #   wants 0.15 but on-sale wants 0"), THEN grade the split arm on the new book. Splitting first would
+  #   ship a knob on the one metric this file keeps catching out.
   quality_cap: 40.0              # LIVE: cap the ROE % fed in (a buyback-levered 200% ROE doesn't dominate)
   # (#42) "why does Apple print n/m as ROE" — asked 2026-07-27. The answer was a display rule reading the
   #   WRONG AXIS, and chasing it found the score doing the same thing. Two thresholds existed for one
