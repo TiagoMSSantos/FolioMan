@@ -2675,6 +2675,32 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
     } else {
         stock
     };
+    // (#75) VALUE BRAKE, stocks only, and deliberately the NEXT thing after the redundancy skip: both are
+    // cohort-aware post-rank trims, both sit after the score/sector cut and before the table is cut to
+    // `n` so what they drop refills from below. Cut the dearest-for-their-growth `growth_value_floor_pct`%
+    // by `fund.peg_yield` — a CROSS-SECTIONAL floor over this table's own rows, not an absolute PEG,
+    // because `growth_max_peg` already owns the absolute ceiling and the question here is "dearest OF THE
+    // SURVIVORS". Names with no peg_yield are KEPT: unjudgeable is not a verdict, the same house rule the
+    // gate above follows, and what makes this equity-only for free. Pinned tickers bypass it like every
+    // other display trim. `core::pct_floor` is shared with the graded twin in `report_vs_benchmark` so
+    // the served brake and the measured brake cannot drift — the (#3j) lesson, applied at the seam.
+    // NOTE the two cohorts are not identical and cannot be: this one is THIS TABLE's post-trim stock
+    // rows, the backtest's is every gated non-crypto sample in a ~6mo bucket. Same rule, same floor
+    // arithmetic, different populations — which is why the grid grades the backtest and this site only
+    // inherits the verdict.
+    let peg_of = |quote: &Quote| quote.fund.as_ref().and_then(|f| f.peg_yield);
+    let stock: Vec<_> = match core::pct_floor(
+        stock.iter().filter_map(|(quote, _)| peg_of(quote)).collect(),
+        tuning.growth_value_floor_pct,
+    ) {
+        Some(floor) => stock
+            .into_iter()
+            .filter(|(quote, _)| {
+                peg_of(quote).is_none_or(|v| v >= floor) || pinned.contains(quote.ticker.as_str())
+            })
+            .collect(),
+        None => stock, // knob off, or nobody in this table carries a PEG -> nothing to rank against
+    };
     let etf: Vec<_> = etf
         .into_iter()
         .filter(|(quote, s)| keep(quote, *s, etf_min_score, core::sector_matches(&quote.name, sectors)))
@@ -6213,6 +6239,41 @@ mod tests {
         // out of uncorrelated candidates the skip TRUNCATES the table instead of refilling it.
         let (s3, _, _) = lane_split(rows(), 1, &all_sectors, &armed, &none, &no_pe);
         assert_eq!(names(&s3), ["LEAD"], "kept stops at n — no refill from below when nothing uncorrelated is left");
+
+        // (#75) VALUE BRAKE — the cross-sectional peg_yield floor. HIGH peg_yield = cheap for the growth
+        // delivered, so the brake cuts the LOW tail. Cohort of four priced 100/80/60/40 plus one name
+        // carrying no PEG at all; scores descend with cheapness so a plain score trim could never produce
+        // these orders on its own.
+        let priced = |t: &str, peg: Option<f64>| {
+            let mut q = stock(t, &up);
+            q.fund = Some(core::FundFactors { peg_yield: peg, ..Default::default() });
+            q
+        };
+        let (cheap, mid, dear, dearest, unpriced) =
+            (priced("CHEAP", Some(100.0)), priced("MID", Some(80.0)), priced("DEAR", Some(60.0)),
+             priced("DEAREST", Some(40.0)), priced("NOPEG", None));
+        let vrows = || vec![(&cheap, 12.0), (&mid, 11.0), (&dear, 10.0), (&dearest, 9.0), (&unpriced, 8.0)];
+        let all = ["CHEAP", "MID", "DEAR", "DEAREST", "NOPEG"];
+        // 0 = off: byte-identical to the pre-(#75) table, which is what makes the default a no-op.
+        let (v0, _, _) = lane_split(vrows(), 10, &all_sectors, &d, &none, &no_pe);
+        assert_eq!(names(&v0), all, "0 = off");
+        // 25% of the FOUR names carrying a PEG -> index 1 of [40,60,80,100] -> floor 60. NOPEG is not in
+        // the cohort the percentile is taken over, and is kept regardless: unjudgeable is not a verdict.
+        let brake25 = BuyHeuristic { growth_value_floor_pct: 25.0, ..d.clone() };
+        let (v1, _, _) = lane_split(vrows(), 10, &all_sectors, &brake25, &none, &no_pe);
+        assert_eq!(names(&v1), ["CHEAP", "MID", "DEAR", "NOPEG"], "the dearest quarter goes; a name with no PEG stays");
+        // AT the floor is not below it — the same boundary `drop_bottom_book` uses (`v < t` rejects).
+        let brake50 = BuyHeuristic { growth_value_floor_pct: 50.0, ..d.clone() };
+        let (v2, _, _) = lane_split(vrows(), 10, &all_sectors, &brake50, &none, &no_pe);
+        assert_eq!(names(&v2), ["CHEAP", "MID", "NOPEG"], "floor 80 keeps MID at exactly 80");
+        // A pin outranks the brake, exactly as it outranks the score floor and the redundancy skip.
+        let pin_dearest: HashSet<&str> = ["DEAREST"].into_iter().collect();
+        let (v3, _, _) = lane_split(vrows(), 10, &all_sectors, &brake50, &pin_dearest, &no_pe);
+        assert_eq!(names(&v3), ["CHEAP", "MID", "DEAREST", "NOPEG"], "a pin means always show me this");
+        // Nobody priced -> no floor -> nothing cut. The failure mode this guards is the inverse reading,
+        // where an absent cohort means "everything is below the floor" and the table empties itself.
+        let (v4, _, _) = lane_split(vec![(&unpriced, 8.0)], 10, &all_sectors, &brake50, &none, &no_pe);
+        assert_eq!(names(&v4), ["NOPEG"], "no PEG anywhere in the cohort -> no verdict, no cut");
 
         // ETF lane runs its OWN floor. Same score, two floors, opposite verdicts.
         let mut fund = Quote::stub("VWCE.DE", "€120.00", "", "Vanguard FTSE All-World UCITS ETF");

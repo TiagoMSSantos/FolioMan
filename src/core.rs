@@ -399,6 +399,23 @@ pub fn decorrelate_keep(trails: &[&[f64]], n: usize, cap: f64) -> Vec<usize> {
     kept
 }
 
+/// (#75) Cross-sectional P-th percentile FLOOR over one cohort's values — the shared definition behind
+/// the live `growth_value_floor_pct` trim (`picks::lane_split`) and the backtest's graded twin
+/// (`report_vs_benchmark`), so the brake that ships and the brake that was measured cannot drift. Same
+/// bargain as `decorrelate_keep` above: the shared fn owns the arithmetic and returns a plain number,
+/// the callers keep their own row types. `None` = nothing to cut (knob off, or a cohort where nobody
+/// carries the factor), and the caller then filters nothing rather than filtering everything.
+/// Truncating index, clamped to the last element, so `p = 100` is "keep only the top value and its
+/// ties" instead of an out-of-bounds panic. Sorted by `total_cmp`: a NaN in the cohort must not decide
+/// whether the whole table gets cut, and `partial_cmp().unwrap()` would panic on one.
+pub fn pct_floor(mut values: Vec<f64>, p: f64) -> Option<f64> {
+    if p <= 0.0 || values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.total_cmp(b));
+    Some(values[(((p / 100.0) * values.len() as f64) as usize).min(values.len() - 1)])
+}
+
 pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
     let age = dates
         .first()
@@ -3714,6 +3731,22 @@ mod tests {
     // A name with NO trail is unjudgeable, and an unjudgeable pair never blocks — a brake may only act
     // on evidence. Two empty trails must therefore BOTH survive, not collapse into one.
     assert_eq!(decorrelate_keep(&[&[], &[]], 10, 0.9), vec![0, 1]);
+
+    // (#75) pct_floor: the cut point BOTH value-brake sites compare against. Truncating index into the
+    // sorted cohort, so p% of the cohort sits strictly below the returned floor and the floor itself is
+    // KEPT by callers (`< floor` rejects) — the boundary `drop_bottom_book` already uses.
+    let cohort = || vec![50.0, 10.0, 40.0, 20.0, 30.0]; // deliberately unsorted: the fn owns the sort
+    assert_eq!(pct_floor(cohort(), 40.0), Some(30.0), "40% of 5 = index 2 of the sorted cohort");
+    assert_eq!(pct_floor(cohort(), 25.0), Some(20.0), "1.25 truncates to index 1, never rounds up");
+    assert_eq!(pct_floor(cohort(), 100.0), Some(50.0), "index clamps to the last element, no panic");
+    // Both off-switches return None, and they mean the same thing to a caller: cut nothing. An empty
+    // cohort must NOT be read as "everything is below the floor" — that would empty the table on the
+    // one input where there is no evidence at all.
+    assert_eq!(pct_floor(cohort(), 0.0), None, "0 = off");
+    assert_eq!(pct_floor(cohort(), -5.0), None, "a negative percentile is off, not an inverted gate");
+    assert_eq!(pct_floor(Vec::new(), 40.0), None, "nobody carries the factor -> no floor, cut nothing");
+    // total_cmp, not partial_cmp().unwrap(): one NaN in a cohort must not panic the whole run.
+    assert_eq!(pct_floor(vec![f64::NAN, 1.0, 2.0], 50.0), Some(2.0), "NaN sorts last and cannot panic");
     // fund_as_of point-in-time join: latest row FILED on/before the cutoff, NEVER a future filing
     // (the look-ahead guard). Rows out of order on purpose to prove order-independence.
     let frows = vec![

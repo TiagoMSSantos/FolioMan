@@ -2149,6 +2149,67 @@ buy_heuristic:
   #   which picks are effectively one concentrated bet, without deleting rows from a ranking whose whole
   #   purpose is to show you the candidates. Re-open this only with a refill that walks past n.
   growth_corr_cap: 0.0
+  # (#75) VALUE BRAKE — the cross-sectional PEG floor: built, wired, graded and REFUSED 2026-08-12.
+  #   Sibling of the (#41) skip above by construction (same site, same shape, same "not a gate, not a
+  #   score term" standing) and now its sibling in outcome too: a cohort-aware trim that measures well
+  #   on a probe's own book and does not survive contact with the graded one.
+  #   THE LEAD. The PEG-VALUE-GATE probe prints its own ship bar — "a reject-% that lifts book with OOS
+  #   both + and worst no deeper than off -> ship as a real growth gate" — and MET it: 12y book
+  #   +13.9->+14.2%/yr, excess +6.1->+6.4, OOS late +7.0->+7.5, worst -7.8 unmoved; 8y +13.9->+14.1,
+  #   +6.3->+6.5, late +6.4->+6.9, worst -9.2 unmoved. The code's own "MEASURED DEAD 2026-07-25 ... flat
+  #   +6.8/+6.9/+6.9/+6.9" annotation was STALE — the (#74) perishability lesson running BACKWARDS. A
+  #   flag banked as dead expires exactly like one banked as REAL, and nothing re-reads a death
+  #   certificate. That annotation is now corrected in place, in both directions.
+  #   WHY NO SWEEP EVER FOUND IT. `gate_sweep` loosens each gate one notch and ONLY loosens, so a gate
+  #   that should be TIGHTER is structurally invisible to it. The probe's cohort has already passed
+  #   `growth_max_peg: 1.6`, so "drop the cheapest 40% by peg_yield" IS the tightening direction — never
+  #   measured under the current PEG definition, because every PEG ladder ever run went 1.6/2.0/2.5/off.
+  #   That blind spot is general, outlives this knob, and is the most reusable thing here.
+  #   THE GRID. 12 runs, `backtest {12,8} universe fund` x {0,25,40,55,70} plus a 20y {0,70} pair. One
+  #   field moved per arm (self-verified by the off-validation warning); identical data conditions inside
+  #   every horizon — 4999 tickers, cutoffs 4588/11885/20791, as-of coverage 4394/8456/10956.
+  #   WIRING PROVEN BEFORE ANY GRADING, and this step is not optional for a knob with a probe twin: the
+  #   graded top-10 line reproduces the probe's own row TO THE DECIMAL at every shared rung (12y 0%
+  #   +13.9/+6.1/-7.8/+5.3,+7.0; 25% +14.0/+6.2/+5.3,+7.2; 40% +14.2/+6.4/+5.3,+7.5). Same cohort, same
+  #   `< floor` boundary -> probe and knob are measuring one thing, so the disagreement below is real.
+  #   THE VERDICT, top-3 under Ship Rule v2 with the ADDITION bar (off its default => must RISE):
+  #     12y top-3 mean|med   off +6.8|+6.9   25 +6.8|+6.9   40 +6.9|+7.1   55 +6.8|+7.1   70 +6.6|+6.7
+  #      8y top-3 mean|med   off +7.3|+7.8   25 +7.2|+7.8   40 +7.3|+7.8   55 +7.1|+7.8   70 +6.8|+7.5
+  #   40 is the best arm at both horizons; it RISES at 12y and merely HOLDS at 8y (+7.3|+7.8 on both
+  #   sides, to the decimal). ADDITION wants a rise at BOTH graded horizons -> NO SHIP. Every other arm
+  #   is flat or worse. The guards passed and did NOT decide it: worst window identical at every arm and
+  #   horizon (-7.8 / -9.2 / -0.5), rank-1 h2h >=50% everywhere (12y 65-67%, 8y 52-63%, 20y 74%).
+  #   WHY THE PROBE AND THE GRADE DISAGREE, which is the finding. The probe grades a TOP-10 held-Ny
+  #   NO-SELL book; Ship Rule v2 grades the REBALANCED TOP-3. The +0.3/+0.2 the probe reports is a
+  #   top-10 effect that decays to +0.1 at 12y top-3 and to 0.0 at 8y top-3 — the brake works by
+  #   improving the AVERAGE of a wide book, and there is nothing left of it by the time the book is
+  #   three names. A probe's printed ship line is a reason to LOOK, never a grade. Six receipts already
+  #   say that about lane metrics ((#63), (#69), (#70), (#3d), (#71), (#73)); this is the first time it
+  #   has been measured about a probe that prints an explicit ship rule of its own.
+  #   THE 70 RUNG WAS A DESIGNED SANITY CHECK, and it passed. Had the book kept climbing there this
+  #   would be "buy the cheapest", not a brake. It does not: 70 is the WORST arm on top-3 at both
+  #   horizons (+6.6|+6.7 and +6.8|+7.5) while lifting 12y top-1 to +7.0, i.e. noise at the argmax.
+  #   20y IS PROVEN INERT, not assumed. Control and reject-70 are IDENTICAL on every book and every h2h
+  #   line (top-1 +6.4|+6.2, top-3 +6.3|+5.7, top-10 +5.9|+6.1, h2h 14/19 74%): no 20y cutoff carries a
+  #   peg_yield (SEC XBRL starts 2007, 20y cutoffs end ~2006) and the PEG probe prints nothing there. A
+  #   70% cut that removes ZERO names is the strongest available statement of that blackout.
+  #   COST OF GRADING ANY COHORT TRIM, general and worth knowing before the next one: the h2h
+  #   DENOMINATOR SHRINKS as the brake tightens (12y 27->23 windows, 8y 35->29), because that test needs
+  #   >10 names in a window and trimming pushes windows under the bar. A tighter arm is graded on fewer
+  #   windows than the control, so its h2h is not quite the same measurement. Never read a trim's h2h
+  #   without reading its denominator.
+  #   THREE LEADS DIED AT ZERO RUN COST in the same round, recorded so they are not re-proposed:
+  #   (a) re-laddering `growth_fund_weight` on a "strengthened" peg_yield — (#71)'s own control run and
+  #       today's are BYTE-IDENTICAL (n=1424 rho +0.23 edge +399.8 OOS +0.27|+0.18), so (#71) graded
+  #       with exactly this evidence and held 0.07; (b) `op_margin` as a second negatively-tilted axis —
+  #       its rho near-mirrors peg_yield's at both horizons (+0.23/-0.24 at 12y, +0.19/-0.17 at 8y),
+  #       the signature of an inverse-valuation proxy the shipped tilt already carries; (c) a
+  #       `quality_weight` sign audit — (#72) already proved every arm 0..0.30 ties on the book.
+  #   KEPT OFF, NOT DELETED — the (#47) precedent. The knob is what stops this loop repeating: without
+  #   it the next session re-reads the probe's "ship as a real growth gate" line and re-proposes the
+  #   whole round, which is precisely what a stale annotation caused this time. Re-open only on a run
+  #   where top-3 RISES at BOTH 12y and 8y.
+  growth_value_floor_pct: 0.0
   growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
   # (#50) WHAT THIS 0.0 COSTS DOWNSTREAM, recorded 2026-08-06 because no receipt said it: with this
   #   term off, `growth_max_peg` is the GROWTH LANE'S ONLY VALUATION CONTROL. Nothing else in

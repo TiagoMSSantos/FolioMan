@@ -1811,23 +1811,53 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         println!("\n── vs S&P500 (ABSOLUTE) ──  no {bench_sym} history fetched — skipping the benchmark leg.");
         return;
     }
-    // (bucket, score, pick CAGR, SPY CAGR, ticker) for every GATED non-crypto pick that has a benchmark window.
-    let mut rows: Vec<(i32, f64, f64, f64, String)> = Vec::new();
+    // (bucket, score, pick CAGR, SPY CAGR, ticker, as-of peg_yield) for every GATED non-crypto pick that
+    // has a benchmark window. The peg rides along ONLY for the (#75) value brake below; nothing else reads it.
+    let mut rows: Vec<(i32, f64, f64, f64, String, Option<f64>)> = Vec::new();
     for s in samples {
         if picks::asset_class(&s.quote) == 0 {
             continue; // crypto: a coin isn't an S&P500-comparable hold
         }
         let Some(score) = growth_score(&s.quote, tuning) else { continue };
         let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
-        rows.push((bucket(s.date), score, s.realized, bench_r, s.quote.ticker.clone())); // RAW cumulative % (annualize the BOOK, not per-name)
+        // RAW cumulative % (annualize the BOOK, not per-name)
+        rows.push((bucket(s.date), score, s.realized, bench_r, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)));
     }
     if rows.len() < 8 {
         println!("\n── vs S&P500 (ABSOLUTE) ──  only {} gated picks have a ^GSPC window — too few.", rows.len());
         return;
     }
+    // (#75) VALUE BRAKE — the GRADED twin of the `picks::lane_split` trim, sharing `core::pct_floor` so
+    // the served rule and the measured one cannot drift ((#3j)). It has to run HERE, on the cohort and
+    // before any ranking, for the same reason it runs where it does live: it changes WHO IS IN the pool,
+    // so the top-N table AND the rank-slice ladder below must both see the trimmed cohort — grading one
+    // on a pool the other never saw is how a knob ships on a number nothing served.
+    // ONE FLOOR PER BUCKET, never pooled: the floor is a cross-sectional statement about a single
+    // rebalance window, and a pooled percentile would let a cheap 2009 cohort exile an expensive 2021
+    // one wholesale. Computed once per bucket rather than per row — `pct_floor` sorts, and the 20y run
+    // carries ~20k rows.
+    let mut floors: std::collections::BTreeMap<i32, Option<f64>> = std::collections::BTreeMap::new();
+    if tuning.growth_value_floor_pct > 0.0 {
+        let mut by_peg: std::collections::BTreeMap<i32, Vec<f64>> = std::collections::BTreeMap::new();
+        for (b, _, _, _, _, peg) in &rows {
+            by_peg.entry(*b).or_default().extend(peg);
+        }
+        for (b, vals) in by_peg {
+            floors.insert(b, core::pct_floor(vals, tuning.growth_value_floor_pct));
+        }
+    }
     // BTreeMap -> buckets iterate in chronological order, so the OOS split is early-vs-late in time.
+    // Names with no peg_yield are KEPT — unjudgeable is not a verdict, matching the live site and the
+    // `drop_bottom_book` probe this knob came from. `< floor` rejects, so the comparison matches that
+    // probe's `if v < t { skip }` to the boundary and at reject-P this book must reproduce the
+    // PEG-VALUE-GATE probe's own row. With the knob off, `floors` is empty and nothing is dropped.
     let mut by_bucket: std::collections::BTreeMap<i32, Vec<(f64, f64, f64, String)>> = std::collections::BTreeMap::new();
-    for (b, sc, pc, spc, tk) in &rows {
+    for (b, sc, pc, spc, tk, peg) in &rows {
+        if let (Some(Some(f)), Some(v)) = (floors.get(b), peg) {
+            if v < f {
+                continue; // dearest for its growth in THIS window -> the brake rejects it
+            }
+        }
         by_bucket.entry(*b).or_default().push((*sc, *pc, *spc, tk.clone()));
     }
     println!("\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {years}y no-sell, vs {bench_sym}) ──");
@@ -2263,12 +2293,24 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     // (PEG probe) the brake on growth-at-price — reject the most-expensive-FOR-ITS-GROWTH P% (lowest
     // peg_yield = earnings_yield·CAGR) gated STOCKS, rank survivors by growth_score. Distinct from the two
     // gates above in intent (a fast grower can be dear on P/E yet cheap on PEG, and vice-versa).
-    // MEASURED DEAD 2026-07-25, wide same-batch 12y (4913 tickers, 8393 fund-covered cutoffs): flat across
-    // the whole sweep — excess +6.8 / +6.9 / +6.9 / +6.9 at reject 0/10/25/40%, book +14.8%/yr and worst
-    // -7.8 unmoved throughout. The growth-at-price axis is closed AS A BRAKE, on measurement rather than
-    // on the old "expected dead" assumption. Note the same factor is very much alive as a RANK TILT in the
-    // same run (peg_yield is the shipped `growth_fund_factor`) — cutting the dear names and ranking by
-    // cheapness are different questions, and only the second one pays here.
+    // ONCE "MEASURED DEAD 2026-07-25" — flat +6.8 / +6.9 / +6.9 / +6.9 at reject 0/10/25/40% on a
+    // same-batch 12y (4913 tickers, 8393 fund-covered cutoffs), book +14.8%/yr and worst -7.8 unmoved,
+    // read at the time as "the growth-at-price axis is closed AS A BRAKE".
+    // (#75) THAT NOTE EXPIRED. Re-read 2026-08-12 the sweep is NOT flat and it MEETS the bar printed
+    // below: 12y +6.1 / +6.2 / +6.2 / +6.4 (book +13.9->+14.2, OOS late +7.0->+7.5), 8y +6.3 / +6.2 /
+    // +6.3 / +6.5, worst -7.8 / -9.2 unmoved at every rung. A death certificate perishes exactly like
+    // the TOO TIGHT flags in the (#74) receipt do — same lesson, opposite direction — so re-read one
+    // before citing it, and never delete the probe that would have told you.
+    // AND IT STILL DOES NOT SHIP, which is the part worth carrying: the axis was armed as a real knob
+    // (`growth_value_floor_pct`, a cross-sectional percentile floor at this same boundary) and graded
+    // over 12 runs. The lift here is a TOP-10 held-book effect and decays to +0.1 at 12y top-3 and to
+    // 0.0 at 8y top-3, so it fails Ship Rule v2's ADDITION bar. THE BAR PRINTED BELOW IS THEREFORE NOT
+    // A SHIP RULE — it grades a top-10 held-N-years no-sell book, while the verdict grades the
+    // rebalanced top-3. Treat it as "worth a grid", never as "ship this". Full grid in the (#75)
+    // receipt at `growth_value_floor_pct` in tests/ci-settings.yaml.
+    // Note the same factor is very much alive as a RANK TILT in the same run (peg_yield is the shipped
+    // `growth_fund_factor`) — cutting the dear names and ranking by cheapness are different questions,
+    // and only the second one has ever paid at the top of the book.
     let has_peg = samples.iter().any(|s| s.fund.as_ref().and_then(|f| f.peg_yield).is_some());
     if has_peg {
         println!("\n── PEG-VALUE-GATE probe: drop the most-expensive-for-growth P% (low peg_yield) gated STOCKS, rank rest by growth_score, top-{n} held {years}y ──");
