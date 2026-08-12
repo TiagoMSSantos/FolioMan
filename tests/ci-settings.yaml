@@ -1487,6 +1487,22 @@ buy_heuristic:
                                  #   at 50 — already gets 65%, so the range revert is worth ~3 h2h pts ON TOP of the leg
                                  #   floor and is NEGATIVE without it. Order matters: leg floor first, this second.
                                  #   Do not quote line 895 at an overlay without checking its `growth_min_leg_years`.
+                                 # (#74) THE MIRAGE RE-CONFIRMED A THIRD TIME, AND ITS SIGNATURE IS SHARPER THAN "THE MEDIAN
+                                 #   REVERSES". 2026-08-12, `backtest {20,12,8} universe fund`, `growth_min_range_pct -10`:
+                                 #     20y  n=5   -164.8 |  -771.2            (both negative)
+                                 #     12y  n=6    +39.3 |   -59.7   SPLIT
+                                 #      8y  n=6    +74.6 |   +29.7   TOO TIGHT
+                                 #   THE HORIZON THAT SURVIVES HAS MOVED. On 2026-08-01 (paragraph above) the row survived its
+                                 #   median at 12y ONLY (+76.6 | +44.2); today 12y is SPLIT and 8y is the survivor instead. A real
+                                 #   effect does not migrate between horizons — a handful of names crossing a threshold does, which
+                                 #   is what n=5/6 buys you. That is the mirage stated more precisely than before: not merely "the
+                                 #   median reverses at two of three horizons", but "WHICH horizon it reverses at is itself random".
+                                 #   n also fell from 10/15/15 to 5/6/6 as intervening rounds tightened the gates upstream, so the
+                                 #   row is thinner than when it was already judged too thin to act on. 80 stands, untouched.
+                                 #   DO NOT RE-PROPOSE THIS GATE OFF A SWEEP ROW. Three independent refusals now (2026-07-02
+                                 #   A/B, 2026-08-01 median, 2026-08-12 here) plus the live funnel's 780-rejected / ZERO-sole
+                                 #   column. Loosening it returns no rows, which is the only question a "see more names" request
+                                 #   is actually asking.
   growth_min_range_pct_crypto: 40.0 # GATE (crypto only): looser range floor (top 60% of its own range) so MORE coins
                                  #   surface — alts spend most of their life far below ATH yet still out-compound. The
                                  #   BTC-relative tilt below + the NUPL damp keep the wider crypto table honest. Stocks/ETFs
@@ -3110,6 +3126,43 @@ buy_heuristic:
                                  #   the flag WILL fire again on any 12y or 8y sweep and reads like a free win on its own.
                                  #   TO REOPEN: an ETF/equity-split bar, or 20y evidence that the n=10 tail is survivorship
                                  #   rather than signal. Do not act on a short-horizon flag alone.
+                                 # (#74) BOTH REOPEN CONDITIONS ARE DISCHARGED, AND THE ETF SPLIT IS DEAD ON MEASUREMENT
+                                 #   RATHER THAN ON JUDGEMENT. 2026-08-12, six runs, `backtest {20,12,8} universe fund` x
+                                 #   {this config, cap off}. `fund` is not optional: `fund_lane_on` gates the as-of fill, so a
+                                 #   `stress` run is structurally blind to every fundamental knob and cannot be used to reason
+                                 #   about which names reach this gate. One field moved per arm, each run self-verifying via
+                                 #   `growth_maxdd_cap 84.0->0.0` and nothing else. Data conditions identical inside every pair
+                                 #   (4999 tickers; cutoffs 4588 / 11885 / 20791; as-of coverage 4394 / 8456 / 10956).
+                                 #     horizon   ETF scored on->off   stock scored on->off   sweep `growth_maxdd_cap ->off`
+                                 #       20y         0/15  ->  0/15      351 -> 357  (+6)      n=6   -1175.9 | -1238.0
+                                 #       12y         4/2836 -> 4/2836    511 -> 536 (+25)      n=25   +167.7 |   +63.1  TOO TIGHT
+                                 #        8y        17/8971 -> 17/8971   637 -> 678 (+41)      n=41    +82.4 |   -44.3  SPLIT
+                                 #   THE ETF COLUMN DOES NOT MOVE BY ONE NAME AT ANY HORIZON. `gate_sweep` loosens exactly one
+                                 #   gate off the shipped tuning (`newly_admitted_stats`, backtest.rs), so its n IS the sole-block
+                                 #   count for this knob — and that n equals the STOCK delta to the unit at all three horizons
+                                 #   (6, 25, 41). Two independent readings of the same quantity, agreeing exactly, the way (#65)'s
+                                 #   n=713/852 cross-check did. Conclusion: this cap sole-blocks ZERO ETFs. A `growth_maxdd_cap_etf`
+                                 #   sibling in the `sharpe_cap_etf` shape would be INERT at every horizon that has any ETF coverage
+                                 #   at all, and 20y has none to begin with (0 of 15). There is nothing for it to admit. Do not
+                                 #   propose that field again; it is not unproven, it is measured empty.
+                                 #   MECHANISM, PLAUSIBLE BUT NOT MEASURED: every ETF that fails this cap must also fail an earlier
+                                 #   gate, and `growth_min_cagr` 19 is the obvious candidate since no broad fund clears it. NOT
+                                 #   established here — the runs prove the sole-block count is zero, not which gate takes the block.
+                                 #   THE SECOND CLAUSE FAILS IN THE OPPOSITE DIRECTION TO THE ONE IT SUSPECTED. The 20y tail is not
+                                 #   a survivorship-inflated positive to be discounted; it is n=6 at -1175.9 | -1238.0, and it is
+                                 #   the MOST-correct gate on the whole 20y board — every gate reads negative there (range -164.8,
+                                 #   cagr -466.8, 1y -689.0, above_ma -772.2, leg_years -846.7) and this one is worse than the next
+                                 #   by over 300 pts. Magnitudes are NOT comparable across horizons (20y peer-relative returns
+                                 #   compound for 20 years, which is why that whole column is in the hundreds); only signs are.
+                                 #   THE CASE FOR LOOSENING HAS WEAKENED SINCE (#60), NOT STRENGTHENED. (#60) recorded the flag at
+                                 #   TWO horizons; today it fires at ONE. 8y went +324.2 | +7.0 (TOO TIGHT) -> +82.4 | -44.3 (SPLIT,
+                                 #   median NEGATIVE) as intervening rounds changed which names reach the gate. That is the same way
+                                 #   `growth_max_peg`'s 8y flag died — see its own block. A sweep flag surviving on a thin positive
+                                 #   median is the thing that expires; check its age before ever acting on one.
+                                 #   84.0 STANDS. (#60)'s SHIP RULE v2 TIE re-affirmed on a fresh dataset, both reopen conditions
+                                 #   now closed. NOTHING on the asset-class axis can reopen this. The only route left is a change
+                                 #   to WHICH names reach this gate at 12y — e.g. closing the live-vs-backtest as-of fundamentals
+                                 #   skew — and that is a different round with a different instrument.
                                  #   0 = off.
   growth_maxdd_cap_crypto: 84.0  # (#26) crypto's own maxdd bar = "reject coins that wiped out WORSE than Bitcoin" (BTC -83%,
                                  #   so 84 keeps BTC and cuts the deeper-wipeout alts: ZEC -98, TRX -96, XMR -93, XRP -96,
@@ -3274,6 +3327,21 @@ buy_heuristic:
                                  #   divided by a rate it stopped delivering a decade ago; do NOT tune this ceiling to
                                  #   compensate, because a ceiling cannot fix a denominator — it only trades away names.
                                  #   The fix is a separate window for the PEG denominator ALONE (next round, code).
+                                 # (#74) THE OWED 8y LADDER IS CANCELLED: ITS PREMISE EXPIRED. 2026-08-12. The paragraph above
+                                 #   banks one number — "the sweep's 8y TOO TIGHT flag survives its median (+195.3 | +57.5, n=54)
+                                 #   and is REAL" — and that is the entire case for re-laddering this ceiling. Re-read today on
+                                 #   `backtest {20,12,8} universe fund`, that row is `n=55  +82.1 | -45.8  <- SPLIT`. The MEDIAN
+                                 #   FLIPPED, by 103 pts, while n barely moved (54 -> 55). A stable n with a reversed median is
+                                 #   not the pool changing size; it is the same-sized cohort's forward returns going the other
+                                 #   way. 12y reads n=13 `-210.8 | -421.1` and 20y still `admits 0 new names`, so after the flip
+                                 #   there is no horizon left where loosening looks good on both stats. NOTHING TO LADDER — the
+                                 #   ladder was owed to a flag, and the flag is gone. 1.6 stands on the 2026-08-01 verdict.
+                                 #   THE GENERAL LESSON, and it cost this round its first two candidate targets: A SWEEP FLAG IS
+                                 #   PERISHABLE. Both leads that died on inspection here died the same way — a TOO TIGHT row
+                                 #   banked months ago, re-read today, now SPLIT with a negative median. `growth_maxdd_cap`'s 8y
+                                 #   flag went +324.2 | +7.0 -> +82.4 | -44.3 over the same period (see its block). The flags that
+                                 #   expire are the ones whose median sat just above zero: +57.5 and +7.0 both did. BEFORE ACTING
+                                 #   ON ANY BANKED SWEEP ROW, RE-READ IT — one `universe fund` run, ~2 min, prints every gate.
   growth_max_peg_etf: 2.0        # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
