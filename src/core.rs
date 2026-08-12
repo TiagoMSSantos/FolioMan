@@ -212,7 +212,7 @@ pub struct Quote {
     pub fund: Option<FundFactors>,
     pub age_years: Option<f64>,        // listing age in years from the FULL (monthly-backfilled) history; DISPLAY-ONLY (`yrs` column). None = no data / stub / backtest
     pub life_cagr: Option<f64>,        // whole-life endpoint CAGR (%) over that full history, via `core::life_cagr`. NOT display-only since (#3i)/(#3j): the `cagr` column, the `growth_min_cagr` whole-life bar, and the growth RANK when `use_life_cagr` is on. Filled in the backtest too (same fn, `[..=as_of]` slice) -> train==serve. None = <6mo history / non-positive first close / stub
-    pub capped_cagr: Option<f64>,      // (#3l) endpoint CAGR over the last min(age, life_cagr_max_years) years, via `core::capped_life_cagr` — the `use_life_cagr: false` rank source when the knob is >0, replacing the 20/8/5Y rung ladder. Filled at the same two sites as `life_cagr` (fetch + backtest_quote), same knob read via the free accessor -> train==serve. None = knob off / <5y of history (pool guard: the rung ladder never ranked a name without a 5Y leg, and the window swap must not widen the pool)
+    pub capped_cagr: Option<f64>,      // (#3l/#73) endpoint CAGR over the last min(age, life_cagr_max_years) years, via `core::capped_life_cagr`. ONE reader: `picks::life_leg_cagr`, i.e. `growth_min_cagr`'s whole-life reject bar — (#73) repointed this field from the RANK (where (#3l) measured it at -66 edge and shipped it off) to that bar. Filled at the same two sites as `life_cagr` (fetch + backtest_quote), same knob read via the free accessor -> train==serve. None = knob off / <5y of history, and the bar then falls back to the uncapped `life_cagr` it always used -> the pool is unchanged at 0 and young names never move
     pub life_return_pct: Option<f64>,  // whole-life CUMULATIVE real return (%) over that same full history, via `core::life_return`. DISPLAY-ONLY, and deliberately NOT an entry in `perf`: `picks::perf_fill` prints it (marked `≈`) in a long rung the record ALMOST reaches, and putting it in `perf` would hand it to `perf_pct` and therefore to every gate. None = <6mo history / non-positive first close / stub / BACKTEST (never rendered there)
     pub trail_monthly: Vec<f64>,       // (#41) up to 36 trailing MONTH-over-MONTH returns (%), newest last, via `core::monthly_returns_tail`. Sole input to the growth_corr_cap redundancy skip. Built from the DAILY chart live and from the monthly slice in the backtest — the same fn, so a pair's correlation means the same thing in train and serve. Empty = no history / stub -> unjudgeable, and an unjudgeable pair never blocks
     pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). DISPLAY-ONLY (`trcagr` column), never scored; ≈ life_cagr for Acc funds/non-payers
@@ -412,12 +412,13 @@ pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
     }
 }
 
-/// (#3l) `life_cagr` over the last min(age, `max_years`) years only — the `use_life_cagr: false`
-/// rank source when `life_cagr_max_years` > 0. Two guards, both deliberate:
-/// - `max_years <= 0.0` -> None (knob off; callers fall back to the rung ladder, byte-identical).
-/// - age < 5y -> None. The rung ladder never ranked a name without a 5Y leg, so swapping the
-///   WINDOW must not widen the ranked POOL — a 6-month-old on a bull tear would otherwise walk in
-///   with a "CAGR" no gate ever validated.
+/// (#3l/#73) `life_cagr` over the last min(age, `max_years`) years only — since (#73), the window
+/// `growth_min_cagr`'s whole-life reject bar reads when `life_cagr_max_years` > 0. Two guards, both
+/// deliberate, and both still right for the bar they now feed:
+/// - `max_years <= 0.0` -> None (knob off; the bar falls back to the uncapped lifetime, byte-identical).
+/// - age < 5y -> None. Under (#3l) this kept the WINDOW swap from widening the ranked pool; under
+///   (#73) it keeps a 6-month-old on a bull tear from clearing a proven-compounder bar on a "CAGR"
+///   no gate ever validated. Same guard, same reason, other side of the score.
 /// The window starts at the first bar AT/AFTER `last − max_years`, so a name younger than the cap
 /// keeps its whole life (min(age, cap)) and the cut lands on a real close, never an interpolation.
 pub fn capped_life_cagr(dates: &[NaiveDate], closes: &[f64], max_years: f64) -> Option<f64> {

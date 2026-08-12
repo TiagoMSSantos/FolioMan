@@ -741,6 +741,95 @@ buy_heuristic:
                                  #   Widening the window fixes the dead band and LOSES at every horizon
                                  #   that can see it — the recent-window rung is the signal, not a proxy.
                                  #   Keep 0.0. Inertness verified: knob-0 binary = ship metrics exactly.
+                                 #
+                                 #   (#73) 2026-08-12 — REPURPOSED, THEN GRADED AND HELD AT 0.0. Everything above this line
+                                 #   describes a knob that no longer exists in that form. The RANKING branch it drove in
+                                 #   `long_cagr_from` is DELETED — it was measured at -66 edge and shipped off, so this removes a
+                                 #   branch that was never taken, and ranking is the 20/8/5Y rung ladder at every value now.
+                                 #   The knob is repointed at `growth_min_cagr`'s WHOLE-LIFE REJECT BAR (leg 2), which is the
+                                 #   round the two receipts below demanded (`fixed_cagr_years` ~line 777 and `growth_min_cagr`
+                                 #   ~line 1524, both now discharged). One reader survives: `picks::life_leg_cagr`, which is
+                                 #   `capped_cagr.or(life_cagr)` and is called from BOTH `score_parts` and `gate_failures` so the
+                                 #   two can no longer drift. `capped_life_cagr` returns None at or below zero, so the `or` IS the
+                                 #   switch: 0.0 = the uncapped lifetime this bar has always used.
+                                 #   BEHAVIOUR BY AGE (from `core::capped_life_cagr`'s own guards, unit-tested at core.rs):
+                                 #     under 5y  -> None, falls back to life_cagr — IDENTICAL (and unrankable anyway, no 5Y rung)
+                                 #     5y..N     -> window clamps to whole life — IDENTICAL
+                                 #     over N    -> last N years — THE ONLY GROUP THAT MOVES
+                                 #   Two-sided by construction: it ADMITS a compounder whose dead first decade blocks it, and
+                                 #   REJECTS a has-been whose early run still flatters a 20Y rung. That second half is why it
+                                 #   needed a grid and not an argument.
+                                 #   LADDER 0/6/8/10/12/16/20, `backtest {20,12,8} universe stress`, one-field probe arms (each
+                                 #   printed `life_cagr_max_years 0->N` and nothing else; the CONTROL ran as a probe file too, so
+                                 #   it is the same measurement). Conditions matched across all seven at every horizon — 8y
+                                 #   20925 cutoffs 18/8971/11936, 12y 11989 cutoffs 0/2836/9153, 20y 4648 cutoffs 0/15/4633.
+                                 #   The growth-scored count is the TREATMENT here and is expected to move; it is listed, not
+                                 #   used as a drift check. (11 runs were discarded first: an upstream ETF-listing outage silently
+                                 #   swapped the universe 4367 -> 4024 tickers and moved the cutoff denominators, which no config
+                                 #   knob can do. Caught by the conditions check, re-run clean.)
+                                 #     8y     t3 mean|med   h2h   r1 med   worst   scored   lane edge
+                                 #      0.0    +7.7|+8.3    63%    +8.2    -9.2      713      +43.8
+                                 #      6      +6.8|+7.1    57%    +9.4    -9.2      795      +40.0
+                                 #      8      +7.0|+8.1    46%    +8.4    -9.2      815      +35.5
+                                 #     10      +7.5|+8.2    63%    +9.9    -9.2      711      +35.0
+                                 #     12      +7.8|+8.3    60%    +9.4    -9.2      677      +46.2
+                                 #     16      +8.0|+8.3    57%    +8.2    -9.2      692      +51.3
+                                 #     20      +7.7|+8.3    64%    +8.2    -9.2      726      +46.5
+                                 #     12y    t3 mean|med   h2h   r1 med   worst   scored   lane edge
+                                 #      0.0    +6.8|+6.9    63%    +7.7    -7.8      530     +176.9
+                                 #      6      +6.1|+6.8    48%    +8.2    -7.8      538     +143.5
+                                 #      8      +6.5|+7.0    48%    +7.2    -7.8      592     +159.5
+                                 #     10      +6.7|+6.9    48%    +7.7    -7.8      540     +164.6
+                                 #     12      +6.8|+6.9    59%    +7.7    -7.8      510     +173.8
+                                 #     16      +7.0|+6.9    67%    +7.7    -7.8      520     +181.8
+                                 #     20      +6.7|+6.9    68%    +7.7    -7.8      536     +169.7
+                                 #     20y    t3 mean|med   h2h   r1 med   worst   scored   lane edge
+                                 #      0.0    +6.3|+5.7    74%    +6.2    -0.5      353     +696.8
+                                 #      6      +6.4|+5.9    58%    +6.2    -0.8      351     +577.8
+                                 #      8      +6.2|+5.2    60%    +6.0    -0.5      384     +620.7
+                                 #     10      +6.4|+5.9    72%    +5.6    -0.5      359     +717.7
+                                 #     12      +6.3|+5.7    74%    +6.2    -0.5      351     +723.4
+                                 #     16      +6.3|+5.7    74%    +6.2    -0.5      360     +701.9
+                                 #     20      +6.3|+5.7    74%    +6.2    -0.5      357     +705.0
+                                 #   SHIP RULE v2, PRECEDENCE GUARD > PRIMARY > TIE, STOP AT THE FIRST THAT FIRES:
+                                 #      6  20y worst window -0.8 vs -0.5, and 12y h2h 48%. GUARD x2. NO SHIP.
+                                 #      8  8y h2h 46%, 12y h2h 48%. GUARD x2. NO SHIP.
+                                 #     10  12y h2h 48%. GUARD. NO SHIP. (It also has the round's best 8y rank-1 median, +9.9 —
+                                 #         the guard is what stops that from being read as a win, which is the whole point of it.)
+                                 #     12/16/20  guards all hold and PRIMARY holds (20y is byte-identical to control for all
+                                 #         three; 8y t3 mean +0.1/+0.3/0.0 with the median dead flat at +8.3). They die on the
+                                 #         ADDITION bar pre-registered for this round: the knob moves off its 0.0 default, so
+                                 #         rank-1 median must RISE, not merely hold. It is FLAT at 12y AND 20y for all three,
+                                 #         and flat at 8y for 16 and 20.
+                                 #   VERDICT: HOLD 0.0. The code change ships; the value does not.
+                                 #   THE ONE JUDGEMENT CALL, RECORDED RATHER THAN BURIED. The ADDITION bar did not say at WHICH
+                                 #   horizon the rank-1 median must rise. Arm 12 DOES raise it at 8y (+8.2 -> +9.4) and is flat at
+                                 #   the other two, so a lenient reading ("rises somewhere, falls nowhere") would ship 12. Refused,
+                                 #   for a reason fixed before the data: the 20y book is byte-identical to control and the 8y t3
+                                 #   median is exactly flat, so the entire "win" is one name at one horizon — precisely the argmax
+                                 #   noise (#3k) and (#51) both measured and both refused. Shipping on it would be reading the
+                                 #   ladder for the arm that flatters, which is what v2 exists to stop. Both readings are written
+                                 #   down here so a later session cannot quietly adopt the convenient one.
+                                 #   THREE FINDINGS WORTH MORE THAN THE VERDICT:
+                                 #   (a) THE 8y t3 MEAN IS MONOTONE IN WINDOW LENGTH — 6.8 / 7.0 / 7.5 / 7.8 / 8.0 for N=6..16,
+                                 #       then back to 7.7 at N=20 (= control, as it must be, since ~20y is whole life for nearly
+                                 #       every name). SHORT WINDOWS HURT, long ones converge to today. Same shape as the (#51)
+                                 #       dose-response and the same mechanism: a shorter leg is a noisier leg for the argmax.
+                                 #   (b) THE ARMS THAT DO BEST ARE A NET TIGHTENING, WHICH INVERTS THE FRAMING THAT ORDERED THIS
+                                 #       ROUND. The receipts argued the bar was too tight and named 18 blocked compounders. But
+                                 #       8y scored counts run 795/815 at N=6/8 and 677/692/726 at N=12/16/20 against control 713 —
+                                 #       the best arms admit FEWER names. The two-sided effect dominates once the window is long
+                                 #       enough to still contain a has-been's dead years, so what leg 2 mostly buys is REJECTION.
+                                 #       The 18-sole-blocks argument is now priced and it was pointing the wrong way.
+                                 #   (c) ETF ADMISSION IS A SHORT-WINDOW ARTEFACT: 8y ETF scored 17 at control and at every arm
+                                 #       from 10 up, but 31 at N=6 and 24 at N=8. Narrow funds clear a 19%/yr floor only on a
+                                 #       recent window. Consistent with the ETF-BLIND paragraph at `growth_min_cagr`.
+                                 #   LANE VS BOOK DIVERGED AGAIN, THE SIXTH TIME. Lane edge moves materially (8y +43.8 -> +51.3
+                                 #   at N=16; 20y +696.8 -> +723.4 at N=12) while the graded book does not move at all. Lane
+                                 #   metrics chose this round's target and were pre-committed NON-VOTING before the first run,
+                                 #   which is the only reason that divergence is a footnote here instead of a shipped regression.
+                                 #   DO NOT RE-RUN THIS LADDER. Seven arms x three horizons happened; this is their verdict. The
+                                 #   knob is now pinned at 0.0 in `validated_tilt_pin` (config.rs) — the first pin it has ever had.
   # fixed_cagr_years still 0, but the reason has CHANGED and the old one is dead. It said "#15 is redundant
   # because use_trend_cagr overrides a pinned window with the whole-series slope" — use_trend_cagr was then
   # REVERTED two lines up, so #15 sat untested on a stale rationale. (#3j) finally measured it: pinning every
@@ -776,6 +865,12 @@ buy_heuristic:
   #   go 2 -> 18: CASY CAT DECK FICO FIX FLEX IBKR JBL KLAC LLY MCK PH STLD TPL TRGP TT URI WSM — names
   #   that now clear the 8-year bar and die on a lifetime average. That is the NEXT round and it is a
   #   CODE question, not this knob. Do not read those 18 as an argument against the pin.
+  #   (#73) 2026-08-12 — THAT NEXT ROUND HAPPENED AND THIS PARAGRAPH IS DISCHARGED. Leg 2 can now read a
+  #   window (`life_cagr_max_years`, repurposed; receipt at that knob ~line 744), it was graded on a
+  #   0/6/8/10/12/16/20 ladder at three horizons, and the verdict is HOLD 0.0 — windowing leg 2 does not
+  #   reach the graded book at any length. The 18 were counted under an arm that was REFUSED and the live
+  #   count is 2; the grid then showed the useful arms ADMIT FEWER names, not more, so the sole-block list
+  #   was arguing for the opposite of what the measurement supports. It is spent as a motivator either way.
   #   GRADED AND REFUSED THE SAME DAY — 5, 8 AND 10 ALL NO-SHIP. `backtest {20,12,8} universe stress`,
   #   one-field arms (each printed `fixed_cagr_years 0->N` and nothing else; control is this file, which
   #   prints no warning at all; baseline re-run at the end of the grid was byte-identical to the first
@@ -1528,6 +1623,22 @@ buy_heuristic:
                                  #   an arm that did not ship — they describe the defect, not today's funnel. Only if a
                                  #   future round pins the ranking legs for real does this ladder need re-measuring.
                                  #
+                                 #   (#73) 2026-08-12 — LEG 2 IS REACHABLE NOW, AND IT CHANGED NOTHING. "NO config reaches it"
+                                 #   above is obsolete: `life_cagr_max_years` was repurposed off the rank and onto this bar, so
+                                 #   leg 2 reads `capped_cagr.or(life_cagr)` (`picks::life_leg_cagr`) at both the score site and
+                                 #   the footer site. Graded on a 0/6/8/10/12/16/20 ladder, `backtest {20,12,8} universe stress`,
+                                 #   full Ship Rule v2 — full table and verdict at `life_cagr_max_years` ~line 744. HOLD 0.0:
+                                 #   6/8/10 fail the h2h guard, 12/16/20 hold every guard and PRIMARY but leave rank-1 median flat.
+                                 #   THIS 15..22 LADDER STILL STANDS UNTOUCHED, and now for a second, stronger reason: leg 2 ships
+                                 #   at 0.0, i.e. on the same uncapped lifetime this gate was swept against. The pre-registration
+                                 #   above ("only if a future round pins the ranking legs for real") has fired, been answered NO,
+                                 #   and is spent. The 19 owes no re-measurement.
+                                 #   WHAT THE GRID ACTUALLY REVEALED ABOUT THIS GATE, worth more than the knob: the arms that
+                                 #   graded best are a net TIGHTENING of leg 2, not the loosening the sole-block story predicted.
+                                 #   A window cuts both ways and the rejecting half dominates once it is long enough to still
+                                 #   contain a has-been's dead years. Anyone re-opening "19 is too tight" starts from that, not
+                                 #   from the 18 names.
+                                 #
                                  #   (#52) 2026-08-06 — 18 RE-TESTED ON SHIP RULE v2, AND IT IS A WASH. NO-SHIP; 19 STANDS.
                                  #   The pre-registration above ("re-test 18 FIRST if the grading rule is ever re-weighted
                                  #   toward the 8y lane") HAS NOW FIRED AND IS SPENT. Three fresh wide runs,
@@ -1555,6 +1666,8 @@ buy_heuristic:
                                  #   DO NOT RE-RUN 18. The runs happened; this is their verdict. What would be genuinely new
                                  #   is the leg-2 question two paragraphs up (should `life_cagr` read a window instead of a
                                  #   lifetime) — that is a CODE change, and no floor value can substitute for it.
+                                 #   (#73) that leg-2 code change was made and graded; see the paragraph above. It is a wash too,
+                                 #   which retires the last open lead on this gate. 18 stays refused and 19 stays shipped.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.

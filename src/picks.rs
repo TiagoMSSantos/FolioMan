@@ -78,8 +78,11 @@ fn long_leg_fixed(quote: &Quote, fixed_years: u32, min_leg_years: f64) -> Option
 ///   - default          endpoint CAGR of `long_leg_fixed`'s rung (20/8/5Y, or the pinned window)
 ///   - `use_trend_cagr` (#14) endpoint-robust least-squares log-slope, precomputed at fetch/backtest build
 ///   - `use_life_cagr`  (#3j) whole-life CAGR since listing, ditto — no age cliff, no common window
-///   - `life_cagr_max_years` (#3l) false-mode only: last min(age, N) years, ditto — the rung ladder
-///     replaced by a continuous window (no 8->20 dead band), still capped so age can't dominate
+///
+/// `life_cagr_max_years` used to be a fourth source here and is NOT one any more: (#73) repointed it at
+/// the whole-life REJECT BAR (`life_leg_cagr` below), which is the only reader of `capped_cagr` now. The
+/// ranking arm it drove was measured at −66 edge and shipped off, so this deletes a branch that was
+/// never taken. Ranking is the 20/8/5Y rung ladder at every value of that knob.
 ///
 /// THE chokepoint, and the reason it is worth one: `score_parts` calls this ONCE and hands the result to
 /// every reader, so a knob flipped here moves all seven together — the `growth_min_cagr` gate, `trend`,
@@ -102,14 +105,25 @@ fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) ->
         quote.life_cagr.unwrap_or_else(|| core::cagr(cum, years))
     } else if tuning.use_trend_cagr {
         quote.trend_cagr.unwrap_or_else(|| core::cagr(cum, years))
-    } else if tuning.life_cagr_max_years > 0.0 {
-        // (#3l) false-mode window swap: last min(age, N) years instead of the 20/8/5Y rung. Same
-        // fallback rule as the life branch — a name the capped fn declines (knob off upstream,
-        // <5y history) keeps its rung CAGR, never a 0 that would fail the floor for the wrong reason.
-        quote.capped_cagr.unwrap_or_else(|| core::cagr(cum, years))
     } else {
         core::cagr(cum, years)
     }
+}
+
+/// (#73) The CAGR the WHOLE-LIFE REJECT BAR judges — `growth_min_cagr`'s second leg, and the one number
+/// `capped_cagr` still feeds. `None` only when the quote has no life history at all (<6mo), which must
+/// read as "unknown", never as a failed bar.
+///
+/// ONE definition because there are TWO call sites — `score_parts` and `gate_failures` — and this file
+/// says at both of them that they must stay the same expression. They drifted once; a shared fn is what
+/// stops it happening again, and it costs three lines.
+///
+/// `capped_cagr` is `None` whenever `life_cagr_max_years` is 0 (`core::capped_life_cagr` returns None at
+/// or below zero), so the `or` IS the knob: off = the uncapped lifetime this bar always used. No config
+/// read here on purpose — the field's presence is the signal, and reading the knob a second time is how
+/// a fill site and a read site end up on different windows.
+fn life_leg_cagr(quote: &Quote) -> Option<f64> {
+    quote.capped_cagr.or(quote.life_cagr)
 }
 
 /// (#37) The ONE CAGR every PEG in this tool divides by — `long_cagr_from` above, the same number the
@@ -959,7 +973,14 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     //
     // `is_some_and` still matters, for the honest reason: a name under 6 months old has no life CAGR, and
     // absent history must not read as a failed bar. It can only REJECT a name, never admit one.
-    if quote.life_cagr.is_some_and(|l| l < min_cagr) {
+    //
+    // (#73) the number is now `life_leg_cagr`, not `quote.life_cagr` — the last min(age, N) years when
+    // `life_cagr_max_years` is armed, the uncapped lifetime when it is 0 (today's behaviour, and the
+    // default). What (#3i) missed is that this bar has no window AT ALL while leg 1 has three: a name
+    // whose dead decade is old fails here on history it no longer resembles. Two-sided, which is why it
+    // needed a book and not an argument: it also REJECTS a has-been whose early run still flatters a
+    // 20Y rung. See the (#73) receipt for the ladder and the verdict.
+    if life_leg_cagr(quote).is_some_and(|l| l < min_cagr) {
         return None; // strong recent leg, mediocre whole life -> not a proven compounder
     }
     let return_1y = perf_pct(quote, "1Y")?;
@@ -1633,8 +1654,13 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     // by the life bar drops out of the table with no reason printed anywhere. Same 1.5pp near-miss margin
     // as the leg above. Label `cagr-life`, NOT `lifetime` — that string belongs to the `<= 0` value-trap
     // dock below, and a footer that can't tell "mediocre" from "negative" is the confusion this fixes.
-    if let Some(l) = quote.life_cagr.filter(|&l| l < min_cagr) {
-        fails.push(("cagr-life", format!("{l:.1}%/yr since listing (need ≥{min_cagr:.1}%)"), l >= min_cagr - 1.5));
+    // (#73) reads `life_leg_cagr`, the same number `score_parts` rejects on — these two MUST stay one
+    // expression, which is why it is a function now. The span word moves with it: printing "since
+    // listing" for a windowed CAGR would be the exact defect this footer exists to prevent, a reason
+    // string that names a measurement the tool did not take.
+    if let Some(l) = life_leg_cagr(quote).filter(|&l| l < min_cagr) {
+        let span = if quote.capped_cagr.is_some() { "in its capped window" } else { "since listing" };
+        fails.push(("cagr-life", format!("{l:.1}%/yr {span} (need ≥{min_cagr:.1}%)"), l >= min_cagr - 1.5));
     }
     if return_1y <= y1_floor {
         fails.push(("1Y+", format!("1Y {return_1y:+.1}% (need >{y1_floor:.1}%)"), return_1y > y1_floor - 10.0));
@@ -6003,17 +6029,55 @@ mod tests {
         let cc = |c: f64| s(&scarred, &BuyHeuristic { calmar_weight: 1.0, calmar_cap: c, ..d.clone() });
         assert!(cc(2.0) > cc(0.1), "the calmar cap must clamp a ratio above it");
 
-        // (#3l) life_cagr_max_years — false-mode window swap: the chokepoint reads `capped_cagr` instead
-        // of the 20/8/5Y rung. Shipped 0.0 (both arms LOST); the knob must still be WIRED, or the receipt
-        // that condemned it is unreproducible.
-        let mut capped = hot();
-        capped.capped_cagr = Some(40.0); // a hotter recent window than the 24.6%/yr rung
-        // NOT a direction assert: this CAGR is the chokepoint, so swapping it moves trend UP and accel
-        // (1Y − CAGR) DOWN at once. What must hold is that the knob is READ — the receipt that condemned
-        // both arms is unreproducible if it isn't.
-        assert!((s(&capped, &BuyHeuristic { life_cagr_max_years: 20.0, ..d.clone() }) - s(&capped, &d)).abs() > 1e-9,
-            "an armed cap window must feed the score its own CAGR");
-        assert!((s(&capped, &d) - s(&hot(), &d)).abs() < 1e-9, "0 = off: capped_cagr unread");
+        // (#73) growth_min_cagr's LEG 2 — the whole-life reject bar, now windowed. This replaces (#3l)'s
+        // assert that `capped_cagr` feeds the SCORE: it no longer does, and the branch that did is
+        // deleted. The field's one remaining reader is `life_leg_cagr`, so these four asserts are its
+        // entire contract. `capped_cagr` is None exactly when `life_cagr_max_years` is 0, which is why
+        // the knob itself never appears here — presence IS the switch.
+        //
+        // TWO-SIDED ON PURPOSE. The receipt claims the window both ADMITS names their dead decade blocks
+        // and REJECTS has-beens whose early run still flatters a 20Y rung; a one-directional test would
+        // prove half of it and let the other half rot. Leg 1 is 24.6%/yr here (the 5Y 200% rung) and the
+        // floor is the code default 8.0, so leg 1 passes in all four and only leg 2 decides.
+        let leg2 = |life: Option<f64>, capped: Option<f64>| {
+            let mut q = hot();
+            q.life_cagr = life;
+            q.capped_cagr = capped;
+            growth_score(&q, &d).is_some()
+        };
+        assert!(leg2(Some(25.0), None), "0 = off: a 25%/yr lifetime clears the bar, exactly as before");
+        assert!(!leg2(Some(4.0), None), "0 = off: the uncapped lifetime must still reject");
+        assert!(!leg2(Some(25.0), Some(4.0)), "armed: a dead window must reject a flattering lifetime");
+        assert!(leg2(Some(4.0), Some(25.0)), "armed: a live window must rescue a name its dead decade blocks");
+
+        // The footer has to name the span it actually measured. Printing a windowed CAGR as "since
+        // listing" is the same class of defect as the `cagr-life` vs `lifetime` label split this
+        // block's neighbour documents: a reason string describing a measurement nobody took.
+        let life_entry = |life: f64, capped: Option<f64>| {
+            let mut q = hot();
+            q.life_cagr = Some(life);
+            q.capped_cagr = capped;
+            gate_failures(&q, &d).unwrap_or_default().into_iter().find(|(k, _, _)| *k == "cagr-life")
+        };
+        let life_fail = |life: f64, capped: Option<f64>| {
+            life_entry(life, capped).expect("a failing life leg must produce a `cagr-life` footer")
+        };
+        // The bar is `<`, NOT `<=`: a name sitting exactly ON the floor is a pass, and printing it as a
+        // failure would dock the one name the number was chosen to admit. `score_parts` has the same
+        // boundary two functions up and the suite already pinned that one — this is its missing mirror.
+        assert!(life_entry(8.0, None).is_none(), "exactly at the 8.0 floor clears leg 2, no footer");
+        assert!(life_fail(4.0, None).1.contains("since listing"), "unwindowed span: {}", life_fail(4.0, None).1);
+        assert!(life_fail(4.0, Some(4.0)).1.contains("capped window"), "windowed span: {}", life_fail(4.0, Some(4.0)).1);
+
+        // The NEAR-MISS FLAG (the tuple's third slot) had no assert anywhere, on either leg — a hole
+        // (#73) inherited rather than made, and only found because touching this line handed it to the
+        // mutation gate. It decides whether the footer prints a name as "one notch out" or as a plain
+        // reject, so a silently inverted flag mislabels every borderline compounder in the table.
+        // Floor is the code default 8.0, margin 1.5, so the near band is [6.5, 8.0). Both values are
+        // chosen to pin the ARITHMETIC and not just the comparison: 7.0 is inside the real band, and
+        // 6.0 is outside it but inside the band a `min_cagr / 1.5` slip would open (5.33).
+        assert!(life_fail(7.0, None).2, "7.0%/yr is 1.0 under the 8.0 floor — a near miss");
+        assert!(!life_fail(6.0, None).2, "6.0%/yr is 2.0 under the floor — past the 1.5 margin, not near");
     }
 
     /// (QA) ON-SALE (foil) lane knobs — the other half of `buy_heuristic`'s untested surface. The foil
