@@ -1831,35 +1831,9 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // the served rule and the measured one cannot drift ((#3j)). It has to run HERE, on the cohort and
     // before any ranking, for the same reason it runs where it does live: it changes WHO IS IN the pool,
     // so the top-N table AND the rank-slice ladder below must both see the trimmed cohort — grading one
-    // on a pool the other never saw is how a knob ships on a number nothing served.
-    // ONE FLOOR PER BUCKET, never pooled: the floor is a cross-sectional statement about a single
-    // rebalance window, and a pooled percentile would let a cheap 2009 cohort exile an expensive 2021
-    // one wholesale. Computed once per bucket rather than per row — `pct_floor` sorts, and the 20y run
-    // carries ~20k rows.
-    let mut floors: std::collections::BTreeMap<i32, Option<f64>> = std::collections::BTreeMap::new();
-    if tuning.growth_value_floor_pct > 0.0 {
-        let mut by_peg: std::collections::BTreeMap<i32, Vec<f64>> = std::collections::BTreeMap::new();
-        for (b, _, _, _, _, peg) in &rows {
-            by_peg.entry(*b).or_default().extend(peg);
-        }
-        for (b, vals) in by_peg {
-            floors.insert(b, core::pct_floor(vals, tuning.growth_value_floor_pct));
-        }
-    }
-    // BTreeMap -> buckets iterate in chronological order, so the OOS split is early-vs-late in time.
-    // Names with no peg_yield are KEPT — unjudgeable is not a verdict, matching the live site and the
-    // `drop_bottom_book` probe this knob came from. `< floor` rejects, so the comparison matches that
-    // probe's `if v < t { skip }` to the boundary and at reject-P this book must reproduce the
-    // PEG-VALUE-GATE probe's own row. With the knob off, `floors` is empty and nothing is dropped.
-    let mut by_bucket: std::collections::BTreeMap<i32, Vec<(f64, f64, f64, String)>> = std::collections::BTreeMap::new();
-    for (b, sc, pc, spc, tk, peg) in &rows {
-        if let (Some(Some(f)), Some(v)) = (floors.get(b), peg) {
-            if v < f {
-                continue; // dearest for its growth in THIS window -> the brake rejects it
-            }
-        }
-        by_bucket.entry(*b).or_default().push((*sc, *pc, *spc, tk.clone()));
-    }
+    // on a pool the other never saw is how a knob ships on a number nothing served. BTreeMap -> buckets
+    // iterate in chronological order, so the OOS split below is early-vs-late in time.
+    let by_bucket = value_floor_trim(&rows, tuning.growth_value_floor_pct);
     println!("\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {years}y no-sell, vs {bench_sym}) ──");
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
     // (#41/#43) EQUAL-WEIGHT HELD-BOOK return — the correct metric for a no-sell hold. A held book earns
@@ -1951,6 +1925,41 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     }
     println!("  (BOOK = equal-weight terminal wealth annualized (winners carry it, a zero costs its 1/N weight); >0 beats S&P500.");
     println!("   NON-stress: picks are today's survivors (biased UP) vs the true index — run `stress` for the honest excess.)");
+}
+
+/// (#75) The value brake's cohort trim, pure for testability for a reason worth recording: its first
+/// mutation audit reported SIX survivors on the two comparisons below, and every one of them was
+/// unkillable rather than merely unkilled. [`report_vs_benchmark`] returns `()` and only prints, the
+/// knob ships at `0.0`, and `fund` — which this brake needs to see a single `peg_yield` — cannot run
+/// offline (`tests/backtest_fixture.rs`), so no test could reach the comparisons in place. Split out,
+/// they take arguments and answer with a value, which is the whole difference.
+///
+/// ONE FLOOR PER BUCKET, never pooled: the floor is a cross-sectional statement about a single
+/// rebalance window, and a pooled percentile would let a cheap 2009 cohort exile an expensive 2021 one
+/// wholesale. Computed once per bucket rather than per row — `pct_floor` sorts, and the 20y run carries
+/// ~20k rows. There is deliberately NO `pct > 0.0` guard: `pct_floor` already answers `None` at or
+/// below zero, so the guard was a second copy of that decision, and at the shipped default it was
+/// invisible to any test — three of those six survivors were nothing but its redundancy.
+///
+/// Names with no `peg_yield` are KEPT — unjudgeable is not a verdict, matching the live site and the
+/// `drop_bottom_book` probe this knob came from. `< floor` rejects, so the boundary matches that
+/// probe's `if v < t { skip }` and at reject-P this book reproduces the PEG-VALUE-GATE probe's own row.
+fn value_floor_trim(rows: &[(i32, f64, f64, f64, String, Option<f64>)], pct: f64) -> BTreeMap<i32, Vec<(f64, f64, f64, String)>> {
+    let mut by_peg: BTreeMap<i32, Vec<f64>> = BTreeMap::new();
+    for (b, _, _, _, _, peg) in rows {
+        by_peg.entry(*b).or_default().extend(peg);
+    }
+    let floors: BTreeMap<i32, Option<f64>> = by_peg.into_iter().map(|(b, vals)| (b, core::pct_floor(vals, pct))).collect();
+    let mut by_bucket: BTreeMap<i32, Vec<(f64, f64, f64, String)>> = BTreeMap::new();
+    for (b, sc, pc, spc, tk, peg) in rows {
+        if let (Some(Some(f)), Some(v)) = (floors.get(b), peg) {
+            if v < f {
+                continue; // dearest for its growth in THIS window -> the brake rejects it
+            }
+        }
+        by_bucket.entry(*b).or_default().push((*sc, *pc, *spc, tk.clone()));
+    }
+    by_bucket
 }
 
 /// (#45) DISJOINT rank-slice books + same-window head-to-head, pure for testability. Per window
@@ -2137,6 +2146,14 @@ fn report_entry_state(
 /// Only the free SEC/income-statement factors are listed (roe, the round-107 survival levels and — since
 /// (#43) — roic are all SEC-computed; `FundRow::roic`, the PREMIUM field, is still never populated and is
 /// not what the roic row reads). Runs only under `fund` (else `s.fund` is None everywhere).
+///
+/// Skipped because `replace report_book_by_factor with ()` is unkillable, not merely unkilled. It
+/// returns `()` and its entire effect is `println!`, so a test that called it could assert nothing a
+/// stub would fail; and the only mode that gets past the `s.fund` check is `fund`, which needs a live
+/// API and is therefore unpinned by design (`tests/backtest_fixture.rs`: the six goldens cover the
+/// modes that run OFFLINE). Measured in (#75)'s audit, where a comment correction inside this body was
+/// enough to drag it into `--in-diff` scope and red the gate on its own.
+#[mutants::skip]
 fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let (bd, bc) = bench;
     if bd.len() < 2 {
@@ -3445,6 +3462,47 @@ mod tests {
         assert!(
             bootstrap_edge_ci(&rows, scores_nothing, &t, 8, 5.0, 95.0).is_none(),
             "every draw gated out -> no band, not a NaN band"
+        );
+    }
+
+    /// (#75) The value brake's graded trim, on two buckets whose peg cohorts do not overlap at all —
+    /// bucket 1 spans 10..50, bucket 2 spans 100..500. That gap is the whole point: a POOLED percentile
+    /// would floor both at 50 and so cut nothing from bucket 2 while gutting bucket 1, which is the one
+    /// way this brake could quietly stop being cross-sectional. The boundary name (peg exactly ON the
+    /// floor) is kept, matching `drop_bottom_book`'s `if v < t { skip }`, and the unjudgeable name is
+    /// kept because unjudgeable is not a verdict.
+    #[test]
+    fn value_floor_trims_each_bucket_against_its_own_cohort() {
+        let row = |b: i32, tk: &str, peg: Option<f64>| (b, 1.0, 2.0, 3.0, tk.to_string(), peg);
+        let rows = vec![
+            row(1, "P10", Some(10.0)),
+            row(1, "P20", Some(20.0)),
+            row(1, "P30", Some(30.0)),
+            row(1, "P40", Some(40.0)),
+            row(1, "P50", Some(50.0)),
+            row(1, "NOPEG", None),
+            row(2, "Q100", Some(100.0)),
+            row(2, "Q200", Some(200.0)),
+            row(2, "Q300", Some(300.0)),
+            row(2, "Q400", Some(400.0)),
+            row(2, "Q500", Some(500.0)),
+        ];
+        let names = |m: &BTreeMap<i32, Vec<(f64, f64, f64, String)>>, b: i32| -> Vec<String> {
+            m.get(&b).map(|v| v.iter().map(|(_, _, _, t)| t.clone()).collect()).unwrap_or_default()
+        };
+        let off = value_floor_trim(&rows, 0.0);
+        assert_eq!(names(&off, 1), ["P10", "P20", "P30", "P40", "P50", "NOPEG"], "0 = off, the cohort is untouched");
+        assert_eq!(names(&off, 2), ["Q100", "Q200", "Q300", "Q400", "Q500"], "0 = off in every bucket, not just the first");
+        let cut = value_floor_trim(&rows, 40.0);
+        assert_eq!(
+            names(&cut, 1),
+            ["P30", "P40", "P50", "NOPEG"],
+            "floor = the 40th pct of THIS bucket (30): dearest-for-their-growth go, the name sitting exactly ON the floor stays, unjudgeable stays"
+        );
+        assert_eq!(
+            names(&cut, 2),
+            ["Q300", "Q400", "Q500"],
+            "bucket 2 is floored at 300 by its OWN cohort — pooled, it would floor at 50 and cut nobody"
         );
     }
 

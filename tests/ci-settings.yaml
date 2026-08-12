@@ -2209,6 +2209,17 @@ buy_heuristic:
   #   it the next session re-reads the probe's "ship as a real growth gate" line and re-proposes the
   #   whole round, which is precisely what a stale annotation caused this time. Re-open only on a run
   #   where top-3 RISES at BOTH 12y and 8y.
+  #   MUTATION AUDIT — the round's first gate came back RED, 7 missed of 86, and all 7 were this change:
+  #   six operators on the brake's own two comparisons plus a whole-function stub of the neighbouring
+  #   `report_book_by_factor`, which a COMMENT correction inside its body was enough to drag into scope.
+  #   Every one was unkillable rather than unkilled — the knob ships at 0.0, the brake needs `fund` to
+  #   see a single peg_yield, and `fund` cannot run offline, so no test could reach the comparisons
+  #   where they stood. Closed by splitting the trim into `value_floor_trim` (pure, argument-taking,
+  #   value-returning, tested on two non-overlapping bucket cohorts) and dropping the redundant
+  #   `pct > 0.0` guard, whose three survivors existed only because `pct_floor` already decides that.
+  #   The printer is `#[mutants::skip]` with the reason at its head. GENERAL LESSON, third recording:
+  #   a knob defaulted OFF is a knob whose live path no offline test executes — plan the pure split
+  #   with the feature, not after the gate reds.
   growth_value_floor_pct: 0.0
   growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
   # (#50) WHAT THIS 0.0 COSTS DOWNSTREAM, recorded 2026-08-06 because no receipt said it: with this
