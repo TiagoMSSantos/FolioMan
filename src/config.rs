@@ -1287,6 +1287,23 @@ mod tests {
         assert!(err.contains("unknown field `not_a_real_key`"), "must name the field: {err}");
     }
 
+    /// (#76) The OpenFIGI endpoint is `serde(default)`, so no committed YAML supplies it and the
+    /// constant IS the shipped value — nothing else in the tree would notice it changing. Pinned
+    /// through a real parse of the committed fixture rather than by calling the default fn directly,
+    /// because the property that matters is what a settings file WITHOUT the key resolves to.
+    ///
+    /// Defaulted rather than required so an existing private settings.yaml keeps loading: `Urls` is
+    /// `deny_unknown_fields` and every other field is mandatory, so a bare addition would have broken
+    /// every deployed config on upgrade.
+    #[test]
+    fn openfigi_endpoint_defaults_to_the_live_mapping_service() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
+        let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
+        assert!(!text.contains("openfigi_mapping"), "fixture must exercise the DEFAULT, not pin the key");
+        let settings: Settings = serde_yaml::from_str(&text).expect("parse ci-settings.yaml");
+        assert_eq!(settings.urls.openfigi_mapping, "https://api.openfigi.com/v3/mapping");
+    }
+
     /// Same pin for the hand-tuned knob surface: a buy_heuristic typo must error, not become a no-op.
     #[test]
     fn typoed_buy_heuristic_knob_errors() {

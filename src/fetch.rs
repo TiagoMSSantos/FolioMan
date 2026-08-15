@@ -3791,7 +3791,12 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
     }
     eprintln!("fetch: resolving EU listings for {} new symbols (~{}s, cached forever after)", todo.len(), todo.len().div_ceil(FIGI_BATCH) * 2 * FIGI_PACE_MS as usize / 1000);
     let mut share_figis: Vec<(String, String)> = Vec::new();
-    for chunk in todo.chunks(FIGI_BATCH) {
+    // Pace BETWEEN requests, never after the last one of a hop: the trailing sleep bought nothing and
+    // cost 2.5s on every run, including the single-batch case where no pacing is needed at all.
+    for (i, chunk) in todo.chunks(FIGI_BATCH).enumerate() {
+        if i > 0 {
+            tokio::time::sleep(StdDuration::from_millis(FIGI_PACE_MS)).await;
+        }
         let jobs = chunk
             .iter()
             .map(|t| serde_json::json!({"idType": "TICKER", "idValue": t, "exchCode": "US"}))
@@ -3804,10 +3809,11 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
                 }
             }
         }
-        tokio::time::sleep(StdDuration::from_millis(FIGI_PACE_MS)).await;
     }
     let mut candidates: Vec<(String, String)> = Vec::new();
     for chunk in share_figis.chunks(FIGI_BATCH) {
+        // hop 2 always follows hop 1's last request, so this one paces from its very first batch
+        tokio::time::sleep(StdDuration::from_millis(FIGI_PACE_MS)).await;
         let jobs = chunk
             .iter()
             .map(|(_, f)| serde_json::json!({"idType": "ID_BB_GLOBAL_SHARE_CLASS_LEVEL", "idValue": f}))
@@ -5194,6 +5200,27 @@ mod tests {
         let _ = FETCH_CONCURRENCY.set(1);
     }
 
+    /// Seed `.sec_cache/_tickers.json`. EVERY test that can reach `sec_cik` must call this, not just
+    /// the one that needs a CIK resolved, because `CIK_MAP` is a process-wide `OnceLock` filled by the
+    /// FIRST `sec_cik` call in the binary: whichever test gets there first decides the map for all of
+    /// them, and if the file is not on disk yet that map is permanently EMPTY.
+    ///
+    /// That is a real, latent order dependency, not a hypothetical. Seeding it inside the test that
+    /// needs AAPL worked only while the scheduler happened to run that test first — with the scratch
+    /// root cold and `--test-threads=1`, `enrich_fund_factor…` sorts earlier, claims the `OnceLock`
+    /// from an absent file, and `sec_facts_rows_serve_the_cache_before_the_socket` then fails on a
+    /// lookup that has nothing to do with what it is testing. Idempotent, so calling it from several
+    /// tests is free.
+    ///
+    /// AAPL resolves; every other ticker (`NOSUCH`, `AAA`, `BBB`) is absent on purpose, which is the
+    /// non-US path a wide screen takes and must stay a miss.
+    fn seed_cik_map() {
+        let dir = crate::config::data_path(".sec_cache");
+        std::fs::create_dir_all(&dir).expect("scratch .sec_cache");
+        std::fs::write(dir.join("_tickers.json"), r#"{"0":{"ticker":"AAPL","cik_str":320193}}"#)
+            .expect("seed cik map");
+    }
+
     /// One canned HTTP/1.1 response on an ephemeral loopback port, accepted exactly once. The SEC
     /// transport pair is two lines of `reqwest` each and had no test at all, which the mutation gate
     /// found the moment the offline guard made those lines part of a diff: `sec_get_text` could
@@ -5261,6 +5288,73 @@ mod tests {
         assert_eq!(got["isin"], "LU0378438732");
     }
 
+    /// (#76) OpenFIGI answers a batch POSITIONALLY: one element per job, in job order, and an
+    /// unresolvable job still occupies its slot with a `warning` instead of `data`. Compacting that
+    /// array instead of mapping it would shift every later answer up one — MSFT's share class would be
+    /// recorded against the symbol before it, and the swap would then quote the wrong company entirely.
+    /// Nothing downstream could detect it, because a shifted FIGI resolves perfectly well.
+    #[tokio::test]
+    async fn figi_batch_keeps_one_answer_per_job_in_order() {
+        use serde_json::json;
+        let (url, client) = stub_server(
+            r#"[{"data":[{"shareClassFIGI":"BBG009S39JY5"}]},{"warning":"No identifier found."},{"data":[{"shareClassFIGI":"BBG001S5N8V8"}]}]"#,
+        );
+        let jobs = vec![
+            json!({"idType": "TICKER", "idValue": "GOOGL", "exchCode": "US"}),
+            json!({"idType": "TICKER", "idValue": "NOSUCH", "exchCode": "US"}),
+            json!({"idType": "TICKER", "idValue": "MSFT", "exchCode": "US"}),
+        ];
+        let out = figi_batch(&client, &url, jobs).await;
+        assert_eq!(out.len(), 3, "one slot per job, always");
+        assert_eq!(out[0].as_ref().expect("GOOGL data")[0]["shareClassFIGI"], "BBG009S39JY5");
+        assert!(out[1].is_none(), "a warning row carries no data");
+        assert_eq!(out[2].as_ref().expect("MSFT data")[0]["shareClassFIGI"], "BBG001S5N8V8");
+    }
+
+    /// (#76) A dead endpoint must still answer one slot per job. Returning a SHORT vec instead would
+    /// misalign the `zip` in the caller and silently drop the tail of the batch.
+    #[tokio::test]
+    async fn figi_batch_answers_none_per_job_when_the_endpoint_is_dead() {
+        pin_throttle();
+        // port 1 is privileged and unbound: refused instantly, no timeout to wait out
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let out = figi_batch(&client, "http://127.0.0.1:1/", vec![serde_json::json!({}); 3]).await;
+        assert_eq!(out.len(), 3);
+        assert!(out.iter().all(Option::is_none));
+    }
+
+    /// (#76) The EU-listing cache, both branches. ONE test, two phases, because both own the same
+    /// `.eu_listing_cache.json` in the shared scratch root and would race as two `#[test]`s — same
+    /// reason as `regulatory_isins_serve_a_fresh_cache_and_never_shrink` above.
+    ///
+    /// The dead port is the assertion in phase 1, not scaffolding: a fully cached call must consult
+    /// OpenFIGI zero times, and the only way to prove "zero" is to make any call fail. Phase 2 then
+    /// pins the negative-caching rule the single-file design rests on — an unresolvable symbol is
+    /// remembered as the empty string rather than left absent, so it is asked about exactly once ever.
+    #[tokio::test]
+    async fn resolve_eu_listings_serves_its_cache_and_remembers_misses() {
+        pin_throttle();
+        let path = crate::config::data_path(EU_LISTING_CACHE_PATH);
+        let urls = stub_urls("http://127.0.0.1:1/");
+        let client = Client::builder().no_proxy().build().expect("test client");
+
+        // 1. every symbol already known -> the file is served verbatim and nothing is fetched
+        std::fs::write(&path, r#"{"GOOGL":"ABEA.DE","BRK-B":""}"#).expect("seed cache");
+        let got = resolve_eu_listings(&client, &urls, &["GOOGL".to_string(), "BRK-B".to_string()]).await;
+        assert_eq!(got["GOOGL"], "ABEA.DE");
+        assert_eq!(got["BRK-B"], "", "an empty value is a remembered miss, not a cache gap");
+
+        // 2. a new symbol the resolver cannot answer for -> remembered as a miss, previous answers kept
+        let got = resolve_eu_listings(&client, &urls, &["GOOGL".to_string(), "TSLA".to_string()]).await;
+        assert_eq!(got["GOOGL"], "ABEA.DE", "an unrelated lookup must not evict a known twin");
+        assert_eq!(got["TSLA"], "");
+        let on_disk: HashMap<String, String> =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written")).expect("cache json");
+        assert_eq!(on_disk["TSLA"], "", "the miss is persisted, so it is never asked again");
+        assert_eq!(on_disk["GOOGL"], "ABEA.DE");
+        std::fs::remove_file(&path).ok();
+    }
+
     /// Every `Urls` field pointed at ONE loopback stub. Setting all of them is the safety property, not
     /// a chore: a fetch under test can only reach the address it was handed, so a field the test author
     /// did not think about still cannot leave the machine. `Urls` has 32 required fields, no
@@ -5269,8 +5363,14 @@ mod tests {
     ///
     /// Built by deserializing rather than by struct literal so a renamed field is a test failure with
     /// the field name in it, and so this stays one line per field.
+    ///
+    /// `openfigi_mapping` is the exception that proves the point and MUST stay listed: it carries
+    /// `#[serde(default)]`, so omitting it here does not fail — it silently deserializes to the live
+    /// `api.openfigi.com` endpoint and every EU-listing test starts POSTing to Bloomberg. A defaulted
+    /// field is exactly the field the author does not think about, so list defaulted ones too.
     fn stub_urls(base: &str) -> Urls {
-        const FIELDS: [&str; 31] = [
+        const FIELDS: [&str; 32] = [
+            "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "eu_hicp_old", "coingecko_markets", "sp500_csv", "nupl",
             "coinmetrics_catalog", "coinmetrics_mvrv", "ntfy", "fundamentals", "fundamentals_quality",
@@ -5347,12 +5447,7 @@ mod tests {
     #[tokio::test]
     async fn sec_facts_rows_serve_the_cache_before_the_socket() {
         pin_throttle();
-        let dir = crate::config::data_path(".sec_cache");
-        std::fs::create_dir_all(&dir).expect("scratch .sec_cache");
-        // Seeded BEFORE any `sec_cik` call, because `CIK_MAP::get_or_init` reads this file exactly
-        // once per process. AAPL resolves; "NOSUCH" is absent on purpose.
-        std::fs::write(dir.join("_tickers.json"), r#"{"0":{"ticker":"AAPL","cik_str":320193}}"#)
-            .expect("seed cik map");
+        seed_cik_map();
 
         // One cached row, every field distinct so a mis-wired mapping shows up as a wrong number
         // rather than as a coincidence.
@@ -5607,10 +5702,10 @@ mod tests {
     #[tokio::test]
     async fn enrich_fund_factor_skips_currency_quotes_and_divides_by_the_native_close() {
         pin_throttle();
+        seed_cik_map(); // this test reaches `sec_cik` first under a cold scratch root — see the helper
         let fmp = crate::config::data_path(".fmp_cache");
         let sec = crate::config::data_path(".sec_cache");
         std::fs::create_dir_all(&fmp).expect("scratch .fmp_cache");
-        std::fs::create_dir_all(&sec).expect("scratch .sec_cache");
         // `fund_factors` takes `eps_ttm` from the NEWEST row's eps, so one row settles the arithmetic.
         let filed = chrono::Local::now().date_naive() - chrono::Duration::days(30);
         let rows = format!(
