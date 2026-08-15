@@ -3793,6 +3793,12 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
     let mut share_figis: Vec<(String, String)> = Vec::new();
     // Pace BETWEEN requests, never after the last one of a hop: the trailing sleep bought nothing and
     // cost 2.5s on every run, including the single-batch case where no pacing is needed at all.
+    //
+    // DELIBERATELY UNPINNED (mutation audit, round 76): this comparison survives `==`, `<` and `>=`.
+    // All three change only WHEN the sleeps happen, never what the function returns or writes, so the
+    // only test that could kill them asserts on elapsed wall-clock — a flaky test bought with a real
+    // 2.5s of suite time. Deleting the guard instead would kill all three and cost that same 2.5s on
+    // every `cargo t` forever, to save 1% of a 4-minute operation that runs once per cache lifetime.
     for (i, chunk) in todo.chunks(FIGI_BATCH).enumerate() {
         if i > 0 {
             tokio::time::sleep(StdDuration::from_millis(FIGI_PACE_MS)).await;
@@ -3854,6 +3860,14 @@ fn swap_to_eu(pond: Vec<(String, String)>, eu: &HashMap<String, String>) -> Vec<
             _ => (sym, sector),
         })
         .collect()
+}
+
+/// (EU listing) How many of `syms` actually got swapped. Extracted from the `eprintln!` that reports
+/// it because a number computed inside a printer can never be graded, and this particular number is
+/// the one the knob's whole rollout depends on: the plan is to read the Xetra hit rate off stderr and
+/// decide from it, so a tally that silently inverted would send that decision the wrong way.
+fn eu_swap_tally(syms: &[String], eu: &HashMap<String, String>) -> usize {
+    syms.iter().filter(|s| eu.get(*s).is_some_and(|t| !t.is_empty())).count()
 }
 
 pub async fn fetch_universe(
@@ -3928,7 +3942,7 @@ pub async fn fetch_universe(
         }
         let syms: Vec<String> = ponds.iter().flatten().map(|(s, _)| s.clone()).collect();
         let eu = resolve_eu_listings(client, urls, &syms).await;
-        let swapped = syms.iter().filter(|s| eu.get(*s).is_some_and(|t| !t.is_empty())).count();
+        let swapped = eu_swap_tally(&syms, &eu);
         eprintln!("fetch: EU listing swap — {swapped} of {} constituents on Xetra, {} kept on their US line", syms.len(), syms.len() - swapped);
         ponds = ponds.into_iter().map(|p| swap_to_eu(p, &eu)).collect();
     }
@@ -4060,6 +4074,14 @@ mod tests {
         assert_eq!(out[3], pond[3], "absent key = never asked -> US row untouched");
         // Empty map is the resolver-fully-failed case: the whole pond must survive unchanged.
         assert_eq!(swap_to_eu(pond.clone(), &HashMap::new()), pond);
+
+        // The stderr tally must agree with what the swap actually did, counting only real twins. An
+        // inverted count reads as "497 of 503 on Xetra" on a run that swapped six names, which is the
+        // number the decision to turn this knob on is meant to rest on.
+        let syms: Vec<String> = pond.iter().map(|(s, _)| s.clone()).collect();
+        assert_eq!(eu_swap_tally(&syms, &eu), 2, "GOOGL and AAPL swapped; BRK-B and TSLA did not");
+        assert_eq!(eu_swap_tally(&syms, &HashMap::new()), 0);
+        assert_eq!(eu_swap_tally(&[], &eu), 0);
     }
 
     /// (#45) The MVRV staleness guard, on the exact shapes the live endpoint returns. `btc` is a
@@ -5874,6 +5896,19 @@ mod tests {
         assert!(universe.is_empty(), "no venue answered, so no universe: {universe:?}");
         assert!(etf_set.is_empty());
         assert!(sectors.is_empty());
+
+        // 2. ONE leg alive -> the names it found actually come back. Without this the assertions above
+        //    are satisfied by a `fetch_universe` that returns empty unconditionally, which is exactly
+        //    the mutant the audit found surviving: a total-outage test cannot tell a working universe
+        //    builder from one that has stopped building. Only CoinGecko is pointed at the live stub —
+        //    every other leg stays on the dead port on purpose, because a live Börse Frankfurt reply
+        //    would reach the POST-success branch and claim the name-keyed `OnceLock`s this binary's
+        //    other tests own (see the note above).
+        let (base, client) = stub_server(r#"[{"symbol":"btc"},{"symbol":"eth"}]"#);
+        let mut urls = stub_urls("http://127.0.0.1:1/");
+        urls.coingecko_markets = base;
+        let (universe, _, _) = fetch_universe(&client, &urls, 10, true, false, &[]).await;
+        assert_eq!(universe, ["BTC-EUR", "ETH-EUR"], "the one answering leg must reach the caller");
     }
 
     /// The macro series cache trio (CPI/HICP), untested until the scratch root existed. A same-day
