@@ -3835,6 +3835,43 @@ compute_threads: 0
 # buy_heuristic.prefer_eur but for what `screen` fetches. US stocks/ETFs have no EUR listing.
 universe_prefer_eur: true
 
+# (#76) EQUITY VENUE SWAP — replace a constituent-CSV stock with its Xetra twin (GOOGL -> ABEA.DE) so a
+# EUR investor is shown the line they can actually buy, priced in the currency they actually pay. BUILT
+# AND WIRED 2026-08-15, SHIPPED OFF. Off is byte-identical to no swap at all (goldens unmoved), so this
+# `false` is the shipped behaviour, not a CI-only override.
+#
+# WHY AN IDENTIFIER SERVICE AND NOT A SUFFIX. The German ticker is genuinely a different string: AAPL is
+# APC.DE, KO is CCC3.DE, V is 3V64.DE, CAT is CAT1.DE. A naive `AAPL.DE` returns no chart at all. Yahoo's
+# own search cannot do the job either — `?q=GOOGL` returns a 2x ETF, options and a Korean ETF but no
+# European venue; `?q=AAPL` returns Thai DRs, a Brazilian DRN and an Argentine CEDEAR, none of which are
+# the same security. Resolution is OpenFIGI (Bloomberg's keyless open service), two hops:
+# TICKER+exchCode US -> shareClassFIGI -> every listing of that share class, then the `GY` (Xetra) row
+# with securityType `Common Stock`. Measured 2026-08-15: 10 of 10 S&P names resolved to a Xetra ticker
+# whose Yahoo chart came back EUR, exchangeName GER, 219-320 monthly bars, zero nulls. Cost is 10 jobs
+# per request unkeyed (20 returns HTTP 413), 25 requests/min, two hops over ~500 names = ~102 requests
+# paid once and cached forever in .eu_listing_cache.json.
+#
+# WHAT TURNING IT ON COSTS, ALL FIVE STATED PLAINLY:
+#   1. It re-prices the entire equity lane. A Xetra line's avg_turnover_eur is a fraction of NASDAQ's,
+#      and turnover feeds liq_bonus and the rank tie-break, so every US name's score moves.
+#   2. The CAGR becomes EUR-denominated and carries EUR/USD drift. growth_min_cagr and every threshold in
+#      this file were calibrated on USD series. From a EUR investor's view the EUR CAGR is the CORRECT
+#      number; it still invalidates the calibration.
+#   3. Xetra history starts 2007-12-31 for nearly every name — 18.6y, under the 20Y rung. Harmless at a
+#      fixed_cagr_years of 8 or less, but on the default 20/8/5 ladder every swapped name drops a rung and
+#      its CAGR changes for that reason alone. trust_factor's 10Y requirement still clears.
+#   4. train != serve against the backtest, structurally. Both lanes read this same knob, so they agree
+#      with each other, but the frozen fixture pool is US/USD and no Ship Rule run can grade the swap.
+#   5. Owned matching breaks. Owned.stocks matches by yahoo_base, and yahoo_base("ABEA.DE") == "abea"
+#      will not match a held GOOGL_US_EQ, so owned names stop being flagged until that match goes
+#      through ISIN.
+#
+# UNGRADEABLE, therefore OFF until one real screen makes the pond-size and rank effects measurements
+# rather than predictions. The resolver prints its hit/miss tally to stderr for exactly that run. A name
+# whose twin fails to resolve, is not on Xetra, or whose chart is not EUR with at least 60 bars keeps its
+# US row — the pond never silently shrinks.
+prefer_eu_listing: false
+
 # `screen` SECTOR FILTER — which type of companies/ETFs to fetch. Case-insensitive substring
 # keywords matched against a stock's GICS sector AND an ETF's fund name. Empty list (or omitted) =
 # fetch ALL sectors (the default). Stocks are filtered BEFORE fetch (by their GICS sector, so other

@@ -26,6 +26,8 @@ pub struct Settings {
     #[serde(default = "default_true")]
     pub universe_prefer_eur: bool, // crypto in the live universe quoted in EUR (BTC-EUR) if true, else USD
     #[serde(default)]
+    pub prefer_eu_listing: bool, // EQUITY VENUE SWAP: replace a constituent-CSV stock with its Xetra twin (GOOGL -> ABEA.DE) when one resolves and its chart proves out (EUR, enough bars), so the row a EUR investor sees is the line they can actually buy. Resolution is OpenFIGI (`openfigi_mapping`), TICKER -> shareClassFIGI -> every listing, `GY` venue only; the US line stays whenever the twin does not resolve or its chart fails. false = off (DEFAULT), and off is byte-identical to no swap at all. EDGE-AFFECTING and UNGRADEABLE — the swapped series is EUR-denominated, so its CAGR carries EUR/USD drift while every threshold in ci-settings was calibrated on USD series; Xetra history also starts 2007-12-31 for nearly every name (18.6y, under the 20Y rung, harmless only while `fixed_cagr_years` <= 8). Turnover drops to the Xetra line's, which moves `liq_bonus` and the rank tie-break. Read one real screen before trusting any number it produces
+    #[serde(default)]
     pub sectors: Vec<String>, // `screen` sector filter (GICS keyword, case-insensitive substring): which company/ETF types to fetch. Empty = ALL sectors. e.g. [Technology, Communication, Semiconductor] = tech only. Stocks filtered before fetch (by GICS sector); ETFs filtered by fund name (no GICS for funds)
     pub ntfy_topic: String,
     #[serde(default)]
@@ -431,6 +433,13 @@ pub struct Urls {
     pub yahoo_intraday: String, // {ticker} — hourly bars (~2d) for the screen 1h/6h/12h columns
     pub yahoo_search: String,  // {ticker}
     pub yahoo_quote: String,   // {ticker} (human quote page, for `perf`)
+    // (EU listing) OpenFIGI mapping endpoint — POST, keyless, 10 jobs per request (20 returns HTTP
+    // 413). Read ONLY by `prefer_eu_listing`; untouched when that knob is off. Defaulted so an older
+    // settings.yaml still loads. Yahoo's own search cannot do this job: `?q=GOOGL` returns a 2x ETF
+    // and options but no European venue, and `?q=AAPL` offers Thai DRs and an Argentine CEDEAR that
+    // are not the same security at all.
+    #[serde(default = "default_openfigi_mapping")]
+    pub openfigi_mapping: String,
     pub euribor: String,
     pub us_cpi: String, // BLS CPI-U base /data/ URL (v1); seriesID + year window POSTed by fetch_us_inflation — keyless it POSTs the fresh 10y window daily plus a PERMANENT old-decade window once (merged, fills 20Y); swaps to /v2/ when BLS_API_KEY env is set (20y/call vs v1's 10y, 500 vs 25 req/day)
     pub pt_cpi: String,
@@ -650,6 +659,12 @@ fn default_fund_expense_url() -> String {
 /// Default Börse Frankfurt ETF search (POST, turnover-sorted UCITS list).
 fn default_bf_etf_search_url() -> String {
     "https://api.boerse-frankfurt.de/v1/search/etp_search".to_string()
+}
+
+/// Default OpenFIGI mapping endpoint — Bloomberg's keyless open identifier service, the only source
+/// probed that answers "which European line is this US ticker" correctly and consistently.
+fn default_openfigi_mapping() -> String {
+    "https://api.openfigi.com/v3/mapping".to_string()
 }
 
 /// Default request-signing salt, lifted from the Börse Frankfurt web bundle (`tracing.salt`). Public

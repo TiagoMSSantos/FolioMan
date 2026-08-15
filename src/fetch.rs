@@ -3707,11 +3707,155 @@ pub async fn sector_map(client: &Client, urls: &Urls, sectors: &[String]) -> std
     out
 }
 
+/// (EU listing) US symbol -> its verified Xetra Yahoo symbol (`GOOGL` -> `ABEA.DE`). Only read when
+/// `prefer_eu_listing` is on, and the mapping is stable, so resolutions are remembered forever.
+///
+/// ponytail: ONE file, not the positive/negative pair `fetch_xetra_etfs` keeps. A known-absent twin is
+/// stored as the EMPTY STRING, which costs no TTL machinery and no second const. The ceiling that buys:
+/// a negative never expires, so a listing that appears later stays unseen until this file is deleted.
+/// Cheap failure — the name simply keeps its US row — and `rm .eu_listing_cache.json` is the upgrade
+/// path. Swap in a dated negative like `ISIN_NEG_CACHE_PATH`'s if that ever actually bites.
+pub(crate) const EU_LISTING_CACHE_PATH: &str = ".eu_listing_cache.json";
+
+/// OpenFIGI's keyless job cap. MEASURED, not guessed: 10 jobs returns HTTP 200, 20 and 50 both return
+/// HTTP 413 Payload Too Large. The published rate limit alongside it is 25 requests/minute, which is
+/// what `FIGI_PACE_MS` spaces — the global `throttle()` paces for Yahoo (10 req/s default) and would
+/// blow through this one an order of magnitude over.
+const FIGI_BATCH: usize = 10;
+const FIGI_PACE_MS: u64 = 2500;
+
+/// Bloomberg exchange code for Xetra. The ONLY venue this swap accepts — see `figi_eu_symbol`.
+const XETRA_EXCH_CODE: &str = "GY";
+
+/// (EU listing) The Xetra common-stock line inside one OpenFIGI share-class response, as a Yahoo
+/// symbol. Pure, so the venue rule is testable without a network: `GY` + `Common Stock` -> `<t>.DE`.
+///
+/// `securityType` is checked because the same share class carries certificates, depositary lines and
+/// structured products on other rows, and substituting one of those would swap the security itself
+/// rather than its venue — the exact failure that killed the Yahoo-search route, where `?q=AAPL`
+/// offered Thai DRs and an Argentine CEDEAR as if they were Apple.
+///
+/// ponytail: Xetra ONLY, no venue ladder. All ten probed S&P names carried `GY`, `LN` returns
+/// non-EUR depositary lines (`0RIH`, `0QYP`), and a preference order over `NA`/`FP`/`IM`/`SW` is
+/// guesswork until a real run reports a Xetra miss. Add fallbacks when that count is a number.
+fn figi_eu_symbol(data: &Value) -> Option<String> {
+    let row = data.as_array()?.iter().find(|r| {
+        r.get("exchCode").and_then(Value::as_str) == Some(XETRA_EXCH_CODE)
+            && r.get("securityType").and_then(Value::as_str) == Some("Common Stock")
+    })?;
+    let ticker = row.get("ticker").and_then(Value::as_str)?;
+    (!ticker.is_empty()).then(|| format!("{ticker}.DE"))
+}
+
+/// (EU listing) Is this long-chart payload a usable EUR series? The swap is confirmed by the fetch the
+/// pipeline was going to make anyway (`chart_json_long` is disk-cached for 7 days), so a thin or
+/// wrong-currency venue excludes ITSELF here instead of needing a hand-maintained blacklist.
+fn eu_chart_ok(raw: &RawValue, min_bars: usize) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(raw.get()) else {
+        return false;
+    };
+    let eur = v.pointer("/chart/result/0/meta/currency").and_then(Value::as_str) == Some("EUR");
+    let bars = v.pointer("/chart/result/0/timestamp").and_then(Value::as_array).map_or(0, Vec::len);
+    eur && bars >= min_bars
+}
+
+/// (EU listing) Shortest EU record worth swapping to. 60 monthly bars = 5 years, which is
+/// `growth_min_leg_years`' shipped floor — below it the swapped name could not be ranked anyway, so
+/// keeping its US row is strictly better than trading a scoreable series for an unscoreable one.
+const EU_MIN_BARS: usize = 60;
+
+/// One OpenFIGI POST: `jobs` in, one `data` array (or None) out per job, order preserved.
+async fn figi_batch(client: &Client, url: &str, jobs: Vec<Value>) -> Vec<Option<Value>> {
+    let n = jobs.len();
+    let Some(v) = post_json(client, url, &Value::Array(jobs)).await else {
+        return vec![None; n]; // transport error -> every job in this batch simply stays unresolved
+    };
+    let arr = v.as_array().cloned().unwrap_or_default();
+    (0..n).map(|i| arr.get(i).and_then(|j| j.get("data")).cloned()).collect()
+}
+
+/// (EU listing) Resolve each US symbol to its Xetra twin, two OpenFIGI hops and one chart check:
+/// `TICKER`+`exchCode: US` -> `shareClassFIGI` -> every listing of that share class -> the `GY` row.
+/// Cached forever (see [`EU_LISTING_CACHE_PATH`]), so the ~4 minutes this costs is paid once.
+///
+/// Serial and paced rather than fanned out: OpenFIGI allows 25 requests/minute keyless, which is two
+/// orders of magnitude below what `fetch_concurrency()` would throw at it.
+async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> HashMap<String, String> {
+    let mut cache: HashMap<String, String> = std::fs::read_to_string(crate::config::data_path(EU_LISTING_CACHE_PATH))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let todo: Vec<String> = syms.iter().filter(|s| !cache.contains_key(*s)).cloned().collect();
+    if todo.is_empty() {
+        return cache;
+    }
+    eprintln!("fetch: resolving EU listings for {} new symbols (~{}s, cached forever after)", todo.len(), todo.len().div_ceil(FIGI_BATCH) * 2 * FIGI_PACE_MS as usize / 1000);
+    let mut share_figis: Vec<(String, String)> = Vec::new();
+    for chunk in todo.chunks(FIGI_BATCH) {
+        let jobs = chunk
+            .iter()
+            .map(|t| serde_json::json!({"idType": "TICKER", "idValue": t, "exchCode": "US"}))
+            .collect();
+        for (sym, data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, jobs).await) {
+            match data.as_ref().and_then(|d| d.get(0)).and_then(|r| r.get("shareClassFIGI")).and_then(Value::as_str) {
+                Some(f) => share_figis.push((sym.clone(), f.to_string())),
+                None => {
+                    cache.insert(sym.clone(), String::new()); // no US share class -> no twin to find
+                }
+            }
+        }
+        tokio::time::sleep(StdDuration::from_millis(FIGI_PACE_MS)).await;
+    }
+    let mut candidates: Vec<(String, String)> = Vec::new();
+    for chunk in share_figis.chunks(FIGI_BATCH) {
+        let jobs = chunk
+            .iter()
+            .map(|(_, f)| serde_json::json!({"idType": "ID_BB_GLOBAL_SHARE_CLASS_LEVEL", "idValue": f}))
+            .collect();
+        for ((sym, _), data) in chunk.iter().zip(figi_batch(client, &urls.openfigi_mapping, jobs).await) {
+            match data.as_ref().and_then(figi_eu_symbol) {
+                Some(eu) => candidates.push((sym.clone(), eu)),
+                None => {
+                    cache.insert(sym.clone(), String::new()); // resolves, but lists nowhere on Xetra
+                }
+            }
+        }
+        tokio::time::sleep(StdDuration::from_millis(FIGI_PACE_MS)).await;
+    }
+    // Chart check LAST, and through the same disk-cached call the quote path uses — an accepted twin
+    // costs nothing extra because this warms the very entry that fetch is about to want.
+    for (sym, eu) in candidates {
+        let ok = matches!(chart_json_long(client, urls, &eu).await, Some(raw) if eu_chart_ok(&raw, EU_MIN_BARS));
+        cache.insert(sym, if ok { eu } else { String::new() });
+    }
+    if let Ok(json) = serde_json::to_string(&cache) {
+        let _ = std::fs::write(crate::config::data_path(EU_LISTING_CACHE_PATH), json);
+    }
+    cache
+}
+
+/// (EU listing) Rewrite one constituent pond onto its EU twins, carrying each row's GICS sector across
+/// the rename. Pure and separate from the fetch so the substitution rule is testable offline.
+///
+/// The sector MUST travel: `sector_of` is keyed by symbol, the stocks table filters on it, and a
+/// swapped row that lost its sector is dropped by that filter — the single most likely way to ship
+/// this looking like "the EU swap emptied my screen".
+fn swap_to_eu(pond: Vec<(String, String)>, eu: &HashMap<String, String>) -> Vec<(String, String)> {
+    pond.into_iter()
+        .map(|(sym, sector)| match eu.get(&sym) {
+            // empty value = resolved to "no usable twin"; absent key = never asked. Both keep the US row.
+            Some(t) if !t.is_empty() => (t.clone(), sector),
+            _ => (sym, sector),
+        })
+        .collect()
+}
+
 pub async fn fetch_universe(
     client: &Client,
     urls: &Urls,
     cap: usize,
     prefer_eur: bool,
+    prefer_eu_listing: bool,
     sectors: &[String],
 ) -> (Vec<String>, std::collections::HashSet<String>, std::collections::HashMap<String, String>) {
     let cg_url = urls.coingecko_markets.replace("{n}", &cap.to_string());
@@ -3767,7 +3911,21 @@ pub async fn fetch_universe(
     // (1–3 URLs, negligible vs the universe fan-out); a failed/empty CSV just drops its pond, never crashes.
     // (Item 32) each pond is a CSV (Symbol first, sector col 3) OR a Wikipedia constituents page
     // (the only maintained source for e.g. the S&P MidCap 400) — the URL's host picks the parser.
-    let ponds = constituent_ponds(client, urls, sectors).await;
+    let mut ponds = constituent_ponds(client, urls, sectors).await;
+    // (EU listing) Swap each constituent onto its Xetra twin BEFORE any chart is fetched, so every
+    // downstream reader — score, gates, tables, order glue — sees a genuine EU quote rather than a US
+    // series wearing a EU ticker. Capped first: the resolver then only ever prices names that actually
+    // enter the universe. Off by default; `prefer_eu_listing`'s doc carries what turning it on costs.
+    if prefer_eu_listing {
+        for pond in &mut ponds {
+            pond.truncate(cap);
+        }
+        let syms: Vec<String> = ponds.iter().flatten().map(|(s, _)| s.clone()).collect();
+        let eu = resolve_eu_listings(client, urls, &syms).await;
+        let swapped = syms.iter().filter(|s| eu.get(*s).is_some_and(|t| !t.is_empty())).count();
+        eprintln!("fetch: EU listing swap — {swapped} of {} constituents on Xetra, {} kept on their US line", syms.len(), syms.len() - swapped);
+        ponds = ponds.into_iter().map(|p| swap_to_eu(p, &eu)).collect();
+    }
     let crypto_cur = if prefer_eur { "EUR" } else { "USD" };
     let mut out: Vec<String> = Vec::new();
     // crypto: CoinGecko market-cap-ranked array -> SYMBOL-<EUR|USD> (Yahoo crypto form).
@@ -3810,6 +3968,93 @@ pub async fn fetch_universe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#76) The EU-listing swap's three pure halves, on the exact payload shapes the live services
+    /// return. The knob that drives them defaults off and is therefore unkillable by the mutation gate,
+    /// so these test the functions directly rather than through `fetch_universe`.
+    ///
+    /// Hop 2 of OpenFIGI hands back EVERY listing of a share class — 234 rows for Alphabet, spanning
+    /// dozens of venues and several security types. Picking the wrong row is the whole risk: a German
+    /// certificate or a London depositary line is a different instrument with a different currency, and
+    /// swapping onto one would quietly price a derivative as if it were the stock.
+    #[test]
+    fn figi_eu_symbol_takes_only_the_xetra_common_line() {
+        use serde_json::json;
+        // Shape and ordering as served: the US line first, the Xetra one buried mid-list.
+        let alphabet = json!([
+            {"ticker": "GOOGL", "exchCode": "US", "securityType": "Common Stock"},
+            {"ticker": "ABEA", "exchCode": "GF", "securityType": "Common Stock"},
+            {"ticker": "ABEA", "exchCode": "GY", "securityType": "Common Stock"},
+            {"ticker": "0R2U", "exchCode": "LN", "securityType": "Common Stock"},
+        ]);
+        assert_eq!(figi_eu_symbol(&alphabet).as_deref(), Some("ABEA.DE"));
+
+        // Right venue, wrong instrument — a Xetra certificate must never stand in for the share.
+        let certificate = json!([{"ticker": "XYZ", "exchCode": "GY", "securityType": "Certificate"}]);
+        assert_eq!(figi_eu_symbol(&certificate), None);
+
+        // Listed in Europe, but not on Xetra: this swap knows one venue, so this is a miss, not a guess.
+        let paris_only = json!([{"ticker": "MC", "exchCode": "FP", "securityType": "Common Stock"}]);
+        assert_eq!(figi_eu_symbol(&paris_only), None);
+
+        // Degenerate payloads: an empty ticker would build a bare ".DE", and hop 2 can answer with
+        // nothing at all.
+        assert_eq!(figi_eu_symbol(&json!([{"ticker": "", "exchCode": "GY", "securityType": "Common Stock"}])), None);
+        assert_eq!(figi_eu_symbol(&json!([])), None);
+        assert_eq!(figi_eu_symbol(&json!({"error": "No identifier found."})), None);
+    }
+
+    /// (#76) The chart check is what makes a bad venue self-excluding: OpenFIGI can name a Xetra line
+    /// that Yahoo does not quote, quotes in the wrong currency, or has barely started. A USD series
+    /// wearing a `.DE` ticker is the failure this exists to stop — every threshold in ci-settings was
+    /// calibrated on USD, so the swap is only honest when the series really changed currency.
+    #[test]
+    fn eu_chart_ok_demands_eur_and_history() {
+        let chart = |cur: &str, bars: usize| {
+            let ts: Vec<String> = (0..bars).map(|i| (1_000_000 + i * 86_400).to_string()).collect();
+            RawValue::from_string(format!(
+                r#"{{"chart":{{"result":[{{"meta":{{"currency":"{cur}"}},"timestamp":[{}]}}]}}}}"#,
+                ts.join(",")
+            ))
+            .unwrap()
+        };
+        assert!(eu_chart_ok(&chart("EUR", 60), 60)); // exactly at the floor counts
+        assert!(!eu_chart_ok(&chart("EUR", 59), 60)); // one bar short does not
+        assert!(!eu_chart_ok(&chart("USD", 300), 60)); // the trap: right ticker, wrong denomination
+        assert!(!eu_chart_ok(&chart("GBp", 300), 60)); // London's pence lines are not EUR either
+        // Yahoo's own "no such symbol" answer, and a body that is not JSON at all.
+        assert!(!eu_chart_ok(&RawValue::from_string(r#"{"chart":{"result":null,"error":{"code":"Not Found"}}}"#.into()).unwrap(), 60));
+        assert!(!eu_chart_ok(&RawValue::from_string("null".into()).unwrap(), 60));
+    }
+
+    /// (#76) Substitution keeps the pond the same size and the sector attached. Losing the sector is the
+    /// single most likely way to ship this broken — `sector_map` is keyed by the CSV symbol, so a
+    /// rename that drops it empties the stocks table through the sector filter rather than erroring.
+    #[test]
+    fn swap_to_eu_renames_without_losing_rows_or_sectors() {
+        let pond = vec![
+            ("GOOGL".to_string(), "Communication Services".to_string()),
+            ("AAPL".to_string(), "Information Technology".to_string()),
+            ("BRK-B".to_string(), "Financials".to_string()),
+            ("TSLA".to_string(), "Consumer Discretionary".to_string()),
+        ];
+        let eu: HashMap<String, String> = [
+            ("GOOGL", "ABEA.DE"),
+            ("AAPL", "APC.DE"),
+            ("BRK-B", ""), // resolved, but no usable Xetra twin
+        ]
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+        let out = swap_to_eu(pond.clone(), &eu);
+        assert_eq!(out.len(), pond.len(), "the swap never shrinks the pond");
+        assert_eq!(out[0], ("ABEA.DE".to_string(), "Communication Services".to_string()));
+        assert_eq!(out[1], ("APC.DE".to_string(), "Information Technology".to_string()));
+        assert_eq!(out[2], pond[2], "empty value = no twin -> US row untouched");
+        assert_eq!(out[3], pond[3], "absent key = never asked -> US row untouched");
+        // Empty map is the resolver-fully-failed case: the whole pond must survive unchanged.
+        assert_eq!(swap_to_eu(pond.clone(), &HashMap::new()), pond);
+    }
 
     /// (#45) The MVRV staleness guard, on the exact shapes the live endpoint returns. `btc` is a
     /// covered asset (row = today), `bnb` and `dot` are dropped ones whose LAST row is years old —
@@ -5526,7 +5771,7 @@ mod tests {
         let urls = stub_urls("http://127.0.0.1:1/");
         let client = Client::builder().no_proxy().build().expect("test client");
 
-        let (universe, etf_set, sectors) = fetch_universe(&client, &urls, 10, true, &[]).await;
+        let (universe, etf_set, sectors) = fetch_universe(&client, &urls, 10, true, false, &[]).await;
 
         let after = std::fs::read_to_string(&store).expect("store must survive the outage");
         assert_eq!(after, seeded, "a dead venue must not overwrite the last-good ISIN list");

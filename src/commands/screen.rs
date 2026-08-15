@@ -1121,7 +1121,7 @@ pub async fn run(args: Vec<String>) {
         // row's own sector.
         (args, std::collections::HashSet::new(), fetch::sector_map(&client, &settings.urls, &[]).await)
     } else {
-        fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &settings.sectors).await
+        fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, settings.prefer_eu_listing, &settings.sectors).await
     };
     // watchlist tickers are ALWAYS fetched so they show in their table for comparison (sector filter or not)
     universe.extend(settings.tickers.iter().cloned());

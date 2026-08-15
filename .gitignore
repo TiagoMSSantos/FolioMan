@@ -53,6 +53,8 @@ config/settings.yaml
 
 # persistent ISIN -> Yahoo-symbol resolutions (positive-only; stabilizes the ETF universe)
 .isin_cache.json
+# US symbol -> Xetra twin (OpenFIGI); empty value = resolved to "no usable twin", never re-asked
+.eu_listing_cache.json
 # last-good venue ISIN lists (fallback across venue outages)
 .venue_isins.json
 # weekly ESMA+FCA FIRDS ETF-ISIN scan (regulatory universe source)

@@ -568,7 +568,7 @@ pub async fn run(args: Vec<String>) {
         eprintln!("backtest: fetching the live screen universe (this is the slow, wide-sample path)…");
         // no sector filter (&[]): the backtest measures edge across the FULL sample, never a slice
         let universe =
-            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, &[]).await;
+            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, settings.prefer_eu_listing, &[]).await;
         (tickers, etf_set, sector_of) = universe;
     } else if tickers.is_empty() {
         tickers = settings.tickers.clone();
