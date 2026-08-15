@@ -3866,6 +3866,16 @@ universe_prefer_eur: true
 #      will not match a held GOOGL_US_EQ, so owned names stop being flagged until that match goes
 #      through ISIN.
 #
+# MUTATION AUDIT (round 76), CI's targets exactly (--lib --test backtest_fixture, no --test cli):
+# 83 mutants, 79 caught, 1 unviable, 3 missed. The three are one comparison — the `i > 0` request pacer
+# in `resolve_eu_listings` surviving `==`, `<` and `>=` — and they are DELIBERATELY UNPINNED: all three
+# move only WHEN the sleeps happen, never what the function returns or writes, so killing them needs a
+# wall-clock assertion. The note at the site carries the full reasoning. Two earlier survivors were real
+# and are fixed: the stderr swap tally computed inside its own `eprintln!` (extracted to `eu_swap_tally`
+# — an inverted count would have misreported the very Xetra hit rate this rollout is meant to be decided
+# on), and the whole-function stub on `fetch_universe`, whose only test asserted the TOTAL-OUTAGE case
+# and so was satisfied perfectly by a universe builder that had stopped building.
+#
 # UNGRADEABLE, therefore OFF until one real screen makes the pond-size and rank effects measurements
 # rather than predictions. The resolver prints its hit/miss tally to stderr for exactly that run. A name
 # whose twin fails to resolve, is not on Xetra, or whose chart is not EUR with at least 60 bars keeps its
