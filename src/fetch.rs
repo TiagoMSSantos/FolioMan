@@ -2785,9 +2785,6 @@ async fn yahoo_fund_facts_fill(
     // one handshake up front so a dead crumb skips the whole batch instead of 400 doomed calls;
     // the per-symbol seam below reuses it via the in-process YQ_AUTH cache.
     let crumb_alive = yahoo_crumb(client).await.is_some();
-    if !crumb_alive {
-        eprintln!("fetch: Yahoo crumb handshake failed — filling fund facts from justETF instead");
-    }
     let queried = todo.clone(); // the justETF pass at the bottom needs this list after the stream eats it
     let fetched: Vec<Option<(String, Option<f64>, Option<f64>)>> = if crumb_alive {
         stream::iter(todo)
@@ -2821,8 +2818,15 @@ async fn yahoo_fund_facts_fill(
         }
         cache.insert(sym, (today.to_string(), ter, aum)); // both-None cached too: one retry a day, not one per run
     }
+    // One `if`, two arms, rather than an earlier `if !crumb_alive` for the failure line and this one for
+    // the success line. Both said the same thing about the same flag, and the negated copy carried a
+    // `delete !` mutant that no test can reach: it only decides WHICH of two `eprintln!`s fires, and a
+    // lib unit test cannot read this binary's stderr. Nothing prints between the two sites, so the
+    // failure message still lands ahead of the justETF pass below, exactly where it did before.
     if crumb_alive {
         eprintln!("fetch: Yahoo fund-facts fallback filled {got} non-BF funds (cache: {})", cache.len());
+    } else {
+        eprintln!("fetch: Yahoo crumb handshake failed — filling fund facts from justETF instead");
     }
 
     // (TER/AUM) justETF mops up whatever still has no TER — the field that actually reads n/a. This used
@@ -4534,6 +4538,27 @@ mod tests {
         assert!(is_crumb("Unauthorized"), "shape alone cannot catch this one — the status check does");
     }
 
+    /// The one seam ALL Yahoo fund data rides — fund P/E, the TER/AUM fallback, sector weightings, the
+    /// stock/bond split — and its first statement is the crumb handshake. That ordering is the property:
+    /// a failed handshake must yield `Err`, not an empty-but-successful body, because every caller reads
+    /// `Ok` as "Yahoo answered, this symbol simply has no data" and stops asking. One dead handshake
+    /// would then look like a universe with no fund facts in it, which is exactly the shape of the bug
+    /// that took those four columns out.
+    ///
+    /// Hermetic without stubbing anything: `yahoo_crumb` hardcodes `https://query2.finance.yahoo.com`
+    /// and takes no `Urls`, so a seeded `None` in `YQ_AUTH` — read before any request — is the only way
+    /// to drive it from a unit test, and it is also the only way to guarantee no socket is opened.
+    /// Every test in this binary that touches `YQ_AUTH` seeds the same `None`, so the `set` race is not
+    /// one: whoever gets there first stores the value the others wanted.
+    #[tokio::test]
+    async fn quote_summary_json_fails_closed_when_the_handshake_does() {
+        pin_throttle();
+        let _ = YQ_AUTH.set(None);
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let got = quote_summary_json(&client, "VUAA.DE", "fundProfile").await;
+        assert_eq!(got, Err("Yahoo crumb handshake failed".to_string()), "an Err, never an empty Ok");
+    }
+
     /// The EU->US alias `sec_cik` looks a swapped ticker up through. Three properties, and the run's
     /// whole fundamentals block rides on each: the direction is EU->US (inverted, not copied), the
     /// "resolved, no usable twin" empty value is DROPPED rather than becoming a `"" -> US` entry that
@@ -5044,6 +5069,12 @@ mod tests {
     ///
     /// The two filings of the prior-year period are listed NEWEST FIRST on purpose. Array position and
     /// filing order disagree, so a rule that kept whatever landed last would still print −5.66 here.
+    ///
+    /// The THIRD filing of that period ties the winner's date and holds a different number, which pins
+    /// the comparison to a strict `>`. XBRL republishes one period across forms, so same-day duplicates
+    /// are ordinary, and on a tie the incumbent has to hold: `>=` (or `==`, or `!=`) would take whichever
+    /// row the array happened to end on, and SEC guarantees no order. All four spellings then diverge
+    /// from the correct one right here — 2.71 for the three that overwrite, −5.65 for `<`.
     #[test]
     fn ttm_eps_uses_the_newest_filing_so_a_split_cannot_mix_share_bases() {
         use serde_json::json;
@@ -5054,12 +5085,32 @@ mod tests {
             facts("2025-01-01", "2025-12-31", 2.98, "2026-02-25"), // FY2025 base, post-split
             facts("2025-01-01", "2025-03-31", 0.62, "2026-05-06"), // prior Q1 RESTATED post-split (9.35/15)
             facts("2025-01-01", "2025-03-31", 9.35, "2025-05-07"), // same period as originally filed, PRE-split
+            facts("2025-01-01", "2025-03-31", 0.99, "2026-05-06"), // a TIE on filing date — must NOT displace
             facts("2026-01-01", "2026-03-31", 0.72, "2026-05-06"), // current Q1 YTD, post-split
         ]}});
         let today = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
         let ttm = ttm_eps_from_concept(&j, today).expect("the roll must produce a value");
         assert!((ttm - (2.98 + 0.72 - 0.62)).abs() < 1e-9, "want the post-split 3.08, got {ttm}");
         assert!(ttm > 0.0, "a positive TTM EPS is what keeps the pe cell from reading n/a");
+    }
+
+    /// (split basis) `sec_ttm_eps`' cache hit — its one branch reachable without a socket, and the branch
+    /// that decides what every later run sees. Worth pinning past coverage: the file is a BARE FLOAT with
+    /// no version field and no expiry (see the `_ttmeps3` note on the fn), so whatever lands there is
+    /// served forever, and a wrong roll is silent — the `pe` cell simply drops a negative and reads n/a.
+    ///
+    /// The seeded value is ORLY's real post-split roll. Any float would exercise the branch; this one is
+    /// also none of the constants a stubbed return can substitute, so the assertion pins the read to the
+    /// file's contents rather than to "some number came back".
+    #[tokio::test]
+    async fn sec_ttm_eps_serves_its_cache_before_the_socket() {
+        let cache = sec_cache_path("SPLITCO_ttmeps3");
+        std::fs::create_dir_all(cache.parent().expect("under .sec_cache")).expect("scratch .sec_cache");
+        std::fs::write(&cache, "3.15").expect("seed the roll");
+        let urls = stub_urls("http://127.0.0.1:1/"); // port 1 is unbound: any socket refuses instantly
+        let client = Client::builder().no_proxy().build().expect("test client");
+        assert_eq!(sec_ttm_eps(&client, &urls, "SPLITCO").await, Some(3.15), "the cached roll, unmodified");
+        let _ = std::fs::remove_file(&cache);
     }
 
     /// The two guards, each against the REAL payload that motivated it. They are independent: neither
@@ -5790,11 +5841,19 @@ mod tests {
         pin_throttle();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().expect("local addr");
+        // Serves the same body to EVERY connection, not just the first. Most callers here make one
+        // request and cannot tell the difference; `justetf_fund_facts_fill` fans out over a symbol list,
+        // and against a single-accept server the second symbol onward hit a closed port — a "justETF
+        // could not answer" that looks identical to a parse failure, and racy besides, since which
+        // symbol won depended on `buffer_unordered`. The thread parks on `accept` for the rest of the
+        // process; the test binary exits out from under it.
         std::thread::spawn(move || {
-            let (mut sock, _) = listener.accept().expect("accept");
-            let _ = std::io::Read::read(&mut sock, &mut [0u8; 2048]); // drain the request line+headers
-            let resp = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len());
-            let _ = std::io::Write::write_all(&mut sock, resp.as_bytes());
+            for sock in listener.incoming() {
+                let Ok(mut sock) = sock else { continue };
+                let _ = std::io::Read::read(&mut sock, &mut [0u8; 2048]); // drain the request line+headers
+                let resp = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+                let _ = std::io::Write::write_all(&mut sock, resp.as_bytes());
+            }
         });
         let client = Client::builder().no_proxy().build().expect("test client");
         (format!("http://{addr}/"), client)
@@ -6219,15 +6278,27 @@ mod tests {
         )
         .expect("seed fund-facts cache");
 
-        let client = Client::builder().no_proxy().build().expect("test client");
         // HALFBF.DE is in bf_ter but NOT bf_aum — the only shape that separates the two guards, see
         // the assertions below.
-        let bf_ter: HashMap<String, f64> =
-            [("BFHAS.DE".to_string(), 0.11), ("HALFBF.DE".to_string(), 0.12)].into_iter().collect();
+        // TERBF.DE has no cache row at all, so it reaches the fetch list — the only way a BF-answered
+        // TER can be observed against the residual filter, which every cached fund is excluded from.
+        let bf_ter: HashMap<String, f64> = [
+            ("BFHAS.DE".to_string(), 0.11),
+            ("HALFBF.DE".to_string(), 0.12),
+            ("TERBF.DE".to_string(), 0.13),
+        ]
+        .into_iter()
+        .collect();
         // AUMONLY.DE is HALFBF.DE's mirror — BF holds its AUM but not its TER. Both halves are needed:
         // each of the two `!`s in the short-circuit is invisible against the other fund alone.
-        let bf_aum: HashMap<String, f64> =
-            [("BFHAS.DE".to_string(), 2.0e9), ("AUMONLY.DE".to_string(), 3.0e9)].into_iter().collect();
+        // AUMBF.DE is AUMONLY.DE's uncached twin, for the same reason TERBF.DE exists.
+        let bf_aum: HashMap<String, f64> = [
+            ("BFHAS.DE".to_string(), 2.0e9),
+            ("AUMONLY.DE".to_string(), 3.0e9),
+            ("AUMBF.DE".to_string(), 4.0e9),
+        ]
+        .into_iter()
+        .collect();
         let syms: Vec<String> = [
             "HOLE.DE",
             "BFHAS.DE",
@@ -6238,16 +6309,38 @@ mod tests {
             "PASTCAP.DE",
             "CORRUPT.DE",
             "TERONLY.DE",
+            "AUMBF.DE",
+            "TERBF.DE",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect();
 
-        // Unroutable stub + an EMPTY isin map: the justETF fallback this test now falls through into
-        // must not reach a real host, and with no ISIN for any symbol it has nothing to ask for anyway.
-        // Both belts on purpose — `justetf_profile` defaults to justETF's live URL.
-        let urls = stub_urls("http://127.0.0.1:1/none");
-        let isin_of: HashMap<String, String> = HashMap::new();
+        // The justETF mop-up runs for real now. It used to get an unroutable stub and an EMPTY isin map,
+        // which made every one of its returned values unobservable — the pass ran, found nothing to ask
+        // for, and no assertion here could tell that apart from a pass that had been deleted.
+        //
+        // `stub_urls` points EVERY url field at the stub, `justetf_profile` included; it carries no
+        // `{isin}` placeholder, so all three ISINs resolve to the same canned page. That is what makes
+        // the TER/AUM below (0.20 / 1.6988e10) the justETF signature — no seeded cache row holds either.
+        //
+        // ISINs for exactly three symbols, and the omissions are load-bearing. PASTCAP.DE and CORRUPT.DE
+        // stay unresolvable so their staleness assertions keep meaning "nothing served it"; ATCAP.DE
+        // stays unresolvable so the residual filter is graded on which symbols it ADMITS rather than on
+        // what a request would have returned for a fund already filled from cache.
+        let (justetf_url, client) = stub_server(
+            "<span data-testid=\"tl_etf-basics_value_ter\">0.20% p.a.</span>\
+             <tr data-testid=\"etf-basics_row_fund-size\"><td><div>EUR 16,988 m </div></td></tr>",
+        );
+        let urls = stub_urls(&justetf_url);
+        let isin_of: HashMap<String, String> = [
+            ("STALE.DE", "IE00STALE"),
+            ("AUMBF.DE", "IE00AUMBF"),
+            ("TERBF.DE", "IE00TERBF"),
+        ]
+        .iter()
+        .map(|(s, i)| (s.to_string(), i.to_string()))
+        .collect();
         let (ter, aum) = yahoo_fund_facts_fill(&client, &urls, &syms, &bf_ter, &bf_aum, &isin_of).await;
 
         // a BF hole with a fresh entry -> filled from cache, no request
@@ -6273,10 +6366,26 @@ mod tests {
         assert_eq!(ter.get("AUMONLY.DE"), Some(&0.25), "BF has no TER for it — the hole must be filled");
         assert!(!aum.contains_key("AUMONLY.DE"), "but BF holds this AUM — Yahoo's must not override it");
 
-        // far past the cap -> NOT served; it goes to the fetch list, which fails closed here. A stale
-        // TER served as if current is a wrong number that never expires.
-        assert!(!ter.contains_key("STALE.DE"), "a cache entry past the cap must not be served");
-        assert!(!aum.contains_key("STALE.DE"));
+        // far past the cap -> NOT served; it goes to the fetch list. A stale TER served as if current is
+        // a wrong number that never expires. Yahoo fails closed here, so what fills it is justETF —
+        // whose signature values (0.20 / 1.6988e10) are precisely what proves the 0.99/9.9e9 on disk was
+        // discarded rather than served. This is also the anchor for the residual filter: every mutation
+        // of it either empties the residual or admits the wrong symbols, and both leave these two None.
+        assert_eq!(ter.get("STALE.DE"), Some(&0.20), "justETF's TER — the past-cap 0.99 must not be served");
+        assert_eq!(aum.get("STALE.DE"), Some(&1.6988e10), "and its AUM, not the cached 9.9e9");
+
+        // no cache row AT ALL and BF holds only the AUM: the TER hole is justETF's to fill, the AUM is
+        // not its to touch. The mirror of AUMONLY.DE one lane down, and the reason it exists separately
+        // is that AUMONLY.DE is fresh in cache, so it never reaches the justETF pass to grade its guard.
+        assert_eq!(ter.get("AUMBF.DE"), Some(&0.20), "uncached BF TER hole -> justETF is the only source");
+        assert!(!aum.contains_key("AUMBF.DE"), "BF holds this AUM — justETF's 1.6988e10 must not override it");
+
+        // BF already answers the TER, so this fund is filtered OUT of the residual and justETF is never
+        // asked about it — even though its AUM is a hole and it does sit on the fetch list. The residual
+        // gate is an AND: widening it to an OR would ask anyway, and the answer's AUM would land here,
+        // since the AUM guard has no reason to refuse a fund BF has no AUM for.
+        assert!(!ter.contains_key("TERBF.DE"), "BF holds this TER");
+        assert!(!aum.contains_key("TERBF.DE"), "and the residual gate is AND, not OR — it is never asked");
 
         // (fund staleness) THE BOUNDARY, pinned from both sides. Yahoo's handshake is dead upstream, so
         // this comparison is the only thing standing between "last week's TER, silently" and `n/a` —
@@ -6297,6 +6406,59 @@ mod tests {
         // stays ABSENT. A missing AUM defaulting to 0 would read as a fund below every size gate.
         assert_eq!(ter.get("TERONLY.DE"), Some(&0.15));
         assert!(!aum.contains_key("TERONLY.DE"), "a missing AUM must stay missing, never 0");
+    }
+
+    /// (TER/AUM) `justetf_fund_facts_fill` on its own, for the two things its caller structurally
+    /// cannot reach. First, what it RETURNS: the caller only ever consults the returned rows through
+    /// `or_insert`, so a wrong symbol or a wrong number there is swallowed by whatever is already in the
+    /// maps, and every possible return value looks alike from outside. Second, the cache merge — which
+    /// needs a row stamped TODAY to merge WITH, and a fund whose cache row is that fresh never reaches
+    /// this fn through `yahoo_fund_facts_fill` at all (`cache_use` sets `refetch` off below one day).
+    ///
+    /// The page here carries a TER and NO fund-size row on purpose. An AUM in the response would take
+    /// precedence over the merge in `aum.or(same_run.1)` and hide the whole question.
+    ///
+    /// Opens no socket beyond loopback: `stub_urls` points every url field, `justetf_profile` included,
+    /// at the canned server.
+    #[tokio::test]
+    async fn justetf_fund_facts_fill_returns_its_rows_and_merges_only_todays_cache() {
+        let (url, client) = stub_server("<span data-testid=\"tl_etf-basics_value_ter\">0.20% p.a.</span>");
+        let urls = stub_urls(&url);
+        let today = chrono::Utc::now().date_naive();
+        // MERGE.DE was written by THIS run's Yahoo pass (AUM found, TER not) — the shape the merge
+        // exists for. OLD.DE holds the same shape from a month ago, which must NOT be resurrected under
+        // today's stamp: a re-dated stale figure looks freshly confirmed and then never expires again.
+        let mut cache: HashMap<String, (String, Option<f64>, Option<f64>)> = [
+            ("MERGE.DE".to_string(), (today.to_string(), None, Some(9.9e8))),
+            ("OLD.DE".to_string(), ("2020-01-01".to_string(), None, Some(1.1e8))),
+        ]
+        .into_iter()
+        .collect();
+        let isin_of: HashMap<String, String> =
+            [("MERGE.DE", "IE00MERGE"), ("OLD.DE", "IE00OLD")].iter().map(|(s, i)| (s.to_string(), i.to_string())).collect();
+        // NOISIN.DE has no ISIN, and justETF is ISIN-keyed — it must be skipped silently, not guessed at.
+        let todo: Vec<String> = ["MERGE.DE", "OLD.DE", "NOISIN.DE"].iter().map(|s| s.to_string()).collect();
+
+        let mut got = justetf_fund_facts_fill(&client, &urls, &todo, &isin_of, &mut cache, today).await;
+        // sorted because the fetch is `buffer_unordered` — the CONTENT is the contract, the order is not
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            vec![("MERGE.DE".to_string(), Some(0.20), None), ("OLD.DE".to_string(), Some(0.20), None)],
+            "one row per resolvable symbol, carrying the page's TER and no AUM"
+        );
+
+        assert_eq!(
+            cache.get("MERGE.DE"),
+            Some(&(today.to_string(), Some(0.20), Some(9.9e8))),
+            "the AUM this run already found must survive a justETF page that carries only a TER"
+        );
+        assert_eq!(
+            cache.get("OLD.DE"),
+            Some(&(today.to_string(), Some(0.20), None)),
+            "but a 2020 AUM must not be restamped today — clobber anything older than this run"
+        );
+        assert!(!cache.contains_key("NOISIN.DE"), "no ISIN, no request, no cache row");
     }
 
     /// `enrich_fund_factor`'s per-quote lane, opening NO socket. `fetch_fundamentals_history` treats a
