@@ -3886,14 +3886,32 @@ universe_prefer_eur: true
 # (NA/FP/IM/SW beyond GY) that was deliberately deferred when this shipped.
 #
 # MUTATION AUDIT (round 76), CI's targets exactly (--lib --test backtest_fixture, no --test cli):
-# 83 mutants, 79 caught, 1 unviable, 3 missed. The three are one comparison — the `i > 0` request pacer
-# in `resolve_eu_listings` surviving `==`, `<` and `>=` — and they are DELIBERATELY UNPINNED: all three
-# move only WHEN the sleeps happen, never what the function returns or writes, so killing them needs a
-# wall-clock assertion. The note at the site carries the full reasoning. Two earlier survivors were real
-# and are fixed: the stderr swap tally computed inside its own `eprintln!` (extracted to `eu_swap_tally`
-# — an inverted count would have misreported the very Xetra hit rate this rollout is meant to be decided
-# on), and the whole-function stub on `fetch_universe`, whose only test asserted the TOTAL-OUTAGE case
-# and so was satisfied perfectly by a universe builder that had stopped building.
+# 83 mutants, 79 caught, 1 unviable, 3 missed. Two of the survivors were real and are fixed: the stderr
+# swap tally computed inside its own `eprintln!` (extracted to `eu_swap_tally` — an inverted count would
+# have misreported the very Xetra hit rate this rollout is meant to be decided on), and the whole-
+# function stub on `fetch_universe`, whose only test asserted the TOTAL-OUTAGE case and so was satisfied
+# perfectly by a universe builder that had stopped building.
+#
+# THE OTHER THREE WERE SHIPPED AS "DELIBERATELY UNPINNED" AND THAT WAS A MISTAKE (round 77). They were
+# one comparison — the `i > 0` request pacer in `resolve_eu_listings` surviving `==`, `<` and `>=` —
+# left alive on the reasoning that all three move only WHEN the sleeps happen, never what the function
+# returns or writes, so killing them needs a flaky wall-clock assertion costing real suite time. That
+# reasoning priced the LOCAL cost correctly and ignored the gate's shape: `.github/workflows/ci.yml`
+# ends with `if [ "${missed}" -gt 0 ]; then ... exit 1`, and there is no allowlist anywhere in it.
+# "Accepted survivor" is not a concept the CI gate has, so shipping three was shipping a permanently red
+# main — which is exactly what run 31934809294 reported (`MISSED src/fetch.rs:3803:14: replace > with
+# >= in resolve_eu_listings`).
+#
+# THE LESSON, and it generalises past this knob: a local audit may not accept a survivor, because the
+# thing that decides is a gate with no allowlist. Either kill it or `#[mutants::skip]` the function.
+#
+# The fix was to DELETE the comparison, not to test it. Hoisting it into a testable helper would not
+# have worked: every usize comparison against zero has a semantically equivalent partner (`i > 0` is
+# `i != 0`, `i == 0` is `i <= 0`), so an unkillable mutant follows the comparison wherever it is moved.
+# The pacing delay is now carried in a `pace` variable that starts at zero — same behaviour, one line
+# shorter, no operator left to mutate, no test and no suite time bought. Round 77 also removed a second
+# sleep at the END of each hop-2 chunk, which had been spacing that hop's requests 5s apart against a
+# 2.4s rate limit: ~2 minutes of pure waiting on a cold ~52-chunk resolve.
 #
 # UNGRADEABLE, therefore OFF until one real screen makes the pond-size and rank effects measurements
 # rather than predictions. The resolver prints its hit/miss tally to stderr for exactly that run. A name

@@ -3791,18 +3791,21 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
     }
     eprintln!("fetch: resolving EU listings for {} new symbols (~{}s, cached forever after)", todo.len(), todo.len().div_ceil(FIGI_BATCH) * 2 * FIGI_PACE_MS as usize / 1000);
     let mut share_figis: Vec<(String, String)> = Vec::new();
-    // Pace BETWEEN requests, never after the last one of a hop: the trailing sleep bought nothing and
+    // Pace BETWEEN requests, never before the first one of a hop: the leading sleep bought nothing and
     // cost 2.5s on every run, including the single-batch case where no pacing is needed at all.
     //
-    // DELIBERATELY UNPINNED (mutation audit, round 76): this comparison survives `==`, `<` and `>=`.
-    // All three change only WHEN the sleeps happen, never what the function returns or writes, so the
-    // only test that could kill them asserts on elapsed wall-clock — a flaky test bought with a real
-    // 2.5s of suite time. Deleting the guard instead would kill all three and cost that same 2.5s on
-    // every `cargo t` forever, to save 1% of a 4-minute operation that runs once per cache lifetime.
-    for (i, chunk) in todo.chunks(FIGI_BATCH).enumerate() {
-        if i > 0 {
-            tokio::time::sleep(StdDuration::from_millis(FIGI_PACE_MS)).await;
-        }
+    // The delay is CARRIED IN A VARIABLE rather than branched on the index, and that is a mutation
+    // gate decision, not a style one (round 77). `if i > 0` survives `==`, `<` and `>=` because all
+    // three change only WHEN the sleeps happen, never what this function returns or writes — nothing
+    // short of a wall-clock assertion kills them, and `ci.yml` has no allowlist for a survivor, so one
+    // unkillable mutant is a permanently red gate. Hoisting the comparison into a testable helper does
+    // NOT fix it either: every usize comparison against zero has an equivalent partner (`i > 0` is
+    // `i != 0`, `i == 0` is `i <= 0`), so a survivor follows the comparison wherever it is moved.
+    // Deleting it is the only fix. `pace` starts at zero and is FIGI_PACE_MS from the second chunk on.
+    let mut pace = 0;
+    for chunk in todo.chunks(FIGI_BATCH) {
+        tokio::time::sleep(StdDuration::from_millis(pace)).await;
+        pace = FIGI_PACE_MS;
         let jobs = chunk
             .iter()
             .map(|t| serde_json::json!({"idType": "TICKER", "idValue": t, "exchCode": "US"}))
@@ -3818,7 +3821,10 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
     }
     let mut candidates: Vec<(String, String)> = Vec::new();
     for chunk in share_figis.chunks(FIGI_BATCH) {
-        // hop 2 always follows hop 1's last request, so this one paces from its very first batch
+        // hop 2 always follows hop 1's last request, so this one paces from its very first batch —
+        // hence a leading sleep here where hop 1 skips its first. ONE sleep per chunk, not two: a
+        // second at the end of the body spaced hop-2's requests 5s apart against a 2.4s rate limit,
+        // which is ~2 minutes of pure waiting on a cold ~52-chunk resolve.
         tokio::time::sleep(StdDuration::from_millis(FIGI_PACE_MS)).await;
         let jobs = chunk
             .iter()
@@ -3832,7 +3838,6 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
                 }
             }
         }
-        tokio::time::sleep(StdDuration::from_millis(FIGI_PACE_MS)).await;
     }
     // Chart check LAST, and through the same disk-cached call the quote path uses — an accepted twin
     // costs nothing extra because this warms the very entry that fetch is about to want.
