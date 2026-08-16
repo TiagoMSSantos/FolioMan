@@ -3870,6 +3870,25 @@ fn eu_swap_tally(syms: &[String], eu: &HashMap<String, String>) -> usize {
     syms.iter().filter(|s| eu.get(*s).is_some_and(|t| !t.is_empty())).count()
 }
 
+/// (EU listing) The pinned tickers that ALSO resolved to a Xetra twin, as `US -> EU` strings ready to
+/// print. These are exactly the names where the knob looks broken but is not.
+///
+/// `screen` re-appends the watchlist VERBATIM after `fetch_universe` has already swapped the pond, so
+/// both legs of such a name reach `ranked`. They share one Yahoo name (`NVDA` and `NVD.DE` are both
+/// "NVIDIA Corporation"), which is the key the dual-class collapse dedups on — and that collapse
+/// exempts pinned tickers, so the US leg survives and the EU one is deleted with no output anywhere.
+/// Each rule is deliberate and documented at its own site; the interaction between them was not, and
+/// it was invisible until this line.
+///
+/// Empty EU value = "resolved, no usable twin" — the same convention `eu_swap_tally` reads, and never
+/// a shadow. Absent key = never asked (a pinned ETF or crypto), also never a shadow.
+pub(crate) fn eu_shadowed_pins(pinned: &[String], eu: &HashMap<String, String>) -> Vec<String> {
+    pinned
+        .iter()
+        .filter_map(|t| eu.get(t).filter(|e| !e.is_empty()).map(|e| format!("{t} -> {e}")))
+        .collect()
+}
+
 pub async fn fetch_universe(
     client: &Client,
     urls: &Urls,
@@ -4082,6 +4101,31 @@ mod tests {
         assert_eq!(eu_swap_tally(&syms, &eu), 2, "GOOGL and AAPL swapped; BRK-B and TSLA did not");
         assert_eq!(eu_swap_tally(&syms, &HashMap::new()), 0);
         assert_eq!(eu_swap_tally(&[], &eu), 0);
+    }
+
+    /// A pinned US ticker cancels the swap for its own name, silently: `screen` re-appends the
+    /// watchlist after the pond was already swapped, both legs then carry the same Yahoo name, and the
+    /// dual-class collapse keeps the pinned one. This is the only warning a user gets that the knob is
+    /// on and doing nothing for the names they care most about, so it must name the pair to act on —
+    /// reporting a bare count would leave them re-deriving which pin did it.
+    #[test]
+    fn eu_shadowed_pins_names_only_the_pins_that_cancel_their_own_swap() {
+        let eu: HashMap<String, String> = [
+            ("NVDA", "NVD.DE"),
+            ("AMZN", "AMZ.DE"),
+            ("BRK-B", ""), // resolved, no usable Xetra twin -> the pin shadows nothing
+        ]
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+        let pinned: Vec<String> =
+            ["NVDA", "BRK-B", "VUAA.DE", "BTC-EUR"].iter().map(|s| (*s).to_string()).collect();
+
+        // AMZN resolved but is NOT pinned, so it swapped cleanly and must not be reported; VUAA.DE and
+        // BTC-EUR were never asked (absent key), which is also not a shadow.
+        assert_eq!(eu_shadowed_pins(&pinned, &eu), ["NVDA -> NVD.DE"]);
+        assert!(eu_shadowed_pins(&pinned, &HashMap::new()).is_empty(), "no resolutions, no shadows");
+        assert!(eu_shadowed_pins(&[], &eu).is_empty(), "no pins, no shadows");
     }
 
     /// (#45) The MVRV staleness guard, on the exact shapes the live endpoint returns. `btc` is a

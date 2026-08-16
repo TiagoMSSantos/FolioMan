@@ -3851,7 +3851,7 @@ universe_prefer_eur: true
 # per request unkeyed (20 returns HTTP 413), 25 requests/min, two hops over ~500 names = ~102 requests
 # paid once and cached forever in .eu_listing_cache.json.
 #
-# WHAT TURNING IT ON COSTS, ALL FIVE STATED PLAINLY:
+# WHAT TURNING IT ON COSTS, ALL SIX STATED PLAINLY:
 #   1. It re-prices the entire equity lane. A Xetra line's avg_turnover_eur is a fraction of NASDAQ's,
 #      and turnover feeds liq_bonus and the rank tie-break, so every US name's score moves.
 #   2. The CAGR becomes EUR-denominated and carries EUR/USD drift. growth_min_cagr and every threshold in
@@ -3865,6 +3865,25 @@ universe_prefer_eur: true
 #   5. Owned matching breaks. Owned.stocks matches by yahoo_base, and yahoo_base("ABEA.DE") == "abea"
 #      will not match a held GOOGL_US_EQ, so owned names stop being flagged until that match goes
 #      through ISIN.
+#   6. A PINNED US TICKER CANCELS THE SWAP FOR ITS OWN NAME. Found on the first real run (2026-08-16), by
+#      a NVIDIA row that printed NVDA/USA with the knob on. Nothing failed: NVDA resolved to NVD.DE, the
+#      EUR/XETRA chart was fetched (225 bars), and then `screen` re-appended the watchlist VERBATIM after
+#      the pond was already swapped, putting the US leg back beside the twin that had replaced it. Both
+#      carry the byte-identical Yahoo name "NVIDIA Corporation", so the dual-class collapse in `ranked`
+#      fires — and it exempts pinned tickers, so the US leg survives and the EU one is deleted. Which leg
+#      sorts first is decided by trust_factor: at fixed_cagr_years 20 NVDA's 332 bars clear the 20Y rung
+#      at 1.0 while NVD.DE's 225 do not and take the flat 0.5, i.e. cost 3 above is what settles it. Both
+#      rules are deliberate and neither was changed; the interaction is now REPORTED on stderr
+#      (`eu_shadowed_pins`) instead of being silent, since rewriting a ticker the user typed on purpose is
+#      worse than naming the shadow. The fix is the user's: drop the US pin, or pin the EU symbol too.
+#
+# FIRST REAL RESOLVER RUN (2026-08-16, the run this knob's rollout was waiting on): the stderr tally
+# reads `338 of 604 constituents on Xetra, 266 kept on their US line` (56.0%). Read the denominators
+# before comparing: 604 is the pond list WITH cross-pond duplicates, while the cache behind it holds 517
+# UNIQUE symbols, of which 266 resolved and 251 are remembered misses. The 10-of-10 probe above was not
+# representative — it sampled mega-caps, and roughly half the pond has no Xetra common line at all. That
+# miss rate is now a number rather than a guess, which was the precondition for the venue-ladder question
+# (NA/FP/IM/SW beyond GY) that was deliberately deferred when this shipped.
 #
 # MUTATION AUDIT (round 76), CI's targets exactly (--lib --test backtest_fixture, no --test cli):
 # 83 mutants, 79 caught, 1 unviable, 3 missed. The three are one comparison — the `i > 0` request pacer

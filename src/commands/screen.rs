@@ -1127,6 +1127,30 @@ pub async fn run(args: Vec<String>) {
     universe.extend(settings.tickers.iter().cloned());
     universe.sort();
     universe.dedup();
+    // (EU listing) That extend is VERBATIM and runs AFTER `fetch_universe` swapped the pond, so a
+    // pinned US ticker puts its own US leg back next to the EU twin that replaced it. Both then carry
+    // the same Yahoo name, and the dual-class collapse in `ranked` keeps the pinned leg — the knob is
+    // on, the twin was resolved and priced, and it is deleted with nothing said. Warn instead of
+    // changing either rule: the literal watchlist and the pinned-never-deduped exemption are both
+    // deliberate (see the comment above and `picks.rs`), and rewriting a ticker the user typed on
+    // purpose is worse than telling them it is being shadowed.
+    if settings.prefer_eu_listing {
+        // ponytail: the cache read is duplicated from `resolve_eu_listings` rather than shared. Four
+        // lines of "read a JSON file or default" do not earn a graded function plus the test to kill
+        // its mutant — and this call site must NOT resolve anything, only read what is already known.
+        let eu: std::collections::HashMap<String, String> =
+            std::fs::read_to_string(config::data_path(fetch::EU_LISTING_CACHE_PATH))
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+        let shadowed = fetch::eu_shadowed_pins(&settings.tickers, &eu);
+        if !shadowed.is_empty() {
+            eprintln!(
+                "screen: pinned US tickers shadow their resolved EU listing (the pin wins the dual-class collapse — drop it, or pin the EU symbol): {}",
+                shadowed.join(", ")
+            );
+        }
+    }
 
     // per-class counts so an EMPTY class is visible here (a leg that "succeeded" with 0 rows
     // never trips the fetch-failure warnings). Explicit-args runs skip the split — etf_tickers
