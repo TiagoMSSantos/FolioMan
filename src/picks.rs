@@ -2516,8 +2516,31 @@ impl Owned {
     }
 }
 
+/// (fund staleness) Does this row EARN the `°` legend entry?
+///
+/// Lifted out of [`print_picks`] because it is the one piece of judgement in a function that is
+/// otherwise `println!` end to end — and `print_picks` is `#[mutants::skip]`ped for exactly that
+/// reason, which would have taken this gate down with it.
+///
+/// An AND of three independent facts, each of which fails differently and none of which implies
+/// another: the `peg` column has to be on THIS table (a layout without it must not explain a mark it
+/// never showed), the fund's P/E has to be cache-served rather than fetched (`as_of` set), and the row
+/// has to actually print a PEG — a fund whose cached P/E yields none prints `n/a`, which carries no
+/// mark, so a legend entry behind it would explain something the reader cannot see.
+fn earns_cache_mark(quote: &Quote, cols: &[&ColSpec], tuning: &BuyHeuristic, fund_pe: &FundPeMap) -> bool {
+    cols.iter().any(|c| c.key == "peg")
+        && fund_pe.get(&quote.ticker).is_some_and(|f| f.as_of.is_some())
+        && fund_peg_yield(quote, tuning, fund_pe).is_some()
+}
+
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks). Columns +
 /// order come from `widths.columns` via [`active_columns`] (default = [`DEFAULT_COLUMNS`]).
+///
+/// UNGRADEABLE, hence the skip: every effect this has is a `println!`, and the mutation gate runs
+/// `--lib --test backtest_fixture` — no `--test cli`, so nothing in the killing suite can read this
+/// binary's stdout. Its only real decision, the `°` gate, lives in [`earns_cache_mark`] above, which
+/// is a pure predicate and is graded there. Same rationale as `commands::screen::run`.
+#[mutants::skip]
 #[allow(clippy::too_many_arguments)]
 fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, owned: &Owned, hide: &[&str], tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
     println!("\n{title}");
@@ -2617,14 +2640,8 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         if !seen.contains('≈') && cols.iter().any(|c| perf_fill(quote, &c.key.to_uppercase(), tuning).is_some()) {
             seen.push('≈');
         }
-        // `°` rides the ETF `peg` cell, same collection story as the two above. Gated on the column
-        // actually printing AND on the row having a PEG to show: a fund whose cached P/E yields no PEG
-        // prints `n/a`, which carries no mark and must not pull a legend entry in behind it.
-        if !seen.contains('°')
-            && cols.iter().any(|c| c.key == "peg")
-            && fund_pe.get(&quote.ticker).is_some_and(|f| f.as_of.is_some())
-            && fund_peg_yield(quote, tuning, fund_pe).is_some()
-        {
+        // `°` rides the ETF `peg` cell, same collection story as the two above — see `earns_cache_mark`.
+        if !seen.contains('°') && earns_cache_mark(quote, &cols, tuning, fund_pe) {
             seen.push('°');
         }
         row(&m, quote, *score);
@@ -6389,6 +6406,48 @@ mod tests {
             "no P/E fetched -> n/a, never a number and never the class-N/A dash");
         // and the ceiling's own arithmetic agrees with the cell it prints: 2.50 > 2.0 is why DEAR.L went.
         assert!(100.0 / fund_peg_yield(&dear, &on, &pe).unwrap() > on.growth_max_peg_etf);
+    }
+
+    /// (fund staleness) The `°` legend gate — three independent facts ANDed, and each row below is
+    /// there because it fails exactly one of them.
+    ///
+    /// It lives outside `print_picks` (`#[mutants::skip]`ped: pure `println!`) precisely so it can be
+    /// checked here. What it prevents is a legend line explaining a mark the table never printed. `°`
+    /// says "this look-through P/E came off disk, not the wire", and it rides the ETF `peg` cell — so a
+    /// layout without that column has nowhere to put it, and a fund whose cached P/E yields no PEG
+    /// prints `n/a`, which carries no mark either. Both of those would leave the reader hunting a
+    /// symbol that is not on the page.
+    #[test]
+    fn cache_mark_needs_the_column_the_staleness_and_a_peg_to_hang_it_on() {
+        let fund = |t: &str, cagr: bool| {
+            let mut q = Quote::stub(t, "€100.00", "", &format!("{t} UCITS ETF"));
+            q.instrument_type = "ETF".into();
+            q.perf = vec![None; core::HORIZONS.len()];
+            if cagr {
+                q.perf[core::HORIZONS.iter().position(|(l, _)| *l == "5Y").unwrap()] = Some((String::new(), 61.051));
+            }
+            q
+        };
+        // CACHED.L is the one that earns the mark. FRESH.L differs only in provenance, FLAT.L only in
+        // having no long leg — so no CAGR to divide by, hence no PEG, hence an `n/a` cell.
+        let (cached, fresh, flat) = (fund("CACHED.L", true), fund("FRESH.L", true), fund("FLAT.L", false));
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 8, 13).expect("a real date");
+        let stale = |pe: f64| FundPe { pe, from: None, as_of: Some(day) };
+        let pe: FundPeMap = [
+            ("CACHED.L".to_string(), stale(25.0)),
+            ("FRESH.L".to_string(), 25.0.into()), // `as_of: None` = fetched this run
+            ("FLAT.L".to_string(), stale(25.0)),
+        ]
+        .into_iter()
+        .collect();
+        let t = BuyHeuristic::default();
+        let cols = |keys: &[&str]| active_columns(&keys.iter().map(|k| (*k).to_string()).collect::<Vec<_>>());
+        let (with_peg, without_peg) = (cols(&["rank", "peg"]), cols(&["rank", "name"]));
+
+        assert!(earns_cache_mark(&cached, &with_peg, &t, &pe), "column on, P/E off disk, PEG printable");
+        assert!(!earns_cache_mark(&cached, &without_peg, &t, &pe), "no `peg` column: no cell to carry it");
+        assert!(!earns_cache_mark(&fresh, &with_peg, &t, &pe), "fetched this run: no staleness to flag");
+        assert!(!earns_cache_mark(&flat, &with_peg, &t, &pe), "cached, but the cell it rides prints `n/a`");
     }
 
     /// (#45) The CRYPTO valuation ceiling, and the three things about it that are easy to get backwards.

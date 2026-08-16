@@ -6461,6 +6461,75 @@ mod tests {
         assert!(!cache.contains_key("NOISIN.DE"), "no ISIN, no request, no cache row");
     }
 
+    /// (fund staleness) `yahoo_top_holdings`' CACHE HALF — the only half reachable without a socket, and
+    /// the half that decides what the fund table prints on a day Yahoo will not shake hands.
+    ///
+    /// Three ages, one per outcome of `cache_use`, because the two flags it returns are INDEPENDENT and
+    /// the `°` date hangs off exactly the window where they disagree:
+    ///
+    /// | stamp   | serve | refetch | row |
+    /// |---------|-------|---------|-----|
+    /// | today   | yes   | no      | served UNDATED — fetched this run, there is nothing to mark |
+    /// | today-2 | yes   | yes     | served and DATED `today - 2` — the stale-but-usable window |
+    /// | today-9 | no    | yes     | withheld — past the cap, the column goes `n/a` rather than lying |
+    ///
+    /// A seeded `YQ_AUTH` of `None` fails the crumb handshake without a request, so the refetch leg
+    /// returns early — ahead of the cache write — and the seeded rows are what comes back verbatim.
+    /// `MISSING.DE` has no row at all: absent must read the same as far-too-old, never as fresh.
+    ///
+    /// Owns `.holdings_cache.json` in the shared scratch root; nothing else in this binary touches it.
+    #[tokio::test]
+    async fn yahoo_top_holdings_serves_its_cache_and_dates_only_the_stale_rows() {
+        let _ = YQ_AUTH.set(None); // every test here seeds None, so the racing `set` is benign
+        let today = chrono::Utc::now().date_naive();
+        type Row = (String, Vec<(String, f64)>, Vec<(String, f64)>, Option<(f64, f64)>, Option<f64>);
+        let row = |age: i64, holder: &str, weight: f64, pe: f64| -> Row {
+            (
+                (today - chrono::Duration::days(age)).to_string(),
+                vec![(holder.to_string(), weight)],
+                vec![("Technology".to_string(), 0.42)],
+                Some((0.97, 0.01)),
+                Some(pe),
+            )
+        };
+        let cache: HashMap<String, Row> = [
+            ("FRESH.DE".to_string(), row(0, "Apple Inc", 7.5, 26.87)),
+            ("STALE2.DE".to_string(), row(2, "Nvidia Corp", 6.25, 31.5)),
+            ("ANCIENT.DE".to_string(), row(9, "Tesla Inc", 3.75, 48.0)),
+        ]
+        .into_iter()
+        .collect();
+        let path = crate::config::data_path(HOLDINGS_CACHE_PATH);
+        std::fs::write(&path, serde_json::to_string(&cache).expect("the row schema round-trips"))
+            .expect("seed the holdings cache");
+
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let syms: Vec<String> =
+            ["FRESH.DE", "STALE2.DE", "ANCIENT.DE", "MISSING.DE"].iter().map(|s| s.to_string()).collect();
+        let (out, mix) = yahoo_top_holdings(&client, &syms).await;
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(out.get("FRESH.DE"), Some(&vec![("Apple Inc".to_string(), 7.5)]), "today's row, weights intact");
+        assert_eq!(out.get("STALE2.DE"), Some(&vec![("Nvidia Corp".to_string(), 6.25)]), "and the 2-day-old one");
+        assert_eq!(out.len(), 2, "the 9-day-old row and the absent symbol are both withheld");
+        assert_eq!(
+            mix.get("FRESH.DE"),
+            Some(&(vec![("Technology".to_string(), 0.42)], Some((0.97, 0.01)), Some(26.87), None)),
+            "sectors, equity/bond split and look-through P/E ride along — and NO date: nothing to mark"
+        );
+        assert_eq!(
+            mix.get("STALE2.DE"),
+            Some(&(
+                vec![("Technology".to_string(), 0.42)],
+                Some((0.97, 0.01)),
+                Some(31.5),
+                Some(today - chrono::Duration::days(2))
+            )),
+            "served AND due a refetch — dated backwards to when it was actually fetched"
+        );
+        assert_eq!(mix.len(), 2, "same two rows, same reason");
+    }
+
     /// `enrich_fund_factor`'s per-quote lane, opening NO socket. `fetch_fundamentals_history` treats a
     /// seeded `.fmp_cache/{ticker}.json` as a hit — no key, no budget, no request — and FMP rows carry
     /// no reporting currency, so `fund_ccy` is None, the price join takes `close_native` untouched and

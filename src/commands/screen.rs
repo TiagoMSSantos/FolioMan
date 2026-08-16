@@ -3659,6 +3659,60 @@ mod tests {
         }
     }
 
+    /// (#37 funds) `borrow_index_twins` end to end, and specifically its UNANIMITY RULE: a borrowed P/E
+    /// is only handed over when every fund sharing the orphan's `index_key` reports the same ratio to
+    /// within 1%. The test above proves the KEY does not fuse two books; this one proves that when it
+    /// does anyway, the disagreement is caught and the orphan is left with no number rather than an
+    /// invented one — the number can cut a fund off the table, so silence has to be the failure mode.
+    ///
+    /// Two groups, one per verdict. S&P 500: `SPY5.MI` orphaned, two sources 0.04% apart, so it borrows
+    /// — from `CSSPX.MI`, the alphabetically first, whose cache date rides along so the `°` mark still
+    /// says how old the borrowed value is. Nasdaq-100: `XNAS.DE` orphaned, sources at 20 and 30, which
+    /// is exactly the fused-book signature, so it borrows nothing.
+    ///
+    /// Runs OFFLINE by construction and not by stubbing: every candidate is already in `fund_pe` and
+    /// every orphan is in `bench`, which empties `todo` and skips the `yahoo_top_holdings` call
+    /// outright. The names are real Yahoo `longName` strings so the keys are the ones the live matcher
+    /// derives, not ones invented to make the test pass.
+    #[tokio::test]
+    async fn borrow_index_twins_demands_unanimity_before_lending_a_ratio() {
+        let etf = |t: &str, name: &str| {
+            let mut q = core::Quote::stub(t, "€100.00", "", name);
+            q.instrument_type = "ETF".into();
+            q
+        };
+        let quotes = vec![
+            etf("SPY5.MI", "SPDR S&P 500 UCITS ETF"), // orphan: no P/E of its own
+            etf("CSSPX.MI", "iShares Core S&P 500 UCITS ETF USD (Acc)"),
+            etf("SPXS.L", "Invesco S&P 500 UCITS ETF Acc"),
+            etf("XNAS.DE", "Xtrackers Nasdaq 100 UCITS ETF 1C"), // the other orphan
+            etf("ANX.PA", "Amundi Nasdaq-100 UCITS ETF Acc"),
+            etf("EQQQ.MI", "Invesco EQQQ NASDAQ-100 UCITS ETF"),
+        ];
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 8, 13).expect("a real date");
+        let measured = |pe: f64, as_of: Option<chrono::NaiveDate>| picks::FundPe { pe, from: None, as_of };
+        let fund_pe: picks::FundPeMap = [
+            ("CSSPX.MI".to_string(), measured(26.87, Some(day))), // agree to 0.04% — well inside the 1% bar
+            ("SPXS.L".to_string(), measured(26.88, None)),
+            ("ANX.PA".to_string(), measured(30.0, None)), // 50% apart: two different books under one key
+            ("EQQQ.MI".to_string(), measured(20.0, None)),
+        ]
+        .into_iter()
+        .collect();
+        let bench: Vec<String> = ["SPY5.MI", "XNAS.DE"].iter().map(|s| (*s).to_string()).collect();
+        let client = reqwest::Client::builder().no_proxy().build().expect("test client");
+
+        let got = borrow_index_twins(&client, &bench, &fund_pe, &quotes).await;
+        assert_eq!(
+            got,
+            vec![(
+                "SPY5.MI".to_string(),
+                picks::FundPe { pe: 26.87, from: Some("CSSPX.MI".to_string()), as_of: Some(day) }
+            )],
+            "the agreeing group lends, named and dated; the disagreeing one lends nothing at all"
+        );
+    }
+
     /// (round 62) state-file parse fork: absent = normal first run (silent), present-but-garbage =
     /// corrupt (the case that used to silently wipe every alert baseline), valid JSON loads, and a
     /// round-50-era file missing the newer fields still deserializes (the serde(default) guard).
