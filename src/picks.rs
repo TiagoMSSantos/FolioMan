@@ -158,19 +158,25 @@ pub fn long_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
 /// exactly like a fetched one, so it can remove a fund from the printed table. Anything that can cost
 /// you a candidate has to say out loud that it was inferred, hence the `~` the `peg` cell appends and
 /// the source `fund_pe_line` names.
+/// (fund staleness) `as_of: Some(date)` = this ratio came off disk rather than the wire, and is that
+/// old. Same argument as `from` one paragraph up, applied to TIME instead of provenance: a cached P/E
+/// acts exactly like a fetched one, so a value that can cut a fund from the table has to say how old it
+/// is. `None` = fetched this run. The fetch side refuses to serve anything past
+/// `FUND_CACHE_MAX_AGE_DAYS`, so a marked cell is stale but never unboundedly so.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FundPe {
     pub pe: f64,
     pub from: Option<String>,
+    pub as_of: Option<chrono::NaiveDate>,
 }
 
 /// Look-through P/E per fund ticker. Aliased because it rides through six signatures.
 pub type FundPeMap = HashMap<String, FundPe>;
 
 impl From<f64> for FundPe {
-    /// A measured ratio — the common case, and what every fetch produces.
+    /// A measured ratio fetched THIS RUN — the common case, and what every live fetch produces.
     fn from(pe: f64) -> Self {
-        Self { pe, from: None }
+        Self { pe, from: None, as_of: None }
     }
 }
 
@@ -2389,9 +2395,16 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // because this one is swap-based and has no equity book of its own (see `FundPe`). It is an
         // inference, and it can cut this fund from the table, so it must never read like a measurement.
         // `fund_pe_line` names the source ticker.
+        //
+        // (fund staleness) A trailing `°` means the P/E was SERVED FROM CACHE rather than fetched this
+        // run. Same rule as `~` one paragraph up, for age instead of provenance: the value still feeds
+        // the trim, so it must not read like something measured today. Both marks can appear together —
+        // a borrowed value inherits its source's age.
         "peg" if is_etf => fund_peg_yield(quote, tuning, fund_pe).map_or("n/a".to_string(), |p| {
-            let borrowed = fund_pe.get(&quote.ticker).is_some_and(|f| f.from.is_some());
-            format!("{:.2}{}", 100.0 / p, if borrowed { "~" } else { "" })
+            let fp = fund_pe.get(&quote.ticker);
+            let borrowed = fp.is_some_and(|f| f.from.is_some());
+            let cached = fp.is_some_and(|f| f.as_of.is_some());
+            format!("{:.2}{}{}", 100.0 / p, if borrowed { "~" } else { "" }, if cached { "°" } else { "" })
         }),
         "peg" => quote
             .fund
@@ -2599,6 +2612,16 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
         if !seen.contains('≈') && cols.iter().any(|c| perf_fill(quote, &c.key.to_uppercase(), tuning).is_some()) {
             seen.push('≈');
         }
+        // `°` rides the ETF `peg` cell, same collection story as the two above. Gated on the column
+        // actually printing AND on the row having a PEG to show: a fund whose cached P/E yields no PEG
+        // prints `n/a`, which carries no mark and must not pull a legend entry in behind it.
+        if !seen.contains('°')
+            && cols.iter().any(|c| c.key == "peg")
+            && fund_pe.get(&quote.ticker).is_some_and(|f| f.as_of.is_some())
+            && fund_peg_yield(quote, tuning, fund_pe).is_some()
+        {
+            seen.push('°');
+        }
         row(&m, quote, *score);
     }
     // Legend: explain only the flags THIS table used, so clean tables stay clean.
@@ -2618,6 +2641,12 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     .map(|(flag, what)| format!("{flag} = {what}"))
     .collect();
     // Carries the configured coverage, so it can't be a static entry in the table above.
+    if seen.contains('°') {
+        legend.push(
+            "° = look-through P/E served from cache, not fetched this run (Yahoo unreachable) — the fund P/E line dates each one; anything older than 3 days is dropped rather than shown"
+                .into(),
+        );
+    }
     if seen.contains('≈') {
         legend.push(format!(
             "≈ = record covers ≥{:.0}% of that horizon but not all of it — the cell is the whole-life MEASURED return under a longer label (not a projection), and is never scored",

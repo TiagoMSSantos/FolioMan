@@ -500,6 +500,15 @@ pub struct Urls {
     pub bf_etf_search: String,
     #[serde(default = "default_bf_salt")]
     pub bf_salt: String,
+    // justETF ETF profile page (GET, keyless HTML, `{isin}` substituted) -> TER + fund size for the
+    // funds Börse Frankfurt does not list. The THIRD source for these two facts, and now the only
+    // working one: BF answers most, Yahoo used to fill the holes, and Yahoo's crumb handshake is dead
+    // (`fc.yahoo.com` stopped setting the session cookie). HTML, so it is scraped off two stable
+    // `data-testid` anchors — see `parse_justetf_facts`, which returns None on any shape change rather
+    // than guessing. Display + H/CORE only, exactly like the Yahoo fallback it stands in for: these
+    // never reach the score. Defaulted so an older settings.yaml loads.
+    #[serde(default = "default_justetf_profile_url")]
+    pub justetf_profile: String,
     // Euronext Lisbon equities list (POST, DataTables JSON, `mics=XLIS` scopes it to Lisbon) -> the
     // Portugal `.LS` stock leg of the screen universe. The column datapoints the renderer needs are
     // sent in the request body by `fetch_euronext_lisbon`. Defaulted so an older settings.yaml loads.
@@ -659,6 +668,13 @@ fn default_fund_expense_url() -> String {
 /// Default Börse Frankfurt ETF search (POST, turnover-sorted UCITS list).
 fn default_bf_etf_search_url() -> String {
     "https://api.boerse-frankfurt.de/v1/search/etp_search".to_string()
+}
+
+/// Default justETF profile page, `{isin}` substituted. The English locale on purpose: the anchors
+/// `parse_justetf_facts` reads are locale-independent `data-testid`s, but the AUM magnitude suffix
+/// ("m"/"bn") is not.
+fn default_justetf_profile_url() -> String {
+    "https://www.justetf.com/en/etf-profile.html?isin={isin}".to_string()
 }
 
 /// Default OpenFIGI mapping endpoint — Bloomberg's keyless open identifier service, the only source
@@ -1302,6 +1318,20 @@ mod tests {
         assert!(!text.contains("openfigi_mapping"), "fixture must exercise the DEFAULT, not pin the key");
         let settings: Settings = serde_yaml::from_str(&text).expect("parse ci-settings.yaml");
         assert_eq!(settings.urls.openfigi_mapping, "https://api.openfigi.com/v3/mapping");
+    }
+
+    /// (TER/AUM) Same story as the OpenFIGI pin above, and the same reason it needs one: `serde(default)`
+    /// means no committed YAML supplies this, so the constant IS the shipped value. It also carries the
+    /// `{isin}` placeholder `justetf_fund_facts` substitutes — a URL that lost it would fetch the same
+    /// literal page for every fund and quietly report one ETF's TER for all of them.
+    #[test]
+    fn justetf_endpoint_defaults_to_the_live_profile_page() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml");
+        let text = std::fs::read_to_string(path).expect("read tests/ci-settings.yaml");
+        assert!(!text.contains("justetf_profile"), "fixture must exercise the DEFAULT, not pin the key");
+        let settings: Settings = serde_yaml::from_str(&text).expect("parse ci-settings.yaml");
+        assert_eq!(settings.urls.justetf_profile, "https://www.justetf.com/en/etf-profile.html?isin={isin}");
+        assert!(settings.urls.justetf_profile.contains("{isin}"), "the placeholder is load-bearing");
     }
 
     /// Same pin for the hand-tuned knob surface: a buy_heuristic typo must error, not become a no-op.

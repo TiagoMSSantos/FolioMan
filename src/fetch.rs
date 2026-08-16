@@ -1361,6 +1361,16 @@ fn parse_form4_txns(xml: &str) -> Vec<core::InsiderTx> {
 /// cached, then parsed into a process-wide map). A non-US ticker (".DE", "-USD") never appears -> None ->
 /// the insider factor simply skips it. An unreachable map caches empty for the run (degrades to no
 /// coverage, never panics).
+///
+/// (EU listing) The lookup goes through the EU->US alias first, and that is the ONE seam that decides
+/// whether a swapped name has any fundamentals at all. `prefer_eu_listing` renames S&P constituents onto
+/// their Xetra twins BEFORE any fundamentals fetch, and every SEC read in this file funnels through here
+/// — P/E, ROE/A, the TTM EPS roll, the income statement, the insider factor. Keyed by US ticker, a Xetra
+/// symbol misses and the whole block goes dark at once: a live run reported `222 of 549 stocks carry the
+/// factor` with 266 constituents swapped. Aliasing costs one hash lookup and restores all of it.
+///
+/// The alias is safe to apply unconditionally: the map's KEYS are Xetra symbols, which only ever reach
+/// this fn when the swap actually ran, so a US-only run cannot hit one. No `prefer_eu_listing` plumbing.
 async fn sec_cik(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
     let path = sec_cache_path("_tickers");
     if !path.exists() {
@@ -1385,8 +1395,22 @@ async fn sec_cik(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
         }
         m
     });
-    map.get(&ticker.to_uppercase()).cloned()
+    let key = EU_TO_US
+        .get_or_init(|| {
+            let eu: HashMap<String, String> = std::fs::read_to_string(crate::config::data_path(EU_LISTING_CACHE_PATH))
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            invert_eu(&eu)
+        })
+        .get(&ticker.to_uppercase())
+        .cloned()
+        .unwrap_or_else(|| ticker.to_uppercase());
+    map.get(&key).cloned()
 }
+
+/// (EU listing) `US -> EU` inverted to `EU -> US`, for [`sec_cik`]. Read once from the resolver's cache.
+static EU_TO_US: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
 
 /// (Item 4) Open-market insider transactions for a US ticker, newest first, from SEC Form-4 filings.
 /// DISK-CACHED under `.sec_cache/{ticker}.json` (append-only history -> reuse forever). Flow: ticker→CIK,
@@ -2526,22 +2550,89 @@ async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
         if cookie.is_empty() {
             return None;
         }
-        let crumb = client
+        let resp = client
             .get("https://query2.finance.yahoo.com/v1/test/getcrumb")
             .header("Cookie", &cookie)
             .header("User-Agent", "Mozilla/5.0")
             .send()
             .await
-            .ok()?
-            .text()
-            .await
             .ok()?;
-        // a real crumb is a short opaque token; an error comes back as a JSON body
-        (!crumb.is_empty() && !crumb.contains('{')).then_some((cookie, crumb))
+        // status FIRST: a 429 body is plain prose, and prose passed the old token check (see `is_crumb`)
+        if !resp.status().is_success() {
+            return None;
+        }
+        let crumb = resp.text().await.ok()?;
+        is_crumb(&crumb).then_some((cookie, crumb))
     }
     .await;
     let _ = YQ_AUTH.set(v.clone());
     v
+}
+
+/// Does this response body look like a Yahoo crumb rather than an error?
+///
+/// A real crumb is a short opaque token with no spaces (`0EBQ3sZ/xyz`). The previous rule was only
+/// "non-empty and contains no `{`", which accepts Yahoo's rate-limit body — the bare text
+/// `Too Many Requests`, no braces anywhere. That token was then cached in `YQ_AUTH` for the whole
+/// process and appended to every quoteSummary URL, so ONE 429 turned into a run's worth of requests
+/// that could only ever earn `401 Invalid Crumb`. Measured against the live endpoint while probing.
+///
+/// Split out of [`yahoo_crumb`] because that fn is `#[mutants::skip]`-ed live-only code; the rule that
+/// actually decides is pure, so it can be graded and tested.
+fn is_crumb(token: &str) -> bool {
+    let t = token.trim();
+    !t.is_empty() && !t.contains('{') && !t.chars().any(char::is_whitespace)
+}
+
+/// (TER/AUM) `(TER %, AUM)` out of one justETF ETF-profile page. `(None, None)` on any shape change.
+///
+/// THE THIRD SOURCE for these two facts, and currently the only working one. Börse Frankfurt answers
+/// most funds; Yahoo used to fill the holes and no longer can (its crumb handshake is dead upstream).
+/// justETF is keyless and covers EU UCITS funds, which is exactly the population BF misses.
+///
+/// ponytail: an HTML scrape, with a known ceiling — two `data-testid` anchors, no HTML parser, no new
+/// dependency. `data-testid` attributes are what justETF's own test suite selects on, so they are the
+/// most stable handles the page offers, but they are still not an API. If the page moves, both values
+/// go `None` and the cells stay `n/a` exactly as they are today; nothing guesses.
+///
+/// Units are normalised to match Börse Frankfurt's (`bf_row_aum`): TER in percent (`0.15% p.a.` ->
+/// `0.15`) and AUM in absolute currency (`EUR 16,988 m` -> `1.6988e10`), so the two sources are
+/// interchangeable downstream. A magnitude suffix that is neither millions nor billions yields None
+/// rather than a figure wrong by a factor of a million.
+fn parse_justetf_facts(html: &str) -> (Option<f64>, Option<f64>) {
+    // "0.15% p.a." / "16,988 m" -> the leading number, thousands separators dropped. Non-positive is
+    // rejected: justETF prints a literal 0 for "unknown", the same convention BF and Yahoo use.
+    fn lead_num(s: &str) -> Option<f64> {
+        let t: String = s
+            .trim()
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',')
+            .filter(|c| *c != ',')
+            .collect();
+        t.parse::<f64>().ok().filter(|v: &f64| v.is_finite() && *v > 0.0)
+    }
+    let ter = between(html, "tl_etf-basics_value_ter\">", "<").and_then(lead_num);
+    let aum = between(html, "etf-basics_row_fund-size", "</tr>").and_then(|row| {
+        let cell = between(row, "<div>", "<")?.trim(); // "EUR 16,988 m "
+        let rest = cell.split_once(' ')?.1; // drop the currency word
+        let n = lead_num(rest)?;
+        let mag = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == ',' || c == '.').trim();
+        match mag {
+            // `bn` is what justETF writes; matching on `b` alone covers that and any `b`/`billion`
+            // variant in one test, where `starts_with("bn") || starts_with('b')` was the same set
+            // written twice — the first arm implies the second.
+            m if m.starts_with('b') => Some(n * 1e9),
+            m if m.starts_with('m') => Some(n * 1e6),
+            _ => None,
+        }
+    });
+    (ter, aum)
+}
+
+/// (TER/AUM) Live justETF facts for one ISIN. `None` on transport failure or an unusable page.
+async fn justetf_fund_facts(client: &Client, urls: &Urls, isin: &str) -> Option<(Option<f64>, Option<f64>)> {
+    let html = get_text(client, &urls.justetf_profile.replace("{isin}", isin)).await?;
+    Some(parse_justetf_facts(&html))
 }
 
 /// Pull (TER %, AUM) out of one Yahoo quoteSummary payload. TER arrives as a FRACTION (0.0014 =
@@ -2576,9 +2667,11 @@ fn parse_yahoo_fund_facts(v: &Value) -> (Option<f64>, Option<f64>) {
 /// flag — the win is honest TER/AUM cells.
 async fn yahoo_fund_facts_fill(
     client: &reqwest::Client,
+    urls: &Urls,
     syms: &[String],
     bf_ter: &HashMap<String, f64>,
     bf_aum: &HashMap<String, f64>,
+    isin_of: &HashMap<String, String>,
 ) -> (HashMap<String, f64>, HashMap<String, f64>) {
     // (round 54) 200 -> 400: each TER hole blocks a potential H/CORE qualifier and the wide screen
     // was converging ~90 holes/run; the round-53 monthly cache freed the runtime headroom. Fallback
@@ -2591,9 +2684,6 @@ async fn yahoo_fund_facts_fill(
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
     let today = chrono::Utc::now().date_naive();
-    let fresh = |r: &Row| {
-        NaiveDate::parse_from_str(&r.0, "%Y-%m-%d").is_ok_and(|d| (today - d).num_days() < 7)
-    };
     let mut todo: Vec<String> = Vec::new();
     for s in syms {
         let (miss_ter, miss_aum) = (!bf_ter.contains_key(s), !bf_aum.contains_key(s));
@@ -2606,20 +2696,25 @@ async fn yahoo_fund_facts_fill(
         if !miss_ter && !miss_aum {
             continue; // BF already answered — Yahoo is only consulted for the holes
         }
-        match cache.get(s) {
-            Some(r) if fresh(r) => {
-                if miss_ter {
-                    if let Some(t) = r.1 {
-                        ter_map.insert(s.clone(), t);
-                    }
-                }
-                if miss_aum {
-                    if let Some(a) = r.2 {
-                        aum_map.insert(s.clone(), a);
-                    }
+        // (fund staleness) Serve and refetch decided separately — the same split as `yahoo_top_holdings`,
+        // and for the same reason: the dead crumb below returns whatever was served here, so a row that
+        // is merely not-from-today must still fill the cell while it waits to be refreshed.
+        let age = cache.get(s).and_then(|r| cache_age_days(&r.0, today));
+        let (serve, refetch) = cache_use(age);
+        if let (Some(r), true) = (cache.get(s), serve) {
+            if miss_ter {
+                if let Some(t) = r.1 {
+                    ter_map.insert(s.clone(), t);
                 }
             }
-            _ => todo.push(s.clone()),
+            if miss_aum {
+                if let Some(a) = r.2 {
+                    aum_map.insert(s.clone(), a);
+                }
+            }
+        }
+        if refetch {
+            todo.push(s.clone());
         }
     }
     todo.truncate(BUDGET);
@@ -2629,7 +2724,25 @@ async fn yahoo_fund_facts_fill(
     // one handshake up front so a dead crumb skips the whole batch instead of 400 doomed calls;
     // the per-symbol seam below reuses it via the in-process YQ_AUTH cache.
     if yahoo_crumb(client).await.is_none() {
-        eprintln!("fetch: Yahoo crumb handshake failed — fund-facts fallback skipped this run");
+        // ...and when it IS dead, fall through to justETF rather than giving up on the holes entirely.
+        // This is no longer a rare degradation: `fc.yahoo.com` stopped setting the session cookie, so
+        // this branch is the normal path, and returning here is why a live run reported 1433 funds with
+        // no TER at all.
+        eprintln!("fetch: Yahoo crumb handshake failed — filling fund facts from justETF instead");
+        let filled = justetf_fund_facts_fill(client, urls, &todo, isin_of, &mut cache, today).await;
+        for (sym, ter, aum) in filled {
+            if !bf_ter.contains_key(&sym) {
+                if let Some(t) = ter {
+                    ter_map.entry(sym.clone()).or_insert(t);
+                }
+            }
+            if !bf_aum.contains_key(&sym) {
+                if let Some(a) = aum {
+                    aum_map.entry(sym.clone()).or_insert(a);
+                }
+            }
+        }
+        write_fund_facts_cache(&cache);
         return (ter_map, aum_map);
     }
     let fetched: Vec<Option<(String, Option<f64>, Option<f64>)>> = stream::iter(todo)
@@ -2658,13 +2771,51 @@ async fn yahoo_fund_facts_fill(
         if let Some(a) = aum {
             aum_map.entry(sym.clone()).or_insert(a);
         }
-        cache.insert(sym, (today.to_string(), ter, aum)); // both-None cached too: one retry a week
+        cache.insert(sym, (today.to_string(), ter, aum)); // both-None cached too: one retry a day, not one per run
     }
-    eprintln!("fetch: Yahoo fund-facts fallback filled {got} non-BF funds (weekly cache: {})", cache.len());
-    if let Ok(json) = serde_json::to_string(&cache) {
+    eprintln!("fetch: Yahoo fund-facts fallback filled {got} non-BF funds (cache: {})", cache.len());
+    write_fund_facts_cache(&cache);
+    (ter_map, aum_map)
+}
+
+/// Best-effort write-back of the fund-facts cache. Two callers (the Yahoo pass and the justETF one),
+/// so it is a fn rather than the same three lines twice. A read-only dir just costs next run a refetch.
+fn write_fund_facts_cache(cache: &HashMap<String, (String, Option<f64>, Option<f64>)>) {
+    if let Ok(json) = serde_json::to_string(cache) {
         let _ = std::fs::write(crate::config::data_path(FUND_FACTS_CACHE_PATH), json);
     }
-    (ter_map, aum_map)
+}
+
+/// (TER/AUM) The justETF half of `yahoo_fund_facts_fill`, run when Yahoo's handshake is dead. Resolves
+/// each symbol to its ISIN (justETF is ISIN-keyed; a symbol with no known ISIN is simply skipped) and
+/// records every answer in the shared cache, both-None included, so a fund justETF cannot serve costs
+/// one request rather than one per run.
+async fn justetf_fund_facts_fill(
+    client: &Client,
+    urls: &Urls,
+    todo: &[String],
+    isin_of: &HashMap<String, String>,
+    cache: &mut HashMap<String, (String, Option<f64>, Option<f64>)>,
+    today: NaiveDate,
+) -> Vec<(String, Option<f64>, Option<f64>)> {
+    let pairs: Vec<(String, String)> =
+        todo.iter().filter_map(|s| isin_of.get(s).map(|i| (s.clone(), i.clone()))).collect();
+    let fetched: Vec<Option<(String, Option<f64>, Option<f64>)>> = stream::iter(pairs)
+        .map(|(sym, isin)| async move {
+            let (ter, aum) = justetf_fund_facts(client, urls, &isin).await?;
+            Some((sym, ter, aum))
+        })
+        .buffer_unordered(fetch_concurrency())
+        .collect()
+        .await;
+    let out: Vec<(String, Option<f64>, Option<f64>)> = fetched.into_iter().flatten().collect();
+    for (sym, ter, aum) in &out {
+        cache.insert(sym.clone(), (today.to_string(), *ter, *aum));
+    }
+    // Just the page count. A "how many carried a usable field" refinement would need its own `||`
+    // over data no caller reads — a branch that exists only to shape one log line.
+    eprintln!("fetch: justETF answered for {} non-BF funds", out.len());
+    out
 }
 
 /// (round 56) Top-10 holdings out of one Yahoo quoteSummary `topHoldings` payload: the underlying
@@ -2776,6 +2927,42 @@ fn parse_fund_category(v: &Value) -> Option<String> {
 /// (fund valuation) third widening, same heal: rows gained the inverted equity-book P/E.
 const HOLDINGS_CACHE_PATH: &str = ".holdings_cache.json";
 
+/// (fund staleness) Refetch a fund row that is not from TODAY. Was 7 days, which is why a run in the
+/// middle of Yahoo's outage found every row 8-22 days old and had nothing at all to serve.
+const FUND_CACHE_REFRESH_DAYS: i64 = 1;
+/// (fund staleness) And REFUSE to serve one older than this, even when the refetch is impossible.
+/// A fund's look-through book moves slowly, but not so slowly that a week-old P/E should quietly trim a
+/// fund off the table — past this age the column goes `n/a`, which is a visible absence rather than a
+/// number nobody can date. Between the two thresholds a row is served and MARKED, never served silently.
+const FUND_CACHE_MAX_AGE_DAYS: i64 = 3;
+
+/// (fund staleness) Age in days of a `YYYY-MM-DD` cache stamp, or None if it does not parse.
+///
+/// One helper for both fund caches (`yahoo_fund_facts_fill` and `yahoo_top_holdings`) because they had
+/// the same date predicate written twice and only one of them would ever have been fixed. `None` for an
+/// unparseable stamp reads downstream as "not usable", the same as far too old — a corrupt row must not
+/// become an infinitely fresh one.
+///
+/// Signed on purpose: a stamp dated in the FUTURE (clock skew, a hand-edited cache) yields a negative
+/// age, which is `< REFRESH` and `<= MAX_AGE`, so it counts as fresh rather than being refetched forever.
+fn cache_age_days(stamp: &str, today: NaiveDate) -> Option<i64> {
+    NaiveDate::parse_from_str(stamp, "%Y-%m-%d").ok().map(|d| (today - d).num_days())
+}
+
+/// (fund staleness) `(serve?, refetch?)` for a fund-cache row of this age (`None` = absent or corrupt).
+///
+/// The two answers are INDEPENDENT, which is the whole point and was the bug: the old code asked one
+/// question ("is this fresh?") and used it for both, so a row that was merely due a refresh was also
+/// treated as unusable — and when the refresh then failed (Yahoo's crumb handshake is dead), the caller
+/// returned nothing at all despite holding a perfectly datable value. `serve && refetch` is exactly the
+/// stale-but-usable window, i.e. the rows that must print with the `°` mark.
+///
+/// Both loops call this rather than repeating the comparisons, because they DID repeat them before and
+/// only one of the two copies would ever have been fixed.
+fn cache_use(age: Option<i64>) -> (bool, bool) {
+    (age.is_some_and(|a| a <= FUND_CACHE_MAX_AGE_DAYS), age.is_none_or(|a| a >= FUND_CACHE_REFRESH_DAYS))
+}
+
 /// (report round 7) Shared cacheless quoteSummary GET — the fund seams below (and their
 /// report-only `_ext`/composition cousins) differ ONLY in the `modules=` list, so the crumb
 /// handshake + throttle guard live here once. `Err` = environmental (skip/retry); `Ok(Value)` =
@@ -2870,8 +3057,12 @@ pub async fn sec_facts_live(client: &Client, urls: &Urls, ticker: &str) -> Resul
 }
 
 /// Per-fund composition for the sector-tilt + fund-valuation footers:
-/// (sectors desc by weight, equity/bond split, P/E of the fund's equity book).
-pub type FundMix = (Vec<(String, f64)>, Option<(f64, f64)>, Option<f64>);
+/// (sectors desc by weight, equity/bond split, P/E of the fund's equity book, as-of).
+///
+/// (fund staleness) The as-of is `None` when the row was fetched THIS RUN and `Some(date)` when it came
+/// off disk. It rides here rather than in a parallel map because the P/E it dates travels through six
+/// signatures already; a second map would be one more thing to keep in step with this one.
+pub type FundMix = (Vec<(String, f64)>, Option<(f64, f64)>, Option<f64>, Option<NaiveDate>);
 
 /// (round 56) Top-10 holdings per fund (each with its weight fraction), for the screen's
 /// holdings-overlap + concentration footers — the sector-tech table is full of "different" funds
@@ -2891,19 +3082,27 @@ pub async fn yahoo_top_holdings(
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
     let today = chrono::Utc::now().date_naive();
-    let fresh = |r: &Row| {
-        NaiveDate::parse_from_str(&r.0, "%Y-%m-%d").is_ok_and(|d| (today - d).num_days() < 7)
-    };
     let mut out = HashMap::new();
     let mut mix = HashMap::new();
     let mut todo: Vec<String> = Vec::new();
+    // (fund staleness) A cached row is SERVED and REFETCHED independently, where it used to be one
+    // decision. Yahoo's crumb handshake is dead upstream, and the old shape returned only cache HITS
+    // from the failure branch below — so a run found 138 rows, 0 of them "fresh" under a 7-day rule,
+    // and published nothing at all despite holding 98 perfectly datable P/Es. Now: refetch anything not
+    // from today, but still serve what is on disk up to `FUND_CACHE_MAX_AGE_DAYS` while that refetch is
+    // impossible. The live pass below overwrites whatever it manages to get.
     for s in syms {
-        match cache.get(s) {
-            Some(r) if fresh(r) => {
-                out.insert(s.clone(), r.1.clone());
-                mix.insert(s.clone(), (r.2.clone(), r.3, r.4));
-            }
-            _ => todo.push(s.clone()),
+        let age = cache.get(s).and_then(|r| cache_age_days(&r.0, today));
+        let (serve, refetch) = cache_use(age);
+        if let (Some(r), true) = (cache.get(s), serve) {
+            out.insert(s.clone(), r.1.clone());
+            // as-of stays None for a row fetched TODAY: it is not "from cache" in any sense the reader
+            // cares about, and marking every same-day row would make the mark mean nothing.
+            let as_of = (serve && refetch).then(|| today - chrono::Duration::days(age.unwrap_or(0)));
+            mix.insert(s.clone(), (r.2.clone(), r.3, r.4, as_of));
+        }
+        if refetch {
+            todo.push(s.clone());
         }
     }
     if !todo.is_empty() {
@@ -2926,7 +3125,7 @@ pub async fn yahoo_top_holdings(
         for (sym, holdings, sectors, stock_bond, pe) in fetched.into_iter().flatten() {
             cache.insert(sym.clone(), (today.to_string(), holdings.clone(), sectors.clone(), stock_bond, pe));
             out.insert(sym.clone(), holdings);
-            mix.insert(sym, (sectors, stock_bond, pe));
+            mix.insert(sym, (sectors, stock_bond, pe, None)); // fetched now -> unmarked, overwriting any stale row served above
         }
         if let Ok(json) = serde_json::to_string(&cache) {
             let _ = std::fs::write(crate::config::data_path(HOLDINGS_CACHE_PATH), json);
@@ -3409,9 +3608,12 @@ pub async fn fetch_xetra_etfs(
     let mut ter_map: HashMap<String, f64> = HashMap::new();
     let mut aum_map: HashMap<String, f64> = HashMap::new();
     let mut meta_map: HashMap<String, BfMeta> = HashMap::new();
+    // (TER/AUM) symbol -> ISIN, the key justETF needs. Built here because this is the one place the two
+    // identifiers are side by side; every later caller has only the symbol.
+    let mut isin_of: HashMap<String, String> = HashMap::new();
     let tickers: Vec<String> = resolved
         .into_iter()
-        .map(|(sym, ter, aum, meta, _)| {
+        .map(|(sym, ter, aum, meta, src)| {
             if let Some(t) = ter {
                 ter_map.insert(sym.clone(), t);
             }
@@ -3421,13 +3623,16 @@ pub async fn fetch_xetra_etfs(
             if carries_fund_facts(&meta) {
                 meta_map.insert(sym.clone(), meta);
             }
+            if let Some(isin) = src {
+                isin_of.insert(sym.clone(), isin);
+            }
             sym
         })
         .collect();
     // (round 47) top up missing TER/AUM from Yahoo into the SEPARATE display-only fallback statics —
     // venue/regulatory-only funds (no BF row -> factless forever) get honest cells; the BF maps that
     // feed the score/gates stay untouched so momentum ranks are byte-identical with pre-fallback runs.
-    let (yh_ter, yh_aum) = yahoo_fund_facts_fill(client, &tickers, &ter_map, &aum_map).await;
+    let (yh_ter, yh_aum) = yahoo_fund_facts_fill(client, urls, &tickers, &ter_map, &aum_map, &isin_of).await;
     let _ = YH_TER.set(yh_ter);
     let _ = YH_AUM.set(yh_aum);
     let ter_n = ter_map.len();
@@ -3894,6 +4099,16 @@ pub(crate) fn eu_shadowed_pins(pinned: &[String], eu: &HashMap<String, String>) 
         .collect()
 }
 
+/// (EU listing) Invert the resolver's `US -> EU` map into `EU -> US`, so [`sec_cik`] can find the filer
+/// behind a swapped symbol. Both sides upper-cased because `sec_cik` looks up on an upper-cased ticker.
+///
+/// Empty value = "resolved, no usable twin" and is DROPPED, not inverted to a `"" -> US` entry that
+/// would then match every ticker whose upper-case form is empty. Same convention `eu_swap_tally` and
+/// `eu_shadowed_pins` read; pure and separate from the cache read so the rule is testable offline.
+pub(crate) fn invert_eu(eu: &HashMap<String, String>) -> HashMap<String, String> {
+    eu.iter().filter(|(_, e)| !e.is_empty()).map(|(u, e)| (e.to_uppercase(), u.to_uppercase())).collect()
+}
+
 pub async fn fetch_universe(
     client: &Client,
     urls: &Urls,
@@ -4131,6 +4346,125 @@ mod tests {
         assert_eq!(eu_shadowed_pins(&pinned, &eu), ["NVDA -> NVD.DE"]);
         assert!(eu_shadowed_pins(&pinned, &HashMap::new()).is_empty(), "no resolutions, no shadows");
         assert!(eu_shadowed_pins(&[], &eu).is_empty(), "no pins, no shadows");
+    }
+
+    /// (fund staleness) The serve/refetch split, which is the entire fix for "Yahoo is down and the
+    /// fund columns went blank". `serve` decides what the caller can still publish when the network
+    /// gives it nothing; `refetch` decides what it asks for. They used to be one answer, and that is
+    /// why a run holding 138 datable rows published none of them.
+    #[test]
+    fn cache_use_serves_and_refetches_independently() {
+        let today = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap();
+        let age = |s: &str| cache_age_days(s, today);
+
+        assert_eq!(age("2026-08-16"), Some(0));
+        assert_eq!(age("2026-08-13"), Some(3));
+        assert_eq!(age("not-a-date"), None, "a corrupt stamp is not a date");
+
+        // fetched today: publish it, don't ask again.
+        assert_eq!(cache_use(age("2026-08-16")), (true, false));
+        // yesterday: still good to publish, but due a refresh — this is the marked (`°`) window.
+        assert_eq!(cache_use(age("2026-08-15")), (true, true));
+        // exactly at the cap: still served. The boundary is the whole knob, so it is pinned on both
+        // sides rather than left to whichever comparison someone edits next.
+        assert_eq!(cache_use(age("2026-08-13")), (true, true));
+        // one day past it: refetch, and publish NOTHING — `n/a` beats a number nobody would trust.
+        assert_eq!(cache_use(age("2026-08-12")), (false, true));
+        assert_eq!(cache_use(age("2026-07-01")), (false, true));
+
+        // absent or corrupt: never served, always refetched. A row that fails to parse must not become
+        // an infinitely fresh one.
+        assert_eq!(cache_use(None), (false, true));
+        assert_eq!(cache_use(age("not-a-date")), (false, true));
+
+        // clock skew / hand-edited cache: a future stamp counts as fresh rather than being refetched
+        // forever, which a plain `.abs()`-free `>` would get wrong in the other direction.
+        assert_eq!(cache_use(age("2026-08-20")), (true, false));
+    }
+
+    /// (TER/AUM) The justETF scrape, on the EXACT markup the live page serves (captured from
+    /// IE00B3WJKG14 while probing, whitespace-collapsed). This is now the only working source for these
+    /// two facts, so the shapes it must survive — and the ones it must refuse — are pinned here.
+    ///
+    /// UNITS ARE THE POINT: Börse Frankfurt reports AUM in absolute currency, justETF in millions. A
+    /// silent unit mismatch would put every justETF-sourced fund a factor of 10^6 below the AUM gate,
+    /// i.e. quietly delete them from the ETF table rather than fail loudly.
+    #[test]
+    fn parse_justetf_facts_reads_ter_and_fund_size() {
+        let page = concat!(
+            r#"<tr data-testid="etf-basics_row_fund-size"> <td class="vallabel"> Fund size </td>"#,
+            r#" <td> <div> EUR 16,988 m <span class="indicator-3"></span> </div> </td> </tr>"#,
+            r#" <tr data-testid="etf-basics_row_ter"> <td class="vallabel"> Total expense ratio </td>"#,
+            r#" <td> <div class="val" data-testid="tl_etf-basics_value_ter">0.15% p.a.</div> </td> </tr>"#,
+        );
+        let (ter, aum) = parse_justetf_facts(page);
+        assert_eq!(ter, Some(0.15), "percent, not a fraction — same units as BF's TER");
+        assert_eq!(aum, Some(1.6988e10), "millions -> absolute, same units as bf_row_aum");
+
+        // billions suffix, and a fund with no thousands separator
+        let bn = page.replace("EUR 16,988 m", "USD 3.5 bn");
+        assert_eq!(parse_justetf_facts(&bn).1, Some(3.5e9));
+
+        // an UNKNOWN magnitude must yield None, never a number wrong by 10^6
+        let odd = page.replace("EUR 16,988 m", "EUR 42 zz");
+        assert_eq!(parse_justetf_facts(&odd).1, None, "unknown suffix -> no guess");
+
+        // justETF prints a literal 0 for "unknown" — the same convention BF and Yahoo use
+        let zero = page.replace(">0.15% p.a.", ">0.00% p.a.");
+        assert_eq!(parse_justetf_facts(&zero).0, None, "0% is unknown, not a free fund");
+
+        // any shape change -> both None, cells stay n/a, nothing is invented
+        assert_eq!(parse_justetf_facts("<html>redesigned</html>"), (None, None));
+        assert_eq!(parse_justetf_facts(""), (None, None));
+    }
+
+    /// (round 78) The crumb-vs-error rule. Yahoo answers a rate limit with the bare prose
+    /// `Too Many Requests` — no braces — which the previous "no `{`" test ACCEPTED and then cached in
+    /// `YQ_AUTH` for the rest of the process, so one 429 became a whole run of requests that could only
+    /// earn `401 Invalid Crumb`. Found against the live endpoint.
+    #[test]
+    fn is_crumb_rejects_yahoos_error_bodies() {
+        assert!(is_crumb("0EBQ3sZ/xyz"), "a real crumb is a short opaque token");
+        assert!(is_crumb("abc.def"), "punctuation is fine — only whitespace and JSON are not");
+
+        assert!(!is_crumb("Too Many Requests"), "THE 429 BODY — the whole reason this fn exists");
+        assert!(!is_crumb("{\"finance\":{\"error\":\"Invalid Cookie\"}}"), "JSON error body");
+        assert!(!is_crumb(""), "empty");
+        assert!(!is_crumb("   \n"), "whitespace only");
+
+        // A one-word error body (`Unauthorized`) is shape-identical to a crumb and this fn CANNOT
+        // reject it — which is why the caller checks the HTTP status first and never reaches here on a
+        // non-2xx. Asserted so the split of responsibility is not quietly re-litigated.
+        assert!(is_crumb("Unauthorized"), "shape alone cannot catch this one — the status check does");
+    }
+
+    /// The EU->US alias `sec_cik` looks a swapped ticker up through. Three properties, and the run's
+    /// whole fundamentals block rides on each: the direction is EU->US (inverted, not copied), the
+    /// "resolved, no usable twin" empty value is DROPPED rather than becoming a `"" -> US` entry that
+    /// would alias every ticker, and both sides are upper-cased because the caller keys on an
+    /// upper-cased ticker (a lower-case cache entry would otherwise silently never match).
+    #[test]
+    fn invert_eu_maps_the_xetra_symbol_back_to_the_filer() {
+        let eu: HashMap<String, String> = [
+            ("NVDA", "NVD.DE"),
+            ("MCD", "MDO.DE"),
+            ("BRK-B", ""), // resolved, no usable twin -> contributes no alias
+            ("coin", "1qz.de"), // lower-case on both sides -> must still match an upper-cased lookup
+        ]
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+
+        let inv = invert_eu(&eu);
+        assert_eq!(inv.get("NVD.DE").map(String::as_str), Some("NVDA"));
+        assert_eq!(inv.get("MDO.DE").map(String::as_str), Some("MCD"));
+        assert_eq!(inv.get("1QZ.DE").map(String::as_str), Some("COIN"), "both sides upper-cased");
+        assert!(!inv.contains_key(""), "the empty twin must not become a catch-all alias");
+        assert_eq!(inv.len(), 3, "one entry per resolved pair, none for the empty one");
+        // direction: a US ticker is a VALUE here, never a key — aliasing US->US would be a no-op that
+        // silently reintroduced the bug this exists to fix.
+        assert!(!inv.contains_key("NVDA"));
+        assert!(invert_eu(&HashMap::new()).is_empty());
     }
 
     /// (#45) The MVRV staleness guard, on the exact shapes the live endpoint returns. `btc` is a
@@ -5283,14 +5617,32 @@ mod tests {
     /// lookup that has nothing to do with what it is testing. Idempotent, so calling it from several
     /// tests is free.
     ///
-    /// AAPL resolves; every other ticker (`NOSUCH`, `AAA`, `BBB`) is absent on purpose, which is the
-    /// non-US path a wide screen takes and must stay a miss.
+    /// AAPL and GOOGL resolve; every other ticker (`NOSUCH`, `AAA`, `BBB`) is absent on purpose, which
+    /// is the non-US path a wide screen takes and must stay a miss.
+    ///
+    /// (EU listing) `.eu_listing_cache.json` is seeded here for the SAME reason and with the same
+    /// hazard doubled: `EU_TO_US` is a second `OnceLock`, filled on that same first `sec_cik` call,
+    /// from a file `resolve_eu_listings_serves_its_cache_and_remembers_misses` also owns. Written only
+    /// when ABSENT so it can never clobber that test mid-flight, and its content is deliberately the
+    /// byte-identical `GOOGL -> ABEA.DE` pair that test seeds — so whichever of the file's possible
+    /// states the `OnceLock` happens to catch, the alias under test is in it. That test re-seeds
+    /// instead of deleting on the way out for the same reason.
     fn seed_cik_map() {
         let dir = crate::config::data_path(".sec_cache");
         std::fs::create_dir_all(&dir).expect("scratch .sec_cache");
-        std::fs::write(dir.join("_tickers.json"), r#"{"0":{"ticker":"AAPL","cik_str":320193}}"#)
-            .expect("seed cik map");
+        std::fs::write(
+            dir.join("_tickers.json"),
+            r#"{"0":{"ticker":"AAPL","cik_str":320193},"1":{"ticker":"GOOGL","cik_str":1652044}}"#,
+        )
+        .expect("seed cik map");
+        let eu = crate::config::data_path(EU_LISTING_CACHE_PATH);
+        if !eu.exists() {
+            std::fs::write(&eu, EU_CACHE_SEED).expect("seed eu listing cache");
+        }
     }
+
+    /// The one `.eu_listing_cache.json` content every test in this binary agrees on. See [`seed_cik_map`].
+    const EU_CACHE_SEED: &str = r#"{"GOOGL":"ABEA.DE","BRK-B":""}"#;
 
     /// One canned HTTP/1.1 response on an ephemeral loopback port, accepted exactly once. The SEC
     /// transport pair is two lines of `reqwest` each and had no test at all, which the mutation gate
@@ -5410,7 +5762,7 @@ mod tests {
         let client = Client::builder().no_proxy().build().expect("test client");
 
         // 1. every symbol already known -> the file is served verbatim and nothing is fetched
-        std::fs::write(&path, r#"{"GOOGL":"ABEA.DE","BRK-B":""}"#).expect("seed cache");
+        std::fs::write(&path, EU_CACHE_SEED).expect("seed cache");
         let got = resolve_eu_listings(&client, &urls, &["GOOGL".to_string(), "BRK-B".to_string()]).await;
         assert_eq!(got["GOOGL"], "ABEA.DE");
         assert_eq!(got["BRK-B"], "", "an empty value is a remembered miss, not a cache gap");
@@ -5423,7 +5775,10 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written")).expect("cache json");
         assert_eq!(on_disk["TSLA"], "", "the miss is persisted, so it is never asked again");
         assert_eq!(on_disk["GOOGL"], "ABEA.DE");
-        std::fs::remove_file(&path).ok();
+        // Re-seed rather than delete: `sec_cik`'s `EU_TO_US` reads this same file exactly once per
+        // process, and an absent file would freeze that alias map EMPTY for every later test. See
+        // `seed_cik_map`.
+        std::fs::write(&path, EU_CACHE_SEED).expect("restore the shared seed");
     }
 
     /// Every `Urls` field pointed at ONE loopback stub. Setting all of them is the safety property, not
@@ -5440,7 +5795,10 @@ mod tests {
     /// `api.openfigi.com` endpoint and every EU-listing test starts POSTing to Bloomberg. A defaulted
     /// field is exactly the field the author does not think about, so list defaulted ones too.
     fn stub_urls(base: &str) -> Urls {
-        const FIELDS: [&str; 32] = [
+        // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
+        // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
+        // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
+        const FIELDS: [&str; 33] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
             "pt_cpi", "eu_hicp", "eu_hicp_old", "coingecko_markets", "sp500_csv", "nupl",
@@ -5448,6 +5806,7 @@ mod tests {
             "fundamentals_history", "fund_expense", "bf_etf_search", "bf_salt", "euronext_lisbon",
             "euronext_track", "six_funds", "esma_firds", "fca_firds", "sec_ticker_cik",
             "sec_submissions", "sec_companyfacts", "sec_companyconcept", "sec_user_agent",
+            "justetf_profile",
         ];
         let mut yaml: String = FIELDS.iter().map(|f| format!("{f}: \"{base}\"\n")).collect();
         yaml.push_str(&format!("constituents_csv: [\"{base}\"]\n")); // the one non-String field
@@ -5504,6 +5863,32 @@ mod tests {
             .expect("seed stale cache");
         let got = fetch_regulatory_etf_isins(&client, &urls).await;
         assert_eq!(got, ["IE00B4L5Y983"], "a failed refresh must keep the last-good list");
+    }
+
+    /// (EU listing) `sec_cik` itself — the one seam every SEC read in this file funnels through, and
+    /// the one the EU swap broke. `invert_eu` above proves the map is built right; this proves it is
+    /// actually CONSULTED, which is a separate failure: delete the alias lookup and `invert_eu`'s test
+    /// stays green while 266 swapped constituents silently lose P/E, ROE/A and the whole income block.
+    ///
+    /// The dead port is an assertion, not scaffolding — the seeded `_tickers.json` must be served from
+    /// disk, so any fetch attempt fails the test rather than reaching sec.gov. And a CIK is asserted by
+    /// VALUE: an empty-but-`Some` string is exactly what a broken zero-pad or a short-circuited lookup
+    /// returns, and it reads as "resolved" at all six call sites.
+    #[tokio::test]
+    async fn sec_cik_resolves_a_us_ticker_and_a_swapped_xetra_symbol() {
+        pin_throttle();
+        seed_cik_map();
+        let urls = stub_urls("http://127.0.0.1:1/");
+        let client = Client::builder().no_proxy().build().expect("test client");
+
+        assert_eq!(sec_cik(&client, &urls, "AAPL").await.as_deref(), Some("0000320193"), "zero-padded to 10");
+        assert_eq!(sec_cik(&client, &urls, "aapl").await.as_deref(), Some("0000320193"), "case-insensitive");
+        // the fix: the Xetra twin resolves to its US filer's CIK, not to nothing
+        assert_eq!(sec_cik(&client, &urls, "ABEA.DE").await.as_deref(), Some("0001652044"), "EU->US alias");
+        assert_eq!(sec_cik(&client, &urls, "abea.de").await.as_deref(), Some("0001652044"));
+        // a genuinely non-US name still misses — the alias must not become a catch-all
+        assert_eq!(sec_cik(&client, &urls, "NOSUCH.DE").await, None);
+        assert_eq!(sec_cik(&client, &urls, "").await, None);
     }
 
     /// `fetch_sec_facts_rows`' SHELL — the disk cache, the CIK gate and the two `then_some` guards.
@@ -5681,7 +6066,8 @@ mod tests {
         let path = crate::config::data_path(FUND_FACTS_CACHE_PATH);
         let today = chrono::Utc::now().date_naive();
         let stale = today - chrono::Duration::days(30);
-        let exactly_a_week = today - chrono::Duration::days(7);
+        let at_the_cap = today - chrono::Duration::days(FUND_CACHE_MAX_AGE_DAYS);
+        let past_the_cap = today - chrono::Duration::days(FUND_CACHE_MAX_AGE_DAYS + 1);
         // Yahoo's cached numbers are deliberately DIFFERENT from the BF ones below, so a leak across
         // the firewall shows up as the wrong value rather than as a passing coincidence.
         std::fs::write(
@@ -5692,7 +6078,9 @@ mod tests {
                 "HALFBF.DE":   [today.to_string(), 0.40, 7.0e8],
                 "AUMONLY.DE":  [today.to_string(), 0.25, 2.5e8],
                 "STALE.DE":    [stale.to_string(), 0.99, 9.9e9],
-                "EXACT7.DE":   [exactly_a_week.to_string(), 0.77, 7.7e8],
+                "ATCAP.DE":    [at_the_cap.to_string(), 0.77, 7.7e8],
+                "PASTCAP.DE":  [past_the_cap.to_string(), 0.88, 8.8e8],
+                "CORRUPT.DE":  ["not-a-date", 0.66, 6.6e8],
                 "TERONLY.DE":  [today.to_string(), 0.15, serde_json::Value::Null],
             })
             .to_string(),
@@ -5708,13 +6096,27 @@ mod tests {
         // each of the two `!`s in the short-circuit is invisible against the other fund alone.
         let bf_aum: HashMap<String, f64> =
             [("BFHAS.DE".to_string(), 2.0e9), ("AUMONLY.DE".to_string(), 3.0e9)].into_iter().collect();
-        let syms: Vec<String> =
-            ["HOLE.DE", "BFHAS.DE", "HALFBF.DE", "AUMONLY.DE", "STALE.DE", "EXACT7.DE", "TERONLY.DE"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+        let syms: Vec<String> = [
+            "HOLE.DE",
+            "BFHAS.DE",
+            "HALFBF.DE",
+            "AUMONLY.DE",
+            "STALE.DE",
+            "ATCAP.DE",
+            "PASTCAP.DE",
+            "CORRUPT.DE",
+            "TERONLY.DE",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
-        let (ter, aum) = yahoo_fund_facts_fill(&client, &syms, &bf_ter, &bf_aum).await;
+        // Unroutable stub + an EMPTY isin map: the justETF fallback this test now falls through into
+        // must not reach a real host, and with no ISIN for any symbol it has nothing to ask for anyway.
+        // Both belts on purpose — `justetf_profile` defaults to justETF's live URL.
+        let urls = stub_urls("http://127.0.0.1:1/none");
+        let isin_of: HashMap<String, String> = HashMap::new();
+        let (ter, aum) = yahoo_fund_facts_fill(&client, &urls, &syms, &bf_ter, &bf_aum, &isin_of).await;
 
         // a BF hole with a fresh entry -> filled from cache, no request
         assert_eq!(ter.get("HOLE.DE"), Some(&0.20));
@@ -5739,16 +6141,25 @@ mod tests {
         assert_eq!(ter.get("AUMONLY.DE"), Some(&0.25), "BF has no TER for it — the hole must be filled");
         assert!(!aum.contains_key("AUMONLY.DE"), "but BF holds this AUM — Yahoo's must not override it");
 
-        // older than the 7-day TTL -> NOT served from cache; it goes to the fetch list, which fails
-        // closed here. A stale TER served as fresh is a wrong number that never expires.
-        assert!(!ter.contains_key("STALE.DE"), "a cache entry past the TTL must not be served");
+        // far past the cap -> NOT served; it goes to the fetch list, which fails closed here. A stale
+        // TER served as if current is a wrong number that never expires.
+        assert!(!ter.contains_key("STALE.DE"), "a cache entry past the cap must not be served");
         assert!(!aum.contains_key("STALE.DE"));
 
-        // EXACTLY 7 days old, which is the boundary itself: the TTL is `< 7`, so this entry is spent.
-        // Thirty days cannot pin that — every widening of the comparison still rejects it — and the
-        // consequence of a `<=` is a fund whose facts are re-served for one extra day each cycle.
-        assert!(!ter.contains_key("EXACT7.DE"), "seven days is the TTL, not inside it");
-        assert!(!aum.contains_key("EXACT7.DE"));
+        // (fund staleness) THE BOUNDARY, pinned from both sides. Yahoo's handshake is dead upstream, so
+        // this comparison is the only thing standing between "last week's TER, silently" and `n/a` —
+        // and the 30-day fund above cannot pin it, because every widening of the comparison still
+        // rejects that one. At the cap the row is SERVED (the point of the whole change: a run with no
+        // network still fills its cells); one day past it the row is dropped.
+        assert_eq!(ter.get("ATCAP.DE"), Some(&0.77), "exactly at the cap is still inside it");
+        assert_eq!(aum.get("ATCAP.DE"), Some(&7.7e8));
+        assert!(!ter.contains_key("PASTCAP.DE"), "one day past the cap is out");
+        assert!(!aum.contains_key("PASTCAP.DE"));
+
+        // an unparseable stamp is treated as unusable, NOT as infinitely fresh — the failure mode a
+        // bare `parse().ok()` plus a `<` comparison would otherwise invite.
+        assert!(!ter.contains_key("CORRUPT.DE"), "a corrupt date must not be served");
+        assert!(!aum.contains_key("CORRUPT.DE"));
 
         // fresh, TER present, AUM absent -> the half that exists fills and the half that does not
         // stays ABSENT. A missing AUM defaulting to 0 would read as a fund below every size gate.

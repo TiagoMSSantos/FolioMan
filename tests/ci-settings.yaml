@@ -3851,7 +3851,7 @@ universe_prefer_eur: true
 # per request unkeyed (20 returns HTTP 413), 25 requests/min, two hops over ~500 names = ~102 requests
 # paid once and cached forever in .eu_listing_cache.json.
 #
-# WHAT TURNING IT ON COSTS, ALL SIX STATED PLAINLY:
+# WHAT TURNING IT ON COSTS, ALL SEVEN STATED PLAINLY:
 #   1. It re-prices the entire equity lane. A Xetra line's avg_turnover_eur is a fraction of NASDAQ's,
 #      and turnover feeds liq_bonus and the rank tie-break, so every US name's score moves.
 #   2. The CAGR becomes EUR-denominated and carries EUR/USD drift. growth_min_cagr and every threshold in
@@ -3876,6 +3876,18 @@ universe_prefer_eur: true
 #      rules are deliberate and neither was changed; the interaction is now REPORTED on stderr
 #      (`eu_shadowed_pins`) instead of being silent, since rewriting a ticker the user typed on purpose is
 #      worse than naming the shadow. The fix is the user's: drop the US pin, or pin the EU symbol too.
+#   7. IT ORPHANS EVERY SWAPPED NAME FROM ITS SEC FILINGS — found 2026-08-16 on the same run, and the
+#      largest cost of the seven by a wide margin. The SEC is keyed by US ticker (`sec_cik`), and the swap
+#      renames a constituent BEFORE any fundamentals fetch, so `NVD.DE` has no CIK, no company-facts, no
+#      TTM EPS roll and no Form-4s. Every SEC-derived cell for that name goes n/a AT ONCE: P/E, PEG,
+#      ROE/A, REV-YoY, EPS-YoY, NET% and BUYBK. The run said so and it was misread as thin coverage —
+#      `fund tilt (peg_yield): 222 of 549 stocks carry the factor`, against 266 constituents swapped.
+#      FIXED (round 78) rather than accepted: `sec_cik` now looks the ticker up through an EU->US alias
+#      inverted from the resolver's own cache (`invert_eu`), so a swapped name reaches its filer's CIK.
+#      The FX discipline this needs was already there — `fetch_ratios_sec`/`enrich_fund_factor` put the
+#      native close into the filer's reporting currency before dividing (the ASML-ADR case), so a EUR
+#      close over a USD EPS was never the problem. Cost 3 above is the one that CANNOT be fixed this way:
+#      short Xetra history is a property of the listing, not of a lookup key.
 #
 # FIRST REAL RESOLVER RUN (2026-08-16, the run this knob's rollout was waiting on): the stderr tally
 # reads `338 of 604 constituents on Xetra, 266 kept on their US line` (56.0%). Read the denominators

@@ -201,8 +201,8 @@ fn concentration_lines(holdings: &std::collections::HashMap<String, Vec<(String,
 fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) -> Vec<String> {
     let mut rows: Vec<(&String, &Vec<(String, f64)>, Option<(f64, f64)>)> = mix
         .iter()
-        .filter(|(_, (sectors, _, _))| !sectors.is_empty())
-        .map(|(t, (sectors, sb, _))| (t, sectors, *sb))
+        .filter(|(_, (sectors, _, _, _))| !sectors.is_empty())
+        .map(|(t, (sectors, sb, _, _))| (t, sectors, *sb))
         .collect();
     rows.sort_by(|a, b| b.1[0].1.total_cmp(&a.1[0].1).then_with(|| a.0.cmp(b.0)));
     rows.into_iter()
@@ -569,25 +569,27 @@ async fn borrow_index_twins(
     } else {
         fetch::yahoo_top_holdings(client, &todo).await.1
     };
-    let measured = |t: &str| -> Option<f64> {
+    // (fund staleness) the source's age travels with its P/E: a value borrowed from a twin whose own
+    // ratio came off disk is no fresher than that twin, and it acts just as hard.
+    let measured = |t: &str| -> Option<(f64, Option<chrono::NaiveDate>)> {
         extra
             .get(t)
-            .and_then(|(_, _, pe)| *pe)
-            .or_else(|| fund_pe.get(t).filter(|f| f.from.is_none()).map(|f| f.pe))
+            .and_then(|(_, _, pe, as_of)| pe.map(|p| (p, *as_of)))
+            .or_else(|| fund_pe.get(t).filter(|f| f.from.is_none()).map(|f| (f.pe, f.as_of)))
     };
     orphans
         .iter()
         .filter_map(|(orphan, key)| {
-            let mut found: Vec<(&str, f64)> = candidates
+            let mut found: Vec<(&str, f64, Option<chrono::NaiveDate>)> = candidates
                 .iter()
                 .filter(|q| index_key(&q.name).as_ref() == Some(key))
-                .filter_map(|q| measured(&q.ticker).map(|pe| (q.ticker.as_str(), pe)))
+                .filter_map(|q| measured(&q.ticker).map(|(pe, as_of)| (q.ticker.as_str(), pe, as_of)))
                 .collect();
             found.sort_by(|a, b| a.0.cmp(b.0)); // deterministic source across runs
-            let (src, pe) = *found.first()?;
+            let (src, pe, as_of) = *found.first()?;
             // rival wrappers on one index must agree; if they do not, the key fused two books
-            let agrees = found.iter().all(|(_, p)| (p - pe).abs() <= 0.01 * pe.abs());
-            agrees.then(|| ((*orphan).to_string(), picks::FundPe { pe, from: Some(src.to_string()) }))
+            let agrees = found.iter().all(|(_, p, _)| (p - pe).abs() <= 0.01 * pe.abs());
+            agrees.then(|| ((*orphan).to_string(), picks::FundPe { pe, from: Some(src.to_string()), as_of }))
         })
         .collect()
 }
@@ -625,7 +627,15 @@ fn fund_pe_line(fund_pe: &picks::FundPeMap, quotes: &[core::Quote], tuning: &con
         let line = rows
             .iter()
             .map(|(t, fp, peg)| {
-                let (p, mark) = (fp.pe, if fp.from.is_some() { "~" } else { "" });
+                // (fund staleness) `°` here and in the table's `peg` cell mean the same thing; the DATE
+                // lives only on this line, because a per-row date in a fixed-width column would cost
+                // more width than the fact is worth.
+                let mark = format!(
+                    "{}{}",
+                    if fp.from.is_some() { "~" } else { "" },
+                    if fp.as_of.is_some() { "°" } else { "" }
+                );
+                let p = fp.pe;
                 match (peg, bar) {
                     (Some(y), Some(b)) if *y < b => format!("{t} {p:.0}{mark} (PEG {:.2} — cut)", 100.0 / y),
                     (Some(y), _) => format!("{t} {p:.0}{mark} (PEG {:.2})", 100.0 / y),
@@ -638,14 +648,24 @@ fn fund_pe_line(fund_pe: &picks::FundPeMap, quotes: &[core::Quote], tuning: &con
             .iter()
             .filter_map(|(t, fp, _)| fp.from.as_ref().map(|s| format!("{t}←{s}")))
             .collect();
-        match sources.is_empty() {
-            true => line,
-            false => format!(
+        let stale: Vec<String> =
+            rows.iter().filter_map(|(t, fp, _)| fp.as_of.map(|d| format!("{t} {d}"))).collect();
+        let mut line = line;
+        if !sources.is_empty() {
+            line = format!(
                 "{line}\n  ~ = no equity book of its own (swap-based); P/E borrowed from a physical fund on \
                  the same index — matched by name, not measured: {}",
                 sources.join(", ")
-            ),
+            );
         }
+        if !stale.is_empty() {
+            line = format!(
+                "{line}\n  ° = served from cache, not fetched this run (as-of date shown); refetched daily, \
+                 dropped past 3 days: {}",
+                stale.join(", ")
+            );
+        }
+        line
     })
 }
 
@@ -1403,8 +1423,12 @@ pub async fn run(args: Vec<String>) {
         let (holdings, mix) = fetch::yahoo_top_holdings(&client, &syms).await;
         (holdings, mix, syms)
     };
-    let mut fund_pe: picks::FundPeMap =
-        mix.iter().filter_map(|(t, (_, _, pe))| pe.map(|p| (t.clone(), picks::FundPe::from(p)))).collect();
+    let mut fund_pe: picks::FundPeMap = mix
+        .iter()
+        .filter_map(|(t, (_, _, pe, as_of))| {
+            pe.map(|p| (t.clone(), picks::FundPe { as_of: *as_of, ..picks::FundPe::from(p) }))
+        })
+        .collect();
     // The fetch above keeps ONE venue per fund name, but the ETF table shows every listing (only
     // crypto twins are collapsed upstream, in `dedup_currency_twins`) and the universe is Xetra +
     // Euronext + Lisbon, so a UCITS fund routinely appears two or three times. Propagate each fetched
@@ -2904,7 +2928,12 @@ mod tests {
         let mut m: HashMap<String, fetch::FundMix> = HashMap::new();
         m.insert(
             "TECH.L".into(),
-            (vec![("Technology".into(), 0.99), ("Communication Services".into(), 0.01)], Some((1.0, 0.0)), None),
+            (
+                vec![("Technology".into(), 0.99), ("Communication Services".into(), 0.01)],
+                Some((1.0, 0.0)),
+                None,
+                None,
+            ),
         );
         m.insert(
             "MIXED.DE".into(),
@@ -2912,9 +2941,10 @@ mod tests {
                 vec![("Financial Services".into(), 0.40), ("Industrials".into(), 0.30), ("Energy".into(), 0.20)],
                 Some((0.60, 0.40)),
                 None,
+                None,
             ),
         );
-        m.insert("NOSECTORS.L".into(), (Vec::new(), Some((1.0, 0.0)), None)); // silent
+        m.insert("NOSECTORS.L".into(), (Vec::new(), Some((1.0, 0.0)), None, None)); // silent
         let lines = sector_tilt_lines(&m);
         assert_eq!(lines.len(), 2);
         assert!(lines[0].starts_with("  TECH.L") && lines[0].contains("Technology 99% · Communication Services 1%"));
@@ -3503,11 +3533,22 @@ mod tests {
         // (#37 funds) a BORROWED P/E must never read like a measured one: `~` on the value, and the
         // source spelled out. This is the only signal you get that a number was inferred by a name
         // match — and it can cut the fund, so it has to survive any reformatting of this line.
-        pe.insert("DEAR.L".into(), picks::FundPe { pe: 25.0, from: Some("TWIN.L".into()) });
+        pe.insert("DEAR.L".into(), picks::FundPe { pe: 25.0, from: Some("TWIN.L".into()), as_of: None });
         let line = fund_pe_line(&pe, &quotes, &on).unwrap();
         assert!(line.contains("DEAR.L 25~ (PEG 2.50 — cut)"), "borrowed value marked in place: {line}");
         assert!(line.contains("DEAR.L←TWIN.L"), "and the source named: {line}");
         assert!(!line.contains("CHEAP.L 4~"), "a measured value is never marked: {line}");
+
+        // (fund staleness) a CACHE-SERVED P/E carries `°` plus its as-of date. It acts exactly like a
+        // fetched one — it can cut a fund — so the age has to be on the line, not inferable only from
+        // the fact that Yahoo happened to be down. The two marks are independent and can co-occur.
+        let d = chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap();
+        pe.insert("CHEAP.L".into(), picks::FundPe { pe: 4.0, from: None, as_of: Some(d) });
+        let line = fund_pe_line(&pe, &quotes, &on).unwrap();
+        assert!(line.contains("CHEAP.L 4° (PEG 0.40)"), "cache-served value marked in place: {line}");
+        assert!(line.contains("CHEAP.L 2026-08-13"), "and dated: {line}");
+        assert!(!line.contains("CHEAP.L 4~"), "cached is not borrowed: {line}");
+        assert!(line.contains("DEAR.L 25~ "), "a borrowed-but-fresh value keeps only its own mark: {line}");
     }
 
     /// (#37 funds) THE GATE ON THE INDEX-TWIN MATCHER. It decides that two differently-named funds hold
