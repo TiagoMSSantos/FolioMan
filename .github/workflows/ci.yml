@@ -304,8 +304,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests]
     # 20 is the CEILING THE GATE IS DESIGNED AROUND, not a guess at how long it takes. Measured
-    # capacity at that ceiling was 24 mutants and is ~13 now that the crate has grown (see the BUDGET
-    # block for both measurements); anything larger is sharded down rather than run into the timeout.
+    # capacity at that ceiling has fallen with every crate growth — 24 mutants, then ~13, now ~7 (see
+    # the BUDGET block for all three); anything larger is sharded down rather than run into the timeout.
     #
     # This should no longer be reachable: the step wraps cargo-mutants in its own shorter `timeout`,
     # so an overrun ends the run cleanly and still reports what it graded. Reaching THIS limit now
@@ -334,8 +334,9 @@ jobs:
           # 45-minute run on 038a4b1: 33 mutants x 86s is 47 minutes of build alone.
           #
           # Keep the override, but do not trust its magnitude: on a 4-vCPU runner an incremental
-          # rebuild costs 65.7s, not 25s (measured, see the BUDGET block). Incremental IS working;
-          # the local figure simply does not transfer.
+          # rebuild costs 166s as of the latest measurement, not 25s (see the BUDGET block for the
+          # series). Incremental IS working; the local figure simply does not transfer, and the gap
+          # widens as the crate grows.
           #
           # Safe here specifically because the trees are throwaway. An interrupted run can leave a
           # corrupted incremental cache (`rust-lld: undefined hidden symbol: anon...llvm...` on the
@@ -385,39 +386,40 @@ jobs:
           # Round-robin so the slice spreads across every file the diff touched — `slice` sharding
           # would spend the whole budget on whichever file sorts first and never reach the rest.
           #
-          # WHERE BUDGET COMES FROM — MEASURED ON A RUNNER, not derived. Two earlier rounds guessed
-          # this number from local timings and were cancelled; the numbers below are read off the
-          # mutants.out artifact of run 31328239009, which survived its own cancellation intact.
+          # WHERE BUDGET COMES FROM — MEASURED ON A RUNNER, not derived. Two early rounds guessed it
+          # from local timings and were cancelled. Read the Build/Test phase durations out of
+          # mutants.out/outcomes.json on the run's artifact; every number below came from there.
           #
-          #   setup before this step      11s        (job 18:09:40 -> step 18:09:52)
-          #   COLD build per tree        423s        first mutant in each of the 2 trees
-          #   build per mutant            65.7s      mean of the other 22 Build phases
-          #   test per mutant              1.3s      mean of 24 Test phases
+          # CURRENT, run 31946331154 (the fund-facts push, 258 mutants sharded to 12):
           #
-          # RE-MEASURED (run 31934809294, the EU-listing push): the shard was 14 and only 13 finished
-          # inside the 17m wrapper. Per-mutant work was unchanged at ~66s (the log prints `61s build +
-          # 5s test`), so 13 * 66 / 2 workers = 429s of graded work, leaving ~590s of COLD START —
-          # against the 423s above. Nothing regressed: the crate grew by the whole EU-listing feature
-          # and the cold build grew with it. THAT is what this constant actually tracks, so re-read it
-          # whenever a feature-sized diff lands, not only when this block is edited. Capacity at 17m is
-          # now ~13, which is why BUDGET is 12 and not the 24 the model above would still predict.
+          #   COLD build per tree     417s, 556s   first mutant in each of the 2 trees
+          #   build per mutant        166s         mean of 141/166/171/175/177
+          #   test per mutant           2.9s
           #
-          # So the run is 98.6% compiler (2291s of build against 32s of test) and the cold start
-          # alone is a third of the window. Work per mutant is 67s across 2 workers = 33.5s of wall
-          # clock, and the cold start covers the first mutant in each tree:
-          #   mutants(T) = 2 + (T - 423) / 33.5
-          #   mutants(1197s) = 25.1        actually graded: 24
-          # 12 is what fits the step's own 17-minute `timeout` at the RE-MEASURED cold start below:
-          #   590 + 12 * 33 = 986s        against the 1020s the wrapper allows
-          # (at the stale 423s figure the same arithmetic said 16, and 16 is what overran.)
+          # THE TREND IS THE POINT. Build per mutant is the term that moves, and it only goes up as the
+          # crate grows: 65.7s (run 31328239009) -> ~66s (run 31934809294) -> 166s here. Cold start is
+          # comparatively stable by contrast: 423s -> ~590s -> 417/556s. So re-read this whenever a
+          # feature-sized diff lands, not only when this block is edited — a stale build figure is what
+          # made each of the last two rounds overrun.
           #
-          # Re-measure from the artifact after any change here — that habit is the fix, the constant
-          # is only its output. Read Build/Test phase durations out of mutants.out/outcomes.json.
+          # The run is 98.3% compiler (1804s of build against 20s of test) and the cold start alone is
+          # over half the window. Work per mutant is 166s across 2 workers = 83s of wall clock, and the
+          # two cold builds run in parallel, so the slower one covers the first mutant in each tree:
+          #   mutants(T) = 2 + (T - 556) / 83
+          #   mutants(1020s) = 7.6         actually graded: 7
+          # 6 is what fits the step's own 17-minute `timeout` with room to finish cleanly:
+          #   556 + 4 * 83 = 888s          against the 1020s the wrapper allows
+          # At 12 the wrapper fires instead. That still yields a verdict — the SIGINT below is what buys
+          # that — but it grades one more mutant at the price of two builds interrupted mid-flight.
+          #
+          # CAVEAT, recorded on purpose: the sample above is FIVE warm builds from ONE run, because that
+          # run was cut off at 7. Treat 166s as a floor with wide error bars and re-measure from a run
+          # that completes before trusting this model to two significant figures.
           #
           # An ARRAY, not a string: an unquoted "$SHARD" would need word-splitting to become three
           # arguments, and quoting it would pass one empty argument in the common case where no shard
           # is wanted. `"${SHARD[@]}"` expands to nothing at all when empty, and needs no splitting.
-          BUDGET=12
+          BUDGET=6
           SHARD=()
           if [ "${n}" -gt "${BUDGET}" ]; then
             shards=$(( (n + BUDGET - 1) / BUDGET ))
