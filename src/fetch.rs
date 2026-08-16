@@ -2506,18 +2506,27 @@ static BF_META_NAMES: std::sync::OnceLock<Vec<(String, BfMeta)>> = std::sync::On
 /// — `bf_meta` must NOT read this, or a factless row would start shadowing the name fallback.
 static BF_ROW_NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
 
-/// Yahoo-name -> BF value via unique prefix (Yahoo drops BF's share-class suffix: "VanEck Semiconductor
-/// UCITS ETF" vs BF's "… - USD Acc"). None unless EXACTLY one BF fund name starts with the quote's name.
-fn bf_by_name<T: Clone>(list: &std::sync::OnceLock<Vec<(String, T)>>, name: &str) -> Option<T> {
+/// Yahoo-name -> BF value via name prefix (Yahoo drops BF's share-class suffix: "VanEck Semiconductor
+/// UCITS ETF" vs BF's "… - USD Acc"). None unless every BF row starting with that name AGREES.
+///
+/// (USE/REPL) Agreement, not uniqueness. Demanding exactly one hit refused the answer whenever a fund
+/// was listed at more than one venue — the GBP and USD lines of one fund share a prefix, and both carry
+/// the identical Acc/Swap/benchmark facts, so there was never anything to choose between. That refusal
+/// is what the `AmbiguousName` bucket of `bf_meta_miss_report` counts, and it is the only one of its
+/// four causes this codebase can do anything about.
+///
+/// Agreement keeps the guarantee the uniqueness rule was there for, which is that no fund is ever told
+/// another's facts: ties that disagree still return None, so a genuine Acc/Dist pair (different by
+/// definition in `use_of`) stays `n/a` rather than being guessed at. It also self-polices the numeric
+/// callers — two share classes rarely carry the same AUM to the unit, so those ties simply disagree.
+fn bf_by_name<T: Clone + PartialEq>(list: &std::sync::OnceLock<Vec<(String, T)>>, name: &str) -> Option<T> {
     let n = name.trim().to_lowercase();
     if n.len() < 10 {
         return None; // too short to identify one fund
     }
-    let mut hits = list.get()?.iter().filter(|(bf, _)| bf.starts_with(&n));
-    match (hits.next(), hits.next()) {
-        (Some((_, v)), None) => Some(v.clone()),
-        _ => None,
-    }
+    let mut hits = list.get()?.iter().filter(|(bf, _)| bf.starts_with(&n)).map(|(_, v)| v);
+    let first = hits.next()?;
+    hits.all(|v| v == first).then(|| first.clone())
 }
 
 fn bf_ter_by_name(name: &str) -> Option<f64> {
@@ -2541,6 +2550,11 @@ static YQ_AUTH: std::sync::OnceLock<Option<(String, String)>> = std::sync::OnceL
 /// because every other provider here is happy with the short form and SEC prefers a contact UA.
 const YAHOO_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+/// The other half of looking like a browser. Yahoo hands out the `A1`/`A3` session cookies only to a
+/// request carrying an HTML `Accept`; with this omitted the same URL returns `dflow` alone and the
+/// crumb call 401s. Sent on every Yahoo request so all three stay indistinguishable from each other.
+const YAHOO_ACCEPT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 /// UNGRADEABLE, hence the skip: two live GETs against hardcoded Yahoo hosts. The one branch a test
 /// could pin is the `offline()` guard, and pinning it needs `FOLIOMAN_OFFLINE` set for the whole
 /// process — which a `--lib` test cannot do without `std::env::set_var`, and one of those invalidates
@@ -2563,27 +2577,36 @@ async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
         return v.clone();
     }
     let v: Option<(String, String)> = async {
-        // Two hosts, in order, first non-empty cookie wins. fc.yahoo.com answers 404 but historically SET
-        // the session cookie; it has since stopped sending `set-cookie` at all, which made `cookie` empty
-        // and returned None on EVERY run — and because this is the sole crumb seam, that one dead handshake
-        // silently took out fund P/E, the TER/AUM fallback, sector weightings and the stock/bond split
-        // together. finance.yahoo.com still sets one. Keep fc first: it is the cheaper 404 when it works.
+        // The session cookie now comes from query2 itself — the SAME host that issues the crumb — and it
+        // is handed out only to a request that looks like a browser: a real `User-Agent` AND an HTML
+        // `Accept`. Both halves are load-bearing, and each was verified against the live host:
         //
-        // Either way, keep the name=value pairs and drop the attributes (Path/Expires/HttpOnly).
-        let mut cookie = String::new();
-        for host in ["https://fc.yahoo.com", "https://finance.yahoo.com"] {
-            let Ok(resp) = client.get(host).header("User-Agent", YAHOO_UA).send().await else { continue };
-            cookie = resp
-                .headers()
-                .get_all("set-cookie")
-                .iter()
-                .filter_map(|h| h.to_str().ok()?.split(';').next().map(str::to_string))
-                .collect::<Vec<_>>()
-                .join("; ");
-            if !cookie.is_empty() {
-                break;
-            }
-        }
+        //   fc.yahoo.com          -> `by` only                  -> getcrumb 401
+        //   finance.yahoo.com     -> `by`, `GUCS`, `dflow`      -> getcrumb 401
+        //   query2.finance...     -> A1, A3, A1S (+ dflow)      -> getcrumb 200
+        //
+        // and dropping the `Accept` from that last one degrades it to `dflow` alone, back to 401.
+        //
+        // fc.yahoo.com is what this used to call. It answered 404 but SET the session cookie; it has
+        // since stopped sending `set-cookie` at all, so `cookie` was empty and this returned None on
+        // every run, forever. That mattered far past fund P/E: this is the sole crumb seam, so one dead
+        // request took out the TER/AUM fallback, sector weightings and the stock/bond split with it.
+        //
+        // Keep the name=value pairs, drop the attributes (Path/Expires/HttpOnly/SameSite).
+        let resp = client
+            .get("https://query2.finance.yahoo.com")
+            .header("User-Agent", YAHOO_UA)
+            .header("Accept", YAHOO_ACCEPT)
+            .send()
+            .await
+            .ok()?;
+        let cookie = resp
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|h| h.to_str().ok()?.split(';').next().map(str::to_string))
+            .collect::<Vec<_>>()
+            .join("; ");
         if cookie.is_empty() {
             return None;
         }
@@ -2591,6 +2614,7 @@ async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
             .get("https://query2.finance.yahoo.com/v1/test/getcrumb")
             .header("Cookie", &cookie)
             .header("User-Agent", YAHOO_UA)
+            .header("Accept", YAHOO_ACCEPT)
             .send()
             .await
             .ok()?;
@@ -2728,7 +2752,7 @@ async fn yahoo_fund_facts_fill(
         // the firewall: the per-field `miss_ter`/`miss_aum` guards below already refuse to overwrite a
         // BF answer, so deleting this branch changes no returned value — only the number of symbols
         // that reach the fetch list. Killing it means observing that a fully-answered fund is never
-        // fetched, and `yahoo_crumb` hardcodes `https://fc.yahoo.com` (no `Urls`, so `stub_urls`
+        // fetched, and `yahoo_crumb` hardcodes `https://query2.finance.yahoo.com` (no `Urls`, so `stub_urls`
         // cannot redirect it), which leaves no way to count requests without a live socket.
         if !miss_ter && !miss_aum {
             continue; // BF already answered — Yahoo is only consulted for the holes
@@ -2760,40 +2784,27 @@ async fn yahoo_fund_facts_fill(
     }
     // one handshake up front so a dead crumb skips the whole batch instead of 400 doomed calls;
     // the per-symbol seam below reuses it via the in-process YQ_AUTH cache.
-    if yahoo_crumb(client).await.is_none() {
-        // ...and when it IS dead, fall through to justETF rather than giving up on the holes entirely.
-        // This is no longer a rare degradation: `fc.yahoo.com` stopped setting the session cookie, so
-        // this branch is the normal path, and returning here is why a live run reported 1433 funds with
-        // no TER at all.
+    let crumb_alive = yahoo_crumb(client).await.is_some();
+    if !crumb_alive {
         eprintln!("fetch: Yahoo crumb handshake failed — filling fund facts from justETF instead");
-        let filled = justetf_fund_facts_fill(client, urls, &todo, isin_of, &mut cache, today).await;
-        for (sym, ter, aum) in filled {
-            if !bf_ter.contains_key(&sym) {
-                if let Some(t) = ter {
-                    ter_map.entry(sym.clone()).or_insert(t);
-                }
-            }
-            if !bf_aum.contains_key(&sym) {
-                if let Some(a) = aum {
-                    aum_map.entry(sym.clone()).or_insert(a);
-                }
-            }
-        }
-        write_fund_facts_cache(&cache);
-        return (ter_map, aum_map);
     }
-    let fetched: Vec<Option<(String, Option<f64>, Option<f64>)>> = stream::iter(todo)
-        .map(|sym| async move {
-            let (ter, aum) = fund_facts_live(client, &sym).await.ok()?;
-            Some((sym, ter, aum))
-        })
-        .buffer_unordered(fetch_concurrency())
-        .collect()
-        .await;
+    let queried = todo.clone(); // the justETF pass at the bottom needs this list after the stream eats it
+    let fetched: Vec<Option<(String, Option<f64>, Option<f64>)>> = if crumb_alive {
+        stream::iter(todo)
+            .map(|sym| async move {
+                let (ter, aum) = fund_facts_live(client, &sym).await.ok()?;
+                Some((sym, ter, aum))
+            })
+            .buffer_unordered(fetch_concurrency())
+            .collect()
+            .await
+    } else {
+        Vec::new() // nothing to ask Yahoo with; the justETF pass below carries the whole batch
+    };
     // DELIBERATELY UNPINNED (mutation audit, round 5), all three mutants on the two lines below: the
     // `||`, and both replacements for the `+=`. `got` is read by one `eprintln!` and nothing else, and
     // this whole block is unreachable without a LIVE Yahoo handshake — the `yahoo_crumb` call above
-    // hardcodes `https://fc.yahoo.com` and takes no `Urls`, so `stub_urls` cannot redirect it and a
+    // hardcodes `https://query2.finance.yahoo.com` and takes no `Urls`, so `stub_urls` cannot redirect it and a
     // unit test can only make it fail closed (`YQ_AUTH.set(None)`), which returns before here.
     // Killing them needs a real socket, which no test in this binary may open. The cache-served path
     // above it — the half that decides actual returned values — is pinned.
@@ -2810,7 +2821,37 @@ async fn yahoo_fund_facts_fill(
         }
         cache.insert(sym, (today.to_string(), ter, aum)); // both-None cached too: one retry a day, not one per run
     }
-    eprintln!("fetch: Yahoo fund-facts fallback filled {got} non-BF funds (cache: {})", cache.len());
+    if crumb_alive {
+        eprintln!("fetch: Yahoo fund-facts fallback filled {got} non-BF funds (cache: {})", cache.len());
+    }
+
+    // (TER/AUM) justETF mops up whatever still has no TER — the field that actually reads n/a. This used
+    // to run ONLY when the handshake was dead, an either/or that made it unreachable the moment the
+    // handshake was repaired, so the holes it exists to fill just stayed empty.
+    //
+    // The split is not arbitrary. Measured over one live batch of 400: Yahoo answered AUM for 220 of
+    // them but a TER for only 65, because its fund coverage is US-centric and this universe is EU UCITS.
+    // justETF is keyless and EU-UCITS-native, so it is the one remaining source for that column.
+    //
+    // Gated on TER alone rather than "any hole": triggering on AUM too would roughly double the page
+    // count for the field Yahoo already serves well. Bounded by `queried`, so it can never exceed the
+    // same BUDGET, and each answer is cached — the holes converge across runs instead of refetching.
+    let residual: Vec<String> =
+        queried.into_iter().filter(|s| !bf_ter.contains_key(s) && !ter_map.contains_key(s)).collect();
+    if !residual.is_empty() {
+        for (sym, ter, aum) in justetf_fund_facts_fill(client, urls, &residual, isin_of, &mut cache, today).await {
+            if !bf_ter.contains_key(&sym) {
+                if let Some(t) = ter {
+                    ter_map.entry(sym.clone()).or_insert(t);
+                }
+            }
+            if !bf_aum.contains_key(&sym) {
+                if let Some(a) = aum {
+                    aum_map.entry(sym.clone()).or_insert(a);
+                }
+            }
+        }
+    }
     write_fund_facts_cache(&cache);
     (ter_map, aum_map)
 }
@@ -2847,7 +2888,13 @@ async fn justetf_fund_facts_fill(
         .await;
     let out: Vec<(String, Option<f64>, Option<f64>)> = fetched.into_iter().flatten().collect();
     for (sym, ter, aum) in &out {
-        cache.insert(sym.clone(), (today.to_string(), *ter, *aum));
+        // Merge with a row THIS RUN already wrote, clobber anything older. Both halves matter, because
+        // this fn now has two callers' worth of work: as Yahoo's mop-up it must not erase the AUM the
+        // Yahoo pass just found with a justETF page that carries only a TER; as Yahoo's replacement
+        // (dead handshake) there is nothing to merge, and resurrecting a month-old value under today's
+        // stamp would make a stale number look freshly confirmed and never expire.
+        let same_run = cache.get(sym).filter(|r| r.0 == today.to_string()).map_or((None, None), |r| (r.1, r.2));
+        cache.insert(sym.clone(), (today.to_string(), ter.or(same_run.0), aum.or(same_run.1)));
     }
     // Just the page count. A "how many carried a usable field" refinement would need its own `||`
     // over data no caller reads — a branch that exists only to shape one log line.
@@ -3017,6 +3064,7 @@ async fn quote_summary_json(client: &Client, sym: &str, modules: &str) -> Result
         .get(&url)
         .header("Cookie", &cookie)
         .header("User-Agent", YAHOO_UA)
+        .header("Accept", YAHOO_ACCEPT)
         .send()
         .await
         .map_err(|e| format!("transport error: {e}"))?;
@@ -3217,9 +3265,12 @@ enum BfMetaMiss {
     /// No BF row under this name at all: a venue-list / regulatory (FIRDS) extra, which `fetch_universe`
     /// documents as factless by design. A Stockholm-only fund is not on Börse Frankfurt; no code fixes that.
     NotOnBf,
-    /// BF holds the row and the lookup REFUSES it — 2+ BF names share this prefix (or the probe is under
-    /// `bf_by_name`'s 10-byte floor), so its uniqueness rule returns None rather than guess between share
-    /// classes. Data in hand, discarded. The one bucket where a fix needs no new data source.
+    /// BF holds the row and the lookup REFUSES it — 2+ BF names share this prefix and DISAGREE about the
+    /// facts (or the probe is under `bf_by_name`'s 10-byte floor), so it returns None rather than guess
+    /// between share classes. Data in hand, discarded. The one bucket where a fix needs no new data
+    /// source, and the reason `bf_by_name` was loosened from uniqueness to agreement: the ties that
+    /// agreed were the same fund listed twice, and refusing those was pure loss. What is left here is
+    /// the genuinely undecidable remainder — an Acc and a Dist class cannot both be right.
     AmbiguousName,
     /// Exactly one BF row matches on a long-enough name, yet it parsed to `BfMeta::default()` — row
     /// present, keyData empty. Detectable only because `BF_ROW_NAMES` keeps what `BF_META_NAMES` drops.
@@ -3238,7 +3289,9 @@ fn bf_meta_miss(ticker: &str, name: &str) -> BfMetaMiss {
         return BfMetaMiss::NoReplField; // BF answered with facts — it just had no replication token
     }
     // count prefix hits the way `bf_by_name` matches (whole name, then the part after " - "), but
-    // COUNTING instead of demanding uniqueness — the count is the whole diagnostic.
+    // COUNTING instead of testing agreement — the count is the whole diagnostic. Reaching here at all
+    // already means `bf_meta` came back factless, so a tie counted below is one `bf_by_name` refused:
+    // agreeing ties resolve and return above, at `NoReplField`.
     let probe = |n: &str| -> Option<(usize, usize)> {
         let n = n.trim().to_lowercase();
         let hits = BF_ROW_NAMES.get()?.iter().filter(|bf| bf.starts_with(&n)).count();
@@ -3633,6 +3686,15 @@ pub async fn fetch_xetra_etfs(
         .filter_map(|(sym, _, _, _, src)| src.as_ref().map(|isin| (isin.clone(), sym.clone())))
         .collect();
     let fresh_n = fresh.len();
+    // (TER/AUM) symbol -> ISIN, the key justETF needs — seeded from the PERSISTENT cache, then topped up
+    // with this run's fresh resolutions below.
+    //
+    // The persistent half is the whole point. Building this from `src` alone made it a map of what was
+    // resolved FOR THE FIRST TIME this run, and ISIN->symbol is cached forever precisely because it never
+    // changes — so on any warm run `fresh` is empty, `isin_of` was empty, and justETF could not key a
+    // single lookup. It reported "answered for 0 non-BF funds" with nothing wrong at either end.
+    let mut isin_of: HashMap<String, String> =
+        isin_cache.iter().map(|(isin, sym)| (sym.clone(), isin.clone())).collect();
     if !fresh.is_empty() {
         let mut isin_cache = isin_cache;
         isin_cache.extend(fresh);
@@ -3645,9 +3707,6 @@ pub async fn fetch_xetra_etfs(
     let mut ter_map: HashMap<String, f64> = HashMap::new();
     let mut aum_map: HashMap<String, f64> = HashMap::new();
     let mut meta_map: HashMap<String, BfMeta> = HashMap::new();
-    // (TER/AUM) symbol -> ISIN, the key justETF needs. Built here because this is the one place the two
-    // identifiers are side by side; every later caller has only the symbol.
-    let mut isin_of: HashMap<String, String> = HashMap::new();
     let tickers: Vec<String> = resolved
         .into_iter()
         .map(|(sym, ter, aum, meta, src)| {
@@ -4652,8 +4711,13 @@ mod tests {
         assert!(!no_ter_parsed(0, ""), "BF sent nothing at all; that is the OTHER diagnostic's job");
     }
 
-    /// Name-keyed TER fallback: unique fund-name prefix hits, ambiguous share-class prefixes and
-    /// too-short names never guess.
+    /// Name-keyed TER fallback: a unique prefix hits, an AGREEING tie hits, a DISAGREEING tie and a
+    /// too-short name never guess.
+    ///
+    /// (USE/REPL) The agreeing-tie case is the rule change, and the Banks pair is why it is safe. Two
+    /// share classes of one fund, listed separately, charging the identical 0.30 — the old uniqueness
+    /// rule saw "2 hits" and returned n/a, which discarded a number both candidates agreed on. The
+    /// hedged S&P pair is the control: same prefix, genuinely different TERs, still refused.
     #[test]
     fn bf_ter_name_lookup() {
         let _ = BF_TER_NAMES.set(vec![
@@ -4669,15 +4733,18 @@ mod tests {
         assert_eq!(bf_ter_by_name(yahoo), None);
         assert_eq!(bf_ter_by_name(yahoo.split_once(" - ").unwrap().1), Some(0.15));
         assert_eq!(bf_ter_by_name("VanEck Semiconductor UCITS ETF"), Some(0.35)); // unique prefix
-        assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF"), None); // 2 share classes -> ambiguous
+        // 2 share classes, SAME TER -> nothing to choose between, so answer instead of refusing
+        assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF"), Some(0.30));
         assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF Dist"), Some(0.30)); // exact class
+        // 2 share classes, DIFFERENT TER (0.15 unhedged vs 0.28 hedged) -> undecidable, still n/a
+        assert_eq!(bf_ter_by_name("Amundi S&P 500 Swap UCITS ETF EUR"), None);
         assert_eq!(bf_ter_by_name("vaneck"), None); // too short
         assert_eq!(bf_ter_by_name("iShares Physical Gold ETC"), None); // not in list
     }
 
     /// (#45) The four causes behind one `REPL n/a`. The point of the split is that only AmbiguousName
-    /// is actionable — BF already holds that row and `bf_by_name`'s uniqueness rule throws it away —
-    /// so a bucket collapsing into NotOnBf would hide a fixable bug behind "upstream has no data".
+    /// is actionable — BF already holds that row and `bf_by_name` throws it away — so a bucket
+    /// collapsing into NotOnBf would hide a fixable bug behind "upstream has no data".
     /// Owns BF_ROW_NAMES/BF_META_NAMES: no other test seeds them, and OnceLock only takes the first set.
     #[test]
     fn bf_meta_miss_buckets() {
@@ -6117,7 +6184,7 @@ mod tests {
     }
 
     /// Seeding `YQ_AUTH` is a HERMETICITY guard, not a shortcut. `yahoo_crumb` hardcodes
-    /// `https://fc.yahoo.com` and takes no `Urls`, so `stub_urls` cannot redirect it, and `offline()`
+    /// `https://query2.finance.yahoo.com` and takes no `Urls`, so `stub_urls` cannot redirect it, and `offline()`
     /// is false in this binary — any symbol reaching the fetch list would open a REAL connection to
     /// Yahoo from a unit test. `YQ_AUTH` is read before that request, so a seeded `None` makes the
     /// handshake fail closed and the function returns whatever the cache already gave it. No other
