@@ -893,10 +893,12 @@ async fn fetch_ratios_sec(
 /// non-US/unknown ticker or when TTM can't be rolled (caller then falls back to the annual EPS).
 async fn sec_ttm_eps(client: &Client, urls: &Urls, ticker: &str) -> Option<f64> {
     use std::sync::atomic::Ordering;
-    // `_ttmeps2`, not `_ttmeps`: the v1 file is a BARE FLOAT with no version field, so every stale roll
-    // already on disk (MNST's 2.73, rolled off a 2010 annual) would be served forever no matter what
-    // this fn learned to reject. A cache bump is the only way the guards below can take effect.
-    let cache = sec_cache_path(&format!("{ticker}_ttmeps2"));
+    // `_ttmeps3`, not `_ttmeps2`, for the same reason v2 replaced v1: the file is a BARE FLOAT with no
+    // version field and no expiry, so a wrong roll already on disk is served forever no matter what this
+    // fn later learns. v1 held stale rolls (MNST's 2.73, off a 2010 annual); v2 holds split-mixed ones
+    // (ORLY's −5.66, see `ttm_eps_from_concept`). A cache bump is the only way a fix here reaches a box
+    // that has already run — and a negative cached EPS is invisible, since the `pe` cell just drops it.
+    let cache = sec_cache_path(&format!("{ticker}_ttmeps3"));
     if let Some(v) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<f64>(&s).ok()) {
         return Some(v); // cache hit -> no network, no budget spend
     }
@@ -941,7 +943,23 @@ fn ttm_eps_from_concept(j: &Value, today: NaiveDate) -> Option<f64> {
         units.keys().filter(|k| k.ends_with("/shares")).min()?.clone()
     };
     let arr = units.get(&key)?.as_array()?;
-    // (start, end) -> (earliest filed, val); de-dupes a period's restatements to its FIRST filing.
+    // (start, end) -> (latest filed, val); de-dupes a period's restatements to its NEWEST filing.
+    //
+    // NEWEST, not first, and a share SPLIT is why. The roll below spans three periods, and a split
+    // restates every prior EPS by its factor — so the legs are only comparable when they all carry the
+    // same share basis, and the newest filing is the only basis all three can share. Keeping the first
+    // filing pinned whichever legs predate the split to the OLD basis and left the rest on the new one,
+    // which does not read as a data error, it reads as a plausible number:
+    //
+    //   ORLY split 15-for-1 on 2025-06-10, mid-roll. FY2025 2.98 (post) + Q1-2026 YTD 0.72 (post)
+    //   - Q1-2025 YTD 9.35 (PRE, first filed 2025-05) = -5.66, which is what the cache held.
+    //
+    // Neither existing guard sees it: the roll is fresh, and |-5.66| is well inside 100x the annual.
+    // A negative EPS then just drops out of the `pe` cell's `> 0.0` filter, so the column reads n/a and
+    // nothing anywhere says why. Any name that split since its oldest comparative filing had this.
+    //
+    // Accounting restatements ride along with the same rule, and that is also correct for a roll: the
+    // restated figure is the one the filer now stands behind.
     let mut periods: std::collections::HashMap<(NaiveDate, NaiveDate), (NaiveDate, f64)> = std::collections::HashMap::new();
     for x in arr {
         let d = |k| x.get(k).and_then(|v| v.as_str()).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
@@ -950,7 +968,7 @@ fn ttm_eps_from_concept(j: &Value, today: NaiveDate) -> Option<f64> {
         periods
             .entry((sd, ed))
             .and_modify(|cur| {
-                if filed < cur.0 {
+                if filed > cur.0 {
                     *cur = (filed, val);
                 }
             })
@@ -2516,6 +2534,13 @@ fn isin_domicile(isin: &str) -> Option<String> {
 /// process, best-effort: a race just repeats the two-request handshake, first `set` wins.
 /// ponytail: endpoints hardcoded — lift into `Urls` only if a test ever needs to stub them.
 static YQ_AUTH: std::sync::OnceLock<Option<(String, String)>> = std::sync::OnceLock::new();
+
+/// A full browser UA, for Yahoo only. The bare `"Mozilla/5.0"` the rest of this file sends is now
+/// enough on its own to get the crumb handshake refused, so the string's realism IS the feature —
+/// do not shorten it. Scoped to the three Yahoo requests rather than the shared `client()` builder,
+/// because every other provider here is happy with the short form and SEC prefers a contact UA.
+const YAHOO_UA: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 /// UNGRADEABLE, hence the skip: two live GETs against hardcoded Yahoo hosts. The one branch a test
 /// could pin is the `offline()` guard, and pinning it needs `FOLIOMAN_OFFLINE` set for the whole
 /// process — which a `--lib` test cannot do without `std::env::set_var`, and one of those invalidates
@@ -2538,22 +2563,34 @@ async fn yahoo_crumb(client: &reqwest::Client) -> Option<(String, String)> {
         return v.clone();
     }
     let v: Option<(String, String)> = async {
-        // fc.yahoo.com answers 404 but SETS the session cookie — keep the pairs, drop the attributes.
-        let resp = client.get("https://fc.yahoo.com").header("User-Agent", "Mozilla/5.0").send().await.ok()?;
-        let cookie = resp
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter_map(|h| h.to_str().ok()?.split(';').next().map(str::to_string))
-            .collect::<Vec<_>>()
-            .join("; ");
+        // Two hosts, in order, first non-empty cookie wins. fc.yahoo.com answers 404 but historically SET
+        // the session cookie; it has since stopped sending `set-cookie` at all, which made `cookie` empty
+        // and returned None on EVERY run — and because this is the sole crumb seam, that one dead handshake
+        // silently took out fund P/E, the TER/AUM fallback, sector weightings and the stock/bond split
+        // together. finance.yahoo.com still sets one. Keep fc first: it is the cheaper 404 when it works.
+        //
+        // Either way, keep the name=value pairs and drop the attributes (Path/Expires/HttpOnly).
+        let mut cookie = String::new();
+        for host in ["https://fc.yahoo.com", "https://finance.yahoo.com"] {
+            let Ok(resp) = client.get(host).header("User-Agent", YAHOO_UA).send().await else { continue };
+            cookie = resp
+                .headers()
+                .get_all("set-cookie")
+                .iter()
+                .filter_map(|h| h.to_str().ok()?.split(';').next().map(str::to_string))
+                .collect::<Vec<_>>()
+                .join("; ");
+            if !cookie.is_empty() {
+                break;
+            }
+        }
         if cookie.is_empty() {
             return None;
         }
         let resp = client
             .get("https://query2.finance.yahoo.com/v1/test/getcrumb")
             .header("Cookie", &cookie)
-            .header("User-Agent", "Mozilla/5.0")
+            .header("User-Agent", YAHOO_UA)
             .send()
             .await
             .ok()?;
@@ -2979,7 +3016,7 @@ async fn quote_summary_json(client: &Client, sym: &str, modules: &str) -> Result
     let resp = client
         .get(&url)
         .header("Cookie", &cookie)
-        .header("User-Agent", "Mozilla/5.0")
+        .header("User-Agent", YAHOO_UA)
         .send()
         .await
         .map_err(|e| format!("transport error: {e}"))?;
@@ -4897,7 +4934,7 @@ mod tests {
 
     /// TTM roll-forward off REAL LITE (Lumentum) SEC data: FY 0.37 + current 9mo-YTD 2.59 − prior 9mo-YTD
     /// −2.72 = 5.68 (vs the stale annual 0.37 that produced the bogus P/E 2319). Restatement duplicates
-    /// de-dupe to the first filing; standalone quarters are ignored (YTD cumulatives drive the roll).
+    /// de-dupe to the newest filing; standalone quarters are ignored (YTD cumulatives drive the roll).
     #[test]
     fn ttm_eps_rollforward() {
         use serde_json::json;
@@ -4927,6 +4964,35 @@ mod tests {
         ]}});
         assert_eq!(ttm_eps_from_concept(&no_prior, today), Some(0.37));
         assert_eq!(ttm_eps_from_concept(&json!({}), today), None); // no units at all -> None
+    }
+
+    /// (split basis) The roll spans three filings, so all three must be quoted in the SAME share basis —
+    /// and after a split only the newest filing of each period is. REAL O'Reilly data: ORLY split 15-for-1
+    /// on 2025-06-10, and de-duping to the first filing left the prior-year leg alone on the pre-split
+    /// basis: 2.98 + 0.72 − 9.35 = −5.66, which is exactly what `.sec_cache/ORLY_ttmeps2.json` held. A
+    /// negative EPS is then dropped by the `pe` cell's `> 0.0` filter, so the column just read n/a.
+    ///
+    /// Neither shipped guard catches this, which is why it needs its own test: the roll is fresh, and
+    /// |−5.66| sits far inside the `100 * annual` sanity band. Only the de-dupe rule decides it.
+    ///
+    /// The two filings of the prior-year period are listed NEWEST FIRST on purpose. Array position and
+    /// filing order disagree, so a rule that kept whatever landed last would still print −5.66 here.
+    #[test]
+    fn ttm_eps_uses_the_newest_filing_so_a_split_cannot_mix_share_bases() {
+        use serde_json::json;
+        let facts = |start: &str, end: &str, val: f64, filed: &str| {
+            json!({"start": start, "end": end, "val": val, "filed": filed, "form": "10-Q"})
+        };
+        let j = json!({"units": {"USD/shares": [
+            facts("2025-01-01", "2025-12-31", 2.98, "2026-02-25"), // FY2025 base, post-split
+            facts("2025-01-01", "2025-03-31", 0.62, "2026-05-06"), // prior Q1 RESTATED post-split (9.35/15)
+            facts("2025-01-01", "2025-03-31", 9.35, "2025-05-07"), // same period as originally filed, PRE-split
+            facts("2026-01-01", "2026-03-31", 0.72, "2026-05-06"), // current Q1 YTD, post-split
+        ]}});
+        let today = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        let ttm = ttm_eps_from_concept(&j, today).expect("the roll must produce a value");
+        assert!((ttm - (2.98 + 0.72 - 0.62)).abs() < 1e-9, "want the post-split 3.08, got {ttm}");
+        assert!(ttm > 0.0, "a positive TTM EPS is what keeps the pe cell from reading n/a");
     }
 
     /// The two guards, each against the REAL payload that motivated it. They are independent: neither
@@ -5620,13 +5686,17 @@ mod tests {
     /// AAPL and GOOGL resolve; every other ticker (`NOSUCH`, `AAA`, `BBB`) is absent on purpose, which
     /// is the non-US path a wide screen takes and must stay a miss.
     ///
-    /// (EU listing) `.eu_listing_cache.json` is seeded here for the SAME reason and with the same
-    /// hazard doubled: `EU_TO_US` is a second `OnceLock`, filled on that same first `sec_cik` call,
-    /// from a file `resolve_eu_listings_serves_its_cache_and_remembers_misses` also owns. Written only
-    /// when ABSENT so it can never clobber that test mid-flight, and its content is deliberately the
-    /// byte-identical `GOOGL -> ABEA.DE` pair that test seeds — so whichever of the file's possible
-    /// states the `OnceLock` happens to catch, the alias under test is in it. That test re-seeds
-    /// instead of deleting on the way out for the same reason.
+    /// (EU listing) `EU_TO_US` is a SECOND `OnceLock` filled on that same first `sec_cik` call, so it
+    /// carries the same hazard — and it is set here DIRECTLY rather than through
+    /// `.eu_listing_cache.json`, which is what closes it. Going through the file made the winner of the
+    /// race depend on the file's content at that instant, and
+    /// `resolve_eu_listings_serves_its_cache_and_remembers_misses` owns that same file. Seeding it only
+    /// when absent could not repair a file left with the WRONG content by anything else on the box (a
+    /// `--in-place` mutants run does exactly that), so `cargo t` failed once and then self-healed —
+    /// an intermittently red gate, which is worse than a plain failure. Setting the lock means every
+    /// caller supplies identical content and who wins stops mattering.
+    ///
+    /// `set` returning Err is the normal case (some earlier test already filled it) and is ignored.
     fn seed_cik_map() {
         let dir = crate::config::data_path(".sec_cache");
         std::fs::create_dir_all(&dir).expect("scratch .sec_cache");
@@ -5635,14 +5705,11 @@ mod tests {
             r#"{"0":{"ticker":"AAPL","cik_str":320193},"1":{"ticker":"GOOGL","cik_str":1652044}}"#,
         )
         .expect("seed cik map");
-        let eu = crate::config::data_path(EU_LISTING_CACHE_PATH);
-        if !eu.exists() {
-            std::fs::write(&eu, EU_CACHE_SEED).expect("seed eu listing cache");
-        }
+        let _ = EU_TO_US.set(invert_eu(&HashMap::from([
+            ("GOOGL".to_string(), "ABEA.DE".to_string()),
+            ("BRK-B".to_string(), String::new()), // a remembered miss: must invert to nothing
+        ])));
     }
-
-    /// The one `.eu_listing_cache.json` content every test in this binary agrees on. See [`seed_cik_map`].
-    const EU_CACHE_SEED: &str = r#"{"GOOGL":"ABEA.DE","BRK-B":""}"#;
 
     /// One canned HTTP/1.1 response on an ephemeral loopback port, accepted exactly once. The SEC
     /// transport pair is two lines of `reqwest` each and had no test at all, which the mutation gate
@@ -5762,7 +5829,7 @@ mod tests {
         let client = Client::builder().no_proxy().build().expect("test client");
 
         // 1. every symbol already known -> the file is served verbatim and nothing is fetched
-        std::fs::write(&path, EU_CACHE_SEED).expect("seed cache");
+        std::fs::write(&path, r#"{"GOOGL":"ABEA.DE","BRK-B":""}"#).expect("seed cache");
         let got = resolve_eu_listings(&client, &urls, &["GOOGL".to_string(), "BRK-B".to_string()]).await;
         assert_eq!(got["GOOGL"], "ABEA.DE");
         assert_eq!(got["BRK-B"], "", "an empty value is a remembered miss, not a cache gap");
@@ -5775,10 +5842,8 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written")).expect("cache json");
         assert_eq!(on_disk["TSLA"], "", "the miss is persisted, so it is never asked again");
         assert_eq!(on_disk["GOOGL"], "ABEA.DE");
-        // Re-seed rather than delete: `sec_cik`'s `EU_TO_US` reads this same file exactly once per
-        // process, and an absent file would freeze that alias map EMPTY for every later test. See
-        // `seed_cik_map`.
-        std::fs::write(&path, EU_CACHE_SEED).expect("restore the shared seed");
+        // Safe to delete again: `seed_cik_map` no longer reads this file, it sets `EU_TO_US` directly.
+        let _ = std::fs::remove_file(&path);
     }
 
     /// Every `Urls` field pointed at ONE loopback stub. Setting all of them is the safety property, not
@@ -6222,7 +6287,7 @@ mod tests {
             // `rev_accel` — so 9.0 must never reach `eps_ttm` below. Inverting that gate would let
             // the TTM roll override the annual EPS for every factor, which is a train-serve skew:
             // the live tilt would score on a number the backtest cannot reconstruct as-of.
-            std::fs::write(sec.join(format!("{t}_ttmeps2.json")), "9.0").expect("seed ttm sidecar");
+            std::fs::write(sec.join(format!("{t}_ttmeps3.json")), "9.0").expect("seed ttm sidecar");
         }
 
         let urls = stub_urls("http://127.0.0.1:1/"); // port 1 is unbound: any stray fetch refuses at once

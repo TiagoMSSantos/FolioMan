@@ -2357,13 +2357,18 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
             }
         }
         "r2" => format!("{:.2}", quote.trend_r2),
-        "abv-ma" => {
-            if quote.above_ma_pct > 0.0 {
-                format!("+{:.0}%", quote.above_ma_pct)
-            } else {
-                "0%".to_string()
-            }
-        }
+        // Signed, because `above_ma_pct` alone cannot say which of three states a row is in: it clamps at
+        // zero (`core::above_long_ma_pct`), so "40% below its own 200wk trend" and "no 200wk history yet"
+        // both used to print an identical `0%`. `below_ma_pct` is the mirror clamp and is already on the
+        // Quote, so all three separate with no new field and no change to the 34 readers of the raw value.
+        //
+        // Both zero = no history (or a degenerate MA). It cannot mean "sitting exactly ON the line":
+        // exact f64 equality with a 1000-session mean is measure-zero.
+        "abv-ma" => match (quote.above_ma_pct, quote.below_ma_pct) {
+            (a, _) if a > 0.0 => format!("+{a:.0}%"),
+            (_, b) if b > 0.0 => format!("-{b:.0}%"),
+            _ => "n/a".to_string(),
+        },
         "pe" if stock_only_na => "—".to_string(),
         "pe" => quote.pe_ratio.map_or("n/a".to_string(), |v| format!("{v:.1}")),
         // (#37) THE one PEG: the number `growth_max_peg` cuts on and `growth_fund_factor: peg_yield`
@@ -5413,8 +5418,14 @@ mod tests {
         assert_eq!(cc("r2", &q, 0.0, None, ""), "0.87");
         q.above_ma_pct = 61.0;
         assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "+61%");
+        // the three states the old single-clamp cell collapsed into one `0%`. `above` wins when both are
+        // set, which no real quote is, but it pins the arm order so the two branches cannot swap silently.
+        q.below_ma_pct = 40.0;
+        assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "+61%", "above must win over a stray below");
         q.above_ma_pct = 0.0;
-        assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "0%");
+        assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "-40%", "below the 200wk trend reads signed, not 0%");
+        q.below_ma_pct = 0.0;
+        assert_eq!(cc("abv-ma", &q, 0.0, None, ""), "n/a", "both clamps at zero = no 200wk history");
         q.age_years = Some(11.0);
         assert_eq!(cc("yrs", &q, 0.0, None, ""), "11.0"); // 1 decimal: "8" for a 7.7y record contradicted its own blank 8Y
         q.intraday = [Some(0.12), Some(-0.34), Some(2.0)];
