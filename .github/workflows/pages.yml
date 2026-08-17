@@ -6,10 +6,18 @@ name: Pages
 # key must never turn a push red — and nothing in ci.yml should have to wait on a ~15-minute network
 # run. The two files share no job, no cache key and no permission set.
 #
-# READ THIS BEFORE ENABLING IT. The repo is private; a Pages site is not. Publishing a private repo's
-# Pages site at all requires GitHub Pro, and even then the SITE IS WORLD-READABLE — restricting it to
-# people with repo access needs Enterprise Cloud. So what ships is exactly three ranked rows, built
-# from `config/web-settings.yaml`, which carries no watchlist, no holdings and no deploy amount.
+# ONE PREREQUISITE, AND IT DOES NOT LIVE IN THIS FILE: the repo's Pages source must be "GitHub
+# Actions" (`build_type: workflow`). Turning Pages on defaults it to "Deploy from a branch" instead,
+# and against a branch source `deploy-pages` dies with a bare `HttpError: Not Found` — a 404 that
+# reads like a missing artifact and is really a missing site. Run 32059047479 spent a full 15-minute
+# fetch to find that out, with every step before the deploy already green. Check it with
+# `gh api repos/OWNER/REPO/pages --jq .build_type` before blaming anything here.
+#
+# The repo is public, so the site is public and standard-runner minutes are free. That is not licence
+# to relax about what ships: `config/settings.yaml` — the real overlay, holding the watchlist, the
+# positions and the monthly deploy amount — is gitignored and is NOT public today, and this page must
+# never become the thing that publishes it. Hence `config/web-settings.yaml`, which carries a column
+# layout and the gate knobs and nothing that says whose portfolio these rows belong to.
 on:
   # Weekday mornings, after the European open has settled. GitHub delays scheduled runs under load
   # and drops them outright on a quiet repo, which is why the page carries its own staleness banner
