@@ -417,12 +417,26 @@ fn is_leveraged(name: &str) -> bool {
 /// Substrings (lowercased) that mark a pooled fund (ETF / UCITS index fund) vs a single-company
 /// stock — plain index-fund longNames all carry one ("...S&P 500 UCITS ETF", "...ETF Trust"),
 /// company names ("Apple Inc.") don't. Used only to SPLIT the equity table, never to gate.
-/// note: name match, no asset-type field exists; tighten the list if a stock ever trips it.
-const ETF_MARKERS: &[&str] = &["etf", "ucits", " index fund", " fund "];
+///
+/// (#77) These three are safe as SUBSTRINGS and stay that way: no English word contains "ucits", and
+/// the other two carry their own space guards. "etf" used to be a fourth entry here and is not, for
+/// the reason spelled out on the token arm below.
+const ETF_MARKERS: &[&str] = &["ucits", " index fund", " fund "];
 
 fn is_etf(name: &str) -> bool {
     let n = name.to_lowercase();
     ETF_MARKERS.iter().any(|m| n.contains(m))
+        // (#77) "etf" is the one marker short enough to fit INSIDE a word, and `contains` duly read
+        // "N-etf-lix" as a fund: Netflix ranked 2# in the live ETF table, judged against
+        // `growth_min_score_etf` — a floor deliberately lowered for baskets that cap around 5.6,
+        // which a single company clears trivially. So match it as a NAME TOKEN, the same rule
+        // `is_commodity_etf` below already uses to keep "Goldman" out of "gold".
+        //
+        // PREFIX rather than equality, because two real families carry the letters with a suffix
+        // fused on: the "ETFS …" issuer names, and the Polish `ETFB*.WA` tickers — which reach here
+        // as their own name, since `backtest_quote` builds `Quote::stub(tk, "", "", tk)`. Equality
+        // would silently drop both back into the stock class.
+        || n.split(|c: char| !c.is_ascii_alphanumeric()).any(|t| t.starts_with("etf"))
 }
 
 /// Substrings marking a PHYSICAL-commodity / precious-metal ETC (checked ETF-scoped only): a
@@ -3327,12 +3341,15 @@ mod tests {
         assert!(!is_commodity(&fund), "'battery' is deliberately in neither list");
         // BACKTEST INERTNESS, the claim the ci-settings receipt rests on. `backtest_quote` builds
         // `Quote::stub(tk, "", "", tk)`: sector None AND name == the ticker. The subtle part is that
-        // `quote_is_etf` falls back to `is_etf(&quote.name)`, a SUBSTRING match — so a ticker that
-        // literally contains "etf" DOES open the fund path (the Polish ETFB*.WA family; 11 such
-        // tickers are in the live pool). It stays inert only because is_commodity token-SPLITS: a
-        // ticker has no commodity token. Swap either match rule and the backtest stops being blind.
+        // `quote_is_etf` falls back to `is_etf(&quote.name)`, whose "etf" arm token-PREFIX-matches —
+        // so a ticker whose first token starts with "etf" DOES open the fund path (the Polish
+        // ETFB*.WA family; 11 such tickers are in the live pool). (#77) That arm was a bare substring
+        // until Netflix classed as a fund; the prefix is what keeps this family on the same side of
+        // the line it was always on. It stays inert only because is_commodity token-splits on
+        // EQUALITY: a ticker has no commodity token. Swap either match rule and the backtest stops
+        // being blind.
         let etfish = Quote::stub("ETFBW20LV.WA", "", "", "ETFBW20LV.WA");
-        assert!(quote_is_etf(&etfish), "substring 'etf' in the ticker opens the fund path");
+        assert!(quote_is_etf(&etfish), "leading 'etf' in the ticker opens the fund path");
         assert!(!is_commodity(&etfish), "...but no commodity TOKEN -> damp x1.0 in the backtest");
         assert!(!is_commodity(&Quote::stub("CF", "", "", "CF")), "sector-less stub, the pool's shape");
     }
@@ -3721,6 +3738,17 @@ mod tests {
     // ETF classifier (splits the equity table only): funds match, single companies don't
     assert!(is_etf("iShares Core S&P 500 UCITS ETF") && is_etf("SPDR S&P 500 ETF Trust"));
     assert!(!is_etf("Apple Inc.") && !is_etf("NVIDIA Corporation"));
+    // (#77) the two arms are independently load-bearing, and each name below reaches only one of
+    // them. "SPDR S&P 500 ETF Trust" above carries NO substring marker (no "ucits", no " fund ") —
+    // it is the token arm alone; the UCITS-only fund here carries no "etf" token — the marker arm
+    // alone. Both must hold, so the `||` cannot collapse to either side.
+    assert!(is_etf("Wealth Invest AKL Othania Stabil UCITS"), "a UCITS fund need not say ETF");
+    // THE RECEIPT: Netflix ranked 2# in the live ETF table because "n-ETF-lix" contains the marker,
+    // and the fund lane judged a single company against the lower basket score floor.
+    assert!(!is_etf("Netflix, Inc."), "'etf' inside a word is not a fund");
+    // ...and the token match is a PREFIX, so the letters may still carry a suffix: this issuer name
+    // and the `ETFB*.WA` tickers (see the backtest-inertness assert) both depend on it.
+    assert!(is_etf("ETFS Physical Gold"), "issuer prefix, not a bare 'etf' token");
     let mut lev = quote(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     lev.name = "GraniteShares 2x Short NVD".into();
     assert!(buy_score(&lev, &tuning).is_none()); // leveraged/inverse product excluded
