@@ -36,6 +36,10 @@ config/settings.yaml
 # screen run-to-run gate state (EXIT-review footer)
 .screen_state.json
 
+# the Pages payload (screen's three #1 rows). Written every run; the site's copy is built on the
+# runner and uploaded as an artifact, so a committed one would only ever be someone's stale local run.
+.screen_web.json
+
 # alert run-to-run market entry state (flip-ping dedup)
 .alert_state
 

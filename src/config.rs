@@ -1198,6 +1198,43 @@ mod tests {
         assert!(s.urls.fundamentals.contains("financialmodelingprep")); // defaulted Urls subfield
     }
 
+    /// (#79) The Pages overlay must MERGE-parse, and must stay private-clean.
+    ///
+    /// It is only ever exercised on a runner, by a scheduled job, against a config that isn't in this
+    /// repo — so a typo in it fails on GitHub with nobody watching, hours after the commit that
+    /// caused it. Parsing it here is the whole point: `Settings` rejects unknown fields, which is what
+    /// catches a mis-nested key (`compute_threads` under `buy_heuristic` is the live example).
+    ///
+    /// The second half is the one that matters more. The repo is private, but a Pages site is
+    /// world-readable, so an overlay that grew a `tickers:` entry or a real `ntfy_topic` would publish
+    /// it. These asserts are that gate, and they are deliberately about ABSENCE — the easiest way for
+    /// a private value to reach the page is for someone to paste their whole settings.yaml in here.
+    #[test]
+    fn web_overlay_parses_merged_and_leaks_nothing() {
+        let base = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml"))
+            .expect("read tests/ci-settings.yaml");
+        let overlay = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config/web-settings.yaml"))
+            .expect("read config/web-settings.yaml");
+        let mut merged: serde_yaml::Value = serde_yaml::from_str(&base).expect("parse the base");
+        merge_yaml(&mut merged, serde_yaml::from_str(&overlay).expect("parse config/web-settings.yaml"));
+        // asked of the merged VALUE, before it is consumed: this is the same check `load` runs, and an
+        // empty `buy_heuristic` would otherwise deserialize clean into the code defaults and rank a
+        // plausible-looking table off an unconfigured heuristic.
+        assert!(gates_configured(&merged), "the page must inherit the tuned gates");
+        let s: Settings = serde_yaml::from_value(merged).expect("the merged Pages config must parse");
+
+        // nothing that says WHOSE screen this is
+        assert!(s.tickers.is_empty(), "a pin publishes a name purely because someone watches it");
+        assert!(s.sectors.is_empty(), "the page shows the unfiltered ranking");
+        assert_eq!(s.monthly_deploy_eur, 0.0, "how much is being invested is nobody's business");
+        assert_eq!(s.ntfy_topic, "ci-smoke-tests-unused", "the base dummy — never a real topic");
+
+        // the display shape the page promises: an explicit column list, not the built-in default
+        assert!(s.widths.columns.len() > 20, "the page publishes the wide terminal layout");
+        assert!(s.widths.columns.iter().any(|c| c == "ter"), "the ETF lane needs its own columns");
+        assert!(s.widths.name_etf > 0, "the ETF lane's own NAME width, same as the terminal's");
+    }
+
     /// Value-pin for the RANKING-LIVE tilt knobs. The scoring pins (r59/r67) guard the CODE defaults
     /// (tilt off) and the drift tripwire treats this fixture as its BASELINE, so an edit to these
     /// values in tests/ci-settings.yaml is the one path that changes live ranks with nothing

@@ -1,0 +1,109 @@
+name: Pages
+
+# Publish `screen`'s three #1 rows (stocks / ETFs / crypto) to the repo's GitHub Pages site.
+#
+# SEPARATE FROM ci.yml ON PURPOSE. Nothing here gates a commit — a throttled fetch or a missing API
+# key must never turn a push red — and nothing in ci.yml should have to wait on a ~15-minute network
+# run. The two files share no job, no cache key and no permission set.
+#
+# READ THIS BEFORE ENABLING IT. The repo is private; a Pages site is not. Publishing a private repo's
+# Pages site at all requires GitHub Pro, and even then the SITE IS WORLD-READABLE — restricting it to
+# people with repo access needs Enterprise Cloud. So what ships is exactly three ranked rows, built
+# from `config/web-settings.yaml`, which carries no watchlist, no holdings and no deploy amount.
+on:
+  # Weekday mornings, after the European open has settled. GitHub delays scheduled runs under load
+  # and drops them outright on a quiet repo, which is why the page carries its own staleness banner
+  # rather than assuming this fired.
+  schedule:
+    - cron: "30 5 * * 1-5"
+  workflow_dispatch: {}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+# Least privilege, plus exactly what deploy-pages needs: `pages: write` to publish and `id-token:
+# write` for the OIDC token it trades for a deployment. `contents: read` is the checkout.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and NEVER cancel one in flight: a half-finished Pages deployment is how a
+# site ends up serving a partial artifact. A superseded run waits its turn instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # ~2 min build + a full-universe fetch that measures ~5 min warm; 45 leaves room for a bad
+    # throttling day without letting a wedged socket burn the 6-hour default.
+    timeout-minutes: 45
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+
+      # The fetch caches, restored from the previous run. This is not a nicety: `resolve_eu_listings`
+      # alone is documented at ~4 minutes cold, and the SEC facts cache is append-only history that
+      # never needs refetching. Keyed by date so each day writes its own entry, with a prefix
+      # restore-key so today warms from yesterday.
+      #
+      # `.long_history_cache.json` is deliberately NOT here — 138 MB, and backtest-only.
+      - name: Restore fetch caches
+        uses: actions/cache@v6
+        with:
+          path: |
+            .sec_cache
+            .isin_cache.json
+            .venue_isins.json
+            .regulatory_isins.json
+            .fund_facts_cache.json
+            .holdings_cache.json
+            .eu_listing_cache.json
+          key: folioman-fetch-${{ github.run_id }}
+          restore-keys: folioman-fetch-
+
+      - name: Build
+        run: cargo build --release --locked
+
+      # The run itself. FMP_API_KEY reaches it through `env:` and nothing else — never an argument,
+      # never echoed — and it is OPTIONAL: without it the value/quality tilts go neutral, which
+      # empties the `#` flag and some columns rather than failing.
+      - name: Screen
+        env:
+          # ABSOLUTE, deliberately. `data_path` anchors the caches and the payload on the config's
+          # grandparent directory, and a relative "config/web-settings.yaml" has an EMPTY grandparent
+          # — it would fall through to anchoring on tests/ci-settings.yaml instead. Same directory
+          # today, by luck; naming it outright is what keeps it so.
+          FOLIOMAN_CONFIG: ${{ github.workspace }}/config/web-settings.yaml
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+        run: ./target/release/folioman screen
+
+      # Fail HERE, before the deploy, when the run came back empty. Pages keeps serving the last
+      # successful deployment, so a throttled morning leaves yesterday's page up — which the page's
+      # own staleness banner then labels — instead of publishing three empty tables. That is the
+      # whole fallback: no last-good store to maintain, because not deploying IS the fallback.
+      - name: Validate the payload
+        run: |
+          test -f .screen_web.json || { echo "screen wrote no payload"; exit 1; }
+          jq -e '(.stocks | length) + (.etfs | length) + (.crypto | length) > 0' .screen_web.json \
+            > /dev/null || { echo "every lane came back empty — not deploying over a good page"; exit 1; }
+          jq -r '"generated \(.generated): stocks \(.stocks|length) etfs \(.etfs|length) crypto \(.crypto|length) cells"' .screen_web.json
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp web/index.html _site/index.html
+          cp .screen_web.json _site/data.json
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v5

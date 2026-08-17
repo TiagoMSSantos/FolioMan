@@ -2558,6 +2558,98 @@ fn earns_cache_mark(quote: &Quote, cols: &[&ColSpec], tuning: &BuyHeuristic, fun
         && fund_peg_yield(quote, tuning, fund_pe).is_some()
 }
 
+/// (#79) The RANK CELL of one printed row: its position, then the display flags it earned.
+///
+/// Lifted out of [`print_picks`] so the web payload can build the identical cell — `print_picks` is
+/// `#[mutants::skip]`ped for being `println!` end to end, and a second copy of this in the payload
+/// builder is exactly how a page starts disagreeing with the terminal it claims to mirror.
+///
+/// Order is load-bearing: it is what a reader scans, and the legend below lists the flags in the same
+/// sequence. Flags on the RANK cell rather than the name, so name truncation can never eat them.
+fn rank_mark(idx: usize, quote: &Quote, pinned: &HashSet<&str>, owned: &Owned, tuning: &BuyHeuristic) -> String {
+    let star = if pinned.contains(quote.ticker.as_str()) { "*" } else { "" }; // * = a pinned (watchlist) name
+    // # = the score used LIVE fundamentals (trailing P/E, ROE, and/or the as-of fund_factor when the
+    // growth_fund tilt is on), not price-only — only equities with an FMP key populate these, so on the
+    // wide screen it flags the few enriched rows (the pins).
+    let enriched = if quote.pe_ratio.is_some() || quote.roe.is_some() || quote.expense_ratio.is_some() || quote.fund_factor.is_some() { "#" } else { "" };
+    // ! = LATE-CYCLE: the overextension brake is FLOORED for this row (price >= growth_overext_cap %
+    // above its 200wk SMA — e.g. WDC at +486% vs cap 100). The score is already maximally docked, but
+    // past the cap the column can't dock MORE, so a 5x-above-trend name prints like a 1x one without
+    // this flag. Display-only: read it as "rank earned on a cycle blow-off, conviction is the SCORE".
+    let cap = if is_currency_quoted(&quote.ticker) { tuning.growth_overext_cap_crypto } else { tuning.growth_overext_cap };
+    let braked = if cap > 0.0 && quote.above_ma_pct >= cap { "!" } else { "" };
+    // c = COMMODITY-LINKED (GICS Energy/Materials, or a fund named for a commodity): its earnings are a
+    // spread on a traded input price, so the long CAGR is a spot-price snapshot rather than compounding.
+    // R² cannot isolate this — it measures the SYMPTOM, and on the live screen Amazon's 0.79 sat BETWEEN
+    // the two commodity names (CF 0.76, MPC 0.68) — so the flag names the CAUSE. Printed whether or not
+    // growth_commodity_damp is set: the dock is optional, knowing what the row is never is.
+    let commodity = if is_commodity(quote) { "c" } else { "" };
+    // x = non-EUR-quoted ETF line (GBp/USD/SEK…): a EUR buyer pays broker FX conversion + the
+    // off-home spread the EUR twin of the same fund doesn't. Printed whether or not growth_fx_damp
+    // is set — same rule as `c`: the dock is optional, knowing what the row is never is.
+    let fx_listed = if is_noneur_etf(quote) { "x" } else { "" };
+    // ~ = the score ran on BRIDGED history (config `history_proxy`: a young listing spliced onto its
+    // configured older same-strategy twin). CAGR/YRS describe the strategy's record, not this listing's.
+    let bridged = if quote.history_proxied { "~" } else { "" };
+    // H = a buy-and-hold-20yr CORE (broad + cheap + physical + Acc + large + UCITS), flagged
+    // INDEPENDENTLY of the momentum score — the broad index funds it marks are floored to 0.0 by the
+    // late-cycle brake, so without this the table reads them as the WORST rows. Display-only.
+    let holdable = if core::hold_suitable(quote) { "H" } else { "" };
+    // o = ALREADY HELD at the broker (round 110): the screen ranks candidates but can't otherwise
+    // see your portfolio, so a top row you already own reads "covered", not "buy more". Display-only.
+    let held = if owned.holds(&quote.ticker) { "o" } else { "" };
+    format!("{}{star}{enriched}{braked}{commodity}{fx_listed}{bridged}{holdable}{held}", idx + 1)
+}
+
+/// (#79) One printed row as `(header, cell)` pairs — the same pairing [`print_picks`] pads into
+/// columns and the web payload serializes verbatim, so neither can render a cell the other wouldn't.
+/// Cell text comes from [`col_cell`], which is already the single source for every column's format.
+fn row_cells(cols: &[&ColSpec], quote: &Quote, score: f64, alt: Option<f64>, mark: &str, tuning: &BuyHeuristic, fund_pe: &FundPeMap) -> Vec<(String, String)> {
+    cols.iter().map(|c| (c.hdr.to_string(), col_cell(c.key, quote, score, alt, mark, tuning, fund_pe))).collect()
+}
+
+/// (#79) The S-8Y re-read's tuning. Shared by [`print_picks`] and the web payload so the `alt` they
+/// feed [`col_cell`] cannot differ.
+///
+/// It used to be built only when the `score8y` column was on, and that guard is gone — not for
+/// tidiness, but because it was UNGRADEABLE. `alt` reaches exactly one arm of `col_cell` ("score8y"),
+/// so a layout without that column discards the number: flipping the guard's `==` to `!=` changes
+/// nothing observable, and the mutation gate has no allowlist for a survivor that no test can kill.
+/// The guard bought one `growth_score` per row on tables that don't print it — against a screen whose
+/// entire CPU half is 0.06s. Paying that, and deleting a mutant nothing could grade, is the trade.
+///
+/// S-8Y: the same heuristic with the CAGR window (and, via `trust_factor`, the required record)
+/// pinned to 8 years — a second READ on each row, never a ranking input. Built once per table and
+/// only when the column is on, so a table without it pays nothing.
+///
+/// The CAGR floor is neutralized so EVERY printed row gets a number. Pinning changes exactly one
+/// input, `long_cagr`, and `growth_min_cagr` is the only gate that reads it (the others test range,
+/// age, AUM, 1Y/1M, drawdown, above-MA — none of which the pin touches, and every printed row already
+/// cleared them live). So dropping this one floor is the whole of "score it anyway": without it a
+/// strong 20-year name whose 8-year window compounds under 14%/yr — XDJE.DE at 10.9%/yr — printed a
+/// bare "n/a" that read as missing data instead of the low score it actually earns on 8 years.
+/// NOTE: the floor is a GATE, never a term (grep says `min_cagr` is only ever compared, never summed),
+/// so removing it changes no arithmetic — S-8Y is the same score, judged without the 8Y admission bar.
+fn tuning_8y(tuning: &BuyHeuristic) -> BuyHeuristic {
+    BuyHeuristic {
+        fixed_cagr_years: 8,
+        growth_min_cagr: f64::NEG_INFINITY,
+        growth_min_cagr_crypto: f64::NEG_INFINITY,
+        ..tuning.clone()
+    }
+}
+
+/// (#79) The columns one lane's table prints: the configured layout minus the keys that never apply
+/// to that class. Shared so the payload's header list is the table's header list.
+///
+/// `hide`: column keys to drop for THIS table — a class never has these fundamentals (P/E/PEG/ROE
+/// don't exist for ETFs or crypto), so they'd just print "—" every row. Dropped, not blanked.
+fn lane_columns(w: &Widths, hide: &[&str]) -> Vec<&'static ColSpec> {
+    let mut cols = active_columns(&w.columns);
+    cols.retain(|c| !hide.contains(&c.key));
+    cols
+}
+
 /// Print one Top-`n` buy-candidate table (a single asset-class subset of the ranked picks). Columns +
 /// order come from `widths.columns` via [`active_columns`] (default = [`DEFAULT_COLUMNS`]).
 ///
@@ -2565,6 +2657,11 @@ fn earns_cache_mark(quote: &Quote, cols: &[&ColSpec], tuning: &BuyHeuristic, fun
 /// `--lib --test backtest_fixture` — no `--test cli`, so nothing in the killing suite can read this
 /// binary's stdout. Its only real decision, the `°` gate, lives in [`earns_cache_mark`] above, which
 /// is a pure predicate and is graded there. Same rationale as `commands::screen::run`.
+///
+/// (#79) The row-shaped decisions it used to make inline — the rank flags, the cell list, the S-8Y
+/// re-read's tuning, the per-lane column set — now live in [`rank_mark`], [`row_cells`],
+/// [`tuning_8y`] and [`lane_columns`] above, where the web payload calls the same four and the gate
+/// can actually grade them. What is left here is padding and `println!`.
 #[mutants::skip]
 #[allow(clippy::too_many_arguments)]
 fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinned: &HashSet<&str>, owned: &Owned, hide: &[&str], tuning: &BuyHeuristic, fund_pe: &FundPeMap) {
@@ -2575,76 +2672,24 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
     }
     // `hide`: column keys to drop for THIS table — a class never has these fundamentals (P/E/PEG/ROE
     // don't exist for ETFs or crypto), so they'd just print "—" every row. Dropped, not blanked.
-    let mut cols = active_columns(&w.columns);
-    cols.retain(|c| !hide.contains(&c.key));
+    let cols = lane_columns(w, hide);
     let header = cols.iter().map(|c| fmt_cell(c.hdr, col_width(c, w), c.right)).collect::<Vec<_>>().join(" ");
     println!("  {header}");
-    // S-8Y: the same heuristic with the CAGR window (and, via `trust_factor`, the required record)
-    // pinned to 8 years — a second READ on each row, never a ranking input. Built once per table and
-    // only when the column is on, so a table without it pays nothing.
-    //
-    // The CAGR floor is neutralized so EVERY printed row gets a number. Pinning changes exactly one
-    // input, `long_cagr`, and `growth_min_cagr` is the only gate that reads it (the others test range,
-    // age, AUM, 1Y/1M, drawdown, above-MA — none of which the pin touches, and every printed row already
-    // cleared them live). So dropping this one floor is the whole of "score it anyway": without it a
-    // strong 20-year name whose 8-year window compounds under 14%/yr — XDJE.DE at 10.9%/yr — printed a
-    // bare "n/a" that read as missing data instead of the low score it actually earns on 8 years.
-    // NOTE: the floor is a GATE, never a term (grep says `min_cagr` is only ever compared, never summed),
-    // so removing it changes no arithmetic — S-8Y is the same score, judged without the 8Y admission bar.
-    let tuning8 = cols.iter().any(|c| c.key == "score8y").then(|| BuyHeuristic {
-        fixed_cagr_years: 8,
-        growth_min_cagr: f64::NEG_INFINITY,
-        growth_min_cagr_crypto: f64::NEG_INFINITY,
-        ..tuning.clone()
-    });
-    // one printed row; `mark` is the rank label (number + "*" pinned / "#" fundamentals flags). Flags on
-    // the rank cell, not the name, so name truncation can't eat them.
+    let tuning8 = tuning_8y(tuning);
+    // one printed row; `mark` is the rank label (number + "*" pinned / "#" fundamentals flags). The
+    // cells come from [`row_cells`] — all this adds is the padding, which is what makes the web
+    // payload's row and this line the same row.
     let row = |mark: &str, quote: &Quote, score: f64| {
-        let alt = tuning8.as_ref().and_then(|t| growth_score(&as_8y_window(quote), t));
-        let line = cols
+        let alt = growth_score(&as_8y_window(quote), &tuning8);
+        let line = row_cells(&cols, quote, score, alt, mark, tuning, fund_pe)
             .iter()
-            .map(|c| fmt_cell(&col_cell(c.key, quote, score, alt, mark, tuning, fund_pe), col_width(c, w), c.right))
+            .zip(&cols)
+            .map(|((_, cell), c)| fmt_cell(cell, col_width(c, w), c.right))
             .collect::<Vec<_>>()
             .join(" ");
         println!("  {line}");
     };
-    let star = |quote: &Quote| if pinned.contains(quote.ticker.as_str()) { "*" } else { "" }; // * = a pinned (watchlist) name
-    // # = the score used LIVE fundamentals (trailing P/E, ROE, and/or the as-of fund_factor when the
-    // growth_fund tilt is on), not price-only — only equities with an FMP key populate these, so on the
-    // wide screen it flags the few enriched rows (the pins).
-    let enriched =
-        |quote: &Quote| if quote.pe_ratio.is_some() || quote.roe.is_some() || quote.expense_ratio.is_some() || quote.fund_factor.is_some() { "#" } else { "" };
-    // ! = LATE-CYCLE: the overextension brake is FLOORED for this row (price >= growth_overext_cap %
-    // above its 200wk SMA — e.g. WDC at +486% vs cap 100). The score is already maximally docked, but
-    // past the cap the column can't dock MORE, so a 5x-above-trend name prints like a 1x one without
-    // this flag. Display-only: read it as "rank earned on a cycle blow-off, conviction is the SCORE".
-    let braked = |quote: &Quote| {
-        let cap = if is_currency_quoted(&quote.ticker) { tuning.growth_overext_cap_crypto } else { tuning.growth_overext_cap };
-        if cap > 0.0 && quote.above_ma_pct >= cap { "!" } else { "" }
-    };
-    // ~ = the score ran on BRIDGED history (config `history_proxy`: a young listing spliced onto its
-    // configured older same-strategy twin). CAGR/YRS describe the strategy's record, not this listing's.
-    let bridged = |quote: &Quote| if quote.history_proxied { "~" } else { "" };
-    // H = a buy-and-hold-20yr CORE (broad + cheap + physical + Acc + large + UCITS), flagged
-    // INDEPENDENTLY of the momentum score — the broad index funds it marks are floored to 0.0 by the
-    // late-cycle brake, so without this the table reads them as the WORST rows. Display-only.
-    let holdable = |quote: &Quote| if core::hold_suitable(quote) { "H" } else { "" };
-    // o = ALREADY HELD at the broker (round 110): the screen ranks candidates but can't otherwise
-    // see your portfolio, so a top row you already own reads "covered", not "buy more". Display-only.
-    let held = |quote: &Quote| if owned.holds(&quote.ticker) { "o" } else { "" };
-    // c = COMMODITY-LINKED (GICS Energy/Materials, or a fund named for a commodity): its earnings are a
-    // spread on a traded input price, so the long CAGR is a spot-price snapshot rather than compounding.
-    // R² cannot isolate this — it measures the SYMPTOM, and on the live screen Amazon's 0.79 sat BETWEEN
-    // the two commodity names (CF 0.76, MPC 0.68) — so the flag names the CAUSE. Printed whether or not
-    // growth_commodity_damp is set: the dock is optional, knowing what the row is never is.
-    let commodity = |quote: &Quote| if is_commodity(quote) { "c" } else { "" };
-    // x = non-EUR-quoted ETF line (GBp/USD/SEK…): a EUR buyer pays broker FX conversion + the
-    // off-home spread the EUR twin of the same fund doesn't. Printed whether or not growth_fx_damp
-    // is set — same rule as `c`: the dock is optional, knowing what the row is never is.
-    let fx_listed = |quote: &Quote| if is_noneur_etf(quote) { "x" } else { "" };
-    let mark = |quote: &Quote, i: usize| {
-        format!("{}{}{}{}{}{}{}{}{}", i + 1, star(quote), enriched(quote), braked(quote), commodity(quote), fx_listed(quote), bridged(quote), holdable(quote), held(quote))
-    };
+    let mark = |quote: &Quote, i: usize| rank_mark(i, quote, pinned, owned, tuning);
     // pinned tickers that ranked BELOW the cut still print (with their real rank + "*") so you can
     // compare a holding against the tops above even when it doesn't make the top-N.
     let below_cut = picks.iter().enumerate().skip(n).filter(|(_, (quote, _))| pinned.contains(quote.ticker.as_str()));
@@ -2657,7 +2702,7 @@ fn print_picks(title: &str, picks: &[(&Quote, f64)], n: usize, w: &Widths, pinne
             }
         }
         // `†` rides the S-8Y cell, not the rank cell, so it can't come from `m` — collect it here.
-        if tuning8.is_some() && !short_8y_mark(quote).is_empty() && !seen.contains('†') {
+        if cols.iter().any(|c| c.key == "score8y") && !short_8y_mark(quote).is_empty() && !seen.contains('†') {
             seen.push('†');
         }
         // `≈` rides a perf cell for the same reason — and only over the columns THIS table prints, so
@@ -2818,6 +2863,35 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
     (stock, etf, crypto)
 }
 
+// The always-"—" columns each lane drops. P/E, ROE, REV-YoY, EPS-YoY, NET% are equity-only; TER/AUM/
+// USE/REPL are ETF-only; MVRV is crypto-only. PEG spans equity AND funds now — one header, two
+// constructions (per-share EPS vs look-through book P/E), both over the same CAGR: stocks drop the
+// fund + coin columns, ETFs drop the equity fundamentals but KEEP their PEG, crypto drops every
+// equity/fund column and keeps MVRV.
+//
+// (#79) Consts rather than three array literals at the `print_picks` calls, because the web payload
+// builds the same three tables and a page that hides a different column set is a page that quietly
+// stops being the terminal's row.
+const HIDE_STOCK: &[&str] = &["ter", "aum", "use", "repl", "mvrv"];
+const HIDE_ETF: &[&str] = &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv"];
+const HIDE_CRYPTO: &[&str] =
+    &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom"];
+
+/// (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
+/// OWN NAME width. Inserted into `column_widths` rather than set on `w.name` because `col_width` reads
+/// that map FIRST — writing `name` would lose to any explicit `column_widths: { name: N }` the user
+/// already has. The three lane tables already print different column SETS (`hide` differs per call),
+/// so a differing NAME width costs no alignment that ever existed.
+fn etf_widths(w: &Widths) -> Cow<'_, Widths> {
+    if w.name_etf > 0 {
+        let mut w2 = w.clone();
+        w2.column_widths.insert("name".into(), w.name_etf);
+        Cow::Owned(w2)
+    } else {
+        Cow::Borrowed(w)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap) {
     let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned, fund_pe);
@@ -2826,15 +2900,10 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // it's not a quota, that's all that passed the gates + filter.
     let secs = if sectors.is_empty() { "all".to_string() } else { sectors.join(", ") };
     let head = |len: usize| if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") };
-    // P/E, ROE, REV-YoY, EPS-YoY, NET% are equity-only; TER/AUM/USE/REPL are ETF-only; MVRV is
-    // crypto-only. PEG spans equity AND funds now — one header, two constructions (per-share EPS vs
-    // look-through book P/E), both over the same CAGR. Hide the always-"—" columns per class: stocks
-    // drop the fund + coin columns, ETFs drop the equity fundamentals but KEEP their PEG, crypto drops
-    // every equity/fund column and keeps MVRV.
     // the ranking explainer prints ONCE here — repeating the same ~340-char paragraph in all three
     // table titles (incl. the crypto sentence over the stocks table) tripled the noise.
     println!("\n{kind} — {desc}");
-    print_picks(&format!("{} stocks [sectors: {secs}]:", head(stock.len())), &stock, n, w, pinned, owned, &["ter", "aum", "use", "repl", "mvrv"], tuning, fund_pe);
+    print_picks(&format!("{} stocks [sectors: {secs}]:", head(stock.len())), &stock, n, w, pinned, owned, HIDE_STOCK, tuning, fund_pe);
     // (#27) cluster concentration: a top-20 stock table is usually ~3 correlated trades, not 20
     // independent bets — count the SHOWN rows per GICS sector so "semis-heavy" is a number, not a
     // vibe. Display-only; empty map (`check`, explicit-args screen) skips the sector line. Names
@@ -2861,26 +2930,57 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
         }
         mix_line("market mix", counts, "listing country ~ currency exposure; all-USA = one bet on the dollar too");
     }
-    // (#43) ETF names run ~51 chars at the median against a stock table's ~15, so the ETF lane gets its
-    // OWN NAME width. Inserted into `column_widths` rather than set on `w.name` because `col_width` reads
-    // that map FIRST — writing `name` would lose to any explicit `column_widths: { name: N }` the user
-    // already has. The three lane tables already print different column SETS (`hide` differs per call),
-    // so a differing NAME width costs no alignment that ever existed.
-    let etf_w = if w.name_etf > 0 {
-        let mut w2 = w.clone();
-        w2.column_widths.insert("name".into(), w.name_etf);
-        Cow::Owned(w2)
-    } else {
-        Cow::Borrowed(w)
-    };
     // `peg` is NOT hidden here any more (#37 funds): the ETF lane is trimmed on a real fund PEG, and a
     // table that acts on a number while refusing to print it is how the ETF ceiling's first cull looked
     // like an unexplained one-row table. `pe` stays hidden — a fund's book P/E is a look-through
     // aggregate, not the row's own multiple, and it already has the footer line.
-    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, &etf_w, pinned, owned, &["pe", "roe", "rev-yoy", "eps-yoy", "net", "buyback", "mvrv"], tuning, fund_pe);
+    print_picks(&format!("{} ETFs [sectors: {secs}]:", head(etf.len())), &etf, n, &etf_widths(w), pinned, owned, HIDE_ETF, tuning, fund_pe);
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
-    print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, owned, &["pe", "peg", "roe", "rev-yoy", "eps-yoy", "net", "ter", "aum", "use", "repl", "div", "buyback", "dom"], tuning, fund_pe);
+    print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, owned, HIDE_CRYPTO, tuning, fund_pe);
+}
+
+/// (#79) The three #1 rows the web page publishes — one per printed table, each carried as the
+/// `(header, cell)` pairs [`print_picks`] pads into that table's top line. An EMPTY vec is the honest
+/// "(none pass the gates)" the terminal prints for an empty lane; the page says the same words.
+///
+/// Rows only. No watchlist, no holdings, no deploy amounts: the repo is private but a Pages site is
+/// world-readable, so what ships is exactly the three rows and nothing that says whose they are.
+#[derive(serde::Serialize)]
+pub struct WebTop {
+    /// RFC3339 UTC — the page greys itself out when this goes stale, which is what makes a failed
+    /// refresh visible instead of yesterday's numbers reading as today's.
+    pub generated: String,
+    pub stocks: Vec<(String, String)>,
+    pub etfs: Vec<(String, String)>,
+    pub crypto: Vec<(String, String)>,
+}
+
+/// (#79) Build the page payload from the SAME ranked picks [`print_lane`] is about to print: same
+/// [`lane_split`], same per-lane hide lists, same [`etf_widths`], same [`rank_mark`] and
+/// [`row_cells`]. Nothing here re-derives a number — every cell is the string the terminal prints,
+/// which is the whole reason the row machinery came out of `print_picks`.
+///
+/// Widths are NOT applied: the page lays out its own columns, and padding a cell to a terminal width
+/// would only make the browser re-collapse it.
+#[allow(clippy::too_many_arguments)]
+pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap) -> WebTop {
+    let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned, fund_pe);
+    let top = |lane: &[(&Quote, f64)], w: &Widths, hide: &[&str]| {
+        let cols = lane_columns(w, hide);
+        lane.first().map_or_else(Vec::new, |(quote, score)| {
+            let alt = growth_score(&as_8y_window(quote), &tuning_8y(tuning));
+            // Rank 0 — the row IS the table here, but the flags (`*` pinned, `!` braked, `H`
+            // hold-core…) still ride the cell, so the page shows the same "1H" the terminal does.
+            row_cells(&cols, quote, *score, alt, &rank_mark(0, quote, pinned, owned, tuning), tuning, fund_pe)
+        })
+    };
+    WebTop {
+        generated: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        stocks: top(&stock, w, HIDE_STOCK),
+        etfs: top(&etf, &etf_widths(w), HIDE_ETF),
+        crypto: top(&crypto, w, HIDE_CRYPTO),
+    }
 }
 
 /// Tilt a crypto growth score by its 1Y return RELATIVE to Bitcoin (the crypto market's base). `edge`
@@ -3061,6 +3161,11 @@ pub struct RenderCtx<'a> {
     pub fund_pe: &'a FundPeMap, // (#37 funds) look-through equity-book P/E per fund ticker,
     // already un-inverted by `parse_fund_pe`. Feeds the ETF PEG trim in `lane_split` and the printed
     // cell. EMPTY is the honest default (`check`, offline tests): no P/E anywhere -> nothing trimmed.
+    /// (#79) Where to drop the [`WebTop`] payload the Pages site publishes, or None to write nothing —
+    /// `check` and the offline tests have no page to feed. A field on the ctx rather than a fourth
+    /// element on `render`'s return tuple: widening that tuple arms a return-replacement mutant for
+    /// every caller-visible shape, and this is a side effect, not a result.
+    pub web_out: Option<&'a std::path::Path>,
 }
 
 pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx: RenderCtx) -> (Option<String>, Vec<String>) {
@@ -3109,6 +3214,16 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
         None => picks.first(),
     };
     let explain_text = target.and_then(|&(q, s)| explain_growth_score(q, tuning, s));
+    // (#79) the web payload, built from the same `picks` the tables below are about to print — cloned
+    // because `print_lane` consumes them, which is a Vec of (&Quote, f64) and therefore ~free. A write
+    // failure is deliberately silent: the page's own staleness banner is what reports a stale payload,
+    // and a screen run must not die over a file the terminal user never asked for.
+    if let Some(path) = ctx.web_out {
+        let top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe);
+        if let Ok(json) = serde_json::to_string_pretty(&top) {
+            let _ = std::fs::write(path, json);
+        }
+    }
     print_lane(picks, n, w, "growth candidates", growth, ctx.sectors, ctx.sector_of, tuning, &pinned_set, ctx.owned, ctx.fund_pe);
     // buy-and-hold CORE shortlist: momentum floors broad index funds at 0.0, so surface the
     // one-fund-forever holds re-sorted by hold-suitability (breadth → domicile → TER → AUM) — the
@@ -5302,21 +5417,211 @@ mod tests {
         let owned = Owned { stocks: ["aapl".to_string()].into(), ..Default::default() };
 
         // euphoric NUPL (>euphoria band) -> nupl_factor damps the crypto rows (the >1 branch).
+        // (#79) `web_out` set, so the same call also exercises the payload write — the only branch in
+        // `render` that touches disk on the page's behalf.
+        let web = crate::config::data_path(".screen_web_smoke.json");
+        let _ = std::fs::remove_file(&web);
         let (_text, tickers) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: Some(0.9), sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: None, show_hold_core: true, fund_pe: &HashMap::new(),
+            web_out: Some(&web),
         });
         assert!(tickers.iter().any(|t| t == "AAPL"), "pinned gated name must still surface in the ranking");
         assert!(tickers.len() <= 5);
+        let payload = std::fs::read_to_string(&web).expect("render must write the payload when web_out is set");
+        let payload: serde_json::Value = serde_json::from_str(&payload).expect("payload must be valid JSON");
+        assert!(payload["generated"].as_str().is_some_and(|g| g.ends_with('Z')), "generated is RFC3339 UTC");
+        // The pinned equity is the stock lane's only row. The two coins score None (a bare 1Y leg is
+        // no growth record) and are NOT pinned, so nothing gives them the sentinel that keeps AAPL in
+        // — they never reach `picks` at all. So two lanes are empty here, and both must serialize as
+        // [] rather than vanish: the page reads the key to print "(none pass the gates)".
+        assert!(!payload["stocks"].as_array().expect("stocks lane").is_empty());
+        assert!(payload["etfs"].as_array().expect("etfs lane").is_empty());
+        assert!(payload["crypto"].as_array().expect("crypto lane").is_empty());
+        let _ = std::fs::remove_file(&web);
 
-        // an --explain for a ticker that isn't in `quotes` at all -> the not-scanned branch.
+        // an --explain for a ticker that isn't in `quotes` at all -> the not-scanned branch, and
+        // `web_out: None` -> the no-page path writes nothing.
         let (miss, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: Some("ZZZZ"), show_hold_core: false, fund_pe: &HashMap::new(),
+            web_out: None,
         });
         assert!(miss.is_some_and(|m| m.contains("wasn't scanned")));
+        assert!(!web.exists(), "web_out: None must not write a payload");
 
         let _ = std::fs::remove_file(crate::config::data_path(".folioman_turnover_watch.txt")); // gitignored cache render wrote
+    }
+
+    /// (#79) The rank cell's flags. These conditions spent their whole life inside `print_picks`,
+    /// which is `#[mutants::skip]`ped — so nothing has ever graded them. Now that they are a function
+    /// the web payload also calls, they are gradeable, and this is what grades them.
+    #[test]
+    fn rank_mark_flags_the_row() {
+        let tuning = BuyHeuristic::default();
+        let owned = Owned::default();
+        let none: HashSet<&str> = HashSet::new();
+        let plain = Quote::stub("AAA", "€100.00", "", "Alpha Corp");
+
+        // the floor: position + 1, nothing else earned.
+        assert_eq!(rank_mark(0, &plain, &none, &owned, &tuning), "1");
+        assert_eq!(rank_mark(9, &plain, &none, &owned, &tuning), "10", "the index is 0-based, the cell isn't");
+
+        // `*` pinned and `o` held are the two overlays that come from OUTSIDE the quote.
+        let pinned: HashSet<&str> = ["AAA"].into();
+        let held = Owned { stocks: ["aaa".to_string()].into(), ..Default::default() };
+        assert_eq!(rank_mark(0, &plain, &pinned, &owned, &tuning), "1*");
+        assert_eq!(rank_mark(0, &plain, &none, &held, &tuning), "1o");
+
+        // `#` = ANY ONE live fundamental, not all four. A single populated field must flag the row:
+        // on the wide screen only the pins carry fundamentals at all, and requiring the full set
+        // would silently blank the flag on every one of them.
+        for tweak in [
+            |q: &mut Quote| q.pe_ratio = Some(31.5),
+            |q: &mut Quote| q.roe = Some(45.0),
+            |q: &mut Quote| q.expense_ratio = Some(0.07),
+            |q: &mut Quote| q.fund_factor = Some(1.1),
+        ] {
+            let mut q = plain.clone();
+            tweak(&mut q);
+            assert_eq!(rank_mark(0, &q, &none, &owned, &tuning), "1#", "one live fundamental is enough");
+        }
+
+        // `!` = the overextension brake is FLOORED: at or past the cap, never below it, and never at
+        // all when the knob is off. The `cap > 0.0` guard is what makes "off" mean off — without it a
+        // 0 cap reads as "everything is overextended", which is every row in the table.
+        let braked = |above: f64, cap: f64| {
+            let mut q = plain.clone();
+            q.above_ma_pct = above;
+            let t = BuyHeuristic { growth_overext_cap: cap, ..tuning.clone() };
+            rank_mark(0, &q, &none, &owned, &t)
+        };
+        assert_eq!(braked(150.0, 100.0), "1!", "past the cap");
+        assert_eq!(braked(100.0, 100.0), "1!", "AT the cap — the brake is already floored there");
+        assert_eq!(braked(99.9, 100.0), "1", "under it");
+        assert_eq!(braked(150.0, 0.0), "1", "cap 0 = brake off, not 'everything is overextended'");
+        assert_eq!(braked(-20.0, 0.0), "1", "…and off stays off for a row below its trend too");
+        // crypto reads its OWN cap, so a coin past the equity cap but under the crypto one is clean.
+        let mut coin = Quote::stub("BTC-EUR", "€50000", "", "Bitcoin");
+        coin.above_ma_pct = 150.0;
+        let t = BuyHeuristic { growth_overext_cap: 100.0, growth_overext_cap_crypto: 300.0, ..tuning.clone() };
+        assert_eq!(rank_mark(0, &coin, &none, &owned, &t), "1", "a coin is judged by the crypto cap");
+
+        // ORDER, which is what the legend below the table reads against and what a scanning eye
+        // relies on. All eight at once, on one row.
+        // note the fund is URANIUM, not gold: `is_commodity` reads COMMODITY_FUND_TOKENS, and "gold"
+        // is in METAL_TOKENS — which belongs to `is_commodity_etf`, a different predicate.
+        let mut all = Quote::stub("ETFX.L", "£100.00", "", "Global X Uranium UCITS ETF");
+        all.instrument_type = "ETF".into();
+        all.quote_currency = Some("GBP".into()); // -> x
+        all.expense_ratio = Some(0.12); //           -> #
+        all.above_ma_pct = 150.0; //                 -> !
+        all.history_proxied = true; //               -> ~
+        let pinned: HashSet<&str> = ["ETFX.L"].into();
+        let held = Owned { stocks: ["etfx".to_string()].into(), ..Default::default() };
+        let t = BuyHeuristic { growth_overext_cap: 100.0, ..tuning.clone() };
+        // no `H`: hold_suitable wants a BROAD index, and this one is a commodity fund by construction.
+        assert_eq!(rank_mark(0, &all, &pinned, &held, &t), "1*#!cx~o");
+    }
+
+    /// (#79) The ETF lane's own NAME width, extracted from `print_lane` so the payload's ETF row is
+    /// built against the same widths the printed ETF table is. `0` means "not configured" and must
+    /// leave the map ALONE — inserting a literal 0 would truncate every fund name to nothing.
+    #[test]
+    fn etf_widths_only_overrides_when_configured() {
+        let off = Widths { name_etf: 0, ..Widths::default() };
+        assert!(!etf_widths(&off).column_widths.contains_key("name"), "0 = untouched, not name:0");
+
+        let on = Widths { name_etf: 53, ..Widths::default() };
+        assert_eq!(etf_widths(&on).column_widths.get("name"), Some(&53));
+        // and the caller's own widths are not mutated behind its back — `print_lane` reuses `w` for
+        // the crypto table right after.
+        assert_eq!(on.column_widths.get("name"), None);
+    }
+
+    /// (#79) THE PARITY TEST. The published page claims to be the terminal's three #1 rows, and the
+    /// only thing making that true is that [`web_top`] and `print_lane` split the same picks into the
+    /// same lanes and hand each lane the same hide list. Nothing about that is type-checked: swap two
+    /// of the three `HIDE_*` consts and both still compile, both still print a table, and the page
+    /// starts publishing an ETF row with a P/E column and no TER.
+    ///
+    /// So the expectations below are written OUT IN FULL rather than derived from the consts — a test
+    /// that reads `HIDE_ETF` to check the ETF lane cannot notice `HIDE_ETF` reaching the wrong lane.
+    #[test]
+    fn web_top_publishes_the_printed_row_per_lane() {
+        let tuning = BuyHeuristic::default();
+        // An EXPLICIT layout, because `DEFAULT_COLUMNS` carries none of the class-specific columns —
+        // against the default the three hide lists are very nearly no-ops and this test would pass
+        // with all three swapped. Every column named here is on exactly one lane's hide list.
+        let w = Widths {
+            columns: ["rank", "name", "ticker", "pe", "peg", "div", "ter", "aum", "mvrv", "score", "score8y"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            ..Widths::default()
+        };
+        let owned = Owned::default();
+        let pinned: HashSet<&str> = HashSet::new();
+
+        // one clean grower per class: an equity, a fund (UCITS in the NAME -> `quote_is_etf`), a coin.
+        let good = |t: &str, name: &str| {
+            let mut q = Quote::stub(t, "€100.00", "", name);
+            q.range_pct = 95.0;
+            q.avg_turnover_eur = Some(3.0e9);
+            q.age_years = Some(12.0);
+            q.perf = legs(&[("1Y", 10.0), ("5Y", 40.0), ("8Y", 400.0)]);
+            q
+        };
+        let mut stock = good("AAA", "Alpha Corp");
+        stock.instrument_type = "EQUITY".into();
+        let mut fund = good("BBB.DE", "Beta S&P 500 UCITS ETF");
+        fund.instrument_type = "ETF".into();
+        let coin = good("BTC-USD", "Bitcoin");
+        let (stock, fund, coin) = (stock, fund, coin);
+        // scores above BOTH display floors (`growth_min_score` 5.0 and `growth_min_score_etf` 5.0 by
+        // default, and `keep` trims on `<=`): this test is about which lane a row lands in, not about
+        // re-testing the floors, so nothing here sits on one.
+        let picks = vec![(&stock, 9.0), (&fund, 7.0), (&coin, 3.0)];
+
+        let top = web_top(picks, 5, &w, &[], &tuning, &pinned, &owned, &HashMap::new());
+        let cell = |row: &[(String, String)], hdr: &str| {
+            row.iter().find(|(h, _)| h == hdr).map(|(_, c)| c.trim().to_string())
+        };
+
+        // 1. each lane published ITS OWN name — the split reached the payload in the right order.
+        assert_eq!(cell(&top.stocks, "TICKER").as_deref(), Some("AAA"), "stock lane: {:?}", top.stocks);
+        assert_eq!(cell(&top.etfs, "TICKER").as_deref(), Some("BBB.DE"), "ETF lane: {:?}", top.etfs);
+        assert_eq!(cell(&top.crypto, "TICKER").as_deref(), Some("BTC-USD"), "crypto lane: {:?}", top.crypto);
+
+        // 2. each lane hid ITS OWN columns. Written literally, per the note above: the equity lane is
+        // the one with P/E and no TER, the fund lane the one with TER and no P/E (but KEEPING its PEG,
+        // #37), the coin lane the one with MVRV and neither.
+        let has = |row: &[(String, String)], hdr: &str| row.iter().any(|(h, _)| h == hdr);
+        assert!(has(&top.stocks, "P/E") && !has(&top.stocks, "TER") && !has(&top.stocks, "MVRV"));
+        assert!(has(&top.etfs, "TER") && has(&top.etfs, "PEG") && !has(&top.etfs, "P/E") && !has(&top.etfs, "MVRV"));
+        assert!(has(&top.crypto, "MVRV") && !has(&top.crypto, "P/E") && !has(&top.crypto, "TER") && !has(&top.crypto, "DIV"));
+
+        // 3. the rank cell is the RANK CELL, flags and all — not a bare "1". The fund is `#`-enriched
+        // here (instrument_type ETF alone doesn't do it; `fund_factor`/TER would), so assert the shape
+        // every lane must have: the number, then only characters from the legend.
+        for row in [&top.stocks, &top.etfs, &top.crypto] {
+            let rank = cell(row, "RANK").expect("every lane prints a rank cell");
+            assert!(rank.starts_with('1'), "rank cell is the row's position: {rank}");
+            assert!(rank[1..].chars().all(|c| "*#!cx~Ho".contains(c)), "only legend flags follow it: {rank}");
+        }
+
+        // 4. S-8Y is a NUMBER, not "n/a". `col_cell` prints "n/a" whenever `alt` is None, which is
+        // what an S-8Y tuning that forgot to neutralize the CAGR floor (or forgot the 8-year pin)
+        // produces for these rows — a blank column that reads as missing data rather than the low
+        // score it earns on 8 years.
+        let s8y = cell(&top.stocks, "S-8Y").expect("the layout prints S-8Y");
+        assert!(s8y.trim_end_matches('†').parse::<f64>().is_ok(), "S-8Y must be scored, got {s8y:?}");
+
+        // 5. an absent lane is an EMPTY row, never a fabricated one — the page prints the terminal's
+        // "(none pass the gates)" off exactly this.
+        let empty = web_top(vec![], 5, &w, &[], &tuning, &pinned, &owned, &HashMap::new());
+        assert!(empty.stocks.is_empty() && empty.etfs.is_empty() && empty.crypto.is_empty());
+        assert!(empty.generated.ends_with('Z'), "still stamped, so the page can call it stale");
     }
 
     /// (QA) `--explain TICKER` for a name that did NOT rank must name WHICH of the four things
@@ -5360,6 +5665,7 @@ mod tests {
             render(&quotes, n, &tuning, &w, RenderCtx {
                 nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
                 owned: &owned, explain: Some(t), show_hold_core: false, fund_pe: &HashMap::new(),
+                web_out: None,
             })
             .0
             .unwrap_or_default()

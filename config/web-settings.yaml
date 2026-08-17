@@ -1,0 +1,99 @@
+# Config for the GitHub Pages run (`FOLIOMAN_CONFIG=config/web-settings.yaml`), and ONLY that run.
+#
+# This is a small overlay, not a second full config: `tests/ci-settings.yaml` merges underneath it
+# field-by-field (see `merged_config`), so everything absent here — the whole tuned `buy_heuristic`,
+# `universe_size`, the fetch pacer — is inherited from the committed base exactly as the local run
+# inherits it. What is here is the delta between "your terminal" and "a public page built by a
+# runner", and it is of two kinds.
+#
+# KIND ONE: things that must NOT reach a public page. `config/settings.yaml` is gitignored and absent
+# on the runner, so its watchlist, its ntfy topic and its deploy amount simply are not here — but the
+# empty `tickers`/`sectors` below are written out anyway, because inheriting an empty list by
+# accident and inheriting it on purpose look identical right up until the base gains a default.
+#
+# KIND TWO: the display shape, so the published row is the row your terminal prints. The column list
+# and the ETF name width are mirrored from `config/settings.yaml`; the two files have to be edited
+# together, and the page's own header row is what shows it when they aren't.
+
+# No watchlist. Pinned tickers print even when gated, so a pin here would publish a name for the sole
+# reason that someone is watching it — which is exactly the private signal this page must not carry.
+tickers: []
+
+# No sector filter: the page publishes the top of the whole ranking, like an unfiltered `screen`.
+sectors: []
+
+# Bridged history for the young S&P 500 listings (mirrors config/settings.yaml). Without it these
+# rank on a 2-3 year record and the `~` flag never appears on the page.
+history_proxy:
+  VUAA.DE: SXR8.DE
+  SPYL.DE: SXR8.DE
+  AUM5.DE: SXR8.DE
+
+# Prefer the EU listing of a name where one exists — the page is read by a EUR buyer, same as the
+# terminal (mirrors config/settings.yaml).
+prefer_eu_listing: true
+
+# The printed table, column for column (mirrors config/settings.yaml `widths.columns`). This IS the
+# "full terminal parity" the page promises: `web_top` publishes one `(header, cell)` pair per column
+# listed here, minus the ones that lane hides. Reorder or comment out a line and the page follows.
+widths:
+  name: 28
+  name_etf: 53
+  ticker: 10
+  market: 7
+  price: 9
+  headline: 27
+  score: 5
+  columns:
+    - rank
+    - name
+    - ticker
+    - market
+    - price
+    - cagr
+    - yrs
+    - 1h
+    - 6h
+    - 1d
+    - 1w
+    - 1m
+    - 2y
+    - 5y
+    - 8y
+    - 20y
+    - vol
+    - maxdd
+    - r2
+    - abv-ma
+    - pe
+    - peg
+    - mvrv
+    - roe
+    - ter
+    - aum
+    - use
+    - repl
+    - rev-yoy
+    - eps-yoy
+    - net
+    - div
+    - buyback
+    - off-hi
+    - turnover
+    - score
+    - score8y
+
+# The gate loosenings the local overlay runs with. Mirrored because they change the RANKING, not just
+# the layout: on the base gates alone the page would rank a different #1 than the terminal it claims
+# to mirror. Nothing private here — these are knobs, and the base carries them all with comments.
+buy_heuristic:
+  growth_min_leg_years: 0
+  growth_min_1y_pct: -1000000.0
+  growth_min_5y_pct: -1000000.0
+  growth_min_8y_pct: 50
+  growth_min_20y_pct: 200
+  growth_min_range_pct_8y: 50
+  growth_min_range_pct_8y_crypto: 50
+  growth_min_range_pct: 50
+  growth_min_range_pct_crypto: 50
+  min_score: -1000000.0

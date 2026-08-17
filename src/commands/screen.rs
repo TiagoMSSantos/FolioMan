@@ -1442,6 +1442,10 @@ pub async fn run(args: Vec<String>) {
     let borrowed = borrow_index_twins(&client, &bench, &fund_pe, &quotes).await;
     fund_pe.extend(borrowed);
     fill_venue_listings(&mut fund_pe, &quotes);
+    // (#79) the web payload's home: the same gitignored data dir `.screen_state.json` uses, written
+    // on every run rather than behind a flag — it is one small file, and a knob nobody sets is a knob
+    // not worth having. The Pages workflow copies it next to `web/index.html` and deploys.
+    let web_out = crate::config::data_path(".screen_web.json");
     let (explain_text, ranked_now) = render(&quotes, settings.top_picks, &settings.buy_heuristic, &settings.widths, RenderCtx {
         nupl,
         sectors: &settings.sectors,
@@ -1451,6 +1455,7 @@ pub async fn run(args: Vec<String>) {
         explain: explain.as_deref(),
         show_hold_core: true,
         fund_pe: &fund_pe,
+        web_out: Some(&web_out),
     });
 
     // (round 114) live track record: journal today's ranked slice + the S&P close so `track` can

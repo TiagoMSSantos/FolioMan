@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>FolioMan — top pick per class</title>
+<style>
+  /* One file, no CDN, no build step. The payload is data.json beside this page; everything else
+     here is layout. Colours come from tokens so the dark block below only has to redefine those. */
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfa;
+    --fg: #1a1a18;
+    --muted: #6b6b66;
+    --rule: #dedcd6;
+    --head-bg: #f0efea;
+    --warn-bg: #fdf3d8;
+    --warn-fg: #6b4e00;
+    --warn-rule: #e0c97a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --fg: #e6e5e1;
+      --muted: #9a988f;
+      --rule: #33333a;
+      --head-bg: #212127;
+      --warn-bg: #3a2f12;
+      --warn-fg: #f0d78a;
+      --warn-rule: #6b5a20;
+    }
+  }
+  body {
+    margin: 0;
+    padding: 1.5rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.5 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  main { max-width: 100%; margin: 0 auto; }
+  h1 { font-size: 1.15rem; margin: 0 0 .25rem; }
+  h2 { font-size: .95rem; margin: 2rem 0 .5rem; font-weight: 600; }
+  .sub, .note { color: var(--muted); font-size: .8rem; margin: 0; }
+  .note { margin-top: 2.5rem; max-width: 60ch; line-height: 1.6; }
+  /* Wide by construction — 26+ columns. Each table scrolls inside its own box so the PAGE never
+     scrolls sideways. */
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px; }
+  table { border-collapse: collapse; white-space: nowrap; font-size: .8rem; }
+  th, td { padding: .4rem .6rem; text-align: right; }
+  th { background: var(--head-bg); color: var(--muted); font-weight: 600; position: sticky; top: 0; }
+  td { border-top: 1px solid var(--rule); }
+  /* the first three columns are labels, not numbers */
+  th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
+  .empty { padding: .6rem; color: var(--muted); }
+  .stale {
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+    border: 1px solid var(--warn-rule);
+    border-radius: 4px;
+    padding: .6rem .8rem;
+    margin: 0 0 1rem;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>FolioMan — top pick per class</h1>
+  <p class="sub" id="generated">loading…</p>
+  <p class="stale" id="stale" hidden></p>
+
+  <h2>Stocks</h2>
+  <div id="stocks"></div>
+  <h2>ETFs</h2>
+  <div id="etfs"></div>
+  <h2>Crypto</h2>
+  <div id="crypto"></div>
+
+  <p class="note">
+    The #1 row of each of <code>screen</code>'s three ranked tables — the 20yr+ growth ranking:
+    at/near its own ~10y high with a strong proven long-term CAGR and an accelerating recent year,
+    braked by how far it has run above its 200wk trend. Crypto is ranked against Bitcoin, the market
+    base. These ranked tilts are higher-variance, regime-dependent sector/thematic bets whose recent
+    leadership won't necessarily repeat. <strong>NOT advice.</strong>
+  </p>
+  <p class="note" id="flags">
+    Rank flags: <code>*</code> pinned · <code>#</code> scored on live fundamentals · <code>!</code>
+    late-cycle, brake floored · <code>c</code> commodity-linked · <code>x</code> non-EUR-quoted line ·
+    <code>~</code> bridged history · <code>H</code> hold-suitable core · <code>o</code> already held.
+  </p>
+</main>
+
+<script>
+// The payload is [{generated, stocks, etfs, crypto}], each lane a list of [header, cell] pairs —
+// exactly the cells the terminal prints for that row, so nothing is reformatted here.
+const STALE_HOURS = 36; // one weekday cron miss is fine; two is worth saying out loud
+
+function table(pairs) {
+  if (!pairs || pairs.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = "(none pass the gates)";
+    return p;
+  }
+  const box = document.createElement("div");
+  box.className = "scroll";
+  const t = document.createElement("table");
+  const thead = t.createTHead().insertRow();
+  const tbody = t.createTBody().insertRow();
+  for (const [header, cell] of pairs) {
+    const th = document.createElement("th");
+    th.textContent = header;
+    thead.appendChild(th);
+    tbody.insertCell().textContent = cell;
+  }
+  box.appendChild(t);
+  return box;
+}
+
+function render(data) {
+  const when = new Date(data.generated);
+  document.getElementById("generated").textContent =
+    "generated " + when.toISOString().replace("T", " ").replace(".000Z", "Z");
+  const ageHours = (Date.now() - when.getTime()) / 3.6e6;
+  if (ageHours > STALE_HOURS) {
+    const banner = document.getElementById("stale");
+    banner.textContent =
+      "Stale: this is " + Math.floor(ageHours / 24) + "d " + Math.floor(ageHours % 24) +
+      "h old. The last refresh did not complete, so these are not today's numbers.";
+    banner.hidden = false;
+  }
+  for (const lane of ["stocks", "etfs", "crypto"]) {
+    document.getElementById(lane).replaceChildren(table(data[lane]));
+  }
+}
+
+fetch("data.json", { cache: "no-store" })
+  .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+  .then(render)
+  .catch((e) => {
+    document.getElementById("generated").textContent = "could not load data.json (" + e.message + ")";
+  });
+</script>
+</body>
+</html>
