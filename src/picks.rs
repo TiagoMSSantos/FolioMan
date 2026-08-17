@@ -405,9 +405,20 @@ fn momentum_factor(quote: &Quote, bounce: f64, knife: f64) -> f64 {
 /// that are never a long-term hold, so they can't be "quality on sale". `direxion` catches the
 /// Direxion Daily 3× family when Yahoo hands a SHORT name ("Direxion Daily Technology" with the
 /// "Bull 3X" dropped) that the `3x` marker would miss (e.g. TECL leaked into the stocks table).
+///
+/// (#78) `proshares ultra` was a bare `ultra`, and unlike every other entry it carried no space
+/// guard — so it fired INSIDE a word and this is a HARD gate, meaning the name simply never printed.
+/// It was swallowing JIREF ("JPMorgan ETFs (Ireland) ICAV - USD Ultra-Short Income UCITS ETF", a
+/// short-duration BOND fund) and would swallow any "Ultra…" company name (Ultragenyx, Ultratech).
+///
+/// Qualified by ISSUER rather than made a token, because neither token rule works: equality still
+/// eats "Ultra Clean Holdings", a prefix still eats "Ultragenyx", and both DROP ProShares'
+/// "UltraShort"/"UltraPro", which no other marker here catches. "Ultra" is the ProShares 2× brand,
+/// so the issuer is the discriminator — the same trick `direxion` uses one entry over.
+///
 /// note: cheap name match; tighten the list if a legit name ever trips it.
 const LEVERAGED_MARKERS: &[&str] =
-    &["2x", "3x", " short", "inverse", "leverag", "bear ", "ultra", "direxion"];
+    &["2x", "3x", " short", "inverse", "leverag", "bear ", "proshares ultra", "direxion"];
 
 fn is_leveraged(name: &str) -> bool {
     let n = name.to_lowercase();
@@ -3735,6 +3746,14 @@ mod tests {
     assert!(is_leveraged("GraniteShares 2x Short NVD") && !is_leveraged("Apple Inc."));
     // (1) Direxion Daily 3x leaks a SHORT name without "3x" -> issuer marker still catches it (TECL)
     assert!(is_leveraged("Direxion Daily Technology") && !is_leveraged("Technology Select Sector"));
+    // (#78) "Ultra" is the ProShares 2x brand, so the ISSUER qualifies it — the whole family lands,
+    // including the two that no other marker in the list would catch on their own.
+    assert!(is_leveraged("ProShares Ultra S&P500") && is_leveraged("ProShares UltraPro QQQ"));
+    // ...and a bare "ultra" is not a leverage signal. This gate is HARD (buy_score, score_parts and
+    // refusal_reason all return early), so a false match does not misplace a row — it deletes it.
+    // JIREF is the live casualty: a short-duration BOND fund, silently absent from every lane.
+    assert!(!is_leveraged("JPMorgan ETFs (Ireland) ICAV - USD Ultra-Short Income UCITS ETF"));
+    assert!(!is_leveraged("Ultragenyx Pharmaceutical Inc."), "a company, not a 2x product");
     // ETF classifier (splits the equity table only): funds match, single companies don't
     assert!(is_etf("iShares Core S&P 500 UCITS ETF") && is_etf("SPDR S&P 500 ETF Trust"));
     assert!(!is_etf("Apple Inc.") && !is_etf("NVIDIA Corporation"));
