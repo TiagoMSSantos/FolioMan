@@ -2892,14 +2892,29 @@ fn etf_widths(w: &Widths) -> Cow<'_, Widths> {
     }
 }
 
+/// (#79) One lane title's count. Extracted from [`print_lane`] because that function is now
+/// `#[mutants::skip]`ped: this is its one real decision, and leaving it inline would have retired the
+/// comparison from the gate along with the `println!`s around it.
+///
+/// The boundary is the point: a FULL table says "Top n" and claims nothing more; a short one says how
+/// many actually qualified, so a three-row table reads as "that's all that passed the gates", not as
+/// a quota someone set. `len == n` is full.
+fn lane_head(len: usize, n: usize) -> String {
+    if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") }
+}
+
+/// UNGRADEABLE, hence the skip — the same story as [`print_picks`] below it, and (#79) proven the
+/// same way: `replace print_lane with ()` was graded 2026-08-17 against `--lib --test
+/// backtest_fixture` and MISSED, because every effect this has is a `println!` and the killing suite
+/// cannot read this binary's stdout. Its decisions have all moved out to functions the gate CAN
+/// reach: [`lane_split`], [`lane_head`], [`lane_columns`], [`etf_widths`] and the `HIDE_*` consts.
+#[mutants::skip]
 #[allow(clippy::too_many_arguments)]
 fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap) {
     let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned, fund_pe);
     // Title carries the selected sector filter so the table says what it's showing ("all" = no filter).
-    // Count shown = how many actually qualified (capped at n); "of {n} max" explains a short table —
-    // it's not a quota, that's all that passed the gates + filter.
     let secs = if sectors.is_empty() { "all".to_string() } else { sectors.join(", ") };
-    let head = |len: usize| if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") };
+    let head = |len: usize| lane_head(len, n);
     // the ranking explainer prints ONCE here — repeating the same ~340-char paragraph in all three
     // table titles (incl. the crypto sentence over the stocks table) tripled the noise.
     println!("\n{kind} — {desc}");
@@ -5522,6 +5537,43 @@ mod tests {
         let t = BuyHeuristic { growth_overext_cap: 100.0, ..tuning.clone() };
         // no `H`: hold_suitable wants a BROAD index, and this one is a commodity fund by construction.
         assert_eq!(rank_mark(0, &all, &pinned, &held, &t), "1*#!cx~o");
+    }
+
+    /// (#79) The S-8Y tuning makes exactly three changes and inherits everything else. Asserted on
+    /// the struct rather than on a printed cell, because a printed S-8Y is a number either way: drop
+    /// the 8-year pin and it silently becomes a SECOND COPY of SCORE, drop a floor and it reverts to
+    /// "n/a" only for the rows that motivated the change. Both read as working output.
+    #[test]
+    fn tuning_8y_pins_eight_years_and_drops_only_the_cagr_floors() {
+        // a base that differs from BuyHeuristic::default() in every field this touches, plus one it
+        // must NOT touch — otherwise "returns the default" and "returns the right thing" look alike.
+        let base = BuyHeuristic {
+            fixed_cagr_years: 20,
+            growth_min_cagr: 8.0,
+            growth_min_cagr_crypto: 4.0,
+            growth_overext_cap: 137.0,
+            ..BuyHeuristic::default()
+        };
+        let pinned = tuning_8y(&base);
+
+        assert_eq!(pinned.fixed_cagr_years, 8, "the whole point: the CAGR window is pinned to 8 years");
+        // NEG_INFINITY, not 0.0 — the floors are compared against, never summed, so the neutral value
+        // is one no CAGR can fail. A 0.0 floor still cuts a negative-CAGR row.
+        assert_eq!(pinned.growth_min_cagr, f64::NEG_INFINITY, "every printed row must get a number");
+        assert_eq!(pinned.growth_min_cagr_crypto, f64::NEG_INFINITY, "…coins included: BTC has a real 8Y leg");
+        // and NOTHING else moves. S-8Y is the same score judged over a different window, not a
+        // different heuristic — if this inherited the defaults it would be a third ranking nobody tuned.
+        assert_eq!(pinned.growth_overext_cap, 137.0, "the rest of the heuristic is inherited verbatim");
+    }
+
+    /// (#79) The lane title's count, extracted from the now-skipped `print_lane`. The boundary is
+    /// where it earns its keep: at exactly `n` the table is full and must not apologize for itself.
+    #[test]
+    fn lane_head_says_full_or_says_how_short() {
+        assert_eq!(lane_head(20, 20), "Top 20", "exactly n is FULL");
+        assert_eq!(lane_head(21, 20), "Top 20", "…and so is more than n, which print_picks then caps");
+        assert_eq!(lane_head(3, 20), "Top 3 of 20 max", "short = say how many qualified, not a quota");
+        assert_eq!(lane_head(0, 20), "Top 0 of 20 max");
     }
 
     /// (#79) The ETF lane's own NAME width, extracted from `print_lane` so the payload's ETF row is

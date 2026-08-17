@@ -28,6 +28,15 @@ fn holdings_lines(
         .collect()
 }
 
+/// (#79) UNGRADEABLE BY THE MUTATION GATE, skipped for exactly the reason `screen::run` is — see the
+/// long note there. `run` is reachable from `main.rs` alone, so the only test that exercises it lives
+/// in the cli suite, and `ci.yml`'s mutants job grades `--lib --test backtest_fixture`: `replace run
+/// with ()` cannot be killed there. Graded 2026-08-17 against that exact selection, 1 mutant, MISSED.
+///
+/// It went unnoticed until now only because nothing had edited this function since the gate was
+/// armed. `--in-diff` grades whole functions, so the one-line `web_out: None` below was enough to
+/// drag all of `run` into scope — which is the trap the attribute closes for every future edit here.
+#[mutants::skip]
 pub async fn run(args: Vec<String>) {
     // `--explain [TICKER]`: print the SCORE arithmetic for TICKER without narrowing the view —
     // the whole watchlist still renders (unlike `screen`, where the target narrows the scan).
