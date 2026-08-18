@@ -1194,6 +1194,40 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
         return None;
     }
 
+    // (P1) SURVIVAL gates. Four rejections sharing the `ff` scope and the is_some_and missing-data
+    // stance of the block above: no fundamentals PASSES. Grouped because they answer ONE question the
+    // scoring terms cannot — will this filer still exist in twenty years — and because they reject
+    // OVERLAPPING cohorts, so their individual edge deltas do not add and must be read jointly.
+    //
+    // (P1a) DILUTION ceiling. `buyback_yield` is sign-flipped (+ = shrinking share count), so the
+    // dilution a holder suffers is its negation. The knob speaks the POSITIVE raise the operator sets,
+    // the same units convention `growth_max_margin_swing` above uses for the same reason.
+    if tuning.growth_max_dilution_pct > 0.0
+        && ff.and_then(|f| f.buyback_yield).is_some_and(|b| -b > tuning.growth_max_dilution_pct)
+    {
+        return None;
+    }
+    // (P1b) INTEREST-COVER floor. None means no interest expense was filed, so debt-free reads NEUTRAL
+    // and passes — see the config doc for why the alternative inverts the gate's meaning.
+    if tuning.growth_min_interest_cover > 0.0
+        && ff.and_then(|f| f.interest_cover).is_some_and(|c| c < tuning.growth_min_interest_cover)
+    {
+        return None;
+    }
+    // (P1c)/(P1d) CASH-BURN and LEVERAGE floors. Both test against -1e8 rather than comparing to the
+    // -1e9 sentinel for equality: an off-check that depends on a float comparing exactly equal is one
+    // yaml round-trip away from silently arming a gate nobody set.
+    if tuning.growth_min_fcf_margin > -1e8
+        && ff.and_then(|f| f.fcf_margin).is_some_and(|m| m < tuning.growth_min_fcf_margin)
+    {
+        return None;
+    }
+    if tuning.growth_min_net_cash_rev > -1e8
+        && ff.and_then(|f| f.net_cash_rev).is_some_and(|n| n < tuning.growth_min_net_cash_rev)
+    {
+        return None;
+    }
+
     // ---- SCORE ----
     let trend = capped_trend(long_cagr, tuning); // proven compounding; long_trend_cap 0 = uncapped (shipped)
     let accel = (return_1y - long_cagr).clamp(0.0, tuning.growth_accel_cap); // last year outpacing the long run = building
@@ -1803,6 +1837,29 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
         if let Some(s) = ff.and_then(|f| f.margin_stability).filter(|&s| s < -tuning.growth_max_margin_swing) {
             let swing = -s;
             fails.push(("swing", format!("{swing:.1}pp net-margin swing (ceiling {:.1}pp)", tuning.growth_max_margin_swing), swing <= tuning.growth_max_margin_swing + 2.0));
+        }
+    }
+    // (P1) the four survival gates' reasons, mirroring `score_parts` leg for leg — the pairing
+    // `gate_failures_agrees_with_the_scorer` enforces. Dilution prints the POSITIVE raise rather than
+    // the sign-flipped field, the same rule the swing leg above follows.
+    if tuning.growth_max_dilution_pct > 0.0 {
+        if let Some(d) = ff.and_then(|f| f.buyback_yield).map(|b| -b).filter(|&d| d > tuning.growth_max_dilution_pct) {
+            fails.push(("dilution", format!("+{d:.1}% share count (ceiling +{:.1}%)", tuning.growth_max_dilution_pct), d <= tuning.growth_max_dilution_pct + 2.0));
+        }
+    }
+    if tuning.growth_min_interest_cover > 0.0 {
+        if let Some(c) = ff.and_then(|f| f.interest_cover).filter(|&c| c < tuning.growth_min_interest_cover) {
+            fails.push(("cover", format!("{c:.1}x interest cover (floor {:.1}x)", tuning.growth_min_interest_cover), c >= tuning.growth_min_interest_cover - 1.0));
+        }
+    }
+    if tuning.growth_min_fcf_margin > -1e8 {
+        if let Some(m) = ff.and_then(|f| f.fcf_margin).filter(|&m| m < tuning.growth_min_fcf_margin) {
+            fails.push(("fcf", format!("{m:.1}% FCF margin (floor {:.1}%)", tuning.growth_min_fcf_margin), m >= tuning.growth_min_fcf_margin - 2.0));
+        }
+    }
+    if tuning.growth_min_net_cash_rev > -1e8 {
+        if let Some(n) = ff.and_then(|f| f.net_cash_rev).filter(|&n| n < tuning.growth_min_net_cash_rev) {
+            fails.push(("netcash", format!("{n:.1}% net cash/rev (floor {:.1}%)", tuning.growth_min_net_cash_rev), n >= tuning.growth_min_net_cash_rev - 10.0));
         }
     }
     let maxdd_cap = if crypto { tuning.growth_maxdd_cap_crypto } else { tuning.growth_maxdd_cap };

@@ -3519,6 +3519,41 @@ buy_heuristic:
                                  #   direction, so it cuts NVDA (36%->56%) and ANET (29%->39%) while CF and MPC survive: it
                                  #   punishes margin EXPANSION as readily as cyclicality. Needs downside-only dispersion, or
                                  #   pairing with margin_trend, before it means what its name says. 0 = off.
+  # ---- (P1) SURVIVAL GATES: four rejections, ALL OFF, NONE MEASURED YET ----
+  # These four factors already exist as `FundFactors` fields and have only ever been priced as additive
+  # TILTS. As GATES they make a different claim — not "this name scores lower" but "this filer may not
+  # survive the hold" — and no scoring term in the lane can express that. Each is equity-only for free
+  # (coins and ETFs carry no `fund`), and missing fundamentals PASS, per the house rule.
+  #
+  # EVERY VALUE BELOW IS AN UNFITTED JUDGEMENT VALUE — specifically, the OFF state. Nothing here has
+  # been swept, so nothing here has a receipt yet. They reject OVERLAPPING cohorts, so their individual
+  # deltas will NOT add and the survivors must be run JOINTLY before any of them ships. The sweep also
+  # has to report each rung's REJECTED cohort forward return vs kept peers: a gate that cuts names which
+  # then outperform is a bad gate whatever it does to the edge, which is the standard the #24 receipt set.
+  # REVERT RULE for all four: they are off; turning one on without a run in this file is the revert.
+  growth_max_dilution_pct: 0.0   # (P1a) reject a filer whose as-of 1y share count grew more than this %.
+                                 #   Reads `-fund.buyback_yield` (that field is sign-flipped, + = shrinking),
+                                 #   so a 3% share raise reads +3.0 here. Serial issuance is how a compounder's
+                                 #   per-share result is taken from the holder, and no margin or growth term in
+                                 #   the lane can see it. Highest prior of the four — sweep this one FIRST.
+                                 #   UNFITTED. Suggested ladder: off / 10 / 5 / 2 / 0. 0 = off.
+  growth_min_interest_cover: 0.0 # (P1b) reject a filer whose as-of operating income ÷ interest expense is
+                                 #   under this ×. `fund.interest_cover` is None when NO interest expense was
+                                 #   filed, so a debt-free balance sheet reads NEUTRAL and passes — deliberate:
+                                 #   scoring "carries no debt" as "cannot service its debt" inverts the gate.
+                                 #   UNFITTED. Suggested ladder: off / 2 / 3 / 5 / 8. 0 = off.
+  growth_min_fcf_margin: -1e9    # (P1c) reject a filer whose as-of (op cash flow − capex) ÷ revenue is under
+                                 #   this %. NOTE THE OFF SENTINEL: it is -1e9, NOT the house 0, because a bar
+                                 #   of exactly 0 ("reject anyone burning cash") is the single most interesting
+                                 #   setting this knob has — a knob whose off-state collides with its best
+                                 #   candidate value cannot be swept at all.
+                                 #   UNFITTED. Suggested ladder: off / -10 / 0 / 5 / 10. -1e9 = off.
+  growth_min_net_cash_rev: -1e9  # (P1d) reject a filer whose as-of (cash − debt) ÷ revenue is under this %.
+                                 #   Same -1e9 off sentinel and the same reason as P1c: negative values are
+                                 #   meaningful here (a levered balance sheet), so 0 is a legitimate bar.
+                                 #   Revenue-scaled rather than EBITDA-scaled so loss-makers stay defined
+                                 #   instead of None-ing straight out of the gate.
+                                 #   UNFITTED. Suggested ladder: off / -100 / -50 / -25 / 0. -1e9 = off.
   growth_require_lifetime_uptrend: true # (#25) reject equities whose WHOLE-LIFE log-trend CAGR is <= 0: moon-crash-partial-recovery
                                  #   names whose 10Y leg looks great but never reclaimed their long-run trend (the ranked CAGR uses
                                  #   the longest 20Y/10Y/5Y leg, so it can't see this). Same-batch pair 2026-07-03: off +115.7
