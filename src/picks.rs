@@ -611,8 +611,19 @@ pub fn perf_pct(quote: &Quote, label: &str) -> Option<f64> {
 /// `max_1m_drop_pct_crypto`, `growth_maxdd_cap_crypto`). It exists because the equity floor's measured
 /// optimum lands on top of Bitcoin: the 2026-08-03 ladder puts the equity peak at +75 (20y lane edge
 /// +410.8 -> +459.3, h2h 67% -> 76%), and BTC's 5Y was +51.5% that day, so one shared knob priced the
-/// whole crypto table against an equity-tuned bar and emptied it. The 8Y/20Y rungs need no twin — no
-/// coin in the universe carries a leg that long, so those cells are `n/a` and skipped by construction.
+/// whole crypto table against an equity-tuned bar and emptied it.
+///
+/// The 20Y rung needs no twin: no coin carries a leg that long — even Bitcoin's Yahoo history starts
+/// 2014 — so the cell is `n/a`, and an absent rung is SKIPPED here, never failed. That floor cannot
+/// reject a coin at any value.
+///
+/// CORRECTED 2026-08-18: the 8Y rung used to be filed under the same "no coin lives that long" excuse,
+/// and it has outlived it. BNB carries 8.8 years and printed an 8Y cell of +3136% on the live table,
+/// so `growth_min_8y_pct` — a bar measured on equities alone — now reaches the OLDEST coins with no
+/// twin to hold it off. Inert as it stands (BNB clears a floor of 50 sixty-fold), and left alone
+/// deliberately: nothing is blocked by it today, and a knob per rung is another number owing another
+/// receipt. But it is now a live edge, not an impossibility — if the crypto table ever empties after
+/// this floor moves, THIS is the reason, and the fix is the twin the 5Y rung already has.
 fn long_leg_floors(tuning: &BuyHeuristic, crypto: bool) -> [(&'static str, &'static str, f64); 3] {
     [
         ("5Y", "5Y+", if crypto { tuning.growth_min_5y_pct_crypto } else { tuning.growth_min_5y_pct }),

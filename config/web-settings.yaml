@@ -97,3 +97,14 @@ buy_heuristic:
   growth_min_range_pct: 50
   growth_min_range_pct_crypto: 50
   min_score: -1000000.0
+
+  # CAGR BASIS — these two pick WHICH number the ranking compounds, where everything above only moves
+  # a threshold. That difference is why they were missed the first time: they read like display knobs
+  # and are nothing of the sort. Both route through `long_cagr_from`, which moves all seven readers
+  # (gate, trend, accel, sharpe, calmar, trend_health, PEG) together.
+  #
+  # Left out, the page ranked on the 20/8/5 leg while the CAGR column kept printing whole-life — so it
+  # showed BNB at +98%/yr and ranked it on ~+54%/yr, and its #1 was not the terminal's #1. That is the
+  # exact failure the header above warns about, so treat these as load-bearing, not decoration.
+  use_life_cagr: true
+  fixed_cagr_years: 20

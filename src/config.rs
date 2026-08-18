@@ -1221,6 +1221,7 @@ mod tests {
         // empty `buy_heuristic` would otherwise deserialize clean into the code defaults and rank a
         // plausible-looking table off an unconfigured heuristic.
         assert!(gates_configured(&merged), "the page must inherit the tuned gates");
+        let merged_pin = merged.clone();
         let s: Settings = serde_yaml::from_value(merged).expect("the merged Pages config must parse");
 
         // nothing that says WHOSE screen this is
@@ -1233,6 +1234,38 @@ mod tests {
         assert!(s.widths.columns.len() > 20, "the page publishes the wide terminal layout");
         assert!(s.widths.columns.iter().any(|c| c == "ter"), "the ETF lane needs its own columns");
         assert!(s.widths.name_etf > 0, "the ETF lane's own NAME width, same as the terminal's");
+
+        // The CAGR-BASIS knobs, pinned by value. These two are the ones that went missing, and they
+        // are the ones a reader is least likely to notice are missing: every knob around them moves a
+        // THRESHOLD, while these pick WHICH NUMBER gets compounded. Left out, the page ranked on the
+        // 20/8/5 leg while its CAGR column printed whole-life, and its #1 stopped being the
+        // terminal's. This pin is what guards CI, where the overlay below does not exist.
+        assert!(s.buy_heuristic.use_life_cagr, "the page must rank on whole-life CAGR, as the terminal does");
+        assert_eq!(s.buy_heuristic.fixed_cagr_years, 20, "…and over the same pinned window, or the two disagree");
+
+        // DRIFT GUARD, skip-if-absent. `config/settings.yaml` is gitignored, so this is a no-op in CI
+        // and a live check on the machine that HAS the overlay — the only machine where the page and
+        // the terminal can be caught disagreeing. Every heuristic knob the overlay sets must survive
+        // into the merged page config. A key the merged heuristic does not carry is skipped, which is
+        // how the overlay's misfiled `compute_threads` stays out of it.
+        //
+        // Retuning the overlay reds BOTH this and the pin above. That is deliberate: the two edits
+        // belong together, and the pin cannot read the file that would tell it the new value.
+        if let Ok(text) = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config/settings.yaml")) {
+            let local: serde_yaml::Value = serde_yaml::from_str(&text).expect("parse config/settings.yaml");
+            if let (Some(lh), Some(mh)) = (local.get("buy_heuristic"), merged_pin.get("buy_heuristic")) {
+                for (key, lv) in lh.as_mapping().expect("buy_heuristic is a mapping") {
+                    let (Some(k), Some(mv)) = (key.as_str(), key.as_str().and_then(|k| mh.get(k))) else { continue };
+                    // 50 and 50.0 are one floor written two ways — compare numbers as numbers, so the
+                    // guard fires on real disagreement and not on YAML spelling.
+                    let same = match (lv.as_f64(), mv.as_f64()) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => lv == mv,
+                    };
+                    assert!(same, "config/web-settings.yaml drifted from the local overlay on `{k}`: page has {mv:?}, terminal has {lv:?} — the page would rank a different #1 than the terminal it claims to mirror");
+                }
+            }
+        }
     }
 
     /// Value-pin for the RANKING-LIVE tilt knobs. The scoring pins (r59/r67) guard the CODE defaults
