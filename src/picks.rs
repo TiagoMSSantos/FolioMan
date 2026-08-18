@@ -6444,6 +6444,98 @@ mod tests {
         assert!(art.iter().any(|(g, _, close)| *g == "artifact" && !*close));
     }
 
+    /// (P1) the four SURVIVAL gates. Nothing else in the suite arms them — they ship OFF, so the
+    /// goldens walk straight past every line of them — and an unarmed gate is indistinguishable from
+    /// a gate that rejects everything. Each case below pins one of the four claims the gates make:
+    ///
+    ///   * OFF really is off, at the knob's own sentinel — and for the two `-1e9` knobs, at the -1e8
+    ///     edge of the band the code actually tests, which is the only place an inclusive comparison
+    ///     would differ from the exclusive one.
+    ///   * the fence is exclusive: a filer sitting EXACTLY on the ceiling or the floor survives, so
+    ///     `growth_min_fcf_margin: 0.0` means "burning cash", not "not making a profit".
+    ///   * `buyback_yield` is read in the sign the HOLDER feels — a filer buying back 8% of itself
+    ///     must not be rejected by a gate aimed at one issuing 8%.
+    ///   * the near-miss flag is sized: it is pinned true just past the line and false well past it,
+    ///     because a `close` that is always true is the same as having no near-miss column at all.
+    ///
+    /// Missing fundamentals PASS all four, per the house rule, and `interest_cover: None` means no
+    /// interest expense was filed at all — a debt-free filer, not one that cannot service its debt.
+    #[test]
+    fn survival_gates_reject_only_past_their_line_and_size_the_miss() {
+        use crate::core::FundFactors; // not otherwise named in this file — the gates read it through `quote.fund`
+        let d = BuyHeuristic::default();
+        // a filer that clears every OTHER gate, so any refusal below belongs to the gate under test
+        let armed = |f: FundFactors| {
+            let mut q = gate_fixture();
+            q.fund = Some(f);
+            q
+        };
+        let dil = |b: f64| armed(FundFactors { buyback_yield: Some(b), ..Default::default() });
+        let cov = |c: f64| armed(FundFactors { interest_cover: Some(c), ..Default::default() });
+        let fcf = |m: f64| armed(FundFactors { fcf_margin: Some(m), ..Default::default() });
+        let cash = |n: f64| armed(FundFactors { net_cash_rev: Some(n), ..Default::default() });
+
+        type Set = fn(&mut BuyHeuristic, f64);
+        let dil_k: Set = |t, v| t.growth_max_dilution_pct = v;
+        let cov_k: Set = |t, v| t.growth_min_interest_cover = v;
+        let fcf_k: Set = |t, v| t.growth_min_fcf_margin = v;
+        let cash_k: Set = |t, v| t.growth_min_net_cash_rev = v;
+
+        // (label, knob, knob value, quote, expected verdict) — None clears, Some((reason, close)) rejects
+        let cases: &[(&str, Set, f64, Quote, Option<(&str, bool)>)] = &[
+            // the unarmed baseline: the fixture with fundamentals attached and no gate on must rank
+            ("baseline, nothing armed", dil_k, 0.0, armed(FundFactors::default()), None),
+            // DILUTION -- ceiling, stated as the positive raise the operator sets
+            ("dilution off lets an 8% raise through", dil_k, 0.0, dil(-8.0), None),
+            ("dilution ignores a filer buying back", dil_k, 5.0, dil(8.0), None),
+            ("dilution spares a filer exactly on it", dil_k, 5.0, dil(-5.0), None),
+            ("dilution passes missing fundamentals", dil_k, 5.0, armed(FundFactors::default()), None),
+            ("dilution rejects just past it", dil_k, 5.0, dil(-6.0),
+                Some(("+6.0% share count (ceiling +5.0%)", true))),
+            ("dilution stops calling it close", dil_k, 5.0, dil(-8.0),
+                Some(("+8.0% share count (ceiling +5.0%)", false))),
+            // INTEREST COVER -- floor. None is a debt-free filer and must read neutral
+            ("cover off lets a 0.5x filer through", cov_k, 0.0, cov(0.5), None),
+            ("cover treats no interest expense as neutral", cov_k, 3.0, armed(FundFactors::default()), None),
+            ("cover spares a filer exactly on it", cov_k, 3.0, cov(3.0), None),
+            ("cover rejects just under it", cov_k, 3.0, cov(2.5),
+                Some(("2.5x interest cover (floor 3.0x)", true))),
+            ("cover stops calling it close", cov_k, 3.0, cov(1.0),
+                Some(("1.0x interest cover (floor 3.0x)", false))),
+            // FCF MARGIN -- floor, off at -1e9 and still off at the -1e8 edge the code tests against
+            ("fcf off at its sentinel", fcf_k, -1e9, fcf(-50.0), None),
+            ("fcf still off at the band edge", fcf_k, -1e8, fcf(-50.0), None),
+            ("fcf spares a filer exactly on it", fcf_k, 0.0, fcf(0.0), None),
+            ("fcf passes missing fundamentals", fcf_k, 0.0, armed(FundFactors::default()), None),
+            ("fcf rejects a cash burner", fcf_k, 0.0, fcf(-1.0),
+                Some(("-1.0% FCF margin (floor 0.0%)", true))),
+            ("fcf stops calling it close", fcf_k, 0.0, fcf(-10.0),
+                Some(("-10.0% FCF margin (floor 0.0%)", false))),
+            // NET CASH / REVENUE -- floor, negative values meaningful, same two-part off sentinel
+            ("netcash off at its sentinel", cash_k, -1e9, cash(-200.0), None),
+            ("netcash still off at the band edge", cash_k, -1e8, cash(-200.0), None),
+            ("netcash spares a filer exactly on it", cash_k, -25.0, cash(-25.0), None),
+            ("netcash passes missing fundamentals", cash_k, -25.0, armed(FundFactors::default()), None),
+            ("netcash rejects a levered filer", cash_k, -25.0, cash(-30.0),
+                Some(("-30.0% net cash/rev (floor -25.0%)", true))),
+            ("netcash stops calling it close", cash_k, -25.0, cash(-100.0),
+                Some(("-100.0% net cash/rev (floor -25.0%)", false))),
+        ];
+
+        for (label, set, v, q, want) in cases {
+            let mut t = d.clone();
+            set(&mut t, *v);
+            let fails = gate_failures(q, &t).unwrap_or_else(|| panic!("{label}: refused, expected a verdict"));
+            // the mirror is the whole point of splitting these two functions -- check it per case
+            assert_eq!(fails.is_empty(), growth_score(q, &t).is_some(),
+                "{label}: gate_failures and score_parts disagree");
+            let got = fails.iter()
+                .find(|(g, ..)| matches!(*g, "dilution" | "cover" | "fcf" | "netcash"))
+                .map(|(_, msg, close)| (msg.as_str(), *close));
+            assert_eq!(got, *want, "{label}: wrong survival verdict (all failures: {fails:?})");
+        }
+    }
+
     /// (QA) The SHIPPED tuning — the one every backtest receipt was graded under. Every other scoring
     /// test builds from `BuyHeuristic::default()`, so the values `tests/ci-settings.yaml` actually serves
     /// were never scored by any test: the whole file could stop being read and the suite would stay
