@@ -522,6 +522,22 @@ fn pit_pool(tickers: &[String], sector_of: &HashMap<String, String>, spans: &cor
     out
 }
 
+/// (PIT) Does this run swap its pool? Two refusals, and they refuse different disasters, which is why
+/// neither half can be dropped:
+///
+/// - **no spans** — the source was unreachable or parsed to nothing. Swapping on an empty map DELETES
+///   the index pond outright and scores the ETF and crypto lanes alone, which prints as a legitimately
+///   small universe rather than as the failure it is.
+/// - **no `sector_of`** — `fetch_universe` never ran, so this is an explicit ticker list. The caller
+///   asked for those names; PIT filters their cutoffs but must not replace them with 1206 others.
+///
+/// A predicate rather than an `if` in `run` because `run` is one enormous `-> ()`: an operator inside
+/// it is only ever graded through a golden, and the golden that would move here is the one path — a
+/// live `universe` fetch — no offline pin can reach.
+fn pit_swaps_pool(spans: &core::MemberSpans, sector_of: &HashMap<String, String>) -> bool {
+    !spans.is_empty() && !sector_of.is_empty()
+}
+
 /// (PIT) How many pool names were index members that Yahoo NO LONGER SERVES. A COUNT, because the
 /// alternative is what this command did for its whole life: drop the ticket in `buffer_unordered` and
 /// print a total that silently omits them. A point-in-time universe whose dead names quietly fail to
@@ -627,7 +643,7 @@ pub async fn run(args: Vec<String>) {
     // `fetch_universe` ran, and what it holds is that universe's index pond. An explicit ticker list
     // keeps every name the caller asked for and only has its CUTOFFS filtered below — which is also the
     // only shape of this feature a frozen-data golden can reach, since `universe` needs a live fetch.
-    if !pit_spans.is_empty() && !sector_of.is_empty() {
+    if pit_swaps_pool(&pit_spans, &sector_of) {
         tickers = pit_pool(&tickers, &sector_of, &pit_spans);
         eprintln!(
             "backtest: PIT — the index pond is now {} names that were EVER in the S&P 500, not the ~503 that survived to today",
@@ -4476,6 +4492,22 @@ mod tests {
         // An EMPTY membership map would otherwise DELETE the index pond and score ETFs and coins alone,
         // which is why the caller refuses to swap on one. Pinned here so that guard cannot drift.
         assert_eq!(pit_pool(&tickers, &sector_of, &core::MemberSpans::new()), vec!["BTC-EUR", "IWDA.L"]);
+    }
+
+    /// (PIT) The swap guard's four cases. Each `false` here is a distinct disaster the guard exists to
+    /// refuse, and the `run` call site is inside a `-> ()` that only a live `universe` fetch reaches —
+    /// so this is the only place either half can be held to account.
+    #[test]
+    fn pit_swaps_pool_needs_both_a_source_and_an_index_pond() {
+        let spans: core::MemberSpans =
+            [("AAPL".to_string(), vec![("1996-01-02".parse().expect("date"), None)])].into_iter().collect();
+        let pond: HashMap<String, String> =
+            [("AAPL".to_string(), "Information Technology".to_string())].into_iter().collect();
+
+        assert!(pit_swaps_pool(&spans, &pond), "a live source and a wide-path pond: swap");
+        assert!(!pit_swaps_pool(&core::MemberSpans::new(), &pond), "no source -> swapping would DELETE the pond");
+        assert!(!pit_swaps_pool(&spans, &HashMap::new()), "no pond -> an explicit ticker list, keep what was asked for");
+        assert!(!pit_swaps_pool(&core::MemberSpans::new(), &HashMap::new()), "neither, plainly nothing to do");
     }
 
     /// (PIT) The unserved count. It exists because the failure it names is INVISIBLE by default: a dead

@@ -1217,6 +1217,23 @@ mod tests {
         assert!(s.urls.fundamentals.contains("financialmodelingprep")); // defaulted Urls subfield
     }
 
+    /// (PIT) The default membership source, pinned by SHAPE rather than by host. Nothing else in the
+    /// tree reads this string, so without a pin `default_sp500_history` is free to return anything at
+    /// all — and the failure it would cause is silent: a URL that fetches but does not parse leaves
+    /// `pit` with an empty map, which is exactly what `pit` being OFF looks like.
+    #[test]
+    fn default_sp500_history_points_at_the_spans_file() {
+        let url = default_sp500_history();
+        assert!(url.starts_with("https://"), "the membership source is fetched over TLS or not at all: {url}");
+        assert!(
+            url.ends_with("sp500_ticker_start_end.csv"),
+            "the SPANS file — `ticker,start_date,end_date` — and NOT the same publisher's 5.3 MB per-date \
+             snapshot. Both answer the same question and only this one parses with `core::sp500_spans`; \
+             point this at the snapshot and `pit` silently gets an empty map, which reads as `pit` being \
+             off. Got: {url}"
+        );
+    }
+
     /// (#79) The Pages overlay must MERGE-parse, and must stay private-clean.
     ///
     /// It is only ever exercised on a runner, by a scheduled job, against a config that isn't in this
@@ -1224,10 +1241,10 @@ mod tests {
     /// caused it. Parsing it here is the whole point: `Settings` rejects unknown fields, which is what
     /// catches a mis-nested key (`compute_threads` under `buy_heuristic` is the live example).
     ///
-    /// The second half is the one that matters more. The repo is private, but a Pages site is
-    /// world-readable, so an overlay that grew a `tickers:` entry or a real `ntfy_topic` would publish
-    /// it. These asserts are that gate, and they are deliberately about ABSENCE — the easiest way for
-    /// a private value to reach the page is for someone to paste their whole settings.yaml in here.
+    /// The second half is the one that matters more. The repo is public and so is the Pages site, so
+    /// an overlay that grew a `tickers:` entry or a real `ntfy_topic` would publish it. These asserts
+    /// are that gate, and they are deliberately about ABSENCE — the easiest way for a private value to
+    /// reach the page is for someone to paste their whole settings.yaml in here.
     #[test]
     fn web_overlay_parses_merged_and_leaks_nothing() {
         let base = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml"))
