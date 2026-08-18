@@ -317,6 +317,29 @@ fn backtest_stress_report_is_pinned() {
     pin(&["12", "stress"], "backtest-12-stress.golden");
 }
 
+/// (PIT) Point-in-time membership. This is the ONLY offline reach into the feature: the pool SWAP is
+/// wide-only and `universe` needs a live index fetch, but the per-cutoff membership FILTER runs on any
+/// pool — so an explicit ticker list scored against `tests/fixture/.sp500_history.json` exercises the
+/// filter, the caveat block and the unserved-name count with no socket open.
+///
+/// It is not a near-duplicate of the 12y golden the way `stress` is. Roughly 45 of the 200 fixture
+/// names are or were S&P 500 constituents, and every one of them loses the cutoffs from before it
+/// joined or after it left — MRNA (joined 2021-07-21) and SBNY (2021-12-20..2023-03-15) lose ALL of
+/// theirs at a 12y horizon, because neither was in the index twelve years ago. The rest of the pool —
+/// every coin, every UCITS ETF, every name that was never a member — is untouched, which is the
+/// property most worth pinning: `pit` must not quietly filter two of the three asset classes to zero.
+#[test]
+fn backtest_pit_report_is_pinned() {
+    let spans = fixture_dir().join(".sp500_history.json");
+    assert!(
+        spans.is_file(),
+        "frozen membership map missing at {} — without it FOLIOMAN_OFFLINE=1 leaves `pit` with an \
+         empty map, which is indistinguishable from `pit` being off and would pin nothing",
+        spans.display()
+    );
+    pin(&["12", "pit"], "backtest-12-pit.golden");
+}
+
 /// THE MARKER CONTRACT, as an assertion rather than a claim.
 ///
 /// `tests/network.rs::backtest_edge_holds` has no parser — it string-searches this report for every

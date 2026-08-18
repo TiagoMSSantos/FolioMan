@@ -4012,6 +4012,50 @@ pub async fn sector_map(client: &Client, urls: &Urls, sectors: &[String]) -> std
     out
 }
 
+/// (PIT) `.sp500_history.json` — the point-in-time S&P 500 membership map, cached FOREVER.
+///
+/// ponytail: no TTL, deliberately. The index changes a handful of times a year and every cutoff a
+/// walk-forward run scores is in the PAST, so a month-stale copy moves nothing it measures. The
+/// ceiling that buys: a name added to the index since the file was written is invisible to `pit` and
+/// will be counted as one more name the pool never had, rather than as a member. `rm
+/// .sp500_history.json` is the entire upgrade path; wrap it in a dated check like
+/// `LONG_CACHE_TTL_DAYS`' if that ever actually bites.
+const SP500_HISTORY_CACHE_PATH: &str = ".sp500_history.json";
+
+/// (PIT) Point-in-time S&P 500 membership: ticker -> the half-open spans it was in the index for.
+/// Empty when the source is unreachable AND nothing is cached — the caller must treat that as "no PIT
+/// data, run as before", never as "nobody was ever a member", which would score an empty universe.
+///
+/// One small GET, once per machine. `screen` never calls this: the live screen wants today's members
+/// and `sp500_csv` already answers that. This exists for `backtest … universe pit`, whose whole job is
+/// to stop scoring 1996 with a pool chosen in 2026.
+pub async fn fetch_sp500_history(client: &Client, urls: &Urls) -> core::MemberSpans {
+    let path = crate::config::data_path(SP500_HISTORY_CACHE_PATH);
+    let cached = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<core::MemberSpans>(&s).ok())
+        .filter(|m| !m.is_empty());
+    // An EMPTY or unparsable cache falls through to a refetch rather than being served: a truncated
+    // write would otherwise pin `pit` to "nobody was ever a member" for good, and that failure prints
+    // as a legitimately tiny pool instead of as an error.
+    if let Some(spans) = cached {
+        return spans;
+    }
+    let Some(text) = get_text(client, &urls.sp500_history).await else {
+        eprintln!("fetch: point-in-time S&P 500 membership unavailable — `pit` has nothing to filter with");
+        return core::MemberSpans::new();
+    };
+    let spans = core::sp500_spans(&text);
+    if spans.is_empty() {
+        eprintln!("fetch: point-in-time membership source parsed to nothing — not caching an empty map");
+        return spans;
+    }
+    if let Ok(json) = serde_json::to_string(&spans) {
+        let _ = std::fs::write(&path, json);
+    }
+    spans
+}
+
 /// (EU listing) US symbol -> its verified Xetra Yahoo symbol (`GOOGL` -> `ABEA.DE`). Only read when
 /// `prefer_eu_listing` is on, and the mapping is stable, so resolutions are remembered forever.
 ///
@@ -5897,6 +5941,40 @@ mod tests {
         assert_eq!(get_text(&client, &url).await.as_deref(), Some("ISIN,name\nIE00B4L5Y983,IWDA"));
     }
 
+    /// (PIT) The membership fetch, both legs: parse-and-cache, then serve-from-cache without a request.
+    /// The second leg is the one worth a test — this cache has NO TTL, so "does it actually answer from
+    /// disk" is the difference between one GET per machine and one GET per backtest run.
+    ///
+    /// The stub URLs are seeded from a DIFFERENT server that serves a different membership list, so a
+    /// version of this that read the wrong `Urls` field would return `WRONG` and fail here rather than
+    /// passing on the coincidence that `stub_urls` points every field at one address.
+    ///
+    /// Owns `.sp500_history.json` in the shared scratch root; nothing else in this binary touches it.
+    #[tokio::test]
+    async fn fetch_sp500_history_parses_then_answers_from_disk() {
+        let path = crate::config::data_path(SP500_HISTORY_CACHE_PATH);
+        let _ = std::fs::remove_file(&path);
+        let (wrong, _) = stub_server("ticker,start_date,end_date\nWRONG,2000-01-01,\n");
+        let (right, client) = stub_server("ticker,start_date,end_date\nAAPL,1996-01-02,\nSBNY,2015-08-05,2023-03-15\n");
+        let mut urls = stub_urls(&wrong);
+        urls.sp500_history = right;
+
+        let live = fetch_sp500_history(&client, &urls).await;
+        assert_eq!(live.len(), 2, "AAPL and SBNY — not the `WRONG` row every other Urls field points at");
+        assert!(live.contains_key("SBNY"), "a name that LEFT the index is the whole reason this source exists");
+        assert!(path.is_file(), "a good parse is written to disk");
+
+        // Now prove it is read back: a port nothing listens on. Answering means no request was made.
+        urls.sp500_history = "http://127.0.0.1:1/".to_string();
+        assert_eq!(fetch_sp500_history(&client, &urls).await, live, "the second call answers from disk");
+
+        // An unreachable source with NO cache is empty — and empty must stay uncached, or one bad
+        // morning pins `pit` to "nobody was ever a member" forever.
+        let _ = std::fs::remove_file(&path);
+        assert!(fetch_sp500_history(&client, &urls).await.is_empty());
+        assert!(!path.is_file(), "nothing to cache, so nothing is written");
+    }
+
     #[tokio::test]
     async fn post_json_parses_the_body() {
         let (url, client) = stub_server(r#"{"isin":"LU0378438732"}"#);
@@ -5989,10 +6067,10 @@ mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 33] = [
+        const FIELDS: [&str; 34] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
-            "pt_cpi", "eu_hicp", "eu_hicp_old", "coingecko_markets", "sp500_csv", "nupl",
+            "pt_cpi", "eu_hicp", "eu_hicp_old", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
             "coinmetrics_catalog", "coinmetrics_mvrv", "ntfy", "fundamentals", "fundamentals_quality",
             "fundamentals_history", "fund_expense", "bf_etf_search", "bf_salt", "euronext_lisbon",
             "euronext_track", "six_funds", "esma_firds", "fca_firds", "sec_ticker_cik",

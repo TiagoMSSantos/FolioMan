@@ -28,11 +28,18 @@
 //!   "the backtest cannot see X", check whether X is already in the payload first.
 //! - **(#5) survivorship**: the universe is names that SURVIVED to today, so realized returns are
 //!   biased UP. Flagged in the footer — treat the edge as optimistic, never a forecast.
+//! - **(PIT) point-in-time universe**: `pit` scores every cutoff against the S&P 500 AS IT STOOD THAT
+//!   DAY — the direct cure for the line above, not the `stress` proxy. With `universe` it also swaps
+//!   the pool: today's ~503 survivors out, all 1206 names ever in the index since 1996 in, dead ones
+//!   included. EXPECT THE EDGE TO FALL; that is the measurement working. Names the index held but
+//!   Yahoo no longer serves are COUNTED and printed, because a point-in-time pool whose dead names
+//!   silently fail to fetch is the survivors-only pool again wearing a flag.
 //!
 //! Defaults to the settings.yaml watchlist (small, cheap). Pass tickers to test others, or the keyword
 //! `universe` to test the whole live screen universe (#2 — a far wider, less single-name-lucky sample).
 //! Add `stress` to inject known crashed/delisted losers into whatever pool is tested (#6) — compare the
-//! rho/edge against the same run without it to see how much of the edge is survivorship bias.
+//! rho/edge against the same run without it to see how much of the edge is survivorship bias, or `pit`
+//! to remove the bias at the source instead of estimating it.
 
 use crate::config::BuyHeuristic;
 use crate::core::Quote;
@@ -407,12 +414,13 @@ struct Args {
     insider: bool,
     halflife: bool,
     stress: bool,
+    pit: bool,
     tickers: Vec<String>,
 }
 
 /// First purely-numeric arg = holdout years; the keyword `universe` = test the live screen universe
-/// (#2: a much wider sample than the ~50-name watchlist -> less single-name luck); everything else =
-/// explicit tickers to test.
+/// (#2: a much wider sample than the ~50-name watchlist -> less single-name luck); `pit` = score each
+/// cutoff against the index as it stood that day; everything else = explicit tickers to test.
 fn parse_args(args: &[String]) -> Args {
     let mut a_ = Args { years: 5, ..Default::default() };
     for a in args {
@@ -425,6 +433,7 @@ fn parse_args(args: &[String]) -> Args {
             _ if a.eq_ignore_ascii_case("insider") => a_.insider = true, // (Item 4) also pull SEC Form-4 net buys
             _ if a.eq_ignore_ascii_case("halflife") => a_.halflife = true, // (Item 11) hold-period net-edge sweep
             _ if a.eq_ignore_ascii_case("stress") => a_.stress = true,   // (#6) inject crashed/delisted losers
+            _ if a.eq_ignore_ascii_case("pit") => a_.pit = true, // (PIT) score each cutoff against the index AS IT WAS
             _ => a_.tickers.push(a.clone()),
         }
     }
@@ -490,6 +499,42 @@ fn too_few_samples(n: usize) -> bool {
 /// the ONLY runs that publish are the thin ones the floor exists to reject — a Yahoo-throttled wide
 /// run resolving a few hundred names instead of ~4900 is indistinguishable from a healthy one in the
 /// file, and the footer goes on citing it for days.
+/// (PIT) The point-in-time pool: today's index members LEAVE, every name that was EVER a member
+/// ARRIVES — the dead ones included. That swap is the whole feature. `fetch_universe`'s equity pond is
+/// `sp500_csv`, a list of the ~503 companies still in the index TODAY, so scoring a 1996 cutoff against
+/// it asks "how did the eventual survivors do", which is the (#5) survivorship caveat stated as a
+/// method. The membership map answers the honest question instead: who was in the index THAT DAY.
+///
+/// Only names carried by `sector_of` are removed, which is exactly the constituent-CSV pond —
+/// crypto and the ETF lane are untouched, because neither was ever in the S&P 500 and filtering them
+/// by it would empty two of the three asset classes.
+///
+/// KNOWN NARROWING, stated rather than buried: an EXTRA `constituents_csv` pond (an S&P MidCap 400
+/// or a European index) also lives in `sector_of` and is dropped here with no historical twin to put
+/// back, because this source covers the S&P 500 alone. So `pit` shrinks a multi-pond universe to one
+/// pond. Add a second membership source before adding a second pond, or the comparison is unfair to
+/// the pond that keeps its names.
+fn pit_pool(tickers: &[String], sector_of: &HashMap<String, String>, spans: &core::MemberSpans) -> Vec<String> {
+    let mut out: Vec<String> = tickers.iter().filter(|t| !sector_of.contains_key(*t)).cloned().collect();
+    out.extend(spans.keys().cloned());
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// (PIT) How many pool names were index members that Yahoo NO LONGER SERVES. A COUNT, because the
+/// alternative is what this command did for its whole life: drop the ticket in `buffer_unordered` and
+/// print a total that silently omits them. A point-in-time universe whose dead names quietly fail to
+/// fetch is just the survivors-only universe again, wearing a flag — so the number has to be visible
+/// even when it is large, and ESPECIALLY when it is large.
+///
+/// Counted over the POOL and not over the whole membership map, so it means the same thing on both
+/// paths: on a `universe` run the pool IS every member, on an explicit ticker list it is the members
+/// among those tickers.
+fn pit_unserved(pool: &[String], spans: &core::MemberSpans, served: &HashSet<&str>) -> usize {
+    pool.iter().filter(|t| spans.contains_key(t.as_str()) && !served.contains(t.as_str())).count()
+}
+
 fn may_write_verdict(wide: bool, resolved: usize) -> bool {
     wide && resolved >= MIN_VERDICT_TICKERS
 }
@@ -537,7 +582,7 @@ pub async fn run(args: Vec<String>) {
     let client = fetch::client();
     let tuning = &settings.buy_heuristic;
 
-    let Args { years, wide, long, fund, tune, insider, halflife, stress, mut tickers } = parse_args(&args);
+    let Args { years, wide, long, fund, tune, insider, halflife, stress, pit, mut tickers } = parse_args(&args);
     // DELIBERATELY UNPINNED (mutation audit, round 3): both halves of this `&&` survive. It guards an
     // eprintln and nothing else — no branch below reads the result — so the worst a wrong spelling does
     // is print, or fail to print, one advisory line. Killing it means mutating the process environment
@@ -572,6 +617,22 @@ pub async fn run(args: Vec<String>) {
         (tickers, etf_set, sector_of) = universe;
     } else if tickers.is_empty() {
         tickers = settings.tickers.clone();
+    }
+    // (PIT) point-in-time index membership, fetched once (27 KB, cached forever). AN EMPTY MAP IS THE
+    // OFF SWITCH: `pit` unset never fetches, an unreachable source returns empty and says so, and every
+    // read below is a lookup that simply finds nothing — so the default path is bit-identical either way.
+    let pit_spans =
+        if pit { fetch::fetch_sp500_history(&client, &settings.urls).await } else { core::MemberSpans::new() };
+    // The POOL swap is WIDE-ONLY, and `sector_of` is the test: it is non-empty exactly when
+    // `fetch_universe` ran, and what it holds is that universe's index pond. An explicit ticker list
+    // keeps every name the caller asked for and only has its CUTOFFS filtered below — which is also the
+    // only shape of this feature a frozen-data golden can reach, since `universe` needs a live fetch.
+    if !pit_spans.is_empty() && !sector_of.is_empty() {
+        tickers = pit_pool(&tickers, &sector_of, &pit_spans);
+        eprintln!(
+            "backtest: PIT — the index pond is now {} names that were EVER in the S&P 500, not the ~503 that survived to today",
+            pit_spans.len()
+        );
     }
     // (#6) survivorship stress: fold the crashed/delisted losers into the pool so the edge is graded
     // against a sample that INCLUDES the names the live universe drops. Dedup so a loser already in the
@@ -664,8 +725,17 @@ pub async fn run(args: Vec<String>) {
     // same file, so whichever ran first pays and the other reads free for a week.
     fetch::long_cache_save();
 
+    // (PIT) the names the pool asked for and Yahoo could not answer for — counted HERE, while the
+    // fetch tickets still remember which ticker they were, and printed in the caveats below. `fetched`
+    // is about to be consumed by the walk, and a `None` in it carries no ticker at all.
+    let pit_missing = {
+        let served: HashSet<&str> = fetched.iter().flatten().map(|(tk, ..)| tk.as_str()).collect();
+        pit_unserved(&tickers, &pit_spans, &served)
+    };
+
     let etf_set = &etf_set;
     let sector_of = &sector_of;
+    let pit_spans = &pit_spans;
     let factor = settings.buy_heuristic.growth_fund_factor.as_str(); // (G) config-selected as-of factor
     let per_ticker: Vec<Vec<Sample>> = fetched
         .into_par_iter()
@@ -692,6 +762,10 @@ pub async fn run(args: Vec<String>) {
             // unreconstructable and `dividend_weight` shipped ungraded. `backtest_quote` slices it
             // to the cutoff, so no look-ahead arrives with it.
             let divs = chart.divs;
+            // (PIT) this name's index spans, resolved ONCE per ticker rather than per cutoff. `None`
+            // means "not an index name at all" — every coin, every ETF, and any stock that was never
+            // an S&P 500 member — and is never filtered: PIT is a claim about the index pond alone.
+            let member_spans = pit_spans.get(tk.as_str()).map(Vec::as_slice);
             let mut out = Vec::new();
             let mut i = min_history;
             // DELIBERATELY UNPINNED (mutation audit, round 4): `<`->`<=` survives here, and killing
@@ -699,6 +773,14 @@ pub async fn run(args: Vec<String>) {
             // not a test. The mutant is also self-limiting: `dates[i]` on the next line panics
             // immediately rather than returning a wrong number.
             while i < dates.len() {
+                // (PIT) was this name IN the index on the day we are pretending to stand? If not, the
+                // cutoff never existed for a real screener and contributes no sample — that is the whole
+                // point-in-time correction, and it cuts BOTH ways: a future member is not scored early,
+                // and a departed one stops being scored at its exit rather than at its delisting.
+                if member_spans.is_some_and(|sp| !core::sp500_member_at(sp, dates[i])) {
+                    i += step;
+                    continue;
+                }
                 // forward index: first session at least `years` past the as-of date
                 let target = dates[i] + chrono::Duration::days(years * 365);
                 match dates[i..].iter().position(|d| *d >= target) {
@@ -1206,6 +1288,15 @@ pub async fn run(args: Vec<String>) {
     } else {
         println!("  • Survivorship (#5): the universe is names that SURVIVED to today — dead tickers never enter,");
         println!("    so realized returns are biased UP. Treat the edge as optimistic. Re-run with `stress` to inject losers.");
+    }
+    if pit {
+        println!("  • Point-in-time (PIT ON): every cutoff was scored against the S&P 500 AS IT STOOD THAT DAY, so a");
+        println!("    name contributes no sample before it joined or after it left. This is the direct correction to");
+        println!("    the line above, and the edge is EXPECTED to fall — a lower number here is the honest one.");
+        println!("    {pit_missing} pool name(s) were index members Yahoo no longer serves: fetched nothing, scored nothing,");
+        println!("    counted here rather than silently dropped. A big count means the correction is still incomplete.");
+        println!("    COVERAGE FLOOR 1996-01-02: the source opens every pre-existing member's span on that date, so");
+        println!("    cutoffs before it are DROPPED rather than corrected — it bites the 20y run's front, not the 8y one.");
     }
     // (#61) WAS "no as-of dividends or P/E reconstructed; the * term above is inert here", and the
     // dividend half of that was false — `#53` plumbed as-of divs (`picks.rs` says so at the growth
@@ -3741,8 +3832,12 @@ mod tests {
         assert!(p("insider").insider);
         assert!(p("halflife").halflife);
         assert!(p("stress").stress);
+        assert!(p("pit").pit, "`pit` must set pit — lose it and the point-in-time run is a plain one that says it isn't");
         // case-insensitive, as every arm claims via eq_ignore_ascii_case
-        assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife);
+        assert!(p("UNIVERSE").wide && p("Stress").stress && p("HalfLife").halflife && p("PIT").pit);
+        // and each keyword sets ONLY its own flag: `pit` and `stress` are opposite treatments of the
+        // same bias (remove it vs estimate it) and an arm that set both would silently conflate them.
+        assert!(!p("pit").stress && !p("stress").pit);
 
         // the numeric arm: first positive integer wins, and it is NOT a ticker
         assert_eq!(p("12").years, 12);
@@ -3769,10 +3864,21 @@ mod tests {
         assert_eq!(mixed.tickers, vec!["AAPL", "MSFT", "20"], "keywords are consumed, everything else is a ticker in order");
 
         // all flags at once still parse independently
-        let all = p("8 universe long fund tune insider halflife stress");
+        let all = p("8 universe long fund tune insider halflife stress pit");
         assert_eq!(
             all,
-            Args { years: 8, wide: true, long: true, fund: true, tune: true, insider: true, halflife: true, stress: true, tickers: vec![] }
+            Args {
+                years: 8,
+                wide: true,
+                long: true,
+                fund: true,
+                tune: true,
+                insider: true,
+                halflife: true,
+                stress: true,
+                pit: true,
+                tickers: vec![]
+            }
         );
     }
 
@@ -4335,6 +4441,63 @@ mod tests {
         assert_eq!(uniq.len(), tickers.len(), "injection duplicated a ticker");
         assert!(STRESS_TICKERS.iter().all(|t| uniq.contains(*t)), "a loser is missing from the pool");
         assert!(uniq.contains("AAPL")); // the unrelated universe name survives
+    }
+
+    /// (PIT) The pool swap, and specifically the two things it must NOT do. It must not touch a name
+    /// outside the index pond — that is where the crypto and ETF lanes live, and filtering those by S&P
+    /// 500 membership would zero two of the three asset classes the report prints by class. And it must
+    /// not keep today's survivors merely because they are also historical members: they come back
+    /// through the membership map, once, on the same footing as the dead ones.
+    #[test]
+    fn pit_pool_swaps_the_index_pond_and_leaves_the_other_lanes_alone() {
+        // a wide-path pool: two index stocks, one ETF, one coin. `sector_of` marks the index pond.
+        let tickers: Vec<String> = ["AAPL", "IWDA.L", "GE", "BTC-EUR"].iter().map(|s| s.to_string()).collect();
+        let sector_of: HashMap<String, String> = [("AAPL", "Information Technology"), ("GE", "Industrials")]
+            .iter()
+            .map(|(t, s)| ((*t).to_string(), (*s).to_string()))
+            .collect();
+        let spans: core::MemberSpans = [
+            ("AAPL", vec![("1996-01-02".parse().expect("date"), None)]),
+            ("GE", vec![("1996-01-02".parse().expect("date"), None)]),
+            // the whole reason this exists: a name that is NOT in today's pond at all
+            ("SBNY", vec![("2021-12-20".parse().expect("date"), Some("2023-03-15".parse().expect("date")))]),
+        ]
+        .into_iter()
+        .map(|(t, v)| (t.to_string(), v))
+        .collect();
+
+        let pool = pit_pool(&tickers, &sector_of, &spans);
+        assert!(pool.contains(&"SBNY".to_string()), "a DEAD member is the point — it must arrive");
+        assert!(pool.contains(&"IWDA.L".to_string()) && pool.contains(&"BTC-EUR".to_string()),
+                "the ETF and crypto lanes are not index names and must survive the swap untouched");
+        assert_eq!(pool.iter().filter(|t| *t == "AAPL").count(), 1, "a survivor is not added twice");
+        assert_eq!(pool, vec!["AAPL", "BTC-EUR", "GE", "IWDA.L", "SBNY"], "sorted and deduped, nothing else");
+
+        // An EMPTY membership map would otherwise DELETE the index pond and score ETFs and coins alone,
+        // which is why the caller refuses to swap on one. Pinned here so that guard cannot drift.
+        assert_eq!(pit_pool(&tickers, &sector_of, &core::MemberSpans::new()), vec!["BTC-EUR", "IWDA.L"]);
+    }
+
+    /// (PIT) The unserved count. It exists because the failure it names is INVISIBLE by default: a dead
+    /// ticker fetches nothing, its ticket is dropped, and the run prints a pool size that never mentions
+    /// it. Counted over the POOL, so a name in the membership map that this run never asked for is not
+    /// blamed on Yahoo.
+    #[test]
+    fn pit_unserved_counts_only_pool_members_yahoo_dropped() {
+        let spans: core::MemberSpans = ["AAPL", "SBNY", "AAMRQ", "ABI"]
+            .iter()
+            .map(|t| ((*t).to_string(), vec![("1996-01-02".parse().expect("date"), None)]))
+            .collect();
+        let pool: Vec<String> = ["AAPL", "SBNY", "AAMRQ", "BTC-EUR"].iter().map(|s| s.to_string()).collect();
+        let served: HashSet<&str> = ["AAPL", "BTC-EUR"].into_iter().collect();
+
+        assert_eq!(pit_unserved(&pool, &spans, &served), 2, "SBNY and AAMRQ were asked for and came back empty");
+        // ABI is in the map but NOT in this pool: not asked for, so not a miss. Counting it would make
+        // every narrow run report hundreds of phantom misses.
+        // BTC-EUR served fine and is not a member anyway — neither half of the filter alone is enough.
+        assert_eq!(pit_unserved(&pool, &spans, &["AAPL", "SBNY", "AAMRQ", "BTC-EUR"].into_iter().collect()), 0);
+        assert_eq!(pit_unserved(&[], &spans, &served), 0, "no pool, no misses");
+        assert_eq!(pit_unserved(&pool, &core::MemberSpans::new(), &served), 0, "pit off -> nothing to miss");
     }
 
     /// (#9) gate_audit reports a POSITIVE accepted−rejected gap when the gate KEEPS the high-return names

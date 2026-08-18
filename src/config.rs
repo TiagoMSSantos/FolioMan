@@ -459,6 +459,19 @@ pub struct Urls {
     // empty. note: no GICS-sector column -> the sector filter drops every row, so the layout matters.
     #[serde(default)]
     pub constituents_csv: Vec<String>,
+    // (PIT) POINT-IN-TIME S&P 500 membership: `ticker,start_date,end_date`, one row per span, an empty
+    // end date meaning "still in the index". Read ONLY by `backtest … universe pit`, never by `screen` —
+    // the live screen wants today's members and nothing else. This is the survivorship cure the (#5)
+    // caveat has been apologising for: `sp500_csv` above lists the ~503 names that SURVIVED to today, so
+    // every backtest cutoff since 1996 has been scored on a pool chosen with hindsight.
+    //
+    // WHY THIS FILE AND NOT THE PUBLISHER'S OTHER ONE. The same repository ships a per-date snapshot
+    // (`date,"TICKER,…"`, 2718 dates, 5.3 MB). The spans file is 27 KB and rebuilds all 2718 snapshots
+    // exactly (see `core::sp500_spans`), so it is a lossless 200x-smaller substitute. It also carries the
+    // dead names — AAMRQ, ABI, AHM, SBNY — which is the entire point; a survivors-only list cannot.
+    // Defaulted so an older settings.yaml still loads, and swappable so the source is not welded in.
+    #[serde(default = "default_sp500_history")]
+    pub sp500_history: String,
     pub nupl: String,          // latest Bitcoin NUPL (net unrealized profit/loss) -> screen sentiment line
     // (#45) PER-COIN MVRV (market cap / realized cap), the generalization of `nupl` above — same
     // quantity, one row per coin instead of Bitcoin's alone (NUPL = 1 - 1/MVRV; cross-checked live at
@@ -615,6 +628,12 @@ fn default_fca_firds_url() -> String {
 }
 
 /// Default archive URL for the terminated pre-2026 Eurostat HICP dataset (see `Urls.eu_hicp_old`).
+/// (PIT) Default point-in-time S&P 500 membership source. Ordinary raw-file GET, no key, no rate limit,
+/// cached to `.sp500_history.json` after the first read.
+fn default_sp500_history() -> String {
+    "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv".to_string()
+}
+
 fn default_eu_hicp_old() -> String {
     "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_manr?format=JSON&lang=EN&coicop=CP00&geo=EU27_2020".to_string()
 }

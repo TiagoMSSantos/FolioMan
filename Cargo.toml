@@ -16,7 +16,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }  # `raw_value` = the long-history cache holds byte spans, not parsed trees (see `long_cache_load`)
 serde_yaml = "0.9"   # archived upstream but stable; swap for serde_norway if it ever breaks
 regex = "1"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# `serde` is here for ONE cache: `.sp500_history.json` stores NaiveDate spans directly rather than
+# round-tripping them through strings by hand. No new crate — serde is already a dependency.
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 hmac = "0.12"        # Binance order signing (HMAC-SHA256)
 sha2 = "0.10"
 md-5 = "0.10"        # Börse Frankfurt API request signing (MD5 trace/security headers)

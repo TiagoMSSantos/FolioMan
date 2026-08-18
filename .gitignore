@@ -75,4 +75,10 @@ config/settings.yaml
 # is the only end-to-end net over real data, and it must work on a fresh clone and in CI.
 !tests/fixture/.long_history_cache.json
 .holdings_cache.json
+# (PIT) point-in-time S&P 500 membership spans. No TTL by design — `rm` it to refresh; the reasoning
+# is on `fetch::SP500_HISTORY_CACHE_PATH`.
+.sp500_history.json
+# ...except the fixture copy, for the same reason the frozen history cache above is kept: without it
+# `backtest … pit` has no offline pin at all, and the one mode nothing can reach is the one that rots.
+!tests/fixture/.sp500_history.json
 .screen_alerts.log

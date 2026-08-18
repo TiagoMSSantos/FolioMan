@@ -849,6 +849,56 @@ fn yahoo_equity_symbol(sym: &str) -> String {
     }
 }
 
+/// (PIT) One name's S&P 500 membership, as HALF-OPEN spans `[start, end)`; `end: None` = still a member.
+/// A `Vec` per name and not one span, because names LEAVE and COME BACK — AAL, AMD, CEG, DELL and 50
+/// others do — and collapsing those into `first_start..last_end` would silently readmit a name for the
+/// years it was out, which is the exact bias a point-in-time universe exists to remove.
+pub type MemberSpans = std::collections::HashMap<String, Vec<(NaiveDate, Option<NaiveDate>)>>;
+
+/// Parse the point-in-time membership source: `ticker,start_date,end_date`, one row per span, an empty
+/// `end_date` meaning "still in the index today". Symbols are normalised to Yahoo form on the way in
+/// (`BF.B` -> `BF-B`) so a caller can look the name up with the same string it fetches history for.
+/// Malformed rows are skipped, and an unrecognizable document yields an empty map — which the caller
+/// then treats as "no PIT data", never as "nobody was ever a member".
+///
+/// HALF-OPEN IS MEASURED, NOT ASSUMED, and it was worth measuring: the same publisher also ships a
+/// 5.3 MB per-date SNAPSHOT file (`date,"TICKER,…"`, 2718 change dates, 1996-01-02..2026-06-30), and
+/// this 27 KB span file is only a legitimate substitute if it reproduces it. Rebuilding all 2718
+/// snapshots from these spans reproduces them EXACTLY — 0 mismatched dates — when `end` is EXCLUSIVE.
+/// Read as inclusive it mismatches 604 of the 2718, with 756 extra names and 0 missing: the signature
+/// of an off-by-one on the last day, on the 604 dates that ARE a departure. So the small file is
+/// lossless, and `sp500_member_at` below must stay half-open.
+pub fn sp500_spans(csv: &str) -> MemberSpans {
+    let mut out = MemberSpans::new();
+    for line in csv.lines().skip(1) {
+        let mut cols = line.split(',');
+        let (Some(sym), Some(start)) = (cols.next(), cols.next()) else { continue };
+        let sym = sym.trim();
+        let Ok(start) = start.trim().parse::<NaiveDate>() else { continue };
+        // A MISSING end field is "still a member"; a PRESENT but garbled one drops the row instead.
+        // The difference matters: silently defaulting a bad date to None promotes a long-dead ticker
+        // to a current constituent, which is a survivorship bug reintroduced by the parser itself.
+        let end = match cols.next().map(str::trim).filter(|s| !s.is_empty()) {
+            None => None,
+            Some(s) => match s.parse::<NaiveDate>() {
+                Ok(d) => Some(d),
+                Err(_) => continue,
+            },
+        };
+        if sym.is_empty() {
+            continue;
+        }
+        out.entry(yahoo_equity_symbol(sym)).or_default().push((start, end));
+    }
+    out
+}
+
+/// Was this name in the index on `on`? HALF-OPEN: the start date counts, the end date does not — see
+/// `sp500_spans` for the 2718-snapshot check that settled which way round.
+pub fn sp500_member_at(spans: &[(NaiveDate, Option<NaiveDate>)], on: NaiveDate) -> bool {
+    spans.iter().any(|(start, end)| *start <= on && end.is_none_or(|e| on < e))
+}
+
 /// (Item 32) Extract (Yahoo symbol, GICS sector) rows from a Wikipedia "List of S&P N companies"
 /// page (the maintained source for the MidCap 400 — no living CSV exists). Anchors on the
 /// `id="constituents"` table; per row, cell 0's text = ticker, cell 2's = sector. The tag-strip is
@@ -3390,6 +3440,64 @@ mod tests {
     }
 
     /// Pure-logic asserts (no network). White-box: reaches `core` privates via `use super::*`.
+    /// (PIT) The membership parser and its HALF-OPEN boundary. The boundary is the entire correctness
+    /// claim of the small source file — `sp500_spans`' doc records that reading `end` as INCLUSIVE
+    /// mis-rebuilds 604 of the publisher's 2718 snapshots — and that measurement lives in a comment,
+    /// which nothing enforces. This is the executable half. The malformed rows are here for the same
+    /// reason: the dangerous parse failure is not a dropped row, it is a garbled `end_date` quietly
+    /// becoming `None` and readmitting a dead ticker to today's index.
+    #[test]
+    fn sp500_spans_parse_and_the_half_open_boundary() {
+        let d = |s: &str| s.parse::<NaiveDate>().expect("date");
+        let csv = "ticker,start_date,end_date\n\
+                   AAPL,1996-01-02,\n\
+                   BF.B,1996-01-02,\n\
+                   AAL,1996-01-02,2013-12-09\n\
+                   AAL,2015-03-23,\n\
+                   SBNY,2015-08-05,2023-03-15\n\
+                   ,2000-01-01,\n\
+                   JUNK,not-a-date,\n\
+                   BAD,2000-01-01,also-not-a-date\n";
+        let spans = sp500_spans(csv);
+
+        // Yahoo form on the way IN, so the caller looks a name up with the same string it fetches.
+        assert!(spans.contains_key("BF-B"), "class shares are normalised: BF.B -> BF-B");
+        assert!(!spans.contains_key("BF.B"));
+        // Three junk rows, three different failures, none of them admitted.
+        assert!(!spans.contains_key(""), "an empty symbol is not a member of anything");
+        assert!(!spans.contains_key("JUNK"), "an unparsable start date drops the row");
+        assert!(
+            !spans.contains_key("BAD"),
+            "a garbled END date drops the row — it must NEVER fall through to None, which would \
+             promote a delisted name to a current constituent and reintroduce survivorship in the parser"
+        );
+        assert_eq!(spans.len(), 4, "AAPL, BF-B, AAL, SBNY — and nothing else");
+        assert_eq!(spans["AAL"].len(), 2, "a name that left and came back keeps BOTH spans, not a merged one");
+
+        let aal = &spans["AAL"];
+        // THE BOUNDARY, both sides of both ends of the first span.
+        assert!(sp500_member_at(aal, d("1996-01-02")), "the start date itself counts");
+        assert!(!sp500_member_at(aal, d("1996-01-01")), "the day before does not");
+        assert!(sp500_member_at(aal, d("2013-12-08")), "the day before the end still counts");
+        assert!(!sp500_member_at(aal, d("2013-12-09")), "the END DATE DOES NOT — half-open, per the 2718-snapshot check");
+        // and the gap between the two spans is genuinely out of the index: this is the whole point of
+        // keeping a Vec, and a merged first_start..last_end span would answer `true` here.
+        assert!(!sp500_member_at(aal, d("2014-06-01")), "the years it was OUT are out");
+        assert!(sp500_member_at(aal, d("2015-03-23")), "…and it is back on its re-entry date");
+
+        // An open span has no right edge: still a member at any date at or after the start.
+        assert!(sp500_member_at(&spans["AAPL"], d("2026-08-18")));
+        assert!(!sp500_member_at(&spans["AAPL"], d("1995-12-31")));
+        // A closed one, well past its end, is not — the dead-ticker case the whole feature exists for.
+        assert!(!sp500_member_at(&spans["SBNY"], d("2026-08-18")));
+        assert!(sp500_member_at(&spans["SBNY"], d("2020-01-02")));
+
+        // No header, no rows, no panic: an unrecognizable document is "no PIT data", never "nobody
+        // was ever a member" — the caller must be able to tell those apart by the map being EMPTY.
+        assert!(sp500_spans("").is_empty());
+        assert!(sp500_spans("<html>404</html>").is_empty());
+    }
+
     #[test]
     fn pure_logic() {
     assert!((pct_from_high(&[100.0, 80.0, 95.0]) - 5.0).abs() < 1e-9);
