@@ -551,8 +551,28 @@ fn pit_unserved(pool: &[String], spans: &core::MemberSpans, served: &HashSet<&st
     pool.iter().filter(|t| spans.contains_key(t.as_str()) && !served.contains(t.as_str())).count()
 }
 
-fn may_write_verdict(wide: bool, resolved: usize) -> bool {
-    wide && resolved >= MIN_VERDICT_TICKERS
+/// (PIT) `pit` is the third refusal, and it is not about sample size. A point-in-time run answers a
+/// DIFFERENT question than the screen footer asks — the footer quotes this journal to say what the
+/// live method does on the live universe, and a PIT verdict is a lower number measured on a pool the
+/// screen never ranks. Journaling one would silently restate the footer's claim on a basis nothing in
+/// the footer mentions, which is worse than a stale number: it is a number that means something else.
+fn may_write_verdict(wide: bool, pit: bool, resolved: usize) -> bool {
+    wide && !pit && resolved >= MIN_VERDICT_TICKERS
+}
+
+/// Why a wide run declined to journal. A `String` and not an `if` at the call site because the call
+/// site is inside `run`'s `-> ()`, where a branch is only ever graded through a golden — and no golden
+/// reaches it, since journaling needs 500 resolved names and the fixture pool is 200.
+fn no_verdict_reason(pit: bool, resolved: usize) -> String {
+    if pit {
+        return "backtest: verdict NOT journaled — a POINT-IN-TIME run measures a different pool than the \
+                screen ranks, so its number must not overwrite the footer's; re-run without `pit` to journal"
+            .to_string();
+    }
+    format!(
+        "backtest: verdict NOT journaled — only {resolved} tickers resolved (need {MIN_VERDICT_TICKERS}); \
+         the screen footer keeps citing the previous run"
+    )
 }
 
 /// The two flags that turn on the fundamental/insider reports. Named because it gates two separate
@@ -1260,7 +1280,7 @@ pub async fn run(args: Vec<String>) {
     // instead of ~4900, and that thin sample overwrote the journal just as surely as a watchlist run
     // would have — the same hazard the comment above warns about, reached by a different route. Hold
     // it to the same ≥500 floor `backtest_edge_holds` uses to decide its own sample is trustworthy.
-    if may_write_verdict(wide, tickers.len()) {
+    if may_write_verdict(wide, pit, tickers.len()) {
         if let Some((book, excess, win, worst, oos_early, oos_late, windows)) = verdict {
             write_verdict(Verdict {
                 date: chrono::Local::now().date_naive().to_string(),
@@ -1278,11 +1298,7 @@ pub async fn run(args: Vec<String>) {
         }
     } else if wide {
         // say so — a silent non-write reads as "the journal is broken", not "this sample was too thin"
-        eprintln!(
-            "backtest: verdict NOT journaled — only {} tickers resolved (need {MIN_VERDICT_TICKERS}); \
-             the screen footer keeps citing the previous run",
-            tickers.len()
-        );
+        eprintln!("{}", no_verdict_reason(pit, tickers.len()));
     }
     // (round 112) the DIVERSIFICATION dimension: does de-correlating the held book beat plain rank order?
     report_corr_cap(&samples, &bench, years, tuning);
@@ -3795,9 +3811,17 @@ mod tests {
 
         // the verdict journal: wide AND deep. A watchlist run must never publish over the nightly
         // one, and a throttled wide run that resolved too few names must not either.
-        assert!(may_write_verdict(true, MIN_VERDICT_TICKERS));
-        assert!(!may_write_verdict(false, MIN_VERDICT_TICKERS), "a watchlist run must not publish");
-        assert!(!may_write_verdict(true, MIN_VERDICT_TICKERS - 1), "a thin wide run is a throttled one");
+        assert!(may_write_verdict(true, false, MIN_VERDICT_TICKERS));
+        assert!(!may_write_verdict(false, false, MIN_VERDICT_TICKERS), "a watchlist run must not publish");
+        assert!(!may_write_verdict(true, false, MIN_VERDICT_TICKERS - 1), "a thin wide run is a throttled one");
+        // (PIT) and the third refusal, which a big enough sample must NOT override: a point-in-time run
+        // is wide and deep and still must not journal, because it measures a pool the screen never ranks.
+        assert!(!may_write_verdict(true, true, MIN_VERDICT_TICKERS), "a PIT run is a different claim, not a better sample");
+        assert!(!may_write_verdict(true, true, MIN_VERDICT_TICKERS * 10));
+        // and the refusal SAYS WHICH, or a reader debugs the ticker count that was never the problem
+        assert!(no_verdict_reason(true, MIN_VERDICT_TICKERS).contains("POINT-IN-TIME"));
+        assert!(no_verdict_reason(false, 3).contains("only 3 tickers resolved"));
+        assert!(!no_verdict_reason(false, 3).contains("POINT-IN-TIME"));
 
         // the fundamental lane: either flag turns it on, not both
         assert!(fund_lane_on(true, false));
