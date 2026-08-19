@@ -229,16 +229,26 @@ fn write_verdict(v: Verdict) {
 /// One-line rendering of [`Verdict`] for the screen footer. `drift` = the current tuning no
 /// longer matches the fingerprint that earned these numbers — say so instead of citing them
 /// as if they still applied.
-pub(crate) fn verdict_line(v: &Verdict, drift: bool) -> String {
+pub(crate) fn verdict_line(v: &Verdict, drift: bool, show_n_eff: bool) -> String {
     let tail = if drift {
         " — ⚠ settings changed since, rerun `folioman backtest universe`"
     } else {
         " (rerun: `folioman backtest universe`)"
     };
     format!(
-        "Method backtest (run {}, wide universe, top-{} held {}y, {} windows): book {:+.1}%/yr, \
+        "Method backtest (run {}, wide universe, top-{} held {}y, {} windows{}): book {:+.1}%/yr, \
          {:+.1}pp/yr vs index, win {:.0}%, worst {:+.1}, OOS {:+.1}/{:+.1}{tail}",
-        v.date, v.top, v.years, v.windows, v.book, v.excess, v.win, v.worst, v.oos_early, v.oos_late
+        v.date,
+        v.top,
+        v.years,
+        v.windows,
+        n_eff_tag(show_n_eff, v.windows, v.years),
+        v.book,
+        v.excess,
+        v.win,
+        v.worst,
+        v.oos_early,
+        v.oos_late
     )
 }
 
@@ -291,6 +301,26 @@ impl Hist {
 /// skill, not the bull/bear regime every pooled cutoff otherwise shares.
 fn bucket(d: chrono::NaiveDate) -> i32 {
     d.year() * 2 + d.month0() as i32 / 6
+}
+
+/// (#91) How many INDEPENDENT trials a printed window count is actually worth.
+///
+/// A "window" here is a ~6-month entry bucket and the hold is `years`, so two consecutive windows share
+/// (years−0.5)/years of one price path: they are near-copies, not repeats of an experiment. The count
+/// that means something is the span of entry dates divided by the hold, which for dense buckets is
+/// `windows / (2 · years)`. The 20y report's headline row reads "win 67% ... (windows 21)" — that is 21
+/// draws worth HALF a trial. The 12y run's 33 windows are worth ~1.4. Neither number is wrong; the
+/// report simply never said which of the two it was quoting, and 67% of 21 reads like evidence.
+///
+/// ONE definition, used by every site that prints a window count and by nothing that scores.
+fn n_eff(windows: usize, years: i64) -> f64 {
+    windows as f64 / (2.0 * years.max(1) as f64)
+}
+
+/// The printed form of [`n_eff`] — EMPTY when the knob is off, so every call site is one extra
+/// interpolation and the shipped output stays byte-identical to the goldens.
+fn n_eff_tag(on: bool, windows: usize, years: i64) -> String {
+    if on { format!("  n_eff {:.1}", n_eff(windows, years)) } else { String::new() }
 }
 
 /// (#90) PURGE + EMBARGO for a chronological split. Returns where the EARLIER side should stop, given
@@ -2068,10 +2098,11 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         let ex_ann: Vec<f64> = excess.iter().map(|(bk, sp)| ann(*bk, years) - ann(*sp, years)).collect();
         let win = ex_ann.iter().filter(|e| **e > 0.0).count() as f64 / ex_ann.len() as f64 * 100.0;
         println!(
-            "    rank {label:<6} excess {:+.1}|{:+.1} pts/yr   win {win:.0}% of {}",
+            "    rank {label:<6} excess {:+.1}|{:+.1} pts/yr   win {win:.0}% of {}{}",
             mean(&ex_ann),
             median(ex_ann.clone()),
-            ex_ann.len()
+            ex_ann.len(),
+            n_eff_tag(tuning.print_n_eff, ex_ann.len(), years)
         );
     }
     if hn > 0 {
@@ -2285,15 +2316,18 @@ fn report_entry_state(
         if let Some((b, _, e, w, wo, el, la)) = book_stats(&m, n, years) {
             let mdd = dds.iter().sum::<f64>() / dds.len() as f64;
             println!(
-                "  {label:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}, mean entry dd {mdd:+.1}%)",
-                dds.len()
+                "  {label:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}{}, mean entry dd {mdd:+.1}%)",
+                dds.len(),
+                n_eff_tag(tuning.print_n_eff, dds.len(), years)
             );
         }
     }
     if let Some((b, _, e, w, wo, el, la)) = book_stats(&base, n, years) {
         println!(
-            "  {:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}) [unconditional]",
-            "all entries", base.len()
+            "  {:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}{}) [unconditional]",
+            "all entries",
+            base.len(),
+            n_eff_tag(tuning.print_n_eff, base.len(), years)
         );
     }
     // The JOURNALED row, and the only one the screen footer quotes: the top-VERDICT_TOP basket a
@@ -2301,8 +2335,10 @@ fn report_entry_state(
     // numbers are auditable inside the run that earned them.
     let verdict = book_stats(&base, VERDICT_TOP, years).map(|(b, _, e, w, wo, el, la)| {
         println!(
-            "  {:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}) [unconditional, JOURNALED]",
-            format!("all entries (top-{VERDICT_TOP})"), base.len()
+            "  {:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}{}) [unconditional, JOURNALED]",
+            format!("all entries (top-{VERDICT_TOP})"),
+            base.len(),
+            n_eff_tag(tuning.print_n_eff, base.len(), years)
         );
         (b, e, w, wo, el, la, base.len())
     });
@@ -4136,6 +4172,28 @@ mod tests {
         assert!(!tuning_fingerprint(&base).is_empty(), "an empty fingerprint compares unequal to everything -> drift warns forever");
     }
 
+    /// (#91) The effective trial count, on the two window counts the finding names, plus the two things
+    /// that keep it from being a footgun: OFF renders the byte-identical footer every golden pins, and
+    /// the arithmetic is a pure read of `windows` and `years` — no journal field, so an old verdict file
+    /// gets a correct `n_eff` too.
+    #[test]
+    fn n_eff_says_how_many_trials_a_window_count_is_worth() {
+        // the 20y report's headline: "win 67% ... (windows 21)" is 21 draws worth half a trial.
+        assert!((n_eff(21, 20) - 0.525).abs() < 1e-9);
+        // the 12y run's 33 windows are ~1.4 — one and a bit.
+        assert!((n_eff(33, 12) - 1.375).abs() < 1e-9);
+        // a hold of 0 would divide by zero and print inf as if it meant something.
+        assert!(n_eff(10, 0).is_finite());
+
+        assert_eq!(n_eff_tag(false, 21, 20), "", "OFF must add NOTHING — the goldens are the proof");
+        assert_eq!(n_eff_tag(true, 21, 20), "  n_eff 0.5");
+        let v = stub_verdict(12, VERDICT_TOP);
+        let off = verdict_line(&v, false, false);
+        assert!(off.contains("held 12y, 84 windows): book"), "the shipped footer, unchanged: {off}");
+        assert!(!off.contains("n_eff"));
+        assert!(verdict_line(&v, false, true).contains("84 windows  n_eff 3.5): book"));
+    }
+
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back
     /// exactly what backtest wrote), corrupt/empty JSON is an empty journal (a broken file silences
     /// the footer, never fabricates a verdict), and verdict_line's drift arm swaps the rerun-pointer
@@ -4155,11 +4213,11 @@ mod tests {
         assert!(parse_journal("{\"date\":\"x\"}").is_empty()); // missing fields -> empty, not a default
         assert!(parse_journal("{\"20\":{\"date\":\"x\"}}").is_empty()); // half-written row, same rule
 
-        let fresh = verdict_line(&v, false);
+        let fresh = verdict_line(&v, false, false);
         assert!(fresh.contains("run 2026-07-19, wide universe, top-3 held 12y, 84 windows"), "{fresh}");
         assert!(fresh.contains("book +14.3%/yr, +6.9pp/yr vs index, win 71%, worst -8.2, OOS +5.1/+7.4"));
         assert!(fresh.contains("(rerun: `folioman backtest universe`)") && !fresh.contains('⚠'));
-        let drifted = verdict_line(&v, true);
+        let drifted = verdict_line(&v, true, false);
         assert!(drifted.contains("⚠ settings changed since"));
         assert!(!drifted.contains("(rerun:"));
     }
@@ -4181,7 +4239,7 @@ mod tests {
         assert_eq!(adopted.len(), 1);
         let only = adopted.into_values().next_back().unwrap();
         assert_eq!((only.years, only.top), (20, 10));
-        assert!(verdict_line(&only, false).contains("top-10 held 20y"));
+        assert!(verdict_line(&only, false, false).contains("top-10 held 20y"));
     }
 
     #[test]

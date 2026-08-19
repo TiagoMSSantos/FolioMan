@@ -782,6 +782,39 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  print_n_eff: false             # (#91) NOTHING TO MEASURE — a display knob, shipping OFF, which is
+                                 #   today's output byte-for-byte and is what every golden in
+                                 #   tests/fixture pins. It adds no gate, no score term and no journal
+                                 #   field; turning it on appends a tag to five lines and changes no
+                                 #   number anywhere. Third of the (#89)/(#90) set: all three are about
+                                 #   whether the numbers that JUDGE a knob are honest.
+                                 #
+                                 #   WHAT IT SAYS: a "window" is a ~6-month entry bucket and the hold is
+                                 #   `years`, so two consecutive windows share (years−0.5)/years of ONE
+                                 #   price path. They are near-copies, not repeats of an experiment, and
+                                 #   the count worth quoting is windows/(2·years). Read off the goldens
+                                 #   in this repo: backtest-20's headline row is "win 67% ... (windows
+                                 #   21)" — 21 draws worth 0.5 of a trial; backtest-12's 33 windows are
+                                 #   worth ~1.4; the 84-window journaled 12y verdict the screen footer
+                                 #   quotes is worth 3.5. A win RATE over half a trial is a story, and
+                                 #   nothing printed today distinguishes it from one over 21 trials.
+                                 #
+                                 #   WHERE IT PRINTS: the screen footer (`verdict_line`, the number a
+                                 #   buy decision actually sees), the three `report_entry_state` rows
+                                 #   including the JOURNALED one, and the rank-slice win rates. All five
+                                 #   go through one helper so no site can drift to its own arithmetic.
+                                 #
+                                 #   NOT APPLIED to `windows scored: N` or the lane `n=` counts: those
+                                 #   count CUTOFF ROWS (many tickers per bucket), not windows, so the
+                                 #   bucket formula would be a wrong number wearing the right label. If
+                                 #   an effective count is ever wanted there it needs its own derivation,
+                                 #   not this one.
+                                 #
+                                 #   REVERT RULE: none needed — it cannot move a decision, only describe
+                                 #   one. Turn it off if the extra column crowds the report. What it
+                                 #   MUST NOT become is an input: the moment a gate or a ship rule reads
+                                 #   n_eff, this stops being a display knob and needs a receipt with
+                                 #   measurements in it.
   split_purge_months: 0          # (#90) UNMEASURED — an unfitted judgement value, shipping 0, which is no
                                  #   purge at all: today's behaviour byte-for-byte, and what every OOS rho,
                                  #   every "both halves positive" promotion in this file and every `tune`

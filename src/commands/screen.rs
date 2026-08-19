@@ -2246,7 +2246,7 @@ pub async fn run(args: Vec<String>) {
     // backtested) = silent. Zero fetch.
     if let Some(v) = crate::commands::backtest::read_verdict() {
         let drift = v.tuning_fp != crate::commands::backtest::tuning_fingerprint(&settings.buy_heuristic);
-        println!("\n{}", crate::commands::backtest::verdict_line(&v, drift));
+        println!("\n{}", crate::commands::backtest::verdict_line(&v, drift, settings.buy_heuristic.print_n_eff));
     }
 
     // (round 28) persistent leaders: which of today's top-10 have DURABLY held a top-10 rank
