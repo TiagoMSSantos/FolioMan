@@ -1111,6 +1111,26 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     {
         return None;
     }
+    // (P4b) the EQUITY/ETF twin of the cap above, deliberately a SEPARATE knob rather than a widened
+    // scope: the two ladders live in different ranges (a coin's quiet week is a stock's crisis), and one
+    // number serving both would be set by whichever class had the samples. `!crypto` rather than an
+    // else-branch so each leg reads its own knob independently, which is what the class-panel pin checks.
+    if !crypto
+        && tuning.growth_max_vol > 0.0
+        && quote.volatility_pct.is_some_and(|v| v > tuning.growth_max_vol)
+    {
+        return None;
+    }
+    // (P4a) SINGLE-BAR SPIKE ceiling. The one tail term the averages cannot see: `volatility_pct` divides
+    // a +30% session across the whole window and `max_drawdown_pct` only ever looks down, so a name can
+    // clear both while its month was one gap and twenty flat days. Non-crypto for the reason in the config
+    // doc. Missing series (`None`) passes, like every other data gate here.
+    if !crypto
+        && tuning.growth_max_daily_1m > 0.0
+        && quote.max_daily_1m.is_some_and(|d| d > tuning.growth_max_daily_1m)
+    {
+        return None;
+    }
     // (#45) CRYPTO VALUATION CEILING — the class-native twin of the PEG ceiling just below, and the
     // first crypto cheapness measure to survive measurement (the (#37) DefiLlama revenue proxy was
     // rejected: chain "P/E" in the thousands, ETH needing 1,629 %/yr to clear a 1.6 bar). MVRV = market
@@ -1782,6 +1802,20 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     if crypto && tuning.growth_max_vol_crypto > 0.0 {
         if let Some(v) = quote.volatility_pct.filter(|&v| v > tuning.growth_max_vol_crypto) {
             fails.push(("volatile", format!("{v:.1}%/day swing (cap {:.1}%)", tuning.growth_max_vol_crypto), v <= tuning.growth_max_vol_crypto + 0.5));
+        }
+    }
+    // (P4) the two price-path gates' reasons, mirroring `score_parts` leg for leg — the pairing
+    // `gate_failures_agrees_with_the_scorer` enforces. Same `volatile` label as the crypto leg above and
+    // the same +0.5pp near-miss margin: it is the same quantity in the same units, only a different bar,
+    // and the two legs are mutually exclusive by `crypto`, so at most one can ever fire.
+    if !crypto && tuning.growth_max_vol > 0.0 {
+        if let Some(v) = quote.volatility_pct.filter(|&v| v > tuning.growth_max_vol) {
+            fails.push(("volatile", format!("{v:.1}%/day swing (cap {:.1}%)", tuning.growth_max_vol), v <= tuning.growth_max_vol + 0.5));
+        }
+    }
+    if !crypto && tuning.growth_max_daily_1m > 0.0 {
+        if let Some(d) = quote.max_daily_1m.filter(|&d| d > tuning.growth_max_daily_1m) {
+            fails.push(("spike", format!("{d:+.1}% single day (ceiling +{:.1}%)", tuning.growth_max_daily_1m), d <= tuning.growth_max_daily_1m + 2.0));
         }
     }
     // (#45) the MVRV ceiling's reason — the twin of the `crypto && crypto_max_mvrv` gate in
@@ -6534,6 +6568,71 @@ mod tests {
                 .find(|(g, ..)| matches!(*g, "dilution" | "cover" | "fcf" | "netcash"))
                 .map(|(_, msg, close)| (msg.as_str(), *close));
             assert_eq!(got, *want, "{label}: wrong survival verdict (all failures: {fails:?})");
+        }
+    }
+
+    /// (P4) The price-path pair — the vol ceiling and the single-bar spike ceiling. Same reason this
+    /// exists as its (P1) sibling above: both ship OFF, so every other test in the suite walks straight
+    /// past them and their whole block could be deleted without reddening anything.
+    ///
+    /// The load-bearing case here is not a fence, it is the SCOPE. Both carry a `!crypto` guard, and a
+    /// coin is the one thing that would trip either on an ordinary week — if that guard is ever dropped
+    /// or inverted, these knobs stop being gates and become a class filter wearing a threshold. The
+    /// crypto rows below fail on a bar the equity rows are rejected by, which is the only way to tell
+    /// "scoped away" apart from "happened not to fire".
+    #[test]
+    fn price_path_gates_are_non_crypto_and_reject_only_past_their_line() {
+        let d = BuyHeuristic::default();
+        // an equity that clears every OTHER gate, and its coin twin — identical stats, different ticker,
+        // so the ONLY thing separating the two verdicts is `is_currency_quoted`
+        let coin = |q: Quote| { let mut c = q; c.ticker = "BTC-EUR".into(); c.instrument_type = "CRYPTOCURRENCY".into(); c };
+        let vol = |v: f64| { let mut q = gate_fixture(); q.volatility_pct = Some(v); q };
+        let spike = |s: f64| { let mut q = gate_fixture(); q.max_daily_1m = Some(s); q };
+
+        type Set = fn(&mut BuyHeuristic, f64);
+        let vol_k: Set = |t, v| t.growth_max_vol = v;
+        let spike_k: Set = |t, v| t.growth_max_daily_1m = v;
+        let cvol_k: Set = |t, v| t.growth_max_vol_crypto = v;
+
+        // (label, knob, knob value, quote, expected verdict) — None clears, Some((reason, close)) rejects
+        let cases: &[(&str, Set, f64, Quote, Option<(&str, bool)>)] = &[
+            ("baseline, nothing armed", vol_k, 0.0, gate_fixture(), None),
+            // VOL -- equity ceiling. Its crypto twin ships the same units on a higher bar.
+            ("vol off lets a 9%/day name through", vol_k, 0.0, vol(9.0), None),
+            ("vol spares a name exactly on it", vol_k, 2.5, vol(2.5), None),
+            ("vol passes an unknown series", vol_k, 2.5, gate_fixture(), None),
+            ("vol rejects just past it", vol_k, 2.5, vol(2.8),
+                Some(("2.8%/day swing (cap 2.5%)", true))),
+            ("vol stops calling it close", vol_k, 2.5, vol(9.0),
+                Some(("9.0%/day swing (cap 2.5%)", false))),
+            // ...and the SAME stat on a coin is the crypto knob's business, not this one's
+            ("vol ignores a coin however wild", vol_k, 2.5, coin(vol(9.0)), None),
+            ("the crypto twin still rejects that coin", cvol_k, 2.5, coin(vol(9.0)),
+                Some(("9.0%/day swing (cap 2.5%)", false))),
+            ("the crypto twin ignores the equity", cvol_k, 2.5, vol(9.0), None),
+            // SPIKE -- ceiling on the single largest bar, which no averaging term can see
+            ("spike off lets a +40% day through", spike_k, 0.0, spike(40.0), None),
+            ("spike spares a name exactly on it", spike_k, 20.0, spike(20.0), None),
+            ("spike passes an unknown series", spike_k, 20.0, gate_fixture(), None),
+            ("spike ignores a name that only fell", spike_k, 20.0, spike(-5.0), None),
+            ("spike rejects just past it", spike_k, 20.0, spike(21.0),
+                Some(("+21.0% single day (ceiling +20.0%)", true))),
+            ("spike stops calling it close", spike_k, 20.0, spike(40.0),
+                Some(("+40.0% single day (ceiling +20.0%)", false))),
+            ("spike ignores a coin however sharp", spike_k, 20.0, coin(spike(40.0)), None),
+        ];
+
+        for (label, set, v, q, want) in cases {
+            let mut t = d.clone();
+            set(&mut t, *v);
+            let fails = gate_failures(q, &t).unwrap_or_else(|| panic!("{label}: refused, expected a verdict"));
+            // same mirror check as the survival gates: score_parts and this footer must agree per case
+            assert_eq!(fails.is_empty(), growth_score(q, &t).is_some(),
+                "{label}: gate_failures and score_parts disagree");
+            let got = fails.iter()
+                .find(|(g, ..)| matches!(*g, "volatile" | "spike"))
+                .map(|(_, msg, close)| (msg.as_str(), *close));
+            assert_eq!(got, *want, "{label}: wrong price-path verdict (all failures: {fails:?})");
         }
     }
 

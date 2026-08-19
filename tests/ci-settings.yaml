@@ -3554,6 +3554,39 @@ buy_heuristic:
                                  #   Revenue-scaled rather than EBITDA-scaled so loss-makers stay defined
                                  #   instead of None-ing straight out of the gate.
                                  #   UNFITTED. Suggested ladder: off / -100 / -50 / -25 / 0. -1e9 = off.
+  # ---- (P4) PRICE-PATH GATES: two rejections, BOTH OFF, NEITHER MEASURED YET ----
+  # Unlike the (P1) four above, these two are SWEEPABLE ON DAY ONE. They read `volatility_pct` and
+  # `max_daily_1m`, both built by `core::backtest_quote` from the close series every run already walks,
+  # and `growth_gate_reachability_pin` pins them LIVE for stock and ETF (INERT for crypto, by scope).
+  # No `fund` lane, no as-of attach — a plain `backtest <h> universe` grades them.
+  #
+  # BOTH ARE UNFITTED JUDGEMENT VALUES — specifically, the OFF state. They are NON-CRYPTO on purpose:
+  # coins already carry three tail knobs of their own, and a coin's ordinary week clears every rung
+  # either of these would be set to, so an unscoped version would be a class filter wearing a threshold.
+  # They overlap each other (a name with a +30% day usually has the vol to match), so the two survivors
+  # must be run JOINTLY before either ships, and each rung must report its REJECTED cohort's forward
+  # return against kept peers — the #24 standard, and the one that matters most here: cutting the
+  # sharpest movers is exactly how a momentum lane can be made to look safer while earning less.
+  # REVERT RULE for both: they are off; turning one on without a run in this file is the revert.
+  growth_max_daily_1m: 0.0       # (P4a) reject a non-crypto name whose LARGEST single-bar move in the
+                                 #   trailing month exceeded this %. The one tail the averages cannot see:
+                                 #   `volatility_pct` divides a +30% session across the whole window and
+                                 #   `max_drawdown_pct` only ever looks down, so a name can clear both while
+                                 #   its month was one gap and twenty flat days.
+                                 #   CADENCE CEILING, and a sweep must respect it: on a MONTHLY-cadence run
+                                 #   the source window collapses to a single bar and the field becomes that
+                                 #   month's own return — a different signal under the same name. Grade this
+                                 #   knob on the DAILY lane only, and never pool a monthly arm with a daily one.
+                                 #   UNFITTED. Suggested ladder: off / 25 / 20 / 15 / 12. 0 = off.
+  growth_max_vol: 0.0            # (P4b) reject a non-crypto name whose daily-return stdev exceeds this %.
+                                 #   The equity/ETF twin of growth_max_vol_crypto (3.0, shipped). That knob's
+                                 #   comment says "equities never reach multi-% daily stdev, so no equity twin";
+                                 #   that is true of ITS value and false of the concept — high-beta single names
+                                 #   run 3-4%/day and small-cap biotech well past it — so THE EQUITY LADDER SITS
+                                 #   BELOW THE CRYPTO ONE, and copying 3.0 across would ship an inert knob.
+                                 #   Also unlike its crypto sibling it is not edge-blind: the pool is
+                                 #   overwhelmingly equities, so a sweep here has the samples to vote.
+                                 #   UNFITTED. Suggested ladder: off / 4 / 3 / 2.5 / 2. 0 = off.
   growth_require_lifetime_uptrend: true # (#25) reject equities whose WHOLE-LIFE log-trend CAGR is <= 0: moon-crash-partial-recovery
                                  #   names whose 10Y leg looks great but never reclaimed their long-run trend (the ranked CAGR uses
                                  #   the longest 20Y/10Y/5Y leg, so it can't see this). Same-batch pair 2026-07-03: off +115.7
