@@ -782,6 +782,65 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  demean_by_market: false        # (#93) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+                                 #   the single pooled (bucket, class) peer group every edge, rho, OOS
+                                 #   half and `tune` winner in this repo was measured against. Turning it
+                                 #   on re-cuts the SELECTION METRIC itself, so it does not move one
+                                 #   number, it re-measures all of them at once.
+                                 #
+                                 #   THE DEFECT: `realized` is `closes[fwd]/closes[i] - 1`, a ratio of two
+                                 #   closes in the LISTING currency, and NOTHING on the return path
+                                 #   converts it. `fx` is fetched, but only `earnings_yield`/`peg_yield`
+                                 #   consume it. So a EUR UCITS line, a GBp LSE line and a USD S&P name
+                                 #   land in one peer group with their FX returns stripped, and the mean
+                                 #   subtracted from each is an average of three different currencies.
+                                 #   Every `relative` in that group then carries the window's FX move as
+                                 #   if it were selection — over a 12y hold that is tens of points on a
+                                 #   quantity the whole growth lane is ranked by.
+                                 #
+                                 #   WHAT THIS KNOB FIXES, and exactly how far: splitting the group by
+                                 #   market makes the FX move COMMON to the group, so subtracting the mean
+                                 #   cancels it — no rate, no series, no fetch, because `Quote::stub`
+                                 #   already fills `market` from the ticker suffix. It over-splits:
+                                 #   `market_of` returns a COUNTRY, so Germany, France and the Netherlands
+                                 #   are three groups trading one currency. That costs group size, never
+                                 #   correctness — it can never MERGE two currencies — and a slice under
+                                 #   MIN_PEER_GROUP (8) falls back to the pooled mean rather than
+                                 #   de-meaning a name against one or two neighbours, or against itself.
+                                 #
+                                 #   WHAT IT DOES NOT FIX, stated plainly rather than left to be
+                                 #   discovered: the ABSOLUTE leg. `report_vs_benchmark` compares a
+                                 #   native-currency held book to ^GSPC, and no peer mean cancels anything
+                                 #   there. Fixing that needs the closes themselves moved into one
+                                 #   currency before the walk — `fetch::fx_factor_series` already returns
+                                 #   a dated rate series, so the data exists, but it would have to be
+                                 #   fetched per listing currency and applied ahead of `backtest_quote`,
+                                 #   which re-bases CAGR, drawdown, trend and range_pct together. Same
+                                 #   blast radius as `use_adjusted_close`, and it is NOT done here.
+                                 #
+                                 #   THE OTHER HALF OF THE SAME FINDING, also not fixed: both legs are
+                                 #   price-only, which is honest only if the picks yield what the index
+                                 #   yields. They do not — the lane selects near-high, low-yield growers
+                                 #   (~0.3-0.8%) against an index yielding ~1.3% — so the reported excess
+                                 #   is flattered by roughly 1.0-1.3 pts/yr on the dividend asymmetry
+                                 #   alone. The correct fix is TR vs TR, which is exactly what
+                                 #   `use_adjusted_close: true` already does (it swaps the benchmark to
+                                 #   ^SP500TR at the same time, which is why the two are coupled and must
+                                 #   stay coupled). That knob ships false and its own receipt requires a
+                                 #   full re-validation to flip. Do NOT "fix" this by pointing the
+                                 #   benchmark at ^SP500TR alone: price-only picks against a total-return
+                                 #   index over-corrects, and would understate excess by the picks' own
+                                 #   yield instead of overstating it by the gap.
+                                 #
+                                 #   TO SETTLE THIS KNOB: `backtest universe` at 8y and 12y with it on,
+                                 #   read against a control run. Watch the CLASS CENSUS and the per-group
+                                 #   sizes first — if the fallback is firing on most slices the knob is
+                                 #   inert and the run says nothing. Expect edge to FALL: removing
+                                 #   contamination removes dispersion the lane was scoring on.
+                                 #
+                                 #   REVERT RULE: an edge that only survives with this OFF was reading
+                                 #   currency moves. If it improves, that is a smaller effective peer
+                                 #   pool landing luckier — confirm at the second horizon before shipping.
   print_selection_count: false   # (#92) NOTHING TO MEASURE in the display half — a display knob shipping
                                  #   OFF, byte-identical output, every golden pins it. But it names a
                                  #   real UNMEASURED debt, recorded here because the fix needs runs this

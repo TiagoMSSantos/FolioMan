@@ -443,18 +443,55 @@ fn class_census(samples: &[Sample], tuning: &BuyHeuristic) -> [(usize, usize); 3
 /// (band straddles 0 = the GROWTH lane can't discriminate). Per-(bucket, class) groups compare like with
 /// like. Pure + testable; the runtime sum-to-~0 invariant check stays in `run`.
 fn demean(samples: &mut [Sample]) {
+    // (#93) FX. `realized` is a ratio of two closes in the LISTING currency and nothing on the return
+    // path converts it, so a pooled group mixes a EUR UCITS line, a GBp LSE line and a USD S&P name and
+    // then subtracts the average of three different currencies from each. Splitting by market makes the
+    // window's FX move COMMON to the group, so the subtraction cancels it — no rate, no fetch, no series:
+    // `Quote::stub` already fills `market` from the ticker suffix. It over-splits (Germany, France and
+    // the Netherlands all trade EUR and become three groups), which is why a thin slice falls back below.
+    // OFF is the pooled key every number in this repo was measured against.
+    //
+    // The knob is a process-once accessor (18 call sites, most with no `tuning` in scope), which a unit
+    // test cannot flip — so the whole body is `demean_with`, and the accessor only chooses its argument.
+    demean_with(samples, crate::config::demean_by_market());
+}
+
+fn demean_with(samples: &mut [Sample], by_market: bool) {
     let key = |s: &Sample| (bucket(s.date), picks::asset_class(&s.quote));
     let mut sums: HashMap<(i32, u8), (f64, usize)> = HashMap::new();
+    let mut fine: HashMap<((i32, u8), String), (f64, usize)> = HashMap::new();
     for s in samples.iter() {
         let e = sums.entry(key(s)).or_insert((0.0, 0));
         e.0 += s.realized;
         e.1 += 1;
+        if by_market {
+            let e = fine.entry((key(s), s.quote.market.clone())).or_insert((0.0, 0));
+            e.0 += s.realized;
+            e.1 += 1;
+        }
     }
     for s in samples.iter_mut() {
-        let (sum, n) = sums[&key(s)];
+        let k = key(s);
+        // A market slice too thin to BE a peer group de-means a name against one or two neighbours, or
+        // against itself (relative 0, which reads as "exactly average" and is not a measurement).
+        // Falling back to the pooled group keeps the FX contamination but keeps the signal; the receipt
+        // records that trade rather than hiding it.
+        let g = if by_market {
+            fine.get(&(k, s.quote.market.clone())).filter(|(_, n)| *n >= MIN_PEER_GROUP).copied()
+        } else {
+            None
+        };
+        let (sum, n) = g.unwrap_or(sums[&k]);
         s.relative = s.realized - sum / n as f64;
     }
 }
+
+/// (#93) Smallest market slice `demean` will treat as its own peer group. Below this the de-mean is
+/// against too few neighbours to mean anything — at 1 it is a name against itself, which yields a
+/// `relative` of exactly 0 and looks like a measured "average" result. Judgement value, not fitted:
+/// it matches the `< 4`-family guards elsewhere in this file in spirit, set higher because a peer MEAN
+/// over 4 names is still mostly one name.
+const MIN_PEER_GROUP: usize = 8;
 
 /// ~6 months between walk-forward cutoffs (trading sessions, ~252/yr). Overlapping forward windows —
 /// fine for a rank correlation, not an independent-sample t-test (flagged in the footer).
@@ -3737,6 +3774,60 @@ mod tests {
             bootstrap_edge_ci(&rows, scores_nothing, &t, 8, 5.0, 95.0).is_none(),
             "every draw gated out -> no band, not a NaN band"
         );
+    }
+
+    /// (#93) The market-split peer group, on the case it exists for: one bucket holding a US cohort and
+    /// a London cohort whose whole return difference is the FX move over the window, not skill.
+    ///
+    /// Pooled, every US name reads as a winner and every LSE name as a loser by half the currency move.
+    /// Split, each cohort de-means against its own currency and the FX drops out exactly. The third
+    /// cohort is one lonely German line: too thin to be a peer group, so it falls back to the pooled
+    /// mean rather than de-meaning against itself and reporting a `relative` of 0 as if measured.
+    #[test]
+    fn the_market_split_peer_group_cancels_the_currency_move() {
+        let d = ymd(2015, 1, 1);
+        let mut rows: Vec<Sample> = Vec::new();
+        let mut push = |tk: &str, r: f64| {
+            let mut s = sample(d, r);
+            s.quote = Arc::new(Quote::stub(tk, "1", "", tk));
+            rows.push(s);
+        };
+        // two cohorts, same dispersion (-5/+5 around their own centre), 20 pts apart purely by currency.
+        for (i, r) in [30.0, 40.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0].iter().enumerate() {
+            push(&format!("US{i}"), *r);
+        }
+        for (i, r) in [10.0, 20.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0].iter().enumerate() {
+            push(&format!("LN{i}.L"), *r);
+        }
+        push("DE0.DE", 45.0); // the thin slice: one name, its own market
+
+        let pooled = {
+            let mut v = rows.clone();
+            demean_with(&mut v, false);
+            v
+        };
+        let split = {
+            let mut v = rows.clone();
+            demean_with(&mut v, true);
+            v
+        };
+        // pooled: one mean over all three markets, so the whole 20-pt FX gap lands in `relative` as if
+        // it were selection — the US cohort is lifted and the LSE cohort docked by half of it.
+        let pm: f64 = rows.iter().map(|s| s.realized).sum::<f64>() / rows.len() as f64;
+        assert!((pooled[0].relative - (30.0 - pm)).abs() < 1e-9, "{}", pooled[0].relative);
+        assert!((pooled[8].relative - (10.0 - pm)).abs() < 1e-9, "{}", pooled[8].relative);
+        // the two cohorts sit ~20 apart in `relative` on nothing but the currency.
+        assert!((pooled[0].relative - pooled[8].relative - 20.0).abs() < 1e-9);
+        // split: each cohort centres on its own 35 / 15, so the SAME name reads -5 in both cohorts and
+        // the currency move is gone. This is the whole claim.
+        assert!((split[0].relative + 5.0).abs() < 1e-9, "{}", split[0].relative);
+        assert!((split[8].relative + 5.0).abs() < 1e-9, "{}", split[8].relative);
+        assert!((split[1].relative - 5.0).abs() < 1e-9 && (split[9].relative - 5.0).abs() < 1e-9);
+        // the lone German line: 1 < MIN_PEER_GROUP, so it keeps the pooled mean rather than becoming 0.
+        assert!((split[16].relative - 0.0).abs() > 1e-9, "a singleton must not de-mean against itself");
+        assert!((split[16].relative - pooled[16].relative).abs() < 1e-9, "it falls back to the pool");
+        // and OFF must be the identity — every edge, rho and OOS number in this repo rests on it.
+        assert!(pooled.iter().zip(&rows).all(|(p, r)| p.realized == r.realized));
     }
 
     /// (#90) The purge, at the boundaries that decide whether it is safe: 0 is the identity — the
