@@ -782,6 +782,59 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  backtest_drop_lookahead_sector: false # (#95) UNMEASURED — an unfitted judgement value, shipping
+                                 #   OFF, which is the stamped-sector behaviour every golden and every
+                                 #   fitted receipt in this file was measured under. Sibling of (#94)
+                                 #   below: that knob is look-ahead in the PRICE record, this one is
+                                 #   look-ahead in the LABEL.
+                                 #
+                                 #   THE LOOK-AHEAD: `backtest::stamp_asset_class` fills `quote.sector`
+                                 #   from the universe fetch, which returns TODAY's GICS label and only
+                                 #   today's. The same label is stamped at every cutoff, so a 1995 walk
+                                 #   grades a name on a classification that may postdate the decision by
+                                 #   thirty years. It is not cosmetic: `picks::is_commodity` reads
+                                 #   `sector` against COMMODITY_SECTORS (Energy, Materials, `picks.rs`
+                                 #   (#44)) and drives `commodity_damp`, so a name reclassified since is
+                                 #   damped — or spared — on a fact from after the bar it is scored at.
+                                 #
+                                 #   NO AS-OF LABEL EXISTS. No feed this tool reads carries GICS
+                                 #   history; `.sp500_history.json` carries membership spans and no
+                                 #   sector. So there is no third option to build: either today's label
+                                 #   (look-ahead) or no label (damp inert). This knob is the second one.
+                                 #
+                                 #   REACH IS UNMEASURED AND CANNOT BE MEASURED FROM THIS REPO. The
+                                 #   sector map arrives from the live universe fetch and is not cached
+                                 #   here, so the count of pool names carrying Energy/Materials — and of
+                                 #   those, how many were reclassified INTO or OUT OF it inside a
+                                 #   window — is only knowable on a run. Stated as unknown rather than
+                                 #   estimated.
+                                 #
+                                 #   TURNING IT ON IS A REACHABILITY CHANGE: with `sector` always None,
+                                 #   `commodity_damp` goes INERT for every equity in the walk. That
+                                 #   makes the on-run a TWO-part change — it removes the look-ahead AND
+                                 #   removes the damp — so a worse result does not by itself convict the
+                                 #   look-ahead. `growth_gate_reachability_pin` describes the OFF arm,
+                                 #   which is the shipped state; if this ever ships ON, that pin moves
+                                 #   with it.
+                                 #
+                                 #   NOT THE LIVE PATH. The knob is read only in the backtest stamp.
+                                 #   `screen` and `check` score at today's cutoff, where today's sector
+                                 #   IS the point-in-time sector, so nothing about the served book moves
+                                 #   at either setting.
+                                 #
+                                 #   The sibling half of the finding — `picks::asset_class`
+                                 #   (crypto/ETF/stock) — is deliberately left alone. An instrument does
+                                 #   not stop being an ETF, so that label is time-invariant in practice
+                                 #   and carries no look-ahead worth a knob.
+                                 #
+                                 #   TO SETTLE: the ship-rule grid at 20y/12y/8y on the PIT pool, on vs
+                                 #   off, reading top-3 excess mean AND median plus rank-1 h2h. Pair it
+                                 #   with a damp-off/sector-on control, otherwise the two effects above
+                                 #   cannot be told apart.
+                                 #
+                                 #   REVERT RULE: stays OFF unless ON raises top-3 excess at 20y AND 8y
+                                 #   with rank-1 h2h ≥50% at all three horizons. A bundled regression
+                                 #   REFUSES — it is never read as "the look-ahead was helping".
   splice_trim_point_in_time: false # (#94) UNMEASURED — an unfitted judgement value, shipping OFF, which
                                  #   is the parse-time trim every golden and every fitted receipt in this
                                  #   file was measured under. Read it together with `splice_max_weekly_rate`

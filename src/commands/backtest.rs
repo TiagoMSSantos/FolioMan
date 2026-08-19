@@ -402,7 +402,15 @@ fn stamp_asset_class(
     quote.name = name.to_string();
     quote.instrument_type =
         if etf_set.contains(&quote.ticker) { "ETF".to_string() } else { instrument_type.to_string() };
-    quote.sector = sector_of.get(&quote.ticker).cloned();
+    // (#95) TODAY's GICS label, and there is no as-of one to substitute — no feed this tool reads
+    // carries GICS history. It is not cosmetic: `picks::is_commodity` reads `sector` and drives
+    // `commodity_damp`, so a name reclassified since is damped on a fact from after the decision.
+    // Dropping it makes that damp inert in the walk, which is at least computable in 1995.
+    quote.sector = if crate::config::backtest_drop_lookahead_sector() {
+        None
+    } else {
+        sector_of.get(&quote.ticker).cloned()
+    };
 }
 
 /// Per-asset-class sample census, indexed by `picks::asset_class`: `[crypto, ETF, stock]`, each
