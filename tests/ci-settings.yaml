@@ -2614,6 +2614,50 @@ buy_heuristic:
   #   score, so damping it makes the ranking steadier across rebalances. That is a cost reduction that
   #   needs no horizon to be true.
   #   THE PIN MOVED WITH IT: src/picks.rs shipped_config_pin() asserts this value by parsing this file.
+  growth_accel_beta: 1.0         # (#98) UNMEASURED — an unfitted judgement value, shipping 1.0, which is
+                                 #   the original `clamp(1Y − long_cagr, 0, cap)` expression BIT FOR BIT
+                                 #   (multiplying by 1.0 is exact in IEEE, so this is not an approximation
+                                 #   of the old line, it IS the old line). Read it with `growth_accel_weight`
+                                 #   above and `growth_trend_weight`: the three multiply out to one slope.
+                                 #
+                                 #   THE DEFECT, which this file already half-records at (#70): inside the
+                                 #   unclamped accel band — the majority of the pool — the lane's derivative
+                                 #   in the quantity it exists to hunt is
+                                 #       growth_trend_weight − β·growth_accel_weight = 0.15 − 1.0×0.50 = −0.35
+                                 #   per %/yr. A 30%/yr compounder scores BELOW an identical 20%/yr one at
+                                 #   the same 1Y return, in a lane whose stated thesis is 20-year compounding.
+                                 #
+                                 #   WHY THE (#70) GRID DID NOT SETTLE IT. That grid raised growth_trend_weight
+                                 #   (0.35/0.55/0.70) and every rung REFUSED on the top-3 worst window, with
+                                 #   0.35 also breaking the 8y h2h guard — correctly read there as "do not
+                                 #   paper over it". But it moved only ONE factor of the product. β is the
+                                 #   other, and it has never been swept. Below β = 0.15/0.50 = 0.30 the slope
+                                 #   turns POSITIVE with growth_trend_weight left exactly where the grid put it.
+                                 #
+                                 #   SECOND EFFECT, deliberate: the clamp floor is at 0, so a smaller β lifts
+                                 #   more names off the floor and the leg discriminates across a wider slice
+                                 #   of the pool. A β sweep is therefore not a pure slope experiment and the
+                                 #   read-out must not be reported as one.
+                                 #
+                                 #   NOT BUILT: the `ratio` (1Y/long_cagr − 1) and `pctile` (1Y against the
+                                 #   name's own rolling 1Y history) forms. `ratio` needs an ε guard at
+                                 #   long_cagr ≈ 0 and re-scales the leg against growth_accel_cap, so it
+                                 #   cannot share this knob's sweep; `pctile` needs per-name rolling-return
+                                 #   history no Quote carries. β is the form that is one line, continuous,
+                                 #   and reduces exactly to today at its default.
+                                 #
+                                 #   TO SETTLE: β over {1.0, 0.5, 0.3, 0.15, 0.0} at 20y/12y/8y under the ship
+                                 #   rule. THEN re-grid growth_trend_weight underneath the winning β — the
+                                 #   (#70) receipt's own reading is that rho, edge and OOS all want that knob
+                                 #   higher and only the worst-window guard refuses, and removing the
+                                 #   counterweight is the most plausible way that guard stops binding. The two
+                                 #   sweeps are ordered, not independent.
+                                 #
+                                 #   REVERT RULE: back to 1.0 unless the paired (β, trend_weight) pass clears
+                                 #   PRIMARY at 20y AND 8y with rank-1 h2h ≥50% at all three horizons. A β that
+                                 #   only lifts LANE EDGE does not ship — that is exactly the trap (#70) names.
+                                 #   `picks::shipped_config_pin` asserts both this value and the −0.35 slope it
+                                 #   implies; that assert failing is the feature.
   growth_accel_cap: 50.0         # SCORE: cap that 1Y-minus-CAGR acceleration term
   growth_smoothness_weight: 0.0  # (E) SCORE: reward per unit of trend_r2 (R² of the log-price trend fit, 0..1) — pays the
                                  #   straight-line compounder over the equal-CAGR rollercoaster. Reconstructed in backtest_quote,

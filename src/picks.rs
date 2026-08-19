@@ -979,6 +979,33 @@ struct ScoreParts {
     score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
 
+/// (#98) The acceleration leg, and the ONE definition of it — `score_parts` computes it, nothing else
+/// re-derives it (non-negotiable 4).
+///
+/// `growth_accel_beta` is how much of the long CAGR the leg subtracts. At the shipped 1.0 this is the
+/// original `clamp(1Y − long_cagr, 0, cap)` expression, bit for bit: multiplying by 1.0 is exact in
+/// IEEE, so the default arm is not an approximation of the old line, it IS the old line.
+///
+/// WHY THE KNOB EXISTS. Inside the unclamped band — the majority of the pool — the lane's derivative in
+/// the very quantity it hunts is `growth_trend_weight − β·growth_accel_weight`, which at the shipped
+/// 0.15 and 0.50 is **−0.35 per %/yr**: a 30%/yr compounder scores BELOW an identical 20%/yr one at the
+/// same 1Y return. The (#70) pin already records this and correctly refuses to paper over it by lifting
+/// `growth_trend_weight`, because the graded top-3 book gets worse — but that grid only ever moved the
+/// WEIGHT, leaving the coupling itself untouched. β attacks the coupling directly: the slope turns
+/// positive below β = growth_trend_weight / growth_accel_weight = 0.30, and at β = 0 the leg is plain
+/// 1Y momentum with no CAGR subtraction at all.
+///
+/// The clamp floor moves with it and that is part of the effect, not a side effect: a smaller β lifts
+/// more names off the 0 floor, so the leg discriminates across a wider slice of the pool.
+///
+/// NOT BUILT: the `ratio` (1Y/long_cagr − 1) and `pctile` (1Y against the name's own rolling 1Y history)
+/// forms. `ratio` needs an ε guard at long_cagr ≈ 0 and re-scales the whole leg against `growth_accel_cap`,
+/// so it cannot share this knob's sweep; `pctile` needs per-name rolling-return history that no `Quote`
+/// carries. β is the form that is one line, continuous, and reduces exactly to today at its default.
+pub(crate) fn accel_raw(return_1y: f64, long_cagr: f64, tuning: &BuyHeuristic) -> f64 {
+    (return_1y - tuning.growth_accel_beta * long_cagr).clamp(0.0, tuning.growth_accel_cap)
+}
+
 /// Score a quote as a MOMENTUM/GROWTH candidate — the MIRROR of `buy_score`. The on-sale lane fades
 /// a name's score to ~0 as it nears its high (a proven compounder at a new high has no "discount"),
 /// so it never surfaces quality that's expensive *because* it keeps winning. This lane is exactly
@@ -1324,7 +1351,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
 
     // ---- SCORE ----
     let trend = capped_trend(long_cagr, tuning); // proven compounding; long_trend_cap 0 = uncapped (shipped)
-    let accel = (return_1y - long_cagr).clamp(0.0, tuning.growth_accel_cap); // last year outpacing the long run = building
+    let accel = accel_raw(return_1y, long_cagr, tuning); // last year outpacing the long run = building
     // (#48) distance from the name's own 10y high, blended toward neutral by its authority knob:
     // w=1 is the raw `range_pct/100` multiply (0.8..1.0 inside the shipped gate — closer to the high
     // = stronger confirmation), w=0 turns the term off, w<0 inverts it so the name furthest below its
@@ -2126,7 +2153,15 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     s.push_str(&format!("    trend    = growth_trend_weight × {:<21} = {:.2} × {:.2} = {:.2}\n",
         if tuning.long_trend_cap > 0.0 { "min(CAGR, cap)" } else { "CAGR (cap off)" },
         tuning.growth_trend_weight, p.trend, p.trend_term));
-    s.push_str(&format!("    accel    = growth_accel_weight × clamp(1Y−CAGR,0,cap)  = {:.2} × {:.2} = {:.2}   (1Y {:.1} − CAGR {:.1})\n",
+    // (#98) the trailing parenthetical tracks `growth_accel_beta` for the same reason the `trend` row
+    // above tracks the cap knob: printing a plain `1Y − CAGR` while the leg subtracts a FRACTION of the
+    // CAGR would advertise arithmetic that is not running. At the shipped 1.0 the tail is unchanged.
+    let beta = if tuning.growth_accel_beta == 1.0 {
+        "CAGR".to_string()
+    } else {
+        format!("{:.2}×CAGR", tuning.growth_accel_beta)
+    };
+    s.push_str(&format!("    accel    = growth_accel_weight × clamp(1Y−CAGR,0,cap)  = {:.2} × {:.2} = {:.2}   (1Y {:.1} − {beta} {:.1})\n",
         tuning.growth_accel_weight, p.accel, p.accel_term, p.return_1y, p.long_cagr));
     s.push_str(&format!("    risk     = Sharpe+Calmar bonus                        = {:.2}\n", p.risk_reward));
     s.push_str(&format!("    quality  = quality_weight × ROE                       = {:.2}\n", p.quality));
@@ -7259,10 +7294,22 @@ mod tests {
 
         // (#70) Pinned because the ARGUMENT for raising it is sound and the MEASUREMENT still refuses
         // it — the combination most likely to get hand-edited by a reader who reasons it through and
-        // stops there. `accel` subtracts `long_cagr`, so this weight minus `growth_accel_weight` is the
-        // lane's slope in CAGR: 0.15 − 0.50 = −0.35 per %/yr, i.e. the lane penalises the compounding it
-        // hunts, and lifting this knob genuinely raises rho, lane edge and OOS at all three horizons.
+        // stops there. `accel` subtracts `growth_accel_beta × long_cagr`, so the lane's slope in CAGR is
+        // `growth_trend_weight − β·growth_accel_weight`: at the shipped 0.15/1.0/0.50 that is −0.35 per
+        // %/yr, i.e. the lane penalises the compounding it hunts, and lifting this knob genuinely raises
+        // rho, lane edge and OOS at all three horizons.
         // The graded top-3 book gets worse anyway. Three rungs refused on the worst-window guard.
+        // (#98) …and that grid only ever moved the WEIGHT. β is the other half of the same product and
+        // has never been swept; below β = 0.15/0.50 = 0.30 the slope turns positive without this knob
+        // moving at all. Sweep β BEFORE reaching for this one again.
+        assert_eq!(
+            tuning.growth_accel_beta, 1.0,
+            "β is the untouched half of the (#70) slope — moving it is an UNSWEPT scoring change, not a fix; read the (#98) receipt"
+        );
+        assert!(
+            (tuning.growth_trend_weight - tuning.growth_accel_beta * tuning.growth_accel_weight + 0.35).abs() < 1e-12,
+            "the shipped lane's CAGR slope is −0.35/%%yr and the (#70) and (#98) receipts both quote it — recompute both if this moves"
+        );
         assert_eq!(tuning.growth_trend_weight, 0.15, "0.15 survived a v2 grid — 0.35/0.55/0.70 all REFUSED on the top-3 worst window, and 0.35 also breaks the 8y h2h guard; read the (#70) receipt, and note that rising lane edge is not a reason to move this");
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
@@ -7305,6 +7352,24 @@ mod tests {
         let ac = |c: f64| s(&hot(), &BuyHeuristic { growth_accel_weight: 0.5, growth_accel_cap: c, ..d.clone() });
         assert!(ac(50.0) > ac(5.0), "the cap must clamp an accel above it");
         assert!((ac(50.0) - ac(500.0)).abs() < 1e-9, "a cap above the value cannot bite");
+
+        // (#98) growth_accel_beta — how much of the long CAGR the leg subtracts. 1.0 must be the ORIGINAL
+        // expression exactly, or the default arm is a rewrite rather than a knob.
+        let (r1y, cagr) = (40.0, 24.57);
+        assert_eq!(accel_raw(r1y, cagr, &d), (r1y - cagr).clamp(0.0, d.growth_accel_cap));
+        let b = |x: f64| BuyHeuristic { growth_accel_beta: x, ..d.clone() };
+        assert!((accel_raw(r1y, cagr, &b(0.0)) - r1y).abs() < 1e-12, "β=0 is plain 1Y momentum");
+        assert!((accel_raw(r1y, cagr, &b(0.5)) - (r1y - 0.5 * cagr)).abs() < 1e-12);
+        // the clamp still owns both ends: β cannot push the leg negative, nor past the cap.
+        assert_eq!(accel_raw(-5.0, cagr, &b(0.0)), 0.0);
+        assert_eq!(accel_raw(500.0, cagr, &b(0.0)), d.growth_accel_cap);
+        // a smaller β subtracts less, so the leg is larger and the score rises monotonically.
+        let bs = |x: f64| s(&hot(), &b(x));
+        assert!(bs(0.0) > bs(0.5) && bs(0.5) > bs(1.0), "less CAGR subtracted must score higher");
+
+        // NOTE the sign of the lane's CAGR slope (`growth_trend_weight − β·growth_accel_weight`) is a
+        // property of the SHIPPED weights, not of these code defaults — at 0.35/0.2 it is positive.
+        // It is asserted where the shipped numbers live: `shipped_config_pin`.
 
         // (1) growth_overext_floor — how much score survives at FULL stretch above the 200wk SMA.
         // Higher floor = weaker brake. 1.0 = brake off entirely.
