@@ -1,6 +1,8 @@
 //! `size [TICKERS]` — suggested position sizes for the growth picks: weight ∝ score ÷ volatility
-//! (vol-target). READ-ONLY, never trades — you still type the qty into `trade` yourself. No TICKERS
-//! -> the watchlist. Names that fail the growth gate are dropped (nothing to size). NOT advice.
+//! (vol-target) inside a per-class risk budget, then capped per name and per sector (`config::Sizing`).
+//! READ-ONLY, never trades — you still type the qty into `trade` yourself. No TICKERS -> the watchlist.
+//! Names that fail the growth gate are dropped (nothing to size). The rows can sum to under 100 when a
+//! cap binds; that remainder is deliberately unallocated, not a rounding error. NOT advice.
 
 use crate::picks::{crypto_adjust, growth_score, nupl_factor, perf_pct, size_weights};
 use crate::{config, fetch};
@@ -53,19 +55,43 @@ pub async fn run(args: Vec<String>) {
 
     // (Item 6) pass the asset class as the cluster key so a correlated block (all crypto) is one risk
     // bucket, not N independent bets.
+    // (P5) `asset_class` rather than the raw `instrument_type` string: that field is Yahoo's free text,
+    // so "EQUITY" and "" split the stock class into two buckets that each drew a full share. The sector
+    // rides along for the stock-class sector cap.
+    let sz = &settings.sizing;
     let weights = size_weights(
-        &scored.iter().map(|(q, s)| (*s, q.volatility_pct, q.instrument_type.as_str())).collect::<Vec<_>>(),
+        &scored
+            .iter()
+            .map(|(q, s)| (*s, q.volatility_pct, crate::picks::asset_class(q), q.sector.as_deref()))
+            .collect::<Vec<_>>(),
+        sz,
     );
 
-    println!("Suggested sizes — weight ∝ score ÷ volatility (vol-target, cluster-capped, READ-ONLY, NOT advice):\n");
-    println!("  {:<10} {:>7} {:>7} {:>7}", "TICKER", "SCORE", "VOL", "SIZE%");
-    for ((q, s), w) in scored.iter().zip(&weights) {
+    println!("Suggested sizes — weight ∝ score ÷ volatility WITHIN a class budget, then capped (READ-ONLY, NOT advice):");
+    println!(
+        "  budget {:.0}/{:.0}/{:.0} stock/ETF/crypto (renormalised over the classes present) · max {:.1}%/name · max {:.1}%/sector\n",
+        sz.budget_stock, sz.budget_etf, sz.budget_crypto, sz.max_name_pct, sz.max_sector_pct,
+    );
+    println!("  {:<10} {:>7} {:>7} {:>7}  CAP", "TICKER", "SCORE", "VOL", "SIZE%");
+    for ((q, s), (w, cap)) in scored.iter().zip(&weights) {
         println!(
-            "  {:<10} {:>7.1} {:>7} {:>6.1}%",
+            "  {:<10} {:>7.1} {:>7} {:>6.1}%  {}",
             q.ticker,
             s,
             q.volatility_pct.map_or("n/a".to_string(), |v| format!("{v:.1}%")),
-            w, // within-basket relative split (sums to 100)
+            w,
+            cap.map_or(String::new(), |c| format!("cap: {c}")),
+        );
+    }
+    // The total is NOT decoration. A capped basket deliberately does not deploy its whole budget — with
+    // too few names in a class the remainder has nowhere to go that respects the caps — and printing 100
+    // when the rows sum to 40 would hide exactly the fact these caps exist to surface.
+    let total: f64 = weights.iter().map(|(w, _)| w).sum();
+    println!("  {:<10} {:>7} {:>7} {:>6.1}%", "TOTAL", "", "", total);
+    if total < 99.5 {
+        println!(
+            "  ({:.1}% unallocated — the caps bind and no name in those classes can take more; add candidates or raise a cap)",
+            100.0 - total,
         );
     }
 
@@ -114,7 +140,7 @@ pub async fn run(args: Vec<String>) {
                 } else {
                     format!("s:{}", crate::picks::yahoo_base(&q.ticker))
                 };
-                (q.ticker.clone(), key, q.price_eur, *w)
+                (q.ticker.clone(), key, q.price_eur, w.0)
             })
             .collect();
         println!("\nAllocation gap — actual broker weights vs the SIZE% split (matched names only; NOT advice):");

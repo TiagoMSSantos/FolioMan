@@ -3416,32 +3416,181 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
 /// whole basket; a non-positive score contributes 0. Empty in -> empty out; an all-zero pool -> all
 /// zeros (no NaN). `scored` = `(growth score, volatility_pct, cluster)`; weights are aligned to it.
 ///
-/// (Item 6) CORRELATION-AWARE: each distinct `cluster` (the asset class — crypto/ETF/stock) is one risk
-/// bucket that gets an EQUAL share of gross; vol-target only splits WITHIN a bucket. So five names that
-/// move together don't draw 5× the money of one independent name — the correlated block is capped at one
-/// bucket's budget. ceiling: asset class is a crude correlation proxy; swap in a pairwise price-correlation
-/// matrix (the history `size` already fetched) if the class split underdelivers.
-pub fn size_weights(scored: &[(f64, Option<f64>, &str)]) -> Vec<f64> {
+/// (Item 6) CORRELATION-AWARE: the asset class is one risk bucket, and vol-target only splits WITHIN a
+/// bucket, so five names that move together don't draw 5× the money of one independent name.
+/// ceiling: asset class is a crude correlation proxy; swap in a pairwise price-correlation matrix (the
+/// history `size` already fetched) if the class split underdelivers.
+///
+/// (P5) THE BUCKETS ARE NOT EQUAL ANY MORE, and the two concentration caps are new. The equal split this
+/// used to do gave a lone positive-scoring coin 33% of gross — the whole stock class's share — for no
+/// reason but being the only member of its class, and nothing capped a single name or a single sector.
+/// Now: `config::Sizing` states the class shares, renormalised over the classes actually present; then
+/// `max_name_pct` clamps each row and `max_sector_pct` clamps each GICS sector of the stock class.
+///
+/// Excess from a clamp is redistributed to the UNCLAMPED members of the SAME class in proportion to
+/// their vol-target weight, iterated to a fixpoint. Never across a class — that would let a cap quietly
+/// undo the budget split. So when a class cannot absorb its share (3 stocks under a 4% name cap hold
+/// 12%, not 70%) the remainder is simply NOT ALLOCATED and the returned weights sum to under 100. That
+/// is the answer to "you don't hold enough names to put this much here", and the caller prints the total
+/// so it is visible rather than normalised away.
+///
+/// `scored` = `(growth score, volatility_pct, asset_class, GICS sector)`; the returned weights are
+/// aligned to it and each carries the constraint BINDING ON THE FINAL NUMBER — `"name"`, `"sector"`, or
+/// `None` for a row the caps never touched. A missing or near-zero vol is floored at `MIN_VOL` so a
+/// no-history name can't grab the basket; a non-positive score contributes 0; a name with NO sector is
+/// exempt from the sector cap (missing data passes, the house rule) and can still receive spill.
+/// Empty in -> empty out; an all-zero pool -> all zeros, never a NaN.
+pub fn size_weights(
+    scored: &[(f64, Option<f64>, u8, Option<&str>)],
+    cfg: &crate::config::Sizing,
+) -> Vec<(f64, Option<&'static str>)> {
     const MIN_VOL: f64 = 0.5; // % daily-return stdev floor: only catches near-zero/no-history vol (a calm
                               // large-cap already swings ~1%); a higher floor would flatten real equities
                               // to one vol and silently turn this back into score-only sizing.
-    let raw: Vec<f64> = scored.iter().map(|(score, vol, _)| score.max(0.0) / vol.unwrap_or(MIN_VOL).max(MIN_VOL)).collect();
-    // sum the vol-target weight per cluster; only clusters with positive weight count toward the split.
-    let mut cluster_tot: HashMap<&str, f64> = HashMap::new();
-    for ((_, _, c), r) in scored.iter().zip(&raw) {
-        *cluster_tot.entry(*c).or_insert(0.0) += *r;
+    const EPS: f64 = 1e-9;
+    // The loop is MONOTONE (every pass either clamps something or ends), so this bound is a guard
+    // against a float-dust cycle, not a real iteration budget — a pass that moves nothing breaks first.
+    const MAX_PASSES: usize = 5;
+
+    let raw: Vec<f64> =
+        scored.iter().map(|(score, vol, ..)| score.max(0.0) / vol.unwrap_or(MIN_VOL).max(MIN_VOL)).collect();
+    let class_of = |i: usize| (scored[i].2).min(2) as usize; // 0 crypto, 1 ETF, 2 stock — `asset_class`
+    let mut class_tot = [0.0f64; 3];
+    for (i, r) in raw.iter().enumerate() {
+        class_tot[class_of(i)] += *r;
     }
-    let k = cluster_tot.values().filter(|t| **t > 0.0).count();
-    if k == 0 {
-        return vec![0.0; scored.len()]; // nothing positive to size -> zeros, never a divide-by-zero NaN
+    // indexed to match `asset_class`, so the config's names and this array cannot drift apart silently
+    let budget = [cfg.budget_crypto.max(0.0), cfg.budget_etf.max(0.0), cfg.budget_stock.max(0.0)];
+    // renormalise over the classes that actually carry weight: an absent class must not leave its share
+    // idle, and a class the operator set to 0 must not resurrect itself here
+    let present: f64 = (0..3).filter(|&i| class_tot[i] > 0.0).map(|i| budget[i]).sum();
+    if present <= 0.0 {
+        return vec![(0.0, None); scored.len()]; // nothing to size -> zeros, never a divide-by-zero NaN
     }
-    let budget = 100.0 / k as f64; // each risk bucket gets an equal share of gross
-    scored
-        .iter()
-        .zip(&raw)
-        .map(|((_, _, c), r)| {
-            let ct = cluster_tot[*c];
-            if ct > 0.0 { r / ct * budget } else { 0.0 }
+    let mut w: Vec<f64> = (0..scored.len())
+        .map(|i| {
+            let c = class_of(i);
+            if class_tot[c] > 0.0 { raw[i] / class_tot[c] * (budget[c] / present * 100.0) } else { 0.0 }
+        })
+        .collect();
+
+    let members = |cls: usize| -> Vec<usize> { (0..scored.len()).filter(|&i| class_of(i) == cls).collect() };
+    let sector_sum = |w: &[f64], sec: &str| -> f64 {
+        (0..scored.len()).filter(|&i| class_of(i) == 2 && scored[i].3 == Some(sec)).map(|i| w[i]).sum()
+    };
+    // A row may receive spill only while BOTH of its ceilings still have room. Checking the sector here
+    // and not just the name is what stops two capped sectors ping-ponging the same excess between them:
+    // with the other sector already full there is no eligible recipient, so the excess correctly stays
+    // unallocated instead of being pushed into a block that is over its limit on the next pass.
+    let has_room = |w: &[f64], i: usize| -> bool {
+        raw[i] > 0.0
+            && (cfg.max_name_pct <= 0.0 || w[i] < cfg.max_name_pct - EPS)
+            && (cfg.max_sector_pct <= 0.0
+                || class_of(i) != 2
+                || scored[i].3.is_none_or(|s| sector_sum(w, s) < cfg.max_sector_pct - EPS))
+    };
+    // Hand `excess` to the rows in `pool` that still have room, split by vol-target weight. Returns
+    // false when there is nowhere to put it — the excess then stays UNALLOCATED, which is the whole
+    // point: topping up an already-capped row would defeat the cap that produced the excess.
+    let spill = |w: &mut [f64], pool: &[usize], excess: f64| -> bool {
+        let free: Vec<usize> = pool.iter().copied().filter(|&i| has_room(w, i)).collect();
+        let tot: f64 = free.iter().map(|&i| raw[i]).sum();
+        if tot <= 0.0 {
+            return false;
+        }
+        for i in free {
+            w[i] += raw[i] / tot * excess;
+        }
+        true
+    };
+    // Clamp every row to the name cap and return what that freed. Split out because the fixpoint below
+    // runs it WITH redistribution and the final pass runs it WITHOUT.
+    let clamp_names = |w: &mut [f64]| -> Vec<(Vec<usize>, f64)> {
+        (0..3)
+            .filter_map(|cls| {
+                if cfg.max_name_pct <= 0.0 {
+                    return None;
+                }
+                let idx = members(cls);
+                let excess: f64 = idx.iter().map(|&i| (w[i] - cfg.max_name_pct).max(0.0)).sum();
+                if excess <= EPS {
+                    return None;
+                }
+                for &i in &idx {
+                    w[i] = w[i].min(cfg.max_name_pct);
+                }
+                Some((idx, excess))
+            })
+            .collect()
+    };
+    // The same for the sector cap. STOCK CLASS ONLY: an ETF's `sector` is a fund-level label meaning
+    // something different from a company's GICS line, and a coin has none at all — capping either on
+    // this field would compare two things that share a name and nothing else.
+    let clamp_sectors = |w: &mut [f64]| -> Vec<(Vec<usize>, f64)> {
+        if cfg.max_sector_pct <= 0.0 {
+            return Vec::new();
+        }
+        let idx = members(2);
+        let mut sectors: Vec<&str> = idx.iter().filter_map(|&i| scored[i].3).collect();
+        sectors.sort_unstable();
+        sectors.dedup();
+        let mut out = Vec::new();
+        for sec in sectors {
+            let grp: Vec<usize> = idx.iter().copied().filter(|&i| scored[i].3 == Some(sec)).collect();
+            let tot: f64 = grp.iter().map(|&i| w[i]).sum();
+            if tot <= cfg.max_sector_pct + EPS {
+                continue;
+            }
+            // scale the whole sector down proportionally rather than clamping its largest row: the
+            // constraint is on the BLOCK, so every member funded it and every member pays for it
+            let scale = cfg.max_sector_pct / tot;
+            for &i in &grp {
+                w[i] *= scale;
+            }
+            out.push((idx.iter().copied().filter(|&i| scored[i].3 != Some(sec)).collect(), tot - cfg.max_sector_pct));
+        }
+        out
+    };
+
+    for _ in 0..MAX_PASSES {
+        let mut moved = false;
+        for (pool, excess) in clamp_names(&mut w) {
+            moved |= spill(&mut w, &pool, excess);
+        }
+        for (pool, excess) in clamp_sectors(&mut w) {
+            moved |= spill(&mut w, &pool, excess);
+        }
+        if !moved {
+            break; // fixpoint: nothing had anywhere to go this pass, so nothing will on the next one
+        }
+    }
+    // FINAL CLAMP, no redistribution. The loop above hands out excess before re-checking, so its last
+    // pass can leave a row or a sector just over its ceiling; this makes the two invariants hold
+    // UNCONDITIONALLY rather than only when the fixpoint had a spare pass. Under-allocating is the safe
+    // direction and the one the caller reports; over-allocating a cap is the failure this rules out.
+    clamp_names(&mut w);
+    clamp_sectors(&mut w);
+
+    // The binding constraint is read off the FINAL weights, not accumulated while iterating: a row the
+    // sector cap scaled down and the redistribution then lifted back is not sector-bound any more, and
+    // saying so would send the reader looking for a limit that isn't holding.
+    let sector_tot = |sec: &str| -> f64 { sector_sum(&w, sec) };
+    (0..scored.len())
+        .map(|i| {
+            let at_name = cfg.max_name_pct > 0.0 && w[i] >= cfg.max_name_pct - EPS;
+            let at_sector = cfg.max_sector_pct > 0.0
+                && class_of(i) == 2
+                && scored[i].3.is_some_and(|s| sector_tot(s) >= cfg.max_sector_pct - EPS);
+            let cap = if w[i] <= EPS {
+                None // an unfunded row is not "capped", it just scored nothing
+            } else if at_name {
+                Some("name")
+            } else if at_sector {
+                Some("sector")
+            } else {
+                None
+            };
+            (w[i], cap)
         })
         .collect()
 }
@@ -3626,32 +3775,114 @@ mod tests {
         assert_eq!(col_width(spec, &off), 28); // 0 = off -> the shared width, byte-identical to before
     }
 
-    /// `size_weights`: vol-target sizing — bigger slice for higher score / lower vol; sums to 100;
-    /// degenerate inputs (empty, all-zero score) stay finite. Pure, no network. (Item 6) within ONE
-    /// cluster it's plain vol-target (the original behaviour); across clusters each is an equal bucket.
+    /// The sizing knobs with both caps OFF, so these tests see the class split alone.
+    fn uncapped() -> crate::config::Sizing {
+        crate::config::Sizing { max_name_pct: 0.0, max_sector_pct: 0.0, ..Default::default() }
+    }
+    /// weights only, for the assertions that don't care which constraint bound
+    fn sizes(scored: &[(f64, Option<f64>, u8, Option<&str>)], cfg: &crate::config::Sizing) -> Vec<f64> {
+        size_weights(scored, cfg).into_iter().map(|(w, _)| w).collect()
+    }
+
+    /// `size_weights`: vol-target sizing — bigger slice for higher score / lower vol; sums to 100 when
+    /// no cap binds; degenerate inputs (empty, all-zero score) stay finite. Pure, no network. (Item 6)
+    /// within ONE class it is plain vol-target — the original behaviour, and the part (P5) did not touch.
     #[test]
     fn size_weights_vol_target() {
-        // A: score 72, vol 1%. B: SAME score, DOUBLE vol. C: lower score, same vol as A. All one cluster.
-        let w = size_weights(&[(72.0, Some(1.0), "x"), (72.0, Some(2.0), "x"), (40.0, Some(1.0), "x")]);
-        assert!((w.iter().sum::<f64>() - 100.0).abs() < 1e-9, "weights must sum to 100"); // normalised
+        // A: score 72, vol 1%. B: SAME score, DOUBLE vol. C: lower score, same vol as A. All one class.
+        let c = uncapped();
+        let w = sizes(&[(72.0, Some(1.0), 2, None), (72.0, Some(2.0), 2, None), (40.0, Some(1.0), 2, None)], &c);
+        assert!((w.iter().sum::<f64>() - 100.0).abs() < 1e-9, "one class, no cap -> the whole 100"); // normalised
         assert!(w[0] > w[1], "same score, lower vol -> bigger slice");
         assert!(w[0] > w[2], "same vol, higher score -> bigger slice");
         assert!((w[0] - 2.0 * w[1]).abs() < 1e-9, "double the vol -> half the weight");
         // degenerate: empty -> empty; all-zero score -> zeros (no NaN/panic); missing vol uses the floor.
-        assert!(size_weights(&[]).is_empty());
-        assert_eq!(size_weights(&[(0.0, Some(1.0), "x")]), vec![0.0]);
-        assert!(size_weights(&[(50.0, None, "x"), (50.0, None, "x")]).iter().all(|w| (w - 50.0).abs() < 1e-9));
+        assert!(size_weights(&[], &c).is_empty());
+        assert_eq!(size_weights(&[(0.0, Some(1.0), 2, None)], &c), vec![(0.0, None)]);
+        assert!(sizes(&[(50.0, None, 2, None), (50.0, None, 2, None)], &c).iter().all(|w| (w - 50.0).abs() < 1e-9));
     }
 
-    /// (Item 6) correlation-aware: two identical "crypto" names + one "stock". Plain vol-target would
-    /// give the crypto BLOCK ~2/3 of the basket (3 equal names); cluster-budgeting caps it at ONE bucket,
-    /// so crypto-block ≈ stock ≈ 50%, and the lone stock outweighs either correlated crypto name.
+    /// (Item 6)/(P5) the class split. Plain vol-target would give the crypto BLOCK 2/3 of the basket
+    /// (three equal names); the class budget holds it to the crypto share. THE REGRESSION THIS PINS: the
+    /// budget used to be 100/k, so this exact input handed the lone coin pair 50% — half the book to the
+    /// asset class that has drawn down 80%+ every cycle, for no reason but being the only coins present.
     #[test]
-    fn size_weights_caps_correlated_cluster() {
-        let w = size_weights(&[(60.0, Some(1.0), "crypto"), (60.0, Some(1.0), "crypto"), (60.0, Some(1.0), "stock")]);
+    fn size_weights_budgets_by_class_and_renormalises_over_those_present() {
+        let c = uncapped();
+        let w = sizes(&[(60.0, Some(1.0), 0, None), (60.0, Some(1.0), 0, None), (60.0, Some(1.0), 2, None)], &c);
         assert!((w.iter().sum::<f64>() - 100.0).abs() < 1e-9);
-        assert!((w[0] + w[1] - w[2]).abs() < 1e-9, "crypto block == stock bucket (equal risk buckets)");
-        assert!(w[2] > w[0] && w[2] > w[1], "the lone stock outweighs each correlated crypto name");
+        // stock 70 vs crypto 5, renormalised over the two present -> 93.33 / 6.67, split within the pair
+        assert!((w[0] + w[1] - 100.0 * 5.0 / 75.0).abs() < 1e-9, "the coin BLOCK gets the crypto budget, not a third");
+        assert!((w[2] - 100.0 * 70.0 / 75.0).abs() < 1e-9, "the lone stock carries the whole stock budget");
+        assert!(w[2] > 10.0 * w[0], "and it must dwarf a coin, which the old equal split had backwards");
+        // ...and an ABSENT class leaves nothing idle: with all three present the shares are the raw ones
+        let all = sizes(&[(60.0, Some(1.0), 0, None), (60.0, Some(1.0), 1, None), (60.0, Some(1.0), 2, None)], &c);
+        assert!((all.iter().sum::<f64>() - 100.0).abs() < 1e-9);
+        assert!((all[0] - 5.0).abs() < 1e-9 && (all[1] - 25.0).abs() < 1e-9 && (all[2] - 70.0).abs() < 1e-9);
+    }
+
+    /// (P5) the two concentration caps, the redistribution, and the deliberate shortfall. Each block
+    /// below is a distinct failure mode: a cap that does not bind, a cap that binds but throws the excess
+    /// away, a sector cap that ignores an unknown sector, and a basket quietly renormalised back to 100.
+    #[test]
+    fn size_weights_caps_names_then_sectors_and_leaves_the_rest_unallocated() {
+        let tech = Some("Technology");
+        let fin = Some("Financials");
+        // ONE class, name cap only. Four equal names would take 25 each; the cap holds each to 10 and
+        // there is nobody left to hand the excess to, so 60% is deliberately NOT allocated.
+        let c = crate::config::Sizing { max_name_pct: 10.0, max_sector_pct: 0.0, ..Default::default() };
+        let four: Vec<_> = (0..4).map(|_| (60.0, Some(1.0), 2u8, None)).collect();
+        let w = size_weights(&four, &c);
+        assert!(w.iter().all(|(x, cap)| (x - 10.0).abs() < 1e-9 && *cap == Some("name")));
+        assert!((w.iter().map(|(x, _)| x).sum::<f64>() - 40.0).abs() < 1e-9, "the shortfall must SURVIVE, not renormalise");
+
+        // the excess goes to the names that CAN take it: one dominant score + three small ones. Without
+        // redistribution the three would keep their original slivers and ~60% would vanish.
+        let mixed = [
+            (900.0, Some(1.0), 2u8, None), // ~90% uncapped -> clamped to 30
+            (10.0, Some(1.0), 2u8, None),
+            (10.0, Some(1.0), 2u8, None),
+            (10.0, Some(1.0), 2u8, None),
+        ];
+        let c30 = crate::config::Sizing { max_name_pct: 30.0, max_sector_pct: 0.0, ..Default::default() };
+        let w = sizes(&mixed, &c30);
+        assert!((w.iter().sum::<f64>() - 100.0).abs() < 1e-9, "with room to spill, the class still deploys fully");
+        assert!((w[0] - 30.0).abs() < 1e-9, "the dominant name sits exactly on its cap");
+        assert!(w[1..].iter().all(|x| (x - 70.0 / 3.0).abs() < 1e-9), "the excess splits by vol-target weight");
+
+        // SECTOR cap: three tech names would hold 75% of the stock class; the cap holds the BLOCK to 25
+        // and the financial name absorbs the rest. Every tech row is scaled, not just the biggest.
+        let sect = [
+            (60.0, Some(1.0), 2u8, tech),
+            (60.0, Some(1.0), 2u8, tech),
+            (60.0, Some(1.0), 2u8, tech),
+            (60.0, Some(1.0), 2u8, fin),
+        ];
+        let c_sec = crate::config::Sizing { max_name_pct: 0.0, max_sector_pct: 25.0, ..Default::default() };
+        let w = size_weights(&sect, &c_sec);
+        let tech_tot: f64 = w[..3].iter().map(|(x, _)| x).sum();
+        assert!((tech_tot - 25.0).abs() < 1e-9, "the SECTOR is capped, not the name");
+        assert!(w.iter().all(|(_, cap)| *cap == Some("sector")), "both blocks sit on the sector ceiling");
+        // The lone financial takes what tech gave up ONLY up to its own sector ceiling — 25, not 75.
+        // Feeding a full sector because it is not the one currently being clamped is the ping-pong this
+        // pins against: two sectors would trade the same excess back and forth until the passes ran out.
+        assert!((w[3].0 - 25.0).abs() < 1e-9, "a recipient sector is bound by its OWN cap too");
+        assert!((w.iter().map(|(x, _)| x).sum::<f64>() - 50.0).abs() < 1e-9, "two sectors at 25 hold 50, and say so");
+
+        // ...and a name with NO sector is exempt from the sector cap (missing data passes) while still
+        // being a legal recipient of the spill.
+        let unknown = [(60.0, Some(1.0), 2u8, tech), (60.0, Some(1.0), 2u8, tech), (60.0, Some(1.0), 2u8, None)];
+        let w = size_weights(&unknown, &c_sec);
+        assert!((w[0].0 + w[1].0 - 25.0).abs() < 1e-9);
+        assert!((w[2].0 - 75.0).abs() < 1e-9 && w[2].1.is_none(), "no sector -> no sector cap, and it takes the spill");
+
+        // both caps at once: the sector cap frees weight that then breaches the NAME cap, which is the
+        // case a single non-iterating pass gets wrong. Whatever the split, no invariant may break.
+        let both = crate::config::Sizing { max_name_pct: 20.0, max_sector_pct: 25.0, ..Default::default() };
+        let w = size_weights(&sect, &both);
+        assert!(w.iter().all(|(x, _)| *x <= 20.0 + 1e-9), "no row may exceed the name cap after the sector pass");
+        assert!((w[..3].iter().map(|(x, _)| x).sum::<f64>() - 25.0).abs() < 1e-9, "nor the sector its own");
+        assert!(w.iter().map(|(x, _)| x).sum::<f64>() <= 100.0 + 1e-9, "and the book is never over-allocated");
     }
 
     /// (#14/#15) the long-CAGR pipeline: `core::trend_cagr` fits the log-price SLOPE (perfectly

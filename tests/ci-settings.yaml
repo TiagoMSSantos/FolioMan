@@ -237,6 +237,26 @@ anchor_windows:
 inflation_adjust:
   enabled: true       # true = deflate long-horizon returns by live EU HICP; false = raw nominal %
 
+# (P5) RISK BUDGET for the `size` table. Every value here is UNMEASURED AND UNMEASURABLE IN THIS REPO,
+# and unlike the unfitted gate values elsewhere in this file that is a permanent fact, not a to-do:
+# `size` is a live read-only command, no backtest path reaches `picks::size_weights`, and no golden
+# covers it. These are POLICY. State them, do not sweep them, and do not let a future receipt claim a
+# horizon for them. Written out rather than left to the code defaults so the shipped policy is legible
+# in the same file as everything else the operator reads.
+# REVERT RULE: delete the block — the code defaults are these exact numbers.
+sizing:
+  budget_stock: 70    # share of gross for single stocks, RENORMALISED over the classes actually present
+  budget_etf: 25      # funds: already diversified internally, so they need less name-level spreading
+  budget_crypto: 5    # WHAT THIS REPLACED: the old split was 100/k over the classes present, so ONE coin
+                      #   scoring positive drew 33% — the whole stock class's share — for no reason but
+                      #   being the only coin in the table. 5 is the standing answer to "how much may sit
+                      #   in the class that has drawn down 80%+ in every cycle it has had".
+  max_name_pct: 4.0   # no single row over this % of gross; excess is redistributed WITHIN its class
+  max_sector_pct: 25.0 # no GICS sector over this %, stock class only (an ETF's sector label means something
+                      #   else and a coin has none). CONSEQUENCE: a class too small to absorb its budget
+                      #   under these caps leaves the remainder UNALLOCATED and the table's total prints
+                      #   below 100. That is the intended reading, not a rounding bug.
+
 # ============================================================================================
 # BUY HEURISTIC (src/picks.rs). Acronyms (CAGR, ROE, P/E, NUPL, SMA, FX, ...): see Glossary in README.md.
 #

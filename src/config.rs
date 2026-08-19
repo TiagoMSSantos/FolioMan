@@ -46,7 +46,44 @@ pub struct Settings {
     pub history_proxy: BTreeMap<String, String>, // young listing -> older SAME-strategy, SAME-currency twin (e.g. VUAA.DE: SXR8.DE); the twin's closes are rebased+prepended so the young wrapper is scored on the strategy's proven history (marked ~ in the table). User-curated only — a wrong twin silently corrupts CAGR
     #[serde(default)]
     pub inflation_adjust: InflationAdjust, // show real (inflation-adjusted) returns on the 1Y+ columns
+    #[serde(default)]
+    pub sizing: Sizing, // (P5) risk budget for the `size` table — class split and the two concentration caps
     pub urls: Urls,
+}
+
+/// (P5) THE RISK BUDGET behind the `size` table. Separate from `buy_heuristic` on purpose: nothing
+/// here touches a score, a gate or a ranking, and none of it is reachable from `backtest` — `size` is
+/// a live, read-only command, so no receipt in tests/ci-settings.yaml can ever be graded against these
+/// and none should pretend to be. They are POLICY, set by judgement, and that is the honest standing.
+///
+/// WHAT THEY REPLACE: `size_weights` used to split gross EQUALLY across the asset classes present, so
+/// a single crypto name that scored positive drew 33% of the book — the same share as the entire
+/// stock class — purely because it was the only coin. There was no per-name cap and no sector cap at
+/// all, so within a class one high-score low-vol name could take most of what was left.
+///
+/// The caps redistribute WITHIN their class and never across one, so the budget split above cannot be
+/// quietly undone by a cap. CONSEQUENCE, and it is intended: a class too small to absorb its budget
+/// under the name cap leaves the remainder UNALLOCATED — 3 stocks under a 4% cap deploy 12%, not 70%
+/// — and the table's total prints below 100 to say so. That is the honest reading of "you do not hold
+/// enough names to put this much in this class", not a bug to normalise away.
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(default, deny_unknown_fields)] // a typo'd knob must error, not silently fall back to the default
+pub struct Sizing {
+    pub budget_stock: f64,   // (P5) share of gross for the single-stock class, RENORMALISED over the classes actually present — with no coin in the table the stock/ETF pair rescales to 73.7/26.3 rather than leaving 5% idle. Relative weights, so 70/25/5 and 14/5/1 mean the same thing
+    pub budget_etf: f64,     // (P5) share of gross for funds. Above the crypto share and below the stock one: an index ETF is already an internally diversified block, so it needs less of the name-level diversification the stock budget is buying, but it is not the tail bet crypto is
+    pub budget_crypto: f64,  // (P5) share of gross for coins. 5 is a JUDGEMENT VALUE and the one number here with a real consequence: it is the standing answer to "how much of the book may sit in the asset class that has drawn down 80%+ in every cycle it has had"
+    pub max_name_pct: f64,   // (P5) no single row may exceed this % of gross. Excess is redistributed to the UNCLAMPED members of the same class in proportion to their vol-target weight, iterated to a fixpoint (capped at 5 passes — the loop is monotone, so a pass that moves nothing ends it). 0 = off
+    pub max_sector_pct: f64, // (P5) no GICS sector may exceed this % of gross, STOCK CLASS ONLY: `quote.sector` is filled for equities live, ETFs carry a fund-level sector that means something different, and a coin has none. Applied after the name cap and re-checked with it, since capping a sector hands weight to names that may then breach their own ceiling. 0 = off
+}
+
+/// Defaults are the SHIPPED policy, not a neutral off-state — the one place in this file where a
+/// knob's default deliberately does NOT reproduce the previous behaviour. `size` never runs in the
+/// backtest and no golden covers it, so there is nothing for an off-by-default to protect; leaving
+/// the old equal-class split as the default would just mean the fix ships disabled.
+impl Default for Sizing {
+    fn default() -> Self {
+        Self { budget_stock: 70.0, budget_etf: 25.0, budget_crypto: 5.0, max_name_pct: 4.0, max_sector_pct: 25.0 }
+    }
 }
 
 /// Toggle for showing REAL (inflation-adjusted) returns on the 1Y/5Y/10Y/20Y % columns instead of
