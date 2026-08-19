@@ -106,6 +106,9 @@
 # growth_max_peg 1.6, growth_accel_weight 0.65 and every other knob receipt below were FITTED on the
 # contaminated peer-mean. The king horizon barely moved so they are not presumed wrong, but they are
 # no longer independently validated at 12y/8y. Re-sweep before citing a 12y/8y Δedge as evidence.
+# Those same four knobs carry a SECOND, larger debt on top of this one — see PRE-PIT below. They were
+# fitted on a pool that could pick a name before it joined the index, and the PIT arm cuts the top-3
+# excess they were fitted to explain by more than half at every horizon.
 #
 # ============================ SHIP RULE v2 — 2026-08-06 =====================================
 # THE PRIMARY METRIC CHANGES FROM rank-1 TO top-3, AND EVERY RECEIPT BELOW PREDATES THE CHANGE.
@@ -189,16 +192,58 @@
 #   CONSEQUENCE, STATED WHERE THE RULE IS STATED: `stress` grades the lane, not the basket. The top-3
 #   number this rule ships on — and that the screen footer quotes — carries FULL survivorship bias.
 #   Do not cite a `stress` run as if it had corrected the held book; it corrected a different metric.
-#   NOT FIXED HERE, and the reason is not laziness: the honest fix is point-in-time index membership
-#   (a data-vendor problem), and expanding a hand-list cannot reach it — a bigger list of names that
-#   score badly still never enters the top 3. What WOULD move it is a loser set that scores WELL at the
-#   cutoff and dies after, which is the hard half of the problem and nobody has assembled one.
+#   PARTLY FIXED SINCE, and the paragraph above is kept because it named the fix correctly: point-in-
+#   time index membership landed 2026-08-19 as the `pit` keyword, and the PRE-PIT block below carries
+#   what it measured. Read the two together — `stress` still does not correct the held book, and `pit`
+#   corrects only the MEMBERSHIP half of the bias, never the price-availability half.
 # HORIZONS ARE NOT COMPARABLE TO EACH OTHER — a cross-horizon CAGR gap is an ERA artifact. A 20y hold
 #   can only START 1971..2006-07 (it needs 20 years of future left); an 8y hold starts 1971..2018-07.
 #   Those extra 12 years of start dates cover the 2010s run, which is why top-3 prints +16.1%/yr at
 #   8y against +13.7%/yr at 20y. It is NOT a shorter-hold premium. The 8y lane's own edge-by-era
 #   DECLINES (+46.6 -> +23.5 -> +22.3 -> +14.8), so the richer recent book is market, not method.
 #   Compare an arm to its control WITHIN a horizon. Never compare horizons to pick one.
+# ============================================================================================
+#
+# ================= PRE-PIT — POINT-IN-TIME MEMBERSHIP LANDED 2026-08-19 =====================
+# EVERY RECEIPT IN THIS FILE WAS MEASURED WITHOUT POINT-IN-TIME INDEX MEMBERSHIP, AND IS THEREFORE
+# `PRE-PIT`. Every Δedge, Δexcess, h2h and worst-window figure below means "measured against a pool
+# of names that were S&P 500 members ON THE DAY THE SWEEP RAN", never "against the index as it stood
+# at the cutoff being scored". A 2003 cutoff could pick a name that did not join until 2015.
+#
+# `backtest <h> universe fund pit` scores each cutoff against the index AS IT STOOD THAT DAY. Six
+# runs, 2026-08-19, this exact config; each PIT arm's control is the identical command without the
+# `pit` keyword, so the ONLY thing that differs is which names were eligible to be picked:
+#
+#     horizon  arm    top-3 excess mean (med)   rank-1 mean|med   rank-1 h2h     windows
+#     20y      base        +6.3 (+5.6)             +6.4|+7.2      67% (12/18)       36
+#     20y      PIT         +0.1 (+0.9)             -3.3|-0.1      50%  (1/2)        20
+#     12y      base        +6.8 (+6.9)             +6.9|+7.6      62% (16/26)       51
+#     12y      PIT         +2.6 (+3.4)             +0.6|+4.1      50%  (2/4)        34
+#     8y       base        +7.1 (+7.4)             +7.6|+8.2      65% (22/34)       59
+#     8y       PIT         +4.7 (+4.9)             +4.6|+6.2      56%  (5/9)        42
+#
+# MOST OF THE MEASURED EDGE WAS LOOK-AHEAD MEMBERSHIP. Top-3 excess falls 6.2 / 4.2 / 2.4 pts/yr and
+# rank-1 goes NEGATIVE at 20y. Nothing was tuned between the two arms of any pair — this is what
+# removing the bias costs, and it is the successful outcome of measuring it rather than a regression.
+# The gradient across horizons is the tell: the longer the hold, the more of the "edge" was the
+# heuristic being handed names whose admission to the index it could not have known about.
+#
+# PIT CORRECTS MEMBERSHIP, NOT SURVIVORSHIP, AND THE TWO ARE NOT THE SAME HOLE. The 20y PIT run
+# reports 387 pool names that were index members Yahoo no longer serves: they fetched nothing and
+# scored nothing. So the PIT pool is "members at the cutoff that a data vendor still prices today" —
+# no longer look-ahead on WHO WAS IN, still blind to WHO DIED. The `stress` note above stands
+# unchanged; neither run corrects the other's half.
+#
+# WHAT A `PRE-PIT` MARK OBLIGES. Not a wholesale re-open — re-sweeping every rung against a pool this
+# much thinner is the maximum-overfit move, and the receipts below are still the honest record of what
+# was measured. What it forbids is one specific claim: no figure below may be cited as evidence that a
+# knob holds ON THE PIT POOL, because none of them was measured there. Cite them for what they are.
+#
+# AND THE PIT POOL CANNOT SETTLE THE SHIP RULE AS WRITTEN. The rank-1 h2h GUARD demands >= 50% at 20y,
+# 12y AND 8y. On the PIT pool those three comparisons rest on 2, 4 and 9 window pairs, and two of the
+# three land EXACTLY on the 50% boundary — a guard that one window flip decides is not a guard. Any
+# future rule that grades on the PIT pool needs a guard whose sample size it can state, and this is
+# the measurement that says so rather than a prediction that it might.
 # ============================================================================================
 tickers: []
 
