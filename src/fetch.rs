@@ -695,13 +695,9 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // (TR-CAGR) same endpoints + the whole-life dividend sum: closes are price-only, so a payer's CAGR
     // hides the cash it returned. LOWER BOUND — the payout is added, not reinvested (true total return
     // with reinvestment compounds higher). Display-only, same guards as life_cagr; ≈ CAGR for Acc funds.
-    let tr_cagr = match (long_closes.first(), long_closes.last(), age_years) {
-        (Some(&first), Some(&last), Some(age)) if first > 0.0 && age >= 0.5 => {
-            let divs_sum: f64 = long_divs.iter().map(|(_, d)| d).sum();
-            Some((((last + divs_sum) / first).powf(1.0 / age) - 1.0) * 100.0)
-        }
-        _ => None,
-    };
+    // (#99) routed through `core::tr_life_cagr` so the backtest can fill the SAME number from its as-of
+    // slice — this arithmetic being inline here is why the dividend leg was never in a backtest.
+    let tr_cagr = core::tr_life_cagr(&long_dates, &long_closes, long_divs.iter().map(|(_, d)| d).sum());
 
     // (S-8Y) the same price stats over the LAST 8 YEARS only, for the 8Y-pinned diagnostic column. This
     // is the one place the closes still exist — `Quote` carries derived scalars only — so a consumer

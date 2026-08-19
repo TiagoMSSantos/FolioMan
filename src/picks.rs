@@ -122,8 +122,24 @@ fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) ->
 /// or below zero), so the `or` IS the knob: off = the uncapped lifetime this bar always used. No config
 /// read here on purpose — the field's presence is the signal, and reading the knob a second time is how
 /// a fill site and a read site end up on different windows.
+/// (#99) `growth_gate_on_tr_cagr` adds the DIVIDEND LEG on top of whichever window the `or` picked.
+/// The uplift is `tr_cagr − life_cagr`: both are whole-life endpoint CAGRs over the same slice and
+/// differ only by the payouts added to the endpoint, so their difference is the dividend contribution
+/// in CAGR points and nothing else. Adding it — rather than returning `tr_cagr` outright — is what
+/// keeps this ONE change: returning `tr_cagr` would also discard the `life_cagr_max_years` window that
+/// `capped_cagr` selected, and the knob would then be two effects wearing one name.
+///
+/// The uplift is measured over the WHOLE life and applied to a possibly-capped window, which is an
+/// approximation whenever the yield changed across the cut. Named in the receipt, not hidden here.
+/// Either field missing -> today's leg, unchanged: missing data passes.
 fn life_leg_cagr(quote: &Quote) -> Option<f64> {
-    quote.capped_cagr.or(quote.life_cagr)
+    let base = quote.capped_cagr.or(quote.life_cagr);
+    match (base, quote.tr_cagr, quote.life_cagr) {
+        (Some(b), Some(tr), Some(life)) if crate::config::gate_on_tr_cagr() => {
+            Some(b + (tr - life).max(0.0))
+        }
+        _ => base,
+    }
 }
 
 /// (#37) The ONE CAGR every PEG in this tool divides by — `long_cagr_from` above, the same number the

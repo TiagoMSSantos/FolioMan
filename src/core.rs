@@ -226,10 +226,10 @@ pub struct Quote {
     pub capped_cagr: Option<f64>,      // (#3l/#73) endpoint CAGR over the last min(age, life_cagr_max_years) years, via `core::capped_life_cagr`. ONE reader: `picks::life_leg_cagr`, i.e. `growth_min_cagr`'s whole-life reject bar — (#73) repointed this field from the RANK (where (#3l) measured it at -66 edge and shipped it off) to that bar. Filled at the same two sites as `life_cagr` (fetch + backtest_quote), same knob read via the free accessor -> train==serve. None = knob off / <5y of history, and the bar then falls back to the uncapped `life_cagr` it always used -> the pool is unchanged at 0 and young names never move
     pub life_return_pct: Option<f64>,  // whole-life CUMULATIVE real return (%) over that same full history, via `core::life_return`. DISPLAY-ONLY, and deliberately NOT an entry in `perf`: `picks::perf_fill` prints it (marked `≈`) in a long rung the record ALMOST reaches, and putting it in `perf` would hand it to `perf_pct` and therefore to every gate. None = <6mo history / non-positive first close / stub / BACKTEST (never rendered there)
     pub trail_monthly: Vec<f64>,       // (#41) up to 36 trailing MONTH-over-MONTH returns (%), newest last, via `core::monthly_returns_tail`. Sole input to the growth_corr_cap redundancy skip. Built from the DAILY chart live and from the monthly slice in the backtest — the same fn, so a pair's correlation means the same thing in train and serve. Empty = no history / stub -> unjudgeable, and an unjudgeable pair never blocks
-    pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). DISPLAY-ONLY (`trcagr` column), never scored; ≈ life_cagr for Acc funds/non-payers
+    pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). ≈ life_cagr for Acc funds/non-payers. (#99) NO LONGER DISPLAY-ONLY: with `growth_gate_on_tr_cagr` on, `picks::life_leg_cagr` adds `tr_cagr − life_cagr` to the whole-life reject bar. Filled at BOTH sites since (#99) — fetch and `backtest_quote`, the same `core::tr_life_cagr` over the same `[..=as_of]` slice and the same as-of dividends `div_eur` reads -> train==serve, and the knob is measurable. Knob off = read by the `trcagr` column only, exactly as before
     pub history_proxied: bool,         // (history_proxy) closes bridged from a configured older same-strategy twin — CAGR/YRS describe the STRATEGY, not this listing; rendered as `~` so the bridge is never invisible
     pub stats_8y: Option<Stats8>,      // (S-8Y) the >8y price stats re-measured on the last 8 years, for the 8Y-pinned diagnostic column ONLY — never read by the live score. None = no history older than 8y (its whole record IS the window, so the full-window stats already are the 8y ones) / stub / backtest
-    pub sector: Option<String>,        // (#44) GICS sector, joined from the constituents CSVs (`fetch::sector_map`) — the sole input to the commodity flag/damp for stocks. Set on BOTH `screen` paths (the universe fetch and, since the explain mismatch, the explicit-args one). None for ETFs/crypto (funds carry no GICS; their path is name tokens), for `check` (its growth table is explicitly "derived from the table above — no extra fetch", a contract worth more than the flag), and in the BACKTEST pool -> `is_commodity` false there -> damp ×1.0 -> validated edge untouched, and unmeasurable by the same token
+    pub sector: Option<String>,        // (#44) GICS sector, joined from the constituents CSVs (`fetch::sector_map`) — the sole input to the commodity flag/damp for stocks. Set on BOTH `screen` paths (the universe fetch and, since the explain mismatch, the explicit-args one). None for ETFs/crypto (funds carry no GICS; their path is name tokens), for `check` (its growth table is explicitly "derived from the table above — no extra fetch", a contract worth more than the flag), and for `check`. CORRECTED (#95): the claim that this is None "in the BACKTEST pool -> `is_commodity` false there -> damp ×1.0 -> validated edge untouched" is FALSE and has been since `stamp_asset_class` started stamping it — the same class of stale claim the `sharpe_cap_etf` receipt corrected on 2026-08-02. The damp IS live in the walk, on TODAY's label at every cutoff; `backtest_drop_lookahead_sector` is the knob that makes the old sentence true again
     pub aum_eur: Option<f64>,          // (AUM) fund size from the Börse Frankfurt universe payload, EUR-approximate (BF mixes fund currencies; ±FX is immaterial vs the order-of-magnitude gate). ETFs/ETPs only; None = not a fund / not in BF / backtest -> gate inert
     pub ter_fallback: Option<f64>,     // Yahoo quoteSummary TER (%) for funds with NO BF facts (venue/regulatory-only rows). Read ONLY via ter_shown() for display + H/CORE — kept out of expense_ratio because ter_damp SCORES that field (a merged run moved live ranks; scoring lane closed)
     pub aum_fallback: Option<f64>,     // Yahoo quoteSummary totalAssets for the same funds, quote-currency ≈ EUR. Read ONLY via aum_shown() for display + H/CORE — the closure-risk AUM gate stays on BF aum_eur
@@ -439,6 +439,28 @@ pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
     match (closes.first(), closes.last()) {
         (Some(&first), Some(&last)) if first > 0.0 && age >= 0.5 => {
             Some(((last / first).powf(1.0 / age) - 1.0) * 100.0)
+        }
+        _ => None,
+    }
+}
+
+/// (#99) `life_cagr`'s TOTAL-RETURN twin: the same endpoints with the whole-window dividend sum added
+/// to the ending price. LOWER BOUND — the payout is added, not reinvested, so a true reinvested total
+/// return compounds higher. Same guards as [`life_cagr`], so the two are `None` in exactly the same
+/// cases and their difference is always a like-for-like comparison.
+///
+/// ONE definition, and that is the point of it existing: this arithmetic lived inline in `fetch.rs` and
+/// was therefore LIVE-ONLY, which is why the dividend leg has never been in a backtest. `backtest_quote`
+/// now fills the same field from the as-of slice through this fn, so the number means the same thing in
+/// train and serve.
+pub fn tr_life_cagr(dates: &[NaiveDate], closes: &[f64], divs_sum: f64) -> Option<f64> {
+    let age = dates
+        .first()
+        .zip(dates.last())
+        .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25)?;
+    match (closes.first(), closes.last()) {
+        (Some(&first), Some(&last)) if first > 0.0 && age >= 0.5 => {
+            Some((((last + divs_sum) / first).powf(1.0 / age) - 1.0) * 100.0)
         }
         _ => None,
     }
@@ -2573,6 +2595,14 @@ pub fn backtest_quote(
     quote.life_cagr = life_cagr(d, c);
     // (#3l) same slice, same free-accessor knob as the live fetch -> train==serve, like the two above.
     quote.capped_cagr = capped_life_cagr(d, c, crate::config::life_cagr_max_years());
+    // (#99) the total-return twin, over the SAME `[..=as_of]` slice and the SAME dividends `div_eur`
+    // already reads — so it is as-of by construction, not by a filter written here. Filling it is what
+    // makes the dividend leg SIGHTED: the arithmetic was inline in `fetch.rs` and therefore live-only,
+    // so `growth_min_cagr`'s price-only bar has never been A/B-able against a total-return one.
+    // `d.last()` bounds the sum at the cutoff; a later payout cannot reach this number.
+    let divs_to_date: f64 =
+        d.last().map_or(0.0, |cut| divs.iter().filter(|(dt, _)| dt <= cut).map(|(_, v)| v).sum());
+    quote.tr_cagr = tr_life_cagr(d, c, divs_to_date);
     quote.max_drawdown_pct = max_drawdown_pct(c);
     // closes-derived risk stats for the standalone PRICE-RISK probes (backtest report only — no
     // score path reads roll*/worst*). The hit-rate/worst windows scale with the run's cadence
@@ -2870,6 +2900,34 @@ mod tests {
             splice_trim_start(&dates[..=9], &closes[..=9], 2.0),
             splice_trim_start(&dates, &closes, 2.0)
         );
+    }
+
+    /// (#99) tr_life_cagr: life_cagr's total-return twin. Same endpoints, dividends added to the ending
+    /// price, so the two are None in exactly the same cases and their DIFFERENCE is the dividend
+    /// contribution in CAGR points — which is the quantity `picks::life_leg_cagr` adds when
+    /// `growth_gate_on_tr_cagr` is on. Zero dividends must reproduce `life_cagr` exactly, or the knob's
+    /// off-arm and its on-arm would differ for non-payers.
+    #[test]
+    fn tr_life_cagr_adds_the_payouts_the_price_series_dropped() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // 10 years, price doubles: 2^(1/10) − 1 ≈ 7.18%/yr price-only.
+        let dates = [ymd(2015, 1, 2), ymd(2025, 1, 2)];
+        let closes = [100.0, 200.0];
+        let price = life_cagr(&dates, &closes).unwrap();
+        assert!((price - 7.177).abs() < 1e-3, "{price}");
+        // no payouts -> the twin IS life_cagr, bit for bit. A non-payer must not move under the knob.
+        assert_eq!(tr_life_cagr(&dates, &closes, 0.0), life_cagr(&dates, &closes));
+        // 30 of dividends over the decade: (230/100)^(1/age) − 1 ≈ 8.68%/yr, a +1.5pt uplift the
+        // price-only bar never sees — which is the whole of finding C2.
+        let tr = tr_life_cagr(&dates, &closes, 30.0).unwrap();
+        assert!((tr - 8.685).abs() < 1e-3, "{tr}");
+        assert!(tr > price, "adding cash to the endpoint cannot lower the CAGR");
+        // LOWER BOUND by construction: reinvesting those payouts would compound higher still.
+        assert!(tr < (((200.0 + 30.0 * 1.5) / 100.0f64).powf(0.1) - 1.0) * 100.0);
+        // the guards must match life_cagr's exactly, or the difference stops being like-for-like.
+        assert_eq!(tr_life_cagr(&[ymd(2025, 1, 2)], &[100.0], 5.0), None); // under 6mo
+        assert_eq!(tr_life_cagr(&dates, &[0.0, 200.0], 5.0), None); // non-positive first close
+        assert_eq!(tr_life_cagr(&[], &[], 5.0), None);
     }
 
     /// (#3l) capped_life_cagr: the window clamps to the LAST `max_years`, so a 40y series with a

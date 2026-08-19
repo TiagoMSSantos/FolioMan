@@ -782,6 +782,60 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  growth_gate_on_tr_cagr: false  # (#99) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+                                 # the price-only bar every golden and every gate receipt in this file
+                                 # was measured under. Read with `growth_min_cagr` and `use_adjusted_close`.
+                                 #
+                                 #   THE DEFECT: closes are price-only (`use_adjusted_close: false`), so
+                                 #   `long_cagr` is roughly the total-return CAGR MINUS the dividend yield.
+                                 #   A name compounding at 19%/yr total while paying 3% measures ~15.5%/yr
+                                 #   and is REMOVED FROM THE UNIVERSE by `growth_min_cagr: 19.0`. No
+                                 #   `dividend_weight` can recover it: the reward is applied after the
+                                 #   gate, to names that already survived it. Over a 20-year hold the
+                                 #   reinvested yield the ranking never sees is 1.03^20 = 1.81x of
+                                 #   terminal value.
+                                 #
+                                 #   SECOND-ORDER, same direction: ex-div drops depress the price series,
+                                 #   so a payer's `range_pct` is pushed down against `growth_min_range_pct:
+                                 #   80`. THIRD-ORDER and opposite in sign: understating `long_cagr` by the
+                                 #   yield INFLATES `accel` (1Y − β·long_cagr) for the payers that do clear
+                                 #   the gate. This knob addresses only the first.
+                                 #
+                                 #   WHAT true DOES: `picks::life_leg_cagr` adds `tr_cagr − life_cagr` —
+                                 #   the dividend contribution in CAGR points over the same endpoints — to
+                                 #   whatever leg it already returned. Deliberately an UPLIFT and not a
+                                 #   switch to `tr_cagr` itself: switching would ALSO discard the
+                                 #   `life_cagr_max_years` window that `capped_cagr` selected, and the knob
+                                 #   would be two changes wearing one name. Approximation, stated rather
+                                 #   than hidden: the uplift is measured whole-life and applied to a
+                                 #   possibly-capped window, so it is wrong by whatever the yield did
+                                 #   across the cut. LOWER BOUND either way — `tr_cagr` adds payouts
+                                 #   without reinvesting them.
+                                 #
+                                 #   IT IS NOW SIGHTED, which it was not before (#99). The arithmetic lived
+                                 #   inline in `fetch.rs`, so `tr_cagr` was live-only and this gate could
+                                 #   never be A/B-ed. `core::tr_life_cagr` is now the one definition and
+                                 #   `core::backtest_quote` fills the field from the same `[..=as_of]`
+                                 #   slice and the same as-of dividends `div_eur` reads -> train == serve.
+                                 #
+                                 #   IT LOOSENS, SO BEFORE/AFTER ARE TWO UNIVERSES. Every payer's measured
+                                 #   CAGR rises, so the pool grows and the edge numbers on either side are
+                                 #   not an A/B on one sample. Read it the way the splice receipt reads its
+                                 #   own coverage change, not as a tuning delta.
+                                 #
+                                 #   TO SETTLE: the ship-rule grid at 20y/12y/8y, plus a `growth_min_cagr`
+                                 #   re-sweep underneath it — a bar fitted against price-only CAGRs is by
+                                 #   construction too low once every CAGR rises. Judge the PAIR.
+                                 #
+                                 #   NOT THE SAME AS `use_adjusted_close`. That knob's recorded "no effect"
+                                 #   verdict was measured with the BENCHMARK still price-only, i.e. on a
+                                 #   broken instrument, and flipping it alone points a total-return book at
+                                 #   a price-only ^GSPC and OVER-corrects. If that route is taken instead,
+                                 #   the benchmark must move to ^SP500TR in the same change.
+                                 #
+                                 #   REVERT RULE: back to false unless the pair (knob + refitted
+                                 #   `growth_min_cagr`) clears PRIMARY at 20y AND 8y with rank-1 h2h >=50%
+                                 #   at all three horizons.
   vol_daily_equivalent: false    # (#97) UNMEASURED — an unfitted judgement value, shipping OFF, which is
                                  # the raw per-bar scale every vol-reading receipt in this file was
                                  # fitted at. This is the one knob here that INVALIDATES OTHER RECEIPTS
