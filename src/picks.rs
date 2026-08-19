@@ -1141,11 +1141,21 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // below: `quote.mvrv` really is None for every non-coin, but the scope is a fact about the metric
     // (realized cap is on-chain), not an accident of which fetches filled which struct.
     //
-    // The shipped 2.0 is NOT a fresh judgement. `nupl_euphoria` (0.5) already declares where crypto
-    // greed begins, and NUPL = 1 - 1/MVRV, so NUPL 0.5 IS MVRV 2.0. The damp and this gate share one
-    // threshold: a coin above it is both score-damped and rejected. That double charge is deliberate —
-    // the alternative is two numbers that both mean "expensive" and drift apart, which is exactly the
-    // failure the PEG cell below documents.
+    // 2.0 IS THE THRESHOLD THIS GATE ARGUES FOR, AND ci-settings SHIPS 1.6. Read that sentence before
+    // the paragraph under it, because this comment used to open "the shipped 2.0", which is a value
+    // that has not shipped since 2026-08-03 (`d58db7a`, a hand edit inside a commit about something
+    // else). `config.rs` carries the correction on both the field and its default; this copy did not,
+    // so the one file a reader of the gate actually opens was the one still naming the wrong number.
+    //
+    // The ARGUMENT is for agreement, not for 2.0 as such. `nupl_euphoria` (0.5) already declares where
+    // crypto greed begins, and NUPL = 1 - 1/MVRV, so NUPL 0.5 IS MVRV 2.0. At 2.0 the damp and this
+    // gate are ONE threshold: a coin above it is both score-damped and rejected, one fact charged
+    // twice, deliberately, because the alternative is two numbers that both mean "expensive" and drift
+    // apart — exactly the failure the PEG cell below documents. At 1.6 they ARE two numbers, so that
+    // drift has happened and is the accepted cost. Why the stricter value stands anyway, why no run
+    // can settle it, and what would reopen it: the (#64) receipt beside the knob in ci-settings.yaml.
+    // Do not "restore" 2.0 to satisfy the invariant above — that loosens a live ceiling on judgement
+    // alone, which is the one direction every stated risk on this knob runs in.
     //
     // DO NOT lower this toward 1.0 without re-reading the `discount_weight` receipt: the walk-forward
     // backtest found deepest-dip ranking BACKWARDS, and below ~1.0 this ceiling inverts into precisely

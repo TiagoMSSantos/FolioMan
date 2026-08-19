@@ -3811,7 +3811,11 @@ buy_heuristic:
                                  #   earnings term, so MVRV reads as a P/B, not a P/E ÷ growth. Folding it into `peg`
                                  #   would recreate "two numbers, one name" — see the picks.rs `peg` cell receipt for
                                  #   what that cost last time (the tool cut APH at 2.02 in the run it ranked ODFL at 2.51).
-                                 #   WHY 2.0 — IT IS NOT A NEW JUDGEMENT. `nupl_euphoria: 0.5` above already declares
+                                 #   WHY 2.0 — AND NOTE THE VALUE ON THE LINE ABOVE IS 1.6. This paragraph argues a
+                                 #   threshold that has not shipped since 2026-08-03; the (#64) block below records the
+                                 #   hand edit, what the disagreement costs, and why the stricter number stands. Read
+                                 #   them as one receipt — this half is kept because it is still the argument.
+                                 #   IT IS NOT A NEW JUDGEMENT. `nupl_euphoria: 0.5` above already declares
                                  #   where crypto greed starts, and NUPL = 1 - 1/MVRV, so NUPL 0.5 IS MVRV 2.0. The damp
                                  #   and this ceiling now share ONE threshold. Consequence, accepted deliberately: a coin
                                  #   above 2.0 is both score-damped AND rejected, i.e. one fact charged twice. The
