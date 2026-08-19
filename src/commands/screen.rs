@@ -2194,13 +2194,23 @@ pub async fn run(args: Vec<String>) {
     // price them (a narrow watchlist run may grade fewer rows; track's table stays the honest
     // view). Today's own snapshot is 0 days old and grades nothing, so no self-grade.
     {
-        let (snaps, _) = crate::commands::track::read_snapshots();
+        let (mut snaps, _) = crate::commands::track::read_snapshots();
         if !snaps.is_empty() {
             let today = chrono::Local::now().date_naive();
             let px_now = |t: &str| {
                 quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0)
             };
             let spx_now = spx.first().and_then(|q| q.price_eur).filter(|p| *p > 0.0);
+            // (#82) same restatement `track` and `sim` do, for the same reason and off the same
+            // helper: `px_now` is retro-split-adjusted and the journal is not. Silent here — the
+            // trust line is one sentence and `track` is where the note belongs — but it MUST happen,
+            // because a trust line that quietly disagreed with `track` would be worse than either.
+            // The rank-based footers below read the journal separately and are unaffected: a split
+            // moves a price, never a position in the book.
+            crate::commands::track::adjust_for_splits(
+                &mut snaps,
+                &crate::commands::track::split_factor_from(&quotes),
+            );
             let (wins, n, sum) = crate::commands::track::verdict_stats(&snaps, today, &px_now, spx_now);
             if n > 0 {
                 println!(

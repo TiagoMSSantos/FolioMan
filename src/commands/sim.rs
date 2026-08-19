@@ -233,6 +233,11 @@ pub(crate) fn digest_line(
     )
 }
 
+/// `#[mutants::skip]` for the reason spelled out on `track::run`: a command entry point is reachable
+/// only from `main.rs`, the gate kills with `--lib --test backtest_fixture`, and so `replace run with
+/// ()` cannot be killed by anything anyone writes. The gradeable logic lives in `ledger`,
+/// `event_now`, `summary_line` and `track::adjust_for_splits`; this is the wiring.
+#[mutants::skip]
 pub async fn run(_args: Vec<String>) {
     let settings = config::load();
     let base = settings.monthly_deploy_eur;
@@ -254,6 +259,34 @@ pub async fn run(_args: Vec<String>) {
     snaps.sort_by(|a, b| a.date.cmp(&b.date));
     let today = chrono::Local::now().date_naive();
     let Some(now_key) = ym(&today.format("%Y-%m-%d").to_string()) else { return };
+
+    // (#82) The fetch now happens BEFORE the ledger, and the order is the fix, not a tidy-up. `ledger`
+    // turns a journaled price into a SHARE COUNT (cash ÷ price), so a price quoted before a split buys
+    // pre-split shares that are then valued at a post-split price — the same corruption `track` had,
+    // arriving as a fake -90% on the buy line instead of on a return. Restating the journal first means
+    // the shares `ledger` computes are already in today's definition, and nothing downstream changes.
+    // The ticker list therefore comes from the JOURNAL rather than from `led.events`: a superset by at
+    // most the names that appear only in non-month-first snapshots, which costs a handful of quotes.
+    let client = fetch::client();
+    let fx_cache = fetch::fx_cache();
+    let mut tickers: Vec<String> = snaps
+        .iter()
+        .flat_map(|s| s.rows.iter().take(BOOK).map(|(t, _)| t.clone()))
+        .chain(std::iter::once("^GSPC".to_string()))
+        .collect();
+    tickers.sort();
+    tickers.dedup();
+    let quotes = fetch::quotes(
+        &client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days,
+        false, false, &settings.anchor_windows, None,
+    )
+    .await;
+    let px_now = |t: &str| quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0);
+    let restated = crate::commands::track::adjust_for_splits(
+        &mut snaps,
+        &crate::commands::track::split_factor_from(&quotes),
+    );
+
     let led = ledger(&snaps, base, now_key);
     if led.events.is_empty() {
         println!("Nothing bought yet — {SNAPSHOT_FILE} has no priced monthly snapshot to buy from.");
@@ -267,25 +300,12 @@ pub async fn run(_args: Vec<String>) {
          {SNAPSHOT_FILE} (rerun = recompute, no sim state). Price-only, EUR, dividends not\n\
          counted. NOT advice.\n"
     );
-
-    // one paced fetch for today's prices: every held ticker + the benchmark leg — fetched BEFORE
-    // the BUYS section so each buy line can say what that month's basket became.
-    let client = fetch::client();
-    let fx_cache = fetch::fx_cache();
-    let mut tickers: Vec<String> = led
-        .events
-        .iter()
-        .flat_map(|e| e.lots.iter().map(|(t, _, _)| t.clone()))
-        .chain(std::iter::once("^GSPC".to_string()))
-        .collect();
-    tickers.sort();
-    tickers.dedup();
-    let quotes = fetch::quotes(
-        &client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days,
-        false, false, &settings.anchor_windows, None,
-    )
-    .await;
-    let px_now = |t: &str| quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0);
+    if restated > 0 {
+        println!(
+            "  note: {restated} journaled price(s) restated for share splits since their snapshot, so a\n  \
+             buy made before a split holds the same number of today's shares it would have held after one.\n"
+        );
+    }
 
     println!("\n  BUYS — each month's advice, and what that €-basket is worth today");
     for e in &led.events {

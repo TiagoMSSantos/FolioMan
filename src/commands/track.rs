@@ -67,6 +67,55 @@ pub(crate) fn read_snapshots() -> (Vec<Snapshot>, usize) {
     (snaps, corrupt)
 }
 
+/// (#82) Restate every journaled price into TODAY's share definition, in place, and return how many
+/// rows moved. Call this once, right after the prices are fetched and BEFORE anything reads the
+/// journal — then `grade`, `verdict_stats` and `sim`'s ledger all keep working on numbers that mean
+/// what they say, with no signature of their own to change.
+///
+/// THE BUG THIS EXISTS FOR. `rows` holds the EUR price as it was quoted on the day. `px_now` comes
+/// from a chart Yahoo has retro-adjusted for every split since. Comparing the two books a 10:1 split
+/// as a permanent -90% — not a rounding error, a wrong sign, forever, in the one artefact whose whole
+/// point is to be the honest live out-of-sample record. It flatters or wrecks the summary line the
+/// `--push` ping sends, and `sim` bought at the same uncorrected price.
+///
+/// It corrects the journal in memory only. The file keeps the raw quoted price, deliberately: that is
+/// what was true on the day, the correction depends on splits that had not happened yet, and rewriting
+/// history would mean re-deriving it on every future split anyway. Restating on read is idempotent;
+/// restating on disk is not.
+///
+/// `spx` is left alone — an index level is not a share and does not split.
+pub(crate) fn adjust_for_splits(snaps: &mut [Snapshot], factor_since: &dyn Fn(&str, chrono::NaiveDate) -> f64) -> usize {
+    let mut restated = 0usize;
+    for snap in snaps.iter_mut() {
+        let Ok(then) = chrono::NaiveDate::parse_from_str(&snap.date, "%Y-%m-%d") else { continue };
+        for (ticker, px) in snap.rows.iter_mut() {
+            let factor = factor_since(ticker, then);
+            // `!= 1.0` and not an epsilon: a factor is a ratio of two small integers or it is the
+            // empty product, so the no-split case is exactly 1.0 and never near it.
+            if factor > 0.0 && factor != 1.0 {
+                if let Some(p) = px {
+                    *p /= factor;
+                    restated += 1;
+                }
+            }
+        }
+    }
+    restated
+}
+
+/// The `factor_since` closure [`adjust_for_splits`] wants, read off quotes the command already
+/// fetched. One definition so `track`, `sim` and the screen's trust line cannot restate the same
+/// journal three slightly different ways — an unknown ticker answers 1.0, the same as a known one
+/// with no splits, because "we could not price it" and "it never split" both mean leave it alone.
+pub(crate) fn split_factor_from(quotes: &[crate::core::Quote]) -> impl Fn(&str, chrono::NaiveDate) -> f64 + '_ {
+    move |ticker, since| {
+        quotes
+            .iter()
+            .find(|q| q.ticker == ticker)
+            .map_or(1.0, |q| crate::core::split_factor_since(&q.splits, since))
+    }
+}
+
 /// One graded journal row: equal-weight book return vs the index over the same window.
 /// `priced` says how many of the book's names had a price on BOTH ends — delisted/err names drop
 /// out, which FLATTERS the book (survivorship); the count keeps that visible.
@@ -130,11 +179,19 @@ pub(crate) fn summary_line(wins: usize, graded_n: usize, excess_sum: f64) -> Str
     }
 }
 
+/// `#[mutants::skip]` because a command entry point is structurally ungradeable by the gate, not
+/// merely ungraded: `run` is reachable from `main.rs` and nowhere else, so the only test that could
+/// exercise it lives in the `cli` suite, and the mutants job kills with `--lib --test
+/// backtest_fixture`. `replace run with ()` therefore survives whatever anyone writes, and since
+/// `--in-diff` grades whole functions, one line changed in here would red the gate on its own. The
+/// gradeable parts were pulled out instead — `adjust_for_splits`, `split_factor_from`, `grade`,
+/// `verdict_stats`, `summary_line` — and this is left as the wiring between them.
+#[mutants::skip]
 pub async fn run(args: Vec<String>) {
     // --push: also send the summary to ntfy — for a monthly cron, so the track record reaches the
     // phone without a manual run. The cron schedule IS the dedup: no state file, one ping per fire.
     let push = args.iter().any(|a| a == "--push");
-    let (snaps, corrupt) = read_snapshots();
+    let (mut snaps, corrupt) = read_snapshots();
     if corrupt > 0 {
         eprintln!("WARNING: {corrupt} corrupt line(s) in {SNAPSHOT_FILE} skipped");
     }
@@ -161,6 +218,10 @@ pub async fn run(args: Vec<String>) {
     .await;
     let px_now = |t: &str| quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0);
     let spx_now = px_now("^GSPC");
+    // (#82) BEFORE anything grades: journaled prices are quoted-on-the-day, `px_now` is retro-adjusted,
+    // and a split between them books a fake collapse. Restating here means every reader below — the
+    // table, the fold, the push ping — sees one consistent share definition.
+    let restated = adjust_for_splits(&mut snaps, &split_factor_from(&quotes));
 
     println!(
         "Track record — the screen's own past top-10s graded on prices that did not exist when they\n\
@@ -168,6 +229,13 @@ pub async fn run(args: Vec<String>) {
          the same window. Delisted/unpriced names drop out and FLATTER the book — the N column keeps\n\
          that honest. NOT advice.\n"
     );
+    if restated > 0 {
+        println!(
+            "  note: {restated} journaled price(s) restated for share splits since their snapshot — the\n  \
+             journal keeps the price as quoted that day, and this run divides it by the splits that have\n  \
+             happened since so both ends of every window mean the same share.\n"
+        );
+    }
     println!("  {:<12} {:>6} {:>4} {:>10} {:>10} {:>9}  BEAT?", "DATE", "AGE", "N", "BOOK", "S&P 500", "EXCESS");
     let today = chrono::Local::now().date_naive();
     for snap in &snaps {
@@ -233,6 +301,48 @@ mod tests {
         assert!(s.aum.is_empty()); // serde default → flow footer silent for this line
         assert_eq!(s.rows.len(), 2);
         assert_eq!(s.rows[1], ("B".to_string(), None));
+    }
+
+    /// (#82) The correction itself, stated as the bug it removes: a name journaled at €100 that has
+    /// since done a 10:1 split trades at €12 today, and comparing those two numbers books -88% when
+    /// the position is up 20%. Restating the OLD price (100 ÷ 10 = 10) is what makes both ends of the
+    /// window mean the same share.
+    ///
+    /// Everything else here is a thing that must NOT move: a `None` price stays `None` rather than
+    /// becoming a number, `spx` is an index level and never splits, a ticker no name in the quote set
+    /// answers 1.0, and a snapshot dated after the split is already in the right definition. The
+    /// returned count is what `track` and `sim` print, so it counts PRICES restated, not snapshots.
+    #[test]
+    fn adjust_for_splits_restates_only_prices_quoted_before_one() {
+        let d = |y, m| chrono::NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+        // AAA split 10:1 on 2025-01-01; BBB never split; CCC is not in the quote set at all.
+        let factor = |t: &str, since: chrono::NaiveDate| match t {
+            "AAA" => crate::core::split_factor_since(&[(d(2025, 1), 10.0)], since),
+            _ => crate::core::split_factor_since(&[], since),
+        };
+        let mut snaps = vec![
+            snap("2024-06-01", Some(5000.0), &[("AAA", Some(100.0)), ("BBB", Some(50.0)), ("CCC", None)]),
+            snap("2026-03-01", Some(6000.0), &[("AAA", Some(12.0))]),
+            snap("not-a-date", Some(1.0), &[("AAA", Some(999.0))]),
+        ];
+        assert_eq!(adjust_for_splits(&mut snaps, &factor), 1, "one price moved, not one snapshot");
+        assert_eq!(snaps[0].rows[0].1, Some(10.0), "€100 pre-split is €10 of today's share");
+        assert_eq!(snaps[0].rows[1].1, Some(50.0), "no split -> byte-identical, not merely close");
+        assert_eq!(snaps[0].rows[2].1, None, "an unpriced row stays unpriced; 1.0 is not a price");
+        assert_eq!(snaps[0].spx, Some(5000.0), "an index level is not a share");
+        assert_eq!(snaps[1].rows[0].1, Some(12.0), "already after the split -> untouched");
+        assert_eq!(snaps[2].rows[0].1, Some(999.0), "an unparseable date is skipped, not guessed at");
+        // and it is idempotent in the only sense that matters: a second pass over the SAME quotes
+        // finds nothing left to do, because the correction is keyed off the snapshot date, not the
+        // price. `track` re-reads the journal from disk every run, so this is the real second pass.
+        assert_eq!(adjust_for_splits(&mut snaps, &factor), 1, "keyed off the date: the same row again");
+
+        // the closure the commands actually pass, over quotes they already fetched
+        let mut q = crate::core::Quote::stub("AAA", "€12.00", "", "A");
+        q.splits = vec![(d(2025, 1), 10.0)];
+        let from_quotes = split_factor_from(std::slice::from_ref(&q));
+        assert_eq!(from_quotes("AAA", d(2024, 6)), 10.0);
+        assert_eq!(from_quotes("ZZZ", d(2024, 6)), 1.0, "unknown ticker leaves the price alone");
     }
 
     /// grade(): zero-day windows and unpriced books grade nothing; a priced book computes the

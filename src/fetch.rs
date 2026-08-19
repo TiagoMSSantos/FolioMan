@@ -170,6 +170,12 @@ pub struct Chart {
     pub name: String,
     pub instrument_type: String, // Yahoo meta.instrumentType ("ETF"/"EQUITY"/...); "" if absent
     pub divs: Vec<(NaiveDate, f64)>, // (ex-date, amount/share) from events.dividends
+    /// (#82) (effective date, ratio) from events.splits — a 4:1 split is `4.0`. Ascending by date.
+    /// The series in `closes` is ALREADY retro-adjusted for every one of these, which is exactly why
+    /// they have to be carried: any price recorded before a split and compared against this series is
+    /// comparing two different share definitions. `track` and `sim` replay journaled prices and are
+    /// the callers that need it; nothing in the scoring path reads it.
+    pub splits: Vec<(NaiveDate, f64)>,
 }
 
 async fn chart_json(client: &Client, urls: &Urls, ticker: &str, range: &str) -> Option<Value> {
@@ -314,6 +320,30 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
         .unwrap_or_default();
     divs.sort_by_key(|(d, _)| *d);
 
+    // (#82) events.splits = { "<ts>": {"date": ts, "numerator": 4, "denominator": 1, ...} }, present
+    // via the same events=div,split the dividends above ride on — the payload was already being
+    // fetched and thrown away. `splitRatio` is a STRING ("4:1"), so the two integers are read instead
+    // of parsed out of it. A ratio at or below zero is dropped rather than defaulted, because it would
+    // divide a price by nothing: the field is only ever used as a divisor.
+    let mut splits: Vec<(NaiveDate, f64)> = result
+        .pointer("/events/splits")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.values()
+                .filter_map(|s| {
+                    let num = s.get("numerator")?.as_f64()?;
+                    let den = s.get("denominator")?.as_f64()?;
+                    let secs = s.get("date")?.as_i64()?;
+                    let ratio = num / den;
+                    (den > 0.0 && ratio > 0.0)
+                        .then(|| Some((DateTime::from_timestamp(secs, 0)?.date_naive(), ratio)))
+                        .flatten()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    splits.sort_by_key(|(d, _)| *d);
+
     // (splice) drop everything before the last redenomination splice — an MXN head glued onto a GBP
     // tail feeds every downstream metric (life_cagr, MAXDD, R², year_returns) a fiction. One parse
     // site = live + backtest see identical data, the same no-train-serve-skew argument adjclose uses
@@ -329,6 +359,7 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
             closes.drain(..start);
             volumes.drain(..start);
             divs.retain(|(d, _)| *d >= cut);
+            splits.retain(|(d, _)| *d >= cut); // same reason: they describe bars that are no longer here
         }
     }
 
@@ -342,6 +373,7 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
         // "ISHARES III PLC ISHRS CORE MSCI" carry no "ETF"/"UCITS" marker). Drives the ETF table split.
         instrument_type: meta.get("instrumentType").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         divs,
+        splits,
     })
 }
 
@@ -731,6 +763,10 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         price_eur: rate.map(|r| cur_close * r),
         close_native: Some(cur_close), // (Item 19) native-currency close for a currency-consistent earnings_yield
         quote_currency: Some(chart.currency.clone()), // (FX) what close_native is denominated in — the proof a filer's EPS may be divided by it
+        // (#82) carried, not scored: `track` and `sim` replay prices journaled before a split against
+        // the series above, which Yahoo has retro-adjusted for it. They ride on the quote every command
+        // already fetches rather than a second chart call of their own.
+        splits: chart.splits.clone(),
         last_close_date: last_date, // (D) newest bar's date -> screen flags/drops stale (halted/dead) listings
         drawdown_pct,
         intraday: intra.map_or([None; 3], |cs| core::intraday_changes(&cs)),
@@ -5763,6 +5799,14 @@ mod tests {
             "events": {"dividends": {
                 "a": {"amount": 2.0, "date": 1593561600}, // 2020-07-01
                 "b": {"amount": 1.0, "date": 1585699200}  // 2020-04-01
+            },
+            // (#82) splits ride the same events payload, and are read the same way: out of order, and
+            // with a malformed entry that must be DROPPED rather than defaulted, because the ratio is
+            // only ever used as a divisor.
+            "splits": {
+                "a": {"date": 1593561600, "numerator": 3, "denominator": 1, "splitRatio": "3:1"},
+                "b": {"date": 1585699200, "numerator": 1, "denominator": 2, "splitRatio": "1:2"},
+                "c": {"date": 1577836800, "numerator": 4, "denominator": 0, "splitRatio": "4:0"}
             }}
         }]}});
         let c = parse_chart(&j, "TST").unwrap();
@@ -5778,6 +5822,18 @@ mod tests {
             (NaiveDate::from_ymd_opt(2020, 4, 1).unwrap(), 1.0),
             (NaiveDate::from_ymd_opt(2020, 7, 1).unwrap(), 2.0),
         ]);
+        // (#82) ratio = numerator/denominator, NOT the "3:1" string, which is why a 1:2 reverse split
+        // comes out as 0.5 and is kept: it is a real corporate action and the correction runs the
+        // other way. The denominator-0 entry is gone — dividing a journaled price by it would be a
+        // division by zero wearing the costume of a split.
+        assert_eq!(c.splits, vec![
+            (NaiveDate::from_ymd_opt(2020, 4, 1).unwrap(), 0.5),
+            (NaiveDate::from_ymd_opt(2020, 7, 1).unwrap(), 3.0),
+        ]);
+        // no events object at all -> empty, never a phantom split (this is the overwhelming case)
+        assert!(parse_chart(&json!({"chart": {"result": [{
+            "timestamp": [1577836800], "indicators": {"quote": [{"close": [10.0]}]}
+        }]}}), "X").unwrap().splits.is_empty());
         // (#81) currency is EMPTY when meta omits it — unknown, never a guessed "USD". This assertion
         // used to read "USD", which is the whole of the bug it was pinning: `core::needs_fx` treats ""
         // as "do not convert" and can never be handed one, so the substituted "USD" sent a EUR listing

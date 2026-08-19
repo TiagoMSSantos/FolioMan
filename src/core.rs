@@ -236,6 +236,7 @@ pub struct Quote {
     pub net_margin_fy: Option<f64>,    // newest complete-FY net margin (%). DISPLAY-ONLY, same scoping as rev_yoy
     pub buyback_yoy: Option<f64>,      // newest complete-FY net share-count change, sign-flipped (+ = buying back, − = diluting). DISPLAY-ONLY (stocks), same scoping as rev_yoy
     pub annual_brief: Option<String>,  // (B) one-line multi-year trajectory (rev chain + margin move + EPS CAGR + source) from the SAME rollup the snapshot above uses — screen's fundamentals footer. DISPLAY-ONLY, same scoping as rev_yoy
+    pub splits: Vec<(NaiveDate, f64)>, // (#82) (effective date, ratio) from the chart's events.splits; a 4:1 split is 4.0, ascending. NOT SCORED and never will be — it exists so `track` and `sim`, which replay prices journaled BEFORE a split against a series retro-adjusted AFTER one, can restate the old price into today's share definition. Empty for stubs and for `backtest_quote`, which walks one internally consistent series and has nothing to restate
 }
 
 impl Quote {
@@ -306,6 +307,7 @@ impl Quote {
             net_margin_fy: None,
             annual_brief: None,
             buyback_yoy: None,
+            splits: Vec::new(),
         }
     }
 
@@ -2004,6 +2006,25 @@ pub fn needs_fx(from: &str, to: &str) -> bool {
     !from.is_empty() && !to.is_empty() && !from.eq_ignore_ascii_case(to)
 }
 
+/// (#82) How many of today's shares one share bought on `since` has become: the product of every
+/// split ratio effective AFTER that date. 1.0 when there were none, which is the overwhelming case.
+///
+/// This exists because a journaled price and a freshly fetched chart disagree about what "one share"
+/// means. Yahoo retro-adjusts `close` for splits, so a series read today prices the CURRENT share;
+/// `.screen_snapshots.jsonl` holds the price as it was quoted on the day, for the share of that day.
+/// Dividing the old price by this factor moves it into today's definition — and skipping that step
+/// books a 10:1 split as a permanent -90%, in the one artefact whose whole purpose is to be an honest
+/// out-of-sample record. `track` posted that number for real.
+///
+/// STRICTLY AFTER, not on-or-after: a split effective on the snapshot date is already in the price
+/// that day's screen quoted, so counting it would correct a price that needs no correcting.
+///
+/// Returns a factor, never a corrected price, so the one direction this can be applied in is fixed at
+/// the call site rather than argued about at each of them.
+pub fn split_factor_since(splits: &[(NaiveDate, f64)], since: NaiveDate) -> f64 {
+    splits.iter().filter(|(d, r)| *d > since && *r > 0.0).map(|(_, r)| r).product()
+}
+
 pub fn convert_price(close_native: f64, from: &str, to: &str, eur_from: Option<f64>, eur_to: Option<f64>) -> Option<f64> {
     if !needs_fx(from, to) {
         return Some(close_native); // same books -> EXACT: no rate, no multiply, no rounding
@@ -3027,6 +3048,36 @@ mod tests {
         assert_eq!(rate_as_of(&series, d(4)), Some(0.80)); // after the end -> last known, the honest carry-forward
         assert_eq!(rate_as_of(&series, d(1).pred_opt().unwrap()), None); // before the start -> no rate exists yet
         assert_eq!(rate_as_of(&BTreeMap::new(), d(2)), None); // no series -> caller drops the factor
+    }
+
+    /// (#82) `split_factor_since` is the whole of the split correction, so every branch is pinned here
+    /// and the callers only have to decide WHEN to divide, never by what.
+    ///
+    /// The load-bearing case is #2. A journal line and a freshly fetched chart disagree about what one
+    /// share is: Yahoo retro-adjusts `close`, the journal keeps the price as quoted on the day. Miss
+    /// this factor and a 10:1 split reads as a permanent -90% in the live out-of-sample record.
+    #[test]
+    fn split_factor_compounds_only_what_came_after() {
+        let d = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+        // 1 — the overwhelming case: no splits at all is the EMPTY PRODUCT, which is 1.0 and not 0.0.
+        //     A factor of 0.0 would divide every price in the journal by zero.
+        assert_eq!(split_factor_since(&[], d(2020, 1)), 1.0);
+        let splits = [(d(2021, 1), 2.0), (d(2023, 1), 5.0)];
+        // 2 — a price quoted before both is in a share definition 10x coarser than today's
+        assert_eq!(split_factor_since(&splits, d(2020, 1)), 10.0, "2:1 then 5:1 compound, they do not add");
+        assert_eq!(split_factor_since(&splits, d(2022, 1)), 5.0, "only the split that came after counts");
+        assert_eq!(split_factor_since(&splits, d(2024, 1)), 1.0, "both already in the quoted price");
+        // 3 — STRICTLY after. A split effective ON the snapshot date is already in that day's quote,
+        //     so counting it would "correct" a price that needs no correcting — a 5x error, wrong way.
+        assert_eq!(split_factor_since(&splits, d(2023, 1)), 1.0, "on-the-day is already priced in");
+        assert_eq!(split_factor_since(&splits, d(2023, 1).pred_opt().unwrap()), 5.0, "one day earlier is not");
+        // 4 — a non-positive ratio is dropped, never multiplied in: the field is only ever a divisor,
+        //     so a 0.0 from a malformed payload would wipe the whole product out.
+        assert_eq!(split_factor_since(&[(d(2021, 1), 0.0), (d(2021, 6), 3.0)], d(2020, 1)), 3.0);
+        assert_eq!(split_factor_since(&[(d(2021, 1), -2.0)], d(2020, 1)), 1.0);
+        // 5 — a reverse split is a ratio BELOW one, and it is carried, not filtered: 1:10 leaves one
+        //     share where ten were, so the old price divides by 0.1 and gets ten times larger.
+        assert_eq!(split_factor_since(&[(d(2021, 1), 0.1)], d(2020, 1)), 0.1);
     }
 
     /// `quality_return`: ROE when equity is positive, ROA when it isn't. The sign test is indirect (the
