@@ -2,9 +2,15 @@ name: Pages
 
 # Publish `screen`'s three #1 rows (stocks / ETFs / crypto) to the repo's GitHub Pages site.
 #
-# SEPARATE FROM ci.yml ON PURPOSE. Nothing here gates a commit — a throttled fetch or a missing API
-# key must never turn a push red — and nothing in ci.yml should have to wait on a ~15-minute network
-# run. The two files share no job, no cache key and no permission set.
+# SEPARATE FROM ci.yml ON PURPOSE, and the reason is isolation, not the trigger: nothing in ci.yml
+# should have to wait on a ~15-minute network run, and nothing here should be able to break one. The
+# two files share no job, no cache key and no permission set.
+#
+# This file now runs on push as well, so BE CLEAR ABOUT WHAT A RED RUN HERE MEANS. It still gates
+# nothing — no pull_request trigger, no required check, no merge to block — but a throttled fetch or
+# an expired FMP key will put a red X against the commit that happened to be pushed at the time. That
+# X is about the morning's network, not about the code. Read it as "the page did not refresh", never
+# as "this commit is bad", and check ci.yml for the verdict that actually judges the commit.
 #
 # ONE PREREQUISITE, AND IT DOES NOT LIVE IN THIS FILE: the repo's Pages source must be "GitHub
 # Actions" (`build_type: workflow`). Turning Pages on defaults it to "Deploy from a branch" instead,
@@ -24,6 +30,17 @@ on:
   # rather than assuming this fired.
   schedule:
     - cron: "30 5 * * 1-5"
+  # Republish whenever main moves, so a heuristic change is visible on the page immediately instead of
+  # at 05:30 the next weekday. NO `paths` filter, deliberately: the rows are a live universe fetch, so
+  # what the page shows depends on the market as much as on the diff, and a docs-only push simply
+  # refreshes it. Runner minutes are free on a public repo and the FMP key is optional, so the cost of
+  # a wasted run is a wasted run. An allowlist would be the thing that silently stopped rebuilding the
+  # day someone added a source directory to it and forgot this file.
+  #
+  # A push during the cron does NOT double-deploy: `concurrency: pages` serialises them, and the
+  # second run republishes the same site a few minutes later.
+  push:
+    branches: [main]
   workflow_dispatch: {}
 
 env:
