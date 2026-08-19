@@ -293,6 +293,35 @@ fn bucket(d: chrono::NaiveDate) -> i32 {
     d.year() * 2 + d.month0() as i32 / 6
 }
 
+/// (#90) PURGE + EMBARGO for a chronological split. Returns where the EARLIER side should stop, given
+/// where the split falls: every row within `months` of the boundary date is dropped off the end of it.
+///
+/// Every split in this file — `tune`'s 70/30 and the early/late OOS halves — cuts by ROW INDEX with no
+/// gap, and that is only sound if a row's label is settled by the boundary. It is not: a cutoff's label
+/// is its return over the NEXT `years`, so the last train row and the first test row share (years−0.5)/
+/// years of the same realised path. At a 12y hold that is 11 of 12 years. The "held-out" half is then
+/// largely the same outcome the earlier half was fitted on, which is exactly the failure an OOS number
+/// exists to detect. `tune`'s per-split `demean` does not help here — it removes the PEER MEAN, and this
+/// leak is in the label itself.
+///
+/// ONE definition, four call sites (`sweep_fund_factor`, `tune_growth`, `weight_curve`, `report_lane`),
+/// because a purge applied at three of four boundaries is a purge nobody can reason about. Only the
+/// EARLIER side loses rows: the later side is the evidence being read, and trimming it would shrink the
+/// very sample whose independence this is buying.
+///
+/// `months <= 0` returns `cut` untouched — the default, byte-identical, no allocation, no date maths.
+/// Rows must be date-ordered, which both callers' inputs already are (`samples` is built in cutoff order
+/// and `scored` preserves it); `partition_point` is a binary search over that order.
+fn purged_cut<T>(rows: &[T], cut: usize, months: i64, date_of: fn(&T) -> chrono::NaiveDate) -> usize {
+    if months <= 0 || cut == 0 || cut >= rows.len() {
+        return cut;
+    }
+    // 30-day months, matching the horizon arithmetic elsewhere in this file. The span is a judgement
+    // call measured in years; calendar-exact month subtraction would be false precision.
+    let keep_before = date_of(&rows[cut]) - chrono::Duration::days(months * 30);
+    rows[..cut].partition_point(|r| date_of(r) < keep_before)
+}
+
 /// (#46) Fill the three fields `Quote::stub` leaves blank that decide a name's ASSET CLASS. The backtest
 /// reconstructs quotes from price history alone, and the stub sets `name` to the TICKER with an empty
 /// `instrument_type` — but `quote_is_etf` is exactly `instrument_type == "ETF" || is_etf(name)`, and
@@ -1255,10 +1284,10 @@ pub async fn run(args: Vec<String>) {
     gate_sweep(&samples, tuning, &gate_loosen); // (#10) which specific gate is too tight?
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
     if fund_lane_on(fund, insider) {
-        report_fund_lane(&samples);
+        report_fund_lane(&samples, tuning.split_purge_months);
         sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
     }
-    report_risk_lane(&samples); // closes-derived risk stats, standalone — no fundamentals needed
+    report_risk_lane(&samples, tuning.split_purge_months); // closes-derived risk stats, standalone — no fundamentals needed
     // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One index fetch
     // (survivorship-clean), matched to the sample cadence. realized is untouched by de-mean.
     // (Phase E) with use_adjusted_close on, the picks' realized returns include dividends, so the fair
@@ -1276,7 +1305,7 @@ pub async fn run(args: Vec<String>) {
     .unwrap_or_default();
     report_vs_benchmark(&samples, &bench, years, tuning);
     // (r40) relative strength vs the index — needs the benchmark, so it lives here, after the fetch.
-    report_relative_strength(&samples, &bench);
+    report_relative_strength(&samples, &bench, tuning.split_purge_months);
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
     let verdict = report_entry_state(&samples, &bench, years, tuning);
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
@@ -1536,7 +1565,7 @@ async fn hold_period_sweep(
 /// — each factor IS its own column, so there's nothing to switch off. This is the validation gate: a
 /// factor earns a place in `growth_score` only if it shows real edge with both-positive OOS, the same
 /// bar the price knobs cleared. `samples` is date-ordered (the OOS split is early-vs-late in time).
-fn report_fund_lane(samples: &[Sample]) {
+fn report_fund_lane(samples: &[Sample], purge_months: i64) {
     let factors: &[(&str, fn(&core::FundFactors) -> Option<f64>)] = &[
         ("revenue_cagr", |f| f.rev_cagr),
         ("revenue_accel", |f| f.rev_accel),
@@ -1590,9 +1619,10 @@ fn report_fund_lane(samples: &[Sample]) {
         let half = v.len() / 2;
         let edge = mean(&v[..half]) - mean(&v[v.len() - half..]);
         let mid = pairs.len() / 2; // pairs preserve the date order of `samples` -> early-vs-late OOS
+        let early = purged_cut(&pairs, mid, purge_months, |p: &(&Sample, f64)| p.0.date); // (#90)
         println!(
             "  {:<14} n={:<5} rho {}  edge {:+.1}  OOS {} | {}",
-            name, pairs.len(), rho, edge, split_rho(&pairs[..mid]), split_rho(&pairs[mid..])
+            name, pairs.len(), rho, edge, split_rho(&pairs[..early]), split_rho(&pairs[mid..])
         );
     }
 }
@@ -1636,7 +1666,7 @@ fn ratio(num: Option<f64>, den: Option<f64>) -> Option<f64> {
 /// SAME way — a factor earns a score term only on real edge with both OOS halves positive. `pairs`
 /// preserve `samples`' date order, so the midpoint IS the early/late OOS cut. Fewer than 4 pairs is
 /// no claim, never a fabricated number.
-fn emit_probe(name: &str, pairs: &[(&Sample, f64)]) {
+fn emit_probe(name: &str, pairs: &[(&Sample, f64)], purge_months: i64) {
     if pairs.len() < 4 {
         println!("  {:<14} n/a (only {} cutoffs carry this stat)", name, pairs.len());
         return;
@@ -1657,18 +1687,19 @@ fn emit_probe(name: &str, pairs: &[(&Sample, f64)]) {
     let half = v.len() / 2;
     let edge = mean(&v[..half]) - mean(&v[v.len() - half..]);
     let mid = pairs.len() / 2; // pairs preserve the date order of `samples` -> early-vs-late OOS
+    let early = purged_cut(pairs, mid, purge_months, |p: &(&Sample, f64)| p.0.date); // (#90)
     println!(
         "  {:<14} n={:<5} rho {}  edge {:+.1}  OOS {} | {}",
-        name, pairs.len(), rho, edge, split_rho(&pairs[..mid]), split_rho(&pairs[mid..])
+        name, pairs.len(), rho, edge, split_rho(&pairs[..early]), split_rho(&pairs[mid..])
     );
 }
 
-fn report_risk_lane(samples: &[Sample]) {
+fn report_risk_lane(samples: &[Sample], purge_months: i64) {
     println!("\n── PRICE-RISK (closes-derived, standalone probes) ──");
     for (name, get) in RISK_FACTORS {
         let pairs: Vec<(&Sample, f64)> =
             samples.iter().filter_map(|s| get(&s.quote).map(|v| (s, v))).collect();
-        emit_probe(name, &pairs);
+        emit_probe(name, &pairs, purge_months);
     }
 }
 
@@ -1681,7 +1712,7 @@ fn report_risk_lane(samples: &[Sample]) {
 /// monthly series, the score's most reliable long leg) so the SAME signal is graded at both the 8y
 /// and 20y forward horizons. Probe-only: no score term, no live fill — this measures whether such a
 /// term would be worth the (large) work of plumbing the benchmark into the per-`Quote` score.
-fn report_relative_strength(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>)) {
+fn report_relative_strength(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), purge_months: i64) {
     let (bd, bc) = bench;
     println!("\n── RELATIVE STRENGTH (name vs benchmark, trailing 5y; abs momentum vs index-relative) ──");
     let abs_pairs: Vec<(&Sample, f64)> =
@@ -1694,8 +1725,8 @@ fn report_relative_strength(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>,
             Some((s, name - bench_ret))
         })
         .collect();
-    emit_probe("abs_mom_5y", &abs_pairs);
-    emit_probe("rel_str_5y", &rel_pairs);
+    emit_probe("abs_mom_5y", &abs_pairs, purge_months);
+    emit_probe("rel_str_5y", &rel_pairs, purge_months);
 }
 
 /// (G) Pick the fund factor whose HELD-OUT TEST edge wins AND whose two OOS halves are both positive AND
@@ -1751,7 +1782,8 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
         }
         demean(&mut s[..cut]);
         demean(&mut s[cut..]);
-        let (train, test) = s.split_at(cut);
+        // (#90) same purge as `tune_growth`, for the same reason and off the same knob.
+        let (train, test) = (&s[..purged_cut(&s, cut, default.split_purge_months, |s| s.date)], &s[cut..]);
         // 1-D search: growth_fund_weight in [0,0.5] on TRAIN; keep the best train edge with rho>0.
         let mut state: u64 = 0x2545_F491_4F6C_DD1D;
         let mut next = || {
@@ -1772,9 +1804,12 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
             }
         }
         let mid = test.len() / 2; // test keeps date order -> early-vs-late OOS sub-halves
+        // (#90) the sub-halves are a chronological split too, and the "both halves positive" reading
+        // treats them as two pieces of evidence — so the early one is purged back off the same knob.
+        let early = purged_cut(test, mid, default.split_purge_months, |s| s.date);
         (
             lane_metrics(test, growth_score, &won).1,
-            lane_metrics(&test[..mid], growth_score, &won).0,
+            lane_metrics(&test[..early], growth_score, &won).0,
             lane_metrics(&test[mid..], growth_score, &won).0,
             won.growth_fund_weight,
         )
@@ -1847,9 +1882,10 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
             let mut t = default.clone();
             t.growth_fund_weight = w;
             let mid = test.len() / 2;
+            let early = purged_cut(test, mid, default.split_purge_months, |s| s.date); // (#90)
             (
                 lane_metrics(test, growth_score, &t).1,
-                lane_metrics(&test[..mid], growth_score, &t).0,
+                lane_metrics(&test[..early], growth_score, &t).0,
                 lane_metrics(&test[mid..], growth_score, &t).0,
             )
         };
@@ -2866,10 +2902,15 @@ fn tune_growth(samples: &[Sample], default: &BuyHeuristic) {
     // chronological split (samples are date-sorted in `run`); de-mean WITHIN each split so neither leaks
     // the other's bucket means (the peer-relative invariant must hold per split, not just globally).
     let cut = samples.len() * 7 / 10;
+    // (#90) TRAIN stops short of the boundary by the purge span; TEST keeps every row from `cut` on,
+    // because the held-out side is the evidence and trimming it would only shrink the sample. The two
+    // `demean` calls still run over the full halves: the purged rows sit in the PAST of every test row,
+    // so their peer means leak nothing, and leaving them in keeps the default byte-identical.
+    let train_end = purged_cut(samples, cut, default.split_purge_months, |s| s.date);
     let mut s = samples.to_vec();
     demean(&mut s[..cut]);
     demean(&mut s[cut..]);
-    let (train, test) = s.split_at(cut);
+    let (train, test) = (&s[..train_end], &s[cut..]);
     if train.len() < 8 || test.len() < 8 {
         println!("\ntune: too few cutoffs to split ({} train / {} test) — run `universe` for a bigger sample.", train.len(), test.len());
         return;
@@ -3084,8 +3125,28 @@ fn bootstrap_edge_ci(
     // bucket per draw, so which buckets a draw gets has to be decided in draw order — materialise that
     // decision first, and the expensive half (`edge_halves`, a sort plus two means over ~all samples,
     // 1000 times) becomes a pure function of one draw with nothing shared.
-    let draws: Vec<Vec<i32>> =
-        (0..iters).map(|_| (0..keys.len()).map(|_| keys[(next() % keys.len() as u64) as usize]).collect()).collect();
+    // (#89) BLOCK LENGTH. "the bucket is the resample unit" above is only sound if one bucket spans the
+    // dependence, and it does not come close: consecutive cutoffs of the SAME ticker share
+    // (2·years−1)/(2·years) of their forward path — 95.8% at 12y, 97.5% at 20y. A block one bucket long
+    // against an autocorrelation length of 2·years therefore reproduces the i.i.d. width almost exactly,
+    // and this band is the load-bearing "straddles 0 -> noise" test. `bootstrap_block_buckets` draws
+    // CONTIGUOUS RUNS of that many buckets instead. 0/1 = one bucket per draw, today's behaviour, and
+    // byte-identical: `picks` is then `keys.len()`, each run is one key, and `next()` is consumed once
+    // per pick in the same order, so the PRNG stream and every band off it are untouched.
+    let block = tuning.bootstrap_block_buckets.clamp(1, keys.len());
+    let picks = keys.len().div_ceil(block);
+    let draws: Vec<Vec<i32>> = (0..iters)
+        .map(|_| {
+            (0..picks)
+                .flat_map(|_| {
+                    let start = (next() % keys.len() as u64) as usize;
+                    // wraps: the buckets are a cycle for resampling purposes, so a run starting near the
+                    // end is not silently short (which would quietly shrink the late-period weight).
+                    (0..block).map(|o| keys[(start + o) % keys.len()]).collect::<Vec<_>>()
+                })
+                .collect()
+        })
+        .collect();
     // `map_init` keeps the pool hoisted the way the serial loop did — one buffer per worker, cleared
     // per draw, instead of a fresh ~280 KB allocation 1000 times. `collect` preserves draw order (and
     // the sort below would make that moot anyway; it costs nothing to keep).
@@ -3308,6 +3369,9 @@ fn weight_curve(
     }
     let rels: Vec<f64> = scored.iter().map(|(s, _)| s.relative).collect();
     let mid = scored.len() / 2;
+    // (#90) same purge as `report_lane`'s OOS line. Every rung re-scores the SAME rows in the SAME
+    // order (`re` is a map over `scored`), so one boundary computed once is valid for the whole ladder.
+    let early = purged_cut(&scored, mid, tuning.split_purge_months, |p| p.0.date);
     let split_rho = |s: &[(&Sample, f64)]| {
         core::spearman(&s.iter().map(|x| x.1).collect::<Vec<_>>(), &s.iter().map(|x| x.0.relative).collect::<Vec<_>>())
             .map_or("n/a".to_string(), |v| format!("{v:+.2}"))
@@ -3334,7 +3398,7 @@ fn weight_curve(
                 "  {x:<6.2} rho {rho}  edge {:+.1}  winsor {:+.1}  OOS {} | {}{tag}",
                 top - bot,
                 winsor_edge(&re),
-                split_rho(&re[..mid]),
+                split_rho(&re[..early]),
                 split_rho(&re[mid..])
             )
         })
@@ -3415,6 +3479,10 @@ fn report_lane(
 
     // out-of-sample early vs late (scored is date-ordered)
     let mid = scored.len() / 2;
+    // (#90) purge the early half back off the boundary — these two rho's are read as independent
+    // evidence ("both halves positive"), and without a gap the rows either side of `mid` share almost
+    // all of one forward path. 0 (the default) leaves `early == mid` and the line byte-identical.
+    let early = purged_cut(&scored, mid, tuning.split_purge_months, |p| p.0.date);
     let split_rho = |s: &[(&Sample, f64)]| {
         core::spearman(
             &s.iter().map(|x| x.1).collect::<Vec<_>>(),
@@ -3425,7 +3493,7 @@ fn report_lane(
     println!(
         "  out-of-sample (split {}): early rho {}  |  late rho {}",
         scored[mid].0.date,
-        split_rho(&scored[..mid]),
+        split_rho(&scored[..early]),
         split_rho(&scored[mid..])
     );
 
@@ -3603,6 +3671,77 @@ mod tests {
         assert!(
             bootstrap_edge_ci(&rows, scores_nothing, &t, 8, 5.0, 95.0).is_none(),
             "every draw gated out -> no band, not a NaN band"
+        );
+    }
+
+    /// (#90) The purge, at the boundaries that decide whether it is safe: 0 is the identity — the
+    /// DEFAULT, and the whole reason every golden stays byte-identical — and a real span drops exactly
+    /// the tail whose forward window is still open at the split date, no more.
+    ///
+    /// The last assertion is the finding rather than a corner case: at the honest 12y span (288 months,
+    /// a `years` purge plus a `years` embargo) this sample has NO train rows left. That is why the knob
+    /// ships at 0 instead of at the statistically correct value.
+    #[test]
+    fn the_split_purge_drops_only_the_overlapping_tail() {
+        // one row per quarter from 2010-01, so index 30 is 2017-07-01 and the spans below are readable.
+        let rows: Vec<Sample> =
+            (0..40).map(|i| sample(ymd(2010 + i / 4, 1 + 3 * (i % 4) as u32, 1), 0.0)).collect();
+        let cut = |months| purged_cut(&rows, 30, months, |s: &Sample| s.date);
+        assert_eq!(rows[30].date, ymd(2017, 7, 1));
+        assert_eq!(cut(0), 30, "0 is OFF, and off must be the identity — every golden rests on this");
+        assert_eq!(cut(-12), 30, "a negative span is off too, never a reversal");
+        // 12 30-day months back from 2017-07-01 is 2016-07-06, so 2016-07-01 (index 26) is the last row
+        // kept and 27 is the new end: rows 27..30 are the ones still sharing a forward path with TEST.
+        assert_eq!(cut(12), 27);
+        assert_eq!(rows[26].date, ymd(2016, 7, 1));
+        assert_eq!(cut(288), 0, "the honest 12y span (purge + embargo) outruns the whole sample");
+        // degenerate cuts pass through rather than indexing `rows[cut]` off the end.
+        assert_eq!(purged_cut(&rows, 0, 12, |s: &Sample| s.date), 0);
+        assert_eq!(purged_cut(&rows, 40, 12, |s: &Sample| s.date), 40);
+    }
+
+    /// (#89) The block length is real, and 0 is exactly the one-bucket resample every band in this repo
+    /// was read off.
+    ///
+    /// 16 half-year buckets, 4 rows each, scores 0..3, with the peer-relative return sitting on the top
+    /// two rows only — so a draw's edge is exactly the MEAN of `e_k` over the buckets it drew, and the
+    /// bootstrap reduces to the textbook case (the sampling distribution of a mean). `e_k` is a two-regime
+    /// step (eight flat buckets then eight rich ones) because SERIAL CORRELATION is the entire subject:
+    /// the real data has it (consecutive cutoffs share 95.8% of their forward path at 12y) and a
+    /// one-bucket block cannot see it. Note that `picks * block == keys.len()` at both settings, so both
+    /// bands come from pools of the SAME SIZE — the only difference is how many INDEPENDENT selections
+    /// built them, 16 at block 1 against 2 at block 8. Measured: (46.9, 103.1) at block 1 against
+    /// (28.1, 121.9) at block 8 — both centred on the true 75, width 56.2 -> 93.8, a ratio of 1.67
+    /// against the 1.63 the finite-population arithmetic predicts. The 1.25 bar below is that ratio with
+    /// room, not a tuned number: this is a seeded PRNG on frozen rows, so it does not drift.
+    #[test]
+    fn a_longer_bootstrap_block_widens_the_band() {
+        fn score_is_the_price(q: &Quote, _: &BuyHeuristic) -> Option<f64> {
+            q.price.parse().ok()
+        }
+        let rows: Vec<Sample> = (0..16)
+            .flat_map(|k| {
+                let e = if k < 8 { 0.0 } else { 150.0 };
+                let date = ymd(2020 + k / 2, 1 + 6 * (k % 2) as u32, 1);
+                // scores 0..3 are the same in every bucket, so the top/bottom split is the same two rows
+                // per bucket in every draw and nothing but the drawn bucket set moves the edge.
+                (0..4).map(move |r| Sample {
+                    relative: if r >= 2 { e } else { 0.0 },
+                    quote: Arc::new(Quote::stub("X", &r.to_string(), "", "X")),
+                    ..sample(date, 0.0)
+                })
+            })
+            .collect();
+        let band = |block: usize| {
+            let t = BuyHeuristic { bootstrap_block_buckets: block, ..BuyHeuristic::default() };
+            bootstrap_edge_ci(&rows, score_is_the_price, &t, 400, 5.0, 95.0).unwrap()
+        };
+        assert_eq!(band(0), band(1), "0 and 1 are the same one-bucket draw — the DEFAULT must not move");
+        let (one, eight) = (band(1), band(8));
+        assert!(
+            eight.1 - eight.0 > 1.25 * (one.1 - one.0),
+            "8-bucket blocks make 2 independent picks where 1-bucket blocks make 16, so the band must \
+             grow: {one:?} vs {eight:?}"
         );
     }
 
