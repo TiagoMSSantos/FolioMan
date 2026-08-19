@@ -278,7 +278,7 @@ pub async fn run(_args: Vec<String>) {
     tickers.dedup();
     let quotes = fetch::quotes(
         &client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days,
-        false, false, &settings.anchor_windows, None,
+        false, false, &settings.anchor_windows, None, settings.inflation_adjust.score_on_nominal,
     )
     .await;
     let px_now = |t: &str| quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0);

@@ -50,7 +50,7 @@ pub async fn run(args: Vec<String>) {
         } else {
             None
         };
-        fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, eu_infl.as_ref())
+        fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal)
             .await
             .into_iter()
             .map(|q| (q.ticker.clone(), q))

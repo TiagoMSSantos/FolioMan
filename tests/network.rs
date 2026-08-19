@@ -166,6 +166,7 @@ async fn full_quote_build() {
     let quotes = fetch::quotes(
         &fetch::client(), &settings.urls, &fetch::fx_cache(), &tickers,
         settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, None,
+        settings.inflation_adjust.score_on_nominal,
     )
     .await;
     assert_eq!(quotes.len(), tickers.len());

@@ -281,6 +281,54 @@ anchor_windows:
 # as the check footer) — no rate to guess. Shorter horizons (1D/1W/1M/6M) are never adjusted.
 inflation_adjust:
   enabled: true       # true = deflate long-horizon returns by live EU HICP; false = raw nominal %
+                      # (#88) THIS KNOB IS NOT ABOUT COLUMNS, which is what the paragraph above and its
+                      #   own comment both claim. `core::horizon_changes` writes its legs into
+                      #   `Quote.perf`, and `Quote.perf` is what `picks::perf_pct` hands to EVERY gate
+                      #   and score term, so at `true` the whole growth lane is scored in REAL terms.
+  score_on_nominal: false # (#88) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+                      #   today's behaviour byte-for-byte. false = the score keeps reading whatever
+                      #   `enabled` produced; true = the score reads a nominal copy while the % columns
+                      #   keep the real one, i.e. `enabled` finally means only what it says.
+                      #   THE SKEW IT CLOSES. Every threshold in this file was fitted by `backtest`,
+                      #   which builds its quotes through `core::backtest_quote` and passes `infl: None`
+                      #   — nominal, always, at every horizon. The live `screen` runs with `enabled:
+                      #   true`. So a nominal bar is being applied to real numbers. Measured off the
+                      #   cached EU HICP feed (.fmp_cache/eu_hicp_old + eu_hicp2, 2000-2026, the same
+                      #   merge `fetch_eu_inflation` does), compounded exactly as
+                      #   `core::inflation_compounded` compounds it:
+                      #        1Y cum  +2.9%    5Y cum +23.4%    8Y cum +32.3%
+                      #       10Y cum +36.3%   12Y cum +38.1%   20Y cum +60.0%
+                      #   As a CAGR that is 2.38 pts/yr off the 20Y rung, 3.56 off the 8Y and 4.30 off
+                      #   the 5Y (the 2021-23 spike sits inside the short windows: 5.3 / 10.4 / 3.4).
+                      #   `growth_min_cagr: 19.0` therefore behaves like ~21.4 on a 20Y-rung name and
+                      #   ~23.3 on a 5Y-rung one — a gate materially tighter than the one the 20y/12y/8y
+                      #   grids measured, and tighter by a DIFFERENT amount per rung, so it also tilts
+                      #   the ranking between old and young names. Same story for every other perf-fed
+                      #   bar: the 5Y/20Y rung floors, `growth_min_1y_pct`, `growth_min_20y_pct`.
+                      #   AND IT IS INCONSISTENT INSIDE THE LIVE RUN, which is the part no horizon can
+                      #   excuse. `quote.life_cagr` (`core::life_cagr`) and `quote.trend_cagr` are built
+                      #   from raw closes and are NOMINAL always. So:
+                      #     - `long_cagr_from`'s three arms are not in the same units — flipping
+                      #       `use_life_cagr` changes the basis as well as the window, worth ~2-4 pts/yr
+                      #       that has nothing to do with what that switch is for;
+                      #     - `growth_min_cagr` has TWO legs (the rung, and the whole-life bar via
+                      #       `picks::life_leg_cagr`) and reads ONE number, 19.0, against one real value
+                      #       and one nominal one.
+                      #   That is a direct breach of the ONE-DEFINITION-PER-NUMBER rule, and it is why
+                      #   this is filed as a defect and not as a tuning question.
+                      #   WHY NO NUMBER IS QUOTED FOR THE FIX, i.e. why it ships OFF. No golden can grade
+                      #   it: `backtest_quote` passes `infl: None`, so `perf_nominal` is never filled on
+                      #   the backtest path and the fixture output is byte-identical at BOTH settings.
+                      #   The change is live-tables end to end. Grading it properly needs an as-of HICP
+                      #   series inside the backtest — real work, not done here — and until then "off"
+                      #   is the only position that is measured, because off is what every receipt in
+                      #   this file was measured under.
+                      #   REVERT RULE: it is already at the revert value. The cheaper alternative, if the
+                      #   real columns are not worth this, is `enabled: false` — that puts the score and
+                      #   the display back on one number with no new field at all. Turn THIS on instead
+                      #   only if the real % columns are wanted, and then check a live `screen` both ways
+                      #   at the BOTTOM of the stock table: names should be ADMITTED, never dropped,
+                      #   since every perf-fed bar gets easier when the deflation comes off.
 
 # (P5) RISK BUDGET for the `size` table. Every value here is UNMEASURED AND UNMEASURABLE IN THIS REPO,
 # and unlike the unfitted gate values elsewhere in this file that is a permanent fact, not a to-do:
@@ -734,6 +782,47 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  backtest_anchor_windows: false # (#88) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+                                 #   today's behaviour byte-for-byte and is what every golden in
+                                 #   tests/fixture and every receipt in this file was measured under.
+                                 #   THE SKEW, and it is the twin of `inflation_adjust.score_on_nominal`:
+                                 #   `core::backtest_quote` hardcoded an EMPTY anchor map, so every
+                                 #   backtest leg fell back to `core::default_anchor_half`, while the live
+                                 #   path is handed the `anchor_windows` block at the top of this file.
+                                 #   They are not the same anchor:
+                                 #       label   live (this file)   backtest (the default)
+                                 #        1W            3                    7
+                                 #        1M           15                   30
+                                 #        6M           91                   90
+                                 #        1Y          182                   90
+                                 #        5Y/10Y/20Y  365                  365   <- these two agree
+                                 #   So the long rungs are clean and the SHORT ones are not, which is the
+                                 #   opposite of where you would look. `return_1y` is the estimator that
+                                 #   moves most: live it is the mean of every close from t-547d to t-183d,
+                                 #   in the backtest the mean over t-455d..t-275d. That number feeds
+                                 #   `growth_min_1y_pct`, `accel` (weight 0.50, the heaviest score term in
+                                 #   the lane) and `mom121`. `return_1m` feeds the 1M-knife gate, which is
+                                 #   inert for equities at the shipped `max_1m_drop_pct: -1000000.0` but
+                                 #   LIVE for crypto at `max_1m_drop_pct_crypto: -35.0` — so a coin is
+                                 #   knifed on a half-width window in the backtest and a full-width one
+                                 #   live.
+                                 #   DIRECTION. A1 offers two reconciliations and this takes the one that
+                                 #   is implementable: the BACKTEST adopts the live map. The inflation half
+                                 #   had to go the other way (live -> nominal) because no as-of HICP series
+                                 #   exists offline; the anchor map has no such problem, it is arithmetic
+                                 #   over closes the run already holds. Resolved once in `backtest::run`
+                                 #   and passed down as a map, so the validated walk and
+                                 #   `hold_period_sweep` cannot read the knob differently.
+                                 #   WHY NO NUMBER. Turning it on moves the INPUT to every perf-fed gate,
+                                 #   so before/after is two different measurements and not an A/B — the
+                                 #   same standing this file already gives `splice_max_weekly_rate`. There
+                                 #   is no ship-rule verdict to quote because there is no comparable pair.
+                                 #   REVERT RULE: it is at the revert value. Turning it on invalidates
+                                 #   every perf-fed receipt at once — `growth_min_cagr`, `growth_min_1y_pct`,
+                                 #   the 5Y/20Y rung floors, `max_1m_drop_pct_crypto`, `growth_accel_cap` — so it
+                                 #   is a RE-SWEEP, not a flip. Do it as its own round, re-bless the
+                                 #   goldens in the same commit, and mark every receipt it touches with the
+                                 #   horizon it was re-measured at.
   use_adjusted_close: false      # (B) REVERTED 2026-06-28: backtest 12 universe edge unchanged (raw
                                  #   -100337371.5 vs adj -100337372.0), OOS halves identical (+0.09/-0.05).
                                  #   No improvement → golden rule reverts. Flip true only if a re-run lifts edge.

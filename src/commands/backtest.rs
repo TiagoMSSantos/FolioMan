@@ -617,6 +617,13 @@ pub async fn run(args: Vec<String>) {
     }
     let client = fetch::client();
     let tuning = &settings.buy_heuristic;
+    // (#88) resolved ONCE, here, and handed down as a map rather than as a bool plus a source. An
+    // empty map is exactly what `core::backtest_quote` used to hardcode, so `false` is byte-identical;
+    // `true` measures the anchor the live tool actually uses. Resolved at the top because two paths
+    // build quotes (the validated walk below, and `hold_period_sweep`) and they must not be able to
+    // read the knob differently.
+    let anchor_windows =
+        if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
     let Args { years, wide, long, fund, tune, insider, halflife, stress, pit, mut tickers } = parse_args(&args);
     // DELIBERATELY UNPINNED (mutation audit, round 3): both halves of this `&&` survive. It guards an
@@ -691,7 +698,7 @@ pub async fn run(args: Vec<String>) {
     // (Item 11) hold-period / signal half-life sweep: which forward window gives the best NET edge?
     // Self-contained (own price-only fetch, cached -> cheap) so the validated dispatch below is untouched.
     if halflife {
-        hold_period_sweep(&client, &settings.urls, &tickers, monthly, cadence, min_history, step, tuning, &etf_set, &sector_of)
+        hold_period_sweep(&client, &settings.urls, &tickers, monthly, cadence, min_history, step, tuning, &etf_set, &sector_of, &anchor_windows)
             .await;
         fetch::long_cache_save(); // this path fetches too — flush before the early return
         return;
@@ -836,7 +843,7 @@ pub async fn run(args: Vec<String>) {
                             i += step;
                             continue;
                         }
-                        let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence);
+                        let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence, &anchor_windows);
                         stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
                         // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
                         // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
@@ -1363,6 +1370,7 @@ fn sweep_cutoffs(
     cadence: usize,
     etf_set: &HashSet<String>,
     sector_of: &HashMap<String, String>,
+    windows: &BTreeMap<String, i64>, // (#88) the live anchor map, or empty for the old default-only behaviour
 ) -> Vec<(i64, Sample)> {
     let mut out = Vec::new();
     // The cutoff's Quote does not depend on the hold window — only `realized` does — yet this used to
@@ -1385,7 +1393,7 @@ fn sweep_cutoffs(
                     if realized.is_finite() {
                         let quote = quotes[i]
                             .get_or_insert_with(|| {
-                                let mut q = core::backtest_quote(tk, dates, closes, divs, i, cadence);
+                                let mut q = core::backtest_quote(tk, dates, closes, divs, i, cadence, windows);
                                 stamp_asset_class(&mut q, name, instrument_type, etf_set, sector_of);
                                 Arc::new(q)
                             })
@@ -1420,6 +1428,7 @@ async fn hold_period_sweep(
     tuning: &BuyHeuristic,
     etf_set: &HashSet<String>,
     sector_of: &HashMap<String, String>,
+    windows: &BTreeMap<String, i64>, // (#88) resolved once in `run`, so both quote-building paths agree
 ) {
     const HOLDS: [i64; 6] = [1, 2, 3, 5, 8, 10]; // forward windows (years) to compare
     eprintln!("backtest: hold-period sweep over {HOLDS:?}y windows ({} tickers)…", tickers.len());
@@ -1454,7 +1463,7 @@ async fn hold_period_sweep(
             };
             sweep_cutoffs(
                 tk, &chart.dates, &chart.closes, &chart.divs, &chart.name, &chart.instrument_type, &HOLDS,
-                min_history, step, cadence, etf_set, sector_of,
+                min_history, step, cadence, etf_set, sector_of, windows,
             )
         })
         .collect();
@@ -4105,7 +4114,7 @@ mod tests {
                 let target = dates[i] + chrono::Duration::days(years * 365);
                 let Some(off) = dates[i..].iter().position(|d| *d >= target) else { break };
                 let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
-                let quote = core::backtest_quote(tk, &dates, closes, &[], i, 252);
+                let quote = core::backtest_quote(tk, &dates, closes, &[], i, 252, &BTreeMap::new());
                 samples.push(Sample {
                     date: dates[i],
                     realized,
@@ -4744,7 +4753,7 @@ mod tests {
                 let target = dates[i] + chrono::Duration::days(years * 365);
                 let Some(off) = dates[i..].iter().position(|d| *d >= target) else { break };
                 let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
-                let quote = core::backtest_quote(tk, &dates, closes, &[], i, 252);
+                let quote = core::backtest_quote(tk, &dates, closes, &[], i, 252, &BTreeMap::new());
                 samples.push(Sample { date: dates[i], realized, relative: 0.0, quote: Arc::new(quote), fund: None, trail: Vec::new() });
                 i += STEP_SESSIONS;
             }
@@ -4942,7 +4951,7 @@ mod tests {
         let d = BuyHeuristic::default();
 
         let fixture = |tk: &str, name: &str, ity: &str| -> Sample {
-            let mut quote = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252);
+            let mut quote = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252, &BTreeMap::new());
             stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
             Sample { date: dates[n - 1], realized: 0.0, relative: 0.0, quote: Arc::new(quote), fund: None, trail: Vec::new() }
         };
@@ -5063,14 +5072,14 @@ mod tests {
         let tuning = BuyHeuristic::default();
 
         // the fixture must score BEFORE anything gates it, else a pass below proves nothing.
-        let mut etc = core::backtest_quote("SGLN.L", &dates, &closes, &[], n - 1, 252);
+        let mut etc = core::backtest_quote("SGLN.L", &dates, &closes, &[], n - 1, 252, &BTreeMap::new());
         assert!(growth_score(&etc, &tuning).is_some(), "fixture must score unstamped — the old behaviour");
         stamp_asset_class(&mut etc, "iShares Physical Gold ETC", "ETF", &etf_set, &sector_of);
         assert_eq!(picks::asset_class(&etc), 1);
         assert!(growth_score(&etc, &tuning).is_none(), "physical-gold ETC must be gated once it classes as a fund");
 
         // and the gate is SELECTIVE, not "every ETF drops out" — which would fake the pass above.
-        let mut broad = core::backtest_quote("XDWD.L", &dates, &closes, &[], n - 1, 252);
+        let mut broad = core::backtest_quote("XDWD.L", &dates, &closes, &[], n - 1, 252, &BTreeMap::new());
         stamp_asset_class(&mut broad, "Xtrackers MSCI World UCITS ETF", "ETF", &etf_set, &sector_of);
         assert_eq!(picks::asset_class(&broad), 1);
         assert!(growth_score(&broad, &tuning).is_some(), "a plain index ETF must keep scoring");
@@ -5109,7 +5118,7 @@ mod tests {
                     let target = dates[i] + chrono::Duration::days(years * 365);
                     let Some(off) = dates[i..].iter().position(|d| *d >= target) else { break };
                     let realized = (closes[i + off] / closes[i] - 1.0) * 100.0;
-                    let mut quote = core::backtest_quote(tk, &dates, &closes, &[], i, 252);
+                    let mut quote = core::backtest_quote(tk, &dates, &closes, &[], i, 252, &BTreeMap::new());
                     if stamp {
                         stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
                     }
@@ -5184,7 +5193,7 @@ mod tests {
         let (etf_set, sector_of) = (HashSet::new(), HashMap::new());
         let d = BuyHeuristic::default();
         let build = |tk: &str, name: &str, ity: &str| {
-            let mut q = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252);
+            let mut q = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252, &BTreeMap::new());
             stamp_asset_class(&mut q, name, ity, &etf_set, &sector_of);
             q
         };
@@ -5241,7 +5250,7 @@ mod tests {
         let sector_of = HashMap::new();
         let holds = [1i64, 2, 5];
         let walk = |c: &[f64]| {
-            sweep_cutoffs("VWRA.L", &dates, c, &[], "VANGUARD FUNDS PLC", "", &holds, MIN_HISTORY, STEP_SESSIONS, 252, &etf_set, &sector_of)
+            sweep_cutoffs("VWRA.L", &dates, c, &[], "VANGUARD FUNDS PLC", "", &holds, MIN_HISTORY, STEP_SESSIONS, 252, &etf_set, &sector_of, &BTreeMap::new())
         };
         let got = walk(&closes);
 
@@ -5274,7 +5283,7 @@ mod tests {
         let d = BuyHeuristic::default();
         let mk = |tk: &str, name: &str, ity: &str, g: f64| {
             let closes = synth_series(n, g, 0.04, 0.0);
-            let mut quote = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252);
+            let mut quote = core::backtest_quote(tk, &dates, &closes, &[], n - 1, 252, &BTreeMap::new());
             stamp_asset_class(&mut quote, name, ity, &etf_set, &sector_of);
             Sample { date: dates[n - 1], realized: 0.0, relative: 0.0, quote: Arc::new(quote), fund: None, trail: Vec::new() }
         };
@@ -5361,7 +5370,7 @@ mod tests {
             .iter()
             .flat_map(|(tk, closes)| {
                 // holds=[12] / min_history 36 / step 6 / cadence 12 — `run`'s monthly branch verbatim
-                sweep_cutoffs(tk, &dates, closes, &[], tk, "", &[12], 36, 6, 12, &etf_set, &sector_of)
+                sweep_cutoffs(tk, &dates, closes, &[], tk, "", &[12], 36, 6, 12, &etf_set, &sector_of, &BTreeMap::new())
                     .into_iter()
                     .map(|(_, s)| s)
             })

@@ -522,7 +522,7 @@ pub async fn price_in(client: &Client, urls: &Urls, fx: &FxCache, close_native: 
 
 /// Fetch a single Quote. Self-swallows failures: a bad ticker yields an "err"/"no data"
 /// row instead of killing the batch. Chart + news are fetched concurrently.
-pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Quote {
+pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker: &str, dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>, score_on_nominal: bool) -> Quote {
     let (chart_j, chart_long_j, titles, intra) = tokio::join!(
         // 10y, NOT max: Yahoo coarsens interval=1d to monthly bars once the span passes ~10y, which
         // makes 1D/1W/1M meaningless (only month-boundary points exist). 10y keeps TRUE daily bars
@@ -558,7 +558,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             // via the USD->EUR fx_cache rate, and dedup keys on the underlying so the -USD leg slots in
             // cleanly. note: boxed recursion for the single retry; -USD can't re-trigger this.
             if let Some(base) = ticker.strip_suffix("-EUR") {
-                return Box::pin(quote_one(client, urls, fx_cache, &format!("{base}-USD"), dip_days, high_days, intraday, news, windows, infl)).await;
+                return Box::pin(quote_one(client, urls, fx_cache, &format!("{base}-USD"), dip_days, high_days, intraday, news, windows, infl, score_on_nominal)).await;
             }
             return match other {
                 Some(c) => Quote::stub(ticker, "no data", "", &c.name),
@@ -756,6 +756,15 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         head: titles.first().cloned().unwrap_or_default(),
         news_block: titles.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n"),
         perf: horizon_changes(&long_dates, &long_closes, rate, windows, infl),
+        // (#88) the nominal twin the SCORE reads, filled only when the knob asks for it — otherwise
+        // empty, and `picks::perf_pct` falls through to `perf` above. Also empty when `infl` is None,
+        // because then `perf` already IS nominal and a second identical vec would just be a second
+        // place for the two to drift. Pure arithmetic over closes we have already fetched: no request.
+        perf_nominal: if score_on_nominal && infl.is_some() {
+            horizon_changes(&long_dates, &long_closes, rate, windows, None)
+        } else {
+            Vec::new()
+        },
         name: chart.name,
         trend: format!("{arrow} {dur}"),
         at_ath,
@@ -7293,7 +7302,7 @@ mod tests {
         let w = BTreeMap::new();
         // no `instrumentType`, deliberately: it keeps the row out of the equity and ETF arms, so this
         // test drives the price/turnover seam and never the fundamentals fan-out behind it.
-        let q = quote_one(&client, &stub_urls(&base), &fx_cache(), "ZZTESTFX", 30, 0, false, false, &w, None).await;
+        let q = quote_one(&client, &stub_urls(&base), &fx_cache(), "ZZTESTFX", 30, 0, false, false, &w, None, false).await;
         assert_eq!(q.quote_currency.as_deref(), Some("USD"));
         assert_eq!(q.price_eur, Some(0.25), "0.5 native at 0.5 EUR/USD");
         assert_eq!(q.close_native, Some(0.5), "the native close is NOT converted");
@@ -7316,7 +7325,7 @@ mod tests {
         }]}}"#;
         let (base, client) = stub_server(BARS);
         let w = BTreeMap::new();
-        let q = quote_one(&client, &stub_urls(&base), &fx_cache(), "ZZTESTNOFX", 30, 0, false, false, &w, None).await;
+        let q = quote_one(&client, &stub_urls(&base), &fx_cache(), "ZZTESTNOFX", 30, 0, false, false, &w, None, false).await;
         assert_eq!(q.quote_currency.as_deref(), Some(""), "unknown, not a guessed USD");
         assert_eq!(q.price_eur, None);
         assert_eq!(q.avg_turnover_eur, None, "no rate -> no EUR turnover for the gate to believe");
@@ -7404,7 +7413,7 @@ pub async fn fetch_history_long(client: &Client, urls: &Urls, ticker: &str) -> O
 }
 
 /// One Quote per ticker, concurrent (≤`FETCH_CONCURRENCY` in flight), input order preserved.
-pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>) -> Vec<Quote> {
+pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &[String], dip_days: i64, high_days: i64, intraday: bool, news: bool, windows: &BTreeMap<String, i64>, infl: Option<&BTreeMap<i32, f64>>, score_on_nominal: bool) -> Vec<Quote> {
     // Warm the USD rate once up front. Otherwise every US stock races its own USDEUR=X call in the
     // fan-out; one gets rate-limited -> None cached -> all USD names print "USD?" instead of €.
     // note: USD only (dominant case); rare currencies (GBP/CHF) still race, fine at this scale.
@@ -7421,7 +7430,7 @@ pub async fn quotes(client: &Client, urls: &Urls, fx_cache: &FxCache, tickers: &
         .map(|tk| {
             let done = &done;
             async move {
-                let quote = quote_one(client, urls, fx_cache, tk, dip_days, high_days, intraday, news, windows, infl).await;
+                let quote = quote_one(client, urls, fx_cache, tk, dip_days, high_days, intraday, news, windows, infl, score_on_nominal).await;
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if n.is_multiple_of(PROGRESS_EVERY) || n == total {
                     eprintln!("fetch: {n}/{total} quotes fetched");

@@ -1204,7 +1204,7 @@ pub async fn run(args: Vec<String>) {
     // extra Yahoo chart request PER NAME (~65s of pacer sleep on a full universe) to fill three display
     // cells nothing scores on. news off (screen never prints headlines).
     let intraday = picks::wants_intraday(&settings.widths.columns);
-    let mut quotes = fetch::quotes(&client, &settings.urls, &fx_cache, &universe, settings.dip_days, settings.high_days, intraday, false, &settings.anchor_windows, eu_infl.as_ref()).await;
+    let mut quotes = fetch::quotes(&client, &settings.urls, &fx_cache, &universe, settings.dip_days, settings.high_days, intraday, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal).await;
     // anything from the Xetra ETF feed IS an ETF, even if Yahoo tags it EQUITY (structured products
     // like BNP Paribas Issuance) — force it so it can't leak into the stocks table past the sector filter
     for quote in &mut quotes {
@@ -1352,7 +1352,7 @@ pub async fn run(args: Vec<String>) {
     // footer both read it. A failed fetch stays silent (None). Display-only.
     let spx = fetch::quotes(
         &client, &settings.urls, &fx_cache, &["^GSPC".to_string()], settings.dip_days, settings.high_days,
-        false, false, &settings.anchor_windows, eu_infl.as_ref(),
+        false, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
     )
     .await;
     let spx_off_hi: Option<f64> = spx.first().map(|q| q.drawdown_pct);

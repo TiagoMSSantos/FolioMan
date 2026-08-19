@@ -33,7 +33,7 @@ pub async fn run(args: Vec<String>) {
     // same fetch shape as `perf`/`screen`; intraday + news off (sizing needs neither).
     let mut quotes = fetch::quotes(
         &client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, false,
-        &settings.anchor_windows, eu_infl.as_ref(),
+        &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
     )
     .await;
 
@@ -115,7 +115,7 @@ pub async fn run(args: Vec<String>) {
     // monthly_deploy_eur (≤0) prints nothing, same as `screen`.
     let spx = fetch::quotes(
         &client, &settings.urls, &fx_cache, &["^GSPC".to_string()], settings.dip_days, settings.high_days,
-        false, false, &settings.anchor_windows, eu_infl.as_ref(),
+        false, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
     )
     .await;
     let off_hi = spx

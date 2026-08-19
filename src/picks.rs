@@ -596,9 +596,29 @@ fn dedup_currency_twins<'a>(
 
 /// % change at a given horizon label (e.g. "1Y") from a Quote's perf, by label not index
 /// (robust to HORIZONS reordering). None if that horizon has no data.
+///
+/// (#88) THE one read site every gate and score term goes through, which is why the real-vs-nominal
+/// switch lives here and nowhere else. `inflation_adjust` is documented as a DISPLAY toggle — "show
+/// REAL returns on the 1Y/5Y/10Y/20Y % columns" — but `horizon_changes` writes its output into
+/// `quote.perf`, and `quote.perf` is this function's input, so with it on every >=1Y leg reaching the
+/// SCORE is deflated too. Every threshold in the growth lane was fitted by a backtest that passes
+/// `infl: None` and is therefore nominal, so a nominal bar was being applied to real numbers: at the
+/// cached EU HICP the cumulative gap is 23.4% over 5y, 36.3% over 10y and 60.0% over 20y, which moves
+/// `growth_min_cagr` by roughly 2.4 pts/yr at the 20Y rung and 4.3 at the 5Y one. The gate reads 19.0
+/// either way; only the units under it changed.
+///
+/// Worse INSIDE the live run: `quote.life_cagr` and `quote.trend_cagr` are built from raw closes and
+/// are always nominal, so `long_cagr_from`'s three arms are not in the same units, and
+/// `growth_min_cagr`'s two legs (the rung via `long_leg`, the whole life via `life_leg_cagr`) judge one
+/// `19.0` against one real number and one nominal one.
+///
+/// `perf_nominal` non-empty = score on it. Empty = today's behaviour. No config read here on purpose,
+/// the same reasoning `life_leg_cagr` records: the field's presence IS the knob, and a read site that
+/// consults the config a second time is how a fill and a read end up on different arms.
 pub fn perf_pct(quote: &Quote, label: &str) -> Option<f64> {
     let i = HORIZONS.iter().position(|(l, _)| *l == label)?;
-    quote.perf.get(i).and_then(|o| o.as_ref()).map(|(_, p)| *p)
+    let legs = if quote.perf_nominal.is_empty() { &quote.perf } else { &quote.perf_nominal };
+    legs.get(i).and_then(|o| o.as_ref()).map(|(_, p)| *p)
 }
 
 /// The growth lane's per-rung CUMULATIVE-return floors: `(perf label, near-miss tag, floor %)`.
@@ -4277,6 +4297,7 @@ mod tests {
         Quote {
             ticker: "T".into(), price: "€1.00".into(), dip: "-5.0%".into(), drop_pct: drawdown_pct,
             market: "USA".into(), instrument_type: String::new(), head: String::new(), news_block: String::new(), perf,
+            perf_nominal: Vec::new(), // (#88) empty = score on `perf`, which is what every fixture here means
             name: "n".into(), trend: String::new(), at_ath: false, at_atl: false, mom_pct: None,
             div_eur: Vec::new(), price_eur: None, close_native: None, quote_currency: None, last_close_date: None, drawdown_pct, intraday: [None; 3],
             // (#20) default a KNOWN turnover so the growth lane's unknown-turnover gate admits test
@@ -5993,6 +6014,41 @@ mod tests {
         q.life_cagr = Some(9.0);
         q.age_years = Some(12.0);
         q
+    }
+
+    /// (#88) The score must read NOMINAL legs when the fetch filled them, and `perf` otherwise. Both
+    /// halves matter: the fall-through is what keeps every golden and every fitted receipt valid, and
+    /// the switch is what stops a knob documented as "which % the COLUMNS show" from re-denominating
+    /// `growth_min_cagr` behind the backtest that fitted it.
+    #[test]
+    fn score_reads_nominal_legs_when_the_fetch_filled_them() {
+        let real = legs(&[("1Y", 12.0), ("5Y", 60.0), ("20Y", 500.0)]);
+        // the same name before deflation — bigger everywhere, by the cumulative HICP over each horizon
+        let nominal = legs(&[("1Y", 15.2), ("5Y", 97.4), ("20Y", 859.9)]);
+        let mut q = Quote::stub("AAA", "€100.00", "", "A");
+        q.perf = real.clone();
+        // EMPTY is the default and the backtest's only state -> `perf`, unchanged
+        assert!(q.perf_nominal.is_empty());
+        assert_eq!(perf_pct(&q, "5Y"), Some(60.0));
+        assert_eq!(perf_pct(&q, "20Y"), Some(500.0));
+        q.perf_nominal = nominal;
+        assert_eq!(perf_pct(&q, "5Y"), Some(97.4), "filled -> the score reads the undeflated leg");
+        assert_eq!(perf_pct(&q, "20Y"), Some(859.9));
+        assert_eq!(q.perf[i_of("5Y")], real[i_of("5Y")], "the REAL vec is untouched — it still feeds the % columns");
+        // and the gate moves with it: the 20Y rung's CAGR is ~2.4 pts/yr higher in nominal terms, which
+        // is the whole finding — one `growth_min_cagr` was being read against two different units.
+        let t = BuyHeuristic { fixed_cagr_years: 20, ..BuyHeuristic::default() };
+        let nom = long_cagr_pct(&q, &t).unwrap();
+        q.perf_nominal.clear();
+        let deflated = long_cagr_pct(&q, &t).unwrap();
+        assert!(nom - deflated > 2.0, "the two units differ by more than a rounding wobble ({nom} vs {deflated})");
+        // a label with no leg on either side stays None rather than falling back across the two vecs
+        assert_eq!(perf_pct(&q, "10Y"), None);
+    }
+
+    /// HORIZONS index of a label — the same lookup `perf_pct` does, for asserting on the raw vec.
+    fn i_of(label: &str) -> usize {
+        HORIZONS.iter().position(|(l, _)| *l == label).unwrap()
     }
 
     /// (QA) `render` — the pure screen seam (takes already-built quotes, no network). A pinned name that

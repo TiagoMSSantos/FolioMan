@@ -61,7 +61,7 @@ pub async fn run(args: Vec<String>) {
         .map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
         .unwrap_or_default();
     let before = alerted.clone();
-    for quote in fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, true, &settings.anchor_windows, None).await { // news on: alert body shows headlines; keys on price drop, not returns
+    for quote in fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, true, &settings.anchor_windows, None, settings.inflation_adjust.score_on_nominal).await { // news on: alert body shows headlines; keys on price drop, not returns
         if quote.price == "err" || quote.price == "no data" {
             continue; // a stub quote reads drop_pct 0.0 — treating that as a recovery would fake-clear the dedup
         }
@@ -101,7 +101,7 @@ pub async fn run(args: Vec<String>) {
     // A failed/stub ^GSPC fetch skips silently (state untouched — a 0.0 stub would fake a recovery).
     let spx = fetch::quotes(
         &client, &settings.urls, &fx_cache, &["^GSPC".to_string()], settings.dip_days, settings.high_days,
-        false, false, &settings.anchor_windows, None,
+        false, false, &settings.anchor_windows, None, settings.inflation_adjust.score_on_nominal,
     )
     .await;
     if let Some(q) = spx.first().filter(|q| q.price != "err" && q.price != "no data") {

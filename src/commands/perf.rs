@@ -23,7 +23,7 @@ pub async fn run(args: Vec<String>) {
     if eu_infl.as_ref().is_some_and(|s| !s.is_empty()) {
         println!("(1Y+ % inflation-adjusted — real EUR terms, EU HICP; past prices stay nominal)");
     }
-    for quote in fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, eu_infl.as_ref()).await { // news off: perf prints only % columns
+    for quote in fetch::quotes(&client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days, false, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal).await { // news off: perf prints only % columns
         println!(
             "\n{} [{}]  now {}  ({})  {}",
             quote.name, quote.ticker, quote.price, quote.market, core::source_url(&settings.urls.yahoo_quote, &quote.ticker)

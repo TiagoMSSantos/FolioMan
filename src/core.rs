@@ -173,6 +173,12 @@ pub struct Quote {
     pub head: String,        // first headline ("" if none)
     pub news_block: String,  // up to 3 headlines, "- ..\n- .." (alert body)
     pub perf: Vec<Option<(String, f64)>>, // aligned to HORIZONS: (past_eur_str, pct) or None
+    // (#88) the SAME legs, never deflated — the units every backtest receipt was fitted in. EMPTY is
+    // the signal, exactly as `capped_cagr`'s absence is (`picks::life_leg_cagr`): the live fetch fills
+    // this only when `inflation_adjust.score_on_nominal` is on, and `backtest_quote` never fills it, so
+    // `picks::perf_pct` falls through to `perf` and the shipped lane stays byte-identical. Filled, it is
+    // what every gate and score term reads, while `perf` above keeps feeding the REAL % columns.
+    pub perf_nominal: Vec<Option<(String, f64)>>,
     pub name: String,    // human-readable instrument name (falls back to ticker)
     pub trend: String,   // "↑ 2w" / "↓ 5d": current direction + how long it has held
     pub at_ath: bool,    // at/near all-time high (within tol of max seen)
@@ -252,6 +258,7 @@ impl Quote {
             head: head.to_string(),
             news_block: String::new(),
             perf: Vec::new(),
+            perf_nominal: Vec::new(), // (#88) empty = "score on `perf`", the default and the backtest's only state
             name: name.to_string(),
             trend: String::new(),
             at_ath: false,
@@ -2473,6 +2480,15 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
 /// slices, so the backtest scores a name exactly as the live tool would have on that day. note:
 /// dividends / turnover / P/E / ROE are NOT reconstructed (no clean as-of source), so those score
 /// terms go neutral here; the backtest validates the PRICE-based heuristic, which is the bulk of it.
+///
+/// (#88) `windows` is the SECOND half of the same train/serve skew `perf_nominal` closes. "so the
+/// backtest scores a name exactly as the live tool would have on that day" — the sentence above — was
+/// not true of the anchor: this used to hardcode an empty map here, so every leg fell back to
+/// `default_anchor_half`, while the live path reads `anchor_windows` from settings and ci-settings
+/// ships 1Y: 182 against that default's 90, 1M: 15 against 30 and 1W: 3 against 7. `return_1y` — the
+/// input to `growth_min_1y_pct`, to `accel` (the heaviest term in the lane) and to `mom121` — was a
+/// DIFFERENT ESTIMATOR in train and in serve. Pass an empty map for the old behaviour, which is what
+/// the shipped lane still does until `backtest_anchor_windows` is turned on.
 pub fn backtest_quote(
     ticker: &str,
     dates: &[NaiveDate],
@@ -2480,6 +2496,7 @@ pub fn backtest_quote(
     divs: &[(NaiveDate, f64)],
     as_of: usize,
     cadence: usize,
+    windows: &BTreeMap<String, i64>,
 ) -> Quote {
     let (d, c) = (&dates[..=as_of], &closes[..=as_of]);
     let mut quote = Quote::stub(ticker, "", "", ticker);
@@ -2497,7 +2514,7 @@ pub fn backtest_quote(
     // the dividend score term and the `div` display column — so filling it moves nothing else.
     quote.div_eur = dividend_sums(divs, d, None);
     quote.price_eur = c.last().copied();
-    quote.perf = horizon_changes(d, c, None, &BTreeMap::new(), None); // calendar-based -> cadence-agnostic
+    quote.perf = horizon_changes(d, c, None, windows, None); // calendar-based -> cadence-agnostic
     quote.drawdown_pct = pct_from_high(c); // all-time anchor as of the `as_of` index
     quote.range_pct = price_pct_rank(c);
     // cadence = bars/year (252 daily, 12 monthly): vol over ~1y of bars; the long MA window scaled
@@ -3998,7 +4015,7 @@ mod tests {
     let mdates: Vec<NaiveDate> =
         (0..60).map(|m| NaiveDate::from_ymd_opt(2015, 1, 1).unwrap() + chrono::Duration::days(30 * m)).collect();
     let mcloses: Vec<f64> = (0..60).map(|m| 100.0 * 1.01_f64.powi(m)).collect();
-    let mq = backtest_quote("X", &mdates, &mcloses, &[], mdates.len() - 1, 12);
+    let mq = backtest_quote("X", &mdates, &mcloses, &[], mdates.len() - 1, 12, &BTreeMap::new());
     assert!(mq.volatility_pct.is_some());
     assert!(mq.range_pct > 90.0); // rising every bar -> sits at its range high
     // (#3j) whole-life CAGR over the SAME `[..=as_of]` slice. THE anti-inert assert: while this stayed
@@ -4036,9 +4053,30 @@ mod tests {
         };
         dcloses.push(dcloses[i - 1] * step);
     }
-    let dq = backtest_quote("X", &ddates, &dcloses, &[], ddates.len() - 1, 252);
+    let dq = backtest_quote("X", &ddates, &dcloses, &[], ddates.len() - 1, 252, &BTreeMap::new());
     let worst = dq.max_daily_1m.expect("a daily backtest_quote must fill max_daily_1m");
     assert!((worst - 20.0).abs() < 1e-6, "the window is the LAST 21 sessions, not one and not all: {worst}");
+
+    // (#88) the anchor map has to REACH the legs, and an empty one has to leave them exactly where they
+    // were. Both halves are the finding: the empty map is what every golden and every fitted receipt
+    // was measured under, and the live tool has been reading `1M: 15` against that map's default 30 —
+    // the same `return_1m` feeding the 1M-knife gate, and the same shape one rung up at `1Y: 182` vs 90.
+    // Four years of daily bars with ONE spike placed so the two windows straddle it: averaging over
+    // ±30d around the anchor swallows it, an exact-day anchor (`1M: 0`, the spelling ci-settings
+    // already ships for `1D`) reads it whole.
+    let adates: Vec<NaiveDate> =
+        (0..1500).map(|d| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap() + chrono::Duration::days(d)).collect();
+    let mut acloses = vec![100.0f64; 1500];
+    let anchor = 1500 - 1 - 30; // the bar exactly one 30-day "month" back
+    acloses[anchor] = 150.0;
+    let i1m = HORIZONS.iter().position(|(l, _)| *l == "1M").unwrap();
+    let wide = backtest_quote("X", &adates, &acloses, &[], adates.len() - 1, 252, &BTreeMap::new());
+    let tight = backtest_quote("X", &adates, &acloses, &[], adates.len() - 1, 252, &[("1M".to_string(), 0)].into_iter().collect());
+    let (w, t) = (wide.perf[i1m].clone().unwrap().1, tight.perf[i1m].clone().unwrap().1);
+    assert!(w.abs() < 1.0, "±30d smooths the spike away, which is what the default does: {w}");
+    assert!((t + 33.33).abs() < 0.1, "an exact-day anchor lands ON the spike — the map reached the leg: {t}");
+    // and OFF is the old hardcoded map, byte for byte, on every leg
+    assert_eq!(wide.perf, backtest_quote("X", &adates, &acloses, &[], adates.len() - 1, 252, &BTreeMap::new()).perf);
 
     // (#41) month-end resampling: a DAILY series and the MONTHLY series of the same months must produce
     // the SAME returns through this one fn — that equality IS the train==serve claim the live skip rests
