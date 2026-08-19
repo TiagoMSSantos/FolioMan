@@ -17,7 +17,7 @@ cargo run -- check AAPL BTC-USD VWCE.DE
 cargo run -- check --explain KEYS      # full watchlist view + KEYS's SCORE arithmetic decomposed
 cargo run -- perf NVDA          # past EUR price + % at each horizon, with source URL (1Y+ % real terms when inflation_adjust on)
 cargo run -- screen             # live universe -> GROWTH ranking per class (stocks/ETFs/crypto) + NUPL
-cargo run -- size               # suggested position sizes for the growth picks (score ÷ volatility, read-only)
+cargo run -- size               # suggested position sizes: score ÷ volatility inside a per-class budget, capped per name and per sector (read-only)
 cargo run -- report AAPL        # annual income-statement trajectory + as-of grower profile (only the valuation tilt is score-weighed)
 cargo run -- backtest           # walk-forward validation: rho, top/bottom edge, OOS split, ablation
 cargo run -- backtest 7 universe       # 7y-forward window, over the live screen universe (not the watchlist)

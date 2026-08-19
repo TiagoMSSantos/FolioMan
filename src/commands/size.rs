@@ -7,6 +7,18 @@
 use crate::picks::{crypto_adjust, growth_score, nupl_factor, perf_pct, size_weights};
 use crate::{config, fetch};
 
+/// (#80) UNGRADEABLE BY THE MUTATION GATE, and skipped so that stays a stated fact rather than a
+/// trap — the same call already made for `screen::run` and `check::run`. `run` is reachable from
+/// `main.rs` alone, so the only test that exercises it is `size_without_candidates_says_nothing_to_size`
+/// in the cli suite — which `ci.yml`'s mutants job deliberately does not run (it grades `--lib --test
+/// backtest_fixture`), and which walks the empty path anyway. Graded 2026-08-19 against exactly that
+/// selection — 42 mutants over the whole file, of which 11 fall inside `run`, and all 11 MISSED.
+///
+/// Without the attribute the gate is armed against every future edit here, because `--in-diff` grades
+/// whole functions and any one-line change drags all of `run` into scope. The risk-budget rewrite
+/// below is precisely such an edit. The alternative was adding `--test cli` to the gate; it was
+/// declined on cost, the same way it was for the other two.
+#[mutants::skip]
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
@@ -233,5 +245,49 @@ mod tests {
         // nothing matches -> the honest no-weights line, not a zero-division table
         let none = allocation_gap_lines(&sized[..1], &[h("c:eth", "ETH", 1.0)]).join("\n");
         assert!(none.contains("no held name matches"), "{none}");
+    }
+
+    /// (#80) The three tag edges `allocation_gap_semantics` cannot reach, and the priceless row that
+    /// nobody holds. Graded 2026-08-19: these four mutants survived that test —
+    /// `173:23 > -> >=`, `182:27 > -> >=`, `184:27 < -> ==`, `184:27 < -> <=`.
+    ///
+    /// The ±5pt band is EXCLUSIVE, so a gap of exactly ±5.0 must carry NO tag; the underweight arm
+    /// needs a row that is actually held, because `v == 0.0` claims every unheld row first; and the
+    /// "no EUR price" flag keys off the HOLDING, not off the missing price — a name nobody holds
+    /// reads "not held" even when its price is unknown.
+    ///
+    /// Every ACTUAL% here is 25.0 by construction (20 of an 80 total): quarters are exact in binary,
+    /// where a tenth is not, and a gap of 5.000000000000002 would silently un-test the boundary.
+    #[test]
+    fn allocation_gap_tag_edges() {
+        let s = |d: &str, k: &str, p: Option<f64>, w: f64| (d.to_string(), k.to_string(), p, w);
+        let h = |k: &str, l: &str, q: f64| (k.to_string(), l.to_string(), q);
+        let sized = vec![
+            s("EDGEHI", "s:hi", Some(20.0), 20.0), // 25.0 - 20 = +5.0 exactly -> NO tag
+            s("EDGELO", "s:lo", Some(20.0), 30.0), // 25.0 - 30 = -5.0 exactly -> NO tag
+            s("DEEPLO", "s:deep", Some(20.0), 50.0), // 25.0 - 50 = -25.0 -> underweight
+            s("BIG", "s:big", Some(20.0), 10.0),   // 25.0 - 10 = +15.0 -> overweight
+            s("GHOST", "s:ghost", None, 0.0),      // no price AND unheld -> "not held", not flagged
+        ];
+        let held = vec![
+            h("s:hi", "HI", 1.0),
+            h("s:lo", "LO", 1.0),
+            h("s:deep", "DEEP", 1.0),
+            h("s:big", "BIG", 1.0),
+        ];
+        let out = allocation_gap_lines(&sized, &held);
+        // the tag is whatever trails the last '%' — empty when the gap sits inside the band
+        let tag = |name: &str| {
+            let line = out
+                .iter()
+                .find(|l| l.starts_with(&format!("  {name} ")))
+                .unwrap_or_else(|| panic!("no row for {name}: {out:?}"));
+            line.trim_end().rsplit('%').next().unwrap().trim().to_string()
+        };
+        assert_eq!(tag("EDGEHI"), "", "+5.0 is the edge and the band excludes it: {out:?}");
+        assert_eq!(tag("EDGELO"), "", "-5.0 likewise: {out:?}");
+        assert_eq!(tag("DEEPLO"), "underweight", "{out:?}");
+        assert_eq!(tag("BIG"), "overweight", "{out:?}");
+        assert_eq!(tag("GHOST"), "not held", "unheld outranks unpriced: {out:?}");
     }
 }
