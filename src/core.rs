@@ -3962,6 +3962,33 @@ mod tests {
     assert!(life_cagr(&mdates, &zero_start).is_none(), "non-positive first close has no growth factor");
     assert!(life_cagr(&[], &[]).is_none());
 
+    // (#80) The 1-month window inside `backtest_quote` is `cadence / 12`, and a DAILY run is the only
+    // cadence that can tell that apart from `cadence % 12`: 252 / 12 = 21 sessions, while 252 % 12 = 0
+    // clamps to a single bar. Everything else here runs `mq` at cadence 12, where both spellings are 1.
+    //
+    // Nothing else can catch it either. `max_daily_1m` is read by ONE gate, `growth_max_daily_1m`, which
+    // ships at 0.0 — so the field reaches no golden and a collapsed window is invisible end to end.
+    // Graded 2026-08-19: `/` -> `%` and `/` -> `*` both MISSED until these asserts existed.
+    //
+    // TWO spikes, and they are doing different jobs: the window has to be pinned from BOTH sides. The
+    // late one fails any arithmetic that shrinks the window (`% 12` -> 0 -> one bar); the early one
+    // fails anything that widens it, and `* 12`, `+ 12` and `- 12` all widen past this series and would
+    // otherwise land on the same answer as the correct expression.
+    let ddates: Vec<NaiveDate> =
+        (0..40).map(|d| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap() + chrono::Duration::days(d)).collect();
+    let mut dcloses = vec![100.0f64];
+    for i in 1..40 {
+        let step = match i {
+            5 => 1.50,  // +50%, 34 bars from the end: OUTSIDE the window, must not be seen
+            30 => 1.20, // +20%, 9 bars from the end: INSIDE it, must be
+            _ => 1.001,
+        };
+        dcloses.push(dcloses[i - 1] * step);
+    }
+    let dq = backtest_quote("X", &ddates, &dcloses, &[], ddates.len() - 1, 252);
+    let worst = dq.max_daily_1m.expect("a daily backtest_quote must fill max_daily_1m");
+    assert!((worst - 20.0).abs() < 1e-6, "the window is the LAST 21 sessions, not one and not all: {worst}");
+
     // (#41) month-end resampling: a DAILY series and the MONTHLY series of the same months must produce
     // the SAME returns through this one fn — that equality IS the train==serve claim the live skip rests
     // on, since fetch hands it daily bars and the backtest hands it monthly ones.
