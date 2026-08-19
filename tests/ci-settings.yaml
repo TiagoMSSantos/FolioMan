@@ -1501,6 +1501,41 @@ buy_heuristic:
   #   The accepted risk costs nothing measurable. Do not re-litigate it without new pool coverage.
   #   NOT A KNOB: `fund_factors(rows, cutoff, yrs)` takes no tuning, so a knob costs its signature and
   #   every caller, and 20x is an accounting fact. Measured by rebuilding the const (INFINITY / 20 / 40).
+  quality_neutral: 0.0           # (#87) UNMEASURED — an unfitted judgement value, shipping at the value that IS
+                                 #   the pre-(#87) behaviour, so this line changes nothing until it is raised.
+                                 #   WHAT IT DOES: what an ABSENT ROE is worth, in ROE points, fed in before the
+                                 #   weight and INSIDE the clamp(0, quality_cap) above — the same ordering (#43)
+                                 #   chose for `growth_fund_extra[].neutral`, so a KNOWN-BAD ROE still floors at
+                                 #   0 and ranks BELOW an unknown one. This is that field arriving, three
+                                 #   receipts late, at the term that predates it.
+                                 #   WHY: `quality_reward` read `roe.unwrap_or(0.0)` and its own doc called that
+                                 #   "0 = neutral". The (N) note under `growth_fund_extra` refutes exactly that
+                                 #   sentence in as many words — in a RANKING absent is not neutral, it is a
+                                 #   demotion of up to weight x cap. Here that is 0.15 x 40 = 6.0 points, the
+                                 #   LARGEST single miss any fundamental term in this file can charge, and it is
+                                 #   not charged at random: `quote.roe` needs a CIK or an FMP key, so it lands on
+                                 #   every non-US filer, every name past the 600-call SEC budget, and every ETF
+                                 #   and coin — all ranked against US filers in the same table. (#43) called the
+                                 #   equivalent gap on roic "a data gap must not be scored as the worst possible
+                                 #   business" and fixed it; the older and three-times-larger one stayed open.
+                                 #   WHY NO NUMBER IS QUOTED, i.e. why this ships at 0.0 and not at the fix. No
+                                 #   sweep can settle it, for the reason (#59) recorded for the roic fill:
+                                 #   `quote.roe` is None on every offline row before the fund path fills it, so
+                                 #   at any non-zero value this term becomes a CONSTANT added to `base` across
+                                 #   the whole sample — and a constant inside `base` is not rank-neutral, because
+                                 #   `base` is then multiplied by trust x overext x proximity x value. A sweep
+                                 #   would be grading the multiplier, not the fill. The only honest basis is the
+                                 #   one (#43) used to get 17.3: a CENSUS of covered filers under this same
+                                 #   clamp. That census has not been run for roe, so no value is asserted here.
+                                 #   REVERT RULE: it is already at the revert value. To raise it, census the
+                                 #   cached filers' roe under clamp(0, quality_cap) and take the MEDIAN, never
+                                 #   the mean — the cap truncates the top, so the mean is dragged by the clamp
+                                 #   ((#43): mean 20.2 vs median 17.3, 19% clamped). Then read a live `screen`
+                                 #   both ways: if uncovered non-US names climb PAST measured US filers with a
+                                 #   genuinely poor ROE, the fill is too generous and belongs back at 0.0.
+                                 #   PAIRS WITH `growth_fund_neutral` / `growth_fund_scope_by_class` in the
+                                 #   growth block — one policy, three terms, see the receipt there for the other
+                                 #   half (a neutral is a covered-PEER median, so it is meaningless for a coin).
 
   # === GROWTH LANE — THIS is the ranking `screen` actually prints. =============================
   # Proven compounders the on-sale lane can't surface: a name AT/NEAR its own ~10y high, with a
@@ -3014,6 +3049,55 @@ buy_heuristic:
                              #   orderable; above that a data artifact would run away with the rank. The code
                              #   default stays 30 (earnings_yield's scale) per the house rule that defaults are
                              #   the neutral value and this fixture carries the live one.
+  growth_fund_neutral: 0.0   # (#87) UNMEASURED — an unfitted judgement value, shipping at the pre-(#87)
+                             #   behaviour, so this line changes nothing. What an ABSENT `growth_fund_factor` is
+                             #   worth, in the factor's own pts, before the 0.07 weight and inside the clamp(0,
+                             #   growth_fund_cap) above. The third and last of the three fundamental terms to
+                             #   get the field, so all three now answer "no data" through one helper
+                             #   (`picks::missing_fundamental`) instead of in three places, two directions.
+                             #   THIS TERM IS THE EXPENSIVE ONE: weight x cap = 0.07 x 300 = 21 pts, so the
+                             #   miss it charges an uncovered row is more than three times `quality`'s 6.0 and
+                             #   twice roic's 10. It is also the term (#43) argued should KEEP the hard 0 —
+                             #   "the primary's misses are CROSS-CLASS, an ETF or a coin has no PEG, and filling
+                             #   it from a filer median would flatter it, so all-or-nothing is right there".
+                             #   That argument is correct about coins and ETFs and WRONG about the rest of the
+                             #   misses, which are the same within-class coverage gap it fixed for roic: a
+                             #   non-US filer has a PEG, we just cannot fetch it. All-or-nothing was the right
+                             #   answer only because the knob to separate the two cases did not exist. It does
+                             #   now, on the line below, and (#43)'s objection is the reason a neutral must
+                             #   never be raised here without it.
+                             #   REVERT RULE: already at the revert value. Raising it requires BOTH a census of
+                             #   the covered filers' factor values under this same clamp (median, per (#43)) AND
+                             #   growth_fund_scope_by_class true. A neutral alone, at this weight, hands every
+                             #   coin and every ETF up to 21 points for having no income statement.
+  growth_fund_scope_by_class: false # (#87) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+                             #   today's behaviour byte-for-byte. The OTHER half of the missing-data policy, and
+                             #   the half a neutral fill alone gets backwards.
+                             #   A NEUTRAL IS A COVERED-PEER MEDIAN. That is a defensible stand-in for a row
+                             #   that COULD have been covered and was not, and it is meaningless for an asset
+                             #   with no income statement in existence. Today the fill is chosen by symptom
+                             #   (`None`), not by cause, so `growth_fund_extra: roic, weight 0.25, neutral 17.3`
+                             #   below pays every ETF, every coin and every non-SEC stock 0.25 x 17.3 = 4.325
+                             #   points for having no fundamentals — against a `growth_trend_weight` term whose
+                             #   ENTIRE discriminating span above the growth_min_cagr floor is 0.15 x (30 - 19)
+                             #   = 1.65 points, and against a measured filer with a genuine 5% ROIC who banks
+                             #   1.25. Coverage outranks merit by ~3 points inside the term that exists to
+                             #   measure merit. (#59) already recorded the constant-in-`base` half of this
+                             #   ("NOT backtest-blind ... a constant inside `base` is NOT rank-neutral"); this
+                             #   is the cross-class half of the same finding.
+                             #   ON = a coin or an ETF takes 0.0 from ALL THREE fundamental terms (nothing to be
+                             #   missing), while a STOCK we merely failed to fetch still takes the configured
+                             #   neutral. Split by cause, which is what the fills were always documented to be.
+                             #   NAME: it reads `growth_*` because it sits in this block, but it governs
+                             #   `quality_neutral` in the on-sale block too — one policy, three terms. Renaming
+                             #   it costs a settings break for no behaviour, so the scope is documented instead.
+                             #   WHY NO NUMBER. There is nothing to sweep: it is a boolean, and at the values
+                             #   this file ships (both neutrals 0.0) it is INERT — with nothing to fill, there
+                             #   is nothing to withhold from a coin. It exists so that the day a census sets a
+                             #   neutral, the cross-class leak is already closed rather than shipped alongside.
+                             #   REVERT RULE: it is at the revert value. Turn it on ONLY in the same change that
+                             #   raises a neutral above 0.0, and check it on a live `screen` by watching the
+                             #   CRYPTO and ETF tables, not the stock one — those are the only rows it moves.
   # (#43) ROIC — the FIRST non-empty `growth_fund_extra` entry, so the mechanism stops being inert here.
   #   WHAT IT IS: pre-tax EBIT / (equity + net debt), derived in core::roic_return from levels already
   #   cached (no refetch, no cache-key bump). Equity is reconstructed as NI / ROE, which is signed right
@@ -3072,6 +3156,10 @@ buy_heuristic:
       # silently skipping it), so there is no OOS split to read and the census of today's filers is the
       # only honest basis. If a later run gives roic as-of coverage, sweep this value the way (#43) swept
       # the weight.
+      # (#87) "covered filers" is the load-bearing word and this fill does not check it. A coin and an
+      # ETF have no filer at all, so the 4.325 they collect here is a stock median handed to something
+      # that cannot have the number — see `growth_fund_scope_by_class` above, which is the switch that
+      # withholds it. It ships OFF, so this line still pays every class today.
       # (#59) NOT "BACKTEST-BLIND", which is what this block used to call it, filed alongside
       # growth_min_age_years / growth_min_aum_etf / growth_turnover_weight. Those three are inert. This
       # one is not, and the distinction is the DATA is absent while the FILL is live: `quote.fund` is None

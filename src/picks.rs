@@ -719,13 +719,57 @@ fn combine_damps(damps: &[f64]) -> f64 {
 /// (F) Profitability/QUALITY reward: trailing return on capital, the canonical quality factor
 /// (high-ROE firms out-compound long-run). `quote.roe` holds `core::quality_return` — ROE where equity
 /// is a credible denominator, ROA where it is negative or bought down past 1/20th of assets — so a
-/// buyback-shrunk filer (HCA, CL) scores on a real denominator instead of on a collapsed one. None (crypto/ETF/no fund coverage) → 0 = neutral;
+/// buyback-shrunk filer (HCA, CL) scores on a real denominator instead of on a collapsed one.
 /// negative clamps to 0 (no bonus, the gates handle bleeders). Shared by both lanes.
+///
+/// (#87) None -> `quality_neutral`, which ships at 0.0. This line used to read "None (crypto/ETF/no
+/// fund coverage) → 0 = neutral", and the "= neutral" half was the bug: 0 is the BOTTOM of a term
+/// clamped to 0..cap, so in a ranking an absent ROE is a demotion of up to `weight × cap` — the full
+/// 0.15 × 40 = 6.0 points, charged to every non-US filer and every name past the SEC fetch budget
+/// against US peers in the same table. The (N) note on `growth_fund_extra` had already written that
+/// reasoning out for a term added later; `missing_fundamental` is now the one place all three ask.
 ///
 /// No longer backtest-blind: the backtest loop fills `quote.roe` from the as-of `FundFactors.quality`,
 /// so `backtest <set> fund` can finally price this term instead of measuring a constant 0.
 fn quality_reward(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
-    tuning.quality_weight * quote.roe.unwrap_or(0.0).clamp(0.0, tuning.quality_cap)
+    let fill = missing_fundamental(quote, tuning, tuning.quality_neutral);
+    tuning.quality_weight * quote.roe.unwrap_or(fill).clamp(0.0, tuning.quality_cap)
+}
+
+/// (#87) ONE answer to "this row has no fundamental", shared by all three terms that can be handed a
+/// `None` — `quality_reward` above, and the `growth_fund_weight` / `growth_fund_extra` pair in
+/// `score_parts`. They used to answer it three different ways, in two opposite directions.
+///
+/// A NEUTRAL IS A COVERED-PEER MEDIAN, and the whole point is that it only means something for a row
+/// that could have been covered. `quality` and the single fund factor filled with a hard 0.0, so an
+/// absent number was a demotion of up to `weight × cap` — the exact reasoning already written down for
+/// `growth_fund_extra`, never applied to the two terms that predate it. `growth_fund_extra` fills with
+/// its configured neutral, which is right for an uncovered filer and absurd for a Bitcoin: with
+/// ci-settings' roic at weight 0.25 and neutral 17.3 a coin banks 4.325 points for having no income
+/// statement, while a measured filer with a genuine 5% ROIC banks 1.25.
+///
+/// So the fill is by CAUSE, not by symptom. Data we failed to fetch -> the neutral, because a median
+/// is our best guess at what we would have found. No income statement in existence -> 0.0, because
+/// there is nothing to guess at and a stock's median is not a fact about a basket or a coin.
+///
+/// Both halves default to today's behaviour: the neutrals ship at 0.0 and the class scoping ships off,
+/// so this returns exactly the `0.0` / `t.neutral` the three call sites used to write inline.
+fn missing_fundamental(quote: &Quote, tuning: &BuyHeuristic, neutral: f64) -> f64 {
+    if tuning.growth_fund_scope_by_class && !has_fundamentals_by_class(quote) {
+        return 0.0;
+    }
+    neutral
+}
+
+/// (#87) Could this row have an income statement at all? Crypto and ETFs could not: a coin has no
+/// filer and a basket's fundamentals are its holdings', not its own. Everything else could, so a
+/// `None` there is a COVERAGE gap — a non-US filer, or a name past the 600-call SEC budget — and is
+/// the case a neutral fill exists to serve.
+///
+/// Deliberately a CLASS test and not `quote.fund.is_none()`: the whole distinction being drawn is
+/// between "no data" and "no such thing", and only one of those is visible in the class.
+fn has_fundamentals_by_class(quote: &Quote) -> bool {
+    !is_currency_quoted(&quote.ticker) && !quote_is_etf(quote)
 }
 
 /// (B/C) Risk-adjusted-return bonus from already-fetched closes (zero extra fetch): additive reward
@@ -1303,13 +1347,20 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // by the multipliers. The `liq_bonus` note further down makes the opposite call for the opposite
     // reason and is right: that one is added OUTSIDE the brake, where a constant really is inert. The
     // test of rank-neutrality is WHICH SIDE OF THE MULTIPLICATION the term lands on, nothing else.
-    let fund = tuning.growth_fund_weight * quote.fund_factor.unwrap_or(0.0).clamp(0.0, tuning.growth_fund_cap)
+    // (#87) both fills now route through `missing_fundamental`, which is where the "no data" versus
+    // "no such thing" split lives. At the shipped defaults it returns 0.0 and `t.neutral` respectively
+    // — the two literals this used to write inline — so the lane is byte-identical.
+    let fund = tuning.growth_fund_weight
+        * quote
+            .fund_factor
+            .unwrap_or(missing_fundamental(quote, tuning, tuning.growth_fund_neutral))
+            .clamp(0.0, tuning.growth_fund_cap)
         + tuning
             .growth_fund_extra
             .iter()
             .map(|t| {
                 let v = quote.fund.as_ref().and_then(|f| crate::core::select_fund_factor(f, &t.factor));
-                t.weight * v.unwrap_or(t.neutral).clamp(0.0, t.cap)
+                t.weight * v.unwrap_or(missing_fundamental(quote, tuning, t.neutral)).clamp(0.0, t.cap)
             })
             .sum::<f64>();
     // (M) 12-1 momentum tilt. Floor at 0: reward momentum, don't punish its absence (matches (G)/div).
@@ -4437,6 +4488,56 @@ mod tests {
     zeroed.underwater_yrs = Some(0.0); // fresh-high name: 0y stretch == None (no claim, no dock)
     assert_eq!(growth_score(&zeroed, &uw), growth_score(&quick, &uw));
     assert_eq!(growth_score(&bleeder, &BuyHeuristic::default()), growth_score(&quick, &BuyHeuristic::default())); // weight 0: field inert
+    // (#87) ONE missing-fundamentals policy, across the three terms that used to answer differently.
+    // `quality` and the single fund factor filled a `None` with a hard 0.0 — the bottom of a 0..cap
+    // clamp, so absence was a demotion of the full weight x cap — while `growth_fund_extra` filled with
+    // a covered-peer median that a coin has no business collecting.
+    let roic = crate::config::FundTerm { factor: "roic".into(), weight: 0.25, cap: 40.0, neutral: 17.3 };
+    let policy = BuyHeuristic {
+        quality_weight: 0.15,
+        quality_cap: 40.0,
+        growth_fund_extra: vec![roic.clone()],
+        ..BuyHeuristic::default()
+    };
+    let uncovered = quote(2.0, strong); // a stock with no roe and no fund rows: a COVERAGE gap
+    let mut covered = uncovered.clone();
+    covered.roe = Some(20.0);
+    // DEFAULT: the uncovered stock is charged the whole quality term against its covered peer
+    let gap = growth_score(&covered, &policy).unwrap() - growth_score(&uncovered, &policy).unwrap();
+    assert!(gap > 0.0, "off: an absent ROE costs real points, not zero ({gap})");
+    // ...and `quality_neutral` is the field that says what absent is worth. At the covered value the
+    // two rows tie exactly, which is the definition of a neutral and is what the doc claimed all along.
+    let filled = BuyHeuristic { quality_neutral: 20.0, ..policy.clone() };
+    assert_eq!(
+        growth_score(&uncovered, &filled),
+        growth_score(&covered, &filled),
+        "a neutral equal to the peer's own ROE must make absence cost exactly nothing"
+    );
+    assert_eq!(growth_score(&covered, &filled), growth_score(&covered, &policy), "a KNOWN roe never reads the fill");
+    // CLASS SCOPING: an ETF and a coin have no income statement, so the roic neutral is a stock's
+    // median handed to something with no filer — 0.25 x 17.3 = 4.325 points for having no data.
+    let mut coin = quote(2.0, strong);
+    coin.ticker = "BTC-EUR".into();
+    let mut etf = quote(2.0, strong);
+    etf.name = "iShares Core S&P 500 UCITS ETF".into();
+    let scoped = BuyHeuristic { growth_fund_scope_by_class: true, ..policy.clone() };
+    for (label, row) in [("coin", &coin), ("etf", &etf)] {
+        let free = growth_score(row, &policy).unwrap() - growth_score(row, &scoped).unwrap();
+        assert!(free > 0.0, "{label}: the neutral fill is worth real points today ({free})");
+    }
+    assert_eq!(
+        growth_score(&uncovered, &scoped),
+        growth_score(&uncovered, &policy),
+        "a STOCK we merely failed to fetch still gets the neutral — the split is by cause, not by symptom"
+    );
+    assert!(has_fundamentals_by_class(&uncovered) && !has_fundamentals_by_class(&coin) && !has_fundamentals_by_class(&etf));
+    // and the defaults are the two literals the call sites used to write inline, so the lane is
+    // byte-identical until one of the three fields is deliberately moved
+    let d = BuyHeuristic::default();
+    assert_eq!(missing_fundamental(&coin, &d, 17.3), 17.3, "off: even a coin takes the configured neutral");
+    assert_eq!(missing_fundamental(&uncovered, &d, 0.0), 0.0);
+    assert_eq!(missing_fundamental(&coin, &scoped, 17.3), 0.0, "on: no income statement, nothing to guess at");
+    assert_eq!(missing_fundamental(&uncovered, &scoped, 17.3), 17.3);
     // (#86) A DAMP MUST NOT IMPROVE A SCORE. `sunk` is 200 underwater-years at weight 0.3, so its base
     // is far below zero, and it sits 50% above its 200wk SMA, so the overextension brake damps it to
     // ~0.525. Multiplying a NEGATIVE base by that raises it toward zero, which is the inversion: the
