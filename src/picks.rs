@@ -6762,6 +6762,9 @@ mod tests {
                 Some(("+8.0% share count (ceiling +5.0%)", false))),
             // INTEREST COVER -- floor. None is a debt-free filer and must read neutral
             ("cover off lets a 0.5x filer through", cov_k, 0.0, cov(0.5), None),
+            // OFF means off even for a filer the armed gate would refuse. 0.0 is the off value AND a
+            // legal floor, so `> 0.0` and `>= 0.0` differ only here: under `>=` this row is rejected.
+            ("cover off ignores a filer under water", cov_k, 0.0, cov(-2.0), None),
             ("cover treats no interest expense as neutral", cov_k, 3.0, armed(FundFactors::default()), None),
             ("cover spares a filer exactly on it", cov_k, 3.0, cov(3.0), None),
             ("cover rejects just under it", cov_k, 3.0, cov(2.5),
@@ -6771,6 +6774,9 @@ mod tests {
             // FCF MARGIN -- floor, off at -1e9 and still off at the -1e8 edge the code tests against
             ("fcf off at its sentinel", fcf_k, -1e9, fcf(-50.0), None),
             ("fcf still off at the band edge", fcf_k, -1e8, fcf(-50.0), None),
+            // and off there for a filer BELOW the edge too — the row above sits above -1e8, so it reads
+            // the same whether the off-check is `>` or `>=`. Only a burn past the edge separates them.
+            ("fcf off ignores a burn past that edge", fcf_k, -1e8, fcf(-2e8), None),
             ("fcf spares a filer exactly on it", fcf_k, 0.0, fcf(0.0), None),
             ("fcf passes missing fundamentals", fcf_k, 0.0, armed(FundFactors::default()), None),
             ("fcf rejects a cash burner", fcf_k, 0.0, fcf(-1.0),
@@ -6780,6 +6786,7 @@ mod tests {
             // NET CASH / REVENUE -- floor, negative values meaningful, same two-part off sentinel
             ("netcash off at its sentinel", cash_k, -1e9, cash(-200.0), None),
             ("netcash still off at the band edge", cash_k, -1e8, cash(-200.0), None),
+            ("netcash off ignores a hole past that edge", cash_k, -1e8, cash(-2e8), None),
             ("netcash spares a filer exactly on it", cash_k, -25.0, cash(-25.0), None),
             ("netcash passes missing fundamentals", cash_k, -25.0, armed(FundFactors::default()), None),
             ("netcash rejects a levered filer", cash_k, -25.0, cash(-30.0),

@@ -5283,7 +5283,10 @@ mod tests {
             ]}},
             // total assets — same instant collector, the ROE fallback denominator
             "Assets": {"units": {"USD": [
-                {"end": "2021-09-30", "val": 3000.0, "form": "10-K", "filed": "2021-11-01"}
+                {"end": "2021-09-30", "val": 3000.0, "form": "10-K", "filed": "2021-11-01"},
+                // (P3) a FILED ZERO. Total assets are positive by construction, so this is a parse
+                // artifact and must be dropped, not carried into a growth denominator as a real 0.
+                {"end": "2022-09-30", "val": 0.0, "form": "10-K", "filed": "2022-11-01"}
             ]}},
             // (round 107) survival inputs, FY2021 only — FY2022 must stay None-neutral
             "OperatingIncomeLoss": {"units": {"USD": [
@@ -5324,6 +5327,10 @@ mod tests {
         assert_eq!(rows[0].eps, Some(3.0));
         assert_eq!(rows[0].roe, Some(15.0)); // NetIncome 150 ÷ StockholdersEquity 1000 (instant)
         assert_eq!(rows[0].roa, Some(5.0)); // NetIncome 150 ÷ Assets 3000 — same numerator, wider denominator
+        // (P3) the LEVEL, which `asset_growth` needs and which no roa assertion can pin: roa reads the
+        // same 3000 through a division, so every way of getting `assets` wrong that still divides right
+        // is invisible from the line above.
+        assert_eq!(rows[0].assets, Some(3000.0));
         // (round 107) survival levels, FY2021: fcf (300−100)/1000, cover 200/50, net cash (500−300−100)/1000
         assert_eq!(rows[0].fcf_margin, Some(20.0));
         assert_eq!(rows[0].interest_cover, Some(4.0));
@@ -5336,7 +5343,8 @@ mod tests {
         assert_eq!(rows[1].gross_margin, Some(50.0)); // 600/1200
         assert_eq!(rows[1].eps, None);
         assert_eq!(rows[1].roe, None);
-        assert_eq!(rows[1].roa, None); // no NI and no Assets line for FY2022 -> None, not a fabricated 0
+        assert_eq!(rows[1].roa, None); // no NI for FY2022 -> None, not a fabricated 0
+        assert_eq!(rows[1].assets, None, "(P3) a filed 0 is dropped by the guard, never carried as Some(0.0)");
         assert_eq!(rows[1].fcf_margin, None);
         assert_eq!(rows[1].interest_cover, None);
         assert_eq!(rows[1].net_cash_rev, None);
