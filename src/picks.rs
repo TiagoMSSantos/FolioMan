@@ -1601,7 +1601,6 @@ pub fn proven_but_unranked(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f64,
     if fails.is_empty() {
         return None; // ranks -> not missing
     }
-    let free_t = BuyHeuristic { fixed_cagr_years: 0, ..tuning.clone() };
     let (cum, years) = long_leg_fixed(quote, 0, tuning.growth_min_leg_years)?; // no long leg -> nothing proven
     // THIS BLOCK DEFINES ITS OWN "LONG", and must: `growth_min_leg_years` is a rank-side knob a user is
     // free to zero (the live overlay does), and at 0 `long_leg` hands back a 1Y rung — which turned the
@@ -1610,7 +1609,11 @@ pub fn proven_but_unranked(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f64,
     if years < tuning.growth_min_leg_years.max(PROVEN_MIN_YEARS) {
         return None;
     }
-    let cagr = long_cagr_from(quote, &free_t, cum, years);
+    // `tuning` and not a `fixed_cagr_years: 0` clone of it, which is what this line used to build:
+    // `long_cagr_from` reads `use_life_cagr` and `use_trend_cagr` and nothing else, so the pinned-leg
+    // knob it was overriding never reached this call. The clone stated an intent the code could not
+    // carry out, and a mutation grade found it by deleting the field with no test moving.
+    let cagr = long_cagr_from(quote, tuning, cum, years);
     let floor = if is_currency_quoted(&quote.ticker) { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
     if cagr < floor {
         return None; // no proven record -> the gates are simply right about it, nothing to explain
@@ -3883,6 +3886,93 @@ mod tests {
         assert!(w.iter().all(|(x, _)| *x <= 20.0 + 1e-9), "no row may exceed the name cap after the sector pass");
         assert!((w[..3].iter().map(|(x, _)| x).sum::<f64>() - 25.0).abs() < 1e-9, "nor the sector its own");
         assert!(w.iter().map(|(x, _)| x).sum::<f64>() <= 100.0 + 1e-9, "and the book is never over-allocated");
+    }
+
+    /// (P5) The eleven survivors a whole-function mutation grade of `size_weights` found on 2026-08-19,
+    /// each of which the three tests above walk straight past. They fall into four groups, and every
+    /// group is a case the shipped `size` command can actually produce.
+    ///
+    /// Seven more survived and are NOT chased here, because no input separates them from the original:
+    ///   - `3486 raw[i] > 0.0 -> >=`: `raw` is non-negative by construction, and a zero-`raw` row that
+    ///     joins `free` adds 0 to `tot` and receives `0 / tot * excess` = 0. Identical output. EQUIVALENT.
+    ///   - `3489 class_of(i) != 2 -> ==`: this would need a NON-stock row carrying a sector string that a
+    ///     stock also carries and has already pushed to its ceiling. `clamp_sectors`' own comment says why
+    ///     that input does not exist — a coin has no GICS line and an ETF's is a fund label.
+    ///   - `3487 <`, `3490 <`, `3490 -> +`, `3541 -> -` shifted to their `<=`/`+EPS` twins: these differ
+    ///     only when a weight lands bit-exactly on `cap ± 1e-9`. A test pinning that is pinning float dust.
+    ///   - `3490 - EPS -> / EPS`: turns the sector ceiling into 3e10, so `has_room` stops blocking and the
+    ///     excess ping-pongs between two full sectors. The FINAL unconditional clamp erases it — which is
+    ///     the argument for that clamp existing, not a hole.
+    #[test]
+    fn size_weights_edges_the_caps_and_the_fixpoint() {
+        let tech = Some("Technology");
+        let fin = Some("Financials");
+        let sized = |rows: &[(f64, u8, Option<&str>)], cfg: &crate::config::Sizing| -> Vec<f64> {
+            let s: Vec<_> = rows.iter().map(|&(sc, cl, sec)| (sc, Some(1.0), cl, sec)).collect();
+            sizes(&s, cfg)
+        };
+
+        // 1. A class that is PRESENT but carries no weight — every one of its names scored 0. Its budget
+        // is already excluded from `present`, so each of its rows must read a flat 0. Under `>=` the same
+        // row divides 0 by 0 and the caller prints NaN%, which is why this asserts the value and not a
+        // bound. A pool where EVERY class is empty exits earlier and cannot reach this.
+        let dead = sized(&[(0.0, 2, None), (60.0, 0, None)], &uncapped());
+        assert_eq!(dead[0], 0.0, "a zero-total class is 0%, never 0/0: {dead:?}");
+        assert!((dead[1] - 100.0).abs() < 1e-9, "and the class that does carry weight takes the lot: {dead:?}");
+
+        // 2. With BOTH caps off, a row that happens to know its sector is still uncapped. The tag is read
+        // off `cfg.max_sector_pct > 0.0`, and 0.0 is the off value AND a legal setting, so `>` and `>=`
+        // differ exactly at the shipped default: under `>=` every sectored stock is labelled "sector"
+        // while nothing is capping it. Every other test here passes `None` sectors and cannot see it.
+        let off = size_weights(&[(60.0, Some(1.0), 2, tech), (60.0, Some(1.0), 2, fin)], &uncapped());
+        assert!(off.iter().all(|(_, cap)| cap.is_none()), "caps off -> no row is bound by one: {off:?}");
+
+        // 3. `sector_sum` must total THIS sector and only the stock class. Two mutations of it survived —
+        // counting every stock (`&&` -> `||`) and counting every OTHER sector (`==` -> `!=`) — because the
+        // existing sector test is symmetric: three tech against one financial, where both readings happen
+        // to clear the same ceiling. Here the sectors are LOPSIDED, so a wrong total blocks the spill.
+        // Tech alone would hold 80; capped at 30 it hands 50 to the financials, which then breach their
+        // own ceiling and settle at 15 each. Under either mutant `has_room` reads the financial block as
+        // already full, the spill finds nowhere to go, and the two of them keep their original 10.
+        let c_sec30 = crate::config::Sizing { max_name_pct: 0.0, max_sector_pct: 30.0, ..Default::default() };
+        let lop = sized(&[(800.0, 2, tech), (100.0, 2, fin), (100.0, 2, fin)], &c_sec30);
+        assert!((lop[0] - 30.0).abs() < 1e-9, "the fat sector sits on its cap: {lop:?}");
+        assert!(lop[1..].iter().all(|x| (x - 15.0).abs() < 1e-9), "and what it gave up is really handed over: {lop:?}");
+
+        // 4. The NAME cap redistributing while the sector cap is OFF, among rows that carry sectors. The
+        // sector arm of `has_room` is guarded by `max_sector_pct <= 0.0`, and with that guard inverted (or
+        // its `||` turned into `&&`) the arm runs anyway and asks whether the sector total is below 0 —
+        // false for every funded row, so nothing may receive spill and 67% of the book evaporates. The
+        // existing name-cap test uses `None` sectors, where the arm short-circuits either way.
+        let c_name30 = crate::config::Sizing { max_name_pct: 30.0, max_sector_pct: 0.0, ..Default::default() };
+        let one_sec = sized(&[(900.0, 2, tech), (10.0, 2, tech), (10.0, 2, tech), (10.0, 2, tech)], &c_name30);
+        assert!((one_sec.iter().sum::<f64>() - 100.0).abs() < 1e-9, "a sector label must not strand the spill: {one_sec:?}");
+        assert!((one_sec[0] - 30.0).abs() < 1e-9, "{one_sec:?}");
+        assert!(one_sec[1..].iter().all(|x| (x - 70.0 / 3.0).abs() < 1e-9), "{one_sec:?}");
+
+        // 5. The fixpoint needs a SECOND pass, and this is the only shape that proves it. Every case above
+        // converges in one, so `moved |= spill(..)` could be `&=` — or the `if !moved` break inverted —
+        // without moving a number: the final clamp still enforces both invariants, it just throws the
+        // excess away. Here the first spill overfills a recipient (900/100/10/10 under a 30 cap: the top
+        // name sheds 58.2, which pushes the second to 58.3), and only a second pass hands that on to the
+        // two small names. Stopping after one pass clamps the second name and DROPS its 28.3.
+        let cascade = sized(&[(900.0, 2, None), (100.0, 2, None), (10.0, 2, None), (10.0, 2, None)], &c_name30);
+        assert!((cascade.iter().sum::<f64>() - 100.0).abs() < 1e-9, "one pass is not a fixpoint: {cascade:?}");
+        assert!((cascade[0] - 30.0).abs() < 1e-9 && (cascade[1] - 30.0).abs() < 1e-9, "{cascade:?}");
+        assert!(cascade[2..].iter().all(|x| (x - 20.0).abs() < 1e-9), "the second pass is what funds these: {cascade:?}");
+
+        // 6. The same for the SECTOR arm of the loop, which case 5 cannot reach with the sector cap off.
+        // Two heavyweights in one sector shed 64.2 onto a mid sector, which overshoots to 63.6; the second
+        // pass moves 33.6 of that to the third sector. Sorted sector names ("AA" < "BB" < "CC") so the
+        // iteration order this depends on is stated rather than inherited from a GICS spelling.
+        let cascade_sec = sized(
+            &[(900.0, 2, Some("AA")), (900.0, 2, Some("AA")), (100.0, 2, Some("BB")), (10.0, 2, Some("CC"))],
+            &c_sec30,
+        );
+        assert!(cascade_sec[..2].iter().all(|x| (x - 15.0).abs() < 1e-9), "{cascade_sec:?}");
+        assert!((cascade_sec[2] - 30.0).abs() < 1e-9, "the first recipient settles ON its cap: {cascade_sec:?}");
+        assert!((cascade_sec[3] - 30.0).abs() < 1e-9, "and the second pass carries the rest to the third: {cascade_sec:?}");
+        assert!((cascade_sec.iter().sum::<f64>() - 90.0).abs() < 1e-9, "three sectors at 30 hold 90: {cascade_sec:?}");
     }
 
     /// (#14/#15) the long-CAGR pipeline: `core::trend_cagr` fits the log-price SLOPE (perfectly
