@@ -1251,7 +1251,7 @@ fn evict_if_stale(path: &std::path::Path, ttl: StdDuration) {
 /// day it was screened — for as long as the box lives. The file is a bare float with no version field,
 /// so the only fix that ever reached an existing box was bumping the `3` in its name by hand, and the
 /// comment on `sec_ttm_eps` records two generations of wrong values shipped exactly that way.
-/// `{ticker}_facts11` holds ANNUAL rows and is genuinely append-only, but "append-only" is not
+/// `{ticker}_facts12` holds ANNUAL rows and is genuinely append-only, but "append-only" is not
 /// "complete": each filer's newest fiscal year appears once a year and never reached a warm cache.
 ///
 /// 30 DAYS, NOT THE 7 THE FMP PATH USES, and the difference is the budget. `SEC_FETCH_BUDGET` is 600
@@ -1275,16 +1275,16 @@ fn sec_cache_ttl(ticker: &str) -> StdDuration {
 }
 
 /// (#84) LIVE-path only, exactly like [`evict_if_stale`]'s other callers, and for the same reason: the
-/// backtest scores as-of historical quarters that cannot go stale, and it reaches `_facts11` through
+/// backtest scores as-of historical quarters that cannot go stale, and it reaches `_facts12` through
 /// `fetch_fundamentals_ranked`. Evicting from there would make every cutoff refetch data it does not
 /// use. One call site — `fetch_ratios_sec`, which `quote_one` runs for every live equity — covers both
 /// files, because a ticker SEC cannot resolve to a CIK has no cache to expire in the first place.
 fn evict_stale_sec_caches(ticker: &str) {
     let ttl = sec_cache_ttl(ticker);
     // NOT `_inst2`: it caches a per-filing XBRL instance that can run to 13.5MB, its content is fixed
-    // once the filing exists, and it is only read when `_facts11` yields no EPS at all — so expiring it
+    // once the filing exists, and it is only read when `_facts12` yields no EPS at all — so expiring it
     // would buy nothing and cost the largest fetch in this file.
-    evict_if_stale(&sec_cache_path(&format!("{ticker}_facts11")), ttl);
+    evict_if_stale(&sec_cache_path(&format!("{ticker}_facts12")), ttl);
     evict_if_stale(&sec_cache_path(&format!("{ticker}_ttmeps3")), ttl);
 }
 
@@ -1601,7 +1601,8 @@ pub async fn fetch_insider_history(client: &Client, urls: &Urls, ticker: &str) -
 // The income-statement source for `report` when FMP is throttled/keyless. Pulls one `companyfacts`
 // JSON (every us-gaap concept's full history with filingDate), keeps ANNUAL (10-K, ~12-month) figures,
 // and de-dupes each fiscal period to its EARLIEST filing so a later 10-K's restated comparative can't
-// post-date the as-of `filed`. US filers only (a non-US ticker has no CIK -> None).
+// post-date the as-of `filed` — except an AMENDMENT of that same report, which supersedes it and
+// carries its own later filing date (`supersedes`, #85). US filers only (no CIK -> None).
 
 // A NAMED struct, not the positional tuple this used to be: serde only implements Serialize for tuples
 // up to 16 elements and the row outgrew that at 18. Names are strictly better anyway — the tuple came
@@ -1638,6 +1639,38 @@ struct SecCacheRow {
 /// admitting it would splice sub-year slices into rows that must each cover one fiscal year.
 fn is_annual_form(f: &str) -> bool {
     f.starts_with("10-K") || f.starts_with("20-F") || f.starts_with("40-F")
+}
+
+/// (#85) An AMENDED annual report — `10-K/A`, `20-F/A`, `40-F/A`, and the transition variants like
+/// `10-KT/A`. SEC spells an amendment with the `/A` suffix and nothing else does, so a suffix test is
+/// the whole rule. `is_annual_form` already admits these (it is a prefix test); this is what tells
+/// them apart from the original once they are in.
+fn is_amendment(form: &str) -> bool {
+    form.ends_with("/A")
+}
+
+/// (#85) Which of two filings of the SAME fiscal period end to keep. True = the new one supersedes.
+///
+/// The rule this replaces was "earliest filed always wins", and its reason is still correct and still
+/// enforced below: a later year's 10-K restates the prior year as a COMPARATIVE, and letting that win
+/// would post-date the as-of `filed` — look-ahead, straight into the walk-forward lane.
+///
+/// An amendment is not that. `10-K/A` re-files THE SAME REPORT because the original was wrong, so the
+/// old rule guaranteed the erroneous number won forever and the filer's own correction was parsed and
+/// thrown away. It keeps the AMENDMENT's filing date, not the original's, which is what keeps the
+/// no-look-ahead property intact: a cutoff before the amendment simply does not see this period yet
+/// (missing data passes, the house rule), rather than seeing a number nobody had published.
+///
+/// Latest wins among amendments — a second `/A` supersedes the first — and earliest still wins among
+/// originals. Both closures in `parse_sec_facts` route through here so the duration and instant
+/// collectors cannot drift apart on which filing is authoritative.
+fn supersedes(new: (bool, NaiveDate), cur: (bool, NaiveDate)) -> bool {
+    match (new.0, cur.0) {
+        (true, false) => true,   // a correction beats the thing it corrects, whenever it arrived
+        (false, true) => false,  // ...and an original never wins it back
+        (true, true) => new.1 > cur.1,   // a later amendment supersedes an earlier one
+        (false, false) => new.1 < cur.1, // ORIGINALS: earliest filed, the no-look-ahead rule
+    }
 }
 
 /// Concept names per XBRL taxonomy — the same income/balance lines under two different vocabularies.
@@ -1793,10 +1826,12 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     // restated, TPL) or a real issuance (comparatives untouched, COF buying Discover).
     // Look-ahead-free: this value was printed in the same document, on the same day, as `value`.
     let collect = |names: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64, Option<f64>)> {
-        // period end -> (filed, WHICH tag won, value). The tag index rides along so the prior below is
-        // read from the SAME concept: mixing a diluted `value` with a basic `prior` would re-introduce
-        // a (small, ~0.4%) basis mismatch, which is the exact bug class this field exists to kill.
-        let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, usize, f64)> = std::collections::BTreeMap::new();
+        // period end -> (filed, WHICH tag won, value, was it an amendment). The tag index rides along so
+        // the prior below is read from the SAME concept: mixing a diluted `value` with a basic `prior`
+        // would re-introduce a (small, ~0.4%) basis mismatch, which is the exact bug class the field
+        // exists to kill. (#85) The flag rides along for `supersedes`, and only for it — it decides the
+        // tie-break and is dropped again before the row is built.
+        let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, usize, f64, bool)> = std::collections::BTreeMap::new();
         // (tag, filed, period end) -> value. Every datapoint, not just the winners — the prior year of
         // a filing is normally NOT a winner anywhere (its own original 10-K filed it first).
         let mut seen: std::collections::BTreeMap<(usize, NaiveDate, NaiveDate), f64> = std::collections::BTreeMap::new();
@@ -1808,9 +1843,9 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 None => continue,
             };
             for x in arr {
-                if !x.get("form").and_then(|v| v.as_str()).is_some_and(is_annual_form) {
+                let Some(form) = x.get("form").and_then(|v| v.as_str()).filter(|f| is_annual_form(f)) else {
                     continue; // annual filing only
-                }
+                };
                 let (Some(s), Some(e)) = (x.get("start").and_then(|v| v.as_str()), x.get("end").and_then(|v| v.as_str())) else {
                     continue;
                 };
@@ -1826,15 +1861,18 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 ) else {
                     continue;
                 };
-                // `or_insert`, not overwrite: on a repeat the first tag listed wins, matching the
-                // strict `<` below so `seen` and `m` never disagree about which concept is authoritative.
+                // `or_insert`, not overwrite: on a repeat the first tag listed wins, matching
+                // `supersedes` below so `seen` and `m` never disagree about which concept is authoritative.
                 seen.entry((tag_idx, filed, ed)).or_insert(val);
-                // keep the ORIGINAL report (lowest filed) for this period end, not a later restatement
+                // (#85) keep the ORIGINAL report for this period end and not a later year's restated
+                // comparative — UNLESS the later filing is this report's own amendment, which is the
+                // filer correcting itself rather than a restatement seen from the future.
+                let amended = is_amendment(form);
                 m.entry(ed).and_modify(|cur| {
-                    if filed < cur.0 {
-                        *cur = (filed, tag_idx, val);
+                    if supersedes((amended, filed), (cur.3, cur.0)) {
+                        *cur = (filed, tag_idx, val, amended);
                     }
-                }).or_insert((filed, tag_idx, val));
+                }).or_insert((filed, tag_idx, val, amended));
             }
         }
         // attach each winner's same-filing prior: the greatest period end BEFORE this one that the same
@@ -1843,7 +1881,7 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
         // hits. Nothing there (first year of coverage, or a filer that prints no comparative) -> None,
         // and the callers fall back to the cross-filing read they used before.
         m.into_iter()
-            .map(|(end, (filed, tag_idx, val))| {
+            .map(|(end, (filed, tag_idx, val, _amended))| {
                 let prior = seen
                     .range((tag_idx, filed, NaiveDate::MIN)..(tag_idx, filed, end))
                     .next_back()
@@ -1858,16 +1896,19 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
     // so one `at` accessor serves both, with the prior always None: no consumer wants a year-over-year
     // ratio of a BALANCE-sheet instant, and a slot nobody reads beats a second accessor everywhere.
     let collect_instant = |names: &[&str], unit: &str| -> std::collections::BTreeMap<NaiveDate, (NaiveDate, f64, Option<f64>)> {
+        // (#85) the amendment flag rides in a parallel map rather than in the value tuple, because the
+        // tuple's shape is what lets ONE `at` accessor serve this collector and `collect` alike.
         let mut m: std::collections::BTreeMap<NaiveDate, (NaiveDate, f64, Option<f64>)> = std::collections::BTreeMap::new();
+        let mut amended_at: std::collections::BTreeMap<NaiveDate, bool> = std::collections::BTreeMap::new();
         for tag in names {
             let arr = match g.get(tag).and_then(|t| t.get("units")).and_then(|u| u.get(unit)).and_then(|v| v.as_array()) {
                 Some(a) => a,
                 None => continue,
             };
             for x in arr {
-                if !x.get("form").and_then(|v| v.as_str()).is_some_and(is_annual_form) {
+                let Some(form) = x.get("form").and_then(|v| v.as_str()).filter(|f| is_annual_form(f)) else {
                     continue;
-                }
+                };
                 let Some(ed) = x.get("end").and_then(|v| v.as_str()).and_then(|e| NaiveDate::parse_from_str(e, "%Y-%m-%d").ok()) else {
                     continue;
                 };
@@ -1877,11 +1918,16 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 ) else {
                     continue;
                 };
-                m.entry(ed).and_modify(|cur| {
-                    if filed < cur.0 {
-                        *cur = (filed, val, None);
-                    }
-                }).or_insert((filed, val, None));
+                // (#85) same tie-break as `collect`, off the same predicate: an amendment corrects its
+                // own report, a later year's 10-K does not get to.
+                let amended = is_amendment(form);
+                let keep = m.get(&ed).is_none_or(|cur| {
+                    supersedes((amended, filed), (amended_at.get(&ed).copied().unwrap_or(false), cur.0))
+                });
+                if keep {
+                    m.insert(ed, (filed, val, None));
+                    amended_at.insert(ed, amended);
+                }
             }
         }
         m
@@ -2210,9 +2256,15 @@ async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Opt
     // fail deserialization (serde reads a missing one as None), so a facts10 file would have loaded
     // cleanly forever with assets empty on every row, and the asset-growth factor would have measured
     // nothing while looking perfectly healthy. The filename is the only thing that forces the refetch.
-    // Old *_facts{3,4,5,6,7,8,9,10}.json files are orphaned (few KB each); refetch amortizes over runs
-    // under SEC_FETCH_BUDGET.
-    let cache = sec_cache_path(&format!("{ticker}_facts11"));
+    // facts12 changes no FIELD — it changes which FILING a fiscal period is read from. The tie-break
+    // used to keep the earliest filing unconditionally, which meant a `10-K/A` correcting a genuine
+    // error always lost to the erroneous original it was filed to replace (see `supersedes`, #85). A
+    // facts11 file therefore holds the WRONG NUMBER for every amended period, is perfectly
+    // deserializable, and would keep serving it forever; the filename is again the only thing that
+    // forces the refetch.
+    // Old *_facts{3,4,5,6,7,8,9,10,11}.json files are orphaned (few KB each); refetch amortizes over
+    // runs under SEC_FETCH_BUDGET.
+    let cache = sec_cache_path(&format!("{ticker}_facts12"));
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
@@ -5416,7 +5468,7 @@ mod tests {
                 .expect("backdate mtime");
             p
         };
-        let facts = aged("_facts11", 60);
+        let facts = aged("_facts12", 60);
         let ttmeps = aged("_ttmeps3", 60);
         // `_inst2` is deliberately exempt: it caches a per-filing XBRL instance up to 13.5MB whose
         // content is fixed once the filing exists. Expiring it would buy nothing and cost the largest
@@ -5427,7 +5479,7 @@ mod tests {
         assert!(!ttmeps.exists(), "a TTM roll 60 days old has missed a quarter by construction");
         assert!(inst.exists(), "the instance cache has no staleness to fix and is the most expensive refetch");
 
-        let fresh_facts = aged("_facts11", 5);
+        let fresh_facts = aged("_facts12", 5);
         let fresh_ttmeps = aged("_ttmeps3", 5);
         evict_stale_sec_caches("SECEVICT");
         assert!(fresh_facts.exists(), "5 days is inside every TTL — evicting here refetches the world each run");
@@ -5540,6 +5592,76 @@ mod tests {
         assert_eq!(rows[1].net_debt, None);
         assert!(parse_sec_facts(&json!({})).is_empty()); // no facts -> empty, never panics
         assert!(parse_sec_facts(&json!({"facts": {}})).is_empty()); // facts but no us-gaap -> empty
+    }
+
+    /// (#85) `supersedes`, the tie-break itself. All four combinations, because the two that involve an
+    /// amendment used not to exist: the rule was `filed < cur`, so a `10-K/A` correcting a real error
+    /// lost to the erroneous original it was filed to replace, permanently and silently.
+    ///
+    /// The originals-only case is the one that must NOT move. It is the no-look-ahead rule — a later
+    /// year's 10-K restates the prior year as a comparative, and letting that win would score a cutoff
+    /// on a number nobody had published yet. Every mutant that flips the `<` breaks exactly that.
+    #[test]
+    fn an_amendment_supersedes_its_original_and_a_later_year_does_not() {
+        let d = |m| NaiveDate::from_ymd_opt(2024, m, 1).unwrap();
+        // originals only: EARLIEST wins, whichever order they arrive in
+        assert!(supersedes((false, d(1)), (false, d(6))), "an earlier original supersedes a later one");
+        assert!(!supersedes((false, d(6)), (false, d(1))), "a later year's comparative never wins");
+        assert!(!supersedes((false, d(1)), (false, d(1))), "same date, no change: ties keep what is held");
+        // an amendment beats an original on identity, NOT on date — even one filed earlier, which is
+        // impossible in practice and must still not depend on the impossibility
+        assert!(supersedes((true, d(6)), (false, d(1))), "the correction beats the thing it corrects");
+        assert!(supersedes((true, d(1)), (false, d(6))));
+        assert!(!supersedes((false, d(1)), (true, d(6))), "and an original never wins it back");
+        // among amendments the LATEST wins: a second /A supersedes the first
+        assert!(supersedes((true, d(6)), (true, d(1))));
+        assert!(!supersedes((true, d(1)), (true, d(6))));
+        assert!(!supersedes((true, d(1)), (true, d(1))));
+        // and the predicate feeding it: `/A` is how SEC spells an amendment and nothing else does
+        assert!(is_amendment("10-K/A") && is_amendment("20-F/A") && is_amendment("40-F/A"));
+        assert!(is_amendment("10-KT/A"), "a transition report can be amended too");
+        assert!(!is_amendment("10-K") && !is_amendment("20-F") && !is_amendment("10-Q"));
+        assert!(is_annual_form("10-K/A"), "an amendment is still an annual form — it always was");
+    }
+
+    /// (#85) The same rule where it actually bites: `parse_sec_facts` over a period that was filed
+    /// once, amended twice, and then restated as a comparative in a later year's 10-K.
+    ///
+    /// Four distinct revenues on one period end, so no mutant can land on the right answer by accident.
+    /// The `filed` assertion is as load-bearing as the value: it is the AMENDMENT's date, which is what
+    /// keeps the no-look-ahead property — a cutoff before the correction does not see this period at
+    /// all rather than seeing a number the filer has publicly withdrawn.
+    ///
+    /// `StockholdersEquity` is here to drive `collect_instant`, which keeps its own map and had to be
+    /// taught the same rule separately: at the original equity ROE reads 16.0, at the amended one 20.0.
+    #[test]
+    fn an_amended_fiscal_year_is_read_from_the_amendment() {
+        use serde_json::json;
+        let j = json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [
+                {"start": "2022-10-01", "end": "2023-09-30", "val": 1000.0, "form": "10-K", "filed": "2023-11-01"},
+                {"start": "2022-10-01", "end": "2023-09-30", "val": 900.0, "form": "10-K/A", "filed": "2024-02-01"},
+                {"start": "2022-10-01", "end": "2023-09-30", "val": 950.0, "form": "10-K/A", "filed": "2024-05-01"},
+                // the FY2025 10-K's restated comparative — later than everything and still must lose
+                {"start": "2022-10-01", "end": "2023-09-30", "val": 1234.0, "form": "10-K", "filed": "2025-11-01"}
+            ]}},
+            "NetIncomeLoss": {"units": {"USD": [
+                {"start": "2022-10-01", "end": "2023-09-30", "val": 160.0, "form": "10-K", "filed": "2023-11-01"}
+            ]}},
+            "StockholdersEquity": {"units": {"USD": [
+                {"end": "2023-09-30", "val": 1000.0, "form": "10-K", "filed": "2023-11-01"},
+                {"end": "2023-09-30", "val": 800.0, "form": "10-K/A", "filed": "2024-05-01"}
+            ]}}
+        }}});
+        let rows = parse_sec_facts(&j);
+        assert_eq!(rows.len(), 1, "one fiscal year, however many times it was filed");
+        assert_eq!(rows[0].revenue, Some(950.0), "the SECOND amendment, not the first and not the original");
+        assert_eq!(
+            rows[0].filed,
+            NaiveDate::from_ymd_opt(2024, 5, 1).unwrap(),
+            "the amendment's own date — an as-of cutoff before it must not see this period at all"
+        );
+        assert_eq!(rows[0].roe, Some(20.0), "160 / the AMENDED equity 800; the original 1000 reads 16.0");
     }
 
     /// `parse_sec_facts` drops every malformed / non-annual datapoint (missing start/end, unparseable
@@ -6430,7 +6552,7 @@ mod tests {
             prior_eps: Some(2.0),
             prior_shares: Some(52.0),
         };
-        let cache = sec_cache_path("CACHED_facts11");
+        let cache = sec_cache_path("CACHED_facts12");
         let write = |rows: &[SecCacheRow]| {
             std::fs::write(&cache, serde_json::to_string(rows).expect("serialise")).expect("seed");
         };
@@ -6484,7 +6606,7 @@ mod tests {
         //    The remove is load-bearing: the scratch root OUTLIVES the run, so on every rerun after
         //    the first this phase would take the phase-1 cache path, never open the socket, and pass
         //    without testing anything. A test that only works once is a test that works never.
-        let _ = std::fs::remove_file(sec_cache_path("AAPL_facts11"));
+        let _ = std::fs::remove_file(sec_cache_path("AAPL_facts12"));
         let (base, client) = stub_server(
             r#"{"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
                 {"start": "2020-10-01", "end": "2021-09-30", "val": 1000.0, "form": "10-K", "filed": "2021-11-01"}
@@ -6494,7 +6616,7 @@ mod tests {
         let got = fetch_sec_facts_rows(&client, &live, "AAPL").await.expect("parsed rows");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].revenue, Some(1000.0));
-        let written = std::fs::read_to_string(sec_cache_path("AAPL_facts11")).expect("cache written");
+        let written = std::fs::read_to_string(sec_cache_path("AAPL_facts12")).expect("cache written");
         assert!(written.contains("2021-09-30"), "the parse must be cached, not just returned: {written}");
     }
 
@@ -6895,7 +7017,7 @@ mod tests {
         .expect("serialise sec rows");
         for t in ["AAA", "BBB"] {
             std::fs::write(fmp.join(format!("{t}.json")), &rows).expect("seed fmp cache");
-            std::fs::write(sec.join(format!("{t}_facts11.json")), &sec_rows).expect("seed sec cache");
+            std::fs::write(sec.join(format!("{t}_facts12.json")), &sec_rows).expect("seed sec cache");
             // The SEC roll-forward TTM sidecar, deliberately DISAGREEING with the 4.0 above. It is
             // consulted only when the selected factor is `earnings_yield`, and the default is
             // `rev_accel` — so 9.0 must never reach `eps_ttm` below. Inverting that gate would let
@@ -6975,7 +7097,7 @@ mod tests {
         // `insider_net_buys_90d`. The default is not, so this long-stale file must go untouched:
         // inverting that gate makes every run evict the SEC cache for every name, which is invisible
         // in the output and just refetches the world. `.sec_cache/<ticker>.json` is the insider
-        // sidecar — `fetch_fundamentals_ranked` reads `<ticker>_facts11.json`, a different file.
+        // sidecar — `fetch_fundamentals_ranked` reads `<ticker>_facts12.json`, a different file.
         std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
         let insider = sec_cache_path("TTLSTALE");
         std::fs::write(&insider, "[]").expect("seed insider sidecar");
