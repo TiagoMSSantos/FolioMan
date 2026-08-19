@@ -288,11 +288,15 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
             }
         }
     }
-    let currency = meta
-        .get("currency")
-        .and_then(|v| v.as_str())
-        .unwrap_or("USD")
-        .to_string();
+    // (#81) An absent `meta.currency` is UNKNOWN, and "" is how this codebase spells that. It used to
+    // default to "USD", which defeated the guard written for exactly this case: `core::needs_fx`
+    // refuses to convert when either side is empty so that a missing currency leaves the price alone,
+    // and substituting "USD" here meant the guard could never see the empty string. A EUR listing
+    // whose metadata Yahoo happened to omit therefore got a USD→EUR rate applied to its price, its
+    // dividends, its turnover and its P/E — a ~16% error, silently, on a row that looked fine.
+    // Every consumer already reads "" as "no conversion claimed": `needs_fx`, `backtest::fx_pair`
+    // and `eur_rate` below, which now returns None rather than assuming a rate of 1.0.
+    let currency = meta.get("currency").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     // events.dividends = { "<ts>": {"amount": x, "date": ts}, ... } (present via events=div)
     let mut divs: Vec<(NaiveDate, f64)> = result
@@ -382,11 +386,19 @@ fn fx_scale(cur: &str) -> f64 {
     if cur == "GBp" || cur == "GBX" { 0.01 } else { 1.0 }
 }
 
-/// EUR per 1 unit of `cur`. 1.0 for EUR; None if Yahoo has no FX pair. Cached — the cache holds
-/// the plain pound rate under "GBP"; the pence scale is applied on read, never stored.
+/// EUR per 1 unit of `cur`. 1.0 for EUR; None if Yahoo has no FX pair, and None for an UNKNOWN
+/// currency. Cached — the cache holds the plain pound rate under "GBP"; the pence scale is applied
+/// on read, never stored.
 pub async fn eur_rate(client: &Client, urls: &Urls, cur: &str, cache: &FxCache) -> Option<f64> {
+    // (#81) An empty `cur` used to be read as EUR, which returned a rate of 1.0 — an assumption
+    // wearing the costume of a fact. It is the same silent mislabel as assuming USD, one direction
+    // over: a USD line passed off as EUR reads ~16% rich, a EUR line passed off as USD ~16% cheap.
+    // Unknown gets no rate, and the callers that cannot proceed without one return None instead.
+    if cur.is_empty() {
+        return None;
+    }
     let scale = fx_scale(cur);
-    let cur = if cur.is_empty() { "EUR".to_string() } else { cur.to_uppercase() };
+    let cur = cur.to_uppercase();
     if cur == "EUR" {
         return Some(1.0);
     }
@@ -726,11 +738,22 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // a notional amount, so use it raw (close×volume would double-count). Equities: close×volume.
         // Suffix check, NOT any dash: BRK-B is an equity — the crypto arm fed its raw share count
         // (~4M) into the scored liquidity term instead of ~€1.5B of close×volume.
-        avg_turnover_eur: if crate::picks::is_currency_quoted(ticker) {
-            core::avg_volume(&chart.volumes, 30).map(|v| v * rate.unwrap_or(1.0))
-        } else {
-            core::avg_turnover(&chart.closes, &chart.volumes, 30).map(|v| v * rate.unwrap_or(1.0))
-        },
+        //
+        // (#81) No rate, no number. This used to read `rate.unwrap_or(1.0)`, which called a native
+        // figure a EUR one whenever the rate was missing — and it did so in the ONE direction the
+        // liquidity gate cannot survive: a GBp line's true rate is ~0.0117, so ×1.0 inflates it ~85×
+        // and floats a dead listing straight over `min_avg_turnover_eur`. The same missing rate was
+        // already making `price_eur` None one line up, so the row asserted two contradictory things
+        // about the same currency. None is what the field means when the answer isn't known, and the
+        // turnover gate already rejects None — a row we cannot price is a row we do not rank.
+        avg_turnover_eur: rate.and_then(|r| {
+            if crate::picks::is_currency_quoted(ticker) {
+                core::avg_volume(&chart.volumes, 30)
+            } else {
+                core::avg_turnover(&chart.closes, &chart.volumes, 30)
+            }
+            .map(|v| v * r)
+        }),
         // the asset's "normal" daily swing (~1 trading year) so picks can tell a deep-for-this-asset
         // dip from everyday noise; a ratio of returns, so no FX conversion needed.
         volatility_pct: core::volatility_pct(&chart.closes, 252),
@@ -5755,12 +5778,16 @@ mod tests {
             (NaiveDate::from_ymd_opt(2020, 4, 1).unwrap(), 1.0),
             (NaiveDate::from_ymd_opt(2020, 7, 1).unwrap(), 2.0),
         ]);
-        // currency defaults to USD when meta omits it; malformed json -> None
+        // (#81) currency is EMPTY when meta omits it — unknown, never a guessed "USD". This assertion
+        // used to read "USD", which is the whole of the bug it was pinning: `core::needs_fx` treats ""
+        // as "do not convert" and can never be handed one, so the substituted "USD" sent a EUR listing
+        // with absent metadata through a USD→EUR rate. Malformed json -> None, unchanged.
         let no_meta = json!({"chart": {"result": [{
             "timestamp": [1577836800],
             "indicators": {"quote": [{"close": [10.0]}]}
         }]}});
-        assert_eq!(parse_chart(&no_meta, "X").unwrap().currency, "USD");
+        assert_eq!(parse_chart(&no_meta, "X").unwrap().currency, "");
+        assert!(!core::needs_fx(&parse_chart(&no_meta, "X").unwrap().currency, "EUR"), "unknown must not convert");
         assert!(parse_chart(&json!({}), "X").is_none());
 
         // --- parse_fund_row: FMP income-statement row -> FundRow ---
@@ -6923,6 +6950,72 @@ mod tests {
         );
         let got = price_in(&client, &stub_urls(&base), &fx_cache(), 10.0, "USD", "EUR").await;
         assert_eq!(got, Some(5.0));
+    }
+
+    /// (#81) An UNKNOWN currency has no rate. This used to return `Some(1.0)` — `eur_rate` read the
+    /// empty string as EUR — and the stub here is what makes the difference visible: if the empty
+    /// currency still reached the network it would come back with the served close, 0.5, instead of
+    /// None. So this pins two things at once, that unknown yields no rate and that it costs no fetch.
+    #[tokio::test]
+    async fn eur_rate_has_none_for_an_unknown_currency() {
+        let (base, client) = stub_server(
+            r#"{"chart":{"result":[{"timestamp":[1577836800],"indicators":{"quote":[{"close":[0.5]}]}}]}}"#,
+        );
+        let urls = stub_urls(&base);
+        assert_eq!(eur_rate(&client, &urls, "", &fx_cache()).await, None, "unknown is not EUR");
+        assert_eq!(eur_rate(&client, &urls, "EUR", &fx_cache()).await, Some(1.0), "EUR still short-circuits");
+        assert_eq!(eur_rate(&client, &urls, "USD", &fx_cache()).await, Some(0.5), "and a known one still fetches");
+    }
+
+    /// (#81) The whole live quote assembly, which had no test at all, pinned at the one seam this
+    /// change moves: every EUR-denominated field on a `Quote` is the native number times ONE rate, and
+    /// a row whose rate is unknown must carry no EUR number rather than a native one wearing a € sign.
+    ///
+    /// Three bars, closes 10/20/0.5 against volumes 100/200/300, so `avg_turnover` averages
+    /// 1000, 4000 and 150 to 1716.67 — three distinct products, so a mutant that sums or counts them
+    /// wrongly cannot land on the same figure. The served close doubles as the USDEUR=X rate (0.5),
+    /// which is what makes the ×rate step assert a VALUE: at ×1.0 turnover would read 1716.67 and the
+    /// price €0.50, both of which this test names and rejects.
+    #[tokio::test]
+    async fn quote_one_prices_every_eur_field_off_one_rate() {
+        const BARS: &str = r#"{"chart":{"result":[{
+            "timestamp":[1577836800,1577923200,1578009600],
+            "indicators":{"quote":[{"close":[10.0,20.0,0.5],"volume":[100,200,300]}]},
+            "meta":{"currency":"USD"}
+        }]}}"#;
+        let (base, client) = stub_server(BARS);
+        let w = BTreeMap::new();
+        // no `instrumentType`, deliberately: it keeps the row out of the equity and ETF arms, so this
+        // test drives the price/turnover seam and never the fundamentals fan-out behind it.
+        let q = quote_one(&client, &stub_urls(&base), &fx_cache(), "ZZTESTFX", 30, 0, false, false, &w, None).await;
+        assert_eq!(q.quote_currency.as_deref(), Some("USD"));
+        assert_eq!(q.price_eur, Some(0.25), "0.5 native at 0.5 EUR/USD");
+        assert_eq!(q.close_native, Some(0.5), "the native close is NOT converted");
+        assert_eq!(q.price, "€0.25");
+        let turnover = q.avg_turnover_eur.expect("a known rate must produce a turnover");
+        assert!((turnover - 5150.0 / 3.0 * 0.5).abs() < 1e-9, "mean(1000,4000,150) x 0.5: {turnover}");
+    }
+
+    /// (#81) The same assembly with `meta.currency` absent. Before this change the parser substituted
+    /// "USD" here, so this row fetched a USD→EUR rate and reported every EUR field as if the guess had
+    /// been a fact — including a turnover that `min_avg_turnover_eur` would then judge. Now the row
+    /// says outright that it does not know: no EUR price, no EUR turnover, and a price string carrying
+    /// the `?` that has always meant "unconverted". The turnover assert is the load-bearing one, since
+    /// `unwrap_or(1.0)` used to hand the gate a native figure ~85x too large for a pence-quoted line.
+    #[tokio::test]
+    async fn quote_one_reports_no_eur_number_when_the_currency_is_unknown() {
+        const BARS: &str = r#"{"chart":{"result":[{
+            "timestamp":[1577836800,1577923200,1578009600],
+            "indicators":{"quote":[{"close":[10.0,20.0,0.5],"volume":[100,200,300]}]}
+        }]}}"#;
+        let (base, client) = stub_server(BARS);
+        let w = BTreeMap::new();
+        let q = quote_one(&client, &stub_urls(&base), &fx_cache(), "ZZTESTNOFX", 30, 0, false, false, &w, None).await;
+        assert_eq!(q.quote_currency.as_deref(), Some(""), "unknown, not a guessed USD");
+        assert_eq!(q.price_eur, None);
+        assert_eq!(q.avg_turnover_eur, None, "no rate -> no EUR turnover for the gate to believe");
+        assert_eq!(q.close_native, Some(0.5), "the native close is still known and still reported");
+        assert!(q.price.ends_with('?'), "the price string says it is unconverted: {}", q.price);
     }
 
     /// One CSV pond, header skipped, sector filter applied. `constituents_csv` is emptied so the
