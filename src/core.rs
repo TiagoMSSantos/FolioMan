@@ -2533,10 +2533,18 @@ pub fn backtest_quote(
     // from its daily session count so the SAME ~4y/200wk span is used on either cadence (cadence=252
     // reproduces the daily path exactly). note: monthly bars APPROXIMATE the daily vol/MA, not
     // equal them — fine, a backtest run is single-cadence so the cross-sectional ranks stay consistent.
-    quote.volatility_pct = volatility_pct(c, cadence);
+    //
+    // (#97) "cross-sectional ranks stay consistent" is true and is not the whole story: every knob that
+    // reads this field is an ABSOLUTE threshold in per-bar % units (`sharpe_cap`, `sharpe_cap_etf`,
+    // `growth_max_vol`, `growth_max_vol_crypto`, `normal_volatility_pct`), and a threshold does not care
+    // that the ranks held. `daily_equivalent` puts both cadences in the same units; see its doc.
+    let rescale = crate::config::vol_daily_equivalent();
+    quote.volatility_pct = volatility_pct(c, cadence).map(|v| daily_equivalent(v, cadence, rescale));
     // (r39) same window/cadence as the vol above so `sortino` vs `sharpe_ref` differ ONLY in which
-    // returns reach the denominator — the whole question the probe asks.
-    quote.downside_dev_pct = downside_deviation_pct(c, cadence);
+    // returns reach the denominator — the whole question the probe asks. Rescaled with it for the same
+    // reason: leaving one of the pair in bar units would make the probe's ratio a cadence artefact.
+    quote.downside_dev_pct =
+        downside_deviation_pct(c, cadence).map(|v| daily_equivalent(v, cadence, rescale));
     // (P4) ONE month of the run's own bars, scaled from `cadence` exactly as the long MA below is scaled
     // from its session count, so a daily run reproduces the live 21-session window bar for bar.
     //
@@ -2635,6 +2643,26 @@ pub fn volatility_pct(closes: &[f64], n: usize) -> Option<f64> {
     let mean = rets.iter().sum::<f64>() / rets.len() as f64;
     let var = rets.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / rets.len() as f64;
     Some(var.sqrt())
+}
+
+/// (#97) Per-bar dispersion, restated in DAILY-equivalent units.
+///
+/// A stdev of per-bar returns scales with the square root of the bar length, so the same asset prints
+/// ~√21 ≈ 4.6× more volatility on the monthly bars a long backtest walks than on the daily bars the
+/// live screen walks. `span_to_bars` already keeps every WINDOW the same calendar length across
+/// cadences — this is the amplitude half of the same train==serve rule, and nothing did it before.
+///
+/// It matters because every consumer of `volatility_pct` is an ABSOLUTE threshold: `sharpe_cap` clamps
+/// `long_cagr / vol`, so a 4.6× larger denominator makes the ratio 4.6× smaller and the cap stops
+/// binding in the very run that fitted it, while live it binds for nearly every name that clears the
+/// CAGR gate. Same for the `growth_max_vol*` ceilings and the `normal_volatility_pct` divisor. All
+/// three horizons the ship rule cites (20y, 12y, 8y) are monthly — `long || years >= 8` — so this is
+/// the scale every one of those receipts was measured at.
+///
+/// `off` returns `v` untouched. At cadence 252 the factor is exactly 1.0 and `v * 1.0` is exactly `v`,
+/// so the LIVE path is bit-identical at either setting; only a non-daily run can move.
+pub fn daily_equivalent(v: f64, cadence: usize, on: bool) -> f64 {
+    if on { v * (cadence as f64 / 252.0).sqrt() } else { v }
 }
 
 /// (P4) MAX: the LARGEST single-bar % gain over the last `n` bars — the trailing-month extreme, not a
@@ -4244,6 +4272,24 @@ mod tests {
     assert!((downside_deviation_pct(&dip, 30).unwrap() - (100.0_f64 / 3.0).sqrt()).abs() < 1e-9);
     assert!(downside_deviation_pct(&dip, 30).unwrap() < volatility_pct(&dip, 30).unwrap());
     assert_eq!(downside_deviation_pct(&[100.0], 30), None); // same too-few guard as its twin
+
+    // (#97) the same asset, measured on monthly bars, prints ~sqrt(21) = 4.6x the daily figure — and
+    // every knob reading this field is an ABSOLUTE threshold, so that scale is not a wash.
+    let v = 6.0; // a monthly-bar stdev
+    assert!((daily_equivalent(v, 12, true) - v / (252.0_f64 / 12.0).sqrt()).abs() < 1e-12);
+    assert!((daily_equivalent(v, 12, true) - 1.309).abs() < 1e-3, "{}", daily_equivalent(v, 12, true));
+    // the finding's ~4.6x, stated as the ratio it actually is.
+    assert!(((v / daily_equivalent(v, 12, true)) - 4.583).abs() < 1e-3);
+    // LIVE IS BIT-IDENTICAL AT EITHER SETTING: cadence 252 gives a factor of exactly 1.0.
+    assert_eq!(daily_equivalent(v, 252, true), v);
+    assert_eq!(daily_equivalent(v, 252, false), v);
+    // OFF leaves a non-daily run untouched too — that is the shipped lane the goldens pin.
+    assert_eq!(daily_equivalent(v, 12, false), v);
+    // what it costs the cap: a 15%/yr CAGR on this name reads sharpe 2.5 on raw monthly bars and
+    // 11.5 once restated — the first is nowhere near `sharpe_cap: 15`, the second is close enough
+    // that the live path clamps names the run that fitted the cap never clamped.
+    assert!((15.0 / v - 2.5).abs() < 1e-9);
+    assert!((15.0 / daily_equivalent(v, 12, true) - 11.456).abs() < 1e-3);
 
     // (P4) worst — largest — single-bar move. Not a dispersion: `riser` has three EQUAL-looking steps
     // whose percentages differ, and the answer is the biggest of them, +13.0434…%, not their spread.

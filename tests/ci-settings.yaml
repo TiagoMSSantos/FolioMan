@@ -782,6 +782,62 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  vol_daily_equivalent: false    # (#97) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+                                 # the raw per-bar scale every vol-reading receipt in this file was
+                                 # fitted at. This is the one knob here that INVALIDATES OTHER RECEIPTS
+                                 # when turned on, so read the whole block before touching it.
+                                 #
+                                 #   THE DEFECT: a stdev of per-bar returns scales with the square root
+                                 #   of the bar length. `volatility_pct` is the stdev of `cadence` bars,
+                                 #   so the SAME asset prints ~√21 = 4.58× more volatility on the monthly
+                                 #   bars a long run walks than on the daily bars the screen walks. All
+                                 #   three horizons the ship rule cites are monthly (`long || years >= 8`
+                                 #   in `backtest::run`), so 20y, 12y and 8y are all at the wrong scale.
+                                 #
+                                 #   WHY THE OLD DEFENCE IS NOT ENOUGH. `backtest_quote`'s comment says
+                                 #   monthly bars only APPROXIMATE the daily vol and that is fine because
+                                 #   "a backtest run is single-cadence so the cross-sectional ranks stay
+                                 #   consistent". The ranks do hold. But EVERY consumer of this field is
+                                 #   an ABSOLUTE THRESHOLD, and a threshold does not care about ranks:
+                                 #     sharpe_cap: 15 / sharpe_cap_etf: 9 — clamp `long_cagr / vol`. A
+                                 #       4.58× larger denominator makes the ratio 4.58× smaller, so the
+                                 #       cap barely binds in the run that fitted it while live it binds
+                                 #       for nearly every name past the CAGR gate. Worked example pinned
+                                 #       in `core.rs`: 15%/yr CAGR on a 6%-per-monthly-bar name reads
+                                 #       sharpe 2.5 raw and 11.5 restated. The backtest measured a term
+                                 #       that is very nearly a CONSTANT live (see C8).
+                                 #     growth_max_vol / growth_max_vol_crypto — absolute % ceilings, so
+                                 #       the monthly run rejects on a bar length the live gate never sees.
+                                 #     normal_volatility_pct — the [FOIL] dip divisor. The knob is NOT
+                                 #       touched here (non-negotiable 6); only what it divides moves.
+                                 #
+                                 #   WHAT true DOES: `core::daily_equivalent` multiplies the field by
+                                 #   √(cadence/252) — and its `downside_dev_pct` twin with it, since
+                                 #   leaving one of the pair in bar units would make the (r39) Sortino
+                                 #   probe's ratio a pure cadence artefact. It is the AMPLITUDE half of
+                                 #   the rule `span_to_bars` already enforces for every WINDOW: same
+                                 #   calendar meaning on either cadence, train == serve.
+                                 #
+                                 #   LIVE IS BIT-IDENTICAL AT EITHER SETTING. At cadence 252 the factor
+                                 #   is exactly 1.0 and `v * 1.0` is exactly `v` in IEEE — asserted, not
+                                 #   assumed. Only a non-daily run can move, which is why this ships off
+                                 #   rather than on despite being the correct units.
+                                 #
+                                 #   TURNING IT ON RETIRES FITTED VALUES. sharpe_cap, sharpe_cap_etf and
+                                 #   growth_max_vol_crypto were all fitted against the raw monthly scale;
+                                 #   under this knob their numbers describe a quantity that no longer
+                                 #   exists. It is NOT a knob to flip and re-read the edge — the honest
+                                 #   sequence is: turn it on, re-sweep those three, then judge the pair
+                                 #   (knob + refitted caps) against the ship rule as ONE change.
+                                 #
+                                 #   TO SETTLE: the ship-rule grid at 20y/12y/8y with the three caps
+                                 #   re-swept underneath it. A daily-cadence control run is the clean
+                                 #   cross-check — at cadence 252 both arms must print identical numbers,
+                                 #   and any difference is a bug in this knob rather than a result.
+                                 #
+                                 #   REVERT RULE: stays OFF until that paired sweep clears the ship rule.
+                                 #   A result read WITHOUT re-sweeping the caps does not count either way
+                                 #   — it measures the caps falling out of range, not the units fix.
   print_edge_annualized: false   # (#96) UNMEASURED in the sense that no run has been read with it on —
                                  # but unlike its neighbours this one CANNOT change a decision, because
                                  # nothing scored reads it. Shipping OFF keeps the goldens byte-identical.
