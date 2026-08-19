@@ -2326,6 +2326,15 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
         // (round 109) cyclical detector: −std(net_margin) over the lookback — margin LEVEL and 1y
         // TREND are swept above; the dispersion is what a peak-cycle name hides behind a good level.
         ("margin_stability", |f| f.margin_stability),
+        // (P2) cash-backing of the reported profit: −(eps − derived fcf/share) / |eps|. Distinct from
+        // fcf_margin above, which prices the LEVEL of cash generation — this prices the GAP between the
+        // cash and the earnings the market is being shown, which is the axis a managed income statement
+        // moves along without moving the level.
+        ("accrual_gap", |f| f.accrual_gap),
+        // (P3) −CAGR of total assets. The counterweight to rev_cagr/rev_accel above, which reward
+        // expansion without ever asking what was spent to buy it. Correlated with rev_accel by
+        // construction — a head-to-head against it is the point, not an independent reading.
+        ("asset_growth", |f| f.asset_growth),
     ];
     let mut any = false;
     let mut skipped: Vec<String> = Vec::new();

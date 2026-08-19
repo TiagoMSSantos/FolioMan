@@ -734,6 +734,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // the asset's "normal" daily swing (~1 trading year) so picks can tell a deep-for-this-asset
         // dip from everyday noise; a ratio of returns, so no FX conversion needed.
         volatility_pct: core::volatility_pct(&chart.closes, 252),
+        // (P4) the same helper the backtest calls, at the live 21-session month — one definition, two paths
+        max_daily_1m: core::max_daily_pct(&chart.closes, 21),
         // (C) % below the ~200wk SMA — structural "cheap vs long trend" entry signal (FX-agnostic ratio).
         below_ma_pct: core::below_long_ma_pct(&chart.closes, crate::config::LONG_MA_SESSIONS),
         // (1) % ABOVE the ~200wk SMA — overextension brake for the growth lane (far above trend = stretched).
@@ -1511,6 +1513,7 @@ struct SecCacheRow {
     net_debt: Option<f64>,
     currency: Option<String>, // (FX) money lines are meaningless against a price without it
     roa: Option<f64>,         // the ROE fallback for negative-equity filers
+    assets: Option<f64>,      // (P3) roa's denominator, kept rather than discarded — the asset-growth base
     prior_eps: Option<f64>,   // the prior FY's EPS as THIS row's filing stated it (the YoY denominator)
     prior_shares: Option<f64>, // likewise for the share count
 }
@@ -1826,6 +1829,10 @@ fn parse_sec_facts(j: &Value) -> Vec<core::FundRow> {
                 // negative. `> 0.0` not `!= 0.0`: total assets are positive by construction, so a
                 // non-positive value is a parse artifact, not a leveraged balance sheet.
                 roa: at(&ni).zip(at(&assets)).and_then(|(n, a)| (a > 0.0).then_some(n / a * 100.0)),
+                // (P3) the same line `roa` just divided by, kept this time. Same `> 0.0` guard and for
+                // the same reason: total assets are positive by construction, so anything else is a
+                // parse artifact and must not reach a growth denominator.
+                assets: at(&assets).filter(|&a| a > 0.0),
                 // (round 107) survival levels, high = safer. fcf needs BOTH lines (a bank with no capex
                 // tag stays None-neutral, not fake-frugal); interest_cover needs a positive interest
                 // expense (debt-free -> None-neutral, and a negative op income reads as negative cover).
@@ -2081,9 +2088,14 @@ async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Opt
     // eps/shares, without which every year-over-year ratio divides two different share bases and any
     // filer that split reads as a collapse — TPL -64.7% against +6.0% real) — old rows were parsed
     // WITHOUT them and would pin the gaps forever.
-    // Old *_facts{3,4,5,6,7,8,9}.json files are orphaned (few KB each); refetch amortizes over runs under
-    // SEC_FETCH_BUDGET.
-    let cache = sec_cache_path(&format!("{ticker}_facts10"));
+    // facts11 adds TOTAL ASSETS, which facts10 parsed, divided into ROA and then threw away — and the
+    // suffix bump is doing REAL work here rather than being ceremony: an added `Option` field does NOT
+    // fail deserialization (serde reads a missing one as None), so a facts10 file would have loaded
+    // cleanly forever with assets empty on every row, and the asset-growth factor would have measured
+    // nothing while looking perfectly healthy. The filename is the only thing that forces the refetch.
+    // Old *_facts{3,4,5,6,7,8,9,10}.json files are orphaned (few KB each); refetch amortizes over runs
+    // under SEC_FETCH_BUDGET.
+    let cache = sec_cache_path(&format!("{ticker}_facts11"));
     if let Some(cached) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<SecCacheRow>>(&s).ok()) {
         let rows: Vec<core::FundRow> = cached
             .into_iter()
@@ -2101,6 +2113,7 @@ async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Opt
                     prior_shares: c.prior_shares,
                     roe: c.roe,
                     roa: c.roa,
+                    assets: c.assets,
                     fcf_margin: c.fcf_margin,
                     interest_cover: c.interest_cover,
                     net_cash_rev: c.net_cash_rev,
@@ -2139,6 +2152,7 @@ async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Opt
                 net_debt: r.net_debt,
                 currency: r.currency.clone(),
                 roa: r.roa,
+                assets: r.assets,
                 prior_eps: r.prior_eps,
                 prior_shares: r.prior_shares,
             })
@@ -6193,10 +6207,11 @@ mod tests {
             net_debt: Some(-100.0),
             currency: Some("USD".into()),
             roa: Some(5.0),
+            assets: Some(3000.0), // (P3) roa's own denominator: 150 net income ÷ 3000 = the 5.0 above
             prior_eps: Some(2.0),
             prior_shares: Some(52.0),
         };
-        let cache = sec_cache_path("CACHED_facts10");
+        let cache = sec_cache_path("CACHED_facts11");
         let write = |rows: &[SecCacheRow]| {
             std::fs::write(&cache, serde_json::to_string(rows).expect("serialise")).expect("seed");
         };
@@ -6226,6 +6241,7 @@ mod tests {
         assert_eq!(got[0].prior_shares, Some(52.0));
         assert_eq!(got[0].roe, Some(15.0));
         assert_eq!(got[0].roa, Some(5.0));
+        assert_eq!(got[0].assets, Some(3000.0), "(P3) the level, not only the ratio derived from it");
         assert_eq!(got[0].fcf_margin, Some(20.0));
         assert_eq!(got[0].interest_cover, Some(4.0));
         assert_eq!(got[0].net_cash_rev, Some(0.1));
@@ -6249,7 +6265,7 @@ mod tests {
         //    The remove is load-bearing: the scratch root OUTLIVES the run, so on every rerun after
         //    the first this phase would take the phase-1 cache path, never open the socket, and pass
         //    without testing anything. A test that only works once is a test that works never.
-        let _ = std::fs::remove_file(sec_cache_path("AAPL_facts10"));
+        let _ = std::fs::remove_file(sec_cache_path("AAPL_facts11"));
         let (base, client) = stub_server(
             r#"{"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
                 {"start": "2020-10-01", "end": "2021-09-30", "val": 1000.0, "form": "10-K", "filed": "2021-11-01"}
@@ -6259,7 +6275,7 @@ mod tests {
         let got = fetch_sec_facts_rows(&client, &live, "AAPL").await.expect("parsed rows");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].revenue, Some(1000.0));
-        let written = std::fs::read_to_string(sec_cache_path("AAPL_facts10")).expect("cache written");
+        let written = std::fs::read_to_string(sec_cache_path("AAPL_facts11")).expect("cache written");
         assert!(written.contains("2021-09-30"), "the parse must be cached, not just returned: {written}");
     }
 
@@ -6651,13 +6667,14 @@ mod tests {
             net_debt: Some(-100.0),
             currency: None, // as for the FMP rows: unknown books currency -> no FX lookup, no socket
             roa: Some(5.0),
+            assets: Some(3000.0),
             prior_eps: Some(2.0),
             prior_shares: Some(52.0),
         }])
         .expect("serialise sec rows");
         for t in ["AAA", "BBB"] {
             std::fs::write(fmp.join(format!("{t}.json")), &rows).expect("seed fmp cache");
-            std::fs::write(sec.join(format!("{t}_facts10.json")), &sec_rows).expect("seed sec cache");
+            std::fs::write(sec.join(format!("{t}_facts11.json")), &sec_rows).expect("seed sec cache");
             // The SEC roll-forward TTM sidecar, deliberately DISAGREEING with the 4.0 above. It is
             // consulted only when the selected factor is `earnings_yield`, and the default is
             // `rev_accel` — so 9.0 must never reach `eps_ttm` below. Inverting that gate would let
@@ -6737,7 +6754,7 @@ mod tests {
         // `insider_net_buys_90d`. The default is not, so this long-stale file must go untouched:
         // inverting that gate makes every run evict the SEC cache for every name, which is invisible
         // in the output and just refetches the world. `.sec_cache/<ticker>.json` is the insider
-        // sidecar — `fetch_fundamentals_ranked` reads `<ticker>_facts10.json`, a different file.
+        // sidecar — `fetch_fundamentals_ranked` reads `<ticker>_facts11.json`, a different file.
         std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
         let insider = sec_cache_path("TTLSTALE");
         std::fs::write(&insider, "[]").expect("seed insider sidecar");

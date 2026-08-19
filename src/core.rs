@@ -187,6 +187,11 @@ pub struct Quote {
     pub intraday: [Option<f64>; 3], // % change over [1h, 6h, 12h] = 1/6/12 hourly bars back; None if too few bars
     pub avg_turnover_eur: Option<f64>, // avg daily turnover (close*volume, EUR) ~last 30 sessions; liquidity proxy
     pub volatility_pct: Option<f64>,   // daily-return stdev (%) ~last year; the asset's "normal swing" for the picks score
+    // (P4) MAX: the largest single-day gain in the trailing month, %. A DIFFERENT question from the two
+    // price-shape terms already here — `volatility_pct` averages the whole distribution and `above_ma_pct`
+    // measures a level stretch, and a name can sit calm and near its mean on both while having printed one
+    // +38% day last week. That lottery-ticket day is the documented signal, and nothing in the tree sees it.
+    pub max_daily_1m: Option<f64>,
     pub below_ma_pct: f64,             // % below the ~200-week SMA (structural "cheap vs long trend"); 0 if at/above or history too short
     pub above_ma_pct: f64,             // % ABOVE the ~200-week SMA (overextension "how far it ran"); 0 if at/below or history too short. Growth-lane brake on blow-off tops
     pub pe_ratio: Option<f64>,         // trailing P/E for the valuation tilt; None for crypto/ETF/no-earnings/no source (-> neutral)
@@ -260,6 +265,7 @@ impl Quote {
             intraday: [None; 3],
             avg_turnover_eur: None,
             volatility_pct: None,
+            max_daily_1m: None,
             below_ma_pct: 0.0,
             above_ma_pct: 0.0,
             pe_ratio: None,
@@ -1639,6 +1645,12 @@ pub struct FundRow {
     pub prior_shares: Option<f64>,
     pub roe: Option<f64>,             // % — PREMIUM (key-metrics/ratios), None on free tier
     pub roa: Option<f64>,             // % = netIncome/totalAssets — SEC-computed. The ROE FALLBACK: assets can't go negative, so a buyback-shrunk filer (HCA, HLT) still has a meaningful quality level. None on the FMP path. Resolved with roe by `quality_return`
+    // (P3) TOTAL ASSETS, the denominator `roa` above already divides by and then throws away. Carried so
+    // the asset BASE can be tracked over time, which is a different question from the return on it: a
+    // filer can hold a flat ROA while doubling its balance sheet, and that expansion is the one thing
+    // the growth lane rewards without ever pricing. Positive by construction -> a non-positive parse
+    // artifact is dropped at the source rather than becoming a CAGR denominator.
+    pub assets: Option<f64>,
     pub roic: Option<f64>,            // % — PREMIUM
     pub net_debt_ebitda: Option<f64>, // ratio, lower=safer — PREMIUM
     pub fcf_ps: Option<f64>,          // free cash flow / share — PREMIUM
@@ -1722,6 +1734,20 @@ pub struct FundFactors {
     // lookback rows (higher = stabler). Margin LEVEL and 1y TREND are swept elsewhere; the
     // dispersion is what a peak-cycle name (fertilizer, refiner) hides behind a good level.
     pub margin_stability: Option<f64>,
+    // (P2) ACCRUAL GAP: how much of the as-of EPS is NOT backed by cash, NEGATED so high = safer,
+    // the same orientation the round-107 levels above carry. Accounting earnings and cash earnings
+    // diverge for ordinary reasons (working capital, a build year) and for one bad one — an income
+    // statement being managed — and the lane has no other term that can tell a cash profit from a
+    // booked one. DERIVED from levels already on the row, so it costs no fetch. None whenever any leg
+    // is missing, which on the FMP free tier is always (fcf_margin never populates there).
+    pub accrual_gap: Option<f64>,
+    // (P3) ASSET GROWTH over the same `yrs` lookback `rev_cagr` uses, NEGATED so high = safer, like
+    // every other survival-shaped factor here. The asset-growth anomaly is that the fastest balance-sheet
+    // expanders underperform — acquisitions, capex booms and equity raises all land here — and this lane
+    // currently has no term that can see it: `rev_cagr` and `rev_accel` reward the growth, and nothing
+    // asks what it cost to buy. Correlated with `rev_accel` by construction, so the two must be read
+    // together rather than summed.
+    pub asset_growth: Option<f64>,
     // (V) this FILER never states an EPS anywhere in its series — not "not yet", not "loss-making",
     // not "no coverage at this cutoff". Read from the WHOLE `rows` slice, deliberately NOT through
     // `fund_as_of`: both callers that matter hand `fund_factors` the same full series (the backtest
@@ -1782,6 +1808,11 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
     };
     let rev_cagr = grow(now.and_then(|r| r.revenue), long_ago.and_then(|r| r.revenue)).map(|c| cagr(c, yrs as f64));
     let rev_1y = grow(now.and_then(|r| r.revenue), yr_ago.and_then(|r| r.revenue));
+    // (P3) same two endpoints, same `grow` positivity guard and the same `cagr` annualiser as rev_cagr
+    // above — one definition of a growth rate, per the house rule — then NEGATED so a slow-growing
+    // asset base ranks high alongside the other safety factors.
+    let asset_growth =
+        grow(now.and_then(|r| r.assets), long_ago.and_then(|r| r.assets)).map(|c| -cagr(c, yrs as f64));
     let rev_accel = match (rev_1y, rev_cagr) {
         (Some(a), Some(c)) => Some(a - c),
         _ => None,
@@ -1866,6 +1897,25 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
             -(vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt()
         })
     };
+    // (P2) accrual gap = −(eps − fcf_ps) / max(|eps|, floor). A filer earning 3.00 a share on 3.00 of
+    // per-share free cash flow scores 0; one earning 3.00 on 0.50 of cash scores −0.83.
+    //
+    // fcf_ps is DERIVED here (fcf_margin · revenue ÷ shares) and is deliberately NOT `FundRow::fcf_ps`
+    // — that field is premium-gated and never populates on either feed we run, so reading it would
+    // leave this None on every name in the universe. Same trap `roic` documents against `FundRow::roic`.
+    //
+    // `shares` is the DILUTED WEIGHTED AVERAGE, not the period-end count, so the fcf_ps in here is not
+    // a quotable per-share FCF and should never be printed as one. It is consistent across the series
+    // and across filers, which is all a cross-sectional rank needs — and crucially `eps` is struck on
+    // that same weighted average, so both legs of the subtraction sit on one share basis.
+    let accrual_gap = now.and_then(|r| {
+        // the floor stops a near-zero EPS from turning one cent of accrual into a ratio in the
+        // hundreds. It is denominated in the filer's REPORTING currency, so it only bites where the
+        // per-share unit is small — which is the intended shape: the guard is against eps ~= 0.
+        const EPS_FLOOR: f64 = 0.5;
+        let (rev, margin, eps, shares) = (r.revenue?, r.fcf_margin?, r.eps?, r.shares?);
+        (shares > 0.0).then(|| -((eps - margin / 100.0 * rev / shares) / eps.abs().max(EPS_FLOOR)))
+    });
     FundFactors {
         rev_cagr,
         rev_accel,
@@ -1918,6 +1968,8 @@ pub fn fund_factors(rows: &[FundRow], cutoff: NaiveDate, yrs: i64) -> FundFactor
         interest_cover: now.and_then(|r| r.interest_cover),
         net_cash_rev: now.and_then(|r| r.net_cash_rev),
         margin_stability,
+        accrual_gap,
+        asset_growth,
         // (V) `rows`, not `now` — see the field's doc. An EMPTY series is not "never reports", it is no
         // coverage at all (every ETF, every coin, every filer with no `fund`), so `!is_empty()` guards it.
         eps_never_reported: !rows.is_empty() && rows.iter().all(|r| r.eps.is_none()),
@@ -2388,6 +2440,8 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
         "interest_cover" => f.interest_cover,             // (round 107) survival: debt-service headroom
         "net_cash_rev" => f.net_cash_rev,                 // (round 107) survival: balance-sheet cushion
         "margin_stability" => f.margin_stability,         // (round 109) cyclical detector: −std(net_margin)
+        "accrual_gap" => f.accrual_gap,                   // (P2) −(earnings − cash earnings)/|earnings|: how cash-backed the profit is
+        "asset_growth" => f.asset_growth,                 // (P3) −CAGR of total assets: how fast the balance sheet is being expanded
         "composite" => composite_factor(f),               // (Item 3) blend of the present factors
         _ => None,
     }
@@ -2433,6 +2487,14 @@ pub fn backtest_quote(
     // (r39) same window/cadence as the vol above so `sortino` vs `sharpe_ref` differ ONLY in which
     // returns reach the denominator — the whole question the probe asks.
     quote.downside_dev_pct = downside_deviation_pct(c, cadence);
+    // (P4) ONE month of the run's own bars, scaled from `cadence` exactly as the long MA below is scaled
+    // from its session count, so a daily run reproduces the live 21-session window bar for bar.
+    //
+    // CEILING, and it is a real one: on a MONTHLY-cadence run this collapses to a single bar, and "the
+    // largest single-bar move in the last month" becomes "that month's own return" — a different signal
+    // wearing the same field name. The gate reading it is therefore only meaningful on the daily lane;
+    // a monthly sweep of it is measuring something else and must not be pooled with a daily one.
+    quote.max_daily_1m = max_daily_pct(c, (cadence / 12).max(1));
     let long_ma = crate::config::LONG_MA_SESSIONS * cadence / 252;
     quote.below_ma_pct = below_long_ma_pct(c, long_ma);
     quote.above_ma_pct = above_long_ma_pct(c, long_ma);
@@ -2523,6 +2585,24 @@ pub fn volatility_pct(closes: &[f64], n: usize) -> Option<f64> {
     let mean = rets.iter().sum::<f64>() / rets.len() as f64;
     let var = rets.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / rets.len() as f64;
     Some(var.sqrt())
+}
+
+/// (P4) MAX: the LARGEST single-bar % gain over the last `n` bars — the trailing-month extreme, not a
+/// dispersion. Same walk, same `.is_finite()` filter and the same "returns need n+1 closes" arithmetic as
+/// `volatility_pct` above, so the two never disagree about which bars are in the window.
+///
+/// One return IS a max (unlike a stdev, which needs two), so the guard is `is_empty`, not `len() < 2`.
+/// Only GAINS are asked for: the crash day is already priced by `max_drawdown_pct` and by the downside
+/// deviation, while the up-spike is the one this whole field exists for. A window with no up day at all
+/// legitimately returns the least-negative return, which is the correct answer to "the biggest single-bar
+/// move" and keeps the factor defined on a name that only fell.
+pub fn max_daily_pct(closes: &[f64], n: usize) -> Option<f64> {
+    let len = closes.len();
+    let start = len.saturating_sub(n + 1); // n returns need n+1 closes — the same window as its twin
+    (start + 1..len)
+        .map(|i| (closes[i] - closes[i - 1]) / closes[i - 1] * 100.0)
+        .filter(|r| r.is_finite())
+        .max_by(|a, b| a.total_cmp(b))
 }
 
 /// (r39 probe) Downside twin of `volatility_pct` — same window, same per-bar % units, but only the
@@ -2871,6 +2951,8 @@ mod tests {
             interest_cover: Some(13.0),
             net_cash_rev: Some(14.0),
             margin_stability: Some(15.0),
+            accrual_gap: Some(23.0),
+            asset_growth: Some(24.0),
             eps_never_reported: false,
         };
         assert_eq!(select_fund_factor(&f, "rev_accel"), Some(2.0));
@@ -2889,6 +2971,8 @@ mod tests {
         assert_eq!(select_fund_factor(&f, "interest_cover"), Some(13.0));
         assert_eq!(select_fund_factor(&f, "net_cash_rev"), Some(14.0));
         assert_eq!(select_fund_factor(&f, "margin_stability"), Some(15.0)); // (round 109)
+        assert_eq!(select_fund_factor(&f, "accrual_gap"), Some(23.0)); // (P2) a FOURTH distinct field — not an alias of fcf_margin, which measures the level rather than the gap to earnings
+        assert_eq!(select_fund_factor(&f, "asset_growth"), Some(24.0)); // (P3) the balance-sheet twin of rev_cagr, and NOT rev_cagr — a filer can grow assets while revenue stalls
         assert_eq!(select_fund_factor(&f, "composite"), Some(3.5)); // (Item 3) mean(1..6) = 21/6, valuation excluded (buyback/valuation not blended)
         assert_eq!(select_fund_factor(&f, "nope"), None); // unknown -> neutral, never panics
         // (Item 19) earnings_yield helper: EPS/price in %, guarded against div-by-zero / missing EPS
@@ -3287,6 +3371,85 @@ mod tests {
         assert_eq!(fund_factors(&rows[..2], cutoff, 5).margin_stability, None);
         // as-of guard: cutoff before the 2024 filing leaves 2 rows -> None, no look-ahead
         assert_eq!(fund_factors(&rows, NaiveDate::from_ymd_opt(2023, 6, 1).unwrap(), 5).margin_stability, None);
+    }
+
+    /// (P2) `accrual_gap` = −(eps − fcf/share) / max(|eps|, 0.5), with fcf/share derived from the row's
+    /// own fcf_margin, revenue and diluted share count. Zero when the profit is exactly cash-backed,
+    /// negative when earnings run ahead of cash, POSITIVE when cash runs ahead of earnings — the sign
+    /// is what makes it usable as a high-is-safer factor next to the round-107 levels.
+    ///
+    /// The floor is pinned too, because without it a filer earning a rounding error a share reports an
+    /// enormous gap off an economically meaningless denominator.
+    #[test]
+    fn accrual_gap_is_negated_and_floored() {
+        let r = |revenue: f64, fcf_margin: f64, eps: f64, shares: f64| FundRow {
+            filed: NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(2023, 12, 31).unwrap(),
+            revenue: Some(revenue),
+            fcf_margin: Some(fcf_margin),
+            eps: Some(eps),
+            shares: Some(shares),
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let gap = |row: FundRow| fund_factors(&[row], cutoff, 5).accrual_gap;
+
+        // 1000 revenue at a 30% FCF margin = 300 of cash over 100 shares = 3.00/share, against 3.00 of
+        // EPS: every cent of the reported profit arrived as cash.
+        assert!(gap(r(1000.0, 30.0, 3.0, 100.0)).unwrap().abs() < 1e-9);
+        // same earnings, a tenth of the cash -> (3.00 − 0.50)/3.00 = 0.833 of the profit is an accrual
+        assert!((gap(r(1000.0, 5.0, 3.0, 100.0)).unwrap() + 0.8333333333).abs() < 1e-9);
+        // cash AHEAD of earnings reads positive — a depreciating-asset filer is not penalised for it
+        assert!((gap(r(1000.0, 30.0, 1.0, 100.0)).unwrap() - 2.0).abs() < 1e-9);
+        // the floor: 0.10 of EPS and no cash is −0.2 (denominator 0.5), NOT the −1.0 the raw ratio gives
+        assert!((gap(r(1000.0, 0.0, 0.1, 100.0)).unwrap() + 0.2).abs() < 1e-9);
+
+        // any missing leg is None, never a fabricated 0 — the FMP free tier leaves fcf_margin empty,
+        // and a 0 there would read as "perfectly cash-backed" on every name it covers
+        assert_eq!(gap(FundRow { fcf_margin: None, ..r(1000.0, 30.0, 3.0, 100.0) }), None);
+        assert_eq!(gap(FundRow { eps: None, ..r(1000.0, 30.0, 3.0, 100.0) }), None);
+        assert_eq!(gap(FundRow { shares: None, ..r(1000.0, 30.0, 3.0, 100.0) }), None);
+        assert_eq!(gap(FundRow { revenue: None, ..r(1000.0, 30.0, 3.0, 100.0) }), None);
+        assert_eq!(gap(FundRow { shares: Some(0.0), ..r(1000.0, 30.0, 3.0, 100.0) }), None);
+
+        // as-of guard: a cutoff before the filing date must not see the row at all
+        assert_eq!(
+            fund_factors(&[r(1000.0, 5.0, 3.0, 100.0)], NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(), 5).accrual_gap,
+            None
+        );
+    }
+
+    /// (P3) `asset_growth` is `rev_cagr`'s annualiser and positivity guard pointed at total assets, then
+    /// NEGATED. A balance sheet that doubled over 5 years must rank BELOW a flat one, which is the whole
+    /// reason the sign is flipped — every other factor in the struct reads high = safer and a raw growth
+    /// rate would silently invert against them in `composite` and in any reject-the-bottom probe.
+    #[test]
+    fn asset_growth_is_negated_and_shares_rev_cagr_s_guards() {
+        let r = |y: i32, assets: Option<f64>, revenue: f64| FundRow {
+            filed: NaiveDate::from_ymd_opt(y, 2, 1).unwrap(),
+            period_end: NaiveDate::from_ymd_opt(y - 1, 12, 31).unwrap(),
+            assets,
+            revenue: Some(revenue),
+            ..Default::default()
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        // assets 1000 -> 2000 over the 5y lookback, revenue flat: the expansion is invisible to rev_cagr
+        let rows = vec![r(2019, Some(1000.0), 500.0), r(2024, Some(2000.0), 500.0)];
+        let f = fund_factors(&rows, cutoff, 5);
+        let doubled = f.asset_growth.unwrap();
+        assert!((doubled + cagr(100.0, 5.0)).abs() < 1e-9, "must be the NEGATED 5y CAGR, got {doubled}");
+        assert!(doubled < 0.0, "a doubling balance sheet must rank low, not high");
+        assert_eq!(f.rev_cagr, Some(0.0), "flat revenue — the term that already exists cannot see this");
+
+        // a SHRINKING asset base ranks high: the sign flip has to work in both directions
+        let shrunk = vec![r(2019, Some(2000.0), 500.0), r(2024, Some(1000.0), 500.0)];
+        assert!(fund_factors(&shrunk, cutoff, 5).asset_growth.unwrap() > 0.0);
+
+        // same `grow` guard as rev_cagr: a missing or non-positive base is None, never a garbage ratio
+        assert_eq!(fund_factors(&[r(2019, None, 500.0), r(2024, Some(2000.0), 500.0)], cutoff, 5).asset_growth, None);
+        assert_eq!(fund_factors(&[r(2019, Some(0.0), 500.0), r(2024, Some(2000.0), 500.0)], cutoff, 5).asset_growth, None);
+        // and the look-ahead guard: with no row old enough to anchor the lookback there is no growth
+        assert_eq!(fund_factors(&[r(2024, Some(2000.0), 500.0)], cutoff, 5).asset_growth, None);
     }
 
     /// `income_snapshot`: picks the newest COMPLETE year (1 = annual filing, 4+ = full quarterly year;
@@ -3922,6 +4085,18 @@ mod tests {
     assert!((downside_deviation_pct(&dip, 30).unwrap() - (100.0_f64 / 3.0).sqrt()).abs() < 1e-9);
     assert!(downside_deviation_pct(&dip, 30).unwrap() < volatility_pct(&dip, 30).unwrap());
     assert_eq!(downside_deviation_pct(&[100.0], 30), None); // same too-few guard as its twin
+
+    // (P4) worst — largest — single-bar move. Not a dispersion: `riser` has three EQUAL-looking steps
+    // whose percentages differ, and the answer is the biggest of them, +13.0434…%, not their spread.
+    assert!((max_daily_pct(&riser, 30).unwrap() - (15.0 / 115.0 * 100.0)).abs() < 1e-9);
+    // ONE return is enough (a stdev needs two), so the guard is emptiness, not `len() < 2`.
+    assert_eq!(max_daily_pct(&[100.0, 105.0], 30), Some(5.0));
+    assert_eq!(max_daily_pct(&[100.0], 30), None); // one close = zero returns
+    assert_eq!(max_daily_pct(&[], 30), None);
+    // the window really is the LAST n returns: n=1 must not see the +50% that fell out of it
+    assert_eq!(max_daily_pct(&[100.0, 150.0, 153.0], 1), Some(2.0));
+    // a name that only fell still HAS a biggest move — the least-negative one, not None and not 0
+    assert!((max_daily_pct(&[100.0, 90.0, 81.0], 30).unwrap() + 10.0).abs() < 1e-9);
 
     assert_eq!(pct_cell(Some(&("€10.00".to_string(), 5.0))), "+5.0%");
     assert_eq!(pct_cell(None), "n/a");

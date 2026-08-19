@@ -3843,6 +3843,7 @@ mod tests {
             sector: None, // (#44) unknown sector -> is_commodity false -> damp inert, as in the backtest
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score
             avg_turnover_eur: Some(1e9), volatility_pct: None, below_ma_pct: 0.0, above_ma_pct: 0.0,
+            max_daily_1m: None, // (P4) unknown worst day -> the spike gate passes, as unknown vol does
             pe_ratio: None,
             mvrv: None, // (#45) no MVRV -> the crypto ceiling passes these fixtures free; the gate's own tests set it
             roe: None,
