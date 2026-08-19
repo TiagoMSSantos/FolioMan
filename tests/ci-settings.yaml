@@ -2159,7 +2159,42 @@ buy_heuristic:
                                  #   n=8571 rho +0.26 edge +27.9 OOS +0.40|+0.14 both +. Candidate lane run at 0.3 same-batch:
                                  #   edge +25.5->+27.5, winsorized +15.7->+17.7, rho intact +0.12, OOS -0.03|+0.26 -> -0.02|+0.27,
                                  #   worst era -11.7->-4.8 (nothing degraded). 0 = off.
+  growth_allow_negative_scores: false # (#86) UNMEASURED — an unfitted judgement value, and it ships OFF, so
+                                 #   the two lines below keep behaving exactly as they have. What it would fix,
+                                 #   stated first because it is the reason the two knobs under it are inert:
+                                 #   `ranked` trims on `min_score.max(0.0)`, so EVERY negative floor is the
+                                 #   same floor. Both values below are -100.0. Neither can fire. -100, -5 and
+                                 #   0 are one setting, and the ~40-line ETF receipt on the second line —
+                                 #   arguing 4.0 against 5.0, citing wrapper scores of 4.5-5.6 — is describing
+                                 #   a knob that has not been able to reach those rows since the clamp went in.
+                                 #   Read that receipt as ARGUMENT, never as a measurement of this config.
+                                 #   AND IT CANNOT BE FIXED ALONE, which is why this is one knob and not two.
+                                 #   The score is `base x damps + liq_bonus` and every damp lies in 0..1, so a
+                                 #   NEGATIVE base is raised toward zero by them: base -2.0 x damp 0.22 = -0.44.
+                                 #   Among the negatives the ranking is inverted — the most overextended, least
+                                 #   trusted, longest-underwater name scores highest. `growth_underwater_weight`
+                                 #   (0.3, three lines up) is the only term that can drive base below zero and
+                                 #   it is unbounded below. Honour the floor without fixing that and the rows
+                                 #   newly admitted arrive in the wrong order, which is worse than hiding them.
+                                 #   ON = the floor is used as written AND a negative base takes no damp at all.
+                                 #   Not `2 - damp`, not a division: the only claim that can be defended without
+                                 #   a sweep is that a penalty must not become a reward. How much MORE to punish
+                                 #   a stretched name already below zero is a magnitude nobody has measured.
+                                 #   WHY NO NUMBER IS QUOTED HERE. No sweep can settle it: the backtest pool
+                                 #   scores no negative-base rows (`underwater_yrs` is rebuilt in
+                                 #   `backtest_quote`, but a name that survives the gates to be scored is at or
+                                 #   near its own high by construction), and `min_score` is DISPLAY-only and
+                                 #   never reached by `backtest`. So this is a live-tables change end to end,
+                                 #   and no golden covers it — which is also why the default had to be `false`
+                                 #   rather than the fix: off is byte-identical, on is unmeasured.
+                                 #   REVERT RULE: it is already at the revert value. Before turning it on, run a
+                                 #   live `screen` both ways and read the BOTTOM of the stock table, not the top
+                                 #   — that is the only place the two settings differ. If a name that is deeply
+                                 #   underwater and far above its trend appears ABOVE a name that is merely
+                                 #   underwater, the inversion is still there and the change is not done.
   growth_min_score: -100.0       # hide growth rows scoring <= this; 0 = show all top_picks
+                                 #   (#86) INERT AT ANY NEGATIVE VALUE while growth_allow_negative_scores is
+                                 #   false — see the receipt above. -100.0 here means "no floor", the same as 0.
   growth_min_score_etf: -100.0   # ETF-only floor. ETF scores structurally cap ~5.6 (accel~0: a diversified basket doesn't accelerate; quality/liq/fund all 0) so the stock-calibrated 5.0 floor (fine at 26% of the ~19 stock ceiling) sits at ~89% of the ETF ceiling and shows only a sliver. 4.0 = surface the diversified broad-tech tier (Nasdaq-100 / World-IT / S&P-IT wrappers score 4.5-5.6; TER column lets you pick the cheapest wrapper) while still trimming the young single-sector padding (Europe-Financials 3.2, 6y). DISPLAY-only -> validated edge untouched. Does NOT surface broad S&P500 core (VUAA/SPYL young=no 5y leg, AUM5 ~8% CAGR=market-beta<growth_min_cagr) — history/thesis wall, not this floor
   # (funnel) THE ETF WALL IS `history`, NOT THIS FLOOR — the line above said it in words, now it is a
   #   number. Screen gate funnel, 2026-08-03, 4718 EU-buyable names: 1842 ETFs fail `history` (no 5y+ leg

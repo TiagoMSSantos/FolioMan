@@ -912,7 +912,7 @@ struct ScoreParts {
     ter_damp: f64,     // (T) ETF cost drag (1−TER)^20; 1.0 for stocks/crypto/None or when growth_ter_drag off
     commodity_damp: f64, // (#44) growth_commodity_damp on a GICS Energy/Materials row or a commodity-named fund; 1.0 otherwise / knob off / sector unknown (backtest)
     fx_damp: f64,      // (#45) growth_fx_damp on an ETF whose live quote currency is not EUR; 1.0 otherwise / knob off / currency unknown (backtest)
-    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp + liq_bonus when #8 growth_geomean_fold)
+    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
 
 /// Score a quote as a MOMENTUM/GROWTH candidate — the MIRROR of `buy_score`. The on-sale lane fades
@@ -1410,7 +1410,24 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
         d if d > 0.0 && is_noneur_etf(quote) => d,
         _ => 1.0,
     };
-    let score = if tuning.growth_geomean_fold {
+    // (#86) A DAMP MUST NEVER IMPROVE A SCORE. Every multiplier below sits in 0..1 and the whole stack
+    // is written as `base × damps`, which is only a penalty while `base` is positive. `underwater` is
+    // unbounded below and is the one term that can push it negative, and there `× 0.22` moves -2.0 to
+    // -0.44 — so the most overextended, least-trusted, longest-underwater name comes out TOP of the
+    // negatives. `liq_bonus` is added after the damps, so a deep-liquid name can ride that inverted
+    // number back above zero and into a table even today.
+    //
+    // Neutralising the damps, not reflecting them (`2 - damp`, or dividing): the defensible claim here
+    // is only that a penalty must not become a reward. How much MORE to punish a stretched name that is
+    // already scoring below zero is a magnitude nobody has measured, and inventing one would be a
+    // second unmeasured number defended by the first. Un-damped, the negatives simply keep `base`'s own
+    // order, which is monotone and is what the terms already say.
+    //
+    // Written as its own branch so the two shipped expressions are untouched character-for-character —
+    // float multiplication does not re-associate, and a golden is a bit-comparison.
+    let score = if tuning.growth_allow_negative_scores && base < 0.0 {
+        base + liq_bonus // every damp is 1.0 here, which is what `base × 1.0 × 1.0 …` evaluates to
+    } else if tuning.growth_geomean_fold {
         base * combine_damps(&[trust, overext_damp, proximity, value]) * ter_damp * commodity_damp * fx_damp + liq_bonus
     } else {
         base * proximity * value * damp * ter_damp * commodity_damp * fx_damp + liq_bonus
@@ -2189,7 +2206,17 @@ fn ranked<'a>(
     let mut picks = dedup_currency_twins(scored, tuning.prefer_eur); // one row per asset (BTC, not BTC-EUR+BTC-USD)
     // drop padding rows below the lane's floor, so the tables stop filling to top_picks with near-zero
     // names. (min_score 0 -> show everything > 0.)
-    picks.retain(|(_, s)| *s > min_score.max(0.0));
+    //
+    // (#86) `.max(0.0)` is why every negative floor is the same floor. ci-settings ships
+    // `growth_min_score: -100.0` and `growth_min_score_etf: -100.0`, so the ETF floor's own receipt —
+    // forty lines arguing 4.0 against 5.0 — is describing a knob that cannot fire, and so is every
+    // other value below zero. The clamp is kept as the DEFAULT rather than deleted because removing it
+    // alone would publish the inversion documented on the knob: a negative base gets damped UP, so the
+    // rows it newly admits are ordered backwards. One knob moves both, or neither.
+    // The on-sale lane's `[FOIL]` -100.0 rides through here too. That is not tuning the foil — it is
+    // the foil's own configured number finally meaning what it says, in the direction of showing more.
+    let floor = if tuning.growth_allow_negative_scores { min_score } else { min_score.max(0.0) };
+    picks.retain(|(_, s)| *s > floor);
     // best score first; ties broken by TURNOVER (most liquid first) not the incoming alphabetical order
     // — score-equal names are otherwise ordered by ticker, which buried a deep-liquid compounder (NVDA,
     // €32B) under a tiny-turnover twin (AMETEK, €244M) at the top-50 cutoff. Tie-break is edge-neutral
@@ -4410,6 +4437,51 @@ mod tests {
     zeroed.underwater_yrs = Some(0.0); // fresh-high name: 0y stretch == None (no claim, no dock)
     assert_eq!(growth_score(&zeroed, &uw), growth_score(&quick, &uw));
     assert_eq!(growth_score(&bleeder, &BuyHeuristic::default()), growth_score(&quick, &BuyHeuristic::default())); // weight 0: field inert
+    // (#86) A DAMP MUST NOT IMPROVE A SCORE. `sunk` is 200 underwater-years at weight 0.3, so its base
+    // is far below zero, and it sits 50% above its 200wk SMA, so the overextension brake damps it to
+    // ~0.525. Multiplying a NEGATIVE base by that raises it toward zero, which is the inversion: the
+    // most stretched, least-trusted, longest-underwater name comes out top of the negatives.
+    let neg = BuyHeuristic { growth_underwater_weight: 0.3, ..BuyHeuristic::default() };
+    let mut sunk = quote(2.0, strong);
+    sunk.underwater_yrs = Some(200.0);
+    sunk.above_ma_pct = 50.0;
+    let sunk_base = score_parts(&sunk, &neg).expect("the fixture scores").base;
+    assert!(sunk_base < 0.0, "fixture must actually go negative or this asserts nothing: {sunk_base}");
+    // DEFAULT (off) — today's behaviour, pinned so the knob's default cannot drift silently
+    let damped = growth_score(&sunk, &neg).unwrap();
+    assert!(damped > sunk_base, "off: a 0..1 damp RAISES a negative base ({damped} > {sunk_base})");
+    // ON — no damp at all, so the score IS the base (liq_bonus is 0 at the fixture's €1B turnover)
+    let on = BuyHeuristic { growth_allow_negative_scores: true, ..neg.clone() };
+    let undamped = growth_score(&sunk, &on).unwrap();
+    assert!((undamped - sunk_base).abs() < 1e-9, "on: the raw base, undamped — {undamped} vs {sunk_base}");
+    assert!(undamped < damped, "the correction can only move a negative score DOWN, never up");
+    // the inversion itself: two equally-sunk names, the MORE stretched one wins today and must not
+    let mut stretched = sunk.clone();
+    stretched.above_ma_pct = 90.0;
+    assert!(
+        growth_score(&stretched, &neg).unwrap() > growth_score(&sunk, &neg).unwrap(),
+        "off: harder brake = higher rank, which is the whole bug"
+    );
+    assert_eq!(growth_score(&stretched, &on), growth_score(&sunk, &on), "on: neither is damped, so they tie");
+    // and a POSITIVE base is untouched by the knob — the entire shipped lane rides on this line
+    assert_eq!(growth_score(&quick, &on), growth_score(&quick, &neg), "a positive score never moves");
+    // (#86) the other half, in `ranked`: `.max(0.0)` makes every negative floor the same floor, which
+    // is what the ~40-line receipt arguing 4.0 vs 5.0 for `growth_min_score_etf` is describing.
+    let unpinned: HashSet<&str> = HashSet::new();
+    let one = std::slice::from_ref(&sunk);
+    assert!(
+        ranked(one, &neg, growth_score, -100.0, &unpinned).is_empty(),
+        "off: clamped to 0, so a -100 floor cannot admit a negative score"
+    );
+    assert_eq!(
+        ranked(one, &on, growth_score, -100.0, &unpinned).len(),
+        1,
+        "on: -100 means -100, and admits a score of about {sunk_base}"
+    );
+    assert!(
+        ranked(one, &on, growth_score, sunk_base, &unpinned).is_empty(),
+        "on: still a STRICT floor at the score itself, exactly as the positive path already is"
+    );
 
     // (X) EXIT-review diff: only PRIOR-PASSING names that fail NOW get a line — still-passing and
     // never-passing names are skipped; a structurally unassessable one (unknown turnover) is flagged.
