@@ -349,6 +349,51 @@ fn best_of_tag(on: bool, candidates: usize) -> String {
     if on { format!(" [best of {candidates}, unhaircut]") } else { String::new() }
 }
 
+/// (#96) The lane's `edge` and the verdict's `top-N excess` are both printed as "pts" and are NOT the
+/// same unit. `edge` is a spread of CUMULATIVE returns over the run's whole `years` hold — `realized`
+/// is `close[i+hold]/close[i] − 1`, one number per cutoff, never divided by anything. `excess` is per
+/// YEAR. At the 20y run that is a ~20× gap between two numbers a reader compares by eye because the
+/// report gives them the same name and the same suffix.
+///
+/// The restatement is per HALF, not on the spread: annualising a difference of cumulative returns is
+/// not the difference of the annualised ones, and the second is the one that means "points per year".
+/// A half at or below −100% cumulative has no real root, so the tag goes silent rather than print NaN.
+fn annualized_edge_tag(on: bool, top: f64, bot: f64, years: i64) -> String {
+    let ann = |x: f64| ((1.0 + x / 100.0).powf(1.0 / years.max(1) as f64) - 1.0) * 100.0;
+    if !on || top <= -100.0 || bot <= -100.0 {
+        return String::new();
+    }
+    format!("   [= {:+.2} pts/yr over the {years}y hold]", ann(top) - ann(bot))
+}
+
+/// (#96) Round trips the net-of-cost line should charge for.
+///
+/// [`turnover_frac`] measures churn between CONSECUTIVE ~6mo buckets — a per-rebalance number. The
+/// charge was applied ONCE against an edge spanning the full `years` hold, so a book re-formed every
+/// six months for twenty years paid one round trip. At 2 rebalances a year that understates the cost
+/// by `2·years`, and "NET ≤ 0: too churny to trade" can never fire on a long run no matter how much
+/// the book churns: 20bps against a twenty-year cumulative spread is noise by construction.
+///
+/// OFF returns the single charge every golden and every fitted receipt was measured under.
+fn rebalances(years: i64, per_rebalance: bool) -> i64 {
+    if per_rebalance { (2 * years).max(1) } else { 1 }
+}
+
+/// The charge itself, in points. ONE definition — both the lane report and the hold-period sweep
+/// route through it, and the printed formula quotes [`rebalances`] rather than re-deriving it.
+fn cost_pts(turn: f64, years: i64, per_rebalance: bool) -> f64 {
+    turn * rebalances(years, per_rebalance) as f64 * ROUND_TRIP_BPS / 100.0
+}
+
+/// The printed multiplier — EMPTY when the knob is off, so the shipped line stays byte-identical.
+fn rebalance_tag(years: i64, per_rebalance: bool) -> String {
+    if per_rebalance {
+        format!(" × {} rebalances", rebalances(years, per_rebalance))
+    } else {
+        String::new()
+    }
+}
+
 /// (#90) PURGE + EMBARGO for a chronological split. Returns where the EARLIER side should stop, given
 /// where the split falls: every row within `months` of the boundary date is dropped off the end of it.
 ///
@@ -1268,8 +1313,8 @@ pub async fn run(args: Vec<String>) {
         knob("growth_min_leg_years ->2 (admits the 2Y rung)", |t| t.growth_min_leg_years = 2.0),
         knob("growth_max_peg ->off", |t| t.growth_max_peg = 0.0), // (#37) fwd return of the names the valuation ceiling excludes — the ceiling's own keep. The ci-settings curve (1.5..4.0) came from six hand-edited configs; this prices the on/off question every run, which is the part that sweep found decisive
     ];
-    report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, &buy_knobs);
-    report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, &growth_knobs);
+    report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, &buy_knobs, years);
+    report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, &growth_knobs, years);
     // (#3g) the two levers that decide how hard a HIGH-CAGR name is rewarded: the slope and the ceiling.
     // Swept as curves because the ablation only prices removal and `tune` only reports a confounded
     // argmax — neither distinguishes a plateau (room to push) from a peak (already at the ceiling).
@@ -1647,7 +1692,9 @@ async fn hold_period_sweep(
         let (t, b) = edge_halves(&scored);
         let edge = t - b;
         let turn = turnover_frac(&scored);
-        let net = edge - turn * ROUND_TRIP_BPS / 100.0;
+        // (#96) `h`, not the run's horizon: this sweep's whole point is that each row holds for a
+        // DIFFERENT span, so the number of rebalances inside the hold differs per row too.
+        let net = edge - cost_pts(turn, h, tuning.cost_per_rebalance);
         // same samples, same halves, only the score changes — so this reads as edge, in the same units
         let null_scored: Vec<(&Sample, f64)> =
             s.iter().filter_map(|x| growth_score(&x.quote, &null_tuning).map(|v| (x, v))).collect();
@@ -3527,6 +3574,7 @@ fn report_lane(
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
     tuning: &BuyHeuristic,
     knobs: &[Knob],
+    years: i64,
 ) {
     let scored: Vec<(&Sample, f64)> =
         samples.iter().filter_map(|s| scorer(&s.quote, tuning).map(|v| (s, v))).collect();
@@ -3549,7 +3597,10 @@ fn report_lane(
     // disagree (a term can read mildly rho-harmful yet be load-bearing for the actual top/bottom spread).
     let (top, bot) = edge_halves(&scored);
     let base_edge = top - bot;
-    println!("  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {base_edge:+.1} pts");
+    println!(
+        "  top-half peer-relative {top:+.1} pts  vs  bottom-half {bot:+.1} pts  ->  edge {base_edge:+.1} pts{}",
+        annualized_edge_tag(tuning.print_edge_annualized, top, bot, years)
+    );
     // (Item 5) bootstrap band: is that point edge distinguishable from 0 given overlapping-sample noise?
     if let Some((lo, hi)) = bootstrap_edge_ci(samples, scorer, tuning, 1000, 5.0, 95.0) {
         let verdict = if lo > 0.0 {
@@ -3564,9 +3615,13 @@ fn report_lane(
     // (Item 9) net of cost: a high-turnover edge can be NET-negative once you pay the spread to chase it
     // each rebalance. cost(pts) = turnover_frac × ROUND_TRIP_BPS / 100 (1 pt = 100 bps).
     let turn = turnover_frac(&scored);
-    let net = base_edge - turn * ROUND_TRIP_BPS / 100.0;
+    let net = base_edge - cost_pts(turn, years, tuning.cost_per_rebalance);
     let tag = if net <= 0.0 { "  <- NET ≤ 0: too churny to trade" } else { "" };
-    println!("  net of cost: edge {base_edge:+.1} − turnover {:.0}% × {ROUND_TRIP_BPS:.0}bps = net {net:+.1} pts{tag}", turn * 100.0);
+    println!(
+        "  net of cost: edge {base_edge:+.1} − turnover {:.0}% × {ROUND_TRIP_BPS:.0}bps{} = net {net:+.1} pts{tag}",
+        turn * 100.0,
+        rebalance_tag(years, tuning.cost_per_rebalance)
+    );
     // (Item 12) is that edge a broad spread or one lucky name? Winsorize the tails and re-read it.
     let wedge = winsor_edge(&scored);
     let wtag = if wedge <= 0.0 && base_edge > 0.0 { "  <- raw edge is an OUTLIER ARTIFACT (leans on extreme rows)" } else { "" };
@@ -4328,6 +4383,47 @@ mod tests {
         assert!(TOP_LADDER.contains(&VERDICT_TOP), "the shipped basket must be a rung the table grades");
         let both = verdict_line(&v, false, true, true);
         assert!(both.contains("top-3 [best of 13, unhaircut] held 12y, 84 windows  n_eff 3.5): book"), "{both}");
+    }
+
+    /// (#96) The two numbers a reader compares by eye and should not: a lane's `edge` is a spread of
+    /// CUMULATIVE returns over the hold, `top-N excess` is per year. The restatement must be the
+    /// difference of the annualised HALVES, not the annualisation of the difference — those disagree,
+    /// and only the first one is "points per year". OFF renders nothing, which is what the goldens pin.
+    #[test]
+    fn a_cumulative_edge_and_a_per_year_excess_are_not_the_same_number() {
+        // 10× and 2× over a 20y hold: +900 vs +100 cumulative, an +800 pt "edge".
+        // Annualised the two halves are +12.20%/yr and +3.53%/yr — an +8.68 pt/yr spread, ~92× smaller.
+        let tag = annualized_edge_tag(true, 900.0, 100.0, 20);
+        assert_eq!(tag, "   [= +8.68 pts/yr over the 20y hold]", "{tag}");
+        // annualising the SPREAD instead would read +11.7 pts/yr — a different, wrong answer.
+        assert!(!tag.contains("+11.7"));
+        // at a 1y hold the two units coincide, so the restatement must be the edge itself.
+        assert_eq!(annualized_edge_tag(true, 900.0, 100.0, 1), "   [= +800.00 pts/yr over the 1y hold]");
+
+        assert_eq!(annualized_edge_tag(false, 900.0, 100.0, 20), "", "OFF adds NOTHING — goldens are the proof");
+        // a half at −100% has no real root; the tag goes silent rather than printing NaN.
+        assert_eq!(annualized_edge_tag(true, 900.0, -100.0, 20), "");
+        assert!(!annualized_edge_tag(true, 900.0, -99.9, 20).contains("NaN"));
+    }
+
+    /// (#96) `turnover_frac` is a PER-REBALANCE number but the charge landed once against a hold-long
+    /// edge. At a 20y hold that is 40 six-month re-formations paying for one, and the printed formula
+    /// must quote the multiplier it actually used rather than leave the arithmetic unreconcilable.
+    #[test]
+    fn the_turnover_charge_must_count_the_rebalances_inside_the_hold() {
+        // OFF: one round trip, whatever the hold — the arithmetic every fitted receipt was measured under.
+        assert_eq!(rebalances(20, false), 1);
+        assert!((cost_pts(0.5, 20, false) - 0.1).abs() < 1e-12);
+        assert_eq!(rebalance_tag(20, false), "", "OFF adds NOTHING — goldens are the proof");
+
+        // ON: ~6mo buckets, so 2 per year of hold. A 0.15pt charge on a 20y run becomes 4.0pt.
+        assert_eq!(rebalances(20, true), 40);
+        assert!((cost_pts(0.5, 20, true) - 4.0).abs() < 1e-12);
+        assert_eq!(rebalance_tag(20, true), " × 40 rebalances");
+        // the hold-period sweep passes its own row's `h`, so a 1y row pays 2 and a 10y row pays 20.
+        assert_eq!((rebalances(1, true), rebalances(10, true)), (2, 20));
+        // a 0y hold must still charge something rather than zeroing the cost line.
+        assert_eq!(rebalances(0, true), 1);
     }
 
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back

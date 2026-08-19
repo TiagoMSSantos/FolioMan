@@ -782,6 +782,62 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  print_edge_annualized: false   # (#96) UNMEASURED in the sense that no run has been read with it on —
+                                 # but unlike its neighbours this one CANNOT change a decision, because
+                                 # nothing scored reads it. Shipping OFF keeps the goldens byte-identical.
+                                 #
+                                 #   THE DEFECT: `edge` and `top-N excess` are both printed as "pts" and
+                                 #   are not the same unit. `edge` is a spread of CUMULATIVE returns over
+                                 #   the run's whole hold — `realized` is `close[i+hold]/close[i] − 1`,
+                                 #   never divided by anything — while `excess` is per YEAR. At the 20y
+                                 #   run that is a ~20× gap between two numbers printed in the same
+                                 #   report under the same name, which a reader compares by eye.
+                                 #
+                                 #   WHAT true DOES: appends `[= X pts/yr over the Ny hold]` to the lane's
+                                 #   headline. The restatement annualises each HALF and subtracts, because
+                                 #   annualising the spread is a different (wrong) number — pinned by
+                                 #   `a_cumulative_edge_and_a_per_year_excess_are_not_the_same_number`,
+                                 #   which reads +8.68 pts/yr where annualising the spread would say +11.7.
+                                 #
+                                 #   TO SETTLE: nothing to sweep. Turn it on when reading a report by hand.
+                                 #   REVERT RULE: none needed — a print-only knob has no result to protect.
+  cost_per_rebalance: false      # (#96) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+                                 # the single-charge arithmetic every golden and every fitted receipt in
+                                 # this file was measured under. Read with `print_edge_annualized` above:
+                                 # both are the same units bug, one in the label and one in the number.
+                                 #
+                                 #   THE DEFECT: `turnover_frac` is a PER-REBALANCE quantity — 1 − mean
+                                 #   Jaccard of the held set between CONSECUTIVE ~6mo buckets — but the
+                                 #   charge `turn × 20bps` was applied ONCE against an edge spanning the
+                                 #   whole hold. A book re-formed every six months for twenty years paid
+                                 #   for one round trip. The consequence is not just a small number: the
+                                 #   "NET ≤ 0: too churny to trade" flag CANNOT fire on a long run at any
+                                 #   churn level, because 20bps against a twenty-year cumulative spread is
+                                 #   noise by construction. The guard is decorative at the horizons that
+                                 #   ship.
+                                 #
+                                 #   WHAT true DOES: charges `2 × hold_years` round trips (~6mo buckets, so
+                                 #   two a year), and prints the multiplier so the line's arithmetic
+                                 #   reconciles. The HOLD-PERIOD SWEEP charges per ROW — a 1y row pays 2,
+                                 #   a 10y row pays 20 — which is the point of that table: the cheap hold
+                                 #   was previously getting the same one-trip discount as the expensive one,
+                                 #   so "if they're flat, the longest (cheapest) wins" was advice the
+                                 #   arithmetic underneath could not support.
+                                 #
+                                 #   EXPECTED TO LOOK WORSE. At 20y the charge grows 40×, and a lane whose
+                                 #   net edge survives that is a different claim from one that survives
+                                 #   0.15pt. A `net` that turns negative when this is ON is the FINDING,
+                                 #   not a regression — it means the shipped number was flattered.
+                                 #
+                                 #   TO SETTLE: it is not a tuning sweep. Run the lane report at 20y/12y/8y
+                                 #   with it on and read whether `net` still clears 0 and whether the churn
+                                 #   flag fires. If it fires, the hold-period sweep is the follow-up: the
+                                 #   answer is a longer hold or a smaller book, not a smaller charge.
+                                 #
+                                 #   REVERT RULE: this knob has NO edge-improving arm and must never be
+                                 #   judged by one. It goes ON when someone accepts the honest cost, and OFF
+                                 #   only to reproduce a pre-(#96) receipt. Never turned off because the
+                                 #   number got worse.
   backtest_drop_lookahead_sector: false # (#95) UNMEASURED — an unfitted judgement value, shipping
                                  #   OFF, which is the stamped-sector behaviour every golden and every
                                  #   fitted receipt in this file was measured under. Sibling of (#94)
