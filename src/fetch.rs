@@ -350,7 +350,11 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     // above. All parallel arrays cut together; pre-splice dividends go too (they're denominated in
     // the discarded currency — summing them into tr_cagr would mix units). Crypto exempt: a real
     // 13×/wk week exists there (SHIB), so the trimmer would amputate genuine history.
-    if !crate::picks::is_currency_quoted(ticker) {
+    // (#94) ...and NOT here when `splice_trim_point_in_time` is on: draining at parse time applies a
+    // splice retroactively, deleting bars that existed and were knowable at every earlier cutoff. The
+    // trim then happens where the as-of slice is known — `core::backtest_quote` for the walk, and the
+    // merged-series pass below for the live path, which already re-trims the whole record anyway.
+    if !crate::picks::is_currency_quoted(ticker) && !crate::config::splice_trim_point_in_time() {
         let start =
             core::splice_trim_start(&dates, &closes, crate::config::splice_max_weekly_rate());
         if start > 0 {

@@ -782,6 +782,50 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  splice_trim_point_in_time: false # (#94) UNMEASURED — an unfitted judgement value, shipping OFF, which
+                                 #   is the parse-time trim every golden and every fitted receipt in this
+                                 #   file was measured under. Read it together with `splice_max_weekly_rate`
+                                 #   above: that knob decides WHAT is a splice, this one decides WHEN the
+                                 #   answer is allowed to be known.
+                                 #
+                                 #   THE LOOK-AHEAD: `splice_trim_start` keeps the LAST qualifying step in
+                                 #   the whole series and `parse_chart` drains everything before it. A 2015
+                                 #   redenomination therefore deletes every pre-2015 bar when scoring a
+                                 #   2005 cutoff — the walk grades a name on a record a 2005 observer had
+                                 #   and a 2015 event retroactively removed. `age_years`, `life_cagr`,
+                                 #   MAXDD and the trend R² are then all computed on the truncated series,
+                                 #   so the name reads YOUNGER than it was and `growth_trust_young` docks
+                                 #   it for a fact that had not happened. The splice receipt already
+                                 #   measured the reach and read it as a cost worth paying: 138/3346
+                                 #   non-crypto series (4.1%), median trimmed series losing 72% of its
+                                 #   record. It is the same number, seen as look-ahead instead of coverage.
+                                 #
+                                 #   WHAT true DOES: `parse_chart` leaves the record whole and
+                                 #   `core::backtest_quote` trims over `[..=as_of]` instead, asking what
+                                 #   the cutoff could actually answer. At the LAST bar the two questions
+                                 #   coincide — that identity is pinned by
+                                 #   `a_splice_cannot_delete_history_that_had_not_happened_yet` — which is
+                                 #   why the LIVE path does not move: `quote_one` re-trims the merged
+                                 #   series over its whole span anyway, and its whole span ends at today.
+                                 #
+                                 #   ONE CAVEAT WORTH KNOWING BEFORE FLIPPING IT: with the drain deferred,
+                                 #   the SHORT (daily-tail) chart inside `quote_one` is no longer trimmed
+                                 #   by `parse_chart`, only by the merged-series pass. A splice inside the
+                                 #   last year of daily bars is caught either way; one that lands exactly
+                                 #   at a payload boundary is worth checking on a live `screen` before
+                                 #   trusting the first run.
+                                 #
+                                 #   TO SETTLE IT: `backtest universe` at 8y and 12y against a control,
+                                 #   and read the CLASS CENSUS and the YRS distribution first — if the
+                                 #   trimmed 4% are not in the gated pool the knob is inert and the run
+                                 #   says nothing. Expect the affected names to get OLDER at early cutoffs,
+                                 #   which loosens `growth_trust_young` and lengthens their `life_cagr`
+                                 #   window; both directions are possible for edge and neither is a bug.
+                                 #
+                                 #   REVERT RULE: this changes the INPUT record, so a before/after pair is
+                                 #   two different measurements, not an A/B — the same caveat
+                                 #   `splice_max_weekly_rate` carries. Judge it on whether the YRS column
+                                 #   stops misstating a listing's age, not on whether edge went up.
   demean_by_market: false        # (#93) UNMEASURED — an unfitted judgement value, shipping OFF, which is
                                  #   the single pooled (bucket, class) peer group every edge, rho, OOS
                                  #   half and `tune` winner in this repo was measured against. Turning it

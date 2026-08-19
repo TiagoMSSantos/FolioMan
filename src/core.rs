@@ -2498,7 +2498,19 @@ pub fn backtest_quote(
     cadence: usize,
     windows: &BTreeMap<String, i64>,
 ) -> Quote {
-    let (d, c) = (&dates[..=as_of], &closes[..=as_of]);
+    // (#94) THE AS-OF SPLICE TRIM. `parse_chart` used to drain the pre-splice head for the whole
+    // record, which applies a redenomination retroactively: a 2015 glue joint deleted every pre-2015
+    // bar for a 2005 cutoff, and `age_years` / `life_cagr` / MAXDD / trend R² were then measured on a
+    // record this walk could not have seen. Trimming HERE, over `[..=as_of]` only, asks the question
+    // the cutoff could actually answer. At the last bar it returns exactly what parse-time trimming
+    // returned, so the live path is unchanged. 0 when the knob is off (the series arrived pre-trimmed,
+    // so this finds nothing anyway) and for crypto, whose real 13x/wk weeks are not splices.
+    let splice = if crate::config::splice_trim_point_in_time() && !crate::picks::is_currency_quoted(ticker) {
+        splice_trim_start(&dates[..=as_of], &closes[..=as_of], crate::config::splice_max_weekly_rate())
+    } else {
+        0
+    };
+    let (d, c) = (&dates[splice..=as_of], &closes[splice..=as_of]);
     let mut quote = Quote::stub(ticker, "", "", ticker);
     // (D) as-of dividends. The module header used to say a walk-forward could not reconstruct these,
     // and the `dividend_weight` receipt called grading the term IMPOSSIBLE on that basis — both were
@@ -2799,6 +2811,37 @@ mod tests {
         // degenerate inputs: empty and single-point series trim nothing
         assert_eq!(splice_trim_start(&[], &[], 2.0), 0);
         assert_eq!(splice_trim_start(&dates[..1], &closes[..1], 2.0), 0);
+    }
+
+    /// (#94) The as-of trim: a splice must not delete history that had not happened yet.
+    ///
+    /// Trimming at PARSE time keeps the last qualifying step in the WHOLE record, so a redenomination
+    /// deletes the pre-splice head for every earlier cutoff too — the walk then scores a name whose
+    /// `age_years`, `life_cagr`, MAXDD and trend R² are all measured on bars a 2005 observer would have
+    /// had and a 2015 splice retroactively removed. The trimmer is pure and takes slices, so the fix is
+    /// the slice: ask it what was knowable at `as_of` rather than what is known now. The last assertion
+    /// is why the live path does not move — at the final bar the two questions have the same answer.
+    #[test]
+    fn a_splice_cannot_delete_history_that_had_not_happened_yet() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // 10 monthly bars; a ×30 redenomination lands between index 5 and 6 (30^(7/30) = 2.21×/wk).
+        let dates: Vec<NaiveDate> =
+            (0..10).map(|i| ymd(2000, 1, 1) + chrono::Duration::days(i * 30)).collect();
+        let closes: Vec<f64> = (0..10).map(|i| if i < 6 { 10.0 } else { 300.0 }).collect();
+
+        // parse time, the whole record: the head goes, and every cutoff inherits that.
+        assert_eq!(splice_trim_start(&dates, &closes, 2.0), 6);
+        // as-of bar 4 the splice is still in the future — nothing is trimmed, because nothing happened.
+        assert_eq!(splice_trim_start(&dates[..=4], &closes[..=4], 2.0), 0);
+        assert_eq!(splice_trim_start(&dates[..=5], &closes[..=5], 2.0), 0, "the bar BEFORE the step");
+        // as-of bar 6 it has happened, and the trim is the same one parse time applies.
+        assert_eq!(splice_trim_start(&dates[..=6], &closes[..=6], 2.0), 6);
+        // at the LAST bar the as-of question and the whole-record question coincide. That identity is
+        // the whole reason moving the trim leaves the live path byte-identical.
+        assert_eq!(
+            splice_trim_start(&dates[..=9], &closes[..=9], 2.0),
+            splice_trim_start(&dates, &closes, 2.0)
+        );
     }
 
     /// (#3l) capped_life_cagr: the window clamps to the LAST `max_years`, so a 40y series with a
