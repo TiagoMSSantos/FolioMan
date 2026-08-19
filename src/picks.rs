@@ -3086,6 +3086,34 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
             .collect(),
         None => stock, // knob off, or nobody in this table carries a PEG -> nothing to rank against
     };
+    // (#101) SECTOR CAP, stocks only, and the third cohort-aware post-rank trim in a row — same seam,
+    // same contract as the two above: after the score/sector cut, before the table is cut to `n`, so a
+    // dropped row refills from below rather than shortening the table. Pinned tickers bypass it.
+    //
+    // Nothing else in this tool limits concentration. `growth_corr_cap` ships 0.0 (off) and
+    // `growth_value_floor_pct` ships 0.0 (off), so on the shipped config the ONLY surviving trim here
+    // is the ETF PEG ceiling — the stock table can legitimately be twenty semiconductor names, and the
+    // printed "sector mix" line is an OBSERVATION, not a constraint. This is the constraint.
+    //
+    // Keeps the FIRST `growth_sector_cap` rows of each sector, which is the highest-scoring ones
+    // because the list arrives rank-ordered. A name with no sector is KEPT: unjudgeable is not a
+    // verdict, the same house rule the value brake above and the PEG gates follow — and it is what
+    // keeps this trim inert for any pool where `sector` is unfilled.
+    let stock: Vec<_> = if tuning.growth_sector_cap > 0 {
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+        let mut stock = stock;
+        stock.retain(|(quote, _)| {
+            pinned.contains(quote.ticker.as_str())
+                || quote.sector.as_deref().is_none_or(|sec| {
+                    let n = seen.entry(sec).or_insert(0);
+                    *n += 1;
+                    *n <= tuning.growth_sector_cap
+                })
+        });
+        stock
+    } else {
+        stock
+    };
     let etf: Vec<_> = etf
         .into_iter()
         .filter(|(quote, s)| keep(quote, *s, etf_min_score, core::sector_matches(&quote.name, sectors)))
@@ -7658,6 +7686,44 @@ mod tests {
         // where an absent cohort means "everything is below the floor" and the table empties itself.
         let (v4, _, _) = lane_split(vec![(&unpriced, 8.0)], 10, &all_sectors, &brake50, &none, &no_pe);
         assert_eq!(names(&v4), ["NOPEG"], "no PEG anywhere in the cohort -> no verdict, no cut");
+
+        // (#101) SECTOR CAP — the only thing in the tool that limits concentration. Five stocks, three
+        // in one sector, one in another, one carrying no sector at all; scores descend so the cap has to
+        // be what decides which of the three semis survives, not the ranking.
+        let sectored = |t: &str, sec: Option<&str>| {
+            let mut q = stock(t, &up);
+            q.sector = sec.map(str::to_string);
+            q
+        };
+        let (s_a, s_b, s_c, health, nosec) = (
+            sectored("NVDA", Some("Information Technology")),
+            sectored("AMD", Some("Information Technology")),
+            sectored("AVGO", Some("Information Technology")),
+            sectored("LLY", Some("Health Care")),
+            sectored("MYSTERY", None),
+        );
+        let crows =
+            || vec![(&s_a, 12.0), (&s_b, 11.0), (&s_c, 10.0), (&health, 9.0), (&nosec, 8.0)];
+        let call = ["NVDA", "AMD", "AVGO", "LLY", "MYSTERY"];
+        let (c0, _, _) = lane_split(crows(), 10, &all_sectors, &d, &none, &no_pe);
+        assert_eq!(names(&c0), call, "0 = off, and that is the shipped default");
+        // cap 2 keeps the two HIGHEST-scoring of the tech trio — the list arrives rank-ordered, so
+        // "first two" and "best two" are the same rows, and AVGO is the one that goes.
+        let cap2 = BuyHeuristic { growth_sector_cap: 2, ..d.clone() };
+        let (c1, _, _) = lane_split(crows(), 10, &all_sectors, &cap2, &none, &no_pe);
+        assert_eq!(names(&c1), ["NVDA", "AMD", "LLY", "MYSTERY"], "third tech name cut, other sectors untouched");
+        // the cap is PER SECTOR, not a global budget: Health Care still gets its own allowance of 2.
+        let cap1 = BuyHeuristic { growth_sector_cap: 1, ..d.clone() };
+        let (c2, _, _) = lane_split(crows(), 10, &all_sectors, &cap1, &none, &no_pe);
+        assert_eq!(names(&c2), ["NVDA", "LLY", "MYSTERY"], "one per sector, and the sectorless name is not a sector");
+        // A pin outranks the cap, exactly as it outranks the value brake and the redundancy skip.
+        let pin_avgo: HashSet<&str> = ["AVGO"].into_iter().collect();
+        let (c3, _, _) = lane_split(crows(), 10, &all_sectors, &cap1, &pin_avgo, &no_pe);
+        assert_eq!(names(&c3), ["NVDA", "AVGO", "LLY", "MYSTERY"], "a pin means always show me this");
+        // Nobody carries a sector -> nothing judgeable -> nothing cut. Same inverse-reading guard the
+        // value brake has: an absent cohort must not mean "cut everything".
+        let (c4, _, _) = lane_split(vec![(&nosec, 8.0)], 10, &all_sectors, &cap1, &none, &no_pe);
+        assert_eq!(names(&c4), ["MYSTERY"], "no sector anywhere -> no verdict, no cut");
 
         // ETF lane runs its OWN floor. Same score, two floors, opposite verdicts.
         let mut fund = Quote::stub("VWCE.DE", "€120.00", "", "Vanguard FTSE All-World UCITS ETF");

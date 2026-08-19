@@ -782,6 +782,47 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  growth_sector_cap: 0           # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
+                                 # 0 (off), which is today's unconstrained table. It is a RISK
+                                 # constraint, and the honest thing to say up front is that the
+                                 # backtest CANNOT grade it: see below.
+                                 #
+                                 #   THE GAP: nothing in this tool limits sector concentration in the
+                                 #   printed book. `growth_corr_cap` ships 0.0 (off) and
+                                 #   `growth_value_floor_pct` ships 0.0 (off), so the ONLY surviving trim
+                                 #   in `lane_split` is the ETF PEG ceiling. The stock table can
+                                 #   legitimately be twenty semiconductor names, and the printed "sector
+                                 #   mix" line is an OBSERVATION, not a constraint. Combined with
+                                 #   `config::Sizing`'s risk budget — the one documented exception to the
+                                 #   defaults-are-current rule — there is nothing between the score and
+                                 #   the position size that limits concentration either.
+                                 #
+                                 #   WHAT > 0 DOES: keeps at most N stocks per GICS sector, the
+                                 #   highest-scoring ones (the list arrives rank-ordered). Post-rank
+                                 #   DISPLAY trim at the same seam as the redundancy skip and the value
+                                 #   brake — after the score/sector cut, before the table is cut to `n`,
+                                 #   so a dropped row REFILLS from below and the table does not shorten.
+                                 #   Pinned tickers bypass. A name with no sector is KEPT: unjudgeable is
+                                 #   not a verdict, and that is also what makes the trim inert in any pool
+                                 #   where `sector` is unfilled.
+                                 #
+                                 #   WHY NO SWEEP CAN SETTLE IT. This is display-only and the backtest
+                                 #   scores SAMPLES, not tables — `lane_split` is never on the graded
+                                 #   path, so no edge, rho or h2h number moves at any value. Worse, the
+                                 #   metric a concentration cap exists to improve (drawdown correlation
+                                 #   across the held book) is not what the ship rule measures: the graded
+                                 #   quantity is per-name peer-relative return, which is de-meaned WITHIN
+                                 #   a bucket and therefore blind to whether the book's names move
+                                 #   together. Grading this needs a portfolio-level measurement the tool
+                                 #   does not have.
+                                 #
+                                 #   SO THE RULE FOR THIS KNOB IS DIFFERENT: it ships off because it is
+                                 #   unmeasured, and if it is ever turned on that will be a DELIBERATE
+                                 #   RISK CHOICE recorded as such — never a fitted value, and never
+                                 #   justified by an edge number, because no edge number can move.
+                                 #   3 is the value to try first if someone makes that choice; it is a
+                                 #   judgement, not a measurement, and must not acquire a receipt that
+                                 #   implies otherwise.
   growth_gate_on_tr_cagr: false  # (#99) UNMEASURED — an unfitted judgement value, shipping OFF, which is
                                  # the price-only bar every golden and every gate receipt in this file
                                  # was measured under. Read with `growth_min_cagr` and `use_adjusted_close`.
