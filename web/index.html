@@ -84,6 +84,22 @@
     base. These ranked tilts are higher-variance, regime-dependent sector/thematic bets whose recent
     leadership won't necessarily repeat. <strong>NOT advice.</strong>
   </p>
+  <!-- (#83) Which config produced these rows. The page runs config/web-settings.yaml, which mirrors
+       the private terminal run and NOT the base the backtest receipts were measured on: four gates
+       are opened wide enough to reject almost nothing, and the ranking compounds whole-life CAGR,
+       which the base records as a measured loser. Stated here because this page is the tool's
+       most-seen output, and an undocumented departure is how a number acquires an authority nobody
+       measured it to have. Static text on purpose — the payload carries three rows and no config,
+       and shipping the knobs to the browser would be a second place for them to drift. -->
+  <p class="note" id="lane">
+    <strong>Which ranking this is.</strong> These rows come from
+    <code>config/web-settings.yaml</code>, which mirrors the author's terminal — not the configuration
+    the backtest receipts were measured on. It opens four gates wide enough that almost nothing is
+    rejected, and it ranks on whole-life CAGR, which the tuned configuration records as
+    <em>worse</em> than the fixed-window basis it ships. So the measured edge in this repo does
+    <em>not</em> transfer to this page: what you are reading is the top of a deliberately permissive
+    ranking, shown because it is the one the author actually looks at.
+  </p>
   <p class="note" id="flags">
     Rank flags: <code>*</code> pinned · <code>#</code> scored on live fundamentals · <code>!</code>
     late-cycle, brake floored · <code>c</code> commodity-linked · <code>x</code> non-EUR-quoted line ·

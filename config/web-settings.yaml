@@ -86,6 +86,24 @@ widths:
 # The gate loosenings the local overlay runs with. Mirrored because they change the RANKING, not just
 # the layout: on the base gates alone the page would rank a different #1 than the terminal it claims
 # to mirror. Nothing private here — these are knobs, and the base carries them all with comments.
+#
+# (#83) SAY IT PLAINLY: THIS BLOCK IS NOT THE VALIDATED LANE, AND THE PAGE IS THE MOST-SEEN OUTPUT
+# THE TOOL HAS. Every receipt in `tests/ci-settings.yaml` was measured on the BASE values, and five
+# lines below depart from them — four gates opened wide enough that almost nothing is rejected
+# (`growth_min_1y_pct`, `growth_min_5y_pct` and `min_score` at -1e6, `growth_min_leg_years` at 0,
+# `growth_min_range_pct*` 80 -> 50) and one that changes WHICH NUMBER is ranked (`use_life_cagr`,
+# see the block beside it). So no measured edge from that file transfers to this page. Nobody has
+# claimed otherwise in code, but nobody had written it down either, and an undocumented departure is
+# how a public number quietly acquires an authority it was never measured to have.
+#
+# WHY IT STANDS ANYWAY, rather than being "restored" to the base. This file exists to mirror
+# `config/settings.yaml`, the private terminal run — the page's whole promise is "the #1 row your
+# terminal prints". Reverting these to the base would break that promise to gain a validated ranking
+# that the reader of the page is not the one acting on. The honest fix is disclosure, and it is in
+# `web/index.html` as a note under the tables: the page now says which lane produced it.
+#
+# WHAT WOULD CHANGE THIS: `config/settings.yaml` moving back onto the base gates. These follow it —
+# they are a mirror, and a mirror that argues with the thing it reflects is just a second config.
 buy_heuristic:
   growth_min_leg_years: 0
   growth_min_1y_pct: -1000000.0
@@ -106,5 +124,18 @@ buy_heuristic:
   # Left out, the page ranked on the 20/8/5 leg while the CAGR column kept printing whole-life — so it
   # showed BNB at +98%/yr and ranked it on ~+54%/yr, and its #1 was not the terminal's #1. That is the
   # exact failure the header above warns about, so treat these as load-bearing, not decoration.
+  #
+  # (#83) AND `use_life_cagr: true` IS A MEASURED LOSER — the base ships `false` and the receipt is
+  # not close: (#3j) reads edge +125.6 vs +167.6 and rho +0.17 vs +0.20 with BOTH OOS halves down,
+  # and (#3k) re-condemned it at all four horizons on the stress grid ("loses EVERY view it was
+  # graded on. Do not re-propose."). `tests/ci-settings.yaml:776` even names this exact situation:
+  # "A local settings.yaml overlay carrying `use_life_cagr: true` silently reverses all of this —
+  # check yours." This is that overlay, one file over, and it is no longer silent.
+  #
+  # It is on because the alternative is worse for what this page IS. The page publishes the terminal's
+  # #1, the terminal runs life-CAGR, and half-mirroring produced the BNB row above — a ranking on one
+  # number printed beside another. One coherent-but-unvalidated ranking beats an incoherent one, and
+  # the disclosure note now carries the caveat that the config cannot. Flip it here only together with
+  # `config/settings.yaml`, never alone.
   use_life_cagr: true
   fixed_cagr_years: 20
