@@ -1479,6 +1479,17 @@ pub async fn run(args: Vec<String>) {
             .iter()
             .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.aum_shown())))
             .collect(),
+        // (#103) the CORE shortlist, priced the same way as `rows`. `core_now` was computed above for
+        // the membership diff; journalling it is what lets the buy-and-hold recommendation ever be
+        // graded out-of-sample, the way the momentum book already is.
+        core: if settings.buy_heuristic.journal_core_list {
+            core_now
+                .iter()
+                .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur)))
+                .collect()
+        } else {
+            Vec::new()
+        },
     });
 
     // (r15) footer population: ranked book + pinned extras — the held/watched names sit in the
@@ -3194,7 +3205,7 @@ mod tests {
                 f += 1;
             }
             rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), rows }
         };
         // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
         let past = vec![
@@ -3238,7 +3249,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), rows }
         };
         // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
         // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
@@ -3270,6 +3281,7 @@ mod tests {
             spx_off_hi: None,
             rows: names.iter().map(|t| (t.to_string(), Some(1.0))).collect(),
             aum: Vec::new(),
+            core: Vec::new(),
         };
         // fully stable: same top set across 3 screens → every pair retains all → 1.0
         let stable = vec![
@@ -3322,7 +3334,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), rows }
         };
         // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
         // E always rank 12 (past the top-10 cut → no point) · D never appears
@@ -3353,6 +3365,7 @@ mod tests {
             spx_off_hi: None,
             rows: at.iter().map(|(t, c, _)| (t.to_string(), *c)).collect(),
             aum: at.iter().map(|(t, _, a)| (t.to_string(), *a)).collect(),
+            core: Vec::new(),
         };
         let journal = vec![
             snap(

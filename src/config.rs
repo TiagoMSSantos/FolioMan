@@ -347,6 +347,10 @@ pub struct BuyHeuristic {
     pub life_cagr_max_years: f64,    // (#73) REPOINTED — this is now the window on `growth_min_cagr`'s WHOLE-LIFE REJECT BAR (leg 2), not on the rank. >0 makes that bar read the endpoint CAGR over the last min(age, this) years instead of the uncapped lifetime, via `picks::life_leg_cagr`, the one remaining reader of `Quote.capped_cagr`. Leg 1 (the 20/8/5Y rung) and the whole ranking are UNTOUCHED at every value. Two-sided: it admits a compounder blocked by a decade it no longer resembles, and rejects a has-been whose early run still flatters a 20Y rung. Young names are unaffected — `core::capped_life_cagr` clamps to min(age, N) and returns None under 5y of history, where the bar falls back to the uncapped lifetime it always used. 0 = off (today's behaviour, byte-identical). Edge-affecting -> graded on the stress grid before shipping any value here.
                                      // (#3l) SUPERSEDED, kept because the receipt must stay readable: this knob used to swap false-mode's RANK window (the rung ladder -> a continuous min(age, N) CAGR through `long_cagr_from`), and the old doc here promised "this knob moves the rank window, not the proven-compounder bar". Both arms LOST (-66 edge), so it shipped 0.0 and that branch was never taken; (#73) deleted the branch and gave the knob the job the (#3i) bar actually needed. Full history in the (#3l) and (#73) blocks of tests/ci-settings.yaml
     pub splice_max_weekly_rate: f64, // (splice) redenomination-splice trimmer: drop history BEFORE the last step whose implied WEEKLY growth factor exceeds this (or its 1/x mirror) — a vendor series gluing an MXN head onto a GBP tail (×19.6 in one step) otherwise feeds life_cagr/MAXDD/R² a fiction spanning the whole record (0A08.L printed +62%/yr life CAGR vs its true +6.7). Weekly RATE, not raw ratio, so a wide real gap (NVR ×26/92d = 1.28×/wk) survives; sub-week gaps clamp to 7d so one −10% day can't extrapolate to a trip. Applied at parse_chart (one site -> live + backtest see the same data, no train-serve skew) + the merged-series seam; crypto exempt (SHIB did a real 13×/wk). 0.0 = off (DEFAULT, no behavior change); ci-settings ships the measured 2.0. BACKTEST-BLIND in the receipt sense: it changes the INPUT universe, so before/after edges are two different measurements, not an A/B.
+    pub journal_core_list: bool, // (#103) journal the CORE shortlist alongside the ranked slice, so `track` can one day grade the buy-and-hold half of the report on out-of-sample prices. `screen` already computes `core_now` (breadth -> domicile -> TER -> AUM, capped at top_picks) and PRINTS it, but only `ranked_now` reaches `.screen_snapshots.jsonl` — so the momentum book accrues a live record with every run while the one-fund-forever recommendation accrues nothing, forever. Nothing can grade what was never written down, which makes the RECORDING the urgent half and the grading the patient one: this knob only writes the field. `Snapshot.core` is `#[serde(default, skip_serializing_if)]`, so OFF emits a byte-identical journal line and ON stays readable by every older build. false = today's journal, and the DEFAULT
+    pub hold_max_ter: f64, // (#102) the CORE admission TER ceiling, in percent, as a named number instead of a literal buried in `core::hold_miss_reason`. 0.25 was chosen so FTSE All-World (VWCE/VWRL, 0.22%) clears it; the printed reject reason formats the cap from this field, so the message cannot drift from the test. Note the SECOND half of this finding is NOT fixed here: this leg reads `ter_shown()` (BF ∨ Yahoo fallback) while the score's TER damp reads `expense_ratio` (BF only), so the H flag and the score can disagree about a fund's cost on the same row. Unifying them moves a scoring input and is a measured change, not a rename. 0.25 = today's literal, byte-identical, and the DEFAULT
+    pub hold_ucits_or_domicile: bool, // (#102) accept an EU-domiciled fund as UCITS even when the NAME omits the token. `hold_miss_reason` requires the literal "ucits" in the fund name, and real cores do not always carry it — "ISHARES III PLC ISHRS CORE MSCI" is an Irish UCITS fund whose feed name has no such token, so it is rejected for a naming accident rather than a fact. true = the leg passes on the name token OR a `domicile` prefix outside `core::NON_EU`, the same blocklist `firds_etf_isins` already screens the FIRDS dumps with (one list, two readers). Names WITH the token are unaffected, and `domicile: None` (watchlist rows) still falls back to the name — missing data cannot newly pass a gate it used to fail. false = name token only, today's behaviour, and the DEFAULT
+    pub hold_name_tokens: bool, // (#102) require a NARROW/GEO token to sit at a word start before it disqualifies or classifies a fund name. `core::geo_tier` scans with bare `contains`, and the list holds short generic words ("value", "select", "small", "esg", "health") that also occur INSIDE longer words — the classic "N-etf-lix" substring bug, here able to silently delete a legitimate core from the shortlist. Deliberately a word-START rule and not whole-word: half the list is intentionally a PREFIX ("technolog" -> Technology/Technologies, "financ" -> Financial/Finance, "communicat", "sustainab", "semiconduct"), which whole-word matching would break. Tokens already carrying their own separator (" pab", "sri ") are hand-rolled guards for exactly this and are passed through untouched. Strictly a TIGHTENING: every match it drops was a mid-word accident. false = bare substring, today's behaviour, and the DEFAULT
     pub growth_sector_cap: usize, // (#101) at most this many stocks per GICS sector in the printed growth table; 0 = off and the DEFAULT. Nothing else in the tool limits concentration: growth_corr_cap and growth_value_floor_pct both ship 0.0, so on the shipped config the only surviving trim in lane_split is the ETF PEG ceiling and the stock table can legitimately be twenty semiconductor names -- the printed "sector mix" line is an observation, not a constraint. Post-rank DISPLAY trim at the same seam as the redundancy skip and the value brake: after the score/sector cut, before the table is cut to n, so a dropped row refills from below. Keeps the highest-scoring rows of each sector (the list arrives rank-ordered), pinned tickers bypass, and a name with no sector is kept (unjudgeable is not a verdict)
     pub growth_gate_on_tr_cagr: bool, // (#99) add the dividend leg to the CAGR the whole-life reject bar judges, so growth_min_cagr stops deleting payers. Closes are price-only (use_adjusted_close: false), so long_cagr is roughly total-return CAGR minus dividend yield: a name compounding at 19%/yr total while paying 3% measures ~15.5%/yr and is REMOVED from the universe by growth_min_cagr: 19.0 -- and no dividend_weight can recover it, because the reward is applied after the gate. true = life_leg_cagr adds `tr_cagr - life_cagr`, the dividend contribution in CAGR points over the same endpoints, to whatever leg it already returned. That is deliberately an UPLIFT and not a switch to tr_cagr itself: switching would also silently discard the life_cagr_max_years window, making the knob two changes. LOWER BOUND, since tr_cagr adds payouts without reinvesting them. Missing tr_cagr or life_cagr falls back to today's leg (missing data passes). false = price-only, today's behaviour, and the DEFAULT
     pub vol_daily_equivalent: bool, // (#97) restate `volatility_pct` (and its `downside_dev_pct` twin) in DAILY-equivalent units on any cadence, so the absolute thresholds reading them mean the same thing live and in a backtest. A per-bar stdev scales with sqrt(bar length), so the same asset prints ~sqrt(21) = 4.6x more vol on the monthly bars a long run walks than on the daily bars the screen walks -- and EVERY consumer is an absolute threshold: sharpe_cap/sharpe_cap_etf clamp long_cagr/vol (4.6x bigger denominator = the cap stops binding in the run that fitted it, while live it binds for nearly every name past the CAGR gate), plus the growth_max_vol* ceilings and the normal_volatility_pct divisor. All three ship-rule horizons are monthly (`long || years >= 8`). `span_to_bars` already holds every WINDOW to the same calendar length across cadences; this is the amplitude half of that same train==serve rule. LIVE IS BIT-IDENTICAL EITHER WAY: at cadence 252 the factor is exactly 1.0. false = today's raw per-bar figure, and the DEFAULT
@@ -497,6 +501,10 @@ impl Default for BuyHeuristic {
             growth_geomean_fold: false,    // (#8) off: multiply proximity/value raw onto base (today's behaviour, validated edge intact). true folds them into the geomean (bounds the multiplicative stack) — validate via `backtest universe` both-OOS-positive before flipping
             life_cagr_max_years: 0.0,      // (#73) OFF by default = `growth_min_cagr`'s leg 2 reads the uncapped lifetime, today's behaviour; >0 windows that bar to the last min(age, N) years. Graded on a 6/8/10/12/16/20 ladder
             splice_max_weekly_rate: 0.0,   // (splice) OFF by default (older settings.yaml unchanged); ci-settings ships the measured 2.0 — the valley between the fastest real mover (3USL.L 1.87×/wk, a 3× leveraged ETP) and the slowest splice (COFF.L 2.06×/wk)
+            journal_core_list: false, // (#103) OFF = only the ranked slice is journalled, which is what every existing line in a user's `.screen_snapshots.jsonl` holds.
+            hold_max_ter: 0.25, // (#102) the literal that shipped, extracted verbatim — moving it changes who wears the H flag.
+            hold_ucits_or_domicile: false, // (#102) OFF = the name token is the only way to prove UCITS-ness, today's behaviour.
+            hold_name_tokens: false, // (#102) OFF = bare `contains`, today's behaviour, mid-word accidents included.
             growth_sector_cap: 0, // (#101) 0 = off, today's unconstrained table, byte-identical. This is a RISK constraint, not a ranking improvement -- see the receipt on why the backtest cannot grade it
             growth_gate_on_tr_cagr: false, // (#99) OFF = the price-only bar every golden and every gate receipt was measured under. ON raises the measured CAGR of every payer, so it LOOSENS the gate and enlarges the pool -- before/after are two different universes, not an A/B on the same one
             vol_daily_equivalent: false, // (#97) OFF = raw per-bar stdev, the scale every vol-reading receipt in ci-settings was fitted at. Turning it on does not move the live screen by a single bit; it moves the BACKTEST onto live's units, which is what invalidates those receipts and is exactly why it cannot ship without the re-sweep its receipt names.
@@ -1101,6 +1109,46 @@ pub fn splice_max_weekly_rate() -> f64 {
             .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
             .map(|s| s.buy_heuristic.splice_max_weekly_rate)
             .unwrap_or(0.0)
+    })
+}
+
+/// (#102) free accessor twins for the CORE admission rule. `core::hold_miss_reason` and `geo_tier`
+/// take a `&Quote` / a `&str` and nothing else — `is_broad_index_name` is called from the fund
+/// funnels, the CORE shortlist and the H-flag column, none of which hold a `tuning`, and threading
+/// one through all of them to carry three display knobs would be the larger change.
+pub fn hold_name_tokens() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+            .map(|s| s.buy_heuristic.hold_name_tokens)
+            .unwrap_or(false)
+    })
+}
+
+/// (#102) see [`hold_name_tokens`].
+pub fn hold_ucits_or_domicile() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+            .map(|s| s.buy_heuristic.hold_ucits_or_domicile)
+            .unwrap_or(false)
+    })
+}
+
+/// (#102) see [`hold_name_tokens`]. The printed reject reason formats this same number, so the cap
+/// and the message it quotes cannot drift apart.
+pub fn hold_max_ter() -> f64 {
+    use std::sync::OnceLock;
+    static CAP: OnceLock<f64> = OnceLock::new();
+    *CAP.get_or_init(|| {
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+            .map(|s| s.buy_heuristic.hold_max_ter)
+            .unwrap_or(0.25)
     })
 }
 

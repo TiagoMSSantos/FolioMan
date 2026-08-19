@@ -1045,6 +1045,15 @@ pub fn euronext_track_isins(payload: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// ISIN/domicile prefixes an EU retail account cannot buy a fund from (PRIIPs — no KID). Read by the
+/// FIRDS funnel, which screens thousands of US/CA/Asia funds listed on EU MTFs out of the dumps, and
+/// (#102) by the CORE admission rule's UCITS leg: "not on this list" is this file's ONE definition of
+/// a fund domicile a European can hold, and two readers of it must not drift into two lists.
+pub const NON_EU: [&str; 17] = [
+    "US", "CA", "HK", "JP", "SG", "KY", "AU", "IL", "ZA", "TW", "KR", "IN", "TH", "MY", "CN", "BM",
+    "VG",
+];
+
 /// Is this ETF name a GEOGRAPHIC market index (the kind you anchor a 20-year hold on), as opposed to
 /// a single-sector / thematic / factor tilt? True = carries a geography token AND no narrow token, so
 /// "S&P 500 Information Technology" (has "s&p 500" but also "information"/"technolog") is correctly
@@ -1117,13 +1126,29 @@ const NARROW: [&str; 30] = [
     "equal weight", "min vol", "minimum vol", "hedged",
 ];
 
+/// (#102) Does an ALREADY-lowercased `n` carry `t` at the START OF A WORD? The tightened matcher
+/// behind `hold_name_tokens`, and deliberately word-START rather than whole-word: half of `NARROW`
+/// is an intentional prefix ("technolog" must catch Technology AND Technologies), so a whole-word
+/// rule would silently un-disqualify the sector funds this list exists to bar. A token that already
+/// begins with its own separator (" pab") is a hand-rolled guard for this exact problem and is left
+/// to do its job — the boundary is in the token, not around it.
+fn token_at_word_start(n: &str, t: &str) -> bool {
+    if !t.starts_with(char::is_alphanumeric) {
+        return n.contains(t);
+    }
+    n.match_indices(t).any(|(i, _)| !n[..i].chars().next_back().is_some_and(char::is_alphanumeric))
+}
+
 /// The geographic tier of an ALREADY-lowercased name, or None when no geography token matches or a
 /// NARROW token disqualifies it. The single place the two public fns above agree.
 fn geo_tier(n: &str) -> Option<u8> {
-    if NARROW.iter().any(|t| n.contains(t)) {
+    let hit = |t: &str| {
+        if crate::config::hold_name_tokens() { token_at_word_start(n, t) } else { n.contains(t) }
+    };
+    if NARROW.iter().any(|t| hit(t)) {
         return None;
     }
-    GEO.iter().find(|(t, _)| n.contains(t)).map(|(_, tier)| *tier)
+    GEO.iter().find(|(t, _)| hit(t)).map(|(_, tier)| *tier)
 }
 
 /// Diversification tier of a broad-index fund, for ordering the buy-and-hold CORE broadest-first.
@@ -1150,19 +1175,26 @@ pub fn hold_suitable(q: &Quote) -> bool {
 /// (round 49) The FIRST hold-core leg this quote fails, as a printable reason — None = passes all
 /// (i.e. `hold_suitable`). Single source of truth: hold_suitable IS this function's is_none(), so
 /// the H flag and the printed reason can never disagree. Leg order = cheapest check first, and the
-/// TER cap note lives here: 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the canonical one-fund
-/// hold — qualifies; below that is S&P/World territory (0.03–0.20%). ter_shown/aum_shown: Yahoo
-/// fallback counts here (display-side flag), the score does NOT see it.
+/// TER cap note lives here: `hold_max_ter` ships 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the
+/// canonical one-fund hold — qualifies; below that is S&P/World territory (0.03–0.20%). The reason
+/// string formats the cap from the knob, so it cannot quote a number the check did not use.
+/// ter_shown/aum_shown: Yahoo fallback counts here (display-side flag), the score does NOT see it —
+/// which also means this leg and the score's TER damp read two different fields; see (#102).
 pub fn hold_miss_reason(q: &Quote) -> Option<String> {
     if !is_broad_index_name(&q.name) {
         return Some("not a broad-index name (sector/thematic/factor tilt)".into());
     }
-    if !q.name.to_lowercase().contains("ucits") {
+    // (#102) the name token, OR — behind the knob — an EU domicile, which is the FACT the token is a
+    // proxy for. `domicile: None` still falls back to the name, so missing data cannot newly pass.
+    let eu_domiciled = crate::config::hold_ucits_or_domicile()
+        && q.domicile.as_deref().is_some_and(|d| d.len() >= 2 && !NON_EU.contains(&&d[..2]));
+    if !q.name.to_lowercase().contains("ucits") && !eu_domiciled {
         return Some("no UCITS token in the name".into());
     }
+    let cap = crate::config::hold_max_ter();
     match q.ter_shown() {
         None => return Some("TER unknown".into()),
-        Some(t) if t > 0.25 => return Some(format!("TER {t:.2}% > 0.25% cap")),
+        Some(t) if t > cap => return Some(format!("TER {t:.2}% > {cap:.2}% cap")),
         _ => {}
     }
     // (round 53) physical FAMILY, not literal "Full": this leg exists to exclude swap counterparty
@@ -1217,10 +1249,6 @@ pub fn firds_latest_fulins_link(payload: &Value) -> Option<String> {
 /// (ESMA is single-line, the FCA file pretty-printed — hence `\s*`); a real XML parser buys
 /// nothing here. Sorted + deduped (an ISIN appears once per trading venue).
 pub fn firds_etf_isins(xml: &str) -> Vec<String> {
-    const NON_EU: [&str; 17] = [
-        "US", "CA", "HK", "JP", "SG", "KY", "AU", "IL", "ZA", "TW", "KR", "IN", "TH", "MY",
-        "CN", "BM", "VG",
-    ];
     let re = regex::Regex::new(
         r"<FinInstrmGnlAttrbts>\s*<Id>([A-Z]{2}[0-9A-Z]{9}[0-9])</Id>\s*<FullNm>([^<]*)</FullNm>\s*(?:<ShrtNm>[^<]*</ShrtNm>\s*)?<ClssfctnTp>CE",
     )
@@ -4063,6 +4091,33 @@ mod tests {
                  "MSCI World ex USA", "MSCI Europe", "MSCI Japan", "not an index at all"] {
         assert!((hold_breadth_tier(name) as usize) < HOLD_TIERS, "{name} tier out of range");
     }
+
+    // (#102) the word-start matcher `hold_name_tokens` swaps in. Three properties, and the middle one
+    // is why this is not whole-word matching: half of NARROW is a deliberate PREFIX.
+    for (name, token) in [
+        ("vaneck semiconductor ucits etf", "semiconduct"), // prefix, mid-name
+        ("technology select sector spdr", "technolog"),    // prefix, first word
+        ("msci world financials", "financ"),
+        ("amundi nasdaq-100 ucits etf", "nasdaq"), // a hyphen is a boundary
+        ("ishares msci world small cap", "small"),
+    ] {
+        assert!(token_at_word_start(name, token), "{token} must still disqualify {name}");
+        assert!(name.contains(token), "test fixture drifted: {name} no longer contains {token}");
+    }
+    // the mid-word accidents the bare `contains` cannot tell from the real thing — all three of these
+    // English words hide a NARROW token inside themselves, and today all three delete a core name.
+    for (name, token) in [
+        ("lyxor global gender equality", "quality"),
+        ("msci world comparison index", "paris"),
+        ("amundi devalued markets index", "value"),
+    ] {
+        assert!(name.contains(token), "test fixture drifted: {name} no longer contains {token}");
+        assert!(!token_at_word_start(name, token), "{token} must not disqualify {name} mid-word");
+    }
+    // a token carrying its own separator is passed through to plain `contains` — the guard is IN the
+    // token, so " pab" answers exactly what it answered before, on both sides.
+    assert!(token_at_word_start("msci world pab ucits etf", " pab"));
+    assert!(!token_at_word_start("xtrackers spab index", " pab"));
     assert_eq!(
         source_url("https://finance.yahoo.com/quote/{ticker}", "BTC-USD"),
         "https://finance.yahoo.com/quote/BTC-USD"

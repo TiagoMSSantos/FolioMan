@@ -30,6 +30,13 @@ pub struct Snapshot {
     /// silent for them. Non-fund rows (stocks/crypto) carry `None` here.
     #[serde(default)]
     pub aum: Vec<(String, Option<f64>)>,
+    /// (#103) the CORE shortlist of the same run — the buy-and-hold half of the report, which the
+    /// screen prints and then forgot. Same `(ticker, close EUR)` shape as `rows` so a future grader
+    /// can reuse `grade` unchanged, and in the same CORE order (breadth -> domicile -> TER -> AUM).
+    /// Written only when `journal_core_list` is on; `skip_serializing_if` keeps the OFF line
+    /// byte-identical to every line already on disk, and `default` keeps old lines readable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub core: Vec<(String, Option<f64>)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -286,6 +293,7 @@ mod tests {
             spx_off_hi: None,
             rows: rows.iter().map(|(t, p)| (t.to_string(), *p)).collect(),
             aum: Vec::new(),
+            core: Vec::new(),
         }
     }
 
@@ -301,6 +309,23 @@ mod tests {
         assert!(s.aum.is_empty()); // serde default → flow footer silent for this line
         assert_eq!(s.rows.len(), 2);
         assert_eq!(s.rows[1], ("B".to_string(), None));
+        assert!(s.core.is_empty()); // (#103) serde default → every line already on disk still reads
+    }
+
+    /// (#103) The knob-off guarantee for a file the goldens cannot cover: `.screen_snapshots.jsonl`
+    /// is a user's own gitignored record, appended to forever, so a new field that widened the line
+    /// unconditionally would be a silent format change nobody could diff. With `journal_core_list`
+    /// off the CORE list is empty and `skip_serializing_if` drops the key entirely — the emitted line
+    /// is byte-identical to the one this build's predecessor wrote. On, it round-trips.
+    #[test]
+    fn an_empty_core_list_leaves_the_journal_line_byte_identical() {
+        let mut s = snap("2026-06-01", Some(100.0), &[("A", Some(10.0))]);
+        let off = serde_json::to_string(&s).unwrap();
+        assert!(!off.contains("core"), "OFF must not widen the line: {off}");
+        s.core = vec![("VWCE.DE".into(), Some(140.0)), ("SWRD.L".into(), None)];
+        let on = serde_json::to_string(&s).unwrap();
+        assert!(on.contains(r#""core":[["VWCE.DE",140.0],["SWRD.L",null]]"#), "{on}");
+        assert_eq!(serde_json::from_str::<Snapshot>(&on).unwrap().core, s.core);
     }
 
     /// (#82) The correction itself, stated as the bug it removes: a name journaled at €100 that has

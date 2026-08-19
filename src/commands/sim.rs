@@ -423,6 +423,7 @@ mod tests {
             spx_off_hi: off_hi,
             rows: rows.iter().map(|(t, p)| (t.to_string(), *p)).collect(),
             aum: Vec::new(),
+            core: Vec::new(),
         }
     }
 
@@ -459,7 +460,7 @@ mod tests {
         // top-BOOK cap: an 11th row never buys
         let rows: Vec<(String, Option<f64>)> =
             (0..12).map(|i| (format!("T{i}"), Some(10.0))).collect();
-        let s = Snapshot { date: "2026-07-16".into(), spx: None, spx_off_hi: None, aum: Vec::new(), rows };
+        let s = Snapshot { date: "2026-07-16".into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), rows };
         assert_eq!(buy_event(&s, 3000.0, 1.0, true).unwrap().lots.len(), BOOK);
 
         // nothing priced, or degenerate budget (slice ≤ fee) → None

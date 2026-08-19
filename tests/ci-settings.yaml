@@ -782,6 +782,119 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  journal_core_list: false       # (#103 / finding C9) UNMEASURED — an unfitted judgement value,
+                                 # shipping OFF, which is what every line already sitting in a user's
+                                 # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
+                                 # there never will be: it does not change a number, it starts a record.
+                                 #
+                                 #   THE GAP: `screen` prints TWO recommendations — the momentum-ranked
+                                 #   book and the buy-and-hold CORE shortlist — and journals ONE. Only
+                                 #   `ranked_now` reaches the snapshot file, so `track` has been accruing
+                                 #   live out-of-sample evidence for the momentum half since round 114
+                                 #   while the CORE half, the part of the report a reader is most likely
+                                 #   to actually act on for twenty years, has accrued nothing at all.
+                                 #
+                                 #   WHY IT SHIPS OFF ANYWAY: it widens an append-only file that no
+                                 #   golden covers and no test owns — a user's own record. Off, the
+                                 #   emitted line is byte-identical (`skip_serializing_if` drops the key,
+                                 #   pinned by `an_empty_core_list_leaves_the_journal_line_byte_identical`);
+                                 #   old lines stay readable either way via serde default.
+                                 #
+                                 #   WHAT IT DOES NOT DO: grade. `track` still reads only `rows`. That is
+                                 #   deliberate and is the whole shape of this item — nothing can grade a
+                                 #   history that was never written, so the RECORDING is the urgent half
+                                 #   and the grader is the patient one. The field carries the same
+                                 #   `(ticker, close EUR)` shape as `rows` precisely so `grade` can be
+                                 #   pointed at it later with no format migration.
+                                 #
+                                 #   TURN IT ON WHEN: you want the CORE half gradeable, and accept that
+                                 #   the evidence starts from the day you flip it, not retroactively.
+                                 #   Every month it stays off is a month of CORE record that cannot be
+                                 #   recovered. REVERT: set false; existing widened lines still parse.
+  hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
+                                 # literal that shipped inside `core::hold_miss_reason`, extracted
+                                 # verbatim, so the value carries whatever justification it always had:
+                                 # 0.25 admits FTSE All-World (VWCE/VWRL, 0.22%), the canonical one-fund
+                                 # hold, and below it sits S&P/World territory (0.03-0.20%). Naming it
+                                 # changes nothing; the printed reject reason now formats the cap from
+                                 # this field, so the message cannot quote a number the check did not use
+                                 # (pinned: "TER 0.30% > 0.25% cap" in `pure_logic`).
+                                 #
+                                 #   THE HALF THIS DOES NOT FIX: the CORE leg reads `ter_shown()` (BF
+                                 #   `expense_ratio` OR the Yahoo `ter_fallback`) while the score's TER
+                                 #   damp reads `expense_ratio` alone. Two sources for one number, so the
+                                 #   H flag and the score can disagree about the same fund's cost on the
+                                 #   same row — the display side sees a TER the ranking does not. That is
+                                 #   a real violation of the one-definition rule, and it is NOT closed
+                                 #   here on purpose: unifying them feeds the Yahoo fallback into a
+                                 #   SCORING input, which moves the rank and needs the stress grid. Left
+                                 #   as a named debt rather than a silent one.
+                                 #
+                                 #   REVERT: 0.25 is the shipped value; any other number is a deliberate
+                                 #   choice about which funds wear the H flag, display-only either way.
+  hold_ucits_or_domicile: false  # (#102 / finding C9) UNMEASURED — an unfitted judgement value, shipping
+                                 # OFF, which is name-token-only, today's behaviour.
+                                 #
+                                 #   THE DEFECT: the CORE admission rule proves UCITS-ness by requiring
+                                 #   the literal token "ucits" in the fund NAME. Feed names do not
+                                 #   reliably carry it — "ISHARES III PLC ISHRS CORE MSCI" is an Irish
+                                 #   UCITS fund by every fact on its row and fails this leg on spelling.
+                                 #   A naming accident silently deletes a legitimate core, and because
+                                 #   `hold_core_list` caps the table at 3 per tier, the deletion is not
+                                 #   even visible as a shorter list — a worse fund refills the slot.
+                                 #
+                                 #   WHAT ON DOES: the leg passes on the name token OR a `domicile`
+                                 #   prefix outside `core::NON_EU` — the same blocklist `firds_etf_isins`
+                                 #   already screens the FIRDS dumps with, hoisted to a module const so
+                                 #   the two readers cannot drift into two lists. Names WITH the token
+                                 #   are untouched. `domicile: None` (watchlist-only rows) still falls
+                                 #   back to the name, so this cannot turn missing data into a PASS —
+                                 #   the house rule cuts the other way here and the knob respects it.
+                                 #
+                                 #   WHY UNMEASURED: display-only. `hold_suitable` drives the H flag and
+                                 #   the CORE shortlist; neither is on the graded path, so no edge, rho
+                                 #   or h2h number can move at any setting. The sweep that WOULD settle
+                                 #   it is not a backtest at all: run `screen etfs` with the knob on and
+                                 #   off and diff the CORE table — the honest question is how many
+                                 #   admitted funds are EU-domiciled with no "ucits" token in the name,
+                                 #   and whether any of them is genuinely not a UCITS wrapper. That needs
+                                 #   a live BF-enriched fund universe, which is why it is not run here.
+                                 #
+                                 #   REVERT: set false. Nothing else reads the flag.
+  hold_name_tokens: false        # (#102 / finding C9) UNMEASURED — an unfitted judgement value, shipping
+                                 # OFF, which is bare `contains`, today's behaviour.
+                                 #
+                                 #   THE DEFECT: `core::geo_tier` decides both "is this a core?" and
+                                 #   "which breadth tier?" by scanning the name for substrings, and the
+                                 #   NARROW disqualifier list holds short generic English words —
+                                 #   "value", "select", "small", "esg", "health", "quality", "paris".
+                                 #   Any of them occurring INSIDE a longer word disqualifies the fund:
+                                 #   the classic "N-etf-lix" substring bug, here with the power to delete
+                                 #   a legitimate one-fund-forever hold from the shortlist silently.
+                                 #   Two of the thirty tokens (" pab", "sri ") already carry a hand-rolled
+                                 #   space guard, which is the previous author noticing this exact class
+                                 #   of bug and fixing it one token at a time.
+                                 #
+                                 #   WHAT ON DOES: a token must sit at a WORD START to count. Word-START
+                                 #   and deliberately not whole-word: half the list is an intentional
+                                 #   PREFIX ("technolog" must catch Technology and Technologies, "financ"
+                                 #   Financial and Finance, likewise "communicat"/"sustainab"/
+                                 #   "semiconduct"), and whole-word matching would un-disqualify exactly
+                                 #   the sector funds the list exists to bar. Tokens that already begin
+                                 #   with their own separator pass through to plain `contains` untouched.
+                                 #   Applies to the GEO table too, on the same call.
+                                 #
+                                 #   STRICTLY A TIGHTENING: every match it removes was a mid-word
+                                 #   accident, so ON can only ADMIT names, never reject new ones. That is
+                                 #   also why it can be flipped without a golden re-bless in any pool
+                                 #   whose names carry no such accident — the goldens hold it off anyway.
+                                 #
+                                 #   WHY UNMEASURED: same reason as `hold_ucits_or_domicile` — display
+                                 #   only, off the graded path. The settling sweep is again a diff of the
+                                 #   `screen etfs` CORE table with the knob on and off, over a live
+                                 #   fund universe. The matcher itself is pinned by fixtures in
+                                 #   `pure_logic` (prefix tokens still bite; "equality"/"comparison"/
+                                 #   "devalued" no longer do). REVERT: set false.
   growth_sector_cap: 0           # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
                                  # 0 (off), which is today's unconstrained table. It is a RISK
                                  # constraint, and the honest thing to say up front is that the
@@ -4277,6 +4390,24 @@ buy_heuristic:
                                  #   flag went +324.2 | +7.0 -> +82.4 | -44.3 over the same period (see its block). The flags that
                                  #   expire are the ones whose median sat just above zero: +57.5 and +7.0 both did. BEFORE ACTING
                                  #   ON ANY BANKED SWEEP ROW, RE-READ IT — one `universe fund` run, ~2 min, prints every gate.
+  # (#100 / finding C6) VALUATION DISCIPLINE REACHES A MINORITY OF THE UNIVERSE, and that is worth
+  #   stating in one place rather than being spread across three knobs that each look fine alone:
+  #     - `growth_value_weight: 0.0` — the P/E multiplier IS computed in `score_parts` and then
+  #       multiplied by a weight of zero. Dead arithmetic on the shipped config, kept as a knob.
+  #     - `growth_max_peg` / `growth_require_peg` read `quote.fund`, which is None for EVERY ETF, EVERY
+  #       coin and every non-SEC-covered stock. So for the majority of rows there is no valuation input
+  #       at all — while valuation is the input with the strongest long-horizon evidence behind it.
+  #     - the free-neutral half of the complaint is ALREADY FIXED and shipped off: see
+  #       `growth_fund_scope_by_class` (#87), which is exactly "stop paying uncovered names for the
+  #       absence". Turning THAT on is the cheap first move, and it has its own receipt.
+  #   THE ETF HALF IS BLOCKED BY FETCH ECONOMICS, not by taste. `fund_peg_yield` exists and would be the
+  #   natural scored term — but its input arrives from `yahoo_top_holdings`, called for the ranked picks
+  #   plus a refill bench (~50 symbols against a ~4300-fund universe). A UNIVERSE-WIDE fund valuation
+  #   term would mean thousands of crumbed quoteSummary calls, which is why that fetch documents itself
+  #   as display-only and why this stays a post-rank TRIM rather than a score input. `lane_split` also
+  #   warns in code against "fixing" it by attaching a synthetic FundFacts, which would switch the
+  #   equity `growth_fund_weight` tilt on for funds as a plumbing side effect. Scoring funds on
+  #   valuation needs a bulk source this tool does not have; it is not one knob away.
   growth_max_peg_etf: 2.0        # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
