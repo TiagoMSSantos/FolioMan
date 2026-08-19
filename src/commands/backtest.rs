@@ -127,10 +127,24 @@ pub const GATE_MARKERS: &[&str] = &[
     markers::ABLATED_GATES[2],
 ];
 
+/// The basket sizes the ABSOLUTE top-N table grades, and therefore the set [`VERDICT_TOP`] was
+/// SELECTED from. Hoisted to a const so its length has one definition: the best-of-N caveat printed
+/// beside the table quotes `TOP_LADDER.len()`, and a rung added here tightens that caveat automatically
+/// instead of silently making the printed count a lie.
+pub(crate) const TOP_LADDER: &[usize] = &[1, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50];
+
 /// Basket size the journal grades on. NOT the top-10 the entry-state table ranks by: the footer must
 /// quote the basket a reader can actually buy off the screen, and top-3 is the measured peak of the
 /// top-N ladder at EVERY horizon (8y 16.1 vs 15.0/14.9/14.4 for top-1/5/10/20; 12y 15.2; 20y 13.7),
 /// with roughly HALF top-1's worst window. See the SHIP RULE v2 block in `tests/ci-settings.yaml`.
+///
+/// (#92) READ THAT SENTENCE AGAIN: "the measured peak of the ladder" means this value is an ARGMAX over
+/// [`TOP_LADDER`]'s 13 rungs, taken on the same data the report then quotes, with no best-of-N haircut —
+/// and on the ~0.5 to 3.5 effectively independent windows (#91) prints. The one multiple-testing
+/// correction in this file covers the 14 fund factors; the basket size, which is what the screen footer
+/// actually tells a reader to buy, has none. The gap between 16.1 and 15.0 is a 13-way maximum on half a
+/// trial at 20y. `print_selection_count` prints that caveat; nothing has yet re-derived the value under
+/// it, and the receipt in tests/ci-settings.yaml names the run that would.
 pub(crate) const VERDICT_TOP: usize = 3;
 
 /// The unconditional held-book verdict of one wide backtest run at ONE horizon: the "all entries"
@@ -229,17 +243,18 @@ fn write_verdict(v: Verdict) {
 /// One-line rendering of [`Verdict`] for the screen footer. `drift` = the current tuning no
 /// longer matches the fingerprint that earned these numbers — say so instead of citing them
 /// as if they still applied.
-pub(crate) fn verdict_line(v: &Verdict, drift: bool, show_n_eff: bool) -> String {
+pub(crate) fn verdict_line(v: &Verdict, drift: bool, show_n_eff: bool, show_selection: bool) -> String {
     let tail = if drift {
         " — ⚠ settings changed since, rerun `folioman backtest universe`"
     } else {
         " (rerun: `folioman backtest universe`)"
     };
     format!(
-        "Method backtest (run {}, wide universe, top-{} held {}y, {} windows{}): book {:+.1}%/yr, \
+        "Method backtest (run {}, wide universe, top-{}{} held {}y, {} windows{}): book {:+.1}%/yr, \
          {:+.1}pp/yr vs index, win {:.0}%, worst {:+.1}, OOS {:+.1}/{:+.1}{tail}",
         v.date,
         v.top,
+        best_of_tag(show_selection, TOP_LADDER.len()),
         v.years,
         v.windows,
         n_eff_tag(show_n_eff, v.windows, v.years),
@@ -321,6 +336,17 @@ fn n_eff(windows: usize, years: i64) -> f64 {
 /// interpolation and the shipped output stays byte-identical to the goldens.
 fn n_eff_tag(on: bool, windows: usize, years: i64) -> String {
     if on { format!("  n_eff {:.1}", n_eff(windows, years)) } else { String::new() }
+}
+
+/// (#92) The printed best-of-N caveat — EMPTY when the knob is off, same contract as [`n_eff_tag`].
+///
+/// `VERDICT_TOP` is the argmax over [`TOP_LADDER`], taken on the data the report then quotes. A maximum
+/// over 13 candidates is biased upward by selection whether or not anyone says so; the only question is
+/// whether the reader is told. `sweep_fund_factor` already answers its own version of this with a
+/// Šidák-tightened band over 14 factors — the basket size, which is the number the screen footer turns
+/// into a buy instruction, has never had one.
+fn best_of_tag(on: bool, candidates: usize) -> String {
+    if on { format!(" [best of {candidates}, unhaircut]") } else { String::new() }
 }
 
 /// (#90) PURGE + EMBARGO for a chronological split. Returns where the EARLIER side should stop, given
@@ -2032,14 +2058,17 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // on a pool the other never saw is how a knob ships on a number nothing served. BTreeMap -> buckets
     // iterate in chronological order, so the OOS split below is early-vs-late in time.
     let by_bucket = value_floor_trim(&rows, tuning.growth_value_floor_pct);
-    println!("\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {years}y no-sell, vs {bench_sym}) ──");
+    println!(
+        "\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {years}y no-sell, vs {bench_sym}){} ──",
+        best_of_tag(tuning.print_selection_count, TOP_LADDER.len())
+    );
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
     // (#41/#43) EQUAL-WEIGHT HELD-BOOK return — the correct metric for a no-sell hold. A held book earns
     // ann(mean of terminal MULTIPLES), NOT mean of per-name CAGRs: a 20× winner in the book covers twenty
     // −100% zeros, and a name that goes to 0 contributes its full weight lost (1/N), not its scary CAGR.
     // Also count "zeros ridden" (names ≤−90% you must hold through) to show the no-sell tail you survive.
     let mut m10: Option<f64> = None; // top-10 mean terminal multiple, feeds the after-tax footer below
-    for n in [1usize, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50] {
+    for &n in TOP_LADDER {
         let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
         let (mut zeros, mut held) = (0usize, 0usize);
         let mut zero_names: Vec<String> = Vec::new(); // (#zeros) names ≤−90% at top-10 -> union across horizons = true distinct death count
@@ -4188,10 +4217,18 @@ mod tests {
         assert_eq!(n_eff_tag(false, 21, 20), "", "OFF must add NOTHING — the goldens are the proof");
         assert_eq!(n_eff_tag(true, 21, 20), "  n_eff 0.5");
         let v = stub_verdict(12, VERDICT_TOP);
-        let off = verdict_line(&v, false, false);
-        assert!(off.contains("held 12y, 84 windows): book"), "the shipped footer, unchanged: {off}");
-        assert!(!off.contains("n_eff"));
-        assert!(verdict_line(&v, false, true).contains("84 windows  n_eff 3.5): book"));
+        let off = verdict_line(&v, false, false, false);
+        assert!(off.contains("top-3 held 12y, 84 windows): book"), "the shipped footer, unchanged: {off}");
+        assert!(!off.contains("n_eff") && !off.contains("best of"));
+        assert!(verdict_line(&v, false, true, false).contains("84 windows  n_eff 3.5): book"));
+
+        // (#92) the other half of the same footer, and the two tags must not collide.
+        assert_eq!(best_of_tag(false, 13), "", "OFF must add NOTHING — the goldens are the proof");
+        assert_eq!(best_of_tag(true, TOP_LADDER.len()), " [best of 13, unhaircut]");
+        assert_eq!(TOP_LADDER.len(), 13, "the printed count and the graded ladder are the same list");
+        assert!(TOP_LADDER.contains(&VERDICT_TOP), "the shipped basket must be a rung the table grades");
+        let both = verdict_line(&v, false, true, true);
+        assert!(both.contains("top-3 [best of 13, unhaircut] held 12y, 84 windows  n_eff 3.5): book"), "{both}");
     }
 
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back
@@ -4213,11 +4250,11 @@ mod tests {
         assert!(parse_journal("{\"date\":\"x\"}").is_empty()); // missing fields -> empty, not a default
         assert!(parse_journal("{\"20\":{\"date\":\"x\"}}").is_empty()); // half-written row, same rule
 
-        let fresh = verdict_line(&v, false, false);
+        let fresh = verdict_line(&v, false, false, false);
         assert!(fresh.contains("run 2026-07-19, wide universe, top-3 held 12y, 84 windows"), "{fresh}");
         assert!(fresh.contains("book +14.3%/yr, +6.9pp/yr vs index, win 71%, worst -8.2, OOS +5.1/+7.4"));
         assert!(fresh.contains("(rerun: `folioman backtest universe`)") && !fresh.contains('⚠'));
-        let drifted = verdict_line(&v, true, false);
+        let drifted = verdict_line(&v, true, false, false);
         assert!(drifted.contains("⚠ settings changed since"));
         assert!(!drifted.contains("(rerun:"));
     }
@@ -4239,7 +4276,7 @@ mod tests {
         assert_eq!(adopted.len(), 1);
         let only = adopted.into_values().next_back().unwrap();
         assert_eq!((only.years, only.top), (20, 10));
-        assert!(verdict_line(&only, false, false).contains("top-10 held 20y"));
+        assert!(verdict_line(&only, false, false, false).contains("top-10 held 20y"));
     }
 
     #[test]

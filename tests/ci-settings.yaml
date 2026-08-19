@@ -782,6 +782,46 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  print_selection_count: false   # (#92) NOTHING TO MEASURE in the display half — a display knob shipping
+                                 #   OFF, byte-identical output, every golden pins it. But it names a
+                                 #   real UNMEASURED debt, recorded here because the fix needs runs this
+                                 #   repo has not made. Sibling of (#91): that one says how many trials a
+                                 #   number rests on, this one says how many candidates it beat.
+                                 #
+                                 #   THE DEBT: `VERDICT_TOP: 3` — the basket the screen footer tells a
+                                 #   reader to BUY — is the argmax over `TOP_LADDER`'s 13 rungs (1, 2, 3,
+                                 #   5, 10, 15, 20, 25, 30, 35, 40, 45, 50), taken on the same data the
+                                 #   report then quotes, with NO best-of-N haircut. Its own receipt says
+                                 #   so in plain words and reads as a strength: "the measured peak of the
+                                 #   top-N ladder at EVERY horizon (8y 16.1 vs 15.0/14.9/14.4 for
+                                 #   top-1/5/10/20)". A 1.1-point gap, as a 13-way maximum, on the ~0.5
+                                 #   effectively independent windows the 20y run has. This file carries
+                                 #   exactly ONE multiple-testing correction — the Šidák-tightened band
+                                 #   over 14 fund factors in `sweep_fund_factor` — and it covers a knob
+                                 #   that ships at weight 0, while the basket size, which is the one
+                                 #   number a reader acts on, has none.
+                                 #
+                                 #   WHAT THE KNOB DOES: prints " [best of 13, unhaircut]" beside the
+                                 #   top-N table header and inside the screen footer, from one helper
+                                 #   reading `TOP_LADDER.len()`, so adding a rung tightens the printed
+                                 #   claim instead of making it a lie. It changes no number. It does NOT
+                                 #   pay the debt — it stops the debt being invisible.
+                                 #
+                                 #   TO PAY IT, and this is the run nobody has made: bootstrap each of
+                                 #   the 13 rungs' excess and read a 5/13-tightened tail, exactly the way
+                                 #   `sweep_fund_factor` reads 5/14 for its factors. If top-3's band
+                                 #   overlaps top-5's and top-10's under that haircut — and at 0.5
+                                 #   effective windows it will — then the ladder never resolved the
+                                 #   basket size and VERDICT_TOP should be FIXED A PRIORI instead, on
+                                 #   grounds that are not a maximum: concentration risk, the worst-window
+                                 #   number, and how many names a reader will actually hold. Note the
+                                 #   existing receipt already offers one such ground ("roughly HALF
+                                 #   top-1's worst window"), which is an argument that survives a haircut
+                                 #   where "16.1 beats 15.0" does not.
+                                 #
+                                 #   DO NOT re-select VERDICT_TOP off a fresh ladder run and call it
+                                 #   settled. Re-running the same argmax on the same universe reproduces
+                                 #   the same selection bias with a newer date on it.
   print_n_eff: false             # (#91) NOTHING TO MEASURE — a display knob, shipping OFF, which is
                                  #   today's output byte-for-byte and is what every golden in
                                  #   tests/fixture pins. It adds no gate, no score term and no journal
