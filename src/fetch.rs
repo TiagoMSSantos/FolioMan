@@ -6516,6 +6516,8 @@ mod tests {
     /// at the canned server.
     #[tokio::test]
     async fn justetf_fund_facts_fill_returns_its_rows_and_merges_only_todays_cache() {
+        pin_throttle();
+        pin_fetch_concurrency(); // this call fans out — see the helper for why it is not optional
         let (url, client) = stub_server("<span data-testid=\"tl_etf-basics_value_ter\">0.20% p.a.</span>");
         let urls = stub_urls(&url);
         let today = chrono::Utc::now().date_naive();
