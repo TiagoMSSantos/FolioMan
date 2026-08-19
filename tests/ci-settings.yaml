@@ -1464,6 +1464,14 @@ buy_heuristic:
                                  #   which is the only reason that divergence is a footnote here instead of a shipped regression.
                                  #   DO NOT RE-RUN THIS LADDER. Seven arms x three horizons happened; this is their verdict. The
                                  #   knob is now pinned at 0.0 in `validated_tilt_pin` (config.rs) — the first pin it has ever had.
+  # (#100 / finding C8) RE-TEST THIS AFTER growth_accel_beta (#98), NOT BEFORE. At 0 a 25-year-old name
+  #   is judged on a full-cycle 20Y CAGR dragged through every crash and a 6-year-old on a bull-only 5Y
+  #   CAGR, and the two are then ranked head to head — so the ladder is a comparability defect, not only
+  #   a PEG-column one. But the v2 refusal on the rank-1 h2h guard graded a BUNDLE: `accel` is
+  #   `1Y − β·long_cagr`, so changing WHICH WINDOW long_cagr measures also changes `accel` for every
+  #   name in the pool. With β at its shipped 1.0 the two effects are the same size and opposite in
+  #   sign, and no run so far can separate them. Under β = 0 the accel leg stops reading long_cagr at
+  #   all, and a fixed_cagr_years grid then measures the window question ALONE. Order: β first.
   # fixed_cagr_years still 0, but the reason has CHANGED and the old one is dead. It said "#15 is redundant
   # because use_trend_cagr overrides a pinned window with the whole-series slope" — use_trend_cagr was then
   # REVERTED two lines up, so #15 sat untested on a stale rationale. (#3j) finally measured it: pinning every
@@ -2509,6 +2517,19 @@ buy_heuristic:
                                  #   C2 gain also sits deep inside the baseline's own [+199.8 … +691.4] bootstrap band.
                                  #   D is the graded record ladder (see growth_trust_ladder): the binary 10Y trust cliff really
                                  #   does throw away resolution, and grading it costs rank-1 at every horizon anyway.
+                                 #   (#100 / finding C4) TWO CORRECTIONS TO HOW D WAS DESCRIBED, neither of which
+                                 #   overturns the refusal. FIRST, THE DOCK IS NOT 0.5. `combine_damps` is a 2-slot
+                                 #   geometric mean, so the shipped cliff delivers sqrt(0.5) = 0.707 — a 29.3% dock,
+                                 #   not 50% — and arm D was graded with that square root in place. Anyone reasoning
+                                 #   about "half the score" is reasoning about a number this lane never applies.
+                                 #   SECOND, THE CLIFF IS A STEP ON A LEG THE SCORE OTHERWISE IGNORES. A listing of
+                                 #   ten years and one day scores 1.0 identically to a 46-year compounder, and a
+                                 #   9.9-year one takes the full dock, while `long_leg` ranks on the 20/8/5 ladder —
+                                 #   so the 10Y leg's ONLY function in the whole growth lane is this cliff, and an
+                                 #   8Y-rung name is ranked on 8Y and docked for not having 10Y.
+                                 #   STANDING VERDICT UNCHANGED: D was measured under v2 and lost rank-1 at every
+                                 #   horizon. What is now recorded is that the thing measured was a 29.3% step, so a
+                                 #   future re-grade should move the DOCK SIZE, not re-run the same ladder.
                                  #   THE FOURTH LEVER — "rank a name better the FARTHER it sits below its high" (OFF-HI, i.e.
                                  #   drawdown_pct) — was NOT run, because two shipped receipts already answer it and a third
                                  #   arm would only re-buy them: rewarding dip depth IS the on-sale lane, which this repo keeps
@@ -4502,7 +4523,24 @@ buy_heuristic:
                                  #   SEMI.AS 5.1->5.0 — note SEMI.AS is a Euronext AMSTERDAM line quoted in USD, the
                                  #   currency-not-country rule catching what a venue rule would miss. EUR rows (VVSM.DE,
                                  #   VUAA/SPYL/AUM5) and crypto identical; ranks unchanged at today's gaps (tie-break sized).
-  growth_overext_floor: 0.05     # growth-score multiplier at full stretch. Tightened 0.2->0.15->0.05, each step a harder blow-off-top brake:
+  growth_overext_floor: 0.05     # (#100 / finding C5) READ THIS FIRST: the number written here is NOT
+                                 #   the multiplier delivered. `damp = combine_damps(&[trust, overext])`
+                                 #   is a 2-slot GEOMETRIC MEAN, so it square-roots the floor. The
+                                 #   documented tightening 0.2 -> 0.15 -> 0.05 actually delivered
+                                 #   0.447 -> 0.387 -> 0.224: a fully-stretched name keeps 22.4% of base,
+                                 #   not 5%. Every reading below is correct AS MEASURED and mis-stated in
+                                 #   its units. `picks::growth_term_knob_flips` now pins the square root.
+                                 #   STRUCTURAL LIMIT, unrelated to the value: damps are PROPORTIONAL, so
+                                 #   they cannot reorder across bases. A 0.224 damp costs a base-30
+                                 #   blow-off 9 points and a base-5 steady name 1.1 — the brake exists to
+                                 #   demote parabolic names and structurally cannot demote one past a name
+                                 #   with a much smaller base. An additive penalty could; that has never
+                                 #   been graded and is not proposed here.
+                                 #   AND THE SLOT COUNT IS A FREE PARAMETER: `picks.rs` records that adding
+                                 #   or removing a CONSTANT-1.0 slot moved edge +98 -> +109. Wiring an
+                                 #   inert term reorders the book, so `combine_damps`' arity is itself an
+                                 #   unswept knob nobody declared.
+                                 # growth-score multiplier at full stretch. Tightened 0.2->0.15->0.05, each step a harder blow-off-top brake:
                                  #   buying right after a parabola = poor long-hold entry. The walk-forward sweep ranks 0.05 best: wide
                                  #   5y rho +0.26->+0.28 AND OOS-late rho +0.09->+0.14 (durability up 55%) with edge flat (+108.5->+106.8).
                                  #   The old "0.1 docks NVDA out" worry was regime-bound — at 0.05 today NVDA still scores 6.7 > min_score
@@ -4653,6 +4691,23 @@ buy_heuristic:
                                  #   ablation showed growth wants 0.15 but on-sale wants 0 — zeroing it lifts the on-sale 12y edge
                                  #   +39.2->+62.9 (Δ+23.7) while growth keeps 0.15. 0 = off (the swept on-sale optimum)
   sharpe_cap: 15.0               # (B) cap that CAGR/volatility ratio
+                                 #   (#100 / finding C3) THIS TERM IS VERY NEARLY A CONSTANT ON THE LIVE
+                                 #   PATH, and the receipt should say so. At a typical 1.3-1.5%/day
+                                 #   large-cap vol this cap binds above ~20%/yr CAGR — i.e. above
+                                 #   `growth_min_cagr: 19.0`, the bar every scored name has already
+                                 #   cleared. So `risk_reward` contributes a fixed number for nearly the
+                                 #   whole live pool and ranks nothing, while `calmar_weight: 0.0` makes
+                                 #   the other half of the term dead code.
+                                 #   It is also TRIPLE-COUNTED: `sharpe`, `calmar` and the trend term are
+                                 #   all affine in `long_cagr`, and the vol/maxdd denominators make the
+                                 #   marginal reward for compounding depend on the asset's VOLATILITY —
+                                 #   which is not what any of the three claims to measure.
+                                 #   THE UNITS HALF IS ALREADY BUILT: `vol_daily_equivalent` (#97) is the
+                                 #   "annualise the vol so the ratio lands in a discriminating range" fix,
+                                 #   and its receipt records that this cap must be RE-SWEPT underneath it
+                                 #   rather than carried across. Deleting the term and its two caps is the
+                                 #   other honest option and has never been graded.
+                                 #   UNMEASURED either way; nothing here moves until that paired run.
   sharpe_cap_etf: 9.0            # (#37) ETF-only Sharpe cap: cross-listed lines of the SAME fund print different daily
                                  #   stdev (NASD.L 1.8%/day vs CSNDX.SW 1.1% for identical Nasdaq-100 holdings — thin-line
                                  #   prints + FX conversion), so ETF CAGR/vol above ~9 measures listing-line noise, not
@@ -4869,6 +4924,19 @@ urls:
   # ranked — forward returns are de-meaned per ~6mo cutoff, so +164 EU names move every bucket's
   # mean. Widening the pond can therefore only pay if the new names rank as well as the incumbents,
   # and by three measurements EU large-caps do not.
+  # (#100 / finding C10) ALL THREE REJECTIONS ARE PRE-PIT AND MEASURED ON A SURVIVOR POOL. Every run
+  # quoted above — MidCap 400, FTSE 100 + DAX, and the DAX/FTSE MIB/FTSE 100 re-test — was 12y-only,
+  # on today's index membership walked backwards, before the peer-mean fix. The DEBT block already
+  # flags 12y/8y numbers from that era as needing a re-sweep, and these are those numbers.
+  # THE SURVIVOR BIAS RUNS THE WRONG WAY HERE. Today's S&P 500 is the set of names that WON; today's
+  # MidCap 400 is largely the set that did not get promoted. Judging mid-caps by attaching them to a
+  # survivor-selected large-cap incumbent pool is close to guaranteed to read "the newcomers rank
+  # worse", whether or not mid-caps carry signal — which is exactly what all three runs read.
+  # So the standing verdict is UNCHANGED (do not re-add on argument alone) but the EVIDENCE behind it
+  # is now marked stale, not settled. A re-run on the point-in-time pool at 20y/12y/8y is the only
+  # thing that can either confirm or overturn it. Until then this file should not be cited as having
+  # measured that mid-caps, EU large-caps, EM or small-caps are useless — it measured them once, on a
+  # pool that could not answer the question.
   constituents_csv:
     - "https://yfiua.github.io/index-constituents/constituents-nasdaq100.csv"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe

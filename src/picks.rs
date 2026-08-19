@@ -7387,6 +7387,19 @@ mod tests {
         // property of the SHIPPED weights, not of these code defaults — at 0.35/0.2 it is positive.
         // It is asserted where the shipped numbers live: `shipped_config_pin`.
 
+        // (#100) THE FLOOR IS NOT THE MULTIPLIER. `damp = combine_damps(&[trust, overext])` is a 2-slot
+        // geometric mean, so what a knob writes down is square-rooted before it reaches the score. The
+        // documented 0.2 -> 0.15 -> 0.05 tightening actually delivered 0.447 -> 0.387 -> 0.224: a fully
+        // stretched name keeps 22.4% of base, not 5%. The trust cliff is the same story — a "0.5" dock
+        // is sqrt(0.5) = 29.3%. Pinned because both receipts quote the written number as if it were the
+        // delivered one, and a third slot would move every one of these again.
+        let pairs = [(0.2, 0.4472), (0.15, 0.3873), (0.05, 0.2236), (0.5, std::f64::consts::FRAC_1_SQRT_2)];
+        for (written, delivered) in pairs {
+            let got = combine_damps(&[1.0, written]);
+            assert!((got - delivered).abs() < 1e-4, "floor {written} delivers {got}, not {delivered}");
+        }
+        assert_eq!(combine_damps(&[0.05]), 0.05, "one slot is the raw number — the arity IS the effect");
+
         // (1) growth_overext_floor — how much score survives at FULL stretch above the 200wk SMA.
         // Higher floor = weaker brake. 1.0 = brake off entirely.
         let mut stretched = hot();
