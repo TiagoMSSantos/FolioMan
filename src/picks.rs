@@ -1041,7 +1041,8 @@ struct ScoreParts {
     ter_damp: f64,     // (T) ETF cost drag (1−TER)^20; 1.0 for stocks/crypto/None or when growth_ter_drag off
     commodity_damp: f64, // (#44) growth_commodity_damp on a GICS Energy/Materials row or a commodity-named fund; 1.0 otherwise / knob off / sector unknown (backtest)
     fx_damp: f64,      // (#45) growth_fx_damp on an ETF whose live quote currency is not EUR; 1.0 otherwise / knob off / currency unknown (backtest)
-    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
+    acc_damp: f64,     // (#109) the twenty-year cost of a DISTRIBUTING share class, (1 − yield × payout-tax)^20; 1.0 for Acc, for an unknown share class (every stock, coin and backtest quote) or when growth_acc_drag off
+    score: f64,        // base × proximity × value × damp × ter_damp × commodity_damp × fx_damp × acc_damp + liq_bonus  (or base × geomean(trust,overext,prox,value) × ter_damp × commodity_damp × fx_damp × acc_damp + liq_bonus when #8 growth_geomean_fold). (#86) When growth_allow_negative_scores is on AND base < 0 every damp is skipped — base + liq_bonus — because multiplying a negative base by a 0..1 damp RAISES it
 }
 
 /// (#98) The acceleration leg, and the ONE definition of it — `score_parts` computes it, nothing else
@@ -1557,6 +1558,33 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     } else {
         1.0
     };
+    // (#109) (round 3 §6) SHARE-CLASS dock — same shape and same exponent as ter_damp, for a cost that
+    // is plausibly LARGER than every TER difference ter_damp is carefully modelling. For a Portuguese
+    // resident an ACCUMULATING UCITS defers everything to one final sale; a DISTRIBUTING one triggers
+    // the payout tax every year for twenty consecutive years, and the compounding of what is taken out
+    // never happens. `(1 − yield × rate)^20` is that missing compounding.
+    //
+    // THE POINT OF THE KNOB IS THAT TODAY'S PREFERENCE IS AN ACCIDENT. FolioMan tracks Acc/Dist, alerts
+    // on a share class changing, and has no score term for it — the Acc twin still wins, but only
+    // because `use_adjusted_close: false` makes the ranking's CAGR price-only, so the Dist payout drag
+    // reaches the score as a depressed price series (`fetch.rs`: "Acc twins win by construction").
+    // That is the right answer produced by a mechanism that is wrong about why.
+    //
+    // WHICH IS WHY IT SHIPS OFF, and the receipt says so: while the ranking's CAGR is still price-only,
+    // turning this on DOUBLE-COUNTS the payout drag. It becomes correct exactly when the accident is
+    // removed — `use_adjusted_close: true` with the benchmark switched to a total-return index in the
+    // same change (round 2 C2) — and the two must move together or the lane is wrong either way.
+    //
+    // The rate comes from `tax_keep`, the SAME keep-fraction the dividend reward nets its payout at:
+    // one definition of "what a distribution loses to tax", not a second one that could drift from it.
+    // `use_of_profits` is None for stocks, crypto and every backtest quote -> ×1.0 -> backtest-blind
+    // like ter_damp, so it can never be swept and the receipt records that rather than promising a run.
+    let acc_damp = if tuning.growth_acc_drag && quote.use_of_profits == Some("Dist") {
+        let (keep, _) = tax_keep(quote, tuning);
+        (1.0 - dividend_yield_1y(quote) / 100.0 * (1.0 - keep)).clamp(0.0, 1.0).powi(HOLD_YEARS)
+    } else {
+        1.0
+    };
     // (#44) COMMODITY dock — same shape as ter_damp (multiplicative, knob-gated, backtest-blind), and
     // for a related reason: a commodity-linked row's long CAGR is a spot-price snapshot, not compounding.
     // Docks on the sector CAUSE, not the price SYMPTOM — which is the whole difference from the (#1)
@@ -1598,14 +1626,14 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let score = if tuning.growth_allow_negative_scores && base < 0.0 {
         base + liq_bonus // every damp is 1.0 here, which is what `base × 1.0 × 1.0 …` evaluates to
     } else if tuning.growth_geomean_fold {
-        base * combine_damps(&[trust, overext_damp, proximity, value]) * ter_damp * commodity_damp * fx_damp + liq_bonus
+        base * combine_damps(&[trust, overext_damp, proximity, value]) * ter_damp * commodity_damp * fx_damp * acc_damp + liq_bonus
     } else {
-        base * proximity * value * damp * ter_damp * commodity_damp * fx_damp + liq_bonus
+        base * proximity * value * damp * ter_damp * commodity_damp * fx_damp * acc_damp + liq_bonus
     };
     Some(ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, smooth, underwater, er, er_term, base, proximity, value_raw, value, trust, overext,
-        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, score,
+        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, score,
     })
 }
 
@@ -2403,11 +2431,20 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     } else {
         String::new()
     };
+    // (#109) and again: a Dist class only prints its twenty-year payout-tax drag when the knob is on
+    // AND the fund actually distributes, so every Acc row, stock and coin keeps the pre-(#109) line.
+    let acc_frag = if p.acc_damp < 1.0 {
+        s.push_str(&format!("  acc_damp     = (1 − yield × payout tax)^20 (Dist class)  = (1 − {:.2}% × {:.0}%)^20 = {:.3}\n",
+            dividend_yield_1y(quote), (1.0 - tax_keep(quote, tuning).0) * 100.0, p.acc_damp));
+        format!(" × {:.3}", p.acc_damp)
+    } else {
+        String::new()
+    };
     if tuning.growth_geomean_fold {
-        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag}{commodity_frag}{fx_frag} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {:.2} × geomean(trust {:.3}, overext {:.3}, prox {:.3}, value {:.3}){ter_frag}{commodity_frag}{fx_frag}{acc_frag} + {:.2} = {:.2}\n",
             p.base, p.trust, p.overext_damp, p.proximity, p.value, p.liq_bonus, p.score));
     } else {
-        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag} + {:.2} = {:.2}\n",
+        s.push_str(&format!("\n  SCORE = {:.2} × {:.3} × {:.3} × {:.3}{ter_frag}{commodity_frag}{fx_frag}{acc_frag} + {:.2} = {:.2}\n",
             p.base, p.proximity, p.value, p.damp, p.liq_bonus, p.score));
     }
     if (displayed - p.score).abs() > 1e-6 {
@@ -7001,6 +7038,70 @@ mod tests {
         assert_eq!(growth_score(&grower, &t), growth_score(&bare, &t), "weight 0 must move NOTHING");
         let on = BuyHeuristic { growth_er_weight: 1.0, ..t.clone() };
         assert!(growth_score(&grower, &on).unwrap() > growth_score(&bare, &on).unwrap(), "…and on, it does");
+    }
+
+    /// (#109) The share-class dock. FolioMan has always PREFERRED accumulating funds and has never had
+    /// a term saying so — the preference falls out of the price-only CAGR, because a Dist fund's
+    /// payouts leave the NAV. This is that preference stated as a cost instead of inherited as a side
+    /// effect, and the test pins the four things that makes it:
+    ///
+    ///   * off by default, so a Dist fund's score is byte-identical to the pre-(#109) one. Not a
+    ///     nicety: while the CAGR stays price-only, ON double-counts the drag, so OFF is the CORRECT
+    ///     shipped state and not merely the safe one.
+    ///   * on, it docks a Dist class and leaves an Acc twin of the same fund untouched.
+    ///   * it is a DAMP, never a bonus — a zero-yield Dist fund pays nothing, since there is no payout
+    ///     to be taxed. A term that rewarded Acc rather than docking Dist would fail here.
+    ///   * unknown share class (every stock, every coin, every backtest quote) is untouched, which is
+    ///     what makes the term backtest-blind rather than an unmeasured edge change.
+    ///
+    /// And one that only shows up once the term shares `tax_keep`: the code default `tax_keep_other`
+    /// is 1.0 — no haircut — so the dock is inert until the operator says what they actually pay. That
+    /// is the correct coupling and not an oversight. A second, private rate here would have made this
+    /// term dock a payout the dividend reward simultaneously scored as untaxed.
+    #[test]
+    fn a_distributing_class_pays_the_payout_tax_twenty_times() {
+        // the operator's own bracket — the code default is 1.0 (no haircut), at which nothing is taxed
+        // and so nothing is docked; assert that first, because it is the coupling the term depends on.
+        let neutral = BuyHeuristic { growth_acc_drag: true, ..BuyHeuristic::default() };
+        assert_eq!(neutral.tax_keep_other, 1.0, "the code default keeps the whole payout");
+        let d = BuyHeuristic { tax_keep_other: 0.72, ..BuyHeuristic::default() };
+        let on = BuyHeuristic { growth_acc_drag: true, ..d.clone() };
+        let fund = |class: Option<&'static str>, div: f64| {
+            let mut q = gate_fixture();
+            q.instrument_type = "ETF".into();
+            q.name = "Vanguard FTSE All-World UCITS ETF".into();
+            q.price_eur = Some(100.0);
+            q.div_eur = vec![Some(div)];
+            q.use_of_profits = class;
+            q
+        };
+        let s = |q: &Quote, t: &BuyHeuristic| growth_score(q, t).expect("fixture clears every gate");
+
+        // OFF is the shipped state and must move nothing at all
+        assert!(!d.growth_acc_drag, "the default must be off");
+        assert_eq!(s(&fund(Some("Dist"), 3.0), &d), s(&fund(Some("Acc"), 3.0), &d));
+
+        // ON: the Dist twin is docked, the Acc twin is not
+        let dist = s(&fund(Some("Dist"), 3.0), &on);
+        let acc = s(&fund(Some("Acc"), 3.0), &on);
+        assert!(dist < acc, "a Dist class pays the payout tax for twenty years: {dist} vs {acc}");
+        assert_eq!(acc, s(&fund(Some("Acc"), 3.0), &d), "and the Acc twin is exactly unchanged");
+
+        // the arithmetic, against the SAME keep-fraction the dividend reward nets at
+        let keep = d.tax_keep_other;
+        let want = (1.0f64 - 0.03 * (1.0 - keep)).powi(HOLD_YEARS);
+        let ratio = dist / acc;
+        assert!((ratio - want).abs() < 1e-9, "expected ×{want}, got ×{ratio}");
+
+        // a damp, never a bonus: no payout, no drag — and an unknown class is untouched
+        assert_eq!(s(&fund(Some("Dist"), 0.0), &on), s(&fund(Some("Dist"), 0.0), &d));
+        assert_eq!(s(&fund(None, 3.0), &on), s(&fund(None, 3.0), &d), "backtest quotes carry no share class");
+        // …and at the neutral keep-fraction the term is inert even ON, for a paying Dist fund
+        assert_eq!(
+            s(&fund(Some("Dist"), 3.0), &neutral),
+            s(&fund(Some("Dist"), 3.0), &BuyHeuristic::default()),
+            "no configured payout tax = nothing to defer = no dock"
+        );
     }
 
     /// (#107) Rank robustness. The claim is that a printed rank is a point estimate and this puts an

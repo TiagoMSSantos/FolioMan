@@ -782,6 +782,41 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  growth_acc_drag: false         # (#109 / round 3 §6) UNMEASURED, and UNMEASURABLE on this pool —
+                                 # `use_of_profits` is None for every backtest quote, so this is
+                                 # backtest-blind by construction like the TER and commodity docks
+                                 # and no sweep can ever price it. Ships OFF, which is today's lane.
+                                 #
+                                 #   THE FINDING: the right answer, from the wrong mechanism. For a
+                                 #   Portuguese resident an ACCUMULATING UCITS defers everything to
+                                 #   one final sale while a DISTRIBUTING one pays the payout tax every
+                                 #   year for twenty consecutive years, and the compounding of what
+                                 #   was taken out never happens. That is plausibly a larger drag than
+                                 #   any TER difference `growth_ter_drag` models to four decimals.
+                                 #   FolioMan tracks Acc/Dist, ALERTS when a share class changes, and
+                                 #   has no score term for it. The Acc twin still wins — but only
+                                 #   because `use_adjusted_close: false` makes the ranking's CAGR
+                                 #   price-only, so a Dist fund's payouts leave the NAV and reach the
+                                 #   score as a depressed price series. fetch.rs says so outright:
+                                 #   "Acc twins win by construction."
+                                 #
+                                 #   WHY OFF IS CORRECT AND NOT MERELY SAFE. While the CAGR is still
+                                 #   price-only, turning this on DOUBLE-COUNTS the drag: the price
+                                 #   series charges it once and the damp charges it again. The term
+                                 #   becomes the right mechanism exactly when the accident is removed
+                                 #   — `use_adjusted_close: true` WITH the benchmark switched to a
+                                 #   total-return index in the same change (round 2 C2, and that
+                                 #   pairing is itself load-bearing: the old "no effect" verdict on
+                                 #   use_adjusted_close was measured with both legs price-only, i.e.
+                                 #   on a broken instrument). These two knobs move together or the
+                                 #   lane is wrong in one direction or the other.
+                                 #
+                                 #   COUPLED TO tax_keep, deliberately: the payout tax is the same
+                                 #   keep-fraction the dividend reward nets at, so at the code default
+                                 #   `tax_keep_other: 1.0` the dock is inert even when switched on. A
+                                 #   private second rate here would have let this term charge tax on a
+                                 #   payout the dividend reward was scoring as untaxed.
+                                 #   REVERT: set false.
   capital_gains_tax_pct: 28.0    # (#108 / round 3 §5) NOT A MEASUREMENT — a tax rate, and the exact
                                  # constant the hardcoded `CAPITAL_GAINS_TAX = 0.28` carried. Its old
                                  # comment said "add a knob only if a second rate is ever needed";
