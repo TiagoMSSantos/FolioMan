@@ -3366,6 +3366,75 @@ fn turnover_frac(scored: &[(&Sample, f64)]) -> f64 {
     1.0 - jac_sum / pairs as f64
 }
 
+/// (#104) RECALL and CAPTURE of the pool's extreme winners — the one question this report has never
+/// asked. Every other number here is a PRECISION metric: rho, edge, top-N excess and rank-1 h2h all
+/// answer "of what I picked, how much was good?". Under the skew a 20-year hold actually lives in
+/// (Bessembinder: 4.3% of firms produced all net wealth creation), terminal wealth is decided by the
+/// opposite question — "of what was good, how much did I pick?" — and a lane can post an excellent rho
+/// while missing every 20-bagger. That lane's book badly trails a sloppier one that caught two.
+///
+/// Per ~6-month bucket, against the FULL pool including every gate-rejected row (that is the whole
+/// point — `gate_audit` prices a gate by the MEAN of what it rejected, which is blind to a rejected
+/// 30-bagger):
+///   W = the bucket's winners      R = the lane's top-`n` by score
+///   recall  = |W ∩ R| / |W|                       — how many of the winners did I hold?
+///   capture = Σ multiple(W ∩ R) / Σ multiple(W)   — what fraction of the available extreme wealth?
+/// `capture` is the one that matters; recall counts a 30-bagger and a 3-bagger the same.
+///
+/// A winner is a row in the bucket's top `top_frac` fraction by realized return AND at or above
+/// `min_multiple`× — one definition covering both of the doc's cuts (top-1%: 0.01 / 0.0; ten-baggers:
+/// 1.0 / 10.0). Multiples floor at 0.0, so a total loss contributes nothing rather than a negative
+/// weight. Buckets with under two rows are skipped: recall over a single name is 0 or 1 and means
+/// neither. `None` = no winner anywhere in the pool, which is the honest answer for a short horizon,
+/// not a zero.
+///
+/// MEASUREMENT ONLY. Nothing here reaches a score, a gate or the journal.
+fn recall_capture(
+    samples: &[Sample],
+    scored: &[(&Sample, f64)],
+    n: usize,
+    top_frac: f64,
+    min_multiple: f64,
+) -> Option<(f64, f64, usize)> {
+    let mut pool: BTreeMap<i32, Vec<&Sample>> = BTreeMap::new();
+    for s in samples {
+        pool.entry(bucket(s.date)).or_default().push(s);
+    }
+    let mut picks: BTreeMap<i32, Vec<(&str, f64)>> = BTreeMap::new();
+    for (s, v) in scored {
+        picks.entry(bucket(s.date)).or_default().push((s.quote.ticker.as_str(), *v));
+    }
+    let (mut w_n, mut hit_n, mut w_mult, mut hit_mult) = (0usize, 0usize, 0.0f64, 0.0f64);
+    for (b, mut rows) in pool {
+        if rows.len() < 2 {
+            continue;
+        }
+        rows.sort_by(|a, z| z.realized.total_cmp(&a.realized));
+        let k = ((rows.len() as f64 * top_frac).round() as usize).clamp(1, rows.len());
+        let held: HashSet<&str> = picks
+            .get(&b)
+            .map(|p| {
+                let mut p = p.clone();
+                p.sort_by(|a, z| z.1.total_cmp(&a.1));
+                p.iter().take(n).map(|(t, _)| *t).collect()
+            })
+            .unwrap_or_default();
+        for s in rows.iter().take(k) {
+            let mult = (1.0 + s.realized / 100.0).max(0.0);
+            if mult < min_multiple {
+                continue; // the ladder is sorted, but keep the guard local rather than breaking
+            }
+            w_n += 1;
+            w_mult += mult;
+            if held.contains(s.quote.ticker.as_str()) {
+                hit_n += 1;
+                hit_mult += mult;
+            }
+        }
+    }
+    (w_n > 0 && w_mult > 0.0).then(|| (hit_n as f64 / w_n as f64, hit_mult / w_mult, w_n))
+}
+
 /// (#9) Do the hard growth GATES actually select winners? Every rho/edge the lanes print is computed
 /// over GATED-IN names only (`report_lane` drops the `None`s), so a gate that quietly discards future
 /// winners is invisible. This partitions the FULL de-meaned sample by whether `scorer` admits it
@@ -3626,6 +3695,24 @@ fn report_lane(
     let wedge = winsor_edge(&scored);
     let wtag = if wedge <= 0.0 && base_edge > 0.0 { "  <- raw edge is an OUTLIER ARTIFACT (leans on extreme rows)" } else { "" };
     println!("  winsorized edge (1/99 clamp): {wedge:+.1} pts{wtag}");
+    // (#104) the recall half of the picture — see `recall_capture`. Every line above this one is a
+    // precision metric; these two ask what the ranking MISSED, against the full pool the gates cut
+    // from. Printed only behind the knob, so the goldens keep the report they were blessed on.
+    if tuning.print_recall_capture {
+        println!("  recall of the pool's extreme winners (what the ranking MISSED):");
+        for (n, label) in [(VERDICT_TOP, "top-3 basket"), (legacy_top(), "top-10 book")] {
+            for (frac, floor, cut) in [(0.01, 0.0, "top 1%"), (1.0, 10.0, "≥10×")] {
+                match recall_capture(samples, &scored, n, frac, floor) {
+                    Some((recall, capture, w)) => println!(
+                        "    {label:<13} vs {cut:<7} winners (n={w:<5}): recall {:.0}%   capture {:.0}%",
+                        recall * 100.0,
+                        capture * 100.0
+                    ),
+                    None => println!("    {label:<13} vs {cut:<7} winners: none in the pool at this horizon"),
+                }
+            }
+        }
+    }
     // (#57) NULL MODEL: the same code with the tuning switched off — `BuyHeuristic::default()`, the
     // deliberately-neutral code defaults (growth_min_cagr 8.0, every PEG/maxdd/vol cap 0.0 = off).
     // The raw edge above cannot be asserted against a fixed threshold because it moves with the market;
@@ -4424,6 +4511,55 @@ mod tests {
         assert_eq!((rebalances(1, true), rebalances(10, true)), (2, 20));
         // a 0y hold must still charge something rather than zeroing the cost line.
         assert_eq!(rebalances(0, true), 1);
+    }
+
+    /// (#104) The two properties that make recall/capture worth printing, stated as arithmetic.
+    ///
+    /// ONE: capture is not recall. A lane that holds one of the bucket's two winners scores 50% recall
+    /// either way, but 67% capture if it caught the 10× and 33% if it caught the 5×. Under skew those
+    /// are not the same book, and recall alone cannot tell them apart — which is the entire reason the
+    /// doc calls capture "the one that matters".
+    ///
+    /// TWO: the denominator includes what the GATES threw away. A winner the lane never scored is
+    /// still a winner of the pool, so it drags recall down. That is the measurement `gate_audit`
+    /// structurally cannot make — it reads the MEAN of the rejected cohort, and one 30-bagger among
+    /// 300 losers does not move a mean far enough to notice.
+    #[test]
+    fn capture_weights_the_winners_that_recall_merely_counts() {
+        let row = |t: &'static str, realized: f64| Sample {
+            date: ymd(2010, 1, 1),
+            realized,
+            relative: 0.0,
+            quote: Arc::new(Quote::stub(t, "1", "", t)),
+            fund: None,
+            trail: Vec::new(),
+        };
+        // one bucket, five names: BIG is a 10×, MID a 5×, the rest are not winners at any cut.
+        let pool = vec![row("BIG", 900.0), row("MID", 400.0), row("C", 100.0), row("D", 0.0), row("E", -50.0)];
+        let hold = |names: &[&str]| -> Vec<(&Sample, f64)> {
+            // score descending in the order given, so `take(n)` holds exactly these names
+            names.iter().enumerate().map(|(i, n)| (pool.iter().find(|s| s.quote.ticker == *n).unwrap(), 100.0 - i as f64)).collect()
+        };
+        // top 40% of 5 rows = 2 winners, {BIG, MID}: Σ multiple = 10 + 5 = 15.
+        let (recall, capture, w) = recall_capture(&pool, &hold(&["BIG"]), 1, 0.4, 0.0).unwrap();
+        assert_eq!(w, 2);
+        assert!((recall - 0.5).abs() < 1e-12, "one of two winners held");
+        assert!((capture - 10.0 / 15.0).abs() < 1e-12, "caught the 10×: {capture}");
+        let (recall, capture, _) = recall_capture(&pool, &hold(&["MID"]), 1, 0.4, 0.0).unwrap();
+        assert!((recall - 0.5).abs() < 1e-12, "SAME recall — this is the point");
+        assert!((capture - 5.0 / 15.0).abs() < 1e-12, "caught the 5×: {capture}");
+
+        // a gate-rejected winner still counts against the lane: BIG is in the pool, not in `scored`.
+        let (recall, capture, w) = recall_capture(&pool, &hold(&["C", "D", "E"]), 3, 0.2, 0.0).unwrap();
+        assert_eq!((w, recall, capture), (1, 0.0, 0.0), "the gates cut the only winner and the metric says so");
+
+        // the ≥10× cut reads the whole pool by multiple, not by rank: only BIG qualifies.
+        let (recall, _, w) = recall_capture(&pool, &hold(&["BIG", "MID"]), 2, 1.0, 10.0).unwrap();
+        assert_eq!((w, recall), (1, 1.0));
+        // …and a pool with no ten-bagger answers None rather than a flattering 100%.
+        assert!(recall_capture(&pool[2..], &hold(&["C"]), 1, 1.0, 10.0).is_none());
+        // a single-row bucket is skipped: recall over one name is 0 or 1 and means neither.
+        assert!(recall_capture(&pool[..1], &hold(&["BIG"]), 1, 1.0, 0.0).is_none());
     }
 
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back

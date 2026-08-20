@@ -782,6 +782,58 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  print_recall_capture: false    # (#104 / round 3 §1) UNMEASURED — an unfitted judgement value,
+                                 # shipping OFF, which is today's report and what every golden holds.
+                                 # It is display-only, so "unmeasured" here means the INSTRUMENT has
+                                 # not been read yet, not that a value is unfitted: turning it on
+                                 # measures something nothing else in this file can see.
+                                 #
+                                 #   THE GAP, and it is the largest one round 3 names: every number
+                                 #   this report prints is a PRECISION metric. rho, edge, top-N excess,
+                                 #   rank-1 h2h — all of them answer "of what I picked, how much was
+                                 #   good?". Under the skew a 20-year hold actually lives in
+                                 #   (Bessembinder: 4.3% of firms produced all net wealth creation, the
+                                 #   top 0.33% half of it), terminal wealth is decided by the OPPOSITE
+                                 #   question: of what was good, how much did I pick? A lane can post an
+                                 #   excellent rho and miss every 20-bagger, and its book will badly
+                                 #   trail a sloppier lane that caught two.
+                                 #
+                                 #   WHY `gate_audit` DOES NOT ALREADY COVER IT: that audit prices a
+                                 #   gate by the MEAN forward return of the names it rejected. A mean is
+                                 #   blind to skew by construction. A gate that rejects 300 names
+                                 #   averaging -40 pts scores as a GOOD gate even if three of those 300
+                                 #   were the decade's 30-baggers — which is the single most expensive
+                                 #   mistake this tool could be making, and it currently has no
+                                 #   instrument that could detect it.
+                                 #
+                                 #   WHAT IT PRINTS: per ~6mo bucket, against the FULL pool including
+                                 #   gate-rejected rows, recall = |winners held| / |winners| and
+                                 #   capture = the same intersection weighted by realized multiple.
+                                 #   Capture is the one that matters: recall counts a 30-bagger and a
+                                 #   3-bagger the same. Two baskets (top-3, the basket the footer sells;
+                                 #   top-10, the book `track` grades) x two winner cuts (top 1% of the
+                                 #   bucket; >=10x outright).
+                                 #
+                                 #   THE GATES THIS EXISTS TO RE-PRICE, and none of them is asserted
+                                 #   wrong here — the claim is only that no instrument could currently
+                                 #   tell you if one is:
+                                 #     growth_min_range_pct: 80  - must sit in the top 20% of its own
+                                 #       10y range. Most extreme compounders spent part of their life
+                                 #       outside that band.
+                                 #     growth_min_1y_pct: 0      - deletes every compounder having one
+                                 #       down year. Its receipt's "-108 pts forward" defence is a
+                                 #       PRECISION argument, which is exactly what a recall metric is
+                                 #       for challenging.
+                                 #     growth_min_cagr: 19.0     - a name is admitted only after it has
+                                 #       already compounded at 19%/yr.
+                                 #     growth_max_above_ma: 150 and growth_maxdd_cap: 84.
+                                 #
+                                 #   THE RUN THAT SETTLES IT: `backtest universe 20 --wide` with this
+                                 #   on, then the same run with each of the five gates above widened one
+                                 #   rung, comparing CAPTURE rather than edge. A gate whose capture cost
+                                 #   is large and whose edge cost is small is a gate paying precision
+                                 #   for terminal wealth. Nothing here proposes acting on that before it
+                                 #   is measured. REVERT: set false; no score, gate or journal reads it.
   journal_core_list: false       # (#103 / finding C9) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
