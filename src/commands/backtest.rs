@@ -1508,6 +1508,20 @@ pub async fn run(args: Vec<String>) {
         println!("  • Survivorship (#5): the universe is names that SURVIVED to today — dead tickers never enter,");
         println!("    so realized returns are biased UP. Treat the edge as optimistic. Re-run with `stress` to inject losers.");
     }
+    // (#112 / round 3 §9) the other end of the survivorship story, and the one nobody names. `#5`/`#6`
+    // are about holds that ENDED BADLY and never entered; this is about holds that ended WELL, early,
+    // and not by choice. It sits here rather than beside the after-tax footer because it is the same
+    // class of statement as the two lines above it — a reason the printed edge is optimistic by an
+    // unmeasured amount — and because the after-tax footer is arithmetic, which this deliberately is not.
+    if tuning.print_acquisition_hazard {
+        println!("  • Acquisition truncation (#112, UNMEASURED): the most common way a 20-year single-stock hold");
+        println!("    actually ENDS is neither bankruptcy nor a sell decision — it is being ACQUIRED. Compounding");
+        println!("    stops at a one-time premium, and the deal CRYSTALLISES the gain: it pays, on a date the holder");
+        println!("    never chose, the tax the deferral edge above assumes stays deferred. Nothing in this walk models");
+        println!("    a takeout, so every multi-year hold in the tables is one that was ALLOWED to run — optimistic in");
+        println!("    the same direction as the line above, by an amount this data cannot size. It argues mildly toward");
+        println!("    LARGER names (harder to swallow), the reasoning `growth_min_aum_etf` already accepts for funds.");
+    }
     if pit {
         println!("  • Point-in-time (PIT ON): every cutoff was scored against the S&P 500 AS IT STOOD THAT DAY, so a");
         println!("    name contributes no sample before it joined or after it left. This is the direct correction to");

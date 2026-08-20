@@ -224,6 +224,105 @@ fn sector_tilt_lines(mix: &std::collections::HashMap<String, fetch::FundMix>) ->
         .collect()
 }
 
+/// (#112 / round 3 §9) The book's CURRENCY exposure — one unit per row, funds looked THROUGH to the
+/// top-10 holdings already fetched for `fund_pe` instead of read off their own listing.
+///
+/// The listing is the exact trap this exists to spring. `print_lane`'s `market mix` counts listing
+/// COUNTRY over the stocks lane, and for a fund that is not merely incomplete but backwards: a
+/// Xetra-quoted S&P 500 tracker reads "Germany" and is 100% dollar exposure. So a fund we hold no
+/// holdings for contributes to `?`, never to its own quote currency — an honest blank beats a
+/// confident wrong number, and how big `?` is decides how much of the rest is worth believing.
+///
+/// EQUAL WEIGHT per row, matching `market mix`'s counts rather than inventing a weighting: nothing
+/// on this surface knows position sizes (`size` decides those, separately and later), so a weighted
+/// mix would be reporting weights it made up. A fund's slice is its top-10 mix RENORMALISED to one
+/// unit — an estimate of the whole fund from the part we can see, which is why the caller prints the
+/// coverage next to it.
+///
+/// Crypto is its own bucket. A coin's `-EUR`/`-USD` suffix is a quote convention, not an exposure:
+/// a EUR holder of BTC carries bitcoin risk, and folding it into USD would overstate the dollar
+/// slice with the one row that has no currency risk at all.
+fn currency_mix(
+    book: &[String],
+    quotes: &[Quote],
+    holdings: &std::collections::HashMap<String, Vec<(String, f64)>>,
+) -> Vec<(String, f64)> {
+    let mut acc: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut rows = 0.0;
+    for ticker in book {
+        let Some(quote) = quotes.iter().find(|q| &q.ticker == ticker) else { continue };
+        rows += 1.0;
+        let mut add = |ccy: String, share: f64| *acc.entry(ccy).or_insert(0.0) += share;
+        if picks::is_currency_quoted(&quote.ticker) {
+            add("crypto".to_string(), 1.0);
+            continue;
+        }
+        // weights arrive as fractions and Yahoo sometimes omits them entirely (all 0.0) — a fund
+        // whose top-10 sums to nothing is a fund with no look-through, not one that is 0% everything
+        let seen = holdings.get(ticker).map(|hs| (hs, hs.iter().map(|(_, w)| w).sum::<f64>()));
+        match seen {
+            Some((hs, total)) if total > 0.0 && picks::quote_is_etf(quote) => {
+                for (sym, w) in hs {
+                    add(core::listing_currency(sym).unwrap_or("?").to_string(), w / total);
+                }
+            }
+            _ if picks::quote_is_etf(quote) => add("?".to_string(), 1.0),
+            // a stock's own quote currency is a real answer straight from Yahoo, so it beats the
+            // suffix guess; `to_uppercase` is what collapses LSE's pence quote (GBp) onto GBP, which
+            // is the same FX exposure under a different unit
+            _ => {
+                let ccy = quote
+                    .quote_currency
+                    .as_deref()
+                    .filter(|c| !c.is_empty())
+                    .map(str::to_uppercase)
+                    .or_else(|| core::listing_currency(&quote.ticker).map(str::to_string))
+                    .unwrap_or_else(|| "?".to_string());
+                add(ccy, 1.0);
+            }
+        }
+    }
+    if rows == 0.0 {
+        return Vec::new();
+    }
+    let mut mix: Vec<(String, f64)> = acc.into_iter().map(|(c, s)| (c, s / rows)).collect();
+    mix.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    mix
+}
+
+/// (#112) The printed form of [`currency_mix`], plus the one number that says how much of it is
+/// measured: the WORST per-fund top-10 coverage in the book, so the claim is `≥N%` and true of every
+/// fund rather than an average that hides the thinnest one. No fund in the book -> no coverage
+/// clause, because there is nothing extrapolated to disclaim.
+fn currency_mix_line(
+    book: &[String],
+    quotes: &[Quote],
+    holdings: &std::collections::HashMap<String, Vec<(String, f64)>>,
+) -> Option<String> {
+    let mix = currency_mix(book, quotes, holdings);
+    if mix.is_empty() {
+        return None;
+    }
+    let parts = mix.iter().map(|(c, s)| format!("{c} {:.0}%", 100.0 * s)).collect::<Vec<_>>().join(", ");
+    let cover = book
+        .iter()
+        .filter_map(|t| holdings.get(t))
+        .map(|hs| hs.iter().map(|(_, w)| w).sum::<f64>())
+        .filter(|s| *s > 0.0)
+        .fold(f64::INFINITY, f64::min);
+    let note = if cover.is_finite() {
+        format!(
+            " — look-through covers ≥{:.0}% of each fund's weight, so read it as directional, not as a hedge ratio",
+            100.0 * cover
+        )
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "Book currency exposure (equal weight per row; funds looked THROUGH their holdings, not read off their listing): {parts}{note}"
+    ))
+}
+
 /// (funnel) Where the growth lane's candidates died: per gate, how many names failed it and how many
 /// it blocked ALONE, split stocks | ETFs | crypto, naming a few of the sole-blocked tickers.
 ///
@@ -2427,6 +2526,19 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (#112 / round 3 §9) the FX position nothing else on this surface displays. `market mix` above
+    // counts listing country over the stocks lane; this counts CURRENCY over the whole book and looks
+    // funds through to their holdings, which is where the two answers stop agreeing. Zero fetch — the
+    // holdings are the ones already pulled for `fund_pe`. Display only, deliberately: whether currency
+    // concentration should tilt the rank is a measured question, and this is how the data to answer it
+    // becomes visible. Silent at false, which is the shipped state.
+    if settings.buy_heuristic.print_currency_mix {
+        let book: Vec<String> = ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
+        if let Some(line) = currency_mix_line(&book, &quotes, &holdings) {
+            println!("\n{line}");
+        }
+    }
+
     // (round 34) fund flow: for today's top-10, net shares created/redeemed across the journal with
     // price appreciation divided OUT of AUM growth — is each fund GAINING or BLEEDING assets? A 20yr
     // durability axis orthogonal to every rank/return footer above: a fund bleeding AUM risks
@@ -3143,6 +3255,64 @@ mod tests {
         assert!(!lines[1].contains("Energy"), "third sector must drop: {}", lines[1]);
         assert!(lines[1].contains("(equity 60% / bond 40%)"), "real bond leg prints: {}", lines[1]);
         assert!(sector_tilt_lines(&HashMap::new()).is_empty());
+    }
+
+    /// (#112) The whole reason this footer exists is one case: a EUR-LISTED fund holding US names is
+    /// dollar exposure, and every other surface in the tool reads it as European. So the assert that
+    /// must not be weakened is `SPYL.DE` landing under USD — if a refactor ever routes a fund through
+    /// its own `quote_currency`, this line goes green-to-EUR and the footer starts lying in the exact
+    /// direction it was built to correct.
+    ///
+    /// Also pins the three honesty rules around it: a fund with NO holdings is `?` and not its
+    /// listing, a coin is its own bucket rather than a dollar, and a stock's pence quote (GBp) is the
+    /// same GBP exposure. And the coverage clause quotes the WORST fund, not an average.
+    #[test]
+    fn a_funds_listing_is_not_its_currency_exposure() {
+        let etf = |ticker: &str, ccy: &str| {
+            let mut x = Quote::stub(ticker, "€100.00", "", "Tracker UCITS ETF");
+            x.instrument_type = "ETF".into();
+            x.quote_currency = Some(ccy.into());
+            x
+        };
+        let stock = |ticker: &str, ccy: &str| {
+            let mut x = Quote::stub(ticker, "€100.00", "", "Some Corp");
+            x.instrument_type = "EQUITY".into();
+            x.quote_currency = Some(ccy.into());
+            x
+        };
+        let mut coin = Quote::stub("BTC-EUR", "€100.00", "", "Bitcoin");
+        coin.instrument_type = "CRYPTOCURRENCY".into();
+        coin.quote_currency = Some("EUR".into());
+        let quotes = vec![etf("SPYL.DE", "EUR"), etf("DARK.DE", "EUR"), stock("VOD.L", "GBp"), coin];
+        let mut holdings: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        // a Xetra-listed S&P 500 tracker: quoted in EUR, 80% of its visible weight in US names
+        holdings.insert(
+            "SPYL.DE".into(),
+            vec![("AAPL".into(), 0.16), ("MSFT".into(), 0.16), ("ASML.AS".into(), 0.08)],
+        );
+        // DARK.DE is deliberately absent from `holdings` -> unknown, never its EUR listing
+        let book: Vec<String> =
+            ["SPYL.DE", "DARK.DE", "VOD.L", "BTC-EUR"].iter().map(|s| (*s).to_string()).collect();
+        let mix: HashMap<String, f64> = currency_mix(&book, &quotes, &holdings).into_iter().collect();
+        // SPYL.DE's 0.32/0.40 US slice = 0.8 of one row out of four
+        assert!((mix["USD"] - 0.20).abs() < 1e-9, "the listing is EUR and the exposure is USD: {mix:?}");
+        assert!((mix["EUR"] - 0.05).abs() < 1e-9, "only the ASML leg is really EUR: {mix:?}");
+        assert!((mix["GBP"] - 0.25).abs() < 1e-9, "GBp is GBP under a different unit: {mix:?}");
+        assert!((mix["crypto"] - 0.25).abs() < 1e-9, "a coin carries coin risk, not dollar risk: {mix:?}");
+        assert!((mix["?"] - 0.25).abs() < 1e-9, "a fund with no look-through is unknown: {mix:?}");
+        assert!((mix.values().sum::<f64>() - 1.0).abs() < 1e-9, "shares must exhaust the book: {mix:?}");
+        // ordering is share-desc then alphabetical, so the reader meets the biggest slice first
+        let ordered = currency_mix(&book, &quotes, &holdings);
+        assert_eq!(ordered[0].0, "?", "0.25 three ways -> alphabetical, and `?` must not be hidden");
+        let line = currency_mix_line(&book, &quotes, &holdings).expect("a non-empty book prints");
+        assert!(line.contains("USD 20%"), "{line}");
+        assert!(line.contains("≥40% of each fund"), "coverage quotes the WORST fund: {line}");
+        // no rows resolvable -> no line at all, rather than a footer claiming a 0% book
+        assert_eq!(currency_mix_line(&book, &[], &holdings), None);
+        // no fund in the book -> nothing extrapolated, so no coverage clause to disclaim
+        let solo = vec!["VOD.L".to_string()];
+        let line = currency_mix_line(&solo, &quotes, &HashMap::new()).unwrap();
+        assert!(line.contains("GBP 100%") && !line.contains("look-through covers"), "{line}");
     }
 
     /// (r11) vs-SPY premium: longest SHARED leg wins (10Y before 5Y), premium = name CAGR minus

@@ -128,6 +128,40 @@ fn suffix_country(suf: &str) -> Option<&'static str> {
     })
 }
 
+/// (#112) Yahoo ticker suffix -> the currency that venue QUOTES in. Deliberately a second table over
+/// the same suffixes rather than a country -> currency map on top of `suffix_country`: the two answer
+/// different questions (Sweden and Denmark are EU and are not euro; four venues share EUR), and a hop
+/// through country would make the euro bloc look like a coincidence instead of a fact. Kept adjacent
+/// to `suffix_country` for the same reason `EU_MARKETS` below is — an edit to either literal sees the
+/// other, and a venue added to one and not the other reads as a country with no currency.
+///
+/// GBp (LSE pence) is NOT spelled here: it is the same EXPOSURE as GBP, and this table answers what a
+/// EUR holder's FX risk is, not what unit the ticker prints in.
+fn suffix_currency(suf: &str) -> Option<&'static str> {
+    Some(match suf {
+        "DE" | "PA" | "AS" | "MI" | "MC" | "VI" | "LS" | "BR" | "HE" | "IR" => "EUR",
+        "L" => "GBP", "SW" => "CHF", "ST" => "SEK", "OL" => "NOK", "CO" => "DKK",
+        "TO" => "CAD", "HK" => "HKD", "T" => "JPY", "AX" => "AUD", "SA" => "BRL",
+        "NS" => "INR", "SS" | "SZ" => "CNY", "KS" => "KRW",
+        _ => return None,
+    })
+}
+
+/// (#112) The currency a listing trades in, from its ticker alone. No suffix = a US line = USD, the
+/// same assumption [`market`] makes one function down. `None` is an UNRECOGNISED venue, printed as
+/// unknown rather than guessed: a wrong currency here is silently a wrong FX exposure, and the
+/// currency-mix footer would rather show a `?` slice than a confident lie.
+///
+/// Ticker-derived on purpose. Yahoo's `quote_currency` is the better answer for a row we hold a
+/// [`Quote`] for, and the caller uses it there — this exists for a fund's HOLDINGS, which arrive as
+/// bare symbols with no quote attached.
+pub fn listing_currency(sym: &str) -> Option<&'static str> {
+    match sym.rsplit_once('.') {
+        Some((_, suffix)) => suffix_currency(suffix),
+        None => Some("USD"),
+    }
+}
+
 /// EU member states, spelled exactly as `suffix_country` above spells them (kept adjacent so an edit
 /// to either literal sees the other). This is the Art. 40.º-A CIRS set: dividends from a company
 /// resident in an EU state meeting the Parent-Subsidiary Directive conditions are englobados at only
@@ -2864,6 +2898,33 @@ pub fn extreme_flags(closes: &[f64], tol: f64) -> (bool, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#112) The two suffix tables answer different questions and must not be allowed to drift into
+    /// each other. This pins the three ways `listing_currency` can be wrong in a way nobody would see
+    /// on the printed line: a euro venue silently dropping out of the bloc, a bare symbol being read
+    /// as anything other than a US listing, and — the one that matters — an UNRECOGNISED venue being
+    /// guessed instead of refused. A guessed currency is a guessed FX exposure, which is the whole
+    /// thing the footer that reads this exists to stop.
+    #[test]
+    fn an_unknown_venue_has_no_currency_rather_than_a_guessed_one() {
+        // four venues share EUR, and that is a fact about the euro, not a coincidence worth deriving
+        for suf in ["DE", "PA", "AS", "MI", "MC", "VI", "LS", "BR", "HE", "IR"] {
+            assert_eq!(listing_currency(&format!("X.{suf}")), Some("EUR"), "{suf} is in the euro bloc");
+        }
+        assert_eq!(listing_currency("VOD.L"), Some("GBP"), "the pence quote is the same GBP exposure");
+        assert_eq!(listing_currency("NESN.SW"), Some("CHF"));
+        assert_eq!(listing_currency("ATCO-B.ST"), Some("SEK"), "EU membership is not euro membership");
+        assert_eq!(listing_currency("NOVO-B.CO"), Some("DKK"), "same, the other Nordic half");
+        assert_eq!(listing_currency("AAPL"), Some("USD"), "no suffix = a US line, as `market` also reads it");
+        assert_eq!(listing_currency("BRK-B"), Some("USD"), "a share-class dash is not a venue");
+        assert_eq!(listing_currency("X.ZZ"), None, "an unrecognised venue is unknown, never guessed");
+        // every suffix `suffix_country` knows must carry a currency too — the drift this pins
+        for suf in ["DE", "L", "PA", "AS", "MI", "MC", "SW", "VI", "LS", "BR", "HE", "ST", "OL", "CO",
+                    "IR", "TO", "HK", "T", "AX", "SA", "NS", "SS", "SZ", "KS"] {
+            assert!(suffix_currency(suf).is_some(), "{suf} has a country but no currency");
+            assert!(suffix_country(suf).is_some(), "{suf} has a currency but no country");
+        }
+    }
 
     /// (splice) the trimmer must cut a redenomination joint, not real market history: the 0A08.L
     /// shape (×19.6 in 28 days) trims; the NVR shape (×26 across 92 days of real quarterly bars)

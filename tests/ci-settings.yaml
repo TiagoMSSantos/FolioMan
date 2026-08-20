@@ -782,6 +782,90 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  print_acquisition_hazard: false # (#112 / round 3 §9) UNMEASURED, and unmeasurABLE from this data —
+                                 # which is the point. Ships OFF, which is the caveat block every
+                                 # golden holds. Prose only; no gate, no score term, no journal field.
+                                 #
+                                 #   THE HAZARD NOBODY NAMES. `#5` and `#6` are both about holds that
+                                 #   ended BADLY and never entered the pool. This is the opposite
+                                 #   corner and it is more common: the usual way a 20-year single-name
+                                 #   hold actually ENDS is neither bankruptcy nor a sell decision, it
+                                 #   is being ACQUIRED. Two things happen at once, and the second is
+                                 #   the one this repo has a stake in. Compounding stops at a one-time
+                                 #   premium — and the deal CRYSTALLISES the gain, paying on a date
+                                 #   the holder never chose the exact tax that `capital_gains_tax_pct`
+                                 #   and the whole after-tax deferral footer (#108) assume stays
+                                 #   deferred for the full horizon. A takeout at year 7 does not just
+                                 #   truncate the return; it converts the hold arm into something much
+                                 #   closer to the rotate arm, which is the comparison that footer
+                                 #   exists to make.
+                                 #
+                                 #   WHY IT IS PROSE AND NOT A GATE. Nothing in the walk models a
+                                 #   takeout, so every multi-year hold in every table is one that was
+                                 #   ALLOWED to run — optimistic in the same direction as `#5`, by an
+                                 #   amount this pool cannot size, because an acquired name simply
+                                 #   leaves the survivor universe and takes its own base rate with it.
+                                 #   Pricing it at a guessed hazard rate would be inventing the number
+                                 #   the footer is admitting it does not have. A hazard that cannot be
+                                 #   quantified from the data should be NAMED, not silently priced at
+                                 #   zero, and silently-at-zero is what OFF does — hence a knob whose
+                                 #   only defect is that it starts off.
+                                 #
+                                 #   THE ONE DIRECTIONAL READ it does support: it argues mildly toward
+                                 #   LARGER names, which are harder to swallow. That is not a new
+                                 #   principle here — `growth_min_aum_etf` already accepts exactly that
+                                 #   reasoning on the fund side, for the sibling reason (liquidation
+                                 #   risk). Deliberately NOT wired into any stock-side size floor: the
+                                 #   fund knob has a receipt and this argument has none.
+                                 #
+                                 #   THE RUN THAT WOULD SETTLE IT: an acquisition-date feed (delisting
+                                 #   reason, not just delisting date) over the PIT pool, re-running the
+                                 #   after-tax footer with holds truncated at the deal and taxed there.
+                                 #   Until that exists the honest output is a named caveat.
+                                 #   REVERT: set false.
+  print_currency_mix: false      # (#112 / round 3 §9) UNMEASURED — display only, and deliberately
+                                 # NOT a score input. Ships OFF, which is today's footer set.
+                                 #
+                                 #   THE UNDISPLAYED POSITION. A EUR investor holding a US-heavy book
+                                 #   for twenty years carries a large unhedged currency bet, and no
+                                 #   line in this tool shows it. The nearest thing is `print_lane`'s
+                                 #   `market mix`, which counts LISTING COUNTRY across the stocks lane
+                                 #   only. For a fund that is not merely incomplete, it is BACKWARDS: a
+                                 #   Xetra-listed S&P 500 tracker reads "Germany" and is 100% dollar
+                                 #   exposure. The book is mostly funds, so the one surface that talks
+                                 #   about currency is silent about most of the position and wrong
+                                 #   about the rest.
+                                 #
+                                 #   WHAT IT PRINTS: one line, currency shares over the top-10 book,
+                                 #   funds looked THROUGH to the holdings already fetched for
+                                 #   `fund_pe` (zero extra requests). Equal weight per row, matching
+                                 #   `market mix`'s counts — nothing on this surface knows position
+                                 #   sizes (`size` decides those separately), so a weighted mix would
+                                 #   be reporting weights it invented.
+                                 #
+                                 #   THREE HONESTY RULES, each pinned by a test: a fund with no
+                                 #   look-through counts as `?`, NEVER as its own listing currency —
+                                 #   an honest blank beats the confident wrong number this footer
+                                 #   exists to correct. A coin is its own bucket, because a `-EUR`
+                                 #   suffix is a quote convention and a EUR holder of BTC carries
+                                 #   bitcoin risk. And the line quotes the WORST per-fund top-10
+                                 #   coverage as `≥N%`, so the reader knows how much of the mix is
+                                 #   measured rather than extrapolated from the mega-caps.
+                                 #
+                                 #   WHY IT SCORES NOTHING. Whether currency concentration should tilt
+                                 #   the rank is a measured question, and it has never been asked
+                                 #   because the exposure was invisible. Making it visible is how the
+                                 #   data to answer it starts existing. Gating on it first would be
+                                 #   the same mistake `growth_fund_scope_by_class` records: paying for
+                                 #   a factor before knowing its sign.
+                                 #
+                                 #   THE RUN THAT WOULD SETTLE IT: a `backtest universe` arm scoring
+                                 #   holdings-weighted currency concentration as a tilt, graded on the
+                                 #   ship rule. Note the pool is all-USD, so the term is backtest-blind
+                                 #   exactly like the TER/FX/commodity docks — it would need a
+                                 #   multi-currency pool before it could be swept at all, which is the
+                                 #   real reason this ships as a printed line and not a weight.
+                                 #   REVERT: set false.
   print_base_rates: false        # (#111 / round 3 §8) UNMEASURED — the instrument has not been read
                                  # yet. Ships OFF, which is the report every golden holds. Display
                                  # only; no score, no gate, no journal field.
