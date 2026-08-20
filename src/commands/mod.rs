@@ -83,6 +83,47 @@ mod tests {
         );
         assert_eq!(parse_explain("check", v(&["--explain"])), (None, vec![])); // bare flag
     }
+
+    /// (#110) The rate `print_macro_footer` RETURNS must be the rate it fetched, and a failed fetch
+    /// must be `None` rather than a number.
+    ///
+    /// This function is otherwise a `println!` sink, and the killing suite (`--lib --test
+    /// backtest_fixture`) can read neither its stdout nor its one real consumer — the level-entry
+    /// line in `screen::run`. The mutation gate found the hole the moment (#110) put the signature in
+    /// a diff: all four of `None` / `Some(0.0)` / `Some(1.0)` / `Some(-1.0)` survived, because
+    /// nothing anywhere checked the value. Serving a known rate off a real socket is what separates
+    /// "fetched it" from "returned a constant", and one exact-value assert kills all four.
+    ///
+    /// THE FAILURE ARM IS THE LOAD-BEARING ONE, and it is the reason this is not just a gate
+    /// formality. `screen` subtracts this rate inside `picks`-adjacent `valuation_state`
+    /// (`100/pe − euribor`), so a fabricated `Some(0.0)` reads as a zero risk-free and prints CHEAP
+    /// for every market. It cannot be caught downstream either: a 0.00% Euribor was REAL for most of
+    /// 2015-2022, so `valuation_state` has to accept 0.0 as an honest number. "No fetch" and "zero"
+    /// must therefore stay distinguishable HERE, which is exactly what the doc comment on
+    /// `fetch_euribor_3m` promises in words and nothing had asserted.
+    ///
+    /// Offline by construction: `stub_urls` fills every URL field with the loopback base, so no
+    /// endpoint in the footer can reach a live host. The inflation half gets the same body, fails to
+    /// parse it as JSON and prints its own ERROR rows — noise in the captured output, and not what
+    /// this asserts.
+    #[tokio::test]
+    async fn the_macro_footer_hands_back_the_rate_it_fetched_and_never_invents_one() {
+        // the euribor scrape is a regex over HTML, so the smallest valid page is the number itself
+        let (base, client) = crate::fetch::tests::stub_server("3M Euribor 2.345 %");
+        let urls = crate::fetch::tests::stub_urls(&base);
+        assert_eq!(
+            print_macro_footer(&client, &urls).await,
+            Some(2.345),
+            "the returned rate must be the SERVED one — a constant cannot match a value it never saw"
+        );
+        // port 1 refuses instantly: a failed fetch, with no live host involved
+        let dead = crate::fetch::tests::stub_urls("http://127.0.0.1:1/");
+        assert_eq!(
+            print_macro_footer(&client, &dead).await,
+            None,
+            "no fetch is None — a zero here would print CHEAP for every market, and 0.00% is a rate that really happened"
+        );
+    }
 }
 
 /// The macro backdrop you compare the asset tables against: live Euribor 3M, the Certificados de

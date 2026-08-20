@@ -4560,8 +4560,13 @@ pub async fn fetch_universe(
 /// Network-module asserts (no live calls): the pure, breakable bit of the Börse Frankfurt signer is
 /// the MD5 — pin it to known answers so a bad refactor is caught offline. (The concatenation order is
 /// verified against the live server, not here.)
+///
+/// `pub(crate)` for exactly two items — [`tests::stub_server`] and [`tests::stub_urls`], both marked
+/// as such below. `commands::mod`'s test for the macro footer needs a real socket and a URL set that
+/// cannot reach the live internet, and a second copy of either would drift from the traps their doc
+/// comments record. Nothing else in here is meant to be reached from outside this module.
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// (#76) The EU-listing swap's three pure halves, on the exact payload shapes the live services
@@ -6245,7 +6250,7 @@ mod tests {
     ///
     /// `no_proxy` because `reqwest` reads `HTTP_PROXY` from the environment and a proxy set on a dev
     /// box would otherwise swallow the loopback request.
-    fn stub_server(body: &'static str) -> (String, Client) {
+    pub(crate) fn stub_server(body: &'static str) -> (String, Client) {
         pin_throttle();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().expect("local addr");
@@ -6427,7 +6432,7 @@ mod tests {
     /// `#[serde(default)]`, so omitting it here does not fail — it silently deserializes to the live
     /// `api.openfigi.com` endpoint and every EU-listing test starts POSTing to Bloomberg. A defaulted
     /// field is exactly the field the author does not think about, so list defaulted ones too.
-    fn stub_urls(base: &str) -> Urls {
+    pub(crate) fn stub_urls(base: &str) -> Urls {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
