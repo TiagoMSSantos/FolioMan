@@ -3581,6 +3581,44 @@ fn gap_verdict(mean_gap: f64, med_gap: f64, positive: &str, negative: &str) -> S
     }
 }
 
+/// (#111) (round 3 §8) THE HONEST DENOMINATOR. The lane's whole thesis is that a long compounding
+/// record predicts the next one — `growth_min_cagr` deletes every name that has not delivered its bar,
+/// so the bar is not a tilt, it is the universe. Nothing has ever asked what fraction of the names that
+/// CLEARED it went on to clear it again, and that number is one pass over a pool already in memory.
+///
+/// Returns `(qualifying, sustained, base_rate_of_everyone)`: how many samples cleared `bar` on their
+/// trailing leg at the cutoff, how many of those also cleared it forward over `years`, and — the part
+/// that makes it a finding rather than a statistic — the fraction of the WHOLE pool that cleared it
+/// forward. A conditional rate is meaningless without it: 30% sounds bleak until the unconditional rate
+/// is 12%, at which point the record is carrying real information, and damning if the unconditional
+/// rate is 34%.
+///
+/// The bar is `growth_min_cagr`, not a new knob: the question is about the gate the lane actually
+/// ships, and a separate threshold here would answer a question nobody is asking. Trailing CAGR routes
+/// through `picks::long_cagr_pct` (non-negotiable 4), forward CAGR through `core::cagr` on the same
+/// `realized` every other metric in this report reads. `None` when nothing clears the bar.
+fn persistence_base_rate(
+    samples: &[Sample],
+    tuning: &BuyHeuristic,
+    years: i64,
+    bar: f64,
+) -> Option<(usize, usize, f64)> {
+    if samples.is_empty() || bar <= 0.0 {
+        return None;
+    }
+    let made_it = |s: &Sample| core::cagr(s.realized, years as f64) >= bar;
+    let qualifying: Vec<&Sample> = samples
+        .iter()
+        .filter(|s| picks::long_cagr_pct(&s.quote, tuning).is_some_and(|c| c >= bar))
+        .collect();
+    if qualifying.is_empty() {
+        return None;
+    }
+    let sustained = qualifying.iter().filter(|s| made_it(s)).count();
+    let everyone = samples.iter().filter(|s| made_it(s)).count() as f64 / samples.len() as f64;
+    Some((qualifying.len(), sustained, everyone * 100.0))
+}
+
 fn gate_audit(
     samples: &[Sample],
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
@@ -3823,6 +3861,28 @@ fn report_lane(
                     None => println!("    {label:<13} vs {cut:<7} winners: none in the pool at this horizon"),
                 }
             }
+        }
+    }
+    // (#111) (round 3 §8) the base rate behind the whole lane: of the names that HAD compounded at the
+    // bar, what fraction did it again over the next window — against the fraction of everyone who did.
+    // The conditional number alone is a rhetorical device; the pair is a finding. Knob-gated, so the
+    // goldens keep the report they were blessed on.
+    if tuning.print_base_rates {
+        let bar = tuning.growth_min_cagr;
+        match persistence_base_rate(samples, tuning, years, bar) {
+            Some((q, kept, everyone)) => {
+                let rate = kept as f64 / q as f64 * 100.0;
+                let read = if rate > everyone {
+                    "the record CARRIES information"
+                } else {
+                    "the record carries NOTHING — a trailing bar is not a forecast here"
+                };
+                println!(
+                    "  base rate at the {bar:.0}%/yr bar: {kept}/{q} ({rate:.0}%) of names that had cleared it \
+                     cleared it again over {years}y, vs {everyone:.0}% of the whole pool -> {read}"
+                );
+            }
+            None => println!("  base rate at the {bar:.0}%/yr bar: no sample clears it — nothing to condition on"),
         }
     }
     // (#57) NULL MODEL: the same code with the tuning switched off — `BuyHeuristic::default()`, the
@@ -5405,6 +5465,55 @@ mod tests {
         let (n2, r2) = after_tax_pair(4.0, 0, 0.28, 0.28); // years clamps to 1
         assert!((n2 - 216.0).abs() < 1e-9); // 1+3·0.72=3.16 -> +216%/yr over 1y
         assert!((r2 - 216.0).abs() < 1e-9); // 4^1−1=300% gross ×0.72 = +216% — same over 1y
+    }
+
+    /// (#111) The own-pool base rate. This is a counting exercise, so the test counts by hand — and the
+    /// thing worth pinning is not the arithmetic but the SHAPE of the answer:
+    ///
+    ///   * the conditional rate is over the qualifying cohort only, and the unconditional rate is over
+    ///     everyone. Printing the first without the second is the failure this exists to avoid, so the
+    ///     fn returns both or nothing.
+    ///   * the two are genuinely independent — a pool can be built where clearing the bar historically
+    ///     predicts clearing it forward WORSE than chance, and the fn must be able to say so.
+    ///   * nothing qualifying = None, not a 0% that reads like a finding about a cohort that is empty.
+    #[test]
+    fn a_conditional_rate_without_its_denominator_is_a_rhetorical_device() {
+        let legs = |pairs: &[(&str, f64)]| -> Vec<Option<(String, f64)>> {
+            crate::core::HORIZONS
+                .iter()
+                .map(|(l, _)| pairs.iter().find(|(pl, _)| pl == l).map(|(_, v)| ("x".to_string(), *v)))
+                .collect()
+        };
+        // a 5Y leg of +200% is 24.6%/yr trailing; +50% is 8.4%/yr
+        let mk = |trailing_5y: f64, realized: f64| {
+            let mut q = Quote::stub("X", "1", "", "X");
+            q.perf = legs(&[("5Y", trailing_5y)]);
+            Sample { date: ymd(2020, 1, 1), realized, relative: 0.0, quote: Arc::new(q), fund: None, trail: Vec::new() }
+        };
+        let t = BuyHeuristic { growth_min_cagr: 20.0, ..BuyHeuristic::default() };
+        // forward over 10y: +900% is 25.9%/yr (clears 20), +100% is 7.2%/yr (does not)
+        let (win, lose) = (900.0, 100.0);
+
+        // 4 qualifiers, 1 of them sustains; 4 laggards, 3 of them sustain — the record ANTI-predicts,
+        // and the fn has to be able to report that rather than only ever flattering the gate.
+        let pool: Vec<Sample> = [
+            mk(200.0, win), mk(200.0, lose), mk(200.0, lose), mk(200.0, lose),
+            mk(50.0, win), mk(50.0, win), mk(50.0, win), mk(50.0, lose),
+        ]
+        .into_iter()
+        .collect();
+        let (q, kept, everyone) = persistence_base_rate(&pool, &t, 10, t.growth_min_cagr).unwrap();
+        assert_eq!((q, kept), (4, 1), "counted over the qualifying cohort only");
+        assert!((everyone - 50.0).abs() < 1e-9, "4 of 8 in the WHOLE pool sustained: {everyone}");
+        assert!(
+            (kept as f64 / q as f64 * 100.0) < everyone,
+            "this pool is built so the record anti-predicts, and the pair must be able to say so"
+        );
+
+        // nothing clears the bar -> nothing to condition on, and that is not a 0% about a cohort
+        let none = BuyHeuristic { growth_min_cagr: 99.0, ..BuyHeuristic::default() };
+        assert_eq!(persistence_base_rate(&pool, &none, 10, none.growth_min_cagr), None);
+        assert_eq!(persistence_base_rate(&[], &t, 10, t.growth_min_cagr), None, "an empty pool says nothing");
     }
 
     /// (#108) The holding-period schedule. Three things have to hold, and the first is the golden rule:

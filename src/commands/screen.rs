@@ -2368,6 +2368,38 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (#111 / round 3 §8) what you'd have to believe: for each of today's top-10 with a P/E, the EPS
+    // growth the CURRENT price already pays for, printed next to what the name has actually delivered.
+    // A ranking says "this one is best"; this turns it into a claim someone can be wrong about. Zero
+    // fetch. Silent at horizon 0 (the shipped state) and silent for any row with no earnings.
+    if settings.buy_heuristic.implied_growth_years > 0 {
+        let (yrs, req) = (
+            settings.buy_heuristic.implied_growth_years,
+            settings.buy_heuristic.implied_growth_required_pct,
+        );
+        let rows: Vec<String> = ranked_now
+            .iter()
+            .take(crate::commands::track::BOOK)
+            .filter_map(|t| quotes.iter().find(|q| &q.ticker == t))
+            .filter_map(|q| {
+                let implied = picks::implied_growth_pct(q, &settings.buy_heuristic, yrs, req)?;
+                // (non-negotiable 4) the delivered leg is `long_cagr_pct`, the same number the trend
+                // term scores and the LEG column prints — never a second CAGR computed at a read site.
+                let delivered = picks::long_cagr_pct(q, &settings.buy_heuristic)
+                    .map_or_else(|| "n/a".to_string(), |c| format!("{c:+.0}%/yr"));
+                Some(format!("{} implies {implied:+.0}%/yr (delivered {delivered})", q.ticker))
+            })
+            .collect();
+        if !rows.is_empty() {
+            println!(
+                "\nWhat the price already pays for — EPS growth implied over {yrs}y at a {req:.0}%/yr required return, \
+                 with the multiple reverting to ref_pe {:.0} (dividends ignored, so this is conservative for a payer):",
+                settings.buy_heuristic.ref_pe
+            );
+            println!("  {}", rows.join(" · "));
+        }
+    }
+
     // (#107 / round 3 §3) rank robustness: today's top-10 re-ranked under `rank_perturb_k` copies of
     // the shipped knobs with every tilt weight scaled by an independent U(0.8, 1.2). The printed rank
     // above is a point estimate under ONE knob vector; this is its error bar. A name whose IQR spans

@@ -782,6 +782,58 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  print_base_rates: false        # (#111 / round 3 §8) UNMEASURED — the instrument has not been read
+                                 # yet. Ships OFF, which is the report every golden holds. Display
+                                 # only; no score, no gate, no journal field.
+                                 #
+                                 #   THE MISSING DENOMINATOR. This lane's whole thesis is that a long
+                                 #   compounding record predicts the next one, and `growth_min_cagr`
+                                 #   does not merely TILT on that — it DELETES everything below the
+                                 #   bar, so the bar is the universe. Nothing in this tool has ever
+                                 #   asked what that bar's forward hit rate actually is. It prints:
+                                 #   of the samples whose trailing leg had already cleared the bar,
+                                 #   how many cleared it again over the forward window, BESIDE the
+                                 #   fraction of the whole pool that did. The pair is the finding —
+                                 #   30% is bleak against an unconditional 34% and strong against an
+                                 #   unconditional 12% — and printing the conditional number alone
+                                 #   would be a rhetorical device, which is why the fn returns both or
+                                 #   nothing. One pass over samples already in memory.
+                                 #
+                                 #   THE BAR IS THE SHIPPED GATE, not a new threshold: a private one
+                                 #   would answer a question nobody is asking. Note this can come back
+                                 #   ANTI-predictive, and the printed read says so in those words
+                                 #   rather than softening it. If it does, that is a finding about
+                                 #   `growth_min_cagr` itself and belongs in a sweep, not here.
+                                 #   REVERT: set false.
+  implied_growth_years: 0        # (#111 / round 3 §8) UNMEASURED — an unfitted judgement value,
+  implied_growth_required_pct: 8.0 # shipping OFF (0 = no line), which is today's ranking footer.
+                                 #
+                                 #   WHAT IT PRINTS: for each of today's top-10 with a P/E, the EPS
+                                 #   growth rate the CURRENT price already pays for, beside what the
+                                 #   name has actually delivered. The most reliable human defence
+                                 #   against buying hype is not a gate, it is being shown the claim
+                                 #   you are implicitly making — and the tell is never the growth a
+                                 #   company has posted, it is the growth the price REQUIRES. A
+                                 #   ranking says "this one is best"; this turns it into a prediction
+                                 #   someone can be wrong about, which is the whole point of printing
+                                 #   it next to `print_base_rates`.
+                                 #
+                                 #   THE MODEL is the smallest one that inverts cleanly: hold N years,
+                                 #   let the multiple revert to `ref_pe` (the same reference multiple
+                                 #   `value_factor` tilts against — one definition of normal, not a
+                                 #   second opinion), require `implied_growth_required_pct` %/yr:
+                                 #     g = (P/E_now / ref_pe)^(1/N) × (1 + r) − 1
+                                 #   DIVIDENDS IGNORED, which makes the printed number CONSERVATIVE
+                                 #   for a payer. Stated rather than corrected: folding in the payout
+                                 #   ratio would cost the one property that makes the line useful,
+                                 #   that a reader can check its arithmetic in their head.
+                                 #
+                                 #   NEITHER VALUE IS FITTED. The horizon is the reader's holding
+                                 #   period and the required return is the reader's hurdle rate; the
+                                 #   printed answer moves one-for-one with the latter, which is why
+                                 #   the line prints both assumptions beside the result instead of
+                                 #   presenting a number. 8.0 is a plain long-run equity hurdle.
+                                 #   REVERT: set implied_growth_years to 0.
   entry_excess_yield_band: 0.0   # (#110 / round 3 §7) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is the one-axis footer every golden holds.
                                  # Display-only; it does NOT touch the deploy multiplier.

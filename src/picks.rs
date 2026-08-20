@@ -1643,6 +1643,37 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     score_parts(quote, tuning).map(|p| p.score)
 }
 
+/// (#111) (round 3 §8) REVERSE-DCF: the EPS growth rate the current price is already paying for.
+///
+/// The most reliable human defence against buying hype is not a gate — it is being shown the claim you
+/// are implicitly making. And the tell is never the growth number a company has posted; it is the
+/// growth number the price REQUIRES. A name compounding earnings at 61%/yr is not expensive or cheap
+/// until you know whether the multiple implies 15%/yr or 45%/yr for the next decade.
+///
+/// The model is the smallest one that inverts cleanly. Hold for `years`, let the multiple revert to the
+/// reference multiple this tool already uses as "normal" (`ref_pe`, the same constant `value_factor`
+/// tilts against — one definition, not a second opinion about what normal is), and require `required`
+/// %/yr of total price return:
+///
+///   P/E_now × (1+g)^N / (1+g)^0 ... -> P/E_now = ref_pe × ((1+g)/(1+r))^N
+///   =>  g = (P/E_now / ref_pe)^(1/N) × (1+r) − 1
+///
+/// DIVIDENDS ARE IGNORED, which makes the answer CONSERVATIVE for a payer — some of the required return
+/// arrives as cash, so the true implied growth is lower than this prints. Stated rather than corrected,
+/// because correcting it would fold the payout ratio in and the whole value of this line is that a
+/// reader can check its arithmetic in their head.
+///
+/// `None` when the name has no positive trailing P/E (funds, coins, loss-makers) or the knob is off:
+/// there is no implied growth rate for a thing with no earnings, and inventing one would be the exact
+/// failure this line exists to expose.
+pub fn implied_growth_pct(quote: &Quote, tuning: &BuyHeuristic, years: u32, required_pct: f64) -> Option<f64> {
+    let pe = quote.pe_ratio.filter(|p| *p > 0.0)?;
+    if years == 0 || tuning.ref_pe <= 0.0 {
+        return None;
+    }
+    Some(((pe / tuning.ref_pe).powf(1.0 / f64::from(years)) * (1.0 + required_pct / 100.0) - 1.0) * 100.0)
+}
+
 /// (#107) The ADDITIVE and MULTIPLICATIVE tilt weights of `score_parts`, as (label, get, set) — the
 /// perturbation set for `rank_robustness`. This is every knob whose units are "how much does this term
 /// count", so scaling one by a few percent is a meaningful question ("what if I'd weighted quality 10%
@@ -7038,6 +7069,51 @@ mod tests {
         assert_eq!(growth_score(&grower, &t), growth_score(&bare, &t), "weight 0 must move NOTHING");
         let on = BuyHeuristic { growth_er_weight: 1.0, ..t.clone() };
         assert!(growth_score(&grower, &on).unwrap() > growth_score(&bare, &on).unwrap(), "…and on, it does");
+    }
+
+    /// (#111) The reverse-DCF. It is a four-term closed form, so the test is the four terms:
+    ///
+    ///   * a name already AT the reference multiple implies exactly the required return and nothing
+    ///     more — no re-rating to pay for, so the whole hurdle has to come out of earnings. This is
+    ///     the anchor the other three move against.
+    ///   * a rich multiple implies MORE growth than the hurdle (the multiple has to shrink, and
+    ///     earnings must cover the shrinkage too); a cheap one implies less. That direction is the
+    ///     entire point of the line.
+    ///   * the horizon dilutes: the same rich multiple spread over twenty years demands less per year
+    ///     than over five, because the re-rating is amortised.
+    ///   * no earnings, no claim. Funds, coins and loss-makers print nothing rather than a number.
+    #[test]
+    fn the_reverse_dcf_prices_the_re_rating_not_just_the_hurdle() {
+        let t = BuyHeuristic::default();
+        let at = |pe: f64| {
+            let mut q = gate_fixture();
+            q.pe_ratio = Some(pe);
+            q
+        };
+        let g = |pe: f64, years: u32| implied_growth_pct(&at(pe), &t, years, 8.0);
+
+        // at ref_pe there is no re-rating: implied growth IS the required return
+        let flat = g(t.ref_pe, 10).unwrap();
+        assert!((flat - 8.0).abs() < 1e-9, "no re-rating to fund, so the hurdle is all of it: {flat}");
+
+        // twice the reference multiple: earnings must also cover the multiple halving over the hold
+        let rich = g(t.ref_pe * 2.0, 10).unwrap();
+        assert!(rich > flat, "a rich multiple demands MORE growth: {rich} vs {flat}");
+        let cheap = g(t.ref_pe / 2.0, 10).unwrap();
+        assert!(cheap < flat, "a cheap multiple demands less: {cheap} vs {flat}");
+        // and the exact arithmetic, so a sign flip inside the root cannot pass
+        let want = (2f64.powf(0.1) * 1.08 - 1.0) * 100.0;
+        assert!((rich - want).abs() < 1e-9, "expected {want}, got {rich}");
+
+        // the re-rating amortises over a longer hold
+        assert!(g(t.ref_pe * 2.0, 20).unwrap() < rich, "twenty years dilutes the same re-rating");
+        assert!(g(t.ref_pe * 2.0, 5).unwrap() > rich, "five years concentrates it");
+
+        // no earnings, no claim — and the knob off says nothing either
+        assert_eq!(implied_growth_pct(&gate_fixture(), &t, 10, 8.0), None, "no P/E at all");
+        assert_eq!(g(0.0, 10), None, "a zero P/E is not a free company");
+        assert_eq!(g(-12.0, 10), None, "a loss-maker has no implied growth rate");
+        assert_eq!(g(t.ref_pe, 0), None, "horizon 0 is the shipped state: no line");
     }
 
     /// (#109) The share-class dock. FolioMan has always PREFERRED accumulating funds and has never had
