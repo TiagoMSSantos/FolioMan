@@ -247,6 +247,97 @@
 # ============================================================================================
 tickers: []
 
+# ============================================================================================
+# (#114) THE LIVE DISPLAY BLOCK — moved here when config/web-settings.yaml was DELETED.
+#
+# There used to be two overlays over this file: the gitignored config/settings.yaml (the author's
+# terminal) and the committed config/web-settings.yaml (the GitHub Pages run). They carried the same
+# `history_proxy`, the same `widths`, the same `prefer_eu_listing: true` and the same twelve
+# off-validated `buy_heuristic` knobs. The page therefore published a lane no receipt in this file had
+# ever graded, and web/index.html had to say so out loud.
+#
+# The collapse went ONE WAY ONLY, and the direction is the whole point. The display half (this block)
+# moved DOWN into the base, because it cannot move a backtest score. The heuristic half was DELETED
+# from both overlays rather than promoted, because promoting it would have made `use_life_cagr: true`
+# — twice-condemned at (#3j) and (#3k) — the graded default and invalidated every receipt below it.
+# Pages now runs FOLIOMAN_CONFIG=tests/ci-settings.yaml: the page, the terminal and the test suite
+# rank on ONE lane, and it is this one.
+#
+# Everything in this block is DISPLAY OR VENUE, never score. No golden covers it and no horizon can be
+# quoted for it — these are shipped-policy values, not fitted ones.
+# ============================================================================================
+
+# Young listing -> older SAME-strategy, SAME-currency twin: the twin's closes are rebased and prepended
+# so the young wrapper is scored on the strategy's proven history (marked ~ in tables). SXR8.DE =
+# iShares Core S&P 500 acc (Xetra, EUR, since 2010) — twin for the young S&P wrappers.
+#
+# UNMEASURED at every horizon, and UNMEASURABLE here: no fixture carries any of these four symbols, so
+# every golden is byte-identical with the block present or absent (checked before it landed). It DOES
+# move a live rank — a spliced name is scored on the strategy's age, not the wrapper's — which is why
+# `picks` marks those rows `~` instead of letting the longer history pass silently.
+# REVERT RULE: drop an entry the moment its twin stops tracking the same index, or trades in another
+# currency; `fetch` already refuses the splice in both cases and says so on stderr.
+history_proxy:
+  VUAA.DE: SXR8.DE
+  SPYL.DE: SXR8.DE
+  AUM5.DE: SXR8.DE
+
+# Table column widths (chars) — each value truncated AND padded to this. All optional; omit the block
+# for the built-in narrow layout (config.rs `Widths::default`). Pure display: `screen`, `check` and
+# `picks` render through these and nothing else reads them.
+widths:
+  name: 28      # NAME column (check/screen/picks)
+  name_etf: 53  # NAME column for ETFs (check/screen/picks) — 0 = use `name` for both lanes
+  ticker: 10    # TICKER column (8 fits the longest EU symbols like CSNDX.SW; 7 truncated them)
+  market: 7     # MARKET column (check/picks)
+  price: 9      # PRICE(EUR) column (check/screen/picks) — lower to tighten the gap before it
+  headline: 27  # HEADLINE column (check)
+  score: 5      # SCORE column (picks) — shown to 1 decimal
+  # screen/picks table columns shown, IN THIS ORDER. Comment out a line to HIDE that column; reorder
+  # freely. Remove the whole `columns:` block (or set `columns: []`) to fall back to the built-in
+  # default layout. Display-only — never affects scoring. (Listed here = ALL available columns.)
+  columns:
+    - rank        # position # (+ "*" pinned / "#" used live fundamentals)
+    - name        # instrument name
+    - ticker      # Yahoo symbol
+    - market      # listing country / venue
+    - price       # current close (EUR)
+    - cagr        # whole-life CAGR (%/yr since listing) — display only; the growth rank scores `leg`, not this
+    # - leg         # the CAGR the growth rank DOES score: the 20/8/5Y ladder rung, capped at long_trend_cap
+    - yrs         # real listing age in years — also picks the rung above (≥20y→20Y, ≥8y→8Y, else 5Y)
+    - 1h          # intraday % (1 hour)
+    - 6h          # intraday % (6 hours)
+    # - 12h         # intraday % (12 hours)
+    - 1d          # % vs 1 day ago
+    - 1w          # % vs 1 week ago
+    - 1m          # % vs 1 month ago
+    - 2y          # % vs 2 years ago
+    - 5y          # % vs 5 years ago
+    - 8y          # % vs 8 years ago
+    - 20y         # % vs 20 years ago
+    - vol         # daily-return stdev (~1y) — risk / "normal swing"
+    - maxdd       # worst peak-to-trough drop ever — pain endured
+    - r2          # log-trend steadiness 0..1 — smooth compounder vs lumpy
+    - abv-ma      # % above the 200wk SMA — overextension / blow-off gauge
+    - pe          # trailing P/E (needs FMP key; else n/a)
+    - peg         # P/E ÷ long CAGR — valuation-vs-growth (<1 cheap for its growth; needs FMP key)
+    - mvrv        # crypto MVRV ratio (needs FMP key; else n/a) — valuation-vs-growth (<1 cheap for its growth)
+    - roe         # trailing return-on-equity (needs FMP key; else n/a) — quality
+    - ter         # ETF expense ratio %/yr — the one cost that compounds against a 40y hold (needs FMP key; ETFs only)
+    - aum         # ETF fund size (EUR-approx, Börse Frankfurt) — sub-€100M funds risk liquidation/merge (ETFs only)
+    - use         # ETF share class: Acc/Dist — Dist payouts taxed yearly; Acc compounds tax-deferred (ETFs only)
+    - repl        # ETF replication: Swap/Full/Opt — counterparty structure; swap-based US funds dodge dividend WHT (ETFs only)
+    - rev-yoy     # newest complete-FY revenue growth vs prior FY (stocks only; report pipeline, top rows enriched)
+    - eps-yoy     # newest complete-FY EPS growth vs prior FY (stocks only) — profit follow-through
+    - net         # newest complete-FY net margin % (stocks only) — profitability quality
+    - div         # trailing-1Y dividend yield
+    - buyback     # buyback yield (stocks only)
+    - off-hi      # % below its OFF-HI high
+    # - upside      # room back to that high (NOT a forecast)
+    - turnover    # avg daily turnover (EUR) — liquidity
+    - score       # the growth ranking score
+    - score8y     # the 8-year growth ranking score
+
 # --- `check` / `alert` / `perf` display + scan knobs (display/report only — NOT scored by the backtest gate) ---
 # OFF-HI anchor: 0 = drawdown vs the ALL-TIME high over the fetched ~10y history (recommended for a
 # decades buy-and-hold: "on sale vs the proven peak", pairs with the below-200wk-SMA cheap reward).
@@ -5460,11 +5551,20 @@ universe_prefer_eur: true
 # sleep at the END of each hop-2 chunk, which had been spacing that hop's requests 5s apart against a
 # 2.4s rate limit: ~2 minutes of pure waiting on a cold ~52-chunk resolve.
 #
-# UNGRADEABLE, therefore OFF until one real screen makes the pond-size and rank effects measurements
-# rather than predictions. The resolver prints its hit/miss tally to stderr for exactly that run. A name
-# whose twin fails to resolve, is not on Xetra, or whose chart is not EUR with at least 60 bars keeps its
-# US row — the pond never silently shrinks.
-prefer_eu_listing: false
+# UNGRADEABLE BY THE BACKTEST — no fixture carries a Xetra twin, so no golden can move either way, and
+# no horizon can be quoted for it. The resolver prints its hit/miss tally to stderr on every real screen.
+# A name whose twin fails to resolve, is not on Xetra, or whose chart is not EUR with at least 60 bars
+# keeps its US row — the pond never silently shrinks.
+#
+# (#114) ON, and the receipt is HONESTY ABOUT WHO WAS ALREADY RUNNING IT rather than a measurement.
+# This sat at `false` while BOTH live lanes — the author's terminal overlay and the Pages overlay —
+# set it `true`, so the committed "off" described nothing that actually ran. Collapsing the two
+# overlays onto this file (see the header note on `widths` below) forced the question, and the answer
+# that keeps ONE lane is to commit the value the lanes were using. UNMEASURED at every horizon and
+# unmeasurable here; it changes which VENUE a live row is fetched from, never a backtest score.
+# REVERT RULE: set `false` if a real screen's stderr tally shows the swap shrinking the pond or
+# promoting a thin Xetra line over a liquid US one. That tally is the only evidence this knob has.
+prefer_eu_listing: true
 
 # `screen` SECTOR FILTER — which type of companies/ETFs to fetch. Case-insensitive substring
 # keywords matched against a stock's GICS sector AND an ETF's fund name. Empty list (or omitted) =

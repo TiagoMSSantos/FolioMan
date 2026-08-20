@@ -20,10 +20,16 @@ name: Pages
 # `gh api repos/OWNER/REPO/pages --jq .build_type` before blaming anything here.
 #
 # The repo is public, so the site is public and standard-runner minutes are free. That is not licence
-# to relax about what ships: `config/settings.yaml` — the real overlay, holding the watchlist, the
-# positions and the monthly deploy amount — is gitignored and is NOT public today, and this page must
-# never become the thing that publishes it. Hence `config/web-settings.yaml`, which carries a column
-# layout and the gate knobs and nothing that says whose portfolio these rows belong to.
+# to relax about what ships: `config/settings.yaml` — the real overlay, holding the watchlist and the
+# monthly deploy amount — is gitignored and is NOT public today, and this page must never become the
+# thing that publishes it.
+#
+# (#114) The guard used to be a second committed overlay, `config/web-settings.yaml`. It is gone. The
+# run below reads `tests/ci-settings.yaml` — the same file `cargo t` grades — and that file ships
+# `tickers: []`, `sectors: []`, `monthly_deploy_eur: 0` and a dummy `ntfy_topic`, asserted by
+# `the_published_base_leaks_nothing_and_ranks_on_the_validated_lane`. Privacy is now a property of the
+# base rather than of a file that had to be kept in sync with it, and the same test refuses to let a
+# second overlay come back.
 on:
   # Weekday mornings, after the European open has settled. GitHub delays scheduled runs under load
   # and drops them outright on a quiet repo, which is why the page carries its own staleness banner
@@ -101,11 +107,20 @@ jobs:
       # empties the `#` flag and some columns rather than failing.
       - name: Screen
         env:
-          # ABSOLUTE, deliberately. `data_path` anchors the caches and the payload on the config's
-          # grandparent directory, and a relative "config/web-settings.yaml" has an EMPTY grandparent
-          # — it would fall through to anchoring on tests/ci-settings.yaml instead. Same directory
-          # today, by luck; naming it outright is what keeps it so.
-          FOLIOMAN_CONFIG: ${{ github.workspace }}/config/web-settings.yaml
+          # (#114) THE COMMITTED BASE, DIRECTLY — no overlay. This used to point at
+          # config/web-settings.yaml, a second tracked config that merged over this one. That file had
+          # grown twelve `buy_heuristic` overrides (including `use_life_cagr: true`, condemned at #3j
+          # and again at #3k), so this job published a ranking no receipt in the repo had graded. The
+          # overlay is deleted; the page now ranks on exactly what `cargo t` grades.
+          #
+          # `config::ci_base_yaml` refuses to self-merge a path ending in `ci-settings.yaml`, so this is
+          # the pure fixture, and `heuristic_drift` stays quiet for the same reason — correct here,
+          # since there is no longer a baseline for it to differ from.
+          #
+          # ABSOLUTE, deliberately: `data_path` anchors the caches and the payload on the config's
+          # GRANDPARENT directory, so this resolves to the workspace root — the same directory the old
+          # overlay anchored on, which keeps the fetch caches below keyed to the same paths.
+          FOLIOMAN_CONFIG: ${{ github.workspace }}/tests/ci-settings.yaml
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
         run: ./target/release/folioman screen
 

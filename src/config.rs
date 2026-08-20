@@ -1504,31 +1504,44 @@ mod tests {
         );
     }
 
-    /// (#79) The Pages overlay must MERGE-parse, and must stay private-clean.
+    /// (#79, rewritten at #114) What the PUBLIC PAGE publishes must stay private-clean, must carry its
+    /// display shape, and must rank on the lane the receipts below it graded.
     ///
-    /// It is only ever exercised on a runner, by a scheduled job, against a config that isn't in this
-    /// repo — so a typo in it fails on GitHub with nobody watching, hours after the commit that
-    /// caused it. Parsing it here is the whole point: `Settings` rejects unknown fields, which is what
-    /// catches a mis-nested key (`compute_threads` under `buy_heuristic` is the live example).
+    /// (#79) asked this of `config/web-settings.yaml`, a second committed overlay that merged over this
+    /// base for the Pages run. (#114) DELETED that file. It had drifted into a whole second lane —
+    /// twelve `buy_heuristic` knobs, `use_life_cagr: true` among them — so the most-seen output the tool
+    /// has was ranking on a config no receipt in `tests/ci-settings.yaml` had ever graded, and
+    /// `web/index.html` had to disclose that in prose. Pages now runs
+    /// `FOLIOMAN_CONFIG=tests/ci-settings.yaml` directly, so the page, the terminal and this suite share
+    /// ONE lane and this test asks its questions of the base itself.
     ///
-    /// The second half is the one that matters more. The repo is public and so is the Pages site, so
-    /// an overlay that grew a `tickers:` entry or a real `ntfy_topic` would publish it. These asserts
-    /// are that gate, and they are deliberately about ABSENCE — the easiest way for a private value to
-    /// reach the page is for someone to paste their whole settings.yaml in here.
+    /// That makes the privacy half MORE load-bearing, not less. The repo is public and so is the site,
+    /// and the file under test is now the same one every receipt is written in — so a `tickers:` entry
+    /// or a real `ntfy_topic` pasted in here would publish itself. These asserts are deliberately about
+    /// ABSENCE.
     #[test]
-    fn web_overlay_parses_merged_and_leaks_nothing() {
-        let base = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml"))
+    fn the_published_base_leaks_nothing_and_ranks_on_the_validated_lane() {
+        // A second committed overlay is the exact regression this whole test is the tombstone for:
+        // re-adding one forks the page off the graded lane again, silently, and the fork is only
+        // visible to whoever reads the workflow env var.
+        assert!(
+            !std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/config/web-settings.yaml")).exists(),
+            "config/web-settings.yaml is back. It was deleted at (#114) because a second committed \
+             overlay is how the published page came to rank on twelve off-validated knobs. Put the \
+             value in tests/ci-settings.yaml with a receipt, or leave it in the gitignored local \
+             overlay — not in a second tracked config"
+        );
+
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ci-settings.yaml"))
             .expect("read tests/ci-settings.yaml");
-        let overlay = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config/web-settings.yaml"))
-            .expect("read config/web-settings.yaml");
-        let mut merged: serde_yaml::Value = serde_yaml::from_str(&base).expect("parse the base");
-        merge_yaml(&mut merged, serde_yaml::from_str(&overlay).expect("parse config/web-settings.yaml"));
-        // asked of the merged VALUE, before it is consumed: this is the same check `load` runs, and an
-        // empty `buy_heuristic` would otherwise deserialize clean into the code defaults and rank a
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&text).expect("parse the base");
+        // asked of the VALUE, before it is consumed: this is the same check `load` runs, and an empty
+        // `buy_heuristic` would otherwise deserialize clean into the code defaults and rank a
         // plausible-looking table off an unconfigured heuristic.
-        assert!(gates_configured(&merged), "the page must inherit the tuned gates");
-        let merged_pin = merged.clone();
-        let s: Settings = serde_yaml::from_value(merged).expect("the merged Pages config must parse");
+        assert!(gates_configured(&parsed), "the page must inherit the tuned gates");
+        // `Settings` denies unknown fields, so this also catches a mis-nested key (`compute_threads`
+        // under `buy_heuristic` is the live example) before a runner does, hours later, unwatched.
+        let s: Settings = serde_yaml::from_value(parsed).expect("the published config must parse");
 
         // nothing that says WHOSE screen this is
         assert!(s.tickers.is_empty(), "a pin publishes a name purely because someone watches it");
@@ -1536,42 +1549,22 @@ mod tests {
         assert_eq!(s.monthly_deploy_eur, 0.0, "how much is being invested is nobody's business");
         assert_eq!(s.ntfy_topic, "ci-smoke-tests-unused", "the base dummy — never a real topic");
 
-        // the display shape the page promises: an explicit column list, not the built-in default
+        // the display shape, moved down from the deleted overlay at (#114): an explicit column list,
+        // not the built-in default. Without it the page publishes the narrow layout and silently drops
+        // the ETF-only columns.
         assert!(s.widths.columns.len() > 20, "the page publishes the wide terminal layout");
         assert!(s.widths.columns.iter().any(|c| c == "ter"), "the ETF lane needs its own columns");
         assert!(s.widths.name_etf > 0, "the ETF lane's own NAME width, same as the terminal's");
 
-        // The CAGR-BASIS knobs, pinned by value. These two are the ones that went missing, and they
-        // are the ones a reader is least likely to notice are missing: every knob around them moves a
-        // THRESHOLD, while these pick WHICH NUMBER gets compounded. Left out, the page ranked on the
-        // 20/8/5 leg while its CAGR column printed whole-life, and its #1 stopped being the
-        // terminal's. This pin is what guards CI, where the overlay below does not exist.
-        assert!(s.buy_heuristic.use_life_cagr, "the page must rank on whole-life CAGR, as the terminal does");
-        assert_eq!(s.buy_heuristic.fixed_cagr_years, 20, "…and over the same pinned window, or the two disagree");
-
-        // DRIFT GUARD, skip-if-absent. `config/settings.yaml` is gitignored, so this is a no-op in CI
-        // and a live check on the machine that HAS the overlay — the only machine where the page and
-        // the terminal can be caught disagreeing. Every heuristic knob the overlay sets must survive
-        // into the merged page config. A key the merged heuristic does not carry is skipped, which is
-        // how the overlay's misfiled `compute_threads` stays out of it.
-        //
-        // Retuning the overlay reds BOTH this and the pin above. That is deliberate: the two edits
-        // belong together, and the pin cannot read the file that would tell it the new value.
-        if let Ok(text) = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config/settings.yaml")) {
-            let local: serde_yaml::Value = serde_yaml::from_str(&text).expect("parse config/settings.yaml");
-            if let (Some(lh), Some(mh)) = (local.get("buy_heuristic"), merged_pin.get("buy_heuristic")) {
-                for (key, lv) in lh.as_mapping().expect("buy_heuristic is a mapping") {
-                    let (Some(k), Some(mv)) = (key.as_str(), key.as_str().and_then(|k| mh.get(k))) else { continue };
-                    // 50 and 50.0 are one floor written two ways — compare numbers as numbers, so the
-                    // guard fires on real disagreement and not on YAML spelling.
-                    let same = match (lv.as_f64(), mv.as_f64()) {
-                        (Some(a), Some(b)) => a == b,
-                        _ => lv == mv,
-                    };
-                    assert!(same, "config/web-settings.yaml drifted from the local overlay on `{k}`: page has {mv:?}, terminal has {lv:?} — the page would rank a different #1 than the terminal it claims to mirror");
-                }
-            }
-        }
+        // THE CAGR-BASIS PAIR, pinned by value, and pinned INVERTED from what (#79) pinned. Every knob
+        // around these moves a THRESHOLD; these two pick WHICH NUMBER gets compounded, which is why
+        // they are the pair a reader is least likely to notice has moved. The deleted overlay set them
+        // to (true, 20) so the page would mirror a terminal that did the same. `use_life_cagr` is a
+        // MEASURED LOSER — (#3j): edge +125.6 vs +167.6, rho +0.17 vs +0.20, both out-of-sample halves
+        // down; (#3k) re-condemned it at all four horizons, "loses EVERY view it was graded on. Do not
+        // re-propose." Turning it on here would re-propose it to the most-seen output the tool has.
+        assert!(!s.buy_heuristic.use_life_cagr, "(#3j)/(#3k) condemned whole-life CAGR twice — the page ranks on the ladder leg");
+        assert_eq!(s.buy_heuristic.fixed_cagr_years, 0, "…and on the 20/8/5 ladder, not a window pinned to one rung");
     }
 
     /// Value-pin for the RANKING-LIVE tilt knobs. The scoring pins (r59/r67) guard the CODE defaults
