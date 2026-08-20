@@ -782,6 +782,48 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  rank_perturb_k: 0              # (#107 / round 3 §3) UNMEASURED — an unfitted judgement value,
+                                 # shipping OFF, which is the point-estimate ranking every golden
+                                 # holds. Display-only and it does NOT reorder the book.
+                                 #
+                                 #   THE GAP. McLean & Pontiff put a published predictor's decay at 26%
+                                 #   out-of-sample and 58% post-publication. The defences here are real
+                                 #   — walk-forward, chronological OOS halves, ship rule v2, an honest
+                                 #   `tune` that searches on TRAIN and scores on a TEST it never saw —
+                                 #   and they all share one limit: they produce exactly ONE knob vector.
+                                 #   Under it every name's printed rank is a point estimate with no
+                                 #   error bar. Nothing in the tool has ever asked whether a name ranks
+                                 #   #2 because it is good or because `sharpe_weight` happens to sit
+                                 #   where it sits.
+                                 #
+                                 #   WHAT IT DOES: k re-scores of the universe, each with all 14 tilt
+                                 #   weights (`picks::WEIGHT_DIMS`) scaled by an independent U(0.8,1.2),
+                                 #   then prints today's top-10 by MEDIAN rank with its IQR:
+                                 #   `NVDA #3 (IQR 2–6)` vs `XYZ #4 (IQR 4–71)`. The second name is a
+                                 #   knob artefact and the score alone cannot say so.
+                                 #
+                                 #   SCOPE, deliberately: weights only, no gates. A gate is a reject,
+                                 #   not a tilt, so perturbing one changes the ranked POPULATION rather
+                                 #   than the order inside it, and the honest statistic for that is
+                                 #   P(name survives), not a rank spread. Keeping gates fixed is also
+                                 #   what makes the output readable — every rank vector has exactly k
+                                 #   entries, so a wide IQR is always about order and never about a
+                                 #   name dropping out of the pool. A weight shipping at 0 stays 0
+                                 #   under a multiplicative draw, which is correct: a term that is off
+                                 #   cannot be a source of fragility.
+                                 #
+                                 #   COST: k full universe re-scores per `screen`, which is why 0 is
+                                 #   the default rather than a small always-on number. 200 is the value
+                                 #   the round-3 note proposes; nothing here has measured what k the
+                                 #   IQR stabilises at, so pick one by watching the printed IQR stop
+                                 #   moving, not by trusting 200.
+                                 #
+                                 #   NOT DONE HERE, and it is the bigger half: ranking the BOOK by
+                                 #   median rank instead of by point score. That ships a different book
+                                 #   — it quietly drops exactly the population that decays after
+                                 #   publication, which is the point — so it is a ship-rule decision
+                                 #   graded on `backtest universe` at 20y/12y/8y, not a print knob.
+                                 #   REVERT: set 0.
   print_book_deciles: false      # (#106 / round 3 §4) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is the mean-only ladder every golden holds.
                                  # Display-only, so "unmeasured" means the instrument has not been read

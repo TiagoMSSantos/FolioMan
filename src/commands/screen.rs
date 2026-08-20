@@ -2368,6 +2368,33 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (#107 / round 3 §3) rank robustness: today's top-10 re-ranked under `rank_perturb_k` copies of
+    // the shipped knobs with every tilt weight scaled by an independent U(0.8, 1.2). The printed rank
+    // above is a point estimate under ONE knob vector; this is its error bar. A name whose IQR spans
+    // half the table ranks where it does because of the tuning, not despite it. Zero fetch, no reorder
+    // — the book printed above is unchanged. Silent at k = 0, which is the shipped state.
+    if settings.buy_heuristic.rank_perturb_k > 0 {
+        let spread =
+            picks::rank_robustness(&quotes, &settings.buy_heuristic, settings.buy_heuristic.rank_perturb_k);
+        let mut rows: Vec<(&String, f64, f64, f64)> = ranked_now
+            .iter()
+            .take(crate::commands::track::BOOK)
+            .filter_map(|t| spread.get(t).map(|&(m, lo, hi)| (t, m, lo, hi)))
+            .collect();
+        // by MEDIAN rank, not by today's score — the whole point of the footer is that the two orders
+        // can disagree, and printing it in score order would hide exactly the disagreement.
+        rows.sort_by(|a, b| a.1.total_cmp(&b.1));
+        if !rows.is_empty() {
+            let k = settings.buy_heuristic.rank_perturb_k;
+            let parts = rows
+                .iter()
+                .map(|(t, m, lo, hi)| format!("{t} #{m:.0} (IQR {lo:.0}–{hi:.0})"))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            println!("\nRank under {k} perturbed knob vectors, by median rank — {parts}");
+        }
+    }
+
     // (round 34) fund flow: for today's top-10, net shares created/redeemed across the journal with
     // price appreciation divided OUT of AUM growth — is each fund GAINING or BLEEDING assets? A 20yr
     // durability axis orthogonal to every rank/return footer above: a fund bleeding AUM risks

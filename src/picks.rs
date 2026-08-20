@@ -1615,6 +1615,96 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     score_parts(quote, tuning).map(|p| p.score)
 }
 
+/// (#107) The ADDITIVE and MULTIPLICATIVE tilt weights of `score_parts`, as (label, get, set) — the
+/// perturbation set for `rank_robustness`. This is every knob whose units are "how much does this term
+/// count", so scaling one by a few percent is a meaningful question ("what if I'd weighted quality 10%
+/// higher?"). It deliberately excludes every GATE and every CAP: a gate is a reject, not a tilt, so
+/// moving one changes the POPULATION rather than the order within it, and the honest statistic for that
+/// is P(name survives), not a rank spread. Caps are excluded for the same reason a cap is not a weight —
+/// `long_trend_cap: 0` means OFF, and 0 × 1.15 is still 0, so a multiplicative draw cannot explore it.
+type WeightDim = (&'static str, fn(&BuyHeuristic) -> f64, fn(&mut BuyHeuristic, f64));
+pub(crate) const WEIGHT_DIMS: [WeightDim; 14] = [
+    ("growth_trend_weight", |t| t.growth_trend_weight, |t, v| t.growth_trend_weight = v),
+    ("growth_accel_weight", |t| t.growth_accel_weight, |t, v| t.growth_accel_weight = v),
+    ("sharpe_weight", |t| t.sharpe_weight, |t, v| t.sharpe_weight = v),
+    ("calmar_weight", |t| t.calmar_weight, |t, v| t.calmar_weight = v),
+    ("quality_weight", |t| t.quality_weight, |t, v| t.quality_weight = v),
+    ("dividend_weight", |t| t.dividend_weight, |t, v| t.dividend_weight = v),
+    ("growth_fund_weight", |t| t.growth_fund_weight, |t, v| t.growth_fund_weight = v),
+    ("growth_mom121_weight", |t| t.growth_mom121_weight, |t, v| t.growth_mom121_weight = v),
+    ("growth_smoothness_weight", |t| t.growth_smoothness_weight, |t, v| t.growth_smoothness_weight = v),
+    ("growth_underwater_weight", |t| t.growth_underwater_weight, |t, v| t.growth_underwater_weight = v),
+    ("growth_er_weight", |t| t.growth_er_weight, |t, v| t.growth_er_weight = v),
+    ("growth_value_weight", |t| t.growth_value_weight, |t, v| t.growth_value_weight = v),
+    ("growth_proximity_weight", |t| t.growth_proximity_weight, |t, v| t.growth_proximity_weight = v),
+    ("growth_turnover_weight", |t| t.growth_turnover_weight, |t, v| t.growth_turnover_weight = v),
+];
+
+/// (#107 / round 3 §3) Rank robustness. McLean & Pontiff put the out-of-sample decay of a published
+/// predictor at 26%, and 58% after publication. This project's defence is walk-forward, OOS halves and
+/// ship rule v2 — good discipline that still only ever produces ONE knob vector, under which every
+/// name's rank is a single point estimate with no error bar on it.
+///
+/// So: re-score the universe under `k` copies of `tuning` with every weight in `WEIGHT_DIMS` scaled by
+/// an independent U(0.8, 1.2), and report each name's MEDIAN rank with its interquartile range. A name
+/// that sits at #2 under the shipped knobs and #40 under a 10% nudge is a knob artefact — precisely the
+/// population that decays post-publication. A name in the top ten under three quarters of plausible
+/// configs is a signal that does not depend on the tuning being right.
+///
+/// Two properties worth stating because they make the output cheap to read:
+/// - Gates are untouched, so the ranked POPULATION is identical in every draw and each name's rank
+///   vector has exactly `k` entries. A wide IQR is therefore always about ORDER, never about a name
+///   dropping in and out of the pool.
+/// - A weight that ships at 0 stays 0 under a multiplicative draw. That is correct, not a gap: a term
+///   that is switched off cannot be a source of rank fragility, and pretending to explore it would
+///   invent an artefact the shipped config does not have.
+///
+/// Seeded xorshift64, same stream shape as `tune_growth`'s search, so a re-run reproduces exactly.
+/// Quartiles come from `backtest::percentile` (nearest-rank) — one definition, not two.
+/// Returns ticker -> (median rank, q1, q3), 1-based ranks. Empty when `k == 0` (the shipped state).
+pub fn rank_robustness(
+    quotes: &[Quote],
+    tuning: &BuyHeuristic,
+    k: usize,
+) -> HashMap<String, (f64, f64, f64)> {
+    if k == 0 {
+        return HashMap::new();
+    }
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let mut ranks: HashMap<&str, Vec<f64>> = HashMap::new();
+    for _ in 0..k {
+        let mut t = tuning.clone();
+        for (_, get, set) in WEIGHT_DIMS {
+            set(&mut t, get(tuning) * (0.8 + 0.4 * next()));
+        }
+        let mut scored: Vec<(&str, f64)> = quotes
+            .iter()
+            .filter(|q| eu_buyable(q))
+            .filter_map(|q| growth_score(q, &t).map(|s| (q.ticker.as_str(), s)))
+            .collect();
+        // same order rule as `ranked`: best first, NaN-safe. No turnover tie-break — a tie here is
+        // genuinely ambiguous under this draw and forcing a stable order would only fake precision.
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        for (i, (ticker, _)) in scored.iter().enumerate() {
+            ranks.entry(ticker).or_default().push((i + 1) as f64);
+        }
+    }
+    ranks
+        .into_iter()
+        .map(|(ticker, mut v)| {
+            v.sort_by(f64::total_cmp);
+            let p = |q| crate::commands::backtest::percentile(&v, q);
+            (ticker.to_string(), (p(50.0), p(25.0), p(75.0)))
+        })
+        .collect()
+}
+
 /// (B) DIAGNOSTIC — read-only, never scored. For a name the growth lane REJECTED, return the ONE gate it
 /// fails IF it fails EXACTLY one of the actionable numeric gates AND fails it by only a small margin: a
 /// "near miss" — a compounder one notch outside the fence (e.g. a great name 25% off its high failing only
@@ -6911,6 +7001,60 @@ mod tests {
         assert_eq!(growth_score(&grower, &t), growth_score(&bare, &t), "weight 0 must move NOTHING");
         let on = BuyHeuristic { growth_er_weight: 1.0, ..t.clone() };
         assert!(growth_score(&grower, &on).unwrap() > growth_score(&bare, &on).unwrap(), "…and on, it does");
+    }
+
+    /// (#107) Rank robustness. The claim is that a printed rank is a point estimate and this puts an
+    /// error bar on it, so the test builds a pool where the answer is known by construction:
+    ///
+    ///   * ROCK carries BOTH advantages, so no reweighting of the two can demote it — median 1, and an
+    ///     IQR of zero width. A perturbation study that cannot report "this one is not in question" is
+    ///     useless, because every name would look fragile.
+    ///   * SMOOTH and QUALITY are tied EXACTLY at the shipped weights and differ only in which term
+    ///     carries their points, so which of them ranks #2 is decided purely by the draw. Their IQR
+    ///     must be strictly wider than ROCK's — that gap IS the finding the footer prints.
+    ///   * the two names are otherwise byte-identical (same perf, same turnover, same range), so the
+    ///     spread cannot be an artefact of a damp or a gate. Only the weights move.
+    ///
+    /// Plus the two properties the caller depends on: k = 0 is empty (the shipped state prints nothing)
+    /// and the seeded stream reproduces, so a re-run of `screen` cannot quietly print a different IQR.
+    #[test]
+    fn a_rank_is_a_point_estimate_and_this_puts_an_error_bar_on_it() {
+        // 1 pt of ROE and 1 unit of trend_r2 are worth exactly the same, through DIFFERENT weights
+        let t = BuyHeuristic {
+            quality_weight: 1.0,
+            growth_smoothness_weight: 10.0,
+            ..BuyHeuristic::default()
+        };
+        let name = |ticker: &str, r2: f64, roe: f64| {
+            let mut q = gate_fixture();
+            q.ticker = ticker.into();
+            q.name = ticker.into();
+            q.market = "Germany".into();
+            q.trend_r2 = r2;
+            q.roe = Some(roe);
+            q
+        };
+        let pool =
+            vec![name("ROCK.DE", 1.0, 10.0), name("SMOOTH.DE", 1.0, 0.0), name("QUALITY.DE", 0.0, 10.0)];
+        assert_eq!(
+            growth_score(&pool[1], &t),
+            growth_score(&pool[2], &t),
+            "the two contenders must be EXACTLY tied at the shipped weights, or the test proves nothing"
+        );
+
+        assert!(rank_robustness(&pool, &t, 0).is_empty(), "k = 0 is the shipped state: no work, no output");
+
+        let spread = rank_robustness(&pool, &t, 64);
+        assert_eq!(spread.len(), 3, "gates never move, so every name is ranked in every draw");
+        let (rock_med, rock_lo, rock_hi) = spread["ROCK.DE"];
+        assert_eq!((rock_med, rock_lo, rock_hi), (1.0, 1.0, 1.0), "a name ahead on BOTH terms is not in question");
+        for t in ["SMOOTH.DE", "QUALITY.DE"] {
+            let (med, lo, hi) = spread[t];
+            assert!((2.0..=3.0).contains(&med), "{t} can only be 2nd or 3rd: {med}");
+            assert!(hi > lo, "{t} is decided by the draw, so its IQR must have width: {lo}–{hi}");
+        }
+
+        assert_eq!(rank_robustness(&pool, &t, 64), spread, "seeded: the same universe reproduces exactly");
     }
 
     /// (#54) `pin_dropped` must name exactly the cohort the CAGR pin costs, and nobody else. The pin

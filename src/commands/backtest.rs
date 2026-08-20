@@ -3289,7 +3289,9 @@ fn knob(name: impl Into<String>, f: impl Fn(&mut BuyHeuristic) + Sync + 'static)
 }
 
 /// (Item 5) p-th percentile of an already-sorted slice (nearest-rank). NaN on empty.
-fn percentile(sorted: &[f64], p: f64) -> f64 {
+/// (#107) `pub(crate)` so `picks::rank_robustness` reads its quartiles off THIS definition rather
+/// than growing a second nearest-rank rule that rounds the other way on an even sample.
+pub(crate) fn percentile(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
         return f64::NAN;
     }
