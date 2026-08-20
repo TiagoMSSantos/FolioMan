@@ -782,6 +782,39 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  print_book_deciles: false      # (#106 / round 3 §4) UNMEASURED — an unfitted judgement value,
+                                 # shipping OFF, which is the mean-only ladder every golden holds.
+                                 # Display-only, so "unmeasured" means the instrument has not been read
+                                 # yet, not that a value is unfitted.
+                                 #
+                                 #   THE DEFECT, and it is arithmetic rather than an empirical claim.
+                                 #   The per-bucket statistic this report computes is right: a held book
+                                 #   earns ann(MEAN OF TERMINAL MULTIPLES), because a 20x winner covers
+                                 #   twenty -100% zeros. But those per-bucket numbers are then
+                                 #   ARITHMETICALLY AVERAGED ACROSS BUCKETS into the headline, and
+                                 #   VERDICT_TOP: 3 is the argmax of that headline over TOP_LADDER's 13
+                                 #   rungs. Under positive skew small N maximises the MEAN while
+                                 #   wrecking the median and the left tail — so selecting a basket size
+                                 #   by mean excess selects the most concentrated book almost by
+                                 #   construction. The ladder is not measuring which N is best; it is
+                                 #   partly measuring which N is most concentrated.
+                                 #
+                                 #   WHAT IT PRINTS: one row per ladder rung — d10, median, d90 of the
+                                 #   book's terminal multiple across windows, plus P(book < index) and
+                                 #   P(book < 1.0x). That last one is the number a 20-year holder
+                                 #   actually feels: not "did I trail the index" but "did I end with
+                                 #   less than I started", and nothing in this report has ever printed
+                                 #   it. Shares `book_multiples` with `book_stats`, so the distribution
+                                 #   and the headline mean cannot be two different arithmetics.
+                                 #
+                                 #   WHAT IT DOES NOT DO: re-derive VERDICT_TOP. That needs the wide run
+                                 #   with this on, at 20y/12y/8y, reading the MEDIAN and the 10th
+                                 #   percentile rather than the mean. The round-3 author's prediction —
+                                 #   recorded as a prediction, worth nothing until run — is that N moves
+                                 #   well above 3, and that the mean-vs-median gap between N=3 and N=15
+                                 #   is the clearest picture of skew this tool could produce. Changing
+                                 #   VERDICT_TOP is a ship-rule decision and does not ride on a print
+                                 #   knob. REVERT: set false.
   growth_er_weight: 0.0          # (#105 / round 3 §2) UNMEASURED — an unfitted judgement value,
   growth_er_cap: 20.0            # shipping the weight at 0, where the term contributes exactly 0.0
                                  # and the lane is the one every golden holds. The cap is inert until

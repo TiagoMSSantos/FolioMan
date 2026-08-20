@@ -145,6 +145,11 @@ pub(crate) const TOP_LADDER: &[usize] = &[1, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40
 /// actually tells a reader to buy, has none. The gap between 16.1 and 15.0 is a 13-way maximum on half a
 /// trial at 20y. `print_selection_count` prints that caveat; nothing has yet re-derived the value under
 /// it, and the receipt in tests/ci-settings.yaml names the run that would.
+///
+/// (#106) And the argmax is over a MEAN. Under positive skew small N maximises the mean while wrecking
+/// the median and the left tail, so selecting a basket size this way selects the most concentrated book
+/// almost by construction. `print_book_deciles` prints the median and the 10th percentile per rung —
+/// the instrument that would re-derive this number off what a holder actually experiences.
 pub(crate) const VERDICT_TOP: usize = 3;
 
 /// The unconditional held-book verdict of one wide backtest run at ONE horizon: the "all entries"
@@ -2204,6 +2209,30 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             mean(&book), mean(&spy), mean(&excess), median(excess.clone())
         );
     }
+    // (#106) (round 3 §4) the DISTRIBUTION behind the ladder above. Every row printed so far quotes a
+    // MEAN across buckets, and `VERDICT_TOP` is the argmax of one of those means over these 13 rungs.
+    // Under positive skew small N maximises the mean while wrecking the median and the left tail, so
+    // that argmax picks the most concentrated book almost by construction. One row per rung, so the
+    // basket size can be re-derived off the median and the 10th percentile instead.
+    if tuning.print_book_deciles {
+        println!("  terminal-multiple distribution across windows (the MEAN above is one number out of these):");
+        // the ladder's rows carry a 4th element (the ticker, for the zero-names line); `book_deciles`
+        // shares its arithmetic with `book_stats`, which is keyed on the 3-element row — drop the name.
+        let ranked: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> =
+            by_bucket.iter().map(|(b, v)| (*b, v.iter().map(|x| (x.0, x.1, x.2)).collect())).collect();
+        for &n in TOP_LADDER {
+            if let Some((d, below_index, below_one, m)) = book_deciles(&ranked, n) {
+                println!(
+                    "    top-{n:<2} d10 {:.2}×  median {:.2}×  d90 {:.2}×   P(book < index) {:.0}%   P(book < 1.0×) {:.0}%   of {m}",
+                    d[0],
+                    d[4],
+                    d[8],
+                    below_index * 100.0,
+                    below_one * 100.0
+                );
+            }
+        }
+    }
     // (#45) RANK-SLICE ladder + same-window head-to-head. The cumulative top-N table above cannot
     // answer "is #1 really better than #20": ann(mean of multiples) mechanically favors bigger books
     // on fat-tailed outcomes (a 10-draw mean usually catches one lottery ticket, a 1-draw book
@@ -2345,13 +2374,13 @@ fn after_tax_pair(m: f64, years: i64, t: f64) -> (f64, f64) {
     (never, rot)
 }
 
-/// (#43) Equal-weight held-book stats for a given ranking key. `by_bucket`: 6mo-bucket ->
-/// Vec<(rank_key, realized%, bench%)>. Per bucket: top-N by rank_key desc, held equal-weight -> book =
-/// ann(mean terminal multiple), SPY = same on the bench leg, excess = book − SPY. Returns
-/// (book, spy, excess_mean, win%, worst, oos_early, oos_late). `None` if no bucket yields a pick.
-fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>, n: usize, years: i64) -> Option<(f64, f64, f64, f64, f64, f64, f64)> {
+/// (#106) The per-bucket terminal multiples of an equal-weight top-`n` book and of the same bucket's
+/// benchmark leg — ONE definition of "what did the book end up worth", so [`book_stats`]'s headline
+/// means and [`book_deciles`]'s distribution cannot be computed two slightly different ways. Buckets
+/// that yield no pick are skipped, which is why the result is a Vec rather than a map.
+fn book_multiples(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>, n: usize) -> Vec<(f64, f64)> {
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
-    let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
+    let mut out = Vec::new();
     for v in by_bucket.values() {
         let mut vv = v.clone();
         vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // rank_key desc
@@ -2360,8 +2389,53 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
             continue;
         }
         let p = &vv[..take];
-        let bcum = mean(&p.iter().map(|x| 1.0 + x.1 / 100.0).collect::<Vec<_>>());
-        let scum = mean(&p.iter().map(|x| 1.0 + x.2 / 100.0).collect::<Vec<_>>());
+        out.push((
+            mean(&p.iter().map(|x| 1.0 + x.1 / 100.0).collect::<Vec<_>>()),
+            mean(&p.iter().map(|x| 1.0 + x.2 / 100.0).collect::<Vec<_>>()),
+        ));
+    }
+    out
+}
+
+/// (#106) (round 3 §4) The DISTRIBUTION behind the headline: deciles of the held book's terminal
+/// multiple across buckets, plus P(book < index) and P(book < 1.0). Returns
+/// (deciles 10..90, p_below_index, p_below_one, buckets).
+///
+/// WHY THE MEAN IS THE WRONG SELECTOR FOR `VERDICT_TOP`. `book_stats` is right to average the
+/// terminal MULTIPLES inside a bucket — that is what an equal-weight book is worth. But those
+/// per-bucket numbers are then arithmetically averaged ACROSS buckets into the headline, and
+/// `VERDICT_TOP: 3` was chosen as the argmax of that headline over a 13-rung ladder. Under positive
+/// skew, small N maximises the mean while wrecking the median and the left tail — that is the
+/// arithmetic of skew, not an empirical claim — so selecting N by mean excess selects the most
+/// concentrated book almost by construction. Reading the median and the 10th percentile instead is
+/// what would re-derive N honestly, and this is the instrument that shows both.
+///
+/// P(book < 1.0) is the number a 20-year holder actually feels: not "did I trail the index", but "did
+/// I end with less than I started". Nothing in this report has ever printed it.
+fn book_deciles(
+    by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
+    n: usize,
+) -> Option<(Vec<f64>, f64, f64, usize)> {
+    let pairs = book_multiples(by_bucket, n);
+    if pairs.is_empty() {
+        return None;
+    }
+    let below_index = pairs.iter().filter(|(b, s)| b < s).count() as f64 / pairs.len() as f64;
+    let below_one = pairs.iter().filter(|(b, _)| *b < 1.0).count() as f64 / pairs.len() as f64;
+    let mut mults: Vec<f64> = pairs.iter().map(|(b, _)| *b).collect();
+    mults.sort_by(f64::total_cmp);
+    let deciles = (1..=9).map(|p| percentile(&mults, f64::from(p) * 10.0)).collect();
+    Some((deciles, below_index, below_one, pairs.len()))
+}
+
+/// (#43) Equal-weight held-book stats for a given ranking key. `by_bucket`: 6mo-bucket ->
+/// Vec<(rank_key, realized%, bench%)>. Per bucket: top-N by rank_key desc, held equal-weight -> book =
+/// ann(mean terminal multiple), SPY = same on the bench leg, excess = book − SPY. Returns
+/// (book, spy, excess_mean, win%, worst, oos_early, oos_late). `None` if no bucket yields a pick.
+fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>, n: usize, years: i64) -> Option<(f64, f64, f64, f64, f64, f64, f64)> {
+    let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
+    let (mut book, mut spy, mut excess) = (Vec::new(), Vec::new(), Vec::new());
+    for (bcum, scum) in book_multiples(by_bucket, n) {
         book.push(ann((bcum - 1.0) * 100.0, years));
         spy.push(ann((scum - 1.0) * 100.0, years));
         excess.push(*book.last().unwrap() - *spy.last().unwrap());
@@ -4608,6 +4682,32 @@ mod tests {
         let only = adopted.into_values().next_back().unwrap();
         assert_eq!((only.years, only.top), (20, 10));
         assert!(verdict_line(&only, false, false, false).contains("top-10 held 20y"));
+    }
+
+    /// (#106) The skew claim, as arithmetic on ten windows: eight books that HALVED and two that went
+    /// 20×. The mean says 4.4× and every headline in this report is built on that mean; the median
+    /// says the typical window lost half its money, and P(book < 1.0×) says eight windows in ten did.
+    /// Those are the same ten numbers summarised two ways, and only one of them is what a holder
+    /// experiences — which is the whole argument for re-deriving `VERDICT_TOP` off the median and the
+    /// 10th percentile rather than off the mean.
+    #[test]
+    fn the_mean_and_the_median_book_are_not_the_same_claim() {
+        let mut m: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+        for b in 0..8 {
+            m.insert(b, vec![(1.0, -50.0, 0.0)]); // book 0.5×, index flat -> lost, and lost to the index
+        }
+        m.insert(8, vec![(1.0, 1900.0, 0.0)]); // two 20× windows carry the whole mean
+        m.insert(9, vec![(1.0, 1900.0, 0.0)]);
+        let (d, below_index, below_one, n) = book_deciles(&m, 1).unwrap();
+        assert_eq!(n, 10);
+        assert!((d[4] - 0.5).abs() < 1e-9, "the median window HALVED: {}", d[4]);
+        assert!((d[8] - 20.0).abs() < 1e-9, "d90 is what made the mean: {}", d[8]);
+        assert!((below_one - 0.8).abs() < 1e-9, "eight of ten ended below their starting value");
+        assert!((below_index - 0.8).abs() < 1e-9);
+        // the mean the ladder prints, off the SAME ten numbers — 4.4× against a 0.5× median.
+        let mean_mult = book_multiples(&m, 1).iter().map(|(b, _)| b).sum::<f64>() / 10.0;
+        assert!((mean_mult - 4.4).abs() < 1e-9, "{mean_mult}");
+        assert!(book_deciles(&std::collections::BTreeMap::new(), 1).is_none()); // empty -> None, not 0%
     }
 
     #[test]
