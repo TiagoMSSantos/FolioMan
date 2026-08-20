@@ -782,6 +782,51 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  capital_gains_tax_pct: 28.0    # (#108 / round 3 §5) NOT A MEASUREMENT — a tax rate, and the exact
+                                 # constant the hardcoded `CAPITAL_GAINS_TAX = 0.28` carried. Its old
+                                 # comment said "add a knob only if a second rate is ever needed";
+                                 # `cgt_hold_schedule` below is that second rate. Reaches ONE printed
+                                 # line in `report_lane` — no score, no gate, no journal field.
+                                 # REVERT: nothing to revert; changing it changes only that line.
+  cgt_hold_schedule: []          # (#108 / round 3 §5) UNMEASURED and, more to the point, UNVERIFIED
+                                 # as a matter of law. Ships EMPTY = one flat rate at every horizon,
+                                 # which is the after-tax line every golden holds.
+                                 #
+                                 #   THE DEFECT. `after_tax_pair` compares never-sell against yearly
+                                 #   rotation on the same pre-tax path, and it taxed BOTH arms at the
+                                 #   same flat rate. Where a jurisdiction's effective rate falls with
+                                 #   the holding period, that is wrong in one specific direction: it
+                                 #   UNDERSTATES the deferral edge, which is the single number in this
+                                 #   whole report that most supports the tool's own buy-and-hold
+                                 #   thesis. An error that flatters the conclusion would be the
+                                 #   dangerous one; this is the opposite, which is why it survived.
+                                 #
+                                 #   WHAT SHIPS: the mechanism, not a jurisdiction. Each rung is
+                                 #   `{min_years, excluded_pct}`, the widest satisfied rung wins
+                                 #   (yaml order irrelevant), and the exclusion applies to the GAIN
+                                 #   before the headline rate. The rotation arm holds for a year by
+                                 #   definition, so it is pinned to the bottom rung while the held arm
+                                 #   climbs — the schedule can therefore only ever widen the printed
+                                 #   deferral edge, never narrow it. `a_holding_period_schedule_can_
+                                 #   only_widen_the_deferral_edge` pins all three claims.
+                                 #
+                                 #   WHY NO NUMBERS. NO TAX LAW IS ENCODED IN THIS CODEBASE — the
+                                 #   knobs ARE the tax model, and that rule is exactly why a value is
+                                 #   not filled in here. The round-3 note reads Art. 43 CIRS as
+                                 #   amended by Lei n.º 31/2024 to give listed shares and open-ended
+                                 #   UCITS a 10/20/30% exclusion at >2y / >5y / 8y+ — 28% becoming an
+                                 #   effective 25.2 / 22.4 / 19.6% — with englobamento optional. It
+                                 #   also records that two secondary sources agreed and a third
+                                 #   described only the older SME-specific regime, and says plainly
+                                 #   that this is the kind of thing a budget law changes. That is a
+                                 #   citation, not a verification. To turn it on:
+                                 #     cgt_hold_schedule:
+                                 #       - { min_years: 2, excluded_pct: 10 }
+                                 #       - { min_years: 5, excluded_pct: 20 }
+                                 #       - { min_years: 8, excluded_pct: 30 }
+                                 #   CONFIRM WITH AN ACCOUNTANT FIRST. Nothing in this repo has, and
+                                 #   the shipped empty list is that fact written down rather than
+                                 #   assumed away. REVERT: set [].
   rank_perturb_k: 0              # (#107 / round 3 §3) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is the point-estimate ranking every golden
                                  # holds. Display-only and it does NOT reorder the book.

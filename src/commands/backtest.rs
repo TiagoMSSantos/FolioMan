@@ -2265,10 +2265,26 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // (Phase B) the never-sell tax edge, made visible: a hold pays capital-gains ONCE at the final
     // sale, a yearly-rotation strategy on the SAME pre-tax path pays tax on each year's gain.
     if let Some(m) = m10.filter(|m| *m > 1.0) {
-        let (never, rot) = after_tax_pair(m, years, CAPITAL_GAINS_TAX);
+        // (#108) the two arms hold for different lengths of time, so under a holding-period schedule
+        // they pay different rates: the never-sell arm is held for the whole window, the rotation arm
+        // for a year by definition and so never past the first rung. On the shipped EMPTY schedule
+        // both resolve to the headline rate and this line is byte-identical to the flat-rate one.
+        let base = tuning.capital_gains_tax_pct / 100.0;
+        let sched = &tuning.cgt_hold_schedule;
+        let (t_hold, t_rot) = (cgt_rate(years, base, sched), cgt_rate(1, base, sched));
+        let (never, rot) = after_tax_pair(m, years, t_hold, t_rot);
+        let sched_tag = if sched.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " [held {years}y taxed at {:.1}%, rotation at {:.1}%]",
+                t_hold * 100.0,
+                t_rot * 100.0
+            )
+        };
         println!(
-            "  after-tax ({:.0}% PT, top-10 book): never-sell {never:+.1}%/yr vs yearly-rotation {rot:+.1}%/yr -> deferral edge {:+.1} pts/yr",
-            CAPITAL_GAINS_TAX * 100.0,
+            "  after-tax ({:.0}% PT, top-10 book): never-sell {never:+.1}%/yr vs yearly-rotation {rot:+.1}%/yr -> deferral edge {:+.1} pts/yr{sched_tag}",
+            tuning.capital_gains_tax_pct,
             never - rot
         );
     }
@@ -2360,17 +2376,37 @@ fn median(mut v: Vec<f64>) -> f64 {
     if k % 2 == 1 { v[k / 2] } else { (v[k / 2 - 1] + v[k / 2]) / 2.0 }
 }
 
-/// (Phase B) PT capital-gains rate; hardcoded — add a knob only if a second rate is ever needed.
-const CAPITAL_GAINS_TAX: f64 = 0.28;
+/// (#108) The capital-gains rate a position held `years` pays, given the headline rate `base` (as a
+/// fraction) and a holding-period exclusion `schedule`. The WIDEST exclusion among the rungs the hold
+/// satisfies wins, so yaml order is irrelevant and a schedule listing only its top rung still works.
+///
+/// An empty schedule returns `base` unchanged, which is what makes this knob a no-op by default and
+/// keeps every golden's after-tax line byte-identical. The exclusion applies to the GAIN, not to the
+/// rate — `base × (1 − excl)` is the same arithmetic either way only because the taxable base is the
+/// whole gain, which is the case this models and the reason the two forms are written as one here.
+fn cgt_rate(years: i64, base: f64, schedule: &[crate::config::CgtRung]) -> f64 {
+    let excl = schedule
+        .iter()
+        .filter(|r| years as f64 >= r.min_years)
+        .map(|r| r.excluded_pct.clamp(0.0, 100.0))
+        .fold(0.0, f64::max);
+    base * (1.0 - excl / 100.0)
+}
 
 /// After-tax %/yr of (never-sell, yearly-rotation) for the SAME pre-tax terminal multiple `m` over
-/// `years` at gains-tax rate `t`. Never-sell defers to one final sale: net multiple = 1 + (m−1)(1−t).
-/// Rotation realizes each year's gain: after-tax rate = gross annual rate × (1−t) — a simplification
-/// that ignores loss-offset asymmetry, fine for a positive-multiple book.
-fn after_tax_pair(m: f64, years: i64, t: f64) -> (f64, f64) {
+/// `years` at gains-tax rates `t_hold` and `t_rot`. Never-sell defers to one final sale: net multiple
+/// = 1 + (m−1)(1−t_hold). Rotation realizes each year's gain: after-tax rate = gross annual rate ×
+/// (1−t_rot) — a simplification that ignores loss-offset asymmetry, fine for a positive-multiple book.
+///
+/// (#108) The two rates were ONE argument until a holding-period exclusion made them differ. They are
+/// separate because the arms hold for different lengths of time: rotation holds for a year by
+/// definition and can never reach a long-hold rung, so passing one rate to both was not a
+/// simplification but a statement that the schedule does not exist. Callers pass the same value twice
+/// on a flat schedule, which is the shipped state.
+fn after_tax_pair(m: f64, years: i64, t_hold: f64, t_rot: f64) -> (f64, f64) {
     let y = years.max(1) as f64;
-    let never = ((1.0 + (m - 1.0) * (1.0 - t)).powf(1.0 / y) - 1.0) * 100.0;
-    let rot = (m.powf(1.0 / y) - 1.0) * (1.0 - t) * 100.0;
+    let never = ((1.0 + (m - 1.0) * (1.0 - t_hold)).powf(1.0 / y) - 1.0) * 100.0;
+    let rot = (m.powf(1.0 / y) - 1.0) * (1.0 - t_rot) * 100.0;
     (never, rot)
 }
 
@@ -5362,13 +5398,49 @@ mod tests {
     /// never-sell lever the footer prints. years=0 must clamp to 1 (no div-by-zero / powf(inf)).
     #[test]
     fn after_tax_pair_hand_computed() {
-        let (never, rot) = after_tax_pair(4.0, 12, 0.28);
+        let (never, rot) = after_tax_pair(4.0, 12, 0.28, 0.28);
         assert!((never - 10.063).abs() < 0.01, "never-sell got {never}");
         assert!((rot - 8.817).abs() < 0.01, "rotation got {rot}");
         assert!(never > rot); // deferral always wins on a gain
-        let (n2, r2) = after_tax_pair(4.0, 0, 0.28); // years clamps to 1
+        let (n2, r2) = after_tax_pair(4.0, 0, 0.28, 0.28); // years clamps to 1
         assert!((n2 - 216.0).abs() < 1e-9); // 1+3·0.72=3.16 -> +216%/yr over 1y
         assert!((r2 - 216.0).abs() < 1e-9); // 4^1−1=300% gross ×0.72 = +216% — same over 1y
+    }
+
+    /// (#108) The holding-period schedule. Three things have to hold, and the first is the golden rule:
+    ///
+    ///   * an EMPTY schedule is the identity — every horizon pays the headline rate, so the after-tax
+    ///     footer is byte-identical to the flat-rate one it replaced. This is the whole default.
+    ///   * the WIDEST satisfied rung wins regardless of yaml order, and a hold short of every rung
+    ///     pays full freight. A schedule is a ladder, not a sequence of overrides.
+    ///   * the schedule can only ever WIDEN the deferral edge, never narrow it: the rotation arm holds
+    ///     for a year by definition, so it is pinned to the bottom rung while the never-sell arm
+    ///     climbs. That asymmetry is the entire finding — a flat rate understates the one number in
+    ///     the report that most supports the tool's own buy-and-hold thesis.
+    #[test]
+    fn a_holding_period_schedule_can_only_widen_the_deferral_edge() {
+        use crate::config::CgtRung;
+        let rung = |min_years: f64, excluded_pct: f64| CgtRung { min_years, excluded_pct };
+        // deliberately NOT in ascending order, and it must not matter
+        let sched = [rung(8.0, 30.0), rung(2.0, 10.0), rung(5.0, 20.0)];
+
+        assert_eq!(cgt_rate(20, 0.28, &[]), 0.28, "empty schedule = today's flat rate, at any horizon");
+        assert_eq!(cgt_rate(1, 0.28, &[]), 0.28);
+
+        assert_eq!(cgt_rate(1, 0.28, &sched), 0.28, "below every rung -> full freight");
+        assert!((cgt_rate(2, 0.28, &sched) - 0.252).abs() < 1e-12, "the rung bites AT its threshold");
+        assert!((cgt_rate(4, 0.28, &sched) - 0.252).abs() < 1e-12);
+        assert!((cgt_rate(5, 0.28, &sched) - 0.224).abs() < 1e-12);
+        assert!((cgt_rate(20, 0.28, &sched) - 0.196).abs() < 1e-12, "past the top rung it stays there");
+
+        // and the asymmetry: same pre-tax path, same window, the schedule only moves the held arm
+        let (m, years) = (4.0, 12);
+        let flat = after_tax_pair(m, years, 0.28, 0.28);
+        let laddered =
+            after_tax_pair(m, years, cgt_rate(years, 0.28, &sched), cgt_rate(1, 0.28, &sched));
+        assert!((laddered.1 - flat.1).abs() < 1e-12, "rotation never reaches a long-hold rung");
+        assert!(laddered.0 > flat.0, "the held arm does");
+        assert!(laddered.0 - laddered.1 > flat.0 - flat.1, "so the deferral edge can only widen");
     }
 
     /// (round 67) END-TO-END walk-forward pin. Every helper above is tested piecewise, but this is
