@@ -89,7 +89,10 @@ mod tests {
 /// Aforro fixed-income ladder, and inflation. Shared by `check` and `screen` (printed at the end).
 /// NO config fallbacks — a failed fetch prints an explicit error line and skips that table, never a
 /// silently-stale number.
-pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::Urls) {
+///
+/// (#110) Returns the Euribor 3M it fetched, so `screen`'s level entry state can subtract the SAME
+/// risk-free rate this footer printed rather than fetching a second one that could differ from it.
+pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::Urls) -> Option<f64> {
     use crate::{core, fetch};
     let (euribor, inflations) = tokio::join!(
         fetch::fetch_euribor_3m(client, urls),
@@ -163,4 +166,5 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
             cum(20)
         );
     }
+    euribor
 }

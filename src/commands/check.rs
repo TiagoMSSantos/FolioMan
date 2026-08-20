@@ -160,7 +160,7 @@ pub async fn run(args: Vec<String>) {
     }
 
     // Euribor / Certificados de Aforro / inflation — the macro backdrop, shared with `screen`
-    print_macro_footer(&client, &settings.urls).await;
+    let _ = print_macro_footer(&client, &settings.urls).await; // (#110) the rate is for `screen`'s level entry state; `check` only prints the table
 }
 
 #[cfg(test)]

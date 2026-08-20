@@ -2431,7 +2431,22 @@ pub async fn run(args: Vec<String>) {
 
     // Euribor / Certificados de Aforro / inflation — fixed-income + macro baselines to compare the
     // asset tables against
-    crate::commands::print_macro_footer(&client, &settings.urls).await;
+    let euribor_3m = crate::commands::print_macro_footer(&client, &settings.urls).await;
+
+    // (#110) (round 3 §7) the LEVEL axis, printed under the rate it subtracts. The anchor is the first
+    // CORE name with a look-through P/E — this tool's own definition of "the index", so the line cannot
+    // quote a valuation for a market the CORE shortlist would never have bought. Silent at band 0
+    // (the shipped state), and silent when either leg is missing rather than guessing one.
+    if let (Some(e), Some((anchor, pe))) = (
+        euribor_3m,
+        core_now.iter().find_map(|t| fund_pe.get(t).map(|fp| (t.as_str(), fp.pe))),
+    ) {
+        if let Some(line) =
+            valuation_state_line(anchor, pe, e, spx_off_hi, settings.buy_heuristic.entry_excess_yield_band)
+        {
+            println!("\n{line}");
+        }
+    }
 
     // (round 56) run diagnostics on stderr (stdout stays pipeable): the round-51/53 fetch caches
     // are otherwise invisible — the first sign of one silently breaking would be Yahoo 429s.
@@ -2512,6 +2527,58 @@ pub(crate) fn entry_state_class(off_hi: f64) -> (&'static str, &'static str) {
     } else {
         ("NEAR-HIGH", "Normal schedule — near-high entries still beat the index +5.9 pts/yr; waiting in cash for a dip was the only losing move")
     }
+}
+
+/// (#110) (round 3 §7) The LEVEL axis, beside the PATH axis [`entry_state_class`] already prints.
+///
+/// "How far below its high" is a path signal, and it is right for the wrong reason at both ends: after
+/// a decade-long grind up a market can be at a nosebleed valuation AND at its high, where the rule says
+/// deploy slowly; after a fast crash from a cheap base it says deploy fast. Both happen to be right.
+/// Neither is right BECAUSE of what the rule measured.
+///
+/// The level signal with the strongest long-horizon evidence is starting valuation, and the cheapest
+/// honest version of it is already on disk: index earnings yield minus the risk-free rate — Shiller's
+/// excess CAPE yield in one subtraction, on a look-through P/E this tool already fetches and the
+/// Euribor 3M the macro footer already prints. Trailing rather than cyclically adjusted, which is a
+/// real difference and is why the printed line names its inputs instead of just its verdict.
+///
+/// `band` is the symmetric threshold in percentage points; `0` (the shipped state) = off, no claim.
+/// `None` also when the P/E is absent or non-positive — an unjudgeable market is not a neutral one.
+pub(crate) fn valuation_state(index_pe: f64, risk_free_pct: f64, band: f64) -> Option<(f64, &'static str)> {
+    if band <= 0.0 || index_pe <= 0.0 {
+        return None;
+    }
+    let excess = 100.0 / index_pe - risk_free_pct;
+    Some(match excess {
+        e if e >= band => (excess, "CHEAP"),
+        e if e <= -band => (excess, "RICH"),
+        _ => (excess, "NEUTRAL"),
+    })
+}
+
+/// (#110) The 2x2 read: the level state above against the path state the banner prints. The corners
+/// where they AGREE are where either rule alone would have done; the corners where they disagree are
+/// the whole reason for adding a second axis, so those are the ones this sentence names.
+///
+/// Deliberately does NOT touch `deploy_multiplier`. Which axis prices the deploy schedule better — or
+/// whether the 2x2 beats both — is a measured question against the same backtest that produced the
+/// +9.1/+6.0/+5.9 receipt, and printing a second axis is how you get the data to answer it.
+fn valuation_state_line(anchor: &str, index_pe: f64, euribor: f64, off_hi: Option<f64>, band: f64) -> Option<String> {
+    let (excess, level) = valuation_state(index_pe, euribor, band)?;
+    let path = off_hi.map(|o| entry_state_class(o).0);
+    let read = match (level, path) {
+        (_, None) => "no index level fetched, so this is the only axis in this run".to_string(),
+        ("CHEAP", Some(p @ ("DRAWDOWN" | "PULLBACK"))) | ("RICH", Some(p @ "NEAR-HIGH")) => {
+            format!("agrees with {p} — either axis alone would have said the same here")
+        }
+        (_, Some(p)) => format!(
+            "DISAGREES with {p} — this is the corner a second axis exists for, and nothing measures which one is right yet"
+        ),
+    };
+    Some(format!(
+        "Valuation state: {anchor} look-through P/E {index_pe:.1} -> earnings yield {:.2}% - Euribor 3M {euribor:.2}% = {excess:+.2} pts excess -> {level} (band ±{band:.1}). {read}. Deploy still reads the drawdown axis alone. NOT advice.",
+        100.0 / index_pe
+    ))
 }
 
 /// (round 109→112) One-line entry-state read for the near-high footer. Delegates to
@@ -2698,6 +2765,44 @@ mod tests {
         assert!(net_nag(Some(&fresh), now).is_none(), "fresh stamp must not nag");
         let edge = (now - 30 * 86_400).to_string();
         assert!(net_nag(Some(&edge), now).is_none(), "exactly 30d is the cadence, not stale");
+    }
+
+    /// (#110) The LEVEL axis. Four claims, and the last two are the reason the axis is worth adding:
+    ///
+    ///   * band 0 is the shipped state and says NOTHING — not "neutral", nothing at all. A default
+    ///     that printed a verdict would be an unmeasured claim shipped on by accident.
+    ///   * the classification is the subtraction and nothing else: earnings yield minus the risk-free
+    ///     rate, symmetric around the band, boundaries inclusive on both sides.
+    ///   * an absent or non-positive P/E is UNJUDGEABLE, not neutral. Every gate in this project lets
+    ///     missing data pass; a level state has nothing to pass, so it declines to speak.
+    ///   * the 2x2 line distinguishes agreement from DISAGREEMENT, because the corners where the two
+    ///     axes disagree are the only reason to carry a second one.
+    #[test]
+    fn the_level_axis_speaks_only_when_it_has_both_legs() {
+        assert_eq!(valuation_state(20.0, 2.0, 0.0), None, "band 0 is the shipped state: no claim");
+        assert_eq!(valuation_state(0.0, 2.0, 1.0), None, "no P/E = unjudgeable, not neutral");
+        assert_eq!(valuation_state(-5.0, 2.0, 1.0), None, "a negative P/E is not a cheap market");
+
+        // 20 P/E -> 5.00% earnings yield. Against a 2% risk-free that is +3.00 excess.
+        assert_eq!(valuation_state(20.0, 2.0, 1.0).unwrap().1, "CHEAP");
+        assert_eq!(valuation_state(20.0, 2.0, 3.0).unwrap().1, "CHEAP", "the band is inclusive");
+        assert_eq!(valuation_state(20.0, 2.0, 3.5).unwrap().1, "NEUTRAL");
+        // 40 P/E -> 2.50% yield against a 5.5% risk-free = −3.00 excess, the mirror case
+        let (excess, state) = valuation_state(40.0, 5.5, 3.0).unwrap();
+        assert!((excess + 3.0).abs() < 1e-12, "{excess}");
+        assert_eq!(state, "RICH", "the band is symmetric and inclusive at both ends");
+
+        // the 2x2: agreement reads as redundancy, disagreement as the reason for the axis
+        let line = |pe: f64, e: f64, off: Option<f64>| {
+            valuation_state_line("VWCE.DE", pe, e, off, 1.0).expect("band 1.0 is armed")
+        };
+        assert!(line(20.0, 2.0, Some(30.0)).contains("agrees with DRAWDOWN"), "cheap AND falling");
+        assert!(line(40.0, 5.5, Some(0.0)).contains("agrees with NEAR-HIGH"), "rich AND at the high");
+        assert!(line(20.0, 2.0, Some(0.0)).contains("DISAGREES with NEAR-HIGH"), "cheap AT the high");
+        assert!(line(40.0, 5.5, Some(30.0)).contains("DISAGREES with DRAWDOWN"), "rich AND falling");
+        assert!(line(20.0, 2.0, None).contains("only axis"), "no index level = one axis, said out loud");
+        // and it never claims to move the deploy schedule, which it does not
+        assert!(line(20.0, 2.0, Some(30.0)).contains("Deploy still reads the drawdown axis alone"));
     }
 
     /// (round 109) entry-state classes + exact boundaries: <5 near-high, 5–15 pullback, ≥15 drawdown.
