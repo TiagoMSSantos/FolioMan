@@ -369,6 +369,53 @@ fn value_factor(quote: &Quote, ref_pe: f64) -> f64 {
     }
 }
 
+/// The lane's stated hold horizon in years — the exponent every "over a 20-year hold" term raises its
+/// per-year drag to. ONE definition, because three separate terms quote this same 20 and a report
+/// whose TER drag, share-class drag and re-rating drag ran over three different holds would be
+/// comparing three different investments: `ter_damp`, `acc_damp` (#106) and the expected-return
+/// re-rating leg (#105).
+pub(crate) const HOLD_YEARS: i32 = 20;
+
+/// (#105) (round 3 §2) GRINOLD-KRONER expected return over the stated hold, in %/yr. `None` when the
+/// name has no as-of fundamental row at all — absent is not zero, and the caller decides what an
+/// unjudgeable name contributes.
+///
+/// WHY THIS TERM IS DIFFERENT FROM EVERY OTHER ONE IN THE LANE. Every input the growth score reads is
+/// TRAILING — `long_cagr`, `return_1y`, `accel`, `range_pct`, `above_ma_pct`, `roe`, `trend_r2`. The
+/// only number in the whole score that references the 20-year horizon it claims to be picking for is
+/// the exponent in `ter_damp`. This is the one candidate whose measurement horizon matches the hold:
+///
+///   E[r] = D/P + (g − ΔS) + Δ(P/E)
+///          income   growth net of dilution   re-rating
+///
+/// and each leg is a field this tool already computes, as-of, on both paths — so it is a COMPOSITION,
+/// not a fetch. `buyback_yield` is the leg worth naming: it was swept alone, floored at 0, capped,
+/// small-weighted and multiplied by four damps, and came back null. Inside a sum its sign is
+/// structurally correct — dilution subtracts from shareholder return one-for-one — and a component
+/// that is noise alone can carry signal in a sum where it is not free to have the wrong sign. Same
+/// argument as gate-versus-tilt, applied to composition instead of thresholding.
+///
+/// The re-rating leg routes through [`value_factor`] rather than re-deriving `ref_pe / pe`: one
+/// definition of that ratio, and it inherits the [0.5, 1.5] clamp, so the drag it can contribute is
+/// bounded to -3.4%/yr .. +2.0%/yr over a 20-year hold whatever the P/E does — asymmetric, because the
+/// clamp is: a nosebleed multiple can dock more than a cheap one can pay. Each other leg is clamped by
+/// `growth_er_cap` for the same reason. Growth floors at 0 (a shrinking EPS is not evidence of a
+/// negative long-run growth rate, it is evidence of a bad year); dilution does NOT, because that sign
+/// is the entire point of including it.
+///
+/// NOT FLOORED AT 0 OVERALL, unlike (D)/(F)/(G)/(M). A negative expected return is information, and
+/// docking for it is the one thing this term does that no other term in the lane can.
+pub(crate) fn expected_return_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
+    let ff = quote.fund.as_ref()?;
+    let cap = tuning.growth_er_cap;
+    let income = dividend_yield_1y(quote).clamp(0.0, cap);
+    let growth = ff.eps_growth.unwrap_or(0.0).clamp(0.0, cap);
+    let dilution = ff.buyback_yield.unwrap_or(0.0).clamp(-cap, cap);
+    let rerating =
+        (value_factor(quote, tuning.ref_pe).powf(1.0 / f64::from(HOLD_YEARS)) - 1.0) * 100.0;
+    Some(income + growth + dilution + rerating)
+}
+
 /// (B) Value-trap dock: when a name's 1Y AND 5Y returns are BOTH <= `sustained_decline_pct` it has
 /// bled for years, not merely dipped — scale its score by `sustained_decline_penalty`. 1.0 (no dock)
 /// if either leg is absent or above the line (a recovering peak-anchored coin — bad 5Y, positive 1Y
@@ -979,7 +1026,9 @@ struct ScoreParts {
     mom121: f64,       // (M) growth_mom121_weight × clamp(12-1 mom, 0, cap)
     smooth: f64,       // (E) growth_smoothness_weight × trend_r2
     underwater: f64,   // −growth_underwater_weight × underwater_yrs (drawdown-duration penalty; 0 when off/None)
-    base: f64,         // sum of the nine terms above
+    er: Option<f64>,   // (#105) the raw Grinold-Kroner expected return, %/yr; None = no as-of fundamental row
+    er_term: f64,      // (#105) growth_er_weight × er (0 when the weight is 0 OR the row is uncovered)
+    base: f64,         // sum of the ten terms above
     proximity: f64,    // (#48) 1 + growth_proximity_weight × (range_pct/100 − 1); = range_pct/100 at the shipped w=1
     value_raw: f64,    // (E) raw P/E value_factor (ref_pe/PE clamped)
     value: f64,        // 1 + growth_value_weight × (value_raw − 1)
@@ -1440,7 +1489,14 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // -> validated end-to-end; standalone probe 2026-07-19: rho +0.26, edge +27.9, OOS +0.40|+0.14.
     // None (no history) -> no penalty, matching the missing-data stance of every gate. Weight 0 = off.
     let underwater = -tuning.growth_underwater_weight * quote.underwater_yrs.unwrap_or(0.0);
-    let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term + smooth + underwater;
+    // (#105) (round 3 §2) the EXPECTED-return tilt — see `expected_return_pct` for why this is the one
+    // forward-looking input in a lane made entirely of trailing ones. A name with no as-of fundamental
+    // row contributes 0, the same "don't punish absence" stance (D)/(F)/(G)/(M) take — and it carries
+    // the same (#59) coverage caveat those do, since this term lands INSIDE the multiplier block.
+    // weight 0 (default) -> the term is 0 -> growth_score is byte-identical to the pre-(#105) lane.
+    let er = expected_return_pct(quote, tuning);
+    let er_term = tuning.growth_er_weight * er.unwrap_or(0.0);
+    let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term + smooth + underwater + er_term;
     let value_raw = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     // (Item 20) dial the BLIND P/E multiplier's authority toward neutral 1.0. weight 1.0 = full ×0.5..1.5
     // swing (default, unchanged); 0.0 = off. The validated edge was measured with this term OFF (pe_ratio
@@ -1497,7 +1553,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // None for stocks/crypto/no-source AND in the backtest pool -> ×1.0 there -> edge byte-identical.
     // Knob-gated: off (default) = byte-identical to the pre-(T) lane.
     let ter_damp = if tuning.growth_ter_drag {
-        quote.expense_ratio.map_or(1.0, |t| (1.0 - t / 100.0).max(0.0).powi(20))
+        quote.expense_ratio.map_or(1.0, |t| (1.0 - t / 100.0).max(0.0).powi(HOLD_YEARS))
     } else {
         1.0
     };
@@ -1548,7 +1604,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     };
     Some(ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
-        fund, mom121: mom_term, smooth, underwater, base, proximity, value_raw, value, trust, overext,
+        fund, mom121: mom_term, smooth, underwater, er, er_term, base, proximity, value_raw, value, trust, overext,
         overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, score,
     })
 }
@@ -2206,6 +2262,18 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
     s.push_str(&format!("    mom121   = growth_mom121_weight × clamp(12-1 mom)     = {:.2}\n", p.mom121));
     s.push_str(&format!("    smooth   = growth_smoothness_weight × trend_r2 (R²)   = {:.2}\n", p.smooth));
     s.push_str(&format!("    underwtr = −growth_underwater_weight × underwater_yrs = {:.2}\n", p.underwater));
+    // (#105) same treatment as the ter/commodity/fx fragments below: printed only when it bites, so a
+    // run at the default weight 0 renders the byte-identical breakdown every golden was blessed on.
+    // The row spells the four legs out because the whole claim of the term is that they are
+    // commensurate — a reader who cannot see them cannot check that claim.
+    if tuning.growth_er_weight != 0.0 {
+        s.push_str(&format!(
+            "    exp.ret  = growth_er_weight × E[r]                     = {:.2} × {} = {:.2}   (D/P + g − ΔS + Δ(P/E), %/yr over {HOLD_YEARS}y)\n",
+            tuning.growth_er_weight,
+            p.er.map_or_else(|| "n/a".to_string(), |v| format!("{v:.2}")),
+            p.er_term
+        ));
+    }
     s.push_str(&format!("    base (sum)                                            = {:.2}\n", p.base));
     s.push_str(&format!("  proximity    = 1 + growth_proximity_weight × (range−1)  = 1 + {:.2} × ({:.3}−1) = {:.3}\n",
         tuning.growth_proximity_weight, quote.range_pct / 100.0, p.proximity));
@@ -6780,6 +6848,69 @@ mod tests {
         q.range_pct = 90.0;
         q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0)]);
         q
+    }
+
+    /// (#105) The expected-return term, which is the only forward-looking input in a lane built
+    /// entirely out of trailing ones. Four claims, and the last is the one that keeps the goldens:
+    ///
+    ///   * the legs compose with the signs economics gives them — income and growth add, DILUTION
+    ///     SUBTRACTS. That sign is the whole reason `buyback_yield` is worth including in a sum after
+    ///     coming back null as a standalone tilt.
+    ///   * the re-rating leg is the 20-year root of the P/E ratio, not the ratio: a name at half the
+    ///     reference multiple earns ~3.5%/yr of re-rating, not 100% of it.
+    ///   * `growth_er_cap` bounds each leg, so one restated share count cannot swamp the other three.
+    ///   * at weight 0 a fully-populated fundamental row moves the score by EXACTLY nothing.
+    #[test]
+    fn expected_return_composes_the_legs_economics_signs_them() {
+        use crate::core::FundFactors;
+        let t = BuyHeuristic { growth_er_cap: 20.0, ..BuyHeuristic::default() };
+        let with = |f: FundFactors| {
+            let mut q = gate_fixture();
+            q.fund = Some(f);
+            q
+        };
+        // no fundamental row at all -> unjudgeable, not zero
+        assert_eq!(expected_return_pct(&gate_fixture(), &t), None);
+
+        // a filer growing EPS 10%/yr, buying back 2%/yr, paying nothing, at an unknown P/E
+        let grower = with(FundFactors { eps_growth: Some(10.0), buyback_yield: Some(2.0), ..Default::default() });
+        assert_eq!(expected_return_pct(&grower, &t), Some(12.0));
+        // the SAME filer issuing 2%/yr instead: dilution subtracts one-for-one, 4 pts of swing
+        let diluter = with(FundFactors { eps_growth: Some(10.0), buyback_yield: Some(-2.0), ..Default::default() });
+        assert_eq!(expected_return_pct(&diluter, &t), Some(8.0));
+        // a shrinking EPS floors at 0 — one bad year is not a negative long-run growth rate — while
+        // the dilution leg keeps its sign, so this filer's expectation is NEGATIVE.
+        let shrinker = with(FundFactors { eps_growth: Some(-30.0), buyback_yield: Some(-5.0), ..Default::default() });
+        assert_eq!(expected_return_pct(&shrinker, &t), Some(-5.0));
+        // the cap bounds a single absurd filed number rather than letting it carry the sum
+        let absurd = with(FundFactors { eps_growth: Some(400.0), ..Default::default() });
+        assert_eq!(expected_return_pct(&absurd, &t), Some(20.0));
+
+        // re-rating: a name at half the reference multiple would re-rate 2×, but `value_factor` clamps
+        // the ratio at VALUE_TILT_MAX first, so the leg pays the 20-year root of 1.5 — about 2.0%/yr,
+        // not 100%, and not 3.5% either. The clamp is doing the bounding, which is why this leg is the
+        // one the term does NOT also cap with `growth_er_cap`.
+        let mut cheap = with(FundFactors { eps_growth: Some(0.0), ..Default::default() });
+        cheap.pe_ratio = Some(t.ref_pe / 2.0);
+        let drag = expected_return_pct(&cheap, &t).unwrap();
+        let clamped = crate::config::VALUE_TILT_MAX.powf(1.0 / f64::from(HOLD_YEARS));
+        assert!((drag - (clamped - 1.0) * 100.0).abs() < 1e-9, "{drag}");
+        assert!(drag > 2.0 && drag < 2.1, "the whole re-rating leg is worth ~2 pts/yr at its ceiling: {drag}");
+        // …and the floor end is the deeper one: 0.5^(1/20) − 1 = −3.4%/yr.
+        let mut dear = with(FundFactors { eps_growth: Some(0.0), ..Default::default() });
+        dear.pe_ratio = Some(t.ref_pe * 100.0);
+        let floor_drag = expected_return_pct(&dear, &t).unwrap();
+        assert!(floor_drag > -3.5 && floor_drag < -3.4, "{floor_drag}");
+        let mut rich = with(FundFactors { eps_growth: Some(0.0), ..Default::default() });
+        rich.pe_ratio = Some(t.ref_pe * 4.0);
+        assert!(expected_return_pct(&rich, &t).unwrap() < 0.0, "a nosebleed multiple is a DRAG");
+
+        // …and none of it reaches the score at the shipped weight 0. This is the golden-rule half.
+        let bare = gate_fixture();
+        assert_eq!(t.growth_er_weight, 0.0, "the default must be off");
+        assert_eq!(growth_score(&grower, &t), growth_score(&bare, &t), "weight 0 must move NOTHING");
+        let on = BuyHeuristic { growth_er_weight: 1.0, ..t.clone() };
+        assert!(growth_score(&grower, &on).unwrap() > growth_score(&bare, &on).unwrap(), "…and on, it does");
     }
 
     /// (#54) `pin_dropped` must name exactly the cohort the CAGR pin costs, and nobody else. The pin

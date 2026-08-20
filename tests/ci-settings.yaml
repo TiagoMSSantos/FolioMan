@@ -782,6 +782,61 @@ buy_heuristic:
                                  #   TO REOPEN: a run where rank-1 median RISES at the 20y king with h2h ≥50% at all
                                  #   three horizons. Lane edge alone cannot carry it — the king cannot vote on this knob.
   growth_geomean_fold: false     # (#8) REVERTED 2026-07-02: folding proximity+value into the geomean DROPPED edge +103.2->+79.2 (Δ-24) and flattened OOS-early +0.06->-0.00. The raw proximity multiply carries real selection weight; the geomean's 4th-root softens it too far. Golden rule reverts. Knob kept inert in code. NOTE (#48): that Δ-24 is the ONLY prior evidence this term carried weight, and the 2026-08-05 sweep at growth_proximity_weight above re-reads it — softening proximity does cost 20y edge, but the served book and rank-1 do not move at any slope, so what the fold cost was list ORDER below #1, not the pick
+  growth_er_weight: 0.0          # (#105 / round 3 §2) UNMEASURED — an unfitted judgement value,
+  growth_er_cap: 20.0            # shipping the weight at 0, where the term contributes exactly 0.0
+                                 # and the lane is the one every golden holds. The cap is inert until
+                                 # the weight moves.
+                                 #
+                                 #   WHAT IT IS: the Grinold-Kroner decomposition of long-horizon
+                                 #   equity return, composed from fields this tool ALREADY computes
+                                 #   as-of on both paths —
+                                 #     E[r] = D/P + (g - dS) + d(P/E)
+                                 #          = dividend_yield_1y
+                                 #          + clamp(eps_growth, 0, cap)
+                                 #          + clamp(buyback_yield, -cap, cap)   (+ = shrinking count)
+                                 #          + (value_factor ^ (1/20) - 1) x 100
+                                 #   So it is a COMPOSITION task, not a data task. No new fetch.
+                                 #
+                                 #   WHY IT IS WORTH A SWEEP EVEN THOUGH SEVERAL COMPONENTS MEASURED
+                                 #   NULL ALONE:
+                                 #     1. It is a LEVEL, not a momentum proxy. Every other input in
+                                 #        this lane keys on the last 12 months; the only number in the
+                                 #        whole score that references the 20-year horizon it claims to
+                                 #        pick for is the exponent in ter_damp. This is the one
+                                 #        candidate whose measurement horizon matches the hold.
+                                 #     2. buyback_yield was tested in the WRONG SHAPE. As an isolated
+                                 #        tilt it was floored at 0, capped, small-weighted and then
+                                 #        multiplied by four damps — and came back null. Inside a sum
+                                 #        its sign is structurally correct: dilution subtracts from
+                                 #        shareholder return one-for-one. A component that is noise
+                                 #        alone can carry signal in a sum where it is not free to have
+                                 #        the wrong sign. Same argument as gate-versus-tilt, applied to
+                                 #        composition instead of thresholding.
+                                 #     3. The re-rating leg has the best long-horizon evidence in the
+                                 #        literature and is currently switched OFF for most of this
+                                 #        universe: growth_value_weight is 0.0 and growth_max_peg only
+                                 #        reaches SEC-covered US filers.
+                                 #
+                                 #   THE ONE TERM HERE THAT CAN GO NEGATIVE. (D)/(F)/(G)/(M) all floor
+                                 #   at 0 — reward the signal, never punish its absence. This one does
+                                 #   not, deliberately: a negative expected return is information, and
+                                 #   docking for it is the single thing no other term in the lane can
+                                 #   do. Absence is still not punished (no as-of fundamental row -> the
+                                 #   term contributes 0), but a filer that HAS a row and expects to
+                                 #   shrink is marked down for it.
+                                 #
+                                 #   THE COVERAGE CAVEAT IS (#59)'s, UNCHANGED: this term lands INSIDE
+                                 #   the multiplier block, so on any run without `fund` it is the
+                                 #   constant 0 for every row and therefore rank-neutral — but on a
+                                 #   PARTIALLY covered pool the uncovered names take 0 while covered
+                                 #   peers take a real number, and that is a demotion, not neutrality.
+                                 #   Sweep it on a `fund` run or the reading is about coverage.
+                                 #
+                                 #   THE RUN THAT SETTLES IT: probe it as a STANDALONE FACTOR first
+                                 #   (`select_fund_factor`, the same machinery accrual_gap used) — one
+                                 #   run, and it prices the composite before any weight is chosen. Only
+                                 #   then a weight curve at 20y/12y/8y under the ship rule. REVERT: set
+                                 #   the weight to 0.0; the term is then exactly 0 for every row.
   print_recall_capture: false    # (#104 / round 3 §1) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is today's report and what every golden holds.
                                  # It is display-only, so "unmeasured" here means the INSTRUMENT has
