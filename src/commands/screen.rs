@@ -11,6 +11,7 @@ use crate::picks::{
     RenderCtx,
 };
 use crate::{config, core, fetch, picks};
+use futures::stream::StreamExt;
 
 /// (X) Watchlist gate-state persisted between `screen` runs so the EXIT-review footer can flag a
 /// holding that PASSED every growth gate last run but fails now — the transition the backtest's
@@ -1401,7 +1402,7 @@ pub async fn run(args: Vec<String>) {
     let no_data = quotes.iter().filter(|q| q.price == "err" || q.price == "no data").count();
     println!(
         "Data quality: {} names | {no_data} no data | {stocks_no_pe} stocks missing P/E | {etfs_no_ter} ETFs missing TER | {} stale dropped (>{}d)",
-        quotes.len(), fresh_before - quotes.len(), settings.stale_days
+        quotes.len(), fresh_before.saturating_sub(quotes.len()), settings.stale_days
     );
 
     // Bitcoin NUPL: whole-market crypto sentiment gauge. Fetched BEFORE render so it can damp the
@@ -1853,15 +1854,21 @@ pub async fn run(args: Vec<String>) {
     // case for a name lives in the numbers above. Fetched here for just the footer names — the
     // universe quotes call keeps news OFF (~500 wasted paced calls otherwise).
     {
-        let mut first_title: std::collections::BTreeMap<String, String> =
-            std::collections::BTreeMap::new();
-        for t in &footer_names {
-            if let Some(title) =
-                fetch::fetch_news(&client, &settings.urls, t).await.into_iter().next()
-            {
-                first_title.insert(t.clone(), title);
-            }
-        }
+        // (#115) overlapped, not serialised: this was the last multi-name fetch still awaited one
+        // name at a time, ~20-40 round trips end to end. Same shape and same width as `fetch::quotes`,
+        // and the global `fetch::throttle` pacer still caps the request RATE — this overlaps latency,
+        // it does NOT add a call. Completion order never reaches the output: the pairs land in a
+        // BTreeMap and `headline_rows` walks `footer_names` itself.
+        let (cl, urls) = (&client, &settings.urls);
+        let fetched: Vec<Option<(String, String)>> = futures::stream::iter(footer_names.iter())
+            .map(|t| async move {
+                fetch::fetch_news(cl, urls, t).await.into_iter().next().map(|title| (t.clone(), title))
+            })
+            .buffered(fetch::fetch_concurrency())
+            .collect()
+            .await;
+        let first_title: std::collections::BTreeMap<String, String> =
+            fetched.into_iter().flatten().collect();
         let rows = headline_rows(&footer_names, &first_title);
         if !rows.is_empty() {
             println!("\nHeadlines — latest news per name (context only, NOT a 20y signal):");
@@ -2298,29 +2305,39 @@ pub async fn run(args: Vec<String>) {
         }
     }
 
+    // (#115) THE JOURNAL, READ ONCE AND RESTATED ONCE, for every footer below it. This used to be
+    // six separate reads restated in only the first of them, and that asymmetry was a live bug:
+    // `fund_flow_lines` divides price appreciation out of AUM growth, so it READS journaled closes —
+    // and it read them raw. AUM is split-neutral (shares double, price halves) while a journaled
+    // close is not, so the error does not cancel: a 2:1 split halved `c1/c0` and printed roughly
+    // +100% net inflow that never happened, on the flattering side of a footer whose only labelled
+    // state is "(bleeding)". One binding makes that unrepresentable, and
+    // `the_journal_is_read_once_and_restated_once` keeps it that way.
+    //
+    // (#82) The restatement is the same one `track` and `sim` do, off the same helper and for the
+    // same reason: today's prices are retro-split-adjusted and the journal is not. Silent — `track`
+    // is where the note belongs — but it MUST happen, because a trust line that quietly disagreed
+    // with `track` would be worse than either. It rewrites `snap.rows` PRICES only, so the four
+    // rank-based footers (which read positions, not prices) are unaffected either way; sharing one
+    // restated copy is safe because `adjust_for_splits` is idempotent (see `track.rs`).
+    let (mut snaps, _) = crate::commands::track::read_snapshots();
+    crate::commands::track::adjust_for_splits(
+        &mut snaps,
+        &crate::commands::track::split_factor_from(&quotes),
+    );
+
     // (trust line) the ranking's own live out-of-sample grade: every past journaled top-10 at
     // today's prices vs the S&P 500 — same fold as `track` (verdict_stats), so the two can't
     // disagree. Zero new fetches: past books are ex-universe names, so this run's quotes already
     // price them (a narrow watchlist run may grade fewer rows; track's table stays the honest
     // view). Today's own snapshot is 0 days old and grades nothing, so no self-grade.
     {
-        let (mut snaps, _) = crate::commands::track::read_snapshots();
         if !snaps.is_empty() {
             let today = chrono::Local::now().date_naive();
             let px_now = |t: &str| {
                 quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur).filter(|p| *p > 0.0)
             };
             let spx_now = spx.first().and_then(|q| q.price_eur).filter(|p| *p > 0.0);
-            // (#82) same restatement `track` and `sim` do, for the same reason and off the same
-            // helper: `px_now` is retro-split-adjusted and the journal is not. Silent here — the
-            // trust line is one sentence and `track` is where the note belongs — but it MUST happen,
-            // because a trust line that quietly disagreed with `track` would be worse than either.
-            // The rank-based footers below read the journal separately and are unaffected: a split
-            // moves a price, never a position in the book.
-            crate::commands::track::adjust_for_splits(
-                &mut snaps,
-                &crate::commands::track::split_factor_from(&quotes),
-            );
             let (wins, n, sum) = crate::commands::track::verdict_stats(&snaps, today, &px_now, spx_now);
             if n > 0 {
                 println!(
@@ -2367,8 +2384,7 @@ pub async fn run(args: Vec<String>) {
     // thin journal can't read as a long record. Zero fetch; silent under 2 past screens or an
     // empty durable set.
     {
-        let (snaps, _) = crate::commands::track::read_snapshots();
-        let past: Vec<_> = snaps.into_iter().filter(|s| s.date < run_date).collect();
+        let past: Vec<_> = snaps.iter().filter(|s| s.date < run_date).cloned().collect();
         if past.len() >= 2 {
             let today_top: Vec<String> =
                 ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
@@ -2391,7 +2407,6 @@ pub async fn run(args: Vec<String>) {
     // rank. Zero fetch; needs ≥3 screens and ≥3 appearances per name; a ±1-rank deadband keeps a
     // flat drift silent; silent when nothing clears the band.
     {
-        let (snaps, _) = crate::commands::track::read_snapshots();
         if snaps.len() >= 3 {
             let today_top: Vec<String> =
                 ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
@@ -2423,7 +2438,6 @@ pub async fn run(args: Vec<String>) {
     // pairs, scored against the smaller book so a short snapshot reads as fewer slots, not churn.
     // Zero fetch; needs ≥3 screens (≥2 pairs); silent otherwise.
     {
-        let (snaps, _) = crate::commands::track::read_snapshots();
         if snaps.len() >= 3 {
             if let Some(ratio) = book_stability(&snaps) {
                 let book = crate::commands::track::BOOK;
@@ -2450,7 +2464,6 @@ pub async fn run(args: Vec<String>) {
     // where each has SAT on average, so a one-day spike sorts below a durable resident. Zero fetch;
     // needs ≥3 screens and ≥3 appearances per name; silent when none qualify.
     {
-        let (snaps, _) = crate::commands::track::read_snapshots();
         if snaps.len() >= 3 {
             let today_top: Vec<String> =
                 ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
@@ -2546,7 +2559,6 @@ pub async fn run(args: Vec<String>) {
     // only (stocks/crypto carry no AUM). Zero fetch. COARSE by design — BF refreshes AUM ~monthly,
     // so a reading accrues over weeks, not per-day; silent until ≥2 journal points carry AUM+close.
     {
-        let (snaps, _) = crate::commands::track::read_snapshots();
         let today_top: Vec<String> =
             ranked_now.iter().take(crate::commands::track::BOOK).cloned().collect();
         let flows = fund_flow_lines(&today_top, &snaps);
@@ -3734,6 +3746,37 @@ mod tests {
         // a flow needs two points: empty and single-snapshot journals yield nothing
         assert!(fund_flow_lines(&today, &[]).is_empty());
         assert!(fund_flow_lines(&today, &journal[..1]).is_empty());
+    }
+
+    /// (#115) STRUCTURAL PIN — and the bug it exists for was real, not hypothetical. `run` used to
+    /// read the journal six separate times and split-restate only the first of them. Five footers
+    /// read RANKS, so they did not care. The sixth, `fund_flow_lines`, divides price appreciation
+    /// out of AUM growth and therefore reads journaled PRICES — un-restated ones. AUM is
+    /// split-neutral while a journaled close is not, so a 2:1 split halved the price leg and the
+    /// footer printed roughly +100% net inflow that never happened, flattering a name on a buy
+    /// surface. There is now ONE read, restated once, shared by all six. A seventh call site would
+    /// silently re-open the hole, so count them here rather than trust review — `run` is 1400 lines
+    /// and the mutation gate skips it, so this file gets no other structural grading.
+    ///
+    /// Both needles are assembled with `concat!` ON PURPOSE: written as single literals they would
+    /// occur in this test's own source and count themselves. For the same reason, no comment or
+    /// message anywhere in this file may write either call with its parenthesis attached.
+    #[test]
+    fn the_journal_is_read_once_and_restated_once() {
+        let src = include_str!("screen.rs");
+        let reads = src.matches(concat!("read_snapshots", "()")).count();
+        assert_eq!(
+            reads, 1,
+            "the journal must be read ONCE and the same restated copy handed to every footer; \
+             found {reads} reads. Reuse the `snaps` binding — a fresh read is un-restated, and the \
+             fund-flow footer reads prices, not ranks."
+        );
+        let restatements = src.matches(concat!("adjust_for_splits", "(")).count();
+        assert_eq!(
+            restatements, 1,
+            "one read, one restatement; found {restatements} calls to adjust_for_splits. Two would \
+             still be correct (it is idempotent), but they mean two journals again."
+        );
     }
 
     /// (r15) T212 orderability: flagged = known-ISIN AND absent from the catalog, input order.

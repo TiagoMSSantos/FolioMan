@@ -15,7 +15,7 @@ pub const SNAPSHOT_FILE: &str = ".screen_snapshots.jsonl";
 /// Graded book = the top-10 slice, matching the backtest's held-book receipts.
 pub(crate) const BOOK: usize = 10;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Snapshot {
     pub date: String, // YYYY-MM-DD of the screen run
     pub spx: Option<f64>, // ^GSPC close (EUR) that day — the benchmark leg
