@@ -7,7 +7,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   windows scored: 272
   Spearman(score, peer-relative): -0.10   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative -815.8 pts  vs  bottom-half -256.2 pts  ->  edge -559.6 pts
-  90% bootstrap band on edge: [-933.8 … -129.8] pts  (below 0 -> backwards)
+  90% bootstrap band on edge: NONE — the honest block at this 20y hold is 40 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
   net of cost: edge -559.6 − turnover 79% × 20bps = net -559.7 pts  <- NET ≤ 0: too churny to trade
   winsorized edge (1/99 clamp): -543.4 pts
   vs null model (tuning off): rho -0.27  edge -814.3 pts  ->  tuning adds +254.7 pts
@@ -31,7 +31,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   windows scored: 36
   Spearman(score, peer-relative): +0.14   [+1 winners-first, 0 none, − backwards]
   top-half peer-relative -661.0 pts  vs  bottom-half -549.5 pts  ->  edge -111.5 pts
-  90% bootstrap band on edge: [-718.1 … +364.5] pts  (STRADDLES 0 -> noise)
+  90% bootstrap band on edge: NONE — the honest block at this 20y hold is 40 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
   net of cost: edge -111.5 − turnover 69% × 20bps = net -111.7 pts  <- NET ≤ 0: too churny to trade
   winsorized edge (1/99 clamp): -111.5 pts
   vs null model (tuning off): rho +0.05  edge -586.7 pts  ->  tuning adds +475.2 pts

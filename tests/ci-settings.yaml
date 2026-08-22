@@ -2009,45 +2009,56 @@ buy_heuristic:
                                  #   claim or shrink a train set. If a value here ever appears to IMPROVE a
                                  #   held-out number, that is a smaller sample landing luckier, not a
                                  #   result — re-read it at a second horizon before believing it.
-  bootstrap_block_buckets: 0     # (#89) UNMEASURED — an unfitted judgement value, shipping 0, which is the
-                                 #   one-bucket resample every band in this file and every "STRADDLES 0 ->
-                                 #   noise" verdict in the repo was read off. Byte-identical: at 0 (and at 1)
-                                 #   `picks` is `keys.len()`, each drawn run is one key, and the xorshift is
-                                 #   consumed once per pick in the same order, so the PRNG stream is untouched.
+  bootstrap_block_buckets: 0     # (#119) MEASURED 2026-08-22 AND SHIPPED — 0 now means DERIVE FROM THE
+                                 #   HOLD, and on this data that means NO BAND AT ANY HORIZON. This is a
+                                 #   deliberate output change: five goldens moved, and what they lost was
+                                 #   two "below 0 -> backwards" verdicts and three "STRADDLES 0" ones.
                                  #
-                                 #   WHAT IT DOES: `bootstrap_edge_ci` calls itself a BLOCK bootstrap and
-                                 #   resamples ONE ~6-month cutoff bucket at a time. That is only sound if one
-                                 #   bucket spans the dependence in the data. It does not come close. Two
-                                 #   cutoffs of the SAME ticker one bucket apart share all but 6 months of
-                                 #   their forward path: (2·years−1)/(2·years) of it, so 95.8% at a 12y hold
-                                 #   and 97.5% at 20y. Resampling at a length far below the autocorrelation
-                                 #   length reproduces the i.i.d. width, which is to say the band is far too
-                                 #   NARROW — and this band is what decides whether an edge is real. Every
-                                 #   "clears 0" in this repo is therefore easier to have earned than it looks.
-                                 #   >1 draws CONTIGUOUS RUNS of that many buckets (wrapping, so a run near
-                                 #   the end is not silently short), which is the textbook fix.
+                                 #   WHAT (#89) LEFT UNDONE. It added the block draw, worked out the honest
+                                 #   length (the dependence is one hold, so 2·years buckets = 16 at 8y, 24
+                                 #   at 12y, 40 at 20y) and then shipped one bucket anyway. The reason is
+                                 #   visible in the code, not the statistics: both call sites are handed
+                                 #   `samples` and `tuning`, neither carried the horizon, so the knob could
+                                 #   only ever hold a FIXED count — and no fixed count is right for a knob
+                                 #   read at three horizons in one run. `bootstrap_block` is that missing
+                                 #   wire; `sweep_fund_factor` took a `years` argument to reach it.
                                  #
-                                 #   WHY NO NUMBER IS SHIPPED, and this is the actual finding: the honest
-                                 #   block is the dependence length, 2·years buckets = 16 at 8y, 24 at 12y,
-                                 #   40 at 20y. Against the fixture's own cutoff spans (read off the three
-                                 #   goldens: 1971-01..2018-08 at 8y, ..2014-07 at 12y, ..2006-07 at 20y —
-                                 #   at most 96, 88 and 72 half-year buckets) that leaves ~6.0 independent
-                                 #   blocks at 8y, ~3.7 at 12y and ~1.8 at 20y. At the 20y king the honest
-                                 #   block is LONGER THAN HALF THE RECORD: there is no 20y confidence band
-                                 #   to estimate, at any setting of this knob. Same shape as the finding at
-                                 #   `split_embargo_months` — the statistically correct value exceeds the
-                                 #   data — and it is why this ships off rather than at a wrong-but-larger
-                                 #   number that would dress the same ignorance as rigour.
+                                 #   THE MEASUREMENT, which is the part (#89) called for and did not run —
+                                 #   frozen 8y fixture (64-71 buckets), sweeping the block, reading the
+                                 #   WIDTH the revert rule asks about and not the edge:
                                  #
-                                 #   TO SETTLE IT: `backtest universe` at 8y and 12y over 0/2/4/8/16/24, and
-                                 #   report the BAND WIDTH, not the edge — the point estimate does not move,
-                                 #   only its error bar. Expect monotone widening; the read is WHERE a
-                                 #   currently-clearing edge starts straddling 0. Do NOT sweep 20y: 1.8
-                                 #   blocks cannot produce a band worth reading.
+                                 #       block    1      2      4      8     16     24
+                                 #       width  62.1   69.3   79.0   70.1   47.0   (refused)
                                  #
-                                 #   REVERT RULE: raising this can only WIDEN a band, so it can only turn a
-                                 #   "clears 0" into a "straddles 0", never the reverse. If a value here ever
-                                 #   appears to NARROW one, that is a bug in the draw loop, not a result.
+                                 #   It rises, PEAKS AT 4, then falls. At 16 — the honest length at 8y —
+                                 #   the band is NARROWER than the one-bucket band it was added to widen.
+                                 #   (#89)'s revert rule called a narrowing "a bug in the draw loop, not a
+                                 #   result". It is neither: as the block approaches the record every draw
+                                 #   resembles the whole record, the resample stops varying, and the
+                                 #   interval shrinks toward zero. The draw loop is correct and the regime
+                                 #   is wrong.
+                                 #
+                                 #   SO NEITHER END WAS HONEST. Below the dependence length the band is the
+                                 #   i.i.d. width wearing a block bootstrap's name; at the dependence
+                                 #   length the record holds too few blocks to vary. The peak at 4 is the
+                                 #   maximum of a bias curve, not an estimate — shipping it would be
+                                 #   fitting the artefact. `MIN_BLOCKS = 10` guards the RATIO instead: a
+                                 #   block must be at most a tenth of the record. Clearing that needs 160
+                                 #   buckets at 8y (80 years of cutoffs), 240 at 12y, 400 at 20y. Nothing
+                                 #   does, so the band refuses everywhere — the same shape of finding as
+                                 #   `split_embargo_months`: the correct value is larger than the data.
+                                 #
+                                 #   WHAT THIS COSTS: nothing the ship rule reads. tests/network.rs never
+                                 #   parsed the band; SHIP RULE v2 is decided on excess, h2h and the worst
+                                 #   window. What it costs is the habit of quoting "clears 0 -> real" off
+                                 #   an interval that was too narrow by construction — every such verdict
+                                 #   in this repo's history was easier to have earned than it looked.
+                                 #
+                                 #   REVERT RULE: `bootstrap_block_buckets: 1` restores the pre-(#119)
+                                 #   one-bucket draw byte-for-byte — `block == 1` is exempt from the ratio
+                                 #   guard (there is no blocking to collapse) and keeps the original
+                                 #   `< 4 buckets` floor. Reverting brings the old bands back verbatim; it
+                                 #   does not make them mean anything.
   backtest_anchor_windows: false # (#88) UNMEASURED — an unfitted judgement value, shipping OFF, which is
                                  #   today's behaviour byte-for-byte and is what every golden in
                                  #   tests/fixture and every receipt in this file was measured under.

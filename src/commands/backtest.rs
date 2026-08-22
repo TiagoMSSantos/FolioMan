@@ -832,6 +832,15 @@ fn px_in_filer_ccy(close: f64, rate: Option<f64>) -> Option<f64> {
     rate.map(|r| close * r)
 }
 
+/// (#119) UNGRADEABLE BY THE MUTATION GATE, skipped for the same reason and on the same evidence as
+/// `screen::run` (#68): `run` is reachable from `main.rs` and nowhere else, so the only test that
+/// exercises it lives in the cli suite, which `ci.yml`'s mutants job does not run — it grades
+/// `--lib --test backtest_fixture`. `replace run with ()` cannot be killed there.
+///
+/// Listed on this commit's own diff, which is what forced the issue: threading `years` into
+/// `sweep_fund_factor` is a ONE-LINE change at the call site, and `--in-diff` grades whole functions,
+/// so that line drags all 900 of them in. Every future edit here was armed the same way.
+#[mutants::skip]
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     // Here rather than in `main` because `config::load()` exits 1 on an unreadable config and `main`
@@ -1505,7 +1514,7 @@ pub async fn run(args: Vec<String>) {
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
     if fund_lane_on(fund, insider) {
         report_fund_lane(&samples, tuning.split_purge_months);
-        sweep_fund_factor(&samples, tuning); // (G) which factor pays THROUGH the growth lane, held-out
+        sweep_fund_factor(&samples, tuning, years); // (G) which factor pays THROUGH the growth lane, held-out
     }
     report_risk_lane(&samples, tuning.split_purge_months); // closes-derived risk stats, standalone — no fundamentals needed
     // (#40) the ABSOLUTE goal metric: do the top-N picks beat an S&P500 buy-and-hold? One index fetch
@@ -1987,7 +1996,27 @@ fn pick_sweep_winner<'a>(results: &[(&'a str, f64, Option<f64>, Option<f64>)], b
 /// halves. This judges each factor THROUGH the growth lane (report_fund_lane only probes them standalone),
 /// then prints the one to paste into settings.yaml. Ships nothing. Needs the `fund` path; with <8 cutoffs
 /// carrying fundamentals there's nothing to sweep. Same chronological split + seeded search as `tune`.
-fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
+/// (Item 10) The best-of-N haircut's two tail percentiles: a 90% band tightened to 5/N a side, so a
+/// winner picked as the MAX of `n` tried factors is charged for having been selected.
+///
+/// Extracted from the call site because the call site is inside `sweep_fund_factor`, a `-> ()` printer
+/// the mutation gate cannot run at all — the fund lane needs a live `FMP_API_KEY` and every golden runs
+/// offline (tests/backtest_fixture.rs:134). Inline, the six operator mutants on this arithmetic were
+/// unkillable by construction; as a pure fn they are just tested.
+fn sidak_tail(n: usize) -> (f64, f64) {
+    let side = 5.0 / n.max(1) as f64;
+    (side, 100.0 - side)
+}
+
+/// (#119) UNGRADEABLE BY THE MUTATION GATE — the fund lane needs a live `FMP_API_KEY`, and every
+/// golden runs offline by design (tests/backtest_fixture.rs:134), so no test in `--lib --test
+/// backtest_fixture` executes one line of this. `replace sweep_fund_factor with ()` is unkillable
+/// there, and skipping says so instead of arming the gate against the next edit.
+///
+/// The arithmetic that WAS gradeable moved out rather than being skipped with it: `sidak_tail` and
+/// `bootstrap_block` are pure and tested. What stays here is the printing.
+#[mutants::skip]
+fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
     const FACTORS: [&str; 14] = [
         "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
         // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
@@ -2086,8 +2115,9 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic) {
             demean(&mut s); // peer-relative is the bootstrap's metric; `relative` depends only on date+realized
             let mut tun = default.clone();
             tun.growth_fund_weight = weight;
-            let n = FACTORS.len() as f64;
-            if let Some((lo, hi)) = bootstrap_edge_ci(&s, growth_score, &tun, 1000, 5.0 / n, 100.0 - 5.0 / n) {
+            let (lo_p, hi_p) = sidak_tail(FACTORS.len());
+            let block = bootstrap_block(years, &tun);
+            if let Some((lo, hi)) = bootstrap_edge_ci(&s, growth_score, &tun, 1000, lo_p, hi_p, block) {
                 let verdict = if lo > 0.0 {
                     "survives multiple testing -> trust the WINNER"
                 } else {
@@ -3423,6 +3453,28 @@ pub(crate) fn percentile(sorted: &[f64], p: f64) -> f64 {
     sorted[idx.min(sorted.len() - 1)]
 }
 
+/// (#119) How many whole blocks the record must hold before a block bootstrap's width means anything.
+/// A tenth of the record per block — see the measured collapse table in `bootstrap_edge_ci`.
+const MIN_BLOCKS: usize = 10;
+
+/// (#119) The resample block for [`bootstrap_edge_ci`], in ~6-month buckets, DERIVED FROM THE HOLD.
+///
+/// (#89) added the block draw and worked the honest length out in its own receipt — the dependence
+/// length is `2·years` buckets, because two cutoffs less than one hold apart share most of one forward
+/// path — and then shipped one bucket anyway. The reason it shipped unwired is visible in the two call
+/// sites: both are handed `samples` and `tuning`, and neither carries the horizon, so the knob could
+/// only ever be a FIXED count. A fixed count cannot be right for a knob read at 8y, 12y and 20y, which
+/// is why the receipt could name the value and still not ship it. This is that missing wire.
+///
+/// 0 = derive. Any positive value is an explicit override in buckets, so `1` restores the one-bucket
+/// draw every band in this repo was printed off — the revert rule the receipt names.
+fn bootstrap_block(years: i64, tuning: &BuyHeuristic) -> usize {
+    match tuning.bootstrap_block_buckets {
+        0 => 2 * years.max(1) as usize,
+        n => n,
+    }
+}
+
 /// (Item 5) bootstrap band on a lane's top-minus-bottom edge between the `lo_p`/`hi_p` percentiles. BLOCK
 /// bootstrap: resamples whole ~6mo cutoff buckets with replacement (overlapping windows inside a bucket
 /// aren't independent, so the bucket is the resample unit), rescoring the edge each draw. A band that
@@ -3437,6 +3489,9 @@ fn bootstrap_edge_ci(
     iters: usize,
     lo_p: f64,
     hi_p: f64,
+    // Resolved by `bootstrap_block`: passed in rather than read off `tuning`, because the horizon
+    // that decides it lives at the call site and not in the config.
+    block: usize,
 ) -> Option<(f64, f64)> {
     // BTreeMap, not HashMap: the draw below indexes `keys` with the seeded PRNG, so key ORDER is half
     // the seed. Rust randomizes HashMap iteration per process, which made this band — and the
@@ -3450,6 +3505,29 @@ fn bootstrap_edge_ci(
     }
     let keys: Vec<i32> = buckets.keys().copied().collect();
     if keys.len() < 4 {
+        return None;
+    }
+    let block = block.clamp(1, keys.len());
+    // (#119) THE BAND COLLAPSES AT LONG BLOCKS, and that is the second way it lies. Measured on the
+    // frozen 8y fixture (64-71 buckets), sweeping the block and reading the WIDTH the receipt asks for:
+    //
+    //     block    1      2      4      8     16     24
+    //     width  62.1   69.3   79.0   70.1   47.0   (refused)
+    //
+    // It rises, peaks at 4, then FALLS — at block 16 the band is NARROWER than the one-bucket band it
+    // was added to widen. That is not a bug in the draw: as the block approaches the record, every draw
+    // resembles the whole record, so the resample stops varying and the interval shrinks toward zero.
+    // Which means neither end is honest here. Below the dependence length (16 buckets at 8y) the band
+    // is the i.i.d. width; at the dependence length the record holds too few blocks to vary. The peak at
+    // 4 is the maximum of a bias curve, not an estimate, and picking it would be fitting the artefact.
+    //
+    // So the guard is on the RATIO: a block bootstrap is trustworthy while the block is a small
+    // fraction of the record, and `MIN_BLOCKS` fixes that fraction at a tenth. On this data no horizon
+    // clears it — 8y would need 160 buckets (80 years of cutoffs), 12y 240, 20y 400 — so the band
+    // refuses everywhere, which is the finding, the same one `split_embargo_months` and (#89) reached:
+    // the statistically correct value is larger than the data. Only `block == 1` is exempt, because
+    // there is no blocking to collapse; that path keeps the original `< 4` guard and stays byte-identical.
+    if block > 1 && keys.len() < MIN_BLOCKS * block {
         return None;
     }
     let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -3486,11 +3564,12 @@ fn bootstrap_edge_ci(
     // dependence, and it does not come close: consecutive cutoffs of the SAME ticker share
     // (2·years−1)/(2·years) of their forward path — 95.8% at 12y, 97.5% at 20y. A block one bucket long
     // against an autocorrelation length of 2·years therefore reproduces the i.i.d. width almost exactly,
-    // and this band is the load-bearing "straddles 0 -> noise" test. `bootstrap_block_buckets` draws
-    // CONTIGUOUS RUNS of that many buckets instead. 0/1 = one bucket per draw, today's behaviour, and
-    // byte-identical: `picks` is then `keys.len()`, each run is one key, and `next()` is consumed once
-    // per pick in the same order, so the PRNG stream and every band off it are untouched.
-    let block = tuning.bootstrap_block_buckets.clamp(1, keys.len());
+    // and this band is the load-bearing "straddles 0 -> noise" test. `block` draws CONTIGUOUS RUNS of
+    // that many buckets instead. At 1 it is one bucket per draw — the pre-(#119) behaviour, byte-for-byte:
+    // `picks` is then `keys.len()`, each run is one key, and `next()` is consumed once per pick in the
+    // same order, so the PRNG stream and every band off it are untouched.
+    // (#119) `bootstrap_block` now derives it from the hold, so the shipped band is no longer the
+    // one-bucket one. That is a deliberate output change, not a regression — see the receipt.
     let picks = keys.len().div_ceil(block);
     let draws: Vec<Vec<i32>> = (0..iters)
         .map(|_| {
@@ -3909,7 +3988,8 @@ fn report_lane(
         annualized_edge_tag(tuning.print_edge_annualized, top, bot, years)
     );
     // (Item 5) bootstrap band: is that point edge distinguishable from 0 given overlapping-sample noise?
-    if let Some((lo, hi)) = bootstrap_edge_ci(samples, scorer, tuning, 1000, 5.0, 95.0) {
+    let block = bootstrap_block(years, tuning);
+    if let Some((lo, hi)) = bootstrap_edge_ci(samples, scorer, tuning, 1000, 5.0, 95.0, block) {
         let verdict = if lo > 0.0 {
             "clears 0 -> real"
         } else if hi < 0.0 {
@@ -3918,6 +3998,16 @@ fn report_lane(
             "STRADDLES 0 -> noise"
         };
         println!("  90% bootstrap band on edge: [{lo:+.1} … {hi:+.1}] pts  ({verdict})");
+    } else {
+        // (#119) REFUSING IS THE ANSWER. The alternative is a band drawn at a block far below the
+        // dependence length, which is the i.i.d. width wearing a block bootstrap's name — narrow,
+        // confident and wrong. Printing why, rather than printing nothing, keeps the missing band from
+        // reading as a missing feature.
+        println!(
+            "  90% bootstrap band on edge: NONE — the honest block at this {years}y hold is {block} ~6mo \
+             buckets and this record holds under {MIN_BLOCKS} of them; a block that big stops varying, \
+             so there is no band to read"
+        );
     }
     // (Item 9) net of cost: a high-turnover edge can be NET-negative once you pay the spread to chase it
     // each rebalance. cost(pts) = turnover_frac × ROUND_TRIP_BPS / 100 (1 pt = 100 bps).
@@ -4307,7 +4397,7 @@ mod tests {
         let t = BuyHeuristic::default();
         assert_eq!(lane_metrics(&rows[..3], keeps_every_row, &t).1, 0.0, "3 scored rows -> no edge");
         assert_ne!(lane_metrics(&rows[..4], keeps_every_row, &t).1, 0.0, "4 scored rows -> an edge");
-        let ci = |n: usize| bootstrap_edge_ci(&rows[..n], keeps_every_row, &t, 8, 5.0, 95.0);
+        let ci = |n: usize| bootstrap_edge_ci(&rows[..n], keeps_every_row, &t, 8, 5.0, 95.0, 1);
         assert!(ci(3).is_none(), "3 buckets is too few to resample");
         assert!(ci(4).is_some(), "4 buckets is exactly enough to resample");
 
@@ -4318,7 +4408,7 @@ mod tests {
             None
         }
         assert!(
-            bootstrap_edge_ci(&rows, scores_nothing, &t, 8, 5.0, 95.0).is_none(),
+            bootstrap_edge_ci(&rows, scores_nothing, &t, 8, 5.0, 95.0, 1).is_none(),
             "every draw gated out -> no band, not a NaN band"
         );
     }
@@ -4422,9 +4512,9 @@ mod tests {
         fn score_is_the_price(q: &Quote, _: &BuyHeuristic) -> Option<f64> {
             q.price.parse().ok()
         }
-        let rows: Vec<Sample> = (0..16)
+        let rows: Vec<Sample> = (0..100)
             .flat_map(|k| {
-                let e = if k < 8 { 0.0 } else { 150.0 };
+                let e = if k < 50 { 0.0 } else { 150.0 };
                 let date = ymd(2020 + k / 2, 1 + 6 * (k % 2) as u32, 1);
                 // scores 0..3 are the same in every bucket, so the top/bottom split is the same two rows
                 // per bucket in every draw and nothing but the drawn bucket set moves the edge.
@@ -4435,17 +4525,66 @@ mod tests {
                 })
             })
             .collect();
-        let band = |block: usize| {
-            let t = BuyHeuristic { bootstrap_block_buckets: block, ..BuyHeuristic::default() };
-            bootstrap_edge_ci(&rows, score_is_the_price, &t, 400, 5.0, 95.0).unwrap()
-        };
-        assert_eq!(band(0), band(1), "0 and 1 are the same one-bucket draw — the DEFAULT must not move");
+        let t = BuyHeuristic::default();
+        let band = |block: usize| bootstrap_edge_ci(&rows, score_is_the_price, &t, 400, 5.0, 95.0, block).unwrap();
+        assert_eq!(band(0), band(1), "0 and 1 both clamp to a one-bucket draw inside the fn");
         let (one, eight) = (band(1), band(8));
         assert!(
             eight.1 - eight.0 > 1.25 * (one.1 - one.0),
-            "8-bucket blocks make 2 independent picks where 1-bucket blocks make 16, so the band must \
+            "8-bucket blocks make 13 independent picks where 1-bucket blocks make 100, so the band must \
              grow: {one:?} vs {eight:?}"
         );
+        // (#119) 100 buckets carry twelve 8-bucket blocks, which is why the assertion above measures a
+        // WIDENING at all: the same comparison on a 32-bucket record reads the other way, because a
+        // 4-block draw barely varies. That is the collapse the ratio guard exists to refuse.
+        //
+        // 100 and not 96 so the guard's EXACT boundary is reachable: ten 10-bucket blocks fit a
+        // 100-bucket record and eleven do not, which is the pair that separates `<` from `<=`. On a
+        // record no multiple of MIN_BLOCKS the two spellings decide identically and the mutant lives.
+        let band_at = |b: usize| bootstrap_edge_ci(&rows, score_is_the_price, &t, 400, 5.0, 95.0, b);
+        assert!(band_at(10).is_some(), "100/10 -> exactly ten whole blocks, which is enough");
+        assert!(band_at(11).is_none(), "100/11 is under ten whole blocks -> no band, however honest the length");
+    }
+
+    /// (Item 10) The best-of-N haircut. Tested here and not through its caller because the caller is
+    /// `sweep_fund_factor`, which the offline suite cannot run at all.
+    #[test]
+    fn sidak_tail_tightens_both_ends_by_five_over_n() {
+        assert_eq!(sidak_tail(1), (5.0, 95.0), "one candidate is no selection — the plain 90% band");
+        assert_eq!(sidak_tail(10), (0.5, 99.5));
+        let (lo, hi) = sidak_tail(14); // FACTORS.len() at the time of writing
+        assert!((lo - 0.357_142_857).abs() < 1e-9 && (hi - 99.642_857_142).abs() < 1e-9, "{lo} {hi}");
+        // both ends move OUTWARD as the search widens: more factors tried -> a stricter bar, which is
+        // the whole point. A `-` flipped to `+` here would tighten the band and pass a losing winner.
+        assert!(sidak_tail(14).0 < sidak_tail(10).0 && sidak_tail(14).1 > sidak_tail(10).1);
+        assert_eq!(sidak_tail(0), (5.0, 95.0), "no candidates -> no division by zero");
+    }
+
+    /// (#119) The wire itself. `bootstrap_block` is what turns a knob that could only ever hold ONE
+    /// number into a length that tracks the horizon it is read at — so the thing under test is that
+    /// the same config yields a different block at 8y than at 20y, which is exactly what a fixed count
+    /// could not do and why (#89) shipped off.
+    ///
+    /// Graded directly and not through a golden: the goldens are 12y/20y/8y runs of the whole report,
+    /// so they pin the CONSEQUENCE of this number and never the number, and a mutant returning a
+    /// constant would still move every band by some amount and look like a re-bless.
+    #[test]
+    fn bootstrap_block_tracks_the_hold_unless_overridden() {
+        let derive = BuyHeuristic::default();
+        assert_eq!(derive.bootstrap_block_buckets, 0, "0 is the shipped sentinel for `derive`");
+        // buckets are ~6mo, the dependence length is one hold -> 2 buckets per year of hold
+        assert_eq!(bootstrap_block(8, &derive), 16);
+        assert_eq!(bootstrap_block(12, &derive), 24);
+        assert_eq!(bootstrap_block(20, &derive), 40);
+        // a hold of 0 or less is not a hold; clamp to one year rather than returning a 0 block, which
+        // `bootstrap_edge_ci` would then clamp back to 1 and silently call a one-bucket draw honest.
+        assert_eq!(bootstrap_block(0, &derive), 2);
+        assert_eq!(bootstrap_block(-5, &derive), 2);
+
+        // any positive value is taken as written, at every horizon — that is the documented revert.
+        let pinned = BuyHeuristic { bootstrap_block_buckets: 1, ..BuyHeuristic::default() };
+        assert_eq!(bootstrap_block(8, &pinned), 1);
+        assert_eq!(bootstrap_block(20, &pinned), 1, "an override does NOT track the hold");
     }
 
     /// (#75) The value brake's graded trim, on two buckets whose peg cohorts do not overlap at all —
