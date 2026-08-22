@@ -6261,14 +6261,27 @@ pub(crate) mod tests {
     /// caller supplies identical content and who wins stops mattering.
     ///
     /// `set` returning Err is the normal case (some earlier test already filled it) and is ignored.
+    ///
+    /// (#123) THE WRITE HAPPENS EXACTLY ONCE, and the `Once` is the whole point of it. `fs::write`
+    /// TRUNCATES before it fills, so calling this from every test left a window in which the file on
+    /// disk was zero bytes — and under the default parallel `cargo test` another test was reading it
+    /// through `sec_cik` in that window. `CIK_MAP` is a `OnceLock`: whoever reads the truncated file
+    /// caches an EMPTY map for the rest of the process, and both that test and the one that seeds
+    /// correctly then fail on lookups unrelated to what either is testing (~1 run in 30, cold root).
+    /// `call_once` closes it from both sides — there is only ever one write, and every other caller
+    /// BLOCKS until that write has returned, so no reader that honours the contract above can observe
+    /// a partial file. Idempotency alone was never enough; the writes had to stop overlapping.
     fn seed_cik_map() {
-        let dir = crate::config::data_path(".sec_cache");
-        std::fs::create_dir_all(&dir).expect("scratch .sec_cache");
-        std::fs::write(
-            dir.join("_tickers.json"),
-            r#"{"0":{"ticker":"AAPL","cik_str":320193},"1":{"ticker":"GOOGL","cik_str":1652044}}"#,
-        )
-        .expect("seed cik map");
+        static SEEDED: std::sync::Once = std::sync::Once::new();
+        SEEDED.call_once(|| {
+            let dir = crate::config::data_path(".sec_cache");
+            std::fs::create_dir_all(&dir).expect("scratch .sec_cache");
+            std::fs::write(
+                dir.join("_tickers.json"),
+                r#"{"0":{"ticker":"AAPL","cik_str":320193},"1":{"ticker":"GOOGL","cik_str":1652044}}"#,
+            )
+            .expect("seed cik map");
+        });
         let _ = EU_TO_US.set(invert_eu(&HashMap::from([
             ("GOOGL".to_string(), "ABEA.DE".to_string()),
             ("BRK-B".to_string(), String::new()), // a remembered miss: must invert to nothing
@@ -6293,11 +6306,23 @@ pub(crate) mod tests {
         // could not answer" that looks identical to a parse failure, and racy besides, since which
         // symbol won depended on `buffer_unordered`. The thread parks on `accept` for the rest of the
         // process; the test binary exits out from under it.
+        //
+        // (#123) `Connection: close` IS LOAD-BEARING, and leaving it off is what reddened CI. This
+        // server answers ONCE per socket and then drops it, but an HTTP/1.1 response that does not say
+        // so means keep-alive by default — so the client banks the socket as reusable and the NEXT
+        // request on that host picks a corpse out of the pool. Whether it notices in time is a race
+        // between hyper's closed-connection check and the FIN already in flight, so it fails ~10% of
+        // runs and only when two requests SERIALIZE rather than overlap: two in flight at once open two
+        // sockets and both are fine, which is why the flake needed no config (concurrency 32) yet still
+        // hid behind a single-test run. `get_text` maps the error to `None` and `.flatten()` drops it,
+        // so the symptom is a silently SHORT result set — `justETF answered for 1 non-BF funds` where
+        // the fixture seeded 2 — never an error anyone can see. Do not "simplify" this header away.
         std::thread::spawn(move || {
             for sock in listener.incoming() {
                 let Ok(mut sock) = sock else { continue };
                 let _ = std::io::Read::read(&mut sock, &mut [0u8; 2048]); // drain the request line+headers
-                let resp = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+                let resp =
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                 let _ = std::io::Write::write_all(&mut sock, resp.as_bytes());
             }
         });
