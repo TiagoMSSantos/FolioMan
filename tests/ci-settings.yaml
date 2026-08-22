@@ -291,6 +291,43 @@
 # no longer look-ahead on WHO WAS IN, still blind to WHO DIED. The `stress` note above stands
 # unchanged; neither run corrects the other's half.
 #
+# (#121) 2026-08-22 — THAT 387 IS NOW 0, AND NOTHING WAS FIXED. Re-running `backtest {20,12,8} universe
+#   pit` three days later, the miss count above prints ZERO at every horizon. The hole did not close;
+#   it went INVISIBLE. Yahoo now answers for those names — with a payload carrying ZERO BARS. Census of
+#   the long history cache against all 1206 members: every one of them HAS a cache entry, so the miss
+#   count is structurally 0. Of the 734 members whose span carries an exit date, 387 are served with
+#   ZERO BARS; of the 347 that do carry bars, 193 hold fewer than 36 inside their own membership span,
+#   leaving 154 scoreable. THAT 387 IS EXACTLY THE COUNT THIS CAVEAT REPORTED ON 2026-08-19 — not close
+#   to it, equal to it. The names that used to fetch nothing now fetch an empty answer, one for one:
+#   `BSC`, `TWX`, `SVU`, `ROH` and `ENRNQ` all come back as a `MUTUALFUND` stub with a numeric
+#   shortName. A served-but-empty name counts as SERVED, so a metric built on "did the fetch answer"
+#   reads a warm cache as a clean bill of health. THIS IS WHY A MISS COUNT WAS THE WRONG INSTRUMENT.
+#
+#   WORSE, THE SERIES THAT DO CARRY BARS DO NOT END WHEN THE COMPANY DID. Count of members, out of all
+#   1206, whose series ends more than a year before today: ZERO. `CFC` (Countrywide, out of the index
+#   2008-07) carries bars through 2026-08; `MOLX` (acquired 2013) through 2026-07. `LEH`, `WCOM`, `CC`
+#   and `ABK` are not in the membership map at all. So this dataset contains no delisting events of any
+#   kind, and Bessembinder's median delisted return of -91.95% — which docs/heuristic-v2-spec.md builds
+#   its case on — is absent from every number this repo has ever printed. A name that dies simply stops
+#   contributing samples, which biases the edge UP by an amount nothing here can size.
+#
+#   WHAT SHIPS INSTEAD: a COVERAGE RATIO in the PIT caveat — of the index members this pool asked
+#   about, how many produced a scoreable cutoff. Measured live, `backtest {20,12,8} universe pit`:
+#       20y  291 of 1206  (24%)      12y  399 of 1206  (33%)      8y  481 of 1206  (40%)
+#   READ IT WITH ITS CONFOUND, WHICH THE PRINTED LINE ALSO STATES: the ratio has TWO drivers and cannot
+#   split them. A {h}y hold needs a full {h}y forward window, so members that joined late are
+#   unscoreable for a MECHANICAL reason that is not bias — and that is why the ratio climbs 24 -> 33 ->
+#   40 as the horizon shortens. Survivorship is the part that does NOT shrink with a shorter hold.
+#   DO NOT quote 76% as "the survivorship hole at 20y". The defensible claim is narrower and still
+#   damning: at the 20y horizon three quarters of index membership never reaches the tables, the
+#   instrument that was supposed to flag that reports 0, and the 703-member census says a large share
+#   of the gap is names that died.
+#
+#   THIS IS A PRINT, NOT A CORRECTION. It sizes the problem so the far more expensive fix — closing a
+#   dead name's forward window at a terminal return, sourced from delisting DATES, since the prices
+#   provably do not exist to fetch — can be decided on a number instead of a hunch. It moves exactly
+#   one golden (backtest-12-pit) and no other output.
+#
 # WHAT A `PRE-PIT` MARK OBLIGES. Not a wholesale re-open — re-sweeping every rung against a pool this
 # much thinner is the maximum-overfit move, and the receipts below are still the honest record of what
 # was measured. What it forbids is one specific claim: no figure below may be cited as evidence that a

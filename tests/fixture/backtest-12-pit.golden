@@ -224,6 +224,20 @@ Caveats:
     the line above, and the edge is EXPECTED to fall — a lower number here is the honest one.
     0 pool name(s) were index members Yahoo no longer serves: fetched nothing, scored nothing,
     counted here rather than silently dropped. A big count means the correction is still incomplete.
+    COVERAGE (#121): 28 of 46 index members in this pool produced a scoreable cutoff (61%).
+    READ THE TWO NUMBERS TOGETHER: the miss count above is what Yahoo refused to answer, this is what the
+    walk could actually score, and they are far apart because a dead name usually comes back as a payload
+    with ZERO BARS — which counts as SERVED. A 0 above with a low ratio here does not mean the PIT
+    correction is complete; it means the hole is not a fetch failure.
+    TWO DRIVERS, AND THIS LINE CANNOT SPLIT THEM. (1) MECHANICAL: a 12y hold needs a full 12y
+    forward window, so members that joined late are unscoreable at this horizon and NOT evidence of bias —
+    which is why the ratio rises as the horizon shortens. (2) SURVIVORSHIP: measured 2026-08-22 over the
+    734 members whose span carries an exit date — 387 served with ZERO BARS, 193 more with <36 in-span
+    bars, only 154 scoreable — and ZERO of all 1206 members with a series ending over a year ago. Only
+    (2) is bias, and it is the part that never shrinks with a shorter hold. So a name that DIED
+    contributes nothing here rather than a loss, and Bessembinder's -91.95% median delisted return is
+    absent from every number above. Closing it needs delisting DATES plus a terminal return, not a price
+    backfill: these prices provably do not exist to fetch.
     COVERAGE FLOOR 1996-01-02: the source opens every pre-existing member's span on that date, so
     cutoffs before it are DROPPED rather than corrected — it bites the 20y run's front, not the 8y one.
   • Price-only (#6): no as-of P/E reconstructed, so the `value` multiplier is ×1.0 here; as-of DIVIDENDS are live since #53 and every dividend row below is real.

@@ -800,6 +800,36 @@ fn pit_unserved(pool: &[String], spans: &core::MemberSpans, served: &HashSet<&st
     pool.iter().filter(|t| spans.contains_key(t.as_str()) && !served.contains(t.as_str())).count()
 }
 
+/// (#121) (members in the pool, members that produced at least one scoreable cutoff).
+///
+/// WHY THIS IS NOT [`pit_unserved`], AND WHY THE DIFFERENCE IS THE WHOLE POINT. `pit_unserved` counts
+/// names Yahoo answered NOTHING for — an outright fetch miss. Measured against `.sp500_history.json`
+/// and the long history cache on 2026-08-22, that is **ZERO names**: every one of the 1206 members has
+/// a cache entry. The hole is entirely invisible to it. Of the **734** members whose span carries an
+/// exit date, **387** come back as a payload Yahoo is happy to serve and that carries ZERO BARS —
+/// `BSC`, `TWX`, `SVU`, `ROH` and `ENRNQ` all return a `MUTUALFUND` stub with a numeric shortName —
+/// and of the 347 that do carry bars, **193** hold fewer than 36 inside their own membership span.
+/// All 580 are `served`, so `pit_unserved` scores them as fine; only **154** are scoreable.
+/// That 387 is not an approximation: it is exactly the miss count this caveat reported on 2026-08-19,
+/// before the cache warmed and turned every one of them into a served empty answer.
+///
+/// A name that dies therefore contributes NOTHING to this walk, not a loss. That is the direction the
+/// bias runs, and it is not small: `docs/heuristic-v2-spec.md` builds its case on Bessembinder's
+/// median delisted return of −91.95%, and not one such return is in this dataset. Stronger still, the
+/// count of members whose series ends more than a year before today is **ZERO out of 1206** — `CFC`
+/// (Countrywide, out of the index 2008-07) has bars through 2026-08 and `MOLX` (acquired 2013) through
+/// 2026-07. Yahoo is not serving a truncated history for these names; it is serving something else
+/// entirely, and no name in this dataset ever stops trading.
+///
+/// So this returns the RATIO a reader can act on rather than a miss count they cannot: of the index
+/// members this pool asked about, how many the walk could actually score. A free function and not an
+/// `if` inside `run` for the reason [`pit_swaps_pool`] states — `run` is one enormous `-> ()` and the
+/// only grader that reaches inside it is a golden.
+fn pit_coverage(pool: &[String], spans: &core::MemberSpans, scored: &HashSet<&str>) -> (usize, usize) {
+    let members = pool.iter().filter(|t| spans.contains_key(t.as_str()));
+    (members.clone().count(), members.filter(|t| scored.contains(t.as_str())).count())
+}
+
 /// (PIT) `pit` is the third refusal, and it is not about sample size. A point-in-time run answers a
 /// DIFFERENT question than the screen footer asks — the footer quotes this journal to say what the
 /// live method does on the live universe, and a PIT verdict is a lower number measured on a pool the
@@ -1628,6 +1658,25 @@ pub async fn run(args: Vec<String>) {
         println!("    the line above, and the edge is EXPECTED to fall — a lower number here is the honest one.");
         println!("    {pit_missing} pool name(s) were index members Yahoo no longer serves: fetched nothing, scored nothing,");
         println!("    counted here rather than silently dropped. A big count means the correction is still incomplete.");
+        // (#121) the miss count above is the SMALL half of the hole. Print the coverage ratio beside
+        // it, because a name Yahoo answers with an empty stub is `served` and invisible to that count.
+        let scored: HashSet<&str> = samples.iter().map(|s| s.quote.ticker.as_str()).collect();
+        let (members, scoreable) = pit_coverage(&tickers, pit_spans, &scored);
+        let pct = 100.0 * scoreable as f64 / members.max(1) as f64;
+        println!("    COVERAGE (#121): {scoreable} of {members} index members in this pool produced a scoreable cutoff ({pct:.0}%).");
+        println!("    READ THE TWO NUMBERS TOGETHER: the miss count above is what Yahoo refused to answer, this is what the");
+        println!("    walk could actually score, and they are far apart because a dead name usually comes back as a payload");
+        println!("    with ZERO BARS — which counts as SERVED. A 0 above with a low ratio here does not mean the PIT");
+        println!("    correction is complete; it means the hole is not a fetch failure.");
+        println!("    TWO DRIVERS, AND THIS LINE CANNOT SPLIT THEM. (1) MECHANICAL: a {years}y hold needs a full {years}y");
+        println!("    forward window, so members that joined late are unscoreable at this horizon and NOT evidence of bias —");
+        println!("    which is why the ratio rises as the horizon shortens. (2) SURVIVORSHIP: measured 2026-08-22 over the");
+        println!("    734 members whose span carries an exit date — 387 served with ZERO BARS, 193 more with <36 in-span");
+        println!("    bars, only 154 scoreable — and ZERO of all 1206 members with a series ending over a year ago. Only");
+        println!("    (2) is bias, and it is the part that never shrinks with a shorter hold. So a name that DIED");
+        println!("    contributes nothing here rather than a loss, and Bessembinder's -91.95% median delisted return is");
+        println!("    absent from every number above. Closing it needs delisting DATES plus a terminal return, not a price");
+        println!("    backfill: these prices provably do not exist to fetch.");
         println!("    COVERAGE FLOOR 1996-01-02: the source opens every pre-existing member's span on that date, so");
         println!("    cutoffs before it are DROPPED rather than corrected — it bites the 20y run's front, not the 8y one.");
     }
@@ -5757,6 +5806,39 @@ mod tests {
         assert_eq!(pit_unserved(&pool, &spans, &["AAPL", "SBNY", "AAMRQ", "BTC-EUR"].into_iter().collect()), 0);
         assert_eq!(pit_unserved(&[], &spans, &served), 0, "no pool, no misses");
         assert_eq!(pit_unserved(&pool, &core::MemberSpans::new(), &served), 0, "pit off -> nothing to miss");
+    }
+
+    /// (#121) The coverage ratio the miss count cannot see. `pit_unserved` asks "did Yahoo answer?";
+    /// this asks "did the walk score it?", and the gap between those two questions is where 574 of the
+    /// 703 removed S&P members live — served, non-empty as a response, and carrying no usable bars.
+    ///
+    /// The two numbers must move INDEPENDENTLY, which is what this pins: a name can be served and
+    /// unscoreable (the empty-stub case, the whole point), and the denominator must count members the
+    /// pool asked about rather than the whole membership map.
+    #[test]
+    fn pit_coverage_separates_served_from_scoreable() {
+        let spans: core::MemberSpans = ["AAPL", "BSC", "TWX", "ABI"]
+            .iter()
+            .map(|t| ((*t).to_string(), vec![("1996-01-02".parse().expect("date"), None)]))
+            .collect();
+        let pool: Vec<String> = ["AAPL", "BSC", "TWX", "BTC-EUR"].iter().map(|s| s.to_string()).collect();
+
+        // BSC and TWX are exactly the measured case: Yahoo SERVED them, the walk scored neither.
+        let served: HashSet<&str> = ["AAPL", "BSC", "TWX", "BTC-EUR"].into_iter().collect();
+        assert_eq!(pit_unserved(&pool, &spans, &served), 0, "nothing missing — and that is the trap");
+        let scored: HashSet<&str> = ["AAPL", "BTC-EUR"].into_iter().collect();
+        assert_eq!(
+            pit_coverage(&pool, &spans, &scored),
+            (3, 1),
+            "3 members asked about, 1 scored — the stub-served pair is the hole a miss count reports as zero"
+        );
+
+        // ABI is in the map but not in this pool: it must not inflate the denominator.
+        assert_eq!(pit_coverage(&pool, &spans, &["AAPL", "BSC", "TWX", "ABI"].into_iter().collect()), (3, 3));
+        // BTC-EUR is scored but is not a member: it must not inflate the numerator either.
+        assert_eq!(pit_coverage(&pool, &spans, &["BTC-EUR"].into_iter().collect()), (3, 0));
+        assert_eq!(pit_coverage(&[], &spans, &scored), (0, 0), "no pool, nothing to cover");
+        assert_eq!(pit_coverage(&pool, &core::MemberSpans::new(), &scored), (0, 0), "pit off -> no members");
     }
 
     /// (#9) gate_audit reports a POSITIVE accepted−rejected gap when the gate KEEPS the high-return names
