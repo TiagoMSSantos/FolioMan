@@ -800,6 +800,39 @@ fn pit_unserved(pool: &[String], spans: &core::MemberSpans, served: &HashSet<&st
     pool.iter().filter(|t| spans.contains_key(t.as_str()) && !served.contains(t.as_str())).count()
 }
 
+/// (#122) Does this ticker still map to the company it names, or has Yahoo repointed it at a fund id?
+///
+/// THE DEFECT, DEMONSTRATED RATHER THAN SUSPECTED. A ticker whose company died is not retired — it is
+/// REMAPPED, and the series keeps running. `CFC` (Countrywide, out of the index 2008-07) carries 212
+/// bars AFTER its exit, through 2026-08; `BOL` (taken private 2007) carries 220; `CCU` 212; `CBE` 52;
+/// `MOLX` 49. Those post-exit bars are not the company's prices, because the company was gone. A hold
+/// opened before the exit and closed `years` later therefore reads its ENTRY from the real company and
+/// its EXIT from whatever now owns the ticker, and reports the ratio as a return. Replaying the walk's
+/// 36-bar warmup and 6-bar step over the cached series — an APPROXIMATION of the walk, not the walk
+/// itself — 15-24% of PIT-eligible cutoffs have a forward window landing past the name's index exit
+/// (20y 522/2196, 12y 956/5055, 8y 1039/7023). Most of those are healthy names that merely LEFT the
+/// index and kept trading, which is fine; the dead ones are in there too and are NOT separable from
+/// them by date, which is why the fix keys on identity below rather than on the exit date.
+///
+/// THE SIGNATURE, AND WHY IT IS THIS AND NOT A DATE TEST. Yahoo hands back the tell itself: a repointed
+/// ticker types as `MUTUALFUND` and its only name is a numeric registrant id — `CFC` is "3847602",
+/// `BSC` is "1315901", `WYE` is "4595480". Across all 6149 cached series that pattern matches 134
+/// tickers and EVERY ONE of them is an S&P 500 member; there is not a single false positive in the
+/// non-member remainder, which includes real mutual funds like `WLDHC.PA` that carry real names. 34 of
+/// the 134 still carry bars, and those 34 are the ones actively contaminating a forward return.
+///
+/// WHAT IT CANNOT CATCH, STATED SO NOBODY READS IT AS A SURVIVORSHIP FIX. A ticker reused by another
+/// LIVE equity keeps a real name and an `EQUITY` type, so this is blind to it: `CCU` now resolves to
+/// Compania Cervecerias Unidas, `BEAM` to Beam Therapeutics (whose bars all start 2020, six years after
+/// Beam Inc. was bought), `GENZ` to a VanEck ETF. Three failure modes, and this closes one. It also
+/// does nothing for the 387 members served with zero bars — see [`pit_coverage`] — because a name that
+/// never produces a cutoff cannot be bought and so cannot lose money.
+fn ticker_mapping_is_dead(instrument_type: &str, name: &str) -> bool {
+    instrument_type.eq_ignore_ascii_case("MUTUALFUND")
+        && !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_digit())
+}
+
 /// (#121) (members in the pool, members that produced at least one scoreable cutoff).
 ///
 /// WHY THIS IS NOT [`pit_unserved`], AND WHY THE DIFFERENCE IS THE WHOLE POINT. `pit_unserved` counts
@@ -1106,6 +1139,12 @@ pub async fn run(args: Vec<String>) {
             // tag leads because an ETF shortName often carries no "ETF"/"UCITS" marker at all.
             let (dates, closes) = (chart.dates, chart.closes);
             let (cls_name, cls_type) = (chart.name, chart.instrument_type);
+            // (#122) the ticker no longer resolves to the company it names — its bars past the remap are
+            // a different instrument's. Drop the whole series rather than its tail: the remap date is not
+            // in the payload, so there is no honest place to cut. OFF by default; the goldens are the proof.
+            if tuning.drop_dead_ticker_series && ticker_mapping_is_dead(&cls_type, &cls_name) {
+                return Vec::new();
+            }
             // (D) the dividend event list rode in on this SAME response and used to be dropped right
             // here — which is the whole reason the module header below claimed as-of dividends were
             // unreconstructable and `dividend_weight` shipped ungraded. `backtest_quote` slices it
@@ -5806,6 +5845,33 @@ mod tests {
         assert_eq!(pit_unserved(&pool, &spans, &["AAPL", "SBNY", "AAMRQ", "BTC-EUR"].into_iter().collect()), 0);
         assert_eq!(pit_unserved(&[], &spans, &served), 0, "no pool, no misses");
         assert_eq!(pit_unserved(&pool, &core::MemberSpans::new(), &served), 0, "pit off -> nothing to miss");
+    }
+
+    /// (#122) The dead-mapping signature, pinned on the real payloads it was derived from.
+    ///
+    /// Both halves are load-bearing and the test says so by breaking each one alone: a real mutual fund
+    /// carries a real name, and a live equity that merely left the index carries an `EQUITY` type. The
+    /// measured basis is 6149 cached series, where this matches 134 tickers, all of them S&P members,
+    /// with no false positive anywhere in the non-member remainder.
+    #[test]
+    fn dead_ticker_mapping_needs_both_a_fund_type_and_a_numeric_name() {
+        // the exact shortNames Yahoo returns for these, 2026-08-22.
+        assert!(ticker_mapping_is_dead("MUTUALFUND", "3847602"), "CFC, Countrywide");
+        assert!(ticker_mapping_is_dead("MUTUALFUND", "1315901"), "BSC, Bear Stearns");
+        assert!(ticker_mapping_is_dead("MUTUALFUND", "4595480"), "WYE, Wyeth");
+        assert!(ticker_mapping_is_dead("mutualfund", "655556"), "Yahoo's casing is not a contract");
+
+        // a REAL fund keeps a real name — WLDHC.PA is in the live cache and must survive.
+        assert!(!ticker_mapping_is_dead("MUTUALFUND", "Amundi MSCI World Swap II UCITS"));
+        // a live equity that left the index is not dead: AMD left in 2013 and came back.
+        assert!(!ticker_mapping_is_dead("EQUITY", "Advanced Micro Devices, Inc."));
+        // the reuse cases this is deliberately blind to — asserted so the blindness is a decision.
+        assert!(!ticker_mapping_is_dead("EQUITY", "Beam Therapeutics Inc."), "reused by a LIVE equity");
+        assert!(!ticker_mapping_is_dead("ETF", "VanEck Digital Native"), "GENZ, reused by an ETF");
+        // an absent name must not read as "all digits" vacuously — `chars().all` is true on empty.
+        assert!(!ticker_mapping_is_dead("MUTUALFUND", ""), "no name is not a numeric name");
+        // a name that merely CONTAINS digits is a real name.
+        assert!(!ticker_mapping_is_dead("MUTUALFUND", "3M Company"));
     }
 
     /// (#121) The coverage ratio the miss count cannot see. `pit_unserved` asks "did Yahoo answer?";

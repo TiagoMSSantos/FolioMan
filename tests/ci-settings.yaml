@@ -1984,6 +1984,69 @@ buy_heuristic:
                                  #   REVERT RULE: an edge that only survives with this OFF was reading
                                  #   currency moves. If it improves, that is a smaller effective peer
                                  #   pool landing luckier — confirm at the second horizon before shipping.
+  drop_dead_ticker_series: false # (#122) MEASURED 2026-08-22, POST-PIT. A real defect, demonstrated
+                                 #   on named tickers, that moves ZERO of the numbers this repo grades. Ships OFF
+                                 #   and KEPT rather than deleted — the (#47) precedent — so the null stays
+                                 #   reproducible and nobody re-chases it from the census alone.
+                                 #
+                                 #   THE DEFECT. A dead company's ticker is not retired, it is REMAPPED. Yahoo
+                                 #   returns it typed `MUTUALFUND` with a numeric registrant id where the name
+                                 #   should be — `CFC` = "3847602", `BSC` = "1315901", `WYE` = "4595480" — and its
+                                 #   bars KEEP RUNNING to today. `CFC` (Countrywide, index exit 2008-07) carries
+                                 #   212 bars AFTER that exit, `BOL` 220, `CCU` 212, `CBE` 52, `MOLX` 49. A hold
+                                 #   opened before the exit and closed `years` later reads its ENTRY from the real
+                                 #   company and its EXIT from whatever now owns the ticker, then reports the ratio
+                                 #   as a return. That is a WRONG number in the sample, not a missing one — which
+                                 #   is exactly what separates it from the survivorship hole (#121) prints, where
+                                 #   a dead name contributes nothing at all.
+                                 #
+                                 #   THE SIGNATURE IS EXACT ON THIS DATA. Across all 6149 cached series,
+                                 #   `MUTUALFUND` + an all-digit name matches 134 tickers, and every one of the 134
+                                 #   is an S&P 500 member: ZERO false positives among non-members, which include
+                                 #   real mutual funds carrying real names. 34 of the 134 still carry bars and are
+                                 #   the only ones that can contaminate a forward return; the other 100 return an
+                                 #   empty payload and never produce a cutoff either way. The knob drops the WHOLE
+                                 #   series, not its tail — the remap date is not in the payload, so there is no
+                                 #   honest place to cut.
+                                 #
+                                 #   WHAT IT DOES NOT FIX. A ticker reused by another LIVE equity keeps a real name
+                                 #   and an `EQUITY` type and is invisible to this test: `CCU` now resolves to
+                                 #   Compania Cervecerias Unidas, `BEAM` to Beam Therapeutics, `GENZ` to a VanEck
+                                 #   ETF. Three failure modes, one closed. It also does nothing for the 387 members
+                                 #   served with zero bars, which never produce a cutoff at all.
+                                 #
+                                 #   MEASURED, NON-PIT (`backtest {20,12,8} universe`, two arms one boolean apart,
+                                 #   same config path): FULLY INERT. Cutoff counts identical to the unit in both
+                                 #   arms — 4541 / 11835 / 20806 — so not one series was dropped, and every printed
+                                 #   figure matches to the decimal. CAUSE: the wide pool is the LIVE screen
+                                 #   universe (5049 names) and contains none of these tickers. They enter ONLY
+                                 #   through the PIT membership map (5738 names). THE LANE THAT EXISTS TO REMOVE
+                                 #   LOOK-AHEAD IS THE ONLY LANE THAT ADMITS THE CONTAMINATED SERIES.
+                                 #
+                                 #   MEASURED, PIT (`backtest {20,12,8} universe --pit`, six runs):
+                                 #     20y   cutoffs  2296 ->  2295   (-1)
+                                 #     12y   cutoffs  8350 ->  8324   (-26)
+                                 #      8y   cutoffs 16803 -> 16754   (-49)
+                                 #   and NOT ONE GRADED NUMBER MOVES at any horizon. top-10 excess (mean AND
+                                 #   median), win rate, worst window, the OOS split, the rank-1 slice and the
+                                 #   rank-1 h2h are identical in both arms: 20y +0.8 (med +0.9) win 55% of 20 worst
+                                 #   -10.0 h2h 1/2; 12y +2.3 (med +2.1) win 74% of 34 worst -9.5 h2h 3/6; 8y +3.3
+                                 #   (med +2.8) win 81% of 42 worst -6.2. The contaminated cutoffs are real and are
+                                 #   wrong, and not one of them ever reaches the top-10 book. NOISE CAVEAT: the
+                                 #   live universe fetch drifted between arms (8y: 5738 tickers off vs 5740 on), so
+                                 #   those cutoff deltas are a bound, not an exact count.
+                                 #
+                                 #   SHIP RULE v2 CANNOT GRADE THIS KNOB, and that is worth more than the knob. The
+                                 #   rule reads the wide `universe` lane, where the knob provably does nothing; the
+                                 #   only lane it touches is one the rule never looks at. This is NOT a TIE and NOT
+                                 #   an UNRESOLVED — it is structurally ungradeable by the instrument as written.
+                                 #   Recorded rather than worked around.
+                                 #
+                                 #   REVERT RULE: delete this knob the day the wide lane draws from the membership
+                                 #   map, or the day the signature admits a single non-member — re-run the census
+                                 #   before trusting it, `MUTUALFUND` + digits is a Yahoo naming artefact, not a
+                                 #   contract. Turning it ON is only defensible on a PIT run, and on this data buys
+                                 #   a cleaner sample and the same answer.
   print_selection_count: false   # (#92) NOTHING TO MEASURE in the display half — a display knob shipping
                                  #   OFF, byte-identical output, every golden pins it. But it names a
                                  #   real UNMEASURED debt, recorded here because the fix needs runs this
