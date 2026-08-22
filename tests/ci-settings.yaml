@@ -1516,6 +1516,69 @@ buy_heuristic:
                                  #   REVERT RULE: back to false unless the pair (knob + refitted
                                  #   `growth_min_cagr`) clears PRIMARY at 20y AND 8y with rank-1 h2h >=50%
                                  #   at all three horizons.
+  backtest_calendar_cadence: false # (#117) UNMEASURED — an unfitted judgement value, shipping OFF,
+                                 #   which is the fixed 12/36/6 bar-count triple (and the daily path's
+                                 #   252/750/126) that every golden in tests/fixture and every fitted
+                                 #   receipt in this file was measured under.
+                                 #
+                                 #   THE DEFECT: `backtest::run` chooses `cadence`, `min_history` and
+                                 #   `step` ONCE per run and then counts them in BARS against each series
+                                 #   in turn. The three constants only mean what their names claim — 12
+                                 #   bars a year, 3 years of history before a cutoff, 6 months between
+                                 #   cutoffs — if every series really is monthly. The long path ASKS for
+                                 #   monthly (`fetch::chart_json_long` rewrites `interval=1d` to
+                                 #   `interval=1mo`), Yahoo answers with whatever it likes for a thin
+                                 #   line, and nothing in this repo reads `meta.dataGranularity` back.
+                                 #   Census of the live long cache:
+                                 #       1mo 1818 | 1wk 2059 | 1d 1155 | 1h 317 | 3mo 304 | 1y 172
+                                 #   — 31% monthly. The fixture carries the same mix (58 of 200), which
+                                 #   is why no golden has ever seen this.
+                                 #
+                                 #   WHAT IT COSTS TODAY. `step` is the sharp end: 6 bars on a daily
+                                 #   series is 6 SESSIONS, so that name emits a cutoff every week and a
+                                 #   half and enters the graded sample with ~40x the weight of a monthly
+                                 #   one — purely from which granularity Yahoo happened to serve. Same
+                                 #   arithmetic on `min_history: 36`: a daily row clears the "3 years of
+                                 #   history" floor after 36 sessions, i.e. seven weeks. `cadence` is the
+                                 #   other end: it annualises `volatility_pct`, and that field is read by
+                                 #   ABSOLUTE thresholds (`sharpe_cap: 15.0`, `sharpe_cap_etf: 9.0`), so
+                                 #   a daily row's vol is understated ~sqrt(252/12) = 4.6x against caps
+                                 #   fitted on monthly rows. That units half is `vol_daily_equivalent`
+                                 #   (#97), directly below — it fixes the SCALE of the bars, this knob
+                                 #   fixes WHICH bars. They are independent and neither implies the other.
+                                 #
+                                 #   WHAT true DOES: `commands::backtest::walk_params` derives bars/year
+                                 #   from the series' own date array — (n-1) * 365.25 / span_days, a SPAN
+                                 #   and a COUNT rather than a median gap, so a record Yahoo spliced
+                                 #   across granularities averages instead of snapping to whichever half
+                                 #   is longer — and restates the triple as 1 year, 3 years and 6 months
+                                 #   of THAT series' bars. NEAR-INERT WHERE THE DATA WAS ALREADY RIGHT,
+                                 #   which is the property that makes it safe to reason about: a real monthly
+                                 #   series measures 12.00 bars/yr and resolves to exactly 12/36/6, and a
+                                 #   real daily one measures 252.0 and resolves to 252/756/126 against
+                                 #   today's 252/750/126. Only the rows the constants were lying about
+                                 #   move. Degenerate records (empty, single-date, zero-span, or any
+                                 #   resolution that would round `step` to 0 and hang the walk) fall back
+                                 #   to the run-wide triple, unit-tested by the `walk_params_refuses`
+                                 #   case in `commands::backtest::tests`.
+                                 #
+                                 #   TO SETTLE IT: the ship-rule grid at 20y/12y/8y, both arms from the
+                                 #   SAME config path with only this line edited between them — a probe
+                                 #   file in $TMP silently changes the dataset, so compare probe against
+                                 #   probe and never against a fixture run. Read lane edge, top-3 excess
+                                 #   (mean AND median), null-model lift and BOTH OOS halves per horizon.
+                                 #   Expect the cutoff COUNTS to fall hard, worst at 8y: that is the
+                                 #   treatment, not a regression — it is the daily rows losing their 40x
+                                 #   weight — so read the METRICS against the ship rule and do not read
+                                 #   the count as a loss of power.
+                                 #
+                                 #   REVERT RULE: back to false unless it clears SHIP RULE v2 outright —
+                                 #   PRIMARY at 20y AND 8y, rank-1 h2h >= 50% at 20y/12y/8y, top-3 worst
+                                 #   window not worse. An UNRESOLVED verdict is a NO SHIP here for the
+                                 #   same reason a broken guard is: this re-weights the sample every
+                                 #   fitted value in this file was measured on, so anything short of a
+                                 #   clean win leaves those values needing a refit before the read means
+                                 #   anything.
   vol_daily_equivalent: false    # (#97) UNMEASURED — an unfitted judgement value, shipping OFF, which is
                                  # the raw per-bar scale every vol-reading receipt in this file was
                                  # fitted at. This is the one knob here that INVALIDATES OTHER RECEIPTS

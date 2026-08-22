@@ -702,6 +702,53 @@ fn pit_pool(tickers: &[String], sector_of: &HashMap<String, String>, spans: &cor
     out
 }
 
+/// (#117) The walk's three bar-counted parameters, resolved PER SERIES rather than once per run.
+///
+/// `cadence`, `min_history` and `step` are counts of BARS, and `run` fixes them at 12/36/6 for the
+/// whole monthly path on the assumption that a bar is a month. That assumption is false for most of
+/// the universe: `fetch::chart_json_long` asks Yahoo for `interval=1mo` and Yahoo serves a thin line
+/// at whatever granularity it pleases, while nothing anywhere reads `meta.dataGranularity`. A census
+/// of the live long cache found 1818 `1mo` against 2059 `1wk`, 1155 `1d`, 317 `1h`, 304 `3mo` and
+/// 172 `1y` — 31% monthly. The fixture carries the same mix (58 of 200), which is why no golden has
+/// ever noticed.
+///
+/// `step` is where it bites hardest: 6 bars is 6 SESSIONS on a daily series, so that name emits a
+/// cutoff every week and a half and enters the sample with roughly 40x the weight of a monthly one —
+/// sample weighting decided by which granularity a feed happened to return. `cadence` is the other
+/// end, annualising `volatility_pct` (which the LIVE `sharpe_cap` and `sharpe_cap_etf` read) and
+/// sizing `long_ma`.
+///
+/// BARS/YEAR IS MEASURED AS span/count, NOT as the median gap between bars, and the difference is the
+/// whole correctness of the daily arm: consecutive daily bars are one day apart, so a median-gap
+/// estimator reads 365 bars a year for a series that has 252. Dividing the record's calendar span by
+/// the number of steps in it counts the weekends and holidays out for free.
+///
+/// `calendar == false` returns `fallback` untouched — that is what keeps every golden byte-identical
+/// while the knob ships off. It is also NEAR-INERT on real data when on, which is the property worth
+/// checking rather than trusting: a genuine monthly record measures 12.00 bars/yr and resolves to
+/// exactly today's 12/36/6, and a genuine daily one measures 252.0 and resolves to 252/756/126
+/// against today's 252/750/126.
+///
+/// Pure, and deliberately so: `run` is a 900-line `-> ()` with no `#[mutants::skip]`, so logic left
+/// inline there is graded only through a golden — and a knob shipping OFF moves no golden, which
+/// would leave every mutant in this arm alive. Here the `--lib` tests below reach it directly.
+fn walk_params(
+    dates: &[chrono::NaiveDate],
+    calendar: bool,
+    fallback: (usize, usize, usize),
+) -> (usize, usize, usize) {
+    if !calendar || dates.len() < 2 {
+        return fallback;
+    }
+    let span_days = (dates[dates.len() - 1] - dates[0]).num_days();
+    if span_days <= 0 {
+        return fallback; // a zero-span or reversed record measures nothing; keep the run's constants
+    }
+    let per_year = (dates.len() - 1) as f64 * 365.25 / span_days as f64;
+    let bars = |years: f64| ((per_year * years).round() as usize).max(1);
+    (bars(1.0), bars(3.0), bars(0.5))
+}
+
 /// (PIT) Does this run swap its pool? Two refusals, and they refuse different disasters, which is why
 /// neither half can be dropped:
 ///
@@ -1008,6 +1055,10 @@ pub async fn run(args: Vec<String>) {
             // an S&P 500 member — and is never filtered: PIT is a claim about the index pond alone.
             let member_spans = pit_spans.get(tk.as_str()).map(Vec::as_slice);
             let mut out = Vec::new();
+            // (#117) per-SERIES walk parameters. Off by default, in which case this is exactly the
+            // run-wide triple that arrived. See `walk_params`.
+            let (cadence, min_history, step) =
+                walk_params(&dates, tuning.backtest_calendar_cadence, (cadence, min_history, step));
             let mut i = min_history;
             // DELIBERATELY UNPINNED (mutation audit, round 4): `<`->`<=` survives here, and killing
             // it needs a fixture whose walk lands exactly on `dates.len()` — a golden-data change,
@@ -1580,10 +1631,15 @@ fn sweep_cutoffs(
     min_history: usize,
     step: usize,
     cadence: usize,
+    calendar: bool, // (#117) resolve the three above per SERIES; false = use them as handed in
     etf_set: &HashSet<String>,
     sector_of: &HashMap<String, String>,
     windows: &BTreeMap<String, i64>, // (#88) the live anchor map, or empty for the old default-only behaviour
 ) -> Vec<(i64, Sample)> {
+    // (#117) same resolution as the validated walk, off the same helper — the sweep answers "which
+    // hold length pays best", and it could not answer it honestly while a daily-granularity name
+    // contributed ~40x the cutoffs of a monthly one. Off by default, and then this is a no-op.
+    let (cadence, min_history, step) = walk_params(dates, calendar, (cadence, min_history, step));
     let mut out = Vec::new();
     // The cutoff's Quote does not depend on the hold window — only `realized` does — yet this used to
     // rebuild it from the raw series once per window, so every cutoff paid `backtest_quote` six times
@@ -1675,7 +1731,7 @@ async fn hold_period_sweep(
             };
             sweep_cutoffs(
                 tk, &chart.dates, &chart.closes, &chart.divs, &chart.name, &chart.instrument_type, &HOLDS,
-                min_history, step, cadence, etf_set, sector_of, windows,
+                min_history, step, cadence, tuning.backtest_calendar_cadence, etf_set, sector_of, windows,
             )
         })
         .collect();
@@ -4072,6 +4128,114 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
 
+    /// (#117) `walk_params`, OFF — the arm that ships, and the only thing keeping every golden still.
+    /// The fallback must come back untouched no matter what the dates say, so this hands it a daily
+    /// record and the monthly triple: if the guard were dropped the result would be 252/756/126 and
+    /// every fixture would move.
+    #[test]
+    fn walk_params_off_is_the_run_wide_triple_verbatim() {
+        let daily = trading_days(ymd(2016, 1, 4), 2518);
+        assert_eq!(walk_params(&daily, false, (12, 36, 6)), (12, 36, 6));
+        assert_eq!(walk_params(&daily, false, (252, 750, 126)), (252, 750, 126));
+        // and with the knob ON, the same input must NOT be the fallback — otherwise the assertions
+        // above would pass on a function that ignores its flag entirely.
+        assert_ne!(walk_params(&daily, true, (12, 36, 6)), (12, 36, 6));
+    }
+
+    /// (#117) ON, against the two cadences the tool actually runs. This is the "near-inert where the
+    /// data was already right" claim, checked rather than asserted in prose: a genuine monthly record
+    /// resolves to EXACTLY the 12/36/6 `run` hardcodes, and a genuine daily one lands on 252/756/126
+    /// against its 252/750/126 — so turning the knob on cannot move a name whose feed was honest, and
+    /// every difference it does make is a series that was never monthly to begin with.
+    ///
+    /// The daily case is also why bars/year is span/count and not the median gap between bars.
+    /// Consecutive sessions are one day apart, so a median-gap estimator would read 365 bars a year
+    /// for a record that has 252 — off by 45%, in the direction that inflates `min_history`.
+    #[test]
+    fn walk_params_on_reproduces_the_constants_on_honest_data() {
+        let monthly = month_ends(2009, 9, 205); // AVGO's real shape: 205 bars, 2009-09 -> 2026-08
+        assert_eq!(walk_params(&monthly, true, (999, 999, 999)), (12, 36, 6));
+
+        let daily = trading_days(ymd(2016, 1, 4), 2518); // ~10y of sessions, `fetch_history`'s range
+        assert_eq!(walk_params(&daily, true, (999, 999, 999)), (252, 756, 126));
+    }
+
+    /// (#117) ON, against the granularities Yahoo actually returns for a thin line while answering an
+    /// `interval=1mo` request. These are the 4011 non-monthly series of the 5829 in the live long
+    /// cache, and each one of them was being walked at 12/36/6.
+    ///
+    /// The weekly row is the one that ruins a sample quietly: at 12/36/6 such a name needs only 36
+    /// WEEKS (8 months) of history before its first cutoff and then emits one every 6 weeks, so it
+    /// contributes ~8.7x the cutoffs a monthly name does. Daily is ~40x. Neither is a modelling
+    /// choice — it is whichever granularity the feed happened to serve.
+    #[test]
+    fn walk_params_on_reads_the_granularity_yahoo_actually_served() {
+        let weekly = every_n_days(ymd(2010, 1, 4), 7, 800);
+        assert_eq!(walk_params(&weekly, true, (12, 36, 6)), (52, 157, 26));
+
+        let quarterly = month_ends(2000, 3, 100).into_iter().step_by(3).collect::<Vec<_>>();
+        assert_eq!(walk_params(&quarterly, true, (12, 36, 6)), (4, 12, 2));
+
+        // hourly, which is what `WIC.DE` and `34U.DE` really carry: ~450 bars over two months. No 8y
+        // forward window exists in a record that short, so these contribute nothing either way — but
+        // they must not be walked as if 36 bars were three years.
+        let hourly = every_n_days(ymd(2026, 6, 5), 1, 70);
+        let (cadence, min_history, step) = walk_params(&hourly, true, (12, 36, 6));
+        assert!(cadence > 300, "a sub-daily record cannot measure 12 bars a year; got {cadence}");
+        assert!(min_history > 36 && step > 6, "got {min_history}/{step}");
+    }
+
+    /// (#117) The three degenerate records, each of which would otherwise divide by zero or floor a
+    /// parameter at 0 — and a `step` of 0 is an INFINITE LOOP in both walks, not a wrong number.
+    #[test]
+    fn walk_params_refuses_to_measure_a_record_that_says_nothing() {
+        let fb = (12, 36, 6);
+        assert_eq!(walk_params(&[], true, fb), fb, "no dates at all");
+        assert_eq!(walk_params(&[ymd(2020, 1, 1)], true, fb), fb, "one bar spans nothing");
+        assert_eq!(walk_params(&[ymd(2020, 1, 1); 4], true, fb), fb, "four bars, zero span");
+
+        // Sparser than one bar every two years: `step` would round to 0 and hang the walk. The floor
+        // is what makes it 1, and every parameter must clear it.
+        let sparse = every_n_days(ymd(1990, 1, 1), 365 * 3, 12);
+        let (cadence, min_history, step) = walk_params(&sparse, true, fb);
+        assert!(cadence >= 1 && min_history >= 1 && step >= 1, "got {cadence}/{min_history}/{step}");
+    }
+
+    /// Consecutive trading sessions from `start`. Weekends dropped, and every 29th surviving weekday
+    /// dropped as a holiday — because weekdays ALONE are 261 a year and a real exchange closes about
+    /// nine more, which is the difference between 261 and the ~252 the daily constants were sized on.
+    /// Modelling it matters here: the whole point of the daily assertion is that the estimator lands
+    /// on the number the shipped `STEP_SESSIONS`/`MIN_HISTORY` already assume.
+    fn trading_days(start: NaiveDate, n: usize) -> Vec<NaiveDate> {
+        let mut out = Vec::with_capacity(n);
+        let (mut d, mut weekdays) = (start, 0usize);
+        while out.len() < n {
+            if !matches!(d.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun) {
+                weekdays += 1;
+                if weekdays % 29 != 0 {
+                    out.push(d);
+                }
+            }
+            d += chrono::Duration::days(1);
+        }
+        out
+    }
+
+    /// `n` bars, one per month, on the 1st — the shape a real `interval=1mo` payload carries.
+    fn month_ends(year: i32, month: u32, n: usize) -> Vec<NaiveDate> {
+        (0..n)
+            .map(|k| {
+                let m = month as usize - 1 + k;
+                ymd(year + (m / 12) as i32, (m % 12) as u32 + 1, 1)
+            })
+            .collect()
+    }
+
+    /// `n` bars spaced exactly `gap` days apart.
+    fn every_n_days(start: NaiveDate, gap: i64, n: usize) -> Vec<NaiveDate> {
+        (0..n).map(|k| start + chrono::Duration::days(gap * k as i64)).collect()
+    }
+
     /// (#116) STRUCTURAL PIN, and the regression it exists for was a RED CI GATE, not a hypothetical.
     /// `run` used to hand the venue setting (`prefer_eu` + `_listing`) to `fetch_universe`, so the fixture
     /// this walk is graded on decided which VENUE each constituent was priced from. Flipping that knob
@@ -6159,7 +6323,7 @@ mod tests {
         let sector_of = HashMap::new();
         let holds = [1i64, 2, 5];
         let walk = |c: &[f64]| {
-            sweep_cutoffs("VWRA.L", &dates, c, &[], "VANGUARD FUNDS PLC", "", &holds, MIN_HISTORY, STEP_SESSIONS, 252, &etf_set, &sector_of, &BTreeMap::new())
+            sweep_cutoffs("VWRA.L", &dates, c, &[], "VANGUARD FUNDS PLC", "", &holds, MIN_HISTORY, STEP_SESSIONS, 252, false, &etf_set, &sector_of, &BTreeMap::new())
         };
         let got = walk(&closes);
 
@@ -6279,7 +6443,7 @@ mod tests {
             .iter()
             .flat_map(|(tk, closes)| {
                 // holds=[12] / min_history 36 / step 6 / cadence 12 — `run`'s monthly branch verbatim
-                sweep_cutoffs(tk, &dates, closes, &[], tk, "", &[12], 36, 6, 12, &etf_set, &sector_of, &BTreeMap::new())
+                sweep_cutoffs(tk, &dates, closes, &[], tk, "", &[12], 36, 6, 12, false, &etf_set, &sector_of, &BTreeMap::new())
                     .into_iter()
                     .map(|(_, s)| s)
             })
