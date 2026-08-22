@@ -1516,10 +1516,11 @@ buy_heuristic:
                                  #   REVERT RULE: back to false unless the pair (knob + refitted
                                  #   `growth_min_cagr`) clears PRIMARY at 20y AND 8y with rank-1 h2h >=50%
                                  #   at all three horizons.
-  backtest_calendar_cadence: false # (#117) UNMEASURED — an unfitted judgement value, shipping OFF,
-                                 #   which is the fixed 12/36/6 bar-count triple (and the daily path's
+  backtest_calendar_cadence: false # (#117) MEASURED 2026-08-22 AND REFUSED. Held at false, which is
+                                 #   the fixed 12/36/6 bar-count triple (and the daily path's
                                  #   252/750/126) that every golden in tests/fixture and every fitted
-                                 #   receipt in this file was measured under.
+                                 #   receipt in this file was measured under. The defect below is REAL
+                                 #   and the fix for it LOSES at all three horizons — see the verdict.
                                  #
                                  #   THE DEFECT: `backtest::run` chooses `cadence`, `min_history` and
                                  #   `step` ONCE per run and then counts them in BARS against each series
@@ -1562,23 +1563,65 @@ buy_heuristic:
                                  #   to the run-wide triple, unit-tested by the `walk_params_refuses`
                                  #   case in `commands::backtest::tests`.
                                  #
-                                 #   TO SETTLE IT: the ship-rule grid at 20y/12y/8y, both arms from the
-                                 #   SAME config path with only this line edited between them — a probe
-                                 #   file in $TMP silently changes the dataset, so compare probe against
-                                 #   probe and never against a fixture run. Read lane edge, top-3 excess
-                                 #   (mean AND median), null-model lift and BOTH OOS halves per horizon.
-                                 #   Expect the cutoff COUNTS to fall hard, worst at 8y: that is the
-                                 #   treatment, not a regression — it is the daily rows losing their 40x
-                                 #   weight — so read the METRICS against the ship rule and do not read
-                                 #   the count as a loss of power.
+                                 #   THE GRID, 2026-08-22. Six runs, `backtest {20,12,8} universe`, both
+                                 #   arms from the SAME path (`probe117/arm.yaml`, one dir below the repo
+                                 #   root so `config::anchored_path` keeps the gate's data dir) with only
+                                 #   this boolean edited between them. The OFF arm reproduces the gate
+                                 #   run bar for bar at 8y (edge +48.8, null lift +60.9, OOS +0.22/+0.15),
+                                 #   which is the control: the probe path reads the same dataset.
+                                 #     horizon   arm    GROWTH edge     top-3 excess   rank-1 h2h   worst
+                                 #       20y     off    +780.8          +6.3 | +5.6    67% (12/18)   -0.5
+                                 #       20y     ON      +37.6          +5.9 | +5.7    50% (17/34)   -3.9
+                                 #       12y     off    +193.5          +6.8 | +6.9    58% (15/26)   -7.8
+                                 #       12y     ON      +69.3          +6.3 | +6.7    48% (21/44)   -8.9
+                                 #        8y     off     +48.8          +7.5 | +8.3    62% (21/34)   -9.2
+                                 #        8y     ON       -4.0          +7.4 | +7.8    52% (27/52)  -10.0
+                                 #   Null-model lift falls with it (+663.0 -> +353.4, +187.2 -> +114.7,
+                                 #   +60.9 -> +43.7) and both OOS halves degrade at every horizon (20y
+                                 #   +0.25/+0.23 -> -0.06/+0.08, 12y +0.19/+0.16 -> +0.04/+0.08, 8y
+                                 #   +0.22/+0.15 -> +0.04/+0.10). At 8y the ON arm's edge band is
+                                 #   [-33.6 … +21.2] — it straddles 0, i.e. the lane stops being real.
                                  #
-                                 #   REVERT RULE: back to false unless it clears SHIP RULE v2 outright —
-                                 #   PRIMARY at 20y AND 8y, rank-1 h2h >= 50% at 20y/12y/8y, top-3 worst
-                                 #   window not worse. An UNRESOLVED verdict is a NO SHIP here for the
-                                 #   same reason a broken guard is: this re-weights the sample every
-                                 #   fitted value in this file was measured on, so anything short of a
-                                 #   clean win leaves those values needing a refit before the read means
-                                 #   anything.
+                                 #   VERDICT: REFUSED, and not on a tie. Both GUARDs break — rank-1 h2h
+                                 #   is 48% at 12y (the bar is 50%), and the top-3 worst window is worse
+                                 #   at all three horizons. A broken guard refuses outright and is never
+                                 #   softened into UNRESOLVED. PRIMARY fails too: top-3 excess is down on
+                                 #   the mean at 20y AND down on both mean and median at 8y.
+                                 #
+                                 #   WHY IT LOSES, AND THE PART THAT WAS PREDICTED WRONG. The expectation
+                                 #   written here on landing was that cutoff counts would FALL — daily
+                                 #   rows losing their 40x weight. They ROSE: 4541 -> 11502 at 20y, 11835
+                                 #   -> 21317 at 12y, 20800 -> 31010 at 8y, and growth-scored windows 337
+                                 #   -> 1012 / 514 -> 1223 / 695 -> 1410. The dominant term is not the
+                                 #   daily rows at all, it is the COARSE ones. `min_history: 36` bars is
+                                 #   nine years of a quarterly series and thirty-six years of a yearly
+                                 #   one, so the fixed floor was silently excluding almost every `3mo`
+                                 #   and `1y` line in the cache (304 and 172 of them). Resolving per
+                                 #   series drops those floors to 12 bars and 3 bars — three calendar
+                                 #   years, as intended — and admits the whole cohort. Yahoo serves
+                                 #   yearly bars for the lines it has least data on, so that cohort is
+                                 #   the thin and obscure end of the universe, and injecting it triples
+                                 #   the graded sample while collapsing the edge. Same species as the
+                                 #   (#116) venue swap: the number that moved was the SAMPLE, not the
+                                 #   score.
+                                 #
+                                 #   SO THE DEFECT IS STILL REAL AND THIS IS STILL NOT THE FIX. A daily
+                                 #   row does contribute ~40x the cutoffs of a monthly one, and that is
+                                 #   untouched at false. What the grid proves is that the 36-bar floor
+                                 #   was doing a second, undocumented job — a granularity filter — and
+                                 #   that removing it costs more than the weighting bug costs. Anything
+                                 #   proposed here next has to keep that filter explicitly (a floor on
+                                 #   bars/year, or on absolute bar count, ALONGSIDE the calendar
+                                 #   restatement) and be graded on the same six runs. Do not re-propose
+                                 #   the bare calendar restatement; it is measured and it loses.
+                                 #
+                                 #   REVERT RULE: stays false. It only moves if a variant that keeps a
+                                 #   granularity floor clears SHIP RULE v2 outright — PRIMARY at 20y AND
+                                 #   8y, rank-1 h2h >= 50% at 20y/12y/8y, top-3 worst window not worse.
+                                 #   Conditions note for anyone re-running: the two arms saw 5043 and
+                                 #   5044 tickers (one name resolved between them), which is cache drift
+                                 #   and not a treatment; every effect above is orders of magnitude
+                                 #   larger than one ticker in five thousand.
   vol_daily_equivalent: false    # (#97) UNMEASURED — an unfitted judgement value, shipping OFF, which is
                                  # the raw per-bar scale every vol-reading receipt in this file was
                                  # fitted at. This is the one knob here that INVALIDATES OTHER RECEIPTS
