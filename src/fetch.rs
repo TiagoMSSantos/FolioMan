@@ -4291,18 +4291,40 @@ fn figi_eu_symbol(data: &Value) -> Option<String> {
 /// (EU listing) Is this long-chart payload a usable EUR series? The swap is confirmed by the fetch the
 /// pipeline was going to make anyway (`chart_json_long` is disk-cached for 7 days), so a thin or
 /// wrong-currency venue excludes ITSELF here instead of needing a hand-maintained blacklist.
-fn eu_chart_ok(raw: &RawValue, min_bars: usize) -> bool {
+///
+/// (#118) DEPTH IS A SPAN, NOT A COUNT. This used to read the timestamp array's LENGTH against a floor
+/// whose own doc called it "60 monthly bars = 5 years" — but the long fetch only ASKS for monthly and
+/// Yahoo answers with whatever granularity it kept for a thin line, which nothing here reads back
+/// (census of the live long cache: 1818 `1mo`, 2059 `1wk`, 1155 `1d`, 317 `1h`, 304 `3mo`, 172 `1y`).
+/// `WIC.DE` is the case: 453 HOURLY bars over two months cleared the very check built to reject it, at
+/// 7.5x the stated floor and a twelfth of the stated history. Both floors apply now — `EU_MIN_YEARS`
+/// is the DEPTH (first timestamp to last) and `EU_MIN_BARS` the DENSITY (enough observations to score
+/// on, whatever the granularity). Keeping the count makes this strictly a TIGHTENING: nothing that
+/// failed yesterday can pass today, so no live row swaps venue that was not already swapping.
+fn eu_chart_ok(raw: &RawValue) -> bool {
     let Ok(v) = serde_json::from_str::<Value>(raw.get()) else {
         return false;
     };
     let eur = v.pointer("/chart/result/0/meta/currency").and_then(Value::as_str) == Some("EUR");
-    let bars = v.pointer("/chart/result/0/timestamp").and_then(Value::as_array).map_or(0, Vec::len);
-    eur && bars >= min_bars
+    let ts = v.pointer("/chart/result/0/timestamp").and_then(Value::as_array);
+    let bars = ts.map_or(0, Vec::len);
+    // seconds, so 365.25 days — the same year `commands::backtest::walk_params` counts in
+    let span_years = ts
+        .and_then(|t| Some((t.last()?.as_i64()? - t.first()?.as_i64()?) as f64 / 31_557_600.0))
+        .unwrap_or(0.0);
+    eur && bars >= EU_MIN_BARS && span_years >= EU_MIN_YEARS
 }
 
-/// (EU listing) Shortest EU record worth swapping to. 60 monthly bars = 5 years, which is
-/// `growth_min_leg_years`' shipped floor — below it the swapped name could not be ranked anyway, so
-/// keeping its US row is strictly better than trading a scoreable series for an unscoreable one.
+/// (EU listing) Shortest EU record worth swapping to, as CALENDAR YEARS between the first and last bar.
+/// 5 years is `growth_min_leg_years`' shipped floor — below it the swapped name could not be ranked
+/// anyway, so keeping its US row is strictly better than trading a scoreable series for an unscoreable
+/// one. A span and not a bar count because the granularity is whatever Yahoo served; see [`eu_chart_ok`].
+const EU_MIN_YEARS: f64 = 5.0;
+
+/// (EU listing) Fewest bars worth scoring, at the value that shipped. With [`EU_MIN_YEARS`] beside it
+/// this is a DENSITY floor and no longer the depth test its old comment claimed. Note that a monthly
+/// series now needs 61 bars to clear both: 60 monthly bars are 59 months from first to last, and five
+/// years is what "five years" has to mean.
 const EU_MIN_BARS: usize = 60;
 
 /// One OpenFIGI POST: `jobs` in, one `data` array (or None) out per job, order preserved.
@@ -4383,7 +4405,7 @@ async fn resolve_eu_listings(client: &Client, urls: &Urls, syms: &[String]) -> H
     // Chart check LAST, and through the same disk-cached call the quote path uses — an accepted twin
     // costs nothing extra because this warms the very entry that fetch is about to want.
     for (sym, eu) in candidates {
-        let ok = matches!(chart_json_long(client, urls, &eu).await, Some(raw) if eu_chart_ok(&raw, EU_MIN_BARS));
+        let ok = matches!(chart_json_long(client, urls, &eu).await, Some(raw) if eu_chart_ok(&raw));
         cache.insert(sym, if ok { eu } else { String::new() });
     }
     if let Ok(json) = serde_json::to_string(&cache) {
@@ -4610,21 +4632,32 @@ pub(crate) mod tests {
     /// calibrated on USD, so the swap is only honest when the series really changed currency.
     #[test]
     fn eu_chart_ok_demands_eur_and_history() {
-        let chart = |cur: &str, bars: usize| {
-            let ts: Vec<String> = (0..bars).map(|i| (1_000_000 + i * 86_400).to_string()).collect();
+        // `step` seconds between bars, so a case states its GRANULARITY as well as its bar count —
+        // which is the whole point: Yahoo serves the long chart at whatever interval it kept.
+        const MONTH: usize = 2_629_800; // 365.25d / 12, the interval the long fetch asks for
+        const HOUR: usize = 3_600;
+        let chart = |cur: &str, bars: usize, step: usize| {
+            let ts: Vec<String> = (0..bars).map(|i| (1_000_000 + i * step).to_string()).collect();
             RawValue::from_string(format!(
                 r#"{{"chart":{{"result":[{{"meta":{{"currency":"{cur}"}},"timestamp":[{}]}}]}}}}"#,
                 ts.join(",")
             ))
             .unwrap()
         };
-        assert!(eu_chart_ok(&chart("EUR", 60), 60)); // exactly at the floor counts
-        assert!(!eu_chart_ok(&chart("EUR", 59), 60)); // one bar short does not
-        assert!(!eu_chart_ok(&chart("USD", 300), 60)); // the trap: right ticker, wrong denomination
-        assert!(!eu_chart_ok(&chart("GBp", 300), 60)); // London's pence lines are not EUR either
+        assert!(eu_chart_ok(&chart("EUR", 61, MONTH))); // 61 monthly bars = 60 months = the floor exactly
+        assert!(!eu_chart_ok(&chart("EUR", 60, MONTH))); // 60 of them span 59 months — five years minus one
+        assert!(!eu_chart_ok(&chart("EUR", 30, MONTH))); // deep enough per bar, not enough of them
+        // (#118) THE CASE THAT MOTIVATED THE SPAN: `WIC.DE` served 453 HOURLY bars — 7.5x the bar floor,
+        // two months of history — and passed the check built to reject exactly this.
+        assert!(!eu_chart_ok(&chart("EUR", 453, HOUR)));
+        assert!(!eu_chart_ok(&chart("USD", 300, MONTH))); // the trap: right ticker, wrong denomination
+        assert!(!eu_chart_ok(&chart("GBp", 300, MONTH))); // London's pence lines are not EUR either
+        // A single bar has no span to measure, and neither does an empty array.
+        assert!(!eu_chart_ok(&chart("EUR", 1, MONTH)));
+        assert!(!eu_chart_ok(&chart("EUR", 0, MONTH)));
         // Yahoo's own "no such symbol" answer, and a body that is not JSON at all.
-        assert!(!eu_chart_ok(&RawValue::from_string(r#"{"chart":{"result":null,"error":{"code":"Not Found"}}}"#.into()).unwrap(), 60));
-        assert!(!eu_chart_ok(&RawValue::from_string("null".into()).unwrap(), 60));
+        assert!(!eu_chart_ok(&RawValue::from_string(r#"{"chart":{"result":null,"error":{"code":"Not Found"}}}"#.into()).unwrap()));
+        assert!(!eu_chart_ok(&RawValue::from_string("null".into()).unwrap()));
     }
 
     /// (#76) Substitution keeps the pond the same size and the sector attached. Losing the sector is the
