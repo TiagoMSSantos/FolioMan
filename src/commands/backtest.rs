@@ -835,8 +835,26 @@ pub async fn run(args: Vec<String>) {
         // sample. Slower (one history fetch per name) but the only cure for 53-survivor-ticker noise.
         eprintln!("backtest: fetching the live screen universe (this is the slow, wide-sample path)…");
         // no sector filter (&[]): the backtest measures edge across the FULL sample, never a slice
+        //
+        // (#116) THE VENUE ARGUMENT IS HARDCODED FALSE, and it is the one line in this file that must
+        // never read a setting. This walk grades the DEEPEST record a name has; which venue a live row
+        // is bought on is a `screen` question and reaches no score here. Passing the live knob through
+        // made it one, and the collapse was not subtle: 266 of 519 S&P constituents resolve to a Xetra
+        // twin, and the twin is a MEDIAN 18.6 YEARS YOUNGER than the US primary (218 of 261 by more
+        // than five). CMI 1984-11 -> CUM.DE 2007-12. ORCL 1986-03 -> ORC.DE 2007-12.
+        //
+        // A cutoff needs `min_history` bars behind it PLUS the forward window, so a twin starting
+        // 2007-12 contributes NO 20y cutoffs, SOME 12y and MOST 8y — the swap re-weights the sample by
+        // horizon, in the one direction that looks like a scoring regression. Measured on CI run
+        // 32456448769: 20y edge +775.8 (clean, no twin can reach it), 12y +58.2 (about half its ~117
+        // baseline), 8y -22.8 — a RED gate on a universe change nothing in the diff mentioned.
+        //
+        // Every threshold in ci-settings.yaml was fitted on the US lines, and `.backtest_verdict.json`
+        // of 2026-08-18 — the last wide run before the swap — journals 8y at top-3 excess +6.4 pts/yr
+        // over 53 windows with both OOS halves positive. That is the sample those receipts describe.
+        // `the_backtest_never_reads_the_venue_knob` is what keeps this argument a literal.
         let universe =
-            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, settings.prefer_eu_listing, &[]).await;
+            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, false, &[]).await;
         (tickers, etf_set, sector_of) = universe;
     } else if tickers.is_empty() {
         tickers = settings.tickers.clone();
@@ -4053,6 +4071,35 @@ fn exit_probe(
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+
+    /// (#116) STRUCTURAL PIN, and the regression it exists for was a RED CI GATE, not a hypothetical.
+    /// `run` used to hand the venue setting (`prefer_eu` + `_listing`) to `fetch_universe`, so the fixture
+    /// this walk is graded on decided which VENUE each constituent was priced from. Flipping that knob
+    /// to `true` swapped 266 of 519 S&P names onto Xetra twins that are a MEDIAN 18.6 YEARS YOUNGER
+    /// than their US primaries — which, because a cutoff needs history behind it PLUS the forward
+    /// window, drains the 20y lane of them entirely and fills the 8y lane with them. The gate read that
+    /// as a scoring collapse (8y edge -22.8 against a healthy +6.4 top-3 excess three days earlier) and
+    /// no line of the diff that caused it went near a score.
+    ///
+    /// So the venue argument is a LITERAL and this counts it. The knob still exists and the live lanes
+    /// still read it; what must never come back is this file reading it.
+    ///
+    /// The needle is assembled with `concat!` ON PURPOSE: written as one literal it would occur in this
+    /// test's own source and count itself. For the same reason no comment or message anywhere in this
+    /// file may write the setting's name contiguously — spell it with the underscore split, as the
+    /// assert message below does.
+    #[test]
+    fn the_backtest_never_reads_the_venue_knob() {
+        let src = include_str!("backtest.rs");
+        let reads = src.matches(concat!("prefer_eu", "_listing")).count();
+        assert_eq!(
+            reads, 0,
+            "the walk grades the DEEPEST series a name has, never the venue a live row is bought on; \
+             found {reads} mentions of the venue knob in this file. Pass the literal `false` to \
+             `fetch_universe` — a Xetra twin is a median 18.6y younger, so reading the setting here \
+             re-weights the graded sample by horizon and reds this gate at 8y."
+        );
+    }
 
     fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()

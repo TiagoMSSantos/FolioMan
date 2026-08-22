@@ -5560,10 +5560,29 @@ universe_prefer_eur: true
 # This sat at `false` while BOTH live lanes — the author's terminal overlay and the Pages overlay —
 # set it `true`, so the committed "off" described nothing that actually ran. Collapsing the two
 # overlays onto this file (see the header note on `widths` below) forced the question, and the answer
-# that keeps ONE lane is to commit the value the lanes were using. UNMEASURED at every horizon and
-# unmeasurable here; it changes which VENUE a live row is fetched from, never a backtest score.
+# that keeps ONE lane is to commit the value the lanes were using. UNMEASURED at every horizon.
+#
+# (#116) CORRECTED. The sentence that stood here said this knob "changes which VENUE a live row is
+# fetched from, never a backtest score". THAT WAS FALSE, and it is why this flip shipped as a
+# display-only change with no horizon measured: `backtest`'s wide path handed this very setting to
+# `fetch_universe`, so the walk-forward gate — which pins THIS FILE as its config — graded whatever
+# venue the knob selected. Turning it on swapped 266 of 519 S&P constituents onto Xetra twins that are
+# a MEDIAN 18.6 YEARS YOUNGER than their US primaries (218 of 261 by more than five years), and since
+# a cutoff needs history behind it PLUS the forward window, the 20y lane keeps almost none of them
+# while the 8y lane fills with them. CI run 32456448769 read that as a scoring collapse: 20y edge
+# +775.8, 12y +58.2 (about half its ~117 baseline), 8y -22.8 — RED, on a universe change no line of
+# the diff mentioned. The last wide run before the flip (.backtest_verdict.json, 2026-08-18) has 8y at
+# top-3 excess +6.4 pts/yr over 53 windows with both OOS halves positive.
+#
+# The call site now passes a hardcoded `false`, so the corrected claim is true BY CONSTRUCTION rather
+# than by review: the live lanes read this knob, the backtest cannot. The test
+# `the_backtest_never_reads_the_venue_knob` (src/commands/backtest.rs) counts the mentions in that file
+# and fails at one. Every threshold in THIS file was fitted on the US lines, which is the sample the
+# backtest still grades.
+#
 # REVERT RULE: set `false` if a real screen's stderr tally shows the swap shrinking the pond or
-# promoting a thin Xetra line over a liquid US one. That tally is the only evidence this knob has.
+# promoting a thin Xetra line over a liquid US one. That tally is the only evidence this knob has —
+# and it is a LIVE-side tally, because no horizon can be quoted for a knob the backtest never reads.
 prefer_eu_listing: true
 
 # `screen` SECTOR FILTER — which type of companies/ETFs to fetch. Case-insensitive substring
