@@ -113,9 +113,17 @@
 # ============================ SHIP RULE v2 — 2026-08-06 =====================================
 # THE PRIMARY METRIC CHANGES FROM rank-1 TO top-3, AND EVERY RECEIPT BELOW PREDATES THE CHANGE.
 #
-#   PRIMARY   top-3 excess (mean AND median) up or held, at 20y AND 8y
+# (#120) 2026-08-22 — THE GRADED BASKET MOVES top-3 -> top-10, AND EVERY RECEIPT IN THIS FILE THAT
+#   QUOTES A "top-3" COLUMN WAS GRADED UNDER THE OLD BASKET. Those columns are LEFT AS WRITTEN on
+#   purpose: they record what was measured on the day, and rewriting them would forge history. Read
+#   any pre-2026-08-22 receipt as "top-3, the basket then shipped". What this DOES mean is that a
+#   refusal resting on "it only pays at top-10" no longer rests on anything — `growth_value_floor_pct`
+#   (#75) is the one such case in this file, and it is flagged RE-GRADEABLE at its own entry. A
+#   refusal that recorded its arm ordering "at every basket size" (#71) survives the move untouched.
+#
+#   PRIMARY   top-10 excess (mean AND median) up or held, at 20y AND 8y
 #   GUARD     rank-1 h2h >= 50% at 20y, 12y and 8y   (winner's-curse guard, NOT the judge)
-#   GUARD     top-3 worst window not worse
+#   GUARD     top-10 worst window not worse
 #   TIE       horizons disagree -> UNRESOLVED -> NO SHIP. "20y king overrules" is RETIRED.
 #
 #   PRECEDENCE IS GUARD > PRIMARY > TIE, and it is not a formality. A broken guard REFUSES outright;
@@ -127,6 +135,52 @@
 #   is not a disagreeing one, so an arm that is flat at 8y and up at 20y but loses the primary is a
 #   plain NO-SHIP (see `fixed_cagr_years: 8`). The three states carry different follow-ups —
 #   UNRESOLVED invites a better arm, NO-SHIP and REFUSED close the question — so do not blur them.
+#
+# (#120) WHY THE BASKET MOVED FROM 3 TO 10 — MEASURED 2026-08-22 AND SHIPPED.
+#   THE DEFECT, and it is structural rather than empirical: `VERDICT_TOP: 3` was the ARGMAX over
+#   `TOP_LADDER`'s 13 rungs, taken on the same wide run the report then quotes, with no best-of-N
+#   haircut, on the 0.5-3.5 effectively independent windows (#91) counts. Its own doc comment said so
+#   and the (#92) receipt below called it "THE DEBT" in those words. Worse, the argmax was over a MEAN,
+#   and under positive skew small N maximises the mean while wrecking the median and the left tail —
+#   so that selection picks the most concentrated book almost by construction. Meanwhile candidate
+#   knobs were being COMPARED on `legacy_top()` = 10 as "the wider, better-estimated book". The tool
+#   compared on 10 and shipped on 3.
+#
+#   WHY 10 AND NOT A FRESHLY FITTED NUMBER. Re-running the ladder and taking a new argmax reproduces
+#   the same selection bias with a newer date on it — (#92) says this explicitly and it is still right.
+#   Re-deriving 3 off the median or the 10th percentile instead would be the same selection wearing a
+#   different statistic. 10 is FIXED A PRIORI: it is the basket every candidate knob in this file was
+#   already compared on, so the change REMOVES a degree of freedom rather than re-spending it. No
+#   ladder run chose it.
+#
+#   THE PRICE, PAID IN FULL AND ON THE RECORD (`backtest {20,12,8} universe`, wide, 2026-08-22):
+#     horizon   top-3 mean|med   top-10 mean|med   win 3 -> 10   worst 3 -> 10   windows
+#       20y      +6.3 | +5.6      +6.0 | +6.1       97% -> 97%    -0.5 -> -0.5      36
+#       12y      +6.8 | +6.9      +6.2 | +6.1       84% -> 88%    -7.8 -> -7.8      51
+#        8y      +7.5 | +8.3      +6.6 | +7.3       80% -> 85%    -9.2 -> -9.2      59
+#   Top-10 gives up 0.3-0.9 pts/yr of MEAN excess at every horizon. It buys a higher win rate at the
+#   two horizons where the rate could move (12y +4pts, 8y +5pts) and an IDENTICAL worst window at all
+#   three — so the rule's worst-window GUARD does not bind in either direction, which is the cleanest
+#   possible reading of a basket swap.
+#   AND AT 20y THE MEDIAN CROSSES THE MEAN: top-3 is +6.3 mean / +5.6 median, top-10 is +6.0 / +6.1.
+#   The concentrated book wins on the mean and LOSES on the median at the longest horizon. That is the
+#   skew mechanism above, measured rather than argued, and it is the strongest single line of evidence
+#   that the old argmax was reading a selection artifact and not an edge.
+#   AND IT REPRODUCES ACROSS TEN DAYS AND A DIFFERENT RUN. The (#75) control ladder, measured
+#   2026-08-12 on the 20y fund arm for an unrelated question, printed "top-3 +6.3|+5.7, top-10
+#   +5.9|+6.1" — the same crossing, to a tenth, from a run nobody made to settle this. Two independent
+#   measurements of the 20y mean/median inversion is not a fluke of one seed.
+#
+#   WHAT MOVED IN THE TREE: `VERDICT_TOP` 3 -> 10; `markers::VERDICT_ROW` "top-3 " -> "top-10 " with
+#   `verdict_row_matches_the_basket` asserting the two can never drift; the 7 `top-3` parses in
+#   tests/network.rs; the 5 fixture goldens' `all entries (top-N)` row; and the best-of-13 caveat came
+#   OFF the screen footer, since a basket fixed a priori is not a maximum over anything.
+#   THE GOLDENS MOVED ON PURPOSE — this is a correction, not a knob, and non-negotiable #1 does not
+#   apply. Fixture deltas (top-3 -> top-10): 20y +3.3 -> +3.2, 8y +4.9 -> +5.2, 12y +1.1 -> +0.9,
+#   12y-pit unchanged at -2.4. The 200-name fixture disagrees with the wide run about the SIGN of the
+#   8y change; the wide run is the evidence, the fixture is only a byte-level pin.
+#   REVERT RULE: set `VERDICT_TOP` back to 3 and re-bless. Do it only for a reason that is not "top-3
+#   scores higher" — that sentence is the defect, not the argument.
 #
 # WHY. The old primary, "rank-1 median at the 20y king", grades a ONE-STOCK portfolio. Nobody holds
 # one stock; the money goes into a basket. `backtest` already prints top-N for N=1..50, so this costs
@@ -172,12 +226,15 @@
 #   is unmeasured rather than held, and require the result to survive a basket-size check (top-1/3/5/10)
 #   in place of the horizon agreement the rule normally gets. See the (#71) receipt on
 #   growth_fund_weight for the worked case.
-# THE BUY SURFACE NOW QUOTES THE SAME BASKET (backtest.rs `VERDICT_TOP = 3`). The screen's method
+# THE BUY SURFACE NOW QUOTES THE SAME BASKET (backtest.rs `VERDICT_TOP = 10`). The screen's method
 #   footer used to cite top-10 at whatever horizon ran LAST, because `.backtest_verdict.json` held one
 #   row and every wide run overwrote it — so a `backtest 8` erased the 20y proof and the footer changed
-#   horizon silently. The journal is now keyed by hold-years and MERGES, the footer cites top-3 at the
-#   LONGEST row on file, and it names the basket. If a rule change ever moves the graded basket, move
-#   VERDICT_TOP with it or the footer starts advertising a book the rule no longer grades.
+#   horizon silently. The journal is now keyed by hold-years and MERGES, the footer cites the graded
+#   basket at the LONGEST row on file, and it names that basket. If a rule change ever moves the graded
+#   basket, move VERDICT_TOP with it or the footer starts advertising a book the rule no longer grades.
+#   (#120) DID EXACTLY THAT MOVE, and the pin that makes forgetting impossible is now mechanical:
+#   `verdict_row_matches_the_basket` asserts `markers::VERDICT_ROW == format!("top-{VERDICT_TOP} ")`,
+#   so the CI gate's parser and the shipped basket cannot drift apart silently again.
 # SURVIVORSHIP IS UNCORRECTED IN THIS RULE'S PRIMARY METRIC, AND `stress` DOES NOT FIX IT (2026-08-07).
 #   `STRESS_TICKERS` (commands/backtest.rs) is 27 hand-picked crashed/bankrupt names against ~4900
 #   survivors — 0.55% of the pool — and it is worth knowing exactly where that correction lands.
@@ -1930,6 +1987,21 @@ buy_heuristic:
                                  #   DO NOT re-select VERDICT_TOP off a fresh ladder run and call it
                                  #   settled. Re-running the same argmax on the same universe reproduces
                                  #   the same selection bias with a newer date on it.
+                                 #
+                                 #   (#120) 2026-08-22 — THE DEBT IS PAID, AND NOT BY THE ROUTE THIS
+                                 #   ENTRY PROPOSED. Nobody ran the 13-rung Sidak-tightened bootstrap
+                                 #   described above; at 0.5 effective windows it would have resolved
+                                 #   nothing, which this entry already predicted in its own words ("and
+                                 #   at 0.5 effective windows it will"). Instead VERDICT_TOP was FIXED A
+                                 #   PRIORI at 10 — the basket every candidate knob in this file was
+                                 #   already compared on — exactly the "grounds that are not a maximum"
+                                 #   this entry asked for. The paragraph above stands as written because
+                                 #   its warning is still live: the fix was to STOP selecting, not to
+                                 #   select more carefully. Full receipt in the SHIP RULE v2 block at
+                                 #   the top of this file.
+                                 #   THIS KNOB SURVIVES THE PAYMENT, with a narrower job: the caveat now
+                                 #   prints only on the ladder TABLE header, warning the READER off an
+                                 #   argmax the repo no longer makes. It came off the screen footer.
   print_n_eff: false             # (#91) NOTHING TO MEASURE — a display knob, shipping OFF, which is
                                  #   today's output byte-for-byte and is what every golden in
                                  #   tests/fixture pins. It adds no gate, no score term and no journal
@@ -3786,6 +3858,19 @@ buy_heuristic:
   #   The printer is `#[mutants::skip]` with the reason at its head. GENERAL LESSON, third recording:
   #   a knob defaulted OFF is a knob whose live path no offline test executes — plan the pure split
   #   with the feature, not after the gate reds.
+  # (#120) 2026-08-22 — THIS REFUSAL IS NOW HALF-VACATED, AND THE HALF THAT DIED IS NAMED HERE SO
+  #   NOBODY CITES IT AGAIN. The grid above refused 40 because its lift "is a TOP-10 held-book effect"
+  #   that "decays to +0.1 at 12y top-3 and to 0.0 at 8y top-3" — i.e. it pays on the wide basket and
+  #   vanishes on the basket the verdict graded. THE VERDICT NOW GRADES TOP-10. That specific argument
+  #   is therefore measured against a basket this repo no longer ships and CANNOT be re-cited.
+  #   WHAT SURVIVES: the probe's bar grades a HELD-N-YEARS NO-SELL book while the verdict grades a
+  #   REBALANCED one, so the probe's ship line is still not the rule; and the 20y blackout is still
+  #   proven inert. WHAT DOES NOT: the decay argument, and with it the refusal's primary reason.
+  #   STATUS: RE-GRADEABLE, NOT RE-GRADED. Nobody has run 0/25/40/55/70 against a top-10 verdict, and
+  #   (#120) deliberately did not re-open it — a basket change is not a licence to re-litigate every
+  #   refusal it touched. It SHIPS 0.0 (unchanged) until that grid is run under Ship Rule v2.
+  #   The (#71) receipt is the contrast worth noting: it recorded its arm ordering "at every basket
+  #   size", so it survives the move untouched. Receipts that name the basket age better.
   growth_value_floor_pct: 0.0
   growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
   # (#50) WHAT THIS 0.0 COSTS DOWNSTREAM, recorded 2026-08-06 because no receipt said it: with this

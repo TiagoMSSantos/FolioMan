@@ -83,7 +83,7 @@ const MIN_VERDICT_TICKERS: usize = 500;
 ///   nothing at all, forever, silently.
 /// - `n=`, `peer-relative`, and the three `growth_*_->off` labels — the gate re-probe WARN just
 ///   stops firing.
-/// - `top-3 `, `excess`, `tuning adds`, `early rho`, `late rho` — panic only under `forced`.
+/// - `top-10 `, `excess`, `tuning adds`, `early rho`, `late rho` — panic only under `forced`.
 /// - `->  edge` — the only one that is hard unconditionally (`.expect`).
 ///
 /// So the honest place to enforce them is OFFLINE, against the golden, where there is no network to
@@ -98,7 +98,14 @@ pub mod markers {
     pub const GROWTH_SECTION: &str = "── GROWTH";
     pub const WINDOWS_SCORED: &str = "windows scored:";
     pub const LANE_EDGE: &str = "->  edge";
-    pub const TOP3_ROW: &str = "top-3 ";
+    /// (#120) The held-book row SHIP RULE v2 grades — the [`super::VERDICT_TOP`] rung of the top-N
+    /// ladder, not a fixed 3. Was `"top-3 "`; moving the basket without moving this would have left
+    /// the gate asserting on a row the verdict no longer reports, which is the quietest possible
+    /// failure. `verdict_row_matches_the_basket` pins the two together.
+    ///
+    /// The TRAILING SPACE is load-bearing and matched with `starts_with` after trimming, so the row
+    /// for `top-10` cannot be matched by `top-100` — nor `top-1` by `top-10`. Do not tidy it away.
+    pub const VERDICT_ROW: &str = "top-10 ";
     pub const EXCESS: &str = "excess";
     pub const TUNING_ADDS: &str = "tuning adds";
     pub const EARLY_RHO: &str = "early rho";
@@ -115,7 +122,7 @@ pub const GATE_MARKERS: &[&str] = &[
     markers::GROWTH_SECTION,
     markers::WINDOWS_SCORED,
     markers::LANE_EDGE,
-    markers::TOP3_ROW,
+    markers::VERDICT_ROW,
     markers::EXCESS,
     markers::TUNING_ADDS,
     markers::EARLY_RHO,
@@ -133,24 +140,29 @@ pub const GATE_MARKERS: &[&str] = &[
 /// instead of silently making the printed count a lie.
 pub(crate) const TOP_LADDER: &[usize] = &[1, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50];
 
-/// Basket size the journal grades on. NOT the top-10 the entry-state table ranks by: the footer must
-/// quote the basket a reader can actually buy off the screen, and top-3 is the measured peak of the
-/// top-N ladder at EVERY horizon (8y 16.1 vs 15.0/14.9/14.4 for top-1/5/10/20; 12y 15.2; 20y 13.7),
-/// with roughly HALF top-1's worst window. See the SHIP RULE v2 block in `tests/ci-settings.yaml`.
+/// Basket size the journal grades on, and the one the ship rule reads. THE SAME 10 the entry-state
+/// table and the CORR-CAP probe rank by, which is the whole point of (#120): this was 3, those were
+/// 10, and the tool therefore COMPARED candidate knobs on one basket and SHIPPED its verdict on
+/// another. Every receipt in tests/ci-settings.yaml was written across that gap.
 ///
-/// (#92) READ THAT SENTENCE AGAIN: "the measured peak of the ladder" means this value is an ARGMAX over
-/// [`TOP_LADDER`]'s 13 rungs, taken on the same data the report then quotes, with no best-of-N haircut —
-/// and on the ~0.5 to 3.5 effectively independent windows (#91) prints. The one multiple-testing
-/// correction in this file covers the 14 fund factors; the basket size, which is what the screen footer
-/// actually tells a reader to buy, has none. The gap between 16.1 and 15.0 is a 13-way maximum on half a
-/// trial at 20y. `print_selection_count` prints that caveat; nothing has yet re-derived the value under
-/// it, and the receipt in tests/ci-settings.yaml names the run that would.
+/// 3 was not a policy, it was an ARGMAX. (#92) and (#106) already said so at length and are kept
+/// below in compressed form because they are the reason this moved, not a caveat about it: the value
+/// was the maximum of a 13-rung ladder ([`TOP_LADDER`]), taken on the same data the report then
+/// quotes, with no best-of-N haircut, on the 0.5-3.5 effectively independent windows [`n_eff`]
+/// counts — and the maximum was over a MEAN, which under positive skew is maximised by the most
+/// concentrated book almost by construction, wrecking the median and the left tail as it goes.
+/// A selection made that way cannot be defended by the numbers it was selected from.
 ///
-/// (#106) And the argmax is over a MEAN. Under positive skew small N maximises the mean while wrecking
-/// the median and the left tail, so selecting a basket size this way selects the most concentrated book
-/// almost by construction. `print_book_deciles` prints the median and the 10th percentile per rung —
-/// the instrument that would re-derive this number off what a holder actually experiences.
-pub(crate) const VERDICT_TOP: usize = 3;
+/// So it is no longer selected at all. Pinning it to the comparison basket removes the free
+/// parameter instead of re-fitting it — re-deriving 3 off the median and the 10th percentile
+/// (`book_deciles` prints both) would be the same move a second time, on the same one trial.
+/// The cost is real and stated: 10 is a wider, lower-mean book than 3 on this data. What it buys is
+/// that the number the screen footer turns into a buy instruction is no longer the winner of a
+/// contest run on the reader's behalf and never disclosed to them.
+///
+/// `legacy_top()` stays 10 as the serde default for journal files written before the field existed —
+/// that is a historical fact about those files, not this policy, so the two are not merged.
+pub(crate) const VERDICT_TOP: usize = 10;
 
 /// The unconditional held-book verdict of one wide backtest run at ONE horizon: the "all entries"
 /// row of the entry-state table (full gated pool, growth_score ranking, equal-weight top-[`VERDICT_TOP`],
@@ -248,18 +260,23 @@ fn write_verdict(v: Verdict) {
 /// One-line rendering of [`Verdict`] for the screen footer. `drift` = the current tuning no
 /// longer matches the fingerprint that earned these numbers — say so instead of citing them
 /// as if they still applied.
-pub(crate) fn verdict_line(v: &Verdict, drift: bool, show_n_eff: bool, show_selection: bool) -> String {
+///
+/// (#120) NO [`best_of_tag`] HERE, DELIBERATELY. This footer used to carry " [best of 13, unhaircut]"
+/// beside the basket, because the basket WAS the argmax of [`TOP_LADDER`]. It no longer is —
+/// [`VERDICT_TOP`] is fixed a priori — so printing a best-of-N caveat next to it would caveat a
+/// selection that was not made. The tag stays on the ladder TABLE header, which really is 13 rungs
+/// wide and which a reader really can argmax by eye.
+pub(crate) fn verdict_line(v: &Verdict, drift: bool, show_n_eff: bool) -> String {
     let tail = if drift {
         " — ⚠ settings changed since, rerun `folioman backtest universe`"
     } else {
         " (rerun: `folioman backtest universe`)"
     };
     format!(
-        "Method backtest (run {}, wide universe, top-{}{} held {}y, {} windows{}): book {:+.1}%/yr, \
+        "Method backtest (run {}, wide universe, top-{} held {}y, {} windows{}): book {:+.1}%/yr, \
          {:+.1}pp/yr vs index, win {:.0}%, worst {:+.1}, OOS {:+.1}/{:+.1}{tail}",
         v.date,
         v.top,
-        best_of_tag(show_selection, TOP_LADDER.len()),
         v.years,
         v.windows,
         n_eff_tag(show_n_eff, v.windows, v.years),
@@ -345,11 +362,16 @@ fn n_eff_tag(on: bool, windows: usize, years: i64) -> String {
 
 /// (#92) The printed best-of-N caveat — EMPTY when the knob is off, same contract as [`n_eff_tag`].
 ///
-/// `VERDICT_TOP` is the argmax over [`TOP_LADDER`], taken on the data the report then quotes. A maximum
-/// over 13 candidates is biased upward by selection whether or not anyone says so; the only question is
-/// whether the reader is told. `sweep_fund_factor` already answers its own version of this with a
-/// Šidák-tightened band over 14 factors — the basket size, which is the number the screen footer turns
-/// into a buy instruction, has never had one.
+/// A maximum over 13 candidates is biased upward by selection whether or not anyone says so; the only
+/// question is whether the reader is told. `sweep_fund_factor` already answers its own version of this
+/// with a Šidák-tightened band over 14 factors.
+///
+/// (#120) WHAT THIS TAG NOW CAVEATS, AND WHAT IT NO LONGER DOES. It was written when [`VERDICT_TOP`]
+/// was the argmax over [`TOP_LADDER`], and it flagged the shipped basket as an unhaircut 13-way
+/// maximum. That debt is PAID: the basket is fixed a priori and is not selected off this table at all,
+/// so the tag came off the screen footer. It stays on the ladder table header, where the 13 rungs are
+/// still printed side by side and the eye still argmaxes them — the caveat's subject is now the
+/// READER's selection, not the repo's.
 fn best_of_tag(on: bool, candidates: usize) -> String {
     if on { format!(" [best of {candidates}, unhaircut]") } else { String::new() }
 }
@@ -2558,11 +2580,17 @@ fn book_multiples(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64
 /// WHY THE MEAN IS THE WRONG SELECTOR FOR `VERDICT_TOP`. `book_stats` is right to average the
 /// terminal MULTIPLES inside a bucket — that is what an equal-weight book is worth. But those
 /// per-bucket numbers are then arithmetically averaged ACROSS buckets into the headline, and
-/// `VERDICT_TOP: 3` was chosen as the argmax of that headline over a 13-rung ladder. Under positive
-/// skew, small N maximises the mean while wrecking the median and the left tail — that is the
-/// arithmetic of skew, not an empirical claim — so selecting N by mean excess selects the most
-/// concentrated book almost by construction. Reading the median and the 10th percentile instead is
-/// what would re-derive N honestly, and this is the instrument that shows both.
+/// `VERDICT_TOP` USED TO BE the argmax of that headline over a 13-rung ladder. Under positive skew,
+/// small N maximises the mean while wrecking the median and the left tail — that is the arithmetic of
+/// skew, not an empirical claim — so selecting N by mean excess selects the most concentrated book
+/// almost by construction.
+///
+/// (#120) THAT SELECTION IS GONE — the basket is now fixed a priori at 10 — and this instrument's job
+/// changed with it. It is no longer the thing that would "re-derive N honestly": re-deriving N off the
+/// median would be the same selection wearing a different statistic. It is now the evidence that the
+/// fixed basket is defensible, and the wide run backs it — at 20y the top-10 book's excess MEDIAN is
+/// HIGHER than top-3's (+6.1 vs +5.6) while its MEAN is lower (+6.0 vs +6.3). That crossing is the
+/// skew signature above, printed rather than argued.
 ///
 /// P(book < 1.0) is the number a 20-year holder actually feels: not "did I trail the index", but "did
 /// I end with less than I started". Nothing in this report has ever printed it.
@@ -2712,10 +2740,11 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     if bd.len() < 2 {
         return;
     }
-    // NOT the measured optimum — the top-N ladder peaks at 3 at every horizon (see VERDICT_TOP).
-    // 10 is kept HERE on purpose: these rows compare candidates against EACH OTHER, so they want the
-    // wider, better-estimated book. The journaled verdict is the one that must match the buy policy.
-    let n = 10;
+    // (#120) THE SAME basket the verdict ships on. These rows compare candidates against each other,
+    // so they want the wider, better-estimated book — and that argument, which was already written
+    // here, is exactly the one that moved `VERDICT_TOP` from 3 to 10. Reading the const rather than
+    // repeating the literal is what stops the two drifting apart again.
+    let n = VERDICT_TOP;
     // baseline: rank the FUND-COVERED gated picks by growth_score. Restricting to fund-covered rows
     // (same universe the factors see) makes the excess head-to-head fair — otherwise the score baseline
     // spans ETF/foreign buckets the SEC factors can't reach and the SPY leg differs.
@@ -2882,11 +2911,18 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     // before citing it, and never delete the probe that would have told you.
     // AND IT STILL DOES NOT SHIP, which is the part worth carrying: the axis was armed as a real knob
     // (`growth_value_floor_pct`, a cross-sectional percentile floor at this same boundary) and graded
-    // over 12 runs. The lift here is a TOP-10 held-book effect and decays to +0.1 at 12y top-3 and to
-    // 0.0 at 8y top-3, so it fails Ship Rule v2's ADDITION bar. THE BAR PRINTED BELOW IS THEREFORE NOT
-    // A SHIP RULE — it grades a top-10 held-N-years no-sell book, while the verdict grades the
-    // rebalanced top-3. Treat it as "worth a grid", never as "ship this". Full grid in the (#75)
-    // receipt at `growth_value_floor_pct` in tests/ci-settings.yaml.
+    // over 12 runs. The lift here is a TOP-10 held-book effect and decayed to +0.1 at 12y top-3 and to
+    // 0.0 at 8y top-3, so it failed Ship Rule v2's ADDITION bar. THE BAR PRINTED BELOW IS STILL NOT A
+    // SHIP RULE — it grades a HELD-N-YEARS NO-SELL book, while the verdict grades a REBALANCED one, and
+    // those are different questions. Treat it as "worth a grid", never as "ship this". Full grid in the
+    // (#75) receipt at `growth_value_floor_pct` in tests/ci-settings.yaml.
+    //
+    // (#120) READ THAT REFUSAL AGAIN BEFORE REUSING IT. Half of why (#75) was refused was that its lift
+    // lived at top-10 while the verdict graded top-3 — and the verdict now grades top-10. The
+    // no-sell-vs-rebalanced gap survives the basket move, so the bar below is still not the rule, but
+    // the DECAY ARGUMENT does not survive: it was measured against a basket this repo no longer ships.
+    // `growth_value_floor_pct` is therefore RE-GRADEABLE, not re-graded — nobody has run that grid
+    // against a top-10 verdict. It is not re-opened here, and it stays at its shipped 0.0 until it is.
     // Note the same factor is very much alive as a RANK TILT in the same run (peg_yield is the shipped
     // `growth_fund_factor`) — cutting the dear names and ranking by cheapness are different questions,
     // and only the second one has ever paid at the top of the book.
@@ -3040,10 +3076,11 @@ fn report_corr_cap(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>
     if bd.len() < 2 || !samples.iter().any(|s| s.trail.len() >= 12) {
         return; // no trails (stub/short-history run) -> no fabricated rows
     }
-    // NOT the measured optimum — the top-N ladder peaks at 3 at every horizon (see VERDICT_TOP).
-    // 10 is kept HERE on purpose: these rows compare candidates against EACH OTHER, so they want the
-    // wider, better-estimated book. The journaled verdict is the one that must match the buy policy.
-    let n = 10;
+    // (#120) THE SAME basket the verdict ships on. These rows compare candidates against each other,
+    // so they want the wider, better-estimated book — and that argument, which was already written
+    // here, is exactly the one that moved `VERDICT_TOP` from 3 to 10. Reading the const rather than
+    // repeating the literal is what stops the two drifting apart again.
+    let n = VERDICT_TOP;
     println!("\n── CORR-CAP probe: greedy top-{n} by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held {years}y ──");
     for cap in [f64::INFINITY, 0.8, 0.6, 0.4] {
         if let Some((b, _, e, w, wo, el, la)) = corr_cap_book(samples, bd, bc, years, tuning, n, cap) {
@@ -4028,7 +4065,9 @@ fn report_lane(
     // from. Printed only behind the knob, so the goldens keep the report they were blessed on.
     if tuning.print_recall_capture {
         println!("  recall of the pool's extreme winners (what the ranking MISSED):");
-        for (n, label) in [(VERDICT_TOP, "top-3 basket"), (legacy_top(), "top-10 book")] {
+        // (#120) ONE row, not two: this printed the verdict basket beside the comparison book, and
+        // those are now the same number, so the pair was the same line twice.
+        for (n, label) in [(VERDICT_TOP, "held book")] {
             for (frac, floor, cut) in [(0.01, 0.0, "top 1%"), (1.0, 10.0, "≥10×")] {
                 match recall_capture(samples, &scored, n, frac, floor) {
                     Some((recall, capture, w)) => println!(
@@ -4546,6 +4585,20 @@ mod tests {
         assert!(band_at(11).is_none(), "100/11 is under ten whole blocks -> no band, however honest the length");
     }
 
+    /// (#120) The gate's search string and the basket it grades are ONE number. `markers::VERDICT_ROW`
+    /// has to be a `const &str` (both test crates read it, and `tests/network.rs` matches on it), so it
+    /// cannot be built from `VERDICT_TOP` at compile time without a formatting dep. This is that
+    /// dependency, as an assertion instead: move `VERDICT_TOP` and forget the marker, and the gate goes
+    /// on asserting on a row the verdict no longer reports — green, forever, grading nothing. Exactly
+    /// the failure `gate_markers_are_all_in_the_golden` was written for, one level up.
+    #[test]
+    fn verdict_row_matches_the_basket() {
+        assert_eq!(markers::VERDICT_ROW, format!("top-{VERDICT_TOP} "), "the marker must name the graded basket");
+        assert!(markers::VERDICT_ROW.ends_with(' '), "the trailing space is what stops top-100 matching top-10");
+        // and the row it names must be a rung the ladder actually prints, or the marker matches nothing
+        assert!(TOP_LADDER.contains(&VERDICT_TOP), "the verdict basket must be one of the printed rungs");
+    }
+
     /// (Item 10) The best-of-N haircut. Tested here and not through its caller because the caller is
     /// `sweep_fund_factor`, which the offline suite cannot run at all.
     #[test]
@@ -4994,18 +5047,22 @@ mod tests {
         assert_eq!(n_eff_tag(false, 21, 20), "", "OFF must add NOTHING — the goldens are the proof");
         assert_eq!(n_eff_tag(true, 21, 20), "  n_eff 0.5");
         let v = stub_verdict(12, VERDICT_TOP);
-        let off = verdict_line(&v, false, false, false);
-        assert!(off.contains("top-3 held 12y, 84 windows): book"), "the shipped footer, unchanged: {off}");
+        let off = verdict_line(&v, false, false);
+        assert!(off.contains("top-10 held 12y, 84 windows): book"), "the footer names the graded basket: {off}");
         assert!(!off.contains("n_eff") && !off.contains("best of"));
-        assert!(verdict_line(&v, false, true, false).contains("84 windows  n_eff 3.5): book"));
+        assert!(verdict_line(&v, false, true).contains("84 windows  n_eff 3.5): book"));
 
-        // (#92) the other half of the same footer, and the two tags must not collide.
+        // (#92) the ladder table's half of the caveat, which the footer no longer shares.
         assert_eq!(best_of_tag(false, 13), "", "OFF must add NOTHING — the goldens are the proof");
         assert_eq!(best_of_tag(true, TOP_LADDER.len()), " [best of 13, unhaircut]");
         assert_eq!(TOP_LADDER.len(), 13, "the printed count and the graded ladder are the same list");
         assert!(TOP_LADDER.contains(&VERDICT_TOP), "the shipped basket must be a rung the table grades");
-        let both = verdict_line(&v, false, true, true);
-        assert!(both.contains("top-3 [best of 13, unhaircut] held 12y, 84 windows  n_eff 3.5): book"), "{both}");
+        // (#120) THE FOOTER MUST NEVER CARRY THE BEST-OF CAVEAT AGAIN. `VERDICT_TOP` is fixed a priori,
+        // so a best-of-13 tag beside it would caveat a selection nobody made. There is no knob that can
+        // put it back — the parameter is gone — and this asserts the strongest form of that: whatever
+        // the display knobs say, the rendered footer never claims the basket was a maximum.
+        assert!(!verdict_line(&v, false, true).contains("best of"), "the fixed basket is not a best-of-N");
+        assert!(!verdict_line(&v, true, false).contains("best of"), "not on the drift arm either");
     }
 
     /// (#96) The two numbers a reader compares by eye and should not: a lane's `edge` is a spread of
@@ -5102,13 +5159,14 @@ mod tests {
     /// exactly what backtest wrote), corrupt/empty JSON is an empty journal (a broken file silences
     /// the footer, never fabricates a verdict), and verdict_line's drift arm swaps the rerun-pointer
     /// for the ⚠ stale-settings warning (citing stale numbers as current would mislead the buy
-    /// decision). The line must name the BASKET too — top-3 and top-10 are different claims.
+    /// decision). The line must name the BASKET too — a top-3 claim and a top-10 claim are different
+    /// claims, which is why (#120) had to move the printed row and not only the const.
     #[test]
     fn verdict_journal_semantics() {
         let v = stub_verdict(12, VERDICT_TOP);
         let json = serde_json::to_string(&Journal::from([(v.years, stub_verdict(12, VERDICT_TOP))])).unwrap();
         let back = parse_journal(&json).into_values().next_back().expect("roundtrip parses");
-        assert_eq!((back.date.as_str(), back.years, back.top, back.windows), ("2026-07-19", 12, 3, 84));
+        assert_eq!((back.date.as_str(), back.years, back.top, back.windows), ("2026-07-19", 12, VERDICT_TOP, 84));
         assert!((back.book - 14.3).abs() < 1e-9 && (back.excess - 6.9).abs() < 1e-9);
         assert_eq!(back.tuning_fp, "{\"a\":1}");
 
@@ -5117,11 +5175,11 @@ mod tests {
         assert!(parse_journal("{\"date\":\"x\"}").is_empty()); // missing fields -> empty, not a default
         assert!(parse_journal("{\"20\":{\"date\":\"x\"}}").is_empty()); // half-written row, same rule
 
-        let fresh = verdict_line(&v, false, false, false);
-        assert!(fresh.contains("run 2026-07-19, wide universe, top-3 held 12y, 84 windows"), "{fresh}");
+        let fresh = verdict_line(&v, false, false);
+        assert!(fresh.contains("run 2026-07-19, wide universe, top-10 held 12y, 84 windows"), "{fresh}");
         assert!(fresh.contains("book +14.3%/yr, +6.9pp/yr vs index, win 71%, worst -8.2, OOS +5.1/+7.4"));
         assert!(fresh.contains("(rerun: `folioman backtest universe`)") && !fresh.contains('⚠'));
-        let drifted = verdict_line(&v, true, false, false);
+        let drifted = verdict_line(&v, true, false);
         assert!(drifted.contains("⚠ settings changed since"));
         assert!(!drifted.contains("(rerun:"));
     }
@@ -5143,7 +5201,7 @@ mod tests {
         assert_eq!(adopted.len(), 1);
         let only = adopted.into_values().next_back().unwrap();
         assert_eq!((only.years, only.top), (20, 10));
-        assert!(verdict_line(&only, false, false, false).contains("top-10 held 20y"));
+        assert!(verdict_line(&only, false, false).contains("top-10 held 20y"));
     }
 
     /// (#106) The skew claim, as arithmetic on ten windows: eight books that HALVED and two that went

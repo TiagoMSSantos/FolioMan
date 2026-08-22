@@ -315,9 +315,9 @@ async fn euribor_parses() {
 }
 
 /// Walk-forward regime gate. Shells `backtest {20,12,8} universe` over the LIVE universe and asserts
-/// the committed default tuning still yields a POSITIVE validated edge AND a positive top-3 held book
+/// the committed default tuning still yields a POSITIVE validated edge AND a positive top-10 held book
 /// at each horizon. Same skip-vs-fail contract as the probes above: a throttle (spawn error / nonzero
-/// exit / too-few-tickers) SKIPS green, per horizon; only a genuine COLLAPSE (GROWTH edge <= 0, top-3
+/// exit / too-few-tickers) SKIPS green, per horizon; only a genuine COLLAPSE (GROWTH edge <= 0, top-10
 /// excess <= 0, or BOTH out-of-sample halves negative) FAILS. It scores with the real tuning mirrored
 /// into ci-settings.yaml's `buy_heuristic`.
 ///
@@ -470,19 +470,19 @@ fn backtest_edge_holds() {
         // (SHIP RULE v2) the metric the screen footer actually quotes. The lane edge above grades the
         // top-HALF against the bottom-HALF, which can stay healthy while the small book a reader buys
         // goes backwards — that gap is exactly why the rule moved. Row format:
-        //   top-3  book +13.7%/yr  vs S&P500 +7.2%/yr  ->  excess +6.5 (med +6.6) pts/yr  win 97% of 39 …
-        // TOP3_ROW carries a TRAILING SPACE (`"top-3 "`) and is matched with starts_with after
-        // trimming, so "top-30"/"top-35" can never match it. Do not "tidy" that space away.
-        let t3 = growth.lines().find(|l| l.trim_start().starts_with(markers::TOP3_ROW)).and_then(|l| num_after(l, markers::EXCESS));
+        //   top-10  book +13.7%/yr  vs S&P500 +7.2%/yr  ->  excess +6.5 (med +6.6) pts/yr  win 97% of 39 …
+        // VERDICT_ROW carries a TRAILING SPACE (`"top-10 "`) and is matched with starts_with after
+        // trimming, so "top-100" can never match it. Do not "tidy" that space away.
+        let t3 = growth.lines().find(|l| l.trim_start().starts_with(markers::VERDICT_ROW)).and_then(|l| num_after(l, markers::EXCESS));
         match t3 {
             Some(x) => {
                 assert!(
                     x > 0.0,
-                    "{years}y: the TOP-3 held book went NEGATIVE vs the index ({x:+.1} pts/yr) — SHIP RULE v2 \
+                    "{years}y: the TOP-10 held book went NEGATIVE vs the index ({x:+.1} pts/yr) — SHIP RULE v2 \
                      grades this basket and the screen footer quotes it, so this is a real collapse, not a lane \
                      statistic. Lane edge was still {edge:+.1}, which is why edge alone is not enough."
                 );
-                eprintln!("backtest-gate {years}y OK — GROWTH edge {edge:+.1} pts, top-3 excess {x:+.1} pts/yr");
+                eprintln!("backtest-gate {years}y OK — GROWTH edge {edge:+.1} pts, top-10 excess {x:+.1} pts/yr");
             }
             // A run CAN complete the GROWTH lane and print no held-book block — too few gated picks
             // with a ^GSPC window. That is exactly what the health gate above now filters out, and it
@@ -492,11 +492,11 @@ fn backtest_edge_holds() {
             // `tests/backtest_fixture.rs` pins this string offline so a rename reds there first; this
             // is the backstop for the case that pin is bypassed.
             None if forced => panic!(
-                "{years}y: GROWTH completed (edge {edge:+.1}) but NO `top-3 ` held-book row parsed. Under \
-                 FOLIOMAN_BACKTEST_GATE this is a report-format regression, not a thin sample: the top-3 \
+                "{years}y: GROWTH completed (edge {edge:+.1}) but NO `top-10 ` held-book row parsed. Under \
+                 FOLIOMAN_BACKTEST_GATE this is a report-format regression, not a thin sample: the top-10 \
                  excess assert — the metric SHIP RULE v2 grades and the screen footer quotes — was skipped"
             ),
-            None => eprintln!("backtest-gate {years}y OK — GROWTH edge {edge:+.1} pts (no top-3 held-book row parsed)"),
+            None => eprintln!("backtest-gate {years}y OK — GROWTH edge {edge:+.1} pts (no top-10 held-book row parsed)"),
         }
         // (#57) null model: the shipped tuning vs the SAME code with the tuning off. Assertable where
         // the raw edge is not — both arms score the same samples over the same window, so market drift
@@ -526,7 +526,7 @@ fn backtest_edge_holds() {
                 );
                 eprintln!("backtest-gate {years}y OOS early {early:+.2} / late {late:+.2}");
             }
-            // same reasoning as the top-3 arm: the split is unconditional once >=4 windows scored, so
+            // same reasoning as the top-10 arm: the split is unconditional once >=4 windows scored, so
             // in CI a missing rho is a renamed line disarming the generalization check, not thin data.
             _ if forced => panic!(
                 "{years}y: GROWTH completed but printed no `early rho`/`late rho` — the out-of-sample check was skipped"
@@ -554,7 +554,7 @@ fn backtest_edge_holds() {
         true
     }
 
-    // (SHIP RULE v2, 2026-08-06) ONE horizon is no longer enough. The rule grades top-3 at 20y AND 8y
+    // (SHIP RULE v2, 2026-08-06) ONE horizon is no longer enough. The rule grades top-10 at 20y AND 8y
     // with 12y as the consistency read, so a gate that only ever ran 12y was guarding a lane the rule
     // does not vote on. 20 leads: hardest lane, and the horizon the screen footer quotes.
     //
@@ -578,6 +578,6 @@ fn backtest_edge_holds() {
         );
         eprintln!("backtest-gate SKIPPED — every horizon skipped (throttle/cold cache); NOTHING was gated this run");
     } else {
-        eprintln!("backtest-gate DONE — {graded}/3 horizons graded on SHIP RULE v2 (lane edge + top-3 held book + OOS)");
+        eprintln!("backtest-gate DONE — {graded}/3 horizons graded on SHIP RULE v2 (lane edge + top-10 held book + OOS)");
     }
 }

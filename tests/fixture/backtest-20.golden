@@ -202,7 +202,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   pullback  (-15 < dd <= -5%)  book +7.2%/yr  excess +1.4  win 100%  worst +1.4  OOS -0.0/+1.4   (windows 1, mean entry dd -13.4%)
   drawdown  (dd <= -15%)       book +7.7%/yr  excess -0.3  win 40%  worst -2.3  OOS +1.1/-1.8   (windows 10, mean entry dd -26.7%)
   all entries                  book +9.9%/yr  excess +3.2  win 67%  worst -2.3  OOS +6.9/-0.2   (windows 21) [unconditional]
-  all entries (top-3)          book +10.0%/yr  excess +3.3  win 67%  worst -2.3  OOS +6.9/-0.1   (windows 21) [unconditional, JOURNALED]
+  all entries (top-10)         book +9.9%/yr  excess +3.2  win 67%  worst -2.3  OOS +6.9/-0.2   (windows 21) [unconditional, JOURNALED]
   (a class with a handful of windows is a regime story, not a statistic. If a state over-delivers, the
    guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)
 

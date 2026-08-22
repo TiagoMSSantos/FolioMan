@@ -62,9 +62,9 @@ Read `docs/heuristic-v2-plan.md` before proposing changes to the buy heuristic.
 7. Secrets stay in env, never in yaml.
 
 ## Ship rule v2 (from tests/ci-settings.yaml — precedence GUARD > PRIMARY > TIE)
-- PRIMARY: top-3 excess (mean AND median) up or held, at 20y AND 8y
+- PRIMARY: top-10 excess (mean AND median) up or held, at 20y AND 8y
 - GUARD:   rank-1 h2h >= 50% at 20y, 12y and 8y
-- GUARD:   top-3 worst window not worse
+- GUARD:   top-10 worst window not worse
 - TIE:     horizons disagree (one up, one down) -> UNRESOLVED -> NO SHIP
 A broken guard REFUSES outright. It is never softened into "unresolved".
 
@@ -102,7 +102,7 @@ When it builds and tests pass, run and report side by side:
   cargo run --release -- backtest 20 universe fund
   cargo run --release -- backtest 20 universe fund pit
   (then the same at 12 and 8)
-Report rho, edge, both OOS halves, top-3 excess mean+median, rank-1 h2h, windows scored, and the
+Report rho, edge, both OOS halves, top-10 excess mean+median, rank-1 h2h, windows scored, and the
 new "membership names Yahoo no longer serves" count.
 
 Expect the edge to FALL, possibly a lot at 12y/8y. That is a successful run, not a regression — the
