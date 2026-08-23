@@ -3316,10 +3316,11 @@ fn lane_split<'a>(picks: Vec<(&'a Quote, f64)>, n: usize, sectors: &[String], tu
     // same contract as the two above: after the score/sector cut, before the table is cut to `n`, so a
     // dropped row refills from below rather than shortening the table. Pinned tickers bypass it.
     //
-    // Nothing else in this tool limits concentration. `growth_corr_cap` ships 0.0 (off) and
-    // `growth_value_floor_pct` ships 0.0 (off), so on the shipped config the ONLY surviving trim here
-    // is the ETF PEG ceiling — the stock table can legitimately be twenty semiconductor names, and the
-    // printed "sector mix" line is an OBSERVATION, not a constraint. This is the constraint.
+    // Nothing else in this tool limits concentration BY SECTOR. `growth_corr_cap` ships 0.0 (off);
+    // (#126) `growth_value_floor_pct` now ships 40.0, so the value brake above IS live on this table —
+    // but it trims by PRICE-FOR-GROWTH, not by sector, and twenty cheap semiconductor names clear it
+    // as easily as twenty dear ones. So the stock table can still legitimately be one sector, the
+    // printed "sector mix" line is still an OBSERVATION, and this is still the only sector constraint.
     //
     // Keeps the FIRST `growth_sector_cap` rows of each sector, which is the highest-scoring ones
     // because the list arrives rank-ordered. A name with no sector is KEPT: unjudgeable is not a

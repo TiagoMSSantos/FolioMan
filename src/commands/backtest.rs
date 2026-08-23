@@ -3011,9 +3011,19 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     // the DECAY ARGUMENT does not survive: it was measured against a basket this repo no longer ships.
     // `growth_value_floor_pct` is therefore RE-GRADEABLE, not re-graded — nobody has run that grid
     // against a top-10 verdict. It is not re-opened here, and it stays at its shipped 0.0 until it is.
-    // Note the same factor is very much alive as a RANK TILT in the same run (peg_yield is the shipped
+    //
+    // (#126) THAT GRID WAS RUN 2026-08-23 AND THE KNOB SHIPS AT 40.0. Twelve runs on the PIT pool,
+    // `backtest {12,8} universe fund pit` x {0,25,40,55,70} plus a 20y {0,70} pair: top-10 excess rises
+    // on BOTH moments at BOTH graded horizons (12y +2.4|+2.5 -> +2.8|+2.8, 8y +3.7|+3.4 -> +4.5|+4.5),
+    // worst window IDENTICAL at every arm, h2h >=50% throughout. The two paragraphs above are kept as
+    // written — they record why the re-grade was owed — but the "stays at its shipped 0.0" clause is
+    // SUPERSEDED. The last sentence below is superseded too: cutting the dear names DOES now pay at the
+    // top of the book, which is exactly what (#120)'s basket move made visible. Full receipt at
+    // `growth_value_floor_pct` in tests/ci-settings.yaml, caveats included — the evidence is thin
+    // (n_eff 1.4 at 12y, 2.6 at 8y) and the receipt says so.
+    // Note the same factor is ALSO alive as a RANK TILT in the same run (peg_yield is the shipped
     // `growth_fund_factor`) — cutting the dear names and ranking by cheapness are different questions,
-    // and only the second one has ever paid at the top of the book.
+    // and as of (#126) both of them pay.
     let has_peg = samples.iter().any(|s| s.fund.as_ref().and_then(|f| f.peg_yield).is_some());
     if has_peg {
         println!("\n── PEG-VALUE-GATE probe: drop the most-expensive-for-growth P% (low peg_yield) gated STOCKS, rank rest by growth_score, top-{n} held {years}y ──");

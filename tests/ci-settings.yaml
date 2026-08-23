@@ -142,6 +142,18 @@
 #   refusal resting on "it only pays at top-10" no longer rests on anything — `growth_value_floor_pct`
 #   (#75) is the one such case in this file, and it is flagged RE-GRADEABLE at its own entry. A
 #   refusal that recorded its arm ordering "at every basket size" (#71) survives the move untouched.
+#   (#126) 2026-08-23 — THAT RE-GRADE IS DONE and `growth_value_floor_pct` now SHIPS 40.0. The basket
+#   move is what made it visible, so (#120) is the reason this knob is on; read the two receipts
+#   together. No other refusal in this file was re-opened by the basket move.
+#
+# PRIMARY AND THE FUNDAMENTAL BLACKOUT — read before grading any knob that reads company financials.
+#   PRIMARY says "20y AND 8y". No 20y cutoff carries a `peg_yield` or any other as-of fundamental:
+#   SEC XBRL starts 2007 and 20y cutoffs end ~2006. (#71) proved it by ablation, (#75) by a 70% cut
+#   that removed ZERO names, and (#126) reproduced it on the PIT pool with control and reject-70
+#   byte-identical on every field. So EVERY fundamental knob discharges the 20y half of PRIMARY
+#   VACUOUSLY and reads "held at 20y" for free. That is not evidence. (#126) is the worked precedent
+#   for what to do about it: substitute 12y for the blind horizon and require the rise at 8y AND 12y,
+#   which is STRICTER than the letter, and state the substitution in the receipt as a deviation.
 #
 #   PRIMARY   top-10 excess (mean AND median) up or held, at 20y AND 8y
 #   GUARD     rank-1 h2h >= 50% at 20y, 12y and 8y   (winner's-curse guard, NOT the judge)
@@ -1604,10 +1616,13 @@ buy_heuristic:
                                  # constraint, and the honest thing to say up front is that the
                                  # backtest CANNOT grade it: see below.
                                  #
-                                 #   THE GAP: nothing in this tool limits sector concentration in the
-                                 #   printed book. `growth_corr_cap` ships 0.0 (off) and
-                                 #   `growth_value_floor_pct` ships 0.0 (off), so the ONLY surviving trim
-                                 #   in `lane_split` is the ETF PEG ceiling. The stock table can
+                                 #   THE GAP: nothing in this tool limits SECTOR concentration in the
+                                 #   printed book. `growth_corr_cap` ships 0.0 (off); (#126) turned
+                                 #   `growth_value_floor_pct` on at 40.0, but that brake cuts by
+                                 #   price-for-growth, not by sector, and a cheap semiconductor name
+                                 #   clears it as easily as a dear one — so the gap below is unchanged
+                                 #   and only the "ONLY surviving trim" wording needed fixing. The
+                                 #   other surviving trim in `lane_split` is the ETF PEG ceiling. The stock table can
                                  #   legitimately be twenty semiconductor names, and the printed "sector
                                  #   mix" line is an OBSERVATION, not a constraint. Combined with
                                  #   `config::Sizing`'s risk budget — the one documented exception to the
@@ -4076,8 +4091,56 @@ buy_heuristic:
   #   refusal it touched. It SHIPS 0.0 (unchanged) until that grid is run under Ship Rule v2.
   #   The (#71) receipt is the contrast worth noting: it recorded its arm ordering "at every basket
   #   size", so it survives the move untouched. Receipts that name the basket age better.
-  growth_value_floor_pct: 0.0
-  growth_value_weight: 0.0       # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
+  # (#126) RE-GRADED UNDER SHIP RULE v2 ON THE PIT POOL — 2026-08-23 — AND IT SHIPS AT 40.0.
+  #   (#75) refused this knob 2026-08-12 on a top-3 basket. Half that refusal was that the lift lived
+  #   at top-10 while the verdict graded top-3; (#120) moved the graded basket to top-10 on 2026-08-22
+  #   and backtest.rs marked the knob RE-GRADEABLE in those words. This is that re-grade. It is ALSO a
+  #   fresh grid, not a comparison against (#75)'s numbers: that round was PRE-PIT, this one is on the
+  #   point-in-time pool, so the absolute levels are lower throughout and only the DELTAS transfer.
+  #   METHOD. 12 runs, `backtest {12,8} universe fund pit` x {0,25,40,55,70} plus a 20y {0,70} pair.
+  #   One field moved per arm, self-verified by the off-validation warning naming exactly five knobs
+  #   (this one + the four display-only diagnostics). Data conditions identical inside every horizon:
+  #   cutoffs with a forward window 8350/16804/2296, growth-scored stock 228/318/117. The TICKER count
+  #   drifted 5745->5749 across runs as the ETF fetch picked up a few ISINs; the growth-scored counts
+  #   are identical, so the graded book never saw it. Recorded rather than smoothed over.
+  #   WIRING PROVEN BEFORE GRADING, as (#75) requires of any knob with a probe twin: the graded top-10
+  #   row reproduces the PEG-VALUE-GATE probe's own row TO THE DECIMAL at every shared rung, at BOTH
+  #   horizons (12y 40% -> +2.8, worst -9.5, OOS +2.1/+3.4 on both; 8y 40% -> +4.5, worst -6.2, OOS
+  #   +3.5/+5.4 on both). Probe and knob are measuring one thing, so the grid below is about the knob.
+  #   THE GRID, top-10 excess mean|med (the basket Ship Rule v2 now grades):
+  #     horizon   off        25         40         55         70        worst (all arms)
+  #      12y     +2.4|+2.5  +2.6|+2.7  +2.8|+2.8  +2.6|+2.9  +2.5|+2.7   -9.5 identical
+  #       8y     +3.7|+3.4  +4.0|+4.0  +4.5|+4.5  +4.2|+4.7  +4.2|+4.8   -6.2 identical
+  #      20y     +0.8|+0.9      -          -          -      +0.8|+0.9  -10.0 identical
+  #   VERDICT. 40 RISES on BOTH moments at BOTH graded horizons (12y +0.4|+0.3, 8y +0.8|+1.1), which is
+  #   what the ADDITION bar wants off a 0.0 default. Guards passed and did NOT decide it: the worst
+  #   window is IDENTICAL at every arm and horizon, and rank-1 h2h is >=50% everywhere. 40 is the
+  #   mean-argmax at both horizons AND interior to the ladder, with decay on both sides — a plateau
+  #   peak, not a grid-edge artifact. Every rung 25..70 also clears the primary; 40 is the best of them
+  #   on the mean at both horizons, which is why it and not a wider cut is the shipped value.
+  #   THE 20y DEVIATION, STATED PLAINLY BECAUSE IT IS A DEVIATION. PRIMARY as written reads "20y AND
+  #   8y". This knob CANNOT be judged at 20y: control and reject-70 came back byte-identical on every
+  #   field (+0.8|+0.9, win 55% of 20, worst -10.0, OOS -1.6/+3.2, h2h 1/2) because no 20y cutoff
+  #   carries a peg_yield — SEC XBRL starts 2007, 20y cutoffs end ~2006. A 70% cut that removes ZERO
+  #   names is the strongest available statement of that blackout, and it reproduces (#75)'s finding on
+  #   a different pool. (#71) warns in writing that such an arm reads "held at 20y" for free and that
+  #   this must not be mistaken for evidence. SO THIS ROUND SUBSTITUTED 12y FOR THE BLIND HORIZON and
+  #   required the rise at 8y AND 12y — STRICTER than the letter, not looser. NOTE THE LITERAL RULE
+  #   REACHES THE SAME VERDICT (20y vacuously held, 8y rises), so the deviation did not buy the ship.
+  #   WHAT WOULD MAKE THIS WRONG, recorded because the evidence is THIN and saying so is the receipt:
+  #   (a) n_eff is 1.4 at 12y (34 windows) and 2.6 at 8y (42) — one to three independent trials, not
+  #   thirty-four. (b) The rank-1 h2h DENOMINATOR is tiny and SHRINKS as the brake tightens (8y 9->8->
+  #   6->4->4 windows, 12y 4 throughout), exactly the cost (#75) flagged; that guard passed on almost
+  #   nothing and should not be cited as support. (c) The MEDIAN at 8y keeps climbing past 40 to +4.8
+  #   at the 70 rung while the mean turns over at 40 — that is the "buy the cheapest, not a brake" tell
+  #   the 70 rung exists to catch, and it half-fired. It does NOT fire at 12y, where the median peaks
+  #   at 55 and falls at 70, which is why 40 ships and 70 does not. Re-read this before widening the
+  #   cut. (d) Eight arm-horizon cells from ONE grid, no multiple-testing haircut applied.
+  #   REVERT RULE: set back to 0.0 on any future `universe fund pit` run where top-10 excess at 40 fails
+  #   to beat off on BOTH moments at 8y AND 12y, or where the worst window at 40 comes in deeper than
+  #   off at either. A single horizon regressing is a re-open, not a revert.
+  growth_value_floor_pct: 40.0
+  growth_value_weight: 0.0     # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
   # (#50) WHAT THIS 0.0 COSTS DOWNSTREAM, recorded 2026-08-06 because no receipt said it: with this
   #   term off, `growth_max_peg` is the GROWTH LANE'S ONLY VALUATION CONTROL. Nothing else in
   #   `score_parts` reads a P/E. That is why the PEG rung has to be chosen on the raw P/E column and
