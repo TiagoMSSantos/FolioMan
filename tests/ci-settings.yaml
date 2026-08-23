@@ -43,6 +43,39 @@
 # and it is the check to repeat, because NOTHING in the test suite pins `ci_base_yaml`'s behaviour.
 #
 # ============================================================================================
+# (#131) THE IN-TREE OVERLAY ARMS ARE GONE (2026-08-23) — WHAT THE CITATIONS BELOW POINT AT
+# ============================================================================================
+# Six `tests/<x>-ci-settings.yaml` overlay arms were deleted as housekeeping. The repo now keeps
+# exactly two settings files: THIS one (the committed base) and the gitignored `config/settings.yaml`.
+# `tests/fixture/config/settings.yaml` also stays and is NOT an exception to that rule — it is not a
+# tuning arm at all. It carries the golden fixture's universe, and its LOCATION is load-bearing:
+# `config::data_path` anchors to that file's GRANDPARENT, which is the only thing making
+# `tests/fixture/` the frozen-cache data root. Delete it and the goldens do not fail, they score a
+# different dataset and print confident wrong numbers.
+#
+# NOTHING BELOW IS RETRACTED. Every receipt citing a deleted arm still stands: the arms were
+# INSTRUMENTS, the measurements they produced are written down in this file, and the file is the
+# record. What is gone is the convenience of re-running one without re-typing it. Each is one
+# `git show <sha>:<path>` away:
+#     tests/diag-ci-settings.yaml      f26f02b  4 display-only knobs, all score-neutral: print_n_eff,
+#                                               print_recall_capture, print_book_deciles,
+#                                               print_base_rates. Cited in the header above and in
+#                                               several receipts below.
+#     tests/gatesoff-ci-settings.yaml  5159105  the (#129) gates-off CEILING arm: 9 binding gates at
+#                                               their own documented off-values (min_range_pct 0;
+#                                               min_cagr / min_1y_pct / min_5y_pct -1e9; max_above_ma
+#                                               / maxdd_cap / max_peg 0; require_peg and
+#                                               require_lifetime_uptrend false) + print_recall_capture.
+#     tests/beta{050,030,015,000}-     2804808  the (#130) beta ladder: ONE knob each,
+#       ci-settings.yaml                        growth_accel_beta at 0.5 / 0.3 / 0.15 / 0.0.
+#
+# RE-CREATING ONE IS THE POINT, NOT THE COST. An arm is 2-10 lines and the merge rules are directly
+# above: carry ONLY the knob under test, let this file supply every other gate, and verify FROM THE
+# RUN that `heuristic_drift()` names exactly your knobs and no others. A stale arm sitting in the tree
+# is the thing worth avoiding — it invites being re-run against a base that has moved underneath it,
+# which is the whole subject of the (#125) correction above.
+#
+# ============================================================================================
 # ETF-CLASSIFICATION RECEIPT (2026-08-02) — READ BEFORE TRUSTING ANY PEER-RELATIVE EDGE BELOW
 # ============================================================================================
 # Every peer-relative edge number written into this file BEFORE this date was measured with ETFs
