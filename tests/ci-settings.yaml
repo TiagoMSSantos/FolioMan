@@ -1658,6 +1658,139 @@ buy_heuristic:
                                  #   NO KNOB WAS CHANGED. Goldens untouched. REVERT RULE: none applies — this receipt records a
                                  #   measurement and a refusal, not a value. Re-running it costs three `universe fund pit` runs with
                                  #   `print_recall_capture` on (tests/diag-ci-settings.yaml).
+                                 #
+                                 # (#129) THE GATES-OFF CEILING — MEASURED 2026-08-23, and it CLOSES the loosen-the-stack family
+                                 # at every arity. Read this before proposing ANY gate loosening; it is the refusal of last resort.
+                                 #
+                                 #   WHAT WAS ASKED. (#127) and (#128) refused every threshold arm they could name and closed with
+                                 #   "threshold tuning is exhausted at every arity", which leaves exactly one question: not WHICH
+                                 #   gate, but whether the gate STACK AS A CONJUNCTION pays for itself at all. Two readings pointed
+                                 #   at "no". The GATE AUDIT (#9) on the PIT pool comes back SPLIT at two of three horizons, and at
+                                 #   20y the ADMITTED cohort averaged 260 points BELOW the pool it rejected. And the one-at-a-time
+                                 #   GATE SWEEP flags `growth_maxdd_cap ->off` and `growth_min_cagr -4` TOO TIGHT at 8y/12y while
+                                 #   both flip hard negative at 20y — the signature of gates cutting a tail.
+                                 #
+                                 #   HOW IT WAS READ, WITHOUT ONE LINE OF RUST. `tests/gatesoff-ci-settings.yaml` turns off every
+                                 #   gate that BINDS in the backtest lane, each via its own documented off-value: range 80->0,
+                                 #   min_cagr 19->-1e9 (this also governs the whole-life leg), min_1y 0->-1e9, min_5y 75->-1e9,
+                                 #   above_ma 150->0, maxdd_cap 84->0, max_peg 1.6->0, require_peg true->false,
+                                 #   require_lifetime_uptrend true->false. DELIBERATELY NOT LOOSENED: `growth_min_leg_years` and
+                                 #   `fixed_cagr_years`, because they feed `long_leg_fixed` and so DEFINE THE CAGR WINDOW THE SCORE
+                                 #   RANKS ON — moving them redefines the score instead of removing a gate, and the arm would stop
+                                 #   being a read on the stack. Already inert here and so left alone: min_avg_turnover_eur and
+                                 #   growth_min_age_years (LIVE-only), max_1m_drop_pct, min_8y/20y_pct, and every fundamentals floor.
+                                 #
+                                 #   THE ARM ARMED. `heuristic_drift()` named EXACTLY ten knobs on all three arm runs and none on the
+                                 #   three control runs, and the admitted count went 117 -> 2084 (20y), 228 -> 6035 (12y),
+                                 #   325 -> 11998 (8y).
+                                 #
+                                 #   THE GATE AUDIT (#9), BANKED — three horizons on the PIT pool, never written down before. This is
+                                 #   the control arm, i.e. the SHIPPED gates:
+                                 #     20y  accepted n=117  mean -246.4 med -391.2 | rejected n=2179  mean +13.2 med -408.3
+                                 #                                                 | gap mean -259.7 med  +17.0  SPLIT
+                                 #     12y  accepted n=228  mean  +17.0 med  -75.6 | rejected n=8122  mean  -0.5 med  -68.6
+                                 #                                                 | gap mean  +17.5 med   -7.0  SPLIT
+                                 #      8y  accepted n=325  mean  +48.7 med   -5.8 | rejected n=16480 mean  -1.0 med  -20.8
+                                 #                                                 | gap mean  +49.7 med  +15.0  gates SELECT winners
+                                 #   Two of three horizons SPLIT. That is what motivated the arm, and the arm explains it — see the
+                                 #   MECHANISM paragraph, which is the reason a name-level peer-relative gap does not become a
+                                 #   portfolio win.
+                                 #
+                                 #   PRIMARY PASSED AT ALL THREE HORIZONS, AND IT DOES NOT MATTER. top-10 book, excess mean|med
+                                 #   pts/yr, and the worst-window guard:
+                                 #     20y  control +0.8|+0.9  worst -10.0   ->   arm +2.7|+2.2  worst  -3.3
+                                 #     12y  control +2.8|+2.8  worst  -9.5   ->   arm +4.1|+3.8  worst  -2.3
+                                 #      8y  control +4.5|+4.5  worst  -6.2   ->   arm +5.0|+4.7  worst  -1.7
+                                 #   Both PRIMARY clauses up at 20y AND 8y, and the worst-window GUARD improves at every horizon.
+                                 #   This is precisely the trap the `growth_min_leg_years` receipt names in capitals: "THE TOP-10
+                                 #   COLUMN IS THE TRAP: it RISES at every horizon, and that is the dilution signature, not a win...
+                                 #   Grade rank-1 and h2h, not top-10." Ship Rule v2 encodes that as a GUARD for this exact reason.
+                                 #
+                                 #   THE RANK-1 H2H GUARD BREAKS AT ALL THREE HORIZONS -> REFUSE OUTRIGHT (GUARD > PRIMARY):
+                                 #     20y  control #1 beat the 11-20 book 1/2 (50%)  ->  arm  7/20 (35%)
+                                 #     12y  control                        2/4 (50%)  ->  arm 16/36 (44%)
+                                 #      8y  control                        4/6 (67%)  ->  arm 18/44 (41%)
+                                 #   READ THE DENOMINATORS — they cut the other way this time. The CONTROL h2h rests on 2, 4 and 6
+                                 #   windows, barely a statistic, because a gated lane seldom admits 20 names in one window and so
+                                 #   seldom has an 11-20 book to compare against. The ARM's 20/36/44 are the first genuinely readable
+                                 #   rank-1 h2h numbers this lane has ever produced, and they say the top of the list loses to its own
+                                 #   middle roughly six times out of ten.
+                                 #
+                                 #   THE MECHANISM, AND IT IS THE ROUND'S REAL FINDING. On the widened pool the score does not merely
+                                 #   stop helping, it INVERTS. Disjoint rank slices, ARM, excess mean|med pts/yr:
+                                 #     20y  rank 1 -0.3|+0.1   2-5 +2.0|+1.4   6-10 +1.2|+1.1   11-20 +1.4|+1.1   21-50 +2.4|+2.0
+                                 #     12y  rank 1 +1.5|-0.3   2-5 +3.5|+3.3   6-10 +2.7|+3.1   11-20 +4.1|+2.9   21-50 +3.0|+2.4
+                                 #      8y  rank 1 +2.9|+1.8   2-5 +4.3|+3.7   6-10 +4.2|+3.8   11-20 +3.6|+2.8   21-50 +2.6|+2.4
+                                 #   Rank 1 is the WORST slice at every horizon. In the CONTROL at 8y it is the BEST (+4.6|+6.2 against
+                                 #   2-5 at +3.8|+4.7). A second and independent instrument reads the same thing —
+                                 #   Spearman(growth_score, peer-relative) on the GROWTH lane:
+                                 #     20y  control -0.08 (n=117)  ->  arm -0.09 (n=2084)
+                                 #     12y  control +0.10 (n=228)  ->  arm -0.03 (n=6035)    sign flip
+                                 #      8y  control +0.25 (n=325)  ->  arm +0.03 (n=11998)   ~88% of the ranking power gone
+                                 #   THE GATES ARE NOT A FILTER IN FRONT OF THE SCORE. THEY ARE THE PRECONDITION FOR THE SCORE TO RANK
+                                 #   AT ALL. That also explains (#128)'s central puzzle — why the missed winners fail three to five
+                                 #   gates at once: on names that fail gates the score carries no usable order, so admitting them
+                                 #   cannot help. It destroys the ordering the top-10 book is built on.
+                                 #
+                                 #   ONE CAVEAT ON THE PRIMARY COLUMN, recorded because it weakens a clause that already lost: the arm
+                                 #   is graded on MORE windows than the control (21 vs 20, 37 vs 34, 45 vs 42), and the extra windows
+                                 #   are ones the control could not score at all for want of admitted names. The two columns are
+                                 #   therefore not the same window set. Moot under GUARD precedence — but do not quote the PRIMARY
+                                 #   delta as a clean comparison.
+                                 #
+                                 #   VERDICT: CLOSED, per the stop rule fixed in writing before any run. The rank-1 h2h GUARD is broken
+                                 #   at 20y, 12y AND 8y, and a broken guard REFUSES OUTRIGHT — it is never softened into UNRESOLVED.
+                                 #   The loosen-the-stack family is now finished at every arity: one gate ((#127)), exactly two
+                                 #   ((#128)), and the whole conjunction (here). NO LATER ROUND MAY PROPOSE A GATE LOOSENING WITHOUT
+                                 #   CITING THIS RUN.
+                                 #
+                                 #   AND IT REFUSES THE KNOB IT WAS RUN TO JUSTIFY. This ceiling existed to decide whether
+                                 #   `growth_max_gate_failures` (0 = today's conjunction, k = admit up to k gate failures) was worth
+                                 #   building across the ~25 `return None` sites in `picks::score_parts`. It is NOT. Every k>0 admits
+                                 #   names the score ranks backwards, and the ceiling reading is what k would be climbing toward. Do
+                                 #   not build it.
+                                 #
+                                 #   THE TIE-BACK, AND IT INVERTS (#127)'s HEADLINE. `print_recall_capture` was on in the arm, so the
+                                 #   same missed-winner instrument (#127)/(#128) built reports on the UNGATED pool. Capture of the
+                                 #   pool's extreme winners rose exactly as loosening should make it rise — GROWTH lane, top 1%:
+                                 #     20y  recall 14% capture 12%    12y  recall 16% capture 11%    8y  recall 12% capture 15%
+                                 #   against 0% / 2% / 4% for the gated control that (#128) recorded. So the gates WERE excluding real
+                                 #   winners and turning them off DID admit them. The book still refused. Capture went up; the
+                                 #   portfolio did not.
+                                 #   And then the blame column re-files completely. On the ungated pool the first-failure table reads,
+                                 #   at every horizon and both cuts:
+                                 #     20y top 1%   out-ranked 87.1%   history 12.9%     20y >=10x   out-ranked 89.9%   history 10.1%
+                                 #     12y top 1%   out-ranked 99.2%   history  0.8%     12y >=10x   out-ranked 95.2%   history  4.4%
+                                 #      8y top 1%   out-ranked 87.6%   history  9.7%      8y >=10x   out-ranked 88.0%   history  9.7%
+                                 #   `out-ranked` was 0.2% / 0.0% / 1.5% in the gated control, and (#127) cited exactly those three
+                                 #   numbers to declare SELECTION DEAD. That verdict was true only INSIDE the gated pool. Remove the
+                                 #   gates and essentially ALL of the missed wealth re-files as out-ranked: the winners are in the
+                                 #   pool, the score is looking straight at them, and it does not put them in the top ten. THE GATES
+                                 #   WERE HIDING THE SELECTION PROBLEM, NOT CAUSING IT. Do not cite (#127)'s `out-ranked` row to refuse
+                                 #   a selection proposal without also citing this paragraph.
+                                 #   Two more things the same block says, both worth having in writing. Even with EVERY gate off the
+                                 #   lane still misses 83-90% of the extreme winners' wealth, so gating was never the main reason
+                                 #   winners were missed. And at 20y the binary's own null-model line flags the arm outright:
+                                 #   `vs null model (tuning off): rho -0.13  edge +8.0 pts  ->  tuning adds -311.2 pts  <- the tuning
+                                 #   is NOT EARNING ITS KEEP`.
+                                 #
+                                 #   WHAT THIS LEAVES, AND IT IS NOT WHAT (#128) EXPECTED. (#128) named two surviving levers, DATA
+                                 #   COVERAGE and POOL SIZE, on the assumption that admission was the binding constraint. Pool size is
+                                 #   now measured and small — see the (#129) correction on (#100 / finding C10) below. Data coverage
+                                 #   (`history`) survives and is real: it is the ONLY named blocker left standing on the ungated pool
+                                 #   (0.8-12.9%), and no threshold moves it — it is names without enough record to score.
+                                 #   But the lever this round actually uncovers is THE SCORE. Three instruments now say the same thing
+                                 #   from three directions: the rank slices invert (rank 1 worst at every horizon), Spearman collapses
+                                 #   (+0.25 -> +0.03 at 8y, +0.10 -> -0.03 at 12y), and 87-99% of the ungated missed wealth files under
+                                 #   `out-ranked`. Note also that Spearman is -0.08 on the GATED pool at 20y: the ranking has never
+                                 #   worked at the king horizon, gates or no gates, and no gate change was ever going to fix that.
+                                 #   A round on the score is the next honest move, and it must be graded on rank-1 and h2h — this run
+                                 #   is the standing proof that the top-10 column will happily rise while the ordering rots underneath.
+                                 #
+                                 #   NO KNOB WAS CHANGED. No Rust was touched at all, so the goldens cannot have moved. REVERT RULE:
+                                 #   none applies — this receipt records a measurement and a refusal, not a value. Re-run: six
+                                 #   `backtest {20,12,8} universe fund pit`, control on this file, arm on
+                                 #   `tests/gatesoff-ci-settings.yaml`, which is kept in-tree for exactly that purpose.
   journal_core_list: false       # (#103 / finding C9) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
@@ -6405,6 +6538,34 @@ urls:
   #   WHY IT MATTERS NOW: (#128) retired threshold tuning at every arity (one gate <=16.2% of the
   #   missed wealth, exactly two <=13.6%, near-miss share ~0), which leaves POOL SIZE as one of the
   #   two remaining levers on growth admission. This is the thing standing in front of it.
+  # (#129) TWO CORRECTIONS TO THE PARAGRAPH ABOVE, 2026-08-23. The BLOCK STANDS; its framing does not.
+  # (1) THE SECOND MEMBERSHIP SOURCE DOES NOT EXIST FOR FREE — the block is on DATA, not on effort, and
+  # (#128) left that ambiguous. The CODE side is small and was checked: `core::sp500_spans` is already
+  # an index-agnostic `ticker,start_date,end_date` parser despite the name, and `Urls.sp500_history` is
+  # a single String where `constituents_csv` is already a Vec — so a second source is a Vec, a map
+  # merge, and `pit_pool` unchanged. The SOURCE is what is missing. fja05680/sp500, the repo
+  # `default_sp500_history` points at, publishes the S&P 500 alone. yfiua/index-constituents — the repo
+  # the pond below is fetched from — covers Nasdaq-100/DAX/FTSE/CSI, but its history BEGINS 2023-07 and
+  # is MONTHLY SNAPSHOTS, not spans. Neither can produce a point-in-time twin at 8y, let alone 20y.
+  # RE-FILE from "blocked pending a second membership source" to "blocked pending a source that is not
+  # available free": this needs a paid vendor (CRSP/EODHD-class), not a session of work. Do not open
+  # this again on the assumption that someone simply has not looked.
+  # (2) THE POND ACTUALLY BEING DROPPED TODAY IS 15 NAMES. "One of the two remaining levers on growth
+  # admission" was written without measuring it. Measured 2026-08-23 against `.sp500_history.json`
+  # (1206 spans) and both configured pond CSVs:
+  #       sp500_csv pond                                503
+  #       constituents_csv pond (nasdaq100)             101
+  #       nasdaq100 names not already in sp500_csv       14
+  #       names `pit_pool` actually drops           15 of 517   = 2.9% of the live pond, ~1% of the PIT pool
+  #       of those, carrying >=20y of price history        6   ALNY ASML INSM MSTR TRI VMRK
+  #       >=12y / >=8y                                  9 / 12
+  # So POOL SIZE, as this repo is configured today, is a SIX-NAME lever at 20y — the same order as the
+  # `out-ranked` column (0.2%/0.0%/1.5%) that (#127) used to declare selection dead. Treat it as
+  # measured and immaterial, not as a lever awaiting a session.
+  # THIS DOES NOT RETIRE THE C10 RE-RUN, and the distinction matters: C10 is about MidCap 400 / FTSE /
+  # DAX ponds, which share almost nothing with the S&P 500 spans and would be dropped very nearly
+  # ENTIRELY under `pit`. The 15 measures the nasdaq100 pond that is configured now. Two different
+  # claims — never cite the 15 for the other ponds.
   constituents_csv:
     - "https://yfiua.github.io/index-constituents/constituents-nasdaq100.csv"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
