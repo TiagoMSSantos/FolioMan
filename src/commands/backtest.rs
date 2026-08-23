@@ -3849,6 +3849,138 @@ fn recall_capture(
     (w_n > 0 && w_mult > 0.0).then(|| (hit_n as f64 / w_n as f64, hit_mult / w_mult, w_n))
 }
 
+/// One attribution row. A STRUCT and not the 5-tuple this started as, for a mutation-gate reason
+/// worth writing down: `--in-diff` grades a changed function's WHOLE return-replacement set, and
+/// cargo-mutants enumerates a tuple field by field — every combination of `""`, `0`/`1` and
+/// `0.0`/`1.0`/`-1.0`. The tuple spelling made this one function 223 return mutants against 13 here,
+/// and CI's budget is 6, so the gate would have sampled ~1 in 79 of them and called that covered.
+#[derive(Debug, Default)]
+struct MissRow {
+    reason: &'static str,
+    winners: usize,
+    /// Σ multiple of the winners filed under `reason` — the missed WEALTH, which is the number that
+    /// matters: a 30-bagger and a 3-bagger are not the same miss.
+    mult: f64,
+    /// Winners failing EXACTLY this one gate. The only cohort a single-knob loosening can buy back,
+    /// so Σ `sole_mult` over the table is the hard ceiling on what moving any one knob can recover.
+    /// `unassessable` and `out-ranked` have no gate list, so their sole columns are structurally 0.
+    sole: usize,
+    sole_mult: f64,
+}
+
+/// (#127) WHY the misses were missed — the attribution `recall_capture` above cannot make.
+///
+/// `recall_capture` counts what the lane failed to hold; it never says whether a missed 20-bagger was
+/// GATED OUT, was never scorable to begin with, or was admitted and simply out-ranked. Those three
+/// have nothing in common as fixes: the first is a threshold, the second is DATA COVERAGE, and only
+/// the third is something a scoring weight can touch. Sweeping a knob without that distinction is how
+/// `(#60)` and `(#74)` each spent a round on a gate that was never the binding constraint.
+///
+/// The measurement this exists to serve: the graded basket does not bind. top-20 and top-50 return a
+/// byte-identical book at all three horizons because the gates admit ~6 names per window, so the
+/// ranking is choosing ~6 candidates for 10 slots while the lane captures 2-4% of the pool's extreme
+/// wealth. `out-ranked`'s share is the direct test of that claim: small = selection genuinely cannot
+/// move this book, and every future weight proposal has one number to answer.
+///
+/// Same winner definition, same buckets and the same `n` as `recall_capture` — deliberately, so the
+/// two reconcile: the returned counts sum to `w_n − hit_n` and the returned multiples to
+/// `w_mult − hit_mult`. The caller prints that tie-back. If it does not hold, the two instruments
+/// disagree about the winner set and neither number means anything.
+///
+/// GROWTH LANE ONLY, enforced by the caller. `picks::gate_failures` reports the GROWTH gates and
+/// `gate_failures_agrees_with_the_scorer` pins it to the scorer itself, so "blocked by X" here is the
+/// same X the lane actually applied — but running it beside `buy_score` would blame one lane's misses
+/// on another lane's gates.
+///
+/// THE FIRST FAILURE IS NOT NECESSARILY THE ONLY ONE, and reading this table without that in mind
+/// inverts its meaning. A winner that fails `range`, `cagr` and `1Y+` is filed under `range` because
+/// that is first in gate order — so a large `range` share does NOT imply that loosening `range` would
+/// admit those names. The sweep proves the gap: `growth_min_range_pct -10` admits n=1 at every
+/// horizon while `range` takes the blame for half the missed wealth. Hence the SOLE-BLOCKER columns:
+/// only a winner failing EXACTLY ONE gate can be bought back by moving that one knob, and the sole
+/// count is therefore the honest ceiling on what any single-knob loosening can recover. `unassessable`
+/// and `out-ranked` have no gate list at all, so their sole columns are structurally zero.
+///
+/// Returns (rows sorted by missed wealth desc, `w_n`, `w_mult`).
+/// MEASUREMENT ONLY — nothing here reaches a score, a gate or the journal.
+fn missed_winner_reasons(
+    samples: &[Sample],
+    scored: &[(&Sample, f64)],
+    tuning: &BuyHeuristic,
+    n: usize,
+    top_frac: f64,
+    min_multiple: f64,
+) -> Option<(Vec<MissRow>, usize, f64)> {
+    let mut pool: BTreeMap<i32, Vec<&Sample>> = BTreeMap::new();
+    for s in samples {
+        pool.entry(bucket(s.date)).or_default().push(s);
+    }
+    let mut picked: BTreeMap<i32, Vec<(&str, f64)>> = BTreeMap::new();
+    for (s, v) in scored {
+        picked.entry(bucket(s.date)).or_default().push((s.quote.ticker.as_str(), *v));
+    }
+    let (mut w_n, mut w_mult) = (0usize, 0.0f64);
+    let mut tally: HashMap<&'static str, (usize, f64, usize, f64)> = HashMap::new();
+    for (b, mut rows) in pool {
+        if rows.len() < 2 {
+            continue; // same skip as `recall_capture`, or the two stop counting the same winners
+        }
+        rows.sort_by(|a, z| z.realized.total_cmp(&a.realized));
+        let k = ((rows.len() as f64 * top_frac).round() as usize).clamp(1, rows.len());
+        let held: HashSet<&str> = picked
+            .get(&b)
+            .map(|p| {
+                let mut p = p.clone();
+                p.sort_by(|a, z| z.1.total_cmp(&a.1));
+                p.iter().take(n).map(|(t, _)| *t).collect()
+            })
+            .unwrap_or_default();
+        for s in rows.iter().take(k) {
+            let mult = (1.0 + s.realized / 100.0).max(0.0);
+            if mult < min_multiple {
+                continue;
+            }
+            w_n += 1;
+            w_mult += mult;
+            if held.contains(s.quote.ticker.as_str()) {
+                continue; // held, so not a miss: there is nothing to attribute
+            }
+            // `None` = not assessable as a growth candidate at all (leveraged / stablecoin / unknown
+            // turnover / no 1Y). Empty = cleared every gate and the ranking still left it out.
+            // Otherwise the FIRST failure in gate order is the one that blocked it.
+            let fails = picks::gate_failures(&s.quote, tuning);
+            let reason = match &fails {
+                None => "unassessable",
+                Some(v) => v.first().map_or("out-ranked", |f| f.0),
+            };
+            // SOLE blocker = this winner fails exactly one gate, so moving that one knob is the only
+            // case where a single-knob loosening could actually buy it back.
+            let sole = fails.as_ref().is_some_and(|v| v.len() == 1);
+            let e = tally.entry(reason).or_insert((0, 0.0, 0, 0.0));
+            e.0 += 1;
+            e.1 += mult;
+            if sole {
+                e.2 += 1;
+                e.3 += mult;
+            }
+        }
+    }
+    let mut rows: Vec<MissRow> = tally
+        .into_iter()
+        .map(|(reason, (winners, mult, sole, sole_mult))| MissRow { reason, winners, mult, sole, sole_mult })
+        .collect();
+    // By missed WEALTH, not by count — the whole point of capture is that a 30-bagger and a 3-bagger
+    // are not the same miss. Name tiebreak because `HashMap` order is unspecified and this table has
+    // to read identically at any thread count.
+    rows.sort_by(|a, z| z.mult.total_cmp(&a.mult).then(a.reason.cmp(z.reason)));
+    // `rows.is_empty()` is the "every winner was held" case, and it returns None for the same reason
+    // the other two do: the caller divides by `w_mult` and by Σ`mult`, so an empty table would print
+    // a NaN. Deciding it HERE and not at the print site is deliberate — the print site sits inside
+    // `if tuning.print_recall_capture`, which ships false, so no golden ever executes it and any
+    // branch left there is unkillable by the mutation gate. Guards belong where a test can reach them.
+    (w_n > 0 && w_mult > 0.0 && !rows.is_empty()).then_some((rows, w_n, w_mult))
+}
+
 /// (#9) Do the hard growth GATES actually select winners? Every rho/edge the lanes print is computed
 /// over GATED-IN names only (`report_lane` drops the `None`s), so a gate that quietly discards future
 /// winners is invisible. This partitions the FULL de-meaned sample by whether `scorer` admits it
@@ -4175,6 +4307,47 @@ fn report_lane(
                     ),
                     None => println!("    {label:<13} vs {cut:<7} winners: none in the pool at this horizon"),
                 }
+            }
+        }
+        // (#127) …and WHY each miss was missed. OUTSIDE the loop above on purpose: that loop shadows
+        // `label` with "held book", so the lane guard has to read the lane's own label from here.
+        // GROWTH only — `gate_failures` reports the GROWTH gates, so running this beside `buy_score`
+        // would blame one lane's misses on the other lane's gates.
+        if label.starts_with("GROWTH") {
+            for (frac, floor, cut) in [(0.01, 0.0, "top 1%"), (1.0, 10.0, "≥10×")] {
+                let Some((rows, w_n, w_mult)) =
+                    missed_winner_reasons(samples, &scored, tuning, VERDICT_TOP, frac, floor)
+                else {
+                    continue;
+                };
+                let missed_n: usize = rows.iter().map(|r| r.winners).sum();
+                let missed_mult: f64 = rows.iter().map(|r| r.mult).sum();
+                // TIE-BACK, and it is not decoration: this % must equal 100 − the capture printed
+                // above for the same cut (±1 from rounding). If it does not, the two instruments
+                // disagree about the winner set and this whole table is void.
+                println!(
+                    "    why the {cut} misses were missed ({missed_n} of {w_n} winners = {:.0}% of their wealth; capture above is the rest):",
+                    missed_mult / w_mult * 100.0
+                );
+                for r in &rows {
+                    println!(
+                        "      {:<24} {:>4} winners   {:>5.1}% of the missed wealth   sole blocker: {:>4} ({:>4.1}%)",
+                        r.reason,
+                        r.winners,
+                        r.mult / missed_mult * 100.0,
+                        r.sole,
+                        r.sole_mult / missed_mult * 100.0
+                    );
+                }
+                // The ceiling on every single-knob loosening, in one number. `range` can own half the
+                // missed wealth and still be worth almost nothing to move if it is hardly ever the
+                // ONLY thing in the way — which is exactly what `growth_min_range_pct -10` admitting
+                // n=1 on the gate sweep has been saying all along.
+                let sole_mult: f64 = rows.iter().map(|r| r.sole_mult).sum();
+                println!(
+                    "      -> at most {:.1}% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once",
+                    sole_mult / missed_mult * 100.0
+                );
             }
         }
     }
@@ -5251,6 +5424,133 @@ mod tests {
         assert!(recall_capture(&pool[2..], &hold(&["C"]), 1, 1.0, 10.0).is_none());
         // a single-row bucket is skipped: recall over one name is 0 or 1 and means neither.
         assert!(recall_capture(&pool[..1], &hold(&["BIG"]), 1, 1.0, 0.0).is_none());
+    }
+
+    /// (#127) The attribution that turns "the lane missed 96% of the extreme wealth" into something
+    /// actionable. Three buckets, three DIFFERENT fixes — a threshold, data coverage, a scoring
+    /// weight — so mislabelling one sends a whole round at the wrong lever.
+    ///
+    /// Two properties beyond the mapping itself:
+    ///
+    /// ONE: rows rank by missed WEALTH, not by count. The fixture makes those two orders disagree —
+    /// `unassessable` has the most winners and the least wealth — because ranking a skewed miss list
+    /// by headcount is exactly the mistake `capture` exists to prevent.
+    ///
+    /// TWO: the rows reconcile with `recall_capture` EXACTLY, in both count and wealth. The two share
+    /// a winner definition, a bucket skip and an `n`; if either drifts, this assert is what catches it,
+    /// and it is also what kills a `Default::default()` return on the function under test.
+    #[test]
+    fn missed_winners_are_attributed_to_the_constraint_that_actually_blocked_them() {
+        let legs = |pairs: &[(&str, f64)]| -> Vec<Option<(String, f64)>> {
+            crate::core::HORIZONS
+                .iter()
+                .map(|(l, _)| pairs.iter().find(|(pl, _)| pl == l).map(|(_, v)| ("x".to_string(), *v)))
+                .collect()
+        };
+        let t = BuyHeuristic::default();
+        // Each fixture asserts its own `gate_failures` verdict FIRST, so it documents its precondition
+        // instead of silently drifting into a different row when a gate default moves.
+        let unassessable = |tick: &'static str| Quote::stub(tick, "1", "", tick); // no turnover
+        assert!(
+            picks::gate_failures(&unassessable("BARE"), &t).is_none(),
+            "unknown turnover is NOT ASSESSABLE, which is a different answer from being gated out"
+        );
+        let no_history = |tick: &'static str| {
+            let mut q = Quote::stub(tick, "1", "", tick);
+            q.instrument_type = "EQUITY".into();
+            q.avg_turnover_eur = Some(1e9);
+            q
+        };
+        assert_eq!(
+            picks::gate_failures(&no_history("NOHIST"), &t).expect("assessable").first().map(|f| f.0),
+            Some("history"),
+            "a known turnover but no 5Y leg is the `history` cohort"
+        );
+        // `gate_fixture`'s own recipe (picks.rs): near its high, a 24.6%/yr 5Y leg, climbing on the year.
+        let clears = |tick: &'static str| {
+            let mut q = no_history(tick);
+            q.range_pct = 90.0;
+            q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0)]);
+            q
+        };
+        let cf = picks::gate_failures(&clears("CLEAN"), &t);
+        assert!(cf.as_ref().is_some_and(|v| v.is_empty()), "CLEAN must clear every gate, got {cf:?}");
+        // Fails MORE THAN ONE gate: bottom of its own range AND down on the year. Filed under whichever
+        // is first in gate order, but NOT a sole blocker — no single knob buys this name back.
+        let multi = {
+            let mut q = clears("MULTI");
+            q.range_pct = 10.0;
+            q.perf = legs(&[("1M", 2.0), ("1Y", -5.0), ("5Y", 200.0)]);
+            q
+        };
+        let mf = picks::gate_failures(&multi, &t).expect("assessable");
+        assert!(mf.len() >= 2, "MULTI must fail 2+ gates or the sole-blocker column proves nothing: {mf:?}");
+        let multi_reason = mf[0].0;
+
+        // One bucket. Realized % -> multiple: 950->10.5, 900->10.0, 400->5.0, 300->4.0, 100->2.0, …
+        let row = |q: Quote, realized: f64| Sample {
+            date: ymd(2010, 1, 1),
+            realized,
+            relative: 0.0,
+            quote: Arc::new(q),
+            fund: None,
+            trail: Vec::new(),
+        };
+        let pool = vec![
+            row(clears("TOP"), 950.0),      // held -> attributed to nothing
+            row(clears("CLEAN"), 900.0),    // cleared the gates, ranked below n -> out-ranked
+            row(no_history("NOHIST"), 400.0), // fails exactly one gate -> SOLE blocker
+            row(multi, 300.0),                // fails 2+ -> counted, but not sole
+            row(unassessable("BARE"), 100.0),
+            row(unassessable("BARE2"), 10.0),
+            row(unassessable("BARE3"), 5.0),
+        ];
+        // scored = the two that clear the gates, TOP ranked first; n=1 holds TOP alone.
+        let scored: Vec<(&Sample, f64)> = ["TOP", "CLEAN"]
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (pool.iter().find(|s| s.quote.ticker == *n).unwrap(), 100.0 - i as f64))
+            .collect();
+        let (rows, w_n, w_mult) =
+            missed_winner_reasons(&pool, &scored, &t, 1, 1.0, 0.0).expect("seven winners in the pool");
+        assert_eq!(w_n, 7);
+        assert!((w_mult - 33.65).abs() < 1e-9, "Σ multiple over every winner: {w_mult}");
+
+        // THE MAPPING, and the order is by wealth: out-ranked 10.0 > history 5.0 > unassessable 4.15 >
+        // MULTI 4.0 — even though `unassessable` has three winners to every other row's one.
+        let got: Vec<(&str, usize)> = rows.iter().map(|r| (r.reason, r.winners)).collect();
+        assert_eq!(
+            got,
+            vec![("out-ranked", 1), ("history", 1), ("unassessable", 3), (multi_reason, 1)],
+            "{rows:?}"
+        );
+        assert!((rows[0].mult - 10.0).abs() < 1e-9 && (rows[2].mult - 4.15).abs() < 1e-9, "{rows:?}");
+
+        // THE SOLE-BLOCKER COLUMN, which is the whole reason this table can be acted on: only NOHIST
+        // fails exactly one gate. MULTI is counted under the same kind of row but is NOT recoverable by
+        // moving one knob, and `out-ranked`/`unassessable` are structurally zero (no gate failed / not
+        // assessable). Read the first-failure column alone and MULTI's wealth looks reachable; it isn't.
+        let sole: Vec<(usize, f64)> = rows.iter().map(|r| (r.sole, r.sole_mult)).collect();
+        assert_eq!(sole.iter().map(|s| s.0).collect::<Vec<_>>(), vec![0, 1, 0, 0], "{rows:?}");
+        assert!((sole[1].1 - 5.0).abs() < 1e-9 && sole.iter().map(|s| s.1).sum::<f64>() == 5.0, "{rows:?}");
+
+        // THE TIE-BACK to `recall_capture` on the same arguments — both halves, count and wealth.
+        let (recall, capture, rc_w) = recall_capture(&pool, &scored, 1, 1.0, 0.0).unwrap();
+        let (missed_n, missed_mult): (usize, f64) =
+            (rows.iter().map(|r| r.winners).sum(), rows.iter().map(|r| r.mult).sum());
+        assert_eq!((rc_w, missed_n), (w_n, w_n - 1), "one winner was held, six were missed");
+        assert!((recall - 1.0 / 7.0).abs() < 1e-9);
+        assert!(
+            (missed_mult / w_mult - (1.0 - capture)).abs() < 1e-9,
+            "missed wealth {missed_mult} of {w_mult} must be exactly the complement of capture {capture}"
+        );
+
+        // Every winner HELD -> None, not an empty table the caller would divide by. top_frac 0.01
+        // rounds k down to 1, so TOP is the only winner, and n=1 holds it.
+        assert!(missed_winner_reasons(&pool, &scored, &t, 1, 0.01, 0.0).is_none());
+
+        // no winner anywhere -> None, not an empty table that reads like "nothing was missed".
+        assert!(missed_winner_reasons(&pool, &scored, &t, 1, 1.0, 100.0).is_none());
     }
 
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back

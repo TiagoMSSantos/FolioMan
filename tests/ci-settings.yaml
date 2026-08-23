@@ -1477,6 +1477,35 @@ buy_heuristic:
                                  #   for terminal wealth. Nothing here proposes acting on that before it
                                  #   is measured. REVERT: set false; no score, gate or journal reads it.
                                  #
+                                 #   (#127) THIS FLAG NOW PRINTS A SECOND TABLE, 2026-08-23: MISSED-WINNER
+                                 #   ATTRIBUTION, on the GROWTH lane only. Recall/capture count what the
+                                 #   lane missed; they never say WHY, and the three answers need three
+                                 #   different fixes — a gate name (a threshold), `unassessable` or
+                                 #   `history` (DATA COVERAGE, which no knob moves), or `out-ranked` (the
+                                 #   only bucket a scoring weight can touch). "THE RUN THAT SETTLES IT"
+                                 #   above proposes widening five gates one rung each and comparing
+                                 #   capture; the attribution answers the same question in ONE run by
+                                 #   naming the blocking gate directly, and it does it without moving a
+                                 #   gate at all. Reasons come from `picks::gate_failures`, which
+                                 #   `gate_failures_agrees_with_the_scorer` pins to the scorer, so the
+                                 #   named gate is the gate the lane actually applied. GROWTH-only for
+                                 #   that same reason — beside `buy_score` it would blame one lane's
+                                 #   misses on the other lane's gates. Rows rank by missed WEALTH, not
+                                 #   headcount, for the reason capture exists. EACH ROW CARRIES TWO
+                                 #   COUNTS, and reading only the first inverts the table's meaning: a
+                                 #   blocked name usually fails several gates and is attributed to the
+                                 #   FIRST in gate order, so an early gate inherits the blame of every
+                                 #   later one. The SOLE-BLOCKER count is the winners failing EXACTLY one
+                                 #   gate — the only cohort a single-knob loosening can buy back — and the
+                                 #   summary line sums it into a hard ceiling on what any one knob could
+                                 #   ever recover. (#127) is that reading; on the shipped gates the first
+                                 #   column's largest row has a sole-blocker count of ZERO. It reconciles with the
+                                 #   recall line by construction (same winner cut, same buckets, same n)
+                                 #   and PRINTS that tie-back: the missed-wealth % must be the complement
+                                 #   of the capture % on the line above. No new knob was added for it —
+                                 #   this flag already asked the question, and it still ships false, so
+                                 #   the goldens are untouched. Same REVERT: set false.
+                                 #
                                  # (#124) MEASURED 2026-08-23, `universe fund pit` at 20y/12y/8y, held book
                                  # (VERDICT_TOP=10), against the FULL pool including every gate-rejected row:
                                  #             vs top-1% winners          vs >=10x winners
@@ -1498,6 +1527,55 @@ buy_heuristic:
                                  # Nothing here says WHICH gate to loosen (the gate-sweep flags in the same runs
                                  # disagree across horizons), and no gate was changed on the strength of it.
                                  # Knob stays false. REVERT: set false; no score, gate or journal field reads it.
+                                 #
+                                 # (#127) WHY THOSE MISSES WERE MISSED — MEASURED 2026-08-23, same `universe fund pit` runs at
+                                 # 20y/12y/8y, GROWTH lane, held book (VERDICT_TOP=10). (#124) above ends on "Nothing here says
+                                 # WHICH gate to loosen". This is that answer, and it is not the answer the shape of (#124)
+                                 # suggested. Share of MISSED WEALTH by the gate that blocked it, >=10x cut:
+                                 #             20y            12y            8y
+                                 #   range     49.5% (101)    64.0% (113)    37.7% (32)
+                                 #   cagr      36.1% (140)    24.3% ( 71)    32.6% (20)
+                                 #   history    9.3% ( 28)     4.1% ( 19)     8.2% ( 5)
+                                 #   1Y+        2.3% ( 13)     3.7% (  9)     5.1% ( 3)
+                                 #   stretch    0.5% (  5)       -            8.6% ( 4)
+                                 #   maxdd        -            2.2% (  8)     2.9% ( 4)
+                                 #   out-ranked 0.2% (  2)     0.0% (  0)     1.5% ( 2)
+                                 # THE FIRST-FAILURE COLUMN ABOVE IS A TRAP AND THE TABLE PRINTS ITS OWN ANTIDOTE. A blocked name
+                                 # usually fails SEVERAL gates, and this attributes it to the FIRST in gate order — and `range`
+                                 # sits ahead of `cagr`, `1Y+` and `stretch`, so it inherits their blame. The SOLE-BLOCKER column
+                                 # counts only winners failing EXACTLY ONE gate, which is the only cohort a single-knob loosening
+                                 # could ever buy back:
+                                 #   range      SOLE BLOCKER FOR ZERO WINNERS AT EVERY HORIZON AND BOTH CUTS — 0 of 361.
+                                 #   cagr       >=10x: 8 (1.9%) at 20y, 6 (1.2%) at 12y, 0 at 8y. top 1%: 0 / 1 / 1.
+                                 #   history    >=10x: 28 / 19 / 5 (top 1%: 4 / 3 / 13) — 100% sole everywhere, and the one
+                                 #              row no threshold can move.
+                                 #   maxdd      absent at 20y; 12y 8 (>=10x) / 6 (top 1%); 8y 4 / 6 — also 100% sole, and
+                                 #              worth only 2.2-2.9% of the missed wealth either way.
+                                 # CEILING ON ANY SINGLE-KNOB LOOSENING (the table's own summary line), share of missed wealth:
+                                 #   20y 14.9% (>=10x) / 13.4% (top 1%);  12y 10.1% / 5.9%;  8y 16.2% / 16.2%.
+                                 # Subtract `history`, which is DATA COVERAGE and not a threshold, and the THRESHOLD-reachable
+                                 # share is 5.6% / 2.0% at 20y, 6.0% / 5.2% at 12y, 8.0% / 7.6% at 8y. That is an UPPER bound: it
+                                 # assumes the loosening admits the winner and costs nothing, when in practice a wider gate admits
+                                 # losers by the hundred. Everything else fails 2+ gates at once, so it needs a JOINT loosening,
+                                 # which is a different and much more expensive experiment than any rung on this file's ladders.
+                                 # THE STOP RULE WAS PRE-REGISTERED AND IT REFUSED. The rule was: one reason carrying >=40% of
+                                 # missed capture at 8y AND 12y becomes the round's grid target. `range` reads 64.0%/70.6% at 12y
+                                 # but 37.7%/35.4% at 8y, so it FAILED the bar as written — and the sole-blocker column then showed
+                                 # that the 12y number was an artifact of gate ordering, not a lever. NO GRID WAS RUN. Recording
+                                 # that the threshold was missed, rather than relaxing it after seeing the data, is the point.
+                                 # SELECTION IS CONFIRMED DEAD, IN ONE NUMBER. `out-ranked` — cleared every gate, ranking still
+                                 # missed it — is 0.2% / 0.0% / 1.5% of missed wealth. (#124) inferred "ADMISSION, not selection"
+                                 # from book size; this measures it directly. Any future proposal to move `growth_fund_weight`,
+                                 # `quality_weight`, `op_margin` or the tilt weights must clear this line first: on 20y/12y/8y PIT
+                                 # data there is at most ~2% of the extreme wealth for a scoring change to win, and (#71)/(#72)/
+                                 # (#75) each already spent a round finding that out the expensive way.
+                                 # WHAT THIS DOES NOT SAY: it does not say the gates are correct, only that no ONE of them is
+                                 # individually responsible. The largest genuinely single-gate cohort at every horizon is
+                                 # `history` (no 5y+ record), which is a data-coverage ceiling — see `growth_min_leg_years`, which
+                                 # prices it at 1949 of 4748 live EU-buyable names. That is the only rung this table endorses
+                                 # looking at next, and it is a COVERAGE problem, not a threshold to sweep.
+                                 # NO KNOB WAS CHANGED ON THE STRENGTH OF THIS. The instrument is `print_recall_capture`, which
+                                 # still ships false; the goldens are untouched.
   journal_core_list: false       # (#103 / finding C9) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
@@ -5610,6 +5688,36 @@ buy_heuristic:
   # `max_daily_1m`, both built by `core::backtest_quote` from the close series every run already walks,
   # and `growth_gate_reachability_pin` pins them LIVE for stock and ETF (INERT for crypto, by scope).
   # No `fund` lane, no as-of attach — a plain `backtest <h> universe` grades them.
+  #
+  # (#127) "SWEEPABLE ON DAY ONE" IS FALSE FOR BOTH, 2026-08-23. The paragraph above is right that
+  #   neither knob needs the `fund` lane and right that both pin LIVE. It is wrong that a plain
+  #   `backtest <h> universe` GRADES them, and the block contradicts itself: P4a's own paragraph
+  #   below already carries the cadence ceiling that kills it. Two separate structural reasons, both
+  #   read off `core::backtest_quote` rather than measured, because neither needs a run to settle.
+  #
+  #   P4a — `core.rs` fills `max_daily_1m = max_daily_pct(c, (cadence / 12).max(1))`. The 20y/12y/8y
+  #   `universe` lanes walk MONTHLY (`cadence` 12), so that window is ONE BAR and the field stops
+  #   being "the largest single-bar move last month" and becomes "that month's own return". core.rs
+  #   states this in its own comment ("a monthly sweep of it is measuring something else and must not
+  #   be pooled with a daily one"), and the run's caveat block agrees: "vol/MA are monthly-bar
+  #   approximations". A monthly grid of this knob would produce numbers, and they would be numbers
+  #   about a different signal wearing the same field name. THERE IS NO DAILY LANE AT THESE HORIZONS.
+  #
+  #   P4b — `volatility_pct` is passed through `daily_equivalent(v, cadence, rescale)`, and `rescale`
+  #   is `vol_daily_equivalent` (#97), which is UNMEASURED and SHIPS OFF. So on the shipped config a
+  #   monthly run's field is in per-MONTHLY-bar units while the suggested ladder (off/4/3/2.5/2) and
+  #   the LIVE screen are both per-day — a ~√21 mismatch. core.rs already names this exact hazard:
+  #   "every knob that reads this field is an ABSOLUTE threshold in per-bar % units ... and a
+  #   threshold does not care that the ranks held". Fitting the ladder in monthly units instead would
+  #   ship a value that means something else the moment the live daily screen reads it, which is the
+  #   train==serve skew this file spends four other receipts avoiding.
+  #
+  #   STATUS CHANGE: both are BLOCKED, not merely unswept. P4b is blocked ON (#97) — grade that units
+  #   fix first and P4b becomes gradeable behind it. P4a is blocked on there being no daily lane at a
+  #   ship-rule horizon at all, which is not a knob problem and may never be worth fixing.
+  #   DO NOT open either on the strength of the "SWEEPABLE ON DAY ONE" line above; it is superseded.
+  #   The ladders below are left exactly as written — they are still the right ladders IF the lane
+  #   ever exists to run them on.
   #
   # BOTH ARE UNFITTED JUDGEMENT VALUES — specifically, the OFF state. They are NON-CRYPTO on purpose:
   # coins already carry three tail knobs of their own, and a coin's ordinary week clears every rung
