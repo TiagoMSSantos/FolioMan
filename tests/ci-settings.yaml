@@ -15,10 +15,32 @@
 # separate cache. A cold `.long_history_skip.json` makes `screen` fetch the monthly series it would
 # otherwise skip, which moved the universe by 42 names and rewrote most of the gate funnel. `backtest` is
 # immune (measured: same config, both dirs, byte-identical), `screen` is NOT. So: keep every arm at
-# `tests/<something>-ci-settings.yaml` (the `ci-settings.yaml` suffix also makes it self-contained, since
-# `ci_base_yaml` returns an empty base for that name), and bracket the arm with a repeat of the shipped
+# `tests/<something>-ci-settings.yaml`, and bracket the arm with a repeat of the shipped
 # config — consecutive same-config screens still drift by a few names, and that drift is the noise floor
 # any claimed effect has to clear.
+#
+# (#125) CORRECTION 2026-08-23. The clause just deleted from the paragraph above was WRONG, and wrong
+# in the direction that silently produces a wrong measurement rather than an error. It claimed a
+# `tests/<x>-ci-settings.yaml` arm is SELF-CONTAINED, "since `ci_base_yaml` returns an empty base for
+# that name". It does not. `ci_base_yaml` (src/config.rs) tests `overlay.ends_with("ci-settings.yaml")`
+# and Rust's `Path::ends_with` matches WHOLE PATH COMPONENTS, not string suffixes. The last component
+# of `tests/diag-ci-settings.yaml` is `diag-ci-settings.yaml`, which is not the component
+# `ci-settings.yaml` — so the test is FALSE, and this canonical base IS loaded and merged underneath
+# the arm. Only a file literally NAMED `ci-settings.yaml` takes the empty base, which is CI's own
+# `FOLIOMAN_CONFIG=tests/ci-settings.yaml` and precisely the self-merge that guard exists to prevent.
+#
+# WHY THE ERROR IS EXPENSIVE: merging is what an arm WANTS — carry only the knob under test, inherit
+# every other gate from this file. Believing the old sentence, you would either duplicate 5000 lines
+# needlessly, or write a small arm trusting it stood alone. A small arm with a non-empty
+# `buy_heuristic` still PASSES `gates_configured`, so it would not refuse; it would run with every
+# OTHER gate at its CODE DEFAULT and report a plausible-looking table. src/config.rs names that case
+# itself: "not a degraded result, it is a wrong one".
+#
+# HOW TO VERIFY ANY ARM, free and without a test: `heuristic_drift()` prints a startup WARNING listing
+# every `buy_heuristic` knob whose value differs from the validated baseline. It must name EXACTLY the
+# knobs your arm sets — no more. If it names dozens, the base did not merge and the run is void.
+# Measured on tests/diag-ci-settings.yaml: 4 knobs set, 4 knobs named. That check is what settled this,
+# and it is the check to repeat, because NOTHING in the test suite pins `ci_base_yaml`'s behaviour.
 #
 # ============================================================================================
 # ETF-CLASSIFICATION RECEIPT (2026-08-02) — READ BEFORE TRUSTING ANY PEER-RELATIVE EDGE BELOW
@@ -5436,6 +5458,36 @@ buy_heuristic:
   # has to report each rung's REJECTED cohort forward return vs kept peers: a gate that cuts names which
   # then outperform is a bad gate whatever it does to the edge, which is the standard the #24 receipt set.
   # REVERT RULE for all four: they are off; turning one on without a run in this file is the revert.
+  #
+  # (#124) PARTIALLY MEASURED 2026-08-23 — the "NONE MEASURED YET" in the heading above is now stale
+  # for THREE of the four, and still exactly true for the fourth. Read on `universe fund pit` at
+  # 20y/12y/8y (tests/diag-ci-settings.yaml), from the SURVIVAL-GATE probe the report already prints:
+  #
+  #                    reject 0% (off)      reject 10%           reject 25%
+  #   fcf_margin       excess +2.4          +2.4  (null)         +2.2  (WORSE)
+  #   interest_cover   excess +2.4          +2.4  (null)         +2.2  (WORSE)
+  #   net_cash_rev     excess +2.4          +2.4  (null)         +2.3  (WORSE)
+  #   margin_stability excess +2.4          +2.4  (null)         +2.2  (WORSE)   [not a P1 knob]
+  #                                          (12y; `worst` and OOS unmoved at every rung)
+  #
+  # READ IT AS EVIDENCE ABOUT THE FACTORS, NOT AS A SWEEP OF THESE KNOBS. The probe drops the weakest
+  # P% by factor and re-ranks; these knobs set an ABSOLUTE threshold. A percentile cut and a bar are
+  # not the same experiment, so this does NOT retire the 5-rung ladders below. What it does do is move
+  # the prior hard: cutting the weakest tenth by any of the three changed nothing at all, and cutting
+  # the weakest quarter cost edge every time. That is the opposite of the shape a gate worth shipping
+  # makes, and it is the same answer at 8y.
+  #
+  # P1a (growth_max_dilution_pct) HAS NO READING AT ALL — and it is the one with the highest prior.
+  # The SURVIVAL-GATE probe covers fcf_margin, interest_cover, net_cash_rev and margin_stability.
+  # Dilution is absent from it, so nothing above speaks to it and nothing may be inferred about it
+  # from its neighbours. It is still UNFITTED in the strict sense: sweep it FIRST, as this block
+  # already said.
+  #
+  # THE FINDING THAT OUTRANKS ALL FOUR, from (#124) on print_recall_capture/print_book_deciles in the
+  # same runs: the held book NEVER EXCEEDS ~10 NAMES (the top-N ladder is identical from top-10 to
+  # top-50 at every horizon) and it captures only 5-24% of the pool's extreme wealth. The lane's
+  # problem is ADMISSION, not selection. Four more rejections is the wrong direction against that
+  # measurement, whatever any individual rung scores. Do not open this block before reading (#124).
   growth_max_dilution_pct: 0.0   # (P1a) reject a filer whose as-of 1y share count grew more than this %.
                                  #   Reads `-fund.buyback_yield` (that field is sign-flipped, + = shrinking),
                                  #   so a 3% share raise reads +3.0 here. Serial issuance is how a compounder's
@@ -5459,6 +5511,37 @@ buy_heuristic:
                                  #   Revenue-scaled rather than EBITDA-scaled so loss-makers stay defined
                                  #   instead of None-ing straight out of the gate.
                                  #   UNFITTED. Suggested ladder: off / -100 / -50 / -25 / 0. -1e9 = off.
+  # ---- (P2)/(P3) ACCRUALS AND ASSET GROWTH: MEASURED, AND NEITHER EARNS A KNOB ----
+  # (#124) 2026-08-23. There is no knob here to hang a receipt on, deliberately — this block IS the
+  # receipt, and it records why `growth_max_accrual_gap` and `growth_max_asset_cagr` were NOT added.
+  # docs/heuristic-v2-tasks.md P2 and P3 both say: STOP and run the standalone factor probe before
+  # writing the gate. That probe needs no code — `report_book_by_factor` already prints a line for all
+  # 20 registered factors, `accrual_gap` and `asset_growth` included, on any `fund` run. It was run:
+  # `universe fund pit` at 20y/12y/8y via tests/diag-ci-settings.yaml.
+  #
+  #   asset_growth   20y n=0    12y n=0    8y n=44, excess +3.1 (below its peers in the same table)
+  #   accrual_gap    20y n=0    12y n=52   8y n=108, excess +5.1
+  #
+  # (P3) asset_growth: the stop rule FIRES, unambiguously. n=0 means the factor built no book at all at
+  # the two horizons the ship rule grades hardest. There is nothing to gate on. Do not write the knob.
+  #
+  # (P2) accrual_gap: the 12y row is DEGENERATE and must not be quoted as a win. Its n=52 line came back
+  # byte-identical to three unrelated factors in the same table — same +16.6%/yr, same excess +5.0, same
+  # win 100%, same worst +0.8, same OOS +4.7/+5.2. Four different factors cannot genuinely agree to the
+  # decimal; they are selecting the SAME handful of names out of a pool too thin to separate them. Read
+  # it as one pool, not four confirmations. The 8y row (n=108) is distinct, and it is the only real
+  # reading either factor produced.
+  #
+  # AND THE EVIDENCE IS WEAKER THAN P1'S, STRUCTURALLY — say so rather than comparing the two. This is
+  # `report_book_by_factor`, an ABSOLUTE held-book stat. It is NOT `sweep_fund_factor`, whose hardcoded
+  # 14-name `FACTORS` array (src/commands/backtest.rs) omits `accrual_gap` and `asset_growth` along with
+  # `fcf_margin`, `interest_cover`, `net_cash_rev`, `margin_stability`, `roic`, `quality`, `roe` and
+  # `ebitda_yield`. So neither factor has a train/test held-out edge or OOS halves at all. Adding those
+  # 10 names to `FACTORS` is the cheap follow-up IF either factor ever looks worth the trouble; on this
+  # reading neither does, which is why that work was not done either.
+  #
+  # REVERT RULE: this is a null result, not a threshold. Adding either gate requires a NEW run in this
+  # file that beats these numbers — not an appeal to the literature, which is what put them on the list.
   # ---- (P4) PRICE-PATH GATES: two rejections, BOTH OFF, NEITHER MEASURED YET ----
   # Unlike the (P1) four above, these two are SWEEPABLE ON DAY ONE. They read `volatility_pct` and
   # `max_daily_1m`, both built by `core::backtest_quote` from the close series every run already walks,
