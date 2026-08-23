@@ -1,0 +1,6 @@
+# (#130) beta ladder rung -- ONE knob, nothing else. Read the receipt at `growth_accel_beta` in
+# tests/ci-settings.yaml before running this: the ladder is NOT a pure slope experiment (the accel
+# leg's clamp binds at the floor at high beta and at the cap at low beta), and `heuristic_drift()`
+# must name this knob and NOTHING else or the base did not merge.
+buy_heuristic:
+  growth_accel_beta: 0.3                     # 1.0 -- lane CAGR slope 0.15 - 0.3*0.50 = 0.00 per %/yr
