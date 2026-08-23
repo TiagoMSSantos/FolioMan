@@ -11,8 +11,11 @@
 # .long_history_cache.json next to it gets picked up by the ordinary cache path with no test-only
 # plumbing inside fetch.rs. Do not move this file without moving the frozen cache with it.
 #
-# The list must stay in sync with FIXTURE_TICKERS in tests/backtest_fixture.rs, which documents the
-# selection recipe and regenerates the cache.
+# THIS LIST IS THE ONE DEFINITION OF THE FIXTURE UNIVERSE. The binary under test reads it as its
+# universe, and `regen_backtest_fixture` in tests/backtest_fixture.rs reads it FROM HERE to rebuild
+# the frozen cache — so the cache and the scored universe can no longer drift apart. It used to be
+# duplicated as a `FIXTURE_TICKERS` array there, kept in sync by this comment asking nicely.
+# The selection recipe — why these 200 names and not 200 others — is documented on `fixture_tickers()`.
 tickers:
   - "020Y.L"
   - "0A08.L"

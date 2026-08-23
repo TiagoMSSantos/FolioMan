@@ -142,7 +142,12 @@
 use std::path::PathBuf;
 
 /// The frozen universe: 200 tickers, chosen to span every branch the backtest can take rather than
-/// sampled at random. A regeneration must reproduce this list, so the recipe is recorded here:
+/// sampled at random. THE LIST ITSELF LIVES IN `tests/fixture/config/settings.yaml` and is read from
+/// there — it used to be duplicated into a `FIXTURE_TICKERS` array here, kept in sync BY COMMENT, so a
+/// name added to one and not the other would regenerate a cache that did not match the universe the
+/// golden actually scores. One definition, and it is the one the binary under test reads.
+///
+/// What the list cannot record is WHY these names, so the recipe stays here:
 ///
 /// - `^GSPC` — the benchmark; the held-book comparison is meaningless without it
 /// - the `STRESS_TICKERS` that Yahoo still serves — crashed-and-alive (GE, INTC, NOK, CCL…) plus
@@ -155,28 +160,47 @@ use std::path::PathBuf;
 /// - ten quote currencies (USD 97, EUR 63, GBP 9, GBp 8, CHF 5, SEK 5, DKK 4, MXN 4, PLN 4, NZD 1) —
 ///   GBp vs GBP is the pence/pounds trap, and every non-USD name exercises FX conversion
 /// - 92 dividend payers — `events.dividends`, `dividends_in_window`, the dividend term
-const FIXTURE_TICKERS: &[&str] = &[
-    "020Y.L", "0A08.L", "0A09.L", "0E2B.IL", "0FLE.L", "0P0001ON2S.CO", "0P00035XN8.F", "0TPE.L", "0VPX.L",
-    "10AL.DE", "30GB.L", "31ID.AS", "33ID.AS", "3BRL.L", "3DUE.DE", "3FNP.L", "3SEM.L", "3UBS.MI", "5ESGE.MI",
-    "AAP3.L", "AAVE-EUR", "ACGL", "ACT60.MI", "ACWUKD.SW", "AEE", "AEMU.L", "AGSGX.XC", "AGUG.AS", "AIFS.DE",
-    "AIG", "AK8G.DE", "ALAU.L", "ALTR.LS", "AMZ3.L", "APT-USD", "ARK3.L", "ASML", "AUEM.L", "AVB", "AVERE.MI",
-    "AVGO", "AWDSR.PA", "B41J.DE", "B4NE.DE", "B4NN.DE", "BA", "BBEG.DE", "BCFK.DE", "BCH-EUR", "BENE.L",
-    "BID3.L", "BIIB", "BNKT.AS", "BS30.L", "BTC-EUR", "BTCN.AS", "BUG.L", "C", "CBDE.DE", "CBDG.L",
-    "CBSEUD.SW", "CCL", "CD9.PA", "CEMC.DE", "CEUH.DE", "CHRW", "CHSE.DE", "CI2U.L", "CLMA.MI", "CM9.PA",
-    "CMOD.L", "CMU.PA", "CNEW.L", "COF", "COIY.L", "COMS.SW", "COR.LS", "CRM3.L", "CRO-EUR", "CSGP",
-    "CSPXXN.MX", "CT2B.AS", "CWE.PA", "D6RA.DE", "DBMFE.PA", "DGX", "DHYD.AS", "DIA", "DOT-EUR", "DTM.AS",
-    "DXCM", "EDEP.DE", "EGL.LS", "ELV", "EPAD.AS", "ETFBCASH.WA", "ETFBNDXPL.WA", "ETFBSPXPL.WA",
-    "ETFBW20LV.WA", "EUGO.MI", "EUN1.DE", "EW", "F", "FDXF", "FE", "FERG", "FGPT.L", "FIL-EUR", "FOXA", "FRCB",
-    "FTAD.L", "GCVG.L", "GE", "GOOG", "GRMN", "GRWY.L", "HBAR-EUR", "HMJA.L", "I50G.L", "IBS.LS", "IBTC.SW",
-    "IEGMX.XC", "IGLD.DE", "IGTM.L", "INTC", "INXG.L", "IPR.LS", "IWRD.L", "JBL", "JGCV.SW", "JGPD.DE",
-    "JIREF", "JRID.L", "JST-USD", "KCS-USD", "KHC", "KIM", "LQDMX.XC", "LTC-EUR", "LU3003218107-USD.LU", "M",
-    "M-USD", "MAA", "MAJDCU.CO", "MAJLO.CO", "MCP.LS", "MMM", "MONTLEV.ST", "MRNA", "MZL0.DE", "NBA.LS",
-    "NCLH", "NEXO-USD", "NOK", "NWL", "ODFL", "PFG", "PI-EUR", "PMIOSU.CO", "PRIJ.L", "PSRM.L", "PWR",
-    "QNT-EUR", "RSG", "S5SD.DE", "SBNY", "SGSU.L", "SJHY.L", "SJM", "SKY-EUR", "SMIEX.SW", "SP5G.L", "SPOL.L",
-    "SQQQ.MI", "SUOE.L", "T", "T10A.L", "TECH", "TRES.L", "TRX-EUR", "UAL", "UNIC.L", "USAS.PA", "USDC-EUR",
-    "USDG-USD", "UST10D.SW", "VFC", "VRT", "WBD", "WDSD.DE", "WLD-USD", "WOEE.DE", "WYNN", "XACT-BULL-2.ST",
-    "XACT-NORDEN.ST", "XACT-SVERIGE.ST", "XISP.DE", "XLM-EUR", "XMEM.L", "^GSPC",
-];
+fn fixture_tickers() -> Vec<String> {
+    let path = fixture_dir().join("config/settings.yaml");
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let doc: serde_yaml::Value = serde_yaml::from_str(&raw).expect("fixture settings parses as YAML");
+    let list = doc
+        .get("tickers")
+        .and_then(|t| t.as_sequence())
+        .unwrap_or_else(|| panic!("{} carries no `tickers:` list", path.display()));
+    let out: Vec<String> = list
+        .iter()
+        .map(|v| v.as_str().expect("every ticker is a string").to_string())
+        .collect();
+    // A silently EMPTY list would regenerate an empty fixture and every golden would still "pass" on
+    // a run that scored nothing. Refuse instead.
+    assert!(!out.is_empty(), "{} has an empty `tickers:` list", path.display());
+    out
+}
+
+/// The ONLY non-`#[ignore]`d caller of `fixture_tickers`. Without it the reader is dead code until
+/// someone regenerates, and a renamed key or a re-shaped list would surface at the worst moment.
+///
+/// It is not the only guard on the config-vs-cache invariant — a ticker added here without a regen
+/// already reds 8 goldens, because the binary asks for a name the frozen cache does not hold and
+/// `FOLIOMAN_OFFLINE=1` forbids the fetch. What this buys over that is one named failure that says
+/// which list is wrong, instead of eight diffs that say the numbers moved.
+#[test]
+fn fixture_tickers_are_exactly_the_frozen_cache() {
+    let path = fixture_dir().join(".long_history_cache.json");
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let cache: std::collections::BTreeMap<String, serde_json::Value> =
+        serde_json::from_str(&raw).expect("the frozen cache parses as a ticker-keyed object");
+    let cached: Vec<String> = cache.keys().cloned().collect();
+    let mut configured = fixture_tickers();
+    configured.sort();
+    assert_eq!(
+        configured, cached,
+        "tests/fixture/config/settings.yaml and the frozen cache name different universes; \
+         add the ticker to the config and re-run the ignored regen_backtest_fixture, or drop it"
+    );
+}
 
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -421,16 +445,16 @@ fn regen_backtest_fixture() {
         }
     }
 
-    let mut out: std::collections::BTreeMap<&str, (String, serde_json::Value)> = Default::default();
+    let mut out: std::collections::BTreeMap<String, (String, serde_json::Value)> = Default::default();
     let mut missing = Vec::new();
-    for t in FIXTURE_TICKERS {
-        match all.get(*t) {
+    for t in fixture_tickers() {
+        match all.get(&t) {
             Some((d, v)) => {
                 let mut v = v.clone();
                 slim(&mut v);
                 out.insert(t, (d.clone(), v));
             }
-            None => missing.push(*t),
+            None => missing.push(t),
         }
     }
     assert!(missing.is_empty(), "not in the real cache (warm it, or drop them from the recipe): {missing:?}");
