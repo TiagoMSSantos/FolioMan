@@ -148,23 +148,32 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v5
 
-  # Actions housekeeping: a Pages run is superseded the moment the next one deploys, so once THIS run
-  # has published, delete this workflow's older SUCCESSFUL runs (their logs go with them). Mirrors
-  # ci.yml's cleanup-runs job, with one deliberate difference: `--status success`, NOT `completed`.
+  # Actions housekeeping: a Pages run is superseded the moment the next one deploys, so delete this
+  # workflow's older SUCCESSFUL runs (their logs go with them). Mirrors ci.yml's cleanup-runs job,
+  # with one deliberate difference: `--status success`, NOT `completed`.
   # A red run is the only record of why a morning failed to publish — the bare `HttpError: Not Found`
   # that cost run 32059047479 a full 15-minute fetch to diagnose was read out of exactly such a log —
   # so failed and cancelled runs are KEPT here, deliberately, however long they accumulate.
   #
-  # `needs: publish` is the safety, not a sequencing nicety: history is swept only after a new good
-  # deploy exists, never while this run might still fail. And `--status success` cannot match the run
-  # doing the sweeping — it is still `in_progress` when the filter is applied — so "previous" needs no
-  # keep-the-newest bookkeeping. Per-id `|| true` so one undeletable run never reddens the page.
+  # `--status success` cannot match the run doing the sweeping — it is still `in_progress` when the
+  # filter is applied — so "previous" needs no keep-the-newest bookkeeping. Per-id `|| true` so one
+  # undeletable run never reddens the page. No `if:` guard is needed either, unlike ci.yml's copy:
+  # that one runs on `pull_request` too and must exclude merge refs, while this workflow triggers
+  # only on `push: branches: [main]`, the cron and dispatch.
+  #
+  # (#132) NO `needs:`, SO THIS RACES THE DEPLOY — CHOSEN, NOT OVERLOOKED. It used to carry
+  # `needs: publish` and that line was documented here as a safety: history was swept only after a new
+  # good deploy existed, never while this run might still fail. Running in parallel gives that up. The
+  # failure case is now real: a publish that dies at the fetch or at `deploy-pages` no longer stops the
+  # sweep, so a red morning can leave NO successful run in the history to diff against — only the red
+  # one. That was accepted deliberately, for parity with ci.yml's unguarded cleanup and because the
+  # log this job exists to protect is the FAILED one, which `--status success` never matches.
+  # A `tail -n +2` on the id list would buy the old safety back for one pipe if that trade ever bites.
   #
   # Deleting a run does NOT delete its Pages deployment or take the site down. The live page is served
   # from Pages storage, not from the run's artifact: deployment 5949614221 is still listed under the
   # github-pages environment with no surviving workflow run behind it.
   cleanup-runs:
-    needs: publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Job-level permissions REPLACE the workflow block, so this job holds `actions: write` and none of
