@@ -1028,7 +1028,9 @@ struct ScoreParts {
     underwater: f64,   // −growth_underwater_weight × underwater_yrs (drawdown-duration penalty; 0 when off/None)
     er: Option<f64>,   // (#105) the raw Grinold-Kroner expected return, %/yr; None = no as-of fundamental row
     er_term: f64,      // (#105) growth_er_weight × er (0 when the weight is 0 OR the row is uncovered)
-    base: f64,         // sum of the ten terms above
+    record_years: f64, // (#133) the long leg `long_leg_fixed` FOUND, in years — carried, never re-derived (non-negotiable #4). Display only: the penalty row is unreadable without the leg it is short of
+    record_term: f64,  // (#133) −growth_record_weight × max(0, growth_record_full_years − long_years); 0 when the weight is 0 (default) or the leg is already full
+    base: f64,         // sum of the eleven terms above
     proximity: f64,    // (#48) 1 + growth_proximity_weight × (range_pct/100 − 1); = range_pct/100 at the shipped w=1
     value_raw: f64,    // (E) raw P/E value_factor (ref_pe/PE clamped)
     value: f64,        // 1 + growth_value_weight × (value_raw − 1)
@@ -1497,7 +1499,19 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // weight 0 (default) -> the term is 0 -> growth_score is byte-identical to the pre-(#105) lane.
     let er = expected_return_pct(quote, tuning);
     let er_term = tuning.growth_er_weight * er.unwrap_or(0.0);
-    let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term + smooth + underwater + er_term;
+    // (#133) RECORD-LENGTH penalty — the one term aimed at a mechanism rather than at a quantity.
+    // `growth_min_leg_years` refused the 2Y rung twice and named why: a short record COLLECTS SCORE FOR
+    // THE ABSENCE OF MEASURED BAD NEWS. Those names read above-MA 0% with a shallow maxdd because the
+    // drawdown has not happened yet, so every risk brake in this lane is blind to them by construction.
+    // That receipt pre-registered the fix as "a record-length term in the score itself, not a post-hoc
+    // multiplier", which is why this is ADDITIVE and lands in `base`, ahead of the damps — `trust_factor`
+    // is the multiplier it rules insufficient, and it already halves these names without fixing the order.
+    // `long_years` is the leg `long_leg_fixed` ALREADY found above; the record length is not re-derived
+    // here (non-negotiable #4). Only the SHORTFALL is docked, so a longer-than-full record earns nothing.
+    // weight 0 (default) -> the term is exactly 0.0 -> growth_score is byte-identical to the pre-(#133) lane.
+    let record_term =
+        -tuning.growth_record_weight * (tuning.growth_record_full_years - long_years).max(0.0);
+    let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term + smooth + underwater + er_term + record_term;
     let value_raw = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     // (Item 20) dial the BLIND P/E multiplier's authority toward neutral 1.0. weight 1.0 = full ×0.5..1.5
     // swing (default, unchanged); 0.0 = off. The validated edge was measured with this term OFF (pe_ratio
@@ -1632,7 +1646,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     };
     Some(ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
-        fund, mom121: mom_term, smooth, underwater, er, er_term, base, proximity, value_raw, value, trust, overext,
+        fund, mom121: mom_term, smooth, underwater, er, er_term, record_years: long_years, record_term, base, proximity, value_raw, value, trust, overext,
         overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, score,
     })
 }
@@ -2421,6 +2435,16 @@ pub fn explain_growth_score(quote: &Quote, tuning: &BuyHeuristic, displayed: f64
             tuning.growth_er_weight,
             p.er.map_or_else(|| "n/a".to_string(), |v| format!("{v:.2}")),
             p.er_term
+        ));
+    }
+    // (#133) same (#105) treatment: printed only when it bites, so a run at the default weight 0
+    // renders the byte-identical breakdown every golden was blessed on. The row spells out the leg
+    // it found and the bar it is short of, because "penalised for a short record" is unreadable
+    // without both numbers — and the leg shown here is the one the score used, never a re-derivation.
+    if tuning.growth_record_weight != 0.0 {
+        s.push_str(&format!(
+            "    record   = −growth_record_weight × missing years       = −{:.2} × max(0, {:.0} − {:.1}) = {:.2}\n",
+            tuning.growth_record_weight, tuning.growth_record_full_years, p.record_years, p.record_term
         ));
     }
     s.push_str(&format!("    base (sum)                                            = {:.2}\n", p.base));
@@ -7007,6 +7031,55 @@ mod tests {
         q.range_pct = 90.0;
         q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0)]);
         q
+    }
+
+    /// (#133) The record-length penalty. It exists because `growth_min_leg_years` refused the 2Y rung
+    /// twice and named the mechanism rather than the quantity: a short record COLLECTS SCORE FOR THE
+    /// ABSENCE OF MEASURED BAD NEWS — above-MA reads 0% and maxdd is shallow because the drawdown has
+    /// not happened yet, so every risk brake in the lane is blind to it. That receipt pre-registered
+    /// this term as the only condition for re-proposing the rung, and required it to be ADDITIVE
+    /// ("not a post-hoc multiplier"), which is why it lands in `base` ahead of every damp.
+    ///
+    /// Four claims, and the first is the one that keeps every golden byte-identical.
+    #[test]
+    fn record_term_docks_only_the_missing_years() {
+        let off = BuyHeuristic::default();
+        assert_eq!(off.growth_record_weight, 0.0, "the term SHIPS OFF — non-negotiable #1");
+        let undocked = score_parts(&gate_fixture(), &off).unwrap();
+        assert_eq!(undocked.record_term, 0.0, "at weight 0 a 5-year record moves the score by EXACTLY nothing");
+
+        // gate_fixture's longest leg is 5Y, so against a 20Y "full" record it is 15 years short.
+        let armed = BuyHeuristic {
+            growth_record_weight: 0.5,
+            growth_record_full_years: 20.0,
+            ..BuyHeuristic::default()
+        };
+        let docked = score_parts(&gate_fixture(), &armed).unwrap();
+        assert!(
+            (docked.record_term - -7.5).abs() < 1e-9,
+            "0.5 x (20 - 5) docked, negative: {}",
+            docked.record_term
+        );
+
+        // A SHORTFALL, not a length reward: at or past the full record there is nothing to dock, and
+        // the clamp is what stops a long leg from paying the name a bonus the receipt never asked for.
+        for full in [5.0, 3.0] {
+            let t = BuyHeuristic { growth_record_full_years: full, ..armed.clone() };
+            assert_eq!(
+                score_parts(&gate_fixture(), &t).unwrap().record_term,
+                0.0,
+                "a 5Y leg against a {full}Y bar has no shortfall"
+            );
+        }
+
+        // and it reaches `score` through `base`, ahead of the damps — a multiplier is what the
+        // receipt ruled insufficient, so a term that did not move the score would be the wrong shape.
+        assert!(
+            docked.score < undocked.score,
+            "the docked name must rank below its undocked self: {} vs {}",
+            docked.score,
+            undocked.score
+        );
     }
 
     /// (#105) The expected-return term, which is the only forward-looking input in a lane built

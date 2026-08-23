@@ -1457,6 +1457,72 @@ buy_heuristic:
                                  #   run, and it prices the composite before any weight is chosen. Only
                                  #   then a weight curve at 20y/12y/8y under the ship rule. REVERT: set
                                  #   the weight to 0.0; the term is then exactly 0 for every row.
+  growth_record_weight: 0.0      # (#133 / round 8) UNMEASURED AS SHIPPED — 0.0 is OFF, the term
+  growth_record_full_years: 20.0 # contributes exactly 0.0, and the lane is the one every golden
+                                 # holds. The full-years bar is an UNFITTED judgement value and is
+                                 # inert until the weight moves: 20.0 because that is the hold this
+                                 # tool claims to pick for, and the top rung of `long_leg`'s ladder.
+                                 #
+                                 #   WHAT IT IS: an ADDITIVE penalty in `base`, ahead of every damp —
+                                 #     record_term = −weight × max(0, full_years − long_years)
+                                 #   `long_years` is the leg `long_leg_fixed` ALREADY found inside
+                                 #   `score_parts`; the record length is not re-derived at the term
+                                 #   (non-negotiable #4), and `quote.age_years` is deliberately NOT
+                                 #   used — it is never filled on the backtest path and reads INERT in
+                                 #   `growth_gate_reachability_pin`. Only the SHORTFALL is docked, so a
+                                 #   longer-than-full record is never PAID for its length. No gate is
+                                 #   added, so `gate_failures` needs no mirror (non-negotiable #2) and
+                                 #   the reachability pin does not move.
+                                 #
+                                 #   WHY IT EXISTS, and this is the whole justification: it is the
+                                 #   condition `growth_min_leg_years` PRE-REGISTERED for its own rung to
+                                 #   be re-proposed. That receipt refused 5.0->2.0 TWICE, on every
+                                 #   clause (20y-s rank-1 +5.9|+6.0 -> +4.5|+4.0, h2h 67% -> 39%, lane
+                                 #   edge +411.0 -> +244.2), and named the MECHANISM rather than the
+                                 #   quantity: a short record COLLECTS SCORE FOR THE ABSENCE OF MEASURED
+                                 #   BAD NEWS. Its above-MA reads 0% and its maxdd is shallow because
+                                 #   the drawdown HAS NOT HAPPENED YET, so every risk brake in this lane
+                                 #   is blind to it by construction. The refusal's exact terms: "Do not
+                                 #   re-propose without a NEW damp aimed at that mechanism (a record-
+                                 #   length term in the score itself, not a post-hoc multiplier)."
+                                 #   `trust_factor` is the multiplier that receipt rules INSUFFICIENT by
+                                 #   name — it already halves these names and does not fix the order.
+                                 #   That is why this term is additive and lands in `base`.
+                                 #
+                                 #   WHY THIS RUNG AT ALL. (#127) measured `out-ranked` — cleared every
+                                 #   gate, ranking still missed the winner — at 0.2% / 0.0% / 1.5% of
+                                 #   missed wealth at 20y/12y/8y: "SELECTION IS CONFIRMED DEAD, IN ONE
+                                 #   NUMBER", at most ~2% of the extreme wealth for a scoring change to
+                                 #   win. The same table endorses exactly one direction: "The largest
+                                 #   genuinely single-gate cohort at every horizon is `history` (no 5y+
+                                 #   record) ... That is the only rung this table endorses looking at
+                                 #   next." (#124) prices the ceiling it would lift: the held book NEVER
+                                 #   EXCEEDS ~10 NAMES (deciles identical from top-10 to top-50 at every
+                                 #   horizon) and captures 5-24% of the extreme wealth its own pool held.
+                                 #   "This is an ADMISSION problem, not a ranking problem." This term is
+                                 #   not a scoring improvement; it is the brake that has to exist BEFORE
+                                 #   the admission rung underneath it can be re-graded.
+                                 #
+                                 #   THE LADDER, anchored on a measured pair, not a guess: the leg
+                                 #   receipt banks its own failure as GEV at 2.3y scoring 26.2 over NVDA
+                                 #   at 27.5y on 10.8. Closing a 15.4-point gap over ~17.7 missing years
+                                 #   needs ~0.87 points/yr, so the grid spans it: w in {0.25, 0.5, 1.0,
+                                 #   2.0}, each paired with `growth_min_leg_years: 2.0`, against the
+                                 #   SHIPPED lane (leg 5.0, w 0.0) as control. `universe stress` at
+                                 #   {20, 12, 8}: record length is price-derived, so `fund` buys nothing
+                                 #   and costs coverage, and `stress` is the lane the banked leg grid
+                                 #   used, which keeps the comparison like-for-like.
+                                 #
+                                 #   GRADED AS AN ADDITION, so it owes the addition ship rule: the arm
+                                 #   is judged against the SHIPPED lane it would replace, not against
+                                 #   the leg-2.0 control — beating that control only proves the term
+                                 #   does something. And a CANDIDATE additionally requires THE BOOK TO
+                                 #   HAVE GROWN (cleared-name count up). A term that fixes the ranking
+                                 #   but admits nobody has bought nothing, which is the finding (#124)
+                                 #   already banked.
+                                 #
+                                 #   REVERT: set the weight to 0.0; the term is then exactly 0.0 for
+                                 #   every row and `growth_record_full_years` stops being read.
   print_recall_capture: false    # (#104 / round 3 §1) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is today's report and what every golden holds.
                                  # It is display-only, so "unmeasured" here means the INSTRUMENT has
