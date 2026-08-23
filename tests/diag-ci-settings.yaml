@@ -1,0 +1,24 @@
+# READ-ONLY DIAGNOSTIC ARM — turns on the four display-only instruments that ship OFF and have never
+# been read. It changes NO gate, NO weight and NO score: every knob below is documented in
+# src/config.rs as "display only — no score, no gate, no journal field reads it", so the ranking this
+# produces is byte-identical to the shipped one and there is nothing to A/B against a control.
+#
+# WHY IT LIVES IN tests/ AND NOT /tmp: `config::data_path` resolves the on-disk caches from this
+# file's GRANDPARENT directory. An arm parked in /tmp or a job dir resolves to THAT tree instead — a
+# cold, separate cache — which silently changes the dataset the run reports on. See the A/B warning
+# at the top of tests/ci-settings.yaml.
+#
+# HOW TO KNOW THE BASE MERGED: `heuristic_drift()` (src/config.rs:1099) prints a startup WARNING
+# naming every buy_heuristic knob that differs from the validated baseline. It must name EXACTLY the
+# four knobs below. If it names more, this file is being read as a self-contained config rather than
+# an overlay, every other gate is silently at its code default, and the run is wrong — not degraded,
+# wrong. Stop and re-check rather than reading the numbers.
+#
+# RUN AS:
+#   FOLIOMAN_CONFIG=tests/diag-ci-settings.yaml cargo run --release -- backtest 20 universe fund pit
+# `fund` is mandatory: the P1 gates and the fund-factor probes are INERT without it.
+buy_heuristic:
+  print_n_eff: true            # (#91)  how many INDEPENDENT trials each window count is worth
+  print_recall_capture: true   # (#104) how much of the pool's extreme upside the ranking HELD
+  print_book_deciles: true     # (#106) d10/median/d90, P(book < index), P(book < 1.0)
+  print_base_rates: true       # (#111) does clearing growth_min_cagr predict clearing it again

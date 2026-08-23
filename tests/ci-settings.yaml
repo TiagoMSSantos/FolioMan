@@ -1074,6 +1074,27 @@ buy_heuristic:
                                  #   rather than softening it. If it does, that is a finding about
                                  #   `growth_min_cagr` itself and belongs in a sweep, not here.
                                  #   REVERT: set false.
+                                 #
+                                 # (#124) MEASURED 2026-08-23, `universe fund pit` at 20y/12y/8y. The instrument has
+                                 # now been read, and at the horizon this tool exists for the bar carries the WRONG
+                                 # SIGN:
+                                 #     20y     3/476  ( 1%) cleared the bar again   vs   2% of the whole pool
+                                 #     12y    63/840  ( 8%)                         vs   5%
+                                 #      8y   170/1157 (15%)                         vs   6%
+                                 # The report prints its own verdict at 20y: "the record carries NOTHING - a
+                                 # trailing bar is not a forecast here". Conditional BELOW unconditional is not a
+                                 # weak result, it is the wrong direction: over 20y a name that had cleared 19%/yr
+                                 # was LESS likely to clear it again than a name drawn at random from the pool. The
+                                 # lane's whole thesis is that a long record predicts the next one, and
+                                 # `growth_min_cagr` does not merely tilt on that record - it DELETES everything
+                                 # below it, so the bar IS the universe. At 12y and 8y the pair is the right way
+                                 # round and the thesis holds.
+                                 # WHAT THIS LICENCES AND WHAT IT DOES NOT: it does NOT license a new value for
+                                 # `growth_min_cagr`. This is one reading of one bar, at 20y n_eff 0.5 (#124 on
+                                 # print_n_eff), and picking a value is a sweep this did not run. It DOES establish
+                                 # that the bar is the thing to sweep, ahead of adding any new factor - which is
+                                 # what the round that read it concluded, against its own prior.
+                                 # Knob stays false. REVERT: set false.
   implied_growth_years: 0        # (#111 / round 3 §8) UNMEASURED — an unfitted judgement value,
   implied_growth_required_pct: 8.0 # shipping OFF (0 = no line), which is today's ranking footer.
                                  #
@@ -1295,6 +1316,25 @@ buy_heuristic:
                                  #   is the clearest picture of skew this tool could produce. Changing
                                  #   VERDICT_TOP is a ship-rule decision and does not ride on a print
                                  #   knob. REVERT: set false.
+                                 #
+                                 # (#124) MEASURED 2026-08-23, `universe fund pit` at 20y/12y/8y. The skew
+                                 # arithmetic this knob was written to expose is real and large at 20y:
+                                 #     top-1    d10 0.05x   median 3.78x   P(book<1.0x) 40%   P(book<index) 50%
+                                 #     top-3    d10 0.88x   median 4.59x   P(book<1.0x) 15%   P(book<index) 40%
+                                 #     top-10   d10 1.30x   median 5.51x   P(book<1.0x)  5%   P(book<index) 45%
+                                 # Concentration wrecks BOTH tails: the top-1 book ends below where it started 40%
+                                 # of the time and its 10th percentile is a 95% loss, while the median IMPROVES all
+                                 # the way out to top-10. That is the pattern (#106) predicted and an independent
+                                 # confirmation of the basket (#120) already moved to.
+                                 # THE UNPLANNED FINDING, and the more important one: the deciles are IDENTICAL from
+                                 # top-10 through top-50, at EVERY horizon. The ladder is not flat because wider
+                                 # baskets stop helping - it is flat because THE BOOK NEVER HOLDS MORE THAN ~10
+                                 # NAMES. The gates admit too few survivors to fill a wider basket, so every rung
+                                 # above 10 is the same book relabelled, and any past reading of the top-N ladder
+                                 # that treated rungs 15-50 as distinct baskets was reading one basket 9 times.
+                                 # Read beside (#104)'s capture numbers from the same runs: a book that cannot be
+                                 # widened cannot hold winners it was never allowed to admit.
+                                 # Knob stays false. REVERT: set false.
   growth_er_weight: 0.0          # (#105 / round 3 §2) UNMEASURED — an unfitted judgement value,
   growth_er_cap: 20.0            # shipping the weight at 0, where the term contributes exactly 0.0
                                  # and the lane is the one every golden holds. The cap is inert until
@@ -1402,6 +1442,28 @@ buy_heuristic:
                                  #   is large and whose edge cost is small is a gate paying precision
                                  #   for terminal wealth. Nothing here proposes acting on that before it
                                  #   is measured. REVERT: set false; no score, gate or journal reads it.
+                                 #
+                                 # (#124) MEASURED 2026-08-23, `universe fund pit` at 20y/12y/8y, held book
+                                 # (VERDICT_TOP=10), against the FULL pool including every gate-rejected row:
+                                 #             vs top-1% winners          vs >=10x winners
+                                 #     20y   recall 14%  capture 24%    recall 14%  capture 21%   (n=28 / 318)
+                                 #     12y   recall 12%  capture  7%    recall  4%  capture  5%   (n=90 / 241)
+                                 #      8y   recall  5%  capture  6%    recall  5%  capture  6%   (n=174 / 77)
+                                 # THE ANSWER IS LOW, and capture is the half that matters: the ranking held 5-24%
+                                 # of the extreme wealth its own pool contained, single digits at 12y and 8y. Every
+                                 # precision metric in this report can look healthy while that is true - and they
+                                 # do, which is exactly the gap (#104) was written to expose.
+                                 # WHY IT IS LOW, from (#106) read on the same runs: the book never holds more than
+                                 # ~10 names, because the gates admit no more than that. This is an ADMISSION
+                                 # problem, not a ranking problem, and it inverts the standing plan - every open
+                                 # task in docs/heuristic-v2-tasks.md (P1-P4) proposes adding MORE exclusions, each
+                                 # to be graded by `gate_audit`, whose mean is blind to precisely the rejected
+                                 # 30-bagger this line counts. Those tasks are not refuted by this reading, but they
+                                 # can no longer be started on their stated priors alone.
+                                 # THE CHANGE THAT WOULD MOVE THIS NUMBER is a LOOSER funnel, not a tighter one.
+                                 # Nothing here says WHICH gate to loosen (the gate-sweep flags in the same runs
+                                 # disagree across horizons), and no gate was changed on the strength of it.
+                                 # Knob stays false. REVERT: set false; no score, gate or journal field reads it.
   journal_core_list: false       # (#103 / finding C9) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
@@ -2135,6 +2197,27 @@ buy_heuristic:
                                  #   MUST NOT become is an input: the moment a gate or a ship rule reads
                                  #   n_eff, this stops being a display knob and needs a receipt with
                                  #   measurements in it.
+                                 #
+                                 # (#124) MEASURED 2026-08-23, `universe fund pit` at 20y/12y/8y, via
+                                 # tests/diag-ci-settings.yaml. The arithmetic in this receipt was right, and the
+                                 # numbers are worse than its own example suggested:
+                                 #     20y   20 windows -> n_eff 0.5     (rank 1; rank 6-10 is 0.2)
+                                 #     12y   34 windows -> n_eff 1.4
+                                 #      8y   42 windows -> n_eff 2.6
+                                 # EVERY 20-YEAR VERDICT IN THIS FILE RESTS ON HALF AN INDEPENDENT TRIAL. That is
+                                 # not a caveat on one printed line, it is a property of the ship rule itself:
+                                 # PRIMARY reads top-10 excess at 20y AND 8y, and one of those two horizons is 0.5
+                                 # effective draws. A knob that "held at 20y" held across less than one effective
+                                 # observation, which is the most likely reason so many sweeps in this file read as
+                                 # noise-floor ties.
+                                 # WHAT IT DOES NOT SAY: it does not say the 20y lane is wrong or should be dropped.
+                                 # A 20-year hold IS the product, and 0.5 trials is the honest price of a 20y window
+                                 # on the history available - not a defect to be tuned away. It says the 20y column
+                                 # cannot ADJUDICATE between two knob values, and that knob-grading work belongs at
+                                 # 12y/8y where n_eff clears 1. Anyone re-reading a 20y refusal in this file should
+                                 # price it against 0.5.
+                                 # Knob stays false: reading an instrument is not a reason to ship its output into
+                                 # every golden. REVERT: set false.
   split_purge_months: 0          # (#90) UNMEASURED — an unfitted judgement value, shipping 0, which is no
                                  #   purge at all: today's behaviour byte-for-byte, and what every OOS rho,
                                  #   every "both halves positive" promotion in this file and every `tune`
