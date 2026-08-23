@@ -1506,6 +1506,25 @@ buy_heuristic:
                                  #   this flag already asked the question, and it still ships false, so
                                  #   the goldens are untouched. Same REVERT: set false.
                                  #
+                                 #   (#128) AND A THIRD AND FOURTH, 2026-08-23, for the question (#127)'s own
+                                 #   ceiling raises: if one gate reaches at most 10-16% of the missed wealth,
+                                 #   which TWO would have to move together? The pair table tallies, per missed
+                                 #   winner failing EXACTLY two gates, the pair it failed — exactly two and not
+                                 #   every pair drawn from a k-failure name, because five failures make ten pairs
+                                 #   and a two-knob arm buys none of them, so enumerating those would credit each
+                                 #   row with wealth no arm can reach. Its BOTH-NEAR-MISS column reuses
+                                 #   `gate_failures`' third field, the per-gate slack the codebase already
+                                 #   committed to ("nearly passed"), which until now was computed at every push
+                                 #   site and discarded: it separates the part of a pair a shippable loosening
+                                 #   admits from the part that misses by miles. The GATE-COUNT HISTOGRAM is the
+                                 #   honesty check on the pair table — if the missed wealth sits at 3+ gates, no
+                                 #   two-knob arm reaches it and the pair rows are a rounding error. It excludes
+                                 #   `unassessable` by construction: `None` is not "zero gates failed", it is no
+                                 #   gate list at all, and folding it into bucket 0 would read as "cleared
+                                 #   everything". Read the (#128) receipt below for what all three said; the short
+                                 #   version is that the histogram refused the arm. Still no new knob, still ships
+                                 #   false, goldens untouched. Same REVERT: set false.
+                                 #
                                  # (#124) MEASURED 2026-08-23, `universe fund pit` at 20y/12y/8y, held book
                                  # (VERDICT_TOP=10), against the FULL pool including every gate-rejected row:
                                  #             vs top-1% winners          vs >=10x winners
@@ -1576,6 +1595,69 @@ buy_heuristic:
                                  # looking at next, and it is a COVERAGE problem, not a threshold to sweep.
                                  # NO KNOB WAS CHANGED ON THE STRENGTH OF THIS. The instrument is `print_recall_capture`, which
                                  # still ships false; the goldens are untouched.
+                                 #
+                                 # (#128) HOW MANY GATES, AND WHICH TWO — MEASURED 2026-08-23, same `universe fund pit` runs,
+                                 # 20y/12y/8y, GROWTH lane, both cuts. THIS IS THE EXPERIMENT (#127) ABOVE SAID WAS THE ONLY ONE
+                                 # LEFT, AND IT REFUSES. (#127) closed on "at most 10-16% of the missed wealth is reachable by
+                                 # loosening ONE gate; the rest fails 2+ gates at once", which reads as an invitation to loosen
+                                 # two. So the instrument now also tallies, per missed winner, the EXACT PAIR it failed (only for
+                                 # winners failing exactly two — a five-failure name has ten pairs and a two-knob arm buys none of
+                                 # them) and the histogram of HOW MANY gates each miss failed at once. Both printed behind the same
+                                 # `print_recall_capture`, which still ships false.
+                                 #
+                                 #   PRE-REGISTERED BEFORE THE RUN, all three required to grade any joint arm:
+                                 #     (1) CONSISTENCY  one pair holds >=25% of missed wealth at 20y AND 12y AND 8y.
+                                 #     (2) REACHABILITY that pair's BOTH-NEAR-MISS subset is >=1/3 of its own wealth at 12y and 8y.
+                                 #     (3) DEPTH        the gate-count histogram does NOT put the plurality of missed wealth at 3+.
+                                 #   ALL THREE FAILED. No arm was graded, no knob moved, no grid ran.
+                                 #
+                                 #   (1) FAILS BY 3-14x, AND THE PAIR IS NOT EVEN STABLE. Largest pair at any horizon or cut:
+                                 #       20y  range+maxdd       6.2% (top 1%)  /  range+maxdd     3.6% (>=10x)
+                                 #       12y  cagr+maxdd        1.9% (top 1%)  /  cagr+cagr-life  1.7% (>=10x)
+                                 #        8y  stretch+maxdd     6.4% (top 1%)  /  stretch+maxdd   8.6% (>=10x)
+                                 #       Nothing reaches 25% anywhere, and the top pair is a DIFFERENT pair at each horizon. There
+                                 #       is no joint hypothesis to pre-register; there are three unrelated ones, each worth ~5%.
+                                 #
+                                 #   (2) FAILS TO ~ZERO. Every both-near-miss column at 20y and 12y is 0 winners. The single
+                                 #       non-zero cell in the whole measurement is 8y `stretch+maxdd`, 1 of 4 winners (1.8 of 8.6
+                                 #       points), i.e. 21% — under the bar. READ THAT PLAINLY: of the winners that failed exactly
+                                 #       two gates, essentially NONE missed both of them narrowly. The near-miss flag is
+                                 #       `gate_failures`' own third field (range -10pp, cagr -1.5pp, 1Y -10pp, ...), i.e. the
+                                 #       codebase's existing definition of "nearly passed", not one invented for this run.
+                                 #
+                                 #   (3) FAILS AT ALL SIX TABLES, and this is the finding that matters. Missed wealth by number of
+                                 #       gates failed at once (gate-assessable winners; `unassessable` has no gate list):
+                                 #         20y top 1%        1:13 2:7  3:28 4:15 5:20 6:18            -> 3+ = 81%, mode 3
+                                 #         20y >=10x    0:0  1:15 2:11 3:26 4:17 5:18 6:12 7:1       -> 3+ = 74%, mode 3
+                                 #         12y top 1%        1:6  2:6  3:7  4:19 5:33 6:24 7:4  8:1  -> 3+ = 88%, mode 5
+                                 #         12y >=10x         1:10 2:6  3:11 4:16 5:29 6:20 7:6  8:1  -> 3+ = 83%, mode 5
+                                 #          8y top 1%   0:2  1:16 2:14 3:19 4:15 5:16 6:10 7:4  8:1  -> 3+ = 65%, mode 3
+                                 #          8y >=10x    0:2  1:16 2:10 3:20 4:15 5:19 6:11 7:4  8:2  -> 3+ = 71%, mode 3
+                                 #       Winners failing exactly two gates hold only 6.0-13.6% of the missed wealth at any horizon,
+                                 #       and the tail runs to EIGHT gates failed simultaneously. The buckets are true counts, not a
+                                 #       clamp: a "7+" lumping was written first and dropped, because HOW FAR outside the gates these
+                                 #       winners sit is the one thing this table exists to say.
+                                 #
+                                 #   WHAT THIS RETIRES, AND IT IS A WHOLE CLASS. Take the three ceilings together:
+                                 #       one gate      <= 16.2% of missed wealth   ((#127))
+                                 #       exactly two   <= 13.6% of missed wealth   (this receipt)
+                                 #       and of that two-gate cohort, the near-miss share is ~0.
+                                 #   The names this lane misses are not sitting just outside the boundary. They fail a MEDIAN of
+                                 #   three to five growth gates SIMULTANEOUSLY and they fail them by wide margins. No loosening of
+                                 #   any arity reaches them; one large enough to admit them would not be the growth heuristic any
+                                 #   more, it would be an ungated momentum screen. THRESHOLD TUNING IS EXHAUSTED — that is the
+                                 #   round's finding, and it should be cited to refuse the next "just loosen X" proposal the way
+                                 #   (#127)'s `out-ranked` column (0.2%/0.0%/1.5%) is cited to refuse the next selection-weight one.
+                                 #
+                                 #   WHAT IS LEFT, STATED SO THE NEXT ROUND DOES NOT REDISCOVER IT: the reachable levers are no
+                                 #   longer thresholds. They are (a) DATA COVERAGE — `history` is the largest genuinely single-gate
+                                 #   cohort at every horizon (9.3%/4.1%/8.2% of missed wealth) and no threshold moves it, see
+                                 #   `growth_min_leg_years`; and (b) POOL SIZE, which is blocked — see the (#128) correction on
+                                 #   (#100 / finding C10) below.
+                                 #
+                                 #   NO KNOB WAS CHANGED. Goldens untouched. REVERT RULE: none applies — this receipt records a
+                                 #   measurement and a refusal, not a value. Re-running it costs three `universe fund pit` runs with
+                                 #   `print_recall_capture` on (tests/diag-ci-settings.yaml).
   journal_core_list: false       # (#103 / finding C9) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
@@ -6302,6 +6384,27 @@ urls:
   # thing that can either confirm or overturn it. Until then this file should not be cited as having
   # measured that mid-caps, EU large-caps, EM or small-caps are useless — it measured them once, on a
   # pool that could not answer the question.
+  # (#128) THAT RE-RUN IS BLOCKED, 2026-08-23, and the block is in this repo, not in the data.
+  # `backtest::pit_pool` keeps a ticker only if it is ABSENT from `sector_of` (i.e. not supplied by
+  # any `constituents_csv` pond) or present in the S&P 500 membership spans. So under `pit` — the
+  # only mode that can answer the question above — every name from an EXTRA pond is dropped, because
+  # `member_spans` covers the S&P 500 alone and there is no historical twin to put the others back.
+  # `pit_pool`'s own doc comment says it: "So `pit` shrinks a multi-pond universe to one pond. Add a
+  # second membership source before adding a second pond, or the comparison is unfair to the pond
+  # that keeps its names."
+  #   CONSEQUENCE: adding MidCap 400 / FTSE / DAX back to `constituents_csv` and re-running at
+  #   20y/12y/8y `pit` does NOT re-test the rejection. It produces the SAME S&P-500 pool plus
+  #   whatever the new pond contributes that the S&P spans already carry, and reads as "the newcomers
+  #   changed nothing" — a null that is manufactured by `pit_pool`, not measured. That is a WORSE
+  #   failure than the survivor bias this finding already flags, because it looks like a clean answer.
+  #   RE-FILED: the standing verdict is unchanged (do not re-add on argument alone) and the evidence
+  #   stays marked stale, but the prescribed re-run is now BLOCKED PENDING A SECOND MEMBERSHIP
+  #   SOURCE — point-in-time constituents for whichever pond is being tested — not merely unrun.
+  #   Cite this before quoting the "a re-run on the point-in-time pool is the only thing that can
+  #   confirm or overturn it" line above as though the re-run were available.
+  #   WHY IT MATTERS NOW: (#128) retired threshold tuning at every arity (one gate <=16.2% of the
+  #   missed wealth, exactly two <=13.6%, near-miss share ~0), which leaves POOL SIZE as one of the
+  #   two remaining levers on growth admission. This is the thing standing in front of it.
   constituents_csv:
     - "https://yfiua.github.io/index-constituents/constituents-nasdaq100.csv"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe

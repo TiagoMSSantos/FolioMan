@@ -3868,6 +3868,42 @@ struct MissRow {
     sole_mult: f64,
 }
 
+/// (#128) One gate PAIR among the winners that failed EXACTLY two gates. `MissRow` above answers
+/// "which gate gets the blame"; this answers the question that follows from its own result, which is
+/// that the blame column is not actionable — `range` is named first for half the missed wealth and is
+/// the SOLE blocker for none of it. A two-knob arm needs to know WHICH two.
+#[derive(Debug, Default)]
+struct PairRow {
+    /// In gate order, because `gate_failures` pushes in gate order — so the key is stable and
+    /// `(range, 1Y+)` can never also appear as `(1Y+, range)`.
+    pair: (&'static str, &'static str),
+    winners: usize,
+    mult: f64,
+    /// Winners where BOTH members are inside their own gate's near-miss slack — `gate_failures`'
+    /// third field, already computed at every push site and until now discarded. This is the only
+    /// part of the pair a loosening anyone would actually ship can admit; the rest misses by miles.
+    near: usize,
+    near_mult: f64,
+}
+
+/// Everything `missed_winner_reasons` returns, as ONE struct rather than the tuple it would otherwise
+/// have grown into. Same mutation-gate reason as `MissRow` and it compounds: five tuple fields is a
+/// return-replacement set in the hundreds against one `Default` here, and CI's budget is 6.
+#[derive(Debug, Default)]
+struct MissTable {
+    rows: Vec<MissRow>,
+    pairs: Vec<PairRow>,
+    /// `(gates failed, winners, missed wealth)` ascending, empty buckets omitted. `0` is `out-ranked`;
+    /// `unassessable` is absent by construction because it has no gate list to count. This is the
+    /// honesty check on `pairs`: if the wealth sits at 3+, no two-knob arm reaches it and the pair
+    /// table is a rounding error. Filtered HERE and not at the print site on purpose — the print site
+    /// sits behind `print_recall_capture`, which ships false, so a predicate left there is unkillable
+    /// by the mutation gate. Same rule as the `rows.is_empty()` guard below.
+    by_count: Vec<(usize, usize, f64)>,
+    w_n: usize,
+    w_mult: f64,
+}
+
 /// (#127) WHY the misses were missed — the attribution `recall_capture` above cannot make.
 ///
 /// `recall_capture` counts what the lane failed to hold; it never says whether a missed 20-bagger was
@@ -3901,7 +3937,13 @@ struct MissRow {
 /// count is therefore the honest ceiling on what any single-knob loosening can recover. `unassessable`
 /// and `out-ranked` have no gate list at all, so their sole columns are structurally zero.
 ///
-/// Returns (rows sorted by missed wealth desc, `w_n`, `w_mult`).
+/// (#128) …and the pair table is the answer to what that ceiling leaves. Since the sole column came
+/// back at ~0 for `range` at every horizon, the reachable wealth is whatever fails a SMALL NUMBER of
+/// gates together — so this also tallies, per winner, the exact pair it failed (only for winners
+/// failing exactly two: a five-failure name has ten pairs and a two-knob arm buys none of them) and
+/// the count histogram that says whether "small number" is even two.
+///
+/// Returns rows and pairs sorted by missed wealth desc, plus `by_count`, `w_n` and `w_mult`.
 /// MEASUREMENT ONLY — nothing here reaches a score, a gate or the journal.
 fn missed_winner_reasons(
     samples: &[Sample],
@@ -3910,7 +3952,7 @@ fn missed_winner_reasons(
     n: usize,
     top_frac: f64,
     min_multiple: f64,
-) -> Option<(Vec<MissRow>, usize, f64)> {
+) -> Option<MissTable> {
     let mut pool: BTreeMap<i32, Vec<&Sample>> = BTreeMap::new();
     for s in samples {
         pool.entry(bucket(s.date)).or_default().push(s);
@@ -3921,6 +3963,8 @@ fn missed_winner_reasons(
     }
     let (mut w_n, mut w_mult) = (0usize, 0.0f64);
     let mut tally: HashMap<&'static str, (usize, f64, usize, f64)> = HashMap::new();
+    let mut pair_tally: HashMap<(&'static str, &'static str), (usize, f64, usize, f64)> = HashMap::new();
+    let mut count_tally: BTreeMap<usize, (usize, f64)> = BTreeMap::new();
     for (b, mut rows) in pool {
         if rows.len() < 2 {
             continue; // same skip as `recall_capture`, or the two stop counting the same winners
@@ -3963,6 +4007,28 @@ fn missed_winner_reasons(
                 e.2 += 1;
                 e.3 += mult;
             }
+            // (#128) the same misses again, filed by HOW MANY gates blocked them rather than by which
+            // one is first. `unassessable` is deliberately absent: `None` is not zero gates failed, it
+            // is no gate list at all, and folding it into `[0]` would read as "cleared everything".
+            let Some(v) = &fails else { continue };
+            let c = count_tally.entry(v.len()).or_insert((0, 0.0));
+            c.0 += 1;
+            c.1 += mult;
+            // EXACTLY two, not every pair drawn from a k-failure name: five failures make ten pairs and
+            // a two-knob loosening admits none of them, so enumerating those would credit each row with
+            // wealth no arm can reach. Exactly-2 is the cohort a two-knob arm CAN admit, and it files
+            // each winner under one key, so the column still sums.
+            let [a, z] = v.as_slice() else { continue };
+            let e = pair_tally.entry((a.0, z.0)).or_insert((0, 0.0, 0, 0.0));
+            e.0 += 1;
+            e.1 += mult;
+            // BOTH inside their own gate's near-miss slack. One member near and the other missing by a
+            // mile is not a pair any shippable loosening reaches, and counting it would overstate the
+            // arm before the arm is even graded.
+            if a.2 && z.2 {
+                e.2 += 1;
+                e.3 += mult;
+            }
         }
     }
     let mut rows: Vec<MissRow> = tally
@@ -3973,12 +4039,25 @@ fn missed_winner_reasons(
     // are not the same miss. Name tiebreak because `HashMap` order is unspecified and this table has
     // to read identically at any thread count.
     rows.sort_by(|a, z| z.mult.total_cmp(&a.mult).then(a.reason.cmp(z.reason)));
+    let mut pairs: Vec<PairRow> = pair_tally
+        .into_iter()
+        .map(|(pair, (winners, mult, near, near_mult))| PairRow { pair, winners, mult, near, near_mult })
+        .collect();
+    pairs.sort_by(|a, z| z.mult.total_cmp(&a.mult).then(a.pair.cmp(&z.pair)));
+    let by_count: Vec<(usize, usize, f64)> =
+        count_tally.into_iter().map(|(gates, (winners, mult))| (gates, winners, mult)).collect();
     // `rows.is_empty()` is the "every winner was held" case, and it returns None for the same reason
     // the other two do: the caller divides by `w_mult` and by Σ`mult`, so an empty table would print
     // a NaN. Deciding it HERE and not at the print site is deliberate — the print site sits inside
     // `if tuning.print_recall_capture`, which ships false, so no golden ever executes it and any
     // branch left there is unkillable by the mutation gate. Guards belong where a test can reach them.
-    (w_n > 0 && w_mult > 0.0 && !rows.is_empty()).then_some((rows, w_n, w_mult))
+    // `pairs` is allowed to be empty — "nothing failed exactly two gates" is a real and publishable
+    // answer, and it refuses the arm rather than voiding the table. Only `rows` gates the None.
+    // NO `w_n > 0` TERM: it was here and it is redundant, because every winner contributes a
+    // non-negative multiple, so `w_mult > 0.0` cannot hold with `w_n == 0`. A guard that re-decides
+    // what the next guard already decided is an unkillable mutant by construction (`>` and `>=` agree
+    // on a usize that is only ever compared to zero), so it is deleted rather than tested.
+    (w_mult > 0.0 && !rows.is_empty()).then_some(MissTable { rows, pairs, by_count, w_n, w_mult })
 }
 
 /// (#9) Do the hard growth GATES actually select winners? Every rho/edge the lanes print is computed
@@ -4315,11 +4394,11 @@ fn report_lane(
         // would blame one lane's misses on the other lane's gates.
         if label.starts_with("GROWTH") {
             for (frac, floor, cut) in [(0.01, 0.0, "top 1%"), (1.0, 10.0, "≥10×")] {
-                let Some((rows, w_n, w_mult)) =
-                    missed_winner_reasons(samples, &scored, tuning, VERDICT_TOP, frac, floor)
+                let Some(t) = missed_winner_reasons(samples, &scored, tuning, VERDICT_TOP, frac, floor)
                 else {
                     continue;
                 };
+                let (rows, w_n, w_mult) = (&t.rows, t.w_n, t.w_mult);
                 let missed_n: usize = rows.iter().map(|r| r.winners).sum();
                 let missed_mult: f64 = rows.iter().map(|r| r.mult).sum();
                 // TIE-BACK, and it is not decoration: this % must equal 100 − the capture printed
@@ -4329,7 +4408,7 @@ fn report_lane(
                     "    why the {cut} misses were missed ({missed_n} of {w_n} winners = {:.0}% of their wealth; capture above is the rest):",
                     missed_mult / w_mult * 100.0
                 );
-                for r in &rows {
+                for r in rows {
                     println!(
                         "      {:<24} {:>4} winners   {:>5.1}% of the missed wealth   sole blocker: {:>4} ({:>4.1}%)",
                         r.reason,
@@ -4347,6 +4426,31 @@ fn report_lane(
                 println!(
                     "      -> at most {:.1}% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once",
                     sole_mult / missed_mult * 100.0
+                );
+                // (#128) …so WHICH two. Only winners failing exactly two gates appear here, and the
+                // near-miss column is the part of each pair that sits inside the gates' own slack —
+                // the only part a loosening anyone would ship actually admits.
+                for pr in t.pairs.iter().take(6) {
+                    println!(
+                        "      {:<11} + {:<11} {:>4} winners   {:>5.1}% of the missed wealth   both near-miss: {:>4} ({:>4.1}%)",
+                        pr.pair.0,
+                        pr.pair.1,
+                        pr.winners,
+                        pr.mult / missed_mult * 100.0,
+                        pr.near,
+                        pr.near_mult / missed_mult * 100.0
+                    );
+                }
+                // The histogram is what says whether the pair table is worth reading at all: if the
+                // wealth sits at 3+ gates, no two-knob arm reaches it. Gate-assessable winners only —
+                // `unassessable` has no gate list, so these shares do not sum to 100.
+                let hist: String =
+                    t.by_count.iter().map(|(g, _, m)| format!("{g}:{:.0}% ", m / missed_mult * 100.0)).collect();
+                let pair_mult: f64 = t.pairs.iter().map(|pr| pr.mult).sum();
+                println!(
+                    "      -> exactly-2-gate winners hold {:.1}% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): {}",
+                    pair_mult / missed_mult * 100.0,
+                    hist.trim_end()
                 );
             }
         }
@@ -5475,17 +5579,35 @@ mod tests {
         };
         let cf = picks::gate_failures(&clears("CLEAN"), &t);
         assert!(cf.as_ref().is_some_and(|v| v.is_empty()), "CLEAN must clear every gate, got {cf:?}");
-        // Fails MORE THAN ONE gate: bottom of its own range AND down on the year. Filed under whichever
-        // is first in gate order, but NOT a sole blocker — no single knob buys this name back.
+        // Fails EXACTLY TWO gates: outside its own range AND down on the year. Filed under whichever is
+        // first in gate order, but NOT a sole blocker — no single knob buys this name back. Both misses
+        // are inside the gates' own near-miss slack (75 vs an 80 floor with 10pp of give; -5% on the
+        // year against a 0 floor with 10pp), so this is the pair cohort an arm could actually admit.
         let multi = {
             let mut q = clears("MULTI");
-            q.range_pct = 10.0;
+            q.range_pct = 75.0;
             q.perf = legs(&[("1M", 2.0), ("1Y", -5.0), ("5Y", 200.0)]);
             q
         };
         let mf = picks::gate_failures(&multi, &t).expect("assessable");
-        assert!(mf.len() >= 2, "MULTI must fail 2+ gates or the sole-blocker column proves nothing: {mf:?}");
+        assert_eq!(mf.len(), 2, "MULTI must fail EXACTLY 2 gates or it lands outside the pair table: {mf:?}");
+        assert!(mf[0].2 && mf[1].2, "both MULTI failures must be NEAR misses: {mf:?}");
         let multi_reason = mf[0].0;
+        // The same pair, but one member missing by a mile (10% of range against an 80 floor). Same row
+        // as MULTI, and the near column is what separates them — without it the pair table would price
+        // an unreachable name as if a modest loosening could buy it.
+        let far = {
+            let mut q = multi.clone();
+            q.ticker = "FAR".into();
+            q.range_pct = 10.0;
+            q
+        };
+        let ff = picks::gate_failures(&far, &t).expect("assessable");
+        assert_eq!(
+            (ff.len(), ff[0].2, ff[1].2),
+            (2, false, true),
+            "FAR must fail the SAME two gates with the first NOT near: {ff:?}"
+        );
 
         // One bucket. Realized % -> multiple: 950->10.5, 900->10.0, 400->5.0, 300->4.0, 100->2.0, …
         let row = |q: Quote, realized: f64| Sample {
@@ -5500,7 +5622,8 @@ mod tests {
             row(clears("TOP"), 950.0),      // held -> attributed to nothing
             row(clears("CLEAN"), 900.0),    // cleared the gates, ranked below n -> out-ranked
             row(no_history("NOHIST"), 400.0), // fails exactly one gate -> SOLE blocker
-            row(multi, 300.0),                // fails 2+ -> counted, but not sole
+            row(multi, 300.0),                // fails exactly 2, both near -> the reachable pair cohort
+            row(far, 200.0),                  // fails the same 2, one by a mile -> in the pair, not near
             row(unassessable("BARE"), 100.0),
             row(unassessable("BARE2"), 10.0),
             row(unassessable("BARE3"), 5.0),
@@ -5511,35 +5634,62 @@ mod tests {
             .enumerate()
             .map(|(i, n)| (pool.iter().find(|s| s.quote.ticker == *n).unwrap(), 100.0 - i as f64))
             .collect();
-        let (rows, w_n, w_mult) =
-            missed_winner_reasons(&pool, &scored, &t, 1, 1.0, 0.0).expect("seven winners in the pool");
-        assert_eq!(w_n, 7);
-        assert!((w_mult - 33.65).abs() < 1e-9, "Σ multiple over every winner: {w_mult}");
+        let table =
+            missed_winner_reasons(&pool, &scored, &t, 1, 1.0, 0.0).expect("eight winners in the pool");
+        let (rows, w_n, w_mult) = (&table.rows, table.w_n, table.w_mult);
+        assert_eq!(w_n, 8);
+        assert!((w_mult - 36.65).abs() < 1e-9, "Σ multiple over every winner: {w_mult}");
 
-        // THE MAPPING, and the order is by wealth: out-ranked 10.0 > history 5.0 > unassessable 4.15 >
-        // MULTI 4.0 — even though `unassessable` has three winners to every other row's one.
+        // THE MAPPING, and the order is by wealth: out-ranked 10.0 > range 7.0 (MULTI+FAR) > history
+        // 5.0 > unassessable 4.15 — even though `unassessable` has three winners to every other row's
+        // one or two.
         let got: Vec<(&str, usize)> = rows.iter().map(|r| (r.reason, r.winners)).collect();
         assert_eq!(
             got,
-            vec![("out-ranked", 1), ("history", 1), ("unassessable", 3), (multi_reason, 1)],
+            vec![("out-ranked", 1), (multi_reason, 2), ("history", 1), ("unassessable", 3)],
             "{rows:?}"
         );
-        assert!((rows[0].mult - 10.0).abs() < 1e-9 && (rows[2].mult - 4.15).abs() < 1e-9, "{rows:?}");
+        assert!((rows[0].mult - 10.0).abs() < 1e-9 && (rows[3].mult - 4.15).abs() < 1e-9, "{rows:?}");
 
         // THE SOLE-BLOCKER COLUMN, which is the whole reason this table can be acted on: only NOHIST
         // fails exactly one gate. MULTI is counted under the same kind of row but is NOT recoverable by
         // moving one knob, and `out-ranked`/`unassessable` are structurally zero (no gate failed / not
         // assessable). Read the first-failure column alone and MULTI's wealth looks reachable; it isn't.
         let sole: Vec<(usize, f64)> = rows.iter().map(|r| (r.sole, r.sole_mult)).collect();
-        assert_eq!(sole.iter().map(|s| s.0).collect::<Vec<_>>(), vec![0, 1, 0, 0], "{rows:?}");
-        assert!((sole[1].1 - 5.0).abs() < 1e-9 && sole.iter().map(|s| s.1).sum::<f64>() == 5.0, "{rows:?}");
+        assert_eq!(sole.iter().map(|s| s.0).collect::<Vec<_>>(), vec![0, 0, 1, 0], "{rows:?}");
+        assert!((sole[2].1 - 5.0).abs() < 1e-9 && sole.iter().map(|s| s.1).sum::<f64>() == 5.0, "{rows:?}");
+
+        // (#128) THE PAIR TABLE. MULTI and FAR fail the same two gates, so they are ONE row carrying
+        // both — and the near column splits it, because only MULTI is inside the slack a shippable
+        // loosening reaches. Read `mult` alone and the arm looks twice as valuable as it is.
+        let pairs: Vec<((&str, &str), usize, f64, usize, f64)> =
+            table.pairs.iter().map(|pr| (pr.pair, pr.winners, pr.mult, pr.near, pr.near_mult)).collect();
+        assert_eq!(pairs.len(), 1, "one distinct pair in this pool: {pairs:?}");
+        assert_eq!((pairs[0].0, pairs[0].1, pairs[0].3), ((mf[0].0, mf[1].0), 2, 1), "{pairs:?}");
+        assert!((pairs[0].2 - 7.0).abs() < 1e-9 && (pairs[0].4 - 4.0).abs() < 1e-9, "{pairs:?}");
+
+        // THE COUNT HISTOGRAM, and its own tie-back: it files every GATE-ASSESSABLE miss exactly once,
+        // so it must sum to the rows table minus `unassessable` — which has no gate list and is absent
+        // by construction. If it summed to the whole table, `None` would be being read as "zero gates
+        // failed", i.e. as out-ranked, which is the opposite of what it means.
+        let hist = &table.by_count;
+        assert_eq!(
+            hist.iter().map(|h| (h.0, h.1)).collect::<Vec<_>>(),
+            vec![(0, 1), (1, 1), (2, 2)],
+            "out-ranked once, one single-gate miss, two two-gate misses: {hist:?}"
+        );
+        let assessable: f64 = rows.iter().filter(|r| r.reason != "unassessable").map(|r| r.mult).sum();
+        assert!(
+            (hist.iter().map(|h| h.2).sum::<f64>() - assessable).abs() < 1e-9,
+            "histogram {hist:?} must sum to the assessable rows {assessable}"
+        );
 
         // THE TIE-BACK to `recall_capture` on the same arguments — both halves, count and wealth.
         let (recall, capture, rc_w) = recall_capture(&pool, &scored, 1, 1.0, 0.0).unwrap();
         let (missed_n, missed_mult): (usize, f64) =
             (rows.iter().map(|r| r.winners).sum(), rows.iter().map(|r| r.mult).sum());
-        assert_eq!((rc_w, missed_n), (w_n, w_n - 1), "one winner was held, six were missed");
-        assert!((recall - 1.0 / 7.0).abs() < 1e-9);
+        assert_eq!((rc_w, missed_n), (w_n, w_n - 1), "one winner was held, seven were missed");
+        assert!((recall - 1.0 / 8.0).abs() < 1e-9);
         assert!(
             (missed_mult / w_mult - (1.0 - capture)).abs() < 1e-9,
             "missed wealth {missed_mult} of {w_mult} must be exactly the complement of capture {capture}"
@@ -5551,6 +5701,13 @@ mod tests {
 
         // no winner anywhere -> None, not an empty table that reads like "nothing was missed".
         assert!(missed_winner_reasons(&pool, &scored, &t, 1, 1.0, 100.0).is_none());
+
+        // WINNERS WORTH NOTHING -> None. Two names that realized -100% are still counted as winners
+        // (`min_multiple` 0.0 admits them) and still attributed, so the table is NOT empty — but their
+        // multiples sum to zero, and every share the caller prints divides by that sum. `rows.is_empty()`
+        // cannot see this case; only the `w_mult > 0.0` guard stands between the report and a NaN.
+        let wiped = vec![row(unassessable("Z1"), -100.0), row(unassessable("Z2"), -100.0)];
+        assert!(missed_winner_reasons(&wiped, &[], &t, 1, 1.0, 0.0).is_none());
     }
 
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back
