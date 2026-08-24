@@ -418,6 +418,13 @@
 #   revert rule at `print_h2h_mid_ladder`. So: WHERE THE 11-20 BOOK EXISTS, IT STILL DECIDES. Where a
 #   window cannot hold it, the guard reads the 6-10 book instead of going uncomputable.
 #
+#   (#135) LIMIT, 2026-08-24, ADDED THE DAY THE RE-BASING WAS MADE — P0b arm 1 broke the agreement
+#   at 20y (6-10 reads 46%, 11-20 reads 50%), so the pre-registered revert rule fired and THE
+#   RE-BASING NOW HOLDS AT 12y AND 8y ONLY. The 20y rank-1 h2h on the PIT pool is uncomputable
+#   again, which is honest: (#124) prices 20y at n_eff 0.5 live and ~0.2 on PIT, so that column
+#   could never adjudicate between two knob values anyway. Full record at `print_h2h_mid_ladder`,
+#   including why "just prefer the bigger denominator" is the one repair that is NOT available.
+#
 #   WHAT IT DOES NOT LICENSE: 8 windows at 20y is still ~0.2 effective trials (#124). The guard is now
 #   COMPUTABLE at 20y on PIT, not decisive there. PIT knob-grading belongs at 12y and 8y.
 # ============================================================================================
@@ -2801,6 +2808,37 @@ buy_heuristic:
                                  # run finds the two books disagreeing on any arm where both are computable,
                                  # the re-basing is void and the guard goes back to the 11-20 book alone,
                                  # which puts P0b back where (#130) left it. Record the disagreeing arm here.
+                                 #
+                                 # *** THE REVERT RULE FIRED ON THE FIRST ARM GRADED, 2026-08-24. RECORDED HERE
+                                 # AS IT REQUIRES, AND THE RE-BASING IS NOW LIMITED TO 12y AND 8y. ***
+                                 # P0b arm 1 (`growth_min_cagr` 19->15 on PIT, full receipt at that knob) put the
+                                 # two books on opposite sides of the 50% line at 20y: the 6-10 book reads 6/13
+                                 # (46%, GUARD BROKEN) and the 11-20 book reads 3/6 (50%, passes). At 12y and 8y
+                                 # they agreed again (68% vs 69%, and 76% vs 62% — same side, both pass).
+                                 #
+                                 # WHAT THIS COSTS AND WHAT IT DOES NOT. The rule was pre-registered mechanically
+                                 # — "disagreeing on any arm where both are computable" — and it is being applied
+                                 # as written rather than argued past, which is the whole reason to pre-register.
+                                 # So: THE 20y RANK-1 h2h ON THE PIT POOL IS ONCE AGAIN UNCOMPUTABLE, because
+                                 # the only book licensed there is the 11-20 one and (#130) measured its
+                                 # denominator at 2. The re-basing SURVIVES at 12y and 8y, where the two books
+                                 # have now agreed on four independent readings (control and arm, both horizons).
+                                 #
+                                 # That limit lands exactly where the independent evidence already pointed, which
+                                 # is why it is a limit and not a defeat: (#124) measured 20y n_eff at 0.5 on the
+                                 # live pool, this receipt put PIT 20y at ~0.2, and both said the 20y column
+                                 # cannot ADJUDICATE between two knob values. A 6-window 50.0% and a 13-window
+                                 # 46.2% are not a real contradiction — they are two draws of noise, and the
+                                 # rule correctly refuses to let either one decide anything.
+                                 #
+                                 # DO NOT "FIX" THIS BY PREFERRING THE BIGGER DENOMINATOR. It is the obvious move
+                                 # and it is exactly the softening this rule exists to block: the 6-10 book was
+                                 # licensed BY agreement, so it cannot be promoted over the book it disagrees
+                                 # with by citing its own sample size. TO RE-EXTEND IT TO 20y, an arm must show
+                                 # the two books agreeing at 20y on a lane where the 11-20 denominator is not
+                                 # starved — i.e. on `stress`, where (#135) already got 18 windows — AND the
+                                 # PIT 20y denominator must clear the n_eff>=1 bar (#124) sets, which at ~0.2
+                                 # today needs roughly a 5x deeper admitted book, not a different comparison.
   split_purge_months: 0          # (#90) UNMEASURED — an unfitted judgement value, shipping 0, which is no
                                  #   purge at all: today's behaviour byte-for-byte, and what every OOS rho,
                                  #   every "both halves positive" promotion in this file and every `tune`
@@ -4003,6 +4041,65 @@ buy_heuristic:
                                  #   lifetime) — that is a CODE change, and no floor value can substitute for it.
                                  #   (#73) that leg-2 code change was made and graded; see the paragraph above. It is a wash too,
                                  #   which retires the last open lead on this gate. 18 stays refused and 19 stays shipped.
+                                 # (#135) P0b ARM 1 — THE FIRST POINT-IN-TIME RE-SWEEP EVER RUN ON THIS KNOB,
+                                 # 2026-08-24. REFUSED. 19.0 stands. This discharges the PIT half of the DEBT
+                                 # block for `growth_min_cagr` specifically: it is no longer un-re-swept, it is
+                                 # re-swept and it lost. Three runs, `backtest {20,12,8} universe fund pit`, via
+                                 # tests/p0b-cagr15.yaml; `heuristic_drift` named exactly two fields on all
+                                 # three (`growth_min_cagr 19.0->15.0` and the `print_h2h_mid_ladder` instrument).
+                                 #
+                                 # WHY 15.0 AND NOT A LADDER: 15 is the exact point `gate_sweep` probes as
+                                 # `growth_min_cagr -4`, and on the PIT control that probe flags TOO TIGHT at 8y
+                                 # (n=315, fwd peer-relative mean +66.3 | med +63.8). One arm at the flagged
+                                 # point, verdict recorded either way — not a ladder re-fitted to a fresh
+                                 # objective, which is how a file overfits itself.
+                                 #
+                                 #     horizon   top-10 exc|med      worst        h2h vs 6-10    vs 11-20   admitted
+                                 #       20y     +0.8|+0.9 -> +1.0|+1.5   -10.0 -> -10.0   50% -> 46%     50% -> 50%   117 -> 183
+                                 #       12y     +2.8|+2.8 -> +2.2|+3.1    -9.5 ->  -6.9   61% -> 68%     50% -> 69%   228 -> 374
+                                 #        8y     +4.5|+4.5 -> +3.3|+3.8    -6.2 ->  -4.4   65% -> 76%     67% -> 62%   325 -> 640
+                                 #
+                                 # THE VERDICT DOES NOT DEPEND ON WHICH COMPARISON BOOK THE GUARD READS, which
+                                 # is why it can be recorded as clean despite the 20y disagreement below:
+                                 #   - re-based guard (6-10, per #135): rank-1 h2h 46% at 20y -> GUARD BROKEN ->
+                                 #     REFUSED OUTRIGHT. Precedence GUARD > PRIMARY; it is not softened to a tie.
+                                 #   - old guard (11-20): h2h 50/69/62 all pass, but PRIMARY fails at 8y with
+                                 #     BOTH mean AND median DOWN (+4.5|+4.5 -> +3.3|+3.8). NO SHIP.
+                                 # Both roads end at 19.0. The worst-window GUARD never bit — it improves at 12y
+                                 # and 8y and holds exactly at 20y.
+                                 #
+                                 # THE INSTRUMENT VALIDATED ITSELF. The admitted-count deltas are +66 / +146 /
+                                 # +315, which equal `gate_sweep`'s own n at 20y / 12y / 8y to the unit. Two
+                                 # independent readings of the same quantity agreeing exactly, the same
+                                 # cross-check (#74) used. The arm moved what it said it moved.
+                                 #
+                                 # *** READ THIS BEFORE ACTING ON ANY `gate_sweep` TOO TIGHT FLAG AGAIN. ***
+                                 # At 8y this flag was as strong as flags get — n=315, mean AND median both
+                                 # strongly positive — and the top-10 book still got WORSE (+4.5 -> +3.3). There
+                                 # is no contradiction: `gate_sweep` measures the newly-admitted names' OWN
+                                 # forward peer-relative return. It does NOT measure their effect on the book.
+                                 # The book holds TEN names, so a newcomer who is above peer average can still
+                                 # rank into the top-10 and displace someone BETTER. ADMISSION IS NOT SELECTION,
+                                 # and a gate can be "too tight" by the sweep's measure while being exactly right
+                                 # for the book. (#60) said "do not act on a short-horizon flag alone" about
+                                 # `growth_maxdd_cap`; this generalizes it to the instrument — a TOO TIGHT flag
+                                 # is a LEAD, never a verdict, at any horizon count. It costs three runs to
+                                 # convert one into a verdict, and both of the two flags converted so far
+                                 # (maxdd_cap #60/#74, and this one) converted to REFUSED.
+                                 #
+                                 # WHAT MOVED AND WHAT DID NOT. Loosening to 15 reliably improves the DOWNSIDE
+                                 # (worst window better at 12y and 8y) and the MEDIAN at the two long horizons,
+                                 # while cutting the MEAN at 12y and 8y. That is the shape of trading tail
+                                 # winners for breadth: 19.0 is buying the right tail, and the right tail is what
+                                 # an equal-weight terminal-wealth book is made of. A future arm that wants this
+                                 # gate looser needs to keep the mean, not just the median.
+                                 #
+                                 # REVERT RULE: none to execute — nothing shipped. TO REOPEN, one of: (a) a rung
+                                 # between 15 and 19 that holds the 8y MEAN, which is the clause that actually
+                                 # failed on the old guard; or (b) evidence that the 20y rank-1 h2h disagreement
+                                 # recorded at `print_h2h_mid_ladder` resolves in favour of the 6-10 book, since
+                                 # under the 11-20 book this arm dies on PRIMARY rather than on the GUARD and the
+                                 # two failures invite different repairs. Do not reopen on a `gate_sweep` flag.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
