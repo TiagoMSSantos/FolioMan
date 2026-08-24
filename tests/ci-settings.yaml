@@ -6831,6 +6831,67 @@ urls:
   # DAX ponds, which share almost nothing with the S&P 500 spans and would be dropped very nearly
   # ENTIRELY under `pit`. The 15 measures the nasdaq100 pond that is configured now. Two different
   # claims — never cite the 15 for the other ponds.
+  # (#134) THE POND RE-RUN IS BLOCKED BY THE PRICE SOURCE, NOT BY MEMBERSHIP DATA. Measured 2026-08-24.
+  # (#128) filed this as "BLOCKED PENDING A SECOND MEMBERSHIP SOURCE"; (#129) refiled it as "blocked
+  # pending a source that is not available free ... a paid vendor (CRSP/EODHD-class)" and closed with
+  # "do not open this again on the assumption that someone simply has not looked". Someone has now
+  # looked, and both receipts name the WRONG HALF. Membership is the CHEAP half. The half that cannot
+  # be had here is PRICES FOR NAMES THAT STOPPED TRADING.
+  #
+  # 1. MEMBERSHIP IS NEARLY FREE, AND (#129) MISSED THE SOURCE IT CHECKED FOR. Wikipedia serves any
+  #    revision's wikitext, and the constituent tables carry {{NyseSymbol|X}} / {{NasdaqSymbol|X}}
+  #    templates, so a monthly walk of a page's revision history reconstructs `ticker,start_date,
+  #    end_date` directly — the shape `core::sp500_spans` already parses.
+  #    `tools/membership_from_wikipedia.py` does exactly that, and is deliberately NOT wired into the
+  #    binary; `--selftest` runs its parser checks offline.
+  #    Measured depth, per pond, 2026-08-24:
+  #      S&P 400 MidCap   USABLE 2012-12 -> today. 399/400/400/401/400 names parsed at 2013-01, 2016-06,
+  #                       2020-06, 2023-06, today.
+  #      FTSE 100         USABLE ~2015 ONLY. The Ticker column appears between 2014-06 and 2015-06;
+  #                       before that the page lists company NAMES ("# [[3i]]", 2005), and the
+  #                       "Past constituents" section is an undated, ticker-less name list.
+  #      S&P 600          2018. Too shallow.
+  #      DAX / CAC 40 / IBEX 35   No machine-readable ticker table at any depth.
+  #    The S&P 400 page's own "Selected past ... changes" table IS dated and DOES carry added/removed
+  #    tickers — 508 dated rows — but its earliest row is 2012-01, so it does not extend the walk back.
+  #    CONSEQUENCE ON ITS OWN: no free pond reaches 20y. Ship Rule v2 PRIMARY needs 20y AND 8y, so no
+  #    Wikipedia-sourced arm can carry a verdict. (12y needs membership by 2014-08 — S&P 400 clears
+  #    that, FTSE 100 does not. 20y needs 2006-08 and nothing clears it.)
+  #
+  # 2. A 20y SOURCE DOES EXIST, AND IT FAILS FOR A SECOND, SEPARATE REASON. iShares Trust (CIK
+  #    0001100663) files the IJH schedule of investments on EDGAR: N-Q filings carrying "S&P MidCap 400
+  #    Index Fund" run from 2007-08, N-CSR from 2003. Parsed live — the 2007-06-30 IJH schedule yields
+  #    393 holdings, inside a 350-420 band. But those filings identify holdings by COMPANY NAME ONLY:
+  #    no ticker, no CUSIP, no ISIN, checked in a 2004 and a 2013 filing alike. Resolving those names
+  #    against the Wikipedia name<->ticker pairs (754 keys, unioned over eight revisions) matched
+  #    234 of 393 = 59.5%. The 40% that missed are systematically the DEPARTED names — Catalina
+  #    Marketing, DRS Technologies, Sequa, ArvinMeritor, Colonial BancGroup, Greater Bay Bancorp.
+  #    Dropping them re-introduces precisely the survivor bias a point-in-time universe exists to
+  #    remove, so the shortfall cannot be waved through as coverage noise.
+  #
+  # 3. AND IT WOULD CHANGE NOTHING IF EVERY NAME RESOLVED. THIS IS THE ACTUAL FINDING. (#121) already
+  #    measured it on the S&P 500, where membership is perfect: of the 734 members whose span carries
+  #    an exit date, 387 come back as a MUTUALFUND stub with ZERO BARS, and 193 more hold fewer than 36
+  #    bars inside their own span — 154 of 734 are scoreable. ZERO of 1206 members have a series ending
+  #    more than a year before today. Re-confirmed 2026-08-24 against `.long_history_cache.json`:
+  #      BSC TWX SVU ROH ENRNQ  MUTUALFUND stub, numeric shortName, 0 bars.
+  #      CFC (left 2008-07)     320 bars, 2000-01..2026-08 — not Countrywide's history.
+  #      MOLX (acquired 2013)   215 bars, 1973-01..2026-07 — likewise.
+  #      ARM                    "Arm Holdings plc", 2023-09..2026-08. ArvinMeritor was a 2007 IJH
+  #                             holding; that ticker now belongs to a company that listed in 2023.
+  #    A perfect MidCap membership file would therefore hand the walk zero-bar stubs and RECYCLED
+  #    tickers carrying a different company's prices. The second failure is worse than the first,
+  #    because it scores silently instead of dropping out.
+  #
+  # WHAT WOULD ACTUALLY REOPEN THIS: a survivorship-free PRICE source. That is the vendor (#129) was
+  # reaching for, described correctly for the first time. ONE free candidate is UNTESTED rather than
+  # refuted — stooq.com is reported to retain delisted US symbols, but on 2026-08-24 every request
+  # from this machine, INCLUDING a live AAPL control, returned a JavaScript proof-of-work bot check
+  # instead of CSV. Nothing about its delisted coverage was measured either way. Run the live control
+  # first before citing this line as "stooq does not have it".
+  # DO NOT re-open the pond question by reconstructing membership: that half is done and it is not the
+  # blocker. (#100)'s evidence stays STALE and the standing verdict stays UNCHANGED — do not re-add a
+  # pond on argument alone — but the block is now filed against the right half of the problem.
   constituents_csv:
     - "https://yfiua.github.io/index-constituents/constituents-nasdaq100.csv"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
