@@ -2496,18 +2496,8 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // collapses to a handful (#130) and Ship Rule v2's rank-1 guard cannot be computed there at all —
     // which is why P0b has never run. This one needs 6. Printed BESIDE the shipped number and never
     // instead of it: the two DENOMINATORS side by side are the actual reading of the admission ceiling.
-    if tuning.print_h2h_mid_ladder && h2h_low.n > 0 {
-        println!(
-            "    head-to-head vs the 6-10 book (#135): #1 beat it in {}/{} ({:.0}%), the 2-5 book did in {}/{} ({:.0}%) — denominator {} here vs {} for the 11-20 line above",
-            h2h_low.h1,
-            h2h_low.n,
-            h2h_low.h1 as f64 / h2h_low.n as f64 * 100.0,
-            h2h_low.h25,
-            h2h_low.n,
-            h2h_low.h25 as f64 / h2h_low.n as f64 * 100.0,
-            h2h_low.n,
-            hn
-        );
+    if let Some(line) = h2h_low_line(tuning.print_h2h_mid_ladder, h2h_low, hn) {
+        println!("{line}");
     }
     // (Phase B) the never-sell tax edge, made visible: a hold pays capital-gains ONCE at the final
     // sale, a yearly-rotation strategy on the SAME pre-tax path pays tax on each year's gain.
@@ -2600,6 +2590,26 @@ fn h2h_beats(vv: &[(f64, f64, f64, String)], lo: usize, hi: usize) -> Option<(bo
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
     let mid = mean(&vv[lo..hi.min(vv.len())].iter().map(|x| x.1).collect::<Vec<_>>());
     Some((vv[0].1 > mid, mean(&vv[1..5].iter().map(|x| x.1).collect::<Vec<_>>()) > mid))
+}
+/// (#135) the second head-to-head line, built as a VALUE rather than printed inline so the condition
+/// that decides whether it appears is testable — the module's standing idiom (`rank_slice_stats` and
+/// `h2h_beats` are pure for the same reason). `None` = stay silent, and both reasons are real: the
+/// knob is off, or NO window reaches the 6-10 book, in which case the percentage would be 0/0 = NaN.
+fn h2h_low_line(on: bool, low: H2h, hn: usize) -> Option<String> {
+    if !on || low.n == 0 {
+        return None;
+    }
+    Some(format!(
+        "    head-to-head vs the 6-10 book (#135): #1 beat it in {}/{} ({:.0}%), the 2-5 book did in {}/{} ({:.0}%) — denominator {} here vs {} for the 11-20 line above",
+        low.h1,
+        low.n,
+        low.h1 as f64 / low.n as f64 * 100.0,
+        low.h25,
+        low.n,
+        low.h25 as f64 / low.n as f64 * 100.0,
+        low.n,
+        hn
+    ))
 }
 /// (#45) DISJOINT rank-slice books + same-window head-to-head, pure for testability. Per window
 /// (bucket): sort by score desc; slice `lo..hi` of that order becomes its own equal-weight book;
@@ -5109,6 +5119,24 @@ mod tests {
     /// +10 everywhere. Window B: 8 names only — too small for a head-to-head (needs ≥11), and its
     /// 21-50 slice must NOT exist rather than fake a short book.
     #[test]
+    fn h2h_low_line_stays_silent_unless_it_has_something_true_to_say() {
+        // (#135) THE PRINT CONDITION IS THE TESTABLE PART. This line exists to be read BESIDE the
+        // shipped 11-20 head-to-head, so the two ways it must stay quiet are not cosmetic: printing
+        // when the knob is off would move every golden (non-negotiable #1), and printing when no
+        // window reaches the 6-10 book would render 0/0 as "NaN%" and put a fake denominator next to
+        // a real one — the exact "a short book fakes a number" failure `h2h_beats` returns None for.
+        let some = H2h { h1: 3, h25: 2, n: 4 };
+        assert_eq!(h2h_low_line(false, some, 6), None, "knob off: silent even with windows to report");
+        assert_eq!(h2h_low_line(true, H2h::default(), 6), None, "no window reaches the 6-10 book: silent");
+
+        let line = h2h_low_line(true, some, 6).expect("knob on with 4 windows must print");
+        assert!(line.contains("3/4 (75%)"), "rank-1 tally and its own denominator: {line}");
+        assert!(line.contains("2/4 (50%)"), "the 2-5 book shares that denominator: {line}");
+        // The whole point of the line: its denominator NEXT TO the shipped one, never in place of it.
+        assert!(line.contains("denominator 4 here vs 6"), "both denominators, side by side: {line}");
+    }
+
+    #[test]
     fn rank_slice_ladder_and_head_to_head() {
         let mut by_bucket: std::collections::BTreeMap<i32, Vec<(f64, f64, f64, String)>> =
             std::collections::BTreeMap::new();
@@ -5177,6 +5205,17 @@ mod tests {
         let (_, h2h_mid, h2h_low) = rank_slice_stats(&by_bucket);
         assert_eq!((h2h_mid.h1, h2h_mid.h25, h2h_mid.n), (2, 2, 2), "the 14-name window reaches the 11-20 book");
         assert_eq!((h2h_low.h1, h2h_low.h25, h2h_low.n), (4, 4, 4), "and every window reaches the 6-10 book");
+
+        // (#135) A TIE IS NOT A WIN, AND ONLY AN EXACT TIE CAN PROVE IT. Every name in window E has
+        // the SAME return, so #1, the 2-5 book and both comparison books are all exactly 50.0 — the
+        // one shape where `>` and `>=` disagree. Both denominators must count the window (12 names
+        // reaches 11-20 and 6-10 alike) while NEITHER numerator moves. Relaxing either comparison in
+        // `h2h_beats` to `>=` would book a dead heat as a win for the argmax, which is precisely the
+        // winner's-curse the h2h GUARD exists to catch, so this case is load-bearing for the guard.
+        by_bucket.insert(5, (0..12).map(|r| (100.0 - r as f64, 50.0, 10.0, format!("E{r}"))).collect());
+        let (_, h2h_mid, h2h_low) = rank_slice_stats(&by_bucket);
+        assert_eq!((h2h_mid.h1, h2h_mid.h25, h2h_mid.n), (2, 2, 3), "the tied window counts, and wins nothing");
+        assert_eq!((h2h_low.h1, h2h_low.h25, h2h_low.n), (4, 4, 5), "same on the 6-10 book");
         // median: odd + even sample sizes, and the top-N table's clone-then-sort usage pattern
         assert_eq!(median(vec![3.0, 1.0, 2.0]), 2.0);
         assert_eq!(median(vec![4.0, 1.0, 2.0, 3.0]), 2.5);
