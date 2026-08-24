@@ -1457,11 +1457,11 @@ buy_heuristic:
                                  #   run, and it prices the composite before any weight is chosen. Only
                                  #   then a weight curve at 20y/12y/8y under the ship rule. REVERT: set
                                  #   the weight to 0.0; the term is then exactly 0 for every row.
-  growth_record_weight: 0.0      # (#133 / round 8) UNMEASURED AS SHIPPED — 0.0 is OFF, the term
-  growth_record_full_years: 20.0 # contributes exactly 0.0, and the lane is the one every golden
-                                 # holds. The full-years bar is an UNFITTED judgement value and is
-                                 # inert until the weight moves: 20.0 because that is the hold this
-                                 # tool claims to pick for, and the top rung of `long_leg`'s ladder.
+  growth_record_weight: 0.0      # (#133 / round 8) MEASURED AND REFUSED 2026-08-23 — stays OFF, where
+  growth_record_full_years: 20.0 # the term contributes exactly 0.0 and the lane is the one every
+                                 # golden holds. Kept rather than deleted, on the `growth_trust_ladder`
+                                 # precedent: the null must stay reproducible in one config line. The
+                                 # full-years bar is an UNFITTED judgement value, inert while w is 0.
                                  #
                                  #   WHAT IT IS: an ADDITIVE penalty in `base`, ahead of every damp —
                                  #     record_term = −weight × max(0, full_years − long_years)
@@ -1521,8 +1521,74 @@ buy_heuristic:
                                  #   but admits nobody has bought nothing, which is the finding (#124)
                                  #   already banked.
                                  #
-                                 #   REVERT: set the weight to 0.0; the term is then exactly 0.0 for
-                                 #   every row and `growth_record_full_years` stops being read.
+                                 #   THE VERDICT: REFUSED AT EVERY RUNG, GUARD BROKEN. 14 runs,
+                                 #   `backtest {20,12,8} universe stress`, 2026-08-23. Arm verification
+                                 #   passed as pre-registered (control A names no drift, control B names
+                                 #   `growth_min_leg_years` alone, every arm names exactly it plus
+                                 #   `growth_record_weight`), and the pool was IDENTICAL across all 14
+                                 #   runs at each horizon (2374 / 4712 / 8389), so no cross-run universe
+                                 #   noise is in these numbers.
+                                 #
+                                 #   rank-1 h2h, the guard, quoted with its denominator:
+                                 #                        20y            8y
+                                 #     control A     67% (12/18)   65% (22/34)     <- SHIPPED, passes
+                                 #     control B     45% (10/22)   46% (19/41)
+                                 #     w 0.25        41% ( 9/22)   46% (19/41)
+                                 #     w 0.50        36% ( 8/22)   44% (18/41)
+                                 #     w 1.00        27% ( 6/22)   39% (16/41)
+                                 #     w 2.00        45% (10/22)   34% (14/41)
+                                 #   Ship Rule v2 precedence is GUARD > PRIMARY, and a broken guard
+                                 #   REFUSES OUTRIGHT — it is never softened into unresolved. Every rung
+                                 #   is under 50% at BOTH graded horizons. 12y was not run for the arms
+                                 #   because the plan pre-registered it for survivors only, and there
+                                 #   were none. PRIMARY fails independently anyway: top-10 median falls
+                                 #   at every rung at both horizons (20y +6.1 -> 6.0/5.6/5.4/5.6 vs
+                                 #   control A +6.1; 8y +7.1/6.5/6.3/6.1 vs +7.3). The worst-window
+                                 #   guard never bound — -0.5 at 20y and -9.2 at 8y at EVERY arm.
+                                 #
+                                 #   THE PRE-REGISTERED CONDITION IS NOW DISCHARGED, AND NEGATIVE. This
+                                 #   term IS the "record-length term in the score itself, not a post-hoc
+                                 #   multiplier" that `growth_min_leg_years` demanded before its 2Y rung
+                                 #   could be re-proposed. It was built, graded on the ladder its own
+                                 #   receipt anchored, and it DOES NOT SAVE THE RUNG. Its best arm only
+                                 #   MATCHES control B (20y 45% = 45%, 8y 46% = 46%) and never beats it,
+                                 #   so the term buys nothing the bare rung did not already have. DO NOT
+                                 #   RE-PROPOSE the 2Y rung on a third damp of this shape; the direction
+                                 #   is closed, and closing it was the point of running this.
+                                 #
+                                 #   TWO THINGS THE ARMS SAY THAT THE VERDICT DOES NOT.
+                                 #   (a) THE TERM IS NOT MERELY INERT, IT IS ACTIVELY WRONG-SHAPED. At 8y
+                                 #   it degrades h2h MONOTONICALLY as the weight rises (46/44/39/34), so
+                                 #   arming it is strictly worse than leaving it off on the same pool. At
+                                 #   20y it is non-monotone and incoherent: w 1.00 buys the BEST rank-1
+                                 #   excess of any arm (+5.0|+4.6 vs control B's +4.5|+3.7) together with
+                                 #   the WORST h2h (27%). It raises what rank 1 earns on average while
+                                 #   making rank 1 beat its own book's middle LESS often — a docking rule
+                                 #   that reshuffles the argmax without improving it. The same trap
+                                 #   `growth_proximity_weight` and `growth_max_peg` both record: visible
+                                 #   reordering, no rank-1 authority.
+                                 #   (b) THE RUNG'S ADMISSION LIFT IS REAL, LARGE, AND NOT WHAT (#50)
+                                 #   SAID IT WAS. King-walk windows go 339 -> 486 at 20y (+43%) and
+                                 #   699 -> 977 at 8y (+40%); at 8y the scored book goes 692 -> 938
+                                 #   STOCKS and 7 -> 39 ETFs. (#50)'s "the leg rung admits ETFs, not
+                                 #   stocks (ETF table 5->20, stocks +1)" is FALSE on today's pool — it
+                                 #   admits +246 stocks. Any future citation of (#50) on that point must
+                                 #   re-measure first. And the wider book is NOT worse in the basket:
+                                 #   control B's top-10 excess RISES at 8y (+6.6|+7.3 -> +7.1|+6.8 mean
+                                 #   up, median down) and at 12y (+6.2|+6.1 -> +6.7|+7.2, BOTH up). What
+                                 #   collapses is rank 1 ALONE. That localisation is the useful residue
+                                 #   of this round: (#124)'s admission ceiling is genuinely liftable, the
+                                 #   basket survives the lift, and the only casualty is the single name
+                                 #   at the top. A future round should aim at THAT — a rank-1-specific
+                                 #   brake, or the guard's own definition — not at another score term.
+                                 #
+                                 #   REVERT: already at the reverted value. Re-run any row above with
+                                 #   `tests/record{025,050,100,200}-ci-settings.yaml` (recreate per
+                                 #   (#131) — they are arm overlays, not tracked lanes) and
+                                 #   `tests/leg2-ci-settings.yaml` for control B. NEVER set
+                                 #   FOLIOMAN_OFFLINE=1 on these runs: it cuts the 8y king walk from 699
+                                 #   scored windows to 32 and prints the SHIPPED lane at -5.9 excess,
+                                 #   exiting 0 with a complete-looking report. Check `windows scored`.
   print_recall_capture: false    # (#104 / round 3 §1) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is today's report and what every golden holds.
                                  # It is display-only, so "unmeasured" here means the INSTRUMENT has
