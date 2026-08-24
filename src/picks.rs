@@ -7033,6 +7033,35 @@ mod tests {
         q
     }
 
+    /// (#133) The explain row is printed ONLY when the weight bites — the (#105) treatment, and the
+    /// reason every golden stayed byte-identical when the term landed. Without this test the guard is
+    /// ungraded: `cargo mutants` flips `!=` to `==` there and nothing fails, because no golden covers
+    /// `explain_growth_score` on this path. A row that appeared at the default weight would move every
+    /// blessed breakdown; a row that vanished when armed would hide the only arithmetic a reader has.
+    #[test]
+    fn record_row_is_printed_only_when_the_weight_bites() {
+        let off = BuyHeuristic::default();
+        let q = gate_fixture();
+        let quiet = explain_growth_score(&q, &off, 0.0).expect("the fixture clears the gates");
+        assert!(!quiet.contains("record   ="), "the default lane must print no record row:\n{quiet}");
+
+        let armed = BuyHeuristic {
+            growth_record_weight: 0.5,
+            growth_record_full_years: 20.0,
+            ..BuyHeuristic::default()
+        };
+        let loud = explain_growth_score(&q, &armed, 0.0).expect("the fixture clears the gates");
+        let row = loud
+            .lines()
+            .find(|l| l.contains("record   ="))
+            .unwrap_or_else(|| panic!("an armed weight must print the record row:\n{loud}"));
+        // the leg it FOUND and the bar it is short of both have to be on the row, or "penalised for a
+        // short record" is unreadable — and the dock has to be the one `score_parts` actually applied.
+        for want in ["0.50", "20", "5.0", "-7.50"] {
+            assert!(row.contains(want), "row is missing {want}: {row}");
+        }
+    }
+
     /// (#133) The record-length penalty. It exists because `growth_min_leg_years` refused the 2Y rung
     /// twice and named the mechanism rather than the quantity: a short record COLLECTS SCORE FOR THE
     /// ABSENCE OF MEASURED BAD NEWS — above-MA reads 0% and maxdd is shallow because the drawdown has
