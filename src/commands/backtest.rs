@@ -2467,7 +2467,8 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // can't), so top-1 trailing top-10 is diversification math, not a ranking verdict. DISJOINT
     // slices and a direct same-window compare are the honest order test: if ranks 1 and 2-5 don't
     // beat 11-20 HERE, the order at the top of the screen carries no signal.
-    let (slices, (h1, h25, hn)) = rank_slice_stats(&by_bucket);
+    let (slices, h2h_mid, h2h_low) = rank_slice_stats(&by_bucket);
+    let (h1, h25, hn) = (h2h_mid.h1, h2h_mid.h25, h2h_mid.n);
     println!("  rank-slice (DISJOINT books, excess vs {bench_sym}; mean|median across windows — median is lottery-ticket-immune):");
     for (label, excess) in &slices {
         if excess.is_empty() {
@@ -2488,6 +2489,24 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             "    head-to-head same-window (no averaging artifact): #1 beat the 11-20 book in {h1}/{hn} ({:.0}%), the 2-5 book did in {h25}/{hn} ({:.0}%) — >50% = the top of the list is genuinely better than its middle",
             h1 as f64 / hn as f64 * 100.0,
             h25 as f64 / hn as f64 * 100.0
+        );
+    }
+    // (#135) the SAME head-to-head against the 6-10 book. The line above needs 11 names in a window
+    // and (#124) measured that the gates admit no more than ~10, so on the PIT lane its denominator
+    // collapses to a handful (#130) and Ship Rule v2's rank-1 guard cannot be computed there at all —
+    // which is why P0b has never run. This one needs 6. Printed BESIDE the shipped number and never
+    // instead of it: the two DENOMINATORS side by side are the actual reading of the admission ceiling.
+    if tuning.print_h2h_mid_ladder && h2h_low.n > 0 {
+        println!(
+            "    head-to-head vs the 6-10 book (#135): #1 beat it in {}/{} ({:.0}%), the 2-5 book did in {}/{} ({:.0}%) — denominator {} here vs {} for the 11-20 line above",
+            h2h_low.h1,
+            h2h_low.n,
+            h2h_low.h1 as f64 / h2h_low.n as f64 * 100.0,
+            h2h_low.h25,
+            h2h_low.n,
+            h2h_low.h25 as f64 / h2h_low.n as f64 * 100.0,
+            h2h_low.n,
+            hn
         );
     }
     // (Phase B) the never-sell tax edge, made visible: a hold pays capital-gains ONCE at the final
@@ -2555,19 +2574,46 @@ fn value_floor_trim(rows: &[(i32, f64, f64, f64, String, Option<f64>)], pct: f64
     by_bucket
 }
 
+type SliceStats = (Vec<(&'static str, Vec<(f64, f64)>)>, H2h, H2h);
+
+/// (#135) head-to-head tallies against ONE comparison book: windows where the #1 name beat it, windows
+/// where the 2-5 book beat it, and `n` — the windows big enough to hold that book AT ALL. `n` is the
+/// guard's denominator and it is the half that starves: the 11-20 book needs 11 names in a window, and
+/// (#124) measured that the gates admit no more than ~10, which is why the PIT lane's rank-1 h2h rests
+/// on 2/4/6 windows (#130) and P0b has never been runnable there.
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
+struct H2h {
+    h1: usize,
+    h25: usize,
+    n: usize,
+}
+
+/// One window's verdict against the comparison book at 0-based ranks `lo..hi`, on raw realized % (mean
+/// of multiples is monotone in mean of %, so ordering within one window needs no annualization).
+/// None = the window does not reach `lo`, and that must count as neither a win nor a loss — booking it
+/// either way is exactly how a short book fakes a number. Both call sites pass `lo >= 5`, which is what
+/// makes the `vv[1..5]` slice below safe.
+fn h2h_beats(vv: &[(f64, f64, f64, String)], lo: usize, hi: usize) -> Option<(bool, bool)> {
+    if vv.len() <= lo {
+        return None;
+    }
+    let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
+    let mid = mean(&vv[lo..hi.min(vv.len())].iter().map(|x| x.1).collect::<Vec<_>>());
+    Some((vv[0].1 > mid, mean(&vv[1..5].iter().map(|x| x.1).collect::<Vec<_>>()) > mid))
+}
 /// (#45) DISJOINT rank-slice books + same-window head-to-head, pure for testability. Per window
 /// (bucket): sort by score desc; slice `lo..hi` of that order becomes its own equal-weight book;
 /// each slice collects per-window (book cum %, bench cum %) pairs — the caller annualizes, so this
-/// fn stays years-free. Head-to-head counts windows (≥11 names) where the #1 name / the 2-5 book
-/// beat the 11-20 book on raw realized % — mean of multiples is monotone in mean of %, so no
-/// annualization is needed to ORDER them within one window.
-type SliceStats = (Vec<(&'static str, Vec<(f64, f64)>)>, (usize, usize, usize));
+/// fn stays years-free. Returns TWO head-to-head tallies over the same windows: `mid` is the shipped
+/// guard (#1 / the 2-5 book vs the 11-20 book, windows of ≥11 names) and `low` is (#135)'s same
+/// question against the 6-10 book, which needs only 6. Both come from this one pass so the pair can
+/// never differ by grid drift; the ship rule still reads `mid`.
 fn rank_slice_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64, String)>>) -> SliceStats {
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
     const SLICES: [(usize, usize, &str); 5] =
         [(0, 1, "1"), (1, 5, "2-5"), (5, 10, "6-10"), (10, 20, "11-20"), (20, 50, "21-50")];
     let mut out: Vec<(&'static str, Vec<(f64, f64)>)> = SLICES.iter().map(|(_, _, l)| (*l, Vec::new())).collect();
-    let (mut h1, mut h25, mut hn) = (0usize, 0usize, 0usize);
+    let (mut mid, mut low) = (H2h::default(), H2h::default());
     for v in by_bucket.values() {
         let mut vv = v.clone();
         vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc — the screen's own order
@@ -2580,18 +2626,18 @@ fn rank_slice_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f
             let sp = (mean(&p.iter().map(|x| 1.0 + x.2 / 100.0).collect::<Vec<_>>()) - 1.0) * 100.0;
             series.push((bk, sp));
         }
-        if vv.len() > 10 {
-            hn += 1;
-            let mid = mean(&vv[10..20.min(vv.len())].iter().map(|x| x.1).collect::<Vec<_>>());
-            if vv[0].1 > mid {
-                h1 += 1;
-            }
-            if mean(&vv[1..5].iter().map(|x| x.1).collect::<Vec<_>>()) > mid {
-                h25 += 1;
+        // (#45) the shipped guard: #1 vs the 11-20 book. (#135) the SAME question against the 6-10
+        // book, which a ~10-name window can still answer — tallied beside it, never instead of it, and
+        // from this one run so the pair cannot differ by grid drift.
+        for (tally, (lo, hi)) in [(&mut mid, (10usize, 20usize)), (&mut low, (5usize, 10usize))] {
+            if let Some((won_1, won_25)) = h2h_beats(&vv, lo, hi) {
+                tally.n += 1;
+                tally.h1 += usize::from(won_1);
+                tally.h25 += usize::from(won_25);
             }
         }
     }
-    (out, (h1, h25, hn))
+    (out, mid, low)
 }
 
 /// Median of an owned sample. Callers skip empty slices, so the 0-length arm never reaches a print.
@@ -5075,7 +5121,8 @@ mod tests {
         };
         by_bucket.insert(1, (0..25).map(|r| (100.0 - r as f64, step(r), 10.0, format!("A{r}"))).collect());
         by_bucket.insert(2, (0..8).map(|r| (100.0 - r as f64, step(r), 10.0, format!("B{r}"))).collect());
-        let (slices, (h1, h25, hn)) = rank_slice_stats(&by_bucket);
+        let (slices, h2h_mid, h2h_low) = rank_slice_stats(&by_bucket);
+        let (h1, h25, hn) = (h2h_mid.h1, h2h_mid.h25, h2h_mid.n);
         let get = |label: &str| slices.iter().find(|(l, _)| *l == label).unwrap().1.clone();
         let close = |a: &(f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9;
         // window A's slice books equal their block means; bench cum is +10 in every slice
@@ -5091,6 +5138,16 @@ mod tests {
         assert!(close(&get("6-10")[1], (30.0, 10.0)));
         // head-to-head: only window A qualifies (>10 names); #1 (+100) and 2-5 (+50) both beat 11-20 (+10)
         assert_eq!((h1, h25, hn), (1, 1, 1));
+        // (#135) THE SAME QUESTION ON A WINDOW THE SHIPPED GUARD CANNOT SEE. Window B (8 names) is
+        // too short to hold ranks 11-20 and contributes NOTHING to the line above, but it does hold a
+        // 6-10 book (ranks 6-8, clamped at its pool), so it answers here: #1 (+100) and the 2-5 book
+        // (+50) both beat it (+30). The denominators — 1 above, 2 here — are the finding, not the
+        // verdicts, which agree.
+        assert_eq!(
+            (h2h_low.h1, h2h_low.h25, h2h_low.n),
+            (2, 2, 2),
+            "both windows reach the 6-10 book; only window A reaches the 11-20 book"
+        );
 
         // EXACTLY ON THE BOUNDARY. Windows A and B (25 and 8 names) straddle every slice start but
         // land on none of them, so `vv.len() <= lo` and `vv.len() < lo` decide identically above —
@@ -5101,11 +5158,25 @@ mod tests {
         // wipeout row in the ladder, not a missing one. That is the "no fake short book" the guard's
         // own comment promises, and it now has a test standing on it.
         by_bucket.insert(3, (0..10).map(|r| (100.0 - r as f64, step(r), 10.0, format!("C{r}"))).collect());
-        let (slices, _) = rank_slice_stats(&by_bucket);
+        let (slices, h2h_mid, h2h_low) = rank_slice_stats(&by_bucket);
         let get = |label: &str| slices.iter().find(|(l, _)| *l == label).unwrap().1.clone();
         assert_eq!(get("11-20").len(), 1, "a 10-name window sits ON the 11-20 slice start and must contribute NOTHING");
         assert_eq!(get("6-10").len(), 3, "all three windows still reach the 6-10 slice");
         assert!(get("11-20").iter().all(|p| p.0 > -100.0), "an empty slice must be skipped, never booked as -100%");
+        // (#135) A 10-NAME WINDOW IS EXACTLY THE ADMISSION CEILING (#124) MEASURED, and this is what it
+        // does to the two guards: it is NOT > 10, so the shipped h2h still counts one window, while the
+        // 6-10 book now counts three. That 1-vs-3 gap on this fixture is the same shape as 2/4/6 vs a
+        // full denominator on the PIT lane (#130) — the guard is starved by the gates it grades.
+        assert_eq!(h2h_mid.n, 1, "a 10-name window still cannot answer the 11-20 head-to-head");
+        assert_eq!((h2h_low.h1, h2h_low.h25, h2h_low.n), (3, 3, 3), "it can answer the 6-10 one");
+        // (#135) THE COMPARISON BOOK MUST CLAMP TO A SHORT POOL, NOT INDEX PAST IT. A 14-name window
+        // reaches the 11-20 slice but holds only four of its ten ranks, so `hi.min(vv.len())` is load-
+        // bearing: dropping the clamp slices vv[10..20] on a 14-long vec and panics. Both books agree
+        // here too (#1 +100 and the 2-5 book +50 beat 11-14's +10 and 6-10's +30).
+        by_bucket.insert(4, (0..14).map(|r| (100.0 - r as f64, step(r), 10.0, format!("D{r}"))).collect());
+        let (_, h2h_mid, h2h_low) = rank_slice_stats(&by_bucket);
+        assert_eq!((h2h_mid.h1, h2h_mid.h25, h2h_mid.n), (2, 2, 2), "the 14-name window reaches the 11-20 book");
+        assert_eq!((h2h_low.h1, h2h_low.h25, h2h_low.n), (4, 4, 4), "and every window reaches the 6-10 book");
         // median: odd + even sample sizes, and the top-N table's clone-then-sort usage pattern
         assert_eq!(median(vec![3.0, 1.0, 2.0]), 2.0);
         assert_eq!(median(vec![4.0, 1.0, 2.0, 3.0]), 2.5);

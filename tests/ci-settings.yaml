@@ -400,11 +400,26 @@
 # was measured. What it forbids is one specific claim: no figure below may be cited as evidence that a
 # knob holds ON THE PIT POOL, because none of them was measured there. Cite them for what they are.
 #
-# AND THE PIT POOL CANNOT SETTLE THE SHIP RULE AS WRITTEN. The rank-1 h2h GUARD demands >= 50% at 20y,
-# 12y AND 8y. On the PIT pool those three comparisons rest on 2, 4 and 9 window pairs, and two of the
-# three land EXACTLY on the 50% boundary — a guard that one window flip decides is not a guard. Any
+# AND THE PIT POOL COULD NOT SETTLE THE SHIP RULE AS WRITTEN. The rank-1 h2h GUARD demands >= 50% at
+# 20y, 12y AND 8y. On the PIT pool those three comparisons rest on 2, 4 and 9 window pairs, and two of
+# the three land EXACTLY on the 50% boundary — a guard that one window flip decides is not a guard. Any
 # future rule that grades on the PIT pool needs a guard whose sample size it can state, and this is
 # the measurement that says so rather than a prediction that it might.
+#
+#   (#135) 2026-08-24 — THAT GUARD NOW HAS A SAMPLE SIZE, AND THE CAUSE WAS NOT THE PIT POOL.
+#   The shipped h2h compares #1 to the 11-20 book, so it needs a window holding >= 11 admitted names.
+#   (#124) had already measured that the gates admit no more than ~10. The guard was starved by the
+#   very gate values it exists to revalidate — the PIT pool only made it visible. Re-based onto the
+#   6-10 book, which a ~10-name window can answer, the PIT denominators go 2/4/6 -> 8/18/26.
+#
+#   THE RE-BASING IS A DENOMINATOR FIX, NOT A SOFTENING, and that was pre-registered before any run:
+#   it counts only if the 6-10 book reproduces the SAME verdict wherever both books are computable.
+#   All 12 comparisons agree (rank-1 and the 2-5 book, two lanes, three horizons). Full table and the
+#   revert rule at `print_h2h_mid_ladder`. So: WHERE THE 11-20 BOOK EXISTS, IT STILL DECIDES. Where a
+#   window cannot hold it, the guard reads the 6-10 book instead of going uncomputable.
+#
+#   WHAT IT DOES NOT LICENSE: 8 windows at 20y is still ~0.2 effective trials (#124). The guard is now
+#   COMPUTABLE at 20y on PIT, not decisive there. PIT knob-grading belongs at 12y and 8y.
 # ============================================================================================
 tickers: []
 
@@ -2713,6 +2728,79 @@ buy_heuristic:
                                  # price it against 0.5.
                                  # Knob stays false: reading an instrument is not a reason to ship its output into
                                  # every golden. REVERT: set false.
+  print_h2h_mid_ladder: false    # (#135) MEASURED 2026-08-24 — and it is the measurement the SHIP RULE v2
+                                 # block at the top of this file asked for in writing: "any future rule that
+                                 # grades on the PIT pool needs a guard whose sample size it can state".
+                                 #
+                                 # WHAT IT DOES: prints a SECOND head-to-head line — #1 and the 2-5 book
+                                 # against the 6-10 book — BESIDE the shipped line, which compares them to
+                                 # the 11-20 book. Never instead of it. Both tallies come from ONE pass over
+                                 # the same buckets in `rank_slice_stats`, so the pair cannot differ by grid
+                                 # drift the way a two-run comparison could. The ship rule still reads the
+                                 # 11-20 line wherever that line exists.
+                                 #
+                                 # WHY IT EXISTS — THE GUARD IS STARVED BY THE GATES IT GRADES. The shipped
+                                 # h2h needs a window holding >= 11 admitted names (`vv.len() > 10`), and
+                                 # (#124) measured that "the book never holds more than ~10 names, because
+                                 # the gates admit no more than that". So the winner's-curse GUARD that
+                                 # exists to revalidate the gates is starved by the very gate values it
+                                 # grades. That is one defect, not two: (#124)'s admission ceiling and
+                                 # (#130)'s "the PIT universe was DECLINED, the h2h rests on 2/4/6 windows"
+                                 # are the same fact seen from two sides. Its cost is concrete — P0b, the
+                                 # re-sweep of the five lookahead-fitted knobs on a point-in-time pool, has
+                                 # never been runnable, so those five stay frozen at values fitted on a pool
+                                 # that could pick a name before it joined the index (see DEBT, above).
+                                 #
+                                 # THE BAR WAS FIXED IN WRITING BEFORE ANY RUN, because this touches a GUARD
+                                 # and a broken guard REFUSES outright. Pre-registered: the 6-10 book may be
+                                 # read as the guard ONLY if it reproduces the SAME verdict as the 11-20
+                                 # book on every arm where both are computable. One disagreement and this is
+                                 # a rule change rather than a denominator fix, and it is REFUSED.
+                                 #
+                                 # MEASURED: six wide runs, `backtest {20,12,8} universe fund pit` and
+                                 # `... universe stress`, via tests/h2h-probe.yaml — a one-field overlay, and
+                                 # `heuristic_drift` named `print_h2h_mid_ladder` and nothing else on all
+                                 # six. The runs authenticate themselves: the 11-20 denominators come back
+                                 # 2/4/6 on PIT and 18 at 20y / 34 at 8y on stress, which is exactly what
+                                 # (#130) recorded, so these are the lanes it measured.
+                                 #
+                                 #     rank-1 h2h        vs 11-20        vs 6-10       same side of 50%
+                                 #     pit  20y           1/2   50%       4/8   50%      YES
+                                 #     pit  12y           2/4   50%      11/18  61%      YES
+                                 #     pit   8y           4/6   67%      17/26  65%      YES
+                                 #     strs 20y          12/18  67%      15/22  68%      YES
+                                 #     strs 12y          15/26  58%      19/36  53%      YES
+                                 #     strs  8y          22/34  65%      27/44  61%      YES
+                                 #
+                                 #     the 2-5 book, same six arms:  pit 50->75, 50->61, 67->54;
+                                 #                                   strs 61->68, 73->58, 71->66.  ALL SIX AGREE.
+                                 #
+                                 # VERDICT: 12 of 12 comparisons agree on the >= 50% line. The pre-registered
+                                 # bar is MET, so re-basing the guard onto the 6-10 book is a DENOMINATOR FIX,
+                                 # not a softening. On the PIT lane the denominator goes 2/4/6 -> 8/18/26
+                                 # (4.0x, 4.5x, 4.3x) and the "one window flips it 50 points" objection at
+                                 # line 404 falls to 12.5 / 5.6 / 3.8 points.
+                                 #
+                                 # WHAT THIS DOES NOT BUY, and the receipt says it rather than let a later
+                                 # session discover it: 8 windows at 20y is still ~0.2 EFFECTIVE trials by
+                                 # (#124)'s own n_eff arithmetic directly above. The 20y PIT column still
+                                 # cannot ADJUDICATE between two knob values. This fix makes the guard
+                                 # COMPUTABLE at 20y; it does not make it decisive there. Grade P0b at 12y
+                                 # and 8y, where n_eff clears 1, exactly as (#124) instructs.
+                                 #
+                                 # KNOB STAYS false, matching every other print_* knob in this file: today's
+                                 # output byte-for-byte, which is what the tests/fixture goldens pin. Turn it
+                                 # on per-run via an overlay when grading a PIT arm. No golden can reach the
+                                 # print (`hn == 0` on every fixture run, and no golden contains the string
+                                 # "head-to-head"), so `rank_slice_ladder_and_head_to_head` is the ONLY
+                                 # protection for this path — it pins both tallies, the 10-name boundary and
+                                 # the short-pool clamp. Do not weaken it.
+                                 #
+                                 # REVERT RULE: this knob only prints, so reverting it reverts nothing that
+                                 # was decided. What IS revertible is the re-basing it licenses — if a future
+                                 # run finds the two books disagreeing on any arm where both are computable,
+                                 # the re-basing is void and the guard goes back to the 11-20 book alone,
+                                 # which puts P0b back where (#130) left it. Record the disagreeing arm here.
   split_purge_months: 0          # (#90) UNMEASURED — an unfitted judgement value, shipping 0, which is no
                                  #   purge at all: today's behaviour byte-for-byte, and what every OOS rho,
                                  #   every "both halves positive" promotion in this file and every `tune`
