@@ -176,6 +176,18 @@
 #     basket of 10, so PRIMARY is near-blind to ranking on that lane. The remaining three
 #     (`growth_min_range_pct`, `growth_maxdd_cap`, `growth_max_peg`) are GATES; they move admission,
 #     so unlike a weight they ARE gradeable there.
+# (#138) 2026-08-25 — THE PIT HALF OF THIS DEBT IS NOW CLOSED FOR ALL FIVE. Two of the three gates
+#     named above never needed an arm. Their PIT `gate_sweep` rows, read off the (#137) control runs,
+#     price the loosening directly, and both are NEGATIVE where it counts:
+#       `growth_max_peg` 1.6       20y admits 0 new names | 12y n=11 -156.4|-212.1 | 8y n=37 -2.0|-23.2
+#       `growth_min_range_pct` 80  20y n=1 -347.0 | 12y n=1 -155.8 | 8y n=1 -150.8
+#     max_peg's loosening loses at both adjudicating horizons and does not bind at 20y. min_range_pct's
+#     -10 notch moves EXACTLY ONE NAME, and it loses at every horizon — that knob is not un-re-swept,
+#     it is un-re-sweepABLE on this pool, the gate twin of (#137)'s finding for the weight. NEITHER
+#     NEEDS A RUN; re-running them to hunt a better answer is the overfitting shape this file bans.
+#     `growth_maxdd_cap` DID get the arm, and it is the one of the five that MOVED: it SHIPS OFF as of
+#     (#138) — see its own block for the verdict, the stated 20y deviation and the revert rule.
+#     P0b IS CLOSED. No shipped gate value now rests only on the lookahead pool.
 # ============================ SHIP RULE v2 — 2026-08-06 =====================================
 # THE PRIMARY METRIC CHANGES FROM rank-1 TO top-3, AND EVERY RECEIPT BELOW PREDATES THE CHANGE.
 #
@@ -6110,7 +6122,10 @@ buy_heuristic:
                                  #   NOTHING CHANGED THIS ROUND. The rule was fixed before the runs: revert only if the gate is worse
                                  #   at BOTH ends, keep if it trades short holds for long ones, and neither fired — there is no
                                  #   above-floor long-hold gap to trade against. 150 stands on (#64)'s evidence, undisturbed.
-  growth_maxdd_cap: 84.0         # (#26) reject equities whose worst-EVER peak-to-trough loss exceeds 83% (magnitude; crypto
+  # (#138) 2026-08-25 — THIS GATE NOW SHIPS OFF (0.0). It carried 84.0 from (#26) until then; the
+  # receipt for the change is at the END of this block, after (#74). The (#26) head text below is
+  # left as originally written and describes the gate as it behaved while it was armed.
+  growth_maxdd_cap: 0.0          # (#26) reject equities whose worst-EVER peak-to-trough loss exceeds 83% (magnitude; crypto
                                  #   exempt — BTC itself is -83%). A >83% wipeout survivor is a lottery ticket, not a compounder.
                                  #   Same-batch pair 2026-07-03: off +119.5 (wins +91.5, OOS +0.13|+0.08) / on +128.4 (wins
                                  #   +98.3, OOS +0.14|+0.11 — BOTH halves up); the n=171 names it excludes average -16.5 pts
@@ -6164,6 +6179,74 @@ buy_heuristic:
                                  #   now closed. NOTHING on the asset-class axis can reopen this. The only route left is a change
                                  #   to WHICH names reach this gate at 12y — e.g. closing the live-vs-backtest as-of fundamentals
                                  #   skew — and that is a different round with a different instrument.
+                                 #   (#138) SHIPPED OFF, 2026-08-25 — THE FIRST TIME THIS KNOB WAS EVER GRADED ON THE BOOK.
+                                 #   (#26)/(#60)/(#74) ARE ALL PRE-PIT, and not one of them reports a top-10 excess, a worst window or
+                                 #   an h2h. Every previous refusal rested on the GATE SWEEP row plus the 20y sign flip — a PRE-BOOK
+                                 #   instrument — and all three predate (#120)'s move of the graded basket to top-10. (#74) named the
+                                 #   instrument that reopens it: "the only route left is a change to WHICH names reach this gate at
+                                 #   12y ... a different round with a different instrument". `pit` is that change.
+                                 #   THE LEAD, RE-READ FRESH RATHER THAN BANKED — `{20,12,8} universe fund pit`, this same day:
+                                 #     20y n=3  -703.6 | -483.3      12y n=21 +388.1 | +252.3  TOO TIGHT
+                                 #                                    8y n=30 +209.6 |  +41.7  TOO TIGHT
+                                 #   The 12y median is 4x the largest this flag has ever printed (+63.1 (#74), +62.3 (#60)). Per the
+                                 #   perishability rule in `growth_max_peg`'s block, the flags that expire are the ones whose median
+                                 #   sits just above zero: 8y's +41.7 is in that band, 12y's +252.3 is not.
+                                 #   THE OVERLAY, inlined per the recreation rule (tests/p0b-maxdd-off.yaml, deleted after the round):
+                                 #     buy_heuristic:
+                                 #       print_h2h_mid_ladder: true
+                                 #       growth_maxdd_cap: 0.0
+                                 #   THE INSTRUMENT SELF-VALIDATED. `gate_sweep` loosens exactly one gate off the shipped tuning, so
+                                 #   its n IS this knob's sole-block count. Admitted went 117->120, 228->249, 325->355 — equal to the
+                                 #   sweep n (3/21/30) TO THE UNIT at all three horizons, the cross-check (#74) and (#65) both used.
+                                 #   Drift named exactly `print_h2h_mid_ladder false->true, growth_maxdd_cap 84.0->0.0` on every run;
+                                 #   windows scored 1123 / 2731 / 5941. With the gate off its own sweep row reads "admits 0 new names".
+                                 #     horizon  top-10 exc|med           worst           h2h vs 6-10   vs 11-20   admitted
+                                 #       20y    +0.8|+0.9 -> +0.6|+0.7   -10.0 -> -10.0    50% -> 50%   50% -> 50%   117 -> 120
+                                 #       12y    +2.8|+2.8 -> +3.7|+4.0    -9.5 ->  -6.4    61% -> 63%   50% -> 50%   228 -> 249
+                                 #        8y    +4.5|+4.5 -> +5.3|+5.6    -6.2 ->  -5.5    65% -> 70%   67% -> 62%   325 -> 355
+                                 #   PRIMARY passes at 12y and 8y on BOTH moments. Every guard passes: rank-1 h2h clears 50% on both
+                                 #   comparison books at all three horizons, and the worst window HELD at 20y and IMPROVED at 12y/8y.
+                                 #   The gain is uniform across the WHOLE ladder — top-10 through top-50 all move ~+0.9 — so it is not
+                                 #   a basket-size artifact. The GATE AUDIT agrees from the other side: accepted-cohort mean
+                                 #   +17.0 -> +48.3 (12y) and +48.7 -> +62.3 (8y).
+                                 #   *** THE SHIP TURNS ON ONE PRE-REGISTERED DEVIATION, STATED HERE RATHER THAN BURIED. *** 20y was
+                                 #   graded as a GUARD ONLY, never as a PRIMARY adjudicator, and that was decided BEFORE the runs. 20y
+                                 #   PIT is n=3 on this cohort and (#124) puts its n_eff at ~0.2: it cannot adjudicate a MEAN, but a
+                                 #   worst-window guard is a MAX and stays answerable. UNDER THE LITERAL RULE (PRIMARY at 20y AND 8y)
+                                 #   THIS IS A TIE AND REFUSES, exactly as (#60) and (#74) did — 20y top-10 excess reads +0.8 -> +0.6
+                                 #   and rank-1 -3.3 -> -3.9. Same substitution precedent as (#126)/(#135)/(#137). Anyone who rejects
+                                 #   the deviation should revert on that ground alone; the numbers above are not in dispute.
+                                 #   THE SURVIVORSHIP OBJECTION, TESTED RATHER THAN WAVED THROUGH. A drawdown cap is the knob MOST
+                                 #   exposed to a survivor-biased pool: every >84% faller still in the pool recovered by construction.
+                                 #   `pit` already fixes membership — its pond is 5764 names that were EVER in the index, not the ~503
+                                 #   that survived — leaving delisted-name PRICES, which is (#134)'s open blocker. `pit` and `stress`
+                                 #   CANNOT be combined (backtest.rs: "opposite treatments of the same bias ... would silently conflate
+                                 #   them"), so the cross-check ran on the `stress` lane, arm vs control, same day:
+                                 #     12y  +6.5|+6.1 -> +6.7|+7.1   worst -7.8 -> -7.8   OOS +5.3/+7.6 -> +5.4/+8.0   51 windows both
+                                 #      8y  +6.5|+7.1 -> +6.9|+7.8   worst -9.2 -> -9.2   OOS +6.0/+6.9 -> +6.1/+7.6   59 windows both
+                                 #   Same sign, both OOS halves still positive — the bar backtest.rs itself sets for "the edge survives
+                                 #   the loser-inclusive pool". And at 8y the arm rode FEWER wipeouts, 1/434 -> 0/444, dropping FRCB
+                                 #   (-100%): turning the cap off did not import lottery tickets. The stress gain (+0.2/+0.4 mean) is
+                                 #   SMALLER than the pit gain (+0.9/+0.8), so read the pit number as an UPPER BOUND, not the estimate.
+                                 #   THREE THINGS THAT ARE NOT CLEAN, recorded so nobody has to rediscover them:
+                                 #     (1) the graded window count rose 34->35 (12y) and 42->43 (8y) — a window that admitted nobody
+                                 #         now admits somebody. A new window can only make a WORST worse, so the worst-window
+                                 #         improvement proves EXISTING windows improved, and the stress lane shows the same direction
+                                 #         at IDENTICAL window counts. But the two means are not strictly like-for-like.
+                                 #     (2) the gain sits in the LATE OOS half (12y +3.4->+5.5, 8y +5.4->+7.1) while the early half
+                                 #         slips marginally (+2.1->+1.9, +3.5->+3.4). Both halves stay positive at both horizons.
+                                 #     (3) 20y accepted-cohort quality got WORSE (mean -246.4 -> -257.9), consistent with (#74)'s
+                                 #         reading that over 20 years a >84% wipeout marks a broken company.
+                                 #   OFF-BY-ONE IN THE (#26) TEXT ABOVE, left as written and corrected here: the comparator in
+                                 #   `picks::score_parts` is `>` (pinned by picks.rs "the cap itself is survivable"), so 84.0 rejected
+                                 #   a name whose maxdd exceeded 84, not 83. Do not re-quote "exceeds 83%" as the rule it enforced.
+                                 #   COST OF SHIPPING OFF: the `growth_maxdd_cap ->off` GATE SWEEP row is a no-op from here on, so this
+                                 #   knob loses its own standing alarm. Watch the `top-10 zero names` line instead — that is the direct
+                                 #   symptom this gate existed to prevent.
+                                 #   REVERT RULE: `growth_maxdd_cap: 84.0`. Revert on ANY of — (a) (#134)'s survivorship-free prices
+                                 #   land and the arm does not reproduce (this is the FIRST knob to re-grade when they do); (b) the
+                                 #   20y-as-guard-only deviation is rejected as policy; (c) `top-10 zero names` grows on a later run.
+                                 #   DO NOT ladder 70/78/90 to "improve" this — `off` is the only rung the evidence prices.
                                  #   0 = off.
   growth_maxdd_cap_crypto: 84.0  # (#26) crypto's own maxdd bar = "reject coins that wiped out WORSE than Bitcoin" (BTC -83%,
                                  #   so 84 keeps BTC and cuts the deeper-wipeout alts: ZEC -98, TRX -96, XMR -93, XRP -96,
