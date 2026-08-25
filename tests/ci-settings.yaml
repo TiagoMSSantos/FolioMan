@@ -1424,6 +1424,85 @@ buy_heuristic:
                                  # Read beside (#104)'s capture numbers from the same runs: a book that cannot be
                                  # widened cannot hold winners it was never allowed to admit.
                                  # Knob stays false. REVERT: set false.
+                                 # (#136) MEASURED 2026-08-25 — the basket question, put to the DISTRIBUTION and REFUSED.
+                                 #   WHY THE ROUND RAN. Round 10's mean ladder showed top-5 beating top-10 on the PIT lane at
+                                 #   every horizon, and at 20y/12y beating the MORE concentrated top-3 too. An interior knee is
+                                 #   not something concentration can manufacture, so it was worth one reading. (#124) had already
+                                 #   turned this knob on, but tabulated rungs 1/3/10 at 20y ONLY — rung 5 and the two shorter
+                                 #   horizons were the gap.
+                                 #   METHOD. Six runs off ONE overlay, `tests/basket-probe.yaml`, single field
+                                 #   `print_book_deciles: true`; `heuristic_drift` named that key and NOTHING else on all six.
+                                 #   `backtest {20,12,8} universe fund pit` and `backtest {20,12,8} universe stress`.
+                                 #   windows scored 1123/2731/5941 (PIT) and 2374/4712/8389 (stress) — no OFFLINE collapse.
+                                 #   Runs authenticate against round 10: 12y top-5 +3.2|+3.6 worst -6.4 OOS +2.1/+4.2 and
+                                 #   8y top-5 +4.7|+4.7 worst -5.5 reproduce exactly.
+                                 #
+                                 #   THE BAR, FIXED BEFORE THE FIRST RUN. Mean excess is the statistic (#106) disqualified for this
+                                 #   question, so it is not in the bar. Skew predicts small N buys a higher MEAN with a worse median
+                                 #   and a fatter left tail, so the bar is purely distributional: top-5 beats top-10 only if, at
+                                 #   12y AND 8y (the horizons (#124) says can adjudicate at all), median >= AND d10 >= AND
+                                 #   P(book < 1.0x) <=. Any one clause failing REFUSES.
+                                 #
+                                 #   PIT, top-5 vs top-10:
+                                 #     horizon   median          d10             P(book<1.0x)     verdict
+                                 #     20y       5.14 vs 5.51 X  1.32 vs 1.30 ok 5%  vs 5%  ok    reported, not decisive (n_eff ~0.2)
+                                 #     12y       3.68 vs 3.47 ok 0.83 vs 0.82 ok 18% vs 15% X     FAIL
+                                 #     8y        2.69 vs 2.47 ok 1.09 vs 1.00 ok 7%  vs 12% ok    PASS
+                                 #   VERDICT: REFUSED at 12y, on the ruin clause the bar existed to protect. Nothing changes.
+                                 #   AND IT IS A THIN REFUSAL, said plainly: 18% vs 15% of 34 windows is SIX windows vs FIVE — one
+                                 #   window. The 8y pass is two windows (3 vs 5 of 42). At this sample size the ruin clause is
+                                 #   decided by single windows, and the median/d10 clauses at 12y are +0.21x and +0.01x apart, i.e.
+                                 #   indistinguishable. The honest reading is not "top-10 wins" but "top-5 and top-10 are the same
+                                 #   book wearing different labels, and the pre-registered bar refuses a change it cannot justify".
+                                 #   Note the outcome does not turn on bar-versus-ship-rule wording: read as a v2 TIE (one horizon
+                                 #   up, one down) it is UNRESOLVED -> NO SHIP, the same answer.
+                                 #
+                                 #   THE FALSIFIER DID NOT FIRE, so the bar is discriminating rather than merely rewarding size.
+                                 #   Pre-registered: if the same three clauses passed monotonically down to top-1 on `stress`, the
+                                 #   bar would be measuring concentration and the whole reading would be void. It does not — top-1's
+                                 #   d10 is WORSE than top-10's at every stress horizon (3.79 vs 6.54, 1.86 vs 2.54, 1.23 vs 1.60).
+                                 #
+                                 #   THE FINDING THAT ACTUALLY SETTLES IT, and it is stronger than the bar. The optimum has NO
+                                 #   STABLE LOCATION. Where each statistic peaks on PIT:
+                                 #     statistic       20y          12y      8y
+                                 #     mean excess     top-5/15/20  top-5    top-3
+                                 #     median multiple top-10/15    top-3    top-2
+                                 #   The two statistics disagree with each other AND the peak walks with the horizon. That is the
+                                 #   signature of noise, not of an optimal basket size, and it is a direct independent vindication
+                                 #   of (#120) fixing VERDICT_TOP a priori: there was never a stable argmax over these 13 rungs to
+                                 #   find, so the best-of-13 search (#120) closed would have been fitting window-level luck.
+                                 #
+                                 #   WHAT CONCENTRATION COSTS, now printed at every horizon (PIT). The number (#106) said nothing
+                                 #   had ever printed:
+                                 #     horizon  top-1 d10 / P(book<1.0x)      top-10 d10 / P(book<1.0x)
+                                 #     20y      0.05x / 40%                   1.30x / 5%
+                                 #     12y      0.11x / 29%                   0.82x / 15%
+                                 #     8y       0.68x / 14%                   1.00x / 12%
+                                 #   A top-1 book ends below where it started 40% of the time at 20y and its 10th percentile is a
+                                 #   95% loss. (#106)'s prediction that N moves "well above 3" is CONFIRMED on the left tail at
+                                 #   every horizon, even though it is not confirmed as a knee at 5.
+                                 #
+                                 #   CORRECTION TO (#124), which recorded "the deciles are IDENTICAL from top-10 through top-50, at
+                                 #   EVERY horizon". One rung too strong. Exactly flat from top-15 up at all three horizons; from
+                                 #   top-10 only at 12y. At 20y top-10 -> top-15 moves P(book<index) 45% -> 40%, and at 8y d90
+                                 #   moves 4.25x -> 4.23x. The mean ladder shows the same: holds rise 107 -> 114 (20y), 196 -> 209
+                                 #   (12y), 267 -> 282 (8y) between top-10 and top-15, so a few windows DO admit 11-15 names.
+                                 #   (#124)'s substantive point stands unchanged and is reconfirmed: the book cannot be widened
+                                 #   past ~15 because the gates never admit that many, so rungs above it are one basket relabelled.
+                                 #   The stress lane saturates a little later (~15-20) because it injects extra names.
+                                 #
+                                 #   THE THREE-BASKET MISMATCH, and it is SMALLER than it looked. Gates are tuned against top-10
+                                 #   (VERDICT_TOP), the user is shown top-20 (top_picks), and round 10 measured the mean knee at
+                                 #   top-5. But on PIT the top-20 and top-10 decile rows are identical at 12y and differ only in
+                                 #   P(book<index)/d90 at 20y/8y — so two of the three "different baskets" are the same book.
+                                 #   top_picks IS NOT CHANGED HERE and this receipt is not an argument to change it: it is a display
+                                 #   cap on `check`'s candidate list, not a portfolio rule, and the backtest cannot grade it.
+                                 #   What the admission ceiling does imply is that `check` will usually have fewer than 20 gated
+                                 #   candidates to list at a cutoff, which makes top_picks: 20 harmless rather than wrong.
+                                 #
+                                 #   REVERT: set false (it already is — this knob ships OFF and stays OFF; it was read through an
+                                 #   overlay, never shipped true). If a future round wants to re-open basket size, the bar above and
+                                 #   the no-stable-peak table are the prior: bring a mechanism, not an argmax.
   growth_er_weight: 0.0          # (#105 / round 3 §2) UNMEASURED — an unfitted judgement value,
   growth_er_cap: 20.0            # shipping the weight at 0, where the term contributes exactly 0.0
                                  # and the lane is the one every golden holds. The cap is inert until
@@ -5014,6 +5093,35 @@ buy_heuristic:
   #   never be discharged non-vacuously by ANY fundamental knob — growth_fund_factor, growth_fund_cap,
   #   growth_max_peg, growth_require_peg and quality_weight all inherit this. Every such arm will read
   #   "held at 20y" for free. Do not mistake that for evidence. See the note beside Ship Rule v2 above.
+  #   (#136) THE SAME BLACKOUT ONE RUNG MORE DANGEROUS, measured 2026-08-25 on `universe fund pit` 12y.
+  #   The 20y case above is HONEST: zero cutoffs carry the factor, so the probe prints "n/a" and no
+  #   one is fooled. At 12y on the PIT lane coverage is non-zero but TINY, and the table then prints a
+  #   confident-looking row instead. In the `held-book by FACTOR` block, SIX unrelated factors return
+  #   BYTE-IDENTICAL rows:
+  #     earnings_yield / peg_yield / buyback_yield / roe_raw / fcf_margin / net_cash_rev
+  #     all: book +16.6%/yr  excess +5.0  win 100%  worst +0.8  OOS +4.7/+5.2  (n=52)
+  #     (roic is the same set minus three: n=49, worst +0.7)
+  #   against growth_score's baseline +8.9%/yr, excess +2.7, win 74%, worst -9.5, n=220.
+  #   THE PROOF IT IS COVERAGE AND NOT SKILL, and it is airtight because the same run contains the
+  #   control. Those factors are NOT the same signal: on the large standalone sample the same run
+  #   gives peg_yield rho +0.24 (n=1142), earnings_yield +0.20 (n=1400), roe_raw -0.02 (n=1438).
+  #   Factors that rank differently on n~1400 cannot rank identically on n=52 unless the ranking is a
+  #   NO-OP. It is: the block ranks FUND-COVERED gated picks and holds the top 10, and n=52 over 34
+  #   windows is ~1.5 covered names per window. "Top-10 of 1.5 names" is every covered name, for every
+  #   factor. win 100% and worst +0.8 across 34 windows should have been read as the tell.
+  #   WHY THIS MATTERS RIGHT HERE: backtest.rs:2975 prints, immediately beneath that table, "a factor
+  #   beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship
+  #   it." Six factors clear that line by +2.3 pts/yr with both OOS halves positive and a positive
+  #   worst window. Taken at face value it is a standing invitation to ship a coverage artifact.
+  #   BEFORE SHIPPING ANY FACTOR OFF THAT TABLE: check its n against the window count. If n/windows is
+  #   below the basket size, the row is not a ranking result and the comparison to growth_score is not
+  #   like-for-like — growth_score is graded on n=220 there, a real book, and the factor on ~1.5 names.
+  #   THE SHIPPED VALUE IS NOT CONTAMINATED. `growth_fund_factor: "peg_yield"` leads the STANDALONE
+  #   probe (rho +0.24, edge +506.3, TEST edge +555.0, OOS +0.72|+0.50 — all on n=1142, where the
+  #   factors do discriminate), which is the evidence (#3b)-(#71) actually used. Nothing here reopens
+  #   that choice; this is a guard on how the held-book table is read from now on.
+  #   Sixth entry in the (#71) list of lane-level metrics disagreeing with book quality — except this
+  #   one disagrees with ITSELF at two sample sizes in one run.
   #   THE FUND LANE'S OWN COLUMNS DISAGREED AGAIN, and were pre-committed as non-voting before the runs.
   #   At 8y the sweep verdict prints "no factor beats price-only with both OOS halves + — keep
   #   growth_fund_weight 0. SHIP NOTHING." and its curve reads tilt-off -75.0 vs shipped -77.4, i.e. the

@@ -1,0 +1,17 @@
+# (#136) Round 11 instrument overlay — ONE field, read-only.
+#
+# Turns on `print_book_deciles` (#106). Its header still reads UNMEASURED, but that is stale: (#124)
+# read it on 2026-08-23 and appended a 20y PIT table. What (#124) did NOT record is rung 5 — it
+# tabulated 1/3/10 only — and it tabulated no 12y or 8y rows. Those three gaps are this run.
+# It prints d10 / median / d90 of the book's terminal multiple per TOP_LADDER rung, plus
+# P(book < index) and P(book < 1.0x) — the distributional view needed to settle whether the PIT lane's
+# knee at top-5 is real or the concentration artifact that (#106) predicts and (#124) part-confirmed.
+#
+# NOT named *ci-settings.yaml on purpose: `config::ci_base_yaml` returns EMPTY for that suffix, which
+# would make this a PURE fixture and silently swap ~200 tuned gates for code defaults. Under any other
+# name it deep-merges OVER tests/ci-settings.yaml, which is what an instrument overlay must do.
+# Lives under tests/ because `config::anchored_path` resolves data paths from the GRANDPARENT dir.
+#
+# Proof of the one-field arm: `heuristic_drift` must name `print_book_deciles` and NOTHING else.
+buy_heuristic:
+  print_book_deciles: true
