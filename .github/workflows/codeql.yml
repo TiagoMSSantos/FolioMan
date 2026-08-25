@@ -1,0 +1,121 @@
+name: CodeQL
+
+# (#141) ADVANCED SETUP, REPLACING GITHUB'S DEFAULT SETUP. Until this file landed the repo scanned
+# under default setup — actions/python/rust, `default` query suite, weekly, build-mode none. That
+# config was not broken; it simply cannot raise the query suite, which is the only reason to be here.
+#
+# THE TWO SETUPS ARE MUTUALLY EXCLUSIVE, and this is the failure to recognise on sight: while default
+# setup is `configured`, the `analyze` step below dies at the UPLOAD, not at the scan, with
+#   "CodeQL analyses from advanced configurations cannot be processed when the default setup is
+#    enabled"
+# an HTTP 409 that reads like a token problem and is really a settings conflict. Diagnose and fix:
+#   gh api repos/OWNER/REPO/code-scanning/default-setup --jq .state
+#   gh api -X PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured
+# Re-enabling default setup from the Settings UI silently reds every run of this file from then on,
+# so if this workflow starts failing at upload and nothing here changed, check that first.
+#
+# SEPARATE FROM ci.yml, for the same isolation reason pages.yml gives: nothing in ci.yml should wait
+# on this, and this should not be able to break a ci.yml verdict. The two files share no job and no
+# cache key. What this file does NOT do is gate anything — code scanning results become a required
+# check through branch protection, a repo setting, never through a fail-on-severity step written
+# here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # UNLIKE ci.yml, THIS ONE KEEPS A CRON, and the reason is specific rather than leftover. ci.yml
+  # dropped its schedule because every job there runs on push and a cron only re-ran the same thing.
+  # CodeQL is the one check in this repo whose ANSWER CAN CHANGE WITHOUT THE CODE CHANGING: the query
+  # packs ship on GitHub's cadence, so a new query finds a real defect in a file nobody touched.
+  # Weekly matches what default setup was already running.
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch: {}    # let it be run on demand from the Actions tab
+
+# Same shape as ci.yml: a newer run of a ref supersedes an in-flight one, per-ref so a PR never
+# cancels main's.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege at the top; both jobs below override with exactly what they need and nothing else.
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    # Default setup's rust analysis lands in ~1 min at the `default` suite; security-and-quality is
+    # slower on 39.6k lines of Rust. 30 is ci.yml's 3-4x rule applied to that, so only a genuine hang
+    # trips it rather than a slow morning.
+    timeout-minutes: 30
+    # Job-level permissions REPLACE the workflow block (see pages.yml's cleanup note), so
+    # `security-events: write` is stated here and the sweep job below never sees it.
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      # One language failing must not cancel the other two — a rust extractor bug should still leave
+      # actions and python scanned.
+      fail-fast: false
+      matrix:
+        language: [actions, python, rust]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # All three are buildless here, which is what default setup already used, so this stays a
+          # flat list rather than GitHub's per-language `include:` matrix. Rust does NOT need a cargo
+          # build for extraction; keeping it that way is why this workflow needs no rust-cache, no
+          # toolchain step, and none of ci.yml's CARGO_* hardening.
+          build-mode: none
+          # THE REASON THIS FILE EXISTS. Default setup can only run `default`; this is two suites
+          # wider (security-extended + the quality queries). Expect the alert count to RISE the first
+          # time it runs — that is the change working. The quality half overlaps
+          # `cargo clippy -D warnings` on the Rust legs; that duplication was weighed and accepted.
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # Actions housekeeping, MIRRORING ci.yml's cleanup-runs job rather than pages.yml's. Both exist and
+  # they differ deliberately: pages.yml sweeps `--status success` only, keeping red runs because a
+  # failed publish's log is the only record of why the morning's page went stale. This one takes
+  # ci.yml's harder line — each scan supersedes the history, so sweep everything finished.
+  #
+  # Main-only by the `if`: a PR run's ref is the merge ref (refs/pull/…), so PR runs neither trigger
+  # the sweep nor lose their own history while iterating. Scheduled runs DO sweep — a cron fires on
+  # refs/heads/main. `--status completed` cannot match the run doing the sweeping (still in_progress
+  # when the filter applies), so no keep-the-newest bookkeeping is needed. CANCELLED is a separate
+  # pass because `completed` does not match it — a cancelled run's status is `cancelled` — and the
+  # concurrency block above produces those on every superseded push. Per-id `|| true` so one
+  # undeletable run never reddens the workflow.
+  #
+  # NO `needs:`, so this RACES the analysis — chosen, matching pages.yml's (#132) note. The sweep is
+  # bookkeeping, not a gate, and making it wait would only delay it behind a 30-minute job.
+  #
+  # Deleting a workflow RUN is not the same as deleting a code-scanning ANALYSIS: alerts live in the
+  # Security tab keyed by ref and category, not in the run's logs, and the live page/deployment
+  # precedent in pages.yml is the same shape. Confirmed by counting open alerts across the first
+  # sweep rather than assumed — if that count ever drops because runs were deleted, add `tail -n +2`
+  # to the id list to retain the newest run.
+  cleanup-runs:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write   # gh run delete; the analyze job keeps its own, narrower set
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow codeql.yml --status completed --limit 200 --json databaseId -q '.[].databaseId'); do
+            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          done
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow codeql.yml --status cancelled --limit 200 --json databaseId -q '.[].databaseId'); do
+            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          done
