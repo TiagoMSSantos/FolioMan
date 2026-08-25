@@ -11,6 +11,18 @@
 # .long_history_cache.json next to it gets picked up by the ordinary cache path with no test-only
 # plumbing inside fetch.rs. Do not move this file without moving the frozen cache with it.
 #
+# AND THE ROOT CANNOT SIMPLY BE THE REPO ROOT — the question this file keeps inviting, answered here
+# so it stops being re-asked. There is no data-root env override: `config::anchored_path` consults
+# only `settings_path()` (i.e. FOLIOMAN_CONFIG) and `ci_settings_path()`, so this file's PATH is the
+# ONLY way to set the root. Point the fixture at tests/ci-settings.yaml instead and the root becomes
+# the repo root, where the operator's LIVE caches already sit: .long_history_cache.json (142 MB on
+# 2026-08-25, against the 2.3 MB frozen one here), plus .sp500_history.json and .venue_isins.json.
+# The goldens would then be graded against a mutating market cache, and would fail DIRTY — green
+# locally on a warm cache, drifting whenever the market moves. Deleting this file therefore costs a
+# FOLIOMAN_DATA_ROOT knob in production code serving only tests, PLUS either 200 tickers on every
+# pin() argv or the test universe moved into the shipped ci-settings.yaml where screen and check
+# would read it. Both are worse than one 219-line manifest. Keep it.
+#
 # THIS LIST IS THE ONE DEFINITION OF THE FIXTURE UNIVERSE. The binary under test reads it as its
 # universe, and `regen_backtest_fixture` in tests/backtest_fixture.rs reads it FROM HERE to rebuild
 # the frozen cache — so the cache and the scored universe can no longer drift apart. It used to be
