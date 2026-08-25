@@ -1430,8 +1430,17 @@ buy_heuristic:
                                  #   not something concentration can manufacture, so it was worth one reading. (#124) had already
                                  #   turned this knob on, but tabulated rungs 1/3/10 at 20y ONLY — rung 5 and the two shorter
                                  #   horizons were the gap.
-                                 #   METHOD. Six runs off ONE overlay, `tests/basket-probe.yaml`, single field
-                                 #   `print_book_deciles: true`; `heuristic_drift` named that key and NOTHING else on all six.
+                                 #   METHOD. Six runs off ONE overlay (historically tests/basket-probe.yaml, since DELETED —
+                                 #   instrument overlays are recreated on demand, see the rule directly below):
+                                 #       buy_heuristic:
+                                 #         print_book_deciles: true
+                                 #   `heuristic_drift` named that key and NOTHING else on all six.
+                                 #   HOW TO RECREATE ANY INSTRUMENT OVERLAY CITED IN THIS FILE: write those lines to a file
+                                 #   under tests/ whose name does NOT end in `ci-settings.yaml` — `ci_base_yaml` returns EMPTY
+                                 #   for that suffix, which would make it a PURE fixture and silently swap ~200 tuned gates for
+                                 #   code defaults — then point FOLIOMAN_CONFIG at it. It must live under tests/ because
+                                 #   `config::anchored_path` resolves data paths from the config file's GRANDPARENT. That
+                                 #   `heuristic_drift` names exactly the intended keys and no others IS the proof of the arm.
                                  #   `backtest {20,12,8} universe fund pit` and `backtest {20,12,8} universe stress`.
                                  #   windows scored 1123/2731/5941 (PIT) and 2374/4712/8389 (stress) — no OFFLINE collapse.
                                  #   Runs authenticate against round 10: 12y top-5 +3.2|+3.6 worst -6.4 OOS +2.1/+4.2 and
@@ -2844,7 +2853,10 @@ buy_heuristic:
                                  # a rule change rather than a denominator fix, and it is REFUSED.
                                  #
                                  # MEASURED: six wide runs, `backtest {20,12,8} universe fund pit` and
-                                 # `... universe stress`, via tests/h2h-probe.yaml — a one-field overlay, and
+                                 # `... universe stress`, via a ONE-field overlay (historically tests/h2h-probe.yaml,
+                                 # since DELETED; recreate per the rule at `print_book_deciles` above):
+                                 #     buy_heuristic:
+                                 #       print_h2h_mid_ladder: true
                                  # `heuristic_drift` named `print_h2h_mid_ladder` and nothing else on all
                                  # six. The runs authenticate themselves: the 11-20 denominators come back
                                  # 2/4/6 on PIT and 18 at 20y / 34 at 8y on stress, which is exactly what
@@ -4124,8 +4136,13 @@ buy_heuristic:
                                  # 2026-08-24. REFUSED. 19.0 stands. This discharges the PIT half of the DEBT
                                  # block for `growth_min_cagr` specifically: it is no longer un-re-swept, it is
                                  # re-swept and it lost. Three runs, `backtest {20,12,8} universe fund pit`, via
-                                 # tests/p0b-cagr15.yaml; `heuristic_drift` named exactly two fields on all
-                                 # three (`growth_min_cagr 19.0->15.0` and the `print_h2h_mid_ladder` instrument).
+                                 # a TWO-field overlay (historically tests/p0b-cagr15.yaml, since DELETED; recreate per
+                                 # the rule at `print_book_deciles`):
+                                 #     buy_heuristic:
+                                 #       print_h2h_mid_ladder: true
+                                 #       growth_min_cagr: 15.0
+                                 # `heuristic_drift` named exactly those two fields on all three
+                                 # (`growth_min_cagr 19.0->15.0` and the `print_h2h_mid_ladder` instrument).
                                  #
                                  # WHY 15.0 AND NOT A LADDER: 15 is the exact point `gate_sweep` probes as
                                  # `growth_min_cagr -4`, and on the PIT control that probe flags TOO TIGHT at 8y
