@@ -165,6 +165,17 @@
 # fitted on a pool that could pick a name before it joined the index, and the PIT arm cuts the top-3
 # excess they were fitted to explain by more than half at every horizon.
 #
+# (#137) 2026-08-25 — TWO NOTES ON THE LIST ABOVE. Neither rewrites it; both stop it being miscited.
+# (1) `growth_accel_weight 0.65` is the value this block was written against. The knob has shipped
+#     0.50 since 2026-08-10 ((#63), confirmed by (#70) on 2026-08-11). The DEBT is real either way —
+#     0.50 was fitted on the same contaminated pool — but do not quote 0.65 as the current value.
+# (2) THE PIT HALF OF THIS DEBT IS DISCHARGED FOR TWO OF THE FIVE, AND THE OTHER THREE ARE GATES.
+#     `growth_min_cagr` was re-swept and lost ((#135); 19.0 stands). `growth_accel_weight` was
+#     re-swept and lost ((#137); 0.50 stands) — and that receipt also records why it should be the
+#     LAST weight anyone re-sweeps on `pit`: the graded book holds 5.4-6.4 names per window against a
+#     basket of 10, so PRIMARY is near-blind to ranking on that lane. The remaining three
+#     (`growth_min_range_pct`, `growth_maxdd_cap`, `growth_max_peg`) are GATES; they move admission,
+#     so unlike a weight they ARE gradeable there.
 # ============================ SHIP RULE v2 — 2026-08-06 =====================================
 # THE PRIMARY METRIC CHANGES FROM rank-1 TO top-3, AND EVERY RECEIPT BELOW PREDATES THE CHANGE.
 #
@@ -4294,6 +4305,84 @@ buy_heuristic:
                                  #   just does not buy a better basket. Do not re-propose this knob on the slope argument
                                  #   alone; it has now been brought, measured, and refused on the metric that ships.
   growth_accel_weight: 0.50      # SCORE: reward per pt the last year outpaced the long CAGR.
+                                 #   (#137) P0b arm 2 — RE-SWEPT ON THE POINT-IN-TIME POOL 2026-08-25. NO-SHIP; 0.50 STANDS.
+                                 #   This discharges the PIT half of the DEBT block for `growth_accel_weight`, the LAST of the five
+                                 #   and the only one that is a WEIGHT: no `gate_sweep` row can ever reach it, because a weight moves
+                                 #   no admission (`growth_min_score` is display-only — `print_lane`, not the backtest — and ships at
+                                 #   -100.0 where it cannot fire). Every reading in the (#70)/(#47) receipts below is `stress` at
+                                 #   top-3, the basket (#120) retired on 2026-08-22. Two independent staleness claims, both answered.
+                                 #
+                                 #   METHOD. Six runs, `backtest {20,12,8} universe fund pit`, two overlays under tests/ (recreate per
+                                 #   the rule at `print_book_deciles`; DELETED after the round per (#131)):
+                                 #       buy_heuristic:                          buy_heuristic:
+                                 #         print_h2h_mid_ladder: true              print_h2h_mid_ladder: true
+                                 #                                                 growth_accel_weight: 0.35
+                                 #   `heuristic_drift` named exactly those fields and nothing else on all six. windows scored
+                                 #   1123/2731/5941 — no OFFLINE collapse. The control reproduces (#135)'s PIT control to the decimal
+                                 #   (top-10 +0.8|+0.9 / +2.8|+2.8 / +4.5|+4.5, worst -10.0/-9.5/-6.2, admitted 117/228/325), so this
+                                 #   is demonstrably that lane and the two rounds are comparable.
+                                 #
+                                 #   WHY 0.35 AND NOT A LADDER: it is (#70)'s OWN RUNNER-UP, chosen by prior evidence rather than
+                                 #   fitted here. On that grid it beat 0.50 at 12y on BOTH moments (+7.2|+7.8 vs +7.1|+7.4) with the
+                                 #   better h2h (67% vs 60%) and lost only the 8y median — on the retired top-3 basket. Round 10's
+                                 #   precedent, in its words: one arm at a point prior evidence already flags, "not a ladder re-fitted
+                                 #   to a fresh objective, which is how a file overfits itself".
+                                 #
+                                 #     horizon   top-10 exc|med             worst           h2h vs 6-10   vs 11-20   admitted
+                                 #       20y     +0.8|+0.9 -> +0.8|+0.9   -10.0 -> -10.0     50% -> 50%   50% -> 50%   117 -> 117
+                                 #       12y     +2.8|+2.8 -> +2.8|+2.8    -9.5 ->  -9.5     61% -> 67%   50% -> 50%   228 -> 228
+                                 #        8y     +4.5|+4.5 -> +4.4|+4.5    -6.2 ->  -6.2     65% -> 69%   67% -> 67%   325 -> 325
+                                 #
+                                 #   VERDICT: NO-SHIP, and deliberately NOT "unresolved". BOTH GUARDS PASS — rank-1 h2h clears 50% on
+                                 #   BOTH comparison books at all three horizons and IMPROVES by 4-6 points where it moves, and the
+                                 #   worst window is byte-identical everywhere. PRIMARY FAILS: the 8y top-10 MEAN falls +4.5 -> +4.4
+                                 #   while 12y and 20y hold exactly. No horizon is UP, and "a flat horizon is not a disagreeing one",
+                                 #   so this is a plain NO-SHIP rather than a TIE. Precedence does not rescue it either: GUARD > PRIMARY
+                                 #   means a broken guard refuses outright, never that a passing guard makes a failed primary shippable.
+                                 #
+                                 #   *** THE FINDING THAT OUTLIVES THE VERDICT: ON THE PIT POOL, PRIMARY IS NEARLY BLIND TO RANKING.
+                                 #   READ THIS BEFORE RUNNING ANY WEIGHT ARM ON `pit`. ***
+                                 #   The arm REORDERS the book substantially and the graded basket barely registers it:
+                                 #     20y   18 of 19 graded lines BYTE-IDENTICAL. The only line that moves at all is top-3
+                                 #           (+0.1|+0.9 -> +0.4|+1.1). top-10, rank-1 and BOTH h2h lines are unchanged.
+                                 #     12y   top-1 +0.6|+4.1 -> +0.7|+4.4, top-2 +1.7 -> +2.2, top-3 median +3.5 -> +4.5 (+1.0)
+                                 #           — and EVERY RUNG FROM top-10 TO top-50 IS BYTE-IDENTICAL.
+                                 #      8y   top-2 +5.2 -> +5.8, top-3 +5.3 -> +5.6, and top-10 moves 0.1 on the MEAN alone.
+                                 #   The ranking demonstrably changed: at 12y the top-10 zero-names list comes back in a different
+                                 #   ORDER with the same members. The book moved; the basket could not see it.
+                                 #   MECHANISM, read off the HOLDS column of these same runs rather than inferred: the graded book
+                                 #   holds 107 / 196 / 267 name-slots over 20 / 34 / 42 windows = 5.4 / 5.8 / 6.4 NAMES PER WINDOW,
+                                 #   against a basket of 10, because the gates admit that few. `book_multiples` takes `n.min(vv.len())`,
+                                 #   so in every window admitting <=10 the top-10 book IS the entire admitted set and reordering it is
+                                 #   a no-op. Only slots beyond rank 10 can move, and the WHOLE SAMPLE holds 7 of them at 20y (holds
+                                 #   107 -> 114 at top-15), 14 at 12y (196 -> 210) and 16 at 8y (267 -> 283).
+                                 #   CONSEQUENCE, and it is a rule rather than an observation: the PIT lane CAN grade a GATE — round
+                                 #   10's arm moved admitted 117 -> 183 / 228 -> 374 / 325 -> 640 — but it CANNOT grade a WEIGHT to
+                                 #   better than ~0.1 pt. Here 0.1, at one horizon, on one moment, was the entire signal, and it
+                                 #   decided the verdict. Do NOT run another weight arm on `pit` expecting PRIMARY to answer; it will
+                                 #   read "held" almost whatever the weight does. This is the structural twin of (#127)'s `out-ranked`
+                                 #   column (0.2% / 0.0% / 1.5% of missed wealth): that measured selection dead on RECALL, this measures
+                                 #   it near-ungradeable on the BOOK — opposite direction, same pool, same conclusion.
+                                 #
+                                 #   WHAT THE ARM DOES BUY, recorded because it is real and because it is not enough: rank-1 h2h rises
+                                 #   61 -> 67% (12y) and 65 -> 69% (8y) on the licensed 6-10 book, i.e. 0.35 makes the TOP of the list
+                                 #   beat its own middle MORE often. The 11-20 book is unchanged at 50 / 67%, so the two books sit on
+                                 #   the same side of 50% on every arm and horizon here and (#135)'s revert rule does NOT fire again.
+                                 #   A future round wanting this weight lower needs a graded statistic that reads rank 1 and is NOT the
+                                 #   guard. The guard cannot be promoted to judge — that is (#135)'s standing warning against preferring
+                                 #   the bigger denominator, applied to a different column.
+                                 #
+                                 #   THE 20y COLUMN IS REPORTED AND NOT GRADED, per (#126)'s substitution precedent, and this is stated
+                                 #   as a DEVIATION from PRIMARY's letter rather than passed over: (#124) puts PIT 20y n_eff at ~0.2,
+                                 #   the 6-10 book is unlicensed there because (#135)'s revert rule fired on it, and the 11-20
+                                 #   denominator is 2. The verdict rests on 12y and 8y. It would not change if 20y were graded — 20y
+                                 #   holds exactly, on both books and both moments.
+                                 #
+                                 #   REVERT: none to execute; nothing shipped and 0.50 is the value in this file. TO REOPEN, one of:
+                                 #   (a) a lane whose admitted book EXCEEDS 10 names per window, which today means `stress` and so
+                                 #   re-inherits the lookahead the PIT arm exists to remove; or (b) a graded statistic that reads rank 1
+                                 #   and is not the h2h guard. Do NOT reopen on the h2h improvement above — it is a guard, and a guard
+                                 #   that passes is not evidence for shipping.
                                  #   (#70) RE-GRADED UNDER SHIP RULE v2 ON 2026-08-11 AND CONFIRMED AT 0.50, zero new runs.
                                  #   (#63) below shipped this value on 2026-08-10 graded on (#47)'s rank-1 rule — the primary
                                  #   v2 had retired FOUR DAYS EARLIER. Re-grading its twelve surviving run files on top-3, the
