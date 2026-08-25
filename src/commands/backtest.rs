@@ -2347,6 +2347,29 @@ fn bench_drawdown_at(dates: &[chrono::NaiveDate], closes: &[f64], date: chrono::
 
 /// (#40) ABSOLUTE goal metric — the one the peer-relative lanes never measure. The stated purpose is
 /// "out-return an S&P500 buy-and-hold", but every lane above de-means the level away (SELECTION, not the
+/// (#140) The GRADED redundancy skip — the twin of the `picks::lane_split` `growth_corr_cap` trim,
+/// sharing `core::decorrelate_keep` so the served rule, the CORR-CAP probe and this one cannot
+/// disagree about what "correlated" means ((#3j)/(#41)). Keep the best-scoring rows whose trailing
+/// correlation with every already-kept row stays under `cap`, refilling from below, and stop at `n`.
+///
+/// PER RUNG, NOT PER COHORT, and that is the whole design: a correlation cap is a book-CONSTRUCTION
+/// rule whose answer depends on how many names you are buying, so `n` is always the rung being built
+/// — the same `n` the live site passes (the table size) and the probe passes (`VERDICT_TOP`). The
+/// (#75) value brake trims the cohort instead, because a percentile is a statement about the pool.
+///
+/// `cap <= 0.0` is the IDENTITY (plain top-`n`), which is what ships, and the untouched
+/// `tests/fixture/*.golden` are the proof. Unjudgeable pairs never block — `decorrelate_keep` uses
+/// `is_some_and`, so an empty trail is kept, the house rule every gate follows.
+///
+/// Pure, and split out for exactly the reason `value_floor_trim` is: [`report_vs_benchmark`] returns
+/// `()` and only prints, so a comparison left inline there is unreachable by any test ((#75)).
+fn corr_cap_rung<T: Clone>(rows: &[T], trails: &[&[f64]], n: usize, cap: f64) -> Vec<T> {
+    if cap <= 0.0 {
+        return rows[..n.min(rows.len())].to_vec();
+    }
+    core::decorrelate_keep(trails, n, cap).into_iter().map(|i| rows[i].clone()).collect()
+}
+
 /// index). This asks the real question: buy the top-N growth picks (equal-weight, non-crypto), hold
 /// `years`, and does that beat holding ^GSPC over the SAME window? Per pick, excess = its annualized
 /// return minus what ^GSPC did from the same cutoff. Top-N per ~6mo bucket; report mean pick/SPY CAGR,
@@ -2363,12 +2386,25 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // (bucket, score, pick CAGR, SPY CAGR, ticker, as-of peg_yield) for every GATED non-crypto pick that
     // has a benchmark window. The peg rides along ONLY for the (#75) value brake below; nothing else reads it.
     let mut rows: Vec<(i32, f64, f64, f64, String, Option<f64>)> = Vec::new();
+    // (#140) trailing returns for the graded `growth_corr_cap` skip, keyed by (bucket, ticker) because
+    // a trail is per-SAMPLE, not per-ticker — the same name at two cutoffs carries two histories.
+    // A ticker appearing twice inside one ~6mo bucket keeps the later trail; both describe the same
+    // window to within the step, and a near-duplicate trail cannot change a correlation verdict.
+    //
+    // Built UNCONDITIONALLY, and that is deliberate. An `if cap > 0.0` guard here saves a borrowed
+    // slice per sample on the shipped lane and costs a mutant nobody can kill: at `cap: 0.0` the map
+    // is never read, so `>` `==` `<` `>=` all produce byte-identical output and the gate reds with
+    // six survivors. `report_vs_benchmark` returns `()` and only prints, so no unit test can reach
+    // the guard either ((#75)). An unobservable branch is not an optimisation, it is dead weight the
+    // suite has to pretend to cover — so it is not written.
+    let mut trail_of: std::collections::BTreeMap<i32, std::collections::HashMap<&str, &[f64]>> = Default::default();
     for s in samples {
         if picks::asset_class(&s.quote) == 0 {
             continue; // crypto: a coin isn't an S&P500-comparable hold
         }
         let Some(score) = growth_score(&s.quote, tuning) else { continue };
         let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+        trail_of.entry(bucket(s.date)).or_default().insert(s.quote.ticker.as_str(), s.trail.as_slice());
         // RAW cumulative % (annualize the BOOK, not per-name)
         rows.push((bucket(s.date), score, s.realized, bench_r, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)));
     }
@@ -2401,11 +2437,20 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         for (b, v) in &by_bucket {
             let mut vv = v.clone();
             vv.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // score desc
-            let take = n.min(vv.len());
+            // (#140) the graded redundancy skip. At the shipped `growth_corr_cap: 0.0` this is the
+            // identity and every number below is unchanged; armed, it rebuilds THIS rung from the
+            // ranked list, dropping a name that duplicates a bet already in the book and refilling
+            // from below. NOTE what it deliberately does NOT touch: `rank_slice_stats` and
+            // `book_deciles` below still read the untrimmed `by_bucket`, so the rank-1 h2h GUARD is
+            // measured on the same cohort either way and cannot move for this knob — a vacuous pass,
+            // and the receipt must say so rather than bank it as evidence.
+            let trails: Vec<&[f64]> =
+                vv.iter().map(|x| trail_of.get(b).and_then(|m| m.get(x.3.as_str())).copied().unwrap_or(&[])).collect();
+            let p = corr_cap_rung(&vv, &trails, n, tuning.growth_corr_cap);
+            let take = p.len();
             if take == 0 {
                 continue;
             }
-            let p = &vv[..take];
             let book_cum = mean(&p.iter().map(|x| 1.0 + x.1 / 100.0).collect::<Vec<_>>()); // equal-weight terminal multiple
             let spy_cum = mean(&p.iter().map(|x| 1.0 + x.2 / 100.0).collect::<Vec<_>>());
             multiples.push(book_cum);
@@ -5077,6 +5122,29 @@ mod tests {
     /// way this brake could quietly stop being cross-sectional. The boundary name (peg exactly ON the
     /// floor) is kept, matching `drop_bottom_book`'s `if v < t { skip }`, and the unjudgeable name is
     /// kept because unjudgeable is not a verdict.
+    /// (#140) The graded redundancy skip's contract: IDENTITY at the shipped `growth_corr_cap: 0.0`
+    /// (the goldens depend on it), drops the second copy of a bet once armed and refills from below,
+    /// still honours `n`, and never blocks on an unjudgeable pair. `report_vs_benchmark` returns `()`
+    /// and only prints, so none of this is reachable unless the walk is split out ((#75)).
+    #[test]
+    fn corr_cap_rung_drops_the_duplicate_bet_and_is_identity_when_off() {
+        let up: Vec<f64> = (0..12).map(|i| i as f64).collect();
+        let down: Vec<f64> = (0..12).map(|i| -(i as f64)).collect();
+        let rows = vec!["A", "TWIN", "C"];
+        let trails: Vec<&[f64]> = vec![&up, &up, &down];
+
+        // OFF: plain top-n, the twin still in the book, and n past the end keeps everything.
+        assert_eq!(corr_cap_rung(&rows, &trails, 2, 0.0), vec!["A", "TWIN"]);
+        assert_eq!(corr_cap_rung(&rows, &trails, 9, 0.0), vec!["A", "TWIN", "C"]);
+        // ARMED: TWIN correlates +1.0 with A, so it drops and C refills from below.
+        assert_eq!(corr_cap_rung(&rows, &trails, 2, 0.4), vec!["A", "C"]);
+        // n still bounds the book once armed.
+        assert_eq!(corr_cap_rung(&rows, &trails, 1, 0.4), vec!["A"]);
+        // An unjudgeable pair (empty trail) never blocks — unjudgeable is not a verdict.
+        let blind: Vec<&[f64]> = vec![&up, &[], &down];
+        assert_eq!(corr_cap_rung(&rows, &blind, 2, 0.4), vec!["A", "TWIN"]);
+    }
+
     #[test]
     fn value_floor_trims_each_bucket_against_its_own_cohort() {
         let row = |b: i32, tk: &str, peg: Option<f64>| (b, 1.0, 2.0, 3.0, tk.to_string(), peg);

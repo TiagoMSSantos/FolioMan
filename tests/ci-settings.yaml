@@ -4984,6 +4984,122 @@ buy_heuristic:
   #   which picks are effectively one concentrated bet, without deleting rows from a ranking whose whole
   #   purpose is to show you the candidates. Re-open this only with a refill that walks past n.
   growth_corr_cap: 0.0
+  # (#140) 2026-08-25 — GRADED ON THE BOOK FOR THE FIRST TIME, AND REFUSED THREE WAYS. (#41) above is
+  #   a LIVE-TABLE measurement; the knob had never been graded at all, because nothing read it in the
+  #   graded path. That gap is closed in this commit and the value below is unchanged.
+  #
+  #   THE WIRING GAP, and why no earlier round could have run this arm. `growth_corr_cap` had exactly
+  #   one non-test call site — `picks::lane_split`, the SERVED table. `report_vs_benchmark` never read
+  #   it. The CORR-CAP probe swept the axis on its own ladder and never read this field either. So
+  #   arming the knob in this file moved the screen and left every verdict number byte-identical: a
+  #   vacuous discharge, not a verdict. `report_vs_benchmark` now applies the same skip through
+  #   `corr_cap_rung` -> `core::decorrelate_keep`, the two-site shape (#75) uses, so served rule, probe
+  #   and verdict cannot drift ((#3j)). PER LADDER RUNG (n = the rung being built), not on the cohort:
+  #   a correlation cap's answer depends on how many names you are buying. At 0.0 it is the identity
+  #   and the seven tests/fixture/*.golden did not move — that is the proof, and it is why this commit
+  #   ships the wiring with the knob still off.
+  #
+  #   THE LEAD. The CORR-CAP probe on the post-(#138) config met its own printed bar ("a cap lifting
+  #   book or worst with OOS both + -> ship as a book-construction rule") at both graded horizons:
+  #   12y book +9.7->+9.9, excess +3.3->+3.6, win 74->83%, worst -6.4->-5.6; 8y worst -5.5->-3.8.
+  #   Converted per the standing rule at the head of this file — a flag is a LEAD, never a verdict.
+  #
+  #   THE ARM. `backtest {20,12,8} universe fund pit`, one arm, overlay inlined here per (#131):
+  #       buy_heuristic:
+  #         print_h2h_mid_ladder: true
+  #         growth_corr_cap: 0.4
+  #   0.4 is the only rung the probe prices as moving (0.8 and 0.6 are inert). Pre-registered as a
+  #   KNOWN WEAKNESS that it is the GRID EDGE — nothing is measured beyond it — the opposite of the
+  #   interior-plateau shape (#126) demanded of itself. Verification passed before any verdict was
+  #   read: drift named exactly `print_h2h_mid_ladder false->true, growth_corr_cap 0.0->0.4`;
+  #   windows scored 1123/2731/5941 and 5766 tickers, matching control to the unit.
+  #
+  #     horizon  top-10 exc|med           worst            h2h vs 6-10   vs 11-20   holds
+  #       20y    +0.6|+0.7 -> +0.8|+1.4   -10.0 -> -10.6    50% -> 50%   50% -> 50%   110 -> 102
+  #       12y    +3.7|+4.0 -> +3.9|+3.0    -6.4 ->  -5.6    63% -> 63%   50% -> 50%   209 -> 188
+  #        8y    +5.3|+5.6 -> +5.2|+4.6    -5.5 ->  -3.8    70% -> 70%   62% -> 62%   284 -> 259
+  #
+  #   REFUSED, and any ONE of these is sufficient:
+  #     1. GUARD BROKEN at 20y — top-10 worst window -10.0 -> -10.6. Precedence is GUARD > PRIMARY,
+  #        and a broken guard refuses outright; it is never softened into unresolved.
+  #     2. PRIMARY fails at 12y — the MEDIAN falls +4.0 -> +3.0. Mean-and-median is the bar.
+  #     3. PRIMARY fails at 8y — BOTH moments fall, +5.3|+5.6 -> +5.2|+4.6.
+  #   Not a TIE: PRIMARY fails at both adjudicating horizons rather than disagreeing across them.
+  #
+  #   WHAT IT ACTUALLY DOES: trades RETURN for RISK. Worst window improves at 12y and 8y (-6.4->-5.6,
+  #   -5.5->-3.8) and win-rate rises 74->83% at 12y, while the excess median falls at both. Ship Rule
+  #   v2's PRIMARY is a return bar, so a risk-only gain cannot carry it. Anyone re-opening this should
+  #   argue for changing the RULE, not for re-fitting the cap.
+  #
+  #   THE MECHANISM, and it confirms (#41) rather than contradicting it. Holds fall at every horizon
+  #   (284->259 at 8y). `decorrelate_keep` DOES walk the whole ranked list, so this is not a missing
+  #   refill — the per-bucket candidate list is exhausted first. The PIT book never fills the basket:
+  #   12y control holds 209 over 35 windows = 6.0 names against a basket of 10 (the round-12 finding).
+  #   YOU CANNOT DEDUPE A BOOK THAT IS ALREADY SHORT — removing a duplicate does not swap in a
+  #   replacement, it just makes the book emptier. (#41) measured this live (38 rows -> 29) and
+  #   predicted the deep backtest pool would behave differently. It does not. That is the transferable
+  #   result of this round and it outlives the 0.4 arm.
+  #
+  #   THREE INSTRUMENT LESSONS, all worth more than the arm:
+  #   a) THE PROBE'S BAR HAS NO MEDIAN. It reported 12y as a clean win; the verdict's median is what
+  #      refused it. (#75) already said that bar is "worth a grid, never ship this" — this is the
+  #      demonstration, not the quote. The probe also grades a HELD book while the verdict rebalances.
+  #      Cross-check that the wiring is honest: the graded top-10 reproduces the probe's 0.4 row
+  #      EXACTLY at 20y (+7.3 book, +0.8 excess, -10.6 worst), which is what it should do at n=10.
+  #   b) THE h2h GUARD IS VACUOUS FOR THIS KNOB. The skip is applied per rung inside the top-N ladder
+  #      and deliberately does NOT reach `rank_slice_stats`, so h2h is measured on the same cohort
+  #      armed or off and came back byte-identical at all three horizons. It PASSED and that pass is
+  #      worth nothing. Read it as vacuous, never as evidence — the (#126) precedent for a horizon
+  #      discharged vacuously, applied to a guard.
+  #   c) AN `if knob > 0.0` ALLOCATION GUARD AROUND INERT CODE IS SIX UNKILLABLE MUTANTS. The first
+  #      cut of this wiring guarded both the `trail_of` build and the per-rung `trails` build so the
+  #      shipped 0.0 lane would allocate nothing. The gate graded 14 mutants and SEVEN survived: at
+  #      `cap: 0.0` the guarded bodies are never read, so `>` `==` `<` `>=` all print byte-identical
+  #      output, and `report_vs_benchmark` returns `()` and only prints, so no unit test can reach the
+  #      branch either ((#75)). Six of the seven were that one micro-optimisation. Deleting both
+  #      guards took the diff to 8 mutants with the goldens killing the rest. THE RULE: a branch whose
+  #      only effect at the default is to skip work nothing reads is not an optimisation — it is dead
+  #      weight the suite is then required to pretend it covers. Write the unguarded version. Applies
+  #      to every future knob wired into `report_vs_benchmark`, which is why it sits here and not in a
+  #      commit message. (Grade it the way CI does — `-- --lib --test backtest_fixture`. A local run
+  #      with `--lib` alone hides every mutant the goldens are the only witness for, and this round's
+  #      first pass reported an eighth survivor for exactly that reason.)
+  #
+  #   REVERT RULE: none needed — the value never moved. The src wiring STAYS either way: it is inert
+  #   at 0.0, proven by the untouched goldens, and it closes a knob that was ungradeable by
+  #   construction. Do NOT ladder 0.3/0.2 to rescue this: that is fitting a rung to a failed arm, and
+  #   the 20y guard breaks in the direction a tighter cap makes worse. (#41)'s standing reopen — "only
+  #   with a refill that walks past n" — is NOT met by this round and stays open; but note it would not
+  #   help, because the candidates are exhausted, not skipped.
+  #
+  #   PROBE SURFACE SWEPT THE SAME DAY, so round 15 does not re-derive it. All ten printed decision
+  #   bars in `backtest` were read against banked post-(#138) output. Every one is closed:
+  #     VALUE / EV-VALUE / PEG-VALUE gates  the lift IS `growth_value_floor_pct`, already shipping at
+  #       40.0 since (#126). The probes run on RAW samples (brake-off baseline) while `value_floor_trim`
+  #       is applied inside `report_vs_benchmark`, so 0%->40% re-measures the shipped knob. earnings_yield
+  #       40% returns the IDENTICAL book to peg_yield 40% (+10.1/+3.7) = the same names; ebitda_yield is
+  #       strictly weaker than what ships.
+  #     SURVIVAL-GATE                       every factor flat or negative. net_cash_rev 25% is +0.5 at
+  #       8y and FLAT at 12y; PRIMARY needs both.
+  #     held-book by FACTOR                 (#136)'s coverage mirage, now proven mechanically: NINE
+  #       factors print byte-identical books (12y +18.0/+6.4, n=65) because "ey rows/window mean 1.9" —
+  #       the "top-10" holds ~2 names. Not a ranking result at all.
+  #     growth_fund_weight knee             flat 0.1->2.0 at both horizons; shipped 0.07 sits on it.
+  #     TWO-STYLE combo                     its own bar says "Never a score/gate/knob change".
+  #     CORR-CAP                            this receipt.
+  #
+  #   (#134) RE-TESTED, NOT ASSUMED. Its one named open thread — stooq.com — was re-run 2026-08-25 and
+  #   still returns a JavaScript proof-of-work bot check on every symbol INCLUDING the live AAPL
+  #   control. Per that receipt's own instruction the line stays "untested rather than refuted"; this
+  #   is a second dated attempt and nothing more.
+  #   AND A DEAD END, recorded so nobody walks it. The caveat block says closing PIT survivorship needs
+  #   "delisting DATES plus a terminal return, not a price backfill", which reads as unblocked. It is
+  #   not. `backtest.rs` skips a cutoff whose forward window runs off the end of the series, so a
+  #   mid-hold delisting contributes no loss — and the last close IS the terminal price, so salvaging
+  #   it needs no new data. But (#121) measured "ZERO of 1206 members have a series ending more than a
+  #   year before today": there are no truncated series to salvage. The 387 zero-bar names cannot be
+  #   SCORED at all (no pre-cutoff history -> no score -> never picked), and the rest run to today as
+  #   recycled tickers. A terminal-return stub is dead twice over.
   # (#75) VALUE BRAKE — the cross-sectional PEG floor: built, wired, graded and REFUSED 2026-08-12.
   #   Sibling of the (#41) skip above by construction (same site, same shape, same "not a gate, not a
   #   score term" standing) and now its sibling in outcome too: a cohort-aware trim that measures well
