@@ -225,10 +225,33 @@
 #   for what to do about it: substitute 12y for the blind horizon and require the rise at 8y AND 12y,
 #   which is STRICTER than the letter, and state the substitution in the receipt as a deviation.
 #
+#
+# (#139) 2026-08-25 — PIT-LANE AMENDMENT TO PRIMARY. Same shape as the blackout rule above, different
+#   cause. On the `pit` lane the 20y column cannot adjudicate a MEAN: (#124) puts its n_eff at ~0.2,
+#   and the cohorts a knob moves there are routinely n=3..10 against 20 windows. Four receipts have
+#   now graded PIT this way rather than by the letter — (#126), (#135), (#137), (#138) — and (#138) is
+#   the first that SHIPPED on the substitution instead of refusing anyway. Written down as a rule so
+#   it stops being re-argued from scratch every round.
+#     ON `pit`:  PRIMARY is top-10 excess (mean AND median) up or held at 12y AND 8y.
+#     ON `pit`:  EVERY 20y GUARD STAYS LIVE — rank-1 h2h >= 50% at 20y, and 20y worst window not worse.
+#     WIDE and `stress` lanes are UNCHANGED: PRIMARY stays 20y AND 8y there.
+#   WHY THE GUARDS SURVIVE WHAT PRIMARY CANNOT. A mean over n=3 is noise; a WORST WINDOW is a MAX and
+#   an h2h is a COUNT, and both stay answerable at that n. That is the entire content of this
+#   amendment — it drops the horizon only where the statistic is a MEAN, and nowhere else.
+#   THIS RAISES THE 12y BAR, IT DOES NOT ONLY LOWER THE 20y ONE. By the letter an arm needed 20y and
+#   8y and could be FLAT at 12y; under this rule 12y must carry the rise. Same reasoning (#126) used,
+#   and (#126) called its own version STRICTER than the letter for exactly this reason.
+#   NOT A LICENCE TO DROP AN INCONVENIENT HORIZON. It applies to `pit` alone, it must be pre-registered
+#   BEFORE the runs as every receipt using it did, and the 20y numbers are still reported in full.
+#   TO REVERT: delete this block and re-grade (#138) at 20y — that arm reads +0.8|+0.9 -> +0.6|+0.7
+#   there, a TIE under the letter, so reverting this rule reverts that ship. The two stand together.
+#
 #   PRIMARY   top-10 excess (mean AND median) up or held, at 20y AND 8y
 #   GUARD     rank-1 h2h >= 50% at 20y, 12y and 8y   (winner's-curse guard, NOT the judge)
 #   GUARD     top-10 worst window not worse
 #   TIE       horizons disagree -> UNRESOLVED -> NO SHIP. "20y king overrules" is RETIRED.
+#   PIT LANE  on `pit` ONLY, PRIMARY and TIE read 12y AND 8y, not 20y AND 8y — see (#139) just above.
+#             Every 20y GUARD stays live. The wide and `stress` lanes are unchanged.
 #
 #   PRECEDENCE IS GUARD > PRIMARY > TIE, and it is not a formality. A broken guard REFUSES outright;
 #   it is never softened into "unresolved" because the primary happened to split. `fixed_cagr_years: 5`
