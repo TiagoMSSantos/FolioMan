@@ -188,6 +188,20 @@
 #     `growth_maxdd_cap` DID get the arm, and it is the one of the five that MOVED: it SHIPS OFF as of
 #     (#138) — see its own block for the verdict, the stated 20y deviation and the revert rule.
 #     P0b IS CLOSED. No shipped gate value now rests only on the lookahead pool.
+#     SAME-DAY ADDENDUM, and it matters because it undercuts one sentence above. The rows quoted here
+#     were measured with `growth_maxdd_cap` STILL ARMED. On the config (#138) actually ships — cap off —
+#     the arm runs re-price every other gate for free, and two rows move:
+#       `growth_max_peg` ->off      20y admits 0 | 12y n=14 -18.9|-206.5 | 8y n=42 +45.6|+12.6 TOO TIGHT
+#       `growth_min_range_pct` -10  20y n=2 -278.2 | 12y n=2 -25.8 | 8y n=2 -6.3  (still negative; n=2, not 1)
+#     So "max_peg loses at BOTH adjudicating horizons" is true of the PRE-(#138) config and FALSE of the
+#     shipped one — its 8y row flipped positive. IT STILL DOES NOT REOPEN, for two reasons needing no
+#     runs. (1) 12y reads -18.9|-206.5, hard negative, and PRIMARY needs 12y AND 8y; a loosening cannot
+#     pass on one horizon alone. (2) The 8y median is +12.6, squarely in the band this file records as
+#     PERISHABLE (+57.5 and +7.0 both expired), and max_peg's own block already shows this same 8y flag
+#     dying twice before. Written down so the next reader finds the flag ALREADY PRICED, not fresh.
+#     The ONLY other TOO TIGHT row on the shipped config is `growth_min_cagr -4` at 8y (+64.7|+61.5) —
+#     the flag (#135) already converted in three runs and REFUSED, the 8y book falling +4.5 -> +3.3.
+#     NET: on the config that now ships, the gate stack carries NO live lead.
 # ============================ SHIP RULE v2 — 2026-08-06 =====================================
 # THE PRIMARY METRIC CHANGES FROM rank-1 TO top-3, AND EVERY RECEIPT BELOW PREDATES THE CHANGE.
 #
