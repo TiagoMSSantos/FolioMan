@@ -5433,10 +5433,17 @@ pub(crate) mod tests {
     assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
     assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
     // signer emits exactly the three headers the gateway needs, TraceId folds in the url + salt
-    let h = borse_frankfurt_sign("https://x/y", "saltz");
+    let salt = format!(
+        "test-salt-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let h = borse_frankfurt_sign("https://x/y", &salt);
     assert_eq!(h.len(), 3);
     assert_eq!([h[0].0, h[1].0, h[2].0], ["Client-Date", "X-Client-TraceId", "X-Security"]);
-    assert_eq!(h[1].1, md5_hex(&format!("{}https://x/ysaltz", h[0].1))); // trace = md5(date+url+salt)
+    assert_eq!(h[1].1, md5_hex(&format!("{}https://x/y{}", h[0].1, salt))); // trace = md5(date+url+salt)
 
     // concurrency = cores × multiplier, both floored at 1 (a 0 anywhere can't stall the fan-out)
     assert_eq!(concurrency_for(8, 8), 64);
