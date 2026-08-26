@@ -2398,15 +2398,33 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     // the guard either ((#75)). An unobservable branch is not an optimisation, it is dead weight the
     // suite has to pretend to cover — so it is not written.
     let mut trail_of: std::collections::BTreeMap<i32, std::collections::HashMap<&str, &[f64]>> = Default::default();
+    // (#144) TWO PASSES, because a rank normalisation is CROSS-SECTIONAL and the pool a name is ranked
+    // against must be its OWN cutoff window. Ranking a 1998 name against a 2015 one would be lookahead
+    // of the plainest kind, so the grouping is not a convenience — it is the correctness condition.
+    // This one loop feeds `by_bucket` and therefore EVERY number the ship rule reads: the TOP_LADDER
+    // books, `rank_slice_stats` (rank-1, the h2h GUARD, the disjoint slices) and `book_deciles`.
+    //
+    // BYTE-IDENTICAL ON THE SHIPPED LANE, and by two separate properties rather than one. At
+    // `growth_rank_normalise: 0.0` `growth_scores_ranked` returns `growth_score`'s values verbatim.
+    // And the ROW ORDER cannot move either: each bucket's Vec is filled in `samples` order exactly as
+    // before, so `value_floor_trim`'s per-bucket Vec is element-for-element what it was — which
+    // matters because the rank sort below is STABLE and a reordered tie would silently rebuild a book.
+    let mut by_cutoff: std::collections::BTreeMap<i32, Vec<&Sample>> = Default::default();
     for s in samples {
         if picks::asset_class(&s.quote) == 0 {
             continue; // crypto: a coin isn't an S&P500-comparable hold
         }
-        let Some(score) = growth_score(&s.quote, tuning) else { continue };
-        let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
-        trail_of.entry(bucket(s.date)).or_default().insert(s.quote.ticker.as_str(), s.trail.as_slice());
-        // RAW cumulative % (annualize the BOOK, not per-name)
-        rows.push((bucket(s.date), score, s.realized, bench_r, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)));
+        by_cutoff.entry(bucket(s.date)).or_default().push(s);
+    }
+    for (b, group) in &by_cutoff {
+        let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
+        for (s, scored) in group.iter().zip(picks::growth_scores_ranked(&quotes, tuning)) {
+            let Some(score) = scored else { continue };
+            let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+            trail_of.entry(*b).or_default().insert(s.quote.ticker.as_str(), s.trail.as_slice());
+            // RAW cumulative % (annualize the BOOK, not per-name)
+            rows.push((*b, score, s.realized, bench_r, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)));
+        }
     }
     if rows.len() < 8 {
         println!("\n── vs S&P500 (ABSOLUTE) ──  only {} gated picks have a ^GSPC window — too few.", rows.len());

@@ -1637,24 +1637,224 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     //
     // Written as its own branch so the two shipped expressions are untouched character-for-character —
     // float multiplication does not re-associate, and a golden is a bit-comparison.
-    let score = if tuning.growth_allow_negative_scores && base < 0.0 {
-        base + liq_bonus // every damp is 1.0 here, which is what `base × 1.0 × 1.0 …` evaluates to
-    } else if tuning.growth_geomean_fold {
-        base * combine_damps(&[trust, overext_damp, proximity, value]) * ter_damp * commodity_damp * fx_damp * acc_damp + liq_bonus
-    } else {
-        base * proximity * value * damp * ter_damp * commodity_damp * fx_damp * acc_damp + liq_bonus
-    };
-    Some(ScoreParts {
+    // (#144) The three branches moved WHOLE into `compose_score` below, character-for-character, so
+    // that `base -> score` has ONE definition (non-negotiable #4) and the rank-normalised re-score can
+    // reach it instead of writing a second copy of this stack.
+    let mut parts = ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
         fund, mom121: mom_term, smooth, underwater, er, er_term, record_years: long_years, record_term, base, proximity, value_raw, value, trust, overext,
-        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, score,
-    })
+        overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, score: 0.0,
+    };
+    parts.score = compose_score(&parts, tuning);
+    Some(parts)
+}
+
+/// (#144) `base` and the multiplier stack -> the ranked score. The ONE definition of that composition:
+/// `score_parts` builds it, and `growth_scores_ranked` re-runs it over a normalised `base` rather than
+/// re-deriving the damp product at a second site (non-negotiable #4).
+///
+/// The three expressions are the pre-(#144) ones untouched, which is load-bearing and not tidiness:
+/// float multiplication does not re-associate, and a golden is a bit-comparison. Reordering a single
+/// factor here would move the shipped lane.
+fn compose_score(p: &ScoreParts, tuning: &BuyHeuristic) -> f64 {
+    if tuning.growth_allow_negative_scores && base_is_negative(p.base) {
+        p.base + p.liq_bonus // every damp is 1.0 here, which is what `base × 1.0 × 1.0 …` evaluates to
+    } else if tuning.growth_geomean_fold {
+        p.base * combine_damps(&[p.trust, p.overext_damp, p.proximity, p.value]) * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp + p.liq_bonus
+    } else {
+        p.base * p.proximity * p.value * p.damp * p.ter_damp * p.commodity_damp * p.fx_damp * p.acc_damp + p.liq_bonus
+    }
+}
+
+/// (#144) (#86)'s sign test, split out and SKIPPED for exactly the reason `config::compute_threads`
+/// documents: this comparison has an EQUIVALENT mutant, not merely an unkilled one. At `base == 0.0`
+/// the two branches compute the same number — `0.0 + liq_bonus` and `0.0 × <every damp> + liq_bonus`
+/// are both `liq_bonus` — so `<` and `<=` are indistinguishable on every input a valid `ScoreParts`
+/// can hold, and only a NaN damp (a bug, never a test) could separate them. Isolating the one atom
+/// keeps every OTHER operator in `compose_score` graded, including the `&&` that gates the knob.
+#[mutants::skip]
+fn base_is_negative(base: f64) -> bool {
+    base < 0.0
 }
 
 /// Scalar growth score — the number `screen`/`size`/`backtest` rank on. Thin wrapper over
 /// `score_parts` so the ranked value and the `explain_growth_score` breakdown share one computation.
 pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     score_parts(quote, tuning).map(|p| p.score)
+}
+
+/// (#144) Φ⁻¹, the inverse standard-normal CDF — Acklam's rational approximation, |abs error| < 1.15e-9
+/// across the open interval. Returned RAW; the ±3 clip `docs/heuristic-v2-spec.md:125` calls for is
+/// applied at the call site, so this stays a plain Φ⁻¹ that a test can check against known quantiles.
+///
+/// No new crate for this: the dependency table's own note ("No new crate — serde is already a
+/// dependency") is the house rule, and fifteen lines of published coefficients is not a dependency's
+/// worth of code. `p` outside (0, 1) cannot arise — `rank_pct` is `rank / (n + 1)`, which is bounded
+/// strictly inside it by construction — but the ends return ∓3 rather than ±∞ or NaN, because a NaN
+/// reaching `base` would rank silently instead of failing.
+fn inv_norm(p: f64) -> f64 {
+    const A: [f64; 6] = [-3.969_683_028_665_376e1, 2.209_460_984_245_205e2, -2.759_285_104_469_687e2, 1.383_577_518_672_690e2, -3.066_479_806_614_716e1, 2.506_628_277_459_239e0];
+    const B: [f64; 5] = [-5.447_609_879_822_406e1, 1.615_858_368_580_409e2, -1.556_989_798_598_866e2, 6.680_131_188_771_972e1, -1.328_068_155_288_572e1];
+    const LOW: f64 = 0.024_25;
+    if !(0.0..=1.0).contains(&p) || p.is_nan() {
+        return 0.0; // unreachable from `rank_pct`; the median is the only honest answer for "no position"
+    }
+    if p <= 0.0 {
+        return -3.0;
+    }
+    if p >= 1.0 {
+        return 3.0;
+    }
+    // The two tails, each chosen ONCE. The earlier shape re-tested `p < LOW` inside
+    // `if p < LOW || p > 1.0 - LOW`, where the two comparisons can never disagree — an EQUIVALENT
+    // mutant rather than an untested one. Two early returns say the same thing with one test each.
+    if p < LOW {
+        return inv_norm_tail((-2.0 * p.ln()).sqrt(), 1.0);
+    }
+    if p > 1.0 - LOW {
+        return inv_norm_tail((-2.0 * (1.0 - p).ln()).sqrt(), -1.0);
+    }
+    let q = p - 0.5;
+    let r = q * q;
+    let num = (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q;
+    let den = ((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0;
+    num / den
+}
+
+/// (#144) Acklam's tail fit on the log-scaled variable `q = sqrt(-2 ln x)`, shared by both tails.
+/// `sign` mirrors it: the LOWER fit already evaluates negative and is taken as-is (`+1`), the upper is
+/// its reflection (`-1`). Getting that backwards flips every tail rank into the wrong half of the
+/// distribution while leaving the central 95% exactly right — which is why `inv_norm_matches_known_quantiles`
+/// pins both tails and not just the middle.
+fn inv_norm_tail(q: f64, sign: f64) -> f64 {
+    const C: [f64; 6] = [-7.784_894_002_430_293e-3, -3.223_964_580_411_365e-1, -2.400_758_277_161_838e0, -2.549_732_539_343_734e0, 4.374_664_141_464_968e0, 2.938_163_982_698_783e0];
+    const D: [f64; 4] = [7.784_695_709_041_462e-3, 3.224_671_290_700_398e-1, 2.445_134_137_142_996e0, 3.754_408_661_907_416e0];
+    let num = ((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5];
+    let den = (((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0;
+    sign * num / den
+}
+
+/// (#144) The ELEVEN ADDITIVE terms of `score_parts` — exactly the ones `base` sums — as
+/// (label, get, set). The perturbation set for `growth_scores_ranked`.
+///
+/// It deliberately excludes every MULTIPLICATIVE damp (`proximity`, `value`, `trust`, `overext_damp`,
+/// `ter_damp`, `commodity_damp`, `fx_damp`, `acc_damp`) and `liq_bonus`. Two separate reasons, both
+/// worth stating so a later session does not "complete" this list:
+///   - a damp is a bounded RATIO in 0..1, not an unbounded level, so it is not the fat-tail failure
+///     `docs/heuristic-v2-spec.md:128` describes and normalising it would flatten a deliberate
+///     penalty into a rank position;
+///   - `liq_bonus` lands OUTSIDE the multiplier stack, where `score_parts` already records that a
+///     constant is genuinely rank-inert.
+/// `term_dims_sum_to_base` pins the "exactly `base`" claim — if a twelfth additive term is ever added
+/// to `base` and not to this list, that test fails, which is the feature.
+type TermDim = (&'static str, fn(&ScoreParts) -> f64, fn(&mut ScoreParts, f64));
+const TERM_DIMS: [TermDim; 11] = [
+    ("trend_term", |p| p.trend_term, |p, v| p.trend_term = v),
+    ("accel_term", |p| p.accel_term, |p, v| p.accel_term = v),
+    ("risk_reward", |p| p.risk_reward, |p, v| p.risk_reward = v),
+    ("quality", |p| p.quality, |p, v| p.quality = v),
+    ("dividend", |p| p.dividend, |p, v| p.dividend = v),
+    ("fund", |p| p.fund, |p, v| p.fund = v),
+    ("mom121", |p| p.mom121, |p, v| p.mom121 = v),
+    ("smooth", |p| p.smooth, |p, v| p.smooth = v),
+    ("underwater", |p| p.underwater, |p, v| p.underwater = v),
+    ("er_term", |p| p.er_term, |p, v| p.er_term = v),
+    ("record_term", |p| p.record_term, |p, v| p.record_term = v),
+];
+
+/// (#144) CROSS-SECTIONAL rank normalisation of the growth score — the two-pass twin of
+/// [`growth_score`], and the ONE place the transform is defined for both the graded and the served
+/// lane so they cannot drift (the standing rule (#3j)/(#75) state for the value brake).
+///
+/// Per additive term, replace each name's LEVEL with its rank position mapped back onto that term's
+/// own pool distribution, blended by `growth_rank_normalise`:
+///
+///   v' = v + w × ( mean + sd × clip(Φ⁻¹(rank / (n+1)), −3, +3) − v )
+///
+/// `w = 0` returns [`growth_score`]'s values verbatim — the early return is not an optimisation, it is
+/// the byte-identity guarantee non-negotiable #1 asks for, and it also skips a pointless O(n log n)
+/// sort per term on the shipped lane.
+///
+/// WHY MAPPED BACK THROUGH mean/sd RATHER THAN LEFT AS A z. `base` sums terms in mutually
+/// incommensurable units, so a raw z would silently invalidate all fourteen `WEIGHT_DIMS` values and
+/// every cap that carries a receipt, and the arm would then be testing "the weights are wrong" rather
+/// than the thing it means to test. In these units every existing weight, cap and receipt keeps saying
+/// what it said, and the ONLY thing that changes is that no single fat-tailed value can take the
+/// argmax outright.
+///
+/// THE POOL IS THE CALLER'S WINDOW, and that is what keeps this point-in-time honest: ranking a name
+/// against names from other decades would be lookahead. The backtest calls this per cutoff bucket.
+///
+/// Two cohorts are passed through untouched rather than normalised, both deliberately:
+/// - a pool of fewer than two admitted names — there is no cross-section to rank against;
+/// - a term that is CONSTANT across the pool (sd = 0): every weight shipping at 0, and every
+///   `growth_fund_extra` fill on an uncovered run, lands here. Such a term carries no order, and
+///   giving it one would invent a ranking out of `ranks`' tie-averaging.
+pub fn growth_scores_ranked(pool: &[&Quote], tuning: &BuyHeuristic) -> Vec<Option<f64>> {
+    let mut parts: Vec<Option<ScoreParts>> = pool.iter().map(|q| score_parts(q, tuning)).collect();
+    let w = tuning.growth_rank_normalise;
+    if w == 0.0 {
+        return parts.iter().map(|p| p.as_ref().map(|p| p.score)).collect();
+    }
+    let n = parts.iter().flatten().count();
+    if n < 2 {
+        return parts.iter().map(|p| p.as_ref().map(|p| p.score)).collect();
+    }
+    for (_, get, set) in TERM_DIMS {
+        let vals: Vec<f64> = parts.iter().flatten().map(get).collect();
+        let mean = vals.iter().sum::<f64>() / n as f64;
+        // ONE subtraction, deliberately, not `(v - mean) * (v - mean)`. That form has an EQUIVALENT
+        // mutant: `sum((v-m)(v+m))` equals `sum((v-m)^2)` for ANY pool, because `sum(v) = n*m` makes
+        // both `sum(v^2) - n*m^2`. Binding the deviation once says the same thing with nothing
+        // unkillable in it.
+        let sd = (vals
+            .iter()
+            .map(|v| {
+                let d = v - mean;
+                d * d
+            })
+            .sum::<f64>()
+            / n as f64)
+            .sqrt();
+        if sd == 0.0 {
+            continue; // constant term: no order to normalise, and no division by zero to invent one
+        }
+        // `core::ranks` — fractional, tie-averaged, in input order — so a term where half the pool
+        // shares one value maps that whole group to ONE position. One definition, not a second
+        // opinion about what a rank is (non-negotiable #4).
+        let r = crate::core::ranks(&vals);
+        for (slot, rank) in parts.iter_mut().flatten().zip(r) {
+            let g = mean + sd * inv_norm(rank / (n as f64 + 1.0)).clamp(-3.0, 3.0);
+            let v = get(slot);
+            set(slot, v + w * (g - v));
+        }
+    }
+    for slot in parts.iter_mut().flatten() {
+        slot.base = TERM_DIMS.iter().map(|(_, get, _)| get(slot)).sum();
+        slot.score = compose_score(slot, tuning);
+    }
+    parts.iter().map(|p| p.as_ref().map(|p| p.score)).collect()
+}
+
+/// (#144) The LIVE cross-section — ticker -> rank-normalised score — so the served book is normalised
+/// the same way the graded one is. Without this the knob would move the backtest and not `screen`,
+/// which is the train-serve skew (#3j)/(#75) exist to forbid.
+///
+/// THE POOL IS EVERY eu-BUYABLE NON-CRYPTO QUOTE IN THE RUN, deliberately the same shape the backtest
+/// ranks per cutoff bucket (`report_vs_benchmark` skips `asset_class == 0`). Coins are left on their
+/// raw score and fall through to [`growth_score`] at the call site: crypto is filtered out of every
+/// edge metric in this repo, so a crypto normalisation could never be graded, and ranking a coin
+/// against the stock distribution would be a number nothing validates. The three lanes are split into
+/// independent tables by `lane_split` anyway, so cross-class comparability was never on offer.
+///
+/// A name the gates reject is absent from the map, not present with a sentinel — the caller must fall
+/// through to [`growth_score`] and get its `None`, which is what keeps "gated" and "unranked" the same
+/// answer they are today. At `growth_rank_normalise: 0.0` every value here IS [`growth_score`]'s, so
+/// the live lane is byte-identical.
+pub fn live_rank_scores<'a>(quotes: &'a [Quote], tuning: &BuyHeuristic) -> HashMap<&'a str, f64> {
+    let pool: Vec<&Quote> = quotes.iter().filter(|q| eu_buyable(q) && !is_currency_quoted(&q.ticker)).collect();
+    let scores = growth_scores_ranked(&pool, tuning);
+    pool.iter().map(|q| q.ticker.as_str()).zip(scores).filter_map(|(t, s)| s.map(|s| (t, s))).collect()
 }
 
 /// (#111) (round 3 §8) REVERSE-DCF: the EPS growth rate the current price is already paying for.
@@ -3757,8 +3957,13 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // a gated pinned name returns None from growth_score; give it a tiny sentinel score so it survives
     // ranked's `>0` trim and reaches print_lane (where pinned is exempt from the score/sector cut). Skip
     // err/no-data quotes (a bad symbol like a suffix-less ETF) — nothing to compare, don't show a blank row.
+    // (#144) the run's cross-section, computed ONCE ahead of the per-name closure below. Inert at the
+    // shipped `growth_rank_normalise: 0.0`, where every entry is `growth_score`'s own value.
+    let norm = live_rank_scores(quotes, tuning);
     let growth_scorer = |quote: &Quote, tuning: &BuyHeuristic| {
-        growth_score(quote, tuning).map(|s| crypto_adj(quote, s)).or_else(|| {
+        // map first, `growth_score` second: coins and gated names are absent from the map by design,
+        // and the fallback is what keeps "gated" answering None exactly as it does today.
+        norm.get(quote.ticker.as_str()).copied().or_else(|| growth_score(quote, tuning)).map(|s| crypto_adj(quote, s)).or_else(|| {
             let usable = quote.price != "err" && quote.price != "no data";
             (usable && pinned_set.contains(quote.ticker.as_str())).then_some(f64::MIN_POSITIVE)
         })
@@ -7090,6 +7295,260 @@ mod tests {
         q
     }
 
+    /// (#144) `n` gate-clearing names whose only difference is the 5Y leg, so exactly ONE additive
+    /// term (`trend_term`) fans out and every damp is shared. That isolation is the point: it makes the
+    /// assertions below about the TRANSFORM rather than about which term happened to move.
+    fn rank_pool(fives: &[f64]) -> Vec<Quote> {
+        fives
+            .iter()
+            .enumerate()
+            .map(|(i, five)| {
+                let mut q = gate_fixture();
+                q.ticker = format!("N{i}");
+                q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", *five)]);
+                q
+            })
+            .collect()
+    }
+
+    /// (#144) `long_trend_cap: 0` is OFF (uncapped) and is what `tests/ci-settings.yaml` ships, so this
+    /// is the shipped shape, not a contrived one. Uncapped is also the only shape in which the fat tail
+    /// this transform exists to tame is reachable at all.
+    fn rank_tuning(w: f64) -> BuyHeuristic {
+        BuyHeuristic { growth_rank_normalise: w, long_trend_cap: 0.0, ..BuyHeuristic::default() }
+    }
+
+    #[test]
+    fn inv_norm_matches_known_quantiles() {
+        assert!(inv_norm(0.5).abs() < 1e-9, "the median is 0");
+        assert!((inv_norm(0.975) - 1.959_963_985).abs() < 1e-6);
+        assert!((inv_norm(0.025) + 1.959_963_985).abs() < 1e-6);
+        assert!((inv_norm(0.99) - 2.326_347_874).abs() < 1e-6);
+        // The TAIL branch (p < 0.02425) is a SECOND rational fit on a log-scaled variable. Pin it, or a
+        // mutant that deletes the branch survives on the central quantiles above alone.
+        assert!((inv_norm(0.001) + 3.090_232_306).abs() < 1e-6, "the lower tail uses the log-scaled fit");
+        assert!((inv_norm(0.999) - 3.090_232_306).abs() < 1e-6, "and the upper tail mirrors it");
+        // Monotone ACROSS the seam between the two fits — the property the whole transform rests on,
+        // and the one a swapped coefficient breaks without moving the spot checks much.
+        let xs = [0.000_5, 0.01, 0.024_24, 0.024_26, 0.3, 0.5, 0.7, 0.975_75, 0.999_9];
+        for w in xs.windows(2) {
+            assert!(inv_norm(w[0]) < inv_norm(w[1]), "not monotone at {:?}", w);
+        }
+        // THE SEAM IS A CHOICE, so pin which side owns it. At exactly p = LOW the two fits differ by
+        // 4.4e-9 — Acklam's stated accuracy, not float noise — and the code gives the boundary to the
+        // CENTRAL fit (`p < LOW` is false there). Same at the mirror. A tolerance of 1e-11 is three
+        // orders inside that gap, so this is a real pin and not a last-bit assertion.
+        assert!((inv_norm(0.024_25) - -1.972_961_049_084_871_2).abs() < 1e-11, "p == LOW belongs to the CENTRAL fit");
+        assert!((inv_norm(1.0 - 0.024_25) - 1.972_961_049_084_871_2).abs() < 1e-11, "and so does its mirror");
+
+        // Out of range NEVER yields NaN: a NaN reaching `base` would rank silently.
+        assert_eq!(inv_norm(0.0), -3.0);
+        assert_eq!(inv_norm(1.0), 3.0);
+        assert_eq!(inv_norm(f64::NAN), 0.0);
+        assert_eq!(inv_norm(-0.5), 0.0);
+        assert_eq!(inv_norm(1.5), 0.0);
+    }
+
+    /// (#144) TERM_DIMS must be EXACTLY `base`'s addends. If a twelfth additive term is ever added to
+    /// `base` and not to the list, the normalisation would silently drop it from the re-sum and every
+    /// armed score would be wrong by that term. This test is the only thing standing between that
+    /// mistake and a shipped number.
+    #[test]
+    fn term_dims_sum_to_base() {
+        let p = score_parts(&gate_fixture(), &BuyHeuristic::default()).expect("the fixture clears the gates");
+        let summed: f64 = TERM_DIMS.iter().map(|(_, get, _)| get(&p)).sum();
+        assert!((summed - p.base).abs() < 1e-12, "TERM_DIMS sums to {summed}, base is {}", p.base);
+    }
+
+    /// (#144) `compose_score` factor by factor. Every existing fixture leaves ter/commodity/fx/acc_damp
+    /// at 1.0 and `liq_bonus` at 0.0 — at those values `*` and `/` compute the same number and so do
+    /// `+` and `-`, so the composition was structurally untestable through a `Quote`. Building the
+    /// `ScoreParts` directly with eight DISTINCT non-1.0 damps and a non-zero bonus is what makes each
+    /// factor observable. The `growth_geomean_fold` branch has no other test at all.
+    ///
+    /// The expected values are written in the SAME association order as the code on purpose: float
+    /// multiplication does not re-associate, so a reordered expectation would be a different number
+    /// and this test would be pinning the wrong one.
+    #[test]
+    fn compose_score_applies_every_factor_in_order() {
+        let mut p = score_parts(&gate_fixture(), &BuyHeuristic::default()).expect("the fixture clears the gates");
+        p.base = 8.0;
+        p.proximity = 0.9;
+        p.value = 0.8;
+        p.damp = 0.7;
+        p.trust = 0.95;
+        p.overext_damp = 0.85;
+        p.ter_damp = 0.6;
+        p.commodity_damp = 0.5;
+        p.fx_damp = 0.4;
+        p.acc_damp = 0.3;
+        p.liq_bonus = 2.0;
+
+        let plain = BuyHeuristic::default();
+        assert!(!plain.growth_geomean_fold && !plain.growth_allow_negative_scores, "the shipped lane is the else branch");
+        let want = 8.0 * 0.9 * 0.8 * 0.7 * 0.6 * 0.5 * 0.4 * 0.3 + 2.0;
+        assert_eq!(compose_score(&p, &plain), want, "the shipped branch multiplies all eight damps and ADDS the bonus");
+
+        let fold = BuyHeuristic { growth_geomean_fold: true, ..BuyHeuristic::default() };
+        let want = 8.0 * combine_damps(&[0.95, 0.85, 0.9, 0.8]) * 0.6 * 0.5 * 0.4 * 0.3 + 2.0;
+        assert_eq!(compose_score(&p, &fold), want, "(#8) the fold takes trust/overext/prox/value geometrically, the rest as-is");
+        assert_ne!(compose_score(&p, &fold), compose_score(&p, &plain), "the two branches must not coincide on this fixture");
+
+        // (#86) a negative base takes NO damp — and with a non-zero bonus the sign of the `+` shows.
+        let neg = BuyHeuristic { growth_allow_negative_scores: true, ..BuyHeuristic::default() };
+        p.base = -8.0;
+        assert_eq!(compose_score(&p, &neg), -8.0 + 2.0, "on: base + liq_bonus, undamped");
+        assert_ne!(compose_score(&p, &neg), compose_score(&p, &plain), "off: the damps still apply to a negative base — that IS the (#86) bug");
+        // ...and the knob is what selects it: same parts, knob off, back to the damped branch.
+        p.base = 8.0;
+        assert_eq!(compose_score(&p, &neg), compose_score(&p, &plain), "a POSITIVE base ignores the knob entirely");
+    }
+
+    /// (#144) non-negotiable #1, and the only witness for it: no golden covers this path.
+    #[test]
+    fn rank_normalise_off_reproduces_growth_score() {
+        let t = rank_tuning(0.0);
+        assert_eq!(BuyHeuristic::default().growth_rank_normalise, 0.0, "the DEFAULT must be off");
+        let pool = rank_pool(&[150.0, 300.0, 600.0, 5000.0]);
+        let refs: Vec<&Quote> = pool.iter().collect();
+        let want: Vec<Option<f64>> = refs.iter().map(|q| growth_score(q, &t)).collect();
+        assert_eq!(growth_scores_ranked(&refs, &t), want, "at w=0 the two-pass IS growth_score, bit for bit");
+    }
+
+    /// (#144) the two properties that make this a rank normalisation rather than a reshuffle: the ORDER
+    /// is untouched (a rank map is monotone), and the top name's LEAD over the field collapses — which
+    /// is the entire mechanism, since (#129) measured rank 1 as the worst slice on a widened pool.
+    #[test]
+    fn rank_normalise_keeps_the_order_and_cuts_the_outlier_down() {
+        let pool = rank_pool(&[150.0, 300.0, 600.0, 20_000.0]);
+        let refs: Vec<&Quote> = pool.iter().collect();
+        let raw: Vec<f64> = growth_scores_ranked(&refs, &rank_tuning(0.0)).into_iter().map(|s| s.expect("clears")).collect();
+        let norm: Vec<f64> = growth_scores_ranked(&refs, &rank_tuning(1.0)).into_iter().map(|s| s.expect("clears")).collect();
+
+        let order = |v: &[f64]| {
+            let mut i: Vec<usize> = (0..v.len()).collect();
+            i.sort_by(|&a, &b| v[b].total_cmp(&v[a]));
+            i
+        };
+        assert_eq!(order(&raw), order(&norm), "a rank map is monotone — the order cannot move");
+
+        // lead = (best − runner-up) / (runner-up − worst): how much of the spread ONE name owns.
+        let lead = |v: &[f64]| {
+            let mut d = v.to_vec();
+            d.sort_by(f64::total_cmp);
+            d.reverse();
+            (d[0] - d[1]) / (d[1] - d[d.len() - 1])
+        };
+        assert!(lead(&raw) > 1.0, "the fixture must actually HAVE a dominant outlier: {}", lead(&raw));
+        assert!(lead(&norm) < lead(&raw), "the outlier's lead must shrink: {} -> {}", lead(&raw), lead(&norm));
+    }
+
+    /// (#144) The TRANSFORM'S ARITHMETIC, pinned to an exact number rather than to a property. The
+    /// order/lead assertions above survive almost any damage to this formula — swap `mean + sd*z` for
+    /// `mean * sd*z`, or `rank/(n+1)` for `rank*(n+1)`, and the ranking still comes out monotone.
+    ///
+    /// Two names, one varying term, so the algebra closes in the test rather than in a comment.
+    /// Both names share every damp and every other term, so `score_i = (C + t_i)*K + L` with C, K, L
+    /// common. For n = 2 the deviations from the mean are exactly +/-sd, and the ranks are 1 and 2, so
+    /// `rank_pct` is 1/3 and 2/3 and the normalised terms become `mean +/- sd*z` with
+    /// `z = inv_norm(2/3) = 0.4307272993950297`. The K and L cancel in a RATIO of differences:
+    ///
+    ///     (normalised_1 - normalised_0) / (raw_1 - raw_0)  ==  z
+    ///
+    /// which is a single exact constant that every one of `rank/(n+1)`, `mean +`, `sd *`, `w *` and
+    /// `(g - v)` moves. It also pins `n < 2`: a 2-name pool must NOT take the early return, and if it
+    /// did the ratio would be exactly 1.0.
+    #[test]
+    fn rank_normalise_pins_the_exact_mapping_on_a_two_name_pool() {
+        let pool = rank_pool(&[300.0, 900.0]);
+        let refs: Vec<&Quote> = pool.iter().collect();
+        let parts: Vec<ScoreParts> = refs.iter().map(|q| score_parts(q, &rank_tuning(0.0)).expect("clears")).collect();
+
+        // The ratio is only a clean read if the fixture really does isolate ONE additive term.
+        let varying: Vec<&str> = TERM_DIMS
+            .iter()
+            .filter(|(_, get, _)| get(&parts[0]) != get(&parts[1]))
+            .map(|(name, _, _)| *name)
+            .collect();
+        assert_eq!(varying, ["trend_term"], "the fixture must vary exactly one term, not {varying:?}");
+
+        let raw: Vec<f64> = growth_scores_ranked(&refs, &rank_tuning(0.0)).into_iter().map(|s| s.expect("clears")).collect();
+        let norm: Vec<f64> = growth_scores_ranked(&refs, &rank_tuning(1.0)).into_iter().map(|s| s.expect("clears")).collect();
+
+        let ratio = (norm[1] - norm[0]) / (raw[1] - raw[0]);
+        assert!((ratio - 0.430_727_299_395_029_7).abs() < 1e-12, "the mapping must be mean +/- sd*inv_norm(2/3); ratio {ratio}");
+        assert!((ratio - 1.0).abs() > 1e-9, "a 2-name pool must not take the n < 2 early return");
+
+        // and HALF the dose moves exactly half way, which is what `w` claims to be
+        let half: Vec<f64> = growth_scores_ranked(&refs, &rank_tuning(0.5)).into_iter().map(|s| s.expect("clears")).collect();
+        let want = (raw[1] + norm[1]) / 2.0;
+        assert!((half[1] - want).abs() < 1e-9, "w = 0.5 must land midway between raw and fully normalised: {} vs {want}", half[1]);
+    }
+
+    /// (#144) the two cohorts passed through rather than normalised. Both are reachable on real runs —
+    /// a one-name window, and every weight that ships at 0 — so neither is a hypothetical guard.
+    #[test]
+    fn rank_normalise_passes_degenerate_pools_through() {
+        let t = rank_tuning(1.0);
+        let one = rank_pool(&[300.0]);
+        let refs: Vec<&Quote> = one.iter().collect();
+        assert_eq!(growth_scores_ranked(&refs, &t), vec![growth_score(refs[0], &t)], "a one-name pool has no cross-section");
+
+        let same = rank_pool(&[300.0, 300.0, 300.0]);
+        let refs: Vec<&Quote> = same.iter().collect();
+        let want: Vec<Option<f64>> = refs.iter().map(|q| growth_score(q, &t)).collect();
+        assert_eq!(growth_scores_ranked(&refs, &t), want, "a constant term carries no order — normalising it would invent one");
+    }
+
+    /// (#144) non-negotiable #5's shape for this transform: a gated name is UNRANKED, and it must not
+    /// sit in the rank population either. If it did, the gates would silently move every admitted
+    /// name's position — a rejected name changing the score of an accepted one.
+    #[test]
+    fn a_gated_name_is_excluded_from_the_rank_population() {
+        let t = rank_tuning(1.0);
+        let good = rank_pool(&[150.0, 300.0, 600.0]);
+        let mut with_bad = good.clone();
+        let mut bad = gate_fixture();
+        bad.ticker = "BAD".into();
+        bad.avg_turnover_eur = None; // (#20) unknown turnover -> out of the growth lane, full stop
+        with_bad.push(bad);
+
+        let a: Vec<&Quote> = good.iter().collect();
+        let b: Vec<&Quote> = with_bad.iter().collect();
+        let want = growth_scores_ranked(&a, &t);
+        let got = growth_scores_ranked(&b, &t);
+        assert_eq!(got.last(), Some(&None), "the gated name stays unranked");
+        assert_eq!(&got[..3], &want[..], "a gated name must not move an admitted name's score");
+    }
+
+    /// (#144) the LIVE cross-section: coins and gated names are absent from the map, which is what makes
+    /// `render`'s fallback to `growth_score` the thing that keeps them behaving exactly as before.
+    #[test]
+    fn live_rank_scores_covers_the_non_crypto_admitted_pool_only() {
+        let t = rank_tuning(1.0);
+        let mut quotes = rank_pool(&[150.0, 300.0, 600.0]);
+        let mut coin = gate_fixture();
+        coin.ticker = "BTC-EUR".into();
+        coin.instrument_type = "CRYPTOCURRENCY".into();
+        quotes.push(coin);
+        let mut bad = gate_fixture();
+        bad.ticker = "BAD".into();
+        bad.avg_turnover_eur = None;
+        quotes.push(bad);
+
+        let map = live_rank_scores(&quotes, &t);
+        assert_eq!(map.len(), 3, "three admitted non-crypto names: {:?}", map.keys().collect::<Vec<_>>());
+        assert!(!map.contains_key("BTC-EUR"), "a coin is ranked against coins by `render`, never against the stock pool");
+        assert!(!map.contains_key("BAD"), "a gated name has no score to publish");
+        // ...and the map really is the normalised number, not a passthrough.
+        let refs: Vec<&Quote> = quotes.iter().filter(|q| eu_buyable(q) && !is_currency_quoted(&q.ticker)).collect();
+        for (q, s) in refs.iter().zip(growth_scores_ranked(&refs, &t)) {
+            if let Some(s) = s {
+                assert_eq!(map.get(q.ticker.as_str()), Some(&s), "{} disagrees with the pool pass", q.ticker);
+            }
+        }
+    }
+
     /// (#133) The explain row is printed ONLY when the weight bites — the (#105) treatment, and the
     /// reason every golden stayed byte-identical when the term landed. Without this test the guard is
     /// ungraded: `cargo mutants` flips `!=` to `==` there and nothing fails, because no golden covers
@@ -7955,9 +8414,14 @@ mod tests {
         // %/yr, i.e. the lane penalises the compounding it hunts, and lifting this knob genuinely raises
         // rho, lane edge and OOS at all three horizons.
         // The graded top-3 book gets worse anyway. Three rungs refused on the worst-window guard.
-        // (#98) …and that grid only ever moved the WEIGHT. β is the other half of the same product and
-        // has never been swept; below β = 0.15/0.50 = 0.30 the slope turns positive without this knob
-        // moving at all. Sweep β BEFORE reaching for this one again.
+        // (#98) …and that grid only ever moved the WEIGHT. β is the other half of the same product;
+        // below β = 0.15/0.50 = 0.30 the slope turns positive without this knob moving at all.
+        // (#130) SWEPT IT, 2026-08-23, AND β STAYS 1.0 — do not read the −0.35 above as a live sign
+        // error and reach for β again. It is a PARTIAL derivative at fixed 1Y return, a quantity no
+        // name holds fixed; the total derivative is `0.15 + 0.50·(d(1Y)/d(CAGR) − β)`, and β = 1.0 is
+        // precisely the value that zeroes the accel leg's exposure to the CAGR LEVEL, leaving it a
+        // self-normalising residual. Every lower rung lost: 0.5 and 0.3 broke the 8y h2h guard at 47%.
+        // (#144) is where the score round went instead — normalise the terms, do not re-slope them.
         assert_eq!(
             tuning.growth_accel_beta, 1.0,
             "β is the untouched half of the (#70) slope — moving it is an UNSWEPT scoring change, not a fix; read the (#98) receipt"
@@ -7967,6 +8431,16 @@ mod tests {
             "the shipped lane's CAGR slope is −0.35/%%yr and the (#70) and (#98) receipts both quote it — recompute both if this moves"
         );
         assert_eq!(tuning.growth_trend_weight, 0.15, "0.15 survived a v2 grid — 0.35/0.55/0.70 all REFUSED on the top-3 worst window, and 0.35 also breaks the 8y h2h guard; read the (#70) receipt, and note that rising lane edge is not a reason to move this");
+
+        // (#144) the rank normalisation ships OFF, which is what makes `base` the shipped SUM and every
+        // weight and cap above mean what its own receipt says. Arming it re-scales all eleven additive
+        // terms at once, so it is not a knob that can be "tried" alongside another arm — it re-prices
+        // the whole score. Move it only on a receipt that clears the ship rule on rank-1 AND h2h,
+        // per (#129): "the top-10 column will happily rise while the ordering rots underneath".
+        assert_eq!(
+            tuning.growth_rank_normalise, 0.0,
+            "arming the rank normalisation re-prices every additive term — that is a graded change with a receipt, never an edit"
+        );
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
         // an empty table, which no value assert above would notice.

@@ -1693,7 +1693,12 @@ pub fn spearman(xs: &[f64], ys: &[f64]) -> Option<f64> {
 
 /// Fractional ranks (1-based; tied values share the average of their ranks), in original order.
 /// note: O(n log n) sort + linear tie-merge; fine for the backtest's handful-to-hundreds of names.
-fn ranks(v: &[f64]) -> Vec<f64> {
+///
+/// (#144) `pub(crate)` so `picks::growth_scores_ranked` ranks a term the same way `spearman` ranks one.
+/// Tie-averaging is the half that matters there: a term where half the pool shares one value (every
+/// `growth_fund_extra` fill, every zeroed weight) must map that whole group to ONE position, not
+/// spread it across the range in input order.
+pub(crate) fn ranks(v: &[f64]) -> Vec<f64> {
     let mut idx: Vec<usize> = (0..v.len()).collect();
     idx.sort_by(|&a, &b| v[a].partial_cmp(&v[b]).unwrap_or(std::cmp::Ordering::Equal));
     let mut r = vec![0.0; v.len()];

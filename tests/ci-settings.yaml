@@ -1759,6 +1759,140 @@ buy_heuristic:
                                  #   FOLIOMAN_OFFLINE=1 on these runs: it cuts the 8y king walk from 699
                                  #   scored windows to 32 and prints the SHIPPED lane at -5.9 excess,
                                  #   exiting 0 with a complete-looking report. Check `windows scored`.
+  growth_rank_normalise: 0.0     # (#144) MEASURED AND REFUSED 2026-08-26 — stays OFF, which is `v' = v`
+                                 # for every additive term, so `base` is the shipped sum bit for bit and
+                                 # every golden is untouched. This receipt records a REFUSAL, not a value
+                                 # to tune. 0.0 = off; 1.0 = each of `score_parts`' eleven ADDITIVE terms
+                                 # has its LEVEL replaced by its cross-sectional rank position mapped
+                                 # back onto that term's own pool distribution,
+                                 # `v' = v + w*(mean + sd*clip(inv_norm(rank_pct(v)), -3, 3) - v)`.
+                                 #
+                                 #   WHY IT WAS BUILT. (#129) closed the loosen-the-stack family at every
+                                 #   arity and then named what was left in writing: "the lever this round
+                                 #   actually uncovers is THE SCORE ... A round on the score is the next
+                                 #   honest move, and it must be graded on rank-1 and h2h". Three of its
+                                 #   instruments pointed the same way — the rank slices invert, Spearman
+                                 #   collapses +0.25 -> +0.03 (8y) and +0.10 -> -0.03 (12y), and 87-99% of
+                                 #   the ungated missed wealth files under `out-ranked`. The mechanism
+                                 #   proposed here is the one `docs/heuristic-v2-spec.md:125-128` names:
+                                 #   "Rank->inverse-normal, not raw z-scores. Fundamental distributions
+                                 #   are fat-tailed and a single outlier will otherwise dominate the
+                                 #   composite." `base` sums eleven UNBOUNDED LEVELS in mutually
+                                 #   incommensurable units (CAGR %/yr, accel pts, ROE %, yield %,
+                                 #   trend_r2 0..1, underwater YEARS), so one fat-tailed value can take
+                                 #   the argmax outright.
+                                 #
+                                 #   UNIT-PRESERVING BY CONSTRUCTION, which is why no weight was refitted.
+                                 #   A plain z would change a term's units from %/yr to sigma and silently
+                                 #   invalidate all 14 `WEIGHT_DIMS` values and every cap that has a
+                                 #   receipt in this file. Mapping back through the term's own mean/sd
+                                 #   leaves all of them meaning what they say, so the arm tests exactly
+                                 #   ONE thing: whether the ORDER improves once no single value can
+                                 #   dominate. The multiplicative damps (proximity/value/trust/overext/
+                                 #   ter/commodity/fx/acc) are deliberately NOT normalised — they are
+                                 #   bounded ratios, not levels, so they are not this failure mode.
+                                 #
+                                 #   THE ARM. One knob on top of (#129)'s gates-off arm, recreated per
+                                 #   (#131) from `git show 5159105:tests/gatesoff-ci-settings.yaml` and
+                                 #   deleted after the run. Body, for re-creation as
+                                 #   `tests/rank-ci-settings.yaml` (comment = the value THIS file ships):
+                                 #     growth_min_range_pct: 0.0              # 80.0
+                                 #     growth_min_cagr: -1e9                  # 19.0 (also the whole-life leg)
+                                 #     growth_min_1y_pct: -1e9                # 0.0
+                                 #     growth_min_5y_pct: -1e9                # 75.0
+                                 #     growth_max_above_ma: 0.0               # 150.0
+                                 #     growth_maxdd_cap: 0.0                  # 0.0 — ALREADY OFF, see below
+                                 #     growth_max_peg: 0.0                    # 1.6
+                                 #     growth_require_peg: false              # true
+                                 #     growth_require_lifetime_uptrend: false # true
+                                 #     print_recall_capture: true             # (#104) for the tie-back
+                                 #     growth_rank_normalise: 1.0             # 0.0 — THE KNOB UNDER TEST
+                                 #   `heuristic_drift()` named TEN knobs, not eleven, on all three runs.
+                                 #   `growth_maxdd_cap` is absent because (#138) already moved this file's
+                                 #   value to 0.0, so the arm's setting is a no-op — exactly the drift the
+                                 #   (#125) correction warns about, caught by reading the WARNING line
+                                 #   rather than trusting the arm file. Growth-lane pool 2084/6060/12223
+                                 #   vs (#129)'s 2084/6035/11998: identical at 20y, +25 and +225 at 12y/8y
+                                 #   from three days of universe growth. The 20y column is therefore an
+                                 #   exact same-pool comparison; 12y and 8y carry that small drift.
+                                 #
+                                 #   WHY THE GATES-OFF POOL. The claim under test is "the score stops
+                                 #   ordering a WIDE pool". On the shipped pool the gates admit 117/228/325
+                                 #   names and (#129) shows the score orders them adequately — there is no
+                                 #   defect there for a normalisation to repair. The gates-off pool is the
+                                 #   only place the pathology is measurable.
+                                 #
+                                 #   PRE-REGISTERED STOP RULE, fixed in writing BEFORE any run: proceed
+                                 #   only if Spearman rises at TWO of three horizons AND rank 1 stops being
+                                 #   the worst slice at TWO of three. Otherwise dead, no ship-rule grid.
+                                 #
+                                 #   RESULT — RANK 1 IS STILL THE WORST SLICE AT 0 OF 3. Disjoint rank
+                                 #   slices, excess mean|med pts/yr, (#129) arm -> (#144) arm:
+                                 #     20y  rank 1 -0.3|+0.1 -> -0.4|+0.1   2-5 +2.0|+1.4 -> +0.6|-0.3
+                                 #          6-10 +1.2|+1.1 -> +1.8|+1.1     11-20 +1.4|+1.1 -> +1.7|+2.0
+                                 #     12y  rank 1 +1.5|-0.3 -> -0.1|-0.3   2-5 +3.5|+3.3 -> +2.7|+3.1
+                                 #          6-10 +2.7|+3.1 -> +2.9|+2.2     11-20 +4.1|+2.9 -> +2.6|+2.8
+                                 #      8y  rank 1 +2.9|+1.8 -> +1.2|+1.8   2-5 +4.3|+3.7 -> +3.4|+3.3
+                                 #          6-10 +4.2|+3.8 -> +2.2|+1.4     11-20 +3.6|+2.8 -> +3.2|+2.9
+                                 #   Rank 1's MEAN falls at all three horizons and it remains the lowest
+                                 #   slice at all three. The stop rule fails 0/3, not 2/3.
+                                 #
+                                 #   AND THE RANK-1 H2H GUARD BREAKS AT 20y AND 12y -> REFUSE OUTRIGHT
+                                 #   (GUARD > PRIMARY). #1 vs the 11-20 book, same window:
+                                 #     20y  (#129) 7/20 (35%)  ->  (#144)  8/20 (40%)   GUARD BROKEN
+                                 #     12y  (#129) 16/36 (44%) ->  (#144) 17/36 (47%)   GUARD BROKEN
+                                 #      8y  (#129) 18/44 (41%) ->  (#144) 22/44 (50%)   passes, barely
+                                 #   A broken guard REFUSES OUTRIGHT and is never softened to UNRESOLVED,
+                                 #   so the verdict is settled twice over and the ship-rule grid on
+                                 #   `universe stress` was never run.
+                                 #
+                                 #   THE SPEARMAN HALF OF THE STOP RULE WAS UNMEASURABLE, and this is the
+                                 #   honest defect in the pre-registration. rho reads -0.09/-0.03/+0.03,
+                                 #   BIT-IDENTICAL to (#129), because `lane_metrics` scores through the
+                                 #   `fn(&Quote, &BuyHeuristic) -> Option<f64>` pointer, which this change
+                                 #   deliberately did NOT widen (~20 call sites, and a wide backtest.rs
+                                 #   diff reds the mutation gate). Only `report_vs_benchmark` — rank
+                                 #   slices, h2h, the TOP_LADDER books, the worst window — sees the
+                                 #   normalised score. It does NOT change the verdict: the stop rule is an
+                                 #   AND whose other clause fails 0/3, and the h2h GUARD refuses on its
+                                 #   own. Recorded so nobody re-reads that rho as evidence the knob is
+                                 #   inert on the graded path — the BOOKS moved (20y top-10 +2.7|+2.2 ->
+                                 #   +1.9|+1.3, worst -3.3 -> -2.7), which is the proof the wiring is live.
+                                 #
+                                 #   WHAT IT ACTUALLY MEASURED, AND IT IS NOT NOTHING. h2h rose at ALL
+                                 #   THREE horizons (+5, +3, +9 points) while rank 1's MEAN excess fell at
+                                 #   all three. Read together: the normalisation makes rank 1 beat its own
+                                 #   middle MORE OFTEN but by LESS. That is the transform working exactly
+                                 #   as designed — it damps the fat tail at the top — and it is the design
+                                 #   PREMISE that is false on this pool: the fat tail at rank 1 was
+                                 #   carrying the mean, so it is signal, not the outlier noise
+                                 #   `spec:128` assumes. Do not re-file this as "the transform is broken".
+                                 #
+                                 #   WHY NO LADDER WAS RUN. The plan's ship grid was w in {0.25,0.5,1.0}.
+                                 #   w = 1.0 is the MAXIMUM-DOSE probe: if full normalisation does not
+                                 #   restore the ordering, a partial dose is not the reading that rescues
+                                 #   it, and laddering after a failed pre-registered stop rule is the
+                                 #   post-hoc search the rule exists to prevent. A future round wanting a
+                                 #   partial dose must pre-register it as its own hypothesis.
+                                 #
+                                 #   WHAT SURVIVES. The direction is NOT closed the way (#129) closed the
+                                 #   gate family — h2h moved the right way at 3/3. What is refused is THIS
+                                 #   target: normalising ALL eleven terms uniformly, at full dose, on the
+                                 #   gates-off pool. Two untried shapes remain and both must be
+                                 #   pre-registered and graded on rank-1 + h2h: normalising the MIDDLE of
+                                 #   each term's distribution while leaving the top decile at its level,
+                                 #   and the sector-neutral form `spec:128` actually asks for (ungradeable
+                                 #   today — the backtest pool carries no GICS sector, see
+                                 #   `commodity_damp`'s "sector unknown (backtest)").
+                                 #
+                                 #   REVERT: already at the reverted value; 0.0 IS the shipped policy and
+                                 #   arming it is a graded change needing its own receipt, pinned by
+                                 #   `shipped_config_pin`. Re-run: three `backtest {20,12,8} universe fund
+                                 #   pit` on the arm body above, against (#129)'s banked gates-off column —
+                                 #   the control needs no re-run. NEVER set FOLIOMAN_OFFLINE=1 on these:
+                                 #   it cuts the 8y king walk from 699 scored windows to 32 and prints the
+                                 #   SHIPPED lane at -5.9 excess, exiting 0 with a complete-looking report.
+                                 #   Check `windows scored` (2084/6060/12223 growth-lane here).
   print_recall_capture: false    # (#104 / round 3 §1) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is today's report and what every golden holds.
                                  # It is display-only, so "unmeasured" here means the INSTRUMENT has
