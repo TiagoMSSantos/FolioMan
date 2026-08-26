@@ -1572,61 +1572,141 @@ buy_heuristic:
                                  #   REVERT: set false (it already is — this knob ships OFF and stays OFF; it was read through an
                                  #   overlay, never shipped true). If a future round wants to re-open basket size, the bar above and
                                  #   the no-stable-peak table are the prior: bring a mechanism, not an argmax.
-  growth_er_weight: 0.0          # (#105 / round 3 §2) UNMEASURED — an unfitted judgement value,
-  growth_er_cap: 20.0            # shipping the weight at 0, where the term contributes exactly 0.0
-                                 # and the lane is the one every golden holds. The cap is inert until
-                                 # the weight moves.
+  growth_er_weight: 0.0          # (#145) MEASURED AND REFUSED 2026-08-26 — stays OFF, where the term
+  growth_er_cap: 20.0            # contributes exactly 0.0 for every row and the lane is the one every
+                                 # golden holds. The cap is inert while the weight is 0. This receipt
+                                 # SUPERSEDES (#105)'s "UNMEASURED"; (#105)'s description of the term is
+                                 # kept below because it still describes the code, and its ARGUMENT is
+                                 # kept because the run below is what answered it.
                                  #
-                                 #   WHAT IT IS: the Grinold-Kroner decomposition of long-horizon
-                                 #   equity return, composed from fields this tool ALREADY computes
-                                 #   as-of on both paths —
+                                 #   WHAT IT IS: the Grinold-Kroner decomposition of long-horizon equity
+                                 #   return, composed from fields this tool ALREADY computes as-of on
+                                 #   both paths (`picks::expected_return_pct`) —
                                  #     E[r] = D/P + (g - dS) + d(P/E)
-                                 #          = dividend_yield_1y
-                                 #          + clamp(eps_growth, 0, cap)
-                                 #          + clamp(buyback_yield, -cap, cap)   (+ = shrinking count)
-                                 #          + (value_factor ^ (1/20) - 1) x 100
-                                 #   So it is a COMPOSITION task, not a data task. No new fetch.
+                                 #          = dividend_yield_1y                      (income)
+                                 #          + clamp(eps_growth, 0, cap)              (growth)
+                                 #          + clamp(buyback_yield, -cap, cap)        (dilution, + = shrinking)
+                                 #          + (value_factor ^ (1/20) - 1) x 100      (re-rating)
+                                 #   It is an ADDITIVE term in `base`, and the ONE term in the lane that
+                                 #   is not floored at 0: a negative expected return is information, and
+                                 #   docking for it is the thing no other term can do.
                                  #
-                                 #   WHY IT IS WORTH A SWEEP EVEN THOUGH SEVERAL COMPONENTS MEASURED
-                                 #   NULL ALONE:
-                                 #     1. It is a LEVEL, not a momentum proxy. Every other input in
-                                 #        this lane keys on the last 12 months; the only number in the
-                                 #        whole score that references the 20-year horizon it claims to
-                                 #        pick for is the exponent in ter_damp. This is the one
-                                 #        candidate whose measurement horizon matches the hold.
-                                 #     2. buyback_yield was tested in the WRONG SHAPE. As an isolated
-                                 #        tilt it was floored at 0, capped, small-weighted and then
-                                 #        multiplied by four damps — and came back null. Inside a sum
-                                 #        its sign is structurally correct: dilution subtracts from
-                                 #        shareholder return one-for-one. A component that is noise
-                                 #        alone can carry signal in a sum where it is not free to have
-                                 #        the wrong sign. Same argument as gate-versus-tilt, applied to
-                                 #        composition instead of thresholding.
-                                 #     3. The re-rating leg has the best long-horizon evidence in the
-                                 #        literature and is currently switched OFF for most of this
-                                 #        universe: growth_value_weight is 0.0 and growth_max_peg only
-                                 #        reaches SEC-covered US filers.
+                                 #   WHY IT WAS MEASURED NOW. (#129) closed the gate family and named the
+                                 #   SCORE as the next honest move; (#144) took it, rank-normalised all
+                                 #   eleven additive terms, and refused. This was the only knob still
+                                 #   marked UNMEASURED that changes the score's ORDER — every other one is
+                                 #   display-only (`entry_excess_yield_band`, `implied_growth_years`,
+                                 #   `rank_perturb_k`, the `print_*` flags) or already recorded as
+                                 #   unmeasurABLE. No source code was written for this round: the term,
+                                 #   its `TERM_DIMS`/`WEIGHT_DIMS` entries, its `render` branch and its
+                                 #   unit tests were all already in tree with only the weight at 0.
                                  #
-                                 #   THE ONE TERM HERE THAT CAN GO NEGATIVE. (D)/(F)/(G)/(M) all floor
-                                 #   at 0 — reward the signal, never punish its absence. This one does
-                                 #   not, deliberately: a negative expected return is information, and
-                                 #   docking for it is the single thing no other term in the lane can
-                                 #   do. Absence is still not punished (no as-of fundamental row -> the
-                                 #   term contributes 0), but a filer that HAS a row and expects to
-                                 #   shrink is marked down for it.
+                                 #   THE ARM. One knob, no gates touched. Body, for re-creation as
+                                 #   `tests/er-ci-settings.yaml` (recreate per (#131) — an arm overlay,
+                                 #   not a tracked lane; it MUST sit at tests/<name>-ci-settings.yaml so
+                                 #   `config::data_path` resolves the same caches, and only a file
+                                 #   literally named ci-settings.yaml takes an empty base — (#125)):
+                                 #     buy_heuristic:
+                                 #       growth_er_weight: 0.15   # the dose; 0.0 for the control
+                                 #   `heuristic_drift()` named exactly ONE knob on every arm run, and the
+                                 #   CONTROL WAS RUN THROUGH THE SAME OVERLAY at 0.0 rather than quoted
+                                 #   from a banked shipped run — a probe config resolves its own dataset.
+                                 #   Lane `universe fund pit`, shipped gates. `fund` because the term is 0
+                                 #   for an uncovered row; coverage was NOT the problem here — 240 of the
+                                 #   249 growth-scored cutoffs carry fundamentals (96%), so (#59)'s
+                                 #   partial-coverage demotion is not what this measured. windows scored
+                                 #   2756 (12y) / 249 growth-lane; never with FOLIOMAN_OFFLINE=1.
                                  #
-                                 #   THE COVERAGE CAVEAT IS (#59)'s, UNCHANGED: this term lands INSIDE
-                                 #   the multiplier block, so on any run without `fund` it is the
-                                 #   constant 0 for every row and therefore rank-neutral — but on a
-                                 #   PARTIALLY covered pool the uncovered names take 0 while covered
-                                 #   peers take a real number, and that is a demotion, not neutrality.
-                                 #   Sweep it on a `fund` run or the reading is about coverage.
+                                 #   RESULT — PRIMARY IS BIT-IDENTICAL AT EVERY DOSE, AND THAT IS THE
+                                 #   FINDING RATHER THAN A PASS. top-10 excess mean|med, win, worst:
+                                 #     w      12y                        8y
+                                 #     0.0    +3.7|+4.0  74%  -6.4      +5.3|+5.6  86%  -5.5
+                                 #     0.05   +3.7|+4.0  74%  -6.4      +5.3|+5.6  86%  -5.5
+                                 #     0.15   +3.7|+4.0  71%  -6.4      +5.3|+5.6  86%  -5.5
+                                 #     0.30   +3.7|+4.0  71%  -6.4      +5.3|+5.6  86%  -5.5
+                                 #   Read by the LETTER this is "held" at 12y and 8y and every guard
+                                 #   holds, which under (#139)'s pit substitution is a PASS. It is not
+                                 #   one. It is VACUOUS in exactly (#126)'s sense — a column that cannot
+                                 #   move reads "held" for free, and that is not evidence.
                                  #
-                                 #   THE RUN THAT SETTLES IT: probe it as a STANDALONE FACTOR first
-                                 #   (`select_fund_factor`, the same machinery accrual_gap used) — one
-                                 #   run, and it prices the composite before any weight is chosen. Only
-                                 #   then a weight curve at 20y/12y/8y under the ship rule. REVERT: set
-                                 #   the weight to 0.0; the term is then exactly 0 for every row.
+                                 #   WHY PRIMARY CANNOT SEE THIS KNOB. The top-10 MEMBERSHIP is identical
+                                 #   at every dose and both horizons — same `top-10 zero names` list to
+                                 #   the byte, same `rode 9 zeros/209 holds` (12y) and `3 zeros/284 holds`
+                                 #   (8y). `er_term` reorders WITHIN the book without changing which names
+                                 #   are in it, and an EQUAL-WEIGHT top-10 book is set-invariant, so its
+                                 #   excess, win rate and worst window are all blind to intra-book
+                                 #   reordering by construction. The fund-covered baseline in
+                                 #   `report_book_by_factor` is blind for the same reason: +3.6 (12y,
+                                 #   n=240) and +4.7 (8y, n=332) at every dose. ANY future knob that only
+                                 #   permutes the book has this property — grade it on the rank slices,
+                                 #   and do not read a flat PRIMARY as a pass.
+                                 #
+                                 #   THE COLUMNS THAT CAN SEE IT ALL MOVE THE WRONG WAY. Disjoint rank
+                                 #   slices, excess mean|med:
+                                 #     12y  rank 1   0.0/0.05 +1.8|+5.1   0.15 +1.8|+5.1   0.30 +1.4|+5.1
+                                 #          rank 6-10 0.0/0.05 -1.9|-0.1  0.15 -3.8|-0.2   0.30 -3.8|-0.2
+                                 #      8y  rank 1   0.0/0.05 +5.6|+6.5   0.15 +5.7|+6.5   0.30 +4.8|+5.8
+                                 #          rank 2-5  0.0/0.05 +5.3|+5.7  0.15 +5.4|+5.7   0.30 +5.7|+6.0
+                                 #   0.30 drops rank 1's MEAN at BOTH horizons (+1.8 -> +1.4, +5.6 -> +4.8)
+                                 #   and fires this round's pre-registered rank-1 rule on its own. 0.15
+                                 #   buys +0.1 at 8y rank 1 and pays for it with the 12y 6-10 slice
+                                 #   (-1.9 -> -3.8) and the 12y top-10 win rate (74% -> 71%). 0.05 is a
+                                 #   NO-OP: every graded column is bit-identical to control at both
+                                 #   horizons, so shipping it would be shipping nothing.
+                                 #
+                                 #   THE H2H GUARD IS INERT ON THIS LANE, recorded so it is not mistaken
+                                 #   for a pass either: #1 vs the 11-20 book reads 2/4 (50%) at 12y and
+                                 #   5/8 (62%) at 8y, UNCHANGED at every dose. Denominators of 4 and 8 are
+                                 #   (#130)'s objection to grading h2h on a shipped-gates pit pool, and it
+                                 #   stands — one window is 25 points at 12y.
+                                 #
+                                 #   AND THE COMPOSITE IS HOLLOW ON THE LANE THAT GRADES IT. This is the
+                                 #   half of the finding worth more than the refusal:
+                                 #     * THE RE-RATING LEG IS EXACTLY 0 IN EVERY BACKTEST ROW. It routes
+                                 #       through `value_factor`, which reads `quote.pe_ratio`; `pe_ratio`
+                                 #       appears NOWHERE in src/commands/backtest.rs, so `value_factor`
+                                 #       returns 1.0 and (1.0^(1/20) - 1) x 100 is 0.0. core.rs:2265
+                                 #       already calls `pe_ratio` "live-only ... backtest-blind". (#105)
+                                 #       cited this leg as its THIRD and best argument ("the best
+                                 #       long-horizon evidence in the literature") — it is the one leg the
+                                 #       grading lane cannot see.
+                                 #     * THE GROWTH LEG IS THINLY COVERED. `eps_growth` carries only 250
+                                 #       of the 4829 cutoffs with as-of fundamentals in the standalone
+                                 #       probe, so `unwrap_or(0.0)` supplies most rows. (Sample-wide, not
+                                 #       a gated-pool measurement — read it as an indication.)
+                                 #   So the backtest graded roughly `dividend_yield + buyback_yield`, not
+                                 #   Grinold-Kroner. THE TERM IS ALSO A DIFFERENT FUNCTION LIVE THAN IN
+                                 #   TRAIN — live `pe_ratio` populates and the re-rating leg comes alive —
+                                 #   which is the train/serve skew (#1) used to zero `growth_value_weight`
+                                 #   for this exact reason. Arming this weight off a backtest number would
+                                 #   ship a term the walk-forward never priced.
+                                 #
+                                 #   WHY NO 20y RUN. The refusal is settled at 12y and 8y on the columns
+                                 #   that can see the knob, and 20y guards only bind a SHIP. Continuing to
+                                 #   run horizons after the decision is settled is the post-hoc search the
+                                 #   pre-registration exists to prevent — (#144)'s reason for not
+                                 #   laddering, applied to a horizon instead of a dose.
+                                 #
+                                 #   WHAT SURVIVES, AND IT IS THE NEXT ROUND. The idea is NOT refused; the
+                                 #   composite could not be graded. To make it gradeable, give the
+                                 #   backtest an as-of P/E: backtest.rs:1224 ALREADY computes
+                                 #   `earnings_yield` = eps_ttm / as-of price, so P/E is derivable from a
+                                 #   number the loop holds and simply never reaches `quote.pe_ratio`. That
+                                 #   one fill un-blinds TWO things at once — this term's re-rating leg and
+                                 #   `growth_value_weight`, which (#1) set to 0 SOLELY because "the
+                                 #   walk-forward never saw pe_ratio (None in backtest), so this +-50%
+                                 #   reorder was pure guess". It must be pre-registered as its own round,
+                                 #   graded on the RANK SLICES (PRIMARY is blind to a pure reorder, see
+                                 #   above), and it changes the shipped lane, so it needs its own receipt
+                                 #   and re-blessed goldens.
+                                 #
+                                 #   REVERT: already at the reverted value; 0.0 IS the shipped policy and
+                                 #   arming it is a graded change needing its own receipt. Re-run: the arm
+                                 #   body above at w in {0.05,0.15,0.30} plus a 0.0 control through the
+                                 #   SAME overlay, `backtest {12,8} universe fund pit`, ~2.5 min per run.
+                                 #   NEVER set FOLIOMAN_OFFLINE=1: it cuts the 8y king walk from 699
+                                 #   scored windows to 32 and prints the SHIPPED lane at -5.9 excess,
+                                 #   exiting 0 with a complete-looking report. Check `windows scored`.
   growth_record_weight: 0.0      # (#133 / round 8) MEASURED AND REFUSED 2026-08-23 — stays OFF, where
   growth_record_full_years: 20.0 # the term contributes exactly 0.0 and the lane is the one every
                                  # golden holds. Kept rather than deleted, on the `growth_trust_ladder`
