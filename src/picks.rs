@@ -3498,20 +3498,27 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, owned, HIDE_CRYPTO, tuning, fund_pe);
 }
 
-/// (#79) The three #1 rows the web page publishes — one per printed table, each carried as the
-/// `(header, cell)` pairs [`print_picks`] pads into that table's top line. An EMPTY vec is the honest
-/// "(none pass the gates)" the terminal prints for an empty lane; the page says the same words.
+/// (#79) The three ranked tables the web page publishes — one per printed table, each row carried as
+/// the `(header, cell)` pairs [`print_picks`] pads into that table's lines. An EMPTY vec is the
+/// honest "(none pass the gates)" the terminal prints for an empty lane; the page says the same words.
+///
+/// (#143) A lane was ONE row until this receipt — `screen`'s #1 pick — while the terminal printed up
+/// to `top_picks` of them, so the page was a lopped-off sample of the tables it claimed to be. It now
+/// carries the whole table and the page chooses how much of it to show. The nesting is what changed:
+/// each lane is a list OF ROWS, and a row is the pair list it always was.
 ///
 /// Rows only. No watchlist, no holdings, no deploy amounts: the repo is private but a Pages site is
-/// world-readable, so what ships is exactly the three rows and nothing that says whose they are.
+/// world-readable, so what ships is exactly the ranked rows and nothing that says whose they are.
+/// Widening the row COUNT does not widen that surface — it is more of the same public universe under
+/// the same committed config, no new field.
 #[derive(serde::Serialize)]
 pub struct WebTop {
     /// RFC3339 UTC — the page greys itself out when this goes stale, which is what makes a failed
     /// refresh visible instead of yesterday's numbers reading as today's.
     pub generated: String,
-    pub stocks: Vec<(String, String)>,
-    pub etfs: Vec<(String, String)>,
-    pub crypto: Vec<(String, String)>,
+    pub stocks: Vec<Vec<(String, String)>>,
+    pub etfs: Vec<Vec<(String, String)>>,
+    pub crypto: Vec<Vec<(String, String)>>,
 }
 
 /// (#79) Build the page payload from the SAME ranked picks [`print_lane`] is about to print: same
@@ -3524,14 +3531,24 @@ pub struct WebTop {
 #[allow(clippy::too_many_arguments)]
 pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap) -> WebTop {
     let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned, fund_pe);
-    let top = |lane: &[(&Quote, f64)], w: &Widths, hide: &[&str]| {
+    let top = |lane: &[(&Quote, f64)], w: &Widths, hide: &[&str]| -> Vec<Vec<(String, String)>> {
         let cols = lane_columns(w, hide);
-        lane.first().map_or_else(Vec::new, |(quote, score)| {
-            let alt = growth_score(&as_8y_window(quote), &tuning_8y(tuning));
-            // Rank 0 — the row IS the table here, but the flags (`*` pinned, `!` braked, `H`
-            // hold-core…) still ride the cell, so the page shows the same "1H" the terminal does.
-            row_cells(&cols, quote, *score, alt, &rank_mark(0, quote, pinned, owned, tuning), tuning, fund_pe)
-        })
+        // (#143) `take(n)` is LOAD-BEARING, not belt-and-braces: `lane_split` does not cut to `n` —
+        // it returns the whole filtered lane and `print_lane` applies the cut — so without this the
+        // page would publish every row that cleared the gates rather than the table the terminal
+        // prints. `n` is `top_picks`, the number that already means "how many rows to show", which is
+        // why this needed no knob of its own.
+        lane.iter()
+            .take(n)
+            .enumerate()
+            .map(|(i, (quote, score))| {
+                let alt = growth_score(&as_8y_window(quote), &tuning_8y(tuning));
+                // The row's own index, so ranks read 1, 2, 3… — and the flags (`*` pinned, `!`
+                // braked, `H` hold-core…) still ride the cell, so the page shows the same "1H" the
+                // terminal does. This was a hardcoded 0 while a lane was one row.
+                row_cells(&cols, quote, *score, alt, &rank_mark(i, quote, pinned, owned, tuning), tuning, fund_pe)
+            })
+            .collect()
     };
     WebTop {
         generated: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
@@ -6585,16 +6602,20 @@ mod tests {
         assert_eq!(on.column_widths.get("name"), None);
     }
 
-    /// (#79) THE PARITY TEST. The published page claims to be the terminal's three #1 rows, and the
-    /// only thing making that true is that [`web_top`] and `print_lane` split the same picks into the
-    /// same lanes and hand each lane the same hide list. Nothing about that is type-checked: swap two
-    /// of the three `HIDE_*` consts and both still compile, both still print a table, and the page
+    /// (#79) THE PARITY TEST. The published page claims to be the terminal's three ranked tables, and
+    /// the only thing making that true is that [`web_top`] and `print_lane` split the same picks into
+    /// the same lanes and hand each lane the same hide list. Nothing about that is type-checked: swap
+    /// two of the three `HIDE_*` consts and both still compile, both still print a table, and the page
     /// starts publishing an ETF row with a P/E column and no TER.
     ///
     /// So the expectations below are written OUT IN FULL rather than derived from the consts — a test
     /// that reads `HIDE_ETF` to check the ETF lane cannot notice `HIDE_ETF` reaching the wrong lane.
+    ///
+    /// (#143) The lane is a TABLE now, not a row, so this also pins the two things that widening
+    /// introduced and nothing else can witness: the cut to `n`, and that each row carries its OWN
+    /// rank. `.screen_web.json` has no golden — this test is the only witness the payload has.
     #[test]
-    fn web_top_publishes_the_printed_row_per_lane() {
+    fn web_top_publishes_the_printed_rows_per_lane() {
         let tuning = BuyHeuristic::default();
         // An EXPLICIT layout, because `DEFAULT_COLUMNS` carries none of the class-specific columns —
         // against the default the three hide lists are very nearly no-ops and this test would pass
@@ -6623,34 +6644,51 @@ mod tests {
         let mut fund = good("BBB.DE", "Beta S&P 500 UCITS ETF");
         fund.instrument_type = "ETF".into();
         let coin = good("BTC-USD", "Bitcoin");
+        // (#143) SIX SPARE STOCKS, so the stock lane is SEVEN long against `n = 5`. Without a lane
+        // longer than the cut, `take(n)` is indistinguishable from taking the lot and the mutation
+        // gate gets a survivor no assertion can reach. `lane_split` deliberately does NOT cut to `n`
+        // — `print_lane` does — so this is the only place the payload's own cut is pinned.
+        let extras: Vec<Quote> = (0..6)
+            .map(|i| {
+                let mut q = good(&format!("EX{i}"), &format!("Extra {i} Corp"));
+                q.instrument_type = "EQUITY".into();
+                q
+            })
+            .collect();
         let (stock, fund, coin) = (stock, fund, coin);
         // scores above BOTH display floors (`growth_min_score` 5.0 and `growth_min_score_etf` 5.0 by
         // default, and `keep` trims on `<=`): this test is about which lane a row lands in, not about
-        // re-testing the floors, so nothing here sits on one.
-        let picks = vec![(&stock, 9.0), (&fund, 7.0), (&coin, 3.0)];
+        // re-testing the floors, so nothing here sits on one. Descending, because `lane_split` trusts
+        // the caller's order — it filters and splits, it never re-sorts — so this is what makes the
+        // rank assertion below a statement about position rather than about luck.
+        let mut picks = vec![(&stock, 9.0)];
+        picks.extend(extras.iter().enumerate().map(|(i, q)| (q, 8.5 - i as f64 * 0.1)));
+        picks.push((&fund, 7.0));
+        picks.push((&coin, 3.0));
 
-        let top = web_top(picks, 5, &w, &[], &tuning, &pinned, &owned, &HashMap::new());
+        let n = 5;
+        let top = web_top(picks, n, &w, &[], &tuning, &pinned, &owned, &HashMap::new());
         let cell = |row: &[(String, String)], hdr: &str| {
             row.iter().find(|(h, _)| h == hdr).map(|(_, c)| c.trim().to_string())
         };
 
         // 1. each lane published ITS OWN name — the split reached the payload in the right order.
-        assert_eq!(cell(&top.stocks, "TICKER").as_deref(), Some("AAA"), "stock lane: {:?}", top.stocks);
-        assert_eq!(cell(&top.etfs, "TICKER").as_deref(), Some("BBB.DE"), "ETF lane: {:?}", top.etfs);
-        assert_eq!(cell(&top.crypto, "TICKER").as_deref(), Some("BTC-USD"), "crypto lane: {:?}", top.crypto);
+        assert_eq!(cell(&top.stocks[0], "TICKER").as_deref(), Some("AAA"), "stock lane: {:?}", top.stocks[0]);
+        assert_eq!(cell(&top.etfs[0], "TICKER").as_deref(), Some("BBB.DE"), "ETF lane: {:?}", top.etfs[0]);
+        assert_eq!(cell(&top.crypto[0], "TICKER").as_deref(), Some("BTC-USD"), "crypto lane: {:?}", top.crypto[0]);
 
         // 2. each lane hid ITS OWN columns. Written literally, per the note above: the equity lane is
         // the one with P/E and no TER, the fund lane the one with TER and no P/E (but KEEPING its PEG,
         // #37), the coin lane the one with MVRV and neither.
         let has = |row: &[(String, String)], hdr: &str| row.iter().any(|(h, _)| h == hdr);
-        assert!(has(&top.stocks, "P/E") && !has(&top.stocks, "TER") && !has(&top.stocks, "MVRV"));
-        assert!(has(&top.etfs, "TER") && has(&top.etfs, "PEG") && !has(&top.etfs, "P/E") && !has(&top.etfs, "MVRV"));
-        assert!(has(&top.crypto, "MVRV") && !has(&top.crypto, "P/E") && !has(&top.crypto, "TER") && !has(&top.crypto, "DIV"));
+        assert!(has(&top.stocks[0], "P/E") && !has(&top.stocks[0], "TER") && !has(&top.stocks[0], "MVRV"));
+        assert!(has(&top.etfs[0], "TER") && has(&top.etfs[0], "PEG") && !has(&top.etfs[0], "P/E") && !has(&top.etfs[0], "MVRV"));
+        assert!(has(&top.crypto[0], "MVRV") && !has(&top.crypto[0], "P/E") && !has(&top.crypto[0], "TER") && !has(&top.crypto[0], "DIV"));
 
         // 3. the rank cell is the RANK CELL, flags and all — not a bare "1". The fund is `#`-enriched
         // here (instrument_type ETF alone doesn't do it; `fund_factor`/TER would), so assert the shape
         // every lane must have: the number, then only characters from the legend.
-        for row in [&top.stocks, &top.etfs, &top.crypto] {
+        for row in [&top.stocks[0], &top.etfs[0], &top.crypto[0]] {
             let rank = cell(row, "RANK").expect("every lane prints a rank cell");
             assert!(rank.starts_with('1'), "rank cell is the row's position: {rank}");
             assert!(rank[1..].chars().all(|c| "*#!cx~Ho".contains(c)), "only legend flags follow it: {rank}");
@@ -6660,10 +6698,29 @@ mod tests {
         // what an S-8Y tuning that forgot to neutralize the CAGR floor (or forgot the 8-year pin)
         // produces for these rows — a blank column that reads as missing data rather than the low
         // score it earns on 8 years.
-        let s8y = cell(&top.stocks, "S-8Y").expect("the layout prints S-8Y");
+        let s8y = cell(&top.stocks[0], "S-8Y").expect("the layout prints S-8Y");
         assert!(s8y.trim_end_matches('†').parse::<f64>().is_ok(), "S-8Y must be scored, got {s8y:?}");
 
-        // 5. an absent lane is an EMPTY row, never a fabricated one — the page prints the terminal's
+        // 5. (#143) the lane is CUT TO `n`, not published whole. Seven stocks went in against n = 5.
+        // This is what `lane_split` does not do — it filters and splits and leaves the cut to the
+        // caller — so a payload that forgot it would quietly publish every row that cleared the gates.
+        assert_eq!(top.stocks.len(), n, "the stock lane is cut to n: {:?}", top.stocks.len());
+
+        // 6. (#143) each row carries ITS OWN rank, 1..=n. A lane was one row until this receipt and
+        // the mark was a hardcoded 0, so without this every row would publish as "1".
+        for (i, row) in top.stocks.iter().enumerate() {
+            let rank = cell(row, "RANK").expect("every row prints a rank cell");
+            let digits = rank.trim_end_matches(|c| "*#!cx~Ho".contains(c));
+            assert_eq!(digits.parse::<usize>().ok(), Some(i + 1), "row {i} published rank {rank:?}");
+        }
+
+        // 7. (#143) a lane SHORTER than n caps itself instead of padding. One fund and one coin went
+        // in against n = 5; `take` is what makes that safe, and asserting it is what stops a future
+        // refill-to-n from fabricating rows the terminal never printed.
+        assert_eq!(top.etfs.len(), 1, "the ETF lane is as long as its own contents");
+        assert_eq!(top.crypto.len(), 1, "the crypto lane is as long as its own contents");
+
+        // 8. an absent lane is an EMPTY table, never a fabricated one — the page prints the terminal's
         // "(none pass the gates)" off exactly this.
         let empty = web_top(vec![], 5, &w, &[], &tuning, &pinned, &owned, &HashMap::new());
         assert!(empty.stocks.is_empty() && empty.etfs.is_empty() && empty.crypto.is_empty());

@@ -133,7 +133,7 @@ jobs:
           test -f .screen_web.json || { echo "screen wrote no payload"; exit 1; }
           jq -e '(.stocks | length) + (.etfs | length) + (.crypto | length) > 0' .screen_web.json \
             > /dev/null || { echo "every lane came back empty — not deploying over a good page"; exit 1; }
-          jq -r '"generated \(.generated): stocks \(.stocks|length) etfs \(.etfs|length) crypto \(.crypto|length) cells"' .screen_web.json
+          jq -r '"generated \(.generated): stocks \(.stocks|length) etfs \(.etfs|length) crypto \(.crypto|length) rows"' .screen_web.json
 
       - name: Assemble the site
         run: |

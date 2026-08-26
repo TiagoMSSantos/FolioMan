@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>FolioMan — top pick per class</title>
+<title>FolioMan — top picks per class</title>
 <style>
   /* One file, no CDN, no build step. The payload is data.json beside this page; everything else
      here is layout. Colours come from tokens so the dark block below only has to redefine those. */
@@ -61,14 +61,31 @@
     padding: .6rem .8rem;
     margin: 0 0 1rem;
   }
+  /* The top-N chooser. Native <select> on purpose — it is the platform's own control, it is
+     keyboard- and screen-reader-correct for free, and it needs no styling to be usable. */
+  .topn { color: var(--muted); font-size: .8rem; margin: .75rem 0 0; }
+  .topn select {
+    font: inherit;
+    color: var(--fg);
+    background: var(--head-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .15rem .3rem;
+  }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <main>
-  <h1>FolioMan — top pick per class</h1>
+  <h1>FolioMan — top picks per class</h1>
   <p class="sub" id="generated">loading…</p>
   <p class="stale" id="stale" hidden></p>
+  <!-- (#143) One control for all three lanes. Its options are built from the payload, never
+       hardcoded, so it can never offer an N with no rows behind it and it follows `top_picks`
+       automatically. Hidden entirely when there is nothing to choose. -->
+  <p class="topn" id="topn-box" hidden>
+    <label>show top <select id="topn"></select> rows per table</label>
+  </p>
 
   <h2>Stocks</h2>
   <div id="stocks"></div>
@@ -78,7 +95,7 @@
   <div id="crypto"></div>
 
   <p class="note">
-    The #1 row of each of <code>screen</code>'s three ranked tables — the 20yr+ growth ranking:
+    <code>screen</code>'s three ranked tables — the 20yr+ growth ranking:
     at/near its own ~10y high with a strong proven long-term CAGR and an accelerating recent year,
     braked by how far it has run above its 200wk trend. Crypto is ranked against Bitcoin, the market
     base. These ranked tilts are higher-variance, regime-dependent sector/thematic bets whose recent
@@ -110,12 +127,15 @@
 </main>
 
 <script>
-// The payload is [{generated, stocks, etfs, crypto}], each lane a list of [header, cell] pairs —
-// exactly the cells the terminal prints for that row, so nothing is reformatted here.
+// The payload is {generated, stocks, etfs, crypto}, each lane a list of ROWS and each row a list of
+// [header, cell] pairs — exactly the cells the terminal prints for that row, so nothing is
+// reformatted here. (#143) A lane was a single row until then; every row of a lane carries the same
+// headers in the same order, which is why the head is read off row 0.
+const LANES = ["stocks", "etfs", "crypto"];
 const STALE_HOURS = 36; // one weekday cron miss is fine; two is worth saying out loud
 
-function table(pairs) {
-  if (!pairs || pairs.length === 0) {
+function table(rows) {
+  if (!rows || rows.length === 0) {
     const p = document.createElement("p");
     p.className = "empty";
     p.textContent = "(none pass the gates)";
@@ -124,16 +144,46 @@ function table(pairs) {
   const box = document.createElement("div");
   box.className = "scroll";
   const t = document.createElement("table");
-  const thead = t.createTHead().insertRow();
-  const tbody = t.createTBody().insertRow();
-  for (const [header, cell] of pairs) {
+  const head = t.createTHead().insertRow();
+  for (const [header] of rows[0]) {
     const th = document.createElement("th");
+    th.scope = "col";
     th.textContent = header;
-    thead.appendChild(th);
-    tbody.insertCell().textContent = cell;
+    head.appendChild(th);
+  }
+  const body = t.createTBody();
+  for (const row of rows) {
+    const tr = body.insertRow();
+    for (const [, cell] of row) tr.insertCell().textContent = cell;
   }
   box.appendChild(t);
   return box;
+}
+
+// Every row is in the DOM; the chooser only decides how many are VISIBLE. Hiding rather than
+// re-rendering is what keeps this small and what makes changing N instant.
+function apply(n) {
+  for (const body of document.querySelectorAll("tbody")) {
+    [...body.rows].forEach((tr, i) => { tr.hidden = i >= n; });
+  }
+}
+
+// (#143) `?top=N` rather than localStorage: a bare URL always opens at the default, and a reader who
+// wants ten rows every morning bookmarks the URL that gives them. Clamped and truncated because the
+// query string is user input — `?top=abc`, `?top=0`, `?top=3.7` and `?top=999` must all land on an
+// option that exists, or `sel.value` silently becomes "" and apply(0) blanks every table.
+function chooser(max) {
+  const box = document.getElementById("topn-box");
+  const sel = document.getElementById("topn");
+  for (let i = 1; i <= max; i++) sel.add(new Option(i));
+  const want = Math.trunc(+new URLSearchParams(location.search).get("top")) || 1;
+  sel.value = Math.min(Math.max(want, 1), max);
+  sel.onchange = () => {
+    apply(+sel.value);
+    history.replaceState(null, "", "?top=" + sel.value);
+  };
+  box.hidden = max <= 1; // one row everywhere: nothing to choose, so don't offer a choice
+  apply(+sel.value);
 }
 
 function render(data) {
@@ -148,9 +198,12 @@ function render(data) {
       "h old. The last refresh did not complete, so these are not today's numbers.";
     banner.hidden = false;
   }
-  for (const lane of ["stocks", "etfs", "crypto"]) {
+  for (const lane of LANES) {
     document.getElementById(lane).replaceChildren(table(data[lane]));
   }
+  // Options come from the LONGEST lane, and each table then caps itself at its own length — crypto
+  // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
+  chooser(Math.max(1, ...LANES.map((lane) => (data[lane] || []).length)));
 }
 
 fetch("data.json", { cache: "no-store" })
