@@ -119,3 +119,31 @@ jobs:
           for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow codeql.yml --status cancelled --limit 200 --json databaseId -q '.[].databaseId'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
+          # (#142) THIRD PASS, AND IT SWEEPS A DIFFERENT WORKFLOW ON PURPOSE. GitHub's default setup
+          # runs under a phantom workflow with no file in this repo — `dynamic/github-code-scanning/
+          # codeql`, event `dynamic` — which shares the display name "CodeQL" with this file and is
+          # exactly what this file REPLACED. The two passes above filter `--workflow codeql.yml`,
+          # which resolves to the FILE, so they never matched those runs and six survived every
+          # sweep (run 32885432124 is one of them). The name collision is real enough that
+          # `gh run list --workflow "CodeQL"` refuses outright: "could not resolve to a unique
+          # workflow; found: codeql.yml codeql".
+          #
+          # This deliberately breaks the one-workflow-sweeps-only-its-own-runs rule that ci.yml and
+          # pages.yml both keep, because from the Actions tab there is only one "CodeQL" and its
+          # history should not be half-swept. It stays narrow in the ways that matter: matched by
+          # EXACT path rather than a `dynamic/` prefix, so a future phantom workflow that is not code
+          # scanning is never collateral; and discovered at runtime rather than pinned to id
+          # 341816612, a number this repo never chose and GitHub can reissue.
+          #
+          # NO status filter, unlike the two passes above, and that is a deliberate refusal to depend
+          # on a semantic that could not be tested here: the REST `status` parameter filters on status
+          # OR conclusion, and with no cancelled run anywhere in this repo's history there was nothing
+          # to verify it against. Every run of a workflow that no longer fires is historical, and
+          # `gh run delete` on an in-flight one fails into the `|| true`. If default setup is ever
+          # re-enabled this sweep is cosmetic anyway — the symptom that matters then is the analyze
+          # legs failing at UPLOAD with the 409 quoted in the header, and the fix is turning it off.
+          for wf in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows" --jq '.workflows[] | select(.path == "dynamic/github-code-scanning/codeql") | .id'); do
+            for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$wf/runs?per_page=100" --jq '.workflow_runs[].id'); do
+              gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+            done
+          done
