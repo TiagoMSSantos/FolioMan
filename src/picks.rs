@@ -1693,7 +1693,11 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
 /// strictly inside it by construction — but the ends return ∓3 rather than ±∞ or NaN, because a NaN
 /// reaching `base` would rank silently instead of failing.
 fn inv_norm(p: f64) -> f64 {
-    const A: [f64; 6] = [-3.969_683_028_665_376e1, 2.209_460_984_245_205e2, -2.759_285_104_469_687e2, 1.383_577_518_672_690e2, -3.066_479_806_614_716e1, 2.506_628_277_459_239e0];
+    // A[3] is `...672_69`, one digit SHORTER than Acklam's published `...672_690`. Not a typo and not
+    // a truncation: the trailing zero is beyond f64's 17 significant digits, so both spellings parse
+    // to the same bits, and `clippy::excessive_precision` (a `-D warnings` lint here) rejects the
+    // published one. Re-pasting the table from the paper reds the lint gate without changing a number.
+    const A: [f64; 6] = [-3.969_683_028_665_376e1, 2.209_460_984_245_205e2, -2.759_285_104_469_687e2, 1.383_577_518_672_69e2, -3.066_479_806_614_716e1, 2.506_628_277_459_239e0];
     const B: [f64; 5] = [-5.447_609_879_822_406e1, 1.615_858_368_580_409e2, -1.556_989_798_598_866e2, 6.680_131_188_771_972e1, -1.328_068_155_288_572e1];
     const LOW: f64 = 0.024_25;
     if !(0.0..=1.0).contains(&p) || p.is_nan() {
