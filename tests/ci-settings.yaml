@@ -76,6 +76,60 @@
 # which is the whole subject of the (#125) correction above.
 #
 # ============================================================================================
+# (#146) WHAT THE LIVE TRACK RECORD IS WORTH (2026-08-27) — MEASURED, AND IT IS ~1 TRIAL
+# ============================================================================================
+# Not a knob. `track`/`sim`/the screen's trust line grade the LIVE forward record — the screen's own
+# past top-10s at today's prices — and that number needed the same honesty `print_n_eff` (#124) bought
+# for the backtest columns. It shipped without it, and read as the more confident of the two.
+#
+#   THE SHAPE OF THE ERROR. `track` grades EVERY journaled snapshot against TODAY. The windows are
+#   therefore NESTED on one shared endpoint, not sequential like the backtest's ~6-month entry
+#   buckets. The span of entry dates is (oldest - newest); the longest hold graded is `oldest`
+#   itself. The second can never be smaller than the first, so the ratio is <= 1 BY CONSTRUCTION.
+#   More snapshots do not buy a second trial. A 10,000-row table would still be one observation of
+#   one endpoint, and one bad final week moves every row in it together.
+#
+#   MEASURED on the real journal, 2026-08-27: 40 snapshots, 2026-07-16 -> 2026-08-27, 39 gradeable.
+#     entry span    42d
+#     longest hold  42d
+#     n_eff         1.00        (39 rows, one trial)
+#     longest hold  0.115y = 0.6% of the 20y hold the ranking is built for
+#
+#   WHAT SHIPPED: `track::effective_trials` + `track::trials_note`, appended to the win rate on BOTH
+#   surfaces that print it (`track`'s summary and the screen's trust line) and, free, to the `--push`
+#   ntfy ping, which is the most decontextualised surface there is. One helper, so the two cannot
+#   quote one fold with two different confidences.
+#
+#   NO KNOB, DELIBERATELY — the SECOND documented exception to non-negotiable #1, alongside
+#   `config::Sizing`. That rule protects an off-default lane; `track` has none. The goldens are
+#   backtest-only (`tests/fixture/backtest-*.golden`) and nothing covers this output, so there is no
+#   byte-identical lane to keep. And a correction gated behind a flag defaulting OFF corrects
+#   nothing: (#124)'s own knob has sat off since the day it was measured, which is precisely why
+#   every 20y verdict in this file still reads as if it rested on more than half a trial.
+#
+#   (#124)'s FORMULA MUST NOT BE REUSED HERE. `windows / (2 * years)` counts SEQUENTIAL buckets. That
+#   receipt says it itself: applied to a differently-shaped count it "would be a wrong number wearing
+#   the right label". Nested windows needed their own derivation and got one.
+#
+#   THE LINE THAT MATTERS FOR THE FUTURE: the live record is DESCRIPTIVE. It must never become a
+#   ship-rule input — the same boundary (#124) draws. At n_eff 1.00 it has nothing to adjudicate
+#   with, and the ship rule reading it would import a fitted number wearing an out-of-sample label.
+#
+#   WHAT WOULD ACTUALLY RAISE IT: grade each snapshot at its own maturity (d_i + H) instead of at
+#   today, which makes the windows sequential and lets n_eff grow with the record. It needs
+#   per-ticker history rather than the one current-price fetch `track` makes, and on a 42-day record
+#   it would grade ZERO rows — so it is named in the code as the upgrade path, not built.
+#
+#   WHAT DOES NOT NEED FIXING: the recording itself. `screen` has journaled its `growth_score`
+#   ranking every run since round 114, so the buy/growth heuristic's forward record IS accruing. Time
+#   is the only binding constraint on it, and no code removes that. Still open and unrelated:
+#   `journal_core_list` (#103), the buy-and-hold half, which has accrued nothing and cannot be
+#   recovered retroactively.
+#
+#   REVERT: none needed - it cannot move a decision, only describe one. Deleting the note restores
+#   the previous output exactly; nothing reads it.
+#
+# ============================================================================================
 # ETF-CLASSIFICATION RECEIPT (2026-08-02) — READ BEFORE TRUSTING ANY PEER-RELATIVE EDGE BELOW
 # ============================================================================================
 # Every peer-relative edge number written into this file BEFORE this date was measured with ETFs

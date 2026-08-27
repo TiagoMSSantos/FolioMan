@@ -186,13 +186,73 @@ pub(crate) fn summary_line(wins: usize, graded_n: usize, excess_sum: f64) -> Str
     }
 }
 
+/// (#146) How many INDEPENDENT trials this record is actually worth.
+///
+/// `track` grades EVERY snapshot against TODAY, so its windows are NESTED on one shared endpoint —
+/// not sequential like the backtest's ~6-month entry buckets. The span of entry dates is
+/// `oldest − newest`; the longest hold graded is `oldest` itself. The second is never smaller than
+/// the first, so this ratio is <= 1 and STAYS <= 1 however many snapshots accrue: a 40-row table and
+/// a 10,000-row one are both one observation of one endpoint. That is a property of grading to today,
+/// not a shortage of data, and no amount of screening fixes it.
+///
+/// (#124)'s bucket formula `windows / (2 · years)` MUST NOT be reused here. It counts SEQUENTIAL
+/// buckets, and that receipt says so itself: applied to a differently-shaped count it "would be a
+/// wrong number wearing the right label".
+///
+/// ponytail: the upgrade path is grading each snapshot at its own maturity (`d_i + H`) instead of at
+/// today, which makes the windows sequential and lets this grow past 1. It needs per-ticker history
+/// rather than the one current-price fetch `run` makes, and on a record this young it would grade
+/// zero rows — so it is named, not built.
+fn effective_trials(oldest_days: i64, newest_days: i64) -> f64 {
+    if oldest_days <= 0 {
+        return 0.0;
+    }
+    (oldest_days - newest_days) as f64 / oldest_days as f64
+}
+
+/// The printed caveat that goes wherever the win rate goes. Same contract as the backtest's
+/// `n_eff_tag`: ONE definition, appended by every surface that prints the number, so `track`'s table
+/// and the screen's trust line cannot drift into quoting the same fold with different confidence.
+/// EMPTY when nothing is gradeable — `summary_line` already says so in that case.
+///
+/// Folds over `grade`, the same fn `verdict_stats` folds, so the set behind this note and the set
+/// behind the number it qualifies are the same set by construction rather than by a duplicated filter.
+pub(crate) fn trials_note(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    let ages: Vec<i64> = snaps
+        .iter()
+        .filter_map(|s| grade(s, today, px_now, spx_now))
+        .filter(|g| g.spy_pct.is_some())
+        .map(|g| g.days)
+        .collect();
+    let (Some(oldest), Some(newest)) = (ages.iter().copied().max(), ages.iter().copied().min())
+    else {
+        return String::new();
+    };
+    format!(
+        "\n  ~{:.1} effective trials — every window above ends TODAY, so those {} rows are NESTED on \
+         one shared endpoint, not {} independent draws. The longest spans {oldest}d = {:.1}% of the \
+         {}y hold this ranking is built for. Descriptive only: never a ship-rule input.",
+        effective_trials(oldest, newest),
+        ages.len(),
+        ages.len(),
+        100.0 * oldest as f64 / (365.25 * f64::from(crate::picks::HOLD_YEARS)),
+        crate::picks::HOLD_YEARS,
+    )
+}
+
 /// `#[mutants::skip]` because a command entry point is structurally ungradeable by the gate, not
 /// merely ungraded: `run` is reachable from `main.rs` and nowhere else, so the only test that could
 /// exercise it lives in the `cli` suite, and the mutants job kills with `--lib --test
 /// backtest_fixture`. `replace run with ()` therefore survives whatever anyone writes, and since
 /// `--in-diff` grades whole functions, one line changed in here would red the gate on its own. The
 /// gradeable parts were pulled out instead — `adjust_for_splits`, `split_factor_from`, `grade`,
-/// `verdict_stats`, `summary_line` — and this is left as the wiring between them.
+/// `verdict_stats`, `summary_line`, `effective_trials`, `trials_note` — and this is left as the
+/// wiring between them.
 #[mutants::skip]
 pub async fn run(args: Vec<String>) {
     // --push: also send the summary to ntfy — for a monthly cron, so the track record reaches the
@@ -265,7 +325,11 @@ pub async fn run(args: Vec<String>) {
     // summary comes from the SAME fold the screen's trust line reads — not from accumulators in
     // the print loop above, so the two surfaces can't drift apart.
     let (wins, graded_n, excess_sum) = verdict_stats(&snaps, today, &px_now, spx_now);
-    let summary = summary_line(wins, graded_n, excess_sum);
+    // (#146) the win rate and the caveat that says what it is worth travel together, here and in the
+    // screen's trust line. The `--push` ping interpolates `summary` too, so the phone — the most
+    // decontextualised surface there is — carries it for free.
+    let summary =
+        format!("{}{}", summary_line(wins, graded_n, excess_sum), trials_note(&snaps, today, &px_now, spx_now));
     println!("\n  summary: {summary}");
     if push {
         let delivered = fetch::push(
@@ -432,6 +496,47 @@ mod tests {
         let (wins, n, sum) = verdict_stats(&snaps, today, &px, Some(105.0));
         assert_eq!((wins, n), (1, 2));
         assert!((sum - (5.0 - 15.0)).abs() < 1e-9);
+    }
+
+    /// effective_trials(): the ratio that says a nested-window record is worth about one trial.
+    /// The 0.5 case is the load-bearing one — it is none of the values a return-replacement would
+    /// substitute, so it pins the arithmetic and not just the shape.
+    #[test]
+    fn effective_trials_prices_nested_windows() {
+        assert!((effective_trials(40, 20) - 0.5).abs() < 1e-9);
+        // <= 1 BY CONSTRUCTION: the newest window can only be younger than the oldest, never older,
+        // so the numerator can never exceed the denominator. This is the whole point of the number.
+        assert!((effective_trials(42, 0) - 1.0).abs() < 1e-9, "a record graded from day zero is ONE trial");
+        assert!(effective_trials(9_999, 1) <= 1.0, "no snapshot count can buy a second trial");
+        // Degenerate spans answer 0, not NaN or a divide-by-zero: `run` prints this unconditionally.
+        assert!((effective_trials(0, 0) - 0.0).abs() < 1e-9);
+        assert!((effective_trials(-5, 0) - 0.0).abs() < 1e-9);
+    }
+
+    /// trials_note(): the caveat that travels with every printed win rate. Grades the same set
+    /// `verdict_stats` does — the un-benchmarked row is the probe for that, since counting it would
+    /// make the record look OLDER and the trial count higher than it is.
+    #[test]
+    fn trials_note_reports_the_effective_count() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| if t == "UP" { Some(110.0) } else { None };
+        let snaps = vec![
+            snap("2026-05-16", None, &[("UP", Some(100.0))]), // 61d but NO benchmark -> not graded
+            snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), // 30d -> oldest graded
+            snap("2026-07-06", Some(100.0), &[("UP", Some(100.0))]), // 10d -> newest graded
+        ];
+        let note = trials_note(&snaps, today, &px, Some(105.0));
+        // (30 - 10) / 30 = 0.67; the un-benchmarked 61d row would read 0.8 and "spans 61d".
+        assert!(note.contains("~0.7 effective trials"), "{note}");
+        assert!(note.contains("those 2 rows"), "graded count must exclude the un-benchmarked row: {note}");
+        assert!(note.contains("spans 30d"), "longest window must be the oldest GRADED one: {note}");
+        assert!(note.contains("0.4% of the 20y hold"), "horizon share missing: {note}");
+
+        // Nothing gradeable -> EMPTY, because `summary_line` already says "nothing gradeable yet"
+        // and two ways of saying it is how the two surfaces start disagreeing.
+        assert_eq!(trials_note(&[], today, &px, Some(105.0)), "");
+        let unpriced = vec![snap("2026-06-16", Some(100.0), &[("MISSING", Some(100.0))])];
+        assert_eq!(trials_note(&unpriced, today, &px, Some(105.0)), "");
     }
 
     /// Snapshot JSONL round-trips (the journal format `screen` writes and `track` reads back),

@@ -2340,9 +2340,13 @@ pub async fn run(args: Vec<String>) {
             let spx_now = spx.first().and_then(|q| q.price_eur).filter(|p| *p > 0.0);
             let (wins, n, sum) = crate::commands::track::verdict_stats(&snaps, today, &px_now, spx_now);
             if n > 0 {
+                // (#146) the trials caveat rides with the number, same helper `track` prints, so the
+                // two surfaces cannot quote one fold with two different confidences. This is the line
+                // a buy decision actually reads.
                 println!(
-                    "\nLive track record — this ranking's past top-10s at today's prices: {} (details: `folioman track`)",
-                    crate::commands::track::summary_line(wins, n, sum)
+                    "\nLive track record — this ranking's past top-10s at today's prices: {}{} (details: `folioman track`)",
+                    crate::commands::track::summary_line(wins, n, sum),
+                    crate::commands::track::trials_note(&snaps, today, &px_now, spx_now)
                 );
             }
             // (round 25) follow-the-screen digest: the sim ledger folded to one line — the
