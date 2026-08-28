@@ -1758,6 +1758,98 @@ buy_heuristic:
                                  #   arming it is a graded change needing its own receipt. Re-run: the arm
                                  #   body above at w in {0.05,0.15,0.30} plus a 0.0 control through the
                                  #   SAME overlay, `backtest {12,8} universe fund pit`, ~2.5 min per run.
+                                 #
+                                 #   (#147) RE-MEASURED WITH THE COMPOSITE WHOLE — 2026-08-28, AND THE
+                                 #   REFUSAL STANDS. (#145) refused this knob and then said its own
+                                 #   evidence was compromised: the Grinold-Kroner RE-RATING LEG was
+                                 #   identically 0 in every backtest row, so what got graded was
+                                 #   `dividend + growth + dilution`, not the composite that ships live.
+                                 #   (#147) fills `quote.pe_ratio` on the `fund` lane, so the leg
+                                 #   (picks.rs:414 — it calls the same `value_factor`) now carries a
+                                 #   real number spanning -3.41 .. +2.05 %/yr. Same ladder, same lane,
+                                 #   same overlay discipline, 12y and 8y.
+                                 #
+                                 #   THE LEG IS LIVE — PROVEN, NOT ASSERTED. (#145)'s own error was
+                                 #   reading a leg's state off the code, so repeating that here would be
+                                 #   unforgivable. The proof is a PRE/POST pair at IDENTICAL config: at
+                                 #   8y, w=0.05 read rank 2-5 mean +5.3 before the fill and +5.4 after
+                                 #   it. Same dose, same lane, same knobs — only the fill differs, and
+                                 #   (#145) had recorded 0.05 as a bit-identical NO-OP. A dead leg
+                                 #   cannot do that. (Independently: the A-ladder's w=10.0 diagnostic
+                                 #   moved top-3/top-5, which is only possible if `value_factor` sees a
+                                 #   real P/E inside `score_parts`.)
+                                 #
+                                 #   AND IT CHANGES ALMOST NOTHING ANYWAY. Every other cell of the
+                                 #   ladder reproduces (#145) TO THE BYTE — all four doses at 12y, and
+                                 #   0.0/0.15/0.30 at 8y:
+                                 #     12y      top-10 mean|med win worst | rank1 mean|med win | r6-10 mean|med
+                                 #       0.0    +3.7|+4.0 74% -6.4       | +1.8|+5.1 63%      | -1.9|-0.1
+                                 #       0.05   +3.7|+4.0 74% -6.4       | +1.8|+5.1 63%      | -1.9|-0.1
+                                 #       0.15   +3.7|+4.0 71% -6.4       | +1.8|+5.1 63%      | -3.8|-0.2
+                                 #       0.30   +3.7|+4.0 71% -6.4       | +1.4|+5.1 63%      | -3.8|-0.2
+                                 #      8y      top-10 mean|med win worst | rank1 mean|med win | r6-10 mean|med
+                                 #       0.0    +5.3|+5.6 86% -5.5       | +5.6|+6.5 79%      | -0.0|+1.7
+                                 #       0.05   +5.3|+5.6 86% -5.5       | +5.6|+6.5 79%      | -0.0|+1.7
+                                 #       0.15   +5.3|+5.6 86% -5.5       | +5.7|+6.5 79%      | -1.6|+0.7
+                                 #       0.30   +5.3|+5.6 86% -5.5       | +4.8|+5.8 77%      | -1.6|+0.7
+                                 #
+                                 #   THE REFUSAL, on the pre-registered rank-1 rule. 0.30 drops rank-1's
+                                 #   MEAN at BOTH horizons — +1.8 -> +1.4 at 12y and +5.6 -> +4.8 at 8y,
+                                 #   with rank-1's win rate 79% -> 77% at 8y — while its MEDIAN barely
+                                 #   moves. (#144) is the standing proof those two move in opposite
+                                 #   directions, which is why this round pre-registered reporting the
+                                 #   mean beside the h2h. 0.15 buys +0.1 on rank-1 mean at 8y and pays
+                                 #   with the 6-10 slice at both horizons (-1.9 -> -3.8 at 12y, -0.0 ->
+                                 #   -1.6 at 8y) and the 12y top-10 win rate (74% -> 71%). 0.05 is
+                                 #   within one marginal swap of control. REFUSED, same as (#145).
+                                 #
+                                 #   NOTE what PRIMARY did here, because it is the same trap as the
+                                 #   A-ladder: top-10 excess is +3.7|+4.0 at 12y and +5.3|+5.6 at 8y for
+                                 #   EVERY dose, so PRIMARY reads "held" at all four rungs while rank 1
+                                 #   is visibly degrading. An equal-weight top-10 book is set-invariant
+                                 #   and this knob only permutes it. The GUARDs hold too (h2h 2/4 at 12y
+                                 #   and 5/8 at 8y, unchanged; worst window -6.4 / -5.5, unchanged), so
+                                 #   BY THE LETTER this ladder "passes" Ship Rule v2 at every dose. It
+                                 #   is refused on the rank slices instead, which is what (#145)
+                                 #   pre-registered and what (#126) means by VACUOUS.
+                                 #
+                                 #   WHY SO LITTLE SURVIVES. A twentieth root is a brutal compressor:
+                                 #   `value_factor`'s full x0.5..1.5 span maps onto just -3.41..+2.05
+                                 #   %/yr, so at w=0.30 the whole leg is worth at most -1.02..+0.62
+                                 #   points of `base`. (#105) cited this leg as its best argument, and
+                                 #   that is not wrong about the economics — it is a statement about how
+                                 #   little of a re-rating survives being annualised over a 20-year hold.
+                                 #
+                                 #   REPRODUCIBILITY, recorded because every identity claim above rests
+                                 #   on it: (#145)'s ladder reproduced across a different DATE, a
+                                 #   different BINARY and a different FETCH, and two 0.0 controls run
+                                 #   hours apart on DIFFERENT universes (6082 vs 6081 tickers, 233 vs 353
+                                 #   Yahoo fund-facts fallbacks) printed identical graded columns. The
+                                 #   noise floor on this lane's graded columns is 0, so "identical"
+                                 #   here means identical, not "within noise".
+                                 #
+                                 #   VERDICT: 0.0 STANDS, and the refusal is now made on the composite
+                                 #   it was always supposed to be made on. Closed on this lane at these
+                                 #   doses rather than deferred.
+                                 #   REVERT: already at the reverted value.
+                                 #   Re-run: `growth_er_weight` in {0.05,0.15,0.30} plus a 0.0 control
+                                 #   through the SAME overlay, `backtest {12,8} universe fund pit`,
+                                 #   ~2 min per run.
+                                 #
+                                 #   (#147) TWO CORRECTIONS TO THE TEXT ABOVE, left in place rather
+                                 #   than edited away because the reasoning is still the record:
+                                 #     (1) "it changes the shipped lane, so it needs its own receipt and
+                                 #         RE-BLESSED GOLDENS" — the receipt yes, the re-blessing NO.
+                                 #         No golden runs `fund` (tests/backtest_fixture.rs:134 says so
+                                 #         outright) and an as-of P/E needs as-of EPS, so `pe_ratio`
+                                 #         stays None on every price-only path. All 9 goldens passed
+                                 #         WITHOUT FOLIOMAN_BLESS, and that is the fill's INERTNESS
+                                 #         PROOF rather than an accident. Do not cite this line as
+                                 #         precedent for blessing goldens on a fund-lane change.
+                                 #     (2) The 240/249 (96%) fundamentals coverage above was
+                                 #         re-measured UNCHANGED by (#147) — confirmed, not stale. It
+                                 #         is what rules coverage out as the reason either knob reads
+                                 #         flat.
                                  #   NEVER set FOLIOMAN_OFFLINE=1: it cuts the 8y king walk from 699
                                  #   scored windows to 32 and prints the SHIPPED lane at -5.9 excess,
                                  #   exiting 0 with a complete-looking report. Check `windows scored`.
@@ -5501,7 +5593,117 @@ buy_heuristic:
   #   to beat off on BOTH moments at 8y AND 12y, or where the worst window at 40 comes in deeper than
   #   off at either. A single horizon regressing is a re-open, not a revert.
   growth_value_floor_pct: 40.0
-  growth_value_weight: 0.0     # (#1) authority of the BACKTEST-BLIND P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 — the walk-forward never saw pe_ratio (None in backtest), so this +-50% reorder was pure guess (silently halved high-P/E compounders like AAPL/LLY/MPWR). Revert to 1.0 if the eyeballed top-N is worse; re-enable only once the validated additive earnings_yield term carries valuation
+  growth_value_weight: 0.0     # (#1) authority of the P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 because the walk-forward never saw pe_ratio. (#147) FILLED IT AND MEASURED — 0 STANDS, see the block below
+  # (#147) THE BACKTEST'S P/E IS NO LONGER BLIND, AND THIS KNOB IS STILL 0 — MEASURED 2026-08-28.
+  #   SUPERSEDES (#1)'s reason. (#1) zeroed this knob SOLELY because "the walk-forward never saw
+  #   pe_ratio (None in backtest), so this +-50% reorder was pure guess" — an unmeasurABLE, not a
+  #   refusal. (#145) then found the same blindness had hollowed `growth_er_weight`'s composite and
+  #   pre-registered this round to fix it. The fix was a FILL, not a formula.
+  #
+  #   THE FILL. `core::pe_from_earnings_yield(ey) = 100/ey for ey > 0, else None`, called at
+  #   backtest.rs's cutoff right after `f.earnings_yield` is set, writing `quote.pe_ratio`. The loop
+  #   ALREADY held the number: earnings_yield = eps_ttm / as-of close, in the FILER's currency under
+  #   the existing no-look-ahead FX discipline. A P/E is that inverted, and a ratio carries no
+  #   currency, so no rate is applied and none is needed. Non-positive yields answer None rather than
+  #   a negative P/E — a loss-maker has no meaningful multiple, and inventing one would put a
+  #   "cheap" name at the top of the lane this feeds. `fund` LANE ONLY: an as-of P/E needs as-of EPS.
+  #
+  #   PROOF IT IS LIVE, because "no effect" and "dead code" print the same bytes and this is the
+  #   trap the whole round could have fallen into. The ON-SALE `buy_score` foil reads `value_factor`
+  #   at FULL authority, unmediated by this knob. Same lane, same config, same shipped values, zero
+  #   drift warnings on either run — only the binary differs:
+  #     12y ON-SALE      pre-fill ((#145)'s control)   post-fill
+  #       edge             +3.9 pts                     +12.8 pts
+  #       top/bottom half  -8.1 / -12.0                 -3.6 / -16.3
+  #       winsorized edge  -44.5                        -38.2
+  #       tuning adds      +76.2                        +61.9
+  #     The fill triples the foil's raw edge. READ THE WINSORIZED ROW BEFORE QUOTING THAT: it is
+  #     -38.2, still deeply negative, so the on-sale edge leans on extreme rows either way and this
+  #     is evidence the P/E REACHES the score, NOT evidence it is worth shipping. Non-negotiable #6
+  #     forbids tuning this lane; observing it is what proved the fill.
+  #
+  #   PROOF IT MOVES NOTHING THAT SHIPS. The growth lane is BYTE-IDENTICAL pre- and post-fill
+  #   (12y top-10 +3.7|+4.0, win 74%, worst -6.4, 9 zeros/209 holds on both), because this weight
+  #   ships at 0 so the P/E cannot reach `growth_score` at all. Every golden stayed green WITHOUT
+  #   FOLIOMAN_BLESS — the goldens are price-only, where `pe_ratio` stays None. (#145)'s claim that
+  #   this round "changes the shipped lane, so it needs its own receipt and re-blessed goldens" was
+  #   HALF WRONG and is corrected there: the receipt yes, the re-blessing no.
+  #
+  #   THE ARM. Body, for re-creation as `tests/pe-ci-settings.yaml` (per (#131) — an arm overlay,
+  #   not a tracked lane; it MUST sit at tests/<name>-ci-settings.yaml so `config::data_path`
+  #   resolves the same caches, and only a file literally named ci-settings.yaml takes an empty
+  #   base — (#125)):
+  #     buy_heuristic:
+  #       growth_value_weight: 0.25   # the dose; 0.0 for the control
+  #   `heuristic_drift()` named exactly ONE knob on every arm. The control ran THROUGH THE SAME
+  #   OVERLAY at 0.0. Lane `universe fund pit`, shipped gates, 12y and 8y per (#139); never with
+  #   FOLIOMAN_OFFLINE=1; windows scored 2737 pool / 249 growth-lane, `stock 249/5444` on every run.
+  #
+  #   THE NOISE FLOOR IS ZERO ON THE GRADED COLUMNS, measured rather than assumed, because the whole
+  #   A-verdict is a claim about identical output. Two 0.0 controls run hours apart fetched DIFFERENT
+  #   universes (6082 vs 6081 tickers, 233 vs 353 Yahoo fund-facts fallbacks, 129 vs 87 justETF
+  #   answers) and still printed byte-identical rank slices, zero-names and h2h. The header's warning
+  #   that live-fetch drift is the noise floor is about the SCREEN; on this lane's graded columns it
+  #   is 0, so an identity here is a real identity.
+  #
+  #   RESULT — VACUOUS ON EVERY SHIP-RULE SURFACE, AT BOTH HORIZONS.
+  #     12y: at w = 0.25, 0.5 AND 1.0 every printed column is BYTE-IDENTICAL to
+  #          control — not just top-10 (set-invariant, so it reads "held" for free,
+  #          (#126)/(#145)) but top-1, top-2, top-3, top-5, top-15..top-50, the
+  #          `top-10 zero names` list, `rode 9 zeros/209 holds`, and the rank-1 h2h
+  #          (2/4 = 50% vs the 11-20 book, 2/4 vs the 2-5 book).
+  #      8y: the pool is bigger (355 growth-scored cutoffs vs 249, `stock 348/7649`),
+  #          score gaps are tighter, and the ladder moves EXACTLY TWO CELLS in the
+  #          whole grid: w=0.25 lifts the rank 2-5 MEAN +5.3 -> +5.4, and w=1.0 flips
+  #          rank 6-10's mean -0.0 -> +0.0 (a sign-of-zero print, the smallest move
+  #          representable). NON-MONOTONE — 0.5 sits back at control on both — which
+  #          is the signature of one marginal pair swapping in and out, not of a term
+  #          with authority. top-10 (+5.3|+5.6, win 86%, worst -5.5), the rank-1 h2h
+  #          (5/8 and 6/8) and the `top-10 zero names` list are identical at every dose.
+  #     Both GUARDs therefore HOLD at both horizons and PRIMARY reads "held" — and that
+  #     is exactly the free pass (#145) warned about. Recorded VACUOUS, NEVER PASSED.
+  #
+  #   WHY, AND IT IS ARITHMETIC RATHER THAN DATA. Coverage is NOT the cause — 240 of the 249
+  #   growth-scored cutoffs carry fundamentals (96%), the same number (#145) recorded. The cause is
+  #   that `value` reaches the score through `combine_damps(&[trust, overext, proximity, value])`,
+  #   which is `product().powf(1/n)` with n = 4 — so the knob's REAL authority is the FOURTH ROOT of
+  #   the swing this file has advertised since (#1):
+  #     w      `value` range     after the 4-slot geomean    total spread
+  #     0.25   0.875 .. 1.125    x0.967 .. x1.030            1.07x
+  #     0.5    0.750 .. 1.250    x0.931 .. x1.057            1.14x
+  #     1.0    0.500 .. 1.500    x0.841 .. x1.107            1.32x
+  #   "Full x0.5..1.5 swing" is the range of `value_factor`, NOT the authority the knob exerts. At
+  #   the top rung it is a 1.32x spread, and that is smaller than the score gaps between adjacent
+  #   names in the gated pool, so no pair ever swaps. (#1) called it "a +-50% reorder"; it is not one
+  #   and never was. THIS SAME FOLD APPLIES TO `growth_proximity_weight`, which is why (#48) found it
+  #   argmax-blind — one mechanism, two receipts, and it should be checked FIRST for any future
+  #   multiplier knob before a grid is run for it.
+  #
+  #   THE DOSE THAT DOES MOVE IT, run as a DIAGNOSTIC and never a ship candidate: w = 10.0, ten times
+  #   the top rung. Even there top-1, top-2, top-10, top-15..50, the zero-names list and the h2h stay
+  #   byte-identical; only top-3 (+10.4 -> +10.5%/yr, excess +4.1 -> +4.2) and top-5 (+10.6 -> +10.7,
+  #   median +4.5 -> +4.9) move at all. A knob that needs 10x its documented maximum to nudge two
+  #   middle slices by 0.1pp has no business carrying valuation for this lane.
+  #
+  #   AND THE FILL EXPOSED A LATENT NaN — fixed in this same commit, in `picks::score_parts`.
+  #   `value` had NO clamp while its structural twin `proximity` has carried `.max(0.0)` since (#48)
+  #   for exactly this reason: a negative factor inside `combine_damps` is NaN under a fractional
+  #   exponent, and NaN does not sink the name, it poisons the whole score silently. Any weight above
+  #   2.0 drives a name at VALUE_TILT_MIN negative: 1 + 3x(0.5-1) = -0.5. This was UNREACHABLE while
+  #   the backtest was blind (`value_raw` was 1.0 on every row, so every weight gave exactly 1.0) and
+  #   the FILL is what made it reachable. Guarded at the boundary rather than in a comment, (#48)'s
+  #   reasoning verbatim, and pinned by an assert in the `growth_value_weight` unit test. NO SHIPPED
+  #   VALUE MOVES: the 0.0 lane and the whole 0.25..1.0 ladder keep `value` in [0.5, 1.5], and the
+  #   post-clamp control reproduced the pre-clamp control byte-for-byte on the live lane.
+  #
+  #   VERDICT: 0.0 STANDS, now on EVIDENCE rather than on ignorance. Ship Rule v2 never got to
+  #   adjudicate — every horizon is VACUOUS in (#126)'s sense, and a column that cannot move reads
+  #   "held" for free. Recorded VACUOUS, never passed.
+  #   REVERT: already at the reverted value. Re-open only with a mechanism that gives this term
+  #   authority the geomean does not quarter — moving it OUT of `combine_damps` into `base` as an
+  #   additive term is the shape that would, and that is a different knob needing its own round.
+  #   Re-run: the arm body above at w in {0.25,0.5,1.0} plus a 0.0 control through the SAME overlay,
+  #   `backtest {12,8} universe fund pit`, ~2.5 min per run.
   # (#50) WHAT THIS 0.0 COSTS DOWNSTREAM, recorded 2026-08-06 because no receipt said it: with this
   #   term off, `growth_max_peg` is the GROWTH LANE'S ONLY VALUATION CONTROL. Nothing else in
   #   `score_parts` reads a P/E. That is why the PEG rung has to be chosen on the raw P/E column and

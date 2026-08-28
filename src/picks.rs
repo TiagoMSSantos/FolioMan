@@ -1430,7 +1430,8 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     let risk_reward = risk_bonus(quote, long_cagr, tuning.sharpe_weight, tuning.calmar_weight, tuning); // (B/C) growth lane's Sharpe weight
     // (M) 12-1 momentum: trailing-year return EXCLUDING the last month (skip the short-term-reversal
     // month — Jegadeesh-Titman). Price-only, so it's validated end-to-end (backtest_quote has 1Y/1M),
-    // unlike the still-blind value/TER tilts (div and ROE are sighted now). Missing 1M -> skip-month = 0. Guard the denominator
+    // unlike the still-blind TER tilt (div and ROE are sighted, and (#147) made the P/E sighted too
+    // on `fund` runs). Missing 1M -> skip-month = 0. Guard the denominator
     // against a near-total-wipeout 1M (>= -99%) so the ratio can't blow up.
     let r1m = perf_pct(quote, "1M").unwrap_or(0.0);
     let mom121 = ((1.0 + return_1y / 100.0) / (1.0 + r1m / 100.0).max(0.01) - 1.0) * 100.0;
@@ -1513,11 +1514,23 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
         -tuning.growth_record_weight * (tuning.growth_record_full_years - long_years).max(0.0);
     let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term + smooth + underwater + er_term + record_term;
     let value_raw = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
-    // (Item 20) dial the BLIND P/E multiplier's authority toward neutral 1.0. weight 1.0 = full ×0.5..1.5
-    // swing (default, unchanged); 0.0 = off. The validated edge was measured with this term OFF (pe_ratio
-    // is None in the backtest), so this knob lets valuation move to the validated additive earnings_yield
-    // term (Item 19) once it probes +, without a recompile. On-sale `buy_score` keeps full value_factor.
-    let value = 1.0 + tuning.growth_value_weight * (value_raw - 1.0);
+    // (Item 20) dial the P/E multiplier's authority toward neutral 1.0. weight 1.0 = full ×0.5..1.5
+    // swing (default, unchanged); 0.0 = off (shipped). On-sale `buy_score` keeps full value_factor.
+    // (#147) NO LONGER BLIND: this comment used to say "the validated edge was measured with this term
+    // OFF (pe_ratio is None in the backtest)", and the parenthesis stopped being true when (#147)
+    // filled `quote.pe_ratio` on `fund` runs. The term is now GRADEABLE — and was graded: see the
+    // (#147) receipt in ci-settings.yaml. The weight still ships at 0, but for a MEASURED reason now
+    // (it cannot reach the argmax) rather than because the walk-forward could not see it.
+    // (#147) CLAMPED AT 0, for the same reason `proximity` is and on the same evidence: `value`
+    // reaches the score through `combine_damps`, which fractional-exponents its inputs, so a negative
+    // factor there is NaN — it does not sink the name, it silently poisons the whole score. Any
+    // weight above 2.0 drives a name sitting at VALUE_TILT_MIN negative: 1 + 3x(0.5 - 1) = -0.5.
+    // This was UNREACHABLE in the backtest until (#147) filled `quote.pe_ratio`: `value_raw` was 1.0
+    // on every walk-forward row, so every weight yielded exactly 1.0 and the boundary could not be
+    // touched. Filling the P/E made it reachable, and the knob is config input, so the guard sits at
+    // the boundary rather than in a comment — (#48)'s reasoning verbatim. No shipped value moves: at
+    // w = 0.0 the term is 1.0, and the whole 0.25..1.0 ladder keeps `value` in [0.5, 1.5].
+    let value = (1.0 + tuning.growth_value_weight * (value_raw - 1.0)).max(0.0);
     let trust = trust_factor(
         quote,
         crypto,
@@ -8543,13 +8556,26 @@ mod tests {
         assert!((s(&hot(), &BuyHeuristic { growth_turnover_weight: 0.5, ..d.clone() }) - s(&hot(), &d)).abs() < 1e-9,
             "at exactly €1B the ln ratio is 0 — the tilt lifts ABOVE €1B, it does not shift everything");
 
-        // (Item 20) growth_value_weight — dials the BLIND P/E multiplier toward neutral 1.0. A rich name
+        // (Item 20) growth_value_weight — dials the P/E multiplier toward neutral 1.0 (BLIND in the
+        // backtest until (#147) filled it there). A rich name
         // scores HIGHER as the weight falls, which is the whole point of the knob (the validated edge was
         // measured with this term off).
         let mut rich = hot();
         rich.pe_ratio = Some(40.0); // 2× ref_pe -> the damp end of value_factor
         let vw = |w: f64| s(&rich, &BuyHeuristic { growth_value_weight: w, ..d.clone() });
         assert!(vw(0.0) > vw(0.5) && vw(0.5) > vw(1.0), "less P/E authority = less damp on a rich name");
+        // (#147) THE NaN GUARD, the exact twin of the proximity one. `value` reaches the score through
+        // `combine_damps` (product().powf(1/n)), so a NEGATIVE factor there is NaN — it poisons the whole
+        // score rather than sinking the name. `rich` sits AT VALUE_TILT_MIN (ref_pe/40 clamps to 0.5), so
+        // w=3 computes 1 + 3x(0.5 - 1) = -0.5 without the clamp. This was UNREACHABLE in the backtest
+        // until (#147) filled `quote.pe_ratio` — `value_raw` was 1.0 on every row, so no weight could
+        // reach the boundary. Forced here because a config knob has no gate in front of it.
+        assert!(vw(3.0).is_finite(), "the value clamp let a NaN through: {}", vw(3.0));
+        assert!(vw(3.0) < vw(1.0), "a clamped value must still be the harshest rung, not a free pass");
+        // ...and the clamp must be UNREACHABLE across the ladder (#147) actually measured.
+        for w in [0.25, 0.5, 1.0] {
+            assert!(vw(w).is_finite() && vw(w) > 0.0, "w={w} must not reach the clamp");
+        }
 
         // (C) calmar_cap — clamps the CAGR/max-drawdown ratio inside risk_bonus.
         let mut scarred = hot();

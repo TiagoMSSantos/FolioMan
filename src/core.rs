@@ -2275,6 +2275,28 @@ pub fn earnings_yield(eps: Option<f64>, price: f64) -> Option<f64> {
     }
 }
 
+/// (#147) The inverse of [`earnings_yield`] — an as-of P/E from a yield in %.
+///
+/// EXISTS BECAUSE THE BACKTEST WAS P/E-BLIND. `quote.pe_ratio` appeared ZERO times in
+/// `commands/backtest.rs`, so `picks::value_factor` returned 1.0 on every walk-forward row and both
+/// terms that read it were graded as different functions than the ones that ship live: the re-rating
+/// leg of `picks::expected_return_pct` was identically 0 (found by (#145)), and (#1) zeroed
+/// `growth_value_weight` for exactly that reason. The loop already computes the yield at
+/// `backtest.rs`'s cutoff; this is the one conversion that was missing.
+///
+/// A RATIO IS CURRENCY-NEUTRAL, which is what makes this honest where `ev_ebitda_yield` had to stay
+/// probe-only. `backtest.rs` computes the yield from an as-of close restated into the FILER's
+/// currency so it matches the EPS beside it — and since both legs are then in that one currency, the
+/// quotient is the same number the quote currency would have given. No rate is applied here and none
+/// is needed.
+///
+/// Non-positive yields answer `None`, not a negative P/E: a loss-maker has no meaningful multiple,
+/// and inventing one would put a "cheap" name at the top of the very lane this feeds. Mirrors
+/// [`peg_yield_from_pe`], which does the opposite conversion with the same `100.0 /` constant.
+pub fn pe_from_earnings_yield(ey: Option<f64>) -> Option<f64> {
+    ey.filter(|&y| y > 0.0).map(|y| 100.0 / y)
+}
+
 /// (EV/EBITDA probe) As-of EBITDA yield = EBITDA ÷ enterprise value, in % — the capital-structure-neutral
 /// cousin of `earnings_yield`. EV = market cap + net debt = shares·price + net_debt. PROBE-ONLY, same
 /// currency discipline as earnings_yield: computed in the backtest from the native as-of close + native
@@ -3241,6 +3263,16 @@ mod tests {
         assert_eq!(earnings_yield(Some(-2.0), 50.0), Some(-4.0)); // loss-maker -> negative yield (floored later in score)
         assert_eq!(earnings_yield(Some(5.0), 0.0), None); // non-positive price -> None, no div-by-zero
         assert_eq!(earnings_yield(None, 100.0), None); // no EPS -> None
+
+        // (#147) the inverse, the conversion that un-blinds the backtest's P/E. Round-trips
+        // `earnings_yield` exactly, which is the property the fill in backtest.rs depends on.
+        assert_eq!(pe_from_earnings_yield(Some(5.0)), Some(20.0)); // 5% yield <=> P/E 20
+        assert_eq!(pe_from_earnings_yield(Some(2.5)), Some(40.0)); // and it is not a constant
+        assert_eq!(pe_from_earnings_yield(Some(-4.0)), None); // loss-maker: NO negative multiple
+        assert_eq!(pe_from_earnings_yield(Some(0.0)), None); // zero yield -> None, no div-by-zero
+        assert_eq!(pe_from_earnings_yield(None), None); // nothing in -> nothing out
+        // the round trip both directions, so neither side can drift to its own constant
+        assert_eq!(pe_from_earnings_yield(earnings_yield(Some(5.0), 100.0)), Some(20.0));
         // (EV/EBITDA) ebitda_yield = EBITDA / (shares·price + net_debt), %, high = cheap
         assert_eq!(ev_ebitda_yield(Some(50.0), Some(2.0), Some(50.0), 25.0), Some(50.0)); // EV = 2*25 + 50 = 100 -> 50/100 = 50%
         assert_eq!(ev_ebitda_yield(Some(20.0), Some(2.0), Some(-10.0), 15.0), Some(100.0)); // net CASH: EV = 30 − 10 = 20 -> 20/20 = 100%

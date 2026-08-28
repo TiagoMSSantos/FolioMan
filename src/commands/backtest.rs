@@ -1222,6 +1222,15 @@ pub async fn run(args: Vec<String>) {
                                 Some(s) => px_in_filer_ccy(closes[i], core::rate_as_of(s, dates[i])),
                             };
                             f.earnings_yield = px.and_then(|p| core::earnings_yield(f.eps_ttm, p));
+                            // (#147) THE P/E FILL. Until now `quote.pe_ratio` was never written on this
+                            // path — `pe_ratio` appeared zero times in this file — so `picks::value_factor`
+                            // returned 1.0 on every row and the two terms reading it were graded as
+                            // different functions than the ones that ship. The yield directly above is
+                            // eps_ttm over the as-of close in the filer's currency; a P/E is that inverted,
+                            // and a ratio carries no currency, so no rate is applied. Available ONLY on the
+                            // `fund` lane, because an as-of P/E needs as-of EPS: on a price-only run this
+                            // stays None and every golden is byte-identical, which is the inertness proof.
+                            quote.pe_ratio = core::pe_from_earnings_yield(f.earnings_yield);
                             // (EV/EBITDA) same close, same currency discipline: EV = shares·px + net_debt,
                             // all as-of. Still PROBE-ONLY — never the live score's weighed factor.
                             f.ebitda_yield = px.and_then(|p| core::ev_ebitda_yield(f.ebitda_ttm, f.shares_ttm, f.net_debt, p));
@@ -1723,7 +1732,15 @@ pub async fn run(args: Vec<String>) {
     // dividend half of that was false — `#53` plumbed as-of divs (`picks.rs` says so at the growth
     // lane's own dividend term) and the row it called inert was the largest in the table at Δ+150.7.
     // A footnote claiming a term cannot be graded is the exact thing that stops anyone grading it.
-    println!("  • Price-only (#6): no as-of P/E reconstructed, so the `value` multiplier is ×1.0 here; as-of DIVIDENDS are live since #53 and every dividend row below is real.");
+    // (#147) The P/E half of that footnote has now gone the same way as the dividend half: a `fund`
+    // run reconstructs an as-of P/E from the as-of earnings yield, so "no as-of P/E reconstructed" is
+    // true only on the price-only lane. Same lesson as (#61) — name the lane the reader is on instead
+    // of declaring a term ungradeable everywhere.
+    if fund_lane_on(fund, insider) {
+        println!("  • As-of P/E (#147): reconstructed here as 100 / the as-of earnings yield, so `value_factor` reads a REAL P/E on this lane (×1.0 only where EPS is missing). It reaches the on-sale `buy_score` at full authority; it reaches `growth_score` only through `growth_value_weight`, which ships at 0. as-of DIVIDENDS are live since #53 and every dividend row below is real.");
+    } else {
+        println!("  • Price-only (#6): no as-of P/E reconstructed, so the `value` multiplier is ×1.0 here; as-of DIVIDENDS are live since #53 and every dividend row below is real.");
+    }
     println!("  • Overlapping 6-mo windows share price paths -> samples aren't independent; rho is directional.");
     if monthly {
         println!("  • Long-horizon (MAX monthly): only names alive for the FULL {years}y window enter, so");
