@@ -1521,10 +1521,12 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // filled `quote.pe_ratio` on `fund` runs. The term is now GRADEABLE — and was graded: see the
     // (#147) receipt in ci-settings.yaml. The weight still ships at 0, but for a MEASURED reason now
     // (it cannot reach the argmax) rather than because the walk-forward could not see it.
-    // (#147) CLAMPED AT 0, for the same reason `proximity` is and on the same evidence: `value`
-    // reaches the score through `combine_damps`, which fractional-exponents its inputs, so a negative
-    // factor there is NaN — it does not sink the name, it silently poisons the whole score. Any
-    // weight above 2.0 drives a name sitting at VALUE_TILT_MIN negative: 1 + 3x(0.5 - 1) = -0.5.
+    // (#147) CLAMPED AT 0, for the same reason `proximity` is and on the same evidence. (#148)
+    // CORRECTS THE ARM THIS NAMED: on the SHIPPED arm of `compose_score`, `value` multiplies RAW, and
+    // a negative there would merely invert the name rather than poison it. The NaN lives on the
+    // `growth_geomean_fold` arm, where `value` enters `combine_damps` and gets fractional-exponented
+    // — that arm ships FALSE but is config-reachable, which is exactly why the guard stays at the
+    // boundary. Any weight above 2.0 drives a name at VALUE_TILT_MIN negative: 1 + 3x(0.5 - 1) = -0.5.
     // This was UNREACHABLE in the backtest until (#147) filled `quote.pe_ratio`: `value_raw` was 1.0
     // on every walk-forward row, so every weight yielded exactly 1.0 and the boundary could not be
     // touched. Filling the P/E made it reachable, and the knob is config input, so the guard sits at
@@ -8564,9 +8566,11 @@ mod tests {
         rich.pe_ratio = Some(40.0); // 2× ref_pe -> the damp end of value_factor
         let vw = |w: f64| s(&rich, &BuyHeuristic { growth_value_weight: w, ..d.clone() });
         assert!(vw(0.0) > vw(0.5) && vw(0.5) > vw(1.0), "less P/E authority = less damp on a rich name");
-        // (#147) THE NaN GUARD, the exact twin of the proximity one. `value` reaches the score through
-        // `combine_damps` (product().powf(1/n)), so a NEGATIVE factor there is NaN — it poisons the whole
-        // score rather than sinking the name. `rich` sits AT VALUE_TILT_MIN (ref_pe/40 clamps to 0.5), so
+        // (#147) THE NaN GUARD, the exact twin of the proximity one. On the `growth_geomean_fold` arm
+        // `value` enters `combine_damps` (product().powf(1/n)), so a NEGATIVE factor there is NaN — it
+        // poisons the whole score rather than sinking the name. (#148): that arm ships FALSE and the
+        // shipped arm multiplies `value` raw, but the knob is config input and the arm is config-
+        // reachable, so the guard stays. `rich` sits AT VALUE_TILT_MIN (ref_pe/40 clamps to 0.5), so
         // w=3 computes 1 + 3x(0.5 - 1) = -0.5 without the clamp. This was UNREACHABLE in the backtest
         // until (#147) filled `quote.pe_ratio` — `value_raw` was 1.0 on every row, so no weight could
         // reach the boundary. Forced here because a config knob has no gate in front of it.

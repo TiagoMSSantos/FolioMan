@@ -5663,21 +5663,44 @@ buy_heuristic:
   #     Both GUARDs therefore HOLD at both horizons and PRIMARY reads "held" — and that
   #     is exactly the free pass (#145) warned about. Recorded VACUOUS, NEVER PASSED.
   #
-  #   WHY, AND IT IS ARITHMETIC RATHER THAN DATA. Coverage is NOT the cause — 240 of the 249
-  #   growth-scored cutoffs carry fundamentals (96%), the same number (#145) recorded. The cause is
-  #   that `value` reaches the score through `combine_damps(&[trust, overext, proximity, value])`,
-  #   which is `product().powf(1/n)` with n = 4 — so the knob's REAL authority is the FOURTH ROOT of
-  #   the swing this file has advertised since (#1):
-  #     w      `value` range     after the 4-slot geomean    total spread
-  #     0.25   0.875 .. 1.125    x0.967 .. x1.030            1.07x
-  #     0.5    0.750 .. 1.250    x0.931 .. x1.057            1.14x
-  #     1.0    0.500 .. 1.500    x0.841 .. x1.107            1.32x
-  #   "Full x0.5..1.5 swing" is the range of `value_factor`, NOT the authority the knob exerts. At
-  #   the top rung it is a 1.32x spread, and that is smaller than the score gaps between adjacent
-  #   names in the gated pool, so no pair ever swaps. (#1) called it "a +-50% reorder"; it is not one
-  #   and never was. THIS SAME FOLD APPLIES TO `growth_proximity_weight`, which is why (#48) found it
-  #   argmax-blind — one mechanism, two receipts, and it should be checked FIRST for any future
-  #   multiplier knob before a grid is run for it.
+  #   WHY — RETRACTED BY (#148) ON 2026-08-29. THE MECHANISM THIS RECEIPT GAVE WAS WRONG.
+  #   What stood here explained the vacuous ladder as ARITHMETIC: that `value` reaches the score
+  #   through `combine_damps(&[trust, overext, proximity, value])`, `product().powf(1/n)` with n = 4,
+  #   so the knob's real authority is the FOURTH ROOT of its advertised swing — 1.32x total spread at
+  #   w = 1.0 rather than 3x — under a three-row table of folded ranges sized on that.
+  #   THAT IS THE WRONG ARM OF `compose_score`. It has three, and the 4-slot `combine_damps` is the
+  #   `growth_geomean_fold` arm, which (#8) reverted on 2026-07-02 and which ships FALSE (line 1172).
+  #   The SHIPPED arm is the one line 754 has carried all along:
+  #     score = base · proximity · value · geomean(trust, overext_brake) · ter · commodity · fx · acc
+  #             + liq_bonus
+  #   `proximity` and `value` multiply RAW there, at full advertised authority — at w = 1.0 `value`
+  #   really does span 0.5..1.5, and (#1)'s "+-50% reorder" was the honest description of the knob.
+  #   `damp` is a TWO-slot `combine_damps(&[trust, overext_damp])`, a square root over trust and
+  #   overextension only. Lines 754, 1172, 4854 and 7472 all recorded this BEFORE (#147) contradicted
+  #   them, so the receipt was wrong against its own register — which is why this retraction is loud
+  #   and in place rather than a quiet rewrite. Anything downstream that sized a rung on the folded
+  #   table is sized wrong by up to 3x; nothing shipped on it, because the verdict was 0.0 either way.
+  #   The same retraction covers the claim that this fold is why (#48) found `growth_proximity_weight`
+  #   argmax-blind: proximity multiplies raw too, so that receipt's blindness is ALSO unexplained, not
+  #   explained by a shared mechanism. Two open questions now, not one solved one.
+  #
+  #   ALSO WITHDRAWN: "Coverage is NOT the cause — 240 of the 249 growth-scored cutoffs carry
+  #   fundamentals (96%)". The number is right and the inference is wrong: that is `quote.fund`
+  #   presence, and `value_raw` never reads `quote.fund`. It reads `quote.pe_ratio`, which (#147)
+  #   fills ONLY from a POSITIVE `earnings_yield` (`core::pe_from_earnings_yield` filters y > 0);
+  #   every other row falls back to `value_factor`'s `_ => 1.0` and is INERT at every weight. Coverage
+  #   of that predicate on the growth lane was never measured. The nearest measured bound is pool-wide
+  #   off this same run: 4789 of 8487 cutoffs carry as-of fundamentals, but only 1377 of those carry
+  #   an `earnings_yield` at all (29%), and that count is SIGNED — so positive-only coverage is at
+  #   most 29%, and a term inert on three rows in four is a live hypothesis for the vacuity the fourth
+  #   root pretended to have settled.
+  #
+  #   SO THE MECHANISM IS OPEN. Two candidates, and they are separable: (a) COVERAGE, above — one
+  #   instrumented run counting growth-lane rows with `value_raw != 1.0` decides it; (b) AUTHORITY vs
+  #   GAP — even a raw 0.5..1.5 multiplier may be smaller than the score gaps between adjacent names
+  #   in a pool this thin. (b) is now known to be untestable on this column: the graded top-10 basket
+  #   holds ~93% of a pool that saturates near 6.4 names per bucket, so it could not have moved for
+  #   ANY ranking knob at ANY authority (see (#149), which makes the ruler say so). MEASURE (a) FIRST.
   #
   #   THE DOSE THAT DOES MOVE IT, run as a DIAGNOSTIC and never a ship candidate: w = 10.0, ten times
   #   the top rung. Even there top-1, top-2, top-10, top-15..50, the zero-names list and the h2h stay
@@ -5699,9 +5722,10 @@ buy_heuristic:
   #   VERDICT: 0.0 STANDS, now on EVIDENCE rather than on ignorance. Ship Rule v2 never got to
   #   adjudicate — every horizon is VACUOUS in (#126)'s sense, and a column that cannot move reads
   #   "held" for free. Recorded VACUOUS, never passed.
-  #   REVERT: already at the reverted value. Re-open only with a mechanism that gives this term
-  #   authority the geomean does not quarter — moving it OUT of `combine_damps` into `base` as an
-  #   additive term is the shape that would, and that is a different knob needing its own round.
+  #   REVERT: already at the reverted value. (#148) rewrote this rule too, because the old one asked
+  #   for "a mechanism that gives this term authority the geomean does not quarter" — the geomean
+  #   never quartered it. Re-open only after the coverage count in (a) above, and only on a lane
+  #   (#149) does NOT tag VACUOUS. If coverage is the cause, the fix is upstream data, not a weight.
   #   Re-run: the arm body above at w in {0.25,0.5,1.0} plus a 0.0 control through the SAME overlay,
   #   `backtest {12,8} universe fund pit`, ~2.5 min per run.
   # (#50) WHAT THIS 0.0 COSTS DOWNSTREAM, recorded 2026-08-06 because no receipt said it: with this
