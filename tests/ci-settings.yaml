@@ -6493,6 +6493,54 @@ buy_heuristic:
   #   — SHIP NOTHING" (every factor there has a negative EARLY half, price-only included, so that sweep
   #   discriminates nothing — read its standalone rows instead). A factor that wins at one horizon and
   #   loses at the other is horizon-dependent, not an edge.
+  #   (#157) THE SWEEP WAS WIDENED 14 -> 24 AND MEASURED 2026-08-29. SHIP NOTHING.
+  #   `core::select_fund_factor` has always registered and computed ten factors this array never
+  #   asked about — they were reachable from every OTHER read site (the held-book-by-factor table,
+  #   the SURVIVAL-GATE probe, `growth_fund_weight`) and absent only here, which is the one place
+  #   that applies a multiple-testing haircut. So four of them had (#124)'s percentile-cut reading
+  #   and no honest band, and the other six had neither. The array also moved to module scope as
+  #   `FUND_FACTORS` so (#159) reads the SAME registry — non-negotiable #4, one definition.
+  #   THE HAIRCUT GOT STRICTER, NOT WEAKER. `sidak_tail(n)` returns (5/n, 100-5/n), so the band's
+  #   tails move from the 0.357th/99.643rd percentile at 14 to the 0.208th/99.792nd at 24. ANY band
+  #   quoted in this file must be read against the arity it was computed at — check the length before
+  #   calling a wider band a regression.
+  #   Runs: `backtest {12,8} universe fund pit`, this file unmodified.
+  #                     12y (baseline +309.7)        8y (baseline -48.6)        verdict
+  #     roe             +376.2  OOS +0.31|-0.03     -70.3  OOS -0.18|+0.01     below baseline at 8y
+  #     quality         +376.2  OOS +0.31|-0.03     -50.0  OOS -0.18|+0.02     below baseline at 8y
+  #     roic            +349.5  OOS +0.20|+0.00     -22.7  OOS -0.12|-0.00     early half - at 8y
+  #     ebitda_yield    +400.5  OOS +0.50|+0.08     -50.7  OOS +0.04|+0.14     below baseline at 8y
+  #     fcf_margin      +326.7  OOS +0.48|-0.07     -17.8  OOS -0.13|+0.10     a - half at BOTH
+  #     interest_cover  +180.8  OOS +0.33|-0.18     -18.3  OOS -0.09|+0.08     below baseline at 12y
+  #     net_cash_rev    +349.5  OOS +0.50|-0.06      +0.7  OOS -0.10|-0.06     a - half at BOTH
+  #     margin_stability +309.7 OOS +0.47|-0.00     -48.6  OOS -0.13|-0.02     INERT (see below)
+  #     accrual_gap     +403.1  OOS +0.47|+0.07     -53.2  OOS -0.12|-0.00     below baseline at 8y
+  #     asset_growth    +309.7  OOS +0.47|-0.00     -48.6  OOS -0.13|-0.02     INERT (see below)
+  #   NOT ONE OF THE TEN clears price-only with both OOS halves + at BOTH horizons, which is the bar
+  #   this sweep has always applied. `accrual_gap` is the 12y ARGMAX (+403.1 against a +309.7
+  #   baseline, both halves +) and drops BELOW baseline at 8y (-53.2 vs -48.6) — horizon-dependent,
+  #   the identical disqualification `rev_yoy` already carries above. DO NOT RE-POINT
+  #   `growth_fund_factor` AT IT: the WINNER row is an argmax, `peg_yield` stays shipped.
+  #   `margin_stability` and `asset_growth` print EXACTLY the price-only baseline at both horizons.
+  #   That is not "weak" — the weight search returned 0, so the tilt is inert and the factor cannot
+  #   move the score at any weight the search would pick.
+  #   NO n/a ROWS AT EITHER HORIZON: 24 of 24 populate. The widening was expected to expose factors
+  #   the point-in-time pool cannot fill, and it exposed none. Coverage is not the limit here.
+  #   CAVEAT THAT LIMITS EVERY NUMBER ABOVE — WITHIN-RUN COMPARISONS ONLY. The pre-existing factors'
+  #   TEST edges MOVED between the 14-factor run and this one (eps_yoy +338.3 -> +402.5,
+  #   earnings_yield +371.3 -> +400.5, gross_margin +192.0 -> +225.8) even though the graded top-10
+  #   columns of the two runs were byte-identical (+3.7 med +3.9, worst -6.4, 209 holds). The sweep
+  #   re-searches a weight per factor over a fund sample that shifts as the universe cache warms, and
+  #   it is not a graded column, so it does not inherit (#156)'s determinism result. COMPARE EACH
+  #   FACTOR TO THE price-only BASELINE PRINTED IN ITS OWN RUN, never to a TEST edge from another.
+  #   THE SIDAK BAND DID NOT PRINT AT EITHER HORIZON — `bootstrap_edge_ci` returned None — and it did
+  #   not print in the 14-factor run either, so the widening did not cause this. Recorded because the
+  #   consequence is easy to miss: this file calls that band "exactly ONE multiple-testing
+  #   correction", and on the PIT lane it is currently not produced at all, leaving the WINNER row
+  #   unguarded there. Fixing that is its own round; do not read a WINNER on `pit` as if banded.
+  #   REVERT RULE: shrink `FUND_FACTORS` to restore the looser band; nothing else moves. Goldens are
+  #   untouched either way — the fixture runs offline, so `sweep_fund_factor` returns early on its
+  #   `< 8 samples with fund` guard and never prints a row.
   #   Only eps_growth clears both halves at both horizons — and it is exactly the factor (i) made
   #   split-safe and (ii) made visible. Its held-book is unremarkable though (fund 5: +16.7%/yr, excess
   #   +4.4, win 50%, OOS -0.3/+9.0, n=269) vs peg_yield +31.9 / +19.5 / 100% — so it is a candidate for

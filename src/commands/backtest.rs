@@ -2135,6 +2135,36 @@ fn sidak_tail(n: usize) -> (f64, f64) {
     (side, 100.0 - side)
 }
 
+const FUND_FACTORS: [&str; 24] = [
+    "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
+    // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
+    // array TIGHTENS every reported band: the Šidák haircut below divides by FUND_FACTORS.len(), so
+    // going 11 -> 14 -> 24 makes the best-of-N test stricter, not the factors weaker. A later
+    // reader comparing bands across runs must check this length before calling it a regression.
+    "rev_yoy", "eps_yoy", "net_margin",
+    "insider_net_buys_90d", // (Item 4) shows n/a unless `insider` populated it
+    "earnings_yield",       // (Item 19) as-of valuation; native-currency probe (n/a unless `fund`)
+    // (PEG) growth-at-price = earnings_yield · as-of CAGR (1/PEG; 100 ⇔ PEG 1, >100 ⇔ PEG <1).
+    // Swept HERE, not just in the held-book list, because this is the sweep that carries the
+    // Šidák best-of-N haircut — the axis was annotated "expected dead" for rounds without ever
+    // being measured. NOTE the scale: peg_yield runs ~0-500 where earnings_yield runs ~0-15, so
+    // the default `growth_fund_cap: 30` clamps every PEG < 3.3 name to the same value and would
+    // fake a dead result. Raise the cap (~300) for any run that reads this row.
+    "peg_yield",
+    "buyback_yield",        // as-of 1y share-count shrink (+ = buying back); n/a unless `fund` + shares in the rows
+    // (#157) the ten factors `core::select_fund_factor` has always registered and computed but
+    // this array never asked about. They were reachable from every other read site — the
+    // held-book-by-FACTOR table, the SURVIVAL-GATE probe, `growth_fund_weight` — and absent ONLY
+    // here, which is the one place that applies the Šidák best-of-N haircut. So the four survival
+    // factors had a percentile-cut reading from (#124) and no honest multiple-testing band, and
+    // the other six had neither. Read the n/a rows as a result: they record which factors the
+    // point-in-time pool cannot populate, which is a fact about coverage, not about the factor.
+    "roe", "quality", "roic", "ebitda_yield",
+    "fcf_margin", "interest_cover", "net_cash_rev", "margin_stability",
+    "accrual_gap", "asset_growth",
+    "composite",            // (Item 3) shows n/a until ≥2 factors are present
+];
+
 /// (#119) UNGRADEABLE BY THE MUTATION GATE — the fund lane needs a live `FMP_API_KEY`, and every
 /// golden runs offline by design (tests/backtest_fixture.rs:134), so no test in `--lib --test
 /// backtest_fixture` executes one line of this. `replace sweep_fund_factor with ()` is unkillable
@@ -2144,25 +2174,6 @@ fn sidak_tail(n: usize) -> (f64, f64) {
 /// `bootstrap_block` are pure and tested. What stays here is the printing.
 #[mutants::skip]
 fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
-    const FACTORS: [&str; 14] = [
-        "rev_cagr", "rev_accel", "gross_margin", "op_margin", "margin_trend", "eps_growth",
-        // the printed columns (REV-YoY / EPS-YoY / NET%), swept for the first time. Widening this
-        // array TIGHTENS every reported band: the Šidák haircut below divides by FACTORS.len(), so
-        // going 11 -> 14 makes the best-of-N test stricter, not the factors weaker. A later reader
-        // comparing bands across runs must check this length before calling it a regression.
-        "rev_yoy", "eps_yoy", "net_margin",
-        "insider_net_buys_90d", // (Item 4) shows n/a unless `insider` populated it
-        "earnings_yield",       // (Item 19) as-of valuation; native-currency probe (n/a unless `fund`)
-        // (PEG) growth-at-price = earnings_yield · as-of CAGR (1/PEG; 100 ⇔ PEG 1, >100 ⇔ PEG <1).
-        // Swept HERE, not just in the held-book list, because this is the sweep that carries the
-        // Šidák best-of-N haircut — the axis was annotated "expected dead" for rounds without ever
-        // being measured. NOTE the scale: peg_yield runs ~0-500 where earnings_yield runs ~0-15, so
-        // the default `growth_fund_cap: 30` clamps every PEG < 3.3 name to the same value and would
-        // fake a dead result. Raise the cap (~300) for any run that reads this row.
-        "peg_yield",
-        "buyback_yield",        // as-of 1y share-count shrink (+ = buying back); n/a unless `fund` + shares in the rows
-        "composite",            // (Item 3) shows n/a until ≥2 factors are present
-    ];
     if samples.iter().filter(|s| s.fund.is_some()).count() < 8 {
         return; // no as-of fundamentals (no FMP key / cold cache) -> report_fund_lane already said so
     }
@@ -2214,7 +2225,7 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
 
     let (baseline, ..) = eval(None); // price-only TEST edge: the bar every factor must clear
     let results: Vec<(&str, f64, Option<f64>, Option<f64>)> =
-        FACTORS.iter().map(|&n| { let (e, a, b, _) = eval(Some(n)); (n, e, a, b) }).collect();
+        FUND_FACTORS.iter().map(|&n| { let (e, a, b, _) = eval(Some(n)); (n, e, a, b) }).collect();
 
     let fmt = |r: Option<f64>| r.map_or("n/a".to_string(), |v| format!("{v:+.2}"));
     println!("\n── FUND FACTOR SWEEP (growth_fund_weight searched per factor, held-out TEST) ──");
@@ -2242,7 +2253,7 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
             demean(&mut s); // peer-relative is the bootstrap's metric; `relative` depends only on date+realized
             let mut tun = default.clone();
             tun.growth_fund_weight = weight;
-            let (lo_p, hi_p) = sidak_tail(FACTORS.len());
+            let (lo_p, hi_p) = sidak_tail(FUND_FACTORS.len());
             let block = bootstrap_block(years, &tun);
             if let Some((lo, hi)) = bootstrap_edge_ci(&s, growth_score, &tun, 1000, lo_p, hi_p, block) {
                 let verdict = if lo > 0.0 {
@@ -2250,7 +2261,7 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
                 } else {
                     "within best-of-N luck -> SHIP NOTHING despite the raw winner"
                 };
-                println!("  multiple-testing band (best of {} factors): [{lo:+.1} … {hi:+.1}] pts  ({verdict})", FACTORS.len());
+                println!("  multiple-testing band (best of {} factors): [{lo:+.1} … {hi:+.1}] pts  ({verdict})", FUND_FACTORS.len());
             }
         }
         None => println!("  -> no factor beats price-only with both OOS halves + — keep growth_fund_weight 0. SHIP NOTHING."),
@@ -5185,7 +5196,8 @@ mod tests {
     fn sidak_tail_tightens_both_ends_by_five_over_n() {
         assert_eq!(sidak_tail(1), (5.0, 95.0), "one candidate is no selection — the plain 90% band");
         assert_eq!(sidak_tail(10), (0.5, 99.5));
-        let (lo, hi) = sidak_tail(14); // FACTORS.len() at the time of writing
+        let (lo, hi) = sidak_tail(14); // a fixed arity, NOT FUND_FACTORS.len() — this tests the
+        // function, so it must not move when (#157) widens the array (14 was the length then)
         assert!((lo - 0.357_142_857).abs() < 1e-9 && (hi - 99.642_857_142).abs() < 1e-9, "{lo} {hi}");
         // both ends move OUTWARD as the search widens: more factors tried -> a stricter bar, which is
         // the whole point. A `-` flipped to `+` here would tighten the band and pass a losing winner.
@@ -5991,6 +6003,7 @@ mod tests {
         let wiped = vec![row(unassessable("Z1"), -100.0), row(unassessable("Z2"), -100.0)];
         assert!(missed_winner_reasons(&wiped, &[], &t, 1, 1.0, 0.0).is_none());
     }
+
 
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back
     /// exactly what backtest wrote), corrupt/empty JSON is an empty journal (a broken file silences
