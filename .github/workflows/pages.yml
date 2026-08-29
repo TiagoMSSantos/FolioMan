@@ -31,11 +31,8 @@ name: Pages
 # base rather than of a file that had to be kept in sync with it, and the same test refuses to let a
 # second overlay come back.
 on:
-  # Weekday mornings, after the European open has settled. GitHub delays scheduled runs under load
-  # and drops them outright on a quiet repo, which is why the page carries its own staleness banner
-  # rather than assuming this fired.
   schedule:
-    - cron: "30 5 * * 1-5"
+    - cron: "*/5 * * * *" # every 5 min
   # Republish whenever main moves, so a heuristic change is visible on the page immediately instead of
   # at 05:30 the next weekday. NO `paths` filter, deliberately: the rows are a live universe fetch, so
   # what the page shows depends on the market as much as on the diff, and a docs-only push simply
