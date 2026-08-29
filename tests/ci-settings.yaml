@@ -231,6 +231,16 @@
 #    (the five fundamentals gates), `aum_eur`, `quote_currency`, listing age, the 8Y range. Every one is
 #    reachable on a live `screen`. The pin's own header says this ("STILL INERT there, for a different
 #    and unfixed reason") and the probe list labels the last two "known-unreachable by construction".
+#    (#156) CORRECTS THE `fund` HALF OF THAT SENTENCE, and it is the half that mattered. "Reachable on
+#    a live `screen`" UNDERSTATES the five fundamentals gates: `fund_lane_on` (backtest.rs:501) fills
+#    `quote.fund` whenever the `fund` keyword is on the command line, so those five are reachable and
+#    GRADEABLE in a BACKTEST — `backtest {20,12,8} universe fund pit`. (#156) then graded one of them
+#    (growth_max_dilution_pct) exactly there. So the pin's INERT verdict for those five is an artifact
+#    of probing at a default that omits the keyword, NOT a statement that the backtest cannot see them.
+#    The remaining four (`aum_eur`, `quote_currency`, listing age, the 8Y range) are backtest-blind as
+#    written. This matters for the prune question the block below pre-registers: a live-path twin of
+#    the reachability pin is NOT needed for the five fundamentals gates, because the fund lane already
+#    grades them. It is still needed for the other four.
 #    Deleting on the strength of that table would delete WORKING GATES.
 #    Note growth_require_lifetime_uptrend is the third category named above — reachable, inputs filled,
 #    but `growth_min_cagr` rejects its cohort first. That domination is a property of cagr sitting at
@@ -7688,12 +7698,74 @@ buy_heuristic:
   # top-50 at every horizon) and it captures only 5-24% of the pool's extreme wealth. The lane's
   # problem is ADMISSION, not selection. Four more rejections is the wrong direction against that
   # measurement, whatever any individual rung scores. Do not open this block before reading (#124).
+  #
+  # (#156) MEASURED 2026-08-29 — the sweep this block demanded, run at last. REFUSED AT EVERY RUNG.
+  # Keep 0.0 (off). Nothing to revert: the knob never moved off its default, and this receipt exists
+  # so the next reader does not pay for the same five runs.
+  #
+  # Runs: `backtest {20,12,8} universe fund pit`, arms at tests/dil{0,1,2,5,10}-ci-settings.yaml, the
+  # pre-registered ladder off/10/5/2/0. The `fund` keyword is LOAD-BEARING: `fund_lane_on`
+  # (backtest.rs:501) is what fills `quote.fund`, and without it `buyback_yield` is None on every row,
+  # missing data passes (non-negotiable #5) and all five arms print byte-identical. An arm that reads
+  # exactly like its control is the symptom of a forgotten keyword, not of an inert gate.
+  #
+  #   arm    12y excess (med)  ws   h2h(#135)   |  8y excess (med)  ws   h2h(#135)  |  20y
+  #   off    +3.7 (+3.9)       249  12/19 63%   |  +5.3 (+5.6)      355  19/27 70%  |  all arms
+  #   10     +3.7 (+3.9)       247  11/18 61%   |  +5.5 (+5.7)      349  18/26 69%  |  byte-
+  #    5     +3.5 (+3.9)       243  10/18 56%   |  +5.3 (+5.6)      344  18/26 69%  |  identical
+  #    2     +3.2 (+3.0)       232  10/17 59%   |  +4.8 (+4.8)      328  17/25 68%  |  to control
+  #    1     +3.0 (+2.9)       225   9/16 56%   |  +4.3 (+4.6)      309  13/24 54%  |
+  #   (ws = `windows scored`. worst window UNCHANGED at every arm and horizon: -6.4 / -5.5 / -10.0.)
+  #
+  # Rungs 1, 2 and 5 fail PRIMARY outright at both horizons — down on mean AND median. That is
+  # (#124)'s shape reproduced exactly on the one gate its probe never covered: tightening this family
+  # is null and then costly. The block above may now be read as covering all four, not three.
+  #
+  # Rung 10 is the one that needs care, because BY THE LETTER IT PASSES: 12y held (byte-identical on
+  # every graded column), 8y up on mean and median, worst window unmoved, and the rank-1 h2h GUARD
+  # apparently IMPROVED 5/8 (62%) -> 5/7 (71%). It is refused anyway, on three independent reads:
+  #   1. That h2h "gain" is the (#151) residue artifact in its purest form — the NUMERATOR IS
+  #      IDENTICAL AT 5. Only the denominator moved, 8 -> 7, because the tighter gate saturated one
+  #      more bucket and deleted a window the shipped lane was LOSING. A count improved by removing
+  #      one of its losses is not a win.
+  #   2. `print_h2h_mid_ladder` (#135) — on in this file, off in the shipped config — settles it on a
+  #      real denominator, and REVERSES the sign: 19/27 (70%) -> 18/26 (69%) at 8y, 12/19 (63%) ->
+  #      11/18 (61%) at 12y. The numerator FALLS at both horizons. Rung 10 does not win a single
+  #      head-to-head it was not already winning. This is what (#135) was built for; read it before
+  #      leaning on any rank-1 GUARD whose n is single-digit.
+  #   3. The +0.2 at 8y is a mean over a DIFFERENT SAMPLE: ws 355 -> 349, six growth-scored names and
+  #      six windows gone. See the general finding below.
+  #
+  # GENERAL FINDING — (#151) EXTENDS FROM THE h2h TO PRIMARY ITSELF, FOR POOL-CHANGING KNOBS.
+  # (#149) exempts gates from the vacuity rule because they change the pool; (#151) then amended the
+  # rank-1 h2h out of that exemption, its denominator being the residue count. The same reasoning
+  # reaches PRIMARY: a gate that empties a bucket removes a window from `windows scored`, so its mean
+  # and median are taken over a different sample than the control's. Across all five arms at BOTH
+  # horizons the top-10 excess is a near-monotone function of ws (225->249 tracks +3.0->+3.7;
+  # 309->355 tracks +4.3->+5.3). So: A GATE'S PRIMARY IS A LIKE-FOR-LIKE READ ONLY WHILE `windows
+  # scored` HOLDS. When it moves, the delta must clear what the composition change alone explains —
+  # rung 1's -1.0 on a 13% smaller sample is still plainly a loss, rung 10's +0.2 on a 1.7% smaller
+  # sample is not a gain. Print ws for both sides of every future gate comparison.
+  #
+  # At 20y the gate is entirely INERT — all five arms byte-identical, worst -10.0 throughout. As-of
+  # fundamentals are too sparse pre-2010 for `buyback_yield` to be populated, and missing data passes.
+  # The 20y GUARDs are therefore satisfied trivially, not meaningfully, and no 20y column here is
+  # evidence for or against the gate.
+  #
+  # DETERMINISM, checked rather than assumed: the control was re-run LAST, after all ten other runs.
+  # It differed from its own first run in the header counts ONLY — 6083 -> 6087 tickers, 4764 -> 4768
+  # resolved, as Börse Frankfurt ISIN resolution warmed the cache — and was byte-identical on every
+  # graded column: excess, median, census, h2h, worst window, holds. Universe drift inside that band
+  # is graded-inert, every arm sat inside it, and the ladder above is a like-for-like comparison.
+  # This CONFIRMS the determinism claim this file already makes; run-order drift was the first thing
+  # suspected when the ladder came out monotone, and it is not the explanation.
   growth_max_dilution_pct: 0.0   # (P1a) reject a filer whose as-of 1y share count grew more than this %.
                                  #   Reads `-fund.buyback_yield` (that field is sign-flipped, + = shrinking),
                                  #   so a 3% share raise reads +3.0 here. Serial issuance is how a compounder's
                                  #   per-share result is taken from the holder, and no margin or growth term in
-                                 #   the lane can see it. Highest prior of the four — sweep this one FIRST.
-                                 #   UNFITTED. Suggested ladder: off / 10 / 5 / 2 / 0. 0 = off.
+                                 #   the lane can see it. SWEPT AND REFUSED at every rung — see (#156)
+                                 #   directly above. Do not re-run this ladder without a new reason.
+                                 #   The ladder it ran was off / 10 / 5 / 2 / 0. 0 = off.
   growth_min_interest_cover: 0.0 # (P1b) reject a filer whose as-of operating income ÷ interest expense is
                                  #   under this ×. `fund.interest_cover` is None when NO interest expense was
                                  #   filed, so a debt-free balance sheet reads NEUTRAL and passes — deliberate:
