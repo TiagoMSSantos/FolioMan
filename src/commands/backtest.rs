@@ -2392,6 +2392,36 @@ fn corr_cap_rung<T: Clone>(rows: &[T], trails: &[&[f64]], n: usize, cap: f64) ->
 /// return minus what ^GSPC did from the same cutoff. Top-N per ~6mo bucket; report mean pick/SPY CAGR,
 /// excess, win-rate, worst bucket, and the early-vs-late OOS split. Read the STRESS run: the picks come
 /// from today's survivors (biased UP), ^GSPC is the true index, so a non-stress win is optimistic.
+/// (#149) THE RULER'S OWN BLIND SPOT, reported so no receipt can bank a free pass off it. The
+/// ABSOLUTE top-N table grades an EQUAL-WEIGHT basket, which is SET-invariant: reordering names
+/// INSIDE the basket cannot move one number it prints. A ranking knob is therefore only measurable
+/// through the names that CROSS the basket boundary — and a bucket whose gated pool is no larger
+/// than the basket has nobody outside to cross it. Such a bucket prints an identical row at every
+/// setting of every ranking knob, and its "held" is arithmetic rather than evidence. That is the
+/// (#126)/(#145) vacuity standard applied to the verdict basket itself.
+///
+/// THIS IS NOT (#120)'S QUESTION AND MUST NOT BE ANSWERED ITS WAY. (#120) asked which basket
+/// MAXIMISES the mean, found 3 was an unhaircut 13-way argmax over [`TOP_LADDER`], and pinned
+/// [`VERDICT_TOP`] to the comparison basket precisely to delete a fitted parameter. Re-selecting a
+/// rung here because it happens to peak would be that same forbidden move, on the same ladder and
+/// the same data. So this reports and changes nothing: no basket moves, no pick moves. Whether a
+/// column CAN respond is a VALIDITY question, not a fitting one — the precedent is (#139), which
+/// already declares 20y unable to adjudicate a MEAN on `pit` while a MAX (worst window) and a COUNT
+/// (rank-1 h2h) still answer there. The same split applies to a VACUOUS basket.
+///
+/// Returns (saturated buckets, substitutable names, median pool, vacuous). VACUOUS is DEFINED, not
+/// tuned: the MEDIAN bucket is saturated — a strict majority of graded buckets hold no name outside
+/// the basket at all. `pool <= basket` is a definition and "the median bucket" is a one-line rule,
+/// so there is no threshold here for a later round to fit.
+fn basket_vacuity(pools: &[usize], basket: usize) -> (usize, usize, usize, bool) {
+    let saturated = pools.iter().filter(|&&p| p <= basket).count();
+    let substitutable = pools.iter().map(|&p| p.saturating_sub(basket)).sum();
+    let mut sorted = pools.to_vec();
+    sorted.sort_unstable();
+    let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0);
+    (saturated, substitutable, median, saturated * 2 > pools.len())
+}
+
 fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let (bd, bc) = bench;
     // name the benchmark honestly: ^SP500TR when the run meters total return (use_adjusted_close).
@@ -2458,6 +2488,17 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
         "\n── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD {years}y no-sell, vs {bench_sym}){} ──",
         best_of_tag(tuning.print_selection_count, TOP_LADDER.len())
     );
+    let pools: Vec<usize> = by_bucket.values().map(|v| v.len()).collect();
+    let (sat, subs, med_pool, vacuous) = basket_vacuity(&pools, VERDICT_TOP);
+    println!(
+        "  POOL CENSUS (#149): {} bucket(s), median gated pool {med_pool}, graded basket {VERDICT_TOP} -> {sat} saturated (pool <= basket), {subs} substitutable name(s)",
+        pools.len()
+    );
+    if vacuous {
+        println!(
+            "  POOL CENSUS (#149): VACUOUS — the median bucket has nobody outside the basket, so a RANKING knob CANNOT be adjudicated on this column; record VACUOUS, never \"held\". Gates (pool-changing) and MAX/COUNT statistics (worst window, rank-1 h2h) still answer."
+        );
+    }
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
     // (#41/#43) EQUAL-WEIGHT HELD-BOOK return — the correct metric for a no-sell hold. A held book earns
     // ann(mean of terminal MULTIPLES), NOT mean of per-name CAGRs: a 20× winner in the book covers twenty
@@ -5996,6 +6037,31 @@ mod tests {
         let mean_mult = book_multiples(&m, 1).iter().map(|(b, _)| b).sum::<f64>() / 10.0;
         assert!((mean_mult - 4.4).abs() < 1e-9, "{mean_mult}");
         assert!(book_deciles(&std::collections::BTreeMap::new(), 1).is_none()); // empty -> None, not 0%
+    }
+
+    /// (#149) The vacuity census is a GUARD on every future receipt, so its boundaries are pinned
+    /// rather than assumed. Each assert below kills one way the rule could silently loosen.
+    #[test]
+    fn basket_vacuity_marks_the_column_that_cannot_move() {
+        // A bucket whose pool EQUALS the basket is saturated: the basket already holds everyone, so
+        // nobody can cross the boundary. `<` instead of `<=` here would let the blindest possible
+        // bucket read as measurable.
+        assert_eq!(basket_vacuity(&[10], 10), (1, 0, 10, true));
+        // One name outside the basket is one name that CAN cross — not saturated, and it is the
+        // count of outsiders (not of names) that measures the column.
+        assert_eq!(basket_vacuity(&[11], 10), (0, 1, 11, false));
+        // A pool SMALLER than the basket contributes zero substitutable names, never a wrapped
+        // count: `saturating_sub` is load-bearing, a bare `-` would panic or wrap to usize::MAX.
+        assert_eq!(basket_vacuity(&[3], 10), (1, 0, 3, true));
+        // VACUOUS needs a STRICT majority — an exact half-and-half split still adjudicates, so the
+        // median bucket really is the line and `>=` would be a different, looser rule.
+        assert_eq!(basket_vacuity(&[5, 5, 20, 20], 10), (2, 20, 20, false));
+        assert_eq!(basket_vacuity(&[5, 5, 5, 20], 10), (3, 10, 5, true));
+        // The census reports a MEDIAN, not a mean: one deep bucket must not hide a shelf of thin
+        // ones, which is exactly the shape (#147) misread as a weak knob.
+        assert_eq!(basket_vacuity(&[2, 3, 400], 10), (2, 390, 3, true));
+        // Empty run: no buckets, so nothing is vacuous and nothing is claimed.
+        assert_eq!(basket_vacuity(&[], 10), (0, 0, 0, false));
     }
 
     #[test]

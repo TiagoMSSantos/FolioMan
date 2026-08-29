@@ -300,12 +300,43 @@
 #   TO REVERT: delete this block and re-grade (#138) at 20y — that arm reads +0.8|+0.9 -> +0.6|+0.7
 #   there, a TIE under the letter, so reverting this rule reverts that ship. The two stand together.
 #
+# (#149) 2026-08-29 — VACUITY AMENDMENT. Same shape as (#139) again, and the third cause: a column
+#   that CANNOT MOVE cannot adjudicate either. PRIMARY grades an EQUAL-WEIGHT top-10 basket, which is
+#   SET-invariant — reordering names INSIDE the basket moves not one number it prints. So a RANKING
+#   knob is only ever measured through names that CROSS the basket boundary, and a bucket whose gated
+#   pool is no larger than the basket has NOBODY OUTSIDE TO CROSS IT.
+#   Every backtest run now prints a POOL CENSUS line before the top-N table, and tags the column
+#     VACUOUS  when the MEDIAN bucket is saturated (pool <= basket) — i.e. a strict majority of
+#              graded buckets hold no name outside the basket at all.
+#   ON A VACUOUS COLUMN: a RANKING knob is recorded VACUOUS and NEVER "held". A knob that cannot move
+#   a column has not passed it; it was never tested. Exactly as (#139) splits by STATISTIC, this
+#   splits by WHAT THE KNOB TOUCHES: gates and anything else that CHANGES THE POOL still answer (they
+#   move which names exist, not their order), and so do MAX/COUNT statistics on the pool — the worst
+#   window and the rank-1 h2h, which `rank_slice_stats` reads off the untrimmed cohort.
+#   WHY IT IS A DEFINITION AND NOT A FITTED THRESHOLD, which matters because (#120) forbids selecting
+#   a basket off the ladder it is graded on: `pool <= basket` is arithmetic, and "the median bucket"
+#   is the same one-line rule (#139) already uses. NO BASKET MOVES. `VERDICT_TOP` stays 10 and no pick
+#   changes — re-selecting a rung because it peaks would be (#120)'s forbidden argmax a second time,
+#   on the same ladder and the same data. This is a VALIDITY test, not a fitting one.
+#   WHAT IT COSTS: four rounds that banked a "held" now read VACUOUS instead — (#144), (#145) and
+#   (#147) x2 all graded ranking knobs on this column. None of them SHIPPED on that pass, so no
+#   shipped value moves; what changes is that their passes stop counting as evidence. (#147)'s own
+#   receipt already carried the warning and (#126)/(#145) named the standard; this makes the tool say
+#   it instead of a reader having to notice.
+#   MEASURED: on the frozen fixture EVERY lane is vacuous (12y, 8y, 20y, pit, stress — median pool 1
+#   or 2 against a basket of 10), which is the first thing this rule establishes: the fixture cannot
+#   adjudicate a ranking knob AT ALL, and no receipt should ever have cited it for one.
+#   TO REVERT: delete the `basket_vacuity` call in `report_vs_benchmark` and re-bless the goldens.
+#   Nothing downstream reads the tag programmatically — it is a report line and a grading rule.
+#
 #   PRIMARY   top-10 excess (mean AND median) up or held, at 20y AND 8y
 #   GUARD     rank-1 h2h >= 50% at 20y, 12y and 8y   (winner's-curse guard, NOT the judge)
 #   GUARD     top-10 worst window not worse
 #   TIE       horizons disagree -> UNRESOLVED -> NO SHIP. "20y king overrules" is RETIRED.
 #   PIT LANE  on `pit` ONLY, PRIMARY and TIE read 12y AND 8y, not 20y AND 8y — see (#139) just above.
 #             Every 20y GUARD stays live. The wide and `stress` lanes are unchanged.
+#   VACUITY   a column the POOL CENSUS tags VACUOUS cannot adjudicate a RANKING knob — record
+#             VACUOUS, never "held" (#149). Gates and MAX/COUNT statistics still answer there.
 #
 #   PRECEDENCE IS GUARD > PRIMARY > TIE, and it is not a formality. A broken guard REFUSES outright;
 #   it is never softened into "unresolved" because the primary happened to split. `fixed_cagr_years: 5`

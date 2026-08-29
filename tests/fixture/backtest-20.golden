@@ -173,6 +173,8 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   sharpe_ref     n=563   rho -0.30  edge -1950.7  OOS -0.33 | -0.19
 
 ── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 20y no-sell, vs ^GSPC) ──
+  POOL CENSUS (#149): 22 bucket(s), median gated pool 2, graded basket 10 -> 22 saturated (pool <= basket), 0 substitutable name(s)
+  POOL CENSUS (#149): VACUOUS — the median bucket has nobody outside the basket, so a RANKING knob CANNOT be adjudicated on this column; record VACUOUS, never "held". Gates (pool-changing) and MAX/COUNT statistics (worst window, rank-1 h2h) still answer.
   top-1  book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +2.0) pts/yr   win 68% of 22   worst -3.2   OOS +7.1/-0.0   rode 0 zeros/22 holds
   top-2  book +9.9%/yr  vs S&P500 +6.6%/yr  ->  excess +3.3 (med +1.4) pts/yr   win 73% of 22   worst -2.5   OOS +6.5/+0.2   rode 0 zeros/33 holds
   top-3  book +10.2%/yr  vs S&P500 +6.6%/yr  ->  excess +3.6 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.0   rode 0 zeros/38 holds
