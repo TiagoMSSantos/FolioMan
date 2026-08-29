@@ -8540,7 +8540,11 @@ urls:
   #   already, not a random draw. A live census over 40 UNCACHED delisted symbols was attempted the
   #   same day and is UNMEASURED, not zero: Yahoo returned HTTP 429 to a live AAPL control, so every
   #   row would have been rate limiting rather than coverage. That is the same control discipline
-  #   (#134) demanded for stooq, applied to this run's own result.
+  #   (#134) demanded for stooq, applied to this run's own result. The control was then retried 30
+  #   times at 60s and returned 429 every time, so the run aborted having probed ZERO delisted
+  #   symbols — the cooldown is longer than 30 minutes, not a transient. Whoever retries this should
+  #   pace it in hours and keep the control gate first; a census that fetched nothing is the correct
+  #   outcome of that gate, not a failure of it.
   #
   # VERDICT — NO CODE, AND THE DATES FILE IS NOT WIRED IN. A delisting date without a terminal price
   # cannot correct survivorship bias; it can only label a name the backtest already drops when its
