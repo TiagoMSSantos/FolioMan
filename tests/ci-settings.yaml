@@ -2016,6 +2016,118 @@ buy_heuristic:
                                  #   FOLIOMAN_OFFLINE=1 on these runs: it cuts the 8y king walk from 699
                                  #   scored windows to 32 and prints the SHIPPED lane at -5.9 excess,
                                  #   exiting 0 with a complete-looking report. Check `windows scored`.
+  growth_base_offset: 0.0        # (#150) MEASURED AND REFUSED 2026-08-29 — stays OFF, which makes the
+                                 # term exactly 0.0, so `base` is the shipped sum term for term and every
+                                 # golden passes UNBLESSED. This receipt records a REFUSAL and, more
+                                 # importantly, THE FIRST APPLICATION OF (#149)'s VACUITY RULE.
+                                 #
+                                 #   WHAT THE KNOB IS. A CONSTANT added to `base`, the twelfth additive
+                                 #   term, ahead of every damp. `score = base × M + liq_bonus`, so an
+                                 #   offset c contributes `c × M` — a term that ranks PURELY BY THE
+                                 #   MULTIPLIER STACK (proximity, value, trust, overextension, TER,
+                                 #   commodity, FX, share class). It is the dial for how much of the order
+                                 #   is decided by the additive terms' LEVELS versus by the multipliers.
+                                 #   Unlike `liq_bonus`, which lands OUTSIDE the stack and is genuinely
+                                 #   rank-inert, this lands inside it and reorders.
+                                 #
+                                 #   WHY IT WAS WORTH A ROUND. THE SHIPPED LANE ALREADY HAS ONE AND NOBODY
+                                 #   CHOSE IT. `growth_fund_extra` ships `roic` at `weight: 0.25`,
+                                 #   `neutral: 17.3`, so every row the factor does not cover collects a
+                                 #   flat 0.25 × 17.3 = 4.325 inside `fund` — the (#59) mechanism. The 12y
+                                 #   ablation prints `fund_extra:roic` and a NULL factor at IDENTICAL edge
+                                 #   (+157.0) and IDENTICAL delta (-25.3): the constant IS the whole
+                                 #   measured contribution of the shipped fundamental extra. This knob makes
+                                 #   that quantity nameable and sweepable instead of a side effect of a
+                                 #   missing-data fill. ADDITIVE-ON-TOP, never a replacement for that
+                                 #   `neutral`, which would move shipped behaviour at the default.
+                                 #
+                                 #   RUNS. 8 runs, `backtest {12,8} universe fund pit`, all through the
+                                 #   SAME overlay at `tests/off-ci-settings.yaml` ((#125): a file literally
+                                 #   named `ci-settings.yaml` takes an EMPTY base, any other name deep-merges
+                                 #   over this file — so the control must run through the overlay too, and
+                                 #   did). Overlay body, deleted after per (#131):
+                                 #     buy_heuristic:
+                                 #       growth_base_offset: <c>   # THE ONLY KNOB UNDER TEST
+                                 #   Arms c in {0.0 control, -4.0, +4.0, +16.0}; -4.0 chosen to bracket the
+                                 #   4.325 the shipped lane already carries, +16.0 as the far rung.
+                                 #   Release binary rebuilt from the tree under test FIRST — (#147)'s runs
+                                 #   came off a stale mid-round binary and that nearly cost a verdict.
+                                 #   `windows scored` 2737 pool / 249 growth-lane at 12y and 355 at 8y,
+                                 #   never with FOLIOMAN_OFFLINE=1. The 12y control reproduces the banked
+                                 #   (#147) control (top-1 +1.8 exact, top-10 +3.7; median +3.9 vs +4.0,
+                                 #   inside the known (#40) cross-run universe drift).
+                                 #
+                                 #   RESULT — PRIMARY IS VACUOUS AT BOTH GRADED HORIZONS, AND (#149)'s
+                                 #   CENSUS SAYS SO IN THE OUTPUT RATHER THAN IN A READER'S HEAD:
+                                 #     12y  35 buckets, median gated pool 6, basket 10 -> 31 SATURATED,
+                                 #          16 substitutable names in the whole run.  VACUOUS.
+                                 #      8y  43 buckets, median gated pool ~6, basket 10 -> 35 SATURATED,
+                                 #          21 substitutable names in the whole run.  VACUOUS.
+                                 #   And the top-10 column behaves exactly as the census predicts: excess
+                                 #   +3.7 at EVERY 12y arm and +5.3 at EVERY 8y arm, worst window -6.4 and
+                                 #   -5.5 unchanged, `rode 9 zeros/209 holds` and `3 zeros/284 holds`
+                                 #   unchanged. The knob is NOT inert — see the rank slices below — the
+                                 #   COLUMN cannot see it. Under (#149) that is recorded VACUOUS and NEVER
+                                 #   "held", so PRIMARY cannot be established and the arm CANNOT SHIP.
+                                 #
+                                 #   THE KNOB IS A PURE RANKING KNOB ON THIS LANE, checked rather than
+                                 #   assumed, because (#149) exempts pool-changing knobs. There is NO
+                                 #   `min_score` trim in the graded path — `growth_min_score` is display-only
+                                 #   and ships -100.0 — so no offset can add or remove a name from the pool.
+                                 #   Pool size is identical at every arm, which confirms it.
+                                 #
+                                 #   GUARDS ALL HOLD, and they are the half that still answers (a worst
+                                 #   window is a MAX, an h2h is a COUNT):
+                                 #     worst window  12y -6.4 / 8y -5.5 at EVERY arm, to the decimal.
+                                 #     rank-1 h2h    12y 2/4 (50%) at every arm — identical, and sitting
+                                 #                   exactly ON the >=50% bar with a denominator of FOUR.
+                                 #                    8y control 5/8 (62%) -> -4.0 5/8 (62%) -> +4.0 4/8
+                                 #                   (50%) -> +16.0 4/8 (50%).
+                                 #
+                                 #   THE INTERESTING PART, AND WHY IT IS NOT A REASON TO SHIP. The rank
+                                 #   slices move a lot, and EVERY non-zero arm beats the control at rank-1:
+                                 #     12y rank-1 mean|median  ctl +1.8|+5.1  -4.0 +2.3|+5.7
+                                 #                             +4.0 +2.4|+5.1  +16.0 +2.5|+5.1
+                                 #      8y rank-1 mean|median  ctl +5.6|+6.5  -4.0 +6.4|+8.5
+                                 #                             +4.0 +6.3|+8.5  +16.0 +6.5|+8.5
+                                 #   Read that shape carefully: the control is the WORST arm at rank-1 at
+                                 #   both horizons, and BOTH SIGNS of the offset improve it by about the
+                                 #   same amount. A term whose effect is symmetric in its sign is not
+                                 #   carrying a direction — it is reshuffling the argmax, and on a ONE-NAME
+                                 #   book over 35 (12y) and 43 (8y) windows that is exactly where noise
+                                 #   lives. THE H2H GUARD, which is a same-window COUNT and so carries no
+                                 #   averaging artifact, goes the OTHER WAY at 8y: 62%/75% at the control
+                                 #   down to 50%/38% at both positive arms, while rank 2-5 falls +5.3 ->
+                                 #   +4.4. Rank-1 MEAN up while rank-1 h2h COUNT down is the winner's-curse
+                                 #   signature the guard exists to catch ((#144) requires reporting both
+                                 #   side by side for this reason). No ship on a number that its own
+                                 #   corroborating statistic contradicts.
+                                 #
+                                 #   THE -4.0 RUNG'S KNOWN HAZARD, pre-registered and discharged by
+                                 #   ARGUMENT rather than by an instrumented count, which is stated so the
+                                 #   next round knows what was and was not measured. `growth_allow_negative_
+                                 #   scores` ships false, so a negative `base` still takes the damps and
+                                 #   (#86) records that the ranking INVERTS among such names. The count of
+                                 #   rows driven below zero at -4.0 was NOT measured. It does not change
+                                 #   this verdict: with `M > 0`, any negative-base name scores below every
+                                 #   positive-base one unless its `liq_bonus` exceeds `|base × M|`, so the
+                                 #   inversion misorders the BOTTOM of the list and a top-10 basket never
+                                 #   reaches it. Consistent with the data — pool, holds, zeros and worst
+                                 #   window are all identical at that arm. If a future round grades a
+                                 #   NEGATIVE offset on anything but a top-N basket, count those rows first.
+                                 #
+                                 #   VERDICT: 0.0 STANDS. Not "held", not passed — VACUOUS on PRIMARY at
+                                 #   both graded horizons, guards intact, and the one number that moved in
+                                 #   the arm's favour is contradicted by its own guard. This is the fourth
+                                 #   consecutive ranking-knob round to end this way, and (#149) is why this
+                                 #   one says VACUOUS in the output instead of banking a free "held".
+                                 #   REVERT: already at the reverted value.
+                                 #   RE-OPEN ONLY ON A NON-VACUOUS COLUMN. That is a POOL problem, not a
+                                 #   score problem: 31 of 35 buckets at 12y have no name outside the basket
+                                 #   at all, so no ranking knob whatsoever is measurable here — this one,
+                                 #   `growth_value_weight`, `growth_proximity_weight` or any future one.
+                                 #   (#151) is the pool round, and it is the prerequisite for re-running
+                                 #   ANY of them. Re-run: the four arms above, ~2.5 min per run.
   growth_rank_normalise: 0.0     # (#144) MEASURED AND REFUSED 2026-08-26 — stays OFF, which is `v' = v`
                                  # for every additive term, so `base` is the shipped sum bit for bit and
                                  # every golden is untouched. This receipt records a REFUSAL, not a value

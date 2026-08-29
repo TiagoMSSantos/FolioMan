@@ -1030,7 +1030,8 @@ struct ScoreParts {
     er_term: f64,      // (#105) growth_er_weight × er (0 when the weight is 0 OR the row is uncovered)
     record_years: f64, // (#133) the long leg `long_leg_fixed` FOUND, in years — carried, never re-derived (non-negotiable #4). Display only: the penalty row is unreadable without the leg it is short of
     record_term: f64,  // (#133) −growth_record_weight × max(0, growth_record_full_years − long_years); 0 when the weight is 0 (default) or the leg is already full
-    base: f64,         // sum of the eleven terms above
+    base_offset: f64,  // (#150) growth_base_offset — a CONSTANT, the twelfth additive term. Carried as a FIELD rather than folded into the sum so `TERM_DIMS` covers it and `growth_scores_ranked`'s recomposition cannot drop it
+    base: f64,         // sum of the twelve terms above
     proximity: f64,    // (#48) 1 + growth_proximity_weight × (range_pct/100 − 1); = range_pct/100 at the shipped w=1
     value_raw: f64,    // (E) raw P/E value_factor (ref_pe/PE clamped)
     value: f64,        // 1 + growth_value_weight × (value_raw − 1)
@@ -1512,7 +1513,24 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // weight 0 (default) -> the term is exactly 0.0 -> growth_score is byte-identical to the pre-(#133) lane.
     let record_term =
         -tuning.growth_record_weight * (tuning.growth_record_full_years - long_years).max(0.0);
-    let base = trend_term + accel_term + risk_reward + quality + dividend + fund + mom_term + smooth + underwater + er_term + record_term;
+    // (#150) A CONSTANT, and constants are not rank-inert HERE the way `liq_bonus` is. `liq_bonus`
+    // lands OUTSIDE the multiplier stack, so it shifts every score by the same amount and changes no
+    // order; this lands INSIDE it, and `score = base × M + liq_bonus` turns an offset c into `c × M`
+    // — a term that ranks purely by the multiplier stack. That is the whole knob. 0.0 (default) makes
+    // it exactly 0.0 and the sum below is the shipped one term for term.
+    let base_offset = tuning.growth_base_offset;
+    let base = trend_term
+        + accel_term
+        + risk_reward
+        + quality
+        + dividend
+        + fund
+        + mom_term
+        + smooth
+        + underwater
+        + er_term
+        + record_term
+        + base_offset;
     let value_raw = value_factor(quote, tuning.ref_pe); // (E) a nosebleed P/E still damps the score (anti top-chase)
     // (Item 20) dial the P/E multiplier's authority toward neutral 1.0. weight 1.0 = full ×0.5..1.5
     // swing (default, unchanged); 0.0 = off (shipped). On-sale `buy_score` keeps full value_factor.
@@ -1657,7 +1675,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // reach it instead of writing a second copy of this stack.
     let mut parts = ScoreParts {
         long_cagr, return_1y, trend, accel, trend_term, accel_term, risk_reward, quality, dividend,
-        fund, mom121: mom_term, smooth, underwater, er, er_term, record_years: long_years, record_term, base, proximity, value_raw, value, trust, overext,
+        fund, mom121: mom_term, smooth, underwater, er, er_term, record_years: long_years, record_term, base_offset, base, proximity, value_raw, value, trust, overext,
         overext_cap, overext_damp, damp, liq_bonus, ter_damp, commodity_damp, fx_damp, acc_damp, score: 0.0,
     };
     parts.score = compose_score(&parts, tuning);
@@ -1764,10 +1782,11 @@ fn inv_norm_tail(q: f64, sign: f64) -> f64 {
 ///     penalty into a rank position;
 ///   - `liq_bonus` lands OUTSIDE the multiplier stack, where `score_parts` already records that a
 ///     constant is genuinely rank-inert.
-/// `term_dims_sum_to_base` pins the "exactly `base`" claim — if a twelfth additive term is ever added
-/// to `base` and not to this list, that test fails, which is the feature.
+/// `term_dims_sum_to_base` pins the "exactly `base`" claim — if a THIRTEENTH additive term is ever
+/// added to `base` and not to this list, that test fails, which is the feature. (#150) added the
+/// twelfth (`base_offset`) and this is the mechanism that caught it needing to be here.
 type TermDim = (&'static str, fn(&ScoreParts) -> f64, fn(&mut ScoreParts, f64));
-const TERM_DIMS: [TermDim; 11] = [
+const TERM_DIMS: [TermDim; 12] = [
     ("trend_term", |p| p.trend_term, |p, v| p.trend_term = v),
     ("accel_term", |p| p.accel_term, |p, v| p.accel_term = v),
     ("risk_reward", |p| p.risk_reward, |p, v| p.risk_reward = v),
@@ -1779,6 +1798,13 @@ const TERM_DIMS: [TermDim; 11] = [
     ("underwater", |p| p.underwater, |p, v| p.underwater = v),
     ("er_term", |p| p.er_term, |p, v| p.er_term = v),
     ("record_term", |p| p.record_term, |p, v| p.record_term = v),
+    // (#150) LISTED, and the `sd == 0` guard above is what makes that correct rather than merely
+    // safe: this term is CONSTANT across the pool, so the normaliser skips it and leaves it at its
+    // level. Listing it is what keeps `growth_scores_ranked`'s `base = TERM_DIMS.sum()` recomposition
+    // equal to `score_parts`' sum — omit it and the knob would silently die whenever
+    // `growth_rank_normalise` is armed, which is exactly the landmine `term_dims_sum_to_base` exists
+    // to catch.
+    ("base_offset", |p| p.base_offset, |p, v| p.base_offset = v),
 ];
 
 /// (#144) CROSS-SECTIONAL rank normalisation of the growth score — the two-pass twin of
@@ -7368,10 +7394,70 @@ mod tests {
         assert_eq!(inv_norm(1.5), 0.0);
     }
 
-    /// (#144) TERM_DIMS must be EXACTLY `base`'s addends. If a twelfth additive term is ever added to
-    /// `base` and not to the list, the normalisation would silently drop it from the re-sum and every
-    /// armed score would be wrong by that term. This test is the only thing standing between that
-    /// mistake and a shipped number.
+    /// (#150) `growth_base_offset` — the twelfth additive term, and the ONE number this test has to
+    /// pin is that an offset c reaches the score as `c × multiplier-stack`, not as `c`. That is the
+    /// entire reason the knob exists: `liq_bonus` lands OUTSIDE the stack and shifts every name
+    /// equally (rank-inert, as `score_parts` already records), while this lands INSIDE it and so
+    /// ranks by the stack in proportion to c. A mutant that turns the `+` into a `-` or a `*`, or
+    /// that moves the term outside the multiply, changes that identity and dies here.
+    #[test]
+    fn base_offset_enters_the_score_through_the_multiplier_stack() {
+        let d = BuyHeuristic::default();
+        assert_eq!(d.growth_base_offset, 0.0, "the DEFAULT must be off");
+        let q = gate_fixture();
+        let off = score_parts(&q, &d).expect("the fixture clears the gates");
+        // OFF is exactly absence: the term is 0.0 and `base` is the shipped sum term for term.
+        assert_eq!(off.base_offset, 0.0, "at the default the term must be exactly 0.0, not merely small");
+
+        let c = 3.0;
+        let on = score_parts(&q, &BuyHeuristic { growth_base_offset: c, ..d.clone() }).expect("still clears");
+        assert!((on.base - (off.base + c)).abs() < 1e-12, "the offset must land in `base` additively: {} vs {}", on.base, off.base + c);
+        // THE IDENTITY. The multiplier stack is unchanged by the offset, so the score moves by
+        // exactly c × stack — recovered from the control rather than re-spelled here, because
+        // re-deriving the stack at a read site is what non-negotiable #4 forbids.
+        let stack = (off.score - off.liq_bonus) / off.base;
+        assert!((on.score - (off.score + c * stack)).abs() < 1e-9, "offset must reach the score as c × stack: {} vs {}", on.score, off.score + c * stack);
+        // ...and the stack really is a multiplier, so DOUBLING the offset doubles what it contributes.
+        let on2 = score_parts(&q, &BuyHeuristic { growth_base_offset: c * 2.0, ..d.clone() }).expect("still clears");
+        assert!(
+            ((on2.score - off.score) - 2.0 * (on.score - off.score)).abs() < 1e-9,
+            "the contribution must be LINEAR in the offset: {} vs {}",
+            on2.score - off.score,
+            2.0 * (on.score - off.score)
+        );
+        // A NEGATIVE offset docks, and is the rung with the known hazard: `growth_allow_negative_scores`
+        // ships false, so once `base` goes negative (#86) records that the damps INVERT the order.
+        // Pinned so a sweep arm that reaches there is recognisable rather than silently mis-ranked.
+        let neg = score_parts(&q, &BuyHeuristic { growth_base_offset: -c, ..d.clone() }).expect("still clears");
+        assert!(neg.score < off.score, "a negative offset must dock a positive-base name");
+        assert!(neg.base > 0.0, "the fixture's base must stay positive at -3.0, or this test is measuring (#86)'s inversion instead");
+    }
+
+    /// (#150) The twelfth term must be in `TERM_DIMS`, or `growth_scores_ranked` recomputes `base`
+    /// from the list and silently DROPS the offset whenever `growth_rank_normalise` is armed. The
+    /// term is constant across the pool, so the normaliser's `sd == 0` guard leaves it alone — which
+    /// is what makes the two paths agree by construction instead of by a second spelling.
+    #[test]
+    fn base_offset_survives_rank_normalisation() {
+        let t = BuyHeuristic { growth_base_offset: 5.0, growth_rank_normalise: 1.0, long_trend_cap: 0.0, ..BuyHeuristic::default() };
+        // `rank_pool` fans out exactly ONE additive term (the 5Y leg -> `trend_term`), so the
+        // normaliser really runs instead of short-circuiting on an all-constant cross-section.
+        let quotes = rank_pool(&[120.0, 200.0, 380.0]);
+        let pool: Vec<&Quote> = quotes.iter().collect();
+        let ranked = growth_scores_ranked(&pool, &t);
+        let plain = growth_scores_ranked(&pool, &BuyHeuristic { growth_base_offset: 0.0, ..t.clone() });
+        assert!(ranked.iter().all(|s| s.is_some()), "both fixtures must score");
+        assert!(
+            ranked.iter().zip(&plain).any(|(x, y)| (x.unwrap() - y.unwrap()).abs() > 1e-9),
+            "the offset must still move the rank-normalised score; if it does not, TERM_DIMS dropped it"
+        );
+    }
+
+    /// (#144) TERM_DIMS must be EXACTLY `base`'s addends. If a THIRTEENTH additive term is ever added
+    /// to `base` and not to the list, the normalisation would silently drop it from the re-sum and
+    /// every armed score would be wrong by that term. This test is the only thing standing between
+    /// that mistake and a shipped number — and (#150) is the case that proved it: `growth_base_offset`
+    /// arrived as the twelfth and this is what said it had to be listed.
     #[test]
     fn term_dims_sum_to_base() {
         let p = score_parts(&gate_fixture(), &BuyHeuristic::default()).expect("the fixture clears the gates");
@@ -8452,7 +8538,7 @@ mod tests {
         assert_eq!(tuning.growth_trend_weight, 0.15, "0.15 survived a v2 grid — 0.35/0.55/0.70 all REFUSED on the top-3 worst window, and 0.35 also breaks the 8y h2h guard; read the (#70) receipt, and note that rising lane edge is not a reason to move this");
 
         // (#144) the rank normalisation ships OFF, which is what makes `base` the shipped SUM and every
-        // weight and cap above mean what its own receipt says. Arming it re-scales all eleven additive
+        // weight and cap above mean what its own receipt says. Arming it re-scales all the additive
         // terms at once, so it is not a knob that can be "tried" alongside another arm — it re-prices
         // the whole score. Move it only on a receipt that clears the ship rule on rank-1 AND h2h,
         // per (#129): "the top-10 column will happily rise while the ordering rots underneath".
