@@ -2514,6 +2514,14 @@ buy_heuristic:
                                  # `history` (no 5y+ record), which is a data-coverage ceiling — see `growth_min_leg_years`, which
                                  # prices it at 1949 of 4748 live EU-buyable names. That is the only rung this table endorses
                                  # looking at next, and it is a COVERAGE problem, not a threshold to sweep.
+                                 #   (#152) THAT RUNG IS NOW CLOSED, 2026-08-29 — and the endorsement above is the
+                                 #   thing it refutes. The `history` rejects are GENUINELY YOUNG, not served short:
+                                 #   over the local chart cache, 0 of 138 short-history EQUITIES have a
+                                 #   firstTradeDate older than 5y, and their median actual trading life is 0.53y.
+                                 #   There is no coverage fix that admits them. Full receipt and the offline
+                                 #   reproduction at `growth_min_leg_years`. With it, admission has no open lever
+                                 #   left: selection (#127), one gate (#151), two gates (#128), universe (#134),
+                                 #   coverage (#152). Cite (#152) before quoting the sentence above as a lead.
                                  # NO KNOB WAS CHANGED ON THE STRENGTH OF THIS. The instrument is `print_recall_capture`, which
                                  # still ships false; the goldens are untouched.
                                  #
@@ -4002,6 +4010,89 @@ buy_heuristic:
                                  #   and Quote.perf is a positional Vec aligned to it, so the knob has only
                                  #   three settings (5, 2, 1) and no gentler middle. (#49) added the 1Y rung;
                                  #   it is near-inert, see growth_trust_young below.
+                                 #
+                                 #   (#152) THE COVERAGE HYPOTHESIS IS REFUTED, 2026-08-29. MEASURED, OFFLINE,
+                                 #   NO KNOB MOVED. (#127) closed on "the largest genuinely single-gate cohort at
+                                 #   every horizon is `history` (no 5y+ record), which is a data-coverage ceiling
+                                 #   ... that is the only rung this table endorses looking at next, and it is a
+                                 #   COVERAGE problem, not a threshold to sweep." That framing contains a testable
+                                 #   claim and nobody had tested it. A name can miss a 5y leg for two unrelated
+                                 #   reasons and only ONE of them is recoverable:
+                                 #     TRUNCATED  an old company whose price series we are served short. Fixable
+                                 #                upstream, and fixing it admits real names AT THE SHIPPED GATE —
+                                 #                the only pool widening that does not pay (#151)'s quality tax.
+                                 #     YOUNG      a company that genuinely has not traded 5 years. Nothing to fix;
+                                 #                the gate is correct and the ceiling is structural.
+                                 #   THE DISCRIMINATOR WAS ALREADY ON DISK and needed no request. Yahoo's chart
+                                 #   payload carries `meta.firstTradeDate` — when the security actually began —
+                                 #   which is independent of how many bars the window returned. Compare it against
+                                 #   the served first/last timestamp and the two causes separate exactly.
+                                 #   OVER `.long_history_cache.json` (6450 tickers, 5935 carrying both fields):
+                                 #     instrumentType    cached   span<5y   first traded >=5y ago (= TRUNCATED)
+                                 #     ETF                 4613      2428        21
+                                 #     EQUITY              1147       138         0
+                                 #     CRYPTOCURRENCY        96        36         0
+                                 #     MUTUALFUND            69        11         0
+                                 #     CURRENCY               4         1         1
+                                 #     ECNQUOTE / INDEX     4 / 2       0         0
+                                 #   ZERO OF 138 SHORT-HISTORY EQUITIES ARE TRUNCATED. Not "few" — zero. And they
+                                 #   are not near-misses either: their actual trading life is
+                                 #     n=138  min 0.01y  p25 0.21y  MEDIAN 0.53y  p75 2.00y  max 4.96y
+                                 #   Half have existed under SEVEN MONTHS. This cohort could not carry a 5y record
+                                 #   under any fetch fix, because there is no history to fetch.
+                                 #   THE 22 NON-EQUITY HITS ARE A DIFFERENT BUG, NOT THIS ONE. Every one is a
+                                 #   ONE-BAR payload (served span 0.0y, a single timestamp) against a
+                                 #   firstTradeDate 8-14y old — 21 ETFs and one FX pair. That is a fetch stub, not
+                                 #   a truncated equity history, and the growth STOCK lane never ranks them. Filed
+                                 #   as a live ETF-lane coverage bug and deliberately NOT fixed here; see the note
+                                 #   at the end of this block.
+                                 #   SAMPLE CAVEAT, STATED NOT BURIED: 1147 cached equities against the ~4748
+                                 #   live EU-buyable names the 1949 figure above is drawn from — about a quarter,
+                                 #   and it is the quarter this machine has actually fetched, so it over-weights
+                                 #   names the screen already looks at. It is a SAMPLE. It is also a count of
+                                 #   ZERO across 138, with a median life of six months, which is not the shape a
+                                 #   sampling artifact takes.
+                                 #   CONSEQUENCE — THE LAST ENDORSED RUNG IS CLOSED, and with it every documented
+                                 #   lever on growth ADMISSION:
+                                 #     selection            (#127)  out-ranked 0.2%/0.0%/1.5% of missed wealth
+                                 #     one gate loosened    (#151)  both arms REFUSED on PRIMARY, 2026-08-29
+                                 #     two gates loosened   (#128)  all three pre-registered bars failed
+                                 #     wider universe       (#134)  blocked on a survivorship-free PRICE source
+                                 #     coverage             (#152)  refuted here — the rejects are genuinely young
+                                 #   Do not re-open admission on argument alone. A future proposal needs a NEW
+                                 #   measurement, not a re-reading of these.
+                                 #   TO REPRODUCE (no network, no build, ~20s): the script is inlined so no
+                                 #   instrument has to be built and maintained for a question that is now closed —
+                                 #   the same standard (#127) set for itself ("NO KNOB WAS CHANGED ON THE STRENGTH
+                                 #   OF THIS. The instrument is `print_recall_capture`, which still ships false").
+                                 #     import json, datetime, collections
+                                 #     d = json.load(open('.long_history_cache.json'))
+                                 #     by, short, trunc = (collections.Counter() for _ in range(3))
+                                 #     for t, v in d.items():
+                                 #         try:
+                                 #             r = v[1]['chart']['result'][0]; m = r['meta']
+                                 #             ts = r.get('timestamp') or []; ftd = m.get('firstTradeDate')
+                                 #             if not ts or not ftd: continue
+                                 #             it = m.get('instrumentType', '?')
+                                 #             f = datetime.date.fromtimestamp(ftd)
+                                 #             s = datetime.date.fromtimestamp(ts[0])
+                                 #             e = datetime.date.fromtimestamp(ts[-1])
+                                 #             by[it] += 1
+                                 #             if (e - s).days / 365.25 < 5.0:
+                                 #                 short[it] += 1
+                                 #                 if (e - f).days / 365.25 >= 5.0: trunc[it] += 1
+                                 #         except Exception: pass
+                                 #     for k, n in by.most_common(): print(k, n, short[k], trunc[k])
+                                 #   REVERT RULE: none — nothing shipped. This receipt is the deliverable. It is
+                                 #   INVALIDATED only by a price source that serves longer histories for the SAME
+                                 #   tickers, which would change firstTradeDate for none of them but could change
+                                 #   the served span; re-run the snippet against that cache before citing this.
+                                 #   THE ETF ONE-BAR STUB (byproduct, filed not fixed): 21 ETFs return a single
+                                 #   bar against an 8-14y firstTradeDate, e.g. 0Y07.L (first traded 2012-06-11),
+                                 #   EMUM.L and 0MUL.L (2013-09-18), 020Y.L (2015-01-21), USCO.L (2016-02-17).
+                                 #   The screen HAS an ETF lane, so this is a live coverage bug on shipped output,
+                                 #   not a backtest curiosity. It is out of scope here because this block is about
+                                 #   the growth STOCK gate; it wants its own round and its own receipt.
                                  #   THE 2.0 ARM WAS GRADED AND LOSES EVERY CLAUSE OF THE SHIP RULE. Six-run
                                  #   stress grid 2026-08-03, `backtest {20,12,8} universe stress`, baseline vs arm
                                  #   differing by THIS FIELD ALONE (verified: the drift warning names
