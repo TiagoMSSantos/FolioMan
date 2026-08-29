@@ -336,7 +336,8 @@
 #   PIT LANE  on `pit` ONLY, PRIMARY and TIE read 12y AND 8y, not 20y AND 8y — see (#139) just above.
 #             Every 20y GUARD stays live. The wide and `stress` lanes are unchanged.
 #   VACUITY   a column the POOL CENSUS tags VACUOUS cannot adjudicate a RANKING knob — record
-#             VACUOUS, never "held" (#149). Gates and MAX/COUNT statistics still answer there.
+#             VACUOUS, never "held" (#149). Gates and the worst window still answer there; the
+#             rank-1 h2h answers off the NON-SATURATED buckets only — check its n (#151).
 #
 #   PRECEDENCE IS GUARD > PRIMARY > TIE, and it is not a formality. A broken guard REFUSES outright;
 #   it is never softened into "unresolved" because the primary happened to split. `fixed_cagr_years: 5`
@@ -573,6 +574,88 @@
 #   WHAT IT DOES NOT LICENSE: 8 windows at 20y is still ~0.2 effective trials (#124). The guard is now
 #   COMPUTABLE at 20y on PIT, not decisive there. PIT knob-grading belongs at 12y and 8y.
 # ============================================================================================
+#
+# (#151) 2026-08-29 — C (WIDEN THE POOL): the gate half MEASURED and REFUSED, the coverage half
+#   already answered, and one amendment to the (#149) VACUITY rule at the top of this header.
+#
+#   AMENDMENT — THE rank-1 h2h IS NOT EXEMPT THE WAY (#149) SAID. (#149) exempts "MAX/COUNT
+#   statistics on the pool — the worst window and the rank-1 h2h". The worst window is fine: it is a
+#   MAX over every graded name and saturation cannot touch it. The h2h is NOT. `h2h_beats(vv, 10, 20)`
+#   returns None exactly when `vv.len() <= 10`, and VERDICT_TOP is 10, so the GUARD's denominator is
+#   IDENTICALLY the census's non-saturated bucket count. Not an approximation — the same predicate:
+#     12y ctl  35 buckets, 31 saturated -> h2h n=4 .  Printed: "#1 beat the 11-20 book in 2/4".
+#      8y ctl  43 buckets, 35 saturated -> h2h n=8 .  Printed: "5/8".  Exact on all 6 grid runs.
+#   So on a saturated column the h2h is a COUNT OVER THE RESIDUE. It still ANSWERS (n>0, and >=50% is
+#   an absolute bar, not a delta, so it passes on its own terms), but at n=4 it has no power, and a
+#   reader who treated (#149)'s exemption as "unaffected" would be wrong. The census line now prints
+#   the denominator beside the saturation count so nobody has to subtract, and
+#   `the_h2h_denominator_is_the_unsaturated_bucket_count` pins the identity — if VERDICT_TOP ever
+#   moves off the 10 hardcoded in `rank_slice_stats`'s SLICES that test FAILS, and the census must
+#   stop claiming the identity rather than be re-blessed around it.
+#   NOTE the remedy already exists and ships OFF: `print_h2h_mid_ladder` (#135) tallies the same
+#   question against the 6-10 book, which a ~10-name pool CAN answer. Not turned on here — that is a
+#   grading-rule change and wants its own round — but it is where a thin-pool GUARD should go.
+#
+#   THE BAR THE GATE SWEEP WAS USING WAS THE WRONG BAR. The sweep loosens each gate one notch and
+#   grades what it NEWLY ADMITS, flagging TOO TIGHT only when mean AND median are positive on `fwd
+#   peer-relative`. That is an ABSOLUTE bar of zero. But the SHIPPED accepted cohort sits at
+#   median -73.2 (12y pit, n=249) — peer-relative forward return is strongly negative for EVERY
+#   cohort, including the one the gates already keep. Measured against zero, essentially nothing can
+#   ever flag, and four rounds of "every gate reads negative, loosening imports junk" was reading a
+#   miscalibrated instrument. Against the RIGHT baseline:
+#     growth_min_cagr -4          n=151  med  -55.6   vs shipped +17.6  <- admits BETTER than the book
+#     growth_min_leg_years ->2    n=68   med  -73.0   vs shipped  +0.2  <- admits EQUAL to the book
+#   The sweep now prints `vs shipped` (newly-admitted median MINUS the accepted median) and flags
+#   ADMITS NO WORSE THAN THE BOOK. `gate_audit` returns the accepted median for it; None is never
+#   faked as 0.0.
+#
+#   AND THEN THE GRADED RUN REFUSED BOTH ANYWAY. `backtest {12,8} universe fund pit`, 6 runs, one
+#   knob each, control through the same path. `windows scored` identical within horizon (2737 @12y,
+#   6126 @8y) — same dataset, only the gated pool differs.
+#     12y      scored  census                     top-10 excess   worst   rank-1 h2h    rank-1 mean
+#     ctl        249   35 bkt 31 sat  16 subst    +3.7 | +3.9     -6.4    2/4  (50%)    +1.8 | +5.1
+#     cagr 15    400   36 bkt 22 sat  81 subst    +2.9 | +4.0     -6.4    9/14 (64%)    -0.1 | +3.6
+#     leg 2      317   36 bkt 29 sat  38 subst    +2.7 | +2.7     -6.4    5/7  (71%)    -0.3 | +3.1
+#      8y      scored  census                     top-10 excess   worst   rank-1 h2h    rank-1 mean
+#     ctl        355   43 bkt 35 sat  21 subst    +5.3 | +5.6     -5.5    5/8  (62%)    +5.6 | +6.5
+#     cagr 15    690   44 bkt 22 sat 243 subst    +4.1 | +3.8     -3.5   16/22 (73%)    +4.7 | +5.9
+#     leg 2      447   44 bkt 32 sat  63 subst    +4.6 | +4.5     -2.8    9/12 (75%)    +4.6 | +5.9
+#   GUARDS ALL HOLD. h2h >= 50% at 12y and 8y on every arm, and it RISES on both (50->64/71,
+#   62->73/75). Worst window not worse: identical at 12y, strictly BETTER at 8y (-5.5 -> -3.5/-2.8).
+#   20y not run: the ladder is not PRIMARY-clean at 12y and 8y, and (#124) puts pit 20y n_eff at ~0.2.
+#   PRIMARY FAILS. Top-10 excess needs mean AND median up or held; the MEAN falls at both horizons on
+#   both arms (12y +3.7 -> +2.9/+2.7, 8y +5.3 -> +4.1/+4.6). GUARD > PRIMARY > TIE, no guard broke,
+#   so PRIMARY decides: NO SHIP. Both gates stay at 19.0 and 5.0.
+#   THIS VERDICT IS REAL, NOT VACUOUS, and it is the first substantive adjudication in five rounds.
+#   These are POOL knobs, which (#149) explicitly exempts from the vacuity rule, so the fact that
+#   five of the six columns are still tagged VACUOUS does not void them.
+#   THE ONE THING THAT DID WORK: widening the pool CURES the vacuity. `growth_min_cagr 15` at 8y is
+#   the FIRST NON-VACUOUS graded column this heuristic has produced — 22 of 44 buckets saturated is
+#   exactly half, not the strict majority the tag needs, and 243 substitutable names against 21 on
+#   the control. If a future round needs a column that can grade a RANKING knob, this is the lever;
+#   it costs -1.2 pts/yr of top-10 mean at 8y to buy it, and that price must be paid deliberately and
+#   pre-registered, never discovered after the fact.
+#   HOW BOTH CAN BE TRUE — better admits, worse book. The sweep grades the newly-admitted names as a
+#   COHORT against the accepted cohort's MEDIAN name. The book takes the TOP TEN BY SCORE. Names that
+#   are no worse than the median holding can still be worse than the tenth-best, and admitting them
+#   DISPLACES better names out of an equal-weight basket. So: `vs shipped` is a pool diagnostic, and a
+#   green ADMITS NO WORSE flag IS NOT A SHIP SIGNAL. It says the gate is not obviously mispriced; only
+#   a graded run says whether the book improves. Read it as permission to MEASURE, never as a result.
+#
+#   THE COVERAGE HALF OF C NEEDED NO NEW WORK — (#121) ALREADY MEASURED IT. The plan for this round
+#   wanted a cause-census of the ~810 index members that produce no scoreable cutoff. It exists, in
+#   (#121)'s own report line, measured 2026-08-22 over the 734 members whose span carries an exit
+#   date: 387 served with ZERO BARS, 193 more with <36 in-span bars, 154 scoreable, and ZERO of all
+#   1206 members with a series ending over a year ago. The recoverable-by-fetching bucket is EMPTY —
+#   "closing it needs delisting DATES plus a terminal return, not a price backfill: these prices
+#   provably do not exist to fetch." So "widen the pool with better coverage" is not a cheap round
+#   being deferred; it is already answered, and the answer is that no fetch reaches it. NOT BUILT,
+#   and the reason is measurement, not scope.
+#   TO REVERT (#151): drop the `accepted_med` parameter from `gate_sweep` and the `h2h_n` clause from
+#   the census line, restore `gate_audit`'s 2-tuple, re-bless the goldens. Report-only throughout —
+#   no shipped value, no pick and no gate moved on this commit.
+# ============================================================================================
+
 tickers: []
 
 # ============================================================================================
@@ -3996,6 +4079,10 @@ buy_heuristic:
                                  #   So the two symptoms — "only 2 stocks" and "rank 1 is a 2.4-year listing" — are
                                  #   ONE setting pulling both ways: it does not add stocks (it adds young ETFs) and
                                  #   it inverts the order. The count problem lives at `growth_max_peg`, not here.
+                                 #
+                                 #   (#151) SWEPT TO 2.0 AND REFUSED 2026-08-29 — admits names EQUAL to the book (+0.2 vs the accepted
+                                 #   median) and improves the 8y worst window -5.5->-2.8, but top-10 mean falls
+                                 #   +3.7->+2.7 (12y) and +5.3->+4.6 (8y). PRIMARY fails. See (#151) at the top.
 
   growth_trust_young: 0.5        # (#49) MEASURED AND NOT SHIPPED — the 2Y rung of `growth_trust_ladder`; the 1Y
                                  #   rung takes half of it. 0.5 reproduces the (#47) ladder's flat `none -> 0.50`
@@ -4759,6 +4846,11 @@ buy_heuristic:
                                  # recorded at `print_h2h_mid_ladder` resolves in favour of the 6-10 book, since
                                  # under the 11-20 book this arm dies on PRIMARY rather than on the GUARD and the
                                  # two failures invite different repairs. Do not reopen on a `gate_sweep` flag.
+                                 #
+                                 #   (#151) SWEPT TO 15.0 AND REFUSED 2026-08-29 — admits +17.6 pts BETTER than the accepted cohort's
+                                 #   median and cures the 8y vacuity (the only non-vacuous column ever produced),
+                                 #   but top-10 mean falls +3.7->+2.9 (12y) and +5.3->+4.1 (8y). PRIMARY fails, no
+                                 #   guard broke. Do not re-run the grid; see the (#151) block at the top.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.

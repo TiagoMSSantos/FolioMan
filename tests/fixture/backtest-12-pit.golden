@@ -147,15 +147,16 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── GATE SWEEP (loosen each gate one notch -> fwd return of the names it NEWLY admits) ──
   positive = the gate was too tight (newly-admitted beat the field); ≤0 = it's keeping junk out.
   the TOO TIGHT flag needs mean AND median positive — one survivor can carry a mean on its own.
+  vs shipped = newly-admitted median MINUS the accepted cohort's median (-49.9); >0 = no worse than what the gates already keep.
   growth_min_range_pct -10   admits 0 new names (gate not binding on this sample)
-  growth_min_cagr -4         n=15   fwd peer-relative  mean -24.5 | med -79.9 pts
-  growth_min_1y_pct -10      n=4    fwd peer-relative  mean +1.3 | med -72.2 pts  <- SPLIT (tail-driven, read the median)
+  growth_min_cagr -4         n=15   fwd peer-relative  mean -24.5 | med -79.9 pts  vs shipped -30.0
+  growth_min_1y_pct -10      n=4    fwd peer-relative  mean +1.3 | med -72.2 pts  vs shipped -22.3  <- SPLIT (tail-driven, read the median)
   max_1m_drop_pct -10 (deeper) admits 0 new names (gate not binding on this sample)
   min_avg_turnover_eur ->0   admits 0 new names (gate not binding on this sample)
-  growth_max_above_ma ->off  n=10   fwd peer-relative  mean -74.2 | med -81.8 pts
+  growth_max_above_ma ->off  n=10   fwd peer-relative  mean -74.2 | med -81.8 pts  vs shipped -31.9
   growth_require_lifetime_uptrend ->off admits 0 new names (gate not binding on this sample)
   growth_maxdd_cap ->off     admits 0 new names (gate not binding on this sample)
-  growth_min_leg_years ->2 (admits the 2Y rung) n=10   fwd peer-relative  mean +4.6 | med +16.3 pts  <- TOO TIGHT (loosen this gate)
+  growth_min_leg_years ->2 (admits the 2Y rung) n=10   fwd peer-relative  mean +4.6 | med +16.3 pts  vs shipped +66.2  <- ADMITS NO WORSE THAN THE BOOK  <- TOO TIGHT (loosen this gate)
   growth_max_peg ->off       admits 0 new names (gate not binding on this sample)
 
 ── EXIT PROBE (growth lane: passed gates ~6mo ago -> what next?) ──
@@ -173,8 +174,8 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   sharpe_ref     n=774   rho +0.02  edge -33.4  OOS -0.10 | +0.03
 
 ── vs S&P500 (ABSOLUTE: buy top-N equal-weight, HOLD 12y no-sell, vs ^GSPC) ──
-  POOL CENSUS (#149): 21 bucket(s), median gated pool 1, graded basket 10 -> 21 saturated (pool <= basket), 0 substitutable name(s)
-  POOL CENSUS (#149): VACUOUS — the median bucket has nobody outside the basket, so a RANKING knob CANNOT be adjudicated on this column; record VACUOUS, never "held". Gates (pool-changing) and MAX/COUNT statistics (worst window, rank-1 h2h) still answer.
+  POOL CENSUS (#149): 21 bucket(s), median gated pool 1, graded basket 10 -> 21 saturated (pool <= basket), 0 substitutable name(s); the rank-1 h2h GUARD below reads off the other 0
+  POOL CENSUS (#149): VACUOUS — the median bucket has nobody outside the basket, so a RANKING knob CANNOT be adjudicated on this column; record VACUOUS, never "held". Gates (pool-changing) and MAX/COUNT statistics still answer, but (#151) AMENDS the rank-1 h2h out of that exemption: its denominator is the 0 non-saturated bucket(s) above, so on a saturated column it is not unaffected — it is a COUNT over the residue. Read that n before leaning on the GUARD.
   top-1  book +3.1%/yr  vs S&P500 +7.4%/yr  ->  excess -4.3 (med -2.7) pts/yr   win 24% of 21   worst -17.0   OOS +0.4/-8.6   rode 0 zeros/21 holds
   top-2  book +2.3%/yr  vs S&P500 +7.3%/yr  ->  excess -5.1 (med -2.7) pts/yr   win 14% of 21   worst -17.0   OOS -0.8/-8.9   rode 0 zeros/30 holds
   top-3  book +2.7%/yr  vs S&P500 +7.3%/yr  ->  excess -4.6 (med -2.7) pts/yr   win 14% of 21   worst -17.0   OOS -0.8/-8.1   rode 0 zeros/31 holds

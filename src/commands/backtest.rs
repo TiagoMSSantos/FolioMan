@@ -1609,8 +1609,8 @@ pub async fn run(args: Vec<String>) {
          2026-07-15 state. 1.5 = the ORIGINAL weight, cut for being oversized on a blind term.\n  \
          READ ONLY AS A SCREEN: prints rho/edge/OOS, never rank-1 or h2h, so it cannot settle the ship rule.",
     );
-    gate_audit(&samples, growth_score, tuning); // (#9) are the growth lane's hard gates actually selecting winners?
-    gate_sweep(&samples, tuning, &gate_loosen); // (#10) which specific gate is too tight?
+    let accepted_med = gate_audit(&samples, growth_score, tuning).map(|(_, _, amed)| amed); // (#9) are the growth lane's hard gates actually selecting winners?
+    gate_sweep(&samples, tuning, &gate_loosen, accepted_med); // (#10) which specific gate is too tight?
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
     if fund_lane_on(fund, insider) {
         report_fund_lane(&samples, tuning.split_purge_months);
@@ -2490,13 +2490,19 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
     );
     let pools: Vec<usize> = by_bucket.values().map(|v| v.len()).collect();
     let (sat, subs, med_pool, vacuous) = basket_vacuity(&pools, VERDICT_TOP);
+    // (#151) print the h2h denominator HERE, beside saturation, because it IS the same number:
+    // `h2h_beats(vv, 10, 20)` returns None exactly when `vv.len() <= 10`, and VERDICT_TOP is 10, so
+    // the rank-1 GUARD tallies precisely the buckets this census calls non-saturated. Measured 6/6
+    // across the (#151) grid. A reader who sees "31 saturated of 35" now knows, without subtracting,
+    // that the GUARD two lines down is answering off n=4.
+    let h2h_n = pools.len() - sat;
     println!(
-        "  POOL CENSUS (#149): {} bucket(s), median gated pool {med_pool}, graded basket {VERDICT_TOP} -> {sat} saturated (pool <= basket), {subs} substitutable name(s)",
+        "  POOL CENSUS (#149): {} bucket(s), median gated pool {med_pool}, graded basket {VERDICT_TOP} -> {sat} saturated (pool <= basket), {subs} substitutable name(s); the rank-1 h2h GUARD below reads off the other {h2h_n}",
         pools.len()
     );
     if vacuous {
         println!(
-            "  POOL CENSUS (#149): VACUOUS — the median bucket has nobody outside the basket, so a RANKING knob CANNOT be adjudicated on this column; record VACUOUS, never \"held\". Gates (pool-changing) and MAX/COUNT statistics (worst window, rank-1 h2h) still answer."
+            "  POOL CENSUS (#149): VACUOUS — the median bucket has nobody outside the basket, so a RANKING knob CANNOT be adjudicated on this column; record VACUOUS, never \"held\". Gates (pool-changing) and MAX/COUNT statistics still answer, but (#151) AMENDS the rank-1 h2h out of that exemption: its denominator is the {h2h_n} non-saturated bucket(s) above, so on a saturated column it is not unaffected — it is a COUNT over the residue. Read that n before leaning on the GUARD."
         );
     }
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
@@ -4313,7 +4319,7 @@ fn gate_audit(
     samples: &[Sample],
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
     tuning: &BuyHeuristic,
-) -> Option<(f64, f64)> {
+) -> Option<(f64, f64, f64)> {
     let (accepted, rejected): (Vec<&Sample>, Vec<&Sample>) =
         samples.iter().partition(|s| scorer(&s.quote, tuning).is_some());
     println!("\n── GATE AUDIT (growth gates: do the names they EXCLUDE actually underperform?) ──");
@@ -4334,7 +4340,10 @@ fn gate_audit(
         "gates ADD NOTHING — the rejected names did as well or better; consider loosening them",
     );
     println!("  gap  mean {gap:+.1} | med {gap_med:+.1} pts  ->  {verdict}");
-    Some((gap, gap_med))
+    // (#151) `amed` rides along because the GATE SWEEP below needs it and there must be ONE
+    // definition of "the median the shipped gates actually accept" (non-negotiable #4). Recomputing
+    // it inside `gate_sweep` off the same partition would be a second opinion about the same number.
+    Some((gap, gap_med, amed))
 }
 
 /// (#10 helper) Forward peer-relative return of the names REJECTED under `base` tuning but ACCEPTED
@@ -4367,10 +4376,22 @@ fn newly_admitted_stats(
 /// NEWLY admits. A POSITIVE mean = that gate was discarding winners -> loosen it in settings.yaml and
 /// re-validate (the lane OOS + #9's aggregate must still hold); ≤0 = the gate is correctly keeping junk
 /// out, leave it. Pure measurement, no ranking change; reuses the ablation `Knob` pattern + `growth_score`.
-fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob]) {
+fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob], accepted_med: Option<f64>) {
     println!("\n── GATE SWEEP (loosen each gate one notch -> fwd return of the names it NEWLY admits) ──");
     println!("  positive = the gate was too tight (newly-admitted beat the field); ≤0 = it's keeping junk out.");
     println!("  the TOO TIGHT flag needs mean AND median positive — one survivor can carry a mean on its own.");
+    // (#151) THE ABSOLUTE BAR IS THE WRONG BAR ON ITS OWN, and reading it alone is what refused four
+    // pool rounds for free. `fwd peer-relative` runs a strongly negative MEDIAN for every cohort
+    // measured, the SHIPPED one included: on `12y universe fund pit` the GATE AUDIT above prints the
+    // accepted names at mean +46.3 | med -73.2 (n=249). Mean far above median is a right-skewed
+    // forward distribution, which is the likely reason the peer subtraction lands where it does; the
+    // NUMBERS are what matter here, not the mechanism. So "median > 0" asks a newly-admitted cohort to
+    // clear a bar the shipped gates do not clear either. The question a POOL round actually needs is
+    // comparative: is what this gate newly admits WORSE THAN WHAT IS ALREADY IN THE BOOK? That is
+    // `vs shipped` below, and it is the only column of the two that can justify widening the pool.
+    if let Some(a) = accepted_med {
+        println!("  vs shipped = newly-admitted median MINUS the accepted cohort's median ({a:+.1}); >0 = no worse than what the gates already keep.");
+    }
     // Each row re-scores EVERY sample twice (once at the shipped tuning, once loosened), so at wide-run
     // sample counts the ten gates cost ~24 ms apiece — 237 ms, which measured as the largest single
     // stage in a wide run after the cache load and the walk itself. They are also completely
@@ -4392,7 +4413,14 @@ fn gate_sweep(samples: &[Sample], tuning: &BuyHeuristic, gates: &[Knob]) {
                         (false, false) => "",
                         _ => "  <- SPLIT (tail-driven, read the median)",
                     };
-                    format!("  {name:<26} n={n:<4} fwd peer-relative  mean {mean:+.1} | med {med:+.1} pts{tag}")
+                    // (#151) the comparative column. Absent when the audit could not run, never
+                    // faked with a 0.0 default — "no baseline" and "a baseline of zero" are the two
+                    // different answers this whole receipt is about.
+                    let vs = match accepted_med {
+                        Some(a) => format!("  vs shipped {:+.1}{}", med - a, if med > a { "  <- ADMITS NO WORSE THAN THE BOOK" } else { "" }),
+                        None => String::new(),
+                    };
+                    format!("  {name:<26} n={n:<4} fwd peer-relative  mean {mean:+.1} | med {med:+.1} pts{vs}{tag}")
                 }
                 None => format!("  {name:<26} admits 0 new names (gate not binding on this sample)"),
             }
@@ -6064,6 +6092,28 @@ mod tests {
         assert_eq!(basket_vacuity(&[], 10), (0, 0, 0, false));
     }
 
+    /// (#151) The census's non-saturated count IS the rank-1 h2h GUARD's denominator. `h2h_beats`
+    /// stays silent when the pool cannot reach rank 11, and `basket_vacuity` calls exactly those
+    /// buckets saturated — so `buckets - saturated` is not an estimate of the GUARD's sample size,
+    /// it is that sample size. This test is why the census may print it as a fact. If VERDICT_TOP
+    /// ever moves off the 10 hardcoded in `rank_slice_stats`'s SLICES, this fails, and the census
+    /// line must stop claiming the identity rather than be re-blessed around it.
+    #[test]
+    fn the_h2h_denominator_is_the_unsaturated_bucket_count() {
+        let row = |k: f64| (k, 0.0, 0.0, String::new());
+        let mut m: std::collections::BTreeMap<i32, Vec<(f64, f64, f64, String)>> = Default::default();
+        // Pools of 10 (saturated: no rank 11), 11 (one outsider) and 4 (saturated).
+        for (bucket, n) in [(0, 10), (1, 11), (2, 4)] {
+            m.insert(bucket, (0..n).map(|i| row(f64::from(i))).collect());
+        }
+        let pools: Vec<usize> = m.values().map(|v| v.len()).collect();
+        let (sat, _, _, _) = basket_vacuity(&pools, VERDICT_TOP);
+        let (_, h2h_mid, _) = rank_slice_stats(&m);
+        assert_eq!(sat, 2, "10 <= basket and 4 <= basket are saturated; 11 is not");
+        assert_eq!(h2h_mid.n, pools.len() - sat, "the GUARD tallies the non-saturated buckets");
+        assert_eq!(h2h_mid.n, 1, "and here that is the single 11-name bucket");
+    }
+
     #[test]
     fn book_stats_topn_held_book() {
         // top-1 by rank_key desc, held 1y. Bucket A: key 5 wins (real +100 -> 2x, bench 0). Bucket B:
@@ -6665,12 +6715,12 @@ mod tests {
         // winners (relative +) pass the gate; losers (relative −) fail -> accepted mean ≫ rejected -> +gap
         let good: Vec<Sample> = [(5.0, 1.0), (6.0, 1.0), (7.0, 1.0), (8.0, 1.0), (-5.0, -1.0), (-6.0, -1.0), (-7.0, -1.0), (-8.0, -1.0)]
             .iter().map(|&(r, d)| s_rel(r, d)).collect();
-        let (gap, gap_med) = gate_audit(&good, dd_gate, &def).unwrap();
+        let (gap, gap_med, _) = gate_audit(&good, dd_gate, &def).unwrap();
         assert!(gap > 0.0 && gap_med > 0.0, "gate keeps winners -> both stats positive");
         // flip: the dd>0 (accepted) names now carry the LOW returns -> gate admits losers -> negative gap
         let bad: Vec<Sample> = [(-5.0, 1.0), (-6.0, 1.0), (-7.0, 1.0), (-8.0, 1.0), (5.0, -1.0), (6.0, -1.0), (7.0, -1.0), (8.0, -1.0)]
             .iter().map(|&(r, d)| s_rel(r, d)).collect();
-        let (gap, gap_med) = gate_audit(&bad, dd_gate, &def).unwrap();
+        let (gap, gap_med, _) = gate_audit(&bad, dd_gate, &def).unwrap();
         assert!(gap < 0.0 && gap_med < 0.0, "gate admits losers -> both stats negative");
         // <4 on one side (4 accepted / 1 rejected) -> None (the too-few guard)
         assert!(gate_audit(&good[..5], dd_gate, &def).is_none());
@@ -6682,11 +6732,18 @@ mod tests {
         let skewed: Vec<Sample> = [(-5.0, 1.0), (-6.0, 1.0), (-7.0, 1.0), (-8.0, 1.0), (2000.0, 1.0),
                                    (0.0, -1.0), (1.0, -1.0), (-1.0, -1.0), (0.0, -1.0)]
             .iter().map(|&(r, d)| s_rel(r, d)).collect();
-        let (gap, gap_med) = gate_audit(&skewed, dd_gate, &def).unwrap();
+        let (gap, gap_med, amed) = gate_audit(&skewed, dd_gate, &def).unwrap();
         assert!(gap > 0.0, "one 20-bagger carries the accepted MEAN above the rejected pool");
         assert!(gap_med < 0.0, "the typical accepted name still lost — the median must not follow the tail");
         // and the verdict must refuse to pick a side rather than quietly reporting the mean's answer
         assert!(gap_verdict(gap, gap_med, "yes", "no").starts_with("SPLIT"), "disagreement must print SPLIT");
+        // (#151) THE THIRD RETURN IS THE ACCEPTED COHORT'S OWN MEDIAN, and this fixture is exactly why
+        // the GATE SWEEP needs it: the shipped gates here accept a cohort whose median is -6.0, so a
+        // looser gate admitting names at median -5.0 would be admitting names BETTER than the book —
+        // while an absolute "median > 0" bar calls both of them junk and refuses the widening. The
+        // sweep's `vs shipped` column is `newly-admitted median - this number`.
+        assert_eq!(amed, -6.0, "the accepted cohort's median must be carried out, not the gap");
+        assert!(amed < 0.0 && gap > 0.0, "the shipped cohort can be below the absolute bar while still out-selecting the rejects — the case the bar cannot see");
     }
 
     /// `gap_verdict` fires a directional verdict ONLY on agreement; either mismatch is a SPLIT. Exact
