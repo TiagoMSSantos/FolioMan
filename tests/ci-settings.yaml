@@ -2817,6 +2817,103 @@ buy_heuristic:
                                  #   none applies — this receipt records a measurement and a refusal, not a value. Re-run: six
                                  #   `backtest {20,12,8} universe fund pit`, control on this file, arm on
                                  #   `tests/gatesoff-ci-settings.yaml`, which is kept in-tree for exactly that purpose.
+  print_held_loser_factors: true # (#159) MEASURED 2026-08-29 — the instrument that finally asks what
+                                 # the lane BOUGHT AND LOST. Ships OFF in config.rs (non-negotiable #1);
+                                 # ON here, which is what the goldens are blessed on and what the
+                                 # mutation gate needs: `report_lane` is not `mutants::skip`ped, so a
+                                 # branch the fixture never enters has unkillable mutants and reds the
+                                 # gate. A display knob that ships off must still be ON in this file.
+                                 #
+                                 #   THE GAP IT CLOSES: every other instrument here is a PRECISION or a
+                                 #   RECALL metric about names the lane did NOT own. `recall_capture`
+                                 #   and `missed_winner_reasons` price what the ranking MISSED;
+                                 #   `gate_audit` and `gate_sweep` price what the gates REJECTED.
+                                 #   Nothing priced the held book's own losers — and that cohort is the
+                                 #   ONLY one a new gate can act on, since a gate cannot reach a name the
+                                 #   book never held. (#151), (#128), (#152), (#153) and (#156) were all
+                                 #   spent proposing gates from the literature instead of from it.
+                                 #
+                                 #   WHY IT SPLITS BY FACTOR AND NOT BY GATE: a held name cleared every
+                                 #   gate by construction, so `picks::gate_failures` is empty for all of
+                                 #   them and a gate-attribution column would print nothing at all. The
+                                 #   split is over the same `FUND_FACTORS` registry `sweep_fund_factor`
+                                 #   searches — (#157) widened it to 24 — and prints each factor's median
+                                 #   among held names that MADE money against those that LOST it.
+                                 #   READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose
+                                 #   two cohorts differ. Same sign and similar size = a gate on it would
+                                 #   reject winners and losers together, which is the shape of every
+                                 #   refusal above.
+                                 #
+                                 #   A LOSER IS `realized < 0` — money lost outright, not merely trailing
+                                 #   peers. The peer-relative reading already exists as `relative`, and
+                                 #   half a book sits below its own median by definition, which would
+                                 #   make every factor look like it separated something.
+                                 #
+                                 #   A factor missing from the table filled only one side and was
+                                 #   dropped; the printed count says how many. That is a fact about what
+                                 #   the point-in-time pool COVERS, never a fact about the factor.
+                                 #
+                                 #
+                                 #   WHAT IT FOUND, `backtest {12,8} universe fund pit`, 2026-08-29.
+                                 #   LEAN ON THE 8y COLUMN: the loser cohort is n=22 there against n=7 at
+                                 #   12y. On the best-covered factors the split is 120 winners / 22 losers
+                                 #   at 8y and 58 / 7 at 12y — the growth lane buys an outright money-loser
+                                 #   about one hold in seven, so a gate aimed at this cohort is aiming at a
+                                 #   thin slice to begin with. 23 of 24 factors filled both sides at 8y,
+                                 #   20 of 24 at 12y (gap = median winner - median loser):
+                                 #                        gap 12y    gap 8y    reading
+                                 #     peg_yield          +468.92   +204.46   winners far CHEAPER
+                                 #     ebitda_yield        +38.86    +21.66   winners CHEAPER
+                                 #     earnings_yield      +14.48     +8.27   winners CHEAPER
+                                 #     gross_margin         -8.74    -10.11   losers score HIGHER
+                                 #     eps_growth           -8.75     -6.46   losers score HIGHER
+                                 #     roe / quality        -3.94     -6.61   losers score HIGHER
+                                 #     composite            -7.57     -6.84   losers score HIGHER
+                                 #     interest_cover      -63.96     -4.35   losers score HIGHER
+                                 #     accrual_gap          +0.00     -0.08   DEAD
+                                 #     margin_stability     -0.08     -0.25   DEAD
+                                 #     op_margin            -0.44     +0.39   DEAD
+                                 #     roic                 -5.79     -0.06   collapses at 8y
+                                 #     rev_yoy              +4.40     -7.69   SIGN FLIPS
+                                 #     net_margin           -1.59     +0.92   SIGN FLIPS
+                                 #     fcf_margin           -5.35     +0.77   SIGN FLIPS
+                                 #     buyback_yield        -2.73     +0.42   SIGN FLIPS — see (#156) below
+                                 #
+                                 #   THE ONLY FACTORS THAT SEPARATE ARE VALUE FACTORS, and they agree at
+                                 #   both horizons and by a margin nothing else approaches: the held book's
+                                 #   losers are the EXPENSIVE names. The lane already ships the strongest of
+                                 #   the three as its tilt (`growth_fund_factor: peg_yield`). So the answer
+                                 #   to "what trait do our losers share" is a trait the score ALREADY reads.
+                                 #
+                                 #   THE PROPOSED-GATE FAMILY SEPARATES BACKWARDS. Every quality/growth
+                                 #   factor — gross_margin, eps_growth, roe, quality, composite,
+                                 #   interest_cover — gives the LOSERS the higher median at BOTH horizons. A
+                                 #   gate on any of them rejects the winners. That is a measured explanation
+                                 #   for five consecutive refusals, not another refusal: the family the
+                                 #   literature keeps recommending is anti-correlated with this book's
+                                 #   losses.
+                                 #
+                                 #   IT ALSO EXPLAINS (#156) INDEPENDENTLY, and this is the cross-check that
+                                 #   makes the instrument worth its lines. `growth_max_dilution_pct` rejects
+                                 #   on `-buyback_yield` above a ceiling — that is, it rejects the DILUTERS.
+                                 #   At 12y the losers' median buyback_yield is +2.16 against the winners'
+                                 #   -0.57: the money-losing holds were the ones SHRINKING their share count,
+                                 #   and the diluters were on the winning side. The gate's rejection set is
+                                 #   anti-correlated with the cohort it was proposed to remove, which is why
+                                 #   every rung of that ladder cost edge. (#156) was run before this
+                                 #   instrument existed and refused it on the numbers; this says WHY.
+                                 #
+                                 #   CONSEQUENCE — THE TIGHTENING DIRECTION IS NOW MEASURED SHUT, the way
+                                 #   (#127) closed selection. There is no unexploited separating factor in
+                                 #   the registry: the ones that separate are value and already shipped, the
+                                 #   quality family separates the wrong way, four are dead and four flip sign
+                                 #   between horizons. Read together with (#157) (ten new factors, ship
+                                 #   nothing) and (#156) (the one unswept gate, refused at every rung), a
+                                 #   NEW GATE PROPOSED FROM THE LITERATURE NOW NEEDS TO EXPLAIN ITS GAP IN
+                                 #   THIS TABLE FIRST. That is the bar this receipt sets.
+                                 #   REVERT RULE: set false to restore the pre-(#159) report, and
+                                 #   re-bless — the goldens gained this block additively and nothing
+                                 #   else in the report moved.
   journal_core_list: false       # (#103 / finding C9) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and

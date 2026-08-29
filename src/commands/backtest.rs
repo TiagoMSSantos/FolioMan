@@ -4326,6 +4326,65 @@ fn persistence_base_rate(
     Some((qualifying.len(), sustained, everyone * 100.0))
 }
 
+/// (#159) The held book's LOSERS, split by factor — the one question every other instrument in this
+/// file declines to ask. `recall_capture` and `missed_winner_reasons` price what the ranking MISSED;
+/// `gate_audit` and `gate_sweep` price what the gates REJECTED. Nothing priced what the lane BOUGHT
+/// AND LOST, and that is the only cohort a NEW gate can act on at all — a gate cannot reach a name
+/// the book never held, and five refused rounds were spent proposing gates from the literature
+/// instead of from this cohort.
+///
+/// THE GATE VOCABULARY IS USELESS HERE BY CONSTRUCTION, which is the whole reason this reads
+/// factors: a held name cleared every gate, so `picks::gate_failures` is empty for all of them and
+/// attributing by gate would print one empty column. So the split is by FACTOR, over the same
+/// `FUND_FACTORS` registry `sweep_fund_factor` searches, and each row gives the median among held
+/// names that MADE money against those that LOST it. A factor that separates the two is a gate worth
+/// proposing; one that does not is a gate worth never proposing again.
+///
+/// A LOSER IS `realized < 0` — money lost outright over the hold, not merely trailing its peers. The
+/// peer-relative reading already exists as `relative`, and half a book sits below its own median by
+/// definition, which would make every factor look like it separated something. Losing money is what
+/// a survival gate is actually asked to prevent.
+///
+/// Returns (factor, n_win, n_lose, median_win, median_lose) and SKIPS any factor that cannot fill
+/// both sides. A skipped row is a fact about what the point-in-time pool covers, not about the
+/// factor — the caller prints the count it dropped so the absence stays visible.
+fn held_loser_factors(
+    scored: &[(&Sample, f64)],
+    n: usize,
+    factors: &[&'static str],
+) -> Vec<(&'static str, usize, usize, f64, f64)> {
+    let mut picked: BTreeMap<i32, Vec<(&Sample, f64)>> = BTreeMap::new();
+    for (s, v) in scored {
+        picked.entry(bucket(s.date)).or_default().push((s, *v));
+    }
+    let mut held: Vec<&Sample> = Vec::new();
+    for (_, mut rows) in picked {
+        if rows.len() < 2 {
+            continue; // the same skip `recall_capture` applies, so both instruments count one pool
+        }
+        rows.sort_by(|a, z| z.1.total_cmp(&a.1));
+        held.extend(rows.iter().take(n).map(|(s, _)| *s));
+    }
+    factors
+        .iter()
+        .filter_map(|name| {
+            let (mut win, mut lose) = (Vec::new(), Vec::new());
+            for s in &held {
+                let Some(v) = s.fund.as_ref().and_then(|f| core::select_fund_factor(f, name)) else {
+                    continue; // no as-of fundamentals for this name -> it votes on no factor at all
+                };
+                if s.realized < 0.0 {
+                    lose.push(v);
+                } else {
+                    win.push(v);
+                }
+            }
+            (!win.is_empty() && !lose.is_empty())
+                .then(|| (*name, win.len(), lose.len(), median(win), median(lose)))
+        })
+        .collect()
+}
+
 fn gate_audit(
     samples: &[Sample],
     scorer: fn(&Quote, &BuyHeuristic) -> Option<f64>,
@@ -4670,6 +4729,32 @@ fn report_lane(
                 );
             }
         }
+    }
+    // (#159) the precision half nothing else prints: not what the ranking missed, but what it BOUGHT
+    // AND LOST. GROWTH only, for the same reason `missed_winner_reasons` is — these factors are the
+    // growth lane's, and running the split beside `buy_score` would attribute one lane's losers to
+    // the other lane's inputs. Knob-gated, so the goldens keep the report they were blessed on.
+    if tuning.print_held_loser_factors && label.starts_with("GROWTH") {
+        let rows = held_loser_factors(&scored, VERDICT_TOP, &FUND_FACTORS);
+        println!("  held book's LOSERS by factor (what we BOUGHT and lost, median per side):");
+        if rows.is_empty() {
+            println!("    no factor fills both sides — no as-of fundamentals, or the book never lost money");
+        }
+        for (name, nw, nl, mw, ml) in &rows {
+            // The gap is the whole point, so it is computed once here and not left to the reader:
+            // same sign and similar size = this factor does NOT separate a loser from a winner, and
+            // a gate on it would reject the two cohorts together.
+            println!(
+                "    {name:<21} winners n={nw:<4} med {mw:>9.2}   losers n={nl:<4} med {ml:>9.2}   gap {:>9.2}",
+                mw - ml
+            );
+        }
+        println!(
+            "    ({} of {} factors filled both sides; a factor absent here is uncovered in this pool, not disproven.",
+            rows.len(),
+            FUND_FACTORS.len()
+        );
+        println!("     READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.)");
     }
     // (#111) (round 3 §8) the base rate behind the whole lane: of the names that HAD compounded at the
     // bar, what fraction did it again over the next window — against the fraction of everyone who did.
@@ -6004,6 +6089,55 @@ mod tests {
         assert!(missed_winner_reasons(&wiped, &[], &t, 1, 1.0, 0.0).is_none());
     }
 
+    /// (#159) `held_loser_factors` has three claims and each one rots differently if it breaks.
+    /// (a) It reads the HELD book — the top-n of each bucket — not the pool: a name the ranking left
+    /// out has no bearing on what the book bought, and letting one vote is how a "loser trait" gets
+    /// manufactured out of names nobody owned. (b) It splits on `realized < 0`, money actually lost.
+    /// (c) It DROPS a factor that cannot fill both sides, which is the claim that would fail
+    /// silently — a factor present only on the winners would otherwise print its median against an
+    /// empty cohort and read exactly like the separation this instrument exists to find.
+    #[test]
+    fn held_loser_factors_reads_only_the_held_book_and_drops_one_sided_factors() {
+        use crate::core::FundFactors;
+        let row = |t: &str, realized: f64, roe: Option<f64>, roic: Option<f64>| Sample {
+            date: ymd(2010, 1, 1),
+            realized,
+            relative: 0.0,
+            quote: Arc::new(Quote::stub(t, "1", "", t)),
+            fund: Some(FundFactors { roe, roic, ..Default::default() }),
+            trail: Vec::new(),
+        };
+        // One bucket, four names. `roe` fills both sides; `roic` is winners-only and must vanish.
+        // UNHELD ranks last and carries absurd values, so if it ever votes the medians move visibly.
+        let pool = [
+            row("WIN1", 100.0, Some(30.0), Some(9.0)),
+            row("WIN2", 50.0, Some(20.0), Some(7.0)),
+            row("LOSE", -40.0, Some(2.0), None),
+            row("UNHELD", -99.0, Some(-500.0), Some(-500.0)),
+        ];
+        let scored: Vec<(&Sample, f64)> = ["WIN1", "WIN2", "LOSE", "UNHELD"]
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (pool.iter().find(|s| s.quote.ticker == *n).unwrap(), 100.0 - i as f64))
+            .collect();
+
+        let rows = held_loser_factors(&scored, 3, &["roe", "roic"]);
+        assert_eq!(rows.len(), 1, "roic is winners-only and must be dropped, not printed: {rows:?}");
+        assert_eq!(
+            (rows[0].0, rows[0].1, rows[0].2, rows[0].3, rows[0].4),
+            ("roe", 2, 1, 25.0, 2.0),
+            "held book is WIN1/WIN2/LOSE: winners median (30,20)->25, losers (2)->2; UNHELD must not vote"
+        );
+
+        // n=4 admits UNHELD, and its -500 is what proves the top-n slice above was doing the work.
+        let all = held_loser_factors(&scored, 4, &["roe"]);
+        assert_eq!(all[0].2, 2, "UNHELD is a loser once held");
+        assert!(all[0].4 < 2.0, "its -500 must drag the loser median below LOSE's 2.0: {:?}", all[0]);
+
+        // A bucket of one is skipped, exactly as `recall_capture` skips it, so both instruments
+        // count the same pool — otherwise a single-name window would report a 100% one-sided split.
+        assert!(held_loser_factors(&scored[..1], 1, &["roe"]).is_empty());
+    }
 
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back
     /// exactly what backtest wrote), corrupt/empty JSON is an empty journal (a broken file silences

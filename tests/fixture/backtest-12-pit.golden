@@ -57,6 +57,10 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
       cagr        + cagr-life      1 winners     5.9% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr        + 5Y+            1 winners     4.4% of the missed wealth   both near-miss:    0 ( 0.0%)
       -> exactly-2-gate winners hold 10.4% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:8% 2:10% 3:23% 4:16% 5:34% 6:9%
+  held book's LOSERS by factor (what we BOUGHT and lost, median per side):
+    no factor fills both sides — no as-of fundamentals, or the book never lost money
+    (0 of 24 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
+     READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.)
   vs null model (tuning off): rho -0.14  edge +4.5 pts  ->  tuning adds +31.0 pts
   out-of-sample (split 2007-05-01): early rho +0.62  |  late rho -0.01
   edge by era (chronological quarters):
