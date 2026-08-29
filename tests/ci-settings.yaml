@@ -8902,6 +8902,80 @@ urls:
   # numbers close, which is the build (#127) warned against ("NO KNOB WAS CHANGED ON THE STRENGTH OF
   # THIS"). `STRESS_TICKERS` stays the hand-picked 27 and its doc comment stays honest about it.
   # WHAT WOULD REOPEN THIS is unchanged from (#134) and is now the ONLY thing that would: a
+  # ---------------------------------------------------------------------------------------------
+  # (#161) THE VENDORS ARE NOW PRICED, 2026-08-29. DESK RESEARCH ONLY — NOTHING BOUGHT, NOTHING BUILT.
+  # (#129) said "a paid vendor (CRSP/EODHD-class)" and named no price; (#134) and (#153) both close by
+  # asking for a survivorship-free PRICE source without saying what one costs. Four candidates, priced
+  # against THIS pool's requirement so the next reader does not repeat the search. PRICES ARE PUBLISHED
+  # LIST PRICES READ OFF VENDOR PAGES ON 2026-08-29 AND NOT OFF A CHECKOUT — treat them as indicative.
+  #
+  # THE REQUIREMENT, restated from (#153)'s own numbers so a vendor can be judged against it:
+  #   (a) prices for names that STOPPED TRADING, ending AT the delisting rather than running to today;
+  #   (b) a terminal return (Bessembinder's median delisted return is -91.95%, and this dataset holds
+  #       not one such return);
+  #   (c) depth to ~2006-08 for a 20y PRIMARY, ~2014-08 for 12y;
+  #   (d) A PERMANENT SECURITY ID, NOT A TICKER. This is the one (#153) proved is binding: CEG, MER and
+  #       ARM are all recycled, and a ticker-keyed feed scores a DIFFERENT COMPANY silently.
+  #
+  #   vendor            list price            delisted  depth   platform          keyed on
+  #   EODHD             EUR 19.99/mo          yes, all  US from REST, Linux OK    Isin, "string or null";
+  #                     EUR 199.90/yr         packages  ~2000                     NO delisting date
+  #   Sharadar SEP      ~USD 69/mo, 499/yr    21k act+  1998    REST via Nasdaq   delist reasons, ticker
+  #                     (bundle price, see below)  delisted             Data Link, Linux OK   changes, security ids
+  #   Norgate Platinum  USD 630/yr            yes, AND  1990    WINDOWS ONLY      n/a here
+  #   Norgate Diamond   USD 787.50/yr         historical index consts 1950  (see below)
+  #   CRSP              no individual license — academic/government/practitioner contracts only
+  #
+  # NORGATE IS THE BEST DATA FIT AND THE WORST PLATFORM FIT. Platinum/Diamond carry delisted securities
+  # AND historical index constituents, i.e. BOTH halves (#134) split apart, for USD 630-787.50/yr. But
+  # the Norgate Data Updater is a Windows-only .NET application (Win 10/11 64-bit, .NET 4.7.2, up to
+  # 63 GB local store); Mac/Linux is "medium-term plans", with a Windows VM or WSL2 as the documented
+  # workaround. This project is a Linux Rust CLI whose fetch layer is HTTP-plus-JSON-cache. Standing a
+  # Windows VM up to feed it is a bigger change than anything the data would buy. There is a 21-day
+  # free trial, but it carries TWO YEARS of history, which cannot answer a 20y question.
+  #
+  # EODHD IS THE CHEAPEST THING THAT COULD ANSWER, AND ITS DOCS DO NOT ANSWER THE ONE QUESTION THAT
+  # MATTERS. Delisted symbols come from `exchange-symbol-list/US?delisted=1`, returning `Code` `Name`
+  # `Country` `Exchange` `Currency` `Type` `Isin` — Isin nullable, and NO delisting date, which is fine
+  # because (#153) CORRECTION 2 already found the dates free at Alpha Vantage LISTING_STATUS. The docs
+  # say prices "keep their full history up to the delisting date" and say NOTHING about recycled
+  # tickers, which is requirement (d) — the one that actually decides it.
+  #   AND IT CANNOT BE PROBED FREE. The free tier is 20 calls/day and PAST YEAR ONLY; the DEMO key
+  #   serves six fixed tickers (AAPL, TSLA, VTI, AMZN, BTC-USD, EURUSD). Neither can fetch a name that
+  #   died in 2008. So the control discipline (#134) demanded for stooq and (#153) applied to itself
+  #   CANNOT be run before paying. That is a finding, not an obstacle to route around.
+  #   ONE LIMIT WORTH PRICING NOW: for names delisted BEFORE 2018 EODHD serves EOD ONLY — no
+  #   fundamentals, dividends or splits. Prices and a terminal return are what survivorship needs, so
+  #   this does not block the correction. It DOES mean the `fund` lane — which (#156), (#157) and
+  #   (#159) all read — could not be extended to pre-2018 dead names on this vendor.
+  #
+  # SHARADAR advertises exactly the fields requirement (d) needs — "delist reasons, ticker changes" and
+  # security identifiers, 21k active-and-delisted to 1998. Its price is quoted here from a BUNDLE page
+  # (USD 69/mo, 499/yr full history; 29/mo for 5 years, too shallow) and was NOT confirmed as the price
+  # of SEP alone; SF1, the fundamentals half, is a separate product. Verify before citing this figure.
+  #
+  # CRSP is the gold standard and is not purchasable here: academic, government and practitioner
+  # contracts only, signed and paid annually. (#129)'s "CRSP/EODHD-class" pairs a product this project
+  # cannot buy with one it can, and only the second half was ever actionable.
+  #
+  # WHAT ANY OF IT WOULD ACTUALLY BUY, MEASURED RATHER THAN ASSUMED. The survivorship correction in
+  # this repo is `STRESS_TICKERS`: 27 hand-picked names, of which only FIVE are bankruptcies whose
+  # series ends near zero (BBBYQ, FRCB, SIVBQ, SBNY, WEWKQ) — the doc comment calls those "the gold
+  # correction". Everything this file says about whether the edge survives a loser-inclusive pool rests
+  # on those five. A vendor replaces the hand-picked list with the real population — (#153) already
+  # holds 419 dated delistings from a free endpoint, waiting only on prices. THE INSTRUMENT ALREADY
+  # EXISTS: `stress` injects and dedups the list today, so the integration is a bigger list, not a new
+  # lane. That is the cheapest shape this could take and it is why the question is worth a small bet.
+  #
+  # RECOMMENDED NEXT STEP, AND IT IS NOT A PURCHASE OF A YEAR: buy ONE month of EODHD's cheapest EOD
+  # plan (EUR 19.99) and run the probe (#153) could not — fetch the names it proved Yahoo fails on
+  # (CEG delisted 2013-03-20, MER 2008-12-31, plus ROH BSC TWX ENRNQ AAMRQ PALM NYX SOV) and check
+  # three things: does the series STOP at the delisting date; is there a real terminal return; and is a
+  # RECYCLED ticker isolated from its predecessor. Yahoo fails all three. If EODHD passes, the year is
+  # worth EUR 199.90; if it fails on recycling, the next rung is Sharadar at ~USD 69 for one month, not
+  # Norgate. PRE-REGISTER that as the bar before the month is bought, and record the result here
+  # whichever way it lands — a refuted vendor is as reusable a finding as a working one.
+  # ---------------------------------------------------------------------------------------------
   # survivorship-free PRICE source. Membership is done, dates are free, prices are the block. A
   # candidate must be shown to serve bars that END at a delisting date — that is the one test, and
   # both samples above fail it 0-for-30 and 0-for-703.
