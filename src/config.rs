@@ -561,7 +561,7 @@ impl Default for BuyHeuristic {
             growth_record_full_years: 20.0, // (#133) unfitted judgement value; inert while the weight is 0.
             growth_base_offset: 0.0, // (#150) 0 = the term contributes exactly 0.0 — the lane every golden holds.
             growth_rank_normalise: 0.0,     // (#144) OFF: `v' = v` for every additive term, so `base` is the shipped sum bit for bit.
-            print_recall_capture: false, // (#104) OFF = today's report, which is what every golden holds.
+            print_recall_capture: false, // (#104) OFF = the report without the recall block. NOT what the goldens hold since (#154): tests/ci-settings.yaml ships this `true` and the fixture pins that file, so the blessed goldens carry the ON output. This Default is the config-less shape only.
             journal_core_list: false, // (#103) OFF = only the ranked slice is journalled, which is what every existing line in a user's `.screen_snapshots.jsonl` holds.
             hold_max_ter: 0.25, // (#102) the literal that shipped, extracted verbatim — moving it changes who wears the H flag.
             hold_ucits_or_domicile: false, // (#102) OFF = the name token is the only way to prove UCITS-ness, today's behaviour.
@@ -578,7 +578,7 @@ impl Default for BuyHeuristic {
             drop_dead_ticker_series: false, // (#122) OFF = today's behaviour byte-for-byte, which every golden in tests/fixture pins. Turning it on removes 34 contaminated series from the walk; grade it under Ship Rule v2 before shipping any other value
             print_selection_count: false,  // (#92) OFF = today's output byte-for-byte, which is what every golden in tests/fixture pins. Display-only: turning it on adds a best-of-N caveat to the top-N table header — (#120) took it off the screen footer, where it would now caveat a basket that is fixed a priori rather than selected — and changes no number
             print_n_eff: false,            // (#91) OFF = today's output byte-for-byte, which is what every golden in tests/fixture pins. Display-only knob: turning it on adds a tag to five lines and changes no number
-            print_h2h_mid_ladder: false, // (#135) OFF = the one head-to-head line the report has always printed. Turning it on ADDS a line and moves nothing else.
+            print_h2h_mid_ladder: false, // (#135) OFF = the one head-to-head line the report has always printed. Turning it on ADDS a line and moves nothing else. (#154) ships it `true` in tests/ci-settings.yaml; no golden moves either way, because no fixture window reaches the 6-10 book.
             split_purge_months: 0,         // (#90) OFF = both splits stay a bare row-index cut, today's behaviour and what every OOS rho and `tune` winner in this repo was read off. Any value >0 drops rows and so moves every split-derived number at once
             bootstrap_block_buckets: 0,    // (#119) derive from the hold. The band this suppresses at every horizon was the one every 'clears 0' and every 'below 0 -> backwards' in this repo was read off — see the field comment and the ci-settings receipt
             backtest_anchor_windows: false, // (#88) OFF = the backtest keeps the empty map it always hardcoded, so every golden stays byte-identical. Turning it on re-measures every perf-fed gate at once — see the field comment and the ci-settings receipt

@@ -10,6 +10,9 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   90% bootstrap band on edge: NONE — the honest block at this 20y hold is 40 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
   net of cost: edge -559.6 − turnover 79% × 20bps = net -559.7 pts  <- NET ≤ 0: too churny to trade
   winsorized edge (1/99 clamp): -543.4 pts
+  recall of the pool's extreme winners (what the ranking MISSED):
+    held book     vs top 1%  winners (n=43   ): recall 26%   capture 8%
+    held book     vs ≥10×    winners (n=131  ): recall 30%   capture 14%
   vs null model (tuning off): rho -0.27  edge -814.3 pts  ->  tuning adds +254.7 pts
   out-of-sample (split 2001-06-01): early rho -0.13  |  late rho -0.17
   edge by era (chronological quarters):
@@ -34,6 +37,34 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   90% bootstrap band on edge: NONE — the honest block at this 20y hold is 40 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
   net of cost: edge -143.5 − turnover 75% × 20bps = net -143.6 pts  <- NET ≤ 0: too churny to trade
   winsorized edge (1/99 clamp): -143.5 pts
+  recall of the pool's extreme winners (what the ranking MISSED):
+    held book     vs top 1%  winners (n=43   ): recall 0%   capture 0%
+    held book     vs ≥10×    winners (n=131  ): recall 8%   capture 2%
+    why the top 1% misses were missed (43 of 43 winners = 100% of their wealth; capture above is the rest):
+      range                      17 winners    44.0% of the missed wealth   sole blocker:    0 ( 0.0%)
+      history                     7 winners    36.1% of the missed wealth   sole blocker:    7 (36.1%)
+      cagr                       14 winners    12.0% of the missed wealth   sole blocker:    0 ( 0.0%)
+      cagr-life                   5 winners     7.9% of the missed wealth   sole blocker:    4 ( 6.4%)
+      -> at most 42.5% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
+      cagr        + cagr-life      5 winners     2.8% of the missed wealth   both near-miss:    0 ( 0.0%)
+      cagr-life   + stretch        1 winners     1.5% of the missed wealth   both near-miss:    0 ( 0.0%)
+      range       + 1Y+            1 winners     0.7% of the missed wealth   both near-miss:    0 ( 0.0%)
+      -> exactly-2-gate winners hold 5.0% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:42% 2:5% 3:2% 4:9% 5:20% 6:21%
+    why the ≥10× misses were missed (121 of 131 winners = 98% of their wealth; capture above is the rest):
+      range                      43 winners    42.9% of the missed wealth   sole blocker:    1 ( 0.5%)
+      history                    32 winners    33.8% of the missed wealth   sole blocker:   32 (33.8%)
+      cagr                       32 winners    14.2% of the missed wealth   sole blocker:    3 ( 0.9%)
+      cagr-life                   9 winners     7.7% of the missed wealth   sole blocker:    7 ( 5.9%)
+      1Y+                         4 winners     1.2% of the missed wealth   sole blocker:    4 ( 1.2%)
+      stretch                     1 winners     0.2% of the missed wealth   sole blocker:    1 ( 0.2%)
+      -> at most 42.5% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
+      cagr        + cagr-life      7 winners     2.8% of the missed wealth   both near-miss:    0 ( 0.0%)
+      range       + 1Y+            5 winners     2.1% of the missed wealth   both near-miss:    0 ( 0.0%)
+      cagr        + 5Y+            5 winners     1.8% of the missed wealth   both near-miss:    0 ( 0.0%)
+      cagr-life   + stretch        2 winners     1.8% of the missed wealth   both near-miss:    0 ( 0.0%)
+      range       + 5Y+            1 winners     0.6% of the missed wealth   both near-miss:    0 ( 0.0%)
+      cagr        + 1Y+            1 winners     0.4% of the missed wealth   both near-miss:    0 ( 0.0%)
+      -> exactly-2-gate winners hold 9.5% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:42% 2:9% 3:5% 4:8% 5:18% 6:17%
   vs null model (tuning off): rho +0.05  edge -586.7 pts  ->  tuning adds +443.2 pts
   out-of-sample (split 2002-01-01): early rho +0.06  |  late rho +0.32
   edge by era (chronological quarters):

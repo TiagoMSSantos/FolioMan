@@ -10,6 +10,9 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   90% bootstrap band on edge: NONE — the honest block at this 8y hold is 16 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
   net of cost: edge -4.7 − turnover 72% × 20bps = net -4.9 pts  <- NET ≤ 0: too churny to trade
   winsorized edge (1/99 clamp): -5.4 pts
+  recall of the pool's extreme winners (what the ranking MISSED):
+    held book     vs top 1%  winners (n=67   ): recall 25%   capture 15%
+    held book     vs ≥10×    winners (n=41   ): recall 15%   capture 12%
   vs null model (tuning off): rho -0.28  edge -130.6 pts  ->  tuning adds +125.9 pts
   out-of-sample (split 2009-09-01): early rho +0.05  |  late rho -0.02
   edge by era (chronological quarters):
@@ -34,6 +37,32 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   90% bootstrap band on edge: NONE — the honest block at this 8y hold is 16 ~6mo buckets and this record holds under 10 of them; a block that big stops varying, so there is no band to read
   net of cost: edge -90.5 − turnover 69% × 20bps = net -90.6 pts  <- NET ≤ 0: too churny to trade
   winsorized edge (1/99 clamp): -88.8 pts
+  recall of the pool's extreme winners (what the ranking MISSED):
+    held book     vs top 1%  winners (n=67   ): recall 3%   capture 2%
+    held book     vs ≥10×    winners (n=41   ): recall 5%   capture 4%
+    why the top 1% misses were missed (65 of 67 winners = 98% of their wealth; capture above is the rest):
+      history                    17 winners    43.9% of the missed wealth   sole blocker:   17 (43.9%)
+      range                      27 winners    35.6% of the missed wealth   sole blocker:    0 ( 0.0%)
+      cagr                       15 winners    15.0% of the missed wealth   sole blocker:    0 ( 0.0%)
+      cagr-life                   5 winners     4.8% of the missed wealth   sole blocker:    3 ( 2.8%)
+      1Y+                         1 winners     0.8% of the missed wealth   sole blocker:    0 ( 0.0%)
+      -> at most 46.7% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
+      cagr        + cagr-life      7 winners     9.3% of the missed wealth   both near-miss:    0 ( 0.0%)
+      cagr-life   + 1Y+            2 winners     2.0% of the missed wealth   both near-miss:    0 ( 0.0%)
+      range       + 1Y+            1 winners     1.3% of the missed wealth   both near-miss:    0 ( 0.0%)
+      range       + 5Y+            1 winners     0.8% of the missed wealth   both near-miss:    0 ( 0.0%)
+      1Y+         + 5Y+            1 winners     0.8% of the missed wealth   both near-miss:    0 ( 0.0%)
+      -> exactly-2-gate winners hold 14.2% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:47% 2:14% 3:7% 4:7% 5:9% 6:16%
+    why the ≥10× misses were missed (39 of 41 winners = 96% of their wealth; capture above is the rest):
+      history                    14 winners    47.9% of the missed wealth   sole blocker:   14 (47.9%)
+      range                      12 winners    28.0% of the missed wealth   sole blocker:    0 ( 0.0%)
+      cagr                       12 winners    22.5% of the missed wealth   sole blocker:    0 ( 0.0%)
+      cagr-life                   1 winners     1.6% of the missed wealth   sole blocker:    0 ( 0.0%)
+      -> at most 47.9% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
+      cagr        + cagr-life      4 winners     8.7% of the missed wealth   both near-miss:    0 ( 0.0%)
+      range       + 1Y+            1 winners     1.9% of the missed wealth   both near-miss:    0 ( 0.0%)
+      cagr-life   + 5Y+            1 winners     1.6% of the missed wealth   both near-miss:    0 ( 0.0%)
+      -> exactly-2-gate winners hold 12.2% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:48% 2:12% 3:10% 4:9% 5:7% 6:14%
   vs null model (tuning off): rho -0.04  edge -26.1 pts  ->  tuning adds -64.4 pts  <- the tuning is NOT EARNING ITS KEEP
   out-of-sample (split 2007-11-01): early rho +0.13  |  late rho -0.05
   edge by era (chronological quarters):
