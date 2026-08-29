@@ -4225,8 +4225,65 @@ buy_heuristic:
                                  #   bar against an 8-14y firstTradeDate, e.g. 0Y07.L (first traded 2012-06-11),
                                  #   EMUM.L and 0MUL.L (2013-09-18), 020Y.L (2015-01-21), USCO.L (2016-02-17).
                                  #   The screen HAS an ETF lane, so this is a live coverage bug on shipped output,
-                                 #   not a backtest curiosity. It is out of scope here because this block is about
+                                 #   not a backtest curiosity. [CORRECTED BY (#158) DIRECTLY BELOW: the fetch is
+                                 #   well-formed and the hole is upstream — there is no bug on our side to fix.]
+                                 #   It is out of scope here because this block is about
                                  #   the growth STOCK gate; it wants its own round and its own receipt.
+                                 #   (#158) ANSWERED 2026-08-29 — IT IS AN UPSTREAM HOLE. No code shipped,
+                                 #   and this receipt CORRECTS the sentence above: "a live coverage bug on
+                                 #   shipped output" is wrong in the part that matters. The fetch is not
+                                 #   defective and there is nothing on our side to repair.
+                                 #   THE STUB IS THE LIVE QUOTE, NOT A BAR. In every one of the 21 payloads
+                                 #   the single timestamp carries close == meta.regularMarketPrice to the
+                                 #   last digit and volume == meta.regularMarketVolume, dated the day before
+                                 #   the cache was written:
+                                 #     0Y07.L  close 223.8999938964844  rMP 223.9     vol 24     rMV 24
+                                 #     EMUM.L  close  82.33000183105469 rMP  82.33    vol 24     rMV 24
+                                 #     020Y.L  close   3.063800096511841 rMP  3.0638  vol 39     rMV 39
+                                 #     USCO.L  close   7.346499919891357 rMP  7.3465  vol 0      rMV 0
+                                 #     0A08.L  close 948.3275756835938  rMP 948.3276  vol 13336  rMV 13336
+                                 #   Yahoo is echoing today's quote as a one-row series because it has no
+                                 #   series to send. THE REQUEST IS WELL-FORMED: `range=max` is accepted and
+                                 #   echoed back, `validRanges` advertises max and 10y, and the requested
+                                 #   granularity is honoured (1mo, and 1wk for 0A08.L). So it is not a bad
+                                 #   range/interval — the two candidate causes (#152) named are both excluded,
+                                 #   and the third, a genuine upstream hole, is what is left.
+                                 #   WHAT THE 21 ARE: secondary listings, overwhelmingly non-primary CURRENCY
+                                 #   lines on LSE's international board — MXN (0A08.L, 0A3G.L), NZD (0A09.L),
+                                 #   CHF (0VPX.L, 0VPY.L, 0Y2C.L, 0Y3O.L, 0DB5.L), plus GBp and TRY lines.
+                                 #   Refreshed census: 51 cached ETF entries hold <=1 bar; 21 of them are
+                                 #   >=5y old, which is the figure (#152) quoted and it still stands.
+                                 #   NONE OF THE 21 IS IN `.eu_listing_cache.json` (519 entries, checked).
+                                 #   THE REMEDY ALREADY EXISTS AND IS ALREADY CORRECT TO REFUSE THEM.
+                                 #   `bridge_hint_lines` proposes a same-benchmark twin and `history_proxy`
+                                 #   applies it, but the splice REJECTS a currency mismatch — and every
+                                 #   available twin here is a different currency, which is precisely why
+                                 #   nothing was bridged. Overriding that guard reproduces the failure this
+                                 #   file already records: 0A08.L spliced an MXN head onto a GBP tail for a
+                                 #   x19.59 move in 28 days. 0A08.L IS ONE OF THESE 21. The guard is not in
+                                 #   the way of the fix; it is the reason there is no fix.
+                                 #   WHY NO AUTO-BRIDGE WAS BUILT, stated as the measurement it was: matching
+                                 #   a stub to a covered sibling by fund name was attempted twice and is
+                                 #   unreliable in BOTH directions — exact normalised equality pairs 1 of 21,
+                                 #   token-overlap pairs 18 of 21 while emitting obvious false pairs (two
+                                 #   unrelated iShares funds scoring 1.0 because their names reduce to the
+                                 #   same surviving token). THE MATCHER IS THE HARD PART, and a wrong match
+                                 #   is not a visible error — it is a silent x19 splice into the price
+                                 #   history. Do not build a retry layer, a bridge heuristic, or a symbol
+                                 #   alias table for a hole that is not ours to fill.
+                                 #   CONSEQUENCE: 21 ETF LINES ARE UNRANKABLE, AND THE LANE ALREADY HANDLES
+                                 #   THAT CORRECTLY. No history means they fail the leg/CAGR gates and are
+                                 #   never ranked; they are correctly EXCLUDED, not silently mispriced. The
+                                 #   cost is that these listings cannot be screened, not that the screen is
+                                 #   wrong about them.
+                                 #   NOT ESTABLISHED, AND DELIBERATELY NOT CLAIMED: whether every affected
+                                 #   FUND is reachable through some other covered listing. The name matcher
+                                 #   above is exactly the tool that would answer it and is exactly the tool
+                                 #   this receipt just showed to be untrustworthy. Anyone citing that claim
+                                 #   must establish it by hand, per name.
+                                 #   REVERT RULE: none — nothing shipped. INVALIDATED by a price source that
+                                 #   serves a real series for these tickers; re-run the payload check above
+                                 #   (close vs regularMarketPrice) before re-opening.
                                  #   THE 2.0 ARM WAS GRADED AND LOSES EVERY CLAUSE OF THE SHIP RULE. Six-run
                                  #   stress grid 2026-08-03, `backtest {20,12,8} universe stress`, baseline vs arm
                                  #   differing by THIS FIELD ALONE (verified: the drift warning names
