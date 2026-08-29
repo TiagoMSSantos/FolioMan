@@ -4058,6 +4058,8 @@ buy_heuristic:
                                  #     one gate loosened    (#151)  both arms REFUSED on PRIMARY, 2026-08-29
                                  #     two gates loosened   (#128)  all three pre-registered bars failed
                                  #     wider universe       (#134)  blocked on a survivorship-free PRICE source
+                                 #                          (#153)  block CONFIRMED on dead names, 0 of 30 and
+                                 #                                  0 of 703 usable; dates are free, prices are not
                                  #     coverage             (#152)  refuted here — the rejects are genuinely young
                                  #   Do not re-open admission on argument alone. A future proposal needs a NEW
                                  #   measurement, not a re-reading of these.
@@ -8270,6 +8272,9 @@ urls:
   # RE-FILE from "blocked pending a second membership source" to "blocked pending a source that is not
   # available free": this needs a paid vendor (CRSP/EODHD-class), not a session of work. Do not open
   # this again on the assumption that someone simply has not looked.
+  #   (#153) NARROWS THIS, 2026-08-29: true for PRICES, false for DATES. Alpha Vantage LISTING_STATUS
+  #   serves delisted US symbols with ipoDate and delistingDate on the free tier. The dates alone
+  #   unblock nothing (no terminal price), but do not cite this line for them. See CORRECTION 2.
   # (2) THE POND ACTUALLY BEING DROPPED TODAY IS 15 NAMES. "One of the two remaining levers on growth
   # admission" was written without measuring it. Measured 2026-08-23 against `.sp500_history.json`
   # (1206 spans) and both configured pond CSVs:
@@ -8344,9 +8349,98 @@ urls:
   # from this machine, INCLUDING a live AAPL control, returned a JavaScript proof-of-work bot check
   # instead of CSV. Nothing about its delisted coverage was measured either way. Run the live control
   # first before citing this line as "stooq does not have it".
+  #   (#153) SUPERSEDES THIS LEAD, 2026-08-29: the control was re-run (same wall) and robots.txt reads
+  #   `User-agent: * / Disallow: /`. stooq is refused on PERMISSION, so its coverage is moot and this
+  #   is no longer an open candidate. See CORRECTION 1 below.
   # DO NOT re-open the pond question by reconstructing membership: that half is done and it is not the
   # blocker. (#100)'s evidence stays STALE and the standing verdict stays UNCHANGED — do not re-add a
   # pond on argument alone — but the block is now filed against the right half of the problem.
+  # (#153) THE BLOCK STANDS AND IS NOW MEASURED ON DEAD NAMES — plus THREE CORRECTIONS to the two
+  # receipts above. Measured 2026-08-29, entirely offline. (#134) closed by naming the one free
+  # candidate it had not tested and asking for a live control first. That control has been run, a
+  # dated third-party list of genuinely delisted symbols has been obtained free, and the coverage
+  # metric (#134) reported turns out to count the wrong population. The CONCLUSION does not move:
+  # there is still no survivorship-free price source here. The EVIDENCE is now much sharper.
+  #
+  # CORRECTION 1 — STOOQ IS REFUTED, NOT UNTESTED. Delete the "run the live control first" line
+  # above as an open lead. stooq.com's robots.txt is `User-agent: * / Disallow: /`, exempting only
+  # Bingbot and Googlebot, so ALL automated access is disallowed site-wide regardless of what the
+  # coverage turns out to be. Re-tested 2026-08-29: a live AAPL control still returns the same
+  # JavaScript proof-of-work wall, so the 2026-08-24 observation was not a transient. Its delisted
+  # coverage remains unmeasured and will stay that way — this is a PERMISSION refusal, not a
+  # capability one, and it is not reopened by a better client.
+  #
+  # CORRECTION 2 — DELISTING DATES ARE FREE. (#129) refiled this whole block as "needs a paid vendor
+  # (CRSP/EODHD-class), not a session of work". That is right for PRICES and wrong for DATES.
+  # Alpha Vantage's LISTING_STATUS endpoint returns delisted US symbols with `ipoDate` AND
+  # `delistingDate`, on the free tier, one request, no per-ticker loop. Verified live on the public
+  # demo key, which serves one canned date: `state=delisted&date=2014-07-10` -> 425 symbols, 419 of
+  # them assetType=Stock carrying both dates (e.g. `ZIGO,Zygo Corp,NASDAQ,Stock,1992-03-03,
+  # 2014-06-20,Delisted`). Other dates return 0 rows on the demo key; a real free key serves the
+  # full history. NOTHING WAS BUILT ON THIS — see the verdict below for why the dates alone buy
+  # nothing — but stop citing "the dates need a vendor". They do not.
+  #
+  # CORRECTION 3 — AND THIS IS THE FINDING: `.sp500_history.json` EXIT DATES CANNOT IDENTIFY A DEAD
+  # NAME, so (#134)'s coverage number counts the wrong population. LEAVING AN INDEX IS NOT
+  # DELISTING. A name dropped from the S&P 500 for size or a sector rebalance keeps trading, keeps a
+  # real forward return, and carries NO survivorship bias at all. A name that stopped trading is the
+  # entire problem. The span file records one exit date for both and does not distinguish them.
+  # (#134) reported "154 of 734 are scoreable" off that file. Recounted 2026-08-29 over the 703
+  # members whose spans are ALL closed (i.e. never re-entered; the 734/703 gap is that definition,
+  # not a data change):
+  #       no price data at all            387   = 186 zero-bar payloads + 201 "No data found"
+  #                                             (this half REPRODUCES (#134)'s 387 exactly)
+  #       has bars                        316
+  #         feed runs >1y past the exit   300   median overrun 6476 days = 17.7 YEARS
+  #         feed ends within 1y of exit    16
+  #       (#134)'s ">=36 bars in-span"    123 of 703
+  # AND ALL 16 ARE AN ARTIFACT OF THE WINDOW, NOT TERMINATED FEEDS. Every one exited between
+  # 2025-09-22 and 2026-06-30 and every one's last bar is 2026-08-25 — they are still trading; they
+  # pass a 365-day test only because their exit is recent. None holds 5y of in-span history.
+  #   => ZERO of 703 exited members have a price feed that actually stops when the name stopped, and
+  #      the 123 "scoreable" are live tickers sliced to a past window. For a name that merely left
+  #      the index that slice is legitimate; for a recycled ticker it is a different company's
+  #      prices, which is the silent-scoring failure (#134) 3. already named. The coverage is
+  #      BINARY: Yahoo serves either nothing or a feed running to today. There is no middle.
+  #
+  # THE CROSS-CHECK ON GENUINELY DEAD NAMES. The recount above is still an S&P-membership sample, so
+  # it was re-run against the LISTING_STATUS list, where every row is a real delisting with a real
+  # date. 30 of the 419 delisted stocks are already in `.long_history_cache.json`:
+  #       zero-bar payload                 17   (AAMRQ ACS AYE BJS BRL CVH HNZ IKN JNY MFE NLC NYX
+  #                                              OMX PALM ROH SOV, mostly numeric shortName)
+  #       recycled / continuation          11   last bar >1y after the delisting date
+  #       "No data found, symbol may be delisted"  2   (FRX, HMA)
+  #       USABLE IN-SPAN BARS               0
+  #   CEG delisted 2013-03-20, serves 2022-01-17..2026-08-27 — Constellation Energy, the 2022
+  #   spin-off, on the same ticker. MER (Merrill Lynch) delisted 2008-12-31, serves 28 bars dated
+  #   2026. Same three failure modes as the membership sample, on an independently sourced list.
+  #   SAMPLE CAVEAT, STATED NOT BURIED: those 30 are the names this machine happens to have fetched
+  #   already, not a random draw. A live census over 40 UNCACHED delisted symbols was attempted the
+  #   same day and is UNMEASURED, not zero: Yahoo returned HTTP 429 to a live AAPL control, so every
+  #   row would have been rate limiting rather than coverage. That is the same control discipline
+  #   (#134) demanded for stooq, applied to this run's own result.
+  #
+  # VERDICT — NO CODE, AND THE DATES FILE IS NOT WIRED IN. A delisting date without a terminal price
+  # cannot correct survivorship bias; it can only label a name the backtest already drops when its
+  # span ends. `pit_pool` gains nothing from knowing WHY a span closed. Building a LISTING_STATUS
+  # fetcher, a `stress_source` knob and a cache for that would be an instrument for a question these
+  # numbers close, which is the build (#127) warned against ("NO KNOB WAS CHANGED ON THE STRENGTH OF
+  # THIS"). `STRESS_TICKERS` stays the hand-picked 27 and its doc comment stays honest about it.
+  # WHAT WOULD REOPEN THIS is unchanged from (#134) and is now the ONLY thing that would: a
+  # survivorship-free PRICE source. Membership is done, dates are free, prices are the block. A
+  # candidate must be shown to serve bars that END at a delisting date — that is the one test, and
+  # both samples above fail it 0-for-30 and 0-for-703.
+  # TO REPRODUCE (no network, no build, ~15s):
+  #   import json, datetime
+  #   sp = json.load(open('.sp500_history.json')); ch = json.load(open('.long_history_cache.json'))
+  #   for t, spans in sp.items():
+  #       if any(e is None for _, e in spans): continue          # still a member -> not an exit
+  #       ex = max(datetime.date.fromisoformat(e) for _, e in spans)
+  #       try: ts = ch[t][1]['chart']['result'][0].get('timestamp') or []
+  #       except Exception: continue                             # "No data found" payload
+  #       if not ts: continue                                    # zero-bar stub
+  #       print(t, ex, datetime.date.fromtimestamp(ts[-1]))      # last bar vs the exit date
+  #   # every printed line has a last bar at today, or within a year of a 2025/2026 exit.
   constituents_csv:
     - "https://yfiua.github.io/index-constituents/constituents-nasdaq100.csv"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
