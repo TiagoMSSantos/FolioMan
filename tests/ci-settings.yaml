@@ -211,6 +211,51 @@
 # Change a gate's reachability and that test fails, which is the point — these claims rotted silently
 # for years precisely because nothing asserted them.
 #
+# (#155) THE KNOB SURFACE WAS AUDITED FOR DEAD WEIGHT, 2026-08-29, AND NOTHING IS DELETABLE. Recorded
+# because "215 knobs, prune the inert ones" is an obvious-looking session that should not be re-opened
+# on the same reasoning three times.
+# FIRST, THE COUNT IS 152, NOT 215. `config::BuyHeuristic` carries 152 fields; the larger number counts
+# yaml keys across every struct in this file, most of which are not buy-heuristic knobs at all.
+# 1. ZERO FIELDS ARE UNREAD. Every one of the 152 is referenced somewhere under src/, checked
+#    mechanically over every .rs with the struct definition and the `Default` impl excluded (so a field
+#    that is only declared and only defaulted would show up as 0). The count came back 0. There is no
+#    dead-field tier at all — the easy, provable deletion set is EMPTY.
+# 2. `growth_gate_reachability_pin` CANNOT SUPPLY THE DELETION LIST, and this is the trap worth writing
+#    down because non-negotiable #3 sends every future session to that test. Twelve knobs read INERT for
+#    all three classes: growth_max_peg, growth_max_dilution_pct, growth_min_interest_cover,
+#    growth_min_fcf_margin, growth_min_net_cash_rev, growth_require_lifetime_uptrend, crypto_max_mvrv,
+#    growth_min_aum_etf, growth_ter_drag, growth_fx_damp, growth_min_age_years, growth_min_range_pct_8y.
+#    THEY ARE BACKTEST-BLIND, NOT DEAD. `dim_active` drives each knob to an extreme (1e9 for a floor,
+#    1e-6 for a cap) and asks whether any score moves, so INERT is a real structural claim — but it is a
+#    claim about THIS PATH. `backtest_quote` fills 18 fields and these read ones it does not: `fund`
+#    (the five fundamentals gates), `aum_eur`, `quote_currency`, listing age, the 8Y range. Every one is
+#    reachable on a live `screen`. The pin's own header says this ("STILL INERT there, for a different
+#    and unfixed reason") and the probe list labels the last two "known-unreachable by construction".
+#    Deleting on the strength of that table would delete WORKING GATES.
+#    Note growth_require_lifetime_uptrend is the third category named above — reachable, inputs filled,
+#    but `growth_min_cagr` rejects its cohort first. That domination is a property of cagr sitting at
+#    19; loosening cagr un-dominates it. A value-dependent inertness is not a dead knob either.
+# 3. THE REAL TARGET A PRUNE WOULD FIND IS 62 OF 152, AND IT IS THE WRONG TARGET. That many ship at an
+#    off or non-binding sentinel (0.0, false, ±1e9, empty). They are not dead code; they are
+#    DELIBERATELY-OFF LEVERS, and each carries a receipt in this file stating what it does and what
+#    turning it on measured. Deleting them deletes the options and the measurements together, which is
+#    the one thing this file exists to prevent.
+# 4. WHAT SETTLES IT — DELETION IS NOT FREE, IT IS A LOAD ERROR. `BuyHeuristic` is
+#    `#[serde(default, deny_unknown_fields)]`, by deliberate choice ("a typo'd knob must error, not
+#    silently fall back to the default"). So removing a field turns any overlay that still sets that key
+#    into a HARD FAILURE at config load. `config/settings.yaml` is gitignored and invisible to CI, so a
+#    fully green gate would not predict a broken machine — the failure mode lands on the user, after the
+#    merge. Checked 2026-08-29: the overlay on this machine carries no `buy_heuristic:` section, so
+#    nothing would break today. That is luck, it is not a guarantee, and it is not checkable for anyone
+#    else's overlay.
+# WHAT WOULD ACTUALLY JUSTIFY A PRUNE, pre-registered so the next session does not re-argue it: a knob
+# shown inert on BOTH paths. The pin covers the backtest path; NOTHING probes the live `screen` path,
+# which is precisely where the twelve above come alive. Build a live-path twin of
+# `growth_gate_reachability_pin` first, and delete only what both tables call inert. Until that exists
+# every deletion is an argument rather than a measurement, and this file does not ship those.
+# VERDICT: no knob deleted, no code changed. The surface is 152 wide because the lane is a record of
+# options that were measured, not because it accumulated dead code.
+#
 # DEBT, DELIBERATELY NOT PAID HERE: growth_min_cagr 19, growth_min_range_pct 80, growth_maxdd_cap 84,
 # growth_max_peg 1.6, growth_accel_weight 0.65 and every other knob receipt below were FITTED on the
 # contaminated peer-mean. The king horizon barely moved so they are not presumed wrong, but they are
