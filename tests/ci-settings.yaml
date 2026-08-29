@@ -711,6 +711,69 @@
 #   no shipped value, no pick and no gate moved on this commit.
 # ============================================================================================
 
+# ============================================================================================
+# (#160) 2026-08-29 — THE rank-1 h2h GUARD IS RE-BASED ONTO THE 6-10 BOOK AT 12y AND 8y, AND GAINS A
+#   NOT-WORSE BAR THERE. No code, no shipped value, no golden moves: this is a GRADING-RULE change,
+#   the one (#151) pre-registered in writing — "that is a grading-rule change and wants its own round
+#   — but it is where a thin-pool GUARD should go". CLAUDE.md's Ship rule v2 block is amended to
+#   match; THAT FILE IS GITIGNORED, SO THIS BLOCK IS THE SHARED RECORD.
+#
+#   THE RULE, AS IT NOW READS:
+#     GUARD, 12y and 8y — rank-1 h2h read off the 6-10 book (`print_h2h_mid_ladder`, (#135), shipped
+#       `true` in this file since (#154)): >= 50% AND NOT BELOW THE CONTROL'S TALLY ON THAT SAME BOOK.
+#     GUARD, 20y — UNCHANGED. The 11-20 book, >= 50% absolute, no not-worse bar. (#135)'s revert rule
+#       fired at 20y and STAYS FIRED, and (#124) puts pit 20y n_eff at ~0.2, so a delta there is noise.
+#   NOTHING IS SOFTENED ANYWHERE: 20y keeps today's bar exactly, 12y and 8y GAIN a condition.
+#
+#   WHY A SECOND CLAUSE AT ALL — RE-BASING ALONE DOES NOT FIX WHAT (#156) FOUND. (#156) rung 10 reads
+#   69% on the 6-10 book at 8y and 61% at 12y. Both clear 50%. Under the re-basing ALONE IT PASSES,
+#   and its refusal would still rest on prose judgement rather than on the rule. The defect (#156)
+#   exposed is not the denominator by itself: it is that an ABSOLUTE bar cannot see a knob that makes
+#   the book worse while staying above the line.
+#
+#   AND THE TWO CLAUSES ARE NOT INDEPENDENT — THE RE-BASING IS A PRECONDITION FOR THE NOT-WORSE BAR.
+#   On the 11-20 book at n=7-8 one window flip is 12-14 points, so a not-worse bar there fires on
+#   noise. It would also have REFUSED THE ONE REAL SHIP IN THIS FILE: (#138)'s 8y 11-20 tally FALLS
+#   67% -> 62% while its 6-10 tally RISES 65% -> 70%. Adding the bar to the old book breaks (#138);
+#   adding it to the re-based book does not. That is the argument for the PAIR, and it is why neither
+#   half ships without the other.
+#
+#   VALIDATED AGAINST THE WHOLE RECORD, NOT FITTED TO ONE ROW. Every graded arm in this file that
+#   reports a 6-10 tally, re-adjudicated under the amended rule:
+#     (#138) maxdd_cap off  12y 61->63,  8y 65->70   SHIPS, unchanged. Both clauses pass.
+#     (#151) cagr 15        h2h RISES on every arm   REFUSED, unchanged — it fails PRIMARY, not this.
+#     (#151) leg 2          h2h RISES on every arm   REFUSED, unchanged — same reason.
+#     (#156) dilution 10    12y 63->61,  8y 70->69   REFUSED BY RULE.  <- the only verdict that moves.
+#   ONE verdict changes, and it changes to match the refusal (#156) had ALREADY written out in prose
+#   on three independent reads. A rule that re-derives a judgement already made, and disturbs nothing
+#   else in the record, is doing what a rule is for.
+#
+#   RESOLUTION, so nobody reads a false precision into it: the not-worse bar's minimum trigger is ONE
+#   WHOLE WINDOW — 3.8 points at n=26, 5.6 at n=18. It cannot fire on sub-window noise, and it is NOT
+#   a percentage-point threshold to be tuned. Do not add a tolerance to it; a tolerance is the argmax
+#   (#120) forbids, wearing a different hat.
+#
+#   READING NOTE, NOT A THIRD CLAUSE: a RISING fraction on a FLAT-OR-FALLING numerator is (#151)'s
+#   residue artifact, and (#156) caught rung 10's 5/8 -> 5/7 exactly that way. The bar above is on the
+#   FRACTION, because the fraction is what ">= 50%" has always meant and it is the only figure every
+#   row of the record prints. When a fraction rises, check the numerator and `windows scored` before
+#   believing it — (#156)'s GENERAL FINDING covers why.
+#
+#   WHAT THIS DOES NOT DO. It does not make 20y adjudicable, it does not touch PRIMARY or the worst
+#   window, and it grades no knob. (#151)'s identity test
+#   `the_h2h_denominator_is_the_unsaturated_bucket_count` still describes the 11-20 tally, is
+#   untouched, and MUST STAY — but that identity NO LONGER DESCRIBES THE GUARD at 12y/8y, because the
+#   6-10 book's denominator is a different predicate (>= 6 names, not > 10). Read that test as pinning
+#   the OLD book, which still prints beside the new one.
+#
+#   TO REVERT: delete the not-worse clause and clause 1 stands alone exactly as (#151) pre-registered
+#   it; delete both and the rule is what it was on 2026-08-29. Two code comments were corrected to
+#   match — `rank_slice_stats`'s "the ship rule still reads `mid`" and `print_h2h_mid_ladder`'s "it
+#   does NOT change which number the ship rule reads" — both true when written, both false under this
+#   block. IF (#135)'s REVERT RULE EVER FIRES AGAIN AT 12y OR 8y, THIS BLOCK GOES WITH IT: the
+#   not-worse bar would have no licensed book left to stand on.
+# ============================================================================================
+
 tickers: []
 
 # ============================================================================================
@@ -3813,6 +3876,18 @@ buy_heuristic:
                                  # # it. Do not weaken it.
                                  # # REVERT RULE: set false; this knob only prints, so reverting it reverts
                                  # # nothing that was decided.
+                                 # #
+                                 # # (#160) 2026-08-29 — THAT REVERT RULE IS NO LONGER TRUE, AND THIS IS THE
+                                 # # ONE PLACE A READER WOULD BE MISLED BY IT. The Ship Rule v2 GUARD now READS
+                                 # # this line at 12y and 8y (>= 50% AND not below the control's tally on this
+                                 # # same 6-10 book); 20y still reads the 11-20 line, unchanged and with no
+                                 # # not-worse bar. So setting this false no longer "reverts nothing" — it
+                                 # # removes the figure the guard adjudicates on, and the rule reverts with it.
+                                 # # The knob still only PRINTS; what changed is who reads the print. Full
+                                 # # receipt, the whole-record re-adjudication and the revert path: the (#160)
+                                 # # block in this file's header. The 12y/8y-only limit above is unchanged and
+                                 # # (#160) depends on it — if (#135)'s revert rule fires again at either
+                                 # # horizon, (#160) goes with it.
   split_purge_months: 0          # (#90) UNMEASURED — an unfitted judgement value, shipping 0, which is no
                                  #   purge at all: today's behaviour byte-for-byte, and what every OOS rho,
                                  #   every "both halves positive" promotion in this file and every `tune`

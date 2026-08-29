@@ -2755,7 +2755,8 @@ fn h2h_low_line(on: bool, low: H2h, hn: usize) -> Option<String> {
 /// fn stays years-free. Returns TWO head-to-head tallies over the same windows: `mid` is the shipped
 /// guard (#1 / the 2-5 book vs the 11-20 book, windows of ≥11 names) and `low` is (#135)'s same
 /// question against the 6-10 book, which needs only 6. Both come from this one pass so the pair can
-/// never differ by grid drift; the ship rule still reads `mid`.
+/// never differ by grid drift. (#160) the ship rule reads `low` (the 6-10 book) at 12y and 8y, and
+/// `mid` (11-20) at 20y only — both are printed at every horizon regardless.
 fn rank_slice_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64, String)>>) -> SliceStats {
     let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len().max(1) as f64;
     const SLICES: [(usize, usize, &str); 5] =
