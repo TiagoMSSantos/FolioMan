@@ -66,7 +66,9 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   held book's LOSERS by factor (what we BOUGHT and lost, median per side):
     no factor fills both sides — no as-of fundamentals, or the book never lost money
     (0 of 24 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
-     READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.)
+     READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.
+     (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking
+     by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)
   vs null model (tuning off): rho -0.04  edge -26.1 pts  ->  tuning adds -64.4 pts  <- the tuning is NOT EARNING ITS KEEP
   out-of-sample (split 2007-11-01): early rho +0.13  |  late rho -0.05
   edge by era (chronological quarters):

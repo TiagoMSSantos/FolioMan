@@ -2799,6 +2799,47 @@ fn median(mut v: Vec<f64>) -> f64 {
     if k % 2 == 1 { v[k / 2] } else { (v[k / 2 - 1] + v[k / 2]) / 2.0 }
 }
 
+/// (#165) Probability that a randomly drawn `win` value exceeds a randomly drawn `lose` one, ties
+/// counting a half — the separation column of the held-loser table.
+///
+/// WHY THIS AND NOT THE RAW MEDIAN GAP that table printed alone until now. The gap is expressed in
+/// the FACTOR'S OWN UNITS, and `FUND_FACTORS` does not share units: `peg_yield` is
+/// `earnings_yield · CAGR` and runs in the hundreds, `accrual_gap` is a ratio living near 0,
+/// `margin_stability` is `-std(net_margin)` in single digits. Ranking factors BY THAT GAP therefore
+/// ranked them by scale, which is how `accrual_gap` (+0.00 | -0.08) came to be recorded DEAD beside
+/// `peg_yield` (+468.92) in (#159). This statistic is invariant under any MONOTONE transform, so a
+/// rescaling, a sign convention or an outlier cannot move it and the 24 factors become comparable to
+/// one another. Full re-reading of (#159)'s table: the (#165) block in tests/ci-settings.yaml.
+///
+/// A GATE IS A THRESHOLD, and this is exactly how well the best single threshold on the factor could
+/// separate the two cohorts — the question the table is asked, not a proxy for it. 0.5 = no
+/// separation; > 0.5 = winners score higher; < 0.5 = losers score higher, so DIRECTION survives and
+/// (#159)'s "separates backwards" family stays legible as a value below a half.
+///
+/// It does NOT authorise a gate. It says a threshold is possible; Ship Rule v2 still decides.
+///
+/// O(n·m) deliberately: the cohorts run ~150 x ~30, a sort buys nothing there, and the pair loop is
+/// the version whose tie handling is obvious on inspection. NaN compares as "not greater" (the `_`
+/// arm) so the result stays finite and deterministic on a poisoned input rather than propagating.
+/// Either side empty = 0.5, nothing to separate — `held_loser_factors` drops one-sided factors before
+/// calling, so that is a guard rather than a path.
+fn auc(win: &[f64], lose: &[f64]) -> f64 {
+    if win.is_empty() || lose.is_empty() {
+        return 0.5;
+    }
+    let mut acc = 0.0;
+    for w in win {
+        for l in lose {
+            acc += match w.partial_cmp(l) {
+                Some(std::cmp::Ordering::Greater) => 1.0,
+                Some(std::cmp::Ordering::Equal) => 0.5,
+                _ => 0.0,
+            };
+        }
+    }
+    acc / (win.len() * lose.len()) as f64
+}
+
 /// (#108) The capital-gains rate a position held `years` pays, given the headline rate `base` (as a
 /// fraction) and a holding-period exclusion `schedule`. The WIDEST exclusion among the rungs the hold
 /// satisfies wins, so yaml order is irrelevant and a schedule listing only its top rung still works.
@@ -4346,14 +4387,18 @@ fn persistence_base_rate(
 /// definition, which would make every factor look like it separated something. Losing money is what
 /// a survival gate is actually asked to prevent.
 ///
-/// Returns (factor, n_win, n_lose, median_win, median_lose) and SKIPS any factor that cannot fill
-/// both sides. A skipped row is a fact about what the point-in-time pool covers, not about the
-/// factor — the caller prints the count it dropped so the absence stays visible.
+/// Returns (factor, n_win, n_lose, median_win, median_lose, auc) and SKIPS any factor that cannot
+/// fill both sides. (#165) added the `auc`: the medians give each factor's LEVEL, which is only
+/// readable in its own units, while the `auc` is what makes two factors comparable to EACH OTHER.
+/// Both are kept — dropping the medians would leave a row nobody can sanity-check against the
+/// printed columns elsewhere in this report. A skipped row is a fact about what the point-in-time
+/// pool covers, not about the factor — the caller prints the count it dropped so the absence stays
+/// visible.
 fn held_loser_factors(
     scored: &[(&Sample, f64)],
     n: usize,
     factors: &[&'static str],
-) -> Vec<(&'static str, usize, usize, f64, f64)> {
+) -> Vec<(&'static str, usize, usize, f64, f64, f64)> {
     let mut picked: BTreeMap<i32, Vec<(&Sample, f64)>> = BTreeMap::new();
     for (s, v) in scored {
         picked.entry(bucket(s.date)).or_default().push((s, *v));
@@ -4380,8 +4425,11 @@ fn held_loser_factors(
                     win.push(v);
                 }
             }
-            (!win.is_empty() && !lose.is_empty())
-                .then(|| (*name, win.len(), lose.len(), median(win), median(lose)))
+            (!win.is_empty() && !lose.is_empty()).then(|| {
+                // BEFORE the medians: `median` takes the Vec by value, so the cohorts are gone after.
+                let sep = auc(&win, &lose);
+                (*name, win.len(), lose.len(), median(win), median(lose), sep)
+            })
         })
         .collect()
 }
@@ -4741,12 +4789,13 @@ fn report_lane(
         if rows.is_empty() {
             println!("    no factor fills both sides — no as-of fundamentals, or the book never lost money");
         }
-        for (name, nw, nl, mw, ml) in &rows {
-            // The gap is the whole point, so it is computed once here and not left to the reader:
-            // same sign and similar size = this factor does NOT separate a loser from a winner, and
-            // a gate on it would reject the two cohorts together.
+        for (name, nw, nl, mw, ml, sep) in &rows {
+            // The gap is computed here rather than left to the reader, but it is expressed in THIS
+            // factor's units and so is only comparable to ITSELF across horizons. (#165) the AUC
+            // beside it is the cross-factor reading: unit-free, 0.5 = no separation, below a half =
+            // the LOSERS score higher. Rank the factors on |AUC - 0.5|, never on the gap column.
             println!(
-                "    {name:<21} winners n={nw:<4} med {mw:>9.2}   losers n={nl:<4} med {ml:>9.2}   gap {:>9.2}",
+                "    {name:<21} winners n={nw:<4} med {mw:>9.2}   losers n={nl:<4} med {ml:>9.2}   gap {:>9.2}   AUC {sep:>5.2}",
                 mw - ml
             );
         }
@@ -4755,7 +4804,11 @@ fn report_lane(
             rows.len(),
             FUND_FACTORS.len()
         );
-        println!("     READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.)");
+        println!("     READ THE GAP, NOT THE LEVEL: a gate can only act on a factor whose two cohorts differ.");
+        println!(
+            "     (#165) COMPARE FACTORS ON AUC, NOT ON GAP — the gap carries each factor's own units, so ranking"
+        );
+        println!("     by it ranks by scale. 0.5 = no separation; < 0.5 = the losers score higher.)");
     }
     // (#111) (round 3 §8) the base rate behind the whole lane: of the names that HAD compounded at the
     // bar, what fraction did it again over the next window — against the fraction of everyone who did.
@@ -6138,6 +6191,46 @@ mod tests {
         // A bucket of one is skipped, exactly as `recall_capture` skips it, so both instruments
         // count the same pool — otherwise a single-name window would report a 100% one-sided split.
         assert!(held_loser_factors(&scored[..1], 1, &["roe"]).is_empty());
+
+        // (#165) THE AUC IS WIRED AND IS NOT A CONSTANT. Above, both winners sit over the lone
+        // loser, so the column reads a clean 1.0; here the cohorts INTERLEAVE — W(1) below L(5),
+        // W2(9) above it — so one of the two pairs fails and the same column must read 0.5. A
+        // hard-coded field passes the first and fails the second, which is why both are pinned.
+        assert_eq!(rows[0].5, 1.0, "roe separates WIN1/WIN2 from LOSE completely: {rows:?}");
+        let ov = [
+            row("W", 10.0, Some(1.0), None),
+            row("L", -10.0, Some(5.0), None),
+            row("W2", 20.0, Some(9.0), None),
+        ];
+        let ovs: Vec<(&Sample, f64)> = ov.iter().enumerate().map(|(i, x)| (x, 10.0 - i as f64)).collect();
+        let r = held_loser_factors(&ovs, 3, &["roe"]);
+        assert_eq!(r[0].5, 0.5, "W(1) < L(5) < W2(9): one pair wins, one loses -> 0.5: {r:?}");
+    }
+
+    /// (#165) `auc` is the ruler the held-loser table ranks factors on, so the values that DEFINE it
+    /// are pinned directly rather than inferred from a report: perfect separation, perfect inversion,
+    /// no separation (twice, for two different reasons), an asymmetric denominator, and the monotone
+    /// invariance the whole receipt leans on. The median gap this replaces can make none of these
+    /// distinctions — that is why it exists — so a mutant collapsing any arm has to fail here.
+    #[test]
+    fn auc_is_a_unit_free_separation_statistic() {
+        assert_eq!(auc(&[3.0, 4.0], &[1.0, 2.0]), 1.0, "every winner above every loser");
+        assert_eq!(auc(&[1.0, 2.0], &[3.0, 4.0]), 0.0, "the same data with the roles swapped");
+        // 0.5 twice: interleaved cohorts that tie on aggregate, and an all-ties cohort. The tie arm
+        // is scored at a half, so a factor constant across the book reads "no separation", never 0.
+        assert_eq!(auc(&[1.0, 2.0], &[1.0, 2.0]), 0.5, "interleaved");
+        assert_eq!(auc(&[5.0, 5.0], &[5.0, 5.0]), 0.5, "all ties");
+        // The denominator is n*m, not n+m: 2x1 with one strict win and one tie.
+        assert_eq!(auc(&[3.0, 1.0], &[1.0]), 0.75);
+        // MONOTONE INVARIANCE — the property (#165) rests on. Rescaling by 100 is exactly the
+        // peg_yield-vs-accrual_gap confound that made the raw gap column rank factors by units.
+        let (w, l) = ([3.0, 4.0, 1.5], [1.0, 2.0]);
+        let (bw, bl): (Vec<f64>, Vec<f64>) =
+            (w.iter().map(|x| x * 100.0).collect(), l.iter().map(|x| x * 100.0).collect());
+        assert_eq!(auc(&w, &l), auc(&bw, &bl), "a rescaled factor must read identically");
+        // Empty either side is a guard, not a path: nothing to separate reads as no separation.
+        assert_eq!(auc(&[], &[1.0]), 0.5);
+        assert_eq!(auc(&[1.0], &[]), 0.5);
     }
 
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back
