@@ -650,6 +650,21 @@ pub struct Urls {
     // Defaulted so an older settings.yaml still loads, and swappable so the source is not welded in.
     #[serde(default = "default_sp500_history")]
     pub sp500_history: String,
+    // (#173) EXTRA point-in-time membership sources, same `ticker,start_date,end_date` shape as
+    // `sp500_history` above and parsed by the same `core::sp500_spans` (index-agnostic despite its
+    // name). MERGED into the S&P 500 map, so `backtest::pit_pool` — which builds its pool as
+    // `spans.keys()` — gains those names directly; no `constituents_csv` pond is involved and
+    // `pit_pool` itself is unchanged. This is the "second membership source" its doc comment has
+    // required since (#128) blocked the pond re-run for want of one.
+    //
+    // An entry that does not start with `http` is read from DISK instead of fetched, which is what
+    // lets a locally reconstructed index (`data/sp400_spans.csv`, built offline by
+    // `tools/membership_from_wikipedia.py`) be graded with no network at all.
+    //
+    // Defaulted EMPTY, and empty is the off switch: no file is read, no cache is written, and the
+    // merge is a no-op, so the shipped lane and every golden stay byte-identical (non-negotiable #1).
+    #[serde(default)]
+    pub membership_csv: Vec<String>,
     pub nupl: String,          // latest Bitcoin NUPL (net unrealized profit/loss) -> screen sentiment line
     // (#45) PER-COIN MVRV (market cap / realized cap), the generalization of `nupl` above — same
     // quantity, one row per coin instead of Bitcoin's alone (NUPL = 1 - 1/MVRV; cross-checked live at

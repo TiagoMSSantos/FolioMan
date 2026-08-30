@@ -964,6 +964,26 @@ pub fn sp500_spans(csv: &str) -> MemberSpans {
     out
 }
 
+/// (#173) Union of two point-in-time membership maps — the S&P 500 spans plus whatever
+/// `Urls.membership_csv` supplied. A ticker carried by BOTH keeps both sets of spans rather than one
+/// overwriting the other: a name can be an S&P MidCap 400 constituent for some years and an S&P 500
+/// one for others, and dropping either half would silently shorten its point-in-time life.
+///
+/// Sorted and deduped per ticker so the result does not depend on which source was read first —
+/// `sp500_member_at` is an `any()` and would tolerate duplicates, but `pit_pool` builds the POOL from
+/// `spans.keys()` and a run has to be reproducible bar-for-bar at any thread count.
+///
+/// Merging an EMPTY map returns the base unchanged, which is the off switch the default relies on.
+pub fn merge_spans(mut base: MemberSpans, extra: MemberSpans) -> MemberSpans {
+    for (ticker, spans) in extra {
+        let slot = base.entry(ticker).or_default();
+        slot.extend(spans);
+        slot.sort();
+        slot.dedup();
+    }
+    base
+}
+
 /// Was this name in the index on `on`? HALF-OPEN: the start date counts, the end date does not — see
 /// `sp500_spans` for the 2718-snapshot check that settled which way round.
 pub fn sp500_member_at(spans: &[(NaiveDate, Option<NaiveDate>)], on: NaiveDate) -> bool {
@@ -3982,6 +4002,30 @@ mod tests {
         // was ever a member" — the caller must be able to tell those apart by the map being EMPTY.
         assert!(sp500_spans("").is_empty());
         assert!(sp500_spans("<html>404</html>").is_empty());
+    }
+
+    /// (#173) The merge is what lets a SECOND index join the point-in-time pool. `pit_pool` builds
+    /// its pool from `spans.keys()`, so a name the extra source alone carries arrives in the pool by
+    /// being in this map at all — and the empty-map case is the knob's off switch, which every
+    /// golden depends on.
+    #[test]
+    fn merge_spans_unions_two_membership_sources() {
+        let d = |s: &str| s.parse::<NaiveDate>().expect("date");
+        let base = sp500_spans("ticker,start_date,end_date\nAAPL,1996-01-02,\nEK,1996-01-02,2011-01-27\n");
+        let extra = sp500_spans("ticker,start_date,end_date\nLANC,2012-12-01,\nEK,1990-01-01,1995-01-01\n");
+        let merged = merge_spans(base.clone(), extra);
+        // a name ONLY the second source carries joins the pool — the entire point of the knob
+        assert!(merged.contains_key("LANC"), "the extra source's names must reach the pool");
+        // a name in BOTH keeps both spans, ordered, rather than one source overwriting the other
+        assert_eq!(
+            merged["EK"],
+            vec![(d("1990-01-01"), Some(d("1995-01-01"))), (d("1996-01-02"), Some(d("2011-01-27")))]
+        );
+        assert_eq!(merged["AAPL"], base["AAPL"], "the base source is untouched");
+        // OFF SWITCH: merging nothing returns the base exactly (non-negotiable #1)
+        assert_eq!(merge_spans(base.clone(), MemberSpans::new()), base);
+        // and it is symmetric in the sense that matters: no span is lost either way round
+        assert_eq!(merge_spans(MemberSpans::new(), base.clone()), base);
     }
 
     #[test]

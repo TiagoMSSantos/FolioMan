@@ -4221,7 +4221,51 @@ const SP500_HISTORY_CACHE_PATH: &str = ".sp500_history.json";
 /// One small GET, once per machine. `screen` never calls this: the live screen wants today's members
 /// and `sp500_csv` already answers that. This exists for `backtest … universe pit`, whose whole job is
 /// to stop scoring 1996 with a pool chosen in 2026.
+/// (#173) EXTRA point-in-time membership sources (`Urls.membership_csv`), merged into the S&P 500 map
+/// below. An entry starting with `http` is fetched; anything else is read from DISK, which is what
+/// lets a locally reconstructed index (`data/sp400_spans.csv`, built offline by
+/// `tools/membership_from_wikipedia.py`) be graded with no network at all.
+///
+/// NOT CACHED, and that is deliberate. `.sp500_history.json` exists because its source is a remote GET
+/// on every run; these are a disk read or a 27 KB file. A cache keyed by filename would also serve one
+/// graded arm's membership file to an arm that configured a DIFFERENT one — silent cross-contamination
+/// between runs that are supposed to differ by exactly one knob, which is far worse than re-reading a
+/// small file.
+///
+/// An unreadable or unparsable entry SAYS SO and contributes nothing rather than aborting: a missing
+/// membership file shrinks the pool, it does not invalidate the arithmetic of the run.
+async fn fetch_membership_extra(client: &Client, urls: &Urls) -> core::MemberSpans {
+    let mut out = core::MemberSpans::new();
+    for src in &urls.membership_csv {
+        let text = if src.starts_with("http") {
+            get_text(client, src).await
+        } else {
+            std::fs::read_to_string(src).ok()
+        };
+        let Some(text) = text else {
+            eprintln!("fetch: extra membership source unreadable, contributing nothing: {src}");
+            continue;
+        };
+        let spans = core::sp500_spans(&text);
+        if spans.is_empty() {
+            eprintln!("fetch: extra membership source parsed to nothing: {src}");
+            continue;
+        }
+        eprintln!("fetch: extra membership source contributes {} names: {src}", spans.len());
+        out = core::merge_spans(out, spans);
+    }
+    out
+}
+
+/// (PIT) The point-in-time membership map every `pit` run filters on: the S&P 500 spans, UNIONED with
+/// whatever `Urls.membership_csv` supplies. With that list empty — the default — the union is a no-op
+/// and this is byte-identical to the S&P 500 map alone.
 pub async fn fetch_sp500_history(client: &Client, urls: &Urls) -> core::MemberSpans {
+    let base = fetch_sp500_base(client, urls).await;
+    core::merge_spans(base, fetch_membership_extra(client, urls).await)
+}
+
+async fn fetch_sp500_base(client: &Client, urls: &Urls) -> core::MemberSpans {
     let path = crate::config::data_path(SP500_HISTORY_CACHE_PATH);
     let cached = std::fs::read_to_string(&path)
         .ok()
@@ -6407,6 +6451,38 @@ pub(crate) mod tests {
         let _ = std::fs::remove_file(&path);
         assert!(fetch_sp500_history(&client, &urls).await.is_empty());
         assert!(!path.is_file(), "nothing to cache, so nothing is written");
+    }
+
+    /// (#173) The DISK branch of an extra membership source — the branch a graded arm actually takes,
+    /// since `data/sp400_spans.csv` is reconstructed offline and committed rather than fetched. The
+    /// stub server serves a DIFFERENT list, so a version that fetched instead of reading the file
+    /// would return `WRONG` and fail here. No transport is reached, so this needs no `THROTTLE` pin.
+    #[tokio::test]
+    async fn membership_extra_reads_from_disk_and_merges() {
+        let dir = crate::config::data_path("membership-extra-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("sp400.csv");
+        std::fs::write(&file, "ticker,start_date,end_date\nLANC,2012-12-01,\nEK,1990-01-01,1995-01-01\n")
+            .expect("write the extra membership file");
+        let on_disk = file.to_string_lossy().into_owned();
+
+        let (wrong, client) = stub_server("ticker,start_date,end_date\nWRONG,2000-01-01,\n");
+        let mut urls = stub_urls(&wrong);
+        urls.membership_csv = vec![on_disk.clone()];
+        let got = fetch_membership_extra(&client, &urls).await;
+        assert_eq!(got.len(), 2, "both rows parsed off DISK, not off the stub server");
+        assert!(got.contains_key("LANC"), "a name no other source carries is what the knob is for");
+        assert!(!got.contains_key("WRONG"), "a disk entry must not be fetched");
+
+        // an unreadable entry contributes nothing and does NOT abort the entries after it
+        urls.membership_csv = vec!["/nonexistent/none.csv".to_string(), on_disk.clone()];
+        assert_eq!(fetch_membership_extra(&client, &urls).await.len(), 2, "a missing file is skipped, not fatal");
+
+        // EMPTY LIST IS THE OFF SWITCH, and it is what every golden depends on
+        urls.membership_csv = vec![];
+        assert!(fetch_membership_extra(&client, &urls).await.is_empty());
+
+        let _ = std::fs::remove_file(&file);
     }
 
     #[tokio::test]
