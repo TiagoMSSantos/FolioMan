@@ -2390,6 +2390,113 @@ buy_heuristic:
                                  #   `growth_value_weight`, `growth_proximity_weight` or any future one.
                                  #   (#151) is the pool round, and it is the prerequisite for re-running
                                  #   ANY of them. Re-run: the four arms above, ~2.5 min per run.
+                                 # (#170) THAT RE-OPEN IS NOW CASHED, AND THE STOP RULE PASSES — the first
+                                 # ranking-knob round in five to do so. Measured 2026-08-30, 12 runs,
+                                 # `backtest {20,12,8} universe fund pit`, on (#129)'s GATES-OFF INSTRUMENT
+                                 # LANE recreated per (#131) from `git show 5159105:tests/gatesoff-ci-settings
+                                 # .yaml`. Arms EXACTLY as pre-registered above: c in {0.0 control, -4.0,
+                                 # +4.0, +16.0}. No fifth rung was added after seeing the four ((#120)).
+                                 #
+                                 # THE ARM, and TWO no-ops the base grew underneath it — the (#131) hazard,
+                                 # caught by reading the drift WARNING rather than trusting the file:
+                                 #   growth_min_range_pct 0.0 / growth_min_cagr -1e9 / growth_min_1y_pct -1e9
+                                 #   growth_min_5y_pct -1e9 / growth_max_above_ma 0.0 / growth_max_peg 0.0
+                                 #   growth_require_peg false / growth_require_lifetime_uptrend false
+                                 #   growth_maxdd_cap 0.0        <- ALREADY SHIPS 0.0 since (#138). NO-OP.
+                                 #   print_recall_capture true   <- ALREADY SHIPS true. NO-OP, and NEW since
+                                 #                                  (#144), which still saw it drift.
+                                 # So `heuristic_drift()` names EIGHT knobs on the control and NINE on each
+                                 # offset arm — not (#144)'s ten/eleven. Verified on all 12 runs.
+                                 #
+                                 # THE LANE IS NON-VACUOUS, WHICH IS THE WHOLE POINT. POOL CENSUS per horizon,
+                                 # identical at EVERY arm (so the knob is pure-ranking here, confirming (#150)'s
+                                 # claim that no offset adds or removes a name):
+                                 #   20y  22 buckets, median gated pool  79, basket 10 ->  1 saturated, 1863 subst.
+                                 #   12y  37 buckets, median gated pool 133, basket 10 ->  1 saturated
+                                 #    8y  45 buckets, median gated pool 147, basket 10 ->  1 saturated
+                                 # Against 31-of-35 and 35-of-43 saturated on the shipped lane. THE COLUMN CAN
+                                 # SEE A REORDER HERE.
+                                 #
+                                 # TIE-BACK: the control reproduces (#144)'s gates-off control rho EXACTLY at
+                                 # all three horizons, -0.09 / -0.03 / +0.03. Pool 2079/6036/12256 vs (#144)'s
+                                 # 2084/6060/12223 — four days of universe drift, 20y within 5 names.
+                                 #
+                                 # RESULT. Arms left to right: -4.0 | 0.0 CONTROL | +4.0 | +16.0
+                                 #   rho          20y  -0.11 | -0.09 | -0.08 | -0.07     MONOTONE
+                                 #                12y  -0.04 | -0.03 | -0.02 | -0.01     MONOTONE
+                                 #                 8y  +0.02 | +0.03 | +0.03 | +0.03     flat above control
+                                 #   rank-1 mean  20y   -1.5 |  -0.4 |  +0.8 |  +0.5
+                                 #                12y   +0.9 |  +1.5 |  +2.4 |  +2.4
+                                 #                 8y   +2.4 |  +2.9 |  +3.6 |  +3.7
+                                 #   rank-1 h2h   20y    38% |   38% |   52% |   43%   (#1 vs the 11-20 book)
+                                 #   (COUNT, no   12y    42% |   44% |   44% |   50%
+                                 #    averaging)   8y    43% |   41% |   45% |   48%
+                                 #
+                                 # PRE-REGISTERED STOP RULE — all three clauses, each needing 2 of 3 horizons:
+                                 #   1 DIRECTION  monotone in rho, or single-peaked away from the control.
+                                 #                3/3 monotone. PASS — and it SURVIVES DELETING THE -4.0 ARM
+                                 #                ENTIRELY (0/+4/+16 is still monotone at 3/3), which is how
+                                 #                the (#150) negative-base obligation below is discharged.
+                                 #   2 SPEARMAN   rises vs control at the best arm. 20y and 12y yes, 8y flat.
+                                 #                2/3 PASS. (Live here, unlike (#144): `lane_metrics` scores
+                                 #                through a `fn(&Quote,&BuyHeuristic)` pointer, and this knob
+                                 #                is a per-quote CONSTANT (picks.rs:1521 -> :1533) so the
+                                 #                pointer sees it. (#144)'s cross-sectional transform needed
+                                 #                pool context that pointer cannot supply, which is why its
+                                 #                rho came back bit-identical and its clause was unmeasurable.)
+                                 #   3 RANK-1     stops being the worst disjoint slice (mean). 20y yes at
+                                 #                +4.0 (rank1 +0.8 over 2-5 +0.3); 8y yes at +16.0 (rank1
+                                 #                +3.7 over 6-10 +3.3); 12y only ties. 2/3 PASS.
+                                 # AND THE (#150) NOISE SIGNATURE IS ABSENT. On the shipped lane BOTH SIGNS
+                                 # improved rank-1 by about the same amount, which (#150) read correctly as
+                                 # reshuffling the argmax. Here the response is DIRECTIONAL: the negative arm
+                                 # is worse-or-equal on rho at all three horizons, the positive arms better-
+                                 # or-equal, monotonically. A wide pool is what resolved that ambiguity.
+                                 #
+                                 # THE (#150) NEGATIVE-BASE OBLIGATION IS DISCHARGED WITHOUT THE EXTRA RUNS.
+                                 # (#150) required: "If a future round grades a NEGATIVE offset on anything but
+                                 # a top-N basket, count those rows first" — rho IS a whole-pool statistic, so
+                                 # this round is that case. It is discharged not by counting but by the finding
+                                 # being INDEPENDENT of the -4.0 arm: every clause still passes on {0,+4,+16}
+                                 # alone. The -4.0 arm is reported, and its consistently-worst showing is left
+                                 # UNATTRIBUTED — it is equally consistent with the (#86) inversion artifact
+                                 # and with the real direction, and this round cannot separate them. Do not
+                                 # cite -4.0 as evidence for either.
+                                 #
+                                 # >>> AND THE COUNTER-FINDING, WHICH MATTERS MORE THAN THE PASS <<<
+                                 # The graded basket moves AGAINST the arm that wins on rank-1:
+                                 #   top-10 excess 20y  +2.8 | +2.4 | +2.7 | +2.1
+                                 #                 12y  +4.5 | +4.2 | +4.2 | +4.0   MONOTONE DOWN in c
+                                 #                  8y  +5.4 | +5.1 | +4.8 | +4.2   MONOTONE DOWN in c
+                                 #   worst window  20y  -3.9 | -3.9 | -3.3 | -3.5
+                                 #                 12y  -2.5 | -2.3 | -1.5 | -3.6
+                                 #                  8y  -2.1 | -1.7 | -3.4 | -4.0   MONOTONE WORSE in c
+                                 # Read it as ONE mechanism, not two results: a larger offset hands the order
+                                 # to the MULTIPLIER STACK, which sharpens the single best name and dilutes
+                                 # the 10-name book that averages over it. Rank-1 up while top-10 and the
+                                 # worst window go down is not a contradiction — it is what "rank by the
+                                 # multipliers" buys and costs.
+                                 #
+                                 # VERDICT: 0.0 STANDS, AND NOTHING SHIPS FROM THIS LANE — pre-registered
+                                 # before the runs, not concluded after. The gates-off CONTROL ITSELF fails
+                                 # the rank-1 h2h GUARD at every horizon (38% / 44% / 41%), so Ship Rule v2
+                                 # cannot adjudicate here for ANY arm; (#129) already calls this file "an
+                                 # INSTRUMENT, never a candidate lane". This is a DIAGNOSTIC that passed its
+                                 # own stop rule, nothing more.
+                                 # REVERT: already at the reverted value.
+                                 #
+                                 # WHAT IT AUTHORISES, AND THE PREDICTION THAT SHOULD GOVERN IT. The stop rule
+                                 # passing authorises a follow-up on a SHIPPABLE lane — (#151)'s
+                                 # `growth_min_cagr 15` 8y column, priced there at -1.2 pts/yr of top-10 mean.
+                                 # BUT THESE RUNS PREDICT THAT ROUND REFUSES ON PRIMARY: PRIMARY grades top-10
+                                 # excess, and top-10 excess falls monotonically in c at both 12y and 8y here.
+                                 # Whoever runs it must pre-register that prediction and treat a top-10 gain as
+                                 # the surprise requiring explanation. Cheaper first move: a knob that keeps
+                                 # the rank-1 sharpening WITHOUT handing the whole order to the multipliers —
+                                 # this round says the multiplier stack carries real ordering information at
+                                 # the very top, which is the finding, and NOT that a constant offset is how
+                                 # to harvest it.
+                                 # ARMS DELETED after the round per (#131); body quoted above for re-creation.
   growth_rank_normalise: 0.0     # (#144) MEASURED AND REFUSED 2026-08-26 — stays OFF, which is `v' = v`
                                  # for every additive term, so `base` is the shipped sum bit for bit and
                                  # every golden is untouched. This receipt records a REFUSAL, not a value
