@@ -2497,6 +2497,102 @@ buy_heuristic:
                                  # the very top, which is the finding, and NOT that a constant offset is how
                                  # to harvest it.
                                  # ARMS DELETED after the round per (#131); body quoted above for re-creation.
+                                 #
+                                 # (#172) THE (#170) PREDICTION IS CASHED: ITS CONCLUSION HOLDS AND ITS MECHANISM
+                                 # IS WRONG. Measured 2026-08-30, 8 runs, `backtest {12,8} universe fund pit`, on
+                                 # (#151)'s `growth_min_cagr 15` lane (overlay: that one gate plus the offset;
+                                 # everything else shipped). Arms EXACTLY as pre-registered: c in {0.0 control,
+                                 # -4.0, +4.0, +16.0}. No fifth rung ((#120)). 20y is not part of this lane and
+                                 # was not run. `heuristic_drift()` named ONE knob on the control and TWO on each
+                                 # offset arm, verified on all 8 runs.
+                                 #
+                                 # TIE-BACK: the control reproduces (#151)'s cagr-15 rows EXACTLY at BOTH horizons
+                                 # — 12y 400 scored, top-10 +2.9|+4.0, worst -6.4, h2h 9/14, rank-1 -0.1|+3.6;
+                                 # 8y 690 scored, top-10 +4.1|+3.8, worst -3.5, h2h 16/22, rank-1 +4.7|+5.9.
+                                 # `windows scored` identical within horizon (2737 @12y, 6126 @8y), same dataset.
+                                 #
+                                 # CENSUS, RE-READ FROM EACH RUN'S OWN OUTPUT (banked flags are perishable), and
+                                 # identical at every arm — so the offset is pure-ranking here too:
+                                 #   12y  36 bkt, median gated pool  9, basket 10 -> 22 saturated, 81 subst.
+                                 #        *** VACUOUS TAG PRINTED *** — a RANKING knob CANNOT be adjudicated here.
+                                 #    8y  44 bkt, median gated pool 11, basket 10 -> 22 saturated, 243 subst.
+                                 #        NOT tagged: 22 of 44 is exactly half, not the strict majority. It answers.
+                                 # (#151)'s claim survives re-measurement four days on. But note what it means:
+                                 # exactly ONE of the two columns pit PRIMARY requires can see a reorder at all.
+                                 #
+                                 # RESULT. Arms left to right: -4.0 | 0.0 CONTROL | +4.0 | +16.0
+                                 #   rho           12y  +0.07 | +0.11 | +0.13 | +0.15    MONOTONE UP
+                                 #                  8y  +0.09 | +0.12 | +0.15 | +0.17    MONOTONE UP
+                                 #   top-10 excess 12y  +2.9|+4.0 | +2.9|+4.0 | +2.9|+4.0 | +2.8|+3.6
+                                 #                  8y  +4.2|+4.7 | +4.1|+3.8 | +4.2|+3.8 | +4.1|+3.8   FLAT
+                                 #   worst window  12y   -6.4 |  -6.4 |  -6.4 |  -6.4
+                                 #                  8y   -3.6 |  -3.5 |  -3.5 |  -4.1
+                                 #   rank-1         8y  +4.8|+5.9 | +4.7|+5.9 | +4.4|+5.7 | +3.7|+5.7   FALLS in c
+                                 #   rank 2-5       8y  +4.6|+4.5 | +5.2|+5.5 | +5.7|+6.0 | +5.8|+6.0   RISES in c
+                                 #   rank 6-10      8y  +1.5|+3.1 | +0.3|+0.6 | +0.0|+0.6 | -0.6|-0.1   FALLS in c
+                                 #   h2h #1 vs 6-10 book ((#160)'s book, the GUARD's):
+                                 #                 12y  14/26 | 18/26 | 18/26 | 19/26
+                                 #                  8y  23/34 | 25/34 | 24/34 | 24/34
+                                 #   h2h 2-5 vs 6-10 book, same runs:
+                                 #                  8y  24/34 | 26/34 | 29/34 | 30/34             MONOTONE UP
+                                 #
+                                 # VERDICT: REFUSED ON GUARD, every arm. (#160)'s bar at 12y AND 8y is the rank-1
+                                 # h2h read off the 6-10 book AND NOT BELOW the control's tally on it. At 8y every
+                                 # arm is BELOW the control: 23, 24, 24 against 25 of 34. A broken guard REFUSES
+                                 # OUTRIGHT and is never softened into unresolved, so PRIMARY is never reached.
+                                 # (The absolute >=50% half passes everywhere — 54% to 73%. It is the not-worse
+                                 # half, which (#160) added precisely so a thin book cannot drift down unnoticed,
+                                 # that fails.) Running 20y could not rescue this; a broken guard is broken.
+                                 # SECOND, INDEPENDENT REASON: 12y is VACUOUS, so a ranking knob cannot be
+                                 # adjudicated there, and the pit lane's PRIMARY reads 12y AND 8y ((#139)).
+                                 # REVERT: already at the reverted value. 0.0 STANDS.
+                                 #
+                                 # THE PREDICTION, GRADED HONESTLY. (#170) wrote: "top-10 excess falls
+                                 # monotonically in c at both 12y and 8y here", so the round "REFUSES ON PRIMARY".
+                                 # The round DOES refuse — but NOT for that reason, and the stated mechanism is
+                                 # FALSE. Top-10 excess does not fall: at 8y it is FLAT (+4.1|+3.8 -> +4.2|+3.8 ->
+                                 # +4.1|+3.8) and at 12y it is IDENTICAL across -4/ctl/+4. (#170) generalised from
+                                 # the gates-off INSTRUMENT lane, whose median gated pool is 79/133/147, to this
+                                 # one, whose median pool is 9/11 against a basket of 10. On a deep pool a reorder
+                                 # changes WHICH names fill the basket and dilutes it; on a pool this thin the same
+                                 # ~10 names fill it whatever the order. PRIMARY is not refusing the knob here —
+                                 # IT IS BLIND TO IT. Treat a pre-registered mechanism as testable in its own
+                                 # right, not just its verdict; this one was right by accident.
+                                 #
+                                 # THE FINDING, WHICH IS THE POINT OF THE ROUND. rho rises MONOTONICALLY in c on
+                                 # BOTH horizons, 8 of 8 runs, on a lane whose pool is ~14x THINNER than (#170)'s.
+                                 # That is now TWO independent lanes where the multiplier stack carries real
+                                 # ordering information. But the gain is entirely INTERNAL TO THE BASKET: at 8y
+                                 # ranks 2-5 improve (+5.2 -> +5.8, and the 2-5 book's own h2h against 6-10 climbs
+                                 # 26 -> 29 -> 30 of 34) while rank 1 (+4.7 -> +3.7) and ranks 6-10 (+0.3 -> -0.6)
+                                 # BOTH degrade. An equal-weight top-10 sums those to zero.
+                                 # AND IT INVERTS (#170). There the offset SHARPENED rank 1 (+2.9 -> +3.7 at 8y);
+                                 # here it BLUNTS it (+4.7 -> +3.7) while sharpening 2-5. Same knob, opposite sign
+                                 # at the very top, and POOL DEPTH is the only thing that changed between the two
+                                 # rounds. So (#170)'s "hands the order to the multiplier stack, which sharpens the
+                                 # single best name" is a DEEP-POOL statement, not a property of the knob. Do not
+                                 # re-cite it as one.
+                                 #
+                                 # WHAT THIS CLOSES. The score-ordering direction is now measured and refused at
+                                 # both dials: growth_rank_normalise 0/3 ((#144)), growth_base_offset on the
+                                 # gates-off instrument ((#170)) and on the only shippable non-vacuous column that
+                                 # exists ((#172), here). Together with the gate stack carrying no live lead
+                                 # (header, (#127)/(#128)/(#129)), growth_max_gate_failures refused do-not-build
+                                 # ((#129)) and growth_corr_cap refused three ways ((#140)), every knob-shaped
+                                 # lever on this heuristic is closed, and they close for ONE shared reason: the
+                                 # gated pool yields ~6-10 names against a 10-name basket, so ranking knobs are
+                                 # un-gradeable and de-dup knobs have nothing to de-dup. THE ONE LEVER LEFT IS
+                                 # POOL SUPPLY ON MERIT — more names clearing the gates AS THEY STAND — and it is
+                                 # not another threshold. (#151) already priced buying it by loosening a gate:
+                                 # -1.2 pts/yr of top-10 mean at 8y, which PRIMARY refused. Widening the UNIVERSE
+                                 # rather than the gates is the untried half.
+                                 # NOT A LEVER, and this is (#120)'s forbidden argmax: the 6-10 slice is negative
+                                 # on the shipped lane too, and shrinking VERDICT_TOP to drop it is refitting the
+                                 # grader to the result. It is also an artifact — with the median pool at 6-10
+                                 # names, ranks 7-10 are frequently EMPTY, so that slice is computed over the
+                                 # widest windows only.
+                                 # ARMS DELETED after the round per (#131); overlay was `growth_min_cagr: 15.0`
+                                 # plus `growth_base_offset: <c>` over tests/ci-settings.yaml.
   growth_rank_normalise: 0.0     # (#144) MEASURED AND REFUSED 2026-08-26 — stays OFF, which is `v' = v`
                                  # for every additive term, so `base` is the shipped sum bit for bit and
                                  # every golden is untouched. This receipt records a REFUSAL, not a value
