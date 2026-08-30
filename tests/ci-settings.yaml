@@ -303,6 +303,30 @@
 # no knob deleted — stands on its own merits and this round ships no code.
 # REVERT RULE: none — receipts only, nothing changed.
 #
+# (#166) 2026-08-30 — THE ZERO-ROW FUNNEL (#164) PRE-REGISTERED IS REFUSED; THE GAP IT NAMED IS CLOSED
+# ANOTHER WAY. (#164) above proposed "iterate the gate list, not the `fails` keys" as a small change.
+# It is not small, and it is not wanted, for two reasons found by trying to write it:
+#   1. `funnel_semantics` (src/commands/screen.rs) already asserts, in those words, that "a gate
+#      nobody failed must not print" — `assert!(row("cagr").is_none())`. The zero-row form does not
+#      extend the funnel, it REVERSES a decision the suite states explicitly. Whatever its merits,
+#      it cannot be smuggled in as a small change to a loop.
+#   2. There is NO canonical list of gate names to iterate. `gate_failures` emits its `&'static str`
+#      labels inline, and `ABLATED_GATES` is three GATE SWEEP row labels, not these. Writing one adds
+#      a THIRD copy of the gate names. picks.rs justifies exactly ONE such mirror (`gate_failures`
+#      against `score_parts`, "drift only mislabels the tail, never the rank") and pays for it with
+#      `gate_failures_agrees_with_the_scorer`, which pins the two by DRIVING QUOTES THROUGH BOTH. A
+#      bare name list admits no equivalent pin: a gate that no quote in the corpus fails would go
+#      silently missing from it — which is EXACTLY the failure the zero rows exist to prevent. The
+#      instrument would reproduce its own bug.
+# WHAT SHIPPED INSTEAD, one line in `funnel_lines`: the table now states that a gate absent from it
+# failed nobody in this scan and that this is not evidence its knob is inert. That is the whole of
+# (#164)'s catch — an absent row was ambiguous, and now it is not — at zero drift surface. It is
+# pinned directly beside the assertion in 1., so whoever relaxes that one must decide about this too.
+# WHAT IT STILL DOES NOT GIVE: per-gate zero COUNTS on the live path. Deleting a knob on reachability
+# evidence therefore still goes through the backtest side's `growth_gate_reachability_pin`, exactly
+# as before. (#155)'s verdict — no knob deleted — is untouched, and no knob moved here either.
+# REVERT RULE: drop the line and its assertion together; report-only, no golden and no pick moves.
+#
 # DEBT, DELIBERATELY NOT PAID HERE: growth_min_cagr 19, growth_min_range_pct 80, growth_maxdd_cap 84,
 # growth_max_peg 1.6, growth_accel_weight 0.65 and every other knob receipt below were FITTED on the
 # contaminated peer-mean. The king horizon barely moved so they are not presumed wrong, but they are

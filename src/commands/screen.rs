@@ -422,6 +422,13 @@ fn funnel_lines(quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Vec<St
     if refused_n > 0 {
         out.push(format!("  refused (not assessable): {}", refused.iter().map(|(why, n)| format!("{why} {n}")).collect::<Vec<_>>().join(" · ")));
     }
+    // (#166) A gate with NO row above failed nobody in this scan. Keeping it out of the table is
+    // deliberate — the funnel answers "where did candidates die", and `funnel_semantics` pins a
+    // zero gate out of it — but an absent row is then not evidence the knob is INERT, which is the
+    // misreading (#164) flagged. One line says that; a dozen zero rows would say it structurally,
+    // at the price of a THIRD copy of the gate names (picks.rs already justifies exactly one such
+    // mirror, and `gate_failures_agrees_with_the_scorer` is what keeps that one honest).
+    out.push("  a gate absent above failed nobody in this scan — that is not evidence its knob is inert".to_string());
     // the reconciliation line: a funnel whose arithmetic doesn't close can't be trusted to aim a knob
     out.push(format!("  scanned {} = refused {refused_n} + failed {failed} + cleared {cleared} (cleared ≥ rows printed: score/sector/cap trims come after)", quotes.len()));
     out
@@ -3891,6 +3898,10 @@ mod tests {
         assert_eq!(cells(&stretch), ["0/0", "1/0", "0/0"], "same fund, its second gate — a fail with no sole blame: {stretch}");
 
         assert!(row("cagr").is_none(), "a gate nobody failed must not print: {lines:#?}");
+        // (#166) ...and because it does not print, the table must SAY that an absent row means
+        // "failed nobody" and not "inert". The two assertions are deliberately adjacent: whoever
+        // ever relaxes the one above has to decide what happens to this line as well.
+        assert!(lines.iter().any(|l| l.contains("not evidence its knob is inert")), "{lines:#?}");
         assert!(!lines.iter().any(|l| l.contains("LEVX")), "a refusal is not a gate failure: {lines:#?}");
         assert!(funnel_lines(&[], &t).is_empty());
     }
