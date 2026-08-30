@@ -6766,7 +6766,33 @@ buy_heuristic:
   #   not print in the 14-factor run either, so the widening did not cause this. Recorded because the
   #   consequence is easy to miss: this file calls that band "exactly ONE multiple-testing
   #   correction", and on the PIT lane it is currently not produced at all, leaving the WINNER row
-  #   unguarded there. Fixing that is its own round; do not read a WINNER on `pit` as if banded.
+  #   unguarded there. Do not read a WINNER on ANY lane as if banded.
+  #   (#162) 2026-08-30 CORRECTS THE SENTENCE THAT STOOD HERE. It read "Fixing that is its own round",
+  #   which files this as a PIT-LANE DEFECT awaiting repair. It is not one, and the round it invites
+  #   would be wasted. The None is (#119)'s guard at src/commands/backtest.rs:3860 firing exactly as
+  #   designed:
+  #       if block > 1 && keys.len() < MIN_BLOCKS * block { return None; }
+  #   and that guard's own comment already states the consequence in full: "On this data no horizon
+  #   clears it - 8y would need 160 buckets (80 years of cutoffs), 12y 240, 20y 400 - so the band
+  #   refuses everywhere, which is the finding ... the statistically correct value is larger than the
+  #   data." So the band refuses on EVERY lane at EVERY horizon, wide and stress included; `pit` is
+  #   simply where (#157) happened to notice. Nothing about the point-in-time pool causes it, and no
+  #   amount of pool would cure it: 20y would need 400 half-year buckets, i.e. 200 years of cutoffs.
+  #   THE TWO AVAILABLE "FIXES" ARE BOTH THE OVERFITTING SHAPE THIS FILE BANS. Shrinking MIN_BLOCKS
+  #   weakens the one multiple-testing correction the sweep has, which exists precisely to stop a
+  #   best-of-N winner shipping on selection luck. Forcing `block == 1` is worse and is already
+  #   measured: (#89) records that a one-bucket block "reproduces the i.i.d. width almost exactly",
+  #   because consecutive cutoffs of the SAME ticker share (2*years-1)/(2*years) of their forward
+  #   path - 95.8% at 12y, 97.5% at 20y. A band widened by either route would print a number that
+  #   LOOKS like a correction and is not one, which is strictly worse than printing nothing.
+  #   WHAT SURVIVES UNCHANGED is the operative warning, and it is load-bearing: DO NOT READ A WINNER
+  #   AS IF BANDED, on any lane. The band is UNAVAILABLE, not merely absent here. The honest reading
+  #   of a WINNER row remains (#157)'s own: it is an ARGMAX over FUND_FACTORS.len() tried factors, and
+  #   the file's standing bar - clear price-only with both OOS halves + at BOTH horizons - is the only
+  #   guard actually in force. That bar is what refused all ten factors, so NO VERDICT IN (#157) RESTS
+  #   ON THE MISSING BAND; the widening's conclusion stands exactly as written.
+  #   NO CODE CHANGE, and that is the deliverable: this entry exists so the next reader finds the
+  #   round ALREADY ADJUDICATED instead of spending it. REVERT RULE: none - nothing was changed.
   #   REVERT RULE: shrink `FUND_FACTORS` to restore the looser band; nothing else moves. Goldens are
   #   untouched either way — the fixture runs offline, so `sweep_fund_factor` returns early on its
   #   `< 8 samples with fund` guard and never prints a row.
