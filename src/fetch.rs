@@ -7356,16 +7356,24 @@ pub(crate) mod tests {
     /// change moves: every EUR-denominated field on a `Quote` is the native number times ONE rate, and
     /// a row whose rate is unknown must carry no EUR number rather than a native one wearing a € sign.
     ///
-    /// Three bars, closes 10/20/0.5 against volumes 100/200/300, so `avg_turnover` averages
-    /// 1000, 4000 and 150 to 1716.67 — three distinct products, so a mutant that sums or counts them
-    /// wrongly cannot land on the same figure. The served close doubles as the USDEUR=X rate (0.5),
-    /// which is what makes the ×rate step assert a VALUE: at ×1.0 turnover would read 1716.67 and the
-    /// price €0.50, both of which this test names and rejects.
+    /// Three bars, closes 0.45/0.55/0.5 against volumes 100/200/300, so `avg_turnover` averages
+    /// 45, 110 and 150 to 101.67 — three distinct products, none of them equal to their own mean, so
+    /// a mutant that sums, counts or picks one of them cannot land on the same figure. The served
+    /// close doubles as the USDEUR=X rate (0.5), which is what makes the ×rate step assert a VALUE:
+    /// at ×1.0 turnover would read 101.67 and the price €0.50, both of which this test names and
+    /// rejects.
+    ///
+    /// (#171) Those closes step by at most 1.22×/bar ON PURPOSE. They used to be 10/20/0.5 — a 40×
+    /// single-bar collapse, i.e. splice-shaped — so under the shipped `splice_max_weekly_rate: 2.0`
+    /// the chart parser legitimately trimmed the series to its last bar and turnover read 75. The
+    /// test therefore passed ONLY where config resolution failed, which until (#171) was CI's `--lib`
+    /// job, and failed on every machine that had a config. Keep every bar-to-bar ratio inside
+    /// (0.5, 2.0) or this measures `core::splice_trim_start` instead of the rate.
     #[tokio::test]
     async fn quote_one_prices_every_eur_field_off_one_rate() {
         const BARS: &str = r#"{"chart":{"result":[{
             "timestamp":[1577836800,1577923200,1578009600],
-            "indicators":{"quote":[{"close":[10.0,20.0,0.5],"volume":[100,200,300]}]},
+            "indicators":{"quote":[{"close":[0.45,0.55,0.5],"volume":[100,200,300]}]},
             "meta":{"currency":"USD"}
         }]}}"#;
         let (base, client) = stub_server(BARS);
@@ -7378,7 +7386,7 @@ pub(crate) mod tests {
         assert_eq!(q.close_native, Some(0.5), "the native close is NOT converted");
         assert_eq!(q.price, "€0.25");
         let turnover = q.avg_turnover_eur.expect("a known rate must produce a turnover");
-        assert!((turnover - 5150.0 / 3.0 * 0.5).abs() < 1e-9, "mean(1000,4000,150) x 0.5: {turnover}");
+        assert!((turnover - 305.0 / 3.0 * 0.5).abs() < 1e-9, "mean(45,110,150) x 0.5: {turnover}");
     }
 
     /// (#81) The same assembly with `meta.currency` absent. Before this change the parser substituted
@@ -7387,11 +7395,15 @@ pub(crate) mod tests {
     /// says outright that it does not know: no EUR price, no EUR turnover, and a price string carrying
     /// the `?` that has always meant "unconverted". The turnover assert is the load-bearing one, since
     /// `unwrap_or(1.0)` used to hand the gate a native figure ~85x too large for a pence-quoted line.
+    ///
+    /// (#171) Bars kept in step with the sibling above and for the same reason. Nothing asserted here
+    /// moves under the splice trim — `close_native` reads the LAST bar either way — so this one was
+    /// never red, but leaving a splice-shaped fixture next to the one that was is how it gets copied.
     #[tokio::test]
     async fn quote_one_reports_no_eur_number_when_the_currency_is_unknown() {
         const BARS: &str = r#"{"chart":{"result":[{
             "timestamp":[1577836800,1577923200,1578009600],
-            "indicators":{"quote":[{"close":[10.0,20.0,0.5],"volume":[100,200,300]}]}
+            "indicators":{"quote":[{"close":[0.45,0.55,0.5],"volume":[100,200,300]}]}
         }]}}"#;
         let (base, client) = stub_server(BARS);
         let w = BTreeMap::new();

@@ -98,6 +98,13 @@ jobs:
       - uses: taiki-e/install-action@cargo-audit
       - run: cargo audit
 
+  # (#171) FOLIOMAN_CONFIG for the same reason integration-tests sets it below: config/settings.yaml is
+  # gitignored, so WITHOUT it config::load() resolves nothing on a runner and every knob accessor falls
+  # back to its unwrap_or default. That made this the ONE job grading against UNCONFIGURED knobs while
+  # every other test path (integration-tests, the backtest gate, tests/cli.rs, tests/backtest_fixture.rs)
+  # pinned the fixture — so a green here proved nothing about the tuning that actually ships, and a test
+  # could depend on a knob being OFF and stay green in CI while failing on every developer machine.
+  # One regime everywhere is the point; do not drop this env back off.
   unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -106,7 +113,36 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
-      - run: cargo test --locked --lib   # in-module #[cfg(test)] unit tests
+      - run: FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo test --locked --lib   # in-module #[cfg(test)] unit tests
+
+  # (#171) THE FRESH-CLONE CHECK. It used to be a side effect of unit-tests being config-less; pinning
+  # that job to the fixture was right for GRADING — a green there now says something about the tuning
+  # that actually ships — but it took this guard with it, so the guard moves here and gets a name.
+  #
+  # config/settings.yaml is gitignored: it exists on NO runner and in NO fresh clone, and
+  # config::load() PANICS on an unreadable config. So a path that hard-loads the config works on a
+  # developer box and dies for a new user. That is not hypothetical — it bit twice on 2026-08-09
+  # (273a511, 04a74e4), when the loopback stub-server tests reached the real transport -> throttle()
+  # -> config::load(); closed in 44fdb07 by pinning THROTTLE inside stub_server. The SOFT accessors
+  # (use_adjusted_close, history_proxy, splice_max_weekly_rate, life_cagr_max_years) exist to survive
+  # exactly this, and nothing else proves they still do.
+  #
+  # NOT a second tuning regime, which is the thing (#171) set out to remove: this asserts the binary
+  # SURVIVES with no config at all — a compatibility check, not a measurement. No verdict about the
+  # heuristic is read from it. A red here is closed by making the code tolerate a missing config,
+  # NEVER by giving this job a FOLIOMAN_CONFIG; that would delete the only check of the class.
+  unit-tests-configless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
+        # a path that does not exist => merged_config() returns None, exactly as when discovery finds
+        # nothing. `FOLIOMAN_CONFIG=` empty is IGNORED and falls through to discovery, so that spelling
+        # reproduces nothing — on a runner it finds no file either, but it would not on a dev box.
+      - run: FOLIOMAN_CONFIG=/nonexistent/none.yaml cargo test --locked --lib
 
   # Coverage gate. The numbers steer where the next tests are worth writing AND enforce a floor:
   # COVERAGE_MIN is a no-regression ratchet — line coverage below it fails the job (BLOCKING; the
@@ -130,7 +166,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      COVERAGE_MIN: "87"   # ARMED floor. Measured line coverage 87.15% (2026-08-16, at the scope below, on 352f496 — read off THIS job's own log in run 31934809294, which is the authoritative number; a local config-less run of the same command read 87.03%, so the two agree to ~0.1pp). Ratchet UP as tests grow; never lower it. Read the current "TOTAL" line off this job's LOG (the step prints it) or its step summary.
+      # (#171) The same pin unit-tests, integration-tests and the mutation gate now carry: ONE config
+      # regime for every job that runs tests, so a knob is live or inert everywhere at once instead of
+      # per-job. Measured cost to THIS number: 0.01pt of line coverage (89.13% config-less -> 89.12%
+      # pinned, same tree, local, 2026-08-30). The knobs it makes live barely change which lines run.
+      FOLIOMAN_CONFIG: tests/ci-settings.yaml
+      COVERAGE_MIN: "88"   # ARMED floor. Measured line coverage 89.12% (2026-08-30, at the scope below, on 1fdd47a plus (#171), LOCAL under the FOLIOMAN_CONFIG pin above — the previous entry recorded local and CI agreeing to ~0.1pp, which is the whole basis for trusting a local number here; re-read it off this job's log on the next push and correct if they have drifted apart). 88 and not 89 ON PURPOSE: 89.12 sits 0.12 above the integer and the rule below says take the next one down inside ~0.2. PREVIOUS: 87, measured 87.15% on 2026-08-16 at 352f496 (run 31934809294) — by 2026-08-30 the real number was 89.12, so ~2 points of slack had accumulated in a fortnight, which is precisely the decay the note below describes. Ratchet UP as tests grow; never lower it. Read the current "TOTAL" line off this job's LOG (the step prints it) or its step summary.
       # The measurement's COMMIT is recorded above because its age is what makes it wrong. The 80 this
       # replaced was set against 83.90% at 5c923ae and read as "3.9 points of slack", but twelve commits
       # touching src/tests had landed since — the real number was 86.69%, so the slack was 6.7.
@@ -145,9 +186,11 @@ jobs:
       # 2026-07-13 and was never moved, while actual coverage drifted to 73.13% — eleven points of
       # slack, i.e. ~2000 covered lines could have been deleted with the gate still green. A floor
       # that is not re-measured stops being a floor. Measure it the way this job does before moving it:
-      #   FOLIOMAN_CONFIG=/nonexistent/none.yaml cargo llvm-cov --locked --lib --test cli --test backtest_fixture --summary-only
-      # (the FOLIOMAN_CONFIG spelling reproduces THIS job's config-less state — config/settings.yaml is
-      # gitignored, so a local run with one present measures a tree CI does not have.)
+      #   FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo llvm-cov --locked --lib --test cli --test backtest_fixture --summary-only
+      # ((#171) that spelling reproduces THIS job's env, which is now the same pin every other test job
+      # carries; it read /nonexistent/none.yaml back when this job was config-less. Either way it has to
+      # be spelled out — config/settings.yaml is gitignored, so a local run with one present measures a
+      # tree CI does not have.)
     steps:
       - uses: actions/checkout@v7
       - run: rustup component add llvm-tools-preview
@@ -276,7 +319,9 @@ jobs:
   # failure class the --list guard below already argues against.
   #
   # These two jobs cover exactly the two targets graded, at zero build cost: --lib from unit-tests
-  # (same config-less env this job runs in), and --test backtest_fixture from integration-tests (that
+  # (same FOLIOMAN_CONFIG=tests/ci-settings.yaml this job now pins — (#171); it read "same config-less
+  # env" while both were unconfigured, and the pin has to move on BOTH or this proxy-for-a-baseline
+  # stops holding), and --test backtest_fixture from integration-tests (that
   # target sets FOLIOMAN_CONFIG on the child it spawns, so both jobs run it identically). Gating on
   # integration-tests does NOT couple this blocking gate to network weather: tests/network.rs skips
   # green on any environmental failure and never fails a probe.
@@ -326,6 +371,14 @@ jobs:
           # push: the commit before this one. PR: the merge base. Both can be all-zeros or empty on a
           # branch's first push, where there is no "before" — the step below falls back to HEAD^.
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          # (#171) Same pin as unit-tests, and it MUST track it. --baseline skip means a suite that is
+          # red here grades every mutant CAUGHT and goes vacuously green; the only thing standing in
+          # for the missing baseline is `needs: [unit-tests]` having run the same suite. That proxy
+          # holds only while the two run the same suite in the SAME config regime. Before (#171) both
+          # were config-less and it held by accident; now both pin the fixture and it holds on purpose.
+          # Bonus, not the reason: a knob reading its shipped value makes its branch observable, so
+          # mutants of a config-gated path become killable instead of unkillable-by-construction.
+          FOLIOMAN_CONFIG: tests/ci-settings.yaml
           # THE load-bearing setting in this job, and it is an OVERRIDE: Swatinem/rust-cache exports
           # CARGO_INCREMENTAL=0 to keep its cache small, which is right for every other job here and
           # wrong for this one. folioman is one large crate (fetch.rs 8160 lines, picks.rs 9864,
