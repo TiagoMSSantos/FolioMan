@@ -9556,6 +9556,12 @@ urls:
   #
   # ============================================================================================
   # (#173) POOL SUPPLY ON MERIT — THE S&P MIDCAP 400 POND. GRADED, AND REFUSED. 2026-08-30.
+  # *** RETRACTED IN PART BY (#174), 2026-08-30 — READ THAT BLOCK FIRST. These six runs were graded on
+  # *** `universe pit`, NOT the canonical `universe fund pit`, so the PEG gate was inert and the gate
+  # *** stack incomplete. THE VERDICT BELOW IS WRONG: the (#160) guard is NOT broken at 12y (the
+  # *** canonical lane reads 63%, not 48%) and the shipped lane is NOT guard-broken. The correct
+  # *** verdict is UNRESOLVED on TIE. The POOL-SUPPLY FINDING SURVIVES and was reconfirmed on the
+  # *** canonical lane. Everything below is left as written, per this file's convention.
   # ============================================================================================
   # (#172) named the last open lever: "pool supply on merit, and widening the universe rather than
   # the gates is its untried half." This is that run. It is the first GRADED answer on the
@@ -9661,6 +9667,105 @@ urls:
   #
   # (#173) also documents the sibling key that does NOT appear below because it defaults empty:
   #   membership_csv: ["data/sp400_spans.csv"]   # extra point-in-time membership, off by default
+  # ============================================================================================
+  #
+  #
+  # ============================================================================================
+  # (#174) (#173) WAS GRADED ON THE WRONG LANE. RE-RUN, RETRACTED, RE-ADJUDICATED. 2026-08-30.
+  # ============================================================================================
+  # (#173)'s six runs used `backtest N universe pit`. THE CANONICAL GRADED LANE IN THIS FILE IS
+  # `backtest {20,12,8} universe fund pit` — about twenty receipts use that spelling; the no-fund
+  # spelling appears once, and only for (#121)'s COVERAGE CENSUS, which is a pool diagnostic and not
+  # a graded verdict. Without `fund` the fundamental lane is empty, so `growth_max_peg` never binds
+  # and the gate stack that decides the pool is INCOMPLETE.
+  #
+  # THREE INDEPENDENT CONFIRMATIONS THAT THE FLAG, NOT DATA DRIFT, IS THE CAUSE:
+  #   1. (#173)'s COVERAGE read 289/396/478 of 1206 — the banked NO-FUND census reads 291/399/481.
+  #   2. (#173)'s sweep printed `growth_max_peg ->off admits 0 new names`. On the canonical lane the
+  #      same row reads n=42 at 8y. A gate that admits nobody is a gate with no data behind it.
+  #   3. (#172)'s control, canonical lane, reads 12y 18/26 (69%) and 8y 25/34 (74%).
+  #
+  # THE SHIPPED LANE MEASURED PROPERLY, `universe fund pit`, control arm, 2026-08-30:
+  #     horizon | rank-1 h2h 6-10 book | 11-20 book | median gated pool | (#173) said
+  #       20y   |      4/8  (50%)      |  1/2 (50%) |         5         |  4/8 (50%),  pool 5
+  #       12y   |     12/19 (63%)      |  2/4 (50%) |         6         | 10/21 (48%), pool 7
+  #        8y   |     19/27 (70%)      |  5/8 (62%) |         7         | 16/29 (55%), pool 9
+  #
+  # RETRACTION, STATED PLAINLY: (#173) asserted that the SHIPPED LANE IS GUARD-BROKEN AT 12y, its
+  # 6-10 tally sitting at 48% against (#160)'s 50% absolute bar. THAT IS FALSE. The canonical lane
+  # reads 63% at 12y and 70% at 8y, both comfortably clear, and in the same regime as (#172)'s banked
+  # 69%/74%. No guard is broken on the shipped lane, no round is pre-refused at 12y, and nothing in
+  # the grading apparatus needs repair. The 48% was an artifact of a missing word on a command line.
+  # Note also that `fund` TIGHTENS the pool (5/6/7 against 5/7/9): the live PEG gate removes names.
+  #
+  # THE POND ARM, RE-ADJUDICATED ON THE CANONICAL LANE. Same two overlays, same `data/sp400_spans.csv`,
+  # six fresh runs.
+  #
+  #   PRE-REGISTERED CONFOUND, MEASURED AND CLEARED. 0 of the 785 new names were in `.sec_cache`
+  #   before the round. Non-negotiable #5 is "missing data PASSES a gate", so a name SEC does not
+  #   serve would sail through `growth_max_peg` while the incumbents are genuinely gated — "wider pond
+  #   PLUS a free pass", which is not a result. Declared in writing before the runs. MEASURED AFTER:
+  #   SEC serves 478 of 785 new names (61%) against 694 of 1206 incumbents (58%). The rates are
+  #   SYMMETRIC — the new names are served slightly BETTER than the pond they join — so the asymmetry
+  #   does not exist and the arm is a valid result. 307 names do still ride #5; that is the residue.
+  #
+  #   horizon | scoreable members | windows scored | MEDIAN GATED POOL | VACUOUS
+  #           |    ctl  ->  arm   |   ctl -> arm   |    ctl -> arm     |
+  #     20y   |    289  ->  289   |  1119 -> 1119  |      5 -> 5       |  yes
+  #     12y   |    396  ->  591   |  2737 -> 3013  |      6 -> 6       |  yes
+  #      8y   |    478  ->  736   |  6126 -> 7181  |      7 -> 7       |  yes
+  #
+  #   top-10 excess (mean | median), worst window:
+  #     20y   ctl +0.6 | +0.0  worst -10.0    arm +0.6 | +0.0  worst -10.0   (identical)
+  #     12y   ctl +3.7 | +3.9  worst  -6.4    arm +3.8 | +4.1  worst  -6.4
+  #      8y   ctl +5.3 | +5.6  worst  -5.5    arm +4.9 | +4.3  worst  -5.5
+  #   rank-1 h2h 6-10 book:   20y 4/8 = 4/8   12y 12/19 = 12/19   8y ctl 19/27 -> arm 20/27
+  #   rank-1 h2h 11-20 book:  20y 1/2 = 1/2   12y  2/4  =  2/4    8y ctl  5/8  -> arm  5/10
+  #
+  # VERDICT: UNRESOLVED ON TIE -> NO SHIP. Every GUARD PASSES this time, which is what changes.
+  # (#160) at 12y: 63% >= 50% and 12/19 is NOT BELOW the control's 12/19. At 8y: 74% >= 50% and 20/27
+  # is ABOVE the control's 19/27. At 20y the 11-20 book is 1/2 = 50%, meeting the absolute bar. The
+  # worst window is unchanged at all three horizons. With the guards clear, PRIMARY is reached and it
+  # SPLITS: 12y mean +0.1 / median +0.2 (UP) against 8y mean -0.4 / median -1.3 (DOWN). Horizons
+  # disagreeing is a TIE, and a TIE is UNRESOLVED, and UNRESOLVED IS NO SHIP.
+  # SO THE BOTTOM LINE IS UNCHANGED — the pond does not ship — BUT THE REASON IS DIFFERENT AND THIS
+  # ONE IS CORRECT. (#173) recorded a guard break that was not there.
+  #
+  # READING NOTE on the 8y 11-20 row, so nobody reads a fall into it: the numerator is FLAT at 5 and
+  # the DENOMINATOR grows 8 -> 10, because the wider pond desaturates two more buckets. That is
+  # (#160)'s READING NOTE artifact in its falling form. It is also not the guard book at 8y ((#160)
+  # reads 6-10 there), so it does not bite. The 8y census likewise moves 35 -> 33 saturated: the pond
+  # is not entirely inert, it just never reaches the basket.
+  #
+  # THE (#173) FINDING SURVIVES INTACT AND IS NOW CONFIRMED ON TWO DIFFERENT GATE STACKS. Pond 1206
+  # -> 1991 (+65%), scoreable members +54% at 8y and +49% at 12y, 1055 more windows scored at 8y —
+  # and THE MEDIAN GATED POOL DID NOT MOVE BY ONE NAME at any horizon, on either lane. Every column
+  # stayed VACUOUS. ZERO of the 785 new names appear in any printed rank slice at any horizon on the
+  # canonical lane, exactly as on the no-fund lane. SUPPLY IS NOT THE BINDING CONSTRAINT; THE GATES
+  # ARE. (#173)'s reopening test stands unchanged: this direction reopens only on a run where the
+  # median gated pool MOVES with pond size.
+  #
+  # THE GATE SWEEP, READ ON THE CANONICAL LANE FOR THE FIRST TIME — AND IT NAMES NO LEVER.
+  #     gate                    8y (n, mean|med, vs shipped)      12y (n, mean|med, vs shipped)
+  #     growth_min_cagr -4      335, +60.6|+54.9, +56.5  TIGHT    151, +12.3|-55.6,  +17.6  SPLIT
+  #     growth_max_peg ->off     42, +44.4|+11.7, +13.3  TIGHT     14, -20.1|-212.1, -138.9
+  #     growth_min_1y_pct -10    57, +21.0|-44.3, -42.7  SPLIT     41,  +3.2|-138.7, -65.5  SPLIT
+  #     growth_max_above_ma off  93, +97.4|-75.6, -73.9  SPLIT     86, -94.5|-129.0, -55.7
+  #     growth_min_leg_years 2   93,  +0.3| -3.2,  -1.5  SPLIT     68, -60.6|-73.0,   +0.2
+  #   TWO gates carry a TOO TIGHT flag (mean AND median positive) and BOTH DO SO AT 8y ONLY. At 12y
+  #   the same two have medians of -55.6 and -212.1. NOTHING IS FLAGGED AT BOTH HORIZONS. Since the
+  #   pit lane's PRIMARY reads 12y AND 8y ((#139)), an 8y-only lead is the exact signature that
+  #   produces a TIE, which is how (#151) refused BOTH gates it flagged. `growth_max_peg` is newly
+  #   PRICED here — it was invisible on the no-fund lane — and it is 8y-only too.
+  #   CONCLUSION: THE GATE STACK HAS NO LIVE LEAD ON THE CANONICAL LANE. Read this as permission to
+  #   measure, never as a result ((#151)); a green ADMITS NO WORSE flag is a pool diagnostic.
+  #
+  # THE LESSON, AND IT IS THE REUSABLE PART: A MISSING `fund` SILENTLY CHANGES THE GATE STACK, AND
+  # NOTHING IN THE OUTPUT SAYS SO. There is no warning, no error, and every number still prints. The
+  # tell is `growth_max_peg ->off admits 0 new names` in the GATE SWEEP — a gate that admits nobody
+  # is a gate with no data behind it. GRADE ON `universe fund pit`, and check that row before
+  # believing any verdict. The sibling trap from (#173) still applies: after any cargo-mutants run,
+  # rebuild before grading, because `--in-place` leaves a MUTATED binary in `target/mutants/`.
   # ============================================================================================
   #
   constituents_csv:
