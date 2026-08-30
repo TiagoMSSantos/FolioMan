@@ -6908,6 +6908,33 @@ buy_heuristic:
   #   `margin_stability` and `asset_growth` print EXACTLY the price-only baseline at both horizons.
   #   That is not "weak" — the weight search returned 0, so the tilt is inert and the factor cannot
   #   move the score at any weight the search would pick.
+  #   >>> (#168) 2026-08-30 REFUTES THE THREE LINES DIRECTLY ABOVE. The weight search did NOT return 0.
+  #   It returned w 0.249 for BOTH factors at BOTH horizons. The sentence was an INFERENCE from a
+  #   number the table did not print; the table now prints it (backtest.rs:2234) and the inference is
+  #   wrong. What the signature actually means is settled by a control the same table supplies:
+  #   `insider_net_buys_90d`, which `report_fund_lane` independently reports as "only 0 cutoffs carry
+  #   this factor", prints the IDENTICAL row at 12y — TEST edge +309.7 (w 0.249) OOS +0.47 | -0.00,
+  #   byte-for-byte what `margin_stability` and `asset_growth` print. So a baseline-identical row is
+  #   consistent with THE FACTOR FILLING NOTHING ON THE SWEEP SAMPLE — a NON-MEASUREMENT — and is NOT
+  #   evidence that a real tilt was applied and found neutral. A real, large weight was applied and the
+  #   book did not move one basis point; that is a coverage statement, not a search verdict.
+  #   AND THE TAG IS UNDER-APPLIED. SIX rows carry the signature at 12y, not two: `rev_cagr`,
+  #   `rev_accel`, `insider_net_buys_90d`, `margin_stability`, `asset_growth` (all w 0.249) and
+  #   `buyback_yield` (w 0.249, OOS +0.50|+0.01). At 8y six carry it too — those plus `margin_trend`
+  #   (w 0.071) and `composite` (w 0.046), with `buyback_yield` at w 0.498. Whatever the tag means it
+  #   applies to all of them or to none, and w 0.249 ALONE is not the tell: present factors draw it too
+  #   (12y `gross_margin` +225.8, `eps_growth` +232.4, `interest_cover` +180.8, all at w 0.249). The
+  #   tell is the PAIR — a weight the search actually picked AND an edge equal to the baseline.
+  #   The VERDICT on those two factors is untouched: a factor that cannot move the book is not earning
+  #   the tilt either way. Only the stated mechanism changes, and it changes from a result to a
+  #   coverage hole. Do not cite "the weight search returned 0" again; cite this.
+  #   ALSO RECORDED, because it re-prices the WINNER row: the 12y winner is NOT stable run-to-run on
+  #   this lane. It read `ebitda_yield` (+646.5) on the (#165) run and `accrual_gap` (+403.1, w 0.446)
+  #   on this one, same file, same command, same 2737 windows scored. The 8y winner reads
+  #   `earnings_yield` (-5.8 against a -48.6 baseline, w 0.421). Three different names from three runs.
+  #   The caveat below already says TEST edges move between runs; this says the ARGMAX OVER THEM moves
+  #   too, which is the stronger claim and the one that matters — the WINNER line names an argmax over
+  #   a re-searched, re-sampled table and must never be read as a standing recommendation.
   #   NO n/a ROWS AT EITHER HORIZON: 24 of 24 populate. The widening was expected to expose factors
   #   the point-in-time pool cannot fill, and it exposed none. Coverage is not the limit here.
   #   CAVEAT THAT LIMITS EVERY NUMBER ABOVE — WITHIN-RUN COMPARISONS ONLY. The pre-existing factors'
@@ -8241,6 +8268,98 @@ buy_heuristic:
                                  #   Revenue-scaled rather than EBITDA-scaled so loss-makers stay defined
                                  #   instead of None-ing straight out of the gate.
                                  #   UNFITTED. Suggested ladder: off / -100 / -50 / -25 / 0. -1e9 = off.
+                                 #
+                                 # (#169) 2026-08-30 PRE-REGISTRATION — WRITTEN BEFORE THE RUNS WERE READ,
+                                 # as (#139) requires on the pit lane. The result is appended below it;
+                                 # this half is not edited afterwards.
+                                 #   WHY NOW: (#165) re-read (#159)'s held-loser table on a unit-free AUC
+                                 #   and `net_cash_rev` is the ONE name it surfaced — AUC 0.60 at BOTH 12y
+                                 #   and 8y, same direction (12y winners med 5.72 vs losers 3.48, n=58/7;
+                                 #   8y winners med 3.35 vs losers -0.60, n=120/22). At 8y the MEDIAN LOSER
+                                 #   CARRIES NET DEBT. Both other shapes for that name are already closed:
+                                 #   as a tilt it fails the sweep's own both-halves-+ bar at both horizons
+                                 #   (12y +349.5 OOS +0.42|-0.10, 8y +0.7 OOS -0.10|-0.06), and the banked
+                                 #   "net_cash_rev 25%" refusal is a DIFFERENT INSTRUMENT — the SURVIVAL-GATE
+                                 #   probe (backtest.rs:3275) drops the weakest 25 PERCENT of names, while
+                                 #   this knob is an absolute % floor. The floor itself has never been graded.
+                                 #   LADDER: off / -100 / -50 / -25 / 0. Exactly the five rungs written on
+                                 #   the line above, before today. NO SIXTH RUNG. 0 is the a-priori bright
+                                 #   line ("no net debt") — the config.rs:327 comment records that 0 is why
+                                 #   the off-sentinel is -1e9 and not 0, so it is not a fitted value.
+                                 #   GRADE: Ship Rule v2 unchanged. PRIMARY = top-10 excess, mean AND median,
+                                 #   up-or-held at 12y AND 8y per (#139). Every 20y GUARD live: h2h >=50% on
+                                 #   the 11-20 book at 20y with no not-worse bar; h2h on the 6-10 book at 12y
+                                 #   and 8y at >=50% AND not below the control, per (#160); top-10 worst
+                                 #   window not worse. GUARD > PRIMARY > TIE, and a broken guard REFUSES.
+                                 #   METHOD: five overlay configs in tests/ (NOT $TMP — config::anchored_path
+                                 #   takes the config's GRANDPARENT, so a $TMP probe silently moves the data
+                                 #   root), each merging over this file, one knob apart. The `off` arm is the
+                                 #   CONTROL and every comparison is probe-vs-control, never vs a fixture run.
+                                 #   TRIM, stated so a later reader sees a decision and not a missing horizon:
+                                 #   8y first for all five arms; 12y and 20y only for arms still alive on
+                                 #   PRIMARY at 8y. A rung down at 8y is dead whatever its other columns say.
+                                 #   READ-GUARDS: no FOLIOMAN_OFFLINE (it cuts scored windows 699->32); check
+                                 #   `windows scored` on every run; read the POOL CENSUS before the top-N
+                                 #   table and record the h2h n per (#151). A gate is POOL-CHANGING, so it
+                                 #   still answers on a VACUOUS column where a ranking knob would not.
+                                 #   FRAMING, fixed in advance: the AUC surfaced this name across the whole
+                                 #   record, horizon-agnostically. That 7 of the 9 zero-return 12y holds are
+                                 #   levered mortgage-credit names bought in 2007-08 is a COHERENCE CHECK,
+                                 #   NOT THE JUSTIFICATION — fitting a gate to erase one macro event is the
+                                 #   overfitting shape this file bans. An AUC does not authorise a gate; it
+                                 #   says a threshold is possible. Ship Rule v2 decides.
+                                 #
+                                 # (#169) RESULT — REFUSED, ON A GUARD, AT EVERY RUNG. Runs 2026-08-30,
+                                 # `backtest 8 universe fund pit` per arm, five overlays in tests/ one knob
+                                 # apart. INTEGRITY: all five report `windows scored: 6126` identically, each
+                                 # arm's heuristic_drift() WARNING names ITS OWN knob and no other, and the
+                                 # control emits no WARNING at all (it restates the shipped -1e9).
+                                 #                 top-10 excess     worst   rank-1 h2h (6-10 book)  median pool
+                                 #   off (CONTROL)  +5.3 (med +5.6)   -5.5    19/27  70%             7
+                                 #   -100           +5.6 (med +6.3)   -5.5    16/27  59%             7
+                                 #   -50            +5.6 (med +6.4)   -5.5    16/27  59%             7
+                                 #   -25            +5.5 (med +6.2)   -5.5    14/26  54%             7
+                                 #   0              +6.0 (med +6.4)   -5.5    12/21  57%             5
+                                 #   PRIMARY PASSES ON ALL FIVE — mean AND median up at 8y, every rung — and
+                                 #   the worst window is -5.5 on all six columns, so that GUARD holds too.
+                                 #   THE (#160) 8y GUARD BREAKS ON ALL FIVE. Every rung clears the absolute
+                                 #   >=50% bar and every rung lands BELOW the control's 70% tally on the same
+                                 #   6-10 book, which is exactly the not-worse clause (#160) added at 12y/8y.
+                                 #   GUARD > PRIMARY, and a broken guard REFUSES OUTRIGHT — it is never
+                                 #   softened to unresolved. So the ladder is dead at 8y and NO RUNG WAS RUN
+                                 #   AT 12y OR 20y. That is the pre-registered trim firing, not a missing
+                                 #   horizon: an arm that cannot pass 8y cannot pass, whatever 12y says.
+                                 #   AND IT IS NOT A DENOMINATOR ARTIFACT, which is the first objection to
+                                 #   raise given (#151). A gate thins the pool and the h2h denominator IS the
+                                 #   census's non-saturated bucket count, so a gate mechanically shrinks its
+                                 #   own guard's n — at rung 0 the denominator falls 27 -> 21. But at -100 and
+                                 #   -50 THE DENOMINATOR IS 27, IDENTICAL TO CONTROL, and the count still
+                                 #   falls 19 -> 16. Same book, same n, three head-to-heads lost. The
+                                 #   degradation is real.
+                                 #   WHAT THE GATE ACTUALLY DOES: it raises the mean and median of the top-10
+                                 #   book while making the #1 pick less reliably better than the 6-10 names
+                                 #   beneath it. That is a coherent effect, not noise — cutting levered
+                                 #   filers lifts the basket's centre and flattens the ranking inside it —
+                                 #   and it is precisely the trade (#160)'s clause was written to refuse.
+                                 #   REVERT RULE: none to revert; the knob stays -1e9 and nothing shipped.
+                                 #   Re-opening it requires a NEW measurement in which the 6-10 h2h is NOT
+                                 #   below control at 8y. Re-running these five rungs is not that. A SIXTH
+                                 #   rung is FORBIDDEN — the ladder was fixed in writing above before the
+                                 #   runs, and hunting a threshold that clears the guard is (#120)'s argmax.
+                                 #
+                                 # (#169) ALSO CLOSES THE DIRECTION (#159) OPENED, since this was its last
+                                 # live candidate. (#159)'s standing bar — "a new gate proposed from the
+                                 # literature now needs to explain its gap in this table first" — was re-read
+                                 # by (#165) on a unit-free AUC because the original ranking was in each
+                                 # factor's own units. That re-read surfaced exactly ONE name, `net_cash_rev`
+                                 # at AUC 0.60 on both horizons, and all three shapes for it are now closed:
+                                 # TILT refused (fails the sweep's own both-halves-+ bar at 12y and 8y),
+                                 # SURVIVAL-GATE refused (the percentile probe: +0.5 at 8y, FLAT at 12y),
+                                 # ABSOLUTE FLOOR refused here on the (#160) guard at all five rungs.
+                                 # `ebitda_yield`, the other name the AUC ranked top, is refused twice over
+                                 # (below baseline at 8y, and the WINNER row that named it is an unstable
+                                 # argmax — see (#168) at the sweep block). THE TABLE IS SPENT. The next gate
+                                 # proposal needs a NEW measurement, not another re-reading of (#159).
   # ---- (P2)/(P3) ACCRUALS AND ASSET GROWTH: MEASURED, AND NEITHER EARNS A KNOB ----
   # (#124) 2026-08-23. There is no knob here to hang a receipt on, deliberately — this block IS the
   # receipt, and it records why `growth_max_accrual_gap` and `growth_max_asset_cagr` were NOT added.
@@ -8269,6 +8388,14 @@ buy_heuristic:
   # `ebitda_yield`. So neither factor has a train/test held-out edge or OOS halves at all. Adding those
   # 10 names to `FACTORS` is the cheap follow-up IF either factor ever looks worth the trouble; on this
   # reading neither does, which is why that work was not done either.
+  #
+  # (#168) 2026-08-30 SUPERSEDES THE PARAGRAPH ABOVE, on its facts and not on its verdict. The "hardcoded
+  # 14-name `FACTORS` array" no longer exists: `sweep_fund_factor` (backtest.rs:2228) and
+  # `held_loser_factors` (:4810) both iterate the SAME `FUND_FACTORS` (:2138, 24 names), so all ten
+  # listed omissions — `accrual_gap` and `asset_growth` included — DO now carry a train/test held-out
+  # edge and OOS halves on every `fund` run. The cheap follow-up was done. What does NOT change is the
+  # verdict: read the sweep rows for those two and they still refuse. Cite this correction, not the
+  # paragraph above it, before claiming any factor is unswept — the claim is now false for all 24.
   #
   # REVERT RULE: this is a null result, not a threshold. Adding either gate requires a NEW run in this
   # file that beats these numbers — not an appeal to the literature, which is what put them on the list.
