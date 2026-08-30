@@ -2224,14 +2224,22 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
     };
 
     let (baseline, ..) = eval(None); // price-only TEST edge: the bar every factor must clear
+    // (#168) KEEP the searched weight. `eval`'s 4th element is the `growth_fund_weight` the 200-draw
+    // search actually won with, and it was dropped here for every row but the winner — which the block
+    // below then re-derived with a whole second search. A row that TIES the baseline is a RESULT when
+    // the search chose w=0 ("do not use this factor") and a NON-MEASUREMENT when it chose a real weight
+    // and the book still did not move; the edge alone cannot tell those apart, and six rows tie the
+    // baseline at 12y. Kept parallel rather than widened into the tuple: `pick_sweep_winner` and its
+    // test build that shape by hand, and (#167) is the receipt for what widening a tuple costs.
+    let mut weights: Vec<f64> = Vec::with_capacity(FUND_FACTORS.len());
     let results: Vec<(&str, f64, Option<f64>, Option<f64>)> =
-        FUND_FACTORS.iter().map(|&n| { let (e, a, b, _) = eval(Some(n)); (n, e, a, b) }).collect();
+        FUND_FACTORS.iter().map(|&n| { let (e, a, b, w) = eval(Some(n)); weights.push(w); (n, e, a, b) }).collect();
 
     let fmt = |r: Option<f64>| r.map_or("n/a".to_string(), |v| format!("{v:+.2}"));
     println!("\n── FUND FACTOR SWEEP (growth_fund_weight searched per factor, held-out TEST) ──");
     println!("  price-only baseline TEST edge {baseline:+.1} — a factor must beat this with both OOS halves +");
-    for (name, edge, a, b) in &results {
-        println!("  {name:<14} TEST edge {edge:+.1}  OOS {} | {}", fmt(*a), fmt(*b));
+    for ((name, edge, a, b), w) in results.iter().zip(&weights) {
+        println!("  {name:<14} TEST edge {edge:+.1} (w {w:.3})  OOS {} | {}", fmt(*a), fmt(*b));
     }
     match pick_sweep_winner(&results, baseline) {
         Some(w) => {
@@ -2239,7 +2247,7 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
             // (Item 10) best-of-N haircut: the winner is the MAX of N tried factors, so its edge is inflated
             // by selection. Re-bootstrap the winner's tilt but read a Šidák-tightened tail (5/N instead of
             // 5) — if THAT band straddles 0 the "win" is within best-of-N luck, ship nothing anyway.
-            let weight = eval(Some(w)).3; // seeded search -> identical to the sweep's pick; re-derive the won weight
+            let weight = weights[results.iter().position(|&(n, ..)| n == w).expect("the winner is a swept row")];
             // The winner's edge was measured AT THIS WEIGHT, searched in [0,0.5] — which need not be the
             // shipped `growth_fund_weight`. Print it: shipping the factor at a different weight ships an
             // untested tilt, and the miss is silent (the factor name matches, the magnitude does not).
