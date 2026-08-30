@@ -3014,6 +3014,100 @@ buy_heuristic:
                                  #   REVERT RULE: set false to restore the pre-(#159) report, and
                                  #   re-bless — the goldens gained this block additively and nothing
                                  #   else in the report moved.
+                                 # ── (#165) MEASURED 2026-08-30 — THE SAME TABLE, RE-READ ON A UNIT-FREE RULER ──
+                                 #   WHAT CHANGED: each row gained an `AUC` column beside the gap. AUC = P(a random winner
+                                 #   scores above a random loser), ties counting a half, so it is rank-based and INVARIANT
+                                 #   under any monotone transform of the factor. Same two runs as (#159) —
+                                 #   `backtest {12,8} universe fund pit`, control on this file. The gap column reproduced
+                                 #   (#159) to the decimal (peg_yield +468.92, gross_margin -8.74), so both receipts read
+                                 #   the SAME dataset and the columns are directly comparable.
+                                 #   12y: windows scored 2737, census 35 buckets / median gated pool 6 / h2h n=4 (VACUOUS).
+                                 #    8y: windows scored 6126, census 43 buckets / median gated pool 7 / h2h n=8.
+                                 #
+                                 #   WHY IT WAS NEEDED: (#159) ranked 24 factors by a gap carried in each factor's OWN
+                                 #   units. `peg_yield` is `earnings_yield · CAGR` and runs in the hundreds; `accrual_gap`
+                                 #   is a ratio near 0; `margin_stability` is single digits. Ranking by that gap ranks
+                                 #   partly by SCALE — and the three factors (#159) crowned are the three largest-unit
+                                 #   factors in the registry. That is a confound in the RULER, not a finding about the book.
+                                 #
+                                 #   ranked by |AUC-0.5|; dir = does the direction agree across the two horizons:
+                                 #                      12y AUC   8y AUC   dir    vs (#159)
+                                 #     peg_yield          0.91     0.70    SAME   holds
+                                 #     ebitda_yield       0.91     0.70    SAME   holds
+                                 #     earnings_yield     0.89     0.70    SAME   holds
+                                 #     rev_cagr            —       0.21     —     NEW — see 4
+                                 #     eps_growth         0.15     0.35    SAME   holds (backwards)
+                                 #     interest_cover     0.20     0.46    SAME   12y only; 8y is noise
+                                 #     asset_growth        —       0.69     —     8y only, n=41/10
+                                 #     gross_margin       0.26     0.34    SAME   holds (backwards)
+                                 #     composite          0.31     0.32    SAME   holds (backwards)
+                                 #     buyback_yield      0.30     0.52    FLIP   holds (flips) — (#156) story is 12y-only
+                                 #     margin_trend       0.68     0.47    FLIP   does not replicate
+                                 #     rev_yoy            0.54     0.37    FLIP   holds (flips)
+                                 #     roe / quality      0.38     0.41    SAME   holds (backwards)
+                                 #     net_cash_rev       0.60     0.60    SAME   NEW — see 5
+                                 #     net_margin         0.40     0.48    SAME   weak
+                                 #     eps_yoy            0.53     0.41    FLIP   weak
+                                 #     accrual_gap        0.55     0.45    FLIP   NOT dead — see 2
+                                 #     op_margin          0.45     0.47    SAME   DEAD stands
+                                 #     roic               0.54     0.50    flat   NEVER separated — see 2
+                                 #     margin_stability   0.47     0.46    SAME   DEAD stands
+                                 #     fcf_margin         0.49     0.50    flat   never separated
+                                 #     rev_accel           —       0.50     —     8y only, flat
+                                 #
+                                 #   1. THE CORE CLAIM SURVIVES; THE SUPERLATIVE DOES NOT. The three value factors are the
+                                 #      top three at 12y and hold DIRECTION at both horizons — the only family that does so
+                                 #      at that strength. "The held book's losers are the EXPENSIVE names" therefore stands,
+                                 #      now measured on a ruler units cannot move. But (#159) also wrote "by a margin
+                                 #      nothing else approaches", and at 8y that is FALSE: `rev_cagr` reads 0.21 (|d| 0.29)
+                                 #      against value's 0.70 (|d| 0.20) — and (#159) itself says LEAN ON THE 8y COLUMN.
+                                 #      "THE ONLY FACTORS THAT SEPARATE ARE VALUE FACTORS" is RETRACTED AS WRITTEN and
+                                 #      replaced by: value is the only family that separates CONSISTENTLY. It is not the
+                                 #      strongest separator at every horizon.
+                                 #
+                                 #   2. THREE VERDICTS WERE UNIT ARTIFACTS — and not one of them promotes a factor.
+                                 #      `roic` was "collapses at 8y" on a gap going -5.79 -> -0.06. On AUC it goes
+                                 #      0.54 -> 0.50: it NEVER separated, so there was no collapse to explain.
+                                 #      `accrual_gap` was DEAD on +0.00/-0.08 — numbers small because its UNITS are small.
+                                 #      On AUC it is 0.55/0.45: a real but tiny separation that FLIPS SIGN. Not dead, just
+                                 #      inconsistent. Same refusal, honest reason.
+                                 #      `fcf_margin` was SIGN FLIPS on -5.35/+0.77; AUC 0.49/0.50 says it does not separate
+                                 #      at all, so that flip was median noise on a flat factor.
+                                 #      `interest_cover`'s -63.96 was the third-largest gap at 12y and IS a real reverse
+                                 #      separator there (0.20) — but 0.46 at 8y. The MAGNITUDE was scale; the direction
+                                 #      was not.
+                                 #
+                                 #   3. TWO DEAD VERDICTS ARE GENUINELY DEAD. `margin_stability` (0.47/0.46) and `op_margin`
+                                 #      (0.45/0.47) sit on the half at BOTH horizons. The premise that motivated this
+                                 #      instrument — that DEAD might be a units artifact — was WRONG for these two.
+                                 #      Recorded because a receipt that only confirms its own hypothesis is not a measurement.
+                                 #
+                                 #   4. THE BACKWARDS FAMILY IS CONFIRMED AND WIDENED. gross_margin, eps_growth, roe/quality
+                                 #      and composite are all below the half at BOTH horizons, same direction: (#159)'s
+                                 #      measured explanation for five consecutive refusals holds unchanged. `rev_cagr` at
+                                 #      0.21 is the STRONGEST instance of it on the 8y column and (#159) never saw it — the
+                                 #      money-losing holds are the FAST REVENUE GROWERS. A gate there would ask the growth
+                                 #      lane to reject growth. It fills only at 8y (n=41/10), so it cannot be confirmed at
+                                 #      both horizons and is NOT proposed — recorded as the first thing to re-read when
+                                 #      pre-2018 fundamental coverage improves.
+                                 #
+                                 #   5. ONE NEW CANDIDATE CLEARS (#159)'s BAR: `net_cash_rev` — 0.60 at BOTH horizons, same
+                                 #      direction, on the best-covered rows in the table (n=120/22 at 8y, n=58/7 at 12y).
+                                 #      The winners carry more net cash per unit of revenue. It is the ONLY non-value factor
+                                 #      that replicates in BOTH direction and magnitude across the two horizons. |d| 0.10 is
+                                 #      modest — half of value's — so this is a CANDIDATE, not a result.
+                                 #
+                                 #   AN AUC DOES NOT AUTHORISE A GATE. It says a threshold is possible, never that one pays.
+                                 #   Ship Rule v2 decides in its own round: PRIMARY at 12y AND 8y on `pit` per (#139), every
+                                 #   20y GUARD live, the (#160) h2h off the 6-10 book with its not-worse clause. NOTHING HERE
+                                 #   SHIPS A PICK CHANGE — no knob moved and the goldens gained only the new column.
+                                 #
+                                 #   THE BAR (#159) SET IS AMENDED, NOT LIFTED: a gate proposed from the literature still has
+                                 #   to explain itself in this table first, but it now explains its AUC at BOTH horizons
+                                 #   rather than its gap. A GAP ARGUMENT ALONE IS NO LONGER ADMISSIBLE — it can be bought
+                                 #   with units.
+                                 #   REVERT RULE: none — this receipt records a measurement, not a value. The column itself
+                                 #   reverts with `print_held_loser_factors: false`, exactly as (#159) already says.
   journal_core_list: false       # (#103 / finding C9) UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
