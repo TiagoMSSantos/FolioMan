@@ -9001,6 +9001,58 @@ urls:
   # worth EUR 199.90; if it fails on recycling, the next rung is Sharadar at ~USD 69 for one month, not
   # Norgate. PRE-REGISTER that as the bar before the month is bought, and record the result here
   # whichever way it lands — a refuted vendor is as reusable a finding as a working one.
+  #
+  # (#163) THAT PURCHASE IS VOID, 2026-08-30 — NO-SPEND CONSTRAINT. The recommendation above is kept
+  # as written (its pricing survives if the constraint ever lifts) but it MUST NOT be acted on: this
+  # project buys no data. What follows is the free-only re-run of the same question, and it closes it.
+  #
+  # FMP WAS THE ONE VENDOR (#161) NEVER PROBED, and it was the obvious one to probe: the repo already
+  # holds an FMP_API_KEY and already fetches four /stable/ endpoints with it (src/config.rs 822, 849,
+  # 856, 862), so asking costs nothing. Probed read-only 2026-08-30, key never printed:
+  #
+  #   endpoint                              result
+  #   /stable/delisted-companies            WORKS — symbol, companyName, exchange, ipoDate, delistedDate
+  #   /stable/delisted-companies?page=1     REFUSED — "Special Parameters : The values for 'page' can
+  #                                         only be 0 based on your current subscription"
+  #   /stable/historical-price-eod/full     REFUSED for every dead name — "Special Endpoint : This value
+  #                                         set for 'symbol' is not available under your current
+  #                                         subscription": MER, TWX, ENRNQ, AAMRQ, SIVBQ, FRCB, and
+  #                                         BCAR (delisted 2026-08-28, taken straight off the free list)
+  #   /stable/historical-price-eod/full     AAPL returns full history in the same session
+  #
+  # SO THE DATES ARE FREE AND THE PRICES ARE NOT — the identical split (#153) found at Alpha Vantage,
+  # now confirmed at a second vendor. Two details matter for anyone re-reading this. (1) The price
+  # refusal is SYMBOL-CLASS, not rate-limiting and not age: the live control passes in the same
+  # session, and a name delisted two days earlier is refused exactly like one delisted in 2008. (2) The
+  # free delisted LIST is page 0 only — 100 rows, the most recent delistings — so it is not a census
+  # and cannot enumerate what a 20y backtest is missing. It is a daily-refreshed sliver, and building a
+  # census by accumulating it going forward would take as many years as the backtest is long.
+  # THE LEGACY /api/v3/ PATHS ARE ALSO GONE for this key ("only available for legacy users who have
+  # valid subscriptions prior August 31, 2025"), so any future reader copying a v3 URL from an old
+  # tutorial will get an error that reads like an auth failure and is not one. The repo's own four
+  # endpoints are unaffected — all /stable/, all live-symbol.
+  #
+  # THE FREE LANDSCAPE IS NOW COMPLETE, AND THE DIRECTION IS CLOSED:
+  #   stooq            REFUSED ON PERMISSION — robots.txt is "User-agent: * / Disallow: /"
+  #   Yahoo            0 usable delisted names, 0-for-30 and 0-for-703 on the END-at-delisting test (#153)
+  #   EODHD  free      past-year only; the demo key serves 6 tickers — cannot probe the question (#161)
+  #   Alpha Vantage    LISTING_STATUS free (#153); prices need a free key at 25 req/day and are
+  #                    UNADJUSTED only (adjusted daily is premium), so returns break across splits —
+  #                    and 25/day cannot fetch a universe even if they did not. The public demo key
+  #                    returns "The demo API key is for demo purposes only" for TIME_SERIES_DAILY on
+  #                    every symbol including IBM, so it cannot answer this either.
+  #   FMP              dates free (page 0), prices paywalled — this entry
+  #
+  # VERDICT: THE WIDER-UNIVERSE DIRECTION IS CLOSED ON FREE DATA. Every free source serves membership
+  # or delisting DATES and none serves survivorship-free PRICES. (#129)'s "this needs a paid vendor,
+  # not a session of work" is confirmed a third time, and under no-spend that is the end of it — not a
+  # backlog item, not a smaller probe, and not a reason to re-examine Yahoo. The 27 STRESS_TICKERS
+  # (22 crashed-and-alive, 5 bankrupt) remain the only dead-name evidence this repo has, and (#161)'s
+  # note that `stress` already injects and dedups that list still stands as the cheapest integration
+  # shape IF a price source ever arrives.
+  # WHAT WOULD REOPEN IT: a price source — free or paid — shown to serve bars that END at a delisting
+  # date. That test is unchanged since (#134) and it is still the only test. Nothing above passes it.
+  # REVERT RULE: none — receipts only, no code, no knob, no golden.
   # ---------------------------------------------------------------------------------------------
   # survivorship-free PRICE source. Membership is done, dates are free, prices are the block. A
   # candidate must be shown to serve bars that END at a delisting date — that is the one test, and
