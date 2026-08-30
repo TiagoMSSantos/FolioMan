@@ -266,6 +266,43 @@
 # VERDICT: no knob deleted, no code changed. The surface is 152 wide because the lane is a record of
 # options that were measured, not because it accumulated dead code.
 #
+# (#164) 2026-08-30 — "NOTHING PROBES THE LIVE `screen` PATH" IS FALSE, AND HAS BEEN SINCE 07a941f.
+# Recorded because (#155) makes that claim the PRECONDITION for pruning ("build a live-path twin
+# first"), so a reader who believes it spends a round building an instrument that already ships.
+# TWO THINGS ALREADY COVER THE LIVE PATH, and between them they are the twin (#155) asked for:
+#   (1) `screen::funnel_lines` (src/commands/screen.rs) — per gate, how many names FAILED it and how
+#       many it SOLE-BLOCKED, split stocks / ETFs / crypto, with the sole-blocked tickers named and a
+#       reconciliation line. Called UNCONDITIONALLY at screen.rs:1982 — no knob, no flag; every live
+#       `screen` run prints it. This is where `growth_max_peg`'s receipt got "peg fails 411 stocks and
+#       SOLE-blocks 17"; that number was read off this table, not measured by hand.
+#   (2) `sole_blocking_gates_are_pinned` ((#47), src/commands/backtest.rs) — pins the sole-blocking SET
+#       on the fixture, and its comment already RECORDS THE LIVE SET in-tree: "The live funnel
+#       sole-blocks `cagr peg maxdd 1Y+`". Its failure message sends the reader to the live funnel's
+#       sole-blocked column before touching the pin.
+# So the LIVE/INERT question (#155) wanted is answerable today, and the answer for the gate that
+# matters most is already written down in two places.
+# THE REAL RESIDUAL GAP IS NARROWER, AND THE CODE NAMES IT ITSELF at backtest.rs:7826: "the only place
+# that shows up today is a live `screen` funnel NOBODY DIFFS". The instrument exists; what is missing
+# is that nothing compares its output across runs, so a bar being promoted from decorative to
+# load-bearing is visible only to a human who runs `screen` and reads the column that day.
+# NOT CLOSING THAT WITH CODE, deliberately. A live funnel golden would pin a MOVING MARKET — the set
+# changes when prices change, with no knob touched — so it would be flaky by construction and would
+# train the reader to re-bless it, which is worse than no test. The mechanism this file already uses is
+# the right one: (#47) records the live set in a comment and re-reads it when a knob moves. A second
+# instrument is not what is missing; DIFFING the one that exists is, and that is a habit, not a diff.
+# ONE MORE THING THIS CORRECTS, because it is the load-bearing half. `funnel_lines` only emits a row
+# for a gate that failed at least one name, so a gate that is REACHABLE-BUT-BIT-NOBODY and a gate that
+# is STRUCTURALLY UNREACHABLE both print nothing. That is exactly the confusion
+# `growth_gate_reachability_pin` exists to prevent on the backtest path ("a fixture artifact
+# indistinguishable, in the golden string, from a structurally dead gate"). So the live table answers
+# "what is load-bearing" honestly and CANNOT answer "what is dead" — do not read an absent row as
+# evidence a knob is inert, and do not delete a knob on that basis.
+# WHAT WOULD ACTUALLY UNBLOCK PRUNING is therefore unchanged and is NOT a new instrument: it is a live
+# funnel that emits a row per gate INCLUDING the zero rows. That is a small change to `funnel_lines`
+# (iterate the gate list, not the `fails` keys) and it is not made here, because (#155)'s verdict —
+# no knob deleted — stands on its own merits and this round ships no code.
+# REVERT RULE: none — receipts only, nothing changed.
+#
 # DEBT, DELIBERATELY NOT PAID HERE: growth_min_cagr 19, growth_min_range_pct 80, growth_maxdd_cap 84,
 # growth_max_peg 1.6, growth_accel_weight 0.65 and every other knob receipt below were FITTED on the
 # contaminated peer-mean. The king horizon barely moved so they are not presumed wrong, but they are
