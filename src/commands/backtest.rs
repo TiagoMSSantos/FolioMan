@@ -4368,6 +4368,19 @@ fn persistence_base_rate(
     Some((qualifying.len(), sustained, everyone * 100.0))
 }
 
+/// (#167) One row of the held-loser table: a factor, the size of each cohort, each cohort's median
+/// and the [`auc`] separating them. See [`held_loser_factors`] for why this is a named struct and
+/// not the six-field tuple it replaced.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct HeldLoserRow {
+    factor: &'static str,
+    n_win: usize,
+    n_lose: usize,
+    med_win: f64,
+    med_lose: f64,
+    auc: f64,
+}
+
 /// (#159) The held book's LOSERS, split by factor — the one question every other instrument in this
 /// file declines to ask. `recall_capture` and `missed_winner_reasons` price what the ranking MISSED;
 /// `gate_audit` and `gate_sweep` price what the gates REJECTED. Nothing priced what the lane BOUGHT
@@ -4387,18 +4400,24 @@ fn persistence_base_rate(
 /// definition, which would make every factor look like it separated something. Losing money is what
 /// a survival gate is actually asked to prevent.
 ///
-/// Returns (factor, n_win, n_lose, median_win, median_lose, auc) and SKIPS any factor that cannot
-/// fill both sides. (#165) added the `auc`: the medians give each factor's LEVEL, which is only
-/// readable in its own units, while the `auc` is what makes two factors comparable to EACH OTHER.
-/// Both are kept — dropping the medians would leave a row nobody can sanity-check against the
-/// printed columns elsewhere in this report. A skipped row is a fact about what the point-in-time
-/// pool covers, not about the factor — the caller prints the count it dropped so the absence stays
-/// visible.
+/// (#167) A NAMED ROW, NOT A TUPLE, AND THE REASON IS THE MUTATION GATE. cargo-mutants enumerates a
+/// tuple return element-by-element and multiplies the candidates — `""` for `&str`, `0`/`1` for
+/// `usize`, `0.0`/`1.0`/`-1.0` for `f64` — so the six-field tuple this used to return listed 220
+/// replacement mutants on its own. For a NAMED type it emits one `vec![Default::default()]` instead.
+/// That is not a cosmetic difference: `BUDGET` is 6 in ci.yml, so a 233-mutant diff shards 1/39 and
+/// CI grades a handful — a green that reads exactly like a covered gate. Keep this a struct.
+///
+/// Returns one [`HeldLoserRow`] per factor and SKIPS any that cannot fill both sides. (#165) added
+/// the `auc`: the medians give each factor's LEVEL, which is only readable in its own units, while
+/// the `auc` is what makes two factors comparable to EACH OTHER. Both are kept — dropping the
+/// medians would leave a row nobody can sanity-check against the printed columns elsewhere in this
+/// report. A skipped row is a fact about what the point-in-time pool covers, not about the factor —
+/// the caller prints the count it dropped so the absence stays visible.
 fn held_loser_factors(
     scored: &[(&Sample, f64)],
     n: usize,
     factors: &[&'static str],
-) -> Vec<(&'static str, usize, usize, f64, f64, f64)> {
+) -> Vec<HeldLoserRow> {
     let mut picked: BTreeMap<i32, Vec<(&Sample, f64)>> = BTreeMap::new();
     for (s, v) in scored {
         picked.entry(bucket(s.date)).or_default().push((s, *v));
@@ -4425,10 +4444,14 @@ fn held_loser_factors(
                     win.push(v);
                 }
             }
-            (!win.is_empty() && !lose.is_empty()).then(|| {
+            (!win.is_empty() && !lose.is_empty()).then(|| HeldLoserRow {
+                factor: name,
+                n_win: win.len(),
+                n_lose: lose.len(),
                 // BEFORE the medians: `median` takes the Vec by value, so the cohorts are gone after.
-                let sep = auc(&win, &lose);
-                (*name, win.len(), lose.len(), median(win), median(lose), sep)
+                auc: auc(&win, &lose),
+                med_win: median(win),
+                med_lose: median(lose),
             })
         })
         .collect()
@@ -4789,7 +4812,7 @@ fn report_lane(
         if rows.is_empty() {
             println!("    no factor fills both sides — no as-of fundamentals, or the book never lost money");
         }
-        for (name, nw, nl, mw, ml, sep) in &rows {
+        for &HeldLoserRow { factor: name, n_win: nw, n_lose: nl, med_win: mw, med_lose: ml, auc: sep } in &rows {
             // The gap is computed here rather than left to the reader, but it is expressed in THIS
             // factor's units and so is only comparable to ITSELF across horizons. (#165) the AUC
             // beside it is the cross-factor reading: unit-free, 0.5 = no separation, below a half =
@@ -6178,15 +6201,15 @@ mod tests {
         let rows = held_loser_factors(&scored, 3, &["roe", "roic"]);
         assert_eq!(rows.len(), 1, "roic is winners-only and must be dropped, not printed: {rows:?}");
         assert_eq!(
-            (rows[0].0, rows[0].1, rows[0].2, rows[0].3, rows[0].4),
+            (rows[0].factor, rows[0].n_win, rows[0].n_lose, rows[0].med_win, rows[0].med_lose),
             ("roe", 2, 1, 25.0, 2.0),
             "held book is WIN1/WIN2/LOSE: winners median (30,20)->25, losers (2)->2; UNHELD must not vote"
         );
 
         // n=4 admits UNHELD, and its -500 is what proves the top-n slice above was doing the work.
         let all = held_loser_factors(&scored, 4, &["roe"]);
-        assert_eq!(all[0].2, 2, "UNHELD is a loser once held");
-        assert!(all[0].4 < 2.0, "its -500 must drag the loser median below LOSE's 2.0: {:?}", all[0]);
+        assert_eq!(all[0].n_lose, 2, "UNHELD is a loser once held");
+        assert!(all[0].med_lose < 2.0, "its -500 must drag the loser median below LOSE's 2.0: {:?}", all[0]);
 
         // A bucket of one is skipped, exactly as `recall_capture` skips it, so both instruments
         // count the same pool — otherwise a single-name window would report a 100% one-sided split.
@@ -6196,7 +6219,7 @@ mod tests {
         // loser, so the column reads a clean 1.0; here the cohorts INTERLEAVE — W(1) below L(5),
         // W2(9) above it — so one of the two pairs fails and the same column must read 0.5. A
         // hard-coded field passes the first and fails the second, which is why both are pinned.
-        assert_eq!(rows[0].5, 1.0, "roe separates WIN1/WIN2 from LOSE completely: {rows:?}");
+        assert_eq!(rows[0].auc, 1.0, "roe separates WIN1/WIN2 from LOSE completely: {rows:?}");
         let ov = [
             row("W", 10.0, Some(1.0), None),
             row("L", -10.0, Some(5.0), None),
@@ -6204,7 +6227,7 @@ mod tests {
         ];
         let ovs: Vec<(&Sample, f64)> = ov.iter().enumerate().map(|(i, x)| (x, 10.0 - i as f64)).collect();
         let r = held_loser_factors(&ovs, 3, &["roe"]);
-        assert_eq!(r[0].5, 0.5, "W(1) < L(5) < W2(9): one pair wins, one loses -> 0.5: {r:?}");
+        assert_eq!(r[0].auc, 0.5, "W(1) < L(5) < W2(9): one pair wins, one loses -> 0.5: {r:?}");
     }
 
     /// (#165) `auc` is the ruler the held-loser table ranks factors on, so the values that DEFINE it
