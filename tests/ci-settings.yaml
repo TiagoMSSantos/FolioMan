@@ -449,8 +449,14 @@
 #   SURVIVOR BIAS IS NOT WAIVED. `stress` reaches its fat h2h denominators through non-point-in-time
 #   membership ((#178)); this amendment changes which HORIZONS adjudicate, and changes nothing about
 #   that price. A ship under this rule carries the survivor-bias caveat in its own receipt.
-#   TO REVERT: delete this block. Nothing has shipped under it yet — (#185)'s own arms are graded
-#   below and this line must be updated by whatever result they produce.
+#   TO REVERT: delete this block. NOTHING HAS SHIPPED UNDER IT, AND ON THE EVIDENCE NOTHING WILL —
+#   (#185)'s own arms were graded under it and REFUSED (receipt at `growth_value_weight`). The
+#   amendment did its job in the strict sense: it stopped a trivially-held 20y leg from carrying a
+#   ship, and applying it honestly then exposed that 12y on `stress` is ALSO vacuous, by (#149)
+#   saturation, leaving one adjudicating column where PRIMARY needs two. A rule that refuses the very
+#   arm it was written for is working, not failing. KEEP THE BLOCK: the reasoning is what is reusable
+#   — a knob disconnected from the ruler must never be scored as "held" — and the next structurally
+#   inert knob is entitled to the same treatment without re-arguing it from scratch.
 #
 # (#149) 2026-08-29 — VACUITY AMENDMENT. Same shape as (#139) again, and the third cause: a column
 #   that CANNOT MOVE cannot adjudicate either. PRIMARY grades an EQUAL-WEIGHT top-10 basket, which is
@@ -894,7 +900,14 @@
 #   live book size `top_picks` ..... (#180) NO CHANGE. 5 sits on the flat part of the curve and the pool cannot
 #                                    supply 10 anyway (top-10 == top-15 byte-identical at every horizon)
 #
-# THE ONE GENUINELY OPEN ITEM: `growth_value_weight`. (#178) found it UNGRADEABLE, not refused — it is
+# THE ONE GENUINELY OPEN ITEM IS NOW CLOSED — see the (#185) receipt at `growth_value_weight`. It was
+# re-opened under a pre-registered (#185) structural-inertness amendment and REFUSED: 20y is vacuous
+# because `earnings_yield` reaches 0 cutoffs, 12y is vacuous because median gated pool 10 meets a
+# basket of 10, and one adjudicating column cannot satisfy a two-horizon PRIMARY. The 8y column moves
+# rank-1 h2h not at all (30/44 on every arm) and buys its only median gain by admitting a -100% name.
+# Closed as PERMANENTLY UNGRADEABLE ON TODAY'S LANES. The paragraph below is the pre-(#185) framing,
+# kept because its diagnosis was right and only its "open" status changed:
+# `growth_value_weight`. (#178) found it UNGRADEABLE, not refused — it is
 # structurally inert at 20y (the run reports earnings_yield on 0 cutoffs, `pe_ratio` is filled only from
 # earnings_yield, so `value_factor` is identically 1.0), while `pit`, which could drop 20y under (#139),
 # is VACUOUS for ranking knobs. It falls between the two lanes. Re-opening it requires pre-registering a
@@ -7276,6 +7289,42 @@ buy_heuristic:
   #   column printed beside it) was SKIPPED — there was nothing left to instrument. No shipped value
   #   changed in this commit: all three are RANKING knobs, so the goldens do not move, no gate
   #   LIVE/INERT reachability is in play, and `growth_gate_reachability_pin` is untouched.
+                                 # (#185) GRADED, 2026-08-31, ON THE AMENDMENT WRITTEN FOR IT — AND IT REFUSES. Rungs {0.5, 1.0}
+                                 #   pre-registered and the amendment committed BEFORE any run (`a167527`). Lane `universe fund
+                                 #   stress`, three horizons, control + both arms = 9 runs.
+                                 #   THE INERTNESS EVIDENCE `(#185)` DEMANDS, QUOTED FROM THE RUN: 20y prints `earnings_yield n/a
+                                 #   (only 0 cutoffs carry this factor)`. 12y prints `winners n=66 med 17.48 losers n=8 med 5.64 gap
+                                 #   11.84 AUC 0.77` and 8y `n=137/18 gap 3.42 AUC 0.60` — so the factor is genuinely absent at 20y
+                                 #   and genuinely present, and strongly discriminating, at the other two. The amendment applies.
+                                 #   IT STILL CANNOT BE ADJUDICATED, AND NOW THE REASON IS COMPLETE. Column by column:
+                                 #     20y VACUOUS by `(#185)` — the factor is absent, so every arm returns the control by
+                                 #       construction (confirmed: +5.9|+6.0, worst -0.5, h2h 12/19 identical on all three arms).
+                                 #     12y VACUOUS by `(#149)` — median gated pool 10 against a graded basket of 10, and the run
+                                 #       PRINTS the VACUOUS tag. This was not foreseen when the amendment was drafted; `stress` was
+                                 #       believed non-saturated on the strength of `(#178)`'s 20y/8y census (median pool 11 both),
+                                 #       and 12y had never been run on this lane. It is saturated by one name.
+                                 #     8y is the ONLY column that can answer a ranking knob here.
+                                 #   `(#185)`'s PRIMARY reads 12y AND 8y, and `(#149)` says a VACUOUS column is recorded VACUOUS and
+                                 #   NEVER "held". So the 12y leg cannot be supplied BY ANY ARM, and PRIMARY is unsatisfiable on this
+                                 #   lane. REFUSED — not on a number, on the structure. Two vacuous columns cannot be voted with.
+                                 #   WHAT 8y SAYS ANYWAY, since a refusal on structure invites "but was it winning?": no.
+                                 #     rank-1 h2h on the 6-10 book is 30/44 (68%) on ALL THREE arms — the GUARD statistic does not
+                                 #     move at all. rank-1 excess +8.1|+8.5 control, +8.1|+8.5 at w=0.5, +8.2|+8.6 at w=1.0.
+                                 #     top-10 +6.9|+7.8 control, IDENTICAL at w=0.5, +6.9|+8.0 at w=1.0. Census byte-identical on
+                                 #     every arm at every horizon (37/51/59 buckets, median pool 11/10/11) — a PURE REORDER, as a
+                                 #     ranking weight must be. Everything that moves moves by 0.1pt, at or below the resolution
+                                 #     `(#137)` measured for a weight arm.
+                                 #     AND THE ONE GAIN IS THE ZERO-NAMES LINE `(#178)` WARNED ABOUT: w=1.0's +7.8 -> +8.0 median
+                                 #     arrives with `top-10 zero names (8y): FRCB@b4034(-100%)` — the arm buys 0.2pt of median by
+                                 #     admitting a total loss to the book, while its 11-20 slice falls +5.6|+5.5 -> +5.5|+5.0.
+                                 #   VERDICT: `growth_value_weight` stays 0.0 and `(#181)`'s "one genuinely open item" is CLOSED —
+                                 #   closed as PERMANENTLY UNGRADEABLE ON TODAY'S LANES, which is a result, not a to-do. `pit` is
+                                 #   vacuous for ranking knobs (`(#180)`: median pool 5/6/7); `stress` is structurally inert at 20y
+                                 #   and saturated at 12y. No lane in this file has two columns that can adjudicate it.
+                                 #   REVERT RULE: re-open ONLY if a lane appears whose median gated pool clears the graded basket at
+                                 #   TWO horizons that both carry `earnings_yield`. Widening the pond is the known lever and
+                                 #   `(#173)` already measured that it moves the median gated pool by zero names. Do not re-run
+                                 #   these rungs on these lanes; that question is spent.
   fund_source: "sec"         # SEC EDGAR XBRL: free, keyless, uncapped — the source the tilt was validated on
                              #   (train-serve: FMP's 250/day cap can't even cover one wide run).
                              #   NO LONGER US-only as of 2026-07-25 (#3c): 20-F/40-F forms, the ifrs-full
