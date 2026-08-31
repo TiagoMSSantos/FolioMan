@@ -416,6 +416,42 @@
 #   TO REVERT: delete this block and re-grade (#138) at 20y — that arm reads +0.8|+0.9 -> +0.6|+0.7
 #   there, a TIE under the letter, so reverting this rule reverts that ship. The two stand together.
 #
+# (#185) 2026-08-31 — STRUCTURAL-INERTNESS AMENDMENT TO PRIMARY. Fourth cause, same shape as (#139)
+#   and (#149), and PRE-REGISTERED BEFORE ANY RUN of the arm it exists to adjudicate.
+#   THE HOLE IT CLOSES. (#149) says a column whose median bucket is saturated cannot adjudicate a
+#   RANKING knob, and must be recorded VACUOUS rather than "held". There is a second way a column can
+#   fail to adjudicate, and (#178) hit it: the ruler is fine and the pool is fine, but THE KNOB IS
+#   NOT CONNECTED. `growth_value_weight` at 20y on `stress` is the case — the run reports
+#   `earnings_yield n/a (only 0 cutoffs carry this factor)`, `pe_ratio` is filled only from
+#   earnings_yield, so `value_factor` is identically 1.0 and EVERY arm returns the control's numbers.
+#   READ BY THE LETTER THAT IS A PASS, AND THAT IS THE BUG. PRIMARY is "up or HELD at 20y AND 8y".
+#   A disconnected knob is held at 20y by construction, on every arm, forever. So the letter lets a
+#   favourable 8y rung ship on a 20y leg that was never a test. This amendment refuses that.
+#     ON `stress`, FOR A KNOB WITH DOCUMENTED STRUCTURAL INERTNESS AT 20y:
+#       the 20y PRIMARY leg is VACUOUS, never "held" — exactly (#149)'s word, for the same reason.
+#       PRIMARY is therefore top-10 excess (mean AND median) up or held at 12y AND 8y.
+#       EVERY 20y GUARD STAYS LIVE. A worst window is a MAX and an h2h is a COUNT; neither is
+#       computed from the dead factor, so both still answer and both still refuse.
+#   THIS RAISES THE BAR, IT DOES NOT LOWER IT, and that is the whole reason it can be written after
+#   (#178)'s favourable 8y number is already known. By the letter an arm needed only a trivially-held
+#   20y plus a good 8y. Under this rule 12y must ALSO carry a real rise, on a column where the factor
+#   IS present. Nothing that would have passed before fails to pass on a technicality; things that
+#   would have passed vacuously now have to earn it. A rule that makes the arm harder is not a bar
+#   moved to fit a result.
+#   EVIDENCE REQUIRED, IN THE RECEIPT, QUOTED FROM THE RUN — not asserted. A receipt invoking this
+#   amendment MUST carry the `only 0 cutoffs carry this factor` line (or its equivalent for whatever
+#   factor is dead) for the horizon it drops. Absent that line the amendment does not apply and
+#   PRIMARY reads 20y AND 8y as written. "I think it is inert" is not evidence; the run saying so is.
+#   NOT A LICENCE TO DROP AN INCONVENIENT HORIZON. It applies to `stress` alone, only to a knob the
+#   run itself proves disconnected on that column, it must be pre-registered BEFORE the runs, and the
+#   20y numbers are still reported in full. A knob that is merely WEAK at 20y is not inert — weak is
+#   a result and it counts against the arm.
+#   SURVIVOR BIAS IS NOT WAIVED. `stress` reaches its fat h2h denominators through non-point-in-time
+#   membership ((#178)); this amendment changes which HORIZONS adjudicate, and changes nothing about
+#   that price. A ship under this rule carries the survivor-bias caveat in its own receipt.
+#   TO REVERT: delete this block. Nothing has shipped under it yet — (#185)'s own arms are graded
+#   below and this line must be updated by whatever result they produce.
+#
 # (#149) 2026-08-29 — VACUITY AMENDMENT. Same shape as (#139) again, and the third cause: a column
 #   that CANNOT MOVE cannot adjudicate either. PRIMARY grades an EQUAL-WEIGHT top-10 basket, which is
 #   SET-invariant — reordering names INSIDE the basket moves not one number it prints. So a RANKING
