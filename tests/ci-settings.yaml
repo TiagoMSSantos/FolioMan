@@ -876,6 +876,77 @@
 #   block. IF (#135)'s REVERT RULE EVER FIRES AGAIN AT 12y OR 8y, THIS BLOCK GOES WITH IT: the
 #   not-worse bar would have no licensed book left to stand on.
 # ============================================================================================
+# (#186) 2026-08-31 — A RESOLUTION FLOOR UNDER THE rank-1 h2h GUARD. Fifth cause of a non-answer,
+#   same shape as (#139), (#149), (#178)/(#185): no code, no shipped value, no golden moves. A
+#   GRADING-RULE change, PRE-REGISTERED BEFORE THE (#187) RUNS IT WILL ADJUDICATE.
+#
+#   THE RULE: a rank-1 h2h GUARD column whose denominator n <= 2 is recorded VACUOUS BY RESOLUTION.
+#   It supplies no evidence in either direction — it can neither refuse an arm nor license one. The
+#   n that counts is the ARM's, since at 20y the bar is absolute on the arm's own tally.
+#
+#   THE DEFECT. (#160) reads the guard off the 11-20 book at 20y, at >= 50% absolute. On `pit` that
+#   book's denominator is 2. The SHIPPED CONTROL, re-run twice on 2026-08-31, reads 1/2 = 50% there:
+#   the shipped lane sits exactly ON its own guard, and one window flip fails it. `h2h_beats` uses a
+#   strict `>`, so 1/2 is "#1 won one window and lost one" — the GUARD is passing a 1-1 coin flip as
+#   evidence of no harm.
+#
+#   THE HARM IS ALREADY IN THIS FILE, not hypothetical. (#175)'s block: its arm's 20y guards PASS on
+#   the 11-20 book at 5/10, and it notes "its 6-10 tally is 37% — well under 50% — which does not
+#   bite only because 20y reads the 11-20 book by (#160)". A thin book passed a column the fatter
+#   book refuses. (#173) reasons the same way from the other side, about these same denominators:
+#   "the CONTROL h2h rests on 2, 4 and 6 windows, barely a statistic".
+#
+#   NO FREE PARAMETER, AND THAT IS THE POINT. (#160) established the principle and refused to let it
+#   become tunable — "the not-worse bar's minimum trigger is ONE WHOLE WINDOW ... Do not add a
+#   tolerance to it; a tolerance is the argmax (#120) forbids, wearing a different hat." The guard's
+#   resolution is 1/n and its bar is 50%. Require the resolution to be FINER than the bar it
+#   enforces: 1/n < 1/2 <=> n > 2. At n=2 one window flip moves the tally by the full 50-point width
+#   of the bar, so the statistic can only land ON the bar or 50 points away; the attainable set is
+#   {0%, 50%, 100%}. Nothing is chosen here — 50% is the bar's own number.
+#
+#   IT IS NOT A FREE PASS. VACUOUS AT A GUARD IS NOT A PASS. The arm must still clear every remaining
+#   live guard on that column — at 20y on `pit` that is the worst window, which is a MAX and answers
+#   at any n, exactly (#139)'s reasoning ("a mean over n=3 is noise; a WORST WINDOW is a MAX and an
+#   h2h is a COUNT"). (#186) is the amendment to that sentence: a COUNT stops answering too, once its
+#   denominator is 2. The tally and its n are still REPORTED IN FULL, as (#139) requires of 20y.
+#
+#   WHY NOT THE OBVIOUS REPAIR. Re-basing 20y onto the 6-10 book is what (#135)'s revert rule forbids:
+#   it fired at 20y and STAYS FIRED, and (#160) says "IF (#135)'s REVERT RULE EVER FIRES AGAIN AT 12y
+#   OR 8y, THIS BLOCK GOES WITH IT". The move available is a floor, not a re-base.
+#
+#   RE-ADJUDICATED AGAINST THE WHOLE RECORD, the standard (#160) set itself. Every row in this file
+#   that reports a 20y 11-20 tally, checked for whether the floor moves it:
+#     (#138) maxdd_cap off   20y 50%->50%, admits 117->120, arm n=2   VACUOUS. STILL SHIPS: (#139)
+#            makes 20y guard-only on pit, its 20y worst window HELD (-10.0 -> -10.0), PRIMARY passes
+#            at 12y and 8y, both short-horizon h2h books pass. The one real ship survives.
+#     (#126) corr_cap 0.4    20y 50%->50%, holds 110->102, arm n<=2   VACUOUS. REFUSED ANYWAY, and
+#            its own block says "any ONE of these is sufficient"; its 20y worst window WORSENS
+#            -10.0 -> -10.6, which is a broken 20y guard on its own.
+#     (#185) value_weight    20y 1/2 50%                              already VACUOUS by (#149).
+#     (#135) cagr 15         20y 50%->50%, admits 117->183, arm n>2   not vacuous; REFUSED on the
+#            6-10 book at 20y (46%) and on PRIMARY at 8y. Untouched.
+#     (#175) cagr 12         20y arm 5/10                             n=10. Untouched.
+#     (#173) wider pond      20y ctl 1/2 -> arm 7/20 (35%)            ARM n=20. Refusal STANDS — and
+#            the refusal never rested on the control's 2 in the first place.
+#     (#178) trend_weight    20y column reported and NOT graded       nothing to move.
+#     (#179) sharpe/accel    stress lane, 20y n=19                    Untouched.
+#     every `universe` row   n = 19/21/22/30/38                       Untouched.
+#   THREE COLUMNS BECOME VACUOUS. ZERO VERDICTS FLIP. That is (#160)'s own test of a good rule — "a
+#   rule that re-derives a judgement already made, and disturbs nothing else in the record".
+#
+#   AND IT REMOVES NO REFUSAL. At n=2 the only sub-50% value attainable is 0/2 = 0%; at n=1 it is
+#   0/1. No row in this file reports either. So the floor cannot retroactively rescue an arm — it can
+#   only stop a 1-1 split being quoted as a pass. CHECK THIS AGAIN if a future row reads 0%.
+#
+#   STATE IT PLAINLY: THIS IS INSURANCE, NOT A GAIN. It changes no verdict, it grades no knob, and it
+#   buys no edge. It exists so the next de-saturating arm — which GROWS its own 20y denominator, as
+#   (#175) and (#173) both did — cannot be adjudicated partly on a column that was a coin flip.
+#
+#   TO REVERT: delete this block; every verdict in the file stands exactly as written either way,
+#   which is the whole argument for it and also the reason reverting costs nothing. If the 20y pit
+#   denominator ever rises above 2 on the shipped config, this block goes DORMANT rather than wrong —
+#   re-read it before assuming it still binds.
+# ============================================================================================
 # (#181) LANDSCAPE — WHERE THE BUY/GROWTH HEURISTIC STANDS AS OF 2026-08-31, and what is left. Written
 # so the next round does not re-walk ground that is already closed. Each line names the receipt that
 # closed it; go read that receipt before re-opening anything here.
