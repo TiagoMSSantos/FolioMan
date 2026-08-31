@@ -7306,6 +7306,58 @@ buy_heuristic:
   #   to beat off on BOTH moments at 8y AND 12y, or where the worst window at 40 comes in deeper than
   #   off at either. A single horizon regressing is a re-open, not a revert.
   growth_value_floor_pct: 40.0
+  # (#190) 2026-08-31 — SECTOR-RELATIVE VALUE BRAKE: NOT GRADEABLE. STOP RULE FIRED, NOTHING BUILT.
+  #   THE PROPOSAL. This brake ranks each cutoff bucket by `peg_yield` and drops the cheapest-ranked
+  #   40% — RAW, across all sectors at once. A peg level is a SECTOR property before it is a stock
+  #   property (banks/energy/utilities structurally cheap; software/healthcare/consumer-discretionary
+  #   growth structurally expensive), so a cross-sector bottom-40% cut does not remove the expensive
+  #   NAMES, it removes the expensive SECTORS — in a GROWTH heuristic, whose target population is
+  #   those sectors. The fix would key the floor on (bucket, sector) instead of bucket.
+  #   IT CLEARED (#169)'s BAR ON PAPER, which is why it was worked up rather than waved off: it adds
+  #   NO factor and re-aims the one family measured to separate (peg_yield AUC 0.91 at 12y / 0.70 at
+  #   8y, (#165)). (#93) tried LISTING MARKET as the peer-split axis; SECTOR had never been tried.
+  #
+  #   PRE-REGISTERED STOP RULE, written before the census: if the median (bucket, sector) cell holds
+  #   FEWER THAN 5 ROWS, a 40% within-cell cut is trimming 1-2 names off a 3-name cell and the arm is
+  #   NOT GRADEABLE. It fired on all three counts below, and no backtest run was needed to see it.
+  #
+  #   1. SECTOR COVERAGE CEILING ON THE PIT POOL IS 41.7%, AND THE MISSING 58% IS NOT RANDOM.
+  #      `pit_pool` (backtest.rs:719) keeps a ticker only if it is ABSENT from `sector_of`, then adds
+  #      `spans.keys()` — so every pit stock comes from the membership map, while `sector_of` carries
+  #      only names in a CURRENT constituent CSV. `.sp500_history.json` holds 1206 spans of which 503
+  #      still have an OPEN span; (#129) independently measured the `sp500_csv` pond at exactly 503.
+  #      The two numbers agreeing is the proof, not a coincidence. So 703 of 1206 (58.3%) carry NO
+  #      sector, and they are precisely the DELISTED/REMOVED names — the survivorship-relevant half.
+  #      Missing data passes (non-negotiable #5), so those rows would be exempt from the brake and the
+  #      `on` arm would confound "sector-relative" with "trims 58% fewer names". A CONFOUNDED ARM, not
+  #      merely a thin one: it would have produced a number, and the number would have meant nothing.
+  #
+  #   2. THE CELLS ARE ~1 NAME. (#165)'s census: 12y 35 buckets / median gated pool 6; 8y 43 buckets /
+  #      median 7. Those are POST-trim (`report_vs_benchmark` trims at :2505 before reading pools at
+  #      :2510), so pre-trim is ~10. Ten names across 11 GICS sectors is ~1 per cell against a floor
+  #      of 5 — the rule fires by an order of magnitude, not marginally.
+  #
+  #   3. LIVE IS NO BETTER, so this is not a backtest-only limit. `.screen_web.json` 2026-08-31: the
+  #      stock lane prints FIVE rows. A five-row book cannot be partitioned by sector either.
+  #
+  #   AND THE KEY WOULD BE LOOK-AHEAD ANYWAY — recorded so a future round does not re-derive it.
+  #   (#95): the backtest stamps TODAY's GICS label at every cutoff, there is no as-of source in any
+  #   feed this tool reads, and `backtest_drop_lookahead_sector` ships false. The LIVE path is clean
+  #   ("today's sector IS the point-in-time sector"), but the GRADING key is contaminated by
+  #   construction. Even a passing arm could not have been read as a clean result.
+  #
+  #   THE TRANSFERABLE RESULT, and it outlives this arm. (#41)'s finding at the `growth_corr_cap`
+  #   block — "YOU CANNOT DEDUPE A BOOK THAT IS ALREADY SHORT: removing a duplicate does not swap in
+  #   a replacement, it just makes the book emptier" — is the same arithmetic one step earlier. YOU
+  #   CANNOT PARTITION A BOOK THAT IS ALREADY SHORT. Any proposal that SUBDIVIDES the per-bucket pool
+  #   — by sector, market, size, style or anything else — meets this wall, and the wall is POOL SIZE,
+  #   never the axis chosen. Cite this before working up another partitioning idea: the axis is not
+  #   the thing to argue about. Pool size is, and (#134) records that the pond is blocked on a price
+  #   source for names that stopped trading, not on membership data or on effort.
+  #
+  #   REVERT RULE: none — nothing shipped, no knob was added and no source line changed; this block is
+  #   the whole artifact. Re-opening requires a per-bucket pool that can CARRY a partition, which
+  #   means the pond, not another axis and not another re-reading of (#159)/(#165).
   growth_value_weight: 0.0     # (#1) authority of the P/E multiplier in the growth lane: 1.0 = full x0.5..1.5 swing (default), 0.0 = OFF. Set 0 because the walk-forward never saw pe_ratio. (#147) FILLED IT AND MEASURED — 0 STANDS, see the block below
   # (#147) THE BACKTEST'S P/E IS NO LONGER BLIND, AND THIS KNOB IS STILL 0 — MEASURED 2026-08-28.
   #   SUPERSEDES (#1)'s reason. (#1) zeroed this knob SOLELY because "the walk-forward never saw
