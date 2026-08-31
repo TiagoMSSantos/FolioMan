@@ -3851,6 +3851,58 @@ buy_heuristic:
                                  #   judged by one. It goes ON when someone accepts the honest cost, and OFF
                                  #   only to reproduce a pre-(#96) receipt. Never turned off because the
                                  #   number got worse.
+                                 #
+                                 #   (#177) READ 2026-08-31 on `backtest {20,12,8} universe fund pit` with this knob
+                                 #   and `print_edge_annualized` both ON. NOT A SHIP — a VALIDITY READ, which is
+                                 #   exactly the "TO SETTLE" above. Both knobs stay OFF.
+                                 #
+                                 #   HEADLINE: THE EDGE SURVIVES THE HONEST CHARGE AT EVERY HORIZON, and the churn
+                                 #   flag fires NOWHERE. `net` clears 0 on both lanes at 20y, 12y and 8y. The
+                                 #   multiplier reconciles as promised — 2 × hold_years, printed as "× 40 / × 24 /
+                                 #   × 16 rebalances".
+                                 #
+                                 #     GROWTH lane (`growth_score` — the lane `screen` ranks on)
+                                 #       horizon   gross     net OFF    net ON    charge   charge as % of gross
+                                 #       20y        +15.7     +15.5      +9.0      6.7      43%
+                                 #       12y       +182.3    +182.1    +178.5      3.8       2.1%
+                                 #        8y        +87.4     +87.3     +85.0      2.4       2.7%
+                                 #     BUY lane
+                                 #       20y       +337.5    +337.3    +330.5      7.0       2.1%
+                                 #       12y        +12.8     +12.6      +8.9      3.9      30%
+                                 #        8y        +18.1     +17.9     +15.6      2.5      14%
+                                 #
+                                 #   SO THE SHIPPED NUMBERS WERE FLATTERED, BUT NOT FATALLY. Under the single charge
+                                 #   every `net` sat within 0.2pt of its gross edge — that is the precise sense in
+                                 #   which the old line carried no information. Corrected, two cells are materially
+                                 #   thinner: GROWTH at 20y gives up 43% of its gross edge, and BUY at 12y gives up
+                                 #   30%. Those are the two to watch; everywhere else the charge is ~2-3%.
+                                 #
+                                 #   THE CHURN GUARD IS NO LONGER DECORATIVE. This block says the flag "CANNOT fire
+                                 #   on a long run at any churn level". That was right under the single charge: at
+                                 #   20y it needed the gross edge to fall to 0.2pt. Under the corrected charge the
+                                 #   20y bar is 6.7pt against a +15.7 gross edge — a factor of 2.3, not a factor of
+                                 #   80. The guard is LIVE-BUT-NOT-TRIGGERED, which is a different statement from
+                                 #   decorative, and a future gate that thins the 20y growth edge could trip it. No
+                                 #   hold-period sweep is owed: this block makes that follow-up conditional on the
+                                 #   flag firing, and it did not fire.
+                                 #
+                                 #   THE VERDICT IS UNTOUCHED, as designed. These knobs move only the printed lane
+                                 #   `net`; the top-N book, the POOL CENSUS and every ship-rule statistic are
+                                 #   unchanged. The single verdict-block digit that differs between control and arm
+                                 #   (`abs_mom_5y` OOS -0.09 -> -0.08) is the run-to-run tie-order noise recorded at
+                                 #   (#176) part 4 — same signature, a rank stat moving in the last digit with n and
+                                 #   rho held — and NOT an effect of these knobs.
+                                 #
+                                 #   `print_edge_annualized` ADDED NOTHING VISIBLE HERE. `annualized_edge_tag` is
+                                 #   reached from the hold-period sweep, which a plain lane run does not print, so
+                                 #   the "× N rebalances" text above comes from THIS knob alone. Recorded so the next
+                                 #   reader does not spend a run hunting a label that was never going to appear.
+                                 #
+                                 #   REVERT RULE UNCHANGED, and this entry does not satisfy it: the knob goes ON only
+                                 #   when someone accepts the honest cost. What is now settled is the fact it was
+                                 #   blocking — the edge DOES clear 0 under a 40× charge. Turning it on would restate
+                                 #   every receipt in this file at a charge they were not fitted under, for no new
+                                 #   information, which is why it still ships OFF.
   backtest_drop_lookahead_sector: false # (#95) UNMEASURED — an unfitted judgement value, shipping
                                  #   OFF, which is the stamped-sector behaviour every golden and every
                                  #   fitted receipt in this file was measured under. Sibling of (#94)
