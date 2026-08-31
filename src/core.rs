@@ -465,11 +465,34 @@ pub fn pct_floor(mut values: Vec<f64>, p: f64) -> Option<f64> {
     Some(values[(((p / 100.0) * values.len() as f64) as usize).min(values.len() - 1)])
 }
 
-pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
-    let age = dates
+/// (#182) ONE definition of listing age (non-negotiable #4): the whole-life span of a date series in
+/// years, at 365.25 days to the year. This arithmetic was spelled out inline in six places —
+/// `life_cagr`, `tr_life_cagr`, `capped_life_cagr` and `life_return` below, the `age_years` binding
+/// in `fetch.rs`, and (as of `(#182)`) `core::backtest_quote` — which is five chances for the number
+/// `growth_min_age_years` gates on to drift between train and serve. Five of the six now read it
+/// from here.
+///
+/// `capped_life_cagr` IS THE EXCEPTION, and deliberately: its copy feeds a `< 5.0` guard, not a
+/// stored field, and routing it through here makes that comparison an EQUIVALENT MUTANT the gate can
+/// never kill. `num_days()` is a whole number, so the quotient can only equal 5.0 exactly at 1826.25
+/// days, which does not exist — `<` and `<=` are therefore the same function there, and no test can
+/// separate them. Rewriting the line would plant a permanently un-killable mutant in every future
+/// diff that touches that fn. Its guard also runs identically on both paths, so it carries none of
+/// the train/serve drift risk that motivates this helper. Verified by the gate: with that line
+/// repointed the run came back `1 missed` on exactly that operator and nothing else.
+///
+/// `None` only for an EMPTY series. A single bar is a real answer of 0.0, not missing data, and the
+/// distinction matters: per non-negotiable #5 a `None` PASSES the age gate, so folding the one-bar
+/// case into `None` would silently admit the youngest listings the gate exists to cut.
+pub fn age_years(dates: &[NaiveDate]) -> Option<f64> {
+    dates
         .first()
         .zip(dates.last())
-        .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25)?;
+        .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25)
+}
+
+pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
+    let age = age_years(dates)?;
     match (closes.first(), closes.last()) {
         (Some(&first), Some(&last)) if first > 0.0 && age >= 0.5 => {
             Some(((last / first).powf(1.0 / age) - 1.0) * 100.0)
@@ -488,10 +511,7 @@ pub fn life_cagr(dates: &[NaiveDate], closes: &[f64]) -> Option<f64> {
 /// now fills the same field from the as-of slice through this fn, so the number means the same thing in
 /// train and serve.
 pub fn tr_life_cagr(dates: &[NaiveDate], closes: &[f64], divs_sum: f64) -> Option<f64> {
-    let age = dates
-        .first()
-        .zip(dates.last())
-        .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25)?;
+    let age = age_years(dates)?;
     match (closes.first(), closes.last()) {
         (Some(&first), Some(&last)) if first > 0.0 && age >= 0.5 => {
             Some((((last + divs_sum) / first).powf(1.0 / age) - 1.0) * 100.0)
@@ -564,10 +584,7 @@ pub fn splice_trim_start(dates: &[NaiveDate], closes: &[f64], max_weekly_rate: f
 /// DISPLAY-ONLY: `picks::perf_fill`'s value, and nothing else. Never enters `Quote::perf`, so no gate,
 /// no `long_leg`, no `spy_premium` and no `twin_groups` can reach it.
 pub fn life_return(dates: &[NaiveDate], closes: &[f64], infl: Option<&BTreeMap<i32, f64>>) -> Option<f64> {
-    let age = dates
-        .first()
-        .zip(dates.last())
-        .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25)?;
+    let age = age_years(dates)?;
     let first = *closes.first()?;
     if first <= 0.0 || age < 0.5 {
         return None; // same guards as `life_cagr`: no divide by a junk first close, no <6mo "life"
@@ -2702,6 +2719,17 @@ pub fn backtest_quote(
     // Read `core::life_cagr`'s caveat before trusting a number off this on the DAILY path: "life"
     // there is the ~10y fetch window. Horizon questions need `backtest ... 12` (MAX-monthly).
     quote.life_cagr = life_cagr(d, c);
+    // (#182) LISTING AGE, off the SAME `[..=as_of]` slice, through the SAME `age_years` helper the
+    // live fetch reads -> train==serve, exactly like `life_cagr` above. This is the `(#3i)`
+    // mistake one field over: `(#33)`'s receipt recorded age as BACKTEST-BLIND ("age_years is None in
+    // the backtest pool, so the gate never touches the validated edge; it only shapes the LIVE
+    // screen") and treated that as a property of the walk. It is not — `d` starts at the first bar of
+    // the (splice-trimmed) series, so the age is right there and was simply never read. Filling it is
+    // what makes `growth_min_age_years` gradeable AT ALL; unfilled, the gate reads INERT and any arm
+    // on it reports "no change" and looks like a safe flip. The `(#94)` splice trim above is what
+    // keeps this honest: age is measured over the record THIS cutoff could have seen, not the whole
+    // post-redenomination history. Still display-only in the shipped lane — the gate ships 0.0.
+    quote.age_years = age_years(d);
     // (#3l) same slice, same free-accessor knob as the live fetch -> train==serve, like the two above.
     quote.capped_cagr = capped_life_cagr(d, c, crate::config::life_cagr_max_years());
     // (#99) the total-return twin, over the SAME `[..=as_of]` slice and the SAME dividends `div_eur`
@@ -3072,6 +3100,20 @@ mod tests {
     /// under 5y of history is None (pool guard — the rung ladder never ranked a name without a 5Y
     /// leg, and the window swap must not admit 6-month names); the cut lands at the first bar
     /// AT/AFTER `last − max_years`, never before it.
+    #[test]
+    fn age_years_is_days_over_365_25() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // (#182) the gate `growth_min_age_years` reads this number and nothing else re-derives it,
+        // so the DIVISOR is the whole contract. 731 days across a leap year is 2.0013y — pinned
+        // tightly enough that `%` (-> 365.75) or `*` (-> 267_047) cannot survive.
+        let two_years = vec![ymd(2020, 1, 1), ymd(2022, 1, 1)];
+        assert!((age_years(&two_years).unwrap() - 2.0013).abs() < 1e-3, "{:?}", age_years(&two_years));
+        // a single bar is 0.0, NOT None: per non-negotiable #5 a None PASSES the age gate, so the
+        // youngest possible listing must answer 0.0 and be CUT, never wave through as missing data.
+        assert_eq!(age_years(&[ymd(2026, 1, 5)]), Some(0.0));
+        assert_eq!(age_years(&[]), None);
+    }
+
     #[test]
     fn capped_life_cagr_windows() {
         let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();

@@ -9120,6 +9120,28 @@ buy_heuristic:
                                  #   proven compounders, not hidden. BACKTEST-BLIND either way: age_years is None in the backtest pool, so
                                  #   the gate never touches the validated edge; it only shapes the LIVE screen. Set >0 (e.g. 3) for a hard
                                  #   floor that trims the freshest listings entirely; pins always bypass (shown with a gate-review reason).
+                                 # (#182) RETRACTION, 2026-08-31: the 'BACKTEST-BLIND either way' clause above is WITHDRAWN. It was
+                                 #   never a property of the walk -- it was an unfilled field. `core::backtest_quote` already held the
+                                 #   `[..=as_of]` date slice and read `life_cagr` off it; `age_years` was simply never assigned. It is now
+                                 #   filled there by the SAME arithmetic `fetch.rs` uses at its own `age_years` binding, off the SAME
+                                 #   splice-trimmed slice, so train==serve holds exactly as it does for `life_cagr`. This is the `(#3i)`
+                                 #   mistake one field over, and the fix is the same fix.
+                                 #   CONSEQUENCE: this gate is now GRADEABLE, and `growth_gate_reachability_pin` moved it INERT -> LIVE in
+                                 #   all three lanes (crypto/etf/stock) in the same commit -- non-negotiable #3, done deliberately.
+                                 #   The SHIPPED VALUE DOES NOT MOVE: still 0.0, still a no-op (`picks.rs` gates on `> 0.0`), and the
+                                 #   `tests/fixture/*.golden` files did not move -- which also CONFIRMS the doc claims at `perf_fill`
+                                 #   (`picks.rs`) and the `twin_groups` hint that those two `?`-bail sites are display-only: both woke and
+                                 #   neither reached a golden. Grading of the ladder {3, 5, 10} is `(#183)`; until that lands this knob is
+                                 #   MEASURABLE BUT UNMEASURED, not validated. Revert rule for THIS entry: none -- filling a field the
+                                 #   walk already had is not a knob and has no arm to revert; if the fill itself is ever wrong, the pin
+                                 #   and the goldens are the tripwires.
+                                 #   ONE MORE THING THE GATE FOUND, worth the line because it generalises: with the days-to-years
+                                 #   span written inline at the fill, replacing its `/` with `%` or `*` SURVIVED the whole suite.
+                                 #   Nothing pins a field that is display-only while its gate ships 0.0 -- so the act of making a
+                                 #   knob gradeable does NOT by itself make its input tested. The span is now `core::age_years`,
+                                 #   read by five of the six sites that used to spell it out (the sixth, `capped_life_cagr`, is a
+                                 #   documented equivalent-mutant exception on its own doc comment), and pinned by
+                                 #   `age_years_is_days_over_365_25`. Gate after: 22 mutants, 18 caught, 4 unviable, 0 missed.
   growth_min_aum_etf: 100000000  # (AUM) ETF-only hard fund-size floor in EUR (quote.aum_eur, BF etp_search AUM, EUR-approximate —
                                  #   fund currency is EUR/USD mixed; ±10% FX is immaterial vs an order-of-magnitude line): reject a
                                  #   fund smaller than €100M, the industry viability line under which issuers liquidate/merge — the

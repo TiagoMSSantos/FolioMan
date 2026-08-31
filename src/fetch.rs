@@ -676,8 +676,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // `use_life_cagr` is on — the growth rank itself, so it is no longer display-only and must be
     // computed the SAME way the backtest computes it: `core::life_cagr` is that shared definition,
     // carrying the >=6mo / positive-first-close guards this site used to spell out inline.
-    let age_years = long_dates.first().zip(long_dates.last())
-        .map(|(first, last)| (*last - *first).num_days() as f64 / 365.25);
+    let age_years = core::age_years(&long_dates);
     let life_cagr = core::life_cagr(&long_dates, &long_closes);
     // (#3l) same merged series, same free-accessor knob as `core::backtest_quote` -> train==serve.
     let capped_cagr =

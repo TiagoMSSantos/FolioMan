@@ -7497,18 +7497,27 @@ mod tests {
                 // exactly its job: the equity 5Y floor no longer reaches a coin, so it can sit at its
                 // measured optimum (+75) without emptying the crypto table. Its ETF/stock standing is
                 // unchanged, which is the other half of the claim.
-                "crypto LIVE  growth_min_8y_pct growth_min_20y_pct growth_min_leg_years growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto growth_turnover_weight\n",
+                "crypto LIVE  growth_min_8y_pct growth_min_20y_pct growth_min_leg_years growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto growth_turnover_weight growth_min_age_years\n",
                 // (2026-08-19) the (P4) pair enters LIVE for etf and stock on the FIRST commit that adds
                 // them — the opposite of the (P1) four, which pin INERT here because `quote.fund` is
                 // unfilled on this path. These read `volatility_pct` and `max_daily_1m`, both built from
                 // the same close series `backtest_quote` already walks, so they are sweepable from day one
                 // and their receipts must not claim otherwise. Crypto is INERT by SCOPE (cause b): both
                 // carry a `!crypto` guard, and the coin lane keeps `growth_max_vol_crypto` instead.
-                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_max_vol growth_max_daily_1m growth_max_dilution_pct growth_min_interest_cover growth_min_fcf_margin growth_min_net_cash_rev growth_require_lifetime_uptrend crypto_max_mvrv sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_age_years growth_min_range_pct_8y\n",
-                "etf    LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years sharpe_cap_etf growth_commodity_damp growth_turnover_weight\n",
-                "etf    INERT growth_max_peg growth_max_dilution_pct growth_min_interest_cover growth_min_fcf_margin growth_min_net_cash_rev growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years growth_min_range_pct_8y\n",
-                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_commodity_damp growth_turnover_weight\n",
-                "stock  INERT growth_max_peg growth_max_dilution_pct growth_min_interest_cover growth_min_fcf_margin growth_min_net_cash_rev growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_age_years growth_min_range_pct_8y\n",
+                // (#182) (2026-08-31) `growth_min_age_years` moved INERT -> LIVE in ALL THREE lanes.
+                // It was INERT for cause (a) — an unfilled field, not scope: `core::backtest_quote`
+                // left `quote.age_years` None, so `(#33)`'s receipt correctly read "BACKTEST-BLIND
+                // either way ... it only shapes the LIVE screen". That was never a property of the
+                // walk. The `[..=as_of]` slice starts at the first bar of the record, so the age was
+                // always there to read, and `backtest_quote` now fills it the way `fetch.rs` does.
+                // The gate still SHIPS 0.0, so nothing moves until an arm turns it on — what changed
+                // is that an arm can now be graded at all. This lane has no `!crypto` guard, which is
+                // why crypto goes LIVE with the other two rather than staying INERT by scope.
+                "crypto INERT growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_peg growth_max_vol growth_max_daily_1m growth_max_dilution_pct growth_min_interest_cover growth_min_fcf_margin growth_min_net_cash_rev growth_require_lifetime_uptrend crypto_max_mvrv sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_commodity_damp growth_fx_damp growth_min_range_pct_8y\n",
+                "etf    LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years sharpe_cap_etf growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
+                "etf    INERT growth_max_peg growth_max_dilution_pct growth_min_interest_cover growth_min_fcf_margin growth_min_net_cash_rev growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y\n",
+                "stock  LIVE  growth_min_cagr growth_min_range_pct growth_min_1y_pct growth_min_5y_pct growth_min_8y_pct growth_min_20y_pct growth_maxdd_cap growth_max_above_ma max_1m_drop_pct growth_max_vol growth_max_daily_1m growth_min_leg_years growth_commodity_damp growth_turnover_weight growth_min_age_years\n",
+                "stock  INERT growth_max_peg growth_max_dilution_pct growth_min_interest_cover growth_min_fcf_margin growth_min_net_cash_rev growth_require_lifetime_uptrend growth_min_cagr_crypto growth_min_5y_pct_crypto growth_min_range_pct_crypto min_1y_pct_crypto max_1m_drop_pct_crypto growth_maxdd_cap_crypto growth_max_vol_crypto crypto_max_mvrv sharpe_cap_etf growth_min_aum_etf growth_ter_drag growth_fx_damp growth_min_range_pct_8y\n",
             )
         );
     }
