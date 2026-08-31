@@ -6032,6 +6032,71 @@ buy_heuristic:
                                  #   median and cures the 8y vacuity (the only non-vacuous column ever produced),
                                  #   but top-10 mean falls +3.7->+2.9 (12y) and +5.3->+4.1 (8y). PRIMARY fails, no
                                  #   guard broke. Do not re-run the grid; see the (#151) block at the top.
+                                 #
+                                 #   (#187) 2026-08-31 — RUNG 17 GRADED. REFUSED. CLAUSE (a) ABOVE IS NOW CLOSED, and with it the
+                                 #   last sanctioned reopen on this knob. 19.0 stands.
+                                 #   PRE-REGISTERED BEFORE THE RUNS: ONE rung, the midpoint 17 of the untested {16,17,18}, with the
+                                 #   closing rule fixed in advance — if 17 does not hold the 8y MEAN, (a) is closed for the WHOLE
+                                 #   interval, because 15 and 17 both failing leaves only 18, one notch off the incumbent, which is a
+                                 #   rounding error and not a mechanism. Not a ladder re-fitted to a fresh objective, which is the
+                                 #   failure mode (#135) named in its own block.
+                                 #   THE OVERLAY (tests/mincagr17-ci-settings.yaml, deleted after the round per (#131)): a full copy of
+                                 #   this file with ONE key moved, `growth_min_cagr: 19.0 -> 17.0`. `print_h2h_mid_ladder` already
+                                 #   ships true here, so it needed no second field — and `heuristic_drift` names exactly
+                                 #   `growth_min_cagr 19.0->17.0` on all three runs, nothing else. Control REUSED from (#183), run
+                                 #   TWICE that day on this same binary and byte-identical on every graded line; its numbers match
+                                 #   (#175)'s control column to the decimal. `windows scored` 1119 / 2737 / 6126, matching control.
+                                 #     horizon  top-10 exc|med          worst           h2h 6-10             h2h 11-20          pool  admitted
+                                 #       20y    +0.6|+0.0 -> +0.4|+0.0  -10.0 -> -10.0  4/8 50% -> 5/11 45%  1/2 50% -> 1/5 20%  5->6  120->147
+                                 #       12y    +3.7|+3.9 -> +3.0|+3.0   -6.4 ->  -6.4  12/19 63% -> 17/23 74%  2/4 50% -> 6/9 67%  6->7  249->305
+                                 #        8y    +5.3|+5.6 -> +4.2|+4.3   -5.5 ->  -3.9  19/27 70% -> 23/31 74%  5/8 62% -> 7/17 41%  7->8  355->484
+                                 #   VERDICT: REFUSED TWICE OVER, on two independent halves of the rule.
+                                 #     1. THE 20y rank-1 h2h GUARD BREAKS. The arm reads 1/5 = 20% on the 11-20 book, the licensed book
+                                 #        at 20y — far under the absolute 50% bar. A broken guard REFUSES OUTRIGHT (GUARD > PRIMARY);
+                                 #        it is never softened into unresolved.
+                                 #     2. PRIMARY FAILS AT BOTH GRADED HORIZONS, ON BOTH MOMENTS. 12y +3.7|+3.9 -> +3.0|+3.0 and
+                                 #        8y +5.3|+5.6 -> +4.2|+4.3. Every one of the four numbers is DOWN, so this is not a TIE and
+                                 #        not an UNRESOLVED — the horizons agree.
+                                 #   CLAUSE (a) ANSWERED DIRECTLY: the 8y MEAN goes +5.3 -> +4.2. It does not hold. Combined with
+                                 #   (#135)'s 15.0 (+4.5 -> +3.3 on the config of the day) the interval is walked from both ends, and
+                                 #   the closing rule pre-registered above fires. DO NOT PROBE 16 OR 18.
+                                 #   (#186) WAS EXERCISED AND WAS NOT LOAD-BEARING — recorded because a floor that only ever excuses
+                                 #   things is worthless. The arm de-saturates, so the 20y 11-20 denominator GROWS 2 -> 5 and the column
+                                 #   becomes READABLE for the first time on this lane. Above the floor, it answers, and it answers
+                                 #   REFUSE. The floor did not soften a single thing here; the first arm graded under it dies on exactly
+                                 #   the column it governs. (The CONTROL's 1/2 is still vacuous by (#186); the n that counts is the
+                                 #   arm's, and the arm's is 5.)
+                                 #   *** THE FINDING WORTH KEEPING, AND IT IS ABOUT THE RULER, NOT THIS KNOB. ***
+                                 #   THE (#160) NOT-WORSE BAR CAN BE PASSED BY DEGRADING THE COMPARISON BOOK. This arm CLEARS both
+                                 #   (#160) guards — 6-10 h2h 63% -> 74% at 12y and 70% -> 74% at 8y, above 50% and above the control —
+                                 #   while making rank 1 itself WORSE at both horizons:
+                                 #       12y  rank 1 +1.8|+5.1 -> +0.7|+4.3     rank 6-10 -1.9|-0.1 -> -2.2|-0.3
+                                 #        8y  rank 1 +5.6|+6.5 -> +5.2|+5.8     rank 6-10 -0.0|+1.7 -> -0.9|-1.0
+                                 #   The h2h asks "does #1 beat the 6-10 book". It rises here because the 6-10 book SANK FASTER than #1
+                                 #   did, not because #1 improved. This is adjacent to (#160)'s own reading note about a rising fraction
+                                 #   on a flat numerator, but it is NOT that case and the note does not cover it: both numerator and
+                                 #   denominator rise (12 -> 17 of 19 -> 23; 19 -> 23 of 27 -> 31), so the counts look healthy. A
+                                 #   reader checking the numerator, as (#160) instructs, would be reassured and would be wrong.
+                                 #   WHAT THIS DOES NOT LICENSE: no rule changes on this receipt. The verdict here does not depend on it
+                                 #   (PRIMARY and the 20y guard each refuse on their own), and amending a bar on the strength of the arm
+                                 #   that just failed is exactly the move this file forbids. It is written down so the NEXT arm that
+                                 #   passes (#160) on a falling rank-1 is caught. THE CHEAP CHECK, available on every run already: read
+                                 #   the rank-1 and rank-6-10 SLICES beside the h2h before believing a rising tally.
+                                 #   WHY IT COSTS WHAT IT COSTS — the same mechanism (#175) found at rung 12, in smaller doses. The
+                                 #   admitted names are the wrecks: the 12y top-10 zero list gains AIG@b3994(-96%) and FOSL@b4028(-96%)
+                                 #   and the 8y list gains FOSL@b4028(-93%) — two of the exact names (#175) named. Zeros ridden go
+                                 #   9 -> 10 (12y) and 3 -> 4 (8y). A 19%/yr compounder bar is a distress filter, and 17%/yr already
+                                 #   lets the wreckage back in.
+                                 #   DE-SATURATION IS REAL BUT DOES NOT PAY. Median gated pool 5/6/7 -> 6/7/8, substitutable names
+                                 #   7/16/21 -> 20/40/95. Every column is still VACUOUS for a RANKING knob (pool still <= basket 10),
+                                 #   which does not impede this verdict: (#149) exempts pool-changing GATES, and this is one.
+                                 #   INSTRUMENT CROSS-CHECK, in the weaker form this arm allows. `gate_sweep` probes `growth_min_cagr
+                                 #   -4` (= 15), NOT 17, so the exact admitted-count-equals-sweep-n check (#74)/(#135)/(#138) used is
+                                 #   NOT available here — stated rather than fudged. What is available is the bracket: the 8y sweep row
+                                 #   on the control reads n=335 for rung 15, and 17 admits +129. 0 < 129 < 335, and the deltas are
+                                 #   monotone in the rung at all three horizons (+27/+56/+129). The arm moved what it said it moved.
+                                 #   NET: this knob is CLOSED. (a) is spent here; (b) — the 20y book disagreement — is unchanged and is
+                                 #   a question about the ruler, not about 19.0. Nothing shipped, so there is nothing to revert.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
