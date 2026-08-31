@@ -4803,6 +4803,82 @@ buy_heuristic:
                                  #   is a RE-SWEEP, not a flip. Do it as its own round, re-bless the
                                  #   goldens in the same commit, and mark every receipt it touches with the
                                  #   horizon it was re-measured at.
+                                 #
+                                 #   ============================================================================================
+                                 #   (#188) GRADED 2026-08-31 ON `universe fund pit`. NOT GRADEABLE — THE ARM DESTROYS THE
+                                 #   SAMPLE IT WOULD BE GRADED ON. IT STAYS OFF, NOW BY MEASUREMENT AND NOT ONLY BY CAUTION.
+                                 #   ============================================================================================
+                                 #   THE PREMISE THIS ROUND TESTED. The block above says "WHY NO NUMBER ... before/after is two
+                                 #   different measurements and not an A/B ... There is no ship-rule verdict to quote because
+                                 #   there is no comparable pair." That is RIGHT about the fitted knob receipts and WRONG about
+                                 #   the ship rule. The graded quantity is `realized = closes[fwd]/closes[i] - 1`
+                                 #   (backtest.rs:1181), a raw close-to-close ratio, and `benchmark_fwd` (:2348) is the same
+                                 #   shape. `anchor_windows` is handed only to `core::backtest_quote` on the NEXT line (:1195),
+                                 #   so it moves the score and gate INPUTS and cannot reach the number the ship rule grades. An
+                                 #   arm picks a different book; the book is then graded on returns the knob cannot touch. A
+                                 #   ship-rule A/B IS therefore available, and this round ran it — 3 arm runs against a control
+                                 #   RE-RUN in the same session on the same binary (universe 4788 resolved / 4788 from cache on
+                                 #   every one of the six runs, so the pond is identical and probe-vs-probe holds).
+                                 #
+                                 #   THE ANSWER IS NOT A VERDICT. IT IS A COLLAPSE.
+                                 #       horizon   growth-scored cutoffs   median gated pool   substitutable names
+                                 #        20y           120 ->    5            5 -> (no census printed)   7 -> (none)
+                                 #        12y           249 ->   15            6 ->  1                   16 ->  0
+                                 #         8y           355 ->   23            7 ->  1                   21 ->  0
+                                 #   94-96% of the growth cohort disappears at every horizon. At 12y and 8y the median gated
+                                 #   pool falls to ONE name against a graded basket of 10 and the substitutable count is ZERO,
+                                 #   so by (#149) EVERY column is VACUOUS; the rank-1 h2h denominators are 0 and the GUARD line
+                                 #   does not print at all. At 20y only 5 cutoffs survive and no census prints. A "top-10 book"
+                                 #   drawn from a median pool of 1 is not a book, and setting it beside the control's 6-name
+                                 #   book is not an A/B on the same instrument.
+                                 #   RECORD THIS AS NOT GRADEABLE, NEVER AS "REFUSED": the arm did not lose a measurement, it
+                                 #   removed the measurement. For completeness, on the numbers that do still print it ALSO fails
+                                 #   PRIMARY at both graded horizons and breaks the worst-window GUARD — 12y +3.7|+3.9 ->
+                                 #   -2.9|+1.8 with worst -6.4 -> -38.3; 8y +5.3|+5.6 -> +0.7|+3.4 with worst -5.5 -> -36.9.
+                                 #   Both readings point the same way, so nothing turns on which one is quoted.
+                                 #
+                                 #   THE CAUSE — AND THE BLOCK ABOVE WAS WATCHING THE WRONG RUNG. The arm's missed-winner
+                                 #   breakdown carries a blocker that appears in ALL THREE arm runs and in NONE of the three
+                                 #   control runs: `artifact` (1 at 20y, 12 at 12y, 31 at 8y), while `history` is unchanged at
+                                 #   4/3/15 on both sides. `artifact` is picks.rs:2386 and it fires on EXACT equality —
+                                 #       d1.abs() > 0.5 && (d1 - w1).abs() < 1e-6 && (d1 - m1).abs() < 1e-6
+                                 #   i.e. 1D, 1W and 1M all reading the same %: "single-bar repricing, not a price history". IT
+                                 #   READS 1D/1W/1M AND NOTHING ELSE. The block above spends its entire analysis on 1Y (182 live
+                                 #   vs 90 in the backtest, "the estimator that moves most"). 1Y CANNOT TRIP THIS GATE. The
+                                 #   damage is at the two rungs where the live map is NARROWER than the backtest default —
+                                 #   1W 3 vs 7, and 1M 15 vs 30 — which is the opposite of the direction the receipt reasoned in.
+                                 #   WHY NARROWER HURTS: the live map is calibrated for DAILY bars, and history older than the
+                                 #   ~10y daily window is MONTHLY (fetch.rs; core.rs:1650 states it, and it is the reason the
+                                 #   (H-cov) guard carries 31 days of slack). A +-3d band around t-7d contains no monthly bar at
+                                 #   all, so `asof_avg` returns None and core.rs:1656 falls through to `asof(target)` — the last
+                                 #   bar on or before the target. At a historical cutoff 1D, 1W and 1M then resolve to the SAME
+                                 #   monthly bar, the three percentages come out bit-identical, and the artifact gate fires on a
+                                 #   name whose only defect is that its record is monthly. The wider DEFAULT windows straddle
+                                 #   enough bars to differ, which is why the shipped lane never sees this.
+                                 #
+                                 #   WHAT THIS DOES TO THE PRESCRIPTION ABOVE. Its REVERT RULE orders a RE-SWEEP: "Do it as its
+                                 #   own round, re-bless the goldens in the same commit, and mark every receipt it touches."
+                                 #   THAT ROUND IS NOT EXECUTABLE AS WRITTEN. Re-fitting `growth_min_cagr`, `growth_min_1y_pct`,
+                                 #   the 5Y/20Y rung floors, `max_1m_drop_pct_crypto` and `growth_accel_cap` on this lane would
+                                 #   fit them to 15 growth-scored cutoffs at 12y and 23 at 8y, on a cohort selected in part by a
+                                 #   gate misfiring on bar cadence. Every value it produced would be noise wearing a receipt.
+                                 #   The re-sweep is not merely expensive here — it is invalid, and that is worth more than the
+                                 #   verdict: this round's 6 runs bought the knowledge that the prescribed round must not be run.
+                                 #
+                                 #   TO REOPEN, AND IT IS A CODE FIX, NOT A KNOB. Make the anchor half RESPECT BAR CADENCE:
+                                 #   widen (or skip) a short-horizon window where the local bar spacing is monthly, so
+                                 #   `asof_avg` is never silently reduced to `asof` and 1D/1W/1M cannot collapse onto one bar.
+                                 #   That is a change at core.rs:1655-1658, and it would also make the LIVE path honest on any
+                                 #   name whose early record is monthly — so it is worth doing on its own merits, before any
+                                 #   train-serve reconciliation is measured again. DO NOT reopen this by re-fitting
+                                 #   `anchor_windows` until the backtest survives: that fits the ruler to the sample, which is
+                                 #   (#120)'s argmax wearing a third hat.
+                                 #   ON THE PRE-REGISTERED AMBIGUITY: this round fixed in advance that a REFUSAL on a train-serve
+                                 #   arm is AMBIGUOUS in general — the skew may be harmless, or knobs fitted under the old
+                                 #   estimator may simply fail to transfer. IT IS NOT AMBIGUOUS HERE. The arm does not lose on
+                                 #   edge; it loses the sample, and the cause is identified in code rather than inferred from a
+                                 #   number. That is why this closes as NOT GRADEABLE with a named remedy instead of as a null.
+                                 #   REVERT RULE: it is at the revert value and stays there.
   use_adjusted_close: false      # (B) REVERTED 2026-06-28: backtest 12 universe edge unchanged (raw
                                  #   -100337371.5 vs adj -100337372.0), OOS halves identical (+0.09/-0.05).
                                  #   No improvement → golden rule reverts. Flip true only if a re-run lifts edge.
@@ -6086,7 +6162,11 @@ buy_heuristic:
                                  #
                                  #   (#187) 2026-08-31 — RUNG 17 GRADED. REFUSED. CLAUSE (a) ABOVE IS NOW CLOSED, and with it the
                                  #   last sanctioned reopen on this knob. 19.0 stands.
-                                 #   PRE-REGISTERED BEFORE THE RUNS: ONE rung, the midpoint 17 of the untested {16,17,18}, with the
+                                 #   PRE-REGISTERED BEFORE THE RUNS: ONE rung, the midpoint 17 of the pit-untested {16,17,18}, with the
+                                 #   CORRECTION (#188): "pit-untested" is the accurate word; the original read "untested".
+                                 #   16/17/18 WERE swept, on 2026-08-01, on the `stress` lane — recorded at the LADDER block
+                                 #   (:5848 and the rungs at :5857-5867). They were untested ON PIT, which is the lane clause
+                                 #   (a) names and the lane this receipt graded. The rung-17 verdict below is unaffected.
                                  #   closing rule fixed in advance — if 17 does not hold the 8y MEAN, (a) is closed for the WHOLE
                                  #   interval, because 15 and 17 both failing leaves only 18, one notch off the incumbent, which is a
                                  #   rounding error and not a mechanism. Not a ladder re-fitted to a fresh objective, which is the
