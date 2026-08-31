@@ -4230,6 +4230,57 @@ buy_heuristic:
                                  #   two different measurements, not an A/B — the same caveat
                                  #   `splice_max_weekly_rate` carries. Judge it on whether the YRS column
                                  #   stops misstating a listing's age, not on whether edge went up.
+                                 #
+                                 #   ============================================================================================
+                                 #   (#189) GRADED 2026-08-31 ON `universe fund pit`. THE LOOK-AHEAD IS NOW PRICED. STAYS OFF —
+                                 #   BUT READ WHY BEFORE EVER CITING THIS AS A REFUSAL ON THE MERITS.
+                                 #   ============================================================================================
+                                 #   Same round, same lane and the same control as (#188): 3 arm runs on `backtest {20,12,8}
+                                 #   universe fund pit` against a control re-run in the same session on the same binary, universe
+                                 #   4788 resolved / 4788 from cache on all six runs. Single-key overlay, structurally verified
+                                 #   against the shipped file (exactly one key moved: false -> true).
+                                 #
+                                 #     horizon  top-10 excess mean|med   worst          h2h 6-10      h2h 11-20   pool  subst
+                                 #      20y     +0.6|+0.0 -> +0.6|+0.0   -10.0 -> -10.0  4/8 ->  4/8   1/2 -> 1/2  5->5   7-> 7
+                                 #      12y     +3.7|+3.9 -> +3.6|+3.9    -6.4 ->  -6.4 12/19 -> 12/19 2/4 -> 2/4  6->6  16->18
+                                 #       8y     +5.3|+5.6 -> +5.1|+4.9    -5.5 ->  -5.5 19/27 -> 19/27 5/8 -> 5/8  7->7  21->23
+                                 #   growth-scored cutoffs 120/249/355 -> 120/255/361.
+                                 #   EVERY GUARD HELD: the worst window is identical at all three horizons, and BOTH h2h books
+                                 #   are identical at all three. AT 20y THE ARM IS IDENTICAL TO THE CONTROL ON EVERY GRADED LINE
+                                 #   — the knob is inert there, which is the block above's own pre-registered inertness test
+                                 #   ("if the trimmed 4% are not in the gated pool the knob is inert and the run says nothing")
+                                 #   answering in the affirmative for 20y and in the negative for 12y and 8y.
+                                 #   BY THE SHIP RULE: PRIMARY FAILS. Pit reads 12y AND 8y ((#139)); the mean is down at both
+                                 #   (+3.7 -> +3.6, +5.3 -> +5.1) and the median is down at 8y (+5.6 -> +4.9). REFUSED.
+                                 #
+                                 #   AND NOW THE PART THAT MATTERS MORE THAN THE VERDICT. The block above closes with a
+                                 #   PRE-REGISTERED closing rule: "Judge it on whether the YRS column stops misstating a
+                                 #   listing's age, not on whether edge went up." THIS ROUND DID NOT TEST THE YRS COLUMN, so it
+                                 #   did not answer the question the knob was actually posed. Refusing it on edge is precisely
+                                 #   the reading its own receipt told the next session not to make. That pre-registration is NOT
+                                 #   overruled here on the strength of a number seen afterwards — doing so would be moving a bar
+                                 #   to fit a result, which is the move this file exists to prevent. The ship-rule verdict is
+                                 #   recorded because it was pre-registered; it is not promoted into a finding about the knob.
+                                 #
+                                 #   SO RECORD WHAT WAS ACTUALLY BOUGHT: THE PRICE OF THE LOOK-AHEAD, MEASURED FOR THE FIRST
+                                 #   TIME. `false` lets a 2015 redenomination delete every pre-2015 bar when scoring a 2005
+                                 #   cutoff. Removing that costs the reported lane 0.1 pts/yr of top-10 excess at 12y, 0.2 mean
+                                 #   and 0.7 median at 8y, and EXACTLY NOTHING at 20y. Read in the honest direction, that is not
+                                 #   a cost of the correction at all — it is the INFLATION IN TODAY'S HEADLINE NUMBERS: the
+                                 #   shipped lane's 8y +5.3|+5.6 is flattered by roughly 0.2|0.7 by a trim that knows the future.
+                                 #   Small, which is the reassuring answer, and now a number instead of a worry.
+                                 #   THE POND BEHAVES EXACTLY AS (#173) FOUND: substitutable names rise (16->18 at 12y, 21->23 at
+                                 #   8y) and THE MEDIAN GATED POOL DOES NOT MOVE BY ONE NAME at any horizon. Supply is still not
+                                 #   the binding constraint; the gates still bind.
+                                 #
+                                 #   WHAT THIS DOES NOT LICENSE. It does not ship the flip — PRIMARY refuses it, and the knob's
+                                 #   own receipt says this instrument cannot adjudicate it either way, so there is no reading on
+                                 #   which it goes on today. It does not CLOSE (#94): the YRS question is still open and still
+                                 #   the right one. And it does not license anyone re-citing "the look-ahead costs nothing" —
+                                 #   0.2|0.7 pts at 8y is small, not zero, and it is in the direction that flatters the record.
+                                 #   TO REOPEN: build the YRS check the block above asks for — does the column stop misstating a
+                                 #   listing's age for the 138/3346 trimmed series? — and judge it there, not on edge.
+                                 #   REVERT RULE: it is at the revert value and stays there.
   demean_by_market: false        # (#93) UNMEASURED — an unfitted judgement value, shipping OFF, which is
                                  #   the single pooled (bucket, class) peer group every edge, rho, OOS
                                  #   half and `tune` winner in this repo was measured against. Turning it
