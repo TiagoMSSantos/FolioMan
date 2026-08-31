@@ -5899,6 +5899,19 @@ buy_heuristic:
                                  #   arithmetic and correcting it does exactly what theory says — rho and edge both rise. It
                                  #   just does not buy a better basket. Do not re-propose this knob on the slope argument
                                  #   alone; it has now been brought, measured, and refused on the metric that ships.
+                                 #   (#178) RE-CHECK AT THE NEW BASKET SIZE — REFUSED, AND NOW DEAD PERMANENTLY.
+                                 #   (#70) refused 0.35 on a TOP-3 worst window; (#120) moved the graded basket
+                                 #   to top-10, which CLAUDE.md says makes any such refusal re-checkable, so it
+                                 #   was re-checked on `universe fund stress` — the lane (#70) set it on, and
+                                 #   non-vacuous (median gated pool 11 > basket 10 at both horizons). It loses
+                                 #   on PRIMARY at BOTH horizons (20y median +6.0 -> +5.4, 8y mean +6.9 -> +6.8)
+                                 #   and ALSO breaks the (#160) not-worse bar (8y 6-10 h2h 68% -> 66%, below the
+                                 #   control's tally), so it REFUSES OUTRIGHT. A refusal on the survivor-
+                                 #   flattered lane does not get re-litigated on the honest one. 0.15 STANDS.
+                                 #   NOTE (#130)(d): this knob and `growth_accel_weight` are near-substitutes,
+                                 #   so this is a partial view of ONE slope — sweeping accel independently of
+                                 #   `growth_accel_beta` is still open. Full receipt: the (#178) block on
+                                 #   `growth_value_weight`.
   growth_accel_weight: 0.50      # SCORE: reward per pt the last year outpaced the long CAGR.
                                  #   (#137) P0b arm 2 — RE-SWEPT ON THE POINT-IN-TIME POOL 2026-08-25. NO-SHIP; 0.50 STANDS.
                                  #   This discharges the PIT half of the DEBT block for `growth_accel_weight`, the LAST of the five
@@ -6943,6 +6956,92 @@ buy_heuristic:
   #   price-only ALSO loses is regime weather, not the tilt (2026-07-17 early audit: lane early half
   #   -0.03 with price-only -0.04, ablation removal cost -8.6 edge, standalone ey +0.20|+0.23 -> kept;
   #   receipts .claude/bt_audit_2026-07-17.txt).
+  #
+  #   (#178) RE-RUN ON A NON-VACUOUS LANE — AND THE KNOB IS STRUCTURALLY INERT THERE. UNGRADEABLE,
+  #   NOT "held", and the backlog item stays OPEN. (#147) above measured this knob twice on
+  #   `universe fund pit` and BOTH columns read VACUOUS, so the 0.0 verdict rested on a ruler that
+  #   (#149) says cannot move for a reorder. This round took it to `universe fund stress` — the lane
+  #   (#47)/(#70) originally set these weights on, and the lane (#130) chose for exactly this reason.
+  #   Pre-registered before any arm ran: `backtest --universe fund stress --years {20,8}`, ship rule
+  #   v2 UNCHANGED (PRIMARY reads 20y AND 8y; the (#139) 12y/8y substitution is PIT-LANE-ONLY and was
+  #   deliberately NOT borrowed). Ladders fixed in advance, every rung reported, no rung added after.
+  #   `fund` is a deliberate divergence from (#130)'s bare `universe stress`: without it the gate
+  #   stack is silently incomplete AND this knob has no P/E to act on at all. It took — 8y coverage
+  #   10941/21488 with a live `growth_max_peg` sweep row (n=65); 20y coverage 4394/4608. (The 20y
+  #   `admits 0 new names` on that row is a non-binding gate, NOT (#174)'s missing-`fund` signature.)
+  #
+  #   VOIDING GATE, RUN FIRST, AND IT IS THE REASON THIS ROUND EXISTS. (#130) predates (#149)'s POOL
+  #   CENSUS, so "stress is non-vacuous" was an INFERENCE from a 2026-08-23 table, never a
+  #   measurement. Measured now, on the control:
+  #     20y  37 buckets, median gated pool 11 > basket 10, 18 saturated, rank-1 h2h denom 19
+  #      8y  59 buckets, median gated pool 11 > basket 10, 28 saturated, denom 31
+  #   NON-VACUOUS at both horizons — a ranking knob CAN move this column, which is true of no other
+  #   lane in this file. Control run TWICE per horizon ((#176) part 4): 0 changed lines either time,
+  #   byte-reproducible — cleaner than the pit lane, whose `edge` diagnostic is not. Worst windows
+  #   reproduce (#130) exactly (-0.5 at 20y, -9.2 at 8y). `windows scored` healthy at both; no
+  #   FOLIOMAN_OFFLINE anywhere near these runs.
+  #   THE PRICE, stated here and not in a footnote: `STRESS_TICKERS` is 27 names (backtest.rs:594),
+  #   so the fat denominators do NOT come from the loser injection — they come from membership not
+  #   being point-in-time. Today's index is a set of proven compounders, so far more of them clear a
+  #   19% CAGR gate and the buckets fill. SURVIVOR BIAS IS WHAT MAKES THIS LANE GRADEABLE. Hence the
+  #   reading rule, also pre-registered: a rung that REFUSES on this friendly, pool-full,
+  #   survivor-flattered lane is DEAD PERMANENTLY — it will not win on the honest one, and that
+  #   refusal is publishable. A rung that CLEARS here proves NOTHING and earns only an instrument run.
+  #
+  #   CONTROL BARS.  20y top-10 +5.9|+6.0, worst -0.5, h2h 6-10 14/23 61%, 11-20 12/19 63%.
+  #                   8y top-10 +6.9|+7.8, worst -9.2, h2h 6-10 30/44 68%, 11-20 18/31 58%.
+  #
+  #   THIS KNOB (w -> 0.5 and w -> 1.0). At 20y BOTH rungs are BYTE-IDENTICAL to the control: 0
+  #   changed lines in the entire report, every rank slice included. That is NOT "held". The run
+  #   prints `earnings_yield n/a (only 0 cutoffs carry this factor)` at 20y, and `pe_ratio` is filled
+  #   ONLY from `earnings_yield` (backtest.rs:1233 — an as-of P/E needs as-of EPS), so
+  #   `value_factor == 1.0` for every name and the knob is STRUCTURALLY INERT at 20y. RECORD IT AS
+  #   NOT TESTED. This is a SECOND cause of a non-answer, distinct from (#149)'s saturation: there
+  #   the ruler cannot move, here the knob never touches the ruler. Both are untested, neither is
+  #   evidence, and a byte-identical column must never be written up as a "hold" on either cause.
+  #   At 8y the knob IS live. w = 1.0: top-10 +6.9|+8.0 (median +7.8 -> +8.0), worst -9.2 unchanged,
+  #   h2h 68% and 58% both unchanged; rank-1 +8.1|+8.5 -> +8.2|+8.6, 2-5 +7.1|+7.9 -> +7.0|+7.9,
+  #   6-10 +5.9|+5.2 -> +5.9|+5.4, 11-20 +5.6|+5.5 -> +5.5|+5.0. w = 0.5: verdict block IDENTICAL to
+  #   control (310 changed lines, all diagnostics). So the only rung that moves anything moves ONE
+  #   horizon, and it is the horizon PRIMARY cannot decide on alone.
+  #   VERDICT: UNGRADEABLE. Stress PRIMARY needs 20y AND 8y and 20y cannot answer; `pit` may drop 20y
+  #   under (#139) but is VACUOUS for ranking knobs, which (#147) measured twice. The knob falls
+  #   BETWEEN the two lanes and NO EXISTING LANE CAN GRADE IT. 0.0 stands by default, not by
+  #   measurement. Anyone re-opening it must FIRST pre-register a (#139)-style 12y-AND-8y amendment
+  #   for the stress lane, before running anything — proposing it now, having seen the favourable 8y
+  #   median, would be moving a pre-registered bar after seeing a number.
+  #
+  #   AND A FINDING THE SHIP RULE CANNOT SEE. At w = 1.0, 8y, the knob pulls a TOTAL LOSS into the
+  #   graded book: `top-10 zero names (8y): FRCB@b4034(-100%)`, and the top-10 book goes `rode 0
+  #   zeros` -> `rode 1 zeros/444 holds` — while every ship-rule statistic stays flat or improves. A
+  #   cheap trailing P/E on a bank weeks before it is seized is the textbook value trap, and
+  #   mean|median|worst-window|h2h are all blind to a single -100% inside a 10-name equal-weight
+  #   basket. Not itself the refusal (the knob is untested at 20y regardless) — a warning attached to
+  #   any future re-open: read the zero-names line, not just the verdict block.
+  #
+  #   TWO OTHER RANKING RUNGS WERE KILLED ON THIS LANE IN THE SAME PRE-REGISTERED BATCH. Verdicts
+  #   below; they are repeated in short at each knob.
+  #   (a) `growth_trend_weight` 0.15 -> 0.35 — the (#70) lead (#120) made re-checkable, since (#70)
+  #       refused it on a TOP-3 worst window and the graded basket is now top-10. REFUSED TWICE OVER.
+  #       PRIMARY fails at BOTH horizons: 20y median +6.0 -> +5.4 DOWN, 8y mean +6.9 -> +6.8 DOWN.
+  #       AND the (#160) not-worse bar breaks — 8y 6-10 h2h 68% -> 66% is BELOW the control's tally —
+  #       so it REFUSES OUTRIGHT and is never softened to unresolved. 20y h2h collapses on both books
+  #       (61% -> 52%, 63% -> 53%) and 20y rank-1 goes +6.0|+6.0 -> +5.1|+4.2. DEAD PERMANENTLY:
+  #       (#70)'s trend lead is CLOSED, on the very lane it was set on, at the basket size (#120)
+  #       moved it to. Caveat quoted rather than dropped: (#130)(d) found trend and
+  #       `growth_accel_weight` are near-substitutes on frozen data (cutting accel 0.15 buys what
+  #       raising trend ~0.10 buys), so the two multiply into ONE slope and this is a PARTIAL view of
+  #       it. Sweeping accel INDEPENDENTLY of beta stays OPEN; (#130) swept only beta.
+  #   (b) `sharpe_weight` 0.05 -> 0.15 — (#70)'s own unasked question, verbatim: "the open question is
+  #       whether to RAISE this knob, never whether it is currently earning its place." REFUSED; THE
+  #       ANSWER IS NO. 8y mean +6.9 -> +6.8 DOWN, so PRIMARY fails. 20y top-10 byte-identical, worst
+  #       window unchanged at both horizons, and both h2h books drift DOWN rather than up (20y 11-20
+  #       63% -> 58%; 8y 11-20 58% -> 55%; 8y 6-10 flat at 68%). Nothing gained to trade against the
+  #       loss. DEAD PERMANENTLY. 0.05 stands.
+  #   NO SURVIVOR, so the planned ship-instrument phase (full surface at both horizons plus the pit
+  #   column printed beside it) was SKIPPED — there was nothing left to instrument. No shipped value
+  #   changed in this commit: all three are RANKING knobs, so the goldens do not move, no gate
+  #   LIVE/INERT reachability is in play, and `growth_gate_reachability_pin` is untouched.
   fund_source: "sec"         # SEC EDGAR XBRL: free, keyless, uncapped — the source the tilt was validated on
                              #   (train-serve: FMP's 250/day cap can't even cover one wide run).
                              #   NO LONGER US-only as of 2026-07-25 (#3c): 20-F/40-F forms, the ifrs-full
@@ -9082,6 +9181,16 @@ buy_heuristic:
                                  #   the ETF lane it was deliberately kept nonzero for is absent from `backtest` entirely — but
                                  #   it does mean the open question is whether to RAISE this knob, never whether it is currently
                                  #   earning its place. Nobody needs to spend runs re-confirming that it is quiet today.
+                                 #   (#178) THE RAISE QUESTION (#70) LEFT OPEN IS NOW ANSWERED: NO. (#70)
+                                 #   ablated this to zero, found the delta under the null floor, and said "the
+                                 #   open question is whether to RAISE this knob, never whether it is currently
+                                 #   earning its place." 0.05 -> 0.15 on `universe fund stress` (non-vacuous at
+                                 #   both horizons; see the (#178) block on `growth_value_weight`) fails PRIMARY
+                                 #   at 8y — top-10 mean +6.9 -> +6.8 — with the 20y column BYTE-IDENTICAL, the
+                                 #   worst window unchanged at both, and both h2h books drifting DOWN rather
+                                 #   than up (20y 11-20 63% -> 58%, 8y 11-20 58% -> 55%, 8y 6-10 flat at 68%).
+                                 #   Nothing bought, so nothing to trade for the loss. REFUSED, DEAD PERMANENTLY
+                                 #   — a refusal on the survivor-flattered lane is binding. 0.05 STANDS.
   onsale_sharpe_weight: 0.0      # [FOIL] (B) ON-SALE lane's own Sharpe weight, split from growth because the shared knob conflicted:
                                  #   ablation showed growth wants 0.15 but on-sale wants 0 — zeroing it lifts the on-sale 12y edge
                                  #   +39.2->+62.9 (Δ+23.7) while growth keeps 0.15. 0 = off (the swept on-sale optimum)
