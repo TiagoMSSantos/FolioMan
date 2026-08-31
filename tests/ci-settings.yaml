@@ -9113,6 +9113,27 @@ buy_heuristic:
                                  #   so it prints "gate not binding on this sample" rather than any flag. Every name it would reject
                                  #   is already rejected by something else. The re-question signal has not fired; it also cannot fire
                                  #   on a survivors-only pool, so this stays a live-semantics judgment gate, not a measured one.
+                                 # (#184) THE SURVIVORS-ONLY EXCUSE IS NOW TESTED, AND RETIRED, 2026-08-31. Both notes above explain
+                                 #   the null the same way: the gate barely binds "because the 12y pool is survivors-only -- the
+                                 #   dot-com-wreck cohort this targets is mostly delisted and never enters", and the 2026-08-01 line
+                                 #   goes further, that the re-question signal "cannot fire on a survivors-only pool". Every one of
+                                 #   those runs was on `stress`. `pit` is the POINT-IN-TIME lane with as-of membership, which is
+                                 #   precisely the pool that excuse claims does not exist -- so it can answer, and it was never asked.
+                                 #   ASKED NOW, off the `(#183)` control runs at zero extra cost (the GATE SWEEP prices every gate on
+                                 #   every run): `growth_require_lifetime_uptrend ->off admits 0 new names (gate not binding on this
+                                 #   sample)` at 20y AND 12y AND 8y on `universe fund pit`. Identical verdict to the stress lane.
+                                 #   AND THE COHORT IS DEMONSTRABLY PRESENT, which is what makes this a test rather than a repeat:
+                                 #   the same 20y control prints its top-10 zero names as FMCC@b3995(-97%), FMCC@b3998(-95%),
+                                 #   RIG@b4000(-98%), RIG@b4001(-96%), FNMA@b4003(-99%) -- near-total wrecks that not only enter the
+                                 #   pit pool but reach the BOOK. The names this gate was written for are in the sample and it still
+                                 #   rejects none of them, so the null is a property of the GATE, not of the pool's survivor bias.
+                                 #   CONCLUSION: every name it would reject is already rejected by something else, on the honest lane
+                                 #   too. The knob stays shipped `true` -- it costs nothing, and its live-table semantics are still
+                                 #   the reason it is on -- but it must no longer be described as untestable or as awaiting a probe.
+                                 #   NOTE the `->off` sweep row IS the false-arm: turning the gate off changes the admitted pool by
+                                 #   zero names, so there was no separate arm left to run. NO ARMS WERE SPENT.
+                                 #   REVERT RULE unchanged and now precise: a strongly POSITIVE sweep row (mean AND median, read `vs
+                                 #   shipped`, not the bare sign) on a future maintenance run re-opens it. It has still never fired.
   growth_min_age_years: 0.0      # (#33) hard age floor on quote.age_years (whole-life listing age, the YRS column): reject a name
                                  #   younger than this many years. Shipped OFF (0.0) to DETECT EARLY WINNERS: a young strong grower
                                  #   (e.g. a fresh S&P 500 ETF, +21%/yr) still surfaces in the ranking, DOCKED by trust_factor (which
@@ -9142,6 +9163,45 @@ buy_heuristic:
                                  #   read by five of the six sites that used to spell it out (the sixth, `capped_life_cagr`, is a
                                  #   documented equivalent-mutant exception on its own doc comment), and pinned by
                                  #   `age_years_is_days_over_365_25`. Gate after: 22 mutants, 18 caught, 4 unviable, 0 missed.
+                                 # (#183) MEASURED, 2026-08-31, and the answer is NO. `backtest {20,12,8} universe fund pit`, the
+                                 #   honest lane, Ship Rule v2 under the `(#139)` PIT substitution (PRIMARY 12y AND 8y; every 20y
+                                 #   GUARD live). Ladder {3, 5, 10} pre-registered in the `(#182)` block ABOVE, before any run; all
+                                 #   three rungs reported, none added after. Control run TWICE: every graded line byte-identical, the
+                                 #   only delta in either file being `4777 from cache` vs `4778 from cache` on the fetch-provenance
+                                 #   line -- so this lane IS reproducible at grading resolution and the deltas below are real.
+                                 #   CONTROL  20y +0.6|+0.0 worst -10.0 | 12y +3.7|+3.9 worst -6.4 | 8y +5.3|+5.6 worst -5.5
+                                 #            6-10 h2h 4/8 (50%) | 12/19 (63%) | 19/27 (70%);  11-20 h2h 1/2 (50%) | 2/4 (50%) | 5/8 (62%)
+                                 #            census buckets 21/35/43, median gated pool 5/6/7, substitutable 7/16/21.
+                                 #   age 3 -> INERT. NOT TESTED, never "held" (`(#178)`'s second cause). Every number at every
+                                 #     horizon is byte-identical to control: census, median pool, substitutable count, top-10
+                                 #     mean|median, worst window, and BOTH h2h books. A 3-year floor rejects nobody on this pool who
+                                 #     is not already rejected by another gate. No arm was graded here, and none can be at this rung.
+                                 #   age 5 -> REFUSED on the `(#160)` GUARD. Its PRIMARY actually PASSES (12y mean +3.7->+3.8 with the
+                                 #     median held at +3.9; 8y both held at +5.3|+5.6) and its worst window HOLDS or improves
+                                 #     (20y -10.0, 12y -6.4, 8y -5.5->-5.1). It refuses anyway, because GUARD > PRIMARY: the rank-1
+                                 #     h2h on the 6-10 book falls 63% -> 59% (10/17) at 12y and 70% -> 64% (16/25) at 8y. Both clear
+                                 #     50% in absolute terms; both are BELOW THE CONTROL'S TALLY, which is exactly the not-worse bar
+                                 #     `(#160)` added at 12y/8y. A broken guard REFUSES outright and is never softened to unresolved.
+                                 #     The mechanism is visible in the census: median gated pool 6->5 at 12y, substitutable 16->13,
+                                 #     21->16 at 8y -- the gate thins the bench, so fewer buckets can even field an 11th name and the
+                                 #     h2h denominators shrink 19->17 and 27->25 along with the tally.
+                                 #   age 10 -> REFUSED on the WORST-WINDOW GUARD, at all three horizons, and not narrowly:
+                                 #     20y -10.0 -> -17.8, 12y -6.4 -> -33.9, 8y -5.5 -> -9.6. Its PRIMARY looks spectacular
+                                 #     (8y +5.3|+5.6 -> +6.8|+7.9, 12y +3.7|+3.9 -> +4.0|+6.2) and its 6-10 h2h reads 80% and 89%.
+                                 #     ALL OF THAT IS BOUGHT BY STARVATION, and this is the arm the pre-registration existed to catch.
+                                 #     Median gated pool collapses 5/6/7 -> 2/3/4 against a graded basket of 10, with ZERO
+                                 #     substitutable names at every horizon: the "top-10" book is a FORCED top-2/3/4 with no bench.
+                                 #     The 20y 11-20 h2h line is not printed at all -- the pool cannot form an 11-20 book, so that
+                                 #     GUARD cannot be satisfied even in principle. And it is not like-for-like: bucket counts drop
+                                 #     21->18, 35->32, 43->40, so the gaudy means are scored over FEWER windows than the control.
+                                 #     A 10-year floor does not pick better names; it deletes the pool and reports the remainder.
+                                 #   VERDICT: `(#33)` stays 0.0 and this closes it. Not one rung of a pre-registered ladder shipped:
+                                 #     3 cannot move anything, 5 breaks a guard, 10 starves the book. The `(#33)` rationale above --
+                                 #     keep early winners visible and let `trust_factor` DOCK them rather than hard-cut them -- now
+                                 #     has a measurement behind it on the honest lane instead of only live-table semantics.
+                                 #     REVERT RULE: re-question only if the pit pool's median gated pool rises ABOVE the graded
+                                 #     basket (census stops printing VACUOUS), since every refusal above is entangled with a starved
+                                 #     book. Re-running the same ladder on today's pool is spent -- do not re-grade it.
   growth_min_aum_etf: 100000000  # (AUM) ETF-only hard fund-size floor in EUR (quote.aum_eur, BF etp_search AUM, EUR-approximate —
                                  #   fund currency is EUR/USD mixed; ±10% FX is immaterial vs an order-of-magnitude line): reject a
                                  #   fund smaller than €100M, the industry viability line under which issuers liquidate/merge — the
