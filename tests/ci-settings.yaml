@@ -3708,6 +3708,93 @@ buy_heuristic:
                                  #   REVERT RULE: stays OFF until that paired sweep clears the ship rule.
                                  #   A result read WITHOUT re-sweeping the caps does not count either way
                                  #   — it measures the caps falling out of range, not the units fix.
+                                 #
+                                 #   (#176) GRADED 2026-08-31 on `backtest {20,12,8} universe fund pit`, plus a
+                                 #   daily-lane bug check at 5y. VERDICT: STAYS OFF — and NOT because a number
+                                 #   refused it. The knob is UNGRADEABLE under the ship rule, and (#175) has just
+                                 #   closed the only route to grading it.
+                                 #
+                                 #   1. THE BUG CHECK PASSES, END TO END. This block asked for "a daily-cadence
+                                 #   control run — at cadence 252 both arms must print identical numbers".
+                                 #   `backtest 5 …` walks daily (`monthly = long || years >= 8` in `backtest::run`),
+                                 #   and off-vs-on there is BYTE-IDENTICAL: md5 cbf1362b9cae15f63e19237c46c98372
+                                 #   for both, the sole difference being the drift WARNING that names the overlay.
+                                 #   `core.rs` already pinned the FUNCTION (`assert_eq!(daily_equivalent(v, 252,
+                                 #   true), v)`); this pins the whole PATH through it. So LIVE IS UNAFFECTED BY
+                                 #   THIS KNOB — now measured end to end, not only asserted.
+                                 #
+                                 #   2. ON THE GRADED LANE IT IS VACUOUS AT ALL THREE HORIZONS. Every ship-rule
+                                 #   statistic is IDENTICAL off vs on, to the printed decimal:
+                                 #     20y  top-10 +0.6 (med +0.0)  worst -10.0  h2h 4/8 50% (6-10), 1/2 50%
+                                 #          (11-20)   census 21 buckets, median gated pool 5, 19 saturated
+                                 #     12y  top-10 +3.7 (med +3.9)  worst  -6.4  census 35, pool 6, 31 saturated
+                                 #     8y   top-10 +5.3 (med +5.6)  worst  -5.5  h2h 19/27 70% (6-10), 5/8 62%
+                                 #          (11-20)   census 43, pool 7, 35 saturated
+                                 #   PRIMARY, every GUARD, the worst window and BOTH h2h books move by not one
+                                 #   tenth. Per (#149) that is recorded VACUOUS, NEVER "held": this is a RANKING
+                                 #   knob and on the median bucket the gated pool IS the basket, so an equal-weight
+                                 #   top-10 cannot see a reorder.
+                                 #
+                                 #   IT IS NOT A NO-OP — the reorder is real, it just cannot reach the graded
+                                 #   basket. The THIN slices are proper subsets, hence NOT set-invariant, and they
+                                 #   DO move: top-3 at 20y -0.3 -> -0.2; at 8y top-2 +6.1 -> +5.9 and top-3 +6.3 ->
+                                 #   +6.4; top-2/top-3 likewise at 12y. Same run, same names, a visible reorder
+                                 #   above rank 10 and exactly zero movement AT rank 10 — (#149)'s vacuity argument
+                                 #   caught in the act, and the cleanest demonstration of it in this file.
+                                 #
+                                 #   3. WHY IT CANNOT BE GRADED — the durable finding. The revert rule above
+                                 #   demands the three fitted caps be re-swept and the pair judged as ONE change.
+                                 #   All three are unmeasurable on this lane:
+                                 #     · sharpe_cap / sharpe_cap_etf — read in `picks::score_parts` as
+                                 #       `(long_cagr / v).clamp(0.0, cap)`: a SCORE clamp, never a gate. Pure
+                                 #       ranking -> VACUOUS on every column above.
+                                 #     · growth_max_vol_crypto — crypto-only, and `universe fund pit` is an
+                                 #       S&P-500-member pond with no coins in it. Inert.
+                                 #     · growth_max_vol (P4b) ships 0.0 = off, so the knob's ONLY pool-changing
+                                 #       consumer is not live either. Neither shows in the GATE SWEEP, which
+                                 #       prints live gates only.
+                                 #   So the sweep the revert rule requires is a RANKING sweep on a SATURATED
+                                 #   column. The escape would be to de-saturate first — and (#175) has just priced
+                                 #   that: `growth_min_cagr` 19 -> 12 is the SMALLEST rung that lifts the pool over
+                                 #   the basket, and it REFUSED on the (#160) guard at 12y AND 8y and on PRIMARY at
+                                 #   both. The column cannot be de-saturated at a price the ship rule will pay.
+                                 #
+                                 #   STRUCTURAL BLOCK, NOT AN UNRUN EXPERIMENT. Do not re-open by running the cap
+                                 #   sweep — it would reproduce the VACUOUS reading this entry already records.
+                                 #   RE-OPEN ONLY on a NON-VACUOUS column (median gated pool > VERDICT_TOP at 12y
+                                 #   and 8y) reached by some route (#175) did not refuse. Measurement is also now
+                                 #   consistent with this block's own C8 prediction: with the knob on, vol falls
+                                 #   4.58x, `long_cagr/vol` rises 4.58x and the clamp pins nearly every name, so
+                                 #   the sharpe term goes very nearly CONSTANT — the GROWTH lane headline is
+                                 #   unchanged to the decimal (rho +0.13, edge +182.3, halves +137.7 / -44.6).
+                                 #
+                                 #   REVERT RULE UNCHANGED: stays OFF. The paired sweep has not cleared the ship
+                                 #   rule and presently CANNOT. What this entry adds: a future attempt owes a
+                                 #   non-vacuous column FIRST — a cap sweep run on today's lane is not evidence
+                                 #   either way.
+                                 #
+                                 #   P4b `growth_max_vol` was blocked "on (#97)". It is now blocked on (#97) being
+                                 #   structurally ungradeable rather than merely unrun. Its own receipt also
+                                 #   demands a JOINT run with P4a `growth_max_daily_1m`, permanently blocked for
+                                 #   want of a daily lane at any ship-rule horizon. Both halves of that pair are
+                                 #   closed.
+                                 #
+                                 #   4. MEASUREMENT HYGIENE — found while doing (1), and worth more than the knob.
+                                 #   The FIRST 5y control run printed `consistency_5y edge -231.2`; two later runs
+                                 #   of the BYTE-IDENTICAL config both printed -237.2, as did the knob arm. That
+                                 #   6.0-pt "difference" was THE CONTROL DISAGREEING WITH ITSELF. Cause is already
+                                 #   documented at the fetch/walk split in `backtest.rs`: completion order "turns
+                                 #   on fetch latency alone … neither is pinned", the following `sort_by_key(date)`
+                                 #   is STABLE and inherits it, and a probe's `edge` splits top-half vs bottom-half
+                                 #   via a STABLE sort over a TIE-HEAVY factor (`roll5y_pos_pct`, n=23). Rank
+                                 #   statistics are tie-order-invariant, which is why rho and both OOS rhos held
+                                 #   while ONLY `edge` moved — that is the signature to look for. RULE: a small-n
+                                 #   probe `edge` is NOT reproducible run-to-run on a cache-served run; before
+                                 #   attributing one to a knob, RUN THE CONTROL TWICE. The verdict block and the
+                                 #   POOL CENSUS were stable across every run here — this bites the diagnostics,
+                                 #   not the ship rule. Same cause, same day: two runs disagreed on the ETF pond
+                                 #   (2022 vs 2032 regulatory extras), which is why the 12y BUY-lane rows differ
+                                 #   between the arms and are NOT read here.
   print_edge_annualized: false   # (#96) UNMEASURED in the sense that no run has been read with it on —
                                  # but unlike its neighbours this one CANNOT change a decision, because
                                  # nothing scored reads it. Shipping OFF keeps the goldens byte-identical.
