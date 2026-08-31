@@ -9768,6 +9768,125 @@ urls:
   # rebuild before grading, because `--in-place` leaves a MUTATED binary in `target/mutants/`.
   # ============================================================================================
   #
+  #
+  # ============================================================================================
+  # (#175) THE VACUITY IS STRUCTURAL. THE POOL CAN BE DE-SATURATED, AND IT COSTS THE EDGE. 2026-08-31.
+  # ============================================================================================
+  # THE QUESTION. (#149)'s vacuity rule has now refused FOUR consecutive ranking-knob rounds, and the
+  # fourth (`growth_er_weight`, this file) closed with a standing invitation: "RE-OPEN ONLY ON A
+  # NON-VACUOUS COLUMN. That is a POOL problem, not a score problem ... no ranking knob whatsoever is
+  # measurable here." Nobody had tried to COLLECT on it. This round does, and the answer is that the
+  # invitation cannot be honoured at a price worth paying.
+  #
+  # It also matters live, not just for grading: the median gated pool is 5/6/7 against a graded basket
+  # of 10, so THE SHIPPED HEURISTIC CANNOT FILL ITS OWN BOOK. That is the framing this round tested.
+  #
+  # PRE-REGISTERED BEFORE THE RUNS, and none of it moved afterwards:
+  #   DE-SATURATED := median gated pool >= 11 at BOTH 12y and 8y (strictly above VERDICT_TOP = 10).
+  #   VERDICT_TOP is NOT touched — re-fitting the basket to meet the pool is (#120)'s forbidden argmax.
+  #   ANTI-ARGMAX: report the census for EVERY rung, grade ONLY the SMALLEST arm that de-saturates,
+  #     and if it refuses, STOP. Do not walk up the ladder hunting a rung that passes.
+  #   PREDICTION: the de-saturating arm REFUSES on PRIMARY at 12y, because (#174)'s canonical sweep
+  #     priced `growth_min_cagr`'s newly-admitted cohort at a 12y median of -55.6 and flagged TOO
+  #     TIGHT at 8y only. HIT, and overshot — it refused at BOTH horizons, same direction.
+  #
+  # ---- PHASE A: THE CENSUS LADDER. `backtest {12,8} universe fund pit`, seven arms, census only ----
+  # Control reproduces (#174) exactly (12y pool 6, 31/35 saturated; 8y pool 7, 35/43), so probe-vs-
+  # probe holds. `windows scored` is IDENTICAL at 2737 / 6126 on every arm — the gate moves who is in
+  # the pool, not how many windows exist, which is the control that says these columns are comparable.
+  #
+  #   arm                                    12y pool (sat)   8y pool (sat)   clears >= 11 both?
+  #   control  growth_min_cagr 19.0             6 (31/35)       7 (35/43)      --
+  #   A2  growth_value_floor_pct 40 -> 0        7 (28/35)       8 (29/43)      NO
+  #   A3  growth_max_above_ma 150 -> off        7 (27/36)       8 (31/44)      NO
+  #   A4  growth_min_leg_years 5 -> 3           6 (31/35)       7 (35/43)      NO — moves NOTHING
+  #   A1a growth_min_cagr 19 -> 15              9 (22/36)      11 (22/44)      NO (12y = 9)
+  #   A1b growth_min_cagr 19 -> 12             11 (16/36)      14 (16/44)      YES  <-- smallest
+  #   A1c growth_min_cagr 19 -> 8              14 (12/36)      19 (12/44)      yes, but larger
+  #
+  # ONLY THE CAGR GATE DE-SATURATES. Three of the four non-CAGR arms move the median by ONE name and
+  # `growth_min_leg_years` moves it by ZERO. That is a real result about the shape of the gate stack:
+  # it is not five gates each taking a slice, it is ONE gate doing essentially all of the binding.
+  #
+  # (A2) IS ITS OWN FINDING AND CLOSES THE SECOND SUPPLY EXPLANATION. `growth_value_floor_pct` runs at
+  # backtest.rs:2505 and the POOL CENSUS reads its output at :2519 — so every "median gated pool 6"
+  # ever quoted in this file is measured AFTER a trim that discards the dearest 40% of each bucket.
+  # That looked like the obvious cause. It is not: removing the ENTIRE brake buys ONE name at each
+  # horizon. It roughly doubles the SUBSTITUTABLE count at 8y (21 -> 44) while the MEDIAN barely
+  # moves, and `basket_vacuity` adjudicates on the median. Note this also answers (#75)'s standing
+  # "RE-GRADEABLE, not re-graded" line for the census question, though NOT for the knob's own edge.
+  # With (#173)'s pond result, BOTH supply-side explanations are now eliminated: not the pond, not the
+  # trim. The gates bind, and one gate binds.
+  #
+  # ---- PHASE B: GRADE A1b, `growth_min_cagr: 19.0 -> 12.0`, the smallest de-saturating rung ----
+  # Six runs, `backtest {20,12,8} universe fund pit`. THE COLUMNS ARE GENUINELY NON-VACUOUS ON THE ARM
+  # (12y 16 saturated of 36, 8y 16 of 44), so PRIMARY ADJUDICATES A RANKING-RELEVANT BOOK FOR THE
+  # FIRST TIME IN THIS FILE. That is what the round bought, and it is worth stating separately from
+  # the verdict, because it is the only run on record where the ship rule was not answering vacuously.
+  #
+  #   horizon | top-10 excess mean|med | worst window |  h2h 6-10 book  | h2h 11-20 book | pool
+  #     20y   | +0.6|+0.0 -> +1.7|+1.4 | -10.0 -> -3.9 | 4/8 50% -> 7/19 37% | 1/2 50% -> 5/10 50% | 5 -> 10
+  #     12y   | +3.7|+3.9 -> +3.0|+3.8 |  -6.4 -> -5.3 | 12/19 63% -> 17/32 53% | 2/4 50% -> 11/20 55% | 6 -> 11
+  #      8y   | +5.3|+5.6 -> +4.1|+4.3 |  -5.5 -> -4.2 | 19/27 70% -> 22/40 55% | 5/8 62% -> 19/28 68% | 7 -> 14
+  #
+  # VERDICT: REFUSED ON THE (#160) GUARD AT 12y AND 8y. The 6-10 tally is 53% and 55% — ABOVE the 50%
+  # absolute bar and BELOW the control's 63% and 70%. That is exactly the case (#160) was built for and
+  # says so in its own words: "an ABSOLUTE bar cannot see a knob that makes the book worse while
+  # staying above the line." A broken guard REFUSES OUTRIGHT; it is never softened into unresolved.
+  # PRIMARY REFUSES INDEPENDENTLY, and not as a TIE: top-10 excess falls at BOTH graded horizons
+  # (12y -0.7 mean / -0.1 median, 8y -1.2 / -1.3). Two independent halves of the rule, same answer.
+  #
+  # "TALLY" MEANS THE RATE, NOT THE COUNT — DISAMBIGUATED HERE BECAUSE THIS IS THE FIRST ARM THAT
+  # COULD TELL THEM APART. A de-saturating arm GROWS the h2h denominator (12y 19 -> 32, 8y 27 -> 40),
+  # so the count RISES (12 -> 17, 19 -> 22) while the rate FALLS. (#160) did not anticipate an arm
+  # that moves its own denominator. It is settled by (#160)'s own worked example, which quotes (#138)
+  # as "67% -> 62%" and "65% -> 70%" — percentages. So: RATE. The verdict is robust either way (PRIMARY
+  # fails at both horizons on its own), but the NEXT de-saturating arm needs this written down.
+  #
+  # ---- WHY IT COSTS WHAT IT COSTS, which is the part worth keeping ----
+  # THE ADMITTED NAMES ARE THE WRECKS. The 12y top-10 zero list gains exactly AIG@b3994(-96%),
+  # RIG@b4015(-95%) and FOSL at b4024/b4026/b4028 (-98%/-99%/-96%) — the GFC bailout, post-Macondo
+  # Transocean, and three Fossil Group windows. Zeros ridden go 9 -> 13 and holds 209 -> 308. A 19%/yr
+  # compounder bar is, among other things, a distress filter, and 12%/yr does not clear the wreckage.
+  #
+  # AND THE BOOK REALLY DID GET DEEPER — the cost is not an artifact. The rank slices inverted:
+  #   12y rank 6-10   ctl -1.9|-0.1 (win 47% of 19)  ->  arm +2.1|+1.7 (win 72% of 32)
+  #    8y rank 6-10   ctl -0.0|+1.7 (win 63% of 27)  ->  arm +2.7|+2.2 (win 72% of 40)
+  # The control's 6-10 slice is largely PADDING drawn from saturated buckets; the arm's is real names,
+  # and it scores better. So de-saturation did what it claimed. The top-10 aggregate still falls,
+  # because the marginal names are worse than the index even when they are better than padding.
+  # Read those two facts together — they are the whole finding.
+  #
+  # 20y IS THE DISSENTING COLUMN AND IS NOT PROMOTED. The arm IMPROVES there (+0.6 -> +1.7, worst
+  # -10.0 -> -3.9) and its 20y guards PASS (11-20 book 5/10 = 50%, worst not worse). It does not
+  # rescue the arm: (#139) puts PRIMARY on 12y AND 8y for the pit lane and (#124) puts pit 20y n_eff
+  # at ~0.2. Quoting the 20y improvement as the result would be picking the column the rule excludes
+  # BECAUSE it cannot resolve. Recorded, not promoted. Note its 6-10 tally is 37% — well under 50% —
+  # which does not bite only because 20y reads the 11-20 book by (#160).
+  #
+  # ---- WHAT THIS SETTLES ----
+  # THE FOUR-ROUND INVITATION IS ANSWERED AND SHOULD NOT BE RE-OPENED AS WRITTEN. A non-vacuous column
+  # is REACHABLE — the pool goes 6 -> 11 and 7 -> 14 — but only by loosening the gate that defines a
+  # compounder, and the loosened book fails both halves of the ship rule. So the vacuity is NOT a
+  # tuning oversight that a cleverer knob setting escapes: IT IS THE SHAPE OF A POOL THAT A 19%/yr
+  # CAGR BAR PRODUCES ON THE S&P 500. Any future ranking knob inherits this, and re-opening on "just
+  # de-saturate first" is now a MEASURED refusal rather than an untried idea.
+  #
+  # THE LIVE DEFECT IS REAL AND IS NOT FIXED BY THIS. The heuristic still cannot fill a 10-name book
+  # from its own gated pool. This round establishes only that LOOSENING THE CAGR GATE is the wrong
+  # price for fixing it. A basket smaller than 10 is the untested alternative and is BLOCKED by
+  # (#120)'s forbidden argmax; anyone re-opening that owes a receipt against (#120), not this one.
+  #
+  # PER THE ANTI-ARGMAX RULE, A1c WAS NOT GRADED. It de-saturates further (14/19) and admits strictly
+  # more marginal names than the rung that already refused. Its census is banked above; that is all it
+  # is for.
+  #
+  # REVERT RULE: nothing shipped, so there is nothing to revert — `growth_min_cagr` stays 19.0 and
+  # `growth_value_floor_pct` stays 40.0. RE-OPEN ONLY on a de-saturating arm that does NOT loosen a
+  # gate: something that ADDS names the current stack would already accept. (#173) closed the pond
+  # version of that, so a re-opener needs a third mechanism, not a fourth pond.
+  # ============================================================================================
+  #
   constituents_csv:
     - "https://yfiua.github.io/index-constituents/constituents-nasdaq100.csv"
   # Euronext Lisbon equities (POST, DataTables JSON; mics=XLIS) -> Portugal `.LS` stock universe
