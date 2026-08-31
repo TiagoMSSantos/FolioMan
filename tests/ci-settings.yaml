@@ -834,6 +834,63 @@
 #   block. IF (#135)'s REVERT RULE EVER FIRES AGAIN AT 12y OR 8y, THIS BLOCK GOES WITH IT: the
 #   not-worse bar would have no licensed book left to stand on.
 # ============================================================================================
+# (#181) LANDSCAPE — WHERE THE BUY/GROWTH HEURISTIC STANDS AS OF 2026-08-31, and what is left. Written
+# so the next round does not re-walk ground that is already closed. Each line names the receipt that
+# closed it; go read that receipt before re-opening anything here.
+#
+# CLOSED — GATES AND POOL
+#   spec P1 four / P2 / P3 gates ... refused in three separate shapes; knobs exist and ship OFF
+#   (#159)/(#165) AUC factor table . SPENT. A new gate proposal needs a NEW measurement, not this table
+#   pool SUPPLY .................... (#173)/(#174) a +65% wider pond moved the median gated pool by ZERO names
+#   the gate stack ................. (#174) no gate carries TOO TIGHT at both 12y and 8y; no live lead
+#   de-saturating the pool ......... (#175) growth_min_cagr 19->12 is the smallest rung that works, and it REFUSED
+# CLOSED — RANKING WEIGHTS (all on `universe fund stress`, the one non-vacuous lane)
+#   growth_trend_weight 0.15->0.35   (#178) REFUSED on PRIMARY at both horizons AND on the (#160) bar. Dead.
+#   sharpe_weight 0.05->0.15 ....... (#178) REFUSED; answers (#70)'s unasked raise question with a no. Dead.
+#   growth_accel_weight 0.35 / 0.65  (#179) REFUSED IN BOTH DIRECTIONS; 0.50 is bracketed on a lane that answers
+#   growth_accel_beta .............. (#130) 1.0 is the best rung on every voting column
+#   the trend/accel SUBSTITUTION ... (#130)(d) asked it, (#178)+(#179) close it: both halves of the one slope die
+# CLOSED — MECHANICS AND COSTS
+#   (#97) vol_daily_equivalent ..... (#176) bug check passes end-to-end; the knob is structurally ungradeable
+#   turnover costs ................. (#177) the edge survives a 40x charge at every horizon; churn flag fires nowhere
+#   the hold-period sweep .......... (#177) NOT OWED — it was conditional on the churn flag firing, and it did not
+#   basket size / VERDICT_TOP ...... (#120) re-fitting it is forbidden; (#124)+(#180) measured the distribution
+#   live book size `top_picks` ..... (#180) NO CHANGE. 5 sits on the flat part of the curve and the pool cannot
+#                                    supply 10 anyway (top-10 == top-15 byte-identical at every horizon)
+#
+# THE ONE GENUINELY OPEN ITEM: `growth_value_weight`. (#178) found it UNGRADEABLE, not refused — it is
+# structurally inert at 20y (the run reports earnings_yield on 0 cutoffs, `pe_ratio` is filled only from
+# earnings_yield, so `value_factor` is identically 1.0), while `pit`, which could drop 20y under (#139),
+# is VACUOUS for ranking knobs. It falls between the two lanes. Re-opening it requires pre-registering a
+# (#139)-style 12y-AND-8y amendment for the stress lane FIRST, before any run — the favourable 8y number
+# is already known, so proposing the amendment afterwards would be moving a bar after seeing a result.
+# Its live 8y rung also drags a -100% name into the book while every ship-rule statistic holds or
+# improves; read the zero-names line if it is ever re-run.
+#
+# THE LANE MAP, which is the most reusable thing this round produced. `universe fund pit` is the HONEST
+# lane and the only one that should decide a GATE, but its median gated pool is 5-7 against a basket of
+# 10, so it is VACUOUS for any RANKING knob and (#137) measured that it cannot resolve a weight arm
+# better than ~0.1pt. `universe fund stress` is the only NON-VACUOUS ranking lane (median gated pool 11
+# > basket 10, h2h denominators 19 and 31, byte-reproducible controls) — but its fat denominators come
+# from membership not being point-in-time, NOT from the 27-name loser injection, so SURVIVOR BIAS IS THE
+# PRICE OF GRADING THERE. Hence the standing reading rule: a REFUSAL on stress is permanent and
+# publishable; a PASS on stress proves nothing and earns only an instrument run whose pit column is
+# printed beside it. Every frozen-fixture lane is vacuous and can never grade a ranking knob.
+#
+# METHOD RULES EARNED HERE, all cheaper to obey than to re-derive: (1) an equal-weight top-N book is
+# SET-INVARIANT, so an intra-book reorder reads "held" vacuously — grade a ranking knob on the rank
+# slices and the h2h, never on the top-10 mean ((#179) shows rank-1 collapsing 1.8pt while the top-10
+# mean does not move at all). (2) A byte-identical column is NOT evidence: it means either the ruler
+# cannot move ((#149) saturation) or the knob never touches the ruler ((#178) structural inertness).
+# Record both as NOT TESTED. (3) Settle same-or-different with `md5sum` or `diff -q`; `diff | grep -c`
+# has twice reported 0 for files that differ ((#176) part 4, (#179)). (4) Run the control TWICE before
+# attributing any diagnostic delta to a knob.
+#
+# BOTTOM LINE: the knob space is exhausted. Every weight and every gate in the buy/growth lane has now
+# been swept, and the shipped value won or the arm refused. The next real gain will come from NEW DATA
+# or a NEW MECHANISM — not from another rung of an existing knob, and not from another lane weaker than
+# the two mapped above.
+# ============================================================================================
 
 tickers: []
 
@@ -1919,6 +1976,59 @@ buy_heuristic:
                                  #   REVERT: set false (it already is — this knob ships OFF and stays OFF; it was read through an
                                  #   overlay, never shipped true). If a future round wants to re-open basket size, the bar above and
                                  #   the no-stable-peak table are the prior: bring a mechanism, not an argmax.
+                                 #
+                                 #   (#180) THE TOP-5 COLUMN, READ 2026-08-31 TO PRICE THE ONE NUMBER IN THE STACK
+                                 #   THAT IS NOT 10 — `settings.top_picks`, which is 5 and is what
+                                 #   `check`/`screen` actually shows a human. (#124) above priced top-1, top-3 and
+                                 #   top-10 but never top-5, so the gap between the VALIDATED basket and the
+                                 #   DELIVERED one had never been measured. This knob was turned on for three
+                                 #   diagnostic runs, `backtest {20,12,8} universe fund pit`, then off again. Not
+                                 #   a ship and not an argmax: `VERDICT_TOP` stays 10 ((#120)'s forbidden re-fit
+                                 #   is untouched), and nothing below chooses a basket by maximising anything.
+                                 #
+                                 #   horizon  rung     d10     median   d90     P(book<index)  P(book<1.0x)   windows
+                                 #     20y    top-3    0.88x   4.36x    9.59x       43%            14%          21
+                                 #     20y    top-5    1.32x   5.01x    9.59x       38%             5%          21
+                                 #     20y    top-10   1.30x   5.23x    9.59x       48%             5%          21
+                                 #     12y    top-3    0.54x   4.57x   10.70x       26%            17%          35
+                                 #     12y    top-5    0.83x   3.71x    9.27x       23%            17%          35
+                                 #     12y    top-10   0.82x   3.68x    7.76x       26%            11%          35
+                                 #      8y    top-3    0.94x   2.78x    7.20x       14%            12%          43
+                                 #      8y    top-5    1.09x   2.61x    6.18x       19%             7%          43
+                                 #      8y    top-10   1.05x   2.40x    4.64x       14%             9%          43
+                                 #
+                                 #   VERDICT: NO CHANGE. 5 IS ALREADY ON THE FLAT PART OF THE CURVE. The
+                                 #   concentration cliff (#124) found is real but it is spent by rank 5, not rank
+                                 #   10: from top-3 to top-5 the 20y left tail moves 0.88x -> 1.32x and P(book <
+                                 #   1.0x) falls 14% -> 5%, while from top-5 to top-10 it moves 1.32x -> 1.30x and
+                                 #   5% -> 5%. At 8y top-5 is the BETTER of the two on both tail measures (d10
+                                 #   1.09x vs 1.05x, P(<1.0x) 7% vs 9%); at 12y top-10 wins the left tail (11% vs
+                                 #   17%) and top-5 wins the median. Neither dominates. There is no measured case
+                                 #   for moving `top_picks`, in either direction, and this entry exists so nobody
+                                 #   spends another round looking for one.
+                                 #
+                                 #   AND IT COULD NOT HAVE HELPED ANYWAY — THE POOL CANNOT SUPPLY 10. The same
+                                 #   runs print median gated pool 5 / 6 / 7 at 20y / 12y / 8y against a graded
+                                 #   basket of 10, all three columns VACUOUS. The proof is in the table itself:
+                                 #   top-10 and top-15 are BYTE-IDENTICAL at every horizon (identical d10, median,
+                                 #   d90 and both probabilities), which is what saturation looks like — beyond ~10
+                                 #   there is nobody left to add. So raising `top_picks` from 5 to 10 would, in
+                                 #   the median window, pad the list with the tail of an admitted set that is
+                                 #   barely larger than 5. This is `pool-supply-is-not-the-constraint` seen from
+                                 #   the output end: (#173)/(#174) showed a +65% wider pond moves the gated median
+                                 #   by zero names, and here that same binding gate stack is what caps the
+                                 #   deliverable book.
+                                 #
+                                 #   A DORMANT INCONSISTENCY FOUND WHILE READING THIS, recorded because it is
+                                 #   invisible until someone changes one number. `track::BOOK` is 10 and `track`
+                                 #   grades the live book with `.take(BOOK)`, but the journal rows it takes from
+                                 #   are produced by `picks::render`, which ends `tickers.into_iter().take(n)` at
+                                 #   src/picks.rs:4117 with n = `settings.top_picks` = 5. So BOOK is INERT today:
+                                 #   it is a ceiling that `top_picks` already binds well below. Nothing is wrong
+                                 #   right now, and the two numbers agreeing is NOT required — but anyone who
+                                 #   raises `top_picks` to 10 will silently also change what `track` grades, in
+                                 #   the same edit, with no test naming the coupling. Read this before touching
+                                 #   either.
   growth_er_weight: 0.0          # (#145) MEASURED AND REFUSED 2026-08-26 — stays OFF, where the term
   growth_er_cap: 20.0            # contributes exactly 0.0 for every row and the lane is the one every
                                  # golden holds. The cap is inert while the weight is 0. This receipt
