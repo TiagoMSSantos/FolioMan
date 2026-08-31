@@ -4186,7 +4186,7 @@ buy_heuristic:
                                  #   REVERT RULE: stays OFF unless ON raises top-3 excess at 20y AND 8y
                                  #   with rank-1 h2h ≥50% at all three horizons. A bundled regression
                                  #   REFUSES — it is never read as "the look-ahead was helping".
-  splice_trim_point_in_time: false # (#94) UNMEASURED — an unfitted judgement value, shipping OFF, which
+  splice_trim_point_in_time: false # (#94) GRADED BY (#189) — LOOK-AHEAD PRICED, NOT SETTLED, still OFF, which
                                  #   is the parse-time trim every golden and every fitted receipt in this
                                  #   file was measured under. Read it together with `splice_max_weekly_rate`
                                  #   above: that knob decides WHAT is a splice, this one decides WHEN the
@@ -4762,7 +4762,7 @@ buy_heuristic:
                                  #   guard (there is no blocking to collapse) and keeps the original
                                  #   `< 4 buckets` floor. Reverting brings the old bands back verbatim; it
                                  #   does not make them mean anything.
-  backtest_anchor_windows: false # (#88) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+  backtest_anchor_windows: false # (#88) GRADED BY (#188) — NOT GRADEABLE ON THIS LANE, still OFF, which is
                                  #   today's behaviour byte-for-byte and is what every golden in
                                  #   tests/fixture and every receipt in this file was measured under.
                                  #   THE SKEW, and it is the twin of `inflation_adjust.score_on_nominal`:
