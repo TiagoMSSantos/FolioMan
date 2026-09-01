@@ -1189,8 +1189,17 @@ const GEO: [(&str, u8); 22] = [
 /// Volatility") or abbreviate the ESG screen ("MSCI World PAB" = Paris-Aligned Benchmark), and the
 /// "min vol"/"paris" tokens miss both. " pab" keeps its leading space so a name merely containing
 /// the letters (e.g. a provider string) can't false-positive.
-const NARROW: [&str; 30] = [
+/// (#200) "industrial" was MISSING, and that is a different defect from the mid-word accident
+/// (#195) tested for — a token absent from the list, not one matching too loosely. Without it
+/// `geo_tier` read "Xtrackers MSCI World Industrials" as a DEVELOPED sleeve and "SPDR MSCI Europe
+/// Industrials" as a EUROPE sleeve, so two single-sector funds were admitted to a table whose own
+/// header calls itself "broad geographic sleeves". Found by (#197) while lifting `hold_per_tier`:
+/// both sat among the 22 rows the ≤3/sleeve cap hides, which is why the printed table never showed
+/// the bug and no receipt caught it. NDUS.L clears every other leg on live facts (TER 0.18%, AUM
+/// €1.24B), so this token is the only thing standing between it and the CORE list.
+const NARROW: [&str; 31] = [
     "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
+    "industrial",
     "sector", "select", "nasdaq", "small", "mid cap", "communicat", "biotech",
     "esg", "sri ", "socially responsible", "screened",
     "sustainab", "paris", " pab", "climate", "islamic", "value", "momentum", "quality",

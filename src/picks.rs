@@ -6696,6 +6696,16 @@ mod tests {
         assert_eq!(core::hold_miss_reason(&broad), None);
         assert_eq!(core::hold_miss_reason(&tech).as_deref(),
             Some("not a broad-index name (sector/thematic/factor tilt)"));
+        // (#200) Both of these were admitted as GEOGRAPHIC sleeves — "World"/"Europe" matched GEO and
+        // no NARROW token answered, because "industrial" was not in the list. The cap hid them, so
+        // only lifting `hold_per_tier` in (#197) made them visible. Live tickers: XDWI.L, NDUS.L.
+        for n in ["Xtrackers MSCI World Industrials UCITS ETF 1C",
+                  "SPDR MSCI Europe Industrials UCITS ETF"] {
+            let mut ind = broad.clone();
+            ind.name = n.into();
+            assert_eq!(core::hold_miss_reason(&ind).as_deref(),
+                Some("not a broad-index name (sector/thematic/factor tilt)"), "{n}");
+        }
         let mut m = broad.clone();
         m.name = "Vanguard FTSE All-World Fund USD Acc".into();
         assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("no UCITS token in the name"));
