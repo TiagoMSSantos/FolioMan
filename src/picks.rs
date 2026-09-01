@@ -6816,6 +6816,13 @@ mod tests {
         m = broad.clone();
         m.ter_fallback = Some(0.30);
         assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("TER 0.30% > 0.25% cap"));
+        // (#199) …and the cap is INCLUSIVE, which nothing pinned: every case above sits clear of it,
+        // so `>` and `>=` were indistinguishable and the surviving mutant would have silently evicted
+        // funds priced exactly AT the cap. `hold_max_ter` reads 0.25 in both regimes (ci-settings and
+        // the `config.rs` default agree), so the boundary is the same number on either side.
+        m = broad.clone();
+        m.ter_fallback = Some(crate::config::hold_max_ter());
+        assert_eq!(core::hold_miss_reason(&m), None, "TER exactly at the cap is admitted, not evicted");
         m = broad.clone();
         m.replication = Some("Swap");
         assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("replication Swap (needs physical)"));
@@ -7349,17 +7356,22 @@ mod tests {
         leg3.replication = Some("Swap");
         let mut leg4 = core_etf("DIST.DE", "iShares Core MSCI World Dist UCITS ETF", 5e9, 0.20);
         leg4.use_of_profits = Some("Dist");
-        let leg5 = core_etf("SMLL.DE", "Invesco MSCI Emerging Markets UCITS ETF", 5e8, 0.19);
+        // TWO on the AUM leg, deliberately. A one-per-leg fixture expects [1,1,1,1,1,1,1], which a
+        // `hold_funnel` mutated to return the CONSTANT [1; 7] satisfies exactly — that mutant was
+        // MISSED on the pre-push grading of this diff and this second fund is what kills it. Any
+        // future edit here must keep the expected histogram non-uniform.
+        let leg5 = core_etf("EMAU.DE", "Invesco MSCI Emerging Markets UCITS ETF", 5e8, 0.19);
+        let leg5b = core_etf("JPAC.DE", "Amundi MSCI Pacific UCITS ETF", 7e8, 0.21);
         let good = core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22);
         // neither of these may be counted: not an ETF, and not EU-buyable
         let stock = Quote::stub("AAPL", "€100.00", "", "Apple Inc.");
         let mut us = core_etf("VT", "Vanguard Total World Stock ETF", 30e9, 0.06);
         us.market = "USA".into();
 
-        let quotes = vec![leg0, leg1, leg2, leg3, leg4, leg5, good, stock, us];
+        let quotes = vec![leg0, leg1, leg2, leg3, leg4, leg5, leg5b, good, stock, us];
         let funnel = hold_funnel(&quotes);
-        assert_eq!(funnel, [1, 1, 1, 1, 1, 1, 1], "one fund per leg + one qualified: {funnel:?}");
-        assert_eq!(funnel.iter().sum::<usize>(), 7, "the stock and the US listing are out of scope");
+        assert_eq!(funnel, [1, 1, 1, 1, 1, 2, 1], "one fund per leg, TWO on AUM, one qualified: {funnel:?}");
+        assert_eq!(funnel.iter().sum::<usize>(), 8, "the stock and the US listing are out of scope");
         assert_eq!(funnel.len(), core::HOLD_LEGS.len() + 1, "one slot per leg plus the qualified tail");
         // the tail slot is the SAME verdict `hold_suitable` gives — one definition, two readers
         assert_eq!(funnel[core::HOLD_LEGS.len()],
