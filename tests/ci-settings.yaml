@@ -6230,6 +6230,83 @@ buy_heuristic:
                                  #   a question about the ruler, not about 19.0. Nothing shipped, so there is nothing to revert.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
+  growth_min_cagr_etf: 0.0      # (#192) GATE (ETFs only), TWO LEGS, one number — the fund lane's OWN CAGR floor, same units
+                                 #   and same two legs as growth_min_cagr (the long rung, and the whole-life bar via life_leg_cagr).
+                                 #   0.0 = INHERIT the equity floor and NOT "off": this is a MIN bar, so 0-as-off would make the
+                                 #   DEFAULT a relaxation. SHIPPED AT THE SENTINEL — the lane is byte-identical to before this knob,
+                                 #   and every golden proves it. The knob was MEASURED AND REFUSED; it stays for the two reasons below.
+                                 #   WHAT WAS ASKED. Widen ADMISSION so the book holds more names worth holding 20+ years. (#124)'s
+                                 #   decile ladder is why that was worth trying: more names improved the median AND the left tail
+                                 #   monotonically (top-1 d10 0.05x / med 3.78x / P(book<1.0x) 40% -> top-10 1.30x / 5.51x / 5%), and
+                                 #   went flat only because the book never holds more than ~10 names. The ETF lane was the obvious
+                                 #   place to look: growth_min_cagr 19.0 sits in the RIGHT TAIL of the stock return distribution while
+                                 #   a diversified fund IS that distribution's mean, so structurally no broad sleeve can ever clear it,
+                                 #   and six other ETF-specific relaxations already ship on exactly that argument (growth_max_peg_etf
+                                 #   2.0 vs equity 1.6, sharpe_cap_etf 9.0 vs 15.0, growth_min_score_etf, growth_min_aum_etf,
+                                 #   budget_etf, name_etf). The CAGR gate was the conspicuous hole. It is now measured, not a hole.
+                                 #   THE CLAIM I SHIPPED THIS ON FIRST, AND IT WAS FALSE. The arm was drafted "NOT BACKTEST-GRADEABLE:
+                                 #   the graded pool is S&P 500 constituents and holds no ETFs", to be shipped on judgement plus a live
+                                 #   screen diff. That is WRONG and the repo already said so: `class_census` (backtest.rs) records the
+                                 #   pool as ~4311 ETFs of 4954 and names this exact sentence as the rotted receipt `sharpe_cap_etf`
+                                 #   once shipped on. Arming the knob moved five FROZEN goldens (ETF growth-scored 1/184 -> 4/184),
+                                 #   which is the proof, and it is why the fixture is a gate and not a formality. Graded properly below.
+                                 #   MEASURED 2026-09-01 — six `backtest <y> universe fund pit` runs, control (0.0 = inherit) vs arm
+                                 #   (15.0), one pond (4791-4792 resolved, ALL from cache), windows scored 1119/2737/6126 at 20y/12y/8y
+                                 #   so no FOLIOMAN_OFFLINE collapse. Ship Rule v2 on the (#139) PIT LANE: PRIMARY and TIE read 12y AND
+                                 #   8y, every 20y GUARD live. The knob is a GATE (pool-changing), so (#149)'s vacuity exemption does
+                                 #   NOT excuse it from PRIMARY — that exemption covers RANKING knobs on a saturated column.
+                                 #     PROOF OF ARM (the pool actually moved, per class_census growth-scored/cutoffs):
+                                 #       20y  ETF   0/12   ->   0/12      stock 120/2276 both       <- see 20y note below
+                                 #       12y  ETF   0/3043 ->  12/3043    stock 249/5444 both
+                                 #        8y  ETF   7/9586 -> 138/9586    stock 348/7649 both
+                                 #       The stock column is IDENTICAL at all three horizons: an ETF floor that moved the equity lane
+                                 #       would be a bug, and this is the check that would have caught it.
+                                 #     PRIMARY — top-10 held book, excess mean (median) pts/yr, control -> arm:
+                                 #       12y  +3.7 (+3.9)  ->  +3.7 (+3.3)     mean held, MEDIAN DOWN 0.6      REFUSES
+                                 #        8y  +5.3 (+5.6)  ->  +4.8 (+4.3)     BOTH DOWN, 0.5 and 1.3          REFUSES
+                                 #       20y  +0.6 (+0.0)  ->  +0.6 (+0.0)     unmoved, and unmovable — see below
+                                 #       Both graded horizons move the SAME WAY, so this is not a TIE and not UNRESOLVED. It is an
+                                 #       outright PRIMARY refusal, at the two horizons the pit lane adjudicates on.
+                                 #     GUARDS all PASS — which is the point of reporting them: the arm was refused on its merits, not
+                                 #     on a broken guard, and nothing here was softened to get there.
+                                 #       worst window (top-10)  20y -10.0 = -10.0   12y -6.4 = -6.4   8y -5.5 = -5.5   not worse
+                                 #       rank-1 h2h  12y 12/19 (63%) = control, >= 50% and NOT BELOW it, on the 6-10 book per (#160)
+                                 #       rank-1 h2h   8y 22/27 (81%) vs control 19/27 (70%) — clears both bars, and IMPROVES
+                                 #       rank-1 h2h  20y 1/2 (50%) on the 11-20 book, n=2 -> VACUOUS BY RESOLUTION per (#186): one
+                                 #         window flip moves the tally the full 50 points, so it can neither refuse nor license. Vacuous
+                                 #         is not a pass; the arm still cleared 20y's live MAX guard (worst window) unchanged.
+                                 #     WHERE THE HARM IS, from the disjoint rank slices — the useful part of this refusal:
+                                 #       rank 1     IDENTICAL at every horizon (12y +1.8|+5.1, 8y +5.6|+6.5). No admitted fund ever
+                                 #                  reaches rank 1, so the top of the book is untouched.
+                                 #       rank 6-10  12y -1.9|-0.1 -> -2.0|-0.1     8y -0.0|+1.7 -> -1.7|+0.2
+                                 #       The admitted ETFs land in the MIDDLE of the book and dilute it, and an equal-weight top-10
+                                 #       pays 1/N for every one of them. That is the mechanism, and it is not a scoring artifact: the
+                                 #       same names that widen the pool are the ones that occupy slots 6-10.
+                                 #     THE 20y COLUMN CANNOT SPEAK ABOUT FUNDS AT ALL, and not for (#124)'s n_eff reason. There are 12
+                                 #     ETF cutoffs in the whole 20y lane and NONE scores at 15.0 or at the inherited 19.0, so the arm
+                                 #     and the control are the same run. Forward-window survival scales with listing age; the funds
+                                 #     simply are not old enough. Do not read a 20y ETF conclusion off this harness — `class_census`
+                                 #     carries that warning and this is it firing.
+                                 #   WHAT THE LIVE SCREEN SAID, and why it is NOT the ship signal. Five `screen` runs the same day
+                                 #   (control/18/15/12/10) put ETF rows at 8/10/19/23/23 and cleared names at 11/13/22/~27/35, with the
+                                 #   stock table byte-identical at every arm (md5 323c3eb1366de4979091f1418627ded4). 15.0 was chosen
+                                 #   as the arm because it was the lowest floor whose new rows were 11 DISTINCT benchmarks rather than
+                                 #   share-class twins. All of that is a POOL CENSUS — it counts what gets admitted, and says nothing
+                                 #   about what the admitted names then RETURN. The backtest answers that, and it answered no.
+                                 #   WHY THE KNOB STAYS AT ALL rather than being deleted with its receipt:
+                                 #     (1) it collapsed THREE hand-copied spellings of the CAGR floor (score_parts, gate_failures, and
+                                 #         the long_leg_floors tail view) into `picks::min_cagr_floor` — non-negotiable #4. The #2
+                                 #         mirror was previously held only by the three copies happening to be typed alike.
+                                 #     (2) its ETF-only scope is now a TEST RESULT, not a comment: `growth_gate_reachability_pin` reads
+                                 #         etf LIVE / crypto INERT / stock INERT for it. Re-measuring costs one number, not a refactor.
+                                 #   RE-ARMING RULE, so this is not re-run blind. Any future arm must clear PRIMARY at 12y AND 8y on
+                                 #   `universe fund pit`. The measured direction is that ADMITTING FUNDS DILUTES RANKS 6-10, and it is
+                                 #   monotone in how many get admitted (8y admits 138 names and loses 0.5|1.3; 12y admits 12 and loses
+                                 #   0|0.6), so a floor picked high enough not to hurt is a floor that admits nothing. Do not fit this
+                                 #   knob to the grade — that is a search for the value where the harm rounds to zero, not a finding.
+                                 #   The honest read is that this lever is CLOSED, on the same evidence the other five closed on.
+                                 #   REVERT RULE: none needed — nothing shipped. 0.0 IS the shipped value and it is the INHERIT
+                                 #   sentinel, so deleting the key entirely is byte-identical too.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
                                  #   (#3k) 2026-07-29 LOWERED 0.35 -> 0.15 — the WINNER'S-CURSE CURE. New
                                  #   rank-slice/head-to-head instrumentation proved rank 1 was the WORST

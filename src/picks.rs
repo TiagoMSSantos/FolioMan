@@ -158,6 +158,35 @@ pub fn long_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years).map(|(cum, years)| long_cagr_from(quote, tuning, cum, years))
 }
 
+/// (#192) The CAGR floor `growth_min_cagr` judges THIS quote against — one definition, three readers.
+///
+/// The floor used to be spelled out as its own `if crypto {..} else {..}` at each of the three sites
+/// that read it (`score_parts`, `gate_failures`, `long_leg_floors`). That is exactly the shape
+/// non-negotiable #4 forbids: three copies of one number, free to drift, and the #2 mirror between the
+/// scorer and `gate_failures` held only by their happening to be typed the same. Adding a third class
+/// would have made three edits where one is correct, so the resolution moved here first.
+///
+/// CLASS ORDER IS CRYPTO, THEN ETF, THEN EQUITY, and the order is load-bearing rather than stylistic:
+/// `quote_is_etf` reads a name/instrument-type stamp that a coin can carry (a spot-crypto ETP is a
+/// fund by every test we have), so asking "crypto?" second would route BTC-EUR through the fund floor.
+/// The coin floor is the looser of the two, so the mistake would be silent — a tightening, not a panic.
+///
+/// `growth_min_cagr_etf` 0.0 = INHERIT the equity floor, NOT "off". This is a MIN bar: a 0 floor
+/// admits everything, so 0-as-off would make the DEFAULT a relaxation and break non-negotiable #1's
+/// byte-identical lane. The `_etf` knobs that do mean "off" at 0 are all MAX bars, where 0 is neutral.
+/// Both legs of the gate read this — the long rung and the whole-life `life_leg_cagr` bar — because
+/// they are one knob judged twice, and splitting the classes on only one leg would let a fund clear
+/// the rung it was admitted for and die on the other.
+pub(crate) fn min_cagr_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
+    if is_currency_quoted(&quote.ticker) {
+        tuning.growth_min_cagr_crypto
+    } else if quote_is_etf(quote) && tuning.growth_min_cagr_etf > 0.0 {
+        tuning.growth_min_cagr_etf
+    } else {
+        tuning.growth_min_cagr
+    }
+}
+
 /// (#37 funds) A fund's look-through equity-book P/E together with WHERE THE NUMBER CAME FROM.
 ///
 /// `from: None` = Yahoo served this ratio for this fund, or it was copied across venue listings of the
@@ -1157,7 +1186,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // this just promotes that bar from a soft halving to a hard gate (BTC/ETH/XMR/… all have 5Y).
     let (long_cum, long_years) = long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years)?; // (#15) pin the CAGR window
     let long_cagr = long_cagr_from(quote, tuning, long_cum, long_years); // (#14) the `LEG` column shows this
-    let min_cagr = if crypto { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
+    let min_cagr = min_cagr_floor(quote, tuning);
     if long_cagr < min_cagr {
         return None; // equities: weak trend = expensive laggard. crypto: looser floor (show all growers vs BTC)
     }
@@ -2219,7 +2248,7 @@ pub fn proven_but_unranked(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f64,
     // knob it was overriding never reached this call. The clone stated an intent the code could not
     // carry out, and a mutation grade found it by deleting the field with no test moving.
     let cagr = long_cagr_from(quote, tuning, cum, years);
-    let floor = if is_currency_quoted(&quote.ticker) { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
+    let floor = min_cagr_floor(quote, tuning);
     if cagr < floor {
         return None; // no proven record -> the gates are simply right about it, nothing to explain
     }
@@ -2313,7 +2342,7 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     let return_1y = perf_pct(quote, "1Y")?; // no 1Y data
     let long_cagr = long_cagr_from(quote, tuning, long_cum, long_years);
     let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
-    let min_cagr = if crypto { tuning.growth_min_cagr_crypto } else { tuning.growth_min_cagr };
+    let min_cagr = min_cagr_floor(quote, tuning);
     let y1_floor = if crypto { tuning.min_1y_pct_crypto } else { tuning.growth_min_1y_pct }; // same expression as score_parts, deliberately
     let knife = if crypto { tuning.max_1m_drop_pct_crypto } else { tuning.max_1m_drop_pct };
     let r1m = perf_pct(quote, "1M").unwrap_or(0.0);
@@ -8207,6 +8236,57 @@ mod tests {
         assert!(scored(&crashed, &BuyHeuristic { growth_maxdd_cap: 20.0, ..d.clone() }),
             "the equity drawdown cap must not touch the crypto lane");
     }
+
+    /// (#192) GATE FENCES, fund lane. Three claims, and the third is what non-negotiable #1 rests on:
+    /// the ETF CAGR floor is its own number, the equity bar stops reaching a fund once it is armed, and
+    /// at the default 0 it INHERITS the equity floor rather than opening the gate. A MIN bar read as
+    /// "0 = off" would make the shipped default a relaxation, which is the one thing a new knob may not
+    /// be. The crypto-before-ETF class order is pinned here too: a spot-crypto ETP is a fund by every
+    /// test we have, so asking the questions the other way round would silently route a coin through
+    /// the fund floor.
+    #[test]
+    fn etf_cagr_floor_is_its_own_and_zero_inherits() {
+        let d = BuyHeuristic::default();
+        let scored = |q: &Quote, t: &BuyHeuristic| growth_score(q, t).is_some();
+        let fund = || {
+            let mut q = gate_fixture();
+            q.ticker = "TFND.DE".into();
+            q.name = "Test Core Fund".into(); // no commodity/miner/leveraged token to trip a cheap exclusion
+            q.instrument_type = "ETF".into();
+            q
+        };
+        let leg = core::cagr(200.0, 5.0); // 24.57%/yr — the same fence the equity and crypto lanes measure against
+        assert!(quote_is_etf(&fund()), "or this test is about an equity");
+
+        // 0 = INHERIT. The default must gate a fund on the EQUITY floor, exactly as before the knob existed.
+        assert_eq!(d.growth_min_cagr_etf, 0.0, "the neutral default IS the inherit sentinel");
+        assert!(scored(&fund(), &BuyHeuristic { growth_min_cagr: leg, ..d.clone() }));
+        assert!(!scored(&fund(), &BuyHeuristic { growth_min_cagr: leg + 0.01, ..d.clone() }),
+            "with the fund floor at 0 the equity bar MUST still bite — 0 is inherit, never off");
+
+        // armed: its own fence on the long rung, and the equity bar no longer reaches the fund
+        assert!(scored(&fund(), &BuyHeuristic { growth_min_cagr_etf: leg, growth_min_cagr: 99.0, ..d.clone() }));
+        assert!(!scored(&fund(), &BuyHeuristic { growth_min_cagr_etf: leg + 0.01, growth_min_cagr: 0.0, ..d.clone() }));
+
+        // ...and on the WHOLE-LIFE leg too. One knob judged twice: splitting the classes on only one leg
+        // would admit a fund on the rung it cleared and kill it on the other.
+        let mut aged = fund();
+        aged.life_cagr = Some(10.0);
+        assert!(scored(&aged, &BuyHeuristic { growth_min_cagr_etf: 10.0, growth_min_cagr: 99.0, ..d.clone() }));
+        assert!(!scored(&aged, &BuyHeuristic { growth_min_cagr_etf: 10.01, growth_min_cagr: 0.0, ..d.clone() }),
+            "the fund floor must reach life_leg_cagr, not just the long rung");
+
+        // the fund floor must not reach a stock
+        assert!(scored(&gate_fixture(), &BuyHeuristic { growth_min_cagr_etf: 99.0, ..d.clone() }),
+            "the fund CAGR gate must not touch the stock lane");
+
+        // ...nor a coin, even one Yahoo stamps as a fund — crypto is asked FIRST
+        let mut etp = fund();
+        etp.ticker = "BTC-EUR".into();
+        assert!(scored(&etp, &BuyHeuristic { growth_min_cagr_etf: 99.0, ..d.clone() }),
+            "class order is crypto-then-ETF: a crypto ETP takes the coin floor, not the fund one");
+    }
+
 
     /// (funnel) `gate_failures` MIRRORS `score_parts` rather than sharing its gates — a duplication
     /// picks.rs justifies with "drift only mislabels the tail, never the rank". That justification dies
