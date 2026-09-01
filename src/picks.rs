@@ -3963,6 +3963,44 @@ pub fn narrow_census(quotes: &[Quote]) -> Vec<(&'static str, usize)> {
     out
 }
 
+/// (#203) The OTHER half of leg 0, and the 90% of the pond nobody has ever looked at: EU-buyable ETFs
+/// that carry NO `core::GEO` token, NO `core::NARROW` tilt word, and facts that clear every remaining
+/// admission leg. Sorted by AUM descending, ties by ticker.
+///
+/// `narrow_census` prices what the REFUSE-list costs. This prices what the ACCEPT-list MISSES, which
+/// is the strictly harder half: `core::GEO` is 22 hand-written provider strings matched by plain
+/// `contains`, with no hyphen or whitespace normalisation, so "all-country" cannot match a fund named
+/// "All Country World" and "global all cap" cannot match "Prime Global". Whether such funds are
+/// actually in the pond has never been measured — it cannot be, offline, because no fund NAMES are
+/// cached anywhere on disk.
+///
+/// The no-`narrow_hit` filter is what makes the output readable: it strips the sector and thematic
+/// funds, which are refused on purpose and are the overwhelming bulk of the bucket. What survives is
+/// institutional-grade AND carries no tilt word, so the only thing standing between it and the CORE
+/// list is that no token matched. Every row is therefore either a broad tracker the lane is wrongly
+/// refusing — (#200)'s defect class, a token ABSENT rather than one matching too loosely — or proof
+/// that `GEO` is complete and the argument is over.
+///
+/// Pure and gradeable, per the rule (#198)'s doc comment set for `print_hold_core`.
+pub fn geo_miss_census(quotes: &[Quote]) -> Vec<&Quote> {
+    let mut out: Vec<&Quote> = quotes
+        .iter()
+        .filter(|q| eu_buyable(q) && quote_is_etf(q))
+        .filter(|q| {
+            let lower = q.name.to_lowercase();
+            core::geo_hit(&lower).is_none() && core::narrow_hit(&lower).is_none()
+        })
+        .filter(|q| core::hold_miss_but_breadth(q).is_none())
+        .collect();
+    out.sort_by(|a, b| {
+        b.aum_shown()
+            .unwrap_or(0.0)
+            .total_cmp(&a.aum_shown().unwrap_or(0.0))
+            .then_with(|| a.ticker.cmp(&b.ticker))
+    });
+    out
+}
+
 /// (#201) Why a PINNED broad-ish ETF is not in the CORE list. `hold_miss_reason`'s leg-0 message is
 /// the one leg that cannot say why — "not a broad-index name (sector/thematic/factor tilt)" is a
 /// category, not a cause — so when a narrow token is the blocker this reports the TOKEN, which is the
@@ -3971,10 +4009,24 @@ pub fn narrow_census(quotes: &[Quote]) -> Vec<(&'static str, usize)> {
 /// Extracted rather than written inline in the printer for the reason (#198) recorded there: a real
 /// decision inside a `#[mutants::skip]`ped function is a decision the gate cannot see.
 pub fn near_miss_reason(q: &Quote) -> Option<String> {
-    match core::narrow_hit(&q.name.to_lowercase()) {
-        Some(t) => Some(format!("narrow token \"{}\"", t.trim())),
-        None => core::hold_miss_reason(q),
+    near_miss_reason_with(q, crate::config::hold_size_sleeve_ter())
+}
+
+/// (#204) [`near_miss_reason`] with the size sleeve's cap PASSED rather than read, so the guard below
+/// is reachable from a test — with the sleeve OFF a `NARROW` hit ALWAYS refuses at leg 0, which makes
+/// `leg == 0` and `true` indistinguishable and the fix ungradeable.
+pub fn near_miss_reason_with(q: &Quote, size_cap: f64) -> Option<String> {
+    // (#204) ask WHICH leg first, and only then reach for the token. Asking `narrow_hit` first was
+    // correct while a narrow hit implied refusal; (#202) ended that — the size sleeve admits a name
+    // BECAUSE of its narrow token, so the old order reported `narrow token "small"` for a fund that
+    // was in fact refused three legs later on TER, which is the one number a reader needs.
+    let (leg, msg) = core::hold_miss_leg_with(q, size_cap)?;
+    if leg == 0 {
+        if let Some(t) = core::narrow_hit(&q.name.to_lowercase()) {
+            return Some(format!("narrow token \"{}\"", t.trim()));
+        }
     }
+    Some(msg)
 }
 
 /// Buy-and-hold CORE shortlist — the one-fund-forever holds the momentum SCORE buries at 0.0 (the
@@ -4096,6 +4148,20 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
         let cells: Vec<String> = narrow.iter().map(|(t, n)| format!("{} {n}", t.trim())).collect();
         println!("  NARROW cost — {} geo-broad ETFs refused on a name token: {}",
             narrow.iter().map(|(_, n)| n).sum::<usize>(), cells.join(" · "));
+    }
+    // (#203) …and the half of leg 0 the NARROW census cannot see: no GEO token, no tilt word, every
+    // other leg clear. Arithmetic is in `geo_miss_census` (gradeable); this only formats it.
+    let geo_miss = geo_miss_census(quotes);
+    if !geo_miss.is_empty() {
+        println!("  GEO blind spot — {} ETFs carry no GEO token yet clear every other leg (top 15 by AUM):",
+            geo_miss.len());
+        for q in geo_miss.iter().take(15) {
+            println!("    {:<9} {:>7} {:>6}  {}",
+                q.ticker,
+                q.aum_shown().map_or("n/a".to_string(), |a| format!("€{:.1}B", a / 1e9)),
+                q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%")),
+                q.name);
+        }
     }
     // (round 111) leading 1-char cell = the owned-position marker; this list is what a 20yr holder
     // actually buys, so "covered" matters most here. Blank when the overlay is off/empty.
@@ -7420,6 +7486,59 @@ mod tests {
         dist.use_of_profits = Some("Dist");
         assert_eq!(near_miss_reason(&dist).as_deref(), Some("share class Dist (needs Acc)"));
         assert_eq!(near_miss_reason(&quotes[5]), None, "a qualifying core has no near-miss reason");
+    }
+
+    /// (#203) The census of the OTHER half of leg 0: no GEO token, no NARROW token, every remaining
+    /// admission leg clear. Each of the three exclusions below is carried by a DIFFERENT fund, so
+    /// dropping any one of the three filters changes the answer — and the two survivors carry
+    /// different AUMs, so a constant return or a lost sort cannot satisfy this either.
+    #[test]
+    fn geo_miss_census_finds_what_the_geo_list_cannot_spell() {
+        let cap = crate::config::hold_max_ter();
+        // no GEO token can match these: "all-country" is hyphenated and "global all cap" is a
+        // different string, while `core::hit` is a plain substring test with no normalisation.
+        let praw = core_etf("PRAW.DE", "Amundi Prime All Country World UCITS ETF", 3e9, cap);
+        let lgge = core_etf("LGGE.DE", "L&G Global Equity UCITS ETF", 1.5e9, cap);
+        let quotes = vec![
+            praw,
+            lgge,
+            // excluded by geo_hit ALONE — broad, clean, and already admitted by the lane
+            core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 9e9, cap),
+            // excluded by narrow_hit ALONE — no geography, but a sector word
+            core_etf("INRG.DE", "iShares Global Clean Energy UCITS ETF", 9e9, cap),
+            // excluded by hold_miss_but_breadth ALONE (AUM), not by either name test
+            core_etf("SMAL.DE", "Amundi Prime Global Equity UCITS ETF", 5e8, cap),
+            // …and by the BASE TER cap. Largest AUM in the set, so it would sort FIRST if the leg
+            // filter were dropped — and it pins that `hold_miss_but_breadth` reads the base cap.
+            core_etf("EXPS.DE", "Amundi Prime Global UCITS ETF", 9e9, cap + 0.10),
+        ];
+        let got: Vec<&str> = geo_miss_census(&quotes).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(got, vec!["PRAW.DE", "LGGE.DE"], "descending by AUM, one row per real blind spot");
+    }
+
+    /// (#204) `near_miss_reason` must report the TOKEN only when breadth is what actually refused.
+    /// It asked `narrow_hit` first, which was right while a narrow hit implied refusal — (#202) ended
+    /// that, so a world small-cap fund refused three legs later on AUM still reported
+    /// `narrow token "small"` and hid the one number a reader needs.
+    ///
+    /// Both caps are asserted because with the sleeve OFF every narrow name refuses at leg 0, making
+    /// `leg == 0` and `true` indistinguishable — the cap has to be threaded for this to grade at all.
+    #[test]
+    fn near_miss_reason_names_the_leg_that_actually_refused() {
+        let thin = core_etf("IUSN.DE", "iShares MSCI World Small Cap UCITS ETF", 5e8, 0.30);
+        assert_eq!(near_miss_reason_with(&thin, 0.0).as_deref(), Some("narrow token \"small\""),
+            "sleeve OFF: breadth IS the refusal, so the token is the answer");
+        assert_eq!(near_miss_reason_with(&thin, 0.35).as_deref(), Some("AUM €0.5B < €1B floor"),
+            "sleeve ON: breadth passed, so report the leg that did refuse");
+
+        let pricey = core_etf("WSML.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.40);
+        assert_eq!(near_miss_reason_with(&pricey, 0.35).as_deref(), Some("TER 0.40% > 0.35% cap"),
+            "the sleeve's OWN cap is what the TER leg quotes");
+
+        let ok = core_etf("SMLW.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.30);
+        assert_eq!(near_miss_reason_with(&ok, 0.35), None, "sleeve ON and every leg clear");
+        assert_eq!(near_miss_reason_with(&ok, 0.0).as_deref(), Some("narrow token \"small\""),
+            "the SAME fund is refused with the sleeve off — non-negotiable #1, read through the reader");
     }
 
     /// (#66) The per-tier counter must survive more names in one tier than a `u8` can hold. It was

@@ -1301,9 +1301,17 @@ fn ter_cap_for(tier: u8, size_cap: f64, base_cap: f64) -> f64 {
 /// The geographic tier of an ALREADY-lowercased name, or None when no geography token matches or a
 /// NARROW token disqualifies it. The single place the two public fns above agree.
 fn geo_tier(n: &str) -> Option<u8> {
+    geo_tier_at(n, crate::config::hold_size_sleeve_ter())
+}
+
+/// (#204) [`geo_tier`] with the size sleeve's cap PASSED rather than read, for the reason
+/// [`ter_cap_for`] already records: the knob is a process-wide `OnceLock` no test can flip, so every
+/// branch that only fires with the sleeve ON is a branch the mutation gate cannot reach. Threading
+/// the cap is what makes the whole `(#202)` admission path gradeable, not just its leaf helpers.
+fn geo_tier_at(n: &str, size_cap: f64) -> Option<u8> {
     if let Some(first) = narrow_hit(n) {
         // (#202) …unless the only narrow thing about it is market cap, and the sleeve is switched on.
-        return size_sleeve_tier(n, first, crate::config::hold_size_sleeve_ter());
+        return size_sleeve_tier(n, first, size_cap);
     }
     geo_hit(n)
 }
@@ -1361,10 +1369,25 @@ pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
     // TER leg — `hold_breadth_tier` would answer `SIZE_TIER` for a name with no geography at all
     // (its `unwrap_or` fallback is the last tier), so re-asking there would hand the size cap to
     // anything that reached it by another route. One lookup, one definition (non-negotiable #4).
+    hold_miss_leg_with(q, crate::config::hold_size_sleeve_ter())
+}
+
+/// (#204) The six legs with the size sleeve's TER cap PASSED rather than read — see [`geo_tier_at`].
+/// `size_cap` 0.0 is the shipped lane; any positive value opens the sleeve, and only then can a name
+/// carrying a `NARROW` token be refused by a leg OTHER than breadth, which is the case
+/// `picks::near_miss_reason` had to be fixed for and no test could construct before.
+pub fn hold_miss_leg_with(q: &Quote, size_cap: f64) -> Option<(usize, String)> {
     let lower = q.name.to_lowercase();
-    let Some(tier) = geo_tier(&lower) else {
+    let Some(tier) = geo_tier_at(&lower, size_cap) else {
         return Some((0, "not a broad-index name (sector/thematic/factor tilt)".into()));
     };
+    hold_miss_leg_at(q, tier, size_cap)
+}
+
+/// (#203) Legs 1..5 for a fund ALREADY placed in `tier` — every leg of [`hold_miss_leg`] except the
+/// breadth one, split out so [`hold_miss_but_breadth`] can ask the other five without re-spelling a
+/// single one of them (non-negotiable #4). `tier` is read at exactly one site, [`ter_cap_for`].
+fn hold_miss_leg_at(q: &Quote, tier: u8, size_cap: f64) -> Option<(usize, String)> {
     // (#102) the name token, OR — behind the knob — an EU domicile, which is the FACT the token is a
     // proxy for. `domicile: None` still falls back to the name, so missing data cannot newly pass.
     let eu_domiciled = crate::config::hold_ucits_or_domicile()
@@ -1374,7 +1397,7 @@ pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
     }
     // (#202) the size sleeve carries its own ceiling: world small-cap funds run ~0.35% against a
     // 0.25% cap fitted to all-world trackers, so one shared number cannot admit both.
-    let cap = ter_cap_for(tier, crate::config::hold_size_sleeve_ter(), crate::config::hold_max_ter());
+    let cap = ter_cap_for(tier, size_cap, crate::config::hold_max_ter());
     match q.ter_shown() {
         None => return Some((2, "TER unknown".into())),
         Some(t) if t > cap => return Some((2, format!("TER {t:.2}% > {cap:.2}% cap"))),
@@ -1398,6 +1421,18 @@ pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
         }));
     }
     None
+}
+
+/// (#203) Would this fund clear every leg BUT breadth? The question `picks::geo_miss_census` asks of
+/// the ~4100 names leg 0 refuses, to tell the two populations inside it apart: a stock or a bond fund
+/// with no geography at all, versus a genuinely broad tracker whose index `GEO` simply cannot spell.
+/// Only the second is supply, and only the second is a bug.
+///
+/// Tier 0 (all-world) is passed deliberately: it makes [`ter_cap_for`] apply the BASE cap, never the
+/// size sleeve's, so a hypothetical admission is priced against the lane's own ceiling and the answer
+/// does not move when `hold_size_sleeve_ter` does.
+pub fn hold_miss_but_breadth(q: &Quote) -> Option<(usize, String)> {
+    hold_miss_leg_at(q, 0, 0.0)
 }
 
 /// Pick the newest FULINS_C download link out of a FIRDS registry payload. Handles both registry
