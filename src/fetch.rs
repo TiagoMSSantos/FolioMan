@@ -1105,31 +1105,52 @@ fn ttm_eps_from_concept(j: &Value, today: NaiveDate) -> Option<f64> {
 /// an FMP-covered ETF — FMP's free tier is US-centric, so EU-listed UCITS ETFs (e.g. VUAA.DE) often
 /// return nothing and the column stays n/a for them.
 /// ponytail: scale is the FMP convention; if a known US ETF prints 100× off, drop the ×100 here.
+#[mutants::skip] // (#209) async network shell — see `bf_ter_cascade` for why, and for the decisions.
 async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str, name: &str) -> Option<f64> {
     // Börse Frankfurt TER (captured for free during the universe build) first — it covers the EU UCITS
     // ETFs FMP's US-centric free tier leaves n/a. FMP fallback for US-listed ETFs not in the BF list.
-    if let Some(t) = bf_ter_exact(ticker) {
-        return Some(t);
-    }
-    // A pinned EU listing often sits on a different venue than the map's ISIN-resolved one (SPYL.DE
-    // pinned, map holds SPYL.L): issuers keep one mnemonic per fund across venues, so a same-stem hit
-    // is the same fund's TER. ETF-classified quotes only — an equity ticker could stem-collide.
-    if let Some(t) = ticker.split_once('.').and_then(|(stem, _)| {
-        BF_TER.get()?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, t)| *t)
-    }) {
-        return Some(t);
-    }
-    // Last BF resort: unique fund-name prefix (rescues VVSM.DE, whose venue the symbol map can't reach).
-    // Retry without Yahoo's umbrella-company prefix: "Amundi Index Solutions - Amundi S&P 500 Swap UCITS
-    // ETF EUR Acc" — BF lists only the part after " - " (rescues AUM5.DE, TER 0.15%).
-    if let Some(t) =
-        bf_ter_by_name(name).or_else(|| name.split_once(" - ").and_then(|(_, fund)| bf_ter_by_name(fund)))
-    {
+    if let Some(t) = bf_ter_cascade(BF_TER.get(), &BF_TER_NAMES, ticker, name) {
         return Some(t);
     }
     let v = cached_fund_json(client, &urls.fund_expense, ticker, "etf").await?;
     let ter = v.get(0).unwrap_or(&v).get("expenseRatio")?.as_f64()?;
     ter_pct(ter)
+}
+
+/// (#209) The Börse-Frankfurt TER cascade, hoisted OUT of [`fetch_expense`]. That caller is an async
+/// fn holding a `&Client`, so the mutation gate cannot reach its return AT ALL: CI graded
+/// `replace fetch_expense -> Option<f64> with Some(0.0)` as MISSED, and it was right to. That mutant
+/// makes every ETF in the pond read TER 0.00%, which passes every TER cap there is — it would have
+/// admitted the entire fund universe to the CORE lane, and no test in the suite could see it.
+/// `(#198)`'s rule covers an unreachable network shell exactly as it covers a skipped printer: the
+/// decision moves OUT to somewhere gradeable, it does not get `#[mutants::skip]`-ed in place.
+///
+/// Both maps arrive as PARAMETERS, for the same reason knob values do (`ter_cap_for`,
+/// `hold_miss_leg_with`): `BF_TER` and `BF_TER_NAMES` are process-wide `OnceLock`s no test can flip,
+/// and a rung no test can reach is a rung the gate cannot grade.
+///
+/// Order is load-bearing, and every rung exists because a real listing needed it:
+/// exact symbol -> same-stem venue -> unique fund-name prefix -> name minus Yahoo's umbrella prefix.
+fn bf_ter_cascade(
+    map: Option<&HashMap<String, f64>>,
+    names: &std::sync::OnceLock<Vec<(String, f64)>>,
+    ticker: &str,
+    name: &str,
+) -> Option<f64> {
+    bf_ter_exact_in(map, ticker)
+        .or_else(|| {
+            // A pinned EU listing often sits on a different venue than the map's ISIN-resolved one
+            // (SPYL.DE pinned, map holds SPYL.L): issuers keep one mnemonic per fund across venues, so
+            // a same-stem hit is the same fund's TER. ETF-classified quotes only (the caller gates on
+            // `is_etf`) — an equity ticker could stem-collide.
+            let stem = ticker.split_once('.')?.0;
+            map?.iter().find(|(k, _)| k.split('.').next() == Some(stem)).map(|(_, t)| *t)
+        })
+        // Last BF resort: unique fund-name prefix (rescues VVSM.DE, whose venue the symbol map can't
+        // reach). Retry without Yahoo's umbrella-company prefix: "Amundi Index Solutions - Amundi S&P
+        // 500 Swap UCITS ETF EUR Acc" — BF lists only the part after " - " (rescues AUM5.DE, 0.15%).
+        .or_else(|| bf_by_name(names, name))
+        .or_else(|| bf_by_name(names, name.split_once(" - ")?.1))
 }
 
 /// (#206) FMP's `expenseRatio` as a PERCENT. The ratio arrives as a decimal fraction and the ×100
@@ -1143,8 +1164,16 @@ async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str, name: &str) -
 /// actually inclusive, which `scoring_regression_pin` already asserts is the intent.
 ///
 /// The shipped lane cannot move: its cap is `hold_max_ter` 0.25, and 0.0025 × 100 is exact, so no
-/// FMP value has ever landed just above it. Split out of the caller because the caller is an async
+/// value has ever landed just above it. Split out of the caller because the caller is an async
 /// network fn the gate cannot reach, and an ungraded arithmetic fix is how this bug got here.
+///
+/// (#208) THE conversion, not one of three. `ter_shown` reads `expense_ratio` or `ter_fallback`, and
+/// three separate sources filled them with three separate hand-written `* 100.0`s — Börse Frankfurt
+/// (`bf_row_ter`, which serves most of the pond and is tried FIRST), Yahoo quoteSummary
+/// (`parse_yahoo_fund_facts`) and FMP (`fund_ter`). (#206) fixed only the FMP one, and the live
+/// re-run still refused IUSN.DE at `TER 0.35% > 0.35% cap`, because its TER never came from FMP at
+/// all. Non-negotiable #4 is the whole lesson: ONE definition per number, or a fix lands on the
+/// copy nobody was reading.
 pub fn ter_pct(ratio: f64) -> Option<f64> {
     (ratio.is_finite() && ratio > 0.0).then(|| (ratio * 1e6).round() / 1e4)
 }
@@ -1153,7 +1182,13 @@ pub fn ter_pct(ratio: f64) -> Option<f64> {
 /// symbol proves the listing is an ETP, so Yahoo mislabeling an ETC as EQUITY (physical-gold ETCs)
 /// can't hide its TER.
 fn bf_ter_exact(ticker: &str) -> Option<f64> {
-    BF_TER.get().and_then(|m| m.get(ticker)).copied()
+    bf_ter_exact_in(BF_TER.get(), ticker)
+}
+
+/// (#209) The exact lookup itself, taking the map so `bf_ter_cascade` and the live global read the
+/// SAME one (non-negotiable #4 — and (#208) is what a second copy of a TER rule costs).
+fn bf_ter_exact_in(map: Option<&HashMap<String, f64>>, ticker: &str) -> Option<f64> {
+    map.and_then(|m| m.get(ticker)).copied()
 }
 
 // (G) Cold-fetch budget for the historical-fundamentals lane: FMP free tier = 250 calls/day, so cap
@@ -2737,10 +2772,6 @@ fn bf_by_name<T: Clone + PartialEq>(list: &std::sync::OnceLock<Vec<(String, T)>>
     hits.all(|v| v == first).then(|| first.clone())
 }
 
-fn bf_ter_by_name(name: &str) -> Option<f64> {
-    bf_by_name(&BF_TER_NAMES, name)
-}
-
 /// First 2 ISIN chars = the fund's legal domicile country code. Defensive slice: upstream ISINs are
 /// shape-checked (`core::is_isin`), but a short string must yield None, never panic.
 fn isin_domicile(isin: &str) -> Option<String> {
@@ -2915,8 +2946,7 @@ fn parse_yahoo_fund_facts(v: &Value) -> (Option<f64>, Option<f64>) {
     let ter = r
         .pointer("/fundProfile/feesExpensesInvestment/annualReportExpenseRatio/raw")
         .and_then(|x| x.as_f64())
-        .filter(|t| *t > 0.0)
-        .map(|t| t * 100.0);
+        .and_then(ter_pct); // (#208) one conversion, shared with the BF and FMP paths
     let aum = r
         .pointer("/summaryDetail/totalAssets/raw")
         .or_else(|| r.pointer("/defaultKeyStatistics/totalAssets/raw"))
@@ -3577,8 +3607,8 @@ fn bf_row_ter(row: &Value) -> Option<f64> {
     let obj = row.as_object()?;
     hit(obj)
         .or_else(|| obj.values().filter_map(|v| v.as_object()).find_map(hit))
-        .map(|t| t * 100.0)
-        .filter(|t| t.is_finite() && *t > 0.0 && *t < 5.0)
+        .and_then(ter_pct) // (#208) one conversion, shared with the Yahoo and FMP paths
+        .filter(|t| *t < 5.0)
 }
 
 /// Pull the fund size out of one BF `etp_search` row (`overview.assetsUnderManagement`, absolute
@@ -4676,6 +4706,59 @@ pub(crate) mod tests {
         assert_eq!(ter_pct(f64::INFINITY), None);
     }
 
+    /// (#208) The BF path is the one that actually refused IUSN.DE, and (#206) never touched it:
+    /// `bf_row_ter` had its OWN `* 100.0`, and BF is tried FIRST, so fixing only the FMP last resort
+    /// left the live symptom exactly as it was. This pins the boundary on the source that serves most
+    /// of the pond, and that the sanity filter is still live behind the shared conversion.
+    #[test]
+    fn bf_row_ter_lands_exactly_on_a_cap_not_just_above_it() {
+        use serde_json::json;
+        assert_eq!(bf_row_ter(&json!({"ter": 0.0035})), Some(0.35));
+        assert!(bf_row_ter(&json!({"ter": 0.0035})).unwrap() <= 0.35,
+            "0.0035 * 100.0 is 0.35000000000000003 — the value that evicted a fund from its own cap");
+        // BF nests the detail one level down; the same conversion has to apply there
+        assert_eq!(bf_row_ter(&json!({"keyData": {"ongoingCharges": 0.0035}})), Some(0.35));
+        assert_eq!(bf_row_ter(&json!({"ter": 0.0007})), Some(0.07), "VUAA's known TER, the live probe receipt");
+        // the <5% sanity filter still answers, behind the shared conversion rather than in front of it
+        assert_eq!(bf_row_ter(&json!({"ter": 0.06})), None, "6% is BF flipping units, not a fund");
+        assert_eq!(bf_row_ter(&json!({"ter": 0.0})), None);
+        assert_eq!(bf_row_ter(&json!({"nothing": 1})), None);
+    }
+
+    /// (#209) The four rungs `fetch_expense` used to hold inline, where the gate could never reach
+    /// them. Both maps are built HERE rather than set on the globals: `BF_TER`/`BF_TER_NAMES` are
+    /// `OnceLock`s, so a test that set them would grade whatever an earlier test happened to install.
+    #[test]
+    fn bf_ter_cascade_walks_its_four_rungs_in_order() {
+        let map: std::collections::HashMap<String, f64> =
+            [("SPYL.L".to_string(), 0.03), ("IUSN.DE".to_string(), 0.35)].into_iter().collect();
+        let names: std::sync::OnceLock<Vec<(String, f64)>> = std::sync::OnceLock::new();
+        let _ = names.set(vec![
+            ("vaneck semiconductor ucits etf".to_string(), 0.35),
+            ("amundi s&p 500 swap ucits etf eur acc".to_string(), 0.15),
+        ]);
+        let m = Some(&map);
+        let umbrella = "Amundi Index Solutions - Amundi S&P 500 Swap UCITS ETF EUR Acc";
+
+        // rung 1: the exact resolved symbol
+        assert_eq!(bf_ter_cascade(m, &names, "IUSN.DE", "iShares MSCI World Small Cap UCITS ETF"), Some(0.35));
+        // rung 2: same stem, different venue — pinned .DE, map holds only .L
+        assert_eq!(bf_ter_cascade(m, &names, "SPYL.DE", "SPDR S&P 500 UCITS ETF"), Some(0.03));
+        // rung 3: no symbol hit at all, unique fund-name prefix
+        assert_eq!(bf_ter_cascade(m, &names, "VVSM.SG", "VanEck Semiconductor UCITS ETF"), Some(0.35));
+        // rung 4: BF lists only the part after " - ", so the umbrella name has to be retried without it
+        assert_eq!(bf_ter_cascade(m, &names, "AUM5.DE", umbrella), Some(0.15));
+        // ...and rung 3 must MISS that umbrella name, or rung 4 is dead code that grades as live
+        assert_eq!(bf_by_name(&names, umbrella), None);
+
+        // nothing hits -> None, which is what sends fetch_expense on to the FMP network fallback
+        assert_eq!(bf_ter_cascade(m, &names, "ZZZZ.DE", "Some Fund Nobody Lists"), None);
+        // an absent symbol map must not stop the name rungs
+        assert_eq!(bf_ter_cascade(None, &names, "VVSM.SG", "VanEck Semiconductor UCITS ETF"), Some(0.35));
+        // a venue-less ticker has no stem to scan on: SPYL must NOT reach SPYL.L
+        assert_eq!(bf_ter_cascade(m, &names, "SPYL", "Some Fund Nobody Lists"), None);
+    }
+
     /// (#76) The EU-listing swap's three pure halves, on the exact payload shapes the live services
     /// return. The knob that drives them defaults off and is therefore unkillable by the mutation gate,
     /// so these test the functions directly rather than through `fetch_universe`.
@@ -5114,16 +5197,16 @@ pub(crate) mod tests {
         // Yahoo umbrella prefix ("Amundi Index Solutions - …") never prefixes a BF name; fetch_expense
         // retries with the part after " - ", which must hit its share class uniquely (AUM5.DE rescue).
         let yahoo = "Amundi Index Solutions - Amundi S&P 500 Swap UCITS ETF EUR Acc";
-        assert_eq!(bf_ter_by_name(yahoo), None);
-        assert_eq!(bf_ter_by_name(yahoo.split_once(" - ").unwrap().1), Some(0.15));
-        assert_eq!(bf_ter_by_name("VanEck Semiconductor UCITS ETF"), Some(0.35)); // unique prefix
+        assert_eq!(bf_by_name(&BF_TER_NAMES, yahoo), None);
+        assert_eq!(bf_by_name(&BF_TER_NAMES, yahoo.split_once(" - ").unwrap().1), Some(0.15));
+        assert_eq!(bf_by_name(&BF_TER_NAMES, "VanEck Semiconductor UCITS ETF"), Some(0.35)); // unique prefix
         // 2 share classes, SAME TER -> nothing to choose between, so answer instead of refusing
-        assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF"), Some(0.30));
-        assert_eq!(bf_ter_by_name("Amundi STOXX Europe 600 Banks UCITS ETF Dist"), Some(0.30)); // exact class
+        assert_eq!(bf_by_name(&BF_TER_NAMES, "Amundi STOXX Europe 600 Banks UCITS ETF"), Some(0.30));
+        assert_eq!(bf_by_name(&BF_TER_NAMES, "Amundi STOXX Europe 600 Banks UCITS ETF Dist"), Some(0.30)); // exact class
         // 2 share classes, DIFFERENT TER (0.15 unhedged vs 0.28 hedged) -> undecidable, still n/a
-        assert_eq!(bf_ter_by_name("Amundi S&P 500 Swap UCITS ETF EUR"), None);
-        assert_eq!(bf_ter_by_name("vaneck"), None); // too short
-        assert_eq!(bf_ter_by_name("iShares Physical Gold ETC"), None); // not in list
+        assert_eq!(bf_by_name(&BF_TER_NAMES, "Amundi S&P 500 Swap UCITS ETF EUR"), None);
+        assert_eq!(bf_by_name(&BF_TER_NAMES, "vaneck"), None); // too short
+        assert_eq!(bf_by_name(&BF_TER_NAMES, "iShares Physical Gold ETC"), None); // not in list
     }
 
     /// (#45) The four causes behind one `REPL n/a`. The point of the split is that only AmbiguousName
