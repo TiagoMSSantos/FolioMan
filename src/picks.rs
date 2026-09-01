@@ -7471,7 +7471,12 @@ mod tests {
             q("INRG.DE", "iShares Global Clean Energy UCITS ETF"),  // token, but no geography at all
         ];
         quotes.push(Quote::stub("AAPL", "€100.00", "", "Apple Inc.")); // not an ETF
-        let mut us = q("VT", "Vanguard Total World Stock ETF");
+        // (#205) fails `eu_buyable`, passes `quote_is_etf` — the only quote in the set that separates
+        // the two halves of that filter, so it is what grades the `&&`. Its name is deliberately BOTH
+        // geo-broad ("world ex") and narrow-tagged ("small"): the previous US listing was neither, so
+        // widening the filter to `||` admitted it and it still fell out at the geo check, leaving the
+        // histogram identical and the operator ungraded.
+        let mut us = q("VSS", "Vanguard FTSE All-World ex-US Small-Cap ETF");
         us.market = "USA".into(); // not EU-buyable
         quotes.push(us);
 
@@ -7512,6 +7517,12 @@ mod tests {
             // filter were dropped — and it pins that `hold_miss_but_breadth` reads the base cap.
             core_etf("EXPS.DE", "Amundi Prime Global UCITS ETF", 9e9, cap + 0.10),
         ];
+        // (#205) same grading hole as `narrow_census`: every quote above is both EU-buyable and an
+        // ETF, so `&&` and `||` agree and the filter goes ungraded. This one fails `eu_buyable`,
+        // passes `quote_is_etf`, and clears every other filter — under `||` it sorts FIRST on 9e9.
+        let mut us = core_etf("AVUV", "Avantis Prime Global UCITS ETF", 9e9, cap);
+        us.market = "USA".into();
+        let quotes = [quotes, vec![us]].concat();
         let got: Vec<&str> = geo_miss_census(&quotes).iter().map(|q| q.ticker.as_str()).collect();
         assert_eq!(got, vec!["PRAW.DE", "LGGE.DE"], "descending by AUM, one row per real blind spot");
     }
