@@ -2547,8 +2547,26 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
 /// CAGR), so the user stays the curator; the hint tells them to verify the currency too (splice
 /// refuses a currency mismatch at apply time anyway). Benchmark strings are lowercased at capture
 /// and BF-normalized (hedged share classes carry a DIFFERENT string), so exact `==` is the match.
-pub fn bridge_hint_lines(subjects: &[&Quote], pool: &[Quote], tuning: &BuyHeuristic) -> Vec<String> {
-    subjects
+/// (#193) `admit_only` is what makes the WIDE subject list safe. On the pinned lane it is false: a
+/// curated name earns its hint whether or not the bridge would clear a gate, because the user asked
+/// about that name and a corrected CAGR is the answer. On the DISCOVERY lane it is true, and the
+/// twin's own long CAGR must clear the twin's floor — the twin tracks the identical index, so its
+/// long leg IS what the subject's spliced leg would be. Without it the lane prints thousands of
+/// bridges for funds that would then die on `growth_min_cagr` anyway, which is noise wearing the
+/// costume of a suggestion. `BRIDGE_HINT_MAX` caps what survives that filter; the order is twin CAGR
+/// desc then twin age desc, so a truncated list keeps the bridges most worth curating first.
+/// Returns the lines, and the number of same-index bridges CONSIDERED before `admit_only` culled
+/// them. The count is the difference between "no fund in this pool tracks your index" and "several
+/// do, and every one of them would land you on the next gate" — two findings that look identical as
+/// an empty footer, and only one of which says the lever is closed.
+pub fn bridge_hint_lines(
+    subjects: &[&Quote],
+    pool: &[Quote],
+    tuning: &BuyHeuristic,
+    admit_only: bool,
+) -> (Vec<String>, usize) {
+    let mut considered = 0usize;
+    let mut hits: Vec<(f64, f64, String)> = subjects
         .iter()
         .filter_map(|q| {
             if !quote_is_etf(q) || q.history_proxied || crate::config::history_proxy().contains_key(&q.ticker) {
@@ -2568,13 +2586,31 @@ pub fn bridge_hint_lines(subjects: &[&Quote], pool: &[Quote], tuning: &BuyHeuris
                         && long_leg_fixed(t, tuning.fixed_cagr_years, tuning.growth_min_leg_years).is_some() // twin must HAVE the record
                 })
                 .max_by(|a, b| a.age_years.unwrap_or(0.0).total_cmp(&b.age_years.unwrap_or(0.0)))?;
-            Some(format!(
-                "  hint: {} tracks the same index as {} ({}, {:.0}y) — consider settings.yaml history_proxy: {}: {} (verify same currency first)",
-                q.ticker, twin.ticker, bench, twin.age_years.unwrap_or(0.0), q.ticker, twin.ticker
+            // the twin cleared `long_leg_fixed` above, so this is Some for every twin that got here.
+            let twin_cagr = long_cagr_pct(twin, tuning)?;
+            considered += 1;
+            if admit_only && twin_cagr < min_cagr_floor(twin, tuning) {
+                return None;
+            }
+            let age = twin.age_years.unwrap_or(0.0);
+            Some((
+                twin_cagr,
+                age,
+                format!(
+                    "  hint: {} tracks the same index as {} ({}, {:.0}y, +{:.0}%/yr) — consider settings.yaml history_proxy: {}: {} (verify same currency first)",
+                    q.ticker, twin.ticker, bench, age, twin_cagr, q.ticker, twin.ticker
+                ),
             ))
         })
-        .collect()
+        .collect();
+    hits.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.total_cmp(&a.1)));
+    hits.truncate(BRIDGE_HINT_MAX);
+    (hits.into_iter().map(|(_, _, line)| line).collect(), considered)
 }
+
+/// Ceiling on the discovery lane's output. ~2000 ETFs sit behind the `history` gate, so an uncapped
+/// list is a wall of text nobody curates; 15 is a footer a reader actually reads to the end.
+const BRIDGE_HINT_MAX: usize = 15;
 
 /// Per-name "TICKER  gate: why; gate: why" lines for a gate-review footer: every name in `quotes`
 /// that is NOT in the ranking — one that fails a growth gate, or one that isn't assessable at all
@@ -4104,8 +4140,32 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // history_proxy discovery: a young pinned ETF whose exact benchmark index an older scanned fund
     // already tracks is one settings.yaml line away from a real long-term CAGR — say so here, where
     // the "young/history" gate line above just explained the 0.0. Suggest-only; user curates.
-    for h in &bridge_hint_lines(&pinned_q, quotes, tuning) {
+    for h in &bridge_hint_lines(&pinned_q, quotes, tuning, false).0 {
         println!("{h}");
+    }
+    // (#193) the same machinery, aimed at the pool instead of the watchlist. The hint above only ever
+    // fires for a name the user already pinned, so the ~2000 gate-rejected funds that a one-line
+    // `history_proxy` would repair were invisible by construction — the discovery half of a discovery
+    // tool was never wired up. `admit_only` keeps this honest: only bridges whose twin clears the CAGR
+    // floor print, because a bridge that just moves a fund from the `history` wall to the `cagr` wall
+    // is not a suggestion. Gated on `show_hold_core` for the same reason the core list is: it is the
+    // flag for "this lane carries funds at all", so a stock-only screen stays silent.
+    if ctx.show_hold_core {
+        let unpinned: Vec<&Quote> =
+            quotes.iter().filter(|q| !pinned_set.contains(q.ticker.as_str())).collect();
+        let (found, considered) = bridge_hint_lines(&unpinned, quotes, tuning, true);
+        if !found.is_empty() {
+            println!("\nhistory_proxy discovery — gated funds one settings.yaml line from a real long record:");
+            for h in &found {
+                println!("{h}");
+            }
+        } else if considered > 0 {
+            // the measured nothing, said out loud. An empty footer here used to be indistinguishable
+            // from "this lane never ran".
+            println!(
+                "\nhistory_proxy discovery: {considered} same-index bridge(s) found, none whose twin clears the CAGR floor — bridging them only moves the name from the history gate to the cagr gate."
+            );
+        }
     }
     // returned, not printed: the caller places the score-math walkthrough AFTER the actionable
     // footers (gate review / exit review / fact drift / near-miss) so the alerts aren't buried
@@ -5572,21 +5632,43 @@ mod tests {
     old.instrument_type = "ETF".to_string();
     old.age_years = Some(15.0);
     old.benchmark = Some("x index".to_string());
-    let hints = bridge_hint_lines(&[&yng], std::slice::from_ref(&old), &tuning);
+    let (hints, _) = bridge_hint_lines(&[&yng], std::slice::from_ref(&old), &tuning, false);
     assert_eq!(hints.len(), 1);
     assert!(hints[0].contains("YNG.DE") && hints[0].contains("OLD.DE") && hints[0].contains("x index"));
     // already bridged -> silent (the hint's job is done)
     let mut proxied = yng.clone();
     proxied.history_proxied = true;
-    assert!(bridge_hint_lines(&[&proxied], std::slice::from_ref(&old), &tuning).is_empty());
+    assert!(bridge_hint_lines(&[&proxied], std::slice::from_ref(&old), &tuning, false).0.is_empty());
     // twin tracks a DIFFERENT index -> no true twin -> silent (hedged share classes land here)
     let mut other_idx = old.clone();
     other_idx.benchmark = Some("y index".to_string());
-    assert!(bridge_hint_lines(&[&yng], &[other_idx], &tuning).is_empty());
+    assert!(bridge_hint_lines(&[&yng], &[other_idx], &tuning, false).0.is_empty());
     // twin without its own long record can't lend one -> silent
     let mut recordless = old.clone();
     recordless.perf = yng.perf.clone();
-    assert!(bridge_hint_lines(&[&yng], &[recordless], &tuning).is_empty());
+    assert!(bridge_hint_lines(&[&yng], &[recordless], &tuning, false).0.is_empty());
+    // (#193) admit_only: the DISCOVERY lane only proposes a bridge that would actually clear the CAGR
+    // floor. `old` compounds +200% over 10y = ~11.6%/yr, under the 19.0 floor — so it is a fine hint
+    // for a name the user pinned (they asked about it) and noise for one they did not, since the
+    // bridged fund would land straight on the next gate. A twin at ~21.5%/yr does clear it.
+    let mut yng2 = yng.clone();
+    yng2.ticker = "YNG2.DE".into();
+    yng2.benchmark = Some("z index".to_string());
+    let mut strong = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 600.0)]);
+    strong.ticker = "STRONG.DE".into();
+    strong.instrument_type = "ETF".to_string();
+    strong.age_years = Some(12.0);
+    strong.benchmark = Some("z index".to_string());
+    let pool = vec![old.clone(), strong.clone()];
+    let subjects: Vec<&Quote> = vec![&yng, &yng2];
+    // the shipped floor, not the 8.0 code default: at 8.0 BOTH twins clear and the filter has nothing
+    // to bite on, which would make this test pass for the wrong reason.
+    let admit_t = BuyHeuristic { growth_min_cagr: 19.0, ..BuyHeuristic::default() };
+    assert_eq!(bridge_hint_lines(&subjects, &pool, &admit_t, false).0.len(), 2, "pinned lane hints both");
+    let (admitting, considered) = bridge_hint_lines(&subjects, &pool, &admit_t, true);
+    assert_eq!(considered, 2, "both bridges are CONSIDERED; the floor is what drops one");
+    assert_eq!(admitting.len(), 1, "discovery lane drops the twin that cannot clear the floor");
+    assert!(admitting[0].contains("YNG2.DE") && admitting[0].contains("STRONG.DE"), "{}", admitting[0]);
 
     // --- (AUM) ETF minimum fund-size gate (backtest-blind: aum_eur None -> pass; ETF-only) ---
     let aum_t = BuyHeuristic { growth_min_aum_etf: 100e6, ..BuyHeuristic::default() };

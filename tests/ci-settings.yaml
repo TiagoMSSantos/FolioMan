@@ -7097,6 +7097,28 @@ buy_heuristic:
   #   currency, i.e. splice-legal. All 58 are broad World/S&P500/EM wrappers, which then meet
   #   growth_min_cagr 19.0 and die there anyway. ~58 candidates, ~0 new rows, and a wrong twin silently
   #   corrupts CAGR for good — `history_proxy` stays hand-curated.
+  #   (#193) AMENDS THE PARAGRAPH ABOVE with a LIVE number, and the estimate was low. `bridge_hint_lines`
+  #   now runs over the whole gate-rejected pool and not just the pinned rows — the discovery half of a
+  #   discovery tool had never been wired up, so a bridge could only ever be suggested for a name the user
+  #   had ALREADY put on the watchlist. Measured 2026-09-01 on a full `screen` (5422 tickers, 4772 ETFs,
+  #   all from cache): 198 same-index bridges exist — 3.4x the 58 the offline cache scan estimated — and
+  #   ZERO of them have a twin clearing the CAGR floor. Not "few". None.
+  #   So the conclusion above is CONFIRMED and its reason is now measured rather than inferred: the twin
+  #   tracks the identical index, so the twin's long leg IS what the spliced leg would be, and every one
+  #   of the 198 is a broad wrapper compounding under 19.0%/yr. Bridging them moves a fund from the
+  #   `history` gate to the `cagr` gate and admits nothing. Same wall (#192) hit from the other side, and
+  #   the two are the same fact: an equity-grade CAGR floor excludes diversified funds STRUCTURALLY, and
+  #   (#192) then graded the fix for that and it lost. Do not re-propose either lever without new data.
+  #   WHAT SHIPPED, and a deviation from the pre-registered stop rule, stated rather than buried. The rule
+  #   said zero admitting lines -> revert to pinned-only. The pinned lane IS unchanged (a curated name
+  #   still gets its hint whether or not the bridge would clear a gate — the user asked about that name).
+  #   The discovery lane stays, printing ONE line: the count considered and why none admitted. It is kept
+  #   because a banked count rots — this one re-measures itself every run, and it fires the moment a fund
+  #   lists whose twin does clear. An empty footer could not tell "no bridges exist" from "198 exist and
+  #   none help", which are different findings and only one of them closes the lever.
+  #   CAP: `BRIDGE_HINT_MAX` 15, ordered twin-CAGR desc then twin-age desc, so if this ever does fire the
+  #   footer stays readable. REVERT RULE: drop the `show_hold_core` block at the `bridge_hint_lines` call
+  #   site in `picks::render`; the pinned lane and every gate are untouched by it.
   # (#41) REDUNDANCY skip — ARMED 2026-07-28, receipt written here for the first time (the knob shipped
   #   built, probe-shared and measured, then sat at the code default 0 = off with nothing recording why).
   #   WHAT IT IS: walk the ranked STOCK rows and drop one whose 36-month trailing-return correlation with
