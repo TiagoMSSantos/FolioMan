@@ -3945,7 +3945,30 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     cores
 }
 
-fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>, owned: &Owned) {
+/// The buy-and-hold CORE block. UNGRADEABLE, hence the skip — the same story as [`print_lane`] and
+/// [`print_picks`] above it: every effect this has is a `println!`, and the mutation gate runs
+/// `--lib --test backtest_fixture` with no `--test cli`, so nothing in the killing suite can read
+/// this binary's stdout. (#79) proved that by measurement — `replace print_lane with ()` was graded
+/// 2026-08-17 and MISSED — and this is the same shape, so `replace print_hold_core with ()` was a
+/// red waiting for the next edit to arm it. It sat unfired only because the 19-mutant push of
+/// 5d1ece9 was sharded 1/4 and 14 of them never ran.
+///
+/// (#198) The skip retires NO decision. [`hold_core_list`] holds every one of them — the
+/// `hold_suitable` filter, the breadth-major sort, the one-row-per-name dedup and the per-tier cap —
+/// and is graded by `hold_core_list_and_print` and
+/// `hold_core_tier_cap_survives_more_than_255_names_in_one_tier`. What it does retire is the nine
+/// print-only mutants inside this body: the tier-0 count, the owned marker, and the near-miss
+/// filter's predicates. Anything here that becomes a real decision must move OUT to a function the
+/// gate can reach, exactly as (#79) moved `print_lane`'s out to `lane_split` and `lane_head`.
+///
+/// (#198) The row cut is DELETED rather than pinned, and that is the other half of the same fix.
+/// This took an `n` and applied `.take(n)` to it, against a caller passing
+/// `HOLD_TIERS * hold_per_tier()` — precisely the ceiling `hold_core_list` has already enforced, so
+/// the cut could not bind at any value of the knob. The gate found it as `replace * with +` in
+/// `render` (n -> 10) and `* with /` (n -> 2). Both change what prints and neither is killable from
+/// a suite that cannot read stdout, so the duplicated decision goes instead of growing a test.
+#[mutants::skip]
+fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     let cores = hold_core_list(quotes);
     if cores.is_empty() {
         return;
@@ -3979,7 +4002,7 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>, owned: &O
     // actually buys, so "covered" matters most here. Blank when the overlay is off/empty.
     println!("  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
     let mut any_owned = false;
-    for q in cores.iter().take(n) {
+    for q in &cores {
         let cagr = q.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%"));
         let yrs = q.age_years.map_or("—".to_string(), |a| format!("{a:.1}")); // 1 decimal, as in the screen table
         let ter = q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%"));
@@ -4120,10 +4143,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // every `screen` lane that carries cores (the wide run OR `screen etfs`), never `check`. Empty
     // cores early-return inside, so stock/crypto-only screen filters stay silent.
     if ctx.show_hold_core {
-        // n is DERIVED, never a second magic number: `hold_core_list` already caps 3 per tier, so a
-        // literal here silently truncated the lower tiers the moment tiers were added — which is the
-        // exact failure this list exists to avoid.
-        print_hold_core(quotes, core::HOLD_TIERS * crate::config::hold_per_tier(), &pinned_set, ctx.owned);
+        print_hold_core(quotes, &pinned_set, ctx.owned);
     }
     // gate review: pinned names are shown in their table even when a gate rejects them (score 0.0).
     // Say WHICH gate, so a 0.0 next to strong metrics isn't mistaken for a bug (VVSM stretch, VUAA/
@@ -7188,12 +7208,12 @@ mod tests {
         quotes.push(near);
         let owned = Owned { stocks: ["vwce".to_string()].into(), ..Default::default() };
         let pinned: HashSet<&str> = ["VWRL.DE"].into();
-        print_hold_core(&quotes, 9, &pinned, &owned);
+        print_hold_core(&quotes, &pinned, &owned);
 
         // no all-world fund present -> the "no ACWI fund with facts qualified" hint branch.
         let no_world: Vec<Quote> =
             quotes.iter().filter(|q| core::hold_breadth_tier(&q.name) != 0).cloned().collect();
-        print_hold_core(&no_world, 9, &HashSet::new(), &Owned::default());
+        print_hold_core(&no_world, &HashSet::new(), &Owned::default());
     }
 
     /// (#66) The per-tier counter must survive more names in one tier than a `u8` can hold. It was
