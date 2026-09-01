@@ -10075,6 +10075,65 @@ universe_prefer_eur: true
 # and it is a LIVE-side tally, because no horizon can be quoted for a knob the backtest never reads.
 prefer_eu_listing: true
 
+# (#191) MEASURED AND REFUSED 2026-09-01 — the venue skew is REAL, it is NOT the admission
+# bottleneck, and correcting it makes the live book SMALLER. Two `screen` runs, one boolean apart,
+# overlays merging over this file, the watchlist pinned in both so each arm mirrors the real screen.
+# Both arms read `4790 resolved to Yahoo tickers (4790 from cache)`, so the pond is one experiment.
+#
+# THE PROPOSAL: mirror e1e6a36 into the live lane. That commit forced this knob false for `backtest`
+# ("grade the deepest series, not the venue a row is bought on") because 266 of 519 constituents
+# resolve to a Xetra twin a MEDIAN 18.6 YEARS YOUNGER, and the graded 8y edge fell +117 -> -22.8.
+# It left the live screen swapping, on the stated ground that "every threshold in ci-settings.yaml
+# was fitted on the US lines anyway" — which is the argument FOR insulating the screen too, not
+# against. The screen book collapsed 2026-08-21, the day before the backtest was insulated, and has
+# been frozen since: 12 days, 11 of them an identical name list (.screen_snapshots.jsonl).
+#
+# PRE-REGISTERED STOP RULE, written before the runs: if the two arms' CLEARED counts differ by
+# fewer than 3 names, the swap is not what binds admission -> record it, ship nothing, stop.
+#
+#   arm            scanned   refused   failed   CLEARED   stocks printed   unpinned non-dup
+#   on (shipped)      5186       560     4615        11         5                1  (KLA.DE)
+#   off               5191       558     4622        11         4                0
+#
+# IT FIRED AT ZERO. Not 3, not 1 — the cleared count is IDENTICAL, and the printed book moves the
+# WRONG WAY: off loses KLA.DE, the only company the stock lane discovers, and prints NVIDIA twice.
+#
+# WHY THE GATES DO NOT CARE, and this is the transferable part. The swap moves names between gate
+# columns in BULK and past the finish line NOT AT ALL (stocks, failed / sole-blocked):
+#   gate        on            off          reading
+#   history     57 / 57       13 / 13      the young twins — 44 stocks, every one sole-blocked
+#   liquidity  183 /  1       17 /  0      min_avg_turnover_eur 500k on a Xetra line: 10.8x more fails
+#   cagr       418 /  0      504 /  0      RESTORING history EXPOSES 86 more CAGR failures
+#   peg        318 /  6      409 /  6      ...and 91 more PEG failures
+#   5Y+        392 /  1      423 /  2      ...and 31 more 5Y failures
+# The short Xetra record was HIDING those, exactly the mechanism growth_record_weight's receipt
+# names: "a short record COLLECTS SCORE FOR THE ABSENCE OF MEASURED BAD NEWS". Give a name its true
+# 27-year record back and the gates finally get to fail it on evidence. Sole-blocked stocks total
+# 69 (on) and 24 (off), so even a PERFECT single-gate fix recovers a handful. Admission dies in
+# DEPTH — 4615 of 5186 fail, 11 clear — not on any one axis. Same shape as the (#190) refusal and
+# the "pool supply is not the constraint" result: the gate STACK binds, and no one knob is it.
+#
+# THE SKEW IS STILL REAL, and one row of the off-arm prints it better than any table could:
+#   NVIDIA  NVDA    USA      +36%/yr  YRS 27.6
+#   NVIDIA  NVD.DE  Germany  +14%/yr  YRS 18.7
+# Same company, same day, 22 points of CAGR and 9 years of record, purely from venue and currency —
+# against a growth_min_cagr bar of 19.0 the US line clears and the Xetra line misses by five. That
+# is the train-serve skew as a single fact, and it is worth more than this round's verdict.
+#
+# LEFT OPEN, NOT FIXED HERE (each needs its own round and its own receipt):
+#  - The fundamentals alias LEAKS. fetch.rs:1507 says aliasing a Xetra symbol back to its filer
+#    "restores all of it"; measured, it does not — peg_yield coverage is 345/549 stocks with the
+#    swap on against 404/552 with it off, so 59 names still lose their fundamentals to the swap.
+#    Missing data PASSES, so those names are admitted on a gate that never got to run.
+#  - liquidity at 500k is a US-calibrated bar applied to Xetra turnover. It sole-blocks 1, so it is
+#    not worth a round on its own, but it is the wrong number for the venue it is being read on.
+#
+# REVERT RULE: none — nothing shipped. This knob stays `true`, which is both the shipped state and,
+# on this measurement, the BETTER of the two for the live book. Do not re-propose insulating the
+# screen without first widening what the gates admit; the venue is not what is holding the book to
+# five rows. Nothing in buy_heuristic was re-fitted, no golden moves, and the backtest cannot see
+# any of this — it hardcodes false and `the_backtest_never_reads_the_venue_knob` enforces that.
+
 # `screen` SECTOR FILTER — which type of companies/ETFs to fetch. Case-insensitive substring
 # keywords matched against a stock's GICS sector AND an ETF's fund name. Empty list (or omitted) =
 # fetch ALL sectors (the default). Stocks are filtered BEFORE fetch (by their GICS sector, so other
