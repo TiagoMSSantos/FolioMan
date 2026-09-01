@@ -1768,6 +1768,58 @@ buy_heuristic:
                                  # that the bar is the thing to sweep, ahead of adding any new factor - which is
                                  # what the round that read it concluded, against its own prior.
                                  # Knob stays false. REVERT: set false.
+                                 # 
+                                 # (#194) CROSS-SECTIONAL ADMISSION FOR THE STOCK LANE — REFUSED 2026-09-01 WITHOUT
+                                 # BUILDING IT, on this knob's own reading plus the free sweep. Recorded here because
+                                 # (#124) above is what refuses it.
+                                 # WHAT IT WOULD HAVE BEEN: split the gate predicates out of `picks::score_parts` so a
+                                 # gate-failing name still SCORES, then admit the top P% cross-sectionally through
+                                 # `core::pct_floor` at the two sites `growth_value_floor_pct` already uses. It replaces an
+                                 # ABSOLUTE bar with a RELATIVE one, so in a weak vintage it admits names no floor would —
+                                 # a different mechanism from loosening a number, and it is not refused as if it were one.
+                                 # THE PRE-REGISTERED STOP RULE: pay for that refactor only if the deciles show a stock book
+                                 # WIDER than today's improving median AND d10 AND P(book<1.0x), at 12y AND 8y.
+                                 # THE RULE CANNOT BE MET, and (#124) directly above is the reason: the deciles are IDENTICAL
+                                 # from top-10 through top-50 at EVERY horizon, because the book never holds more than ~10
+                                 # names. There is no "wider book" rung for the ladder to exhibit — rungs 15-50 are one basket
+                                 # relabelled. So the clause is VACUOUS BY RESOLUTION in (#186)'s exact sense: it can neither
+                                 # license the refactor nor refuse it, and re-running the knob would reproduce the same rows.
+                                 # VACUOUS IS NOT A PASS, so the question went to the instrument that CAN answer — the GATE
+                                 # SWEEP, which prices every gate one notch looser on every run for free. Control lane,
+                                 # `universe fund pit`, newly-admitted cohort vs the accepted cohort's median (`vs shipped`):
+                                 #     gate                     20y                  12y                   8y
+                                 #     growth_min_cagr -4       n=67  med -322.5      n=151 med -55.6       n=335 med +54.9
+                                 #                              vs shipped +73.6      vs shipped +17.6      vs shipped +56.5 TOO TIGHT
+                                 #     growth_max_peg ->off     0 new names           n=14  vs shipped -138.9  n=42 vs shipped +13.3 TOO TIGHT
+                                 #     growth_min_leg_years ->2 vs shipped -183.7     vs shipped +0.2       vs shipped -1.5
+                                 #     growth_min_1y_pct -10    vs shipped -61.2      vs shipped -65.5      vs shipped -42.7
+                                 #     growth_max_above_ma ->off vs shipped +37.0     vs shipped -55.7      vs shipped -73.9
+                                 # BOTH TOO TIGHT FLAGS ARE ON GATES THIS FILE HAS ALREADY CLOSED, and it says so IN ADVANCE:
+                                 # the `growth_min_cagr` block ends "Do not reopen on a `gate_sweep` flag." The sweep's `-4` IS
+                                 # rung 15, graded at (#151) — it admits a cohort +17.6 BETTER than the accepted median and the
+                                 # top-10 mean still falls +3.7->+2.9 (12y) and +5.3->+4.1 (8y). Rung 17 was then graded at
+                                 # (#187) and REFUSED TWICE OVER (20y h2h guard broke AND PRIMARY fell on all four numbers),
+                                 # closing the interval with "DO NOT PROBE 16 OR 18".
+                                 # WHY THE GREEN FLAG MISLEADS, now with two measured mechanisms rather than a caution:
+                                 #   (#187) the admitted names are the WRECKS — the 12y zero list gains AIG@-96% and FOSL@-96%,
+                                 #          zeros ridden 9->10. A 19%/yr bar is a distress filter and 17%/yr already lets them in.
+                                 #   (#192) 2026-09-01, the ETF-scoped version of the same loosening: admitted funds never reach
+                                 #          rank 1 and land in ranks 6-10, so the book dilutes where an equal-weight basket pays
+                                 #          1/N for each. PRIMARY fell at both graded horizons.
+                                 #   The common cause is a reading error `vs shipped` invites: it compares the ADMITTED COHORT's
+                                 #   median to the ACCEPTED COHORT's median, and NEITHER of those is the held book. A cohort can
+                                 #   be better on that statistic while the book that holds it gets worse — three times now.
+                                 # NET: the direction "admit more names" now carries FOUR graded refusals — (#127) selection,
+                                 # (#128) two gates, (#151)/(#187) the CAGR floor, (#192) the fund lane — and zero ships. The
+                                 # pool is small because the gates are strict, and every measured attempt to widen it has bought
+                                 # a worse held book. A percentile admission is a new mechanism pointed in that same direction,
+                                 # and it costs the gate/score split in `score_parts` PLUS its `gate_failures` mirror, which
+                                 # non-negotiable #2 pins together. Not worth paying on a prior this bad.
+                                 # WHAT WOULD LICENSE RE-OPENING, so this is falsifiable rather than a mood: evidence about the
+                                 # MARGINAL name, not the cohort — an arm where the top-10 zero list does NOT grow and ranks
+                                 # 6-10 do NOT sink. That is a cheap check available on every run already (read the rank slices
+                                 # beside the h2h, per (#187)). A sweep flag is not that evidence and never was.
+                                 # Nothing was built, so there is nothing to revert.
   implied_growth_years: 0        # (#111 / round 3 §8) UNMEASURED — an unfitted judgement value,
   implied_growth_required_pct: 8.0 # shipping OFF (0 = no line), which is today's ranking footer.
                                  #
