@@ -3936,17 +3936,14 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // binary that actually runs the daily screen, sets only opt-level and lto, leaving them OFF to wrap
     // in silence. A `usize` counter cannot reach either outcome and costs nothing.
     let mut per_tier = [0usize; core::HOLD_TIERS];
+    let cap = crate::config::hold_per_tier();
     cores.retain(|q| {
         let t = core::hold_breadth_tier(&q.name) as usize;
         per_tier[t] += 1;
-        per_tier[t] <= HOLD_PER_TIER
+        per_tier[t] <= cap
     });
     cores
 }
-
-/// Rows kept per breadth tier in the CORE list — enough to show an alternative issuer/venue per
-/// sleeve without one index family crowding out the others.
-pub const HOLD_PER_TIER: usize = 3;
 
 fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>, owned: &Owned) {
     let cores = hold_core_list(quotes);
@@ -3975,7 +3972,9 @@ fn print_hold_core(quotes: &[Quote], n: usize, pinned: &HashSet<&str>, owned: &O
         .zip(supply.iter())
         .map(|(name, n)| format!("{name} {n}"))
         .collect();
-    println!("  supply per sleeve (before the ≤{HOLD_PER_TIER}/sleeve cap): {}", counts.join(" · "));
+    // (#197) the cap is READ here, never re-spelled: the line's whole job is to say how much supply
+    // the cap hid, and a header quoting a different number than the filter applied would invert it.
+    println!("  supply per sleeve (before the ≤{}/sleeve cap): {}", crate::config::hold_per_tier(), counts.join(" · "));
     // (round 111) leading 1-char cell = the owned-position marker; this list is what a 20yr holder
     // actually buys, so "covered" matters most here. Blank when the overlay is off/empty.
     println!("  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
@@ -4124,7 +4123,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
         // n is DERIVED, never a second magic number: `hold_core_list` already caps 3 per tier, so a
         // literal here silently truncated the lower tiers the moment tiers were added — which is the
         // exact failure this list exists to avoid.
-        print_hold_core(quotes, core::HOLD_TIERS * HOLD_PER_TIER, &pinned_set, ctx.owned);
+        print_hold_core(quotes, core::HOLD_TIERS * crate::config::hold_per_tier(), &pinned_set, ctx.owned);
     }
     // gate review: pinned names are shown in their table even when a gate rejects them (score 0.0).
     // Say WHICH gate, so a 0.0 next to strong metrics isn't mistaken for a bug (VVSM stretch, VUAA/
@@ -7200,7 +7199,7 @@ mod tests {
     /// (#66) The per-tier counter must survive more names in one tier than a `u8` can hold. It was
     /// `[0u8; HOLD_TIERS]`, incremented once per distinct fund NAME, so the 256th name in a tier wrapped
     /// it back to 0 and the tier silently admitted three more rows. 300 distinct S&P 500 names is the
-    /// smallest input that crosses the boundary; the cap must still read exactly HOLD_PER_TIER.
+    /// smallest input that crosses the boundary; the cap must still read exactly `hold_per_tier()`.
     ///
     /// This pin is the ONLY cover for that arithmetic, because the two profiles disagree about it: under
     /// `cargo t` (mutants profile, inherits dev) overflow-checks are on and the pre-fix line PANICS here,
@@ -7211,7 +7210,7 @@ mod tests {
             .map(|i| core_etf(&format!("S{i:03}.DE"), &format!("Issuer{i:03} S&P 500 UCITS ETF"), 1e9, 0.10))
             .collect();
         let cores = hold_core_list(&quotes);
-        assert_eq!(cores.len(), HOLD_PER_TIER, "one tier, 300 distinct names -> the cap, not a wrapped counter");
+        assert_eq!(cores.len(), crate::config::hold_per_tier(), "one tier, 300 distinct names -> the cap, not a wrapped counter");
     }
 
     /// (#66) A NaN sort key must order rather than take the screen down. `unwrap_or` supplies a value

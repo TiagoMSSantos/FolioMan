@@ -3667,69 +3667,204 @@ buy_heuristic:
                                  #
                                  #   REVERT: 0.25 is the shipped value; any other number is a deliberate
                                  #   choice about which funds wear the H flag, display-only either way.
-  hold_ucits_or_domicile: false  # (#102 / finding C9) UNMEASURED — an unfitted judgement value, shipping
-                                 # OFF, which is name-token-only, today's behaviour.
-                                 #
-                                 #   THE DEFECT: the CORE admission rule proves UCITS-ness by requiring
-                                 #   the literal token "ucits" in the fund NAME. Feed names do not
-                                 #   reliably carry it — "ISHARES III PLC ISHRS CORE MSCI" is an Irish
-                                 #   UCITS fund by every fact on its row and fails this leg on spelling.
-                                 #   A naming accident silently deletes a legitimate core, and because
-                                 #   `hold_core_list` caps the table at 3 per tier, the deletion is not
-                                 #   even visible as a shorter list — a worse fund refills the slot.
-                                 #
-                                 #   WHAT ON DOES: the leg passes on the name token OR a `domicile`
-                                 #   prefix outside `core::NON_EU` — the same blocklist `firds_etf_isins`
-                                 #   already screens the FIRDS dumps with, hoisted to a module const so
-                                 #   the two readers cannot drift into two lists. Names WITH the token
-                                 #   are untouched. `domicile: None` (watchlist-only rows) still falls
-                                 #   back to the name, so this cannot turn missing data into a PASS —
-                                 #   the house rule cuts the other way here and the knob respects it.
-                                 #
-                                 #   WHY UNMEASURED: display-only. `hold_suitable` drives the H flag and
-                                 #   the CORE shortlist; neither is on the graded path, so no edge, rho
-                                 #   or h2h number can move at any setting. The sweep that WOULD settle
-                                 #   it is not a backtest at all: run `screen etfs` with the knob on and
-                                 #   off and diff the CORE table — the honest question is how many
-                                 #   admitted funds are EU-domiciled with no "ucits" token in the name,
-                                 #   and whether any of them is genuinely not a UCITS wrapper. That needs
-                                 #   a live BF-enriched fund universe, which is why it is not run here.
-                                 #
-                                 #   REVERT: set false. Nothing else reads the flag.
-  hold_name_tokens: false        # (#102 / finding C9) UNMEASURED — an unfitted judgement value, shipping
-                                 # OFF, which is bare `contains`, today's behaviour.
-                                 #
-                                 #   THE DEFECT: `core::geo_tier` decides both "is this a core?" and
-                                 #   "which breadth tier?" by scanning the name for substrings, and the
-                                 #   NARROW disqualifier list holds short generic English words —
-                                 #   "value", "select", "small", "esg", "health", "quality", "paris".
-                                 #   Any of them occurring INSIDE a longer word disqualifies the fund:
-                                 #   the classic "N-etf-lix" substring bug, here with the power to delete
-                                 #   a legitimate one-fund-forever hold from the shortlist silently.
+  hold_ucits_or_domicile: true   # (#102 / finding C9 / MEASURED AND SHIPPED 2026-09-01 by (#196))
+                                 # — ON. Was UNMEASURED and OFF; the sweep its own receipt asked for has
+                                 # now been run and it admits a real core that spelling was deleting.
+                                 # 
+                                 #   THE DEFECT: the CORE admission rule proved UCITS-ness by requiring the
+                                 #   literal token "ucits" in the fund NAME, while `Quote.domicile` carries
+                                 #   the actual fact. The old receipt guessed at the shape of the victim
+                                 #   ("ISHARES III PLC ISHRS CORE MSCI"). The real one is one series over.
+                                 # 
+                                 #   MEASURED 2026-09-01, live `screen`, 5427-quote pond, one boolean apart,
+                                 #   control re-run in the same session. ON admits EXACTLY ONE fund and
+                                 #   removes none:
+                                 # 
+                                 #     iShares VII PLC - iShares MSCI USA ETF USD Acc   CSUS.SW
+                                 #       +14%/yr · 16.6y · TER 0.07% · AUM €4.3B · Acc · Full · DOM IE
+                                 # 
+                                 #   Irish-domiciled iShares umbrella, accumulating, physically FULL
+                                 #   replicated, €4.3B, 0.07% TER, a 16.6-year record. A canonical MSCI USA
+                                 #   UCITS tracker in every fact on its row, carrying no "ucits" token in
+                                 #   the feed name. That is the whole defect, caught live.
+                                 # 
+                                 #   THE SECOND HALF OF THE QUESTION, which is the one that decided it. The
+                                 #   old receipt asked not just HOW MANY are admitted but "whether any of
+                                 #   them is genuinely not a UCITS wrapper" — an EU-domiciled non-UCITS fund
+                                 #   is one a retail account may not be able to buy (PRIIPs). With n=1 that
+                                 #   is answerable by inspection rather than by policy: name, issuer and
+                                 #   domicile all agree it is a UCITS wrapper. Re-ask it on any future pond
+                                 #   that admits more than a handful — the leg is a FACT check, but "is this
+                                 #   wrapper buyable" is not a fact this tool holds.
+                                 # 
+                                 #   MISSING DATA STILL CANNOT PASS: `domicile: None` (watchlist-only rows)
+                                 #   falls back to the name, so the house rule is respected and the ON arm
+                                 #   cannot turn an absent fact into an admission.
+                                 # 
+                                 #   IT WAS INVISIBLE AT THE SHIPPED CAP, and that is worth recording as a
+                                 #   method note. CSUS.SW lands in the US sleeve, which already had 14
+                                 #   qualifiers competing for `hold_per_tier: 3` slots, so the CORE TABLE IS
+                                 #   BYTE-IDENTICAL with the knob on — only the census line moves (US 14 ->
+                                 #   15). This arm could not be read at all until (#197) made the cap
+                                 #   liftable. An admission knob measured on a capped table measures the cap.
+                                 # 
+                                 #   NOT GRADEABLE, AND NEVER WILL BE: `core::hold_miss_reason` reads TER,
+                                 #   AUM, replication, share class and domicile; `backtest::stamp_asset_class`
+                                 #   fills only name, instrument_type and sector, so every backtest quote
+                                 #   dies on the TER leg and no walk reaches this lane. Not a wiring gap —
+                                 #   those are today-only BF facts with no point-in-time history, the same
+                                 #   look-ahead class (#95) documented for `sector`. Judgement plus a live
+                                 #   diff is the only footing the CORE lane has.
+                                 # 
+                                 #   REVERT: set false, which restores name-token-only and drops CSUS.SW
+                                 #   back out of the pond. Nothing else reads the flag; `config.rs` keeps
+                                 #   false as its config-less Default (same split as `print_h2h_mid_ladder`).
+  hold_name_tokens: false        # (#102 / finding C9 / MEASURED 2026-09-01 by (#195)) — shipping OFF,
+                                 # which is name-token-only, today's behaviour. No longer UNMEASURED:
+                                 # the sweep its own receipt asked for has now been run, and the answer
+                                 # is ZERO. Kept OFF because zero is the measured benefit and the ON arm
+                                 # carries a rejection path this pond cannot exercise. See below.
+                                 # 
+                                 #   THE DEFECT (unchanged, and real): the CORE admission rule proves a
+                                 #   fund is a geographic core by scanning its NAME with bare `contains`.
+                                 #   `NARROW` holds short generic English words — "value", "select",
+                                 #   "small", "esg", "health", "quality", "paris" — so any of them landing
+                                 #   INSIDE a longer word disqualifies the fund. The classic "N-etf-lix"
+                                 #   substring bug, here able to delete a legitimate one-fund-forever hold.
                                  #   Two of the thirty tokens (" pab", "sri ") already carry a hand-rolled
-                                 #   space guard, which is the previous author noticing this exact class
-                                 #   of bug and fixing it one token at a time.
-                                 #
-                                 #   WHAT ON DOES: a token must sit at a WORD START to count. Word-START
-                                 #   and deliberately not whole-word: half the list is an intentional
-                                 #   PREFIX ("technolog" must catch Technology and Technologies, "financ"
-                                 #   Financial and Finance, likewise "communicat"/"sustainab"/
-                                 #   "semiconduct"), and whole-word matching would un-disqualify exactly
-                                 #   the sector funds the list exists to bar. Tokens that already begin
-                                 #   with their own separator pass through to plain `contains` untouched.
-                                 #   Applies to the GEO table too, on the same call.
-                                 #
-                                 #   STRICTLY A TIGHTENING: every match it removes was a mid-word
-                                 #   accident, so ON can only ADMIT names, never reject new ones. That is
-                                 #   also why it can be flipped without a golden re-bless in any pool
-                                 #   whose names carry no such accident — the goldens hold it off anyway.
-                                 #
-                                 #   WHY UNMEASURED: same reason as `hold_ucits_or_domicile` — display
-                                 #   only, off the graded path. The settling sweep is again a diff of the
-                                 #   `screen etfs` CORE table with the knob on and off, over a live
-                                 #   fund universe. The matcher itself is pinned by fixtures in
-                                 #   `pure_logic` (prefix tokens still bite; "equality"/"comparison"/
-                                 #   "devalued" no longer do). REVERT: set false.
+                                 #   space guard: the previous author hitting this and patching it one
+                                 #   token at a time. ON requires a token to sit at a WORD START.
+                                 # 
+                                 #   MEASURED 2026-09-01, live `screen`, 5427-quote pond, one boolean
+                                 #   apart, control re-run IN THE SAME SESSION (a banked control is stale —
+                                 #   the cached universe moves between sessions and this one had grown to
+                                 #   US 14 from the 12 an earlier run showed):
+                                 # 
+                                 #     supply per sleeve, OFF: all-world 3 · developed 7 · emerging 4 ·
+                                 #                            US 14 · ex-US 2 · Europe 9 · Japan/AsiaPac 4
+                                 #     supply per sleeve, ON:  IDENTICAL, sleeve for sleeve (43 total)
+                                 #     CORE table:            the SAME 20 tickers, in the same order
+                                 # 
+                                 #   So the live fund pond carries no mid-word accident, in EITHER
+                                 #   direction. That is the whole result and it is worth more than it
+                                 #   looks: the defect was hypothesised from reading the token list, and
+                                 #   the honest finding is that no fund in a 5427-name universe trips it.
+                                 # 
+                                 #   AND IT CORRECTS THIS RECEIPT. The previous text claimed "STRICTLY A
+                                 #   TIGHTENING: every match it removes was a mid-word accident, so ON can
+                                 #   only ADMIT names, never reject new ones." That is true of the NARROW
+                                 #   half and FALSE of the GEO half, which the same `hit` closure serves
+                                 #   (`core::geo_tier`) — the receipt even says "Applies to the GEO table
+                                 #   too" two lines earlier. Tightening GEO can make `geo_tier` return
+                                 #   None for a name whose only geography token sat mid-word, and
+                                 #   `is_broad_index_name` IS `geo_tier(..).is_some()`, so that name stops
+                                 #   being a core at all. ON is two-directional, not one.
+                                 # 
+                                 #   WHY THAT DECIDES THE VALUE. Since the measured delta is zero, ON buys
+                                 #   nothing today and arms a rejection path that today's pond cannot
+                                 #   exercise — zero names reach it, so this run is evidence about the
+                                 #   ADMIT half only and says nothing about the REJECT half. Shipping ON
+                                 #   would be taking an unmeasured risk for a measured zero.
+                                 # 
+                                 #   NOT GRADEABLE, AND NEVER WILL BE — the reason belongs in every CORE
+                                 #   receipt. `core::hold_miss_reason` reads TER, AUM, replication, share
+                                 #   class and domicile; `backtest::stamp_asset_class` fills only name,
+                                 #   instrument_type and sector, so EVERY backtest quote dies on the TER
+                                 #   leg and no walk can reach this lane. Not a wiring gap: TER/AUM/share
+                                 #   class are today-only BF facts with no point-in-time history, the same
+                                 #   look-ahead class (#95) documented for `sector`. Judgement plus a live
+                                 #   diff is the only footing this lane has.
+                                 # 
+                                 #   REVERT: this IS the revert. Set true to re-open, and re-run the pair
+                                 #   above — a pond that has grown may trip what this one did not. The
+                                 #   matcher stays pinned by fixtures in `pure_logic` (prefix tokens still
+                                 #   bite; "equality"/"comparison"/"devalued" no longer do).
+  hold_per_tier: 3               # (#197) MEASURED 2026-09-01 AND HELD AT THE SHIPPED LITERAL — rows kept
+                                 # per breadth sleeve in the buy-and-hold CORE table. Was a bare
+                                 # `const HOLD_PER_TIER: usize = 3` in picks.rs; this names it, and the
+                                 # naming is what let (#195) and (#196) be read at all.
+                                 # 
+                                 #   WHY IT HAD TO EXIST BEFORE THE OTHER TWO COULD BE GRADED. Both CORE
+                                 #   admission knobs move SUPPLY, and the table shows `min(supply, cap)` per
+                                 #   sleeve. The US sleeve carries 14 qualifiers for 3 slots, so (#196)
+                                 #   admitting CSUS.SW moved the census line and NOTHING ELSE — the table was
+                                 #   byte-identical. An admission knob measured on a capped table measures
+                                 #   the cap. The `(#102)` receipts stated this in the other direction ("a
+                                 #   fund deleted on spelling does not shorten the list, because a worse fund
+                                 #   refills the slot") without drawing the consequence for their own sweeps.
+                                 # 
+                                 #   ONE NUMBER, FOUR READERS (non-negotiable #4). `hold_core_list`'s retain
+                                 #   cap, the `≤N/sleeve` HEADER TEXT, the derived `n` at the `print_hold_core`
+                                 #   call site, and the (#66) 300-name counter test all read
+                                 #   `config::hold_per_tier()`. The header is the load-bearing one: its whole
+                                 #   job is to say how much supply the cap hid, so a header quoting a
+                                 #   different number than the filter applied would invert its meaning.
+                                 # 
+                                 #   MEASURED 2026-09-01, live `screen`, 5427-quote pond, cap 3 vs cap 20
+                                 #   (20 > the largest sleeve supply, so it surfaces the whole pond):
+                                 # 
+                                 #     cap  3 -> 20 rows   (3 all-world · 3 dev · 3 EM · 3 US · 2 exUS · 3 EU · 3 JP)
+                                 #     cap 20 -> 42 rows   (supply 44 before the one-row-per-NAME dedup)
+                                 # 
+                                 #   SO THE CAP HIDES 22 ROWS, AND THEY ARE NOT WORTH SURFACING. 20 of the 22
+                                 #   are additional WRAPPERS of an index the table already carries — four more
+                                 #   MSCI World (HMWA/XDWD/IWDA), ten more S&P500/MSCI USA, five more
+                                 #   MSCI Europe / Stoxx 600, one more MSCI EM, one more MSCI Japan. For a
+                                 #   20-year holder that is not more diversification, it is the same exposure
+                                 #   spelled more ways. Note IWDA.L (€123.3B) and CSSPX.MI (€129.0B) — the two
+                                 #   LARGEST funds in the pond — are among the hidden, because the sort is
+                                 #   TER-ascending and cheaper wrappers of the same index outrank them. That is
+                                 #   the sort working as designed on fungible wrappers, not a defect.
+                                 # 
+                                 #   AND THE OTHER 2 ARE A DEFECT THE CAP HAS BEEN HIDING BY ACCIDENT — the
+                                 #   real find of this round, recorded here because lifting the cap is what
+                                 #   surfaced it:
+                                 # 
+                                 #     Xtrackers MSCI World Industrials UCITS ETF 1C    XDWI.L   tier 1 developed
+                                 #     State Street SPDR MSCI Europe Industrials UCITS  NDUS.L   tier 5 Europe
+                                 # 
+                                 #   Both are SECTOR funds admitted as geographic cores. `core::NARROW`
+                                 #   disqualifies "technolog", "financ", "health", "energy", "semiconduct",
+                                 #   "biotech", "communicat" and the bare word "sector" — but has NO
+                                 #   "industrial". `geo_tier` matches "msci world" / "msci europe", nothing
+                                 #   disqualifies, and an industry bet enters the buy-and-hold CORE list. This
+                                 #   is a MISSING TOKEN, not the mid-word accident (#195) tested for, which is
+                                 #   exactly why `hold_name_tokens` found nothing: word-start matching cannot
+                                 #   fix a token that is not in the list.
+                                 # 
+                                 #   DELIBERATELY NOT FIXED IN THIS ROUND. Adding the token moves the census
+                                 #   (developed 7->6, Europe 9->8) that all three of this round's receipts
+                                 #   quote, so the fix and the measurement cannot share a commit without making
+                                 #   the receipts self-inconsistent. It has ZERO effect on shipped output today
+                                 #   — both funds sort below the cap — so the sequencing costs nothing. NEXT
+                                 #   ROUND'S FIRST ITEM, with the same before/after census as its receipt.
+                                 #   While there, price these too: CMXUS.SW ("MSCI USA NSL"), 500X.AS ("S&P 500
+                                 #   Leaders") and the two "Min TE" rows are screened or optimised variants
+                                 #   whose names dodge the "screened"/"esg" tokens the same way.
+                                 # 
+                                 #   SO THE CAP STAYS 3 — and it is now understood rather than inherited: it is
+                                 #   the number at which a sleeve shows an alternative issuer or venue without
+                                 #   one index family crowding the others out, and on this pond it also happens
+                                 #   to bury both mis-admitted sector funds. That last part is LUCK, not a
+                                 #   filter, and the receipt says so: do not treat the cap as the fix for
+                                 #   NARROW.
+                                 # 
+                                 #   NOT `VERDICT_TOP` AND NOT (#120)'S FORBIDDEN ARGMAX. That rule guards the
+                                 #   GRADED basket, which is fitted against forward returns. This is a display
+                                 #   table height on a lane no backtest can reach: `core::hold_miss_reason`
+                                 #   reads TER/AUM/replication/share-class/domicile and
+                                 #   `backtest::stamp_asset_class` fills only name/instrument_type/sector, so
+                                 #   every backtest quote dies on the TER leg. Those are today-only BF facts
+                                 #   with no point-in-time history — the look-ahead class (#95) documented for
+                                 #   `sector`. No argmax is available here even in principle.
+                                 # 
+                                 #   ALSO WIDENS `core_now` (screen.rs, the CORE membership diff and the
+                                 #   `journal_core_list` field), which reads the same `hold_core_list` under
+                                 #   its own `.take(top_picks)`. One cap, not two, on purpose.
+                                 # 
+                                 #   REVERT: 3 is the shipped value and the literal that preceded the knob, so
+                                 #   this IS the revert. Raising it re-surfaces the 22 rows above, sector funds
+                                 #   included, until NARROW is fixed.
   growth_sector_cap: 0           # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
                                  # 0 (off), which is today's unconstrained table. It is a RISK
                                  # constraint, and the honest thing to say up front is that the
