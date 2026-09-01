@@ -3902,6 +3902,35 @@ fn dom_rank(q: &Quote) -> u8 {
     }
 }
 
+/// (#199) CORE admission funnel: how many EU-buyable ETFs die at EACH of the six legs of
+/// [`core::hold_miss_leg`], plus a final slot for the ones that qualify. Slots are indexed by
+/// [`core::HOLD_LEGS`]; the legs short-circuit, so a fund is counted ONCE, at the FIRST leg that
+/// refuses it, and the array sums to the ETF count.
+///
+/// Why this exists: ten rounds of CORE admission work — `(#127)`, `(#128)`, `(#151)`/`(#187)`,
+/// `(#134)`/`(#153)`, `(#152)`, `(#73)`, `(#192)`, `(#193)`, `(#194)` — each picked its lever by
+/// ARGUMENT and was then refused by measurement, because nothing ever printed which leg was binding.
+/// The growth lane has had `funnel_lines` (`screen.rs`) since round 118 and that instrument is what
+/// let a single run locate admission in DEPTH rather than at any one gate. This is its CORE twin.
+/// The offline caches cannot answer it: `core.rs`'s `ter_fallback` is populated only for funds with
+/// NO BF facts, so `.fund_facts_cache.json` is the venue-only tail (gilts, Dist classes, ESG), not
+/// the CORE candidate pool — a tally taken from it measures the bias, not the lane.
+///
+/// Scoped to ETFs on purpose. Leg 0 refuses on the NAME, so over the whole pond it would report
+/// ~4900 stocks and bury the four legs actually in question.
+///
+/// PURE AND GRADEABLE, deliberately. `(#198)` skipped `print_hold_core` from the mutation gate and
+/// its doc comment states the rule: anything in there that becomes a real decision moves OUT to a
+/// function the gate can reach. So the arithmetic is here and only the `println!` is in the printer.
+pub fn hold_funnel(quotes: &[Quote]) -> [usize; core::HOLD_LEGS.len() + 1] {
+    let mut tally = [0usize; core::HOLD_LEGS.len() + 1];
+    for q in quotes.iter().filter(|q| eu_buyable(q) && quote_is_etf(q)) {
+        let slot = core::hold_miss_leg(q).map_or(core::HOLD_LEGS.len(), |(leg, _)| leg);
+        tally[slot] += 1;
+    }
+    tally
+}
+
 /// Buy-and-hold CORE shortlist — the one-fund-forever holds the momentum SCORE buries at 0.0 (the
 /// overext brake floors a broad index fund that has simply run for years). Built straight from the full
 /// universe, bypassing `growth_score` entirely: keep every `hold_suitable` fund (broad + cheap +
@@ -3998,6 +4027,18 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // (#197) the cap is READ here, never re-spelled: the line's whole job is to say how much supply
     // the cap hid, and a header quoting a different number than the filter applied would invert it.
     println!("  supply per sleeve (before the ≤{}/sleeve cap): {}", crate::config::hold_per_tier(), counts.join(" · "));
+    // (#199) …and the funnel BEHIND that supply: where the EU-buyable ETFs that never reach a sleeve
+    // die. The legs short-circuit, so each fund is counted once at the first one that refuses it —
+    // read a leg's count as "sole-blocked here OR ALSO blocked later", never as "only this leg".
+    // Arithmetic is in `hold_funnel` (gradeable); this line only formats it.
+    let funnel = hold_funnel(quotes);
+    let legs: Vec<String> = core::HOLD_LEGS
+        .iter()
+        .zip(funnel.iter())
+        .map(|(name, n)| format!("{name} {n}"))
+        .collect();
+    println!("  CORE funnel — {} EU-buyable ETFs: {} · QUALIFIED {}",
+        funnel.iter().sum::<usize>(), legs.join(" · "), funnel[core::HOLD_LEGS.len()]);
     // (round 111) leading 1-char cell = the owned-position marker; this list is what a 20yr holder
     // actually buys, so "covered" matters most here. Blank when the overlay is off/empty.
     println!("  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
@@ -7224,6 +7265,45 @@ mod tests {
         let no_world: Vec<Quote> =
             quotes.iter().filter(|q| core::hold_breadth_tier(&q.name) != 0).cloned().collect();
         print_hold_core(&no_world, &HashSet::new(), &Owned::default());
+    }
+
+    /// (#199) `hold_funnel` buckets EVERY EU-buyable ETF into the FIRST admission leg that refuses
+    /// it. One fund per leg plus one qualifier, so a mis-indexed slot, an off-by-one on the
+    /// qualified tail, or a leg reordered out from under `core::HOLD_LEGS` all land as a wrong
+    /// histogram rather than a silently plausible one.
+    ///
+    /// The scoping half matters as much as the tally: a STOCK and a US-listed ETF are in the input
+    /// and neither may be counted. Leg 0 refuses on the name, so counting stocks would report ~4900
+    /// of them on the live pond and bury the four legs the round is actually asking about.
+    ///
+    /// Regime-independent by construction — `hold_ucits_or_domicile` ships TRUE and defaults FALSE,
+    /// so the leg-1 fund carries a US domicile as well as a UCITS-free name and fails under both.
+    #[test]
+    fn hold_funnel_buckets_each_leg() {
+        let mut leg0 = core_etf("XDWH.DE", "Xtrackers MSCI World Health Care UCITS ETF", 2e9, 0.25);
+        leg0.name = "Xtrackers MSCI World Health Care UCITS ETF".into(); // NARROW token -> not broad
+        let mut leg1 = core_etf("VWRD.DE", "Vanguard FTSE All-World Index Fund", 5e9, 0.22);
+        leg1.domicile = Some("US".to_string()); // no UCITS token AND non-EU domicile -> fails either way
+        let leg2 = core_etf("EXPN.DE", "Amundi MSCI World Expensive UCITS ETF", 5e9, 0.90);
+        let mut leg3 = core_etf("SWAP.DE", "Amundi MSCI World Swap UCITS ETF", 5e9, 0.12);
+        leg3.replication = Some("Swap");
+        let mut leg4 = core_etf("DIST.DE", "iShares Core MSCI World Dist UCITS ETF", 5e9, 0.20);
+        leg4.use_of_profits = Some("Dist");
+        let leg5 = core_etf("SMLL.DE", "Invesco MSCI Emerging Markets UCITS ETF", 5e8, 0.19);
+        let good = core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22);
+        // neither of these may be counted: not an ETF, and not EU-buyable
+        let stock = Quote::stub("AAPL", "€100.00", "", "Apple Inc.");
+        let mut us = core_etf("VT", "Vanguard Total World Stock ETF", 30e9, 0.06);
+        us.market = "USA".into();
+
+        let quotes = vec![leg0, leg1, leg2, leg3, leg4, leg5, good, stock, us];
+        let funnel = hold_funnel(&quotes);
+        assert_eq!(funnel, [1, 1, 1, 1, 1, 1, 1], "one fund per leg + one qualified: {funnel:?}");
+        assert_eq!(funnel.iter().sum::<usize>(), 7, "the stock and the US listing are out of scope");
+        assert_eq!(funnel.len(), core::HOLD_LEGS.len() + 1, "one slot per leg plus the qualified tail");
+        // the tail slot is the SAME verdict `hold_suitable` gives — one definition, two readers
+        assert_eq!(funnel[core::HOLD_LEGS.len()],
+            quotes.iter().filter(|q| eu_buyable(q) && quote_is_etf(q) && core::hold_suitable(q)).count());
     }
 
     /// (#66) The per-tier counter must survive more names in one tier than a `u8` can hold. It was

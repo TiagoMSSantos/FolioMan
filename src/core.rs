@@ -1255,26 +1255,45 @@ pub fn hold_suitable(q: &Quote) -> bool {
 /// (round 49) The FIRST hold-core leg this quote fails, as a printable reason — None = passes all
 /// (i.e. `hold_suitable`). Single source of truth: hold_suitable IS this function's is_none(), so
 /// the H flag and the printed reason can never disagree. Leg order = cheapest check first, and the
+/// (#199) The CORE admission legs, in the order [`hold_miss_leg`] walks them, indexed BY the number
+/// it returns. Display labels for the funnel line — short on purpose, because all six print on one
+/// row. A seventh tally slot past the end is "qualified"; see [`picks::hold_funnel`].
+pub const HOLD_LEGS: [&str; 6] =
+    ["not broad-index", "no UCITS", "TER", "replication", "not Acc", "AUM"];
+
 /// TER cap note lives here: `hold_max_ter` ships 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the
 /// canonical one-fund hold — qualifies; below that is S&P/World territory (0.03–0.20%). The reason
 /// string formats the cap from the knob, so it cannot quote a number the check did not use.
 /// ter_shown/aum_shown: Yahoo fallback counts here (display-side flag), the score does NOT see it —
 /// which also means this leg and the score's TER damp read two different fields; see (#102).
 pub fn hold_miss_reason(q: &Quote) -> Option<String> {
+    hold_miss_leg(q).map(|(_, msg)| msg)
+}
+
+/// (#199) The same six legs, plus the INDEX of the one that answered — the whole of
+/// [`hold_miss_reason`], which is now a one-line wrapper over this so there is still exactly ONE
+/// definition of the admission decision (non-negotiable #4) and not one caller had to change.
+///
+/// The index exists because nothing could bucket the verdict before: the message is formatted with
+/// live values ("TER 0.30% > 0.25% cap"), so a tally keyed on it would key on the fund's numbers.
+/// [`picks::hold_funnel`] reads the index and nothing else. Ten rounds of admission work guessed
+/// which leg was binding because this number was thrown away on every one of the ~4300 funds that
+/// computes it.
+pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
     if !is_broad_index_name(&q.name) {
-        return Some("not a broad-index name (sector/thematic/factor tilt)".into());
+        return Some((0, "not a broad-index name (sector/thematic/factor tilt)".into()));
     }
     // (#102) the name token, OR — behind the knob — an EU domicile, which is the FACT the token is a
     // proxy for. `domicile: None` still falls back to the name, so missing data cannot newly pass.
     let eu_domiciled = crate::config::hold_ucits_or_domicile()
         && q.domicile.as_deref().is_some_and(|d| d.len() >= 2 && !NON_EU.contains(&&d[..2]));
     if !q.name.to_lowercase().contains("ucits") && !eu_domiciled {
-        return Some("no UCITS token in the name".into());
+        return Some((1, "no UCITS token in the name".into()));
     }
     let cap = crate::config::hold_max_ter();
     match q.ter_shown() {
-        None => return Some("TER unknown".into()),
-        Some(t) if t > cap => return Some(format!("TER {t:.2}% > {cap:.2}% cap")),
+        None => return Some((2, "TER unknown".into())),
+        Some(t) if t > cap => return Some((2, format!("TER {t:.2}% > {cap:.2}% cap"))),
         _ => {}
     }
     // (round 53) physical FAMILY, not literal "Full": this leg exists to exclude swap counterparty
@@ -1283,16 +1302,16 @@ pub fn hold_miss_reason(q: &Quote) -> Option<String> {
     // the norm for a 3000+ name index; BF verified live 2026-07) — keeping the CORE tier-0 slot
     // permanently empty. Optimised/Sample/Hybrid hold the stocks; Swap and unknown still fail.
     if !matches!(q.replication, Some("Full" | "Opt" | "Samp" | "Hybr")) {
-        return Some(format!("replication {} (needs physical)", q.replication.unwrap_or("unknown")));
+        return Some((3, format!("replication {} (needs physical)", q.replication.unwrap_or("unknown"))));
     }
     if q.use_of_profits != Some("Acc") {
-        return Some(format!("share class {} (needs Acc)", q.use_of_profits.unwrap_or("unknown")));
+        return Some((4, format!("share class {} (needs Acc)", q.use_of_profits.unwrap_or("unknown"))));
     }
     if !q.aum_shown().is_some_and(|a| a >= 1e9) {
-        return Some(match q.aum_shown() {
+        return Some((5, match q.aum_shown() {
             Some(a) => format!("AUM €{:.1}B < €1B floor", a / 1e9),
             None => "AUM unknown".into(),
-        });
+        }));
     }
     None
 }
