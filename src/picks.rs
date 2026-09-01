@@ -3931,6 +3931,52 @@ pub fn hold_funnel(quotes: &[Quote]) -> [usize; core::HOLD_LEGS.len() + 1] {
     tally
 }
 
+/// (#201) What `core::NARROW` COSTS: for every EU-buyable ETF whose name IS geographically broad
+/// (`core::geo_hit` answers) but is refused by a single name token, count it under that token.
+/// Descending by count, ties alphabetical, zeros dropped.
+///
+/// This is the (#199) funnel one level up. `hold_funnel`'s leg 0 says "not a broad-index name" and
+/// stops there, which merges two completely different populations: a single stock or a bond fund that
+/// has no geography at all, and a WORLD fund refused for one word in its title. Only the second is
+/// supply, and only the second is actionable — so the census counts exactly that half.
+///
+/// Ten rounds have argued about this list — `(#195)` measured the matching REGIME and moved zero
+/// funds, `(#200)` found a token missing entirely — without anyone being able to see what any single
+/// token refuses. Read it as "refused FIRST on this token": `core::narrow_hit` returns the first hit
+/// in array order, so a name carrying two tokens lands under the earlier one and the columns sum to
+/// the population, never double-count it.
+///
+/// Pure and gradeable, per the rule (#198)'s doc comment set for `print_hold_core`.
+pub fn narrow_census(quotes: &[Quote]) -> Vec<(&'static str, usize)> {
+    let mut counts: HashMap<&'static str, usize> = HashMap::new();
+    for q in quotes.iter().filter(|q| eu_buyable(q) && quote_is_etf(q)) {
+        let lower = q.name.to_lowercase();
+        if core::geo_hit(&lower).is_none() {
+            continue; // no geography at all -> not CORE supply, whatever the tokens say
+        }
+        if let Some(t) = core::narrow_hit(&lower) {
+            *counts.entry(t).or_default() += 1;
+        }
+    }
+    let mut out: Vec<(&'static str, usize)> = counts.into_iter().collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    out
+}
+
+/// (#201) Why a PINNED broad-ish ETF is not in the CORE list. `hold_miss_reason`'s leg-0 message is
+/// the one leg that cannot say why — "not a broad-index name (sector/thematic/factor tilt)" is a
+/// category, not a cause — so when a narrow token is the blocker this reports the TOKEN, which is the
+/// half a reader can act on. Every other leg already names its own number and passes straight through.
+///
+/// Extracted rather than written inline in the printer for the reason (#198) recorded there: a real
+/// decision inside a `#[mutants::skip]`ped function is a decision the gate cannot see.
+pub fn near_miss_reason(q: &Quote) -> Option<String> {
+    match core::narrow_hit(&q.name.to_lowercase()) {
+        Some(t) => Some(format!("narrow token \"{}\"", t.trim())),
+        None => core::hold_miss_reason(q),
+    }
+}
+
 /// Buy-and-hold CORE shortlist — the one-fund-forever holds the momentum SCORE buries at 0.0 (the
 /// overext brake floors a broad index fund that has simply run for years). Built straight from the full
 /// universe, bypassing `growth_score` entirely: keep every `hold_suitable` fund (broad + cheap +
@@ -4039,6 +4085,14 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
         .collect();
     println!("  CORE funnel — {} EU-buyable ETFs: {} · QUALIFIED {}",
         funnel.iter().sum::<usize>(), legs.join(" · "), funnel[core::HOLD_LEGS.len()]);
+    // (#201) …and the split of leg 0 that matters: of the names it refuses, how many were WORLD funds
+    // turned away for one word. Arithmetic is in `narrow_census` (gradeable); this only formats it.
+    let narrow = narrow_census(quotes);
+    if !narrow.is_empty() {
+        let cells: Vec<String> = narrow.iter().map(|(t, n)| format!("{} {n}", t.trim())).collect();
+        println!("  NARROW cost — {} geo-broad ETFs refused on a name token: {}",
+            narrow.iter().map(|(_, n)| n).sum::<usize>(), cells.join(" · "));
+    }
     // (round 111) leading 1-char cell = the owned-position marker; this list is what a 20yr holder
     // actually buys, so "covered" matters most here. Blank when the overlay is off/empty.
     println!("  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
@@ -4075,11 +4129,17 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // (round 49) pinned near-H: a watchlist fund that IS a broad core candidate but misses the H flag —
     // say the first failing leg (single source of truth: core::hold_miss_reason == !hold_suitable),
     // same posture as the gate-review footer. Bounded by watchlist size.
+    // (#201) the filter reads `geo_hit`, NOT `is_broad_index_name`: the latter is already false for
+    // anything a narrow token refused, so pinning exactly the candidate this diagnosis exists for — a
+    // world fund carrying one disqualifying word — printed nothing at all.
     let near: Vec<&Quote> = quotes.iter()
-        .filter(|q| pinned.contains(q.ticker.as_str()) && quote_is_etf(q) && core::is_broad_index_name(&q.name))
+        .filter(|q| {
+            pinned.contains(q.ticker.as_str()) && quote_is_etf(q)
+                && core::geo_hit(&q.name.to_lowercase()).is_some()
+        })
         .collect();
     for q in near {
-        if let Some(reason) = core::hold_miss_reason(q) {
+        if let Some(reason) = near_miss_reason(q) {
             println!("  {:<9} not hold-core: {reason}", truncate(&q.ticker, 9));
         }
     }
@@ -7304,6 +7364,46 @@ mod tests {
         // the tail slot is the SAME verdict `hold_suitable` gives — one definition, two readers
         assert_eq!(funnel[core::HOLD_LEGS.len()],
             quotes.iter().filter(|q| eu_buyable(q) && quote_is_etf(q) && core::hold_suitable(q)).count());
+    }
+
+    /// (#201) `narrow_census` prices each `core::NARROW` token in geographically-broad ETFs, and
+    /// `near_miss_reason` reports the token rather than the generic leg-0 category.
+    ///
+    /// The expected histogram is NON-UNIFORM on purpose — the same lesson the `hold_funnel` fixture
+    /// carries: a flat expectation is satisfied by a mutant returning a constant.
+    ///
+    /// The two exclusions are the point of the census. A fund with a token but NO geography (Global
+    /// Clean Energy) is not CORE supply and must not inflate a column; a fund that is broad and clean
+    /// is not refused at all. Only "broad by geography, refused by one word" counts.
+    #[test]
+    fn narrow_census_prices_each_token() {
+        let q = |t: &str, n: &str| core_etf(t, n, 5e9, 0.20);
+        let mut quotes = vec![
+            q("IUSN.DE", "iShares MSCI World Small Cap UCITS ETF"),
+            q("ZPRX.DE", "SPDR MSCI Europe Small Cap UCITS ETF"),
+            // carries BOTH "small" and "esg" -> counted ONCE, under the earlier token in NARROW order
+            q("SMESG.DE", "Amundi MSCI World Small Cap ESG UCITS ETF"),
+            q("EGSU.DE", "UBS MSCI World ESG UCITS ETF"),
+            q("XDWH.DE", "Xtrackers MSCI World Health Care UCITS ETF"),
+            q("VWCE.DE", "Vanguard FTSE All-World UCITS ETF"),      // broad + clean -> not refused
+            q("INRG.DE", "iShares Global Clean Energy UCITS ETF"),  // token, but no geography at all
+        ];
+        quotes.push(Quote::stub("AAPL", "€100.00", "", "Apple Inc.")); // not an ETF
+        let mut us = q("VT", "Vanguard Total World Stock ETF");
+        us.market = "USA".into(); // not EU-buyable
+        quotes.push(us);
+
+        assert_eq!(narrow_census(&quotes), vec![("small", 3), ("esg", 1), ("health", 1)],
+            "descending by count, ties alphabetical, zeros dropped");
+
+        // near_miss_reason: the TOKEN for a narrow-tagged name, the leg message otherwise, None when it
+        // qualifies — the three branches the pinned line prints.
+        let small = &quotes[0];
+        assert_eq!(near_miss_reason(small).as_deref(), Some("narrow token \"small\""));
+        let mut dist = q("VWRL.DE", "Vanguard FTSE All-World UCITS ETF Dist");
+        dist.use_of_profits = Some("Dist");
+        assert_eq!(near_miss_reason(&dist).as_deref(), Some("share class Dist (needs Acc)"));
+        assert_eq!(near_miss_reason(&quotes[5]), None, "a qualifying core has no near-miss reason");
     }
 
     /// (#66) The per-tier counter must survive more names in one tier than a `u8` can hold. It was

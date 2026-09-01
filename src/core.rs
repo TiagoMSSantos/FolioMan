@@ -1219,16 +1219,41 @@ fn token_at_word_start(n: &str, t: &str) -> bool {
     n.match_indices(t).any(|(i, _)| !n[..i].chars().next_back().is_some_and(char::is_alphanumeric))
 }
 
+/// Does token `t` fire on the ALREADY-lowercased name `n`? The one place the two matching regimes
+/// live: `hold_name_tokens` ON means word-start only, OFF (what ships) means plain substring. It was
+/// a closure inside `geo_tier`; (#201) lifted it so the two halves below can be asked separately
+/// without either re-spelling the rule (non-negotiable #4).
+fn hit(n: &str, t: &str) -> bool {
+    if crate::config::hold_name_tokens() { token_at_word_start(n, t) } else { n.contains(t) }
+}
+
+/// (#201) WHICH `NARROW` token disqualifies an ALREADY-lowercased name — the fact `geo_tier` computes
+/// for every fund in the pond and then throws away, exactly as `hold_miss_reason` threw away the leg
+/// index before (#199). Ten rounds have argued about this list without anyone being able to see what
+/// it costs; `picks::narrow_census` is the reader that finally prices it.
+///
+/// Returns the FIRST token in `NARROW` ORDER when several fire, so "MSCI World Small Cap ESG" is
+/// reported under "small" and not "esg". The census inherits that convention — its counts are
+/// "refused FIRST on this token", never "contains this token".
+pub fn narrow_hit(n: &str) -> Option<&'static str> {
+    NARROW.iter().copied().find(|t| hit(n, t))
+}
+
+/// (#201) The GEO tier an ALREADY-lowercased name matches IGNORING the narrow disqualifier — i.e.
+/// "is this name geographically broad at all". `geo_tier` is exactly this AND `narrow_hit` being
+/// empty; the census needs the halves apart so it can count the funds that ARE broad by geography and
+/// are refused only by a token, which is the supply behind every "should the lane admit factor X".
+pub fn geo_hit(n: &str) -> Option<u8> {
+    GEO.iter().find(|(t, _)| hit(n, t)).map(|(_, tier)| *tier)
+}
+
 /// The geographic tier of an ALREADY-lowercased name, or None when no geography token matches or a
 /// NARROW token disqualifies it. The single place the two public fns above agree.
 fn geo_tier(n: &str) -> Option<u8> {
-    let hit = |t: &str| {
-        if crate::config::hold_name_tokens() { token_at_word_start(n, t) } else { n.contains(t) }
-    };
-    if NARROW.iter().any(|t| hit(t)) {
+    if narrow_hit(n).is_some() {
         return None;
     }
-    GEO.iter().find(|(t, _)| hit(t)).map(|(_, tier)| *tier)
+    geo_hit(n)
 }
 
 /// Diversification tier of a broad-index fund, for ordering the buy-and-hold CORE broadest-first.
