@@ -1137,7 +1137,7 @@ pub fn is_broad_index_name(name: &str) -> bool {
 /// How many breadth tiers `hold_breadth_tier` can return. Anything sizing a per-tier array MUST read
 /// this — `hold_core_list` indexed a hardcoded `[0u8; 3]` by tier, so a fourth tier was an
 /// index-out-of-bounds panic rather than a display bug.
-pub const HOLD_TIERS: usize = 7;
+pub const HOLD_TIERS: usize = 8;
 
 /// (round 118) The CORE admission rule, ONE table, read by both `is_broad_index_name` (does it match
 /// at all) and `hold_breadth_tier` (which tier) — they cannot drift apart the way two parallel lists
@@ -1247,11 +1247,63 @@ pub fn geo_hit(n: &str) -> Option<u8> {
     GEO.iter().find(|(t, _)| hit(n, t)).map(|(_, tier)| *tier)
 }
 
+/// (#202) The `NARROW` tokens the size sleeve rehabilitates — market-cap SEGMENT, nothing else.
+/// "value", "quality", "momentum", "equal weight" and the volatility tilts are deliberately absent:
+/// they re-weight stocks the lane already owns through MSCI World, which is a tilt, not an exposure.
+/// A small-cap fund holds companies no all-world large-cap tracker holds at all.
+const SIZE: [&str; 1] = ["small"];
+
+/// (#202) The eighth sleeve, ranked last (least diversified). Its own tier because a 0.35% small-cap
+/// fund dropped into the developed sleeve loses the cheapest-TER sort to a 0.20% MSCI World tracker
+/// and would never be printed — the sleeve is what makes it visible, not the token alone.
+pub const SIZE_TIER: u8 = HOLD_TIERS as u8 - 1;
+
+/// (#202) Does an ALREADY-lowercased name earn the size sleeve, given the FIRST narrow token that
+/// fired on it? All four conjuncts are load-bearing: the knob must be on (0.0 = off, and no fund
+/// clears a 0.0% cap anyway), the blocking token must be a market-cap one, NO OTHER narrow token may
+/// fire ("MSCI World Small Cap ESG" is still an ESG fund), and the name must still carry a geography
+/// (a bare "Global X Small Cap" is not a world index).
+fn size_sleeve_tier(n: &str, first: &str, cap: f64) -> Option<u8> {
+    if cap <= 0.0 || !SIZE.contains(&first) {
+        return None;
+    }
+    if NARROW.iter().any(|t| !SIZE.contains(t) && hit(n, t)) || geo_hit(n).is_none() {
+        return None;
+    }
+    Some(SIZE_TIER)
+}
+
+/// (#202) How many sleeves the census line prints. The size sleeve is HIDDEN while its knob is off,
+/// so a lane with the sleeve disabled prints byte-identically to its seven-sleeve self — that is
+/// non-negotiable #1, and `SIZE_TIER` being last is what makes a `take` sufficient. Every GEOGRAPHIC
+/// sleeve always prints, empty or not: round 118's rule, because an absent sleeve and one the pond
+/// cannot fill are different facts and the reader needs to tell them apart.
+pub fn sleeves_shown(size_cap: f64) -> usize {
+    if size_cap > 0.0 {
+        HOLD_TIERS
+    } else {
+        HOLD_TIERS - 1
+    }
+}
+
+/// (#202) Which TER ceiling a sleeve is judged against. Takes both caps rather than reading them,
+/// so the choice itself is a pure function the mutation gate can reach — the knob is a process-wide
+/// `OnceLock` read from config, so a test cannot flip it and an unreachable branch here would be an
+/// ungraded one.
+fn ter_cap_for(tier: u8, size_cap: f64, base_cap: f64) -> f64 {
+    if tier == SIZE_TIER {
+        size_cap
+    } else {
+        base_cap
+    }
+}
+
 /// The geographic tier of an ALREADY-lowercased name, or None when no geography token matches or a
 /// NARROW token disqualifies it. The single place the two public fns above agree.
 fn geo_tier(n: &str) -> Option<u8> {
-    if narrow_hit(n).is_some() {
-        return None;
+    if let Some(first) = narrow_hit(n) {
+        // (#202) …unless the only narrow thing about it is market cap, and the sleeve is switched on.
+        return size_sleeve_tier(n, first, crate::config::hold_size_sleeve_ter());
     }
     geo_hit(n)
 }
@@ -1305,9 +1357,14 @@ pub fn hold_miss_reason(q: &Quote) -> Option<String> {
 /// which leg was binding because this number was thrown away on every one of the ~4300 funds that
 /// computes it.
 pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
-    if !is_broad_index_name(&q.name) {
+    // (#202) leg 0 KEEPS the tier it computed instead of throwing it away and re-deriving it at the
+    // TER leg — `hold_breadth_tier` would answer `SIZE_TIER` for a name with no geography at all
+    // (its `unwrap_or` fallback is the last tier), so re-asking there would hand the size cap to
+    // anything that reached it by another route. One lookup, one definition (non-negotiable #4).
+    let lower = q.name.to_lowercase();
+    let Some(tier) = geo_tier(&lower) else {
         return Some((0, "not a broad-index name (sector/thematic/factor tilt)".into()));
-    }
+    };
     // (#102) the name token, OR — behind the knob — an EU domicile, which is the FACT the token is a
     // proxy for. `domicile: None` still falls back to the name, so missing data cannot newly pass.
     let eu_domiciled = crate::config::hold_ucits_or_domicile()
@@ -1315,7 +1372,9 @@ pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
     if !q.name.to_lowercase().contains("ucits") && !eu_domiciled {
         return Some((1, "no UCITS token in the name".into()));
     }
-    let cap = crate::config::hold_max_ter();
+    // (#202) the size sleeve carries its own ceiling: world small-cap funds run ~0.35% against a
+    // 0.25% cap fitted to all-world trackers, so one shared number cannot admit both.
+    let cap = ter_cap_for(tier, crate::config::hold_size_sleeve_ter(), crate::config::hold_max_ter());
     match q.ter_shown() {
         None => return Some((2, "TER unknown".into())),
         Some(t) if t > cap => return Some((2, format!("TER {t:.2}% > {cap:.2}% cap"))),
@@ -4258,6 +4317,32 @@ mod tests {
     assert!(!hold("iShares MSCI World EUR Hedged UCITS ETF Acc", Some(0.20), Some("Full"), Some("Acc"), Some(5e9))); // hedged class: hedge-cost drag, not the canonical core
     assert!(!hold("Xtrackers MSCI World Minimum Volatility UCITS ETF", Some(0.25), Some("Full"), Some("Acc"), Some(1.1e9))); // spelled-out factor tilt (live CORE receipt)
     assert!(!hold("BNP PARIBAS EASY II MSCI World PAB UCITS ETF Acc", Some(0.20), Some("Full"), Some("Acc"), Some(1.5e9))); // PAB = Paris-Aligned Benchmark, an ESG screen (live CORE receipt)
+
+    // (#202) the size sleeve is OFF by default, so a world small-cap fund that clears every other leg
+    // is STILL refused on the name — this is the non-negotiable-#1 proof that the knob ships neutral.
+    assert!(!hold("iShares MSCI World Small Cap UCITS ETF", Some(0.35), Some("Opt"), Some("Acc"), Some(3e9)));
+
+    // (#202) …and the sleeve's own admission rule, exercised directly with the cap passed in, because
+    // `hold_size_sleeve_ter` is a process-wide OnceLock read from config that no test can flip.
+    // Names are pre-lowercased — that is the contract of every fn in this family.
+    let world_small = "ishares msci world small cap ucits etf";
+    assert_eq!(size_sleeve_tier(world_small, "small", 0.0), None, "0.0 = sleeve off");
+    assert_eq!(size_sleeve_tier(world_small, "small", 0.35), Some(SIZE_TIER), "cap on -> the eighth sleeve");
+    // a SECOND narrow token still refuses: a small-cap ESG fund is an ESG fund
+    assert_eq!(size_sleeve_tier("amundi msci world small cap esg ucits etf", "small", 0.35), None);
+    assert_eq!(size_sleeve_tier("spdr msci europe small cap eur hedged ucits etf", "small", 0.35), None);
+    // no geography at all -> not a world index, whatever its market cap
+    assert_eq!(size_sleeve_tier("global x small cap ucits etf", "small", 0.35), None);
+    // the blocking token must be a SIZE one — the sleeve rehabilitates market cap, not sectors
+    assert_eq!(size_sleeve_tier("xtrackers msci world health care ucits etf", "health", 0.35), None);
+
+    // (#202) and the ceiling each sleeve is judged against — SIZE_TIER alone gets the sleeve's cap
+    assert_eq!(ter_cap_for(SIZE_TIER, 0.35, 0.25), 0.35);
+    assert_eq!(ter_cap_for(0, 0.35, 0.25), 0.25, "all-world keeps the shared cap");
+    assert_eq!(ter_cap_for(1, 0.35, 0.25), 0.25, "developed keeps the shared cap");
+    // (#202) and the sleeve stays INVISIBLE while it is off, so the census line is byte-identical
+    assert_eq!(sleeves_shown(0.0), HOLD_TIERS - 1, "off -> the seven geographic sleeves only");
+    assert_eq!(sleeves_shown(0.35), HOLD_TIERS, "on -> the size sleeve joins the line");
 
     // (round 47) Yahoo fallback facts count for the H flag via ter_shown/aum_shown — a venue fund with
     // no BF TER/AUM but Yahoo facts qualifies; BF stays authoritative when both are present.

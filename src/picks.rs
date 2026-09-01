@@ -4064,10 +4064,14 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
         supply[core::hold_breadth_tier(&q.name) as usize] += 1;
     }
     const SLEEVE: [&str; core::HOLD_TIERS] =
-        ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan/AsiaPac"];
+        ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan/AsiaPac", "world small-cap"];
+    // (#202) `take` because SLEEVE now carries an eighth, OPTIONAL sleeve: with its knob off the line
+    // must print exactly the seven geographic cells it always did. The count is `core::sleeves_shown`,
+    // never a literal — the same one-number-one-reader rule the cap in the header below follows.
     let counts: Vec<String> = SLEEVE
         .iter()
         .zip(supply.iter())
+        .take(core::sleeves_shown(crate::config::hold_size_sleeve_ter()))
         .map(|(name, n)| format!("{name} {n}"))
         .collect();
     // (#197) the cap is READ here, never re-spelled: the line's whole job is to say how much supply
