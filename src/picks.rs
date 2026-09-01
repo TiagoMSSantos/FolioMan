@@ -4064,10 +4064,11 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // in silence. A `usize` counter cannot reach either outcome and costs nothing.
     let mut per_tier = [0usize; core::HOLD_TIERS];
     let cap = crate::config::hold_per_tier();
+    let all_world = crate::config::hold_per_tier_all_world();
     cores.retain(|q| {
         let t = core::hold_breadth_tier(&q.name) as usize;
         per_tier[t] += 1;
-        per_tier[t] <= cap
+        per_tier[t] <= core::tier_cap(t, cap, all_world)
     });
     cores
 }
@@ -4128,7 +4129,15 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
         .collect();
     // (#197) the cap is READ here, never re-spelled: the line's whole job is to say how much supply
     // the cap hid, and a header quoting a different number than the filter applied would invert it.
-    println!("  supply per sleeve (before the ≤{}/sleeve cap): {}", crate::config::hold_per_tier(), counts.join(" · "));
+    // (#207) the header must quote the caps the filter ACTUALLY applied — (#197) put both through one
+    // reader for exactly this reason, and a second, tier-0-only cap would otherwise print a number
+    // that never ran. Silent when the override is off, so the shipped line is byte-identical.
+    let all_world_cap = crate::config::hold_per_tier_all_world();
+    let cap_text = match all_world_cap {
+        0 => format!("≤{}", crate::config::hold_per_tier()),
+        n => format!("≤{} for all-world, ≤{}", n, crate::config::hold_per_tier()),
+    };
+    println!("  supply per sleeve (before the {}/sleeve cap): {}", cap_text, counts.join(" · "));
     // (#199) …and the funnel BEHIND that supply: where the EU-buyable ETFs that never reach a sleeve
     // die. The legs short-circuit, so each fund is counted once at the first one that refuses it —
     // read a leg's count as "sole-blocked here OR ALSO blocked later", never as "only this leg".
@@ -7500,13 +7509,17 @@ mod tests {
     #[test]
     fn geo_miss_census_finds_what_the_geo_list_cannot_spell() {
         let cap = crate::config::hold_max_ter();
-        // no GEO token can match these: "all-country" is hyphenated and "global all cap" is a
-        // different string, while `core::hit` is a plain substring test with no normalisation.
-        let praw = core_etf("PRAW.DE", "Amundi Prime All Country World UCITS ETF", 3e9, cap);
+        // no GEO token can match these: `core::hit` is a plain substring test with no normalisation,
+        // so "emerging" cannot see "EM" and "global all cap" is simply a different string. BOTH are
+        // live blind spots the (#203) run found — EIMI.L is €34.8B of them.
+        let eimi = core_etf("EIMI.L", "iShares Core MSCI EM IMI UCITS ETF USD (Acc)", 3e9, cap);
         let lgge = core_etf("LGGE.DE", "L&G Global Equity UCITS ETF", 1.5e9, cap);
         let quotes = vec![
-            praw,
+            eimi,
             lgge,
+            // (#207) excluded by the token this round ADDED, and the regression pin for it: largest
+            // AUM in the set, so dropping "all country world" from GEO puts it back at the top.
+            core_etf("PRAW.DE", "State Street SPDR MSCI All Country World UCITS ETF", 9e9, cap),
             // excluded by geo_hit ALONE — broad, clean, and already admitted by the lane
             core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 9e9, cap),
             // excluded by narrow_hit ALONE — no geography, but a sector word
@@ -7524,7 +7537,7 @@ mod tests {
         us.market = "USA".into();
         let quotes = [quotes, vec![us]].concat();
         let got: Vec<&str> = geo_miss_census(&quotes).iter().map(|q| q.ticker.as_str()).collect();
-        assert_eq!(got, vec!["PRAW.DE", "LGGE.DE"], "descending by AUM, one row per real blind spot");
+        assert_eq!(got, vec!["EIMI.L", "LGGE.DE"], "descending by AUM, one row per real blind spot");
     }
 
     /// (#204) `near_miss_reason` must report the TOKEN only when breadth is what actually refused.

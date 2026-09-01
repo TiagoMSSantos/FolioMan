@@ -3779,6 +3779,48 @@ buy_heuristic:
                                  #   above — a pond that has grown may trip what this one did not. The
                                  #   matcher stays pinned by fixtures in `pure_logic` (prefix tokens still
                                  #   bite; "equality"/"comparison"/"devalued" no longer do).
+  hold_per_tier_all_world: 7     # (#207) MEASURED 2026-09-01, live `screen`, 4597-quote pond. Rows kept in
+                                 #   the ALL-WORLD sleeve alone; 0 = inherit `hold_per_tier` (the default, and
+                                 #   byte-identical to before). JUDGEMENT-PLUS-LIVE-DIFF, NOT GRADED — no
+                                 #   backtest quote carries a TER, so `stamp_asset_class` kills every one of
+                                 #   them on that leg and no walk can reach this lane. Same permanent
+                                 #   ungradeability as `hold_per_tier` itself.
+                                 # 
+                                 #   WHY TIER 0 GETS ITS OWN CAP, AND NO OTHER SLEEVE DOES. (#197) held the
+                                 #   shared cap at 3 on a measured finding: of the 22 rows it hid, 20 were
+                                 #   further WRAPPERS of an index already shown, and since the table sorts
+                                 #   cheapest-first every hidden row was by construction more expensive.
+                                 #   That finding is untouched and still governs every other sleeve. Tier 0
+                                 #   is the exception because its rows are not wrappers of each other:
+                                 #   FTSE All-World, MSCI ACWI and MSCI ACWI IMI are DIFFERENT UNIVERSES —
+                                 #   IMI carries small caps, the other two do not — so ranking them against
+                                 #   each other on TER alone hides an EXPOSURE behind a price.
+                                 # 
+                                 #   It only became visible when (#203)'s GEO blind-spot census found
+                                 #   `all country world` missing from `core::GEO`: a SPACE where the list
+                                 #   spelled a hyphen, and `core::hit` is a plain substring test. Four funds
+                                 #   were reading as "not a broad-index name". Admitting them took the
+                                 #   sleeve's supply 3 -> 7, where a cap of 3 would have evicted two of the
+                                 #   three rows that were already there:
+                                 # 
+                                 #     WEBN.DE  0.07%   €2.5B  Amundi Prime All Country World      <- NEW
+                                 #     SPYY.DE  0.12%  €14.8B  SPDR MSCI All Country World         <- NEW
+                                 #     VWRA.L   0.14%  €45.5B  Vanguard FTSE All-World
+                                 #     FWRA.L   0.15%   €3.7B  Invesco FTSE All-World
+                                 #     SPYI.DE  0.17%   €6.6B  SPDR MSCI ACWI INVESTABLE MARKET    <- NEW
+                                 #     SPP1.DE  0.17%   €1.6B  SPDR MSCI All Country World EUR     <- NEW
+                                 #     SSAC.L   0.20%  €29.5B  iShares MSCI ACWI
+                                 # 
+                                 #   WEBN.DE is HALF the TER of the cheapest all-world row the table has
+                                 #   ever shown, and SPYI.DE is the only fund in the whole CORE list that
+                                 #   holds small caps. 7 = today's full supply, so the cap is not binding;
+                                 #   it is a ceiling against future flooding, not a fitted number.
+                                 # 
+                                 #   NOT (#120)'s forbidden argmax: that governs `VERDICT_TOP`, the GRADED
+                                 #   basket. This is a display table's height. VERIFIED no other sleeve moved
+                                 #   — developed/EM/US/exUS/Europe/Japan are byte-identical row for row.
+                                 #   REVERT RULE: 0. That restores the shared cap on every sleeve, and the
+                                 #   only thing lost is four all-world funds.
   hold_per_tier: 3               # (#197) MEASURED 2026-09-01 AND HELD AT THE SHIPPED LITERAL — rows kept
                                  # per breadth sleeve in the buy-and-hold CORE table. Was a bare
                                  # `const HOLD_PER_TIER: usize = 3` in picks.rs; this names it, and the

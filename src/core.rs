@@ -1163,7 +1163,7 @@ pub const HOLD_TIERS: usize = 8;
 /// Two real collisions: "msci world ex usa" contains "msci world" (would rank an ex-US sleeve AS
 /// developed, i.e. above MSCI World itself), and "ftse developed europe" contains "ftse developed".
 /// Both are pinned by tests.
-const GEO: [(&str, u8); 22] = [
+const GEO: [(&str, u8); 23] = [
     // 4 = ex-US sleeves. FIRST, because every one of them contains a broader token.
     ("acwi ex", 4), ("world ex", 4), ("ex-usa", 4),
     // 5 = Europe. "ftse developed europe" precedes the generic "ftse developed" below.
@@ -1171,7 +1171,7 @@ const GEO: [(&str, u8); 22] = [
     // 6 = Japan / Asia-Pacific
     ("msci japan", 6), ("topix", 6), ("msci pacific", 6),
     // 0 = the whole planet, DM+EM in one fund
-    ("all-world", 0), ("all-country", 0), ("acwi", 0), ("global all cap", 0),
+    ("all-world", 0), ("all-country", 0), ("all country world", 0), ("acwi", 0), ("global all cap", 0),
     ("solactive gbs global markets", 0),
     // 1 = developed markets
     ("msci world", 1), ("ftse developed", 1), ("solactive gbs developed markets", 1),
@@ -1290,6 +1290,23 @@ pub fn sleeves_shown(size_cap: f64) -> usize {
 /// so the choice itself is a pure function the mutation gate can reach — the knob is a process-wide
 /// `OnceLock` read from config, so a test cannot flip it and an unreachable branch here would be an
 /// ungraded one.
+/// (#207) How many rows a sleeve may print. Tier 0 (all-world) can carry its own ceiling because it
+/// is the only sleeve where an extra row is a DIFFERENT product rather than another wrapper of what
+/// is already shown: ACWI, ACWI IMI and FTSE All-World track different universes, and (#207) admitted
+/// two funds into a sleeve that was already saturated at 3. `all_world` 0 = no override, inherit
+/// `base` — which is today's behaviour exactly, on every tier.
+///
+/// Both caps are parameters rather than reads, for the reason [`ter_cap_for`] records: the knobs are
+/// process-wide `OnceLock`s no test can flip, so a branch that only fires on an off-default would be
+/// a branch the mutation gate cannot reach.
+pub fn tier_cap(tier: usize, base: usize, all_world: usize) -> usize {
+    if tier == 0 && all_world > 0 {
+        all_world
+    } else {
+        base
+    }
+}
+
 fn ter_cap_for(tier: u8, size_cap: f64, base_cap: f64) -> f64 {
     if tier == SIZE_TIER {
         size_cap
@@ -4375,6 +4392,22 @@ mod tests {
     assert_eq!(ter_cap_for(SIZE_TIER, 0.35, 0.25), 0.35);
     assert_eq!(ter_cap_for(0, 0.35, 0.25), 0.25, "all-world keeps the shared cap");
     assert_eq!(ter_cap_for(1, 0.35, 0.25), 0.25, "developed keeps the shared cap");
+
+    // (#207) the all-world sleeve's own row cap, and the two halves that make it safe: 0 inherits
+    // (non-negotiable #1, the shipped lane), and the override reaches tier 0 and nothing else.
+    assert_eq!(tier_cap(0, 3, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(0, 3, 5), 5, "…and tier 0 takes it when set");
+    assert_eq!(tier_cap(1, 3, 5), 3, "developed is untouched");
+    assert_eq!(tier_cap(HOLD_TIERS - 1, 3, 5), 3, "…and so is the last sleeve");
+
+    // (#207) "all country world": a SPACE where core::GEO spelled a hyphen, which is why two SPDR
+    // ACWI funds (€14.8B and €6.6B) read as "not a broad-index name" until the (#203) census found
+    // them. The ex-US pin is the ordering half — GEO is first-match-wins and the ex-US group is
+    // listed FIRST precisely so a carve-out cannot be read as the whole planet.
+    assert_eq!(hold_breadth_tier("State Street SPDR MSCI All Country World UCITS ETF"), 0);
+    assert_eq!(hold_breadth_tier("SPDR MSCI All Country World Investable Market UCITS ETF"), 0);
+    assert_eq!(hold_breadth_tier("SPDR MSCI All Country World ex USA UCITS ETF"), 4,
+        "a carve-out is ex-US, not the planet — the ex-US tokens are listed first for this");
     // (#202) and the sleeve stays INVISIBLE while it is off, so the census line is byte-identical
     assert_eq!(sleeves_shown(0.0), HOLD_TIERS - 1, "off -> the seven geographic sleeves only");
     assert_eq!(sleeves_shown(0.35), HOLD_TIERS, "on -> the size sleeve joins the line");
