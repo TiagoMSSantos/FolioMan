@@ -1129,7 +1129,24 @@ async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str, name: &str) -
     }
     let v = cached_fund_json(client, &urls.fund_expense, ticker, "etf").await?;
     let ter = v.get(0).unwrap_or(&v).get("expenseRatio")?.as_f64()?;
-    (ter.is_finite() && ter > 0.0).then_some(ter * 100.0)
+    ter_pct(ter)
+}
+
+/// (#206) FMP's `expenseRatio` as a PERCENT. The ratio arrives as a decimal fraction and the ×100
+/// that converts it is NOT exact: `0.0035 * 100.0 == 0.35000000000000003`, which is genuinely
+/// `> 0.35`. That evicted both iShares MSCI World Small Cap listings from a sleeve whose cap IS
+/// 0.35, while the refusal printed "TER 0.35% > 0.35% cap" — the decision and the display
+/// disagreeing at the boundary, which is why eleven rounds of reading that message never caught it.
+///
+/// Rounding to 1e-4 of a percent is finer than any TER is ever quoted (the cheapest real fund in the
+/// pond is 0.03%, the finest 0.0345%), so no real value moves — it only makes an INCLUSIVE cap
+/// actually inclusive, which `scoring_regression_pin` already asserts is the intent.
+///
+/// The shipped lane cannot move: its cap is `hold_max_ter` 0.25, and 0.0025 × 100 is exact, so no
+/// FMP value has ever landed just above it. Split out of the caller because the caller is an async
+/// network fn the gate cannot reach, and an ungraded arithmetic fix is how this bug got here.
+pub fn ter_pct(ratio: f64) -> Option<f64> {
+    (ratio.is_finite() && ratio > 0.0).then(|| (ratio * 1e6).round() / 1e4)
 }
 
 /// Exact Börse-Frankfurt TER map hit. Safe for ANY quote type: presence under the exact resolved
@@ -4633,6 +4650,31 @@ pub async fn fetch_universe(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// (#206) The ×100 that turns FMP's decimal fraction into a percent is not exact, and the one
+    /// place it matters is a cap comparison: `0.0035 * 100.0` is `0.35000000000000003`, strictly
+    /// greater than a 0.35 cap, so both iShares MSCI World Small Cap listings were refused by a
+    /// sleeve built to admit them — and the message said "TER 0.35% > 0.35% cap", because the
+    /// display rounds and the decision did not.
+    ///
+    /// The `>` assertions are the point; `assert_eq!` on the value alone would pass for the BROKEN
+    /// version too, since `0.35000000000000003 == 0.35` is false but prints identically either way.
+    #[test]
+    fn ter_pct_survives_the_percent_conversion_at_a_cap_boundary() {
+        // `<=`, not `!(> )`: the gate's own test is `t > cap`, and these are finite by construction,
+        // so the two are equivalent — and clippy refuses the negated form (`neg_cmp_op_on_partial_ord`).
+        assert!(ter_pct(0.0035).unwrap() <= 0.35, "an inclusive 0.35 cap must admit a 0.35% TER");
+        assert!(ter_pct(0.0025).unwrap() <= 0.25, "…and the SHIPPED 0.25 cap, which was always exact");
+        assert_eq!(ter_pct(0.0035), Some(0.35));
+        assert_eq!(ter_pct(0.0012), Some(0.12));
+        // finer than any real quote, and NOT rounded away: 0.0345% survives intact
+        assert_eq!(ter_pct(0.000345), Some(0.0345));
+        assert!(ter_pct(0.0035).unwrap() > 0.34, "still a real comparison, not clamped to the cap");
+        assert_eq!(ter_pct(0.0), None, "zero is 'no data', not a free fund");
+        assert_eq!(ter_pct(-0.01), None);
+        assert_eq!(ter_pct(f64::NAN), None);
+        assert_eq!(ter_pct(f64::INFINITY), None);
+    }
 
     /// (#76) The EU-listing swap's three pure halves, on the exact payload shapes the live services
     /// return. The knob that drives them defaults off and is therefore unkillable by the mutation gate,
