@@ -1137,7 +1137,7 @@ pub fn is_broad_index_name(name: &str) -> bool {
 /// How many breadth tiers `hold_breadth_tier` can return. Anything sizing a per-tier array MUST read
 /// this — `hold_core_list` indexed a hardcoded `[0u8; 3]` by tier, so a fourth tier was an
 /// index-out-of-bounds panic rather than a display bug.
-pub const HOLD_TIERS: usize = 8;
+pub const HOLD_TIERS: usize = 9;
 
 /// (round 118) The CORE admission rule, ONE table, read by both `is_broad_index_name` (does it match
 /// at all) and `hold_breadth_tier` (which tier) — they cannot drift apart the way two parallel lists
@@ -1163,13 +1163,53 @@ pub const HOLD_TIERS: usize = 8;
 /// Two real collisions: "msci world ex usa" contains "msci world" (would rank an ex-US sleeve AS
 /// developed, i.e. above MSCI World itself), and "ftse developed europe" contains "ftse developed".
 /// Both are pinned by tests.
-const GEO: [(&str, u8); 24] = [
+const GEO: [(&str, u8); 25] = [
     // 4 = ex-US sleeves. FIRST, because every one of them contains a broader token.
     ("acwi ex", 4), ("world ex", 4), ("ex-usa", 4),
     // 5 = Europe. "ftse developed europe" precedes the generic "ftse developed" below.
     ("ftse developed europe", 5), ("msci europe", 5), ("stoxx europe 600", 5),
-    // 6 = Japan / Asia-Pacific
-    ("msci japan", 6), ("topix", 6), ("msci pacific", 6),
+    // 6 = Japan
+    ("msci japan", 6), ("topix", 6),
+    // 7 = Asia-Pacific. (#213) SPLIT OUT OF JAPAN, which was the one sleeve holding two disjoint
+    // geographies. Because the per-sleeve cap ranks on TER *inside* a sleeve, a 0.20% Pacific fund
+    // lost the sort to three 0.12% Japan trackers and the CORE table carried no Australia/HK/
+    // Singapore row at all — the same failure `ter_cap_for` records for small caps ("a 0.35%
+    // small-cap fund placed in the developed sleeve loses the TER sort to IWDA at 0.20% and is never
+    // printed"), and the same one (#207) answered for tier 0. Ordered AFTER Japan on the sibling
+    // rule the ladder already uses for Europe-before-Japan: regional weight, not nesting.
+    //
+    // (#213) "msci pac " exists to spell iShares' ABBREVIATED "Core MSCI Pac ex-Jpn" (CSPXJ.SW,
+    // EUR 3.5B), which sat in the GEO blind spot because no token could reach it. Its TRAILING
+    // SPACE is DEFENSIVE, not load-bearing: today the only thing it excludes is "MSCI Pacific",
+    // which the next entry files at the SAME tier anyway, so no test can observe the difference.
+    // It is written the way "msci em " and NARROW's "sri " are written because the failure mode is
+    // real (a future "MSCI Pac<letter>" index would be swallowed silently) even though it has not
+    // fired here — unlike (#211), where dropping the space genuinely misfiled a EUR 3.9B fund.
+    //
+    // The sleeve is labelled "Asia-Pacific" and NOT "ex-Japan" deliberately: plain MSCI Pacific
+    // INCLUDES Japan, so an ex-Japan label would over-claim on the one token that is a superset.
+    //
+    // MEASURED 2026-09-02, live `screen`, control and probe BACK TO BACK in one session on the same
+    // cache (`4797 from cache`, 5427 tickers, both runs). The CORE table went 25 rows -> 26, and the
+    // ticker-set diff is ONE addition and ZERO removals — the pre-registered stop rule was "revert if
+    // the split evicts a printed fund or leaves the new sleeve empty", and neither fired:
+    //
+    //     CSPXJ.SW  0.20%  EUR 3.5B  iShares Core MSCI Pac ex-Jpn   <- NEW, 16.6y, Acc, Full, IE
+    //
+    // Sleeve supply split `Japan/AsiaPac 4` -> `Japan 4 · Asia-Pacific 1`: the 4th name tier 6 was
+    // already hiding is a JAPAN fund, so the split did not merely re-file what was there — the new
+    // sleeve is filled entirely by the name `msci pac ` newly spells, and QUALIFIED moved 47 -> 48.
+    // The funnel's other counts drifted between the two runs (EU-buyable 4551 -> 4574) on network
+    // flakiness, NOT on this change, which is why the TICKER-SET DIFF is the attribution argument
+    // here and the funnel line is not.
+    //
+    // JUDGEMENT-PLUS-LIVE-DIFF, NOT GRADED — no backtest quote carries a TER, so `stamp_asset_class`
+    // kills every one of them on that leg and no walk reaches this lane. Same permanent
+    // ungradeability as `hold_per_tier` and (#207).
+    //
+    // REVERT: fold tier 7 back into 6 and drop "msci pac ". That restores one mixed sleeve and puts
+    // CSPXJ.SW back in the GEO blind spot, where (#213) found it.
+    ("msci pac ", 7), ("msci pacific", 7),
     // 0 = the whole planet, DM+EM in one fund
     ("all-world", 0), ("all-country", 0), ("all country world", 0), ("acwi", 0), ("global all cap", 0),
     ("solactive gbs global markets", 0),
@@ -1300,7 +1340,7 @@ fn size_sleeve_tier(n: &str, first: &str, cap: f64) -> Option<u8> {
 }
 
 /// (#202) How many sleeves the census line prints. The size sleeve is HIDDEN while its knob is off,
-/// so a lane with the sleeve disabled prints byte-identically to its seven-sleeve self — that is
+/// so a lane with the sleeve disabled prints byte-identically to its eight-sleeve self — that is
 /// non-negotiable #1, and `SIZE_TIER` being last is what makes a `take` sufficient. Every GEOGRAPHIC
 /// sleeve always prints, empty or not: round 118's rule, because an absent sleeve and one the pond
 /// cannot fill are different facts and the reader needs to tell them apart.
@@ -1361,8 +1401,9 @@ fn geo_tier_at(n: &str, size_cap: f64) -> Option<u8> {
 
 /// Diversification tier of a broad-index fund, for ordering the buy-and-hold CORE broadest-first.
 /// 0 = all-world (whole planet), 1 = developed, 2 = emerging, 3 = US, 4 = ex-US, 5 = Europe,
-/// 6 = Japan/Asia-Pac. Assumes `is_broad_index_name` already held; a name that does not match lands
-/// in the last tier rather than panicking, and the CORE never prints it because the filter ran first.
+/// 6 = Japan, 7 = Asia-Pacific. Assumes `is_broad_index_name` already held; a name that does not
+/// match lands in the last tier rather than panicking, and the CORE never prints it because the
+/// filter ran first.
 pub fn hold_breadth_tier(name: &str) -> u8 {
     geo_tier(&name.to_lowercase()).unwrap_or(HOLD_TIERS as u8 - 1)
 }
@@ -4460,6 +4501,19 @@ mod tests {
         "a region inside a region: GEO gives it a tier, NARROW takes it back");
     assert_eq!(geo_tier_at("ishares msci em ex china ucits etf usd acc", 0.0), None,
         "excluding the largest constituent is a bet, and no China sleeve completes the partition");
+    // (#213) the Japan / Asia-Pacific split, and the abbreviation that made the split worth making.
+    assert_eq!(geo_tier_at("ishares vii plc - ishares core msci pac ex-jpn etf usd acc", 0.0), Some(7),
+        "the €3.5B name the blind-spot census found; only \"msci pac \" can spell iShares' Pac ex-Jpn");
+    assert_eq!(geo_tier_at("ishares core msci pacific ex japan ucits etf", 0.0), Some(7),
+        "the spelled-out form lands in the SAME sleeve — one exposure, one tier");
+    assert_eq!(geo_tier_at("ishares core msci japan imi ucits etf usd (acc)", 0.0), Some(6),
+        "the split did not move Japan: tiers 0-6 are byte-identical to before (#213)");
+    assert_eq!(geo_tier_at("xtrackers msci japan ucits etf 1c", 0.0), Some(6),
+        "and neither did the other two rows the Japan sleeve already printed");
+    assert_eq!(geo_tier_at("amundi index msci pacific ucits etf dr", 0.0), Some(7),
+        "plain MSCI Pacific INCLUDES Japan — which is why the sleeve is labelled Asia-Pacific, not ex-Japan");
+    assert_eq!(geo_tier_at("texas pacific land corporation", 0.0), None,
+        "both tokens are MSCI-qualified: a bare \"pacific\" is a company name, and TPL is in the pond");
     // the blocking token must be a SIZE one — the sleeve rehabilitates market cap, not sectors
     assert_eq!(size_sleeve_tier("xtrackers msci world health care ucits etf", "health", 0.35), None);
 
@@ -4484,7 +4538,7 @@ mod tests {
     assert_eq!(hold_breadth_tier("SPDR MSCI All Country World ex USA UCITS ETF"), 4,
         "a carve-out is ex-US, not the planet — the ex-US tokens are listed first for this");
     // (#202) and the sleeve stays INVISIBLE while it is off, so the census line is byte-identical
-    assert_eq!(sleeves_shown(0.0), HOLD_TIERS - 1, "off -> the seven geographic sleeves only");
+    assert_eq!(sleeves_shown(0.0), HOLD_TIERS - 1, "off -> the eight geographic sleeves only");
     assert_eq!(sleeves_shown(0.35), HOLD_TIERS, "on -> the size sleeve joins the line");
 
     // (round 47) Yahoo fallback facts count for the H flag via ter_shown/aum_shown — a venue fund with

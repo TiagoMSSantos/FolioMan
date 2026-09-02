@@ -4104,22 +4104,23 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     let per_tier0 = cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 0).count();
     println!(
         "\nbuy-and-hold CORE — broad geographic sleeves (the momentum ranking buries these at 0.0; \
-         ranked broadest-first: all-world → developed → emerging → US → ex-US → Europe → Japan/Asia-Pac, \
+         ranked broadest-first: all-world → developed → emerging → US → ex-US → Europe → Japan → Asia-Pacific, \
          then domicile (IE first, withholding) → cheapest TER → largest AUM. One all-world fund IS a \
          whole book; the sleeves below it are for building one yourself. NOT advice):"
     );
     // (round 118) supply per sleeve, BEFORE the cap. Without it the block is unreadable: three rows
     // in a sleeve means "three shown of possibly forty", and an absent sleeve is indistinguishable
-    // from one the universe genuinely cannot fill (Japan/Asia-Pac in a EU-buyable pond). The old
+    // from one the universe genuinely cannot fill (Asia-Pacific in a EU-buyable pond). The old
     // hardcoded 3-tier cap silently truncated for exactly this reason and nothing said so.
     let mut supply = [0usize; core::HOLD_TIERS];
     for q in quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)) {
         supply[core::hold_breadth_tier(&q.name) as usize] += 1;
     }
     const SLEEVE: [&str; core::HOLD_TIERS] =
-        ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan/AsiaPac", "world small-cap"];
-    // (#202) `take` because SLEEVE now carries an eighth, OPTIONAL sleeve: with its knob off the line
-    // must print exactly the seven geographic cells it always did. The count is `core::sleeves_shown`,
+        ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan", "Asia-Pacific",
+         "world small-cap"];
+    // (#202) `take` because SLEEVE now carries a LAST, OPTIONAL sleeve: with its knob off the line
+    // must print exactly the eight geographic cells it always did. The count is `core::sleeves_shown`,
     // never a literal — the same one-number-one-reader rule the cap in the header below follows.
     let counts: Vec<String> = SLEEVE
         .iter()
