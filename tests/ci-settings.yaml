@@ -3837,6 +3837,77 @@ buy_heuristic:
                                  #   (`core::sleeves_shown` hides the eighth sleeve entirely while the knob is
                                  #   off). Revert if a later pond puts a REGIONAL fund in this sleeve — that
                                  #   would mean `SIZE_GEO` has been widened, and it should not be.
+  hold_family_first: true        # (#214) MEASURED 2026-09-02, live `screen`, 4583-EU-buyable-ETF pond.
+                                 #   Fill each CORE sleeve FAMILY-FIRST: one pass takes the best fund of each
+                                 #   DISTINCT index family (which `core::GEO` token matched), then the
+                                 #   sleeve's own (domicile, TER, AUM) ranking resumes for the rest. false =
+                                 #   that ranking alone, which is what shipped before this line, and is the
+                                 #   config-less Default.
+                                 #
+                                 #   WHY. `hold_core_list`'s cap is documented as existing "so no index
+                                 #   family crowds out the others" — but it counts FUNDS, so the principle is
+                                 #   enforced ACROSS sleeves and not INSIDE one. When a family owns the two
+                                 #   cheapest funds in a sleeve it takes two of that sleeve's three slots.
+                                 #   This is (#207)'s finding ("ranking them against each other on TER alone
+                                 #   hides an EXPOSURE behind a price") at the other seam: (#207) answered it
+                                 #   by raising tier 0's height, and (#197) closed height as a lever. Spending
+                                 #   the slots already granted is what was left.
+                                 #
+                                 #   NOT (#197) RE-LITIGATED. It adds no row and raises no cap. (#197) refused
+                                 #   MORE rows on the finding that 20 of the 22 hidden rows were further
+                                 #   wrappers; this CONCEDES that premise and acts on it, changing only which
+                                 #   fund wins a slot the sleeve already had.
+                                 #
+                                 #   THE PER-SLEEVE FAMILY CENSUS, new this round and printed on the supply
+                                 #   line as `(Nf)`, is the instrument (#197) never had. Control reads:
+                                 #   all-world 7 (3f) · developed 6 (2f) · emerging 6 (2f) · US 13 (2f) ·
+                                 #   ex-US 2 (1f) · Europe 8 (3f) · Japan 4 (1f) · Asia-Pacific 1 (1f) ·
+                                 #   world small-cap 1 (1f). NO sleeve has more families than its cap has
+                                 #   slots, which CONFIRMS (#197) per-sleeve by direct measurement for the
+                                 #   first time — and is exactly why this knob is cheap: it can only re-order.
+                                 #
+                                 #   MEASURED, control vs probe back-to-back, attributed on the printed
+                                 #   table's TICKER-SET DIFF (never funnel counts — see (#213)). 26 rows both
+                                 #   sides. EXACTLY ONE membership change, the one the census predicted:
+                                 #     OUT VERE.DE  Vanguard FTSE Developed Europe EX UK  0.10%   EUR 1.4B
+                                 #     IN  MEUD.PA  Amundi Core Stoxx Europe 600         0.07%  EUR 20.5B
+                                 #   Europe was the ONE sleeve under-showing a family (2 shown of 3). The
+                                 #   promoted fund is CHEAPER and 14x larger: TER paid is -0.03pp, i.e. the
+                                 #   trade is free. It ranked below an ex-UK wrapper of an already-shown index
+                                 #   only because the sort puts IE domicile ahead of LU. Every other sleeve
+                                 #   printed the IDENTICAL ticker set, merely re-ordered.
+                                 #
+                                 #   POND CONFOUND, STATED: control resolved 4797 tickers from cache, probe
+                                 #   4716, and `developed` supply drifted 6 -> 5 (memory: a matching `from
+                                 #   cache` line does not prove an identical pond, and here they did not even
+                                 #   match). Attribution survives it because Europe supply is `8 (3f)` in BOTH
+                                 #   runs and the sole membership change is INSIDE Europe — the drift never
+                                 #   reached the sleeve that moved. Every other sleeve being set-identical is
+                                 #   the corroboration.
+                                 #
+                                 #   ONE PASS, NOT A ROUND-ROBIN, and that is measured too. A full round-robin
+                                 #   (2nd of each family, then 3rd...) re-orders the TAIL by family as well,
+                                 #   and the first probe caught it swapping WEBH.DE (msci usa, 0.03%) out for
+                                 #   SP5AU.SW purely because `s&p 500` appears first in GEO — when BOTH US
+                                 #   families were already on the table. That is a re-order inside a solved
+                                 #   problem, and it violated this round's own pre-registered rule that every
+                                 #   swap be family-for-family. Once every family is represented there is
+                                 #   nothing left to diversify and the sleeve's ranking must resume.
+                                 #
+                                 #   JUDGEMENT-PLUS-LIVE-DIFF, NOT GRADED, exactly as (#197)/(#207)/(#210):
+                                 #   `backtest::stamp_asset_class` fills only name/instrument_type/sector, so
+                                 #   every backtest quote dies on its TER leg and no walk reaches this lane.
+                                 #   The family KEY is `core::GEO`'s own token and is deliberately COARSE —
+                                 #   "FTSE Developed Europe" and "FTSE Developed Europe ex UK" share one token
+                                 #   though they are different indices, and ACWI/All Country World are one
+                                 #   index under two tokens. That coarseness is WHY this re-orders and never
+                                 #   caps: a hard one-per-family cap would delete a real row to satisfy a key
+                                 #   that cannot see the difference. Do NOT build a second classifier to fix
+                                 #   it (non-negotiable #4).
+                                 #
+                                 #   REVERT: false, which restores the (domicile, TER, AUM) order byte-for-
+                                 #   byte on every sleeve. Revert if a later pond makes a swap that is NOT
+                                 #   family-for-family, or drops the row count.
   hold_per_tier_all_world: 7     # (#207) MEASURED 2026-09-01, live `screen`, 4597-quote pond. Rows kept in
                                  #   the ALL-WORLD sleeve alone; 0 = inherit `hold_per_tier` (the default, and
                                  #   byte-identical to before). JUDGEMENT-PLUS-LIVE-DIFF, NOT GRADED — no

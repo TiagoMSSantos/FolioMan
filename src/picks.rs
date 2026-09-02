@@ -4062,6 +4062,17 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // and has overflow-checks ON, so `cargo t` would have panicked — while `[profile.release]`, the
     // binary that actually runs the daily screen, sets only opt-level and lto, leaving them OFF to wrap
     // in silence. A `usize` counter cannot reach either outcome and costs nothing.
+    // (#214) fill each sleeve family-first before the cap runs, so a sleeve spends its three slots
+    // on three INDICES where it has three. Off by default -> `family_first_order` returns the
+    // identity and this is a no-op, which is non-negotiable #1.
+    let keys: Vec<(u8, Option<&str>)> = cores
+        .iter()
+        .map(|q| (core::hold_breadth_tier(&q.name), core::geo_family_of(&q.name)))
+        .collect();
+    let order = core::family_first_order(&keys, crate::config::hold_family_first());
+    let reordered: Vec<&Quote> = order.into_iter().map(|k| cores[k]).collect();
+    cores = reordered;
+
     let mut per_tier = [0usize; core::HOLD_TIERS];
     let cap = crate::config::hold_per_tier();
     let all_world = crate::config::hold_per_tier_all_world();
@@ -4113,8 +4124,17 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // from one the universe genuinely cannot fill (Asia-Pacific in a EU-buyable pond). The old
     // hardcoded 3-tier cap silently truncated for exactly this reason and nothing said so.
     let mut supply = [0usize; core::HOLD_TIERS];
+    // (#214) …and how many distinct INDEX FAMILIES that supply spans. The cap is documented as
+    // existing "so no index family crowds out the others" but it counts FUNDS, so a sleeve reading
+    // `13 (2f)` is one where 13 funds track only 2 indices and the third slot cannot help but
+    // repeat. It is also the instrument (#197) never had: that round refused a taller table because
+    // 20 of the 22 hidden rows were WRAPPERS, and a sleeve whose family count EXCEEDS its cap is a
+    // sleeve where the next row would be a new index instead.
+    let mut families: Vec<HashSet<&str>> = (0..core::HOLD_TIERS).map(|_| HashSet::new()).collect();
     for q in quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)) {
-        supply[core::hold_breadth_tier(&q.name) as usize] += 1;
+        let t = core::hold_breadth_tier(&q.name) as usize;
+        supply[t] += 1;
+        families[t].insert(core::geo_family_of(&q.name).unwrap_or("?"));
     }
     const SLEEVE: [&str; core::HOLD_TIERS] =
         ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan", "Asia-Pacific",
@@ -4125,8 +4145,9 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     let counts: Vec<String> = SLEEVE
         .iter()
         .zip(supply.iter())
+        .zip(families.iter())
         .take(core::sleeves_shown(crate::config::hold_size_sleeve_ter()))
-        .map(|(name, n)| format!("{name} {n}"))
+        .map(|((name, n), fams)| format!("{name} {n} ({}f)", fams.len()))
         .collect();
     // (#197) the cap is READ here, never re-spelled: the line's whole job is to say how much supply
     // the cap hid, and a header quoting a different number than the filter applied would invert it.

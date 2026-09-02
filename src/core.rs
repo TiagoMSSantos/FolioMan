@@ -1299,6 +1299,78 @@ pub fn geo_hit(n: &str) -> Option<u8> {
     GEO.iter().find(|(t, _)| hit(n, t)).map(|(_, tier)| *tier)
 }
 
+/// (#214) WHICH `GEO` token matched — the INDEX FAMILY, not the tier. Runs the SAME
+/// first-match-wins scan `geo_hit` runs, so the two can never disagree about what fired
+/// (non-negotiable #4: one definition, read two ways, not two definitions).
+///
+/// A tier answers "which part of the world"; a family answers "which index over it". They are
+/// different questions and `hold_core_list` needs both: its cap is documented as existing "so no
+/// index family crowds out the others", but the cap counts FUNDS, so when one family owns the two
+/// cheapest funds in a sleeve it takes two of the three slots. Live 2026-09-02: the US sleeve
+/// printed `s&p 500` once and `msci usa` TWICE out of a supply of 13.
+///
+/// Takes the RAW name and lowercases it, the way [`hold_breadth_tier`] does — every caller has a
+/// `Quote::name` in hand, and a second already-lowercased variant would just be a second way to get
+/// this wrong.
+pub fn geo_family_of(name: &str) -> Option<&'static str> {
+    let n = name.to_lowercase();
+    GEO.iter().find(|(t, _)| hit(&n, t)).map(|(t, _)| *t)
+}
+
+/// (#214) The order to FILL a sleeve in, given each candidate's index family in the sleeve's
+/// existing `(domicile, TER, AUM)` order. One pass takes the best fund of each DISTINCT family, in
+/// the order those families first appear; everything else follows in its ORIGINAL order.
+///
+/// `on == false` returns the identity order — today's behaviour byte-for-byte, which is what
+/// non-negotiable #1 requires of the knob that feeds this.
+///
+/// RE-ORDERS, NEVER DROPS, and that is the whole design: the family key is `GEO`'s own token and
+/// therefore COARSE. Europe prints "FTSE Developed Europe" and "FTSE Developed Europe ex UK" under
+/// ONE token though they are different indices, so a hard one-per-family cap would delete a real row
+/// to satisfy a key that cannot see the difference. Here every candidate still appears and the cap
+/// still fills; only the contested slot changes hands.
+///
+/// EXACTLY ONE family-first pass, then the original order — load-bearing, and measured. A full
+/// round-robin (2nd of each family, then 3rd…) reorders the TAIL by family too, and the 2026-09-02
+/// probe caught it doing damage: the US sleeve swapped WEBH.DE (msci usa, 0.03%) out for SP5AU.SW
+/// (s&p 500) purely because `s&p 500` appears first, when BOTH families were already on the table.
+/// That is a reorder inside a solved problem. Once every family is represented there is nothing
+/// left to diversify, so the sleeve's own ranking must resume.
+///
+/// The knob is a PARAMETER, not a read, for the reason [`ter_cap_for`] and `(#204)` both record —
+/// it is a process-wide `OnceLock` no test can flip, so a branch reachable only on an off-default
+/// is a branch the mutation gate cannot grade.
+///
+/// Takes `(tier, family)` per candidate and does its OWN grouping, so the caller stays a
+/// three-liner. The alternative — splitting the tier runs at the call site inside `hold_core_list`
+/// — was written first and thrown away: it put twelve mutants of index arithmetic and loop bounds
+/// into a function the gate can barely reach, several of them killable only by panic or timeout.
+/// A stable sort by `(tier, not-first-of-family)` says the same thing with no arithmetic at all:
+/// stability IS the "preserve the sleeve's own order" rule, not an implementation detail of it.
+pub fn family_first_order(keys: &[(u8, Option<&str>)], on: bool) -> Vec<usize> {
+    let mut out: Vec<usize> = (0..keys.len()).collect();
+    if !on {
+        return out;
+    }
+    // The key is (tier, family): the SAME token in two sleeves is two families, because the
+    // question is "does this sleeve already show that index", and a sleeve is a tier.
+    let mut seen: Vec<(u8, &str)> = Vec::new();
+    let first: Vec<bool> = keys
+        .iter()
+        .map(|(t, f)| {
+            // a name with no GEO token shares one key: two unspellable names are not two families
+            let k = (*t, f.unwrap_or(""));
+            let fresh = !seen.contains(&k);
+            if fresh {
+                seen.push(k);
+            }
+            fresh
+        })
+        .collect();
+    out.sort_by_key(|&i| (keys[i].0, !first[i]));
+    out
+}
+
 /// (#202) The `NARROW` tokens the size sleeve rehabilitates — market-cap SEGMENT, nothing else.
 /// "value", "quality", "momentum", "equal weight" and the volatility tilts are deliberately absent:
 /// they re-weight stocks the lane already owns through MSCI World, which is a tilt, not an exposure.
@@ -4514,6 +4586,92 @@ mod tests {
         "plain MSCI Pacific INCLUDES Japan — which is why the sleeve is labelled Asia-Pacific, not ex-Japan");
     assert_eq!(geo_tier_at("texas pacific land corporation", 0.0), None,
         "both tokens are MSCI-qualified: a bare \"pacific\" is a company name, and TPL is in the pond");
+    // (#214) the INDEX FAMILY behind a row — the same scan `geo_hit` runs, read for its token.
+    assert_eq!(geo_family_of("State Street SPDR S&P 500 UCITS ETF USD Acc"), Some("s&p 500"));
+    assert_eq!(geo_family_of("Xtrackers MSCI USA UCITS ETF 1C"), Some("msci usa"));
+    assert_eq!(geo_family_of("Amundi Core MSCI USA UCITS ETF Acc"), Some("msci usa"),
+        "the two sharing the US sleeve's slots 2 and 3 are ONE family — this is the whole finding");
+    assert_eq!(geo_family_of("Amundi Prime All Country World UCITS ETF Acc"), Some("all country world"));
+    assert_eq!(geo_family_of("iShares MSCI ACWI UCITS ETF USD Acc"), Some("acwi"),
+        "ACWI and All Country World are the same INDEX under different tokens: the key is GEO's own \
+         spelling, and that coarseness is why the fill re-orders instead of capping per family");
+    assert_eq!(geo_family_of("Vanguard FTSE Developed Europe ex UK UCITS ETF EUR"),
+        Some("ftse developed europe"),
+        "…and it cuts the other way too: ex-UK is a DIFFERENT index sharing one token");
+    assert_eq!(geo_family_of("Berkshire Hathaway Inc."), None, "not a broad-index name at all");
+    // non-negotiable #4: family and tier are ONE scan, so they cannot disagree about what fired.
+    for (name, tier) in [
+        ("State Street SPDR S&P 500 UCITS ETF USD Acc", 3u8),
+        ("iShares Core MSCI EM IMI UCITS ETF USD (Acc)", 2),
+        ("iShares VII PLC - iShares Core MSCI Pac ex-Jpn ETF USD Acc", 7),
+    ] {
+        let fam = geo_family_of(name).expect("a broad-index name has a family");
+        assert_eq!(geo_hit(&name.to_lowercase()), Some(tier), "{name}");
+        assert_eq!(GEO.iter().find(|(t, _)| *t == fam).map(|(_, t)| *t), Some(tier),
+            "{name}: family {fam} must carry the SAME tier geo_hit reports");
+    }
+
+    // (#214) the fill order. OFF is the identity, and that is non-negotiable #1 in one line.
+    const E: u8 = 5; // Europe, so the pairs read like the sleeve they came from
+    let europe = [(E, Some("ftse developed europe")), (E, Some("ftse developed europe")),
+                  (E, Some("msci europe")), (E, Some("stoxx europe 600"))];
+    assert_eq!(family_first_order(&europe, false), vec![0, 1, 2, 3], "off -> untouched order");
+    assert_eq!(family_first_order(&europe, true), vec![0, 2, 3, 1],
+        "on -> one of each family first; the SECOND ftse row is what a cap of 3 now drops, and \
+         stoxx europe 600 is the family the live Europe sleeve was hiding");
+    // it RE-ORDERS and never drops: always a permutation, whatever the input
+    for on in [false, true] {
+        let mut sorted = family_first_order(&europe, on);
+        sorted.sort_unstable();
+        assert_eq!(sorted, vec![0, 1, 2, 3], "on={on}: every candidate survives the reorder");
+    }
+    assert_eq!(family_first_order(&[], true), Vec::<usize>::new(), "an empty sleeve is not a loop");
+    assert_eq!(family_first_order(&[(E, Some("acwi"))], true), vec![0], "one candidate, one slot");
+    assert_eq!(
+        family_first_order(&[(3, Some("s&p 500")), (3, Some("msci usa")), (3, Some("crsp us total market"))], true),
+        vec![0, 1, 2],
+        "all families distinct -> already family-first, so the order must not move"
+    );
+    assert_eq!(
+        family_first_order(&[(3, Some("msci usa")), (3, Some("msci usa")), (3, Some("msci usa"))], true),
+        vec![0, 1, 2],
+        "one family -> nothing to interleave, and the TER order inside it is preserved"
+    );
+    assert_eq!(
+        family_first_order(&[(E, Some("a")), (E, Some("a")), (E, Some("a")), (E, Some("b"))], true),
+        vec![0, 3, 1, 2],
+        "the one unshown family jumps the queue once; the rest keep their ranking"
+    );
+    assert_eq!(family_first_order(&[(E, None), (E, None), (E, Some("acwi"))], true), vec![0, 2, 1],
+        "no GEO token = one shared key: two unspellable names are not two families");
+    // (#214) the US sleeve in its live TER order, and the reason this is ONE pass, not a full
+    // round-robin. A round-robin puts the SECOND s&p 500 ahead of the second msci usa merely
+    // because `s&p 500` appeared first — the 2026-09-02 probe did exactly that, swapping WEBH.DE
+    // (0.03%) out for SP5AU.SW while BOTH families were already shown. Nothing is gained by it.
+    assert_eq!(
+        family_first_order(
+            &[(3, Some("s&p 500")), (3, Some("msci usa")), (3, Some("msci usa")), (3, Some("s&p 500"))], true),
+        vec![0, 1, 2, 3],
+        "both families shown by slot 2, so slots 3+ fall back to the sleeve's own ranking"
+    );
+    // (#214) TIERS ARE THE UNIT. The sleeves must stay grouped and in order — `print_hold_core`
+    // walks this list expecting breadth-major runs — and the same token in two sleeves is two
+    // families, because the question is whether THIS sleeve already shows that index.
+    assert_eq!(
+        family_first_order(
+            &[(0, Some("acwi")), (0, Some("acwi")), (0, Some("all country world")),
+              (3, Some("msci usa")), (3, Some("msci usa")), (3, Some("s&p 500"))], true),
+        vec![0, 2, 1, 3, 5, 4],
+        "each tier re-orders inside itself; no row crosses a sleeve boundary"
+    );
+    assert_eq!(
+        family_first_order(&[(0, Some("acwi")), (3, Some("acwi"))], true), vec![0, 1],
+        "one token, two sleeves -> both are firsts: tier 3 showing `acwi` says nothing about tier 0"
+    );
+    // an out-of-order input is sorted BACK into tier order rather than trusted — the caller's list
+    // is breadth-major today, and this keeps that a fact rather than an assumption
+    assert_eq!(family_first_order(&[(3, Some("msci usa")), (0, Some("acwi"))], true), vec![1, 0],
+        "tier is the primary key, so a mis-sorted caller cannot smuggle a sleeve out of place");
     // the blocking token must be a SIZE one — the sleeve rehabilitates market cap, not sectors
     assert_eq!(size_sleeve_tier("xtrackers msci world health care ucits etf", "health", 0.35), None);
 
