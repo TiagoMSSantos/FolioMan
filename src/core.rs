@@ -1301,7 +1301,7 @@ const GEO: [(&str, u8); 28] = [
 /// both sat among the 22 rows the ≤3/sleeve cap hides, which is why the printed table never showed
 /// the bug and no receipt caught it. NDUS.L clears every other leg on live facts (TER 0.18%, AUM
 /// €1.24B), so this token is the only thing standing between it and the CORE list.
-const NARROW: [&str; 33] = [
+const NARROW: [&str; 36] = [
     "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
     "industrial",
     "sector", "select", "nasdaq", "small", "mid cap", "communicat", "biotech",
@@ -1315,6 +1315,27 @@ const NARROW: [&str; 33] = [
     // 118 admitted at tier 4 precisely because US + World-ex-US IS one). Revisit with a tier, not
     // by deleting these.
     "em asia", "em ex",
+    // (#216) THE SAME ARGUMENT ONE LEVEL UP, found by probing why the ex-US sleeve sits at 2 of 3.
+    // `("world ex", 4)` is a wildcard for "world ex <anything>", and the live pond holds three names
+    // it was filing in a US-relative sleeve. "World ex Europe" and "World ex EMU" are BETS, not
+    // partitions, by the test the "em ex" note above already states: there is no Europe-complement
+    // sleeve to rebuild the world with, whereas US + World-ex-US IS one, which is why "ex-usa"
+    // stays. "World ex Mega Cap" is not geography at all — it is a SIZE tilt, and belongs beside
+    // "small" and "mid cap" for the reason those are here.
+    //
+    // Tightening the GEO token to "world ex us" was written first and REVERTED: it relocates the
+    // misfile rather than removing it (every one of these also contains "msci world", so they fall
+    // straight through to tier 1) and it costs Vanguard FTSE All-World Ex-U.S. its only token.
+    // NARROW runs BEFORE `geo_hit`, so refusing here is what actually keeps them out of every tier.
+    //
+    // INERT TODAY, DELIBERATELY FIXED ANYWAY: all three die on the TER leg in this pond, so no row
+    // moves. Two of them (CE8.PA, CM9.PA) are 0.35% against a 0.25% cap and never will. WXMEG.SW is
+    // the live hazard — it dies only on "TER unknown", so a pond that serves UBS a TER files a
+    // mega-cap-excluding size tilt in the ex-US GEOGRAPHIC sleeve.
+    //
+    // REVERT: drop the three tokens. That returns CE8.PA/CM9.PA/WXMEG.SW to tier 4. Revert an
+    // INDIVIDUAL token if it ever refuses a fund whose index IS a world-minus-US partition.
+    "world ex europe", "world ex emu", "ex mega cap",
 ];
 
 /// (#102) Does an ALREADY-lowercased `n` carry `t` at the START OF A WORD? The tightened matcher
@@ -4680,6 +4701,27 @@ mod tests {
         "ubs core msci emu ucits etf eur acc",
     ] {
         assert_eq!(geo_tier_at(narrow, 0.0), None, "{narrow}: single-country is not a broad sleeve");
+    }
+    // (#216) "world ex <anything>" is not the ex-US sleeve. Each of these was live in the pond and
+    // filed at tier 4 by the bare "world ex" token; NARROW now refuses them before `geo_hit` runs.
+    // The tier-1 assertion is the point: these names ALSO carry "msci world", so a fix that only
+    // tightened the tier-4 token would have relocated the misfile instead of removing it.
+    for bet in [
+        "amundi index solutions - amundi msci world ex europe etf-c eur",
+        "amundi msci world ex emu ucits etf acc",
+        "ubs msci world ex mega cap ucits etf usd acc",
+    ] {
+        assert_eq!(geo_tier_at(bet, 0.0), None, "{bet}: a world-minus-region bet is not a sleeve");
+    }
+    // ...and the ex-US sleeve itself is UNTOUCHED — both incumbents and the FTSE spellings still
+    // reach tier 4. `world ex us` (space) and `ex-usa` (hyphen) are two spellings of one partition.
+    for exus in [
+        "xtrackers msci world ex usa ucits etf 1c usd",              // EXUS.DE, incumbent
+        "ishares msci world ex-usa ucits etf usd (acc)",             // IXUA.DE, incumbent
+        "xtrackers ftse all world ex us etf 1c usd",                 // AWEX.DE
+        "vanguard funds plc - vanguard ftse all-world ex-u.s. ucits etf usd dist",
+    ] {
+        assert_eq!(geo_tier_at(exus, 0.0), Some(4), "{exus}: world-minus-US IS a partition");
     }
     // (#214) the INDEX FAMILY behind a row — the same scan `geo_hit` runs, read for its token.
     assert_eq!(geo_family_of("State Street SPDR S&P 500 UCITS ETF USD Acc"), Some("s&p 500"));

@@ -4130,6 +4130,23 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // repeat. It is also the instrument (#197) never had: that round refused a taller table because
     // 20 of the 22 hidden rows were WRAPPERS, and a sleeve whose family count EXCEEDS its cap is a
     // sleeve where the next row would be a new index instead.
+    //
+    // (#216) THE SAME QUESTION BELOW THE CAP, and the answer is the same. Three sleeves sit UNDER
+    // their cap for want of supply — ex-US 2/3, Asia-Pacific 1/3, world small-cap 1/3 — and a
+    // throwaway probe (this census, re-keyed by `core::hold_miss_leg`'s leg for the funds that pass
+    // leg 0 and die later) priced all 30 of their near-misses. NOT ONE would add an index family:
+    //   ex-US        18 near-miss — both incumbents (EXUS.DE, IXUA.DE) are MSCI World ex USA, and
+    //                13 of the 18 are a third wrapper of it. The only genuine second family, FTSE
+    //                All-World ex US, exists in this pond ONLY as Dist (VXUD) or EUR 0.0B (AWEX.DE).
+    //   Asia-Pacific  8 near-miss — ALL EIGHT are MSCI Pacific ex Japan, the incumbent's own index.
+    //                The closest (PACUA.SW, 0.30% against the 0.25% cap) is a wrapper priced ABOVE
+    //                the 0.20% incumbent, so admitting it would be strictly worse advice.
+    //   small-cap     4 near-miss — ALL FOUR are MSCI World Small Cap, WSML.L's index; and (#210)
+    //                pre-registers that its TER ceiling is not walked upward to fill the sleeve.
+    // So the printed rows are the CORRECT rows, and (#197)/(#214)'s wrapper finding holds BELOW the
+    // cap as well as above it. Do not re-argue a taller table, a looser AUM floor or a sleeve-local
+    // TER ceiling for these three without first re-running that probe: the refusal is the supply,
+    // not the knobs. What the probe DID find is the misfile `core::NARROW`'s (#216) block records.
     let mut families: Vec<HashSet<&str>> = (0..core::HOLD_TIERS).map(|_| HashSet::new()).collect();
     for q in quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)) {
         let t = core::hold_breadth_tier(&q.name) as usize;
