@@ -1163,7 +1163,7 @@ pub const HOLD_TIERS: usize = 8;
 /// Two real collisions: "msci world ex usa" contains "msci world" (would rank an ex-US sleeve AS
 /// developed, i.e. above MSCI World itself), and "ftse developed europe" contains "ftse developed".
 /// Both are pinned by tests.
-const GEO: [(&str, u8); 23] = [
+const GEO: [(&str, u8); 24] = [
     // 4 = ex-US sleeves. FIRST, because every one of them contains a broader token.
     ("acwi ex", 4), ("world ex", 4), ("ex-usa", 4),
     // 5 = Europe. "ftse developed europe" precedes the generic "ftse developed" below.
@@ -1176,7 +1176,12 @@ const GEO: [(&str, u8); 23] = [
     // 1 = developed markets
     ("msci world", 1), ("ftse developed", 1), ("solactive gbs developed markets", 1),
     // 2 = emerging markets — ABOVE the US deliberately: DM+EM spans the planet, US alone does not
-    ("emerging", 2),
+    // (#211) "msci em " carries a TRAILING SPACE and must keep it: without it the token matches
+    // "MSCI EMU" (UBS Core MSCI EMU, EUR 3.9B) and files a EUROZONE fund as emerging markets. Same
+    // guard `NARROW`'s "sri " uses. The sub-regions it still reaches ("MSCI EM Asia", "MSCI EM ex
+    // China") are refused in NARROW below, because GEO's first-match-wins ordering can express a
+    // DIFFERENT TIER but never a refusal.
+    ("emerging", 2), ("msci em ", 2),
     // 3 = the US
     ("s&p 500", 3), ("msci usa", 3), ("crsp us total market", 3), ("russell 1000", 3),
 ];
@@ -1197,13 +1202,20 @@ const GEO: [(&str, u8); 23] = [
 /// both sat among the 22 rows the ≤3/sleeve cap hides, which is why the printed table never showed
 /// the bug and no receipt caught it. NDUS.L clears every other leg on live facts (TER 0.18%, AUM
 /// €1.24B), so this token is the only thing standing between it and the CORE list.
-const NARROW: [&str; 31] = [
+const NARROW: [&str; 33] = [
     "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
     "industrial",
     "sector", "select", "nasdaq", "small", "mid cap", "communicat", "biotech",
     "esg", "sri ", "socially responsible", "screened",
     "sustainab", "paris", " pab", "climate", "islamic", "value", "momentum", "quality",
     "equal weight", "min vol", "minimum vol", "hedged",
+    // (#211) EM SUB-REGIONS. `("msci em ", 2)` above is what makes these reachable at all, and a
+    // sub-region is not the tier it would inherit: "EM Asia" is a region inside a region, and
+    // "EM ex China" excludes the largest constituent of the index it names, which is a bet rather
+    // than a partition (there is no China sleeve to complete it with — unlike ex-USA, which round
+    // 118 admitted at tier 4 precisely because US + World-ex-US IS one). Revisit with a tier, not
+    // by deleting these.
+    "em asia", "em ex",
 ];
 
 /// (#102) Does an ALREADY-lowercased `n` carry `t` at the START OF A WORD? The tightened matcher
@@ -4436,6 +4448,19 @@ mod tests {
         Some(SIZE_TIER),
         "all-world small cap is the broadest form of the exposure"
     );
+
+        // (#211) the EM spelling gap and the eurozone trap it opens, pinned together. The token has
+        // a TRAILING SPACE for exactly one reason and this is it: "MSCI EMU" is a real €3.9B fund.
+        assert_eq!(geo_tier_at("ishares core msci em imi ucits etf usd (acc)", 0.0), Some(2),
+            "the €34.8B name the census found; \"emerging\" is a plain substring and cannot see EM");
+        assert_eq!(geo_tier_at("ishares msci em ucits etf usd (acc)", 0.0), Some(2),
+            "and the plain one, with nothing after EM but UCITS");
+        assert_eq!(geo_tier_at("ubs core msci emu ucits etf eur acc", 0.0), None,
+            "EMU is the EUROZONE — drop the trailing space and this reads as emerging markets");
+        assert_eq!(geo_tier_at("ishares vii plc - ishares msci em asia etf usd acc", 0.0), None,
+            "a region inside a region: GEO gives it a tier, NARROW takes it back");
+        assert_eq!(geo_tier_at("ishares msci em ex china ucits etf usd acc", 0.0), None,
+            "excluding the largest constituent is a bet, and no China sleeve completes the partition");
     // the blocking token must be a SIZE one — the sleeve rehabilitates market cap, not sectors
     assert_eq!(size_sleeve_tier("xtrackers msci world health care ucits etf", "health", 0.35), None);
 

@@ -7514,13 +7514,23 @@ mod tests {
     fn geo_miss_census_finds_what_the_geo_list_cannot_spell() {
         let cap = crate::config::hold_max_ter();
         // no GEO token can match these: `core::hit` is a plain substring test with no normalisation,
-        // so "emerging" cannot see "EM" and "global all cap" is simply a different string. BOTH are
-        // live blind spots the (#203) run found — EIMI.L is €34.8B of them.
-        let eimi = core_etf("EIMI.L", "iShares Core MSCI EM IMI UCITS ETF USD (Acc)", 3e9, cap);
+        // so "Global Equity" and "DAX" are simply different strings. Both are live blind spots the
+        // (#203)/(#211) runs found — a blind spot is a name GEO CANNOT SPELL, which is not the same
+        // question as whether the lane would want it (it would not want a single-country index).
+        // Every ticker here is .DE or .L on purpose: `eu_buyable` reads a config-driven market list,
+        // so a .SW fixture passes under tests/ci-settings.yaml and fails config-less.
+        let dbxd = core_etf("DBXD.DE", "Xtrackers DAX UCITS ETF 1C", 7e9, cap);
         let lgge = core_etf("LGGE.DE", "L&G Global Equity UCITS ETF", 1.5e9, cap);
         let quotes = vec![
-            eimi,
+            dbxd,
             lgge,
+            // (#211) excluded by the token THIS round added, and the regression pin for it: largest
+            // AUM in the set, so dropping ("msci em ", 2) from GEO puts it back at the top. It was a
+            // survivor here until (#211) — €34.8B of blind spot, and the reason the round happened.
+            core_etf("EIMI.L", "iShares Core MSCI EM IMI UCITS ETF USD (Acc)", 3.48e10, cap),
+            // (#211) the trailing space in that token, pinned: "MSCI EMU" is the EUROZONE, and a
+            // bare "msci em" files this €3.9B fund as emerging markets. Real name, real blind spot.
+            core_etf("0DZP.L", "UBS Core MSCI EMU UCITS ETF EUR acc", 3.9e9, cap),
             // (#207) excluded by the token this round ADDED, and the regression pin for it: largest
             // AUM in the set, so dropping "all country world" from GEO puts it back at the top.
             core_etf("PRAW.DE", "State Street SPDR MSCI All Country World UCITS ETF", 9e9, cap),
@@ -7541,7 +7551,10 @@ mod tests {
         us.market = "USA".into();
         let quotes = [quotes, vec![us]].concat();
         let got: Vec<&str> = geo_miss_census(&quotes).iter().map(|q| q.ticker.as_str()).collect();
-        assert_eq!(got, vec!["EIMI.L", "LGGE.DE"], "descending by AUM, one row per real blind spot");
+        // 0DZP.L STAYS a blind spot after (#211) and that is the pin: delete the trailing space in
+        // ("msci em ", 2) and the eurozone fund gets a tier and vanishes from this list.
+        assert_eq!(got, vec!["DBXD.DE", "0DZP.L", "LGGE.DE"],
+            "descending by AUM, one row per real blind spot");
     }
 
     /// (#204) `near_miss_reason` must report the TOKEN only when breadth is what actually refused.

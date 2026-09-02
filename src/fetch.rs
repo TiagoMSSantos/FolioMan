@@ -618,7 +618,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     };
     // Yahoo labels physical ETCs (gold etc.) EQUITY, but an exact hit in the BF map proves ETP — fill
     // the TER anyway (map-only: no FMP etf/info call wasted on true equities).
-    let ter = if is_etf { fetch_expense(client, urls, ticker, &chart.name).await } else { bf_ter_exact(ticker) };
+    let ter = if is_etf { fetch_expense(client, urls, ticker, &chart.name).await } else { bf_ter_exact_in(BF_TER.get(), ticker) };
     // (AUM) fund size, same BF payload + same proof-of-ETP stance for mislabeled ETCs.
     let aum_eur = if is_etf { bf_aum(ticker, &chart.name) } else { bf_aum_exact(ticker) };
     // (USE/REPL/bench) share-class + replication tokens + benchmark index, same BF payload —
@@ -1181,12 +1181,14 @@ pub fn ter_pct(ratio: f64) -> Option<f64> {
 /// Exact Börse-Frankfurt TER map hit. Safe for ANY quote type: presence under the exact resolved
 /// symbol proves the listing is an ETP, so Yahoo mislabeling an ETC as EQUITY (physical-gold ETCs)
 /// can't hide its TER.
-fn bf_ter_exact(ticker: &str) -> Option<f64> {
-    bf_ter_exact_in(BF_TER.get(), ticker)
-}
-
-/// (#209) The exact lookup itself, taking the map so `bf_ter_cascade` and the live global read the
-/// SAME one (non-negotiable #4 — and (#208) is what a second copy of a TER rule costs).
+///
+/// (#209) Takes the map so `bf_ter_cascade` and the live `quote_one` read the SAME one
+/// (non-negotiable #4 — and (#208) is what a second copy of a TER rule costs).
+///
+/// (#211) There was a `bf_ter_exact(ticker)` wrapper here that read `BF_TER.get()` itself. It was
+/// pure indirection over a process-wide OnceLock no test can set, so all four of its return mutants
+/// survived — an un-gradeable function whose only caller now inlines the one line it held. (#198)'s
+/// rule, applied by DELETION rather than by hoisting: there was no decision left in it to hoist.
 fn bf_ter_exact_in(map: Option<&HashMap<String, f64>>, ticker: &str) -> Option<f64> {
     map.and_then(|m| m.get(ticker)).copied()
 }
@@ -3477,7 +3479,7 @@ fn bf_aum(ticker: &str, name: &str) -> Option<f64> {
         .or_else(|| name.split_once(" - ").and_then(|(_, fund)| bf_by_name(&BF_AUM_NAMES, fund)))
 }
 
-/// Exact Börse-Frankfurt AUM map hit — same "presence proves ETP" semantics as `bf_ter_exact`.
+/// Exact Börse-Frankfurt AUM map hit — same "presence proves ETP" semantics as `bf_ter_exact_in`.
 fn bf_aum_exact(ticker: &str) -> Option<f64> {
     BF_AUM.get().and_then(|m| m.get(ticker)).copied()
 }
@@ -3551,7 +3553,7 @@ fn bf_meta_miss(ticker: &str, name: &str) -> BfMetaMiss {
 /// input is a static that `fetch_universe` finished writing long before. `None` when nothing is missing.
 ///
 /// Blind spot, stated: counts only rows tagged ETF, so a physical ETC that Yahoo labels EQUITY is not
-/// tallied — the same rows `bf_ter_exact`/`bf_aum_exact` exist to rescue.
+/// tallied — the same rows `bf_ter_exact_in`/`bf_aum_exact` exist to rescue.
 pub fn bf_meta_miss_report(quotes: &[Quote]) -> Option<String> {
     let etfs = || quotes.iter().filter(|q| q.instrument_type.eq_ignore_ascii_case("ETF"));
     let (total, use_na) = (etfs().count(), etfs().filter(|q| q.use_of_profits.is_none()).count());
@@ -4721,6 +4723,9 @@ pub(crate) mod tests {
         assert_eq!(bf_row_ter(&json!({"ter": 0.0007})), Some(0.07), "VUAA's known TER, the live probe receipt");
         // the <5% sanity filter still answers, behind the shared conversion rather than in front of it
         assert_eq!(bf_row_ter(&json!({"ter": 0.06})), None, "6% is BF flipping units, not a fund");
+        // (#211) the ceiling ITSELF, not a value comfortably past it: ter_pct(0.05) is exactly 5.0,
+        // so this is the only input that can tell `< 5.0` from `<= 5.0`. 0.06 cannot.
+        assert_eq!(bf_row_ter(&json!({"ter": 0.05})), None, "the 5% sanity ceiling is exclusive");
         assert_eq!(bf_row_ter(&json!({"ter": 0.0})), None);
         assert_eq!(bf_row_ter(&json!({"nothing": 1})), None);
     }
@@ -4742,6 +4747,13 @@ pub(crate) mod tests {
 
         // rung 1: the exact resolved symbol
         assert_eq!(bf_ter_cascade(m, &names, "IUSN.DE", "iShares MSCI World Small Cap UCITS ETF"), Some(0.35));
+        // (#211) …and rung 1 DIRECTLY, because through the cascade it cannot be graded at all: break
+        // the exact lookup and rung 2 re-finds the very same row by stem and returns the very same
+        // TER, so `bf_ter_exact_in -> None` survived this whole test. A rung that another rung can
+        // cover for needs its own call site.
+        assert_eq!(bf_ter_exact_in(m, "IUSN.DE"), Some(0.35));
+        assert_eq!(bf_ter_exact_in(m, "IUSN"), None, "exact means exact — the stem is rung 2's job");
+        assert_eq!(bf_ter_exact_in(None, "IUSN.DE"), None, "no map loaded, no hit");
         // rung 2: same stem, different venue — pinned .DE, map holds only .L
         assert_eq!(bf_ter_cascade(m, &names, "SPYL.DE", "SPDR S&P 500 UCITS ETF"), Some(0.03));
         // rung 3: no symbol hit at all, unique fund-name prefix
