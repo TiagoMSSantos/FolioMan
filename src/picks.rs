@@ -4009,18 +4009,18 @@ pub fn geo_miss_census(quotes: &[Quote]) -> Vec<&Quote> {
 /// Extracted rather than written inline in the printer for the reason (#198) recorded there: a real
 /// decision inside a `#[mutants::skip]`ped function is a decision the gate cannot see.
 pub fn near_miss_reason(q: &Quote) -> Option<String> {
-    near_miss_reason_with(q, crate::config::hold_size_sleeve_ter())
+    near_miss_reason_with(q, crate::config::hold_size_sleeve_ter(), crate::config::hold_factor_sleeve())
 }
 
 /// (#204) [`near_miss_reason`] with the size sleeve's cap PASSED rather than read, so the guard below
 /// is reachable from a test — with the sleeve OFF a `NARROW` hit ALWAYS refuses at leg 0, which makes
 /// `leg == 0` and `true` indistinguishable and the fix ungradeable.
-pub fn near_miss_reason_with(q: &Quote, size_cap: f64) -> Option<String> {
+pub fn near_miss_reason_with(q: &Quote, size_cap: f64, factor_on: bool) -> Option<String> {
     // (#204) ask WHICH leg first, and only then reach for the token. Asking `narrow_hit` first was
     // correct while a narrow hit implied refusal; (#202) ended that — the size sleeve admits a name
     // BECAUSE of its narrow token, so the old order reported `narrow token "small"` for a fund that
     // was in fact refused three legs later on TER, which is the one number a reader needs.
-    let (leg, msg) = core::hold_miss_leg_with(q, size_cap)?;
+    let (leg, msg) = core::hold_miss_leg_with(q, size_cap, factor_on)?;
     if leg == 0 {
         if let Some(t) = core::narrow_hit(&q.name.to_lowercase()) {
             return Some(format!("narrow token \"{}\"", t.trim()));
@@ -4067,7 +4067,7 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // identity and this is a no-op, which is non-negotiable #1.
     let keys: Vec<(u8, Option<&str>)> = cores
         .iter()
-        .map(|q| (core::hold_breadth_tier(&q.name), core::geo_family_of(&q.name)))
+        .map(|q| (core::hold_breadth_tier(&q.name), core::sleeve_family_of(&q.name)))
         .collect();
     let order = core::family_first_order(&keys, crate::config::hold_family_first());
     let reordered: Vec<&Quote> = order.into_iter().map(|k| cores[k]).collect();
@@ -4151,20 +4151,27 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     for q in quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)) {
         let t = core::hold_breadth_tier(&q.name) as usize;
         supply[t] += 1;
-        families[t].insert(core::geo_family_of(&q.name).unwrap_or("?"));
+        families[t].insert(core::sleeve_family_of(&q.name).unwrap_or("?"));
     }
     const SLEEVE: [&str; core::HOLD_TIERS] =
         ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan", "Asia-Pacific",
-         "world small-cap"];
-    // (#202) `take` because SLEEVE now carries a LAST, OPTIONAL sleeve: with its knob off the line
-    // must print exactly the eight geographic cells it always did. The count is `core::sleeves_shown`,
-    // never a literal — the same one-number-one-reader rule the cap in the header below follows.
+         "world small-cap", "world factor"];
+    // (#202) SLEEVE now carries OPTIONAL sleeves: with a knob off the line must print exactly the
+    // eight geographic cells it always did. The rule is `core::sleeve_visible`, never a literal —
+    // the same one-number-one-reader rule the cap in the header below follows.
+    // (#217) …and it is a FILTER over a per-tier predicate, not a `take` over a count. Two
+    // independently optional sleeves cannot be expressed as a length: size OFF with factor ON is a
+    // live combination, and a `take` would have printed the factor sleeve's numbers under the size
+    // sleeve's LABEL rather than hiding the empty one.
+    let size_cap = crate::config::hold_size_sleeve_ter();
+    let factor_on = crate::config::hold_factor_sleeve();
     let counts: Vec<String> = SLEEVE
         .iter()
         .zip(supply.iter())
         .zip(families.iter())
-        .take(core::sleeves_shown(crate::config::hold_size_sleeve_ter()))
-        .map(|((name, n), fams)| format!("{name} {n} ({}f)", fams.len()))
+        .enumerate()
+        .filter(|(t, _)| core::sleeve_visible(*t, size_cap, factor_on))
+        .map(|(_, ((name, n), fams))| format!("{name} {n} ({}f)", fams.len()))
         .collect();
     // (#197) the cap is READ here, never re-spelled: the line's whole job is to say how much supply
     // the cap hid, and a header quoting a different number than the filter applied would invert it.
@@ -7537,8 +7544,8 @@ mod tests {
         // (#210) the cap is passed in, not read: ci-settings SHIPS 0.35 now, so `near_miss_reason`'s
         // knob-reading form answers differently per config regime. Off -> the token is the reason;
         // on -> the size sleeve rehabilitates the very same name and there is no near-miss at all.
-        assert_eq!(near_miss_reason_with(small, 0.0).as_deref(), Some("narrow token \"small\""));
-        assert_eq!(near_miss_reason_with(small, 0.35), None, "the sleeve admits it outright");
+        assert_eq!(near_miss_reason_with(small, 0.0, false).as_deref(), Some("narrow token \"small\""));
+        assert_eq!(near_miss_reason_with(small, 0.35, false), None, "the sleeve admits it outright");
         let mut dist = q("VWRL.DE", "Vanguard FTSE All-World UCITS ETF Dist");
         dist.use_of_profits = Some("Dist");
         assert_eq!(near_miss_reason(&dist).as_deref(), Some("share class Dist (needs Acc)"));
@@ -7606,18 +7613,18 @@ mod tests {
     #[test]
     fn near_miss_reason_names_the_leg_that_actually_refused() {
         let thin = core_etf("IUSN.DE", "iShares MSCI World Small Cap UCITS ETF", 5e8, 0.30);
-        assert_eq!(near_miss_reason_with(&thin, 0.0).as_deref(), Some("narrow token \"small\""),
+        assert_eq!(near_miss_reason_with(&thin, 0.0, false).as_deref(), Some("narrow token \"small\""),
             "sleeve OFF: breadth IS the refusal, so the token is the answer");
-        assert_eq!(near_miss_reason_with(&thin, 0.35).as_deref(), Some("AUM €0.5B < €1B floor"),
+        assert_eq!(near_miss_reason_with(&thin, 0.35, false).as_deref(), Some("AUM €0.5B < €1B floor"),
             "sleeve ON: breadth passed, so report the leg that did refuse");
 
         let pricey = core_etf("WSML.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.40);
-        assert_eq!(near_miss_reason_with(&pricey, 0.35).as_deref(), Some("TER 0.40% > 0.35% cap"),
+        assert_eq!(near_miss_reason_with(&pricey, 0.35, false).as_deref(), Some("TER 0.40% > 0.35% cap"),
             "the sleeve's OWN cap is what the TER leg quotes");
 
         let ok = core_etf("SMLW.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.30);
-        assert_eq!(near_miss_reason_with(&ok, 0.35), None, "sleeve ON and every leg clear");
-        assert_eq!(near_miss_reason_with(&ok, 0.0).as_deref(), Some("narrow token \"small\""),
+        assert_eq!(near_miss_reason_with(&ok, 0.35, false), None, "sleeve ON and every leg clear");
+        assert_eq!(near_miss_reason_with(&ok, 0.0, false).as_deref(), Some("narrow token \"small\""),
             "the SAME fund is refused with the sleeve off — non-negotiable #1, read through the reader");
     }
 

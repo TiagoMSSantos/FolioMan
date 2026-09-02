@@ -3837,6 +3837,93 @@ buy_heuristic:
                                  #   (`core::sleeves_shown` hides the eighth sleeve entirely while the knob is
                                  #   off). Revert if a later pond puts a REGIONAL fund in this sleeve — that
                                  #   would mean `SIZE_GEO` has been widened, and it should not be.
+  hold_factor_sleeve: true       # (#217) MEASURED 2026-09-02, live `screen`, 4490-EU-buyable-ETF pond,
+                                 #   control vs probe back to back in one session. A TENTH CORE sleeve,
+                                 #   `world factor`, holding the geographically-broad funds `core::NARROW`
+                                 #   refuses on a TILT token alone: "quality", "value", "equal weight".
+                                 #   false = those three stay ordinary disqualifiers, which is what shipped
+                                 #   before this line and is the config-less Default.
+                                 #
+                                 #   IT OVERRIDES A SHIPPED PRINCIPLE, AND BY DECISION RATHER THAN BY EVIDENCE.
+                                 #   (#210)'s receipt states that small caps are "a different slice of the
+                                 #   market, not a re-weighting of names MSCI World already holds, which is why
+                                 #   value/quality/momentum are deliberately NOT in `core::SIZE`". That was a
+                                 #   judgement and was never priced. The user elected to price it. Both halves
+                                 #   are recorded here on purpose: the measurement below says the sleeve FILLS,
+                                 #   it does NOT say the principle was wrong. A future round may revert this on
+                                 #   the principle alone, with no new measurement and no argument needed.
+                                 #
+                                 #   WHAT WAS MEASURED. Leg 0 releases exactly 13 funds (not broad-index
+                                 #   3963 -> 3950) and every one is accounted for: TER 169 -> 177 (+8),
+                                 #   replication 173 -> 175 (+2), QUALIFIED 52 -> 55 (+3). 8 + 2 + 3 = 13, and
+                                 #   the split matches the pre-build probe fund-for-fund. AUM 75 -> 75, no-UCITS
+                                 #   2 -> 2, pond 4490 both sides.
+                                 #
+                                 #   THE THREE ADMITTED ROWS — one per factor family, which is what makes this a
+                                 #   sleeve and not a wrapper shelf (census reads `world factor 3 (3f)`):
+                                 #     MWEP.L  Invesco MSCI World Equal Weight   0.20%  EUR1.6B  Acc  Opt   IE
+                                 #     XDEQ.DE Xtrackers MSCI World Quality      0.25%  EUR2.8B  Acc  Full  IE
+                                 #     XDEV.DE Xtrackers MSCI World Value        0.25%  EUR3.7B  Acc  Full  IE
+                                 #   All three are MSCI World (tier 1), all Irish-domiciled, all accumulating.
+                                 #   TWO CAVEATS THAT ARE NOT DEFECTS BUT SHOULD BE READ: MWEP.L is 2.0 years
+                                 #   old (the other two are 11.9) and replicates OPTIMISED rather than FULL —
+                                 #   both facts print in its row, and neither is a CORE admission leg today. If
+                                 #   a future round adds an age floor or tightens the replication leg, MWEP.L is
+                                 #   the row that goes, and the sleeve drops to two families.
+                                 #
+                                 #   NO ROW MOVED. Ticker-set diff of the CORE table, control vs probe: 41
+                                 #   shared rows, ZERO only-in-control, order IDENTICAL, +MWEP.L +XDEV.DE
+                                 #   +XDEQ.DE and nothing else. The sleeve is purely additive — that is (#210)'s
+                                 #   byte-identity attribution argument, and it was pre-registered as an
+                                 #   absolute bar before the probe was read.
+                                 #
+                                 #   NO TER CEILING, DELIBERATELY. Unlike `hold_size_sleeve_ter` this is a plain
+                                 #   bool: all three funds clear the BASE `hold_max_ter` of 0.25, so the sleeve
+                                 #   needs no ceiling of its own and `core::ter_cap_for` is untouched. That also
+                                 #   means there is NO cap here to walk upward — the hazard (#202) and (#210)
+                                 #   each had to pre-register against cannot arise. It is not hypothetical that
+                                 #   it would have: iShares Edge MSCI World Quality (IWFQ.L, EUR5.1B) and Value
+                                 #   (IWFV.L, EUR5.9B) are the two biggest world-factor funds in the pond and
+                                 #   sit at 0.30%, five basis points over. THEY STAY OUT. Raising `hold_max_ter`
+                                 #   to reach them is refused in advance, here, in writing.
+                                 #
+                                 #   WHAT THE SLEEVE REFUSES, and why the third conjunct of
+                                 #   `core::factor_sleeve_tier` is the load-bearing one: of the 121 world-or-
+                                 #   regional factor funds in the pond, 55 are ALSO ESG/screened/sustainable and
+                                 #   53 are REGIONAL. Only 13 are clean world factor funds. Without the
+                                 #   no-other-NARROW-token conjunct the sleeve would fill four-to-one with a
+                                 #   values overlay nobody asked for; without `FACTOR_GEO` it would fill on the
+                                 #   region axis, where the lane already has six sleeves.
+                                 #
+                                 #   SCOPE. "momentum" (7 funds) and "min vol"/"minimum vol" (19) stay in
+                                 #   `NARROW` by the user's own selection: momentum is a high-turnover bet that
+                                 #   contradicts a 20-year hold, and min-vol targets VOLATILITY rather than
+                                 #   return. Both are pinned OUT in `core::pure_logic` so widening the sleeve to
+                                 #   them is a deliberate act, not a drift.
+                                 #
+                                 #   KNOWN AND LEFT ALONE, both inert: (a) IWFS.L "iShares MSCI World Mid-Cap
+                                 #   Equal Weight" is a SIZE x FACTOR cross that the crossing conjunct misses,
+                                 #   because `NARROW` spells the token "mid cap" and the fund spells it
+                                 #   "mid-cap" — the same hyphen/space class as (#203). It is refused twice over
+                                 #   anyway (0.30% > 0.25% cap AND EUR0.4B < EUR1B floor), so no row moves; add
+                                 #   the spelling if either leg ever loosens. (b) the `NARROW cost` line still
+                                 #   counts an admitted factor fund as "refused on a name token". That
+                                 #   inaccuracy is inherited from (#202) — it is true of the size sleeve today —
+                                 #   and fixing it would make the two config regimes disagree, so it is recorded
+                                 #   rather than patched.
+                                 #
+                                 #   PERMANENTLY UNGRADEABLE ON THE BACKTEST, same as `hold_per_tier` and
+                                 #   `hold_per_tier_all_world`: `backtest::stamp_asset_class` fills only
+                                 #   name/instrument_type/sector, so every backtest quote dies on its TER leg and
+                                 #   no walk reaches this lane. Ships on judgement-plus-live-diff. The goldens
+                                 #   are unmoved with the knob armed, which is the free proof it touches nothing
+                                 #   the backtest grades.
+                                 #
+                                 #   REVERT: set false. That returns MWEP.L, XDEQ.DE and XDEV.DE to leg 0 and the
+                                 #   census to nine cells. Revert ALSO — with no measurement — if you side with
+                                 #   (#210)'s principle, or if a REGIONAL or ESG-crossed fund ever appears in
+                                 #   this sleeve, which would mean `FACTOR_GEO` or the crossing conjunct has been
+                                 #   widened and neither should be.
   hold_family_first: true        # (#214) MEASURED 2026-09-02, live `screen`, 4583-EU-buyable-ETF pond.
                                  #   Fill each CORE sleeve FAMILY-FIRST: one pass takes the best fund of each
                                  #   DISTINCT index family (which `core::GEO` token matched), then the
