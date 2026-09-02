@@ -6562,7 +6562,13 @@ buy_heuristic:
                                  #   NOT A REASON TO DROP THE 19: the ladder above priced this number and it is a two-sided
                                  #   knee. It is a reason to ask whether leg 2 should read a WINDOW rather than a lifetime, and
                                  #   that is a CODE question (life_cagr is computed, not configured), so it is the next round's
-                                 #   target, not this one's. THE 15..22 LADDER ABOVE STANDS UNTOUCHED: the pin was REFUSED
+                                 #   target, not this one's.
+                                 #   [(#219) 2026-09-02 - DISCHARGED, AND NOT BY THIS ROUND: the (#73) note six lines below already
+                                 #   says leg 2 became reachable, was graded on a seven-arm ladder and HELD at 0.0. Acting on this
+                                 #   sentence before reaching that one cost (#219) its opening move - the SAME misread this receipt
+                                 #   records at line ~6499 ("THIS LINE READ 'UNSWEPT' FOR A DAY"). A stale forward-pointer outlives
+                                 #   its discharge unless it points AT it, so this one now does.]
+                                 #   THE 15..22 LADDER ABOVE STANDS UNTOUCHED: the pin was REFUSED
                                  #   the same day (5/8/10 all NO-SHIP), so this gate is still measured on the same
                                  #   age-chosen leg it was swept on. The 18 sole-blocks were a LIVE-table observation under
                                  #   an arm that did not ship — they describe the defect, not today's funnel. Only if a
@@ -6751,6 +6757,40 @@ buy_heuristic:
                                  #   monotone in the rung at all three horizons (+27/+56/+129). The arm moved what it said it moved.
                                  #   NET: this knob is CLOSED. (a) is spent here; (b) — the 20y book disagreement — is unchanged and is
                                  #   a question about the ruler, not about 19.0. Nothing shipped, so there is nothing to revert.
+                                 #   (#219) 2026-09-02 - AND SO IS THE LANE. GROWTH-LANE ADMISSION WIDENING IS CLOSED.
+                                 #   This generalises the line above and exists so nobody spends another round looking for a growth
+                                 #   knob that admits more 20-year holds - the exact ask that opened (#219), and the ninth round of
+                                 #   it. FIVE knobs have now been graded on that question; every one was REFUSED. Listed with their
+                                 #   verdicts so a future round starts from the verdict, not from the sole-block count that motivated
+                                 #   each attempt:
+                                 #     knob                  arm graded                       verdict
+                                 #     growth_min_cagr       15..22 ladder, rung 18 re-tested HOLD 19.0, two-sided knee (above)
+                                 #     growth_min_cagr_etf   15.0                             REFUSED - PRIMARY falls at BOTH horizons
+                                 #     life_cagr_max_years   0/6/8/10/12/16/20                HOLD 0.0 - 7 arms x 3 horizons, (#73)
+                                 #     growth_min_leg_years  measured                         REJECTED
+                                 #     growth_max_peg        1.6                              TIE 12y AND 8y -> UNRESOLVED -> NO SHIP
+                                 #   ONE MECHANISM EXPLAINS ALL FIVE, and it is structural rather than a tuning miss. The graded
+                                 #   objective is an EQUAL-WEIGHT top-N basket. A newly admitted name that does not OUTRANK the
+                                 #   incumbents does not replace one - it takes a 1/N slice and dilutes the mean. On this lane
+                                 #   QUANTITY IS ANTI-CORRELATED WITH THE SHIP RULE BY CONSTRUCTION: an admission knob can only pay
+                                 #   by admitting names that rank at the TOP, and a bar already swept to a knee is precisely the bar
+                                 #   that does not. `growth_min_cagr_etf` states it in its own words ("rank 1 is IDENTICAL ... while
+                                 #   the admitted funds land in ranks 6-10, and an equal-weight top-10 pays 1/N for each"); the 17.0
+                                 #   arm above found the same thing from the other side, as the wrecks a lowered bar readmits.
+                                 #   top_picks SATURATION COMPOUNDS IT, and is foreclosed separately: the pool cannot supply 10
+                                 #   (top-10 and top-15 run byte-identical), so widening the DISPLAY does not widen the book either.
+                                 #   See the top_picks entry ~line 2179, which exists for the same reason as this one.
+                                 #   WHERE THE ASK ACTUALLY GOES. Growth is ETF-BLIND BY DESIGN - pass rates measured on the fresh
+                                 #   (#219) funnel are ETF 0/14, 4/2618, 17/8628 against stock 380/4619, 572/9134, 700/11907 - so
+                                 #   broad buy-and-hold breadth was routed to the hold CORE lane instead, and that is where (#215)
+                                 #   through (#218) all shipped: four rounds, four sleeves. A round asked to "show more good assets
+                                 #   to hold 20+ years" belongs in `picks::hold_core_list`, NOT in a growth gate.
+                                 #   WHAT WOULD RE-OPEN THIS. Not another sole-block census - every knob above was opened by one and
+                                 #   closed anyway. Only (a) a graded objective that is not an equal-weight top-N, since the 1/N
+                                 #   dilution IS the mechanism, or (b) an admission arm shown to move RANK 1, the one place a top-N
+                                 #   basket can pay. Anything else re-runs a grid that already has a verdict.
+                                 #   NOTHING SHIPPED IN (#219); there is nothing to revert. Deleting this block is the only way to
+                                 #   lose the five verdicts it indexes.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_min_cagr_etf: 0.0      # (#192) GATE (ETFs only), TWO LEGS, one number — the fund lane's OWN CAGR floor, same units
