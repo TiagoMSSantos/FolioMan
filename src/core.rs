@@ -4448,19 +4448,18 @@ mod tests {
         Some(SIZE_TIER),
         "all-world small cap is the broadest form of the exposure"
     );
-
-        // (#211) the EM spelling gap and the eurozone trap it opens, pinned together. The token has
-        // a TRAILING SPACE for exactly one reason and this is it: "MSCI EMU" is a real €3.9B fund.
-        assert_eq!(geo_tier_at("ishares core msci em imi ucits etf usd (acc)", 0.0), Some(2),
-            "the €34.8B name the census found; \"emerging\" is a plain substring and cannot see EM");
-        assert_eq!(geo_tier_at("ishares msci em ucits etf usd (acc)", 0.0), Some(2),
-            "and the plain one, with nothing after EM but UCITS");
-        assert_eq!(geo_tier_at("ubs core msci emu ucits etf eur acc", 0.0), None,
-            "EMU is the EUROZONE — drop the trailing space and this reads as emerging markets");
-        assert_eq!(geo_tier_at("ishares vii plc - ishares msci em asia etf usd acc", 0.0), None,
-            "a region inside a region: GEO gives it a tier, NARROW takes it back");
-        assert_eq!(geo_tier_at("ishares msci em ex china ucits etf usd acc", 0.0), None,
-            "excluding the largest constituent is a bet, and no China sleeve completes the partition");
+    // (#211) the EM spelling gap and the eurozone trap it opens, pinned together. The token has
+    // a TRAILING SPACE for exactly one reason and this is it: "MSCI EMU" is a real €3.9B fund.
+    assert_eq!(geo_tier_at("ishares core msci em imi ucits etf usd (acc)", 0.0), Some(2),
+        "the €34.8B name the census found; \"emerging\" is a plain substring and cannot see EM");
+    assert_eq!(geo_tier_at("ishares msci em ucits etf usd (acc)", 0.0), Some(2),
+        "and the plain one, with nothing after EM but UCITS");
+    assert_eq!(geo_tier_at("ubs core msci emu ucits etf eur acc", 0.0), None,
+        "EMU is the EUROZONE — drop the trailing space and this reads as emerging markets");
+    assert_eq!(geo_tier_at("ishares vii plc - ishares msci em asia etf usd acc", 0.0), None,
+        "a region inside a region: GEO gives it a tier, NARROW takes it back");
+    assert_eq!(geo_tier_at("ishares msci em ex china ucits etf usd acc", 0.0), None,
+        "excluding the largest constituent is a bet, and no China sleeve completes the partition");
     // the blocking token must be a SIZE one — the sleeve rehabilitates market cap, not sectors
     assert_eq!(size_sleeve_tier("xtrackers msci world health care ucits etf", "health", 0.35), None);
 
