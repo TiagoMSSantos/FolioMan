@@ -1662,9 +1662,15 @@ pub fn sleeve_visible(tier: usize, size_cap: f64, factor_on: bool, sector_on: bo
 /// Both caps are parameters rather than reads, for the reason [`ter_cap_for`] records: the knobs are
 /// process-wide `OnceLock`s no test can flip, so a branch that only fires on an off-default would be
 /// a branch the mutation gate cannot reach.
-pub fn tier_cap(tier: usize, base: usize, all_world: usize) -> usize {
+/// (#220) …and the SECTOR sleeve can carry its own for the opposite reason: it is the one sleeve
+/// where the shared cap hides a whole FAMILY rather than a wrapper. (#197) set that cap at 3 on the
+/// finding that every sleeve prints at least as many rows as it has index families; (#218) built the
+/// first sleeve that holds five. `sector` 0 = no override, inherit `base`, today's behaviour exactly.
+pub fn tier_cap(tier: usize, base: usize, all_world: usize, sector: usize) -> usize {
     if tier == 0 && all_world > 0 {
         all_world
+    } else if tier == SECTOR_TIER as usize && sector > 0 {
+        sector
     } else {
         base
     }
@@ -5121,10 +5127,19 @@ mod tests {
 
     // (#207) the all-world sleeve's own row cap, and the two halves that make it safe: 0 inherits
     // (non-negotiable #1, the shipped lane), and the override reaches tier 0 and nothing else.
-    assert_eq!(tier_cap(0, 3, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(0, 3, 5), 5, "…and tier 0 takes it when set");
-    assert_eq!(tier_cap(1, 3, 5), 3, "developed is untouched");
-    assert_eq!(tier_cap(HOLD_TIERS - 1, 3, 5), 3, "…and so is the last sleeve");
+    assert_eq!(tier_cap(0, 3, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(0, 3, 5, 0), 5, "…and tier 0 takes it when set");
+    assert_eq!(tier_cap(1, 3, 5, 0), 3, "developed is untouched");
+    assert_eq!(tier_cap(HOLD_TIERS - 1, 3, 5, 0), 3, "…and so is the last sleeve");
+    // (#220) the SECTOR override, pinned on the LITERAL tier as well as the symbolic one: the arm
+    // is `tier == SECTOR_TIER`, and a mutation that rewrites that constant moves a symbolic
+    // assertion with it. 10 is the literal `SECTOR_TIER` this ladder ships.
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 5), 5, "(#220) the sector sleeve takes its own cap");
+    assert_eq!(tier_cap(10, 3, 0, 5), 5, "…and it is tier 10 that does so, spelled as a literal");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 5), 3, "the sleeve below it is untouched");
+    assert_eq!(tier_cap(0, 3, 7, 5), 7, "all-world keeps its precedence over the sector override");
+    assert_eq!(tier_cap(1, 3, 0, 5), 3, "…and every ordinary sleeve still reads the shared cap");
 
     // (#207) "all country world": a SPACE where core::GEO spelled a hyphen, which is why two SPDR
     // ACWI funds (€14.8B and €6.6B) read as "not a broad-index name" until the (#203) census found

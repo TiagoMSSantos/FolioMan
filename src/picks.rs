@@ -4086,10 +4086,11 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     let mut per_tier = [0usize; core::HOLD_TIERS];
     let cap = crate::config::hold_per_tier();
     let all_world = crate::config::hold_per_tier_all_world();
+    let sector = crate::config::hold_per_tier_sector();
     cores.retain(|q| {
         let t = core::hold_breadth_tier(&q.name) as usize;
         per_tier[t] += 1;
-        per_tier[t] <= core::tier_cap(t, cap, all_world)
+        per_tier[t] <= core::tier_cap(t, cap, all_world, sector)
     });
     cores
 }
@@ -4189,11 +4190,20 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // (#207) the header must quote the caps the filter ACTUALLY applied — (#197) put both through one
     // reader for exactly this reason, and a second, tier-0-only cap would otherwise print a number
     // that never ran. Silent when the override is off, so the shipped line is byte-identical.
+    // (#220) a second override joins the line the same way, so the header stays one reader ahead of
+    // the filter. Built as a list rather than a match: with both off it is still the bare "≤3", and
+    // with only all-world set it is byte-identical to the string (#207) shipped.
     let all_world_cap = crate::config::hold_per_tier_all_world();
-    let cap_text = match all_world_cap {
-        0 => format!("≤{}", crate::config::hold_per_tier()),
-        n => format!("≤{} for all-world, ≤{}", n, crate::config::hold_per_tier()),
-    };
+    let sector_cap = crate::config::hold_per_tier_sector();
+    let mut caps: Vec<String> = Vec::new();
+    if all_world_cap > 0 {
+        caps.push(format!("≤{all_world_cap} for all-world"));
+    }
+    if sector_cap > 0 {
+        caps.push(format!("≤{sector_cap} for sector"));
+    }
+    caps.push(format!("≤{}", crate::config::hold_per_tier()));
+    let cap_text = caps.join(", ");
     println!("  supply per sleeve (before the {}/sleeve cap): {}", cap_text, counts.join(" · "));
     // (#199) …and the funnel BEHIND that supply: where the EU-buyable ETFs that never reach a sleeve
     // die. The legs short-circuit, so each fund is counted once at the first one that refuses it —

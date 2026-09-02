@@ -4115,6 +4115,49 @@ buy_heuristic:
                                  #   — developed/EM/US/exUS/Europe/Japan are byte-identical row for row.
                                  #   REVERT RULE: 0. That restores the shared cap on every sleeve, and the
                                  #   only thing lost is four all-world funds.
+  hold_per_tier_sector: 5        # (#220) MEASURED 2026-09-02, live `screen`, control and probe BACK TO BACK on the same cache.
+                                 #   WHAT IT DOES: gives the world SECTOR sleeve its own row cap, overriding the shared `hold_per_tier`
+                                 #   there and only there. 0 = inherit it, byte-identical on every sleeve, and the config-less DEFAULT.
+                                 #   WHY A SECOND PER-SLEEVE OVERRIDE. (#197) set the shared cap at 3 and justified it with a finding:
+                                 #   every sleeve prints AT LEAST as many rows as it has index FAMILIES, so a further slot buys only
+                                 #   another WRAPPER of an index already on the table. That was true of all ten sleeves when it was
+                                 #   written. (#218) built the eleventh and it is the first one where it is FALSE - the live census reads
+                                 #   `world sector 9 (5f)`: nine qualifying funds across FIVE families competing for THREE slots. Two
+                                 #   whole EXPOSURES are hidden, not two duplicates. This knob is that finding, and nothing wider.
+                                 #   THE FAMILY COUNT IS THE CAP, NOT AN ARGMAX. 5 = the number of families the sleeve holds. The four
+                                 #   funds beyond it are Xtrackers MSCI World re-wrappers of technology, health care, energy and
+                                 #   financials - all three of which the sleeve ALREADY prints at rank 1-3 - so a sixth slot buys a
+                                 #   duplicate exposure at a WORSE TER (0.25% against the 0.15% S&P sector suite). The cap was not
+                                 #   searched over outcomes; it was read off the census.
+                                 #   ADMITTED, exactly two rows, both sole members of a family the table could not previously reach:
+                                 #     IESU.L  iShares S&P 500 Energy Sector UCITS ETF USD (Acc)  0.15%  EUR 1.2B  10.8y  Acc Full IE
+                                 #     XDWI.L  Xtrackers MSCI World Industrials UCITS ETF 1C      0.25%  EUR 1.2B  15.8y  Acc Full IE
+                                 #   NO EXISTING ROW MOVED - pre-registered as the stop rule, and the ticker-set diff is two additions
+                                 #   and ZERO removals, the same attribution (#210)/(#217)/(#218) used. The sleeve is additive by
+                                 #   construction: `tier_cap` reads the sector arm only at `tier == SECTOR_TIER`, so no other sleeve can
+                                 #   observe this knob, and the tier-0 arm keeps its precedence.
+                                 #   ONE VENUE FLIP, NOT ATTRIBUTABLE, recorded rather than dropped: the US sleeve's S&P 500 row read
+                                 #   SPYL.L in the control and SPYL.DE in the probe - the SAME fund on a different listing. It is DRIFT,
+                                 #   and the proof is that the flip does not track the knob: an EARLIER control at the same effective cap
+                                 #   of 3 printed SPYL.DE, and the cap-9 exploratory probe printed SPYL.L, so both spellings appear on
+                                 #   both sides. The code says the same thing independently - the sector arm fires only at
+                                 #   `tier == SECTOR_TIER` (10) and an S&P 500 tracker sits in the US sleeve (tier 3), which cannot read
+                                 #   this knob at all. The standing rule applied: attribute on the ticker-set diff
+                                 #   and never on a row that moves at unchanged config.
+                                 #   WHY NOT JUST LIFT `hold_per_tier`. Priced on the same run: 3 -> 5 across the board admits ~14 rows
+                                 #   of which 12 are wrappers (developed 3f, emerging 2f, US 3f, Europe 3f, Japan 2f all already print
+                                 #   every family they hold). That is precisely the trade (#197) refused, and (#207) is the precedent for
+                                 #   answering it with a per-sleeve override instead - this is the same move on the opposite rationale:
+                                 #   tier 0 needed more slots because its extra rows are DIFFERENT PRODUCTS, tier 10 because its extra
+                                 #   FAMILIES are shut out entirely.
+                                 #   NOT GRADEABLE, permanently, exactly as `hold_per_tier` and `hold_per_tier_all_world`:
+                                 #   `backtest::stamp_asset_class` fills only name/instrument_type/sector, so every backtest quote dies on
+                                 #   its TER leg and no walk reaches this lane. NO horizons are quoted because none can be. It is a table
+                                 #   height, NOT `VERDICT_TOP` and NOT (#120)'s forbidden argmax.
+                                 #   NO TER CEILING OF ITS OWN, and this receipt PRE-REGISTERS AGAINST ADDING ONE, the clause (#202),
+                                 #   (#210), (#217) and (#218) all carry: both admitted funds clear the BASE 0.25% cap as it stands.
+                                 #   REVERT: set 0. The (#210) principle - CORE is for broad market exposure - already argues against the
+                                 #   sector sleeve existing at all, and reverting THAT (`hold_sector_sleeve: false`) reverts this with it.
   hold_per_tier: 3               # (#197) MEASURED 2026-09-01 AND HELD AT THE SHIPPED LITERAL — rows kept
                                  # per breadth sleeve in the buy-and-hold CORE table. Was a bare
                                  # `const HOLD_PER_TIER: usize = 3` in picks.rs; this names it, and the
