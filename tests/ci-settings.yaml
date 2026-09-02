@@ -3837,6 +3837,84 @@ buy_heuristic:
                                  #   (`core::sleeves_shown` hides the eighth sleeve entirely while the knob is
                                  #   off). Revert if a later pond puts a REGIONAL fund in this sleeve — that
                                  #   would mean `SIZE_GEO` has been widened, and it should not be.
+  hold_sector_sleeve: true       # (#218) MEASURED 2026-09-02, live `screen`, 4499-EU-buyable-ETF pond,
+                                 #   control vs probe back to back in one session, the state journal restored BEFORE
+                                 #   EACH arm. An ELEVENTH CORE sleeve, `world sector`, holding the geographically-broad
+                                 #   funds `core::NARROW` refuses on a SECTOR token alone: "technolog", "information",
+                                 #   "info tech", "financ", "semiconduct", "health", "energy", "industrial",
+                                 #   "communicat", "biotech". false = those ten stay ordinary disqualifiers, which is
+                                 #   what shipped before this line and is the config-less Default.
+                                 #
+                                 #   IT OVERRIDES (#210)'s PRINCIPLE HARDER THAN (#217) DID, AND AGAIN BY DECISION RATHER
+                                 #   THAN BY EVIDENCE. (#210) reserves CORE for broad market exposure; (#217) already
+                                 #   overrode that for factor TILTS, which at least still hold every name in the index. A
+                                 #   sector fund does not: it is a concentrated bet sitting inside a breadth ladder, and
+                                 #   the sleeve is ranked LAST for exactly that reason. The user elected to price it after
+                                 #   eight rounds in which every other lever was closed by a prior graded measurement. Both
+                                 #   halves are recorded on purpose: the measurement below says the sleeve FILLS, it does
+                                 #   NOT say the principle was wrong. A future round may revert this on the principle
+                                 #   alone, with no new measurement and no argument needed.
+                                 #
+                                 #   WHY `SECTOR_GEO` IS [0, 1, 3] AND NOT (#217)'s [0, 1]. A sector fund must still name a
+                                 #   broad index, but US (tier 3) is admitted alongside world and developed. `core::geo_hit`
+                                 #   returns None for most sector funds in the pond — `VanEck Semiconductor`, `iShares MSCI
+                                 #   Global Semiconductors`, `Invesco Technology S&P US Select Sector` match no GEO token at
+                                 #   all — so [0, 1] would have admitted very nearly nothing, and the S&P 500 sector suite
+                                 #   IS the canonical instrument set here. All three admitted rows are tier 3. This
+                                 #   preserves the invariant every CORE row has held since the lane existed: each row is a
+                                 #   geographically identified broad fund. A fund with NO GEO token is still refused.
+                                 #
+                                 #   WHAT WAS MEASURED. Leg 0 releases exactly 44 funds (not broad-index 3958 -> 3914) and
+                                 #   every one is accounted for: TER 178 -> 194 (+16), replication 175 -> 181 (+6), not Acc
+                                 #   56 -> 63 (+7), AUM 75 -> 81 (+6), QUALIFIED 55 -> 64 (+9). 16+6+7+6+9 = 44. no-UCITS
+                                 #   2 -> 2, pond 4499 both sides, NARROW cost 652 both sides (that line counts refusals
+                                 #   BEFORE the sleeve dispatch, so unchanged is the correct reading, not a null result).
+                                 #
+                                 #   THE THREE ADMITTED ROWS — one per sector family, which is what makes this a sleeve and
+                                 #   not a wrapper shelf (census reads `world sector 9 (5f)`: 9 funds across 5 families,
+                                 #   spent 3-at-a-cap by (#214)'s family-first, so `core::sleeve_family_of` had to learn the
+                                 #   SECTOR tokens or all three slots would have gone to tech):
+                                 #     IITU.L  iShares S&P 500 Information Technology  0.15%  EUR15.6B  Acc  Full  IE  10.8y
+                                 #     IUHC.L  iShares S&P 500 Health Care             0.15%   EUR2.6B  Acc  Full  IE  10.8y
+                                 #     UIFS.L  iShares S&P 500 Financials              0.15%   EUR2.1B  Acc  Full  IE  10.8y
+                                 #   All three are one issuer's S&P 500 sector suite: same TER, same age, same domicile, all
+                                 #   accumulating, all FULL replication. Unlike (#217)'s MWEP.L there is no age or
+                                 #   replication caveat on any of them — no plausible future leg drops one of these three
+                                 #   without dropping all three.
+                                 #
+                                 #   NO ROW MOVED. Ticker-set diff of the CORE table, control vs probe: 29 shared rows, ZERO
+                                 #   only-in-control, ORDER IDENTICAL over all 29, +IITU.L +IUHC.L +UIFS.L appended and
+                                 #   nothing else. The confirming line is the near-miss report: the control prints
+                                 #   `IITU.L not hold-core: narrow token "technolog"` and the probe does not print it at
+                                 #   all. Purely additive — (#210)'s byte-identity attribution argument, pre-registered as
+                                 #   an absolute bar before the probe was read.
+                                 #
+                                 #   THE CO-TOKEN HAZARD, and why `core::SECTOR_OK` exists. IITU.L's full name is "iShares
+                                 #   S&P 500 Information Technology SECTOR USD (Acc)" — it fires `technolog`, `information`
+                                 #   AND the meta-token `sector`. (#217)'s third conjunct, copied verbatim, would have
+                                 #   refused the sleeve's single best fund. `SECTOR_OK` permits `sector` as a co-occurring
+                                 #   token while keeping it OUT of the family key, so the family is still `technolog`.
+                                 #   `select` was NOT added: the only pond fund it would reach (`Invesco Technology S&P US
+                                 #   Select Sector`) carries no GEO token and is refused anyway, so adding it would be a
+                                 #   speculative widening with no fund behind it.
+                                 #
+                                 #   NO TER CEILING, DELIBERATELY — the same plain bool as (#217). All three funds sit at
+                                 #   0.15%, comfortably under the BASE `hold_max_ter` of 0.25, so the sleeve needs no
+                                 #   ceiling of its own and `core::ter_cap_for` is untouched. RAISING `hold_max_ter` TO FILL
+                                 #   THIS SLEEVE IS REFUSED IN ADVANCE, HERE, IN WRITING — the clause (#202), (#210) and
+                                 #   (#217) each carry.
+                                 #
+                                 #   METHOD NOTE, because it cost a void A/B this round. `config::ci_base_yaml` makes THIS
+                                 #   FILE the base under any overlay not itself named `ci-settings.yaml`. A probe overlay
+                                 #   that simply omits the knob INHERITS whatever this file says, so a control built by
+                                 #   copying `config/settings.yaml` was silently armed and both arms printed the sleeve.
+                                 #   A control overlay must set the knob to false EXPLICITLY, not leave it absent.
+                                 #
+                                 #   REVERT: false, which restores the ten-sleeve table byte-for-byte (`core::sleeve_visible`
+                                 #   hides the eleventh sleeve entirely while the knob is off). Revert if a later pond puts
+                                 #   a SINGLE-COUNTRY or ESG-crossed fund in this sleeve — that would mean `SECTOR_GEO` or
+                                 #   the no-other-NARROW-token conjunct has been widened, and neither should be. Or revert
+                                 #   on (#210)'s principle alone, which this entry deliberately leaves standing.
   hold_factor_sleeve: true       # (#217) MEASURED 2026-09-02, live `screen`, 4490-EU-buyable-ETF pond,
                                  #   control vs probe back to back in one session. A TENTH CORE sleeve,
                                  #   `world factor`, holding the geographically-broad funds `core::NARROW`

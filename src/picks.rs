@@ -4009,18 +4009,28 @@ pub fn geo_miss_census(quotes: &[Quote]) -> Vec<&Quote> {
 /// Extracted rather than written inline in the printer for the reason (#198) recorded there: a real
 /// decision inside a `#[mutants::skip]`ped function is a decision the gate cannot see.
 pub fn near_miss_reason(q: &Quote) -> Option<String> {
-    near_miss_reason_with(q, crate::config::hold_size_sleeve_ter(), crate::config::hold_factor_sleeve())
+    near_miss_reason_with(
+        q,
+        crate::config::hold_size_sleeve_ter(),
+        crate::config::hold_factor_sleeve(),
+        crate::config::hold_sector_sleeve(),
+    )
 }
 
 /// (#204) [`near_miss_reason`] with the size sleeve's cap PASSED rather than read, so the guard below
 /// is reachable from a test — with the sleeve OFF a `NARROW` hit ALWAYS refuses at leg 0, which makes
 /// `leg == 0` and `true` indistinguishable and the fix ungradeable.
-pub fn near_miss_reason_with(q: &Quote, size_cap: f64, factor_on: bool) -> Option<String> {
+pub fn near_miss_reason_with(
+    q: &Quote,
+    size_cap: f64,
+    factor_on: bool,
+    sector_on: bool,
+) -> Option<String> {
     // (#204) ask WHICH leg first, and only then reach for the token. Asking `narrow_hit` first was
     // correct while a narrow hit implied refusal; (#202) ended that — the size sleeve admits a name
     // BECAUSE of its narrow token, so the old order reported `narrow token "small"` for a fund that
     // was in fact refused three legs later on TER, which is the one number a reader needs.
-    let (leg, msg) = core::hold_miss_leg_with(q, size_cap, factor_on)?;
+    let (leg, msg) = core::hold_miss_leg_with(q, size_cap, factor_on, sector_on)?;
     if leg == 0 {
         if let Some(t) = core::narrow_hit(&q.name.to_lowercase()) {
             return Some(format!("narrow token \"{}\"", t.trim()));
@@ -4155,7 +4165,7 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     }
     const SLEEVE: [&str; core::HOLD_TIERS] =
         ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan", "Asia-Pacific",
-         "world small-cap", "world factor"];
+         "world small-cap", "world factor", "world sector"];
     // (#202) SLEEVE now carries OPTIONAL sleeves: with a knob off the line must print exactly the
     // eight geographic cells it always did. The rule is `core::sleeve_visible`, never a literal —
     // the same one-number-one-reader rule the cap in the header below follows.
@@ -4165,12 +4175,13 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // sleeve's LABEL rather than hiding the empty one.
     let size_cap = crate::config::hold_size_sleeve_ter();
     let factor_on = crate::config::hold_factor_sleeve();
+    let sector_on = crate::config::hold_sector_sleeve();
     let counts: Vec<String> = SLEEVE
         .iter()
         .zip(supply.iter())
         .zip(families.iter())
         .enumerate()
-        .filter(|(t, _)| core::sleeve_visible(*t, size_cap, factor_on))
+        .filter(|(t, _)| core::sleeve_visible(*t, size_cap, factor_on, sector_on))
         .map(|(_, ((name, n), fams))| format!("{name} {n} ({}f)", fams.len()))
         .collect();
     // (#197) the cap is READ here, never re-spelled: the line's whole job is to say how much supply
@@ -6871,7 +6882,9 @@ mod tests {
         broad.use_of_profits = Some("Acc");
         broad.aum_fallback = Some(30e9);
         // sector tech ETF: higher CAGR but stretched far above its 200wk SMA (overext brake bites)
-        let mut tech = fx("iShares S&P 500 Information Technology UCITS ETF", "TECH.L", 85.0,
+        // (#218) named for a fund with NO geography: the S&P 500 sector suite is admitted by the
+        // sector sleeve, and the leg-0 assertion below must hold in both config regimes.
+        let mut tech = fx("VanEck Semiconductor UCITS ETF", "TECH.L", 85.0,
             &[("1M", -2.0), ("1Y", 17.0), ("5Y", 98.0), ("10Y", 438.0)]);
         tech.instrument_type = "ETF".into();
         tech.above_ma_pct = 61.0;
@@ -6925,13 +6938,19 @@ mod tests {
         // (#200) Both of these were admitted as GEOGRAPHIC sleeves — "World"/"Europe" matched GEO and
         // no NARROW token answered, because "industrial" was not in the list. The cap hid them, so
         // only lifting `hold_per_tier` in (#197) made them visible. Live tickers: XDWI.L, NDUS.L.
-        for n in ["Xtrackers MSCI World Industrials UCITS ETF 1C",
-                  "SPDR MSCI Europe Industrials UCITS ETF"] {
-            let mut ind = broad.clone();
-            ind.name = n.into();
-            assert_eq!(core::hold_miss_reason(&ind).as_deref(),
-                Some("not a broad-index name (sector/thematic/factor tilt)"), "{n}");
-        }
+        //
+        // (#218) THE WORLD ONE LEFT THIS CHECK. XDWI.L is one of the nine funds the sector sleeve
+        // admits, so its leg-0 refusal is now config-dependent and cannot be asserted in a test that
+        // runs under both regimes. What `(#200)` actually proved — that "industrial" IS in `NARROW`
+        // — is pinned directly instead, and holds at every knob setting. The EUROPE fund keeps the
+        // leg-0 assertion and is the stronger case anyway: `SECTOR_GEO` is [0, 1, 3], so a REGIONAL
+        // sector fund is refused by the sector sleeve too, exactly as region x factor is.
+        assert_eq!(core::narrow_hit("xtrackers msci world industrials ucits etf 1c"), Some("industrial"),
+            "(#200)'s finding, stated on the token rather than on a verdict a knob can move");
+        let mut ind = broad.clone();
+        ind.name = "SPDR MSCI Europe Industrials UCITS ETF".into();
+        assert_eq!(core::hold_miss_reason(&ind).as_deref(),
+            Some("not a broad-index name (sector/thematic/factor tilt)"));
         let mut m = broad.clone();
         m.name = "Vanguard FTSE All-World Fund USD Acc".into();
         assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("no UCITS token in the name"));
@@ -7472,8 +7491,12 @@ mod tests {
     /// so the leg-1 fund carries a US domicile as well as a UCITS-free name and fails under both.
     #[test]
     fn hold_funnel_buckets_each_leg() {
-        let mut leg0 = core_etf("XDWH.DE", "Xtrackers MSCI World Health Care UCITS ETF", 2e9, 0.25);
-        leg0.name = "Xtrackers MSCI World Health Care UCITS ETF".into(); // NARROW token -> not broad
+        // (#218) was "Xtrackers MSCI World Health Care", which is one of the NINE funds the sector
+        // sleeve admits — so under the armed regime it qualified and the histogram moved. A fund
+        // with a sector token and NO GEO token is refused at leg 0 whatever the three sleeve knobs
+        // say, which is what "regime-independent by construction" above requires.
+        let mut leg0 = core_etf("VVSM.DE", "VanEck Semiconductor UCITS ETF", 2e9, 0.35);
+        leg0.name = "VanEck Semiconductor UCITS ETF".into(); // NARROW token, no geography -> not broad
         let mut leg1 = core_etf("VWRD.DE", "Vanguard FTSE All-World Index Fund", 5e9, 0.22);
         leg1.domicile = Some("US".to_string()); // no UCITS token AND non-EU domicile -> fails either way
         let leg2 = core_etf("EXPN.DE", "Amundi MSCI World Expensive UCITS ETF", 5e9, 0.90);
@@ -7544,8 +7567,8 @@ mod tests {
         // (#210) the cap is passed in, not read: ci-settings SHIPS 0.35 now, so `near_miss_reason`'s
         // knob-reading form answers differently per config regime. Off -> the token is the reason;
         // on -> the size sleeve rehabilitates the very same name and there is no near-miss at all.
-        assert_eq!(near_miss_reason_with(small, 0.0, false).as_deref(), Some("narrow token \"small\""));
-        assert_eq!(near_miss_reason_with(small, 0.35, false), None, "the sleeve admits it outright");
+        assert_eq!(near_miss_reason_with(small, 0.0, false, false).as_deref(), Some("narrow token \"small\""));
+        assert_eq!(near_miss_reason_with(small, 0.35, false, false), None, "the sleeve admits it outright");
         let mut dist = q("VWRL.DE", "Vanguard FTSE All-World UCITS ETF Dist");
         dist.use_of_profits = Some("Dist");
         assert_eq!(near_miss_reason(&dist).as_deref(), Some("share class Dist (needs Acc)"));
@@ -7613,18 +7636,18 @@ mod tests {
     #[test]
     fn near_miss_reason_names_the_leg_that_actually_refused() {
         let thin = core_etf("IUSN.DE", "iShares MSCI World Small Cap UCITS ETF", 5e8, 0.30);
-        assert_eq!(near_miss_reason_with(&thin, 0.0, false).as_deref(), Some("narrow token \"small\""),
+        assert_eq!(near_miss_reason_with(&thin, 0.0, false, false).as_deref(), Some("narrow token \"small\""),
             "sleeve OFF: breadth IS the refusal, so the token is the answer");
-        assert_eq!(near_miss_reason_with(&thin, 0.35, false).as_deref(), Some("AUM €0.5B < €1B floor"),
+        assert_eq!(near_miss_reason_with(&thin, 0.35, false, false).as_deref(), Some("AUM €0.5B < €1B floor"),
             "sleeve ON: breadth passed, so report the leg that did refuse");
 
         let pricey = core_etf("WSML.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.40);
-        assert_eq!(near_miss_reason_with(&pricey, 0.35, false).as_deref(), Some("TER 0.40% > 0.35% cap"),
+        assert_eq!(near_miss_reason_with(&pricey, 0.35, false, false).as_deref(), Some("TER 0.40% > 0.35% cap"),
             "the sleeve's OWN cap is what the TER leg quotes");
 
         let ok = core_etf("SMLW.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.30);
-        assert_eq!(near_miss_reason_with(&ok, 0.35, false), None, "sleeve ON and every leg clear");
-        assert_eq!(near_miss_reason_with(&ok, 0.0, false).as_deref(), Some("narrow token \"small\""),
+        assert_eq!(near_miss_reason_with(&ok, 0.35, false, false), None, "sleeve ON and every leg clear");
+        assert_eq!(near_miss_reason_with(&ok, 0.0, false, false).as_deref(), Some("narrow token \"small\""),
             "the SAME fund is refused with the sleeve off — non-negotiable #1, read through the reader");
     }
 
