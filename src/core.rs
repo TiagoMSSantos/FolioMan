@@ -1163,13 +1163,58 @@ pub const HOLD_TIERS: usize = 9;
 /// Two real collisions: "msci world ex usa" contains "msci world" (would rank an ex-US sleeve AS
 /// developed, i.e. above MSCI World itself), and "ftse developed europe" contains "ftse developed".
 /// Both are pinned by tests.
-const GEO: [(&str, u8); 25] = [
+///
+/// (#215) THREE SPELLINGS, ONE RECEIPT — `prime global` (1), `ftse japan` (6), ` us equity` (3).
+/// Sourced by reading the WHOLE `GEO blind spot` list rather than the top 15 by AUM the run prints:
+/// 47 funds clear every admission leg but this one, and they sort 29 BOND funds, 13 single-country
+/// or narrow-regional names (DAX x4, Euro Stoxx 50 x3, MSCI EMU x2, FTSE 100, Korea, India, China)
+/// and just 5 broad-equity names. Two of those 5 are DELIBERATELY LEFT BLIND, because a fund must
+/// land in the tier its index actually tracks and neither could be verified offline:
+/// L&G Global Equity (LGGL.L, EUR 1.5B) — tier 0 or 1 unresolved — and Vanguard FTSE North America
+/// (VNRA.L, EUR 2.7B), whose US+Canada geography is not any sleeve here. Guessing either is a
+/// misfile, so they stay in the blind spot with this note as the pointer.
+///
+/// THE BOND HAZARD IS THE WHOLE RISK OF THIS ROUND, and it is structural: `NARROW` carries no bond
+/// token and there is NO asset-class leg, so GEO alone is what keeps fixed income out of an equity
+/// table. The blind spot holds `iShares Global Aggregate Bond` — live proof that a generic "global"
+/// token would admit bonds. Hence specific tokens only, and the bond/single-country negative pins in
+/// `pure_logic` are the guard, not decoration.
+///
+/// MEASURED 2026-09-02, live `screen`, control and probe on an IDENTICAL pond (`4797 from cache`,
+/// 4584 EU-buyable ETFs, both runs — the clean pair (#213) and (#214) both had to argue around).
+/// 26 rows both sides, and every swap is family-for-family: each fund evicted was the SECOND of a
+/// family the sleeve already showed, each admitted is a family it showed none of.
+///
+///     developed  OUT SPPW.DE MSCI World 0.12% EUR 17.1B  IN F50A.DE Prime Global 0.05% EUR 2.8B
+///     US         OUT WEBH.DE MSCI USA   0.03% EUR  3.7B  IN LGUS.L  L&G US Eq    0.05% EUR 1.3B
+///     Japan      OUT DBXJ.DE MSCI Japan 0.12% EUR  5.6B  IN VJPA.DE FTSE Japan   0.10% EUR 1.4B
+///
+/// Net TER across the three: -0.07pp, i.e. the table got CHEAPER as well as more diversified. Sleeve
+/// families went developed 2f->3f, US 2f->3f, Japan 1f->2f; blind spot 47 -> 44; QUALIFIED 48 -> 51.
+///
+/// THE SAFETY PROOF IS THE +3, NOT THE 44. Leg 0 newly admitted 44 names, but QUALIFIED rose by
+/// exactly 3 — the other 41 die on TER (+22), replication (+15), Acc (+2) and AUM (+2). NO bond
+/// fund qualified, which is the outcome the guard exists to produce. Re-check that +3 against the
+/// blind-spot delta on any future token: they must move together.
+///
+/// NOT GRADEABLE by backtest, same as (#203)/(#211)/(#213): `backtest::stamp_asset_class` fills only
+/// name/instrument_type/sector, so every backtest quote dies on its TER leg and no walk reaches this
+/// lane. Judgement-plus-live-diff.
+///
+/// REVERT: drop the three tokens. That returns 47 to the blind spot and puts SPPW/WEBH/DBXJ back.
+/// Revert an INDIVIDUAL token if a later pond has it admit a bond, a commodity or a single-country
+/// index, or file a fund in a tier its index does not track.
+const GEO: [(&str, u8); 28] = [
     // 4 = ex-US sleeves. FIRST, because every one of them contains a broader token.
     ("acwi ex", 4), ("world ex", 4), ("ex-usa", 4),
     // 5 = Europe. "ftse developed europe" precedes the generic "ftse developed" below.
     ("ftse developed europe", 5), ("msci europe", 5), ("stoxx europe 600", 5),
     // 6 = Japan
-    ("msci japan", 6), ("topix", 6),
+    // (#215) "ftse japan" is the PUREST form of (#203)'s finding: the sleeve already exists and GEO
+    // simply could not spell it. Vanguard FTSE Japan (VJPA.DE, EUR 1.4B, 0.10%) sat in the blind
+    // spot beside three MSCI/TOPIX trackers. It also gives tier 6 a SECOND index family, which is
+    // what lets (#214)'s family-first fill reach it in a sleeve whose supply (4) exceeds its cap.
+    ("msci japan", 6), ("topix", 6), ("ftse japan", 6),
     // 7 = Asia-Pacific. (#213) SPLIT OUT OF JAPAN, which was the one sleeve holding two disjoint
     // geographies. Because the per-sleeve cap ranks on TER *inside* a sleeve, a 0.20% Pacific fund
     // lost the sort to three 0.12% Japan trackers and the CORE table carried no Australia/HK/
@@ -1214,7 +1259,14 @@ const GEO: [(&str, u8); 25] = [
     ("all-world", 0), ("all-country", 0), ("all country world", 0), ("acwi", 0), ("global all cap", 0),
     ("solactive gbs global markets", 0),
     // 1 = developed markets
+    // (#215) "prime global" spells the SAME index the line above already names — Amundi's Prime
+    // range omits the index from the fund name, so "Amundi Prime Global UCITS ETF Acc" (F50A.DE,
+    // EUR 2.8B, 0.05%) was unreachable though `solactive gbs developed markets` was already here.
+    // DEVELOPED, not tier 0: Prime Global tracks Solactive GBS Developed Markets, and its Prime
+    // sibling "Amundi Prime All Country World" (WEBN.DE) is the ACWI one and already files at tier 0
+    // on `all country world` — the two must not collide, and they do not share a token.
     ("msci world", 1), ("ftse developed", 1), ("solactive gbs developed markets", 1),
+    ("prime global", 1),
     // 2 = emerging markets — ABOVE the US deliberately: DM+EM spans the planet, US alone does not
     // (#211) "msci em " carries a TRAILING SPACE and must keep it: without it the token matches
     // "MSCI EMU" (UBS Core MSCI EMU, EUR 3.9B) and files a EUROZONE fund as emerging markets. Same
@@ -1223,7 +1275,14 @@ const GEO: [(&str, u8); 25] = [
     // DIFFERENT TIER but never a refusal.
     ("emerging", 2), ("msci em ", 2),
     // 3 = the US
+    // (#215) " us equity" carries a LEADING SPACE and it is LOAD-BEARING, not defensive — the
+    // (#211) test, not the (#213) one. `hold_name_tokens` ships OFF, so matching is bare `contains`
+    // and the bare token matches "foc-us equity"; the space is the only thing between this tier and
+    // every "Focus Equity" fund in the pond. Admits L&G US Equity (LGUS.L, EUR 1.3B, 0.05%).
+    // "MSCI USA Equity" is NOT a collision: that reads " usa equity", which the token does not
+    // match, and `msci usa` above files it at this same tier anyway.
     ("s&p 500", 3), ("msci usa", 3), ("crsp us total market", 3), ("russell 1000", 3),
+    (" us equity", 3),
 ];
 
 /// sector/thematic/tilt tokens that disqualify a geographic core: single sectors (Nasdaq-100 is a
@@ -4586,6 +4645,42 @@ mod tests {
         "plain MSCI Pacific INCLUDES Japan — which is why the sleeve is labelled Asia-Pacific, not ex-Japan");
     assert_eq!(geo_tier_at("texas pacific land corporation", 0.0), None,
         "both tokens are MSCI-qualified: a bare \"pacific\" is a company name, and TPL is in the pond");
+
+    // (#215) the three spellings the GEO blind spot proved missing, pinned on their REAL live names.
+    assert_eq!(geo_tier_at("vanguard ftse japan ucits etf usd accumulation", 0.0), Some(6),
+        "the Japan sleeve already existed; only FTSE's wording of it was unreachable");
+    assert_eq!(geo_tier_at("amundi prime global ucits etf acc", 0.0), Some(1),
+        "DEVELOPED markets — Amundi's Prime range omits the index name from the fund name");
+    assert_eq!(geo_tier_at("amundi prime all country world ucits etf acc", 0.0), Some(0),
+        "...and its ACWI sibling must still file at tier 0: the two Prime funds share no token");
+    assert_eq!(geo_tier_at("l&g us equity ucits etf", 0.0), Some(3));
+    // the LEADING SPACE on " us equity", pinned as load-bearing. `hold_name_tokens` ships OFF, so
+    // the match is a bare `contains` and the space is the whole guard. Drop it and this reads Some(3).
+    assert_eq!(geo_tier_at("fidelity focus equity ucits etf", 0.0), None,
+        "\"foc-us equity\" is the mid-word accident the leading space exists to refuse");
+    assert_eq!(geo_tier_at("xtrackers msci usa equity ucits etf", 0.0), Some(3),
+        "\" usa equity\" does not match \" us equity\"; `msci usa` files it at the same tier anyway");
+    // the blind spot is mostly FIXED INCOME, and no new token may reach it. GEO is the ONLY thing
+    // keeping bonds out of an equity table — `NARROW` has no bond token and there is no
+    // asset-class leg — so these are the guard on the whole round, not decoration.
+    for bond in [
+        "ishares iii public limited company - ishares global aggregate bond ucits etf",
+        "vanguard usd treasury bond ucits etf usd accumulation",
+        "amundi core euro government bond ucits etf acc",
+        "xtrackers ii eur corporate bond ucits etf 1c",
+    ] {
+        assert_eq!(geo_tier_at(bond, 0.0), None, "{bond}: a bond fund must never reach a sleeve");
+    }
+    // ...and the single-country names stay refused: a blind spot is a name GEO cannot spell, which
+    // is a different question from whether the lane wants it.
+    for narrow in [
+        "xtrackers dax ucits etf 1c",
+        "franklin ftse india ucits etf",
+        "vanguard ftse 100 ucits etf gbp accumulation",
+        "ubs core msci emu ucits etf eur acc",
+    ] {
+        assert_eq!(geo_tier_at(narrow, 0.0), None, "{narrow}: single-country is not a broad sleeve");
+    }
     // (#214) the INDEX FAMILY behind a row — the same scan `geo_hit` runs, read for its token.
     assert_eq!(geo_family_of("State Street SPDR S&P 500 UCITS ETF USD Acc"), Some("s&p 500"));
     assert_eq!(geo_family_of("Xtrackers MSCI USA UCITS ETF 1C"), Some("msci usa"));
