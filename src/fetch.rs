@@ -618,7 +618,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     };
     // Yahoo labels physical ETCs (gold etc.) EQUITY, but an exact hit in the BF map proves ETP — fill
     // the TER anyway (map-only: no FMP etf/info call wasted on true equities).
-    let ter = if is_etf { fetch_expense(client, urls, ticker, &chart.name).await } else { bf_ter_exact_in(BF_TER.get(), ticker) };
+    let ter = if is_etf { fetch_expense(client, urls, ticker, &chart.name).await } else { bf_ter_exact(ticker) };
     // (AUM) fund size, same BF payload + same proof-of-ETP stance for mislabeled ETCs.
     let aum_eur = if is_etf { bf_aum(ticker, &chart.name) } else { bf_aum_exact(ticker) };
     // (USE/REPL/bench) share-class + replication tokens + benchmark index, same BF payload —
@@ -1185,12 +1185,21 @@ pub fn ter_pct(ratio: f64) -> Option<f64> {
 /// (#209) Takes the map so `bf_ter_cascade` and the live `quote_one` read the SAME one
 /// (non-negotiable #4 — and (#208) is what a second copy of a TER rule costs).
 ///
-/// (#211) There was a `bf_ter_exact(ticker)` wrapper here that read `BF_TER.get()` itself. It was
-/// pure indirection over a process-wide OnceLock no test can set, so all four of its return mutants
-/// survived — an un-gradeable function whose only caller now inlines the one line it held. (#198)'s
-/// rule, applied by DELETION rather than by hoisting: there was no decision left in it to hoist.
+/// (#212) `bf_ter_exact` below is the un-gradeable half, and it is SKIPPED rather than deleted.
+/// (#211) deleted it and inlined its one line into `quote_one`, which was wrong twice over: the four
+/// unkillable mutants went away, but `quote_one` is a 343-line async network fn whose OWN return
+/// mutant (`-> Quote with Default::default()`) is equally unreachable, and editing a line inside it
+/// ARMED that mutant in the next push's `--in-diff` set. Deletion did not remove the un-gradeable
+/// shell, it relocated it into a much bigger one. The rule above is satisfied the way `fetch_expense`
+/// satisfies it: the DECISION lives here in `bf_ter_exact_in`, graded directly by the suite, and what
+/// stays skipped is a `BF_TER.get()` and nothing else.
 fn bf_ter_exact_in(map: Option<&HashMap<String, f64>>, ticker: &str) -> Option<f64> {
     map.and_then(|m| m.get(ticker)).copied()
+}
+
+#[mutants::skip] // (#212) reads a process-wide OnceLock no test can set — see `bf_ter_exact_in`.
+fn bf_ter_exact(ticker: &str) -> Option<f64> {
+    bf_ter_exact_in(BF_TER.get(), ticker)
 }
 
 // (G) Cold-fetch budget for the historical-fundamentals lane: FMP free tier = 250 calls/day, so cap
