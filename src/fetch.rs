@@ -5797,6 +5797,13 @@ pub(crate) mod tests {
         assert_eq!(rows[0].revenue, Some(1000.0));
         assert_eq!(rows[0].currency.as_deref(), Some("USD")); // (FX) a US filer's books, detected not assumed
         assert_eq!(rows[0].gross_margin, Some(40.0)); // 400/1000
+        // (#212) the OTHER two margins the same closure fills. Untested until now, so `delete field
+        // op_margin` and `delete field net_margin` both survived the gate — the struct expression
+        // ends in `..Default::default()`, which turns a deleted field into a silent None. Both
+        // numerators are already load-bearing elsewhere in this test (op 200 via ebitda 280 = 200+80,
+        // NI 150 via roe 15.0), so this pins the FIELD, not the arithmetic.
+        assert_eq!(rows[0].op_margin, Some(20.0)); // OperatingIncomeLoss 200/1000
+        assert_eq!(rows[0].net_margin, Some(15.0)); // NetIncomeLoss 150/1000
         assert_eq!(rows[0].eps, Some(3.0));
         assert_eq!(rows[0].roe, Some(15.0)); // NetIncome 150 ÷ StockholdersEquity 1000 (instant)
         assert_eq!(rows[0].roa, Some(5.0)); // NetIncome 150 ÷ Assets 3000 — same numerator, wider denominator
@@ -5814,6 +5821,8 @@ pub(crate) mod tests {
         // FY2022: no EPS / NI / equity / survival line -> None (neutral, never a fake 0)
         assert_eq!(rows[1].revenue, Some(1200.0));
         assert_eq!(rows[1].gross_margin, Some(50.0)); // 600/1200
+        assert_eq!(rows[1].op_margin, None); // (#212) no op income filed -> None, never a fake 0
+        assert_eq!(rows[1].net_margin, None); // …and no NI, the same line roe/roa already read
         assert_eq!(rows[1].eps, None);
         assert_eq!(rows[1].roe, None);
         assert_eq!(rows[1].roa, None); // no NI for FY2022 -> None, not a fabricated 0
