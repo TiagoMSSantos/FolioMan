@@ -3779,6 +3779,64 @@ buy_heuristic:
                                  #   above — a pond that has grown may trip what this one did not. The
                                  #   matcher stays pinned by fixtures in `pure_logic` (prefix tokens still
                                  #   bite; "equality"/"comparison"/"devalued" no longer do).
+  hold_size_sleeve_ter: 0.35     # (#210) MEASURED 2026-09-02, live `screen`, control vs probe run
+                                 #   BACK TO BACK IN ONE SESSION on a 5431-ticker universe / 4555 EU-buyable
+                                 #   ETFs. TER ceiling for the eighth CORE sleeve (world small-cap); 0.0 = the
+                                 #   sleeve is OFF and "small" stays an ordinary `core::NARROW` disqualifier,
+                                 #   which is the code default and what shipped until today.
+                                 #
+                                 #   WHAT IT ADMITS — exactly one row, and it is the right one:
+                                 #     WSML.L  iShares MSCI World Small Cap UCITS ETF USD (Acc)
+                                 #             UK · 0.35% TER · EUR 7.3B · Acc · Opt (physical) · IE · 8.4y · +9%
+                                 #   Sleeve supply 1. The funnel moved `not broad-index` 4082 -> 4077, i.e. 5
+                                 #   names newly clear leg 0, splitting EXACTLY as TER +1 / not-Acc +1 / AUM +2
+                                 #   / QUALIFIED 46 -> 47. NO OTHER SLEEVE MOVED A ROW — that byte-identity is
+                                 #   the whole attribution argument, since two changes shipped this session.
+                                 #
+                                 #   WHY IT ADMITS ANYTHING AT ALL, AFTER (#202) MEASURED THE SAME KNOB AT THE
+                                 #   SAME 0.35 AND FOUND ONLY A EUROPE FUND: (#208). Three separate hand-written
+                                 #   `* 100.0` TER conversions existed and (#206) fixed only the FMP one, while
+                                 #   Boerse Frankfurt — tried FIRST, serving most of the pond — kept its own.
+                                 #   `0.0035 * 100.0` is 0.35000000000000003, genuinely > 0.35, so the live run
+                                 #   printed `TER 0.35% > 0.35% cap` and evicted the world small-cap funds from
+                                 #   a cap that IS 0.35. The sleeve was never empty; the arithmetic was wrong.
+                                 #
+                                 #   PAIRED WITH (#210)'s `core::SIZE_GEO`, which restricts the sleeve to geo
+                                 #   tier 0/1. (#202) shipped it geography-agnostic and its probe admitted ONE
+                                 #   fund — XXSC.DE, Xtrackers MSCI *Europe* Small Cap — into a sleeve whose own
+                                 #   header says world. Region x size is two bets wearing the name of one, and
+                                 #   the lane already carries a Europe sleeve for the region half. Restricting
+                                 #   it was refused at the time ONLY because it would have left the sleeve
+                                 #   provably empty; with (#208) in, that is no longer true.
+                                 #
+                                 #   WHY 0.35 AND NOT A FITTED NUMBER: UNFITTED JUDGEMENT VALUE. It is where
+                                 #   these products actually price — `hold_max_ter` is 0.25 and every world
+                                 #   small-cap fund is above it, which is why the sleeve needs its own ceiling
+                                 #   (`core::ter_cap_for`) rather than a looser shared cap. (#202)'s
+                                 #   PRE-REGISTRATION STANDS AND IS NOT DISCHARGED BY THIS SHIP: do not walk the
+                                 #   cap upward to fill the sleeve. Small caps are the one long-horizon exposure
+                                 #   the lane structurally cannot otherwise reach — a different slice of the
+                                 #   market, not a re-weighting of names MSCI World already holds, which is why
+                                 #   value/quality/momentum are deliberately NOT in `core::SIZE`.
+                                 #
+                                 #   JUDGEMENT-PLUS-LIVE-DIFF, NOT GRADED — no backtest quote carries a TER, so
+                                 #   `stamp_asset_class` kills every one of them on that leg and no walk can
+                                 #   reach this lane. Same permanent ungradeability as `hold_per_tier`.
+                                 #
+                                 #   TWO CAVEATS ON THE MEASUREMENT, recorded because they are real:
+                                 #     (a) the probe run lost its Yahoo crumb (`handshake failed`, justETF 304
+                                 #         -> 3 funds, ETFs-missing-TER 134 -> 135), so the funnel deltas carry
+                                 #         some noise. WSML.L itself was NOT admitted through missing data — it
+                                 #         prints a real 0.35% and a real EUR 7.3B — so the finding holds.
+                                 #     (b) the journal was restored only AFTER both runs, not between them, so
+                                 #         the probe read state the control had just written. That moves the
+                                 #         `CORE shortlist changed since` line and nothing else: the CORE table
+                                 #         is recomputed from the pond, not from journal state.
+                                 #
+                                 #   REVERT: 0.0, which restores the seven-sleeve table byte-for-byte
+                                 #   (`core::sleeves_shown` hides the eighth sleeve entirely while the knob is
+                                 #   off). Revert if a later pond puts a REGIONAL fund in this sleeve — that
+                                 #   would mean `SIZE_GEO` has been widened, and it should not be.
   hold_per_tier_all_world: 7     # (#207) MEASURED 2026-09-01, live `screen`, 4597-quote pond. Rows kept in
                                  #   the ALL-WORLD sleeve alone; 0 = inherit `hold_per_tier` (the default, and
                                  #   byte-identical to before). JUDGEMENT-PLUS-LIVE-DIFF, NOT GRADED — no

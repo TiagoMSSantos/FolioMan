@@ -1258,19 +1258,33 @@ const SIZE: [&str; 1] = ["small"];
 /// and would never be printed — the sleeve is what makes it visible, not the token alone.
 pub const SIZE_TIER: u8 = HOLD_TIERS as u8 - 1;
 
+/// (#210) Which geographies earn the size sleeve. Tier 0 (all-world) and tier 1 (developed) ONLY,
+/// because the sleeve is labelled `world small-cap`: a EUROPE small-cap fund sitting in it is two
+/// bets stacked (region × size) wearing the name of one, and the lane already carries a Europe
+/// sleeve for the region half.
+///
+/// This is not a hypothetical. `(#202)` shipped the sleeve geography-agnostic, and its live probe
+/// admitted exactly ONE fund — XXSC.DE, Xtrackers MSCI *Europe* Small Cap — into a sleeve whose own
+/// header says world. The two real world small-cap funds were absent for an unrelated reason: the
+/// rounding bug `(#208)` fixed made `0.0035 * 100.0` read as `> 0.35` and evicted them from a cap
+/// that IS 0.35. Restricting the sleeve was refused at the time only because it would have left the
+/// sleeve provably empty; with `(#208)` in, that is no longer true and the restriction is free.
+const SIZE_GEO: [u8; 2] = [0, 1];
+
 /// (#202) Does an ALREADY-lowercased name earn the size sleeve, given the FIRST narrow token that
 /// fired on it? All four conjuncts are load-bearing: the knob must be on (0.0 = off, and no fund
 /// clears a 0.0% cap anyway), the blocking token must be a market-cap one, NO OTHER narrow token may
-/// fire ("MSCI World Small Cap ESG" is still an ESG fund), and the name must still carry a geography
-/// (a bare "Global X Small Cap" is not a world index).
+/// fire ("MSCI World Small Cap ESG" is still an ESG fund), and — `(#210)` — the geography must be a
+/// WORLD one, not merely present (a bare "Global X Small Cap" is not a world index either, and still
+/// fails for want of any geography at all).
 fn size_sleeve_tier(n: &str, first: &str, cap: f64) -> Option<u8> {
     if cap <= 0.0 || !SIZE.contains(&first) {
         return None;
     }
-    if NARROW.iter().any(|t| !SIZE.contains(t) && hit(n, t)) || geo_hit(n).is_none() {
+    if NARROW.iter().any(|t| !SIZE.contains(t) && hit(n, t)) {
         return None;
     }
-    Some(SIZE_TIER)
+    SIZE_GEO.contains(&geo_hit(n)?).then_some(SIZE_TIER)
 }
 
 /// (#202) How many sleeves the census line prints. The size sleeve is HIDDEN while its knob is off,
@@ -4370,9 +4384,28 @@ mod tests {
     assert!(!hold("Xtrackers MSCI World Minimum Volatility UCITS ETF", Some(0.25), Some("Full"), Some("Acc"), Some(1.1e9))); // spelled-out factor tilt (live CORE receipt)
     assert!(!hold("BNP PARIBAS EASY II MSCI World PAB UCITS ETF Acc", Some(0.20), Some("Full"), Some("Acc"), Some(1.5e9))); // PAB = Paris-Aligned Benchmark, an ESG screen (live CORE receipt)
 
-    // (#202) the size sleeve is OFF by default, so a world small-cap fund that clears every other leg
-    // is STILL refused on the name — this is the non-negotiable-#1 proof that the knob ships neutral.
-    assert!(!hold("iShares MSCI World Small Cap UCITS ETF", Some(0.35), Some("Opt"), Some("Acc"), Some(3e9)));
+    // (#202) a world small-cap fund that clears every other leg is refused on the NAME while the size
+    // sleeve is off — the non-negotiable-#1 proof that the knob ships neutral.
+    // (#210) The cap is PASSED IN rather than read, because tests/ci-settings.yaml now SHIPS 0.35 and
+    // a knob-reading assertion here would claim opposite things in the two config regimes CI runs.
+    // Both directions are pinned: off refuses on the name, on admits — which is the knob's whole job.
+    let world_small_q = {
+        let mut q = Quote::stub("X", "", "", "iShares MSCI World Small Cap UCITS ETF");
+        q.expense_ratio = Some(0.35);
+        q.replication = Some("Opt");
+        q.use_of_profits = Some("Acc");
+        q.aum_eur = Some(3e9);
+        q
+    };
+    assert_eq!(
+        hold_miss_leg_with(&world_small_q, 0.0).map(|(leg, _)| leg),
+        Some(0),
+        "sleeve off -> refused at leg 0 on the name, whatever its facts"
+    );
+    assert!(
+        hold_miss_leg_with(&world_small_q, 0.35).is_none(),
+        "sleeve on -> the same fund is admitted; this is the row (#210) shipped"
+    );
 
     // (#202) …and the sleeve's own admission rule, exercised directly with the cap passed in, because
     // `hold_size_sleeve_ter` is a process-wide OnceLock read from config that no test can flip.
@@ -4385,6 +4418,24 @@ mod tests {
     assert_eq!(size_sleeve_tier("spdr msci europe small cap eur hedged ucits etf", "small", 0.35), None);
     // no geography at all -> not a world index, whatever its market cap
     assert_eq!(size_sleeve_tier("global x small cap ucits etf", "small", 0.35), None);
+    // (#210) …and a geography that is not a WORLD one refuses too. XXSC.DE is the live receipt: it
+    // is the single fund (#202)'s probe admitted, into a sleeve labelled "world small-cap".
+    assert_eq!(
+        size_sleeve_tier("xtrackers msci europe small cap ucits etf", "small", 0.35),
+        None,
+        "tier 5 is a region, and region × size is two bets under the name of one"
+    );
+    assert_eq!(
+        size_sleeve_tier("ishares msci usa small cap ucits etf", "small", 0.35),
+        None,
+        "the US is no different — a regional size bet is still regional"
+    );
+    // tier 0 earns it as well as tier 1, so BOTH SIZE_GEO entries are live and neither can be dropped
+    assert_eq!(
+        size_sleeve_tier("vanguard ftse all-world small cap ucits etf", "small", 0.35),
+        Some(SIZE_TIER),
+        "all-world small cap is the broadest form of the exposure"
+    );
     // the blocking token must be a SIZE one — the sleeve rehabilitates market cap, not sectors
     assert_eq!(size_sleeve_tier("xtrackers msci world health care ucits etf", "health", 0.35), None);
 
@@ -4464,7 +4515,14 @@ mod tests {
     assert!(is_broad_index_name("Vanguard FTSE Developed World UCITS ETF"));
     assert!(!is_broad_index_name("VanEck Semiconductor UCITS ETF"));
     assert!(!is_broad_index_name("iShares S&P 500 Information Technology Sector UCITS ETF"));
-    assert!(!is_broad_index_name("iShares MSCI World Small Cap UCITS ETF")); // size TILT, deliberately still barred
+    // (#210) THIS NAME'S VERDICT IS NOW CONFIG-DEPENDENT, so it is pinned with the cap passed in
+    // rather than read: the code default is 0.0 and tests/ci-settings.yaml ships 0.35, and a
+    // knob-reading assertion would contradict itself between the two regimes CI runs. Round 118's
+    // rule is UNCHANGED at the default — a size tilt is not a geography — and the sleeve is the
+    // deliberate, measured exception to it rather than a loosening of it.
+    let world_small_lower = "ishares msci world small cap ucits etf";
+    assert_eq!(geo_tier_at(world_small_lower, 0.0), None, "sleeve off -> a size TILT, still barred");
+    assert_eq!(geo_tier_at(world_small_lower, 0.35), Some(SIZE_TIER), "sleeve on -> the eighth sleeve");
     assert!(!is_broad_index_name("iShares MSCI World EUR Hedged UCITS ETF"));
     assert!(!is_broad_index_name("iShares MSCI World ESG Screened UCITS ETF"));
     assert!(!is_broad_index_name("iShares MSCI World Minimum Volatility UCITS ETF"));

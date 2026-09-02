@@ -7495,7 +7495,11 @@ mod tests {
         // near_miss_reason: the TOKEN for a narrow-tagged name, the leg message otherwise, None when it
         // qualifies — the three branches the pinned line prints.
         let small = &quotes[0];
-        assert_eq!(near_miss_reason(small).as_deref(), Some("narrow token \"small\""));
+        // (#210) the cap is passed in, not read: ci-settings SHIPS 0.35 now, so `near_miss_reason`'s
+        // knob-reading form answers differently per config regime. Off -> the token is the reason;
+        // on -> the size sleeve rehabilitates the very same name and there is no near-miss at all.
+        assert_eq!(near_miss_reason_with(small, 0.0).as_deref(), Some("narrow token \"small\""));
+        assert_eq!(near_miss_reason_with(small, 0.35), None, "the sleeve admits it outright");
         let mut dist = q("VWRL.DE", "Vanguard FTSE All-World UCITS ETF Dist");
         dist.use_of_profits = Some("Dist");
         assert_eq!(near_miss_reason(&dist).as_deref(), Some("share class Dist (needs Acc)"));
