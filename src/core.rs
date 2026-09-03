@@ -1301,9 +1301,19 @@ const GEO: [(&str, u8); 28] = [
 /// both sat among the 22 rows the ≤3/sleeve cap hides, which is why the printed table never showed
 /// the bug and no receipt caught it. NDUS.L clears every other leg on live facts (TER 0.18%, AUM
 /// €1.24B), so this token is the only thing standing between it and the CORE list.
-const NARROW: [&str; 36] = [
+const NARROW: [&str; 42] = [
     "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
     "industrial",
+    // (#222) THE REST OF GICS. `(#200)` found "industrial" missing and named the defect exactly — a
+    // token ABSENT from the list, not one matching too loosely — then fixed the one name it had
+    // found. The list was FIVE sectors short, not one. Utilities, Materials, Consumer Staples and
+    // Consumer Discretionary had no spelling here, so `geo_tier` read "Xtrackers MSCI World
+    // Utilities" as a DEVELOPED sleeve and "SPDR MSCI Europe Consumer Staples" as a EUROPE one:
+    // (#200)'s own sentence, still true for the four sectors it did not enumerate. ONE "consumer"
+    // covers both consumer sectors — they are two GICS slices, but neither is a geography and the
+    // distinction buys nothing here. "real estate", "property" and "reit" were probed with these
+    // and returned ZERO reachable funds, so they are NOT shipped: (#215)'s "specific tokens only".
+    "utilit", "material", "consumer",
     "sector", "select", "nasdaq", "small", "mid cap", "communicat", "biotech",
     "esg", "sri ", "socially responsible", "screened",
     "sustainab", "paris", " pab", "climate", "islamic", "value", "momentum", "quality",
@@ -1336,6 +1346,23 @@ const NARROW: [&str; 36] = [
     // REVERT: drop the three tokens. That returns CE8.PA/CM9.PA/WXMEG.SW to tier 4. Revert an
     // INDIVIDUAL token if it ever refuses a fund whose index IS a world-minus-US partition.
     "world ex europe", "world ex emu", "ex mega cap",
+    // (#222) THE BOND HOLE (#215) LEFT OPEN. That round states the risk in its own words — "NARROW
+    // carries no bond token and there is NO asset-class leg, so GEO alone is what keeps fixed income
+    // out of an equity table" — and pins four bond funds to prove it. Every one of those four is
+    // geographically UNSPELLABLE, which is why the hole survived its own guard: a bond fund that DOES
+    // carry a GEO token walks straight past it. Vanguard USD Emerging Markets Government Bond
+    // (VDEA.L, EUR 754M) matches `emerging`, reaches the EMERGING EQUITY sleeve today, and is refused
+    // by the AUM floor and nothing else. "bond" alone catches every such name in this pond — the
+    // blind spot's Treasury/Aggregate/Corporate funds all carry it too — and "treasury", "aggregate"
+    // and "gilt" were probed separately and returned ZERO, so they are not shipped.
+    //
+    // ...AND THE HEDGE SPELLINGS. "hedged" has been here since the sleeve existed, but UBS spells it
+    // `hEUR` and State Street spells it `EUR H Acc`, so four UBS Core funds and one SPDR reach a
+    // GEO sleeve wearing a currency wrapper the token was written to refuse. Same defect as (#207)'s
+    // missing GEO spellings: the rule was right, the vocabulary was short. " h acc" carries its own
+    // leading separator for the reason " pab" and " us equity" do — `hold_name_tokens` ships OFF, so
+    // the match is a bare `contains` and that space is the whole guard against a "CH Acc" share class.
+    "bond", "heur", " h acc",
 ];
 
 /// (#102) Does an ALREADY-lowercased `n` carry `t` at the START OF A WORD? The tightened matcher
@@ -1528,9 +1555,17 @@ const FACTOR_GEO: [u8; 2] = [0, 1];
 /// CONCENTRATED BET inside a table whose header says diversified. Chosen by the user with that
 /// stated. See the `(#218)` receipt in tests/ci-settings.yaml, which records both halves so a future
 /// round can revert on the principle alone without re-running anything.
-const SECTOR: [&str; 10] = [
+/// (#222) …completed to the GICS eleven. The three tokens exist for the reason the `(#222)` note in
+/// [`NARROW`] gives; they are HERE for symmetry, which is the whole argument — the sleeve already
+/// admits eight GICS sectors, and refusing Utilities while admitting Industrials states no principle
+/// anyone could revert on. ADMITS NOTHING TODAY: all five funds it reaches sit under the EUR 1B AUM
+/// floor, so this is (#216)'s "inert today, deliberately fixed anyway" and the floor is the mask.
+/// REVERT: drop the three from HERE alone. That refuses them the sector sleeve while [`NARROW`] goes
+/// on keeping them out of the geographic ones — i.e. the (#200) behaviour, not the pre-(#222) one.
+const SECTOR: [&str; 13] = [
     "technolog", "information", "info tech", "financ", "semiconduct",
     "health", "energy", "industrial", "communicat", "biotech",
+    "utilit", "material", "consumer",
 ];
 
 /// (#218) Tokens that may CO-OCCUR with a sector one without disqualifying the fund, but that never
@@ -5001,6 +5036,78 @@ mod tests {
         assert_eq!(geo_tier_at(plain, 0.0, false, false), Some(tier), "{plain}: shipped placement");
         assert_eq!(geo_tier_at(plain, 0.0, false, true), Some(tier), "{plain}: …unmoved by the sector knob");
     }
+    // (#222) the three GICS sectors the sleeve was short, on their REAL live names from the
+    // 2026-09-03 pond. All five sit UNDER the AUM floor, so no row moves either way — what these pin
+    // is the CLASSIFICATION the floor is currently masking, which is the whole point of fixing it now.
+    for (fund, why) in [
+        ("xtrackers msci world utilities ucits etf 1c", "XDWU.DE, 0.25%, EUR 851M"),
+        ("xtrackers msci world consumer staples ucits etf 1c", "XDWS.L, 0.25%, EUR 828M"),
+        ("xtrackers msci world materials ucits etf 1c", "XDWM.DE, 0.25%, EUR 633M"),
+        ("xtrackers msci world consumer discretionary ucits etf 1c", "XDWC.L, 0.25%, EUR 330M"),
+        ("franklin s&p 500 consumer discretionary ucits etf usd acc", "FTCD.DE, 0.09%, EUR 2M — tier 3"),
+    ] {
+        assert_eq!(geo_tier_at(fund, 0.0, false, true), Some(SECTOR_TIER), "{why}: the sector sleeve claims it");
+        assert_eq!(geo_tier_at(fund, 0.0, false, false), None,
+            "{why}: …and with the knob OFF it is refused outright — before (#222) this read a GEOGRAPHIC sleeve");
+        assert_eq!(geo_tier_at(fund, 0.35, true, false), None, "{why}: neither OTHER sleeve opens this one");
+    }
+    // (#222) THE ONE ROW THIS ROUND ACTUALLY MOVES, and the probe could not see it. iShares spells
+    // its S&P 500 sector suite "<Sector> Sector", so before (#222) `narrow_hit` returned the BARE
+    // word "sector" for this fund — `SECTOR_OK`'s documented refusal, "a fund whose FIRST token is
+    // the bare word sector has not named a sector". Correct for a fund that names none; wrong here,
+    // because it names Utilities and only the missing token stopped it matching first. Adding
+    // "utilit" AHEAD of "sector" in [`NARROW`] makes it the first token, `SECTOR_OK` then clears the
+    // co-occurring "sector", and the sleeve claims it — the same path its four already-listed
+    // siblings (IITU/IUHC/UIFS/IESU) take. Live 2026-09-03: 2B7A.DE, 0.15%, EUR 1.2B, IE, 9.4y.
+    // It takes the fifth sector slot from XDWI.L (Xtrackers MSCI World Industrials, 0.25%, EUR 1.2B)
+    // on the sleeve's OWN cheapest-TER order, untouched by this round.
+    assert_eq!(geo_tier_at("ishares s&p 500 utilities sector ucits etf usd (acc)", 0.0, false, true), Some(SECTOR_TIER),
+        "2B7A.DE: \"utilit\" must precede \"sector\" in NARROW or SECTOR_OK never gets the chance");
+    assert_eq!(geo_tier_at("ishares s&p 500 utilities sector ucits etf usd (acc)", 0.0, false, false), None,
+        "2B7A.DE: …and the sector knob is still what admits it — off means refused");
+    // the guard that keeps the line above honest: a fund naming NO sector still dies on the bare
+    // word, which is the whole reason `SECTOR_OK` is a separate list from [`SECTOR`].
+    assert_eq!(geo_tier_at("invesco technology s&p us select sector ucits etf acc", 0.0, false, true), None,
+        "a bare \"sector\" token still names no family — (#218)'s rule survives (#222)");
+
+    // the EUROPE half of the same two suites has no sleeve at all: `SECTOR_GEO` stops at tier 3, so
+    // region x sector stays two bets wearing the name of one. Each of these read Some(5) before (#222).
+    for (no, why) in [
+        ("state street spdr msci europe utilities ucits etf", "STUX.SW, EUR 730M"),
+        ("state street spdr msci europe consumer staples ucits etf", "CSTP.L, EUR 150M"),
+        ("state street spdr msci europe consumer discretionary ucits etf", "STR.PA, EUR 114M"),
+        ("state street spdr msci europe materials ucits etf", "SPYP.DE, EUR 103M"),
+        ("xtrackers msci europe utilities ucits etf 1c", "XS6R.L, EUR 80M"),
+    ] {
+        assert_eq!(geo_tier_at(no, 0.35, true, true), None, "{no}: {why} — region x sector, with ALL THREE sleeves open");
+    }
+    // (#222) the bond funds that carry a GEO token — the hole (#215)'s four pins could not reach,
+    // because every one of those is geographically unspellable. These two are not, and `emerging`
+    // walked them into an EQUITY sleeve.
+    for (bond, why) in [
+        ("vanguard usd emerging markets government bond ucits etf usd accumulation", "VDEA.L, EUR 754M — read tier 2 before (#222)"),
+        ("xtrackers ii j.p. morgan usd emerging markets bond ucits etf 2c", "XUEB.L, EUR 73M — same token, same sleeve"),
+    ] {
+        assert_eq!(geo_tier_at(bond, 0.0, false, false), None, "{why}: a bond fund must never reach a sleeve");
+        assert_eq!(geo_tier_at(bond, 0.35, true, true), None, "{why}: …nor with ALL THREE sleeves open");
+    }
+    // (#222) the currency-hedged share classes "hedged" cannot spell. A hedge is a wrapper on the
+    // index, not the index, and it is the one NARROW token the sector sleeve is already documented
+    // as enforcing (IUHE.AS) — so it must refuse these at every knob setting too.
+    for (h, why) in [
+        ("state street spdr msci world ucits etf eur h acc", "SPFH.DE, EUR 811M — read tier 1"),
+        ("ubs core msci usa heur ucits etf eur acc", "UBUJ.DE, EUR 711M — read tier 3"),
+        ("ubs core msci japan ucits etf heur acc", "UFMA.DE, EUR 247M — read tier 6"),
+        ("ubs core s&p 500 ucits etf heur acc", "UEQD.DE, EUR 202M — read tier 3"),
+        ("ubs core msci europe ucits etf heur acc", "EUEUA.MI, EUR 135M — read tier 5"),
+    ] {
+        assert_eq!(geo_tier_at(h, 0.35, true, true), None, "{why}: a currency wrapper is not the index");
+    }
+    // ...and the mid-word accident " h acc" exists to refuse, in the (#215) " us equity" shape: a
+    // Swiss share class is not a hedge, and only the LEADING SPACE tells the two apart.
+    assert_eq!(geo_tier_at("ishares core msci world ucits etf ch acc", 0.0, false, false), Some(1),
+        "\"ch acc\" must not match \" h acc\" — drop the space and this reads None");
+
     // (#218) the family key, which is what makes the 3 slots hold 3 DIFFERENT sectors rather than
     // three technology wrappers — every one of these funds keys `msci world`/`s&p 500` on GEO alone.
     assert_eq!(sleeve_family_of("iShares S&P 500 Information Technology Sector UCITS ETF USD (Acc)"),

@@ -3837,6 +3837,71 @@ buy_heuristic:
                                  #   (`core::sleeves_shown` hides the eighth sleeve entirely while the knob is
                                  #   off). Revert if a later pond puts a REGIONAL fund in this sleeve — that
                                  #   would mean `SIZE_GEO` has been widened, and it should not be.
+  # (#222) NO KNOB — a CORRECTION to `core::NARROW` and `core::SECTOR`, recorded here because it is the
+  #   shared record and because it changes what `hold_sector_sleeve` (below) admits.
+  #
+  #   WHAT IT DOES. Adds six tokens to `core::NARROW` (36 -> 42): "utilit", "material", "consumer",
+  #   "bond", "heur", " h acc"; and the first three ALSO to `core::SECTOR` (10 -> 13), completing it
+  #   to the GICS eleven. No default changes and no knob is introduced, so there is nothing to turn on.
+  #
+  #   THE DEFECT, IN THREE PARTS, ALL FOUND BY PROBE ON THE LIVE POND 2026-09-03 (4798 from cache).
+  #   1. (#200) found "industrial" MISSING from NARROW and named the defect exactly — a token absent
+  #      from the list, not one matching too loosely — then fixed the single name it had found. The
+  #      list was FIVE GICS sectors short, not one. Utilities, Materials, Consumer Staples and
+  #      Consumer Discretionary had no spelling, so `geo_tier` read "Xtrackers MSCI World Utilities"
+  #      as a DEVELOPED sleeve and "SPDR MSCI Europe Consumer Staples" as a EUROPE one: (#200)'s own
+  #      sentence, still true for the four sectors it did not enumerate.
+  #   2. THE BOND HOLE (#215) LEFT OPEN. That round states the risk in its own words — "NARROW carries
+  #      no bond token and there is NO asset-class leg, so GEO alone is what keeps fixed income out of
+  #      an equity table" — and pinned four bond funds to prove the guard held. Every one of those four
+  #      is geographically UNSPELLABLE, which is why the hole survived its own guard: a bond fund that
+  #      DOES carry a GEO token walks straight past it. Vanguard USD Emerging Markets Government Bond
+  #      (VDEA.L, EUR 754M) matches `emerging` and reached the EMERGING EQUITY sleeve, refused by the
+  #      AUM floor and nothing else. XUEB.L (EUR 73M) is the second.
+  #   3. THE HEDGE SPELLINGS. "hedged" has been in NARROW since the sleeve existed, but UBS spells it
+  #      `hEUR` and State Street spells it `EUR H Acc`. Four UBS Core funds and one SPDR reached a GEO
+  #      sleeve wearing a currency wrapper the token was written to refuse. Same defect as (#207)'s
+  #      missing GEO spellings: the rule was right, the vocabulary was short.
+  #
+  #   MEASURED — 19 funds reached a geographic sleeve on a missing token; per-token, `consumer` 6,
+  #   `heur` 4, `utilit` 3, `material` 3, `bond` 2, ` h acc` 1. ALL NINETEEN sat under the EUR 1B AUM
+  #   floor, so the floor — not the classifier — was the only thing keeping a bond fund and four
+  #   sector funds out of the broad geographic sleeves. That is the finding that matters: this had to
+  #   land BEFORE the AUM floor could be touched, and touching the floor first would have printed a
+  #   government-bond fund in an equity sleeve.
+  #
+  #   ONE ROW MOVED, AND THE PROBE COULD NOT SEE IT. The probe skipped funds ALREADY NARROW-refused,
+  #   so it reported LIVE 0 — wrong. iShares spells its S&P 500 suite "<Sector> Sector", so before
+  #   this round `narrow_hit` returned the BARE word "sector" for iShares S&P 500 Utilities Sector
+  #   (2B7A.DE, 0.15%, EUR 1.2B, IE, 9.4y) — `SECTOR_OK`'s documented refusal, correct for a fund that
+  #   names no sector and wrong for one that does. "utilit" now matches FIRST, `SECTOR_OK` clears the
+  #   co-occurring "sector", and the sleeve claims it by the same path its four listed siblings take.
+  #   It takes the fifth sector slot from XDWI.L (World Industrials, 0.25%, EUR 1.2B) on the sleeve's
+  #   OWN cheapest-TER order, untouched here. Ticker-set diff on the CORE table: exactly that one swap,
+  #   34 rows both sides. QUALIFIED 65 -> 66; GEO blind spot 43 -> 17, the drop being (#215)'s 29 bond
+  #   funds now refused a step earlier. FUNNEL COUNTS ARE NOT THE EVIDENCE — the pond drifted +19
+  #   EU-buyable ETFs across the pair on an IDENTICAL `4798 from cache` line, so attribution is the
+  #   ticker-set diff plus the unit pin, never the funnel.
+  #
+  #   NOT SHIPPED, EACH PROBED AND RETURNING ZERO REACHABLE FUNDS: "real estate", "property", "reit",
+  #   "treasury", "aggregate", "gilt", "hgbp", "husd". (#215)'s "specific tokens only" — a token that
+  #   refuses nothing is speculation with a maintenance cost. KNOWN CEILING: "bond" catches 26 of the
+  #   28 bond funds in the blind spot; the two survivors spell it `Treasury Bd` and `TIPS`. Both carry
+  #   no GEO token, so leg 0 already refuses them and a token would buy nothing — revisit ONLY if a
+  #   future GEO spelling reaches one.
+  #
+  #   NOT GRADEABLE BY BACKTEST, same as (#203)/(#211)/(#213)/(#215)/(#218): `backtest::stamp_asset_class`
+  #   fills only what the closes-derived pond carries, and every backtest quote dies on the TER leg
+  #   before any of this is reached. The evidence is the live `screen` pair, the ticker-set diff and
+  #   17 new pins in `core::pure_logic`. Goldens did NOT move and `src/core.rs` was the only file
+  #   changed by the fix — the shipped fixture lane is byte-identical.
+  #
+  #   REVERT, IN TWO INDEPENDENT HALVES. Drop the three sector tokens from `core::SECTOR` ALONE and
+  #   they are refused the sector sleeve while NARROW goes on keeping them out of the geographic ones
+  #   — that is the (#200) behaviour, and it costs 2B7A.DE its row and returns XDWI.L to the table.
+  #   Drop all six from `core::NARROW` to return to the pre-(#222) classifier, which puts a government
+  #   bond fund one AUM point from an equity sleeve; do that only with an asset-class leg in hand.
+  #   Revert an INDIVIDUAL token if it ever refuses a fund whose index IS broad by geography.
   hold_sector_sleeve: true       # (#218) MEASURED 2026-09-02, live `screen`, 4499-EU-buyable-ETF pond,
                                  #   control vs probe back to back in one session, the state journal restored BEFORE
                                  #   EACH arm. An ELEVENTH CORE sleeve, `world sector`, holding the geographically-broad
