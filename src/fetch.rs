@@ -712,7 +712,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             range_pct: core::price_pct_rank(&chart.closes[i..]),
             trend_r2: core::trend_r2(&chart.closes[i..]),
             max_drawdown_pct: core::max_drawdown_pct(&chart.closes[i..]),
-            underwater_yrs: core::longest_underwater_yrs(&chart.closes[i..]),
+            underwater_yrs: core::longest_underwater_yrs(&chart.closes[i..], 252),
         });
 
     let cur_close = *chart.closes.last().unwrap();
@@ -852,7 +852,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         // (consistency) % of rolling 5y/10y windows positive, same closes — the screen's footer
         // stats; the 10y pair (r16) is the decade horizon the book is actually held for.
         roll5y_pos_pct: core::rolling_positive_pct(&chart.closes, 5, 252),
-        underwater_yrs: core::longest_underwater_yrs(&chart.closes),
+        underwater_yrs: core::longest_underwater_yrs(&chart.closes, 252),
         worst_5y_pct: core::worst_rolling_pct(&chart.closes, 5, 252),
         roll10y_pos_pct: core::rolling_positive_pct(&chart.closes, 10, 252),
         worst_10y_pct: core::worst_rolling_pct(&chart.closes, 10, 252),

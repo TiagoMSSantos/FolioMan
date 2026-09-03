@@ -721,12 +721,21 @@ pub fn rolling_positive_pct(closes: &[f64], win_years: usize, bars_per_year: usi
     (n > 0).then(|| 100.0 * pos as f64 / n as f64)
 }
 
-/// (underwater) Longest stretch of sessions spent below the running peak, in years (~252
-/// sessions/yr) — MAXDD's missing twin: depth says how far down, this says how LONG until back
-/// to even. An ongoing stretch counts at its elapsed length (whether it's underwater NOW is the
-/// OFF-HI column's job). Non-positive closes (data holes) are filtered out first; a monotonic
-/// riser legitimately reports 0.0; fewer than 2 usable closes -> None.
-pub fn longest_underwater_yrs(closes: &[f64]) -> Option<f64> {
+/// (underwater) Longest stretch of BARS spent below the running peak, in years — MAXDD's missing
+/// twin: depth says how far down, this says how LONG until back to even. An ongoing stretch counts
+/// at its elapsed length (whether it's underwater NOW is the OFF-HI column's job). Non-positive
+/// closes (data holes) are filtered out first; a monotonic riser legitimately reports 0.0; fewer
+/// than 2 usable closes -> None.
+///
+/// (#223) `bars_per_year` was the literal 252 until this round, which is why the stat was DAILY-ONLY
+/// and blank on every graded horizon — see the guard in [`backtest_quote`]. Both siblings
+/// ([`rolling_positive_pct`], [`worst_rolling_pct`]) already took it; this one being the odd one out
+/// was an omission, not a design. A DURATION converts by dividing, so there is no `daily_equivalent`
+/// rescale here — that helper is the sqrt factor for AMPLITUDE stats and applying it would be wrong.
+/// KNOWN CEILING: monthly bars cannot see a stretch shorter than a month, so the monthly figure
+/// FLOORS short stretches to 0.0. That is a floor effect, not a bias in the long stretches this term
+/// exists to punish, but the two cadences are NOT interchangeable numbers.
+pub fn longest_underwater_yrs(closes: &[f64], bars_per_year: usize) -> Option<f64> {
     let px: Vec<f64> = closes.iter().copied().filter(|c| *c > 0.0).collect();
     if px.len() < 2 {
         return None;
@@ -740,7 +749,7 @@ pub fn longest_underwater_yrs(closes: &[f64]) -> Option<f64> {
             worst = worst.max(i - peak_i);
         }
     }
-    Some(worst as f64 / 252.0)
+    Some(worst as f64 / bars_per_year as f64)
 }
 
 /// (worst-Ny) The single worst rolling ~`win_years`-year (nominal) outcome — severity twin of
@@ -3351,10 +3360,16 @@ pub fn backtest_quote(
     quote.worst_5y_pct = worst_rolling_pct(c, 5, cadence);
     quote.roll10y_pos_pct = rolling_positive_pct(c, 10, cadence);
     quote.worst_10y_pct = worst_rolling_pct(c, 10, cadence);
-    // underwater_yrs is /252-based AND score-read (growth_underwater_weight) -> keep it daily-only
-    // so a monthly run can't feed a miscalibrated duration into the validated held-book verdict.
-    if cadence == 252 {
-        quote.underwater_yrs = longest_underwater_yrs(c);
+    // (#223) underwater_yrs is score-read (growth_underwater_weight) and was DAILY-ONLY because
+    // `longest_underwater_yrs` hardcoded /252. `monthly = long || years >= 8` (backtest.rs), so every
+    // graded horizon — 8y, 12y, 20y — and every fixture golden left this None and the term
+    // contributed 0 to every name: a shipped, live-firing score term that was inert everywhere the
+    // repo measures. `(#3k)` proved that empirically (zeroing the weight reproduced the 20y-stress
+    // grid metric-for-metric) and could only record it. The divisor is now the run's own cadence, so
+    // the stat is a calendar duration on either bar size; the knob gates whether the monthly path
+    // FILLS it, and ships OFF so the seven goldens stay byte-identical (non-negotiable #1).
+    if cadence == 252 || crate::config::underwater_monthly() {
+        quote.underwater_yrs = longest_underwater_yrs(c, cadence);
     }
     // (#20) the LIVE growth lane excludes a name whose turnover is UNKNOWN (an untradeable/dead listing
     // like 0Y72.L). backtest_quote can't reconstruct turnover, but that absence is NOT a liquidity signal
@@ -3778,15 +3793,34 @@ mod tests {
     #[test]
     fn underwater_semantics() {
         let rising: Vec<f64> = (1..=300).map(|i| i as f64).collect();
-        assert_eq!(longest_underwater_yrs(&rising), Some(0.0));
+        assert_eq!(longest_underwater_yrs(&rising, 252), Some(0.0));
         let falling: Vec<f64> = (1..=5).rev().map(|i| i as f64).collect();
-        assert_eq!(longest_underwater_yrs(&falling), Some(4.0 / 252.0)); // 4 sessions since peak
+        assert_eq!(longest_underwater_yrs(&falling, 252), Some(4.0 / 252.0)); // 4 sessions since peak
         // dip (1) -> recovery at 101 resets the peak -> second, longer run (3) wins
-        assert_eq!(longest_underwater_yrs(&[100.0, 90.0, 101.0, 95.0, 96.0, 97.0]), Some(3.0 / 252.0));
+        assert_eq!(longest_underwater_yrs(&[100.0, 90.0, 101.0, 95.0, 96.0, 97.0], 252), Some(3.0 / 252.0));
         // leading data hole filtered out, not treated as a 0.0 peak
-        assert_eq!(longest_underwater_yrs(&[0.0, 100.0, 90.0, 101.0]), Some(1.0 / 252.0));
-        assert_eq!(longest_underwater_yrs(&[100.0]), None);
-        assert_eq!(longest_underwater_yrs(&[]), None);
+        assert_eq!(longest_underwater_yrs(&[0.0, 100.0, 90.0, 101.0], 252), Some(1.0 / 252.0));
+        assert_eq!(longest_underwater_yrs(&[100.0], 252), None);
+        assert_eq!(longest_underwater_yrs(&[], 252), None);
+
+        // (#223) the same walk on MONTHLY bars. Expected values are LITERAL, not `n / 12.0`: a
+        // symbolic expectation recomputes itself alongside a mutated divisor and cannot kill it —
+        // the gap that cost (#217) four missed mutants. Each series is chosen so the quotient is
+        // exact in binary, so these are equalities and not epsilon compares.
+        assert_eq!(longest_underwater_yrs(&rising, 12), Some(0.0), "0.0 is cadence-independent");
+        let falling7: Vec<f64> = (1..=7).rev().map(|i| i as f64).collect();
+        assert_eq!(longest_underwater_yrs(&falling7, 12), Some(0.5), "6 monthly bars = half a year");
+        assert_eq!(longest_underwater_yrs(&[100.0, 90.0, 101.0, 95.0, 96.0, 97.0], 12), Some(0.25),
+            "3 monthly bars = a quarter — the SAME series reads 3/252 daily, 21x shorter");
+        // the arity guards answer identically on either cadence — they are about usable points
+        assert_eq!(longest_underwater_yrs(&[100.0], 12), None);
+        assert_eq!(longest_underwater_yrs(&[], 12), None);
+        // and the divisor is really the argument: one series, two cadences, exact 21x ratio
+        assert_eq!(
+            longest_underwater_yrs(&falling7, 12).unwrap() / longest_underwater_yrs(&falling7, 252).unwrap(),
+            21.0,
+            "252/12 = 21: a DURATION converts by division, with no sqrt rescale"
+        );
     }
 
     /// (worst-Ny) worst_rolling_pct: the MINIMUM window return wins (window A +10% vs window
@@ -5496,6 +5530,13 @@ mod tests {
     let mq = backtest_quote("X", &mdates, &mcloses, &[], mdates.len() - 1, 12, &BTreeMap::new());
     assert!(mq.volatility_pct.is_some());
     assert!(mq.range_pct > 90.0); // rising every bar -> sits at its range high
+    // (#223) …and `underwater_yrs` stays None on a MONTHLY run while `underwater_monthly` is off,
+    // which is the default and what every golden holds. A monotone riser would fill Some(0.0) the
+    // instant the guard were dropped, so this kills the guard-removal mutant outright. The ON branch
+    // is not reachable from `--lib`: the flag is a process-wide OnceLock read from the ambient
+    // config, the same limitation `vol_daily_equivalent` carries — the goldens and the graded
+    // arm-vs-control run are what cover it.
+    assert_eq!(mq.underwater_yrs, None, "monthly fill is OFF by default (non-negotiable #1)");
     // (#3j) whole-life CAGR over the SAME `[..=as_of]` slice. THE anti-inert assert: while this stayed
     // None, `use_life_cagr` fell back to the leg in every backtest and any measurement of it would have
     // reported "no change" — a broken knob that looks like a safe flip. 1%/bar over 59 30-day bars
@@ -5534,6 +5575,12 @@ mod tests {
     let dq = backtest_quote("X", &ddates, &dcloses, &[], ddates.len() - 1, 252, &BTreeMap::new());
     let worst = dq.max_daily_1m.expect("a daily backtest_quote must fill max_daily_1m");
     assert!((worst - 20.0).abs() < 1e-6, "the window is the LAST 21 sessions, not one and not all: {worst}");
+    // (#223) the OTHER half of the cadence guard: a DAILY run fills `underwater_yrs` whatever
+    // `underwater_monthly` says, because `cadence == 252` alone admits it. Both live `fetch.rs` call
+    // sites depend on exactly this, and `growth_underwater_weight` docks the live screen off it.
+    // `dcloses` only ever steps UP, so a filled stat is Some(0.0) and an unfilled one is None —
+    // which is what makes this a kill rather than a tautology.
+    assert_eq!(dq.underwater_yrs, Some(0.0), "the daily path fills underwater_yrs unconditionally");
 
     // (#88) the anchor map has to REACH the legs, and an empty one has to leave them exactly where they
     // were. Both halves are the finding: the empty map is what every golden and every fitted receipt

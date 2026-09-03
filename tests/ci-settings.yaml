@@ -6958,6 +6958,13 @@ buy_heuristic:
                                  #   takes one) would make it reach the verdict, but it is score-read via growth_underwater_weight, so
                                  #   that change perturbs the validated held-book verdict and MUST be graded as its own arm. Best
                                  #   evidence-per-line left here; it is a separate round and it is not this one.
+                                 #   (#223) 2026-09-03 RAN THAT ROUND AND CLOSED THIS THREAD. The mechanism predicted here was
+                                 #   exactly right — bars_per_year was all the code needed — but the answer is NO: filled on
+                                 #   monthly bars, underwater_neg reads edge -13.0 at 12y and -304.5 at 20y and fails the
+                                 #   `backtest.rs:2008` gate at both. It passes at 8y only (+9.9, OOS both +). See the
+                                 #   `underwater_monthly` receipt for the full numbers and for why that refusal does NOT
+                                 #   condemn the daily-path weight. THE LIVE THREAD IS NOW SPENT: durability had one stat left
+                                 #   that passed, this was it, and reaching the verdict is what refuted it.
                                  #   WHAT WOULD RE-OPEN THIS. Not a bigger stock pond - supply was never binding. Only (a) a lane whose
                                  #   objective is not an equal-weight top-N, since 1/N dilution is the same mechanism (#219) closed on, or
                                  #   (b) an arm that moves RANK 1. A repeat of this intersection probe is answered: the numbers are above.
@@ -7775,10 +7782,112 @@ buy_heuristic:
                                  #   validated at the 8/12/20y goal horizons; it still fires on the LIVE
                                  #   screen (daily closes). Kept at 0.3 on the original daily receipt below —
                                  #   a tie is not evidence against — but do not cite the monthly grids for it.
+                                 #   (#223) 2026-09-03 AMENDS THAT PARAGRAPH IN BOTH DIRECTIONS. The blindness
+                                 #   was never intrinsic: `longest_underwater_yrs` now takes `bars_per_year`
+                                 #   like both its siblings, and `underwater_monthly` (next knob down) fills
+                                 #   the stat on monthly bars. So "CANNOT be validated at the goal horizons"
+                                 #   is retired — it CAN, it now HAS BEEN, and it was REFUSED. Read the
+                                 #   `underwater_monthly` receipt for the numbers. What survives of (#3k):
+                                 #   the term is still inert on every shipped monthly path, because that knob
+                                 #   ships OFF, so this 0.3 still fires ONLY on the live daily screen and the
+                                 #   monthly grids still cannot be cited for it. What (#3k) could not know is
+                                 #   that the monthly stat and the daily stat are NOT the same variable — see
+                                 #   the resolution-floor paragraph below — so the refusal of the monthly fill
+                                 #   is NOT by itself a refutation of this 0.3 on daily closes.
                                  #   Rebuilt in backtest_quote (daily cadence). Standalone probe (universe fund, 2026-07-19):
                                  #   n=8571 rho +0.26 edge +27.9 OOS +0.40|+0.14 both +. Candidate lane run at 0.3 same-batch:
                                  #   edge +25.5->+27.5, winsorized +15.7->+17.7, rho intact +0.12, OOS -0.03|+0.26 -> -0.02|+0.27,
                                  #   worst era -11.7->-4.8 (nothing degraded). 0 = off.
+  underwater_monthly: false      # (#223) MEASURED 2026-09-03 and REFUSED. Gates whether `backtest_quote`
+                                 #   fills `underwater_yrs` on a MONTHLY-cadence run. OFF = the daily-only
+                                 #   blank (#3k) described, which is what every golden and every shipped
+                                 #   verdict holds; the seven fixtures are byte-identical at this default,
+                                 #   which is non-negotiable #1's proof. Structural twin of
+                                 #   `vol_daily_equivalent` (#97): a cadence conversion read inside
+                                 #   `backtest_quote`, which has no `tuning` handle, so it is a free
+                                 #   `config::` accessor. UNLIKE that one it is BACKTEST-ONLY: both live
+                                 #   `fetch.rs` call sites pass 252 explicitly and reach the `cadence == 252`
+                                 #   arm, so the LIVE screen is identical at either setting.
+                                 #
+                                 #   WHAT THE FIX IS. `longest_underwater_yrs` divided by a literal 252 while
+                                 #   both siblings (`rolling_positive_pct`, `worst_rolling_pct`) already took
+                                 #   `bars_per_year`. It now takes it too. A DURATION converts by dividing, so
+                                 #   there is no `daily_equivalent` rescale here — that helper is the sqrt
+                                 #   factor for AMPLITUDE stats and applying it to a duration would be wrong.
+                                 #   The refactor is inert at 252 and pinned as such in `core.rs`.
+                                 #
+                                 #   PRE-REGISTERED BEFORE THE RUNS (both rules, stated so the refusal cannot
+                                 #   be read as post-hoc): the standalone probe had to clear 12y AND 8y under
+                                 #   the gate at `backtest.rs:2008` — "a stat earns a growth_score term only
+                                 #   on real edge with both-positive OOS" — and a NEGATIVE edge at 20y vetoed
+                                 #   on its own. Ship Rule v2 on arm-vs-control decided the fill separately.
+                                 #
+                                 #   THE PROBE (universe fund pit, control = this knob explicitly false, arm =
+                                 #   true, back to back; 797/6156/2757/1120 windows scored, no OFFLINE):
+                                 #     control 8y/12y/20y: `underwater_neg n/a (only 0 cutoffs carry this stat)`
+                                 #                         — (#3k)'s blindness, reproduced verbatim.
+                                 #     arm  8y: n=17248 rho +0.14 edge  +9.9  OOS +0.11|+0.18  -> PASS
+                                 #     arm 12y: n=8499  rho +0.17 edge -13.0  OOS +0.06|+0.27  -> FAIL (edge)
+                                 #     arm 20y: n=2290  rho +0.17 edge -304.5 OOS -0.02|+0.08  -> FAIL + VETO
+                                 #   12y misses and 20y vetoes. TWO independent refusals. REFUSED.
+                                 #
+                                 #   SHIP RULE v2, recorded even though the probe already refuses. Every GUARD
+                                 #   passes: top-10 worst window not worse at any horizon (8y -5.5, 12y -6.4,
+                                 #   20y -10.0, all unmoved); rank-1 h2h on the 6-10 book (#135/#160) 8y 19/27
+                                 #   70% -> 19/27 70% (equal, not below control), 12y 12/19 63% -> 13/19 68%
+                                 #   (up); 20y on the 11-20 book 1/2 -> 2/2, n=2 so VACUOUS BY RESOLUTION per
+                                 #   (#186) — it neither refuses nor licenses, and 20y's other live guard (the
+                                 #   worst window, a MAX) answers and is not worse. PRIMARY, however, is
+                                 #   VACUOUS at BOTH pit horizons per (#149): 8y census 35 of 43 buckets
+                                 #   saturated (median gated pool 7 vs basket 10), 12y 31 of 35 (pool 6). This
+                                 #   is a RANKING knob — it changes no gate, and the gated pool and rode-zeros
+                                 #   counts are identical across arms — so top-10 excess holding at +5.3 (med
+                                 #   +5.6) at 8y and +3.7 (med +4.0) at 12y is recorded VACUOUS, NEVER "held".
+                                 #   The non-vacuous read is the rank slices, and there the arm is not an
+                                 #   improvement either: rank 1 IDENTICAL at all three horizons, and rank 6-10
+                                 #   slightly worse at every one (8y -0.0|+1.7 -> -0.5|+0.7; 12y -1.9|-0.1 ->
+                                 #   -2.3|-0.2; 20y -1.5|-0.9 -> -1.6|-1.5).
+                                 #
+                                 #   WHY THE REFUSAL DOES NOT CONDEMN THE 0.3 ABOVE, which the pre-registered
+                                 #   rule assumed it would ("one run answers both"). That premise is falsified
+                                 #   by measurement in the same session, and the falsification is on the
+                                 #   record so nobody re-derives it:
+                                 #   (a) THE COLUMN CONDEMNS EVERYTHING. At 20y every closes-derived risk stat
+                                 #       has a wild negative edge — sortino -582.5, downside_dev_neg -538.2,
+                                 #       sharpe_ref -507.8, consistency_5y -179.0 — and underwater_neg's
+                                 #       -304.5 is MID-PACK among them. At 12y five of seven are negative
+                                 #       (consistency_5y -31.3, consistency_10y -51.1, worst_5y -23.6,
+                                 #       underwater_neg -13.0, downside_dev_neg -7.7). Zeroing this weight on
+                                 #       that column's authority applies a standard NOTHING in this repo
+                                 #       survives. n falls 17248 -> 8499 -> 2290 and the 20y book itself reads
+                                 #       excess -3.9 at rank 1 with win 40% of 20: the long-horizon edge
+                                 #       column is fat-tail dominated, not a clean discriminator.
+                                 #   (b) THE DAILY STAT PASSES. Same session, `universe fund pit` with no
+                                 #       YEARS (a 10y DAILY lane, cadence 252): underwater_neg n=8537 rho
+                                 #       +0.23 edge +14.7 OOS +0.36|+0.13 — real edge, both-positive OOS,
+                                 #       clearing the same `backtest.rs:2008` gate comfortably, and closely
+                                 #       reproducing the original 2026-07-19 daily probe below.
+                                 #   (c) RESOLUTION LOSS MAKES THEM DIFFERENT VARIABLES, one-directionally.
+                                 #       Monthly bars cannot see a stretch shorter than a month, so the
+                                 #       monthly stat FLOORS short stretches to 0.0 and only the long
+                                 #       stretches survive. The monthly and daily numbers are not
+                                 #       interchangeable and this receipt does not treat them as such.
+                                 #   PROPOSED, NOT TAKEN: `growth_underwater_weight: 0.0` was the
+                                 #   pre-registered consequence of a probe failure. It is NOT applied here,
+                                 #   because (a)-(c) say the failing instrument is the monthly column and not
+                                 #   the term. It is left as an open proposal for a human call, not a finding.
+                                 #
+                                 #   REVERT RULE. Turning this ON ships a term that (#86) names as the only
+                                 #   one able to drive base below zero, UNBOUNDED BELOW, at 8y/12y/20y. It did
+                                 #   not reach VERDICT_TOP in these runs — rank 1 is identical at all three
+                                 #   horizons — but verify that again rather than assume it. Do NOT add a cap
+                                 #   pre-emptively: the term already ships uncapped on the daily path and a
+                                 #   cap is a fitted knob nobody has priced. To re-open, an arm must clear the
+                                 #   probe at 12y AND 8y with no negative 20y edge; a repeat of THIS probe is
+                                 #   answered by the numbers above. Note that PRIMARY cannot license it on
+                                 #   this lane at all while the census stays saturated — a ranking knob needs
+                                 #   a non-vacuous column, which is (#149)'s standing problem, not this
+                                 #   round's. Deleting this block is the only way to lose the result.
   growth_allow_negative_scores: false # (#86) UNMEASURED — an unfitted judgement value, and it ships OFF, so
                                  #   the two lines below keep behaving exactly as they have. What it would fix,
                                  #   stated first because it is the reason the two knobs under it are inert:
