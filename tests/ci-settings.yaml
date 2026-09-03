@@ -3646,6 +3646,65 @@ buy_heuristic:
                                  #   the evidence starts from the day you flip it, not retroactively.
                                  #   Every month it stays off is a month of CORE record that cannot be
                                  #   recovered. REVERT: set false; existing widened lines still parse.
+  # (#226) NO KNOB — the two STARVED CORE sleeves were priced and BOTH pre-registered halves REFUSED.
+  #   Recorded here, against `hold_max_ter`, because a per-sleeve override of THIS number is the knob
+  #   the round was authorised to add and did not.
+  #
+  #   THE QUESTION. After (#225) every sleeve prints at least as many rows as it has index families,
+  #   so (#197)'s rule licenses no further cap raise anywhere. Two sleeves print FEWER rows than their
+  #   cap allows — ex-US 2 of 3 slots, Asia-Pacific 1 of 3 — so there the cap is not what binds and
+  #   SUPPLY is. These are also the two most valuable rows the lane could gain: everything else in the
+  #   table is world-index or US, so an extra row elsewhere buys near-zero diversification, while
+  #   ex-US and Asia-Pacific are the genuinely different exposures a 20-year book wants and the table
+  #   carries three rows of them in total. Pre-registered: vocabulary tried FIRST; a new
+  #   `hold_region_sleeve_ter` (mirroring `hold_size_sleeve_ter`, default 0.0 = OFF) only if TER bound;
+  #   ship only on (#197)'s family rule — a NEW index family for that sleeve and ZERO removals.
+  #
+  #   MEASURED 2026-09-03, live `screen`, throwaway probe over `core::hold_miss_but_breadth` (#203) —
+  #   the same instrument (#225) used, so no leg is re-spelled (non-negotiable #4). Journal backed up
+  #   and restored byte-identical. For EVERY fund carrying the sleeve's GEO token, the refusing leg:
+  #     tier 4 ex-US        22 funds — CLEAR 2 · AUM 7 · replication 5 · TER 4 · Dist 4
+  #     tier 7 Asia-Pacific 20 funds — CLEAR 1 · TER 7 · AUM 5 · replication 5 · Dist 2
+  #   The 3 that clear are EXACTLY the 3 already printed: EXUS.DE (EUR 6.3B, 0.15%) and IXUA.DE
+  #   (EUR 3.0B, 0.15%) — BOTH MSCI World ex USA, which is why ex-US reads 2 (1f) — and CSPXJ.SW
+  #   (EUR 3.5B, 0.20%). The sleeves are not throttled. They are EXHAUSTED.
+  #
+  #   THE TER HALF IS REFUSED, AND THE REFUSAL DOES NOT DEPEND ON A VALUE. Of every leg-2 fund in the
+  #   census, the number that would clear EVERY OTHER leg (Acc, physical replication, AUM >= EUR 1B or
+  #   MISSING per (#224), no NARROW token) is ZERO. So `hold_region_sleeve_ter` admits nobody at ANY
+  #   ceiling, and there is no number to argue about. The tier-4 leg-2 funds are two SWAP funds
+  #   (CE8.PA, CM9.PA — refused again a leg later, round 53's counterparty rule) and a EUR 0.0B quality
+  #   fund; the tier-7 leg-2 funds are five ESG/SRI names plus a Dist and a EUR 0.1B. This is exactly
+  #   the hazard (#202)/(#210) pre-registered against when they warned about "a cap to walk upward":
+  #   the walk would have bought nothing. NOT ADDED — a knob that cannot move a row is dead config.
+  #
+  #   THE VOCABULARY HALF IS REFUSED TOO. 76 funds match a spelling `core::GEO` does not hold
+  #   (`ex us` 4 · `ex japan` 19 · `ex-japan` 8 · `pacific` 18 · `asia` 30, overlapping) and ZERO of
+  #   them clear every leg: TER 51 · replication 12 · AUM 10 · Dist 1. `ex usa`, `ex-usa` and
+  #   `ftse all-world ex` reach 0 names at all. So no token earns its place under (#215)'s rule — a
+  #   token that admits nothing is speculation with a maintenance cost. Note this is the OPPOSITE
+  #   result to (#203)/(#213)/(#215), which each found a real fund the list could not spell; the
+  #   difference is that those sleeves had supply and these do not.
+  #
+  #   WHAT ACTUALLY BINDS IS THE EUR 1B AUM FLOOR, and (#224) ALREADY REFUSED LOWERING IT. 12 of the
+  #   42 funds in the two sleeves die there, and the three nearest are institutional-grade and cheap:
+  #     WEXU.DE  Amundi MSCI World Ex USA ETF Acc        0.15%  EUR 0.6B  Acc Full
+  #     HMXS.L   HSBC MSCI Pacific ex Japan UCITS ETF    0.15%  EUR 0.5B  Acc Full
+  #     LGAG.L   L&G Asia Pacific ex Japan Equity ETF    0.10%  EUR 0.7B  Acc Full  (also unspellable)
+  #   None is a NEW index family for its sleeve on its own terms, and re-opening the floor one round
+  #   after it was refused, to buy sub-EUR-1B funds, is the argmax (#220) forbids. REVISIT WHEN one of
+  #   these crosses EUR 1B — then it is a one-line census re-read, and LGAG.L additionally needs the
+  #   vocabulary token this round declined to add on its own.
+  #
+  #   PRICED IN PASSING, NOT FIXED: `leg 3: replication unknown` refuses 10 of these 42 funds for data
+  #   that was never fetched — non-negotiable #5 in the place (#224) did not reach, after leg 5. It
+  #   changes NO row here (every one of the 10 also fails the AUM floor or is Dist), so it is recorded
+  #   and left to the round that can grade it on its own merits.
+  #
+  #   NOTHING SHIPPED: no knob, no token, no Rust, no config value. Non-negotiable #1 holds trivially
+  #   and every golden is untouched. REVERT: n/a — there is nothing to revert. The census IS the
+  #   deliverable, and its finding is that the CORE lane is now SUPPLY-EXHAUSTED rather than
+  #   policy-limited, which is the answer to "can screen offer more" for these two sleeves.
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:
