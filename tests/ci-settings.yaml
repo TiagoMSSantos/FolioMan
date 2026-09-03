@@ -6834,6 +6834,70 @@ buy_heuristic:
                                  #   basket can pay. Anything else re-runs a grid that already has a verdict.
                                  #   NOTHING SHIPPED IN (#219); there is nothing to revert. Deleting this block is the only way to
                                  #   lose the five verdicts it indexes.
+                                 #   (#221) 2026-09-03 - AND SO IS THE STOCK SIDE OF THE HOLD LANE. MEASURED, REFUSED, NOTHING BUILT.
+                                 #   The block above routes the ask ("show more good assets to hold 20+ years") to `picks::hold_core_list`.
+                                 #   That lane is ETF-ONLY - `picks.rs` pins "a single stock is never a hold core" - so the one structural
+                                 #   gap it left open was a permanent hold lane for INDIVIDUAL STOCKS. (#221) priced that gap and it does
+                                 #   not pay. This receipt closes the door (#219) pointed at, so the pair is now complete.
+                                 #   WHAT THE LANE WOULD HAVE BEEN. Not new gates: a SUBTRACTION. Both legs proposed for it already exist
+                                 #   in `picks::gate_failures` - minimum history (the `history` leg, no 5y+ record, plus `young` on
+                                 #   growth_min_age_years) and the compounding floor (`cagr` / `cagr-life`, already routed through
+                                 #   `picks::long_cagr_pct`). What makes a durable stock ROTATE OUT of the growth table is the TIMING
+                                 #   stack. So the lane = for a stock clearing every durability and fundamental gate, stop applying
+                                 #   1Y+, 1M-knife, range, range8y, stretch, maxdd, volatile, and give it a permanent slot instead.
+                                 #   WHAT WAS MEASURED. A throwaway probe (built, run, reverted - nothing of it survives) over
+                                 #   `universe fund pit`, selecting exactly that intersection: asset_class == 2, `gate_failures` returns a
+                                 #   NON-EMPTY list every label of which is one of those seven. `None` (not assessable) and the empty vec
+                                 #   (already in the book) are both excluded, so the cohort is precisely the names the lane would NEWLY
+                                 #   admit. Statistic is `s.relative` (fwd peer-relative); `vs shipped` is the (#151) comparative column,
+                                 #   the cohort median MINUS the accepted cohort's median from `gate_audit`. Setup cross-check: the 12y
+                                 #   accepted median came back -73.2, the exact figure (#151) records for `12y universe fund pit`.
+                                 #       horizon   n     mean     median    vs shipped
+                                 #       20y       179   -3.6     -369.4    +26.6
+                                 #       12y       216   -7.3     -119.2    -46.0
+                                 #       8y        252   +64.0    -58.6     -57.0
+                                 #   VERDICT: REFUSED on a stop rule PRE-REGISTERED BEFORE THE RUNS - "median vs shipped < 0 at BOTH 12y
+                                 #   and 8y -> STOP". It fired at both. Supply was never the problem (n=216 at 12y against a stop bar of
+                                 #   n<8; the pond is stock-heavy, 5448 of 8492 samples at 12y). The cohort is simply WORSE than what the
+                                 #   gates already keep, by 46-57 points of median, at both horizons that adjudicate.
+                                 #   THE 20y COLUMN IS POSITIVE AND DOES NOT LICENSE IT. +26.6 is the lone green number here and it is
+                                 #   read, not buried. It cannot carry the round for two independent reasons, both already in the file:
+                                 #   (#139) puts PRIMARY on the pit lane at 12y AND 8y, so 20y is not a PRIMARY column there at all; and
+                                 #   (#124) puts 20y pit n_eff at ~0.2, which is exactly why a MEDIAN cannot adjudicate at 20y on `pit` -
+                                 #   a worst window is a MAX and an h2h is a COUNT, so those still answer, but this statistic is a median.
+                                 #   Reading +26.6 as a pass would be picking the one horizon the pit lane's own rule excludes.
+                                 #   WHICH GATES WERE DOING THE BLOCKING, stable across all three horizons: 1Y+ (98/127/155),
+                                 #   stretch (88/97/104), range (26/30/33). 1M-knife, range8y, maxdd and volatile blocked nobody in this
+                                 #   cohort. So the lane's whole content reduces to "stop enforcing 1Y+ and stretch on durable stocks",
+                                 #   and the 20y GATE SWEEP had already priced both as doing real work: loosening growth_min_1y_pct admits
+                                 #   n=29 at median -457, growth_max_above_ma admits n=76 at median -350. The probe and the sweep agree.
+                                 #   FREE EVIDENCE GATHERED THE SAME ROUND, worth keeping because it forecloses the OTHER version of this
+                                 #   lane - the one that gates on endurance stats rather than dropping timing gates. `report_risk_lane`
+                                 #   runs on EVERY backtest and probes each closes-derived risk stat standalone under its own stated bar
+                                 #   ("a stat earns a growth_score term only on real edge with both-positive OOS"). Across ~60 banked runs:
+                                 #       consistency_5y    rho +0.02..+0.15 but edge NEGATIVE at every horizon (-28 / -30 / -178)
+                                 #       consistency_10y   20y: rho -0.19, edge -660..-780, OOS -0.15|-0.24 - both halves negative, 6+ runs
+                                 #       worst_5y          sign flips with the pond (+0.17/+14.1 vs -0.09/-805) - unstable, unusable
+                                 #       underwater_neg    rho +0.25, edge +13.7..+30.4, OOS +0.42|+0.13 - PASSES, the only one that does
+                                 #   POSITIVE RHO WITH NEGATIVE EDGE is the signature of cutting the right tail: consistency ranks mildly
+                                 #   positively yet its top half UNDERPERFORMS its bottom half, because the low-consistency half is where
+                                 #   the fat winners are. In an equal-weight basket held 20 years the right tail IS the profit, so a
+                                 #   rolling-consistency floor is the wrong instrument for this ask - by this repo's own measurement.
+                                 #   The zeros the book rides (12y top-10: "rode 8 zeros/370 holds", FMCC -98%, CIN -100%, CMVT -94%,
+                                 #   VIAV -96%, RIG -95%) are NOT reachable this way either: every one of them compounded quietly for
+                                 #   decades and then died. Long prior endurance is what they all had.
+                                 #   THE ONE LIVE THREAD, recorded so it is not lost: underwater_neg is the only durability stat that
+                                 #   passes, and it is INVISIBLE to the pit lane. `longest_underwater_yrs` hardcodes /252 and `core.rs`
+                                 #   guards its fill to `cadence == 252`, so `underwater_yrs` is None on every monthly run - which is the
+                                 #   12y and 8y pit runs. Giving it a bars_per_year parameter (its sibling `rolling_positive_pct` already
+                                 #   takes one) would make it reach the verdict, but it is score-read via growth_underwater_weight, so
+                                 #   that change perturbs the validated held-book verdict and MUST be graded as its own arm. Best
+                                 #   evidence-per-line left here; it is a separate round and it is not this one.
+                                 #   WHAT WOULD RE-OPEN THIS. Not a bigger stock pond - supply was never binding. Only (a) a lane whose
+                                 #   objective is not an equal-weight top-N, since 1/N dilution is the same mechanism (#219) closed on, or
+                                 #   (b) an arm that moves RANK 1. A repeat of this intersection probe is answered: the numbers are above.
+                                 #   NOTHING SHIPPED IN (#221); there is no knob, no default, and nothing to revert. The probe was
+                                 #   reverted before this receipt was written. Deleting this block is the only way to lose the result.
   growth_min_cagr_crypto: 0.0    # GATE (crypto only): any positive long trend qualifies, so the crypto table shows ALL
                                  #   potential growers ranked vs Bitcoin (the base), not just >8%/yr names. Raise toward 8 to tighten.
   growth_min_cagr_etf: 0.0      # (#192) GATE (ETFs only), TWO LEGS, one number — the fund lane's OWN CAGR floor, same units
