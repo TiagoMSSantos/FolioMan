@@ -1878,11 +1878,15 @@ fn hold_miss_leg_at(q: &Quote, tier: u8, size_cap: f64) -> Option<(usize, String
     if q.use_of_profits != Some("Acc") {
         return Some((4, format!("share class {} (needs Acc)", q.use_of_profits.unwrap_or("unknown"))));
     }
-    if !q.aum_shown().is_some_and(|a| a >= 1e9) {
-        return Some((5, match q.aum_shown() {
-            Some(a) => format!("AUM €{:.1}B < €1B floor", a / 1e9),
-            None => "AUM unknown".into(),
-        }));
+    // (#224) missing AUM PASSES (non-negotiable #5). This leg used `is_some_and`, which is false for
+    // None, so a fund BF and the Yahoo fallback both missed was refused for data we never had — the
+    // opposite stance to `growth_min_aum_etf`, the repo's other AUM gate, whose receipt reads
+    // "None-AUM names are NOT gated (missing data is not a small fund; BF only covers its venue)".
+    // Two gates, one field, one of them argued. A KNOWN AUM below the floor still refuses.
+    if let Some(a) = q.aum_shown() {
+        if a < 1e9 {
+            return Some((5, format!("AUM €{:.1}B < €1B floor", a / 1e9)));
+        }
     }
     None
 }
@@ -5367,7 +5371,17 @@ mod tests {
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), None, Some("Acc"), Some(2e9)).as_deref(), Some("replication unknown (needs physical)"));
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF", Some(0.07), Some("Full"), Some("Dist"), Some(2e9)).as_deref(), Some("share class Dist (needs Acc)"));
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(0.3e9)).as_deref(), Some("AUM €0.3B < €1B floor"));
-    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), None).as_deref(), Some("AUM unknown"));
+    // (#224) a KNOWN size below the floor still refuses (line above); an UNKNOWN one now PASSES.
+    // This leg used `is_some_and`, false for None, so it refused funds for data we never had —
+    // non-negotiable #5, and the opposite of `growth_min_aum_etf`'s stance on the same field. The
+    // old expectation was `Some("AUM unknown")`; it is replaced here rather than deleted so the
+    // flip is visible in the diff. Nothing else on the leg moved: 0.3e9 is unchanged above, and a
+    // fund that is otherwise sound is now hold_suitable with no size at all.
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), None), None);
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(1e9)), None,
+        "the floor is inclusive at exactly €1B, unchanged by the rewrite");
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(0.999e9)).as_deref(),
+        Some("AUM €1.0B < €1B floor"), "and just under it still refuses");
 
     // hold_breadth_tier: broadest (all-world/ACWI) sorts first, then the geographic sleeves
     assert_eq!(hold_breadth_tier("Vanguard FTSE All-World UCITS ETF"), 0);

@@ -4055,6 +4055,12 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     cores.sort_by(|a, b| {
         core::hold_breadth_tier(&a.name)
             .cmp(&core::hold_breadth_tier(&b.name))
+            // (#224) a KNOWN size outranks an unknown one, ahead of every other tiebreak. AUM was the
+            // LAST term, so once leg 5 stopped refusing unknowns a fund with no size at all could sort
+            // above a €40B incumbent on domicile or TER alone and push it out of `hold_per_tier`.
+            // This keeps that admission purely ADDITIVE: an unknown-AUM fund can only fill a free slot.
+            // Byte-identical the day it landed — no unknown-AUM fund reaches `cores`.
+            .then(a.aum_shown().is_none().cmp(&b.aum_shown().is_none()))
             .then(dom_rank(a).cmp(&dom_rank(b)))
             .then(a.ter_shown().unwrap_or(9.9).total_cmp(&b.ter_shown().unwrap_or(9.9)))
             .then(b.aum_shown().unwrap_or(0.0).total_cmp(&a.aum_shown().unwrap_or(0.0)))
@@ -7442,6 +7448,33 @@ mod tests {
         assert!(explain("WEAK", 1).contains("SCORE"), "ranked name -> score math, no verdict");
 
         let _ = std::fs::remove_file(crate::config::data_path(".folioman_turnover_watch.txt"));
+    }
+
+    /// (#224) Admission by the unknown-AUM leg-5 fix must be purely ADDITIVE. AUM was the LAST
+    /// tiebreak in `hold_core_list`, behind domicile and TER, so a fund with no size at all but an IE
+    /// domicile and a cheap TER would have sorted ABOVE a €40B incumbent and pushed it out of the
+    /// three-row `hold_per_tier` cap — turning a correctness fix into a silent demotion. The
+    /// known-before-unknown term sits ahead of the domicile term and prevents exactly that.
+    #[test]
+    fn known_aum_outranks_unknown_in_the_core_sort() {
+        let mut big = core_etf("CSPX.DE", "iShares Core S&P 500 UCITS ETF", 70e9, 0.07);
+        big.domicile = Some("DE".to_string()); // worse domicile AND
+        big.expense_ratio = Some(0.20);        // dearer TER — it loses every later tiebreak
+        let mut unknown = core_etf("XXXX.DE", "Vanguard S&P 500 UCITS ETF", 0.0, 0.03);
+        unknown.aum_eur = None;
+        unknown.aum_fallback = None;
+        assert_eq!(unknown.aum_shown(), None, "the fund under test genuinely has no size");
+        assert!(core::hold_suitable(&unknown), "(#224) and it is admitted now — that is the fix");
+
+        let quotes = vec![unknown.clone(), big.clone()];
+        let cores = hold_core_list(&quotes);
+        assert_eq!(cores.len(), 2, "same tier, distinct names -> both fit under the cap");
+        assert_eq!(cores[0].ticker, "CSPX.DE",
+            "the KNOWN size sorts first even though it loses on domicile and on TER");
+
+        // and the guard is real: with the term absent, the later tiebreaks would have inverted this.
+        assert!(dom_rank(&unknown) < dom_rank(&big), "IE beats DE — the term this one jumps ahead of");
+        assert!(unknown.ter_shown() < big.ter_shown(), "and it is cheaper — the next term too");
     }
 
     /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + per-tier cap ≤3, and the

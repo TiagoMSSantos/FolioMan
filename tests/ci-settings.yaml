@@ -3902,6 +3902,132 @@ buy_heuristic:
   #   Drop all six from `core::NARROW` to return to the pre-(#222) classifier, which puts a government
   #   bond fund one AUM point from an equity sleeve; do that only with an asset-class leg in hand.
   #   Revert an INDIVIDUAL token if it ever refuses a fund whose index IS broad by geography.
+  # (#224) NO KNOB — three CORRECTIONS on the live CORE lane, recorded here because this is the shared
+  #   record and because the round it was scoped for, LOWERING THE EUR 1B AUM FLOOR, is REFUSED below.
+  #
+  #   WHAT IT DOES.
+  #   1. `core::hold_miss_leg_at` leg 5: an UNKNOWN AUM now PASSES. A KNOWN one below EUR 1B still
+  #      refuses. The leg read `!q.aum_shown().is_some_and(|a| a >= 1e9)`, and `is_some_and` is false
+  #      for None, so a fund that Boerse Frankfurt AND the Yahoo fallback both missed was refused for
+  #      data we never had.
+  #   2. `fetch::resolve_use_of` (new, extracted from the round-49 fallback at the `bf_meta` call
+  #      site): BF stays authoritative EXCEPT against a listing name that spells DIST. ONE-SIDED on
+  #      purpose — only Dist overrides, never Acc — so it can only ever REFUSE from the Acc-gated
+  #      table, never admit.
+  #   3. `picks::hold_core_list`: a KNOWN AUM outranks an unknown one, inserted AHEAD of the domicile
+  #      term. AUM was the LAST tiebreak, behind domicile and TER.
+  #   No default changes, no knob is introduced, and the CORE table did not move a row.
+  #
+  #   THE #5 FINDING, WHICH IS THE POINT OF THE ROUND. Non-negotiable #5 says missing data PASSES a
+  #   gate, with ONE documented exception (the PEG/negative-EPS split). Leg 5 was a second, undocumented
+  #   one — and the repo's OTHER AUM gate takes the opposite stance IN WRITING: `growth_min_aum_etf`'s
+  #   receipt reads "None-AUM names are NOT gated (missing data is not a small fund; BF only covers its
+  #   venue — same stance as #33 age)". Two gates, one field, opposite answers, and only one of them
+  #   ever argued: nothing in this file litigated the CORE side. The behaviour was PINNED
+  #   (`core.rs`, the `hold_miss_reason` leg table) but never justified. A pin is not an argument.
+  #
+  #   MEASURED — throwaway probe on the live `screen` pond, 2026-09-03, two runs, journal restored and
+  #   verified byte-identical (`cmp`) after each. The shipped funnel merges both halves of leg 5 into
+  #   one AUM column and cannot answer this, so the probe split it:
+  #
+  #     LEG 5 SPLIT   AUM unknown 1  ·  below EUR 1B 71 (run A) / 63 (run B)
+  #
+  #   ONE fund in the whole ~4600-ETF EU-buyable pond is refused for an unknown size, the same one in
+  #   both runs: VXUD.DE, "Vanguard Funds PLC - Vanguard FTSE All-World Ex-U.S. UCITS ETF USD Dist",
+  #   ex-US sleeve, 0.12% TER, IE domicile. So fix 1 is CORRECT AND VERY NEARLY INERT — its entire
+  #   yield today is one fund.
+  #
+  #   AND THAT ONE FUND IS WHY FIX 2 HAD TO SHIP IN THE SAME CHANGE. VXUD.DE reached leg 5 at all only
+  #   by PASSING leg 4, which demands `use_of_profits == Some("Acc")` — for a fund whose own name ends
+  #   "USD Dist". BF's `useOfProfits` payload says Accumulating and takes precedence over the name
+  #   fallback, so the name never got a vote. A second probe censused the disagreement across the pond:
+  #
+  #     ACC/DIST NAME-vs-METADATA DISAGREE: 2 of the EU-buyable ETF pond; 0 of them CURRENTLY QUALIFIED
+  #       FSOV.AS  meta=Acc  First Trust Low Duration Global Government Bond ... Class C EUR Distributing
+  #       VXUD.DE  meta=Acc  Vanguard FTSE All-World Ex-U.S. UCITS ETF USD Dist
+  #
+  #   Both disagreements run the same direction, and NEITHER fund is in the shipped table — so the
+  #   table carries no misclassified distributing fund today and fix 2 removes no row. What it removes
+  #   is the DEPENDENCY: before this round the EUR 1B AUM floor was the ONLY thing standing between a
+  #   distributing share class and an Acc-only table. That is (#222)'s finding a second time, on the
+  #   same floor — there it was a government-bond fund one AUM point from an equity sleeve, here it is
+  #   a Dist share class one AUM point from an Acc table — and it is the same lesson: THE AUM FLOOR HAS
+  #   BEEN SILENTLY DOING OTHER LEGS' WORK, so every leg it was covering for must be fixed before the
+  #   floor is touched. Shipping fix 1 alone would have printed VXUD.DE as a CORE row, which for a
+  #   Portuguese investor is a real tax cost (tax on every payout instead of deferral to one sale, the
+  #   drag `growth_acc_drag` models) — the pre-registered stop rule for this half was "additive + every
+  #   new row a real tracker", and VXUD.DE IS a real tracker, so the letter of the rule permitted it.
+  #   It was refused on the rule's PURPOSE instead, and the receipt records that as a rule defect: a
+  #   stop rule on the QUALITY of a new row cannot see a row that is in the wrong TABLE.
+  #
+  #   FIX 3 IS THE GUARD ON FIX 1, and it is byte-identical the day it lands. `hold_core_list` sorts
+  #   tier -> domicile -> TER -> AUM, so a newly admitted unknown-AUM fund with an IE domicile and a
+  #   cheap TER would sort ABOVE a EUR 40B incumbent and push it out of the three-row `hold_per_tier`
+  #   cap — a correctness fix turning into a silent demotion. Known-before-unknown, placed ahead of
+  #   domicile, makes admission purely ADDITIVE: an unknown-AUM fund can only fill a FREE slot. It is a
+  #   no-op today because no unknown-AUM fund reaches `cores` at all, which is exactly why it costs
+  #   nothing to add now and would be expensive to discover later. Pinned by
+  #   `known_aum_outranks_unknown_in_the_core_sort`, which asserts the fund it puts second WINS both
+  #   later tiebreaks — so the test fails if the term is removed or moved back down the chain.
+  #
+  #   THE FLOOR HALF IS REFUSED — (#216) RE-CONFIRMED ON FRESH POST-(#222) DATA. (#216) refuses "a
+  #   taller table, a looser AUM floor or a sleeve-local TER ceiling" for the three under-cap sleeves
+  #   and names its own re-open condition: "without first re-running that probe: the refusal is the
+  #   supply, not the knobs". (#222) is what changed since, so the probe was re-run. Every below-floor
+  #   near-miss is STILL another wrapper of an index the table already carries:
+  #     ex-US        WEXU.DE EUR 0.63B / CHSI.DE EUR 0.36B — both MSCI World ex USA, the incumbents'
+  #                  (EXUS.DE, IXUA.DE) OWN index.
+  #     Asia-Pacific HMXS.L EUR 0.52B / EPEJ.PA EUR 0.30B — both MSCI Pacific ex Japan, the incumbent's.
+  #     small-cap    XSWC.DE EUR 0.13B — MSCI World Small Cap, WSML.L's.
+  #   The only genuine second family in this pond, FTSE All-World ex US, exists as VXUD.DE (Dist, and
+  #   see above) or AWEX.DE at EUR 0.04B — an order of magnitude below even the EUR 100M industry
+  #   viability line `growth_min_aum_etf` uses, i.e. precisely the closure risk the leg exists to
+  #   prevent. So NO `hold_min_aum` knob was extracted. Per the (#102)/(#197)/(#220) pattern the
+  #   extraction is cheap, but an unused knob at its current value is a receipt with no measurement
+  #   behind it; (#216)'s refusal simply stands, now on fresh numbers. RE-OPEN when a fund tracking an
+  #   index NOT already in the table appears between EUR 0.1B and EUR 1B — not before.
+  #
+  #   CONFIRMED ON THE LIVE POND AFTER THE FIX, and this run landed on IDENTICAL metadata coverage to
+  #   run A — same 4591 pond, same "TER for 3075", same not-broad-index 4040 / TER 195 / replication
+  #   156 — which makes the pair an exact comparison rather than a drifting one:
+  #     run A (pre-fix)   ... not Acc 60 · AUM 72 · QUALIFIED 66
+  #     post-fix          ... not Acc 61 · AUM 71 · QUALIFIED 66
+  #   Exactly one fund moved from the AUM leg to the Acc leg — VXUD.DE, refused now for the reason it
+  #   was always refusable — and QUALIFIED did not move. Ticker-set diff on the printed CORE table:
+  #   34 rows both sides, IDENTICAL, VXUD.DE absent from both. That is the whole claim of this round
+  #   demonstrated rather than asserted: three corrections, zero rows moved, one leg's work handed
+  #   back to the leg that owns it.
+  #
+  #   FUNNEL COUNTS ARE NOT THE EVIDENCE, AND THIS PAIR IS THE SHARPEST CASE OF IT YET. Both runs read
+  #   an IDENTICAL pond — "4591 EU-buyable ETFs", "TER for 3075" — and still disagreed on every leg:
+  #     run A  not broad-index 4040 · UCITS 2 · TER 195 · repl 156 · not Acc 60 · AUM 72 · QUALIFIED 66
+  #     run B  not broad-index 4103 · UCITS 2 · TER 180 · repl 144 · not Acc 45 · AUM 64 · QUALIFIED 53
+  #   QUALIFIED moved 66 -> 53 with no code change between them and the same pond size, because BF
+  #   metadata coverage (replication/use-of/AUM) varies per run as partial fetches succeed or fail.
+  #   (#222) recorded the pond DRIFTING +19 tickers on an identical cache line; this is worse — the
+  #   pond did not drift at all and the classification still moved 13 rows. Read no funnel delta as a
+  #   treatment effect. The numbers this receipt leans on are the ones STABLE ACROSS BOTH RUNS: the
+  #   unknown-AUM count (1) and its ticker (VXUD.DE).
+  #
+  #   NOT GRADEABLE BY BACKTEST, same as (#203)/(#211)/(#213)/(#215)/(#218)/(#222). `hold_suitable` and
+  #   `hold_miss_reason` are reached from `commands/screen.rs` and `commands/report.rs` and from NOWHERE
+  #   in `commands/backtest.rs`; no golden mentions CORE; `aum_eur` is None throughout the backtest pool
+  #   and `use_of_profits` is None for every backtest quote. Ship Rule v2 cannot adjudicate this round
+  #   and was not invoked — there is no horizon to quote. The evidence is the live probe pair, the
+  #   ticker-level findings above, and the unit pins. Goldens did NOT move (verified) and both config
+  #   regimes read 382/9/21.
+  #
+  #   REVERT, IN THREE INDEPENDENT PARTS.
+  #   1. Leg 5: restore `!q.aum_shown().is_some_and(|a| a >= 1e9)` with the "AUM unknown" arm. Do this
+  #      ONLY together with an argument that beats non-negotiable #5 and reconciles `growth_min_aum_etf`
+  #      — the two gates must not disagree about the same field again. Reverting it alone re-refuses
+  #      VXUD.DE, which fix 2 already refuses one leg earlier, so it buys nothing.
+  #   2. `resolve_use_of`: return to `meta.use_of.or_else(|| use_from_name(...))` if BF's payload is
+  #      ever shown to be right and a fund's own name wrong — the reverse of the case measured here.
+  #      Note this revert is what makes leg 5's floor load-bearing for the Acc leg again; do not do it
+  #      while part 1 stands.
+  #   3. The comparator term: drop the `.then(...is_none()...)` line. Byte-identical today either way,
+  #      so revert it only if a future ordering rule needs the slot AND leg 5 has been reverted first.
   hold_sector_sleeve: true       # (#218) MEASURED 2026-09-02, live `screen`, 4499-EU-buyable-ETF pond,
                                  #   control vs probe back to back in one session, the state journal restored BEFORE
                                  #   EACH arm. An ELEVENTH CORE sleeve, `world sector`, holding the geographically-broad

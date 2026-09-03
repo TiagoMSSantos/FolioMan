@@ -624,11 +624,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // (USE/REPL/bench) share-class + replication tokens + benchmark index, same BF payload —
     // display columns + history_proxy twin hints, never scored.
     let mut meta = if is_etf { bf_meta(ticker, &chart.name) } else { BfMeta::default() };
-    // (round 49) USE fallback from the listing name when BF is silent (venue/regulatory funds carry
-    // no BF row): UCITS names spell the share class as a word token ("… USD (Acc)"). BF stays
-    // authoritative via or_else. Display-only; H still requires a BF replication token, so no H flips.
     if is_etf {
-        meta.use_of = meta.use_of.or_else(|| use_from_name(&chart.name));
+        meta.use_of = resolve_use_of(meta.use_of, &chart.name);
     }
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
@@ -3674,6 +3671,28 @@ fn use_from_name(name: &str) -> Option<&'static str> {
     }
 }
 
+/// (round 49 / #224) The share class for an ETF: Börse Frankfurt's payload, with the listing NAME as
+/// the fallback when BF is silent (venue/regulatory funds carry no BF row) — and as the OVERRIDE when
+/// BF says Accumulating but the name spells Dist.
+///
+/// (#224) The two sources disagree on exactly two funds in the ~4600-ETF EU-buyable pond, both the
+/// same way: VXUD.DE lists as "Vanguard FTSE All-World Ex-U.S. UCITS ETF USD Dist" and FSOV.AS as
+/// "… Class C EUR Distributing", while both BF rows read Accumulating. A fund's own share-class
+/// suffix is its label; the BF field is a third-party mapping, so on that disagreement the name wins.
+///
+/// Deliberately ONE-SIDED — only Dist overrides, never Acc. That makes this incapable of newly
+/// ADMITTING anything to the Acc-gated CORE table (`core::hold_miss_leg_at` leg 4); it can only
+/// refuse. It moved no row the day it landed: neither fund was in the shipped table. What it removes
+/// is the reason leg 5 had to keep one out — before this, the €1B AUM floor was the ONLY thing
+/// standing between a distributing share class and an Acc-only table, which is why it had to land in
+/// the same change as leg 5's missing-data fix.
+fn resolve_use_of(bf: Option<&'static str>, name: &str) -> Option<&'static str> {
+    match use_from_name(name) {
+        dist @ Some("Dist") => dist,
+        from_name => bf.or(from_name),
+    }
+}
+
 /// One ETF as it travels through `fetch_xetra_etfs`: ISIN (later the Yahoo symbol), TER, AUM, meta.
 type BfRow = (String, Option<f64>, Option<f64>, BfMeta);
 
@@ -5318,6 +5337,23 @@ pub(crate) mod tests {
         assert_eq!(use_from_name("SPDR S&P Global Dividend Aristocrats Distributing"), Some("Dist"));
         assert_eq!(use_from_name("VanEck Vaccine and Genomics UCITS ETF"), None); // substring trap
         assert_eq!(use_from_name("Xtrackers MSCI World UCITS ETF 1C"), None); // no token -> honest n/a
+
+        // (#224) resolve_use_of: BF authoritative, the name a fallback — EXCEPT a name spelling Dist.
+        let vxud = "Vanguard Funds PLC - Vanguard FTSE All-World Ex-U.S. UCITS ETF USD Dist";
+        assert_eq!(resolve_use_of(Some("Acc"), vxud), Some("Dist"),
+            "the one real disagreement: BF says Accumulating, the fund's own name says Dist -> name wins");
+        assert_eq!(resolve_use_of(None, vxud), Some("Dist"), "and with BF silent it is still Dist");
+        assert_eq!(resolve_use_of(Some("Acc"), "First Trust Low Duration Global Government Bond UCITS ETF Class C EUR Distributing"),
+            Some("Dist"), "the second disagreeing fund, spelled the long way");
+        // the override is ONE-SIDED: a name saying Acc must NOT beat a BF payload saying Dist, or this
+        // could newly admit a distributing fund to the Acc-gated CORE table instead of only refusing.
+        assert_eq!(resolve_use_of(Some("Dist"), "Vanguard S&P 500 UCITS ETF USD (Acc)"), Some("Dist"),
+            "BF still wins in the ADMITTING direction — only Dist overrides");
+        // agreement and silence both behave exactly as before (round 49 unchanged)
+        assert_eq!(resolve_use_of(Some("Acc"), "Vanguard S&P 500 UCITS ETF USD (Acc)"), Some("Acc"));
+        assert_eq!(resolve_use_of(None, "Vanguard S&P 500 UCITS ETF USD (Acc)"), Some("Acc"), "BF silent -> name fallback");
+        assert_eq!(resolve_use_of(Some("Acc"), "Xtrackers MSCI World UCITS ETF 1C"), Some("Acc"), "nameless -> BF stands");
+        assert_eq!(resolve_use_of(None, "Xtrackers MSCI World UCITS ETF 1C"), None, "both silent -> honest n/a");
     }
 
     /// (round 51) monthly-fetch skip decision: within the 30d TTL -> skip, expired/absent -> fetch.
