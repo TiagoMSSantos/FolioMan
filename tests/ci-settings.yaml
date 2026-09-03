@@ -4306,7 +4306,8 @@ buy_heuristic:
                                  #   — developed/EM/US/exUS/Europe/Japan are byte-identical row for row.
                                  #   REVERT RULE: 0. That restores the shared cap on every sleeve, and the
                                  #   only thing lost is four all-world funds.
-  hold_per_tier_sector: 5        # (#220) MEASURED 2026-09-02, live `screen`, control and probe BACK TO BACK on the same cache.
+  hold_per_tier_sector: 6        # (#225) re-read 2026-09-03 — see the amendment at the end of this receipt.
+                                 # (#220) MEASURED 2026-09-02, live `screen`, control and probe BACK TO BACK on the same cache.
                                  #   WHAT IT DOES: gives the world SECTOR sleeve its own row cap, overriding the shared `hold_per_tier`
                                  #   there and only there. 0 = inherit it, byte-identical on every sleeve, and the config-less DEFAULT.
                                  #   WHY A SECOND PER-SLEEVE OVERRIDE. (#197) set the shared cap at 3 and justified it with a finding:
@@ -4349,6 +4350,69 @@ buy_heuristic:
                                  #   (#210), (#217) and (#218) all carry: both admitted funds clear the BASE 0.25% cap as it stands.
                                  #   REVERT: set 0. The (#210) principle - CORE is for broad market exposure - already argues against the
                                  #   sector sleeve existing at all, and reverting THAT (`hold_sector_sleeve: false`) reverts this with it.
+                                 #
+                                 #   (#225) 5 -> 6, 2026-09-03. NOT A NEW ARGUMENT — this is (#220)'s OWN RULE re-read on a grown pond.
+                                 #   That rule is quoted above verbatim: "THE FAMILY COUNT IS THE CAP, NOT AN ARGMAX ... The cap was not
+                                 #   searched over outcomes; it was read off the census." (#220) read `world sector 9 (5f)` and set 5.
+                                 #   The live census now reads `world sector 10 (6f)`, so the same rule returns 6. Applying it is what
+                                 #   keeps the knob honest; leaving it at 5 would silently convert a census-derived number into a fitted
+                                 #   one the first time the pond moved.
+                                 #   THE SIXTH FAMILY, NAMED. A throwaway probe listed the sleeve's qualifying funds with the family each
+                                 #   matched — utilit · energy · technolog · health · financ · industrial — and `industrial` has exactly
+                                 #   ONE member, XDWI.L (Xtrackers MSCI World Industrials UCITS ETF 1C, 0.25%, EUR 1.2B, Acc, Full, IE).
+                                 #   With `hold_family_first: true` the sleeve takes the best fund of each distinct family first, so at 5
+                                 #   slots it prints the five 0.15% iShares S&P 500 sector funds and drops the 0.25% Xtrackers row that is
+                                 #   the sole carrier of the sixth exposure. THE CAP WAS HIDING AN EXPOSURE, NOT A DUPLICATE — which is
+                                 #   the exact condition (#220) built this override for, and (#197)'s invariant ("every sleeve prints at
+                                 #   least as many rows as it has index FAMILIES") is restored by it. Checked against every other sleeve
+                                 #   on the same census: all-world 7 (3f)/7, developed 7 (3f)/3, emerging 6 (2f)/3, US 16 (3f)/3, ex-US
+                                 #   2 (1f)/2, Europe 8 (3f)/3, Japan 5 (2f)/3, Asia-Pacific 1 (1f)/1, small-cap 1 (1f)/1, factor 3 (3f)/3
+                                 #   — sector was the ONLY violation, so nothing else moves and no other cap is touched.
+                                 #   XDWI.L IS THE SAME FUND (#220) ADMITTED and (#222) then displaced: (#222)'s NARROW fix rehabilitated
+                                 #   2B7A.DE (S&P 500 Utilities), a SIXTH family arriving into five slots, and on the sleeve's own
+                                 #   cheapest-TER order the 0.15% newcomer took the 0.25% incumbent's place — (#222) recorded it as
+                                 #   "exactly that one swap, 34 rows both sides". This restores the row it moved out, now that the
+                                 #   census says the sleeve holds six.
+                                 #   NO TER CEILING ADDED, honouring this receipt's own pre-registration above: XDWI.L clears the BASE
+                                 #   0.25% cap exactly as it stands (0.25 is not > 0.25).
+                                 #   STOP RULE, pre-registered before the confirming run: ship only if the ticker-set diff is ADDITIONS
+                                 #   WITH ZERO REMOVALS, and only if the added row carries a family the table could not already reach.
+                                 #   Predicted before the run: exactly one addition, XDWI.L; nothing removed.
+                                 #   OBSERVED, live `screen` control/probe BACK TO BACK on the same cache, journal restored and verified
+                                 #   byte-identical between arms: CORE table 34 -> 35 rows, ADDED {XDWI.L}, REMOVED {} — the prediction
+                                 #   met to the ticker. Both arms printed an IDENTICAL funnel (4593 EU-buyable, TER 195, replication 156,
+                                 #   not Acc 61, AUM 71, QUALIFIED 66) and an identical census (world sector 10 (6f)), so unlike (#222)
+                                 #   and (#224) there is no pond drift to argue around — but the ticker-set diff is still the evidence.
+                                 #   At 6 the sleeve prints one fund per family: 2B7A.DE utilit · IESU.L energy · IITU.L technolog ·
+                                 #   IUHC.L health · UIFS.L financ (all iShares S&P 500, 0.15%) · XDWI.L industrial (Xtrackers, 0.25%).
+                                 #   REVERT: 5, which is (#220)'s value on (#220)'s census. Revert if a future census shows the sleeve
+                                 #   back at five families, and re-read the census rather than assuming either number.
+                                 #
+                                 #   (#225) THE SIZE HALF WAS REFUSED, and this is the record of it. The round was planned as TWO
+                                 #   independent halves; only the sector one ships. `core::SIZE` is a ONE-token array (["small"]) while
+                                 #   the run's NARROW cost line refuses `small 30 · mid cap 3 · ex mega cap 3`, and the size sleeve is the
+                                 #   most starved on the board at 1 of 3 slots used — so the (#222) shape (right rule, short vocabulary)
+                                 #   looked present. It is not. A throwaway probe ran `core::hold_miss_but_breadth` ("would this fund
+                                 #   clear every leg BUT breadth?") over every fund matching each unspelled token:
+                                 #     mid cap      1 fund reachable  — MIDS.SW (L&G MSCI World Mid Cap, TER 0.29%) dies on leg 5 with
+                                 #                                     AUM EUR 0.0B. NOT the TER: the sleeve's own 0.35% ceiling
+                                 #                                     (`hold_size_sleeve_ter`) would have forgiven 0.29%.
+                                 #     ex mega cap  0 funds reachable
+                                 #     smid         0 funds reachable
+                                 #   So spelling all three tokens would admit EXACTLY NOTHING. Per (#215)/(#222), a token that refuses
+                                 #   nothing AND admits nothing is speculation with a maintenance cost — refused on that rule, not on a
+                                 #   measurement of outcomes. Re-probe only if a mid-cap world fund crosses the EUR 1B floor.
+                                 #   AND THE `small` NEAR-MISSES ARE ALL ONE INDEX: of 11 funds matching "small", only WSML.L qualifies;
+                                 #   the other ten (CNUD.DE, HWSC.L, WDSC.L, WDSD.DE, WMFS.DE, WSCR.L, WSCSRI.SW, XSWC.DE, XSWD.DE,
+                                 #   XZSW.DE) are ALL MSCI World Small Cap wrappers. That is (#216) reproduced on a wider census: a
+                                 #   further slot buys a WRAPPER, not an exposure, so `hold_per_tier` does not move for this sleeve
+                                 #   either. (#197)'s invariant holds there at 1 row = 1 family.
+                                 #   THE PLANNED RELABEL `world small-cap` -> `world size` IS THEREFORE MOOT AND WAS DROPPED. It was
+                                 #   pre-registered as mandatory IF a mid-cap fund were admitted (admitting one under a small-cap label
+                                 #   is the two-bets-under-one-name mislabelling (#217) refused). No mid-cap fund is admitted, so the
+                                 #   sleeve still holds only small-cap funds and the current label is the ACCURATE one — renaming it
+                                 #   would make the table less true, not more. `core::SIZE`, `SIZE_GEO` and picks.rs are UNCHANGED.
+                                 #   NET: this round changes ONE config integer and no Rust at all.
   hold_per_tier: 3               # (#197) MEASURED 2026-09-01 AND HELD AT THE SHIPPED LITERAL — rows kept
                                  # per breadth sleeve in the buy-and-hold CORE table. Was a bare
                                  # `const HOLD_PER_TIER: usize = 3` in picks.rs; this names it, and the
