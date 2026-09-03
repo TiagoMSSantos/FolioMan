@@ -4472,6 +4472,127 @@ buy_heuristic:
                                  #   sleeve still holds only small-cap funds and the current label is the ACCURATE one — renaming it
                                  #   would make the table less true, not more. `core::SIZE`, `SIZE_GEO` and picks.rs are UNCHANGED.
                                  #   NET: this round changes ONE config integer and no Rust at all.
+  hold_per_tier_country: 7       # (#227) MEASURED 2026-09-03, live `screen`, 4594-EU-buyable-ETF pond.
+                                 #   Opens a TWELFTH CORE sleeve holding SINGLE-MARKET funds and caps
+                                 #   its rows, in one number: 0 = sleeve OFF, eleven sleeves, byte-
+                                 #   identical to the shipped table (the DEFAULT in config.rs, and
+                                 #   non-negotiable #1). One knob rather than a bool plus a cap — the
+                                 #   shape `hold_size_sleeve_ter` already ships.
+                                 #
+                                 #   THIS OVERRIDES A SHIPPED PRINCIPLE, BY DECISION AND NOT BY
+                                 #   EVIDENCE. (#210) holds that the CORE lane carries broad market
+                                 #   exposure only; (#217) overrode it for factor funds and (#218) for
+                                 #   sector funds, each recording that it did so by decision. This goes
+                                 #   further than either: a factor fund re-weights a universe the lane
+                                 #   already owns and a sector fund holds a slice of it, but a single
+                                 #   market is a concentrated country bet the lane has refused since it
+                                 #   existed. The user took that decision explicitly and UNRESTRICTED,
+                                 #   having been offered the narrower emerging-markets-only scope
+                                 #   (India/China/Korea, +3 rows) and declined it in favour of every
+                                 #   market that qualifies.
+                                 #
+                                 #   WHY A NEW SLEEVE AND NOT A LOOSER KNOB. After (#225) the lane sits
+                                 #   at FAMILY-COUNT EQUILIBRIUM: 66 funds qualify, 35 print, and all 31
+                                 #   held back are further WRAPPERS of an index already shown — exactly
+                                 #   what (#197) decided to hide. (#226) then censused the only two
+                                 #   sleeves printing under their cap (ex-US 2 of 3, Asia-Pacific 1 of
+                                 #   3) and REFUSED in full: no TER ceiling admits anybody at any value,
+                                 #   and what binds is the EUR 1B AUM floor (#224) refused lowering. So
+                                 #   no cap raise is licensed anywhere and no extra supply exists where
+                                 #   one would help. More rows required a new sleeve or nothing.
+                                 #
+                                 #   THE CENSUS, which is where both the token list and this number
+                                 #   come from. A throwaway probe over `core::hold_miss_but_breadth`
+                                 #   (non-negotiable #4 — no leg re-spelled) priced 27 candidate
+                                 #   spellings against the 1549 geo-less, tilt-less EU-buyable ETFs.
+                                 #   SEVEN reach a fund clearing all five admission legs:
+                                 #     dax           32 funds ->  4 clear   (DBXD.DE EUR7.0B 0.09%)
+                                 #     euro stoxx 50 28 funds ->  3 clear   (XESC.DE EUR6.2B 0.09%)
+                                 #     msci emu      25 funds ->  2 clear   (0DZP.L  EUR3.9B 0.09%)
+                                 #     ftse 100      12 funds ->  1 clear   (VUKG.L  EUR2.3B 0.09%)
+                                 #     korea          8 funds ->  1 clear   (FLXK.L  EUR3.1B 0.09%)
+                                 #     india         18 funds ->  1 clear   (FLXI.L  EUR1.9B 0.19%)
+                                 #     china         43 funds ->  1 clear   (FLXC.L  EUR1.5B 0.19%)
+                                 #   TWENTY reach none and are DELIBERATELY NOT SPELLED — cac 40,
+                                 #   nifty, taiwan, brazil, mexico, canada, australia, asx,
+                                 #   switzerland, swiss market, saudi, netherlands, italy, spain,
+                                 #   sweden, poland, turkey, indonesia, vietnam, south africa. A token
+                                 #   that admits nothing is speculation with a maintenance cost, which
+                                 #   is what (#215) and (#222) settled.
+                                 #
+                                 #   7 = THE FAMILY COUNT, NOT AN ARGMAX. (#220)'s rule, read off the
+                                 #   census above: seven tokens, seven index families, seven rows, one
+                                 #   fund each. The six funds beyond it are re-wrappers of DAX (3),
+                                 #   Euro Stoxx 50 (2) and MSCI EMU (1) — families the sleeve already
+                                 #   prints — so they are precisely what (#197) hides. No value was
+                                 #   searched over outcomes.
+                                 #
+                                 #   NO TER CEILING, DELIBERATELY, and none is needed: all thirteen
+                                 #   admitted funds price 0.09%-0.20% against the BASE 0.25% cap, so
+                                 #   `ter_cap_for` is untouched. Same stance as (#217) and (#218), and
+                                 #   the opposite of (#202)'s size sleeve. There is nothing here to
+                                 #   walk upward and this receipt pre-registers against adding one.
+                                 #
+                                 #   GEARED FUNDS ARE NOT REFUSED AT LEG 0, and the pin says so rather
+                                 #   than pretending otherwise. `core::NARROW` spells no leverage word,
+                                 #   so a 2x DAX fund DOES reach this sleeve at breadth. It dies one leg
+                                 #   later on TER — all six geared DAX products in the pond price
+                                 #   0.40%-0.80%. The base cap is what refuses them, and it is pinned
+                                 #   there. Bond, hedged, ESG, screened and SRI country funds DO die at
+                                 #   leg 0, for free, on tokens that already existed.
+                                 #
+                                 #   NEVER ADD A BARE `uk` TOKEN. "FTSE Developed Europe ex UK" contains
+                                 #   it and the live pond carries 11 funds with an `ex uk`/`ex-uk`
+                                 #   spelling — the token would drag every one out of the Europe sleeve
+                                 #   into this one. `ftse 100` is the safe spelling and is what was
+                                 #   measured. Pinned in `core::pure_logic`.
+                                 #
+                                 #   PRE-REGISTERED BEFORE THE RUNS: ship only if the diff is ADDITIONS
+                                 #   ONLY with ZERO removals, and only if each added row carries an
+                                 #   index family the table cannot already reach.
+                                 #   OBSERVED, control vs probe back to back on the same cache with the
+                                 #   journal restored and verified byte-identical between arms:
+                                 #   35 CORE rows -> 42. SEVEN added, ZERO removed, and the 35
+                                 #      control rows print unchanged and in the same order. Every
+                                 #      added row is an index family the table could not reach:
+                                 #        FLXK.L FTSE Korea       EUR3.1B 0.09% Full IE
+                                 #        VUKG.L FTSE 100         EUR2.3B 0.09% Full IE
+                                 #        FLXI.L FTSE India       EUR1.9B 0.19% Full IE
+                                 #        FLXC.L FTSE China       EUR1.5B 0.19% Opt  IE
+                                 #        DBXD.DE DAX             EUR7.0B 0.09% Full LU
+                                 #        XESC.DE Euro Stoxx 50   EUR6.2B 0.09% Full LU
+                                 #        0DZP.L MSCI EMU         EUR3.9B 0.09% Full LU
+                                 #      The census cell reads `single-country 13 (7f)` — thirteen
+                                 #      funds, seven families, seven rows, so the sleeve prints at
+                                 #      family-count equilibrium the moment it opens and the six
+                                 #      funds held back are all re-wrappers. Attributed on the
+                                 #      TICKER-SET DIFF, never on funnel counts, which are noise
+                                 #      ((#224): the two arms disagree on every funnel leg here too).
+                                 #
+                                 #   HONEST LEDGER, recorded because it is a real cost and not a
+                                 #   footnote: India, China and Korea already sit inside the emerging
+                                 #   sleeve at index weight, so a dedicated row is a deliberate
+                                 #   OVERWEIGHT, not a new asset class. China's 20-year record is poor
+                                 #   despite its GDP growth. Four of the seven rows (DAX, Euro Stoxx 50,
+                                 #   MSCI EMU, FTSE 100) are European, where the table already prints
+                                 #   three rows — so more than half this round's gain is concentration
+                                 #   inside covered ground. This table forecasts no returns and never
+                                 #   has; it is a MENU of exposures, and it already prints Japan and
+                                 #   Europe on exactly that logic.
+                                 #
+                                 #   JUDGEMENT-PLUS-LIVE-DIFF, NOT GRADED, exactly as (#197)/(#207)/
+                                 #   (#210)/(#218)/(#220): `backtest::stamp_asset_class` fills only
+                                 #   name/instrument_type/sector, so every backtest quote dies on its
+                                 #   TER leg and no walk reaches this lane. Permanently ungradeable,
+                                 #   same as `hold_per_tier` itself. Ship Rule v2 cannot adjudicate it.
+                                 #
+                                 #   REVERT: set 0, which restores the shipped 35-row table byte-for-
+                                 #   byte on every sleeve. Revert on the (#210) principle alone if the
+                                 #   decision is reconsidered — no measurement is needed to justify
+                                 #   turning it back off. Re-probe if a country fund crosses EUR 1B or
+                                 #   a cheaper wrapper of an unspelled market appears; the family count
+                                 #   is the cap, so a genuinely NEW family licenses 8 and nothing else
+                                 #   does.
   hold_per_tier: 3               # (#197) MEASURED 2026-09-01 AND HELD AT THE SHIPPED LITERAL — rows kept
                                  # per breadth sleeve in the buy-and-hold CORE table. Was a bare
                                  # `const HOLD_PER_TIER: usize = 3` in picks.rs; this names it, and the
