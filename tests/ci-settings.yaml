@@ -4165,7 +4165,10 @@ buy_heuristic:
                                  #   a SINGLE-COUNTRY or ESG-crossed fund in this sleeve — that would mean `SECTOR_GEO` or
                                  #   the no-other-NARROW-token conjunct has been widened, and neither should be. Or revert
                                  #   on (#210)'s principle alone, which this entry deliberately leaves standing.
-  hold_factor_sleeve: true       # (#217) MEASURED 2026-09-02, live `screen`, 4490-EU-buyable-ETF pond,
+  hold_factor_sleeve: true       # (#228) AMENDED — `momentum` joined `core::FACTOR`, so this knob now opens a
+                                 # FOUR-family sleeve. See `hold_per_tier_factor` below; the ceiling this receipt
+                                 # argues against was pre-registered, censused and NOT needed. Min-vol still excluded.
+                                 # (#217) MEASURED 2026-09-02, live `screen`, 4490-EU-buyable-ETF pond,
                                  #   control vs probe back to back in one session. A TENTH CORE sleeve,
                                  #   `world factor`, holding the geographically-broad funds `core::NARROW`
                                  #   refuses on a TILT token alone: "quality", "value", "equal weight".
@@ -4365,6 +4368,93 @@ buy_heuristic:
                                  #   — developed/EM/US/exUS/Europe/Japan are byte-identical row for row.
                                  #   REVERT RULE: 0. That restores the shared cap on every sleeve, and the
                                  #   only thing lost is four all-world funds.
+  hold_per_tier_factor: 4       # (#228) MEASURED 2026-09-03, live `screen`, control and probe BACK TO BACK on the same cache.
+                                 # WHAT IT DOES: gives the world FACTOR sleeve its own row cap, overriding the shared `hold_per_tier`
+                                 # there and only there. 0 = inherit it, byte-identical on every sleeve, and the config-less DEFAULT.
+                                 # The FOURTH per-sleeve override, after `hold_per_tier_all_world` (#207), `hold_per_tier_sector` (#220)
+                                 # and `hold_per_tier_country` (#227), and it exists for the reason all three do.
+                                 # 
+                                 # WHY THIS ROUND EXISTS. The CORE table is at family-count equilibrium on all twelve sleeves and every
+                                 # other seam is closed by a measurement already in this file: `real estate`/`property`/`reit` probed by
+                                 # (#222) -> ZERO reachable funds; `mid cap` -> zero admitted; the remaining GEO blind spot (VNRA.L,
+                                 # LGGL.L) lands in the already-saturated US and all-world sleeves and loses the cheapest-TER sort, so it
+                                 # prints zero rows; a looser `hold_max_ter` or AUM floor was refused by (#197) and (#224). The growth
+                                 # lane is graded shut with explicit do-not-re-open instructions in its own receipts. ONE live token
+                                 # remained anywhere in the heuristic: `momentum`.
+                                 # 
+                                 # HALF OF A SCOPE DECISION, OVERTURNED ON ITS OWN STATED REASONING. (#217) wrote the FACTOR array
+                                 # "deliberately three, and deliberately not five", excluding momentum as "a high-turnover bet that
+                                 # contradicts a 20-year hold" and min-vol as targeting "VOLATILITY rather than return", and recorded
+                                 # the omission as "a scope decision, not a measurement". The momentum half does not survive contact
+                                 # with what this table is: the turnover is the FUND'S INTERNAL REBALANCING, paid inside the NAV by an
+                                 # index the holder never trades. Someone who buys the wrapper once and holds it for twenty years pays
+                                 # no turnover at all — the 0.25% TER is the whole bill, and it is the same 0.25% the quality and value
+                                 # funds already charge in this sleeve. So the objection prices a cost this buyer does not bear.
+                                 # 
+                                 # THE VOLATILITY HALF STANDS, AND IT IS LIVE AND COSTLY — NOT VACUOUS. Recorded here explicitly so
+                                 # nobody later "completes" the set believing it is free: the census found XDEB.DE (Xtrackers MSCI World
+                                 # Minimum Volatility, EUR 1.1B, 0.25%, Acc, Full replication, IE) CLEARING EVERY OTHER LEG. It is
+                                 # refused by the FACTOR array alone. A min-vol fund targets variance at the expense of return, which is
+                                 # the opposite of what a 20-year maximum-profit table is asked for, so the refusal is deliberate and it
+                                 # costs a printable row. `core::factor_sleeve_excludes_volatility_tilts` pins it, with the ticker.
+                                 # 
+                                 # THE CENSUS (2026-09-03, live `screen`, 98 funds in the pond carrying a FACTOR token, read through the
+                                 # real predicates via a throwaway `core::factor_census` helper reverted before commit). World/developed
+                                 # funds clearing EVERY leg, one per family:
+                                 #   MWEP.L   equal weight   EUR 1.6B   0.20%   Acc   Full   IE
+                                 #   XDEQ.DE  quality        EUR 2.8B   0.25%   Acc   Full   IE
+                                 #   XDEV.DE  value          EUR 3.7B   0.25%   Acc   Full   IE
+                                 #   XDEM.SW  momentum       EUR 1.9B   0.25%   Acc   Full   IE   <- the new family
+                                 # FOUR FAMILIES => 4. That is (#220)'s rule applied literally: THE FAMILY COUNT IS THE CAP, NOT AN
+                                 # ARGMAX — read off the census, never searched over outcomes. There is no fifth world/developed factor
+                                 # fund for a larger value to reach, so the sleeve is at family-count equilibrium the moment the token
+                                 # lands, and 5 would be indistinguishable from 4 on today's pond.
+                                 # 
+                                 # WHY THE CAP HAD TO MOVE AT ALL. The shared `hold_per_tier` is 3 and FACTOR now has FOUR families, so
+                                 # without this knob the cap would hide a whole EXPOSURE rather than another wrapper of an index already
+                                 # shown. That is the precise condition (#197) rested its invariant on — every sleeve prints at least as
+                                 # many rows as it has index families, so a further slot buys only another wrapper — and the condition
+                                 # (#220) and (#227) each built this knob for. Without it the round would add a token and print nothing.
+                                 # 
+                                 # A TER CEILING WAS PRE-REGISTERED AND THE CENSUS REFUSED IT. Before the run, `hold_factor_sleeve_ter`
+                                 # was pre-registered to ship at the smallest value admitting the cheapest momentum fund clearing every
+                                 # other leg, bounded at 0.35% (the value `hold_size_sleeve_ter` already ships and already justifies),
+                                 # with a written refusal if momentum needed more. It needed none: XDEM.SW clears the BASE 0.25% cap.
+                                 # So NO ceiling ships, `ter_cap_for` is untouched, and (#217)'s explicit pre-registration AGAINST a
+                                 # factor ceiling stands INTACT rather than overridden. Recorded because a pre-registration that was
+                                 # never needed is still evidence: the next round cannot claim the ceiling was avoided by oversight.
+                                 # 
+                                 # WHAT THE LIVE DIFF SHOWED. Control and probe back to back on the same cache with the five journal
+                                 # files backed up, restored between arms and verified byte-identical with `cmp`. Attribution is on the
+                                 # TICKER-SET DIFF of the printed CORE table, never on funnel counts.
+                                 # Same pond both arms (4594 EU-buyable ETFs), so the only moving part is the token:
+                                 #   CORE funnel QUALIFIED   79 -> 80          (not broad-index 3877 -> 3875, TER 291 -> 292)
+                                 #   census cell             world factor 3 (3f) -> 4 (4f)
+                                 #   header                  ...≤7 for all-world, ≤4 for world factor, ≤6 for sector, ≤7 for single-country, ≤3/sleeve
+                                 #   CORE table              57 -> 58 rows, ONE added, ZERO removed
+                                 #   the added row           Xtrackers MSCI World Momentum UCITS ETF 1C  XDEM.SW  +13%  11.9y  0.25%  EUR 1.9B  Acc  Full  IE
+                                 # Every control row is present in the probe, in the SAME ORDER, and every OTHER sleeve's census cell
+                                 # is byte-identical — all-world 7 (3f), developed 7 (3f), emerging 6 (2f), US 16 (3f), ex-US 2 (1f),
+                                 # Europe 8 (3f), Japan 5 (2f), Asia-Pacific 1 (1f), world small-cap 1 (1f), world sector 10 (6f),
+                                 # single-country 13 (7f). The stop rule fired GREEN: additions only, and the added row is the
+                                 # momentum family. Arms run back to back on the same cache, the control taken from a stash of these
+                                 # very edits so it is HEAD's source and not a banked number from an earlier session.
+                                 # Pre-registered stop rule: ADDITIONS ONLY, ZERO REMOVALS, and the added row must carry the `momentum`
+                                 # family. Additions-only is structural, not hopeful: the sleeve sorts cheapest-TER-first and a new
+                                 # family cannot displace an incumbent that already holds a slot under a raised cap.
+                                 # 
+                                 # NOT GRADEABLE, PERMANENTLY, exactly as `hold_per_tier` and its three elder twins:
+                                 # `backtest::stamp_asset_class` fills only name/instrument_type/sector, so every backtest quote dies on
+                                 # its TER leg and no walk-forward reaches this lane. Ship Rule v2 cannot adjudicate it. The evidence
+                                 # here is a live census plus a live A/B, which is the only instrument this lane has.
+                                 # 
+                                 # NOT (#120)'s forbidden argmax: that governs `VERDICT_TOP`, the GRADED basket. This is a display
+                                 # table's height, and the number came off a census rather than a sweep over results.
+                                 # 
+                                 # REVERT RULE: set 0. That restores the shared cap of 3 on the factor sleeve. To revert the ROUND,
+                                 # drop `"momentum"` from `core::FACTOR` as well — that alone restores the pre-(#228) table byte for
+                                 # byte, and it can be done on the (#217)/(#210) principle alone, with no measurement, exactly as
+                                 # `hold_factor_sleeve`'s own receipt says of turning that knob back off.
   hold_per_tier_sector: 6        # (#225) re-read 2026-09-03 — see the amendment at the end of this receipt.
                                  # (#220) MEASURED 2026-09-02, live `screen`, control and probe BACK TO BACK on the same cache.
                                  #   WHAT IT DOES: gives the world SECTOR sleeve its own row cap, overriding the shared `hold_per_tier`

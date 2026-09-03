@@ -1543,14 +1543,34 @@ pub const SIZE_TIER: u8 = FACTOR_TIER - 1;
 /// was never priced. It has now been overridden on purpose — see the `(#217)` receipt in
 /// tests/ci-settings.yaml, which records both halves so a future round can revert on the principle
 /// alone without re-running anything.
-const FACTOR: [&str; 3] = ["quality", "value", "equal weight"];
+///
+/// (#228) AMENDED — "momentum" SHIPS; "min vol"/"minimum vol" STILL DO NOT. The paragraph above
+/// recorded a single scope decision covering both, and only HALF of it was overturned, on its own
+/// stated reasoning. Momentum was excluded as "a high-turnover bet that contradicts a 20-year hold",
+/// but that turnover is the FUND's internal rebalancing, which a holder of the wrapper never pays —
+/// they buy the ETF once and hold it, and the index does the trading. The volatility half stands
+/// unchallenged and is deliberately NOT re-opened: a min-vol fund targets variance at the expense of
+/// return, which is the opposite of what this table is asked for.
+///
+/// THE MIN-VOL EXCLUSION IS LIVE AND COSTLY, NOT VACUOUS, and is recorded that way so nobody
+/// "completes" the set believing it is free: the 2026-09-03 census found XDEB.DE (Xtrackers MSCI
+/// World Minimum Volatility, EUR 1.1B, 0.25%, Acc, Full, IE) CLEARING EVERY LEG. It is refused by
+/// this array alone. `factor_sleeve_excludes_volatility_tilts` pins it.
+const FACTOR: [&str; 4] = ["quality", "value", "equal weight", "momentum"];
 
 /// (#217) The tenth sleeve, ranked last. Its own tier for the reason `SIZE_TIER` has one: a factor
 /// fund dropped into the developed sleeve loses the cheapest-TER sort to a 0.20% MSCI World tracker
 /// and would never print. UNLIKE the size sleeve it carries NO TER ceiling of its own — [`ter_cap_for`]
-/// is deliberately untouched — because the live pond has three funds clearing the BASE 0.25% cap,
+/// is deliberately untouched — because the live pond has FOUR funds clearing the BASE 0.25% cap,
 /// one per factor family. There is no cap here to walk upward, which is the hazard `(#202)`/`(#210)`
 /// each had to pre-register against.
+///
+/// (#228) THE COUNT MOVED THREE -> FOUR AND THE CEILING STILL DID NOT. This round pre-registered a
+/// `hold_factor_sleeve_ter` before its census, on the theory that momentum might need one, and the
+/// census refused it the honest way: XDEM.SW (Xtrackers MSCI World Momentum, EUR 1.9B, Acc, Full,
+/// IE) clears at 0.25% like the other three. So NO ceiling ships, and `(#217)`'s pre-registration
+/// against a factor ceiling stands INTACT rather than overridden. The sentence above is still true
+/// on its own terms, which is the point — it was never a claim about how many tokens FACTOR holds.
 /// (#218) …no longer the LAST tier either, since the sector sleeve went after it. Spelled RELATIVE
 /// to `SECTOR_TIER` for the reason `SIZE_TIER` is spelled relative to this one: the optional sleeves
 /// must stay adjacent at the end of the ladder, and a literal is how the next one silently
@@ -1784,11 +1804,18 @@ pub fn tier_cap(
     tier: usize,
     base: usize,
     all_world: usize,
+    factor: usize,
     sector: usize,
     country: usize,
 ) -> usize {
     if tier == 0 && all_world > 0 {
         all_world
+    } else if tier == FACTOR_TIER as usize && factor > 0 {
+        // (#228) …and the factor sleeve carries its own for the reason the two below it do: adding
+        // "momentum" gives it a FOURTH index family against a shared cap of 3, so the cap would hide
+        // a whole exposure rather than another wrapper. The value is the measured family count and
+        // NOTHING ELSE — (#220)'s rule, read off the census, never an argmax over outcomes.
+        factor
     } else if tier == SECTOR_TIER as usize && sector > 0 {
         sector
     } else if tier == COUNTRY_TIER as usize && country > 0 {
@@ -4805,6 +4832,20 @@ mod tests {
         assert_eq!(merge_spans(MemberSpans::new(), base.clone()), base);
     }
 
+    /// (#228) The half of (#217)'s scope decision that was NOT overturned, pinned so nobody
+    /// "completes" the set later believing it is free. THE EXCLUSION IS LIVE AND COSTLY: the
+    /// 2026-09-03 census found XDEB.DE (Xtrackers MSCI World Minimum Volatility, EUR 1.1B, 0.25%,
+    /// Acc, Full replication, IE) CLEARING EVERY OTHER LEG. It is refused by this array alone.
+    /// A min-vol fund targets variance at the expense of return, which is the opposite of what a
+    /// 20-year hold table is asked for — so the refusal is deliberate, and this is where it lives.
+    #[test]
+    fn factor_sleeve_excludes_volatility_tilts() {
+        assert!(!FACTOR.contains(&"min vol") && !FACTOR.contains(&"minimum vol"),
+            "(#228) momentum shipped; the VOLATILITY half of (#217)'s exclusion stands");
+        assert_eq!(geo_tier_at("xtrackers msci world minimum volatility ucits etf 1c", 0.0, true, false, 0),
+            None, "(#228) XDEB.DE clears every other leg and is refused by FACTOR alone");
+    }
+
     #[test]
     fn pure_logic() {
     assert!((pct_from_high(&[100.0, 80.0, 95.0]) - 5.0).abs() < 1e-9);
@@ -5082,15 +5123,20 @@ mod tests {
         assert_eq!(geo_tier_at(exus, 0.0, false, false, 0), Some(4), "{exus}: world-minus-US IS a partition");
     }
 
-    // (#217) the world FACTOR sleeve. Every name here is LIVE in the 2026-09-02 pond, and the three
-    // that qualify are the three the sleeve was built to admit — one per factor family, all clearing
-    // the BASE 0.25% cap, which is why this sleeve carries no ceiling of its own.
+    // (#217) the world FACTOR sleeve. Every name here is LIVE in the pond, and the funds that
+    // qualify are the ones the sleeve was built to admit — one per factor family, all clearing the
+    // BASE 0.25% cap, which is why this sleeve carries no ceiling of its own.
+    // (#228) FOUR of them now, re-censused 2026-09-03: momentum joined at the same base cap.
     for (fund, why) in [
         ("invesco msci world equal weight ucits etf usd accumulating", "MWEP.L, 0.20%, €1.6B"),
         ("xtrackers msci world quality ucits etf 1c", "XDEQ.DE, 0.25%, €2.8B"),
         ("xtrackers msci world value ucits etf 1c", "XDEV.DE, 0.25%, €3.7B"),
         // tier 0 rather than tier 1, and refused LATER on TER (0.39%) — placement is not admission
         ("invesco rafi all-world fundamental value ucits etf", "PSRW.L, an all-world factor fund"),
+        // (#228) the fourth family, and the fund the census found clearing every leg at the BASE
+        // 0.25% cap — which is why this sleeve still carries no TER ceiling of its own
+        ("xtrackers msci world momentum ucits etf 1c", "XDEM.SW, 0.25%, €1.9B"),
+        ("ishares edge msci world momentum factor ucits etf", "the other spelling of the same family"),
     ] {
         assert_eq!(geo_tier_at(fund, 0.0, true, false, 0), Some(FACTOR_TIER), "{why}: the factor sleeve claims it");
         assert_eq!(geo_tier_at(fund, 0.0, false, false, 0), None, "{why}: …and refuses it with the knob off");
@@ -5103,9 +5149,13 @@ mod tests {
         // CROSSED: a second NARROW token disqualifies, exactly as it does for the size sleeve
         ("ubs msci world quality esg ucits etf usd acc", "ESG-crossed is still an ESG fund"),
         ("ishares msci world small cap value ucits etf", "size-crossed claims two sleeves at once"),
-        // OUT OF SCOPE BY DECISION: momentum contradicts a 20-year hold, min-vol targets volatility
-        ("ishares edge msci world momentum factor ucits etf", "momentum is deliberately not in FACTOR"),
-        ("ishares edge msci world minimum volatility ucits etf usd (acc)", "nor is minimum volatility"),
+        // (#228) OUT OF SCOPE BY DECISION — and now only HALF of it. Momentum moved to the
+        // positives above: the "high-turnover" objection was about the FUND's internal rebalancing,
+        // which a holder of the wrapper never pays. The VOLATILITY half stands, deliberately: a
+        // min-vol fund targets variance at the expense of return, the opposite of this table's ask.
+        // See `factor_sleeve_excludes_volatility_tilts` — XDEB.DE clears every OTHER leg, so this
+        // refusal is live and costly, not vacuous.
+        ("ishares edge msci world minimum volatility ucits etf usd (acc)", "minimum volatility is not in FACTOR"),
     ] {
         assert_eq!(geo_tier_at(no, 0.0, true, false, 0), None, "{no}: {why}");
         assert_eq!(geo_tier_at(no, 0.35, true, false, 0), None, "{no}: {why} — with BOTH sleeves open");
@@ -5260,7 +5310,24 @@ mod tests {
     assert_eq!(sleeve_family_of("Xtrackers MSCI World Quality UCITS ETF 1C"), Some("quality"));
     assert_eq!(sleeve_family_of("Xtrackers MSCI World Value UCITS ETF 1C"), Some("value"));
     assert_eq!(sleeve_family_of("Invesco MSCI World Equal Weight UCITS ETF USD Accumulating"),
-        Some("equal weight"), "three funds, three families — the sleeve fills on three indices");
+        Some("equal weight"), "one fund, one family — the sleeve fills on distinct indices");
+    // (#228) THE REGRESSION PIN FOR THIS ROUND, and it is the same shape (#217) and (#227) each
+    // needed: a fourth token buys a fourth ROW only if it also keys a fourth FAMILY. Collapse
+    // "momentum" back into `msci world` and the sleeve spends its new slot on another wrapper of an
+    // index it already prints — the exact failure (#197)'s invariant exists to forbid, and it would
+    // happen silently with the table still printing four rows.
+    assert_eq!(sleeve_family_of("Xtrackers MSCI World Momentum UCITS ETF 1C"), Some("momentum"));
+    assert_eq!(FACTOR.len(), 4, "(#228) four tokens, and the four families below are one each");
+    let fac: std::collections::HashSet<_> = [
+        "Xtrackers MSCI World Quality UCITS ETF 1C",
+        "Xtrackers MSCI World Value UCITS ETF 1C",
+        "Invesco MSCI World Equal Weight UCITS ETF USD Accumulating",
+        "Xtrackers MSCI World Momentum UCITS ETF 1C",
+    ]
+    .iter()
+    .map(|n| sleeve_family_of(n))
+    .collect();
+    assert_eq!(fac.len(), 4, "(#228) the census's four clearing funds are FOUR families, not three");
     assert_eq!(sleeve_family_of("iShares Core MSCI World UCITS ETF USD (Acc)"), Some("msci world"),
         "a non-factor fund still keys on its GEO family, exactly as it did");
     // …and a fund whose narrow token is NOT a factor one falls THROUGH to the GEO family rather
@@ -5367,27 +5434,37 @@ mod tests {
 
     // (#207) the all-world sleeve's own row cap, and the two halves that make it safe: 0 inherits
     // (non-negotiable #1, the shipped lane), and the override reaches tier 0 and nothing else.
-    assert_eq!(tier_cap(0, 3, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(0, 3, 5, 0, 0), 5, "…and tier 0 takes it when set");
-    assert_eq!(tier_cap(1, 3, 5, 0, 0), 3, "developed is untouched");
-    assert_eq!(tier_cap(HOLD_TIERS - 1, 3, 5, 0, 0), 3, "…and so is the last sleeve");
+    assert_eq!(tier_cap(0, 3, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(0, 3, 5, 0, 0, 0), 5, "…and tier 0 takes it when set");
+    assert_eq!(tier_cap(1, 3, 5, 0, 0, 0), 3, "developed is untouched");
+    assert_eq!(tier_cap(HOLD_TIERS - 1, 3, 5, 0, 0, 0), 3, "…and so is the last sleeve");
     // (#220) the SECTOR override, pinned on the LITERAL tier as well as the symbolic one: the arm
     // is `tier == SECTOR_TIER`, and a mutation that rewrites that constant moves a symbolic
     // assertion with it. 10 is the literal `SECTOR_TIER` this ladder ships.
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 5, 0), 5, "(#220) the sector sleeve takes its own cap");
-    assert_eq!(tier_cap(10, 3, 0, 5, 0), 5, "…and it is tier 10 that does so, spelled as a literal");
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 5, 0), 3, "the sleeve below it is untouched");
-    assert_eq!(tier_cap(0, 3, 7, 5, 0), 7, "all-world keeps its precedence over the sector override");
-    assert_eq!(tier_cap(1, 3, 0, 5, 0), 3, "…and every ordinary sleeve still reads the shared cap");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 5, 0), 5, "(#220) the sector sleeve takes its own cap");
+    assert_eq!(tier_cap(10, 3, 0, 0, 5, 0), 5, "…and it is tier 10 that does so, spelled as a literal");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 5, 0), 3, "the sleeve below it is untouched");
+    // (#228) the FACTOR override, pinned on the literal tier as well as the symbolic one for
+    // (#220)'s stated reason — 9 is the literal `FACTOR_TIER` this ladder ships, and a mutation
+    // rewriting that constant would drag a purely symbolic assertion along with it.
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 4, 0, 0), 4, "(#228) the factor sleeve takes its own cap");
+    assert_eq!(tier_cap(9, 3, 0, 4, 0, 0), 4, "…and it is tier 9 that does so, spelled as a literal");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 4, 0, 0), 3, "the sleeve below IT is untouched too");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 4, 0, 0), 3, "…and so is the one above");
+    assert_eq!(tier_cap(0, 3, 7, 4, 5, 9), 7,
+        "all-world keeps its precedence over ALL THREE later overrides");
+    assert_eq!(tier_cap(0, 3, 7, 0, 5, 0), 7, "all-world keeps its precedence over the sector override");
+    assert_eq!(tier_cap(1, 3, 0, 0, 5, 0), 3, "…and every ordinary sleeve still reads the shared cap");
     // (#227) the COUNTRY override, pinned the same two ways for the same reason — 11 is the literal
     // `COUNTRY_TIER` this ladder ships, and a mutation rewriting that constant would drag a purely
     // symbolic assertion along with it.
-    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 7), 7, "(#227) the country sleeve takes its own cap");
-    assert_eq!(tier_cap(11, 3, 0, 0, 7), 7, "…and it is tier 11 that does so, spelled as a literal");
-    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 7), 3, "the sleeve above it is untouched");
-    assert_eq!(tier_cap(0, 3, 7, 5, 9), 7, "all-world keeps its precedence over BOTH later overrides");
+    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 7), 7, "(#227) the country sleeve takes its own cap");
+    assert_eq!(tier_cap(11, 3, 0, 0, 0, 7), 7, "…and it is tier 11 that does so, spelled as a literal");
+    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 7), 3, "the sleeve above it is untouched");
+    assert_eq!(tier_cap(0, 3, 7, 0, 5, 9), 7, "all-world keeps its precedence over BOTH later overrides");
     // …and the country sleeve is hidden while the knob is off, on the same rule as the other three.
     assert!(!sleeve_visible(COUNTRY_TIER as usize, 0.35, true, true, 0),
         "(#227) no OTHER sleeve's knob makes the country cell print");
@@ -5478,6 +5555,17 @@ mod tests {
     // pond (0.40%-0.80% against the 0.25% cap). That is the leg carrying the weight — pin it there.
     assert_eq!(geo_tier_at("l&g dax daily 2x long ucits etf", 0.0, false, false, 7), Some(COUNTRY_TIER),
         "(#227) a geared fund reaches leg 0 — NARROW does not spell leverage");
+    // (#228) …and the momentum row's own reachability, both ways round. The token is a NARROW one,
+    // so with the factor sleeve OFF the fund is refused at leg 0 exactly as it is today — that is
+    // non-negotiable #1 spelled as a test, not an assertion in prose.
+    assert_eq!(geo_tier_at("xtrackers msci world momentum ucits etf 1c", 0.0, true, false, 0),
+        Some(FACTOR_TIER), "(#228) a WORLD momentum fund reaches the factor sleeve");
+    assert_eq!(geo_tier_at("xtrackers msci world momentum ucits etf 1c", 0.0, false, false, 0), None,
+        "(#228) …and with the sleeve off it is refused, byte-identical to before the token landed");
+    // FACTOR_GEO [0, 1] is UNTOUCHED and still binds: a EUROPE momentum fund is two bets under one
+    // name and reaches NO sleeve, with the factor sleeve on or off.
+    assert_eq!(geo_tier_at("ishares msci europe momentum factor ucits etf", 0.0, true, false, 0), None,
+        "(#228) FACTOR_GEO still refuses a regional factor fund");
     assert_eq!(ter_cap_for(COUNTRY_TIER, 0.35, 0.25), 0.25,
         "(#227) …and the sleeve is judged against the BASE cap, which is what refuses it");
     // (#227) THE REGRESSION PIN FOR THIS ROUND. `sleeve_family_of` falls through to
