@@ -1390,7 +1390,7 @@ const GEO: [(&str, u8); 32] = [
 /// both sat among the 22 rows the ≤3/sleeve cap hides, which is why the printed table never showed
 /// the bug and no receipt caught it. NDUS.L clears every other leg on live facts (TER 0.18%, AUM
 /// €1.24B), so this token is the only thing standing between it and the CORE list.
-const NARROW: [&str; 43] = [
+const NARROW: [&str; 44] = [
     "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
     "industrial",
     // (#222) THE REST OF GICS. `(#200)` found "industrial" missing and named the defect exactly — a
@@ -1413,7 +1413,18 @@ const NARROW: [&str; 43] = [
     // than a partition (there is no China sleeve to complete it with — unlike ex-USA, which round
     // 118 admitted at tier 4 precisely because US + World-ex-US IS one). Revisit with a tier, not
     // by deleting these.
-    "em asia", "em ex",
+    // (#235) …and "em ex" is the ABBREVIATED spelling ONLY. Amundi writes the same carve-out out in
+    // full — "Amundi MSCI Emerging Ex China UCITS ETF Acc" (EMXC.L, €4.2B, 0.15%) — and "emerging ex
+    // china" contains no "em ex" substring, so the fund walked into the BROAD emerging sleeve that
+    // (#211) had already decided it may not occupy. The policy was right and only the reach was
+    // short: the pin one screen down has asserted the abbreviated name is refused since (#211).
+    // IDENTICAL DEFECT CLASS TO (#234)'s "Global All-Cap" hyphen — one issuer's spelling of an index
+    // the vocabulary already holds an opinion about. Found by (#235)'s REFUSED domicile arm, which
+    // reordered the sleeve enough to print it; LATENT on the shipped lane, where EMXC.L is buried by
+    // the domicile bucket and the live table does not move. Fixed anyway, for the reason (#216)
+    // fixed three inert names one screen up: a sleeve one cost tick away from printing a country bet
+    // is a bug whether or not it is firing today.
+    "em asia", "em ex", "emerging ex",
     // (#216) THE SAME ARGUMENT ONE LEVEL UP, found by probing why the ex-US sleeve sits at 2 of 3.
     // `("world ex", 4)` is a wildcard for "world ex <anything>", and the live pond holds three names
     // it was filing in a US-relative sleeve. "World ex Europe" and "World ex EMU" are BETS, not
@@ -1823,6 +1834,34 @@ const COUNTRY: [&str; 9] = [
 /// for factor and `(#218)` for sector. All thirteen funds the census admits price at 0.09%-0.20%
 /// against the BASE 0.25% cap, so there is nothing here to walk upward.
 pub const COUNTRY_TIER: u8 = HOLD_TIERS as u8 - 1;
+
+/// (#235) The sleeves whose index EXCLUDES US equities BY ITS OWN NAME. Emerging markets, World
+/// ex-USA, Developed Europe, Japan, Pacific ex-Japan and every single-market fund the lane spells —
+/// none holds a US share, so none of them can pay US dividend withholding, so the Irish treaty rate
+/// buys their holders nothing at all.
+///
+/// THIS IS DEFINITIONAL, NOT FITTED, and the distinction is the whole licence for the constant. Each
+/// entry is a property the index asserts in its own title; not one of them was chosen by measuring
+/// which set moved a row. That is what separates it from the per-tier US-WEIGHT table `net_ter`'s doc
+/// refuses to invent — asking "does this index hold ANY US stock" has a published answer, while
+/// asking "what fraction" does not, and `Quote` carries no region weights to answer it with.
+///
+/// THE THREE ABSENTEES ARE DELIBERATE. Tiers 0 (all-world), 1 (developed) and 3 (US) are US-heavy and
+/// obviously keep the charge. `FACTOR_TIER` and `SECTOR_TIER` keep it too — the lane's factor sleeve
+/// is MSCI WORLD quality/value/momentum/equal-weight and its sector sleeve is S&P 500 sectors, both
+/// US-heavy by construction. `SIZE_TIER` is the one GENUINELY MIXED rung (Russell 2000 and MSCI World
+/// Small Cap are US-heavy; MSCI Europe Small Cap holds no US stock at all) and it keeps the charge,
+/// which is the CONSERVATIVE choice because keeping it is today's behaviour. Splitting that sleeve
+/// needs geography this tier does not carry — its family is a SIZE token — and re-deriving it from
+/// the name at a read site is the re-derivation non-negotiable #4 forbids. LEFT OPEN, not guessed.
+const NO_US_TIERS: [u8; 6] = [2, 4, 5, 6, 7, COUNTRY_TIER];
+
+/// (#235) Does a fund in this sleeve hold US shares, and therefore pay US dividend withholding at a
+/// rate its domicile decides? The single reader of [`NO_US_TIERS`], so the set has ONE spelling and
+/// `picks::dom_cost` never re-derives geography at a read site (non-negotiable #4).
+pub fn tier_holds_us_equity(tier: u8) -> bool {
+    !NO_US_TIERS.contains(&tier)
+}
 
 /// (#227) STRUCTURALLY THE INVERSE of the other three optional sleeves, and that is the whole trick.
 /// [`size_sleeve_tier`], [`factor_sleeve_tier`] and [`sector_sleeve_tier`] all fire from INSIDE
@@ -5332,6 +5371,12 @@ mod tests {
         "a region inside a region: GEO gives it a tier, NARROW takes it back");
     assert_eq!(geo_tier_at("ishares msci em ex china ucits etf usd acc", 0.0, false, false, 0), None,
         "excluding the largest constituent is a bet, and no China sleeve completes the partition");
+    assert_eq!(geo_tier_at("amundi msci emerging ex china ucits etf acc", 0.0, false, false, 0), None,
+        "(#235) EMXC.L — the SAME carve-out spelled out in full, which \"em ex\" cannot see");
+    assert_eq!(geo_tier_at("ubs core msci em ucits etf usd acc", 0.0, false, false, 0), Some(2),
+        "(#235) …and a BROAD EM fund is untouched: the token needs the \" ex\" to fire");
+    assert_eq!(geo_tier_at("vanguard ftse emerging markets ucits etf usd acc", 0.0, false, false, 0), Some(2),
+        "(#235) …including the spelling that carries \"emerging\" with no carve-out after it");
     // (#213) the Japan / Asia-Pacific split, and the abbreviation that made the split worth making.
     assert_eq!(geo_tier_at("ishares vii plc - ishares core msci pac ex-jpn etf usd acc", 0.0, false, false, 0), Some(7),
         "the €3.5B name the blind-spot census found; only \"msci pac \" can spell iShares' Pac ex-Jpn");
@@ -5914,6 +5959,38 @@ mod tests {
     // …and the reach is still bounded by NARROW, which runs first: the ESG share class stays refused.
     assert_eq!(geo_tier_at("vanguard esg global all cap ucits etf (usd) accumulating", 0.0, false, false, 0), None,
         "a tilt word still refuses the fund before any GEO token is consulted");
+
+    // (#235) the withholding gate's tier set, pinned against the SLEEVE each tier actually holds
+    // rather than against the literals — a renumbering that moved a sleeve without moving the set
+    // would otherwise pass silently. Every entry is a claim the index makes in its own name.
+    for (fund, holds_us, why) in [
+        ("ishares core msci world ucits etf usd acc", true, "developed is ~72% US"),
+        ("vanguard s&p 500 ucits etf acc", true, "the US sleeve is 100% US"),
+        ("ishares core msci em imi ucits etf usd acc", false, "emerging holds no US share"),
+        ("xtrackers msci world ex usa ucits etf 1c usd", false, "ex-USA says so in the name"),
+        ("vanguard ftse developed europe ucits etf eur acc", false, "Europe holds no US share"),
+        ("vanguard ftse japan ucits etf usd acc", false, "Japan holds no US share"),
+        ("ishares core msci pacific ex japan ucits etf", false, "Pacific ex-Japan holds no US share"),
+    ] {
+        let tier = geo_tier_at(fund, 0.0, false, false, 0).unwrap_or_else(|| panic!("{fund}: no tier"));
+        assert_eq!(tier_holds_us_equity(tier), holds_us, "{fund}: {why}");
+    }
+    // …the single-country sleeve too, which needs its knob open to place the fund at all.
+    let dax = geo_tier_at("xtrackers dax ucits etf 1c", 0.0, false, false, 9).expect("dax tiers");
+    assert_eq!(dax, COUNTRY_TIER);
+    assert!(!tier_holds_us_equity(dax), "a single-market fund holds no US share — no US token exists");
+    // …and the three rungs that KEEP the charge, tier 8 among them BY DECISION and not by measurement:
+    // its family is a SIZE token carrying no geography, so the sleeve cannot be split without
+    // re-deriving one at a read site. Left charged, which is what shipped.
+    for tier in [SIZE_TIER, FACTOR_TIER, SECTOR_TIER] {
+        assert!(tier_holds_us_equity(tier),
+            "tier {tier}: world small-cap, MSCI World factors and S&P 500 sectors are all US-heavy");
+    }
+    assert_eq!(
+        (0..HOLD_TIERS as u8).filter(|t| !tier_holds_us_equity(*t)).count(),
+        NO_US_TIERS.len(),
+        "the predicate and the set must not drift apart — one is the only reader of the other",
+    );
     // …and what it must still REFUSE. The first is the reason `core::COUNTRY` may never hold a bare
     // `uk` token: 11 funds in the live pond carry an ex-UK spelling, and the token would drag every
     // one of them out of the Europe sleeve. The rest are the populations the sleeve must not reach.

@@ -3918,6 +3918,38 @@ fn dom_rank(q: &Quote, tier: u8) -> u8 {
     }
 }
 
+/// (#235) The same domicile ordering, in the units the sort's next term already speaks — the
+/// withholding cost in percentage points, added to [`core::net_ter`] so ONE number decides which
+/// fund is cheaper to hold for twenty years.
+///
+/// WHY THIS EXISTS. [`dom_rank`] is a BUCKET compared AHEAD of price, so it enforces as an infinity a
+/// gap its own doc measures at "≈ +0.2%/yr": an Irish fund at 0.24% beats a Luxembourg one at 0.03%,
+/// and no TER spread the lane's 0.25% cap permits can ever overturn it. (#233) then priced the same
+/// effect in basis points inside `net_ter` and recorded the collision in that function's own doc —
+/// "both sort keys that care … ask this". Two spellings of one number is what non-negotiable #4 is
+/// for, and this is the one that resolves it: `dom_rank` keeps the single definition of WHICH bucket
+/// a fund is in, and this converts that bucket into money.
+///
+/// THREE GUARDS, IN THE ORDER THEY FIRE:
+///   1. `penalty <= 0.0` returns 0.0 — the knob is OFF, the comparator keeps `dom_rank` as a sort key
+///      and this term adds nothing to either side. That is what makes the default byte-identical
+///      (non-negotiable #1) WITHOUT a magic dominating constant: an added 0.0 is provably a no-op,
+///      where a "big enough" multiplier would only be an argument about how big the caps can get.
+///   2. A sleeve that holds no US shares is charged NOTHING, because the treaty it is being charged
+///      for does not apply to it — [`core::tier_holds_us_equity`], whose doc carries the licence for
+///      the set and the reason `SIZE_TIER` is not in it.
+///   3. Otherwise the bucket, priced. `us_withholding_free` is not re-spelled here: `dom_rank`
+///      already asks it, and asking twice is the drift the pair was built to avoid.
+///
+/// Pure in the knob, like its sibling: the penalty is PASSED, so a test grades every branch without
+/// flipping a process-wide `OnceLock` — (#204)'s rule.
+fn dom_cost(q: &Quote, tier: u8, penalty: f64) -> f64 {
+    if penalty <= 0.0 || !core::tier_holds_us_equity(tier) {
+        return 0.0;
+    }
+    f64::from(dom_rank(q, tier)) * penalty
+}
+
 /// (#199) CORE admission funnel: how many EU-buyable ETFs die at EACH of the six legs of
 /// [`core::hold_miss_leg`], plus a final slot for the ones that qualify. Slots are indexed by
 /// [`core::HOLD_LEGS`]; the legs short-circuit, so a fund is counted ONCE, at the FIRST leg that
@@ -4077,6 +4109,31 @@ pub fn near_miss_reason_with(
     Some(msg)
 }
 
+/// (#235) The CORE sort's whole decision, EXTRACTED so the mutation gate can reach it with the
+/// knobs ARMED. While this lived inline in [`hold_core_list`] the penalty came from a process-wide
+/// `OnceLock` no test can flip, so the `dom_pen > 0.0` branch and both `+ dom_cost` terms were
+/// UNKILLABLE: 7 mutants survived the gate on 2026-09-04, and that measurement is what forced the
+/// split. This is (#204)'s rule applied where (#233) claimed it and did not finish delivering it —
+/// the knobs are PASSED, never read, and `ta`/`tb` come in already computed so the three terms that
+/// need the tier still share one derivation (non-negotiable #4).
+fn hold_core_cmp(a: &Quote, ta: u8, b: &Quote, tb: u8, swap_credit: f64, dom_pen: f64) -> std::cmp::Ordering {
+    ta.cmp(&tb)
+        // (#224) a KNOWN size outranks an unknown one, ahead of every other tiebreak. AUM was the
+        // LAST term, so once leg 5 stopped refusing unknowns a fund with no size at all could sort
+        // above a €40B incumbent on domicile or TER alone and push it out of `hold_per_tier`.
+        // This keeps that admission purely ADDITIVE: an unknown-AUM fund can only fill a free slot.
+        // Byte-identical the day it landed — no unknown-AUM fund reaches `cores`.
+        .then(a.aum_shown().is_none().cmp(&b.aum_shown().is_none()))
+        // (#235) the bucket is a sort key ONLY while the penalty is off; above 0 it is spent as
+        // a cost in the next term instead, so the two can never both order the same pair. At the
+        // default this arm is `dom_rank` exactly as it shipped and `dom_cost` adds 0.0 to both
+        // sides — byte-identical by construction, not by choosing a big enough constant.
+        .then(if dom_pen > 0.0 { std::cmp::Ordering::Equal } else { dom_rank(a, ta).cmp(&dom_rank(b, tb)) })
+        .then((core::net_ter(a.ter_shown(), ta, a.replication, swap_credit) + dom_cost(a, ta, dom_pen))
+            .total_cmp(&(core::net_ter(b.ter_shown(), tb, b.replication, swap_credit) + dom_cost(b, tb, dom_pen))))
+        .then(b.aum_shown().unwrap_or(0.0).total_cmp(&a.aum_shown().unwrap_or(0.0)))
+}
+
 /// Buy-and-hold CORE shortlist — the one-fund-forever holds the momentum SCORE buries at 0.0 (the
 /// overext brake floors a broad index fund that has simply run for years). Built straight from the full
 /// universe, bypassing `growth_score` entirely: keep every `hold_suitable` fund (broad + cheap +
@@ -4093,21 +4150,13 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // (#233) the swap TER credit, read ONCE here and passed into the comparator — the sort must not
     // reach for a `OnceLock` once per comparison, and (#204) wants the branch gradeable besides.
     let swap_credit = crate::config::hold_us_swap_ter_credit();
+    // (#235) the domicile penalty, read ONCE for the same reason and threaded the same way.
+    let dom_pen = crate::config::hold_domicile_penalty();
     cores.sort_by(|a, b| {
         // (#233) the tier is now read by THREE terms (the ordering itself, `dom_rank`, `net_ter`),
         // so it is computed once per side instead of re-derived at each — non-negotiable #4.
         let (ta, tb) = (core::hold_breadth_tier(&a.name), core::hold_breadth_tier(&b.name));
-        ta.cmp(&tb)
-            // (#224) a KNOWN size outranks an unknown one, ahead of every other tiebreak. AUM was the
-            // LAST term, so once leg 5 stopped refusing unknowns a fund with no size at all could sort
-            // above a €40B incumbent on domicile or TER alone and push it out of `hold_per_tier`.
-            // This keeps that admission purely ADDITIVE: an unknown-AUM fund can only fill a free slot.
-            // Byte-identical the day it landed — no unknown-AUM fund reaches `cores`.
-            .then(a.aum_shown().is_none().cmp(&b.aum_shown().is_none()))
-            .then(dom_rank(a, ta).cmp(&dom_rank(b, tb)))
-            .then(core::net_ter(a.ter_shown(), ta, a.replication, swap_credit)
-                .total_cmp(&core::net_ter(b.ter_shown(), tb, b.replication, swap_credit)))
-            .then(b.aum_shown().unwrap_or(0.0).total_cmp(&a.aum_shown().unwrap_or(0.0)))
+        hold_core_cmp(a, ta, b, tb, swap_credit, dom_pen)
     });
     let mut seen: HashSet<&str> = HashSet::new();
     cores.retain(|q| seen.insert(q.name.as_str())); // one row per fund (VUAA.DE vs VUAA.L), best-ranked kept
@@ -5280,6 +5329,90 @@ mod tests {
         lu_phys.domicile = Some("LU".to_string());
         lu_phys.replication = Some("Full");
         assert_eq!(dom_rank(&lu_phys, 3), 1, "a PHYSICAL LU fund at tier 3 keeps the full penalty");
+        // (#235) the same ordering as MONEY. Three properties, and the first is the one that makes
+        // the round shippable: at the DEFAULT the term is identically zero, so it can reorder nothing.
+        for tier in 0..core::HOLD_TIERS as u8 {
+            for q in [&ie, &lu, &unk, &lu_swap, &lu_phys] {
+                assert_eq!(dom_cost(q, tier, 0.0), 0.0,
+                    "(#235) knob OFF must add 0.0 to BOTH sides at every tier — that IS non-negotiable #1 here");
+            }
+        }
+        // …a sleeve holding no US shares is charged nothing, because the treaty does not reach it.
+        for tier in 0..core::HOLD_TIERS as u8 {
+            let charged = dom_cost(&lu, tier, 0.20);
+            assert_eq!(charged > 0.0, core::tier_holds_us_equity(tier),
+                "(#235) tier {tier}: the charge must follow tier_holds_us_equity and nothing else");
+        }
+        // …and where it does apply it is the bucket, priced. Spelled off the bucket, never as 0.20/0.40.
+        for tier in [0u8, 1, 3] {
+            for q in [&ie, &lu, &unk] {
+                assert_eq!(dom_cost(q, tier, 0.20), f64::from(dom_rank(q, tier)) * 0.20,
+                    "(#235) a US-holding sleeve charges dom_rank's own bucket, converted to points");
+            }
+        }
+        assert_eq!(dom_cost(&lu_swap, 3, 0.20), 0.0,
+            "(#235) (#233)'s override still wins: a synthetic US fund pays no withholding from any domicile");
+        // THE ROUND'S POINT, as one ordering pin. The live Europe sleeve prints MEUD.PA (LU, 0.07%)
+        // THIRD behind VWCG.DE (IE, 0.10%) because the bucket outranks price; tier 5 holds no US
+        // stock, so with the knob on the cheaper fund wins — and the SAME pair at a US tier does not.
+        let cost = |q: &Quote, ter: f64, tier: u8, pen: f64| {
+            core::net_ter(Some(ter), tier, q.replication, 0.0) + dom_cost(q, tier, pen)
+        };
+        assert!(cost(&lu, 0.07, 5, 0.20) < cost(&ie, 0.10, 5, 0.20),
+            "(#235) Europe holds no US equity, so 0.07% LU must beat 0.10% IE once the charge is priced");
+        assert!(cost(&ie, 0.10, 3, 0.20) < cost(&lu, 0.07, 3, 0.20),
+            "…and at the US tier the treaty is real, so the dearer Irish fund still wins");
+        // …and the reason the comparator cannot simply DROP `dom_rank`: with the knob off the cost
+        // term alone already ranks the LU fund first, so the bucket has to stay a key of its own or
+        // turning the knob off would quietly ship this round anyway. That is what the `dom_pen > 0.0`
+        // arm buys, and why "byte-identical at the default" is a property of the PAIR, not of dom_cost.
+        assert!(cost(&lu, 0.07, 5, 0.0) < cost(&ie, 0.10, 5, 0.0),
+            "OFF, net_ter alone cannot see domicile — so dom_rank must still order this pair, not this term");
+        // (#235) …and the SAME properties through the comparator that actually sorts the table.
+        // `dom_cost` being right proves nothing on its own: the 7 mutants that survived the gate on
+        // 2026-09-04 all lived in these three lines, unreachable while the penalty came from a
+        // `OnceLock`. Both call directions are asserted throughout because a mutation hits ONE side
+        // of the `+`, and a one-directional pin cannot see the other.
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let priced = |dom: &str, repl: Option<&'static str>, ter: f64| {
+            let mut q = Quote::stub("X", "€1", "", "f");
+            q.domicile = Some(dom.to_string());
+            q.replication = repl;
+            q.expense_ratio = Some(ter);
+            q.aum_eur = Some(1e9);
+            q
+        };
+        // The round's thesis at a US tier, where the treaty is REAL and the charge is live: an Irish
+        // fund 0.23pp dearer still wins, because 0.20 of that gap is withholding it does not pay.
+        let ie_dear = priced("IE", Some("Full"), 0.30);
+        let lu_cheap = priced("LU", Some("Full"), 0.07);
+        assert_eq!(hold_core_cmp(&ie_dear, 3, &lu_cheap, 3, 0.0, 0.20), Greater,
+            "(#235) ARMED at tier 3: 0.07+0.20 = 0.27 undercuts 0.30, so the LU fund is genuinely cheaper");
+        assert_eq!(hold_core_cmp(&lu_cheap, 3, &ie_dear, 3, 0.0, 0.20), Less, "…and the reverse call agrees");
+        // The SAME pair with the knob OFF must keep the bucket as a key — this is non-negotiable #1
+        // for this round, and it is the assert that fails if `dom_pen > 0.0` is widened to `>=`.
+        assert_eq!(hold_core_cmp(&ie_dear, 3, &lu_cheap, 3, 0.0, 0.0), Less,
+            "(#235) OFF: dom_rank still outranks price, so the dearer Irish fund sorts first exactly as it shipped");
+        assert_eq!(hold_core_cmp(&lu_cheap, 3, &ie_dear, 3, 0.0, 0.0), Greater, "…and the reverse call agrees");
+        // The charge is ADDED, not subtracted: 0.05 IE must beat 0.07 LU once 0.20 is on top of it.
+        let ie_cheap = priced("IE", Some("Full"), 0.05);
+        assert_eq!(hold_core_cmp(&ie_cheap, 3, &lu_cheap, 3, 0.0, 0.20), Less,
+            "(#235) the penalty is a COST added to the LU side — subtract it and this pair inverts");
+        assert_eq!(hold_core_cmp(&lu_cheap, 3, &ie_cheap, 3, 0.0, 0.20), Greater, "…and the reverse call agrees");
+        // A no-US sleeve charges nothing, so the same armed pair sorts on pure price there.
+        assert_eq!(hold_core_cmp(&ie_dear, 5, &lu_cheap, 5, 0.0, 0.20), Greater,
+            "(#235) tier 5 holds no US equity: the charge is 0.0 and 0.07 simply beats 0.30");
+        // Tier is the FIRST term and nothing below it can overturn a broader sleeve.
+        assert_eq!(hold_core_cmp(&lu_cheap, 0, &ie_cheap, 3, 0.0, 0.0), Less,
+            "(#235) breadth outranks every cost term, penalty on or off");
+        // A KNOWN size outranks an unknown one ((#224)), ahead of domicile and price both.
+        let mut sizeless = priced("IE", Some("Full"), 0.01);
+        sizeless.aum_eur = None;
+        assert_eq!(hold_core_cmp(&sizeless, 3, &lu_cheap, 3, 0.0, 0.20), Greater,
+            "(#224) an unknown-AUM fund can only fill a free slot, however cheap it is");
+        // …and a fund against itself ties all the way down, which is what makes the sort stable.
+        assert_eq!(hold_core_cmp(&lu_cheap, 3, &lu_cheap, 3, 0.0, 0.20), Equal,
+            "(#235) every term is symmetric, so identical inputs must compare Equal");
         // (REV-YoY/EPS-YoY/NET%) stock-only FY snapshot: stock prints signed %s / margin level, an
         // un-enriched stock -> n/a, ETF/crypto -> — (no income statement)
         let mut st = Quote::stub("S", "€1", "", "Co");

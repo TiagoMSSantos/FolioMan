@@ -3705,6 +3705,48 @@ buy_heuristic:
   #   and every golden is untouched. REVERT: n/a — there is nothing to revert. The census IS the
   #   deliverable, and its finding is that the CORE lane is now SUPPLY-EXHAUSTED rather than
   #   policy-limited, which is the answer to "can screen offer more" for these two sleeves.
+  #
+  #   RE-ADJUDICATED BY (#235), 2026-09-04 — VERDICT UNCHANGED, GROUND REPLACED.
+  #   (#233) retired the `replication` leg the day after this block was written (the funnel's
+  #   `replication` count went 196 -> 0), and that leg is LOAD-BEARING above: the TER half was refused
+  #   because its leg-2 funds were "refused again a leg later" at replication. The ground was gone, so
+  #   the refusal owed a re-read rather than a citation. Same instrument, same probe shape, live
+  #   `screen`, journal backed up and restored byte-identical (cmp on all five files).
+  #     tier 4 ex-US        18 funds — CLEAR 2 · AUM 8 · Dist 6 · TER 2 · replication 0
+  #     tier 7 Asia-Pacific  9 funds — CLEAR 1 · TER 3 · Dist 3 · AUM 2 · replication 0
+  #   The ponds shrank (22 -> 18, 20 -> 9) and CE8.PA / CM9.PA — the two swap funds this block named as
+  #   the tier-4 leg-2 population — are no longer in the census at all. The 3 that clear are STILL
+  #   exactly the 3 printed: EXUS.DE, IXUA.DE, CSPXJ.SW. Both sleeves are still EXHAUSTED, not throttled.
+  #
+  #   THE TER HALF STAYS REFUSED, ON A LEG NO FUTURE ROUND CAN RETIRE. Of the 5 leg-2 funds across both
+  #   sleeves, only TWO are refused on PRICE — IPXJ.L (0.60%) and PACUA.SW (0.30%) — and THREE are
+  #   refused on MISSING TER: WEXUS.PA, XUES.L, YIPU.MI. `hold_region_sleeve_ter` is a CEILING, and
+  #   raising a ceiling cannot admit a fund that has no TER to compare against it; those three are the
+  #   `None => refuse` breach of non-negotiable #5 that `core.rs:2100` still carries, and they are a
+  #   different round's problem, not this knob's. The two refused on price die anyway — IPXJ.L is Dist
+  #   AND EUR 0.2B, PACUA.SW is EUR 0.1B — so the count that would clear EVERY OTHER leg is STILL ZERO.
+  #   Same verdict as (#226), now resting on missing data and the AUM floor instead of on a leg that
+  #   turned out to be one day from deletion.
+  #
+  #   AND AT TIER 7 THE SHIP RULE IS UNREACHABLE BY CONSTRUCTION. All NINE funds in that census are
+  #   MSCI Pacific ex Japan — one index family, nine spellings. "A NEW index family for that sleeve"
+  #   cannot be satisfied at ANY TER ceiling until the pond gains a different index, so no value of the
+  #   knob can ever ship there. Tier 4 DOES hold a second family — FTSE All-World ex US (AWEX.DE,
+  #   VXUD.AS, VXUD.DE) — but not one instance of it sits at leg 2: AWEX.DE dies at AUM EUR 0.0B and
+  #   both VXUD are Dist with absent AUM. The TER knob cannot reach the only family that would satisfy
+  #   the rule. NOT ADDED, for the second time and now for a reason that does not expire.
+  #
+  #   WHAT BINDS IS THE EUR 1B AUM FLOOR AND THE Acc LEG: tier 4 is AUM 8 + Dist 6 = 14 of 18, tier 7 is
+  #   Dist 3 + AUM 2 = 5 of 9. The cheapest ex-US funds in the pond are BNP's EEAP.DE/EEAR.DE at 0.07% —
+  #   less than half the incumbents' 0.15% — and both sit at EUR 0.0B. Price is not what is missing.
+  #
+  #   THE REVISIT TRIGGER ABOVE WAS RE-READ AND HAS NOT FIRED — the whole point of naming it:
+  #     WEXU.DE  EUR 0.634B   (was EUR 0.6B)
+  #     HMXS.L   EUR 0.521B   (was EUR 0.5B)
+  #     LGAG.L   EUR 0.679B   (was EUR 0.7B, and now ALSO refuses at leg 0 as a NARROW/thematic name)
+  #   None crossed EUR 1B; the three moved by single-digit percent in a day, so this is a slow trigger
+  #   and re-reading it costs one probe. NOTHING SHIPPED FROM THIS RE-ADJUDICATION either — no knob, no
+  #   token, no config value, no Rust. The census is again the whole deliverable.
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:
@@ -4407,6 +4449,133 @@ buy_heuristic:
                                  #   a SINGLE-COUNTRY or ESG-crossed fund in this sleeve — that would mean `SECTOR_GEO` or
                                  #   the no-other-NARROW-token conjunct has been widened, and neither should be. Or revert
                                  #   on (#210)'s principle alone, which this entry deliberately leaves standing.
+  hold_domicile_penalty: 0.0     # (#235) BUILT, MEASURED, AND REFUSED ON ITS OWN PRE-REGISTERED STOP
+                                 # RULE. SHIPS OFF (0.0) = today's comparator, byte-identical. The
+                                 # measurement is the deliverable; the code lands so the next round
+                                 # re-runs it with one config line instead of rebuilding the probe.
+                                 #
+                                 #   WHAT IT DOES. `picks::hold_core_list` sorts
+                                 #   tier -> aum_shown().is_none() -> dom_rank -> net_ter -> AUM desc, and
+                                 #   `dom_rank` returns a 0/1/2 DOMICILE BUCKET that sorts AHEAD of price.
+                                 #   So within a sleeve any IE fund beats any non-IE fund on cost at ANY
+                                 #   gap. `Quote::domicile`'s own doc puts that edge at "~ +0.2%/yr on a
+                                 #   US/world fund" — a number in basis points, enforced as an infinity.
+                                 #   (#233) then added `net_ter`, which prices the SAME effect in basis
+                                 #   points, and its doc says so. Two representations of one number is
+                                 #   precisely what non-negotiable #4 exists to forbid. At penalty > 0 the
+                                 #   comparator drops `dom_rank` as a KEY and adds `picks::dom_cost` =
+                                 #   `dom_rank * penalty` percentage points onto `net_ter`.
+                                 #
+                                 #   AND IT IS TIER-GATED, DEFINITIONALLY NOT FITTED. The edge is a US
+                                 #   dividend-withholding treaty, so it is worth exactly ZERO on an index
+                                 #   that holds no US equity. `core::NO_US_TIERS` = [2 emerging, 4 ex-US,
+                                 #   5 Europe, 6 Japan, 7 Asia-Pacific, COUNTRY_TIER] — each excludes US
+                                 #   stock BY ITS OWN INDEX NAME, so the set is read off the tier ladder,
+                                 #   not searched over outcomes. At those tiers the knob does not ADD a
+                                 #   charge; it REMOVES `dom_rank` as a key, and the sleeve sorts on pure
+                                 #   cost. Tier 8 small-cap is genuinely MIXED (Russell 2000 and World
+                                 #   Small Cap are US-heavy, Europe Small Cap is not) and KEEPS the
+                                 #   penalty — the conservative choice, because that is today's behaviour.
+                                 #   LEFT OPEN rather than guessed at; `Quote` carries no region weights.
+                                 #
+                                 #   THE VALUE IS NOT AN ARGMAX. Every US-exposed sleeve except small-cap
+                                 #   is 100% IE, so NO value of the penalty moves a row there. In small-cap
+                                 #   the nearest flip boundary is 0.05 (XXSC.DE 0.30% vs WSML.L 0.35%). The
+                                 #   probed 0.20 is the repo's own pre-existing documented number and sits
+                                 #   a factor of four clear of that boundary. Boundary recorded so this is
+                                 #   checkable rather than asserted.
+                                 #
+                                 #   MEASURED 2026-09-04, live `screen`, control and armed arm BACK TO BACK
+                                 #   on ONE cache; journal cp -p'd and restored, cmp-verified on all five
+                                 #   files. Both arms 49 rows and an IDENTICAL funnel (4600 EU-buyable ·
+                                 #   not broad-index 3846 · no UCITS 4 · TER 293 · replication 0 · not Acc
+                                 #   173 · AUM 157 · QUALIFIED 127), so nothing below is pond drift.
+                                 #
+                                 #   STOP RULE "A, order" — PASSED. 10 reorders, and MEUD.PA is one:
+                                 #     tier 5 Europe rotation   VWCG.DE 20->21 · IMEA.SW 21->22 · MEUD.PA 22->20
+                                 #     tier 11 single-country   DBXD.DE 46->42 · 0DZP.L 47->43 · SPIA.SW 48->45
+                                 #                              FLXK.L 42->44 · VUKG.L 43->46 · FLXI.L 44->47
+                                 #                              FLXC.L 45->48
+                                 #   MEUD.PA (LU, 0.07%, EUR 20.5B Stoxx 600) takes Europe #1 from VWCG.DE
+                                 #   (IE, 0.10%, EUR 2.9B) — cheaper, seven times the size, and the edge it
+                                 #   was being charged for is worth nothing on a fund holding no US stock.
+                                 #   Read on its own that is the round's thesis landing exactly as argued.
+                                 #   STOP RULE "A, tiers 0/1/3/9/10" — PASSED. ZERO movement; those sleeves
+                                 #   are 100% IE, so the gate is wired to the tier set it claims.
+                                 #
+                                 #   STOP RULE "A, capped" — FIRED. THE SET CHANGED, 4 in and 4 out:
+                                 #     ADDED   LEMA.L · EMMUSC.SW · EMXC.L · DBXJ.DE
+                                 #     REMOVED HEMA.MI · EIMI.L · VFEA.DE · JPJY.PA
+                                 #   The rule was written on a FALSE PREMISE — "a sort knob must not change
+                                 #   the SET" ignores that `hold_family_first` plus the per-tier caps make
+                                 #   the printed set ORDER-DEPENDENT: the cap takes the first N after the
+                                 #   sort, so any reorder inside the UNPRINTED supply promotes and demotes.
+                                 #   That is recorded as a defect in the rule's reasoning. THE RULE IS
+                                 #   HONOURED ANYWAY. Re-scoring a fired stop rule against the outcome it
+                                 #   fired on is the argmax this whole file exists to forbid, and (#220)
+                                 #   says so in as many words.
+                                 #
+                                 #   AND IT IS THE RIGHT CALL ON THE MERITS, WHICH IS THE STRONGER REASON.
+                                 #   The armed emerging sleeve goes ALL-MSCI: it loses VFEA.DE, the sleeve's
+                                 #   ONLY FTSE index — a FAMILY, the unit (#197)/(#220) count in — and loses
+                                 #   EIMI.L (EUR 34.8B MSCI EM IMI, the BROADEST emerging index in the pond,
+                                 #   12.3y of record). In exchange it gains EMXC.L (MSCI Emerging ex China —
+                                 #   a country carve-out, the exact bet (#211) refused and (#235) below
+                                 #   spends a NARROW token to keep out) and LEMA.L (five weeks old, CAGR
+                                 #   n/a). Price paid for the swap: 0.01-0.04pp of TER. That is a family
+                                 #   lost and a 20-year book made materially worse, for rounding error.
+                                 #   Japan's swap was CLEAN in isolation — JPJY.PA EUR 1.0B -> DBXJ.DE
+                                 #   EUR 5.6B, SAME index, SAME 0.12% — but keeping the tiers that won and
+                                 #   dropping the tier that lost is outcome-selection, i.e. the same argmax.
+                                 #
+                                 #   REVERT: n/a, it ships OFF and `dom_cost` returns 0.0 for every input at
+                                 #   0.0 (asserted, not argued — `screen_columns_config` pins it across all
+                                 #   tiers x all fixture quotes, and the post-change live run returns the
+                                 #   control's 49 rows in the IDENTICAL order). TO RE-OPEN, the emerging
+                                 #   loss must be ANSWERED first, not routed around. The obvious next rung
+                                 #   is a penalty scoped to tiers 5 and 11 only — where this measurement was
+                                 #   clean — and it is deliberately NOT taken here, because picking that
+                                 #   tier set off THIS outcome is exactly what the paragraph above refuses.
+                                 #   A tier-set chosen for a reason other than this run's ticker diff could
+                                 #   ship; one chosen from it cannot.
+                                 #
+                                 #   THE MUTATION GATE CAUGHT THIS ROUND LYING, AND THE FIX IS PART OF IT.
+                                 #   The comparator's (#235) doc claimed the (#204) treatment — "read
+                                 #   ONCE outside the comparator and THREADED in … (#204) wants the
+                                 #   branch gradeable" — while `hold_core_list` still read the OnceLock
+                                 #   itself, so NO test could drive the sort with the penalty armed.
+                                 #   10 mutants survived on 2026-09-04: 3 in the accessor and 7 across
+                                 #   `dom_pen > 0.0` and the two `+ dom_cost` terms. The accessor's 3 are
+                                 #   unkillable by construction and now carry `#[mutants::skip]` like
+                                 #   their two siblings; the other 7 were a REAL hole and are closed by
+                                 #   extracting `picks::hold_core_cmp`, which takes both knobs and both
+                                 #   tiers as arguments. Both call directions are pinned, because a
+                                 #   mutation hits ONE side of the `+` and a one-directional assert
+                                 #   cannot see the other. Worth recording plainly: the round's central
+                                 #   claim is "byte-identical at the default", and until the gate ran
+                                 #   that claim rested on reading the code rather than on a test.
+                                 #
+                                 #   NOT GRADEABLE BY BACKTEST, same as (#203)/(#211)/(#213)/(#215)/(#218)/
+                                 #   (#222)/(#226)/(#234): `backtest::stamp_asset_class` fills only
+                                 #   name/instrument_type/sector, so every backtest quote dies on its TER
+                                 #   leg and no walk reaches the CORE lane. Judgement plus a live diff.
+                                 #
+                                 #   FOUND BY THE REFUSED ARM, AND FIXED — `core::NARROW` gains
+                                 #   "emerging ex" (43 -> 44 tokens). (#211) added "em ex" against exactly
+                                 #   this fund class, with the note that "EM ex China excludes the largest
+                                 #   constituent of the index it names, which is a bet rather than a
+                                 #   partition", and `core.rs` pins the abbreviated spelling as refused. But
+                                 #   "emerging ex china" contains no "em ex" substring, so Amundi's
+                                 #   spelled-out fund walked straight into the broad-EM sleeve. IDENTICAL
+                                 #   defect class to (#234)'s "Global All-Cap" hyphen: `core::hit` is a
+                                 #   plain `contains` with no normalisation, so every token is only as good
+                                 #   as its spellings. LATENT on the shipped lane — EMXC.L does not print in
+                                 #   the control — and it ships anyway, because the token is a REFUSAL and
+                                 #   a refusal that depends on an abbreviation is not a refusal. Pinned in
+                                 #   `pure_logic` on all three spellings, including the two broad-EM funds
+                                 #   (UBS Core MSCI EM, Vanguard FTSE Emerging) that must STILL reach
+                                 #   tier 2 — the token must not eat the sleeve it guards. REVERT: drop the
+                                 #   token; the shipped table does not move either way.
   hold_factor_sleeve: true       # (#228) AMENDED — `momentum` joined `core::FACTOR`, so this knob now opens a
                                  # FOUR-family sleeve. See `hold_per_tier_factor` below; the ceiling this receipt
                                  # argues against was pre-registered, censused and NOT needed. Min-vol still excluded.
