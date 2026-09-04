@@ -4434,6 +4434,88 @@ buy_heuristic:
                                  #   — developed/EM/US/exUS/Europe/Japan are byte-identical row for row.
                                  #   REVERT RULE: 0. That restores the shared cap on every sleeve, and the
                                  #   only thing lost is four all-world funds.
+  hold_per_tier_size: 4          # (#230) MEASURED 2026-09-04, live `screen`, control and probe BACK TO BACK
+                                 #   on the same cache, 4564-EU-buyable-ETF pond. Rows kept in the SMALL-CAP
+                                 #   sleeve alone, overriding `hold_per_tier` (3) there. 0 = inherit it, the
+                                 #   code default and byte-identical to today on every tier (non-negotiable #1).
+                                 #   The FIFTH per-sleeve override and FIRST in ladder order among the optional
+                                 #   sleeves (tier 8; factor 9, sector 10, country 11).
+                                 #
+                                 #   PAIRED WITH THE REAL CHANGE — three tokens `core::GEO` could not spell:
+                                 #     ("russell 2000", 3)      LIVE. `russell 1000` has been in this list since
+                                 #                              the US tier existed; its small-cap sibling never
+                                 #                              was, so EVERY US small-cap fund in the pond
+                                 #                              answered geo_hit = None and died at leg 0 —
+                                 #                              refused for want of a GEOGRAPHY, not for being a
+                                 #                              size tilt. (#229)'s census found 22 of 62
+                                 #                              small-cap ETFs sitting in exactly that hole.
+                                 #     ("s&p smallcap 600", 3)  INERT in this pond and shipped anyway, the way
+                                 #                              (#216) ships its three: ISP6.L is Dist and
+                                 #                              USML.L is Swap at EUR 0.3B, so no row moves. It
+                                 #                              is the correctness half of the same defect.
+                                 #     ("ftse global small", 0) LIVE. FTSE Global Small Cap is developed PLUS
+                                 #                              emerging, so tier 0, not a US spelling.
+                                 #   Same defect as (#200)/(#207)/(#222) — a token ABSENT from the list, not one
+                                 #   matching too loosely. The rule was right; the vocabulary was short.
+                                 #
+                                 #   WHY 4: THE FAMILY COUNT, READ OFF THE CENSUS, NEVER AN ARGMAX ((#220)'s
+                                 #   rule). The live census line moved `small-cap 2 (2f)` -> `small-cap 4 (4f)`,
+                                 #   and supply is exactly four funds, one per family:
+                                 #     WSML.L   msci world         0.35%  EUR 7.3B  Acc Opt IE   8.4y  +9%
+                                 #     R2US.L   russell 2000       0.30%  EUR 4.6B  Acc Opt IE  12.2y  +9%
+                                 #     XXSC.DE  msci europe        0.30%  EUR 3.0B  Acc Opt LU  18.6y  +5%
+                                 #     VGSA.DE  ftse global small  0.22%  AUM n/a   Acc Full IE
+                                 #   Four families against a shared cap of 3 means the cap hides a whole
+                                 #   EXPOSURE, not another wrapper of an index already shown — the invariant
+                                 #   (#197) rested its cap on. There is no fifth fund a larger value could
+                                 #   reach, so the sleeve prints at family-count equilibrium.
+                                 #
+                                 #   VGSA.DE IS ADMITTED ON ABSENT DATA, and that is stated rather than buried.
+                                 #   Its AUM is not served by this pond and (#224) makes missing AUM PASS
+                                 #   (non-negotiable #5, "missing data PASSES a gate"). Its TER (0.22%), share
+                                 #   class (Acc), replication (Full) and domicile (IE) are all real. REVERT
+                                 #   TRIGGER: if a later pond serves VGSA.DE an AUM below the EUR 1B floor it
+                                 #   will drop out on its own and this cap should go back to 3 — the knob is the
+                                 #   family count, so it follows the census down as well as up.
+                                 #
+                                 #   THE HAZARD, RECORDED THE WAY (#216) RECORDS WXMEG.SW: these tokens cannot
+                                 #   leak a size tilt into the BROAD US sleeve only because every Russell 2000 /
+                                 #   S&P SmallCap 600 name in this pond also carries the word "small", which
+                                 #   `narrow_hit` returns FIRST, so `geo_tier` refuses them at tier 3 and only
+                                 #   `size_sleeve_tier` readmits them. A name omitting "small" ("iShares Russell
+                                 #   2000 UCITS ETF") WOULD reach the broad US sleeve. None exists here today.
+                                 #   REVERT the individual token if one appears. Pinned both ways in
+                                 #   `core::pure_logic`.
+                                 #
+                                 #   "global small" was REJECTED as the tier-0 spelling ((#215)'s specific-
+                                 #   tokens-only): it would also swallow the pond's ACTIVE global smaller-
+                                 #   companies funds (Robeco NextGen 0.50%, Jupiter Origin 0.45%) and file three
+                                 #   unrelated strategies under ONE index family — the wrapper failure (#197)
+                                 #   exists to prevent. Both are pinned to stay unspellable.
+                                 #
+                                 #   LIVE DIFF, journal cp -p'd and restored BETWEEN the arms and cmp-verified,
+                                 #   control from a `git stash`, same pond both arms:
+                                 #     census cell  `small-cap 2 (2f)` -> `small-cap 4 (4f)`, EVERY OTHER SLEEVE
+                                 #                  BYTE-IDENTICAL — that is the attribution
+                                 #     funnel       not broad-index 3837 -> 3825, i.e. 12 names newly clear
+                                 #                  leg 0, splitting EXACTLY as TER +2 / replication +5 /
+                                 #                  not-Acc +2 / AUM +1 / QUALIFIED 81 -> 83. Conserved.
+                                 #     CORE table   44 -> 46 rows, TWO added (R2US.L, VGSA.DE), ZERO removed,
+                                 #                  control order preserved inside the probe
+                                 #     cap header   gains `≤4 for small-cap`, in ladder order ahead of the
+                                 #                  factor cell — the header stays one reader ahead of the
+                                 #                  filter, as (#207)/(#220)/(#227)/(#228) each require
+                                 #   PRE-REGISTERED STOP RULE: additions only, zero removals, every added row
+                                 #   carrying a small-cap index family. All three held.
+                                 #
+                                 #   REVERT: set 0 (the cap goes back to the shared 3 and VGSA.DE drops out;
+                                 #   R2US.L and XXSC.DE stay). To revert the whole round, drop the three GEO
+                                 #   tokens as well — that restores (#229)'s 44-row table byte for byte.
+                                 #
+                                 #   JUDGEMENT-PLUS-LIVE-DIFF, NOT GRADED, and PERMANENTLY UNGRADEABLE, exactly
+                                 #   as `hold_per_tier` and its three elder twins — `backtest::stamp_asset_class`
+                                 #   fills only name/instrument_type/sector, so every backtest quote dies on its
+                                 #   TER leg and no walk can reach this lane.
   hold_per_tier_factor: 4       # (#228) MEASURED 2026-09-03, live `screen`, control and probe BACK TO BACK on the same cache.
                                  # WHAT IT DOES: gives the world FACTOR sleeve its own row cap, overriding the shared `hold_per_tier`
                                  # there and only there. 0 = inherit it, byte-identical on every sleeve, and the config-less DEFAULT.

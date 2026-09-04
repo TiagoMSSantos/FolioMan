@@ -4094,13 +4094,14 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     let mut per_tier = [0usize; core::HOLD_TIERS];
     let cap = crate::config::hold_per_tier();
     let all_world = crate::config::hold_per_tier_all_world();
+    let size = crate::config::hold_per_tier_size();
     let factor = crate::config::hold_per_tier_factor();
     let sector = crate::config::hold_per_tier_sector();
     let country = crate::config::hold_per_tier_country();
     cores.retain(|q| {
         let t = core::hold_breadth_tier(&q.name) as usize;
         per_tier[t] += 1;
-        per_tier[t] <= core::tier_cap(t, cap, all_world, factor, sector, country)
+        per_tier[t] <= core::tier_cap(t, cap, all_world, size, factor, sector, country)
     });
     cores
 }
@@ -4212,11 +4213,18 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // the filter. Built as a list rather than a match: with both off it is still the bare "≤3", and
     // with only all-world set it is byte-identical to the string (#207) shipped.
     let all_world_cap = crate::config::hold_per_tier_all_world();
+    let size_cap = crate::config::hold_per_tier_size();
     let factor_cap = crate::config::hold_per_tier_factor();
     let sector_cap = crate::config::hold_per_tier_sector();
     let mut caps: Vec<String> = Vec::new();
     if all_world_cap > 0 {
         caps.push(format!("≤{all_world_cap} for all-world"));
+    }
+    // (#230) a fifth override, same rule again, and it goes FIRST among the optional sleeves because
+    // the list is in LADDER order — small-cap is tier 8, factor 9, sector 10, country 11 — so the
+    // header reads in the order the sleeves print. Silent when off, so the (#228) line is unchanged.
+    if size_cap > 0 {
+        caps.push(format!("≤{size_cap} for small-cap"));
     }
     // (#228) a fourth override, same rule again, and the list is in LADDER order so the header reads
     // in the order the sleeves print. Silent when off, so the (#227) line is byte-identical.

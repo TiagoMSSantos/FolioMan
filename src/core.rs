@@ -1213,7 +1213,7 @@ pub const HOLD_TIERS: usize = 12;
 /// REVERT: drop the three tokens. That returns 47 to the blind spot and puts SPPW/WEBH/DBXJ back.
 /// Revert an INDIVIDUAL token if a later pond has it admit a bond, a commodity or a single-country
 /// index, or file a fund in a tier its index does not track.
-const GEO: [(&str, u8); 28] = [
+const GEO: [(&str, u8); 31] = [
     // 4 = ex-US sleeves. FIRST, because every one of them contains a broader token.
     ("acwi ex", 4), ("world ex", 4), ("ex-usa", 4),
     // 5 = Europe. "ftse developed europe" precedes the generic "ftse developed" below.
@@ -1267,6 +1267,12 @@ const GEO: [(&str, u8); 28] = [
     // 0 = the whole planet, DM+EM in one fund
     ("all-world", 0), ("all-country", 0), ("all country world", 0), ("acwi", 0), ("global all cap", 0),
     ("solactive gbs global markets", 0),
+    // (#230) FTSE Global Small Cap is an ALL-WORLD index (developed + emerging), so it belongs at
+    // tier 0 and not beside the US spellings below. Spelled with its provider prefix on purpose,
+    // (#215)'s "specific tokens only": a bare "global small" would also swallow the pond's ACTIVE
+    // global smaller-companies funds (Robeco NextGen, Jupiter Origin) and file three unrelated
+    // strategies under ONE index family, which is the wrapper failure (#197) exists to prevent.
+    ("ftse global small", 0),
     // 1 = developed markets
     // (#215) "prime global" spells the SAME index the line above already names — Amundi's Prime
     // range omits the index from the fund name, so "Amundi Prime Global UCITS ETF Acc" (F50A.DE,
@@ -1292,6 +1298,19 @@ const GEO: [(&str, u8); 28] = [
     // match, and `msci usa` above files it at this same tier anyway.
     ("s&p 500", 3), ("msci usa", 3), ("crsp us total market", 3), ("russell 1000", 3),
     (" us equity", 3),
+    // (#230) THE US SMALL-CAP INDICES, which this list could not spell. `russell 1000` has been here
+    // since the tier existed and `russell 2000` never was, so every US small-cap fund in the pond
+    // answered `geo_hit` = None and died at leg 0 — refused for want of a geography, not for being a
+    // size tilt. (#229)'s census found 22 of 62 small-cap ETFs in exactly that hole. Same defect as
+    // (#200)/(#207)/(#222): a token ABSENT from the list, not one matching too loosely.
+    //
+    // These CANNOT leak a size tilt into the broad US sleeve, and the reason is `NARROW`, not luck:
+    // every Russell 2000 / S&P SmallCap 600 name in this pond also carries the word "small", which
+    // `narrow_hit` returns FIRST in array order, so `geo_tier` refuses them at tier 3 and only
+    // `size_sleeve_tier` can readmit them — the same GEO-gives/NARROW-takes-back path XXSC.DE walks.
+    // THE HAZARD IS A NAME THAT OMITS "SMALL": "iShares Russell 2000 UCITS ETF" would reach the broad
+    // US sleeve, and no such fund exists here today. REVERT the individual token if one appears.
+    ("russell 2000", 3), ("s&p smallcap 600", 3),
 ];
 
 /// sector/thematic/tilt tokens that disqualify a geographic core: single sectors (Nasdaq-100 is a
@@ -1814,12 +1833,20 @@ pub fn tier_cap(
     tier: usize,
     base: usize,
     all_world: usize,
+    size: usize,
     factor: usize,
     sector: usize,
     country: usize,
 ) -> usize {
     if tier == 0 && all_world > 0 {
         all_world
+    } else if tier == SIZE_TIER as usize && size > 0 {
+        // (#230) …and the small-cap sleeve carries its own, first in ladder order among the optional
+        // sleeves. (#229) took it from one geography to every one and (#230) gave GEO the US
+        // small-cap spellings, so it spans FOUR index families against a shared cap of 3 — the cap
+        // would hide a whole exposure, not another wrapper. The value is the measured family count
+        // and NOTHING ELSE: (#220)'s rule, read off the census, never an argmax over outcomes.
+        size
     } else if tier == FACTOR_TIER as usize && factor > 0 {
         // (#228) …and the factor sleeve carries its own for the reason the two below it do: adding
         // "momentum" gives it a FOURTH index family against a shared cap of 3, so the cap would hide
@@ -5054,6 +5081,34 @@ mod tests {
         Some(SIZE_TIER),
         "all-world small cap is the broadest form of the exposure"
     );
+    // (#230) the US small-cap indices GEO could not spell, and the two-step path they walk: GEO now
+    // gives them a tier, NARROW's "small" takes it straight back, and the SLEEVE is what readmits
+    // them — so the tokens add a small-cap row and can never add a broad-US one.
+    assert_eq!(geo_hit("state street spdr russell 2000 us small cap ucits etf"), Some(3),
+        "(#230) russell 1000 was spelled and russell 2000 was not; R2US.L (EUR 4.6B, 0.30%) is the row");
+    assert_eq!(geo_hit("ishares s&p smallcap 600 ucits etf usd (dist)"), Some(3),
+        "the second US small-cap index — INERT in today's pond (this one is Dist), shipped as the pair");
+    assert_eq!(geo_hit("vanguard funds plc - vanguard ftse global small-cap ucits etf usd acc"), Some(0),
+        "FTSE Global Small Cap is developed PLUS emerging, so it is tier 0 and not a US spelling");
+    assert_eq!(geo_tier_at("state street spdr russell 2000 us small cap ucits etf", 0.0, false, false, 0), None,
+        "…and with the sleeve OFF, NARROW still refuses it: a size tilt never reaches the broad US sleeve");
+    assert_eq!(
+        size_sleeve_tier("state street spdr russell 2000 us small cap ucits etf", "small", 0.35),
+        Some(SIZE_TIER),
+        "(#230) with the sleeve on, the SLEEVE is what readmits it — tier 8, not tier 3"
+    );
+    // …and the three tokens key three DISTINCT families, which is what earns `hold_per_tier_size`.
+    // A collapse here would spend the new rows on wrappers, the failure (#197) forbids.
+    assert_eq!(geo_family_of("state street spdr russell 2000 us small cap ucits etf"), Some("russell 2000"));
+    assert_eq!(geo_family_of("ishares s&p smallcap 600 ucits etf usd (dist)"), Some("s&p smallcap 600"));
+    assert_eq!(geo_family_of("vanguard funds plc - vanguard ftse global small-cap ucits etf usd acc"),
+        Some("ftse global small"));
+    // (#230) "global small" was REJECTED as the tier-0 spelling and this is why: it would file three
+    // unrelated strategies under one family. Both of these must stay geographically unspellable.
+    assert_eq!(geo_hit("robeco nextgen global small-cap equity ucits etf usd acc"), None,
+        "an ACTIVE global smaller-companies fund is not the FTSE Global Small Cap index");
+    assert_eq!(geo_hit("jupiter origin global smaller companies active ucits etf usd acc"), None,
+        "…nor is this one; (#215)'s specific-tokens-only rule is what keeps them out");
     // (#229) and the regression this round turns on: the widened sleeve must buy FAMILIES, not
     // wrappers. A size fund falls through to `geo_family_of`, so the two funds the census clears key
     // DIFFERENT families and the sleeve prints two rows under the shared ≤3 cap. Were they to
@@ -5457,37 +5512,46 @@ mod tests {
 
     // (#207) the all-world sleeve's own row cap, and the two halves that make it safe: 0 inherits
     // (non-negotiable #1, the shipped lane), and the override reaches tier 0 and nothing else.
-    assert_eq!(tier_cap(0, 3, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(0, 3, 5, 0, 0, 0), 5, "…and tier 0 takes it when set");
-    assert_eq!(tier_cap(1, 3, 5, 0, 0, 0), 3, "developed is untouched");
-    assert_eq!(tier_cap(HOLD_TIERS - 1, 3, 5, 0, 0, 0), 3, "…and so is the last sleeve");
+    assert_eq!(tier_cap(0, 3, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(0, 3, 5, 0, 0, 0, 0), 5, "…and tier 0 takes it when set");
+    assert_eq!(tier_cap(1, 3, 5, 0, 0, 0, 0), 3, "developed is untouched");
+    assert_eq!(tier_cap(HOLD_TIERS - 1, 3, 5, 0, 0, 0, 0), 3, "…and so is the last sleeve");
     // (#220) the SECTOR override, pinned on the LITERAL tier as well as the symbolic one: the arm
     // is `tier == SECTOR_TIER`, and a mutation that rewrites that constant moves a symbolic
     // assertion with it. 10 is the literal `SECTOR_TIER` this ladder ships.
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 5, 0), 5, "(#220) the sector sleeve takes its own cap");
-    assert_eq!(tier_cap(10, 3, 0, 0, 5, 0), 5, "…and it is tier 10 that does so, spelled as a literal");
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 5, 0), 3, "the sleeve below it is untouched");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 5, 0), 5, "(#220) the sector sleeve takes its own cap");
+    assert_eq!(tier_cap(10, 3, 0, 0, 0, 5, 0), 5, "…and it is tier 10 that does so, spelled as a literal");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 5, 0), 3, "the sleeve below it is untouched");
     // (#228) the FACTOR override, pinned on the literal tier as well as the symbolic one for
     // (#220)'s stated reason — 9 is the literal `FACTOR_TIER` this ladder ships, and a mutation
     // rewriting that constant would drag a purely symbolic assertion along with it.
-    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 4, 0, 0), 4, "(#228) the factor sleeve takes its own cap");
-    assert_eq!(tier_cap(9, 3, 0, 4, 0, 0), 4, "…and it is tier 9 that does so, spelled as a literal");
-    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 4, 0, 0), 3, "the sleeve below IT is untouched too");
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 4, 0, 0), 3, "…and so is the one above");
-    assert_eq!(tier_cap(0, 3, 7, 4, 5, 9), 7,
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 4, 0, 0), 4, "(#228) the factor sleeve takes its own cap");
+    assert_eq!(tier_cap(9, 3, 0, 0, 4, 0, 0), 4, "…and it is tier 9 that does so, spelled as a literal");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 4, 0, 0), 3, "the sleeve below IT is untouched too");
+    // (#230) the SIZE override, pinned on the literal tier as well as the symbolic one for (#220)'s
+    // stated reason — 8 is the literal `SIZE_TIER` this ladder ships, and a mutation rewriting that
+    // constant would drag a purely symbolic assertion along with it.
+    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 4, 0, 0, 0), 4, "(#230) the small-cap sleeve takes its own cap");
+    assert_eq!(tier_cap(8, 3, 0, 4, 0, 0, 0), 4, "…and it is tier 8 that does so, spelled as a literal");
+    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 4, 0, 0, 0), 3, "the sleeve ABOVE it is untouched");
+    assert_eq!(tier_cap(7, 3, 0, 4, 0, 0, 0), 3, "…and the Asia-Pacific sleeve below it is too");
+    assert_eq!(tier_cap(0, 3, 7, 4, 0, 0, 0), 7, "all-world keeps its precedence over the size override");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 4, 0, 0), 3, "…and so is the one above");
+    assert_eq!(tier_cap(0, 3, 7, 0, 4, 5, 9), 7,
         "all-world keeps its precedence over ALL THREE later overrides");
-    assert_eq!(tier_cap(0, 3, 7, 0, 5, 0), 7, "all-world keeps its precedence over the sector override");
-    assert_eq!(tier_cap(1, 3, 0, 0, 5, 0), 3, "…and every ordinary sleeve still reads the shared cap");
+    assert_eq!(tier_cap(0, 3, 7, 0, 0, 5, 0), 7, "all-world keeps its precedence over the sector override");
+    assert_eq!(tier_cap(1, 3, 0, 0, 0, 5, 0), 3, "…and every ordinary sleeve still reads the shared cap");
     // (#227) the COUNTRY override, pinned the same two ways for the same reason — 11 is the literal
     // `COUNTRY_TIER` this ladder ships, and a mutation rewriting that constant would drag a purely
     // symbolic assertion along with it.
-    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 7), 7, "(#227) the country sleeve takes its own cap");
-    assert_eq!(tier_cap(11, 3, 0, 0, 0, 7), 7, "…and it is tier 11 that does so, spelled as a literal");
-    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 7), 3, "the sleeve above it is untouched");
-    assert_eq!(tier_cap(0, 3, 7, 0, 5, 9), 7, "all-world keeps its precedence over BOTH later overrides");
+    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 0, 7), 7, "(#227) the country sleeve takes its own cap");
+    assert_eq!(tier_cap(11, 3, 0, 0, 0, 0, 7), 7, "…and it is tier 11 that does so, spelled as a literal");
+    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 7), 3, "the sleeve above it is untouched");
+    assert_eq!(tier_cap(0, 3, 7, 0, 0, 5, 9), 7, "all-world keeps its precedence over BOTH later overrides");
     // …and the country sleeve is hidden while the knob is off, on the same rule as the other three.
     assert!(!sleeve_visible(COUNTRY_TIER as usize, 0.35, true, true, 0),
         "(#227) no OTHER sleeve's knob makes the country cell print");
