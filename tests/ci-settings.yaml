@@ -5007,7 +5007,7 @@ buy_heuristic:
                                  #   as `hold_per_tier` and its three elder twins — `backtest::stamp_asset_class`
                                  #   fills only name/instrument_type/sector, so every backtest quote dies on its
                                  #   TER leg and no walk can reach this lane.
-  hold_per_tier_factor: 4       # (#228) MEASURED 2026-09-03, live `screen`, control and probe BACK TO BACK on the same cache.
+  hold_per_tier_factor: 5       # (#228) MEASURED 2026-09-03, live `screen`, control and probe BACK TO BACK on the same cache.
                                  # WHAT IT DOES: gives the world FACTOR sleeve its own row cap, overriding the shared `hold_per_tier`
                                  # there and only there. 0 = inherit it, byte-identical on every sleeve, and the config-less DEFAULT.
                                  # The FOURTH per-sleeve override, after `hold_per_tier_all_world` (#207), `hold_per_tier_sector` (#220)
@@ -5105,6 +5105,53 @@ buy_heuristic:
                                  # drop `"momentum"` from `core::FACTOR` as well — that alone restores the pre-(#228) table byte for
                                  # byte, and it can be done on the (#217)/(#210) principle alone, with no measurement, exactly as
                                  # `hold_factor_sleeve`'s own receipt says of turning that knob back off.
+                                 #
+                                 # ================= (#236) 4 -> 5: THE VOLATILITY HALF OF (#217) IS OVERTURNED TOO =================
+                                 # MEASURED 2026-09-04, live `screen`, control and arm BACK TO BACK on ONE cache (the five journal
+                                 # files backed up, restored and cmp-verified between every run). CONTROL 49 rows / ARM 50 rows.
+                                 #
+                                 # WHAT SHIPPED: `"minimum vol"` joins `core::FACTOR` (4 tokens -> 5) and this cap follows it 4 -> 5.
+                                 # THE CAP IS THE MEASURED FAMILY COUNT AND NOTHING ELSE — (#220)'s rule. The census line moved
+                                 # `world factor 4 (4f)` -> `world factor 5 (5f)`, so supply and families rose TOGETHER and the sleeve
+                                 # stays at family-count equilibrium: one row per factor, no wrapper hidden, none shown twice.
+                                 #
+                                 # THE A/B — whole-line ticker-set diff of the CORE table between the DOM header and the trailer:
+                                 #   ADDED:   XDEB.DE (Xtrackers MSCI World Minimum Volatility 1C, 0.25%, EUR 1.1B, Acc, Full, IE)
+                                 #   REMOVED: NOTHING. The 49 surviving rows kept their exact order.
+                                 #   Pre-registered stop rules were ZERO REMOVALS and NEW FAMILY REQUIRED. Both met: the added row is
+                                 #   the FIFTH FAMILY, not a fifth wrapper of a tilt already shown.
+                                 # THE FUNNEL LEDGER CLOSES on the same run, which is the check that the token did what it claims:
+                                 #   not broad-index 3855 -> 3851 (four min-vol names are now CLASSIFIED instead of refused on sight)
+                                 #   TER 293 -> 296 (three of those four then die on the 0.25% base cap; no other leg moved)
+                                 #   QUALIFIED 123 -> 124 (the fourth is XDEB.DE).  4 = 3 + 1, so no name went missing in the middle.
+                                 #
+                                 # THIS IS A DECISION, NOT A MEASUREMENT, and it is recorded that way because (#228) went out of its
+                                 # way to record the opposite. (#228) KEPT the exclusion and stated its ground: a min-vol fund targets
+                                 # variance at the expense of return, "the opposite of what this table is asked for". NOTHING MEASURED
+                                 # IN (#236) REFUTES THAT SENTENCE — it is still true. The user asked for the two tilt sleeves to be
+                                 # fed and named min-vol as in scope, so the ground was OVERRIDDEN, not disproved: the same shape
+                                 # (#217) used over (#210) and (#218) used over (#217). What (#236) adds is only the PRICE, and (#228)
+                                 # had already paid to learn it — it named XDEB.DE as clearing every leg BUT the array, so the
+                                 # exclusion was known in advance to cost exactly one row. It cost exactly one row.
+                                 # REVERT: drop `"minimum vol"` from `core::FACTOR` and set this back to 4. That restores the
+                                 # pre-(#236) table byte for byte and needs NO measurement — the (#228) principle alone licenses it.
+                                 #
+                                 # `"min vol"` IS DELIBERATELY NOT SHIPPED, and this is the half most likely to be "completed" later
+                                 # by mistake. The two spellings are NOT interchangeable: `core::sleeve_family_of` keys a factor fund
+                                 # on its NARROW TOKEN, so shipping the alias would key TWO FAMILIES FOR ONE EXPOSURE and license a
+                                 # cap of 6 where only five tilts exist — the argmax-by-accident (#220) exists to forbid. It also
+                                 # admits nothing on this pond, which is (#215)'s independent refusal. Ship it only WITH a named fund
+                                 # AND a family collapse for the alias. `factor_sleeve_admits_minimum_vol_but_not_its_alias` pins both
+                                 # halves, and it is the RENAMED `factor_sleeve_excludes_volatility_tilts` — same test, new job.
+                                 #
+                                 # THREE PINS FLIPPED DELIBERATELY, all of which (#228) wrote so that this round could not be quiet:
+                                 #   `pure_logic`'s `FACTOR.len() == 4` and its four-family set assertion -> 5 and five.
+                                 #   the `hold_suitable` exemplar for XDEB.DE, and the `is_broad_index_name` one, are now
+                                 #   CONFIG-DEPENDENT (this file ships the factor sleeve ON; the code default is OFF) and are spelled
+                                 #   OFF `config::hold_factor_sleeve()` rather than as literals, so BOTH CI regimes assert the shipped
+                                 #   answer. A hardcoded `!` there would be green in one regime and red in the other.
+                                 # NOT GRADEABLE, permanently, exactly as the caps around it: `backtest::stamp_asset_class` fills only
+                                 # name/instrument_type/sector, so every backtest quote dies on its TER leg and no walk reaches here.
   hold_per_tier_sector: 6        # (#225) re-read 2026-09-03 — see the amendment at the end of this receipt.
                                  # (#220) MEASURED 2026-09-02, live `screen`, control and probe BACK TO BACK on the same cache.
                                  #   WHAT IT DOES: gives the world SECTOR sleeve its own row cap, overriding the shared `hold_per_tier`
@@ -5212,6 +5259,74 @@ buy_heuristic:
                                  #   sleeve still holds only small-cap funds and the current label is the ACCURATE one — renaming it
                                  #   would make the table less true, not more. `core::SIZE`, `SIZE_GEO` and picks.rs are UNCHANGED.
                                  #   NET: this round changes ONE config integer and no Rust at all.
+                                 #
+                                 # ================= (#236) RE-CENSUSED AND HELD AT 6 — FOUR ARMS PRICED, ALL FOUR REFUSED ==========
+                                 # MEASURED 2026-09-04, live `screen`. A throwaway probe (written, run, and DELETED before commit)
+                                 # walked every EU-buyable ETF carrying a `core::SECTOR` or `core::FACTOR` token — 627 funds — and
+                                 # reported WHICH gate refused each one, because the four candidate fixes need very different changes
+                                 # and only a census tells them apart. Gate tally: no GEO token at all 203 · sector conjunct 69 ·
+                                 # SLEEVE-OK sector 65 · tier-5 not in SECTOR_GEO 56 · tier-3 not in FACTOR_GEO 32 · factor conjunct
+                                 # 32 · 'minimum vol' 19 · 'screened' 19 · tier-5 not in FACTOR_GEO 19 · SLEEVE-OK factor 15 ·
+                                 # 'sector' 11 · 'esg' 10. The sleeve prints 6 families out of 6 IN SUPPLY, so nothing here is capped
+                                 # out: every candidate had to move an ADMISSION leg, and this cap would then follow by (#220) or not
+                                 # move at all. It did not move.
+                                 #
+                                 # ARM 1 — `real estate`/`property`/`reit` AS SECTOR TOKENS: REFUSED. 20 funds carry one of the three
+                                 #   tokens; ZERO clear the legs. That re-confirms (#222) on a wider pond and returns its exact answer,
+                                 #   so the NARROW comment there stands unedited. (#215): a token that admits nothing is speculation
+                                 #   with a maintenance cost.
+                                 #
+                                 # ARM 2 — `SECTOR_GEO += 5` (admit EUROPE sector funds): REFUSED, and NOT for lack of supply. Two
+                                 #   Europe sector funds clear every leg and BOTH are `industrial` — a family the sleeve ALREADY
+                                 #   PRINTS — so the arm buys a wrapper, not an exposure, which is what the caps exist to suppress.
+                                 #   The rest die at TER 0.30% against the 0.25% base cap, and (#218)'s receipt PRE-REGISTERED AGAINST
+                                 #   a sector TER ceiling, so the obvious follow-on is already refused in writing. Not re-opened.
+                                 #
+                                 # ARM 3 — RELAX THE ESG CO-OCCURRENCE CONJUNCT: REFUSED, and the census produced direct evidence that
+                                 #   the conjunct is LOAD-BEARING rather than merely conservative. Five funds would be admitted:
+                                 #   ISPE.L (equal weight — a family already shown, and currency-hedged besides), SXLK.L and WELU.DE
+                                 #   (technolog, already shown), WELK.DE (financ, already shown) — and IX5A.AS, which is
+                                 #   `iShares EUR Corp Bond ex-Financials 1-5yr ESG`, A CORPORATE BOND FUND. It reaches the sector
+                                 #   vocabulary at all because `hit()` is a plain substring test and "ex-Financials" contains
+                                 #   "financ". So the arm's entire yield is four duplicates plus a bond fund in an equity table. B4's
+                                 #   own pre-registered rule (refused if the admitted funds duplicate printed families) fires without
+                                 #   help; the bond fund is the separate reason the conjunct is not merely a duplicate filter.
+                                 #
+                                 # ARM 4 — A SLEEVE-SCOPED AUM FLOOR (`hold_sector_sleeve_aum`): MEASURED IN FULL, THEN REFUSED BY ITS
+                                 #   OWN PRE-REGISTERED STOP RULE. This is the arm that nearly shipped, so the whole receipt is banked
+                                 #   here and the next round should not need to re-run it.
+                                 #   THE ARGUMENT WAS STRUCTURAL, NOT FITTED, which is what would have kept it clear of (#224)/(#226):
+                                 #   a GICS sector is ~1/11th of the market, so a EUR 1B floor calibrated on funds holding the WHOLE
+                                 #   market is not a liquidity test for a sector fund. Probed value EUR 1e9/11 = 9e7, derived from that
+                                 #   ratio and NOT from what it admits.
+                                 #   WHAT IT BOUGHT (live A/B on one cache, arm run at cap 9): sector supply 11 (6f) -> 22 (9f), and
+                                 #   the three new families are all real GICS sectors — ICDU.L Consumer Discretionary (0.15%, EUR
+                                 #   701M), 2B7B.DE Materials (0.15%, EUR 195M), XWTS.DE Communication Services (0.25%, EUR 363M).
+                                 #   Funnel AUM 154 -> 143, QUALIFIED 124 -> 135. Table 50 -> 53 rows.
+                                 #   WHY IT WAS REFUSED ANYWAY: THE ARM ALSO REMOVED A ROW. 2B7C.DE (iShares S&P 500 Industrials,
+                                 #   0.15%, EUR 687M) entered the `industrial` family and DISPLACED XDWI.L (Xtrackers MSCI World
+                                 #   Industrials, 0.25%, EUR 1.2B), because the sleeve fills cheapest-TER-first WITHIN a family. The
+                                 #   round pre-registered ZERO REMOVALS, and a broken guard REFUSES OUTRIGHT — it is never softened.
+                                 #   AND THE REMOVAL IS NOT MERELY BOOKKEEPING, which is why it was not overridden on the spot: the
+                                 #   swap buys 10bp of TER and pays for it in BREADTH (MSCI World -> S&P 500: the world industrials
+                                 #   exposure becomes a US one) and in SIZE (EUR 1.2B -> EUR 687M, i.e. closure risk over a 20-year
+                                 #   hold). Two of three axes get worse. That is a trade a reader should be SHOWN, not one a knob
+                                 #   should make silently.
+                                 #   NO HONEST FLOOR VALUE AVOIDS IT. Every floor at or below EUR 687M admits the displacement first,
+                                 #   because 2B7C.DE sits ABOVE both XWTS.DE (363M) and 2B7B.DE (195M). The ONLY window that admits a
+                                 #   new family without it is EUR 687M-701M — 14M wide, and defined by nothing but the gap between the
+                                 #   fund to include and the fund to exclude. That is the argmax (#220) and (#224) forbid, stated as a
+                                 #   number. (An earlier draft of this receipt claimed the 9e7 choice was robust across a 7x range of
+                                 #   floors; it is NOT — XWTS.DE at 363M falsifies that, and the claim is recorded here as withdrawn
+                                 #   rather than deleted.)
+                                 #   NOTHING SHIPPED FOR THIS ARM: no knob, no `aum_floor_for`, no threading. It was written, measured
+                                 #   and then REMOVED, exactly as (#228) did with its own pre-registered `hold_factor_sleeve_ter`.
+                                 #   THE GLOBAL EUR 1B FLOOR IS UNTOUCHED; (#224) and (#226) both refused lowering it and both stand.
+                                 #   TO SHIP IT LATER it needs a DECISION, not a measurement — the measurement is above and will
+                                 #   reproduce. The decision is whether +3 GICS families is worth XDWI.L becoming 2B7C.DE, which is a
+                                 #   breadth-for-cost trade of exactly the kind (#217)/(#218)/(#227) each put to the user explicitly.
+                                 #
+                                 # NET: this cap does not move, and (#236) changes NO sector-side Rust at all.
   hold_per_tier_country: 9       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
                                  #   BACK on one cache) — 7 -> 9. THE FAMILY COUNT, NOT AN ARGMAX, read
                                  #   off a RE-RUN of (#227)'s own census: two of the twenty spellings it

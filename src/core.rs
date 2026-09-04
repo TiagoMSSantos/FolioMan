@@ -1667,8 +1667,27 @@ pub const SIZE_TIER: u8 = FACTOR_TIER - 1;
 /// THE MIN-VOL EXCLUSION IS LIVE AND COSTLY, NOT VACUOUS, and is recorded that way so nobody
 /// "completes" the set believing it is free: the 2026-09-03 census found XDEB.DE (Xtrackers MSCI
 /// World Minimum Volatility, EUR 1.1B, 0.25%, Acc, Full, IE) CLEARING EVERY LEG. It is refused by
-/// this array alone. `factor_sleeve_excludes_volatility_tilts` pins it.
-const FACTOR: [&str; 4] = ["quality", "value", "equal weight", "momentum"];
+/// this array alone. `factor_sleeve_admits_minimum_vol_but_not_its_alias` pins it (renamed by
+/// (#236), which overturned the half this sentence records).
+///
+/// (#236) AMENDED — "minimum vol" SHIPS. The paragraph above is left standing because it is the
+/// honest record of what was overturned, and it was overturned BY DECISION, NOT BY EVIDENCE: the
+/// user asked for the two tilt sleeves to be fed and named min-vol as in scope. NOTHING MEASURED
+/// HERE REFUTES (#228) — its argument was that a fund targeting variance at the expense of return is
+/// the opposite of this table's ask, and that argument is untouched. What was measured is only the
+/// PRICE, and (#228) had already priced it: the 2026-09-04 census re-confirmed XDEB.DE clearing
+/// every leg, so the token admits a real fund and `(#215)`'s "a token that admits nothing is
+/// speculation" is satisfied. A future round can revert on the (#228) principle alone, with no
+/// measurement, exactly as (#217) and (#218) each recorded for their own overrides.
+///
+/// "min vol" IS DELIBERATELY NOT HERE, and not by oversight — the two spellings are NOT
+/// interchangeable. It is a distinct `NARROW` token, so [`sleeve_family_of`] would key it as a
+/// SEPARATE FAMILY from "minimum vol" while naming the SAME exposure: a cap of 6 for 5 real tilts,
+/// which is precisely the inflation `(#220)`'s family-count rule exists to stop. It also admits
+/// nothing today — the census found no fund spelling it that clears a leg — so `(#215)` refuses it
+/// on its own terms as well. Ship it only WITH a named fund in the receipt AND a family collapse
+/// for the alias; adding the token alone would silently license a row.
+const FACTOR: [&str; 5] = ["quality", "value", "equal weight", "momentum", "minimum vol"];
 
 /// (#217) The tenth sleeve, ranked last. Its own tier for the reason `SIZE_TIER` has one: a factor
 /// fund dropped into the developed sleeve loses the cheapest-TER sort to a 0.20% MSCI World tracker
@@ -5077,18 +5096,26 @@ mod tests {
         assert_eq!(merge_spans(MemberSpans::new(), base.clone()), base);
     }
 
-    /// (#228) The half of (#217)'s scope decision that was NOT overturned, pinned so nobody
-    /// "completes" the set later believing it is free. THE EXCLUSION IS LIVE AND COSTLY: the
-    /// 2026-09-03 census found XDEB.DE (Xtrackers MSCI World Minimum Volatility, EUR 1.1B, 0.25%,
-    /// Acc, Full replication, IE) CLEARING EVERY OTHER LEG. It is refused by this array alone.
-    /// A min-vol fund targets variance at the expense of return, which is the opposite of what a
-    /// 20-year hold table is asked for — so the refusal is deliberate, and this is where it lives.
+    /// (#236) The half of (#217)'s scope decision that (#228) left standing, now OVERTURNED BY
+    /// DECISION — and this test does not go away, it changes what it guards. (#228) proved the
+    /// exclusion was LIVE AND COSTLY by naming the fund it refused: XDEB.DE (Xtrackers MSCI World
+    /// Minimum Volatility, EUR 1.1B, 0.25%, Acc, Full replication, IE) cleared every OTHER leg, so
+    /// the array was the whole refusal. (#236) pays that cost the other way and admits it.
+    ///
+    /// WHAT IS PINNED NOW IS THE ASYMMETRY BETWEEN THE TWO SPELLINGS, which is a real trap and not a
+    /// tidiness rule: `sleeve_family_of` keys a factor fund on its `NARROW` TOKEN, so shipping the
+    /// alias "min vol" alongside "minimum vol" would key TWO families for ONE exposure and license a
+    /// cap of 6 where only 5 tilts exist — the argmax-by-accident (#220) exists to stop. The alias
+    /// also admits nothing today, so (#215) refuses it independently.
     #[test]
-    fn factor_sleeve_excludes_volatility_tilts() {
-        assert!(!FACTOR.contains(&"min vol") && !FACTOR.contains(&"minimum vol"),
-            "(#228) momentum shipped; the VOLATILITY half of (#217)'s exclusion stands");
+    fn factor_sleeve_admits_minimum_vol_but_not_its_alias() {
+        assert!(FACTOR.contains(&"minimum vol"), "(#236) the spelling XDEB.DE actually carries");
+        assert!(!FACTOR.contains(&"min vol"),
+            "(#236) the alias would key a SECOND family for the SAME exposure — (#215) and (#220) both refuse it");
         assert_eq!(geo_tier_at("xtrackers msci world minimum volatility ucits etf 1c", 0.0, true, false, 0),
-            None, "(#228) XDEB.DE clears every other leg and is refused by FACTOR alone");
+            Some(FACTOR_TIER), "(#236) …and the sleeve claims it, which is what (#228) measured as the cost");
+        assert_eq!(geo_tier_at("xtrackers msci world minimum volatility ucits etf 1c", 0.0, false, false, 0),
+            None, "(#236) …while the factor knob still gates it, so the sleeve stays optional");
     }
 
     #[test]
@@ -5237,7 +5264,12 @@ mod tests {
     assert!(hold("Vanguard FTSE All-World UCITS ETF USD Acc", Some(0.22), Some("Full"), Some("Acc"), Some(15e9))); // VWCE: 0.22% all-world under the 0.25 cap
     assert!(!hold("Vanguard FTSE All-World UCITS ETF USD Acc", Some(0.30), Some("Full"), Some("Acc"), Some(15e9))); // 0.30% too dear for a core
     assert!(!hold("iShares MSCI World EUR Hedged UCITS ETF Acc", Some(0.20), Some("Full"), Some("Acc"), Some(5e9))); // hedged class: hedge-cost drag, not the canonical core
-    assert!(!hold("Xtrackers MSCI World Minimum Volatility UCITS ETF", Some(0.25), Some("Full"), Some("Acc"), Some(1.1e9))); // spelled-out factor tilt (live CORE receipt)
+    // (#236) CONFIG-DEPENDENT now, and spelled off the knob for the reason the swap line above is:
+    // the code default is false and tests/ci-settings.yaml ships true, so a hardcoded `!` would
+    // assert the opposite of the shipped answer in one of the two regimes CI runs.
+    assert_eq!(hold("Xtrackers MSCI World Minimum Volatility UCITS ETF", Some(0.25), Some("Full"), Some("Acc"), Some(1.1e9)),
+        crate::config::hold_factor_sleeve(),
+        "(#236) XDEB.DE is hold-suitable EXACTLY when the factor sleeve is open, in either regime");
     assert!(!hold("BNP PARIBAS EASY II MSCI World PAB UCITS ETF Acc", Some(0.20), Some("Full"), Some("Acc"), Some(1.5e9))); // PAB = Paris-Aligned Benchmark, an ESG screen (live CORE receipt)
 
     // (#202) a world small-cap fund that clears every other leg is refused on the NAME while the size
@@ -5462,6 +5494,8 @@ mod tests {
         // 0.25% cap — which is why this sleeve still carries no TER ceiling of its own
         ("xtrackers msci world momentum ucits etf 1c", "XDEM.SW, 0.25%, €1.9B"),
         ("ishares edge msci world momentum factor ucits etf", "the other spelling of the same family"),
+        // (#236) the FIFTH family, and the fund (#228) named as the live cost of excluding it
+        ("xtrackers msci world minimum volatility ucits etf 1c", "XDEB.DE, 0.25%, €1.1B"),
     ] {
         assert_eq!(geo_tier_at(fund, 0.0, true, false, 0), Some(FACTOR_TIER), "{why}: the factor sleeve claims it");
         assert_eq!(geo_tier_at(fund, 0.0, false, false, 0), None, "{why}: …and refuses it with the knob off");
@@ -5474,13 +5508,10 @@ mod tests {
         // CROSSED: a second NARROW token disqualifies, exactly as it does for the size sleeve
         ("ubs msci world quality esg ucits etf usd acc", "ESG-crossed is still an ESG fund"),
         ("ishares msci world small cap value ucits etf", "size-crossed claims two sleeves at once"),
-        // (#228) OUT OF SCOPE BY DECISION — and now only HALF of it. Momentum moved to the
-        // positives above: the "high-turnover" objection was about the FUND's internal rebalancing,
-        // which a holder of the wrapper never pays. The VOLATILITY half stands, deliberately: a
-        // min-vol fund targets variance at the expense of return, the opposite of this table's ask.
-        // See `factor_sleeve_excludes_volatility_tilts` — XDEB.DE clears every OTHER leg, so this
-        // refusal is live and costly, not vacuous.
-        ("ishares edge msci world minimum volatility ucits etf usd (acc)", "minimum volatility is not in FACTOR"),
+        // (#236) the min-vol line that stood here MOVED TO THE POSITIVES above. (#228)'s scope
+        // decision is now fully overturned — momentum went first, volatility followed. What stays
+        // refused is the ALIAS, and that is pinned on the array itself rather than on a name.
+        ("ishares edge msci world min vol ucits etf usd (acc)", "\"min vol\" is the alias (#236) refuses"),
     ] {
         assert_eq!(geo_tier_at(no, 0.0, true, false, 0), None, "{no}: {why}");
         assert_eq!(geo_tier_at(no, 0.35, true, false, 0), None, "{no}: {why} — with BOTH sleeves open");
@@ -5642,17 +5673,21 @@ mod tests {
     // index it already prints — the exact failure (#197)'s invariant exists to forbid, and it would
     // happen silently with the table still printing four rows.
     assert_eq!(sleeve_family_of("Xtrackers MSCI World Momentum UCITS ETF 1C"), Some("momentum"));
-    assert_eq!(FACTOR.len(), 4, "(#228) four tokens, and the four families below are one each");
+    // (#236) FIVE now, and the pin is unchanged in shape on purpose: a fifth token buys a fifth ROW
+    // only if it also keys a fifth FAMILY, and `hold_per_tier_factor` is set from this number.
+    assert_eq!(sleeve_family_of("Xtrackers MSCI World Minimum Volatility UCITS ETF 1C"), Some("minimum vol"));
+    assert_eq!(FACTOR.len(), 5, "(#236) five tokens, and the five families below are one each");
     let fac: std::collections::HashSet<_> = [
         "Xtrackers MSCI World Quality UCITS ETF 1C",
         "Xtrackers MSCI World Value UCITS ETF 1C",
         "Invesco MSCI World Equal Weight UCITS ETF USD Accumulating",
         "Xtrackers MSCI World Momentum UCITS ETF 1C",
+        "Xtrackers MSCI World Minimum Volatility UCITS ETF 1C",
     ]
     .iter()
     .map(|n| sleeve_family_of(n))
     .collect();
-    assert_eq!(fac.len(), 4, "(#228) the census's four clearing funds are FOUR families, not three");
+    assert_eq!(fac.len(), 5, "(#236) the census's five clearing funds are FIVE families, not four");
     assert_eq!(sleeve_family_of("iShares Core MSCI World UCITS ETF USD (Acc)"), Some("msci world"),
         "a non-factor fund still keys on its GEO family, exactly as it did");
     // …and a fund whose narrow token is NOT a factor one falls THROUGH to the GEO family rather
@@ -6183,7 +6218,11 @@ mod tests {
     assert_eq!(geo_tier_at(world_small_lower, 0.35, false, false, 0), Some(SIZE_TIER), "sleeve on -> the eighth sleeve");
     assert!(!is_broad_index_name("iShares MSCI World EUR Hedged UCITS ETF"));
     assert!(!is_broad_index_name("iShares MSCI World ESG Screened UCITS ETF"));
-    assert!(!is_broad_index_name("iShares MSCI World Minimum Volatility UCITS ETF"));
+    // (#236) config-dependent since min-vol joined FACTOR — `geo_tier` reads the sleeve knobs, and
+    // tests/ci-settings.yaml ships the factor sleeve ON while the code default is OFF.
+    assert_eq!(is_broad_index_name("iShares MSCI World Minimum Volatility UCITS ETF"),
+        crate::config::hold_factor_sleeve(),
+        "(#236) min-vol is a broad-index name EXACTLY when the factor sleeve is open");
 
     // the three tokens that FLIPPED: US + World-ex-US is a valid partition, so ex-US is now a sleeve.
     assert!(is_broad_index_name("SPDR MSCI World ex USA UCITS ETF"));
