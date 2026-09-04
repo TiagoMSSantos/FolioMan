@@ -4153,7 +4153,7 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // sleeve where the next row would be a new index instead.
     //
     // (#216) THE SAME QUESTION BELOW THE CAP, and the answer is the same. Three sleeves sit UNDER
-    // their cap for want of supply — ex-US 2/3, Asia-Pacific 1/3, world small-cap 1/3 — and a
+    // their cap for want of supply — ex-US 2/3, Asia-Pacific 1/3, small-cap 1/3 (now 2/3) — and a
     // throwaway probe (this census, re-keyed by `core::hold_miss_leg`'s leg for the funds that pass
     // leg 0 and die later) priced all 30 of their near-misses. NOT ONE would add an index family:
     //   ex-US        18 near-miss — both incumbents (EXUS.DE, IXUA.DE) are MSCI World ex USA, and
@@ -4164,6 +4164,13 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     //                the 0.20% incumbent, so admitting it would be strictly worse advice.
     //   small-cap     4 near-miss — ALL FOUR are MSCI World Small Cap, WSML.L's index; and (#210)
     //                pre-registers that its TER ceiling is not walked upward to fill the sleeve.
+    //                (#229) AMENDS THIS ONE, and the amendment is a limit of the census and not a
+    //                reversal of it: this probe re-keys funds that PASS LEG 0, and a regional small
+    //                cap was refused AT leg 0 by (#210)'s `SIZE_GEO`, so it was never in the four.
+    //                Deleting that array put XXSC.DE (MSCI *Europe* Small Cap, €3.0B, 0.30%, Acc)
+    //                in — a genuine second family, taking the sleeve to 2/3. The TER ceiling was
+    //                HELD at 0.35 exactly as pre-registered; nothing here was walked. Every other
+    //                line above stands: (#226) measured ex-US and Asia-Pacific as EXHAUSTED.
     // So the printed rows are the CORRECT rows, and (#197)/(#214)'s wrapper finding holds BELOW the
     // cap as well as above it. Do not re-argue a taller table, a looser AUM floor or a sleeve-local
     // TER ceiling for these three without first re-running that probe: the refusal is the supply,
@@ -4177,7 +4184,7 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     let country_cap = crate::config::hold_per_tier_country();
     const SLEEVE: [&str; core::HOLD_TIERS] =
         ["all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan", "Asia-Pacific",
-         "world small-cap", "world factor", "world sector", "single-country"];
+         "small-cap", "world factor", "world sector", "single-country"];
     // (#202) SLEEVE now carries OPTIONAL sleeves: with a knob off the line must print exactly the
     // eight geographic cells it always did. The rule is `core::sleeve_visible`, never a literal —
     // the same one-number-one-reader rule the cap in the header below follows.

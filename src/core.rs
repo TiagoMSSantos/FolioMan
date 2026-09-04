@@ -1577,11 +1577,20 @@ const FACTOR: [&str; 4] = ["quality", "value", "equal weight", "momentum"];
 /// overwrites its neighbour.
 pub const FACTOR_TIER: u8 = SECTOR_TIER - 1;
 
-/// (#217) Which geographies earn the factor sleeve — tier 0 and 1 ONLY, for `SIZE_GEO`'s reason
-/// verbatim: the sleeve is labelled `world factor`, and a EUROPE quality fund in it is two bets
-/// (region × factor) wearing the name of one, when the lane already carries a Europe sleeve for the
-/// region half. This is not hypothetical here either: the live pond holds 53 regional factor funds
-/// against 13 world ones, so an unrestricted sleeve would fill on the wrong axis.
+/// (#217) Which geographies earn the factor sleeve — tier 0 and 1 ONLY. This carried `(#210)`'s
+/// reasoning for the size sleeve verbatim: the sleeve is labelled `world factor`, and a EUROPE
+/// quality fund in it is two bets (region × factor) wearing the name of one, when the lane already
+/// carries a Europe sleeve for the region half. The live pond holds 53 regional factor funds against
+/// 13 world ones, so an unrestricted sleeve would fill on the wrong axis.
+///
+/// (#229) reversed that reasoning for SIZE and deliberately did NOT reverse it here, so this array
+/// now stands on its own. The reason is `sleeve_family_of`, and it is asymmetric: a FACTOR fund keys
+/// on its TOKEN, so a US quality fund shares the family `"quality"` with the world one and widening
+/// buys SUPPLY but no FAMILY. Since the sleeve fills cheapest-first per family, XDEW.L (S&P 500
+/// Equal Weight, 0.15%) would DISPLACE MWEP.L (0.20%) — removals, not additions, and absorbing them
+/// with a cap raise is the argmax `(#220)` forbids. A SIZE fund falls THROUGH to `geo_family_of`
+/// instead (pinned: world small-cap keys `"msci world"`), so a regional one keys a NEW family and
+/// the same widening is purely additive there. Do not re-propose this one on the size precedent.
 const FACTOR_GEO: [u8; 2] = [0, 1];
 
 /// (#218) The `NARROW` tokens the SECTOR sleeve rehabilitates — a GICS-style slice of the market.
@@ -1710,25 +1719,26 @@ fn country_sleeve_tier(n: &str, cap: usize) -> Option<u8> {
     (cap > 0 && COUNTRY.iter().any(|t| hit(n, t))).then_some(COUNTRY_TIER)
 }
 
-/// (#210) Which geographies earn the size sleeve. Tier 0 (all-world) and tier 1 (developed) ONLY,
-/// because the sleeve is labelled `world small-cap`: a EUROPE small-cap fund sitting in it is two
-/// bets stacked (region × size) wearing the name of one, and the lane already carries a Europe
-/// sleeve for the region half.
-///
-/// This is not a hypothetical. `(#202)` shipped the sleeve geography-agnostic, and its live probe
-/// admitted exactly ONE fund — XXSC.DE, Xtrackers MSCI *Europe* Small Cap — into a sleeve whose own
-/// header says world. The two real world small-cap funds were absent for an unrelated reason: the
-/// rounding bug `(#208)` fixed made `0.0035 * 100.0` read as `> 0.35` and evicted them from a cap
-/// that IS 0.35. Restricting the sleeve was refused at the time only because it would have left the
-/// sleeve provably empty; with `(#208)` in, that is no longer true and the restriction is free.
-const SIZE_GEO: [u8; 2] = [0, 1];
-
 /// (#202) Does an ALREADY-lowercased name earn the size sleeve, given the FIRST narrow token that
 /// fired on it? All four conjuncts are load-bearing: the knob must be on (0.0 = off, and no fund
 /// clears a 0.0% cap anyway), the blocking token must be a market-cap one, NO OTHER narrow token may
-/// fire ("MSCI World Small Cap ESG" is still an ESG fund), and — `(#210)` — the geography must be a
-/// WORLD one, not merely present (a bare "Global X Small Cap" is not a world index either, and still
-/// fails for want of any geography at all).
+/// fire ("MSCI World Small Cap ESG" is still an ESG fund), and the name must carry SOME geography —
+/// a bare "Global X Small Cap" names no index universe at all and is refused for that.
+///
+/// (#229) REVERSES `(#210)`'s restriction of that last conjunct to tiers 0 and 1, BY DECISION and
+/// not by new evidence — the user asked for every region. `(#210)` rested on two grounds and both
+/// are spent: the "world small-cap" LABEL was ours to change (and `picks::SLEEVE[8]` now reads
+/// "small-cap"), and "region × size is two bets under the name of one" was already overridden for
+/// the neighbouring sleeve when `(#218)` widened `SECTOR_GEO` to `[0, 1, 3]` on a supply argument.
+/// The `SIZE_GEO` array is GONE rather than listing 0..=7: a constant that admits every value
+/// `geo_hit` can return is not a filter.
+///
+/// The census that priced this (live `screen`, 4594-EU-buyable-ETF pond, 2026-09-03) found 62
+/// small-cap ETFs, of which 24 die on a second narrow token and 22 carry no GEO token at all. Of the
+/// 16 that reach the legs, exactly TWO clear all of them at the shipped 0.35% ceiling: WSML.L
+/// (tier 1, `msci world`, already shipped) and XXSC.DE (tier 5, `msci europe`, €3.0B, 0.30%, Acc) —
+/// the single fund `(#202)`'s geography-agnostic probe admitted and `(#210)` evicted. So this
+/// reversal is worth exactly one row, and it is the row `(#210)` named.
 fn size_sleeve_tier(n: &str, first: &str, cap: f64) -> Option<u8> {
     if cap <= 0.0 || !SIZE.contains(&first) {
         return None;
@@ -1736,7 +1746,7 @@ fn size_sleeve_tier(n: &str, first: &str, cap: f64) -> Option<u8> {
     if NARROW.iter().any(|t| !SIZE.contains(t) && hit(n, t)) {
         return None;
     }
-    SIZE_GEO.contains(&geo_hit(n)?).then_some(SIZE_TIER)
+    geo_hit(n).map(|_| SIZE_TIER)
 }
 
 /// (#217) The same four conjuncts as [`size_sleeve_tier`], on the factor tokens: the knob must be
@@ -5022,23 +5032,36 @@ mod tests {
     assert_eq!(size_sleeve_tier("spdr msci europe small cap eur hedged ucits etf", "small", 0.35), None);
     // no geography at all -> not a world index, whatever its market cap
     assert_eq!(size_sleeve_tier("global x small cap ucits etf", "small", 0.35), None);
-    // (#210) …and a geography that is not a WORLD one refuses too. XXSC.DE is the live receipt: it
-    // is the single fund (#202)'s probe admitted, into a sleeve labelled "world small-cap".
+    // (#229) …and a REGIONAL geography earns it too, reversing (#210). XXSC.DE is the live receipt
+    // both ways: the single fund (#202)'s probe admitted, the single fund (#210) evicted, and the
+    // single fund the (#229) census re-admits — the only regional small-cap ETF in a 4594-quote pond
+    // that clears every leg at the shipped 0.35% ceiling.
     assert_eq!(
         size_sleeve_tier("xtrackers msci europe small cap ucits etf", "small", 0.35),
-        None,
-        "tier 5 is a region, and region × size is two bets under the name of one"
+        Some(SIZE_TIER),
+        "(#229) tier 5 is a region and the sleeve now takes regions; SLEEVE[8] says \"small-cap\""
     );
     assert_eq!(
         size_sleeve_tier("ishares msci usa small cap ucits etf", "small", 0.35),
-        None,
-        "the US is no different — a regional size bet is still regional"
+        Some(SIZE_TIER),
+        "the US is no different — every tier geo_hit can return earns the sleeve"
     );
-    // tier 0 earns it as well as tier 1, so BOTH SIZE_GEO entries are live and neither can be dropped
+    // every tier earns it, so the conjunct that survives is PRESENCE of a geography and nothing
+    // more. "global x small cap" below is the only pin proving `geo_hit` is still consulted at all:
+    // delete it and dropping the whole conjunct would go ungraded.
     assert_eq!(
         size_sleeve_tier("vanguard ftse all-world small cap ucits etf", "small", 0.35),
         Some(SIZE_TIER),
         "all-world small cap is the broadest form of the exposure"
+    );
+    // (#229) and the regression this round turns on: the widened sleeve must buy FAMILIES, not
+    // wrappers. A size fund falls through to `geo_family_of`, so the two funds the census clears key
+    // DIFFERENT families and the sleeve prints two rows under the shared ≤3 cap. Were they to
+    // collapse, (#197)'s invariant would spend the new row on a second wrapper of the first.
+    assert_ne!(
+        sleeve_family_of("iShares MSCI World Small Cap UCITS ETF USD (Acc)"),
+        sleeve_family_of("Xtrackers MSCI Europe Small Cap UCITS ETF 1C"),
+        "world and Europe small cap are two families; a shared one would make the widening vacuous"
     );
     // (#211) the EM spelling gap and the eurozone trap it opens, pinned together. The token has
     // a TRAILING SPACE for exactly one reason and this is it: "MSCI EMU" is a real €3.9B fund.
