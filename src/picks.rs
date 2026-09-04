@@ -4186,6 +4186,7 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     let cap = crate::config::hold_per_tier();
     let all_world = crate::config::hold_per_tier_all_world();
     let us = crate::config::hold_per_tier_us();
+    let europe = crate::config::hold_per_tier_europe();
     let size = crate::config::hold_per_tier_size();
     let factor = crate::config::hold_per_tier_factor();
     let sector = crate::config::hold_per_tier_sector();
@@ -4193,7 +4194,7 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     cores.retain(|q| {
         let t = core::hold_breadth_tier(&q.name) as usize;
         per_tier[t] += 1;
-        per_tier[t] <= core::tier_cap(t, cap, all_world, us, size, factor, sector, country)
+        per_tier[t] <= core::tier_cap(t, cap, all_world, us, europe, size, factor, sector, country)
     });
     cores
 }
@@ -4268,11 +4269,38 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // cap as well as above it. Do not re-argue a taller table, a looser AUM floor or a sleeve-local
     // TER ceiling for these three without first re-running that probe: the refusal is the supply,
     // not the knobs. What the probe DID find is the misfile `core::NARROW`'s (#216) block records.
+    //
+    // (#237) …AND THE SAME COUNT KEYED ON THE INDEX ITSELF. `core::sleeve_family_of` keys a non-tilt
+    // fund on its GEO TOKEN, and that key is COARSE by construction — [`family_first_order`]'s own doc
+    // records "FTSE Developed Europe" and "FTSE Developed Europe ex UK" collapsing into ONE family
+    // though they are different indices. `Quote::benchmark` is BF's own index name, already captured
+    // for `history_proxy`'s twin hints and therefore free here. `Xf` is what the cap follows today
+    // under (#220); `Yb` is what it WOULD follow if a family were an index rather than a geography.
+    // Printing both is the only way to ask whether this table should be a menu of EXPOSURES or of
+    // PRODUCTS without shipping the answer first — and it ships no answer: this line is DISPLAY ONLY
+    // and no admission, cap or order reads it.
+    //
+    // THE `/N?` SUFFIX IS THE DENOMINATOR, NOT DECORATION — (#151)'s lesson, which cost a round.
+    // `benchmark` is absent on part of the pond; those funds fall back to their GEO family, so `Yb`
+    // UNDER-counts by an unknown amount unless the miss count is read beside it. `fetch::bf_row_meta`
+    // puts the sibling `replicationMethod` at ~70% coverage, so this is expected to bite.
     let mut families: Vec<HashSet<&str>> = (0..core::HOLD_TIERS).map(|_| HashSet::new()).collect();
+    let mut benches: Vec<HashSet<String>> = (0..core::HOLD_TIERS).map(|_| HashSet::new()).collect();
+    let mut no_bench = [0usize; core::HOLD_TIERS];
     for q in quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)) {
         let t = core::hold_breadth_tier(&q.name) as usize;
         supply[t] += 1;
-        families[t].insert(core::sleeve_family_of(&q.name).unwrap_or("?"));
+        let fam = core::sleeve_family_of(&q.name).unwrap_or("?");
+        families[t].insert(fam);
+        match q.benchmark.as_deref() {
+            Some(b) => benches[t].insert(b.to_string()),
+            // no BF index name: degrade to the GEO family so the count never over-reports, and tally
+            // the fund so the reader can see how much of `Yb` is really `Xf` wearing a hat.
+            None => {
+                no_bench[t] += 1;
+                benches[t].insert(fam.to_string())
+            }
+        };
     }
     let country_cap = crate::config::hold_per_tier_country();
     const SLEEVE: [&str; core::HOLD_TIERS] =
@@ -4292,9 +4320,14 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
         .iter()
         .zip(supply.iter())
         .zip(families.iter())
+        .zip(benches.iter())
+        .zip(no_bench.iter())
         .enumerate()
         .filter(|(t, _)| core::sleeve_visible(*t, size_cap, factor_on, sector_on, country_cap))
-        .map(|(_, ((name, n), fams))| format!("{name} {n} ({}f)", fams.len()))
+        .map(|(_, ((((name, n), fams), bs), miss))| {
+            let gap = if *miss > 0 { format!("/{miss}?") } else { String::new() };
+            format!("{name} {n} ({}f, {}b{gap})", fams.len(), bs.len())
+        })
         .collect();
     // (#197) the cap is READ here, never re-spelled: the line's whole job is to say how much supply
     // the cap hid, and a header quoting a different number than the filter applied would invert it.
@@ -4307,6 +4340,7 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     let all_world_cap = crate::config::hold_per_tier_all_world();
     let us_cap = crate::config::hold_per_tier_us();
     let size_cap = crate::config::hold_per_tier_size();
+    let europe_cap = crate::config::hold_per_tier_europe();
     let factor_cap = crate::config::hold_per_tier_factor();
     let sector_cap = crate::config::hold_per_tier_sector();
     let mut caps: Vec<String> = Vec::new();
@@ -4318,6 +4352,14 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // 11. Silent when off, so the (#230) line is unchanged.
     if us_cap > 0 {
         caps.push(format!("≤{us_cap} for US"));
+    }
+    // (#237) a SEVENTH override, and it goes after the US and before small-cap because the list is in
+    // LADDER order and Europe is tier 5 — behind US 3, ahead of small-cap 8, factor 9, sector 10,
+    // country 11. Silent when off, so the (#231) line is unchanged. (#197)'s rule is the reason this
+    // block is not optional: the header must quote the cap the filter APPLIED, or the line inverts
+    // its own meaning by claiming a sleeve was capped tighter than it was.
+    if europe_cap > 0 {
+        caps.push(format!("≤{europe_cap} for Europe"));
     }
     // (#230) a fifth override, same rule again. It led the optional sleeves until (#231) put the US
     // sleeve ahead of it; the list is in LADDER order — small-cap is tier 8, factor 9, sector 10,
@@ -4342,6 +4384,7 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     caps.push(format!("≤{}", crate::config::hold_per_tier()));
     let cap_text = caps.join(", ");
     println!("  supply per sleeve (before the {}/sleeve cap): {}", cap_text, counts.join(" · "));
+
     // (#199) …and the funnel BEHIND that supply: where the EU-buyable ETFs that never reach a sleeve
     // die. The legs short-circuit, so each fund is counted once at the first one that refuses it —
     // read a leg's count as "sole-blocked here OR ALSO blocked later", never as "only this leg".
@@ -7714,7 +7757,7 @@ mod tests {
     /// `hold_per_tier_us` gave tier 3 an override — after which a literal read site drifts from the
     /// filter the moment the knob is set, and did (both went red under `tests/ci-settings.yaml` and
     /// stayed green config-less). Routed through `core::tier_cap` so there is ONE definition,
-    /// non-negotiable #4. The four trailing zeros are the sleeves below tier 3, which cannot answer
+    /// non-negotiable #4. The five trailing zeros are the sleeves below tier 3, which cannot answer
     /// for it.
     fn us_tier_cap() -> usize {
         core::tier_cap(
@@ -7722,6 +7765,7 @@ mod tests {
             crate::config::hold_per_tier(),
             crate::config::hold_per_tier_all_world(),
             crate::config::hold_per_tier_us(),
+            0,
             0,
             0,
             0,

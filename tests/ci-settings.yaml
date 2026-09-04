@@ -4925,6 +4925,47 @@ buy_heuristic:
                                  #   name/instrument_type/sector, so every backtest quote dies on its TER leg
                                  #   and no walk reaches this lane. Judgement plus a live diff, never a ship
                                  #   rule verdict.
+  hold_per_tier_europe: 4        # (#237) MEASURED 2026-09-04, live `screen`, control and arm BACK TO
+                                 #   BACK in one session on one cache, journal `cp -p`'d and restored + `cmp`-verified between every
+                                 #   run. Pond 4606 EU-buyable ETFs, QUALIFIED 127. Rows kept in the EUROPE sleeve alone, overriding
+                                 #   `hold_per_tier` (3) there; 0 = inherit it, byte-identical, and the DEFAULT (non-negotiable #1).
+                                 #   The SIXTH per-sleeve override, after all_world (#207), sector (#220), country (#227),
+                                 #   factor (#228), size (#230) and us (#231).
+                                 #
+                                 #   WHAT MOVED: `Europe 11 (3f)` -> `11 (4f)`, CORE table 50 -> 51 rows.
+                                 #     ADDED   VERE.DE  Vanguard FTSE Developed Europe ex UK, 0.10%, EUR 1.4B, Acc, Full, IE, +11%/7.1y
+                                 #     REMOVED nothing. The whole-line ticker diff of the CORE table is a SINGLE INSERTION at row 21
+                                 #             (`20a21`); VWCG.DE, IMEA.SW and MEUD.PA keep their slots AND their order.
+                                 #   4 IS THE MEASURED FAMILY COUNT AND NOTHING ELSE — (#220)'s rule, read off the census line, never
+                                 #   an argmax over outcomes. The sleeve now prints at family-count equilibrium: supply is 11 funds
+                                 #   across 4 families, so a fifth slot could only buy another wrapper of an index already shown.
+                                 #
+                                 #   THE TOKEN AND THE CAP ARE ONE CHANGE and neither ships alone. `core::GEO` gains
+                                 #   ("ftse developed europe ex uk", 5) placed BEFORE the plain ("ftse developed europe", 5), because
+                                 #   `core::hit` is a bare `contains` and `geo_hit` takes the FIRST match — so before this round
+                                 #   VERE.DE and VWCG.DE keyed the SAME family and the sleeve counted three where the pond holds four.
+                                 #   BOTH TOKENS SIT AT TIER 5, so the added reach cannot misfile: any conceivable over-match lands on
+                                 #   the rung it would have landed on anyway. That is (#234)'s argument for ("global all", 0), verbatim,
+                                 #   and it is why this needs no new TER, AUM or geography argument.
+                                 #
+                                 #   WHY EX-UK IS AN EXPOSURE AND NOT A WRAPPER, which is the only question (#197)/(#214) ask of a new
+                                 #   family: the UK is roughly a fifth of developed Europe, so ex-UK is an allocation decision a holder
+                                 #   makes deliberately, not another packaging of one index. Contrast the US sleeve in the census block
+                                 #   on `hold_per_tier` below, where six of twelve "distinct" indices are the S&P 500 wearing hats.
+                                 #
+                                 #   A PIN FLIPPED, DELIBERATELY, AND THE FLIP IS THE FEATURE. `core::tests::pure_logic` asserted
+                                 #   `geo_family_of("Vanguard FTSE Developed Europe ex UK UCITS ETF EUR") == Some("ftse developed europe")`
+                                 #   with the message "ex-UK is a DIFFERENT index sharing one token" — (#214) recorded the cost and
+                                 #   (#237) pays it. Updated with this receipt, never silently. `GEO.len()` 32 -> 33 is pinned too, so
+                                 #   a later silent edit to the array cannot pass.
+                                 #
+                                 #   REVERT: set 0. The cap returns to the shared 3 and the GEO token goes INERT — with three slots the
+                                 #   fourth family cannot print — so the revert is one number and the token need not be removed.
+                                 #   NOT GRADEABLE BY BACKTEST, exactly as `hold_per_tier` and its five elder twins:
+                                 #   `backtest::stamp_asset_class` fills only name/instrument_type/sector, so every backtest quote dies
+                                 #   on its TER leg and no walk reaches this lane. Ship Rule v2 cannot adjudicate it and was not
+                                 #   invoked. Evidence is the live control/arm pair, the ticker-set diff, and the unit pins. Goldens did
+                                 #   NOT move (verified) and both config regimes read 383/9/21.
   hold_per_tier_size: 4          # (#230) MEASURED 2026-09-04, live `screen`, control and probe BACK TO BACK
                                  #   on the same cache, 4564-EU-buyable-ETF pond. Rows kept in the SMALL-CAP
                                  #   sleeve alone, overriding `hold_per_tier` (3) there. 0 = inherit it, the
@@ -5511,6 +5552,57 @@ buy_heuristic:
                                  #   a cheaper wrapper of an unspelled market appears; the family count
                                  #   is the cap, so a genuinely NEW family licenses 8 and nothing else
                                  #   does.
+                                 # (#237) THE BENCHMARK-FAMILY CENSUS, AND THE REFUSAL IT EARNED. The sleeve census line now prints
+                                 # TWO family counts per sleeve — `N (Xf, Yb/Z?)` — where `Xf` is `core::sleeve_family_of`'s key (the
+                                 # one the caps follow under (#220)), `Yb` is the same count keyed on `Quote::benchmark` (BF's own
+                                 # index name, already captured for `history_proxy` twin hints and free here), and `Z?` is how many
+                                 # funds carried NO benchmark and fell back to the GEO family. The `Z?` is the DENOMINATOR and is not
+                                 # decoration — (#151)'s lesson. 24 of 127 qualified funds have no BF benchmark (81% coverage), so
+                                 # `Yb` UNDER-counts by an unknown amount without it.
+                                 #
+                                 # MEASURED 2026-09-04, live `screen`, pond 4606:
+                                 #   all-world 11 (4f, 7b/3?) · developed 11 (3f, 4b/3?) · emerging 10 (2f, 5b/2?) · US 33 (4f, 12b/5?)
+                                 #   ex-US 2 (1f, 1b) · Europe 11 (4f, 6b/1?) · Japan 5 (2f, 3b) · Asia-Pacific 1 (1f, 1b)
+                                 #   small-cap 4 (4f, 4b) · world factor 5 (5f, 5b) · world sector 11 (6f, 11b/1?) · country 23 (9f, 13b/9?)
+                                 #
+                                 # THE CAP AUDIT CAME BACK EMPTY, and that is a result. This round was planned to raise any cap sitting
+                                 # BELOW its own family count, since (#220) says the cap IS that count. NOT ONE sleeve reads `Xf` above
+                                 # its cap — `min(supply, cap)` sums to exactly the 50 rows that shipped. Several caps sit ABOVE their
+                                 # count (emerging 3 vs 2f, Japan 3 vs 2f, ex-US 3 vs 1f) because they inherit the shared 3; those
+                                 # print a duplicate wrapper, they hide nothing. Do not re-run this audit without new GEO vocabulary.
+                                 #
+                                 # BENCHMARK-AS-FAMILY-KEY IS REFUSED, on its own evidence. Keying families on the index name would
+                                 # take the table 50 -> 72 rows, but the added rows are PACKAGING, not exposure. The US sleeve's twelve
+                                 # "distinct benchmarks" are:
+                                 #     s&p 500 index (14 funds) · s&p 500 ii index · s&p 500 net dividends reinvested index
+                                 #     s&p 500 eur dynamic hedged index · s&p 500 esg leaders index · <no-bench> [s&p 500]
+                                 #       -> SIX cells for ONE index, separated by total-return vs price-return convention, a currency
+                                 #          overlay and an ESG screen. `s&p 500 ii` and `net dividends reinvested` ARE the same index.
+                                 #     msci usa index (7 funds) · <no-bench> [msci usa] · msci usa select filtered min te index
+                                 #       -> THREE cells for ONE index.
+                                 #     ftse north america index · solactive core united states large & mid cap index
+                                 #   So twelve cells are ~4 exposures — which is exactly the `4f` the GEO key already reports. The
+                                 #   benchmark string is a PRODUCT identifier, not an EXPOSURE identifier, and a cap that followed it
+                                 #   would print six S&P 500 wrappers: precisely what (#197) and (#214) built the caps to suppress.
+                                 #   It would also REMOVE a row — ex-US reads 1b against 2 printed — so it fails the zero-removals rule
+                                 #   in the same breath. The sector sleeve shows the same shape (11b = 6 GICS sectors x 2 providers).
+                                 #
+                                 # WHAT THE KEY DID EARN is one row, and only one: the Europe sleeve, where `ftse developed europe
+                                 # index` (VWCG.DE) and `ftse developed europe ex uk index` (VERE.DE) are genuinely different
+                                 # exposures collapsed into one GEO token. That is shipped as a GEO SPELLING under
+                                 # `hold_per_tier_europe` above — the fix is a token, exactly as (#234) concluded for the hyphen case.
+                                 # The census is kept because it is what let that be told apart from the US inflation, and it costs a
+                                 # HashSet per sleeve on a line that already prints.
+                                 #
+                                 # PRICED FREE IN THE SAME PASS — TWO NON-NEGOTIABLE #5 BREACHES, SIZED, NOT FIXED. Both are refusals
+                                 # on data the tool never fetched, which rule #5 says must PASS. Same shape (#233) fixed on replication
+                                 # and (#224) fixed on AUM; neither is touched here, and each needs its own round:
+                                 #     leg 2 TER (296 refused)          = 43 TER UNKNOWN + 253 genuinely over the cap
+                                 #     leg 4 share class (173 refused)  = 54 UNKNOWN + 119 genuinely Dist
+                                 #   The two halves are NOT symmetric and must not be fixed together: (#222) measured a real tax cost
+                                 #   to a Portuguese holder if a distributing fund reaches this table, so the share-class half needs an
+                                 #   argument the TER half does not. 43 and 54 are the sizes of the prize; neither is a licence.
+
   hold_per_tier: 3               # (#197) MEASURED 2026-09-01 AND HELD AT THE SHIPPED LITERAL — rows kept
                                  # per breadth sleeve in the buy-and-hold CORE table. Was a bare
                                  # `const HOLD_PER_TIER: usize = 3` in picks.rs; this names it, and the
