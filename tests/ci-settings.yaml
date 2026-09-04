@@ -11791,6 +11791,47 @@ prefer_eu_listing: true
 #    "restores all of it"; measured, it does not — peg_yield coverage is 345/549 stocks with the
 #    swap on against 404/552 with it off, so 59 names still lose their fundamentals to the swap.
 #    Missing data PASSES, so those names are admitted on a gate that never got to run.
+#
+#    (#232) THAT CAUSE IS WRONG. WITHDRAWN, comment-only, no code shipped and none to write. The
+#    59-name COVERAGE GAP is real and the numbers above stand; the ALIAS is not what opens it. The
+#    line above sent the next round hunting a plumbing bug that is not there, so it is corrected
+#    here rather than deleted — the measurement is the useful half, the diagnosis was the guess.
+#
+#    FOUR PROOFS THE ALIAS IS INTACT (all re-read at (#232), file:line current as of that commit):
+#      1. `sec_cik` (src/fetch.rs:1576) applies EU_TO_US, and ALL FIVE of its call sites funnel
+#         through it — src/fetch.rs:980, 1633, 2241, 2366, 3385. There is no second door: no SEC
+#         fetch anywhere reaches EDGAR on a raw Xetra symbol.
+#      2. A PASSING PIN already covers the swapped shape, and predates this block:
+#         `sec_cik(.., "ABEA.DE") == Some("0001652044")` (src/fetch.rs:6856, and :6857 lowercased).
+#      3. `fund_source: "sec"` is the SHIPPED value (this file, line 9313). The un-aliased FMP path
+#         (`fetch_fundamentals_history`, keyed by the raw ticker) is therefore never on the ranking
+#         lane at all, so it cannot be the leak either.
+#      4. The live `.eu_listing_cache.json` is COMPLETE, not partial: 519 keys — 266 non-empty, all
+#         266 ending `.DE`, against the 266 constituents the doc at src/fetch.rs:1572 says are
+#         swapped — plus 253 REMEMBERED MISSES (a cached "no EU listing", not a hole), and ZERO
+#         inversion collisions in `invert_eu`. A 1:1 map with nothing to drop.
+#
+#    THE REAL CAUSE — a THIRD input, not the EPS one. `core::peg_yield` (src/core.rs:3176) takes
+#    eps + cagr + price, and the live fill is
+#      `ff.peg_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, long_cagr_pct(q, tuning), p))`
+#    (src/fetch.rs:1446). `picks::long_cagr_pct` (src/picks.rs:157) routes to `long_leg_fixed`
+#    (src/picks.rs:66), which returns None whenever the series cannot reach `fixed_cagr_years`.
+#    Xetra history starts 2007-12-31 for nearly every swapped name, so the CAGR leg is None and
+#    peg_yield is None NO MATTER WHAT THE EPS LEG DID. The EPS arrives; the price history does not.
+#    This block's OWN measurement already said so and was read as corroboration instead of as the
+#    answer: `history 57/57` with the swap on against `13/13` off, and "the young twins — 44
+#    stocks". Same population, counted twice. `prefer_eu_listing`'s doc (src/fetch.rs:1572) states
+#    the short-history cost in its own words.
+#
+#    SO: NOTHING IS TO BE FIXED. This is the swap's DOCUMENTED PRICE, paid knowingly, not a defect.
+#    Aliasing more would not buy a single peg_yield back — the missing input is years of closes,
+#    and the only ways to get them are the two the round already refused: turn the swap off (this
+#    block adjudicated that WORSE for the live book — off loses KLA.DE and prints NVIDIA twice, on
+#    an identical cleared count), or bridge a swapped name's price history to its US twin, which
+#    rebuilds exactly the train-serve skew (#37) closed. `prefer_eu_listing: true` STAYS.
+#
+#    UNTOUCHED AND STILL OPEN: the SECOND bullet below (liquidity 500k as a US-calibrated bar read
+#    on Xetra turnover). (#232) says nothing about it and it keeps its round.
 #  - liquidity at 500k is a US-calibrated bar applied to Xetra turnover. It sole-blocks 1, so it is
 #    not worth a round on its own, but it is the wrong number for the venue it is being read on.
 #
