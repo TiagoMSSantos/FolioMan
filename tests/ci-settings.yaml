@@ -4434,6 +4434,110 @@ buy_heuristic:
                                  #   — developed/EM/US/exUS/Europe/Japan are byte-identical row for row.
                                  #   REVERT RULE: 0. That restores the shared cap on every sleeve, and the
                                  #   only thing lost is four all-world funds.
+  hold_per_tier_us: 4            # (#231) MEASURED 2026-09-04, live `screen`, control and probe BACK TO BACK
+                                 #   on the same cache (`4808 from cache`, both arms). Rows kept in the US
+                                 #   sleeve alone (tier 3), overriding `hold_per_tier` (3) there. 0 = inherit
+                                 #   it, the code default and byte-identical to today on every tier
+                                 #   (non-negotiable #1). The SIXTH per-sleeve override and the FIRST in ladder
+                                 #   order among the optional sleeves, ahead of small-cap 8, factor 9, sector
+                                 #   10, country 11. Written against the LITERAL tier 3 in `core::tier_cap`,
+                                 #   because the geographic rungs are positions in `hold_breadth_tier`'s ladder
+                                 #   and have no named constant — unlike the four sleeves below.
+                                 #
+                                 #   PAIRED WITH TWO CHANGES, and the first is what licensed the second.
+                                 #
+                                 #   1. THE BLIND-SPOT CENSUS WAS OVER-REPORTING, and had been for four rounds.
+                                 #      `picks::geo_miss_census` asked `core::geo_hit` alone, but (#227) gave
+                                 #      `geo_tier_at` a COUNTRY fall-through, so a single-market fund has had a
+                                 #      real sleeve AND a printed CORE row while still answering geo_hit = None.
+                                 #      The census went on reporting funds the lane was already admitting. It
+                                 #      now takes `country_cap` and asks both arms — PASSED, not read, (#204)'s
+                                 #      rule, so the mutation gate can reach the branch. MEASURED: the census
+                                 #      went 19 rows -> 5, and NOT ONE of the 14 it dropped was a blind spot.
+                                 #      Seven were in that very run's CORE table (DBXD.DE, XESC.DE, 0DZP.L,
+                                 #      FLXK.L, VUKG.L, FLXI.L, FLXC.L); the rest are DAX/EuroStoxx wrappers
+                                 #      losing the country sleeve's own TER sort (MSE.PA, C50.PA, EL4A.DE,
+                                 #      CG1.PA). This matters because the census is what every widening round
+                                 #      reads to decide what to do next, and half of it was noise.
+                                 #
+                                 #   2. ("ftse north america", 3) — the one family the CORRECTED census left
+                                 #      standing. Vanguard FTSE North America (VNRA.L, EUR 2.7B, 0.08%, Acc,
+                                 #      Full, IE) cleared every admission leg and died at leg 0 because GEO had
+                                 #      no word for its index. Same defect as (#200)/(#207)/(#222)/(#230): a
+                                 #      token ABSENT from the list, not one matching too loosely.
+                                 #      TIER 3 AND NOT A NEW TIER — North America is the US plus ~3% Canada and
+                                 #      the ladder has no Canada sleeve, so this is not the partition question
+                                 #      that refuses "em ex" and "world ex europe" in NARROW; it is two
+                                 #      breadths of one geography, which tier 3 ALREADY mixes (`s&p 500` is
+                                 #      large-cap, `crsp us total market` is the whole market).
+                                 #      PROVIDER-PREFIXED, (#215)'s "specific tokens only". A bare
+                                 #      "north america" would file MSCI and FTSE North America under ONE
+                                 #      family though they are different indices — (#197)'s wrapper failure,
+                                 #      and the reason (#230) refused a bare "global small". The MSCI spelling
+                                 #      is NOT shipped: no such fund survives to the corrected census, which is
+                                 #      NOT the same as (#230)'s `s&p smallcap 600`, whose funds exist and die
+                                 #      on a LATER leg.
+                                 #
+                                 #   THE VALUE IS THE FAMILY COUNT AND NOTHING ELSE — (#220)'s rule, read off
+                                 #   the census, never an argmax over outcomes. The token takes tier 3 from
+                                 #   THREE printed families to FOUR (`s&p 500` SPYL.DE, `msci usa` XD9U.L,
+                                 #   ` us equity` LGUS.L, and now `ftse north america` VNRA.L), against a shared
+                                 #   cap of 3 — so the cap would have hidden a whole EXPOSURE rather than
+                                 #   another wrapper, the invariant (#197) rested its cap of 3 on. The census
+                                 #   line moved `US 16 (3f)` -> `US 17 (4f)`, and 4 is that count.
+                                 #
+                                 #   THE LIVE A/B, and the ticker-set diff IS the attribution:
+                                 #     CORE table 46 rows -> 47. ONE addition, ZERO removals, control order
+                                 #     preserved among every kept row:
+                                 #       VNRA.L  0.08%  EUR 2.7B  Vanguard FTSE North America  <- NEW, 7.1y, Acc, Full, IE
+                                 #     2B7A.DE appears on both sides with drifted CAGR/YRS cells (+6% 9.4 vs
+                                 #     +7% 9.5) — the SAME row repriced between the two runs, not a swap; a
+                                 #     whole-line diff reports it as a pair and it must be read as one.
+                                 #     Every other sleeve is byte-identical, and the row count equals the SUM
+                                 #     of the per-sleeve caps on both arms (control 7+3+3+3+2+3+3+1+4+4+6+7 =
+                                 #     46; probe, with US at 4, = 47).
+                                 #     FUNNEL COUNTS ARE NOT THE EVIDENCE, the same caveat (#213) records: the
+                                 #     pond drifted 4587 -> 4591 EU-buyable ETFs across the pair on an IDENTICAL
+                                 #     `4808 from cache` line, which also moved TER 274 -> 287 and replication
+                                 #     214 -> 202 — legs this change cannot touch. QUALIFIED 83 -> 84.
+                                 #
+                                 #   LEFT OPEN, AND FOUND BY THE CENSUS FIX ITSELF — the plan for this round
+                                 #   predicted the corrected census would leave nothing further to spell. It
+                                 #   was WRONG, and that is the fix earning its keep: with 14 rows of noise
+                                 #   gone, the 5 survivors are legible and TWO of them are real.
+                                 #     VALL.L  Vanguard FTSE Global All-Cap, 0.07%, tier 0 — GEO ALREADY
+                                 #             CARRIES ("global all cap", 0) and a HYPHEN defeats it: the fund
+                                 #             is spelled "Global All-Cap" and `core::hit` is a plain
+                                 #             `contains` with no normalisation. Exactly the failure this
+                                 #             census's own doc comment names for "all-country". Its AUM is
+                                 #             not served by this pond, so admission would rest on absent data
+                                 #             ((#224), non-negotiable #5) — needs its own round and its own
+                                 #             revert trigger, and tier 0 is at supply 7 against a cap of 7,
+                                 #             so it is a DISPLACEMENT question, not a free row.
+                                 #     NYSX.DE Global X NYSE 100, 0.09%, AUM not served. A US large-cap index
+                                 #             with no spelling here. Same absent-AUM caveat.
+                                 #   The other three survivors are correctly refused and must stay so: LGGL.L
+                                 #   (L&G Global Equity — unspellable without a loose "global equity" token,
+                                 #   which (#215) forbids), and CSBGU0.SW and IUST.DE, BOND funds. NARROW's
+                                 #   "bond" token spells neither "Bd 7-10y" nor "TIPS", so GEO is still the
+                                 #   only thing keeping fixed income out of an equity table — (#215)/(#222)'s
+                                 #   hazard, unchanged and recorded here because the census now shows it plainly.
+                                 #
+                                 #   REVERT: set 0, which returns the sleeve to the shared cap of 3 and drops
+                                 #   VNRA.L. To revert the whole round, also drop ("ftse north america", 3) —
+                                 #   that returns VNRA.L to the blind spot and tier 3 to three families. The
+                                 #   census correction is INDEPENDENT of both and should outlive them: it fixes
+                                 #   a report, not a placement.
+                                 #   KNOWN AND NOT FIXED: a fund named "FTSE Developed North America" would
+                                 #   match `ftse developed` first and file at tier 1, because GEO is
+                                 #   first-match-wins and that token is broader-but-earlier. No such fund is in
+                                 #   this pond. Pre-existing to this round; recorded so the next census reads it.
+                                 #
+                                 #   Display-only and NOT gradeable, exactly as `hold_per_tier` and its five
+                                 #   elder twins — `backtest::stamp_asset_class` fills only
+                                 #   name/instrument_type/sector, so every backtest quote dies on its TER leg
+                                 #   and no walk reaches this lane. Judgement plus a live diff, never a ship
+                                 #   rule verdict.
   hold_per_tier_size: 4          # (#230) MEASURED 2026-09-04, live `screen`, control and probe BACK TO BACK
                                  #   on the same cache, 4564-EU-buyable-ETF pond. Rows kept in the SMALL-CAP
                                  #   sleeve alone, overriding `hold_per_tier` (3) there. 0 = inherit it, the

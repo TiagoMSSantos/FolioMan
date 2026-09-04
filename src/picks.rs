@@ -3977,18 +3977,36 @@ pub fn narrow_census(quotes: &[Quote]) -> Vec<(&'static str, usize)> {
 /// The no-`narrow_hit` filter is what makes the output readable: it strips the sector and thematic
 /// funds, which are refused on purpose and are the overwhelming bulk of the bucket. What survives is
 /// institutional-grade AND carries no tilt word, so the only thing standing between it and the CORE
-/// list is that no token matched. Every row is therefore either a broad tracker the lane is wrongly
-/// refusing — (#200)'s defect class, a token ABSENT rather than one matching too loosely — or proof
-/// that `GEO` is complete and the argument is over.
+/// list is that no sleeve claimed it. Every row is therefore either a broad tracker the lane is
+/// wrongly refusing — (#200)'s defect class, a token ABSENT rather than one matching too loosely —
+/// or proof that the vocabulary is complete and the argument is over.
+///
+/// (#231) `country_cap` IS THAT SENTENCE'S CORRECTION, and it was wrong for four rounds. This asked
+/// `geo_hit` alone, but (#227) gave `core::geo_tier_at` a COUNTRY fall-through — `geo_hit(n)
+/// .or_else(|| country_sleeve_tier(n, cap))` — so a single-market fund has had a real sleeve, and a
+/// printed CORE row, while still answering `geo_hit == None`. The census never learned, and reported
+/// funds it was already admitting: SEVEN of the fifteen rows it printed on 2026-09-04 (DBXD.DE,
+/// XESC.DE, 0DZP.L, FLXK.L, VUKG.L, FLXI.L, FLXC.L) were in that same run's CORE table. Nearly half
+/// the census was noise, and it is the census every widening round reads to decide what to do.
+///
+/// The predicate below IS `geo_tier_at` on the only path reachable here: the no-`narrow_hit` filter
+/// runs first, so that function's three-sleeve branch can never fire, and what is left of it is
+/// exactly these two arms. Writing them out beats threading three more dead knobs through.
+///
+/// The cap is PASSED, NOT READ — (#204)'s rule verbatim: the knob is a process-wide `OnceLock` no
+/// test can flip, so a branch firing only when the sleeve is open is one the mutation gate cannot
+/// reach. At `country_cap == 0` the sleeve is off and the census answers as it did before (#227),
+/// which is what lets one fixture fund pin both sides of this parameter.
 ///
 /// Pure and gradeable, per the rule (#198)'s doc comment set for `print_hold_core`.
-pub fn geo_miss_census(quotes: &[Quote]) -> Vec<&Quote> {
+pub fn geo_miss_census(quotes: &[Quote], country_cap: usize) -> Vec<&Quote> {
     let mut out: Vec<&Quote> = quotes
         .iter()
         .filter(|q| eu_buyable(q) && quote_is_etf(q))
         .filter(|q| {
             let lower = q.name.to_lowercase();
-            core::geo_hit(&lower).is_none() && core::narrow_hit(&lower).is_none()
+            core::geo_hit(&lower).or_else(|| core::country_sleeve_tier(&lower, country_cap)).is_none()
+                && core::narrow_hit(&lower).is_none()
         })
         .filter(|q| core::hold_miss_but_breadth(q).is_none())
         .collect();
@@ -4094,6 +4112,7 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     let mut per_tier = [0usize; core::HOLD_TIERS];
     let cap = crate::config::hold_per_tier();
     let all_world = crate::config::hold_per_tier_all_world();
+    let us = crate::config::hold_per_tier_us();
     let size = crate::config::hold_per_tier_size();
     let factor = crate::config::hold_per_tier_factor();
     let sector = crate::config::hold_per_tier_sector();
@@ -4101,7 +4120,7 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     cores.retain(|q| {
         let t = core::hold_breadth_tier(&q.name) as usize;
         per_tier[t] += 1;
-        per_tier[t] <= core::tier_cap(t, cap, all_world, size, factor, sector, country)
+        per_tier[t] <= core::tier_cap(t, cap, all_world, us, size, factor, sector, country)
     });
     cores
 }
@@ -4213,6 +4232,7 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     // the filter. Built as a list rather than a match: with both off it is still the bare "≤3", and
     // with only all-world set it is byte-identical to the string (#207) shipped.
     let all_world_cap = crate::config::hold_per_tier_all_world();
+    let us_cap = crate::config::hold_per_tier_us();
     let size_cap = crate::config::hold_per_tier_size();
     let factor_cap = crate::config::hold_per_tier_factor();
     let sector_cap = crate::config::hold_per_tier_sector();
@@ -4220,9 +4240,16 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     if all_world_cap > 0 {
         caps.push(format!("≤{all_world_cap} for all-world"));
     }
-    // (#230) a fifth override, same rule again, and it goes FIRST among the optional sleeves because
-    // the list is in LADDER order — small-cap is tier 8, factor 9, sector 10, country 11 — so the
-    // header reads in the order the sleeves print. Silent when off, so the (#228) line is unchanged.
+    // (#231) a sixth override, and it goes FIRST among the optional sleeves because the list is in
+    // LADDER order and the US sleeve is tier 3 — ahead of small-cap 8, factor 9, sector 10, country
+    // 11. Silent when off, so the (#230) line is unchanged.
+    if us_cap > 0 {
+        caps.push(format!("≤{us_cap} for US"));
+    }
+    // (#230) a fifth override, same rule again. It led the optional sleeves until (#231) put the US
+    // sleeve ahead of it; the list is in LADDER order — small-cap is tier 8, factor 9, sector 10,
+    // country 11 — so the header reads in the order the sleeves print. Silent when off, so the
+    // (#228) line is unchanged.
     if size_cap > 0 {
         caps.push(format!("≤{size_cap} for small-cap"));
     }
@@ -4264,7 +4291,7 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     }
     // (#203) …and the half of leg 0 the NARROW census cannot see: no GEO token, no tilt word, every
     // other leg clear. Arithmetic is in `geo_miss_census` (gradeable); this only formats it.
-    let geo_miss = geo_miss_census(quotes);
+    let geo_miss = geo_miss_census(quotes, crate::config::hold_per_tier_country());
     if !geo_miss.is_empty() {
         println!("  GEO blind spot — {} ETFs carry no GEO token yet clear every other leg (top 15 by AUM):",
             geo_miss.len());
@@ -7508,7 +7535,27 @@ mod tests {
         assert!(unknown.ter_shown() < big.ter_shown(), "and it is cheaper — the next term too");
     }
 
-    /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + per-tier cap ≤3, and the
+    /// (#231) The tier-3 row cap AS `hold_core_list` COMPUTES IT, for the two tests below that assert
+    /// on it. Both used to spell it `hold_per_tier()`, which was one definition of the number until
+    /// `hold_per_tier_us` gave tier 3 an override — after which a literal read site drifts from the
+    /// filter the moment the knob is set, and did (both went red under `tests/ci-settings.yaml` and
+    /// stayed green config-less). Routed through `core::tier_cap` so there is ONE definition,
+    /// non-negotiable #4. The four trailing zeros are the sleeves below tier 3, which cannot answer
+    /// for it.
+    fn us_tier_cap() -> usize {
+        core::tier_cap(
+            3,
+            crate::config::hold_per_tier(),
+            crate::config::hold_per_tier_all_world(),
+            crate::config::hold_per_tier_us(),
+            0,
+            0,
+            0,
+            0,
+        )
+    }
+
+    /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + the per-tier cap, and the
     /// `print_hold_core` block over it (owned marker, empty-tier-0 hint, pinned near-miss reason). Pure.
     #[test]
     fn hold_core_list_and_print() {
@@ -7520,7 +7567,11 @@ mod tests {
             core_etf("SPYL.DE", "SPDR S&P 500 UCITS ETF", 8e9, 0.03),
             core_etf("CSPX.DE", "iShares Core S&P 500 UCITS ETF", 70e9, 0.07),
             core_etf("VUAA.DE", "Vanguard S&P 500 UCITS ETF", 10e9, 0.07),
-            core_etf("XDWL.DE", "Xtrackers S&P 500 UCITS ETF", 2e9, 0.09), // 4th S&P -> capped out
+            core_etf("XDWL.DE", "Xtrackers S&P 500 UCITS ETF", 2e9, 0.09), // 4th S&P
+            // (#231) a FIFTH, and it is what keeps the cap binding in both config regimes: with
+            // `hold_per_tier_us` set the tier admits 4, so four names would fit and the assertion
+            // below would stop testing anything. The dearest name is the one capped out either way.
+            core_etf("XDPE.DE", "Amundi S&P 500 UCITS ETF", 1e9, 0.11),
             core_etf("VUAA.L", "Vanguard S&P 500 UCITS ETF", 5e9, 0.15),  // dup NAME -> deduped
             core_etf("MEUD.DE", "Xtrackers MSCI Europe UCITS ETF", 6e9, 0.12), // tier 5
             Quote::stub("AAPL", "€1", "", "Apple Inc."),                   // not a fund -> excluded
@@ -7528,12 +7579,16 @@ mod tests {
 
         let cores = hold_core_list(&quotes);
         assert_eq!(core::hold_breadth_tier(&cores[0].name), 0, "all-world sorts first (broadest)");
-        assert_eq!(cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 3).count(), 3, "S&P tier capped at 3");
+        assert_eq!(cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 3).count(), us_tier_cap(),
+            "S&P tier capped, and five distinct names are supplied so the cap binds in either regime");
         // (round 118) EM ranks ABOVE the US sleeve — DM+EM spans the planet, the S&P alone does not.
         let tiers: Vec<u8> = cores.iter().map(|q| core::hold_breadth_tier(&q.name)).collect();
         assert!(tiers.windows(2).all(|w| w[0] <= w[1]), "breadth-major order: {tiers:?}");
         assert_eq!(cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 2).count(), 1, "EM sleeve present");
-        assert_eq!(cores.len(), 7, "1 all-world + 1 world + 1 EM + 3 S&P + 1 Europe (4th S&P + dup dropped)");
+        // (#231) 4 non-US rows (all-world + developed + EM + Europe) plus whatever tier 3 admits —
+        // spelled off the same helper as the filter, because five S&P names are supplied and the
+        // cap that trims them is 3 config-less and 4 under `tests/ci-settings.yaml`.
+        assert_eq!(cores.len(), 4 + us_tier_cap(), "1 all-world + 1 world + 1 EM + 1 Europe + the US sleeve, dup dropped");
         let uniq: HashSet<&str> = cores.iter().map(|q| q.name.as_str()).collect();
         assert_eq!(uniq.len(), cores.len(), "one row per fund name");
         assert!(!cores.iter().any(|q| q.name == "Apple Inc."), "a single stock is never a hold core");
@@ -7693,11 +7748,19 @@ mod tests {
         let mut us = core_etf("AVUV", "Avantis Prime Global UCITS ETF", 9e9, cap);
         us.market = "USA".into();
         let quotes = [quotes, vec![us]].concat();
-        let got: Vec<&str> = geo_miss_census(&quotes).iter().map(|q| q.ticker.as_str()).collect();
+        let got: Vec<&str> = geo_miss_census(&quotes, 0).iter().map(|q| q.ticker.as_str()).collect();
         // 0DZP.L STAYS a blind spot after (#211) and that is the pin: delete the trailing space in
         // ("msci em ", 2) and the eurozone fund gets a tier and vanishes from this list.
         assert_eq!(got, vec!["DBXD.DE", "0DZP.L", "LGGE.DE"],
             "descending by AUM, one row per real blind spot");
+        // (#231) …and with the COUNTRY sleeve OPEN, two of those three are not blind spots at all —
+        // they are funds the lane already PRINTS. `dax` and `msci emu` are both `core::COUNTRY`
+        // tokens, so (#227) gave each of them a sleeve while `geo_hit` kept answering None, and this
+        // census went on reporting them for four rounds. TWO funds cross the parameter and one does
+        // not, so neither a dropped argument nor a constant-true predicate can satisfy both halves.
+        let got: Vec<&str> = geo_miss_census(&quotes, 7).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(got, vec!["LGGE.DE"],
+            "(#231) only the fund NO sleeve can claim is a blind spot");
     }
 
     /// (#204) `near_miss_reason` must report the TOKEN only when breadth is what actually refused.
@@ -7728,7 +7791,7 @@ mod tests {
     /// (#66) The per-tier counter must survive more names in one tier than a `u8` can hold. It was
     /// `[0u8; HOLD_TIERS]`, incremented once per distinct fund NAME, so the 256th name in a tier wrapped
     /// it back to 0 and the tier silently admitted three more rows. 300 distinct S&P 500 names is the
-    /// smallest input that crosses the boundary; the cap must still read exactly `hold_per_tier()`.
+    /// smallest input that crosses the boundary; the cap must still read exactly the TIER-3 cap.
     ///
     /// This pin is the ONLY cover for that arithmetic, because the two profiles disagree about it: under
     /// `cargo t` (mutants profile, inherits dev) overflow-checks are on and the pre-fix line PANICS here,
@@ -7739,7 +7802,7 @@ mod tests {
             .map(|i| core_etf(&format!("S{i:03}.DE"), &format!("Issuer{i:03} S&P 500 UCITS ETF"), 1e9, 0.10))
             .collect();
         let cores = hold_core_list(&quotes);
-        assert_eq!(cores.len(), crate::config::hold_per_tier(), "one tier, 300 distinct names -> the cap, not a wrapped counter");
+        assert_eq!(cores.len(), us_tier_cap(), "one tier, 300 distinct names -> the cap, not a wrapped counter");
     }
 
     /// (#66) A NaN sort key must order rather than take the screen down. `unwrap_or` supplies a value
