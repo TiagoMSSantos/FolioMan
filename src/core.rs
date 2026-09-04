@@ -1265,7 +1265,43 @@ const GEO: [(&str, u8); 32] = [
     // CSPXJ.SW back in the GEO blind spot, where (#213) found it.
     ("msci pac ", 7), ("msci pacific", 7),
     // 0 = the whole planet, DM+EM in one fund
-    ("all-world", 0), ("all-country", 0), ("all country world", 0), ("acwi", 0), ("global all cap", 0),
+    ("all-world", 0), ("all-country", 0), ("all country world", 0), ("acwi", 0),
+    // (#234) ONE TOKEN FOR BOTH SPELLINGS, replacing `("global all cap", 0)`. That token could never
+    // reach the fund it was written for: Vanguard spells it "FTSE Global All-Cap" with a HYPHEN and
+    // `hit` is a bare `contains` with no normalisation, so VALL.L (0.07%, the broadest equity
+    // universe the lane can hold and the joint-cheapest row on the table) sat in the GEO blind spot
+    // through (#203), (#211), (#231) and (#233). (#231) found it and left it open; this closes it.
+    //
+    // NOT FIXED BY NORMALISING HYPHENS. A `.replace('-', " ")` in the lowercase step would break
+    // `ex-usa`, `all-world` and `all-country`, which carry hyphens in the TOKEN itself. The defect
+    // is a spelling and the fix is a spelling.
+    //
+    // MEASURED 2026-09-04, live `screen`: exactly FOUR funds in the pond contain "global all" —
+    // VALL.L (clears), VGLD.DE (its Dist share class), and V3AA.L/V3AL.L ("ESG Global All Cap",
+    // which carry the SPACE spelling the old token assumed and die on `esg` at leg 0 regardless).
+    // So the widened reach admits ONE fund and every other match is refused by a leg that already
+    // existed. Widening cannot misfile: `all-world` and `all-country` file at tier 0 too, so any
+    // conceivable over-match lands on the rung it would have landed on anyway.
+    //
+    // IT PRINTS ONLY BECAUSE OF `hold_family_first`, and the receipt says so rather than implying
+    // the sort earned it. VALL.L's AUM is not served by this pond, and the comparator sorts
+    // `aum_shown().is_none()` SECOND — ahead of domicile and TER — so on rank alone it is last in a
+    // sleeve already full at 7 and would never appear. Family-first seats the best fund of each
+    // DISTINCT family in pass 1, and VALL.L is the sole member of a new FOURTH all-world family.
+    // Admission therefore rests on ABSENT AUM, which (#224) made a PASS (non-negotiable #5), and
+    // the row prints with `n/a` for AUM, CAGR and years — this pond serves it no price history.
+    // That is thin, it is disclosed, and it is the same footing every (#224) admission stands on.
+    //
+    // OBSERVED: 47 CORE rows -> 49 with the country tokens; this token's own effect is ONE addition
+    // and ONE removal, and the removal was pre-registered BY NAME before the run — SPP1.DE, the
+    // THIRD SPDR MSCI ACWI wrapper in the sleeve, behind SPYY.DE (0.12%) and SPYI.DE (0.17%). A
+    // duplicate wrapper out, a distinct universe at less than half the TER in. The all-world cap
+    // stays 7: tier 0's cap is not governed by (#220) (7 against 3 families, argued separately by
+    // (#207)), so raising it to 8 to avoid the eviction would be a number chosen from the outcome.
+    //
+    // REVERT: restore `("global all cap", 0)`. VALL.L returns to the blind spot and SPP1.DE to the
+    // table.
+    ("global all", 0),
     ("solactive gbs global markets", 0),
     // (#230) FTSE Global Small Cap is an ALL-WORLD index (developed + emerging), so it belongs at
     // tier 0 and not beside the US spellings below. Spelled with its provider prefix on purpose,
@@ -1354,7 +1390,7 @@ const GEO: [(&str, u8); 32] = [
 /// both sat among the 22 rows the ≤3/sleeve cap hides, which is why the printed table never showed
 /// the bug and no receipt caught it. NDUS.L clears every other leg on live facts (TER 0.18%, AUM
 /// €1.24B), so this token is the only thing standing between it and the CORE list.
-const NARROW: [&str; 42] = [
+const NARROW: [&str; 43] = [
     "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
     "industrial",
     // (#222) THE REST OF GICS. `(#200)` found "industrial" missing and named the defect exactly — a
@@ -1416,6 +1452,27 @@ const NARROW: [&str; 42] = [
     // leading separator for the reason " pab" and " us equity" do — `hold_name_tokens` ships OFF, so
     // the match is a bare `contains` and that space is the whole guard against a "CH Acc" share class.
     "bond", "heur", " h acc",
+    // (#234) STYLE, NOT GEOGRAPHY — the gap that let a factor tilt sit in a GEOGRAPHIC sleeve.
+    // NARROW spells "value", "quality", "momentum" and "equal weight" but never spelled the fifth
+    // style anyone screens on, so `geo_tier` read "iShares Russell 1000 Growth" as a US SLEEVE fund.
+    // That is (#200)'s defect class verbatim — a token ABSENT rather than one matching too loosely —
+    // and it is what `geo_tier`'s own doc means by "THE RULE IS GEOGRAPHY, NEVER INDUSTRY OR STYLE".
+    //
+    // MEASURED 2026-09-04, live `screen`: 41 funds in the pond carry the word and EXACTLY ONE is
+    // geo-tiered, tilt-free and clears every remaining leg — R1GR.AS (EUR 1.1B, 0.18%), which is the
+    // whole `russell 1000` family at tier 3. So the token refuses ONE fund and costs nothing else.
+    //
+    // APPENDED, NOT INSERTED, and that is load-bearing: `narrow_hit` returns the FIRST token in
+    // NARROW ORDER, so a token placed earlier would re-file every "Quality Dividend Growth" fund
+    // from "quality" to "growth" and move them out of the FACTOR sleeve. At the end it cannot
+    // preempt any existing verdict, and the census's "refused FIRST on this token" convention holds.
+    //
+    // NOT ADDED TO `FACTOR`: the factor sleeve reads FACTOR_GEO = [0, 1], and the same run found
+    // ZERO growth funds at tier 0 or 1. A FACTOR entry would be a token that admits nothing, which
+    // is what (#215) and (#222) settled against.
+    //
+    // REVERT: drop the token. That returns R1GR.AS to tier 3 and the US sleeve to five families.
+    "growth",
 ];
 
 /// (#102) Does an ALREADY-lowercased `n` carry `t` at the START OF A WORD? The tightened matcher
@@ -1723,7 +1780,7 @@ fn sector_sleeve_tier(n: &str, first: &str, on: bool) -> Option<u8> {
 /// NEVER add a bare `uk` token. "FTSE Developed Europe ex UK" contains it, and 11 funds in the live
 /// pond carry an `ex uk`/`ex-uk` spelling — the token would hijack them out of the Europe sleeve
 /// into this one. `ftse 100` is the safe spelling and is what the census measured.
-const COUNTRY: [&str; 7] = [
+const COUNTRY: [&str; 9] = [
     "dax",
     "euro stoxx 50",
     "msci emu",
@@ -1731,6 +1788,30 @@ const COUNTRY: [&str; 7] = [
     "korea",
     "india",
     "china",
+    // (#234) BOTH REACHABLE ONLY SINCE (#233). (#227) priced 27 candidate spellings against a pond
+    // that refused every synthetic fund and recorded twenty as reaching none; swap admission moved
+    // two of them. Re-measured 2026-09-04 on the post-(#233) pond, same throwaway probe over
+    // `hold_miss_but_breadth` (non-negotiable #4, no leg re-spelled), `allow_swap = true`:
+    //   cac 40    8 funds named ->  1 clears   (CACC.PA EUR 4.5B 0.25%)
+    //   " spi "   4 funds named ->  1 clears   (SPIA.SW EUR 2.4B 0.09%)
+    // Every other one of (#227)'s twenty still reaches nothing and stays unspelled, and so do the
+    // eleven further spellings this round probed (smi, ftse mib, ibex, omx, tsx, nikkei, hang seng,
+    // sensex, bovespa, spi etf, core spi) — a token that admits nothing is speculation with a
+    // maintenance cost.
+    "cac 40",
+    // SWITZERLAND IS SPELLED ONCE, DELIBERATELY. `switzerland` ALSO reaches a fund now (SW2CHB.SW,
+    // "UBS MSCI Switzerland 20/35", EUR 0.0B AUM, 0.20%), so both spellings clear — but they name
+    // the SAME MARKET, and `sleeve_family_of` keys a family off the matched token, so shipping both
+    // would print two Swiss rows and defeat the very mechanism (#197)/(#220) built the family count
+    // on. SPI wins the pick on the fund it reaches, not on the spelling: the whole Swiss market
+    // rather than a capped 20/35 subset, 0.09% against 0.20%, EUR 2.4B against an AUM this pond does
+    // not serve. `switzerland` is MEASURED AND DECLINED, not unmeasured.
+    //
+    // DELIMITED ON BOTH SIDES for the reason "msci em ", "msci pac " and "sri " are, and the reason
+    // this sleeve's own receipt gives for NEVER ADDING A BARE `uk` TOKEN: `hold_name_tokens` ships
+    // OFF, so the match is a bare `contains` and a naked "spi" would swallow any name carrying those
+    // three letters mid-word. Pinned in `pure_logic`.
+    " spi ",
 ];
 
 /// (#227) The twelfth sleeve, ranked LAST — a single market is the least diversified thing the lane
@@ -5781,6 +5862,58 @@ mod tests {
         assert_eq!(geo_tier_at(fund, 0.35, true, true, 0), None,
             "{why}: no OTHER sleeve's knob opens this one");
     }
+    // (#234) the two spellings (#233) made reachable. Both were in (#227)'s twenty-refused list —
+    // measured against a pond that refused every synthetic fund — and both now reach exactly one
+    // clearing fund. They are pinned at COUNTRY_TIER and, like their seven elders, must vanish with
+    // the sleeve knob off.
+    for (fund, why) in [
+        ("amundi cac 40 ucits etf acc", "CACC.PA, the fund cac 40 reaches"),
+        ("ubs core spi etf chf acc", "SPIA.SW, the fund the delimited spi spelling reaches"),
+    ] {
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 9), Some(COUNTRY_TIER),
+            "{why}: the country sleeve claims it");
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0), None,
+            "{why}: …and refuses it with the knob off");
+    }
+    // (#234) THE `spi` HAZARD, which is why the token carries a space on BOTH sides. `hold_name_tokens`
+    // ships OFF, so `hit` is a bare `contains` and a naked "spi" is three letters that occur inside
+    // ordinary words. These names must never reach the country sleeve.
+    for (no, why) in [
+        ("invesco spin-off opportunities ucits etf", "'spin' is not the Swiss Performance Index"),
+        ("ishares inspired growth ucits etf", "'inspi' is not 'spi' at a boundary either"),
+    ] {
+        assert_ne!(geo_tier_at(no, 0.0, false, false, 9), Some(COUNTRY_TIER), "{no}: {why}");
+    }
+    // (#234) THE `growth` GAP. NARROW spelled value, quality, momentum and equal weight but never
+    // growth, so a Russell 1000 GROWTH fund read as a US GEOGRAPHIC core — the one fund in the live
+    // pond that did. `geo_tier` says the rule is geography, never industry or style; this is the
+    // style half finally enforced.
+    assert_eq!(narrow_hit("ishares russell 1000 growth ucits etf usd acc"), Some("growth"),
+        "a growth tilt is a STYLE and must be refused before any sleeve sees it");
+    assert_eq!(geo_tier_at("ishares russell 1000 growth ucits etf usd acc", 0.0, false, false, 0), None,
+        "…so tier 3 must no longer claim it, which is what takes the US sleeve back to four families");
+    // …while the PLAIN index keeps its tier, so the token refuses the tilt and not the family.
+    assert_eq!(geo_tier_at("ishares russell 1000 ucits etf usd acc", 0.0, false, false, 0), Some(3),
+        "russell 1000 without the tilt is still a US geographic index");
+    // APPENDED, NOT INSERTED: `narrow_hit` returns the FIRST token in NARROW order, so a "Quality
+    // Dividend Growth" fund must still report "quality" and keep reaching the FACTOR sleeve. Placing
+    // "growth" any earlier in the array silently re-files every one of them.
+    assert_eq!(narrow_hit("wisdomtree us quality dividend growth ucits etf - usd acc"), Some("quality"),
+        "first-match order is load-bearing: growth is appended so it cannot preempt quality");
+    // (#234) ONE TOKEN FOR BOTH SPELLINGS OF GLOBAL ALL-CAP. `("global all cap", 0)` could not reach
+    // VALL.L (EUR 0.07% FTSE Global All-Cap) because `hit` is a bare `contains` and the fund carries
+    // a HYPHEN — (#231)'s LEFT OPEN, and exactly the failure `geo_miss_census`'s doc names for
+    // "all-country". `("global all", 0)` reaches both spellings at the SAME tier, so no fund can be
+    // misfiled by the extra reach.
+    for (fund, why) in [
+        ("vanguard funds plc - vanguard ftse global all-cap ucits etf usd acc", "the hyphen VALL.L carries"),
+        ("vanguard ftse global all cap ucits etf usd acc", "…and the spelling the old token assumed"),
+    ] {
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0), Some(0), "{why}: all-cap is an ALL-WORLD sleeve");
+    }
+    // …and the reach is still bounded by NARROW, which runs first: the ESG share class stays refused.
+    assert_eq!(geo_tier_at("vanguard esg global all cap ucits etf (usd) accumulating", 0.0, false, false, 0), None,
+        "a tilt word still refuses the fund before any GEO token is consulted");
     // …and what it must still REFUSE. The first is the reason `core::COUNTRY` may never hold a bare
     // `uk` token: 11 funds in the live pond carry an ex-UK spelling, and the token would drag every
     // one of them out of the Europe sleeve. The rest are the populations the sleeve must not reach.

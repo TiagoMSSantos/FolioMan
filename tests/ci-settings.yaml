@@ -4610,7 +4610,43 @@ buy_heuristic:
                                  #   — developed/EM/US/exUS/Europe/Japan are byte-identical row for row.
                                  #   REVERT RULE: 0. That restores the shared cap on every sleeve, and the
                                  #   only thing lost is four all-world funds.
-  hold_per_tier_us: 4            # (#231) MEASURED 2026-09-04, live `screen`, control and probe BACK TO BACK
+  hold_per_tier_us: 4            # (#234) HELD AT 4 — A RAISE TO 5 WAS PLANNED, PRE-REGISTERED AND THEN
+                                 #   REFUSED BY ITS OWN STOP RULE. Recorded here rather than dropped,
+                                 #   because the census line that licensed it is still on screen and the
+                                 #   next round will otherwise re-derive the same wrong conclusion.
+                                 # 
+                                 #   THE ARGUMENT THAT FAILED: after (#233) the census read `US 34 (5f)`
+                                 #   against this cap of 4, so under (#220) — the family count IS the cap
+                                 #   — a raise to 5 looked mechanical and unarguable. The plan
+                                 #   pre-registered "exactly ONE addition, carrying the fifth family;
+                                 #   an addition that re-wraps a family already printed REFUSES the raise".
+                                 # 
+                                 #   WHAT THE FIFTH FAMILY ACTUALLY WAS: `russell 1000`, whose ONLY
+                                 #   member clearing every leg is R1GR.AS — "iShares Russell 1000
+                                 #   GROWTH", EUR 1.1B, 0.18%. A STYLE TILT, not a geography, and
+                                 #   `geo_tier`'s own doc says the rule is geography, never industry or
+                                 #   style. The cap was not hiding an exposure; the NARROW list was
+                                 #   missing a word. Raising to 5 would have seated a growth fund as a US
+                                 #   CORE row.
+                                 # 
+                                 #   FIXED AT THE CAUSE INSTEAD: `core::NARROW` gains "growth" (appended,
+                                 #   so first-match order cannot shift). Measured the same run — 41 funds
+                                 #   in the pond carry the word, and EXACTLY ONE is geo-tiered, tilt-free
+                                 #   and clears every leg. The token refuses R1GR.AS and nothing else,
+                                 #   the census falls back to `US 33 (4f)`, and 4 is the family count
+                                 #   again. THE CAP NEVER NEEDED TO MOVE.
+                                 # 
+                                 #   NOTHING PRINTED DIFFERENTLY EITHER WAY: at cap 4 against 5 families
+                                 #   family-first already seated the four cheapest-by-net-TER families
+                                 #   and R1GR.AS was the one left out, so the defect was LATENT, not
+                                 #   live. It is fixed anyway — a latent misfiling is what the next
+                                 #   vocabulary round trips over.
+                                 # 
+                                 #   THE GENERAL LESSON, AND IT COST (#233) A WRONG PREDICTION TOO: a
+                                 #   census FAMILY COUNT is only as good as the NARROW list underneath
+                                 #   it. Read what the families ARE before reading how many.
+                                 # 
+                                 # (#231) MEASURED 2026-09-04, live `screen`, control and probe BACK TO BACK
                                  #   on the same cache (`4808 from cache`, both arms). Rows kept in the US
                                  #   sleeve alone (tier 3), overriding `hold_per_tier` (3) there. 0 = inherit
                                  #   it, the code default and byte-identical to today on every tier
@@ -4681,6 +4717,12 @@ buy_heuristic:
                                  #   predicted the corrected census would leave nothing further to spell. It
                                  #   was WRONG, and that is the fix earning its keep: with 14 rows of noise
                                  #   gone, the 5 survivors are legible and TWO of them are real.
+                                 #     VALL.L  CLOSED BY (#234): `core::GEO` now carries ("global all", 0),
+                                 #             which reaches both spellings, and the fund PRINTS — one
+                                 #             addition against one pre-registered removal (SPP1.DE).
+                                 #             Everything this block predicted about it held, including
+                                 #             the absent-AUM caveat: it prints with n/a AUM, n/a CAGR
+                                 #             and 0.0 years. Original note follows.
                                  #     VALL.L  Vanguard FTSE Global All-Cap, 0.07%, tier 0 — GEO ALREADY
                                  #             CARRIES ("global all cap", 0) and a HYPHEN defeats it: the fund
                                  #             is spelled "Global All-Cap" and `core::hit` is a plain
@@ -5001,7 +5043,70 @@ buy_heuristic:
                                  #   sleeve still holds only small-cap funds and the current label is the ACCURATE one — renaming it
                                  #   would make the table less true, not more. `core::SIZE`, `SIZE_GEO` and picks.rs are UNCHANGED.
                                  #   NET: this round changes ONE config integer and no Rust at all.
-  hold_per_tier_country: 7       # (#227) MEASURED 2026-09-03, live `screen`, 4594-EU-buyable-ETF pond.
+  hold_per_tier_country: 9       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
+                                 #   BACK on one cache) — 7 -> 9. THE FAMILY COUNT, NOT AN ARGMAX, read
+                                 #   off a RE-RUN of (#227)'s own census: two of the twenty spellings it
+                                 #   refused now reach a fund, so the sleeve has nine index families and
+                                 #   nine is what it prints. `core::COUNTRY` gains `cac 40` and `" spi "`.
+                                 # 
+                                 #   WHY THE ANSWER CHANGED, AND IT IS NOT THAT (#227) WAS WRONG: it
+                                 #   measured a pond that refused every fund whose replication was Swap
+                                 #   OR MISSING. Both funds admitted here carry `replication: None` —
+                                 #   they print with REPL `—` — so they were refused for a DATUM BF
+                                 #   NEVER SENT, not for being synthetic. (#233)'s value at this site is
+                                 #   its non-negotiable #5 half, not its swap half. Worth stating
+                                 #   plainly, because "swap admission added two country rows" is the
+                                 #   wrong causal story and would mislead the next round.
+                                 # 
+                                 #   THE RE-CENSUS, same throwaway probe over `hold_miss_but_breadth`
+                                 #   (non-negotiable #4, no leg re-spelled) with `allow_swap = true`,
+                                 #   against 1545 geo-less tilt-less EU-buyable ETFs:
+                                 #     cac 40         8 named ->  1 clears  CACC.PA EUR4.5B 0.25%
+                                 #     " spi "        4 named ->  1 clears  SPIA.SW EUR2.4B 0.09%
+                                 #     switzerland   13 named ->  1 clears  SW2CHB.SW EUR0.0B 0.20%
+                                 #   and the shipped seven, re-priced on the wider pond: dax 32->4,
+                                 #   euro stoxx 50 28->5, msci emu 26->7, ftse 100 12->2, korea 8->1,
+                                 #   india 18->1, china 43->1. Supply 21 -> 23, families 7 -> 9.
+                                 #   The other seventeen of (#227)'s twenty still reach NOTHING, and so
+                                 #   do eleven further spellings probed for the first time here (smi,
+                                 #   ftse mib, ibex, omx, tsx, nikkei, hang seng, sensex, bovespa,
+                                 #   plus `spi etf` and `core spi`, which reach SPIA.SW and nothing
+                                 #   else). All stay unspelled on (#227)'s standing rule.
+                                 # 
+                                 #   SWITZERLAND IS SPELLED ONCE AND THE OTHER SPELLING IS DECLINED, NOT
+                                 #   UNMEASURED. `switzerland` clears too, but it reaches a DIFFERENT
+                                 #   fund in the SAME market (SW2CHB.SW, MSCI Switzerland 20/35). Since
+                                 #   `sleeve_family_of` keys a family off the MATCHED TOKEN, shipping
+                                 #   both would print two Swiss rows and defeat the mechanism (#197) and
+                                 #   (#220) rest the family count on. SPI wins on the fund, not the
+                                 #   spelling: the whole Swiss market against a capped 20/35 subset,
+                                 #   0.09% against 0.20%, EUR 2.4B against an AUM this pond does not
+                                 #   serve. The token is delimited on BOTH sides for the reason this
+                                 #   sleeve's own receipt forbids a bare `uk`, and the hazard is pinned.
+                                 # 
+                                 #   OBSERVED, control vs probe, whole-line ticker-set diff of the CORE
+                                 #   table: 47 rows -> 49. ADDED CACC.PA, SPIA.SW (this knob) and VALL.L
+                                 #   (the GEO token below); REMOVED SPP1.DE (also the GEO token, and
+                                 #   pre-registered by name). The country half is ADDITIONS ONLY with
+                                 #   ZERO removals, which is (#227)'s stop rule verbatim, and each added
+                                 #   row carries an index family the table could not already reach.
+                                 # 
+                                 #   HONEST LEDGER, CARRIED FORWARD FROM (#227) UNCHANGED: a
+                                 #   single-market fund is a concentrated country bet, and France and
+                                 #   Switzerland both already sit inside the Europe sleeve at index
+                                 #   weight, so a dedicated row is a deliberate OVERWEIGHT. CACC.PA also
+                                 #   prices at 0.25%, EXACTLY the base TER cap and the most expensive
+                                 #   row in the sleeve — it passes because the leg is `t > cap`. This
+                                 #   table forecasts no returns and never has.
+                                 # 
+                                 #   REVERT: set 7 and drop both tokens from `core::COUNTRY`. Revert an
+                                 #   INDIVIDUAL token if it ever reaches a fund that is not a
+                                 #   single-market index. Display-only and NOT gradeable, exactly as its
+                                 #   elders — `backtest::stamp_asset_class` fills only name,
+                                 #   instrument_type and sector, so every backtest quote dies on its TER
+                                 #   leg and no walk reaches this lane.
+                                 # 
+                                 # (#227) MEASURED 2026-09-03, live `screen`, 4594-EU-buyable-ETF pond.
                                  #   Opens a TWELFTH CORE sleeve holding SINGLE-MARKET funds and caps
                                  #   its rows, in one number: 0 = sleeve OFF, eleven sleeves, byte-
                                  #   identical to the shipped table (the DEFAULT in config.rs, and
