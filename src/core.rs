@@ -1909,6 +1909,47 @@ fn ter_cap_for(tier: u8, size_cap: f64, base_cap: f64) -> f64 {
     }
 }
 
+/// (#233) Does this fund escape US dividend withholding entirely? True for a SWAP-based fund in the
+/// US sleeve and nothing else. A synthetic fund holds a total-return swap rather than the shares, so
+/// the counterparty delivers the index return GROSS and no US withholding is levied anywhere in the
+/// chain — the fact `Quote::replication`'s own comment records ("swap-based US-index funds also
+/// legally dodge dividend withholding — why they track so well").
+///
+/// TIER 3 ONLY, and that is a scope decision rather than a physical one. A US index pays 100% US
+/// dividends, so the saving is the whole treaty gap and needs no weighting. A world fund is ~65-72%
+/// US, which is a REAL saving too — but pricing it needs a per-tier US-weight table of judgement
+/// values, and inventing one here would put four unmeasured numbers behind a knob that only needs
+/// one. Outside tier 3 a swap fund is admitted and sorts on its real domicile and raw TER.
+///
+/// ONE definition (non-negotiable #4): both sort keys that care — [`net_ter`] and `picks::dom_rank`
+/// — ask this, and neither re-spells the rule. That matters because the two are answering the SAME
+/// question in different units, and the pair only works if they agree on which funds it applies to.
+pub fn us_withholding_free(replication: Option<&str>, tier: u8) -> bool {
+    tier == 3 && replication == Some("Swap")
+}
+
+/// (#233) The TER the CORE sleeve SORTS on: the headline number, less the withholding a swap fund at
+/// the US tier does not pay. `credit` 0.0 is the shipped lane and makes this the identity, which is
+/// non-negotiable #1.
+///
+/// The `9.9` sentinel for a missing TER lives HERE rather than at the call site it came from. It is
+/// not a real TER — it is "sort me last", and the admission leg has already refused every fund that
+/// could reach the sleeve without one, so it fires only if that leg is ever loosened.
+///
+/// Subtracting rather than adding a drag to physical funds is deliberate and equivalent: the sort is
+/// WITHIN a tier, so a constant shift applied to every physical fund produces the identical order at
+/// a larger diff. What it must NOT be read as is a claim that 0.03% is the true cost of an Irish
+/// physical S&P 500 tracker — it is not; the true cost is ~0.21%, and this expresses the same gap
+/// from the other side.
+pub fn net_ter(ter: Option<f64>, tier: u8, replication: Option<&str>, credit: f64) -> f64 {
+    let shown = ter.unwrap_or(9.9);
+    if us_withholding_free(replication, tier) {
+        shown - credit
+    } else {
+        shown
+    }
+}
+
 /// The geographic tier of an ALREADY-lowercased name, or None when no geography token matches or a
 /// NARROW token disqualifies it. The single place the two public fns above agree.
 fn geo_tier(n: &str) -> Option<u8> {
@@ -2017,6 +2058,7 @@ pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
     // anything that reached it by another route. One lookup, one definition (non-negotiable #4).
     hold_miss_leg_with(
         q,
+        crate::config::hold_allow_swap(),
         crate::config::hold_size_sleeve_ter(),
         crate::config::hold_factor_sleeve(),
         crate::config::hold_sector_sleeve(),
@@ -2030,6 +2072,7 @@ pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
 /// `picks::near_miss_reason` had to be fixed for and no test could construct before.
 pub fn hold_miss_leg_with(
     q: &Quote,
+    allow_swap: bool,
     size_cap: f64,
     factor_on: bool,
     sector_on: bool,
@@ -2039,13 +2082,13 @@ pub fn hold_miss_leg_with(
     let Some(tier) = geo_tier_at(&lower, size_cap, factor_on, sector_on, country_cap) else {
         return Some((0, "not a broad-index name (sector/thematic/factor tilt)".into()));
     };
-    hold_miss_leg_at(q, tier, size_cap)
+    hold_miss_leg_at(q, tier, allow_swap, size_cap)
 }
 
 /// (#203) Legs 1..5 for a fund ALREADY placed in `tier` — every leg of [`hold_miss_leg`] except the
 /// breadth one, split out so [`hold_miss_but_breadth`] can ask the other five without re-spelling a
 /// single one of them (non-negotiable #4). `tier` is read at exactly one site, [`ter_cap_for`].
-fn hold_miss_leg_at(q: &Quote, tier: u8, size_cap: f64) -> Option<(usize, String)> {
+fn hold_miss_leg_at(q: &Quote, tier: u8, allow_swap: bool, size_cap: f64) -> Option<(usize, String)> {
     // (#102) the name token, OR — behind the knob — an EU domicile, which is the FACT the token is a
     // proxy for. `domicile: None` still falls back to the name, so missing data cannot newly pass.
     let eu_domiciled = crate::config::hold_ucits_or_domicile()
@@ -2066,7 +2109,17 @@ fn hold_miss_leg_at(q: &Quote, tier: u8, size_cap: f64) -> Option<(usize, String
     // all-world fund — VWRA (€43B), iShares ACWI (€29B), SPDR ACWI (€14B) all sample ("Optimised",
     // the norm for a 3000+ name index; BF verified live 2026-07) — keeping the CORE tier-0 slot
     // permanently empty. Optimised/Sample/Hybrid hold the stocks; Swap and unknown still fail.
-    if !matches!(q.replication, Some("Full" | "Opt" | "Samp" | "Hybr")) {
+    // (#233) …and `allow_swap` retires the whole leg. Note what the ORIGINAL spelling refused: not
+    // just `Some("Swap")` but `None` as well, so a fund BF simply never told us about died here on a
+    // datum that was never fetched. `fetch::bf_row_meta` records `replicationMethod` present on only
+    // 70% of BF rows and, unlike the share-class leg one line down, replication has no name fallback
+    // — so that was roughly three funds in ten, refused against non-negotiable #5. The identical
+    // shape (#224) found on the AUM leg two legs later.
+    //
+    // The knob does not separate the two halves, because turning it on exhausts the match: admit
+    // "Swap" and admit unknown and the leg refuses nobody. It stays in `HOLD_LEGS` at index 3
+    // regardless, INERT, so the funnel histogram keeps its shape and prints a visible 0.
+    if !allow_swap && !matches!(q.replication, Some("Full" | "Opt" | "Samp" | "Hybr")) {
         return Some((3, format!("replication {} (needs physical)", q.replication.unwrap_or("unknown"))));
     }
     if q.use_of_profits != Some("Acc") {
@@ -2093,8 +2146,8 @@ fn hold_miss_leg_at(q: &Quote, tier: u8, size_cap: f64) -> Option<(usize, String
 /// Tier 0 (all-world) is passed deliberately: it makes [`ter_cap_for`] apply the BASE cap, never the
 /// size sleeve's, so a hypothetical admission is priced against the lane's own ceiling and the answer
 /// does not move when `hold_size_sleeve_ter` does.
-pub fn hold_miss_but_breadth(q: &Quote) -> Option<(usize, String)> {
-    hold_miss_leg_at(q, 0, 0.0)
+pub fn hold_miss_but_breadth(q: &Quote, allow_swap: bool) -> Option<(usize, String)> {
+    hold_miss_leg_at(q, 0, allow_swap, 0.0)
 }
 
 /// Pick the newest FULINS_C download link out of a FIRDS registry payload. Handles both registry
@@ -5043,7 +5096,14 @@ mod tests {
     };
     assert!(hold("Vanguard S&P 500 UCITS ETF USD Acc", Some(0.07), Some("Full"), Some("Acc"), Some(28.8e9))); // VUAA
     assert!(hold("State Street SPDR S&P 500 UCITS ETF", Some(0.03), Some("Full"), Some("Acc"), Some(15.0e9))); // SPYL
-    assert!(!hold("Amundi S&P 500 Swap UCITS ETF", Some(0.15), Some("Swap"), Some("Acc"), Some(2.6e9))); // AUM5: swap
+    // (#233) AUM5's verdict is CONFIG-DEPENDENT now, the same way (#210)/(#218) made their exemplars
+    // so, and it is spelled off the knob rather than as a literal for the same reason: the code
+    // default is false and tests/ci-settings.yaml ships true, so a hardcoded `!` asserts the opposite
+    // of the shipped answer in one of the two regimes CI runs. The unconditional halves live in the
+    // `miss_swap` pins below, which pass the flag instead of reading it.
+    assert_eq!(hold("Amundi S&P 500 Swap UCITS ETF", Some(0.15), Some("Swap"), Some("Acc"), Some(2.6e9)),
+        crate::config::hold_allow_swap(),
+        "a swap fund is hold-suitable EXACTLY when the knob admits it, in either regime");
     // (#218) a sector fund is still not a core — but the exemplar had to change. "iShares S&P 500
     // Information Technology" is the LARGEST fund the sector sleeve admits (IITU.L, EUR 15.6B), so
     // with `hold_sector_sleeve` armed this line asserted the opposite of the shipped answer. VanEck
@@ -5074,12 +5134,12 @@ mod tests {
         q
     };
     assert_eq!(
-        hold_miss_leg_with(&world_small_q, 0.0, false, false, 0).map(|(leg, _)| leg),
+        hold_miss_leg_with(&world_small_q, false, 0.0, false, false, 0).map(|(leg, _)| leg),
         Some(0),
         "sleeve off -> refused at leg 0 on the name, whatever its facts"
     );
     assert!(
-        hold_miss_leg_with(&world_small_q, 0.35, false, false, 0).is_none(),
+        hold_miss_leg_with(&world_small_q, false, 0.35, false, false, 0).is_none(),
         "sleeve on -> the same fund is admitted; this is the row (#210) shipped"
     );
 
@@ -5624,6 +5684,35 @@ mod tests {
     assert_eq!(tier_cap(0, 3, 7, 4, 0, 0, 0, 0), 7, "all-world keeps its precedence over the US override");
     assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 4, 4, 0, 0, 0), 4,
         "…and the US override does not leak into the small-cap sleeve, which reads its own");
+    // (#233) the withholding escape, and the two sort terms that both have to agree about it.
+    // TIER 3 AND `Some("Swap")` — the conjunction is the pin: each half alone is false, so a mutant
+    // that drops either one is caught by the neighbours rather than by the positive case.
+    assert!(us_withholding_free(Some("Swap"), 3), "(#233) a synthetic US fund pays no US withholding");
+    assert!(!us_withholding_free(Some("Swap"), 2), "…the emerging sleeve above it holds no US dividends");
+    assert!(!us_withholding_free(Some("Swap"), 4), "…nor the ex-US sleeve below it, which is the point of ex-US");
+    assert!(!us_withholding_free(Some("Swap"), 0), "…and tier 0 is ~65% US but deliberately UNCREDITED this round");
+    for repl in ["Full", "Opt", "Samp", "Hybr"] {
+        assert!(!us_withholding_free(Some(repl), 3), "a PHYSICAL fund at tier 3 pays the treaty rate: {repl}");
+    }
+    assert!(!us_withholding_free(None, 3), "…and an unknown structure is never assumed synthetic");
+
+    // (#233) `net_ter` is the identity at the shipped credit, which is non-negotiable #1 stated as a
+    // test rather than as a claim. Only the swap-at-tier-3 case may move, and only by the credit.
+    assert_eq!(net_ter(Some(0.15), 3, Some("Swap"), 0.0), 0.15, "(#233) credit 0.0 = the shipped lane, untouched");
+    // a TOLERANCE, not `==`: 0.15 - 0.10 is 0.04999999999999999 in binary floating point, and the
+    // sort this feeds uses `total_cmp`, which cares about the ORDER of two such values and never
+    // about either one landing on a decimal a human would write.
+    assert!((net_ter(Some(0.15), 3, Some("Swap"), 0.10) - 0.05).abs() < 1e-12,
+        "…and the credit comes off the swap fund only");
+    assert_eq!(net_ter(Some(0.03), 3, Some("Full"), 0.10), 0.03, "a physical fund is never credited, at any value");
+    assert_eq!(net_ter(Some(0.15), 4, Some("Swap"), 0.10), 0.15, "…nor a swap fund outside the US tier");
+    assert_eq!(net_ter(None, 3, Some("Full"), 0.0), 9.9, "no TER sorts LAST — the sentinel, not a real number");
+    // the break that (#233) refused to fit to: SPYL.DE at 0.03 against AUM5.DE at 0.15 needs > 0.12.
+    assert!(net_ter(Some(0.15), 3, Some("Swap"), 0.10) > net_ter(Some(0.03), 3, Some("Full"), 0.10),
+        "(#233) at the SHIPPED 0.10 the physical S&P 500 tracker still wins its family slot");
+    assert!(net_ter(Some(0.15), 3, Some("Swap"), 0.13) < net_ter(Some(0.03), 3, Some("Full"), 0.13),
+        "…and 0.13 would flip it, which is why the value was NOT chosen from the outcome");
+
     // …and the country sleeve is hidden while the knob is off, on the same rule as the other three.
     assert!(!sleeve_visible(COUNTRY_TIER as usize, 0.35, true, true, 0),
         "(#227) no OTHER sleeve's knob makes the country cell print");
@@ -5789,16 +5878,51 @@ mod tests {
         q.aum_eur = aum;
         hold_miss_reason(&q)
     };
+    // (#233) the same fixture with `allow_swap` PASSED instead of read. The two replication pins
+    // below became config-dependent the moment tests/ci-settings.yaml armed the knob — the same
+    // shape (#210)/(#218) hit when their sleeves shipped on — so they are asked here at BOTH
+    // settings and never through the reader. (#204)'s rule: a branch that only fires when a knob is
+    // on is one the mutation gate cannot reach unless the flag is an argument.
+    let miss_swap = |name: &str, repl: Option<&'static str>, allow_swap: bool| {
+        let mut q = Quote::stub("X", "", "", name);
+        q.expense_ratio = Some(0.15);
+        q.replication = repl;
+        q.use_of_profits = Some("Acc");
+        q.aum_eur = Some(2.6e9);
+        hold_miss_leg_with(&q, allow_swap, 0.0, false, false, 0)
+    };
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF USD Acc", Some(0.07), Some("Full"), Some("Acc"), Some(28.8e9)), None); // VUAA passes all
     assert_eq!(miss("Amundi Nasdaq-100 UCITS ETF", Some(0.22), Some("Full"), Some("Acc"), Some(5.8e9)).as_deref(), Some("not a broad-index name (sector/thematic/factor tilt)"));
     assert_eq!(miss("Vanguard S&P 500 ETF", Some(0.03), Some("Full"), Some("Acc"), Some(2e9)).as_deref(), Some("no UCITS token in the name"));
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF", None, Some("Full"), Some("Acc"), Some(2e9)).as_deref(), Some("TER unknown"));
     assert_eq!(miss("Vanguard FTSE All-World UCITS ETF", Some(0.30), Some("Full"), Some("Acc"), Some(15e9)).as_deref(), Some("TER 0.30% > 0.25% cap"));
-    assert_eq!(miss("Amundi S&P 500 Swap UCITS ETF", Some(0.15), Some("Swap"), Some("Acc"), Some(2.6e9)).as_deref(), Some("replication Swap (needs physical)")); // AUM5
+    // (#233) AUM5.DE, the fund this round is about, at both settings of the knob. Leg 3 is the
+    // index the funnel buckets on, so it is pinned alongside the message rather than instead of it.
+    assert_eq!(miss_swap("Amundi S&P 500 Swap UCITS ETF", Some("Swap"), false),
+        Some((3, "replication Swap (needs physical)".to_string())),
+        "swap OFF = round 53's counterparty rule, exactly as it shipped");
+    assert_eq!(miss_swap("Amundi S&P 500 Swap UCITS ETF", Some("Swap"), true), None,
+        "(#233) swap ON = the leg is INERT and AUM5 clears every leg");
     // (round 53) sampling IS physical: VWRA-shape all-world fund ("Optimised") must pass — the old
     // literal-Full leg kept the CORE tier-0 slot empty (every big all-world fund samples).
     assert_eq!(miss("Vanguard FTSE All-World UCITS ETF USD Acc", Some(0.22), Some("Opt"), Some("Acc"), Some(42.9e9)), None);
-    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), None, Some("Acc"), Some(2e9)).as_deref(), Some("replication unknown (needs physical)"));
+    // (#233) …and the MISSING-DATUM half, which is the non-negotiable #5 breach the knob also
+    // closes. `fetch::bf_row_meta` carries `replicationMethod` on 70% of BF rows and replication has
+    // no name fallback, so `None` here means "never fetched", not "synthetic". It is bundled with
+    // the half above rather than fixed unconditionally BECAUSE IT IS NOT BYTE-IDENTICAL: unlike
+    // (#224)'s AUM leg, where no unknown-AUM fund reached `cores` at all, unknown-replication funds
+    // demonstrably do — so an unconditional fix would move the shipped lane and non-negotiable #1
+    // refuses that. The config-less default therefore KEEPS the breach on purpose; the shipped
+    // tests/ci-settings.yaml lane is where it is closed.
+    assert_eq!(miss_swap("Vanguard S&P 500 UCITS ETF Acc", None, false),
+        Some((3, "replication unknown (needs physical)".to_string())),
+        "swap OFF = a datum we never fetched still refuses, which is the breach itself");
+    assert_eq!(miss_swap("Vanguard S&P 500 UCITS ETF Acc", None, true), None,
+        "(#233) swap ON = missing data PASSES, non-negotiable #5");
+    // the leg cannot be made inert by a knob it does not read: a fund that fails a DIFFERENT leg
+    // still fails it at both settings, so a mutant returning `None` from the whole function is caught.
+    assert_eq!(miss_swap("Amundi Nasdaq-100 UCITS ETF", Some("Swap"), true).map(|(leg, _)| leg), Some(0),
+        "(#233) the breadth leg answers first and the knob cannot reach it");
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF", Some(0.07), Some("Full"), Some("Dist"), Some(2e9)).as_deref(), Some("share class Dist (needs Acc)"));
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(0.3e9)).as_deref(), Some("AUM €0.3B < €1B floor"));
     // (#224) a KNOWN size below the floor still refuses (line above); an UNKNOWN one now PASSES.

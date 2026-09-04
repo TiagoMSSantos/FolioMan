@@ -3894,7 +3894,23 @@ pub fn crypto_adjust(quote: &Quote, base: f64, tuning: &BuyHeuristic, cfactor: f
 /// CORE-shortlist domicile ordering: IE first — the 15% US-dividend withholding treaty vs LU's 30%
 /// ≈ +0.2%/yr on a US/world equity fund over a decades hold, outweighing the single-digit-bp TER
 /// deltas ranked after it. Unknown last: missing data is never rewarded.
-fn dom_rank(q: &Quote) -> u8 {
+///
+/// (#233) …which is exactly why a SWAP fund at the US tier ranks as though it were Irish. This term
+/// is not about domicile as such — the doc above says so in its own words — it is a PROXY for the
+/// withholding a fund's structure makes it pay, and a synthetic fund pays none of it from any
+/// domicile. Leaving the proxy to read the passport would have made the whole round inert: `dom_rank`
+/// is compared AHEAD of TER, so a Luxembourg swap fund loses to every Irish physical one before
+/// [`core::net_ter`]'s credit is ever consulted. The two terms have to agree about which funds escape
+/// the withholding, and they do — both ask `core::us_withholding_free` and neither re-spells it
+/// (non-negotiable #4).
+///
+/// Byte-identical while `hold_allow_swap` is off, because no swap fund reaches the list to be ranked.
+/// The branch is still gradeable: this is a pure function of a `Quote` and a tier, so a test hands it
+/// a swap fund directly and never has to flip the `OnceLock` — which is the shape (#204) asks for.
+fn dom_rank(q: &Quote, tier: u8) -> u8 {
+    if core::us_withholding_free(q.replication, tier) {
+        return 0;
+    }
     match q.domicile.as_deref() {
         Some("IE") => 0,
         Some(_) => 1,
@@ -3999,7 +4015,7 @@ pub fn narrow_census(quotes: &[Quote]) -> Vec<(&'static str, usize)> {
 /// which is what lets one fixture fund pin both sides of this parameter.
 ///
 /// Pure and gradeable, per the rule (#198)'s doc comment set for `print_hold_core`.
-pub fn geo_miss_census(quotes: &[Quote], country_cap: usize) -> Vec<&Quote> {
+pub fn geo_miss_census(quotes: &[Quote], allow_swap: bool, country_cap: usize) -> Vec<&Quote> {
     let mut out: Vec<&Quote> = quotes
         .iter()
         .filter(|q| eu_buyable(q) && quote_is_etf(q))
@@ -4008,7 +4024,7 @@ pub fn geo_miss_census(quotes: &[Quote], country_cap: usize) -> Vec<&Quote> {
             core::geo_hit(&lower).or_else(|| core::country_sleeve_tier(&lower, country_cap)).is_none()
                 && core::narrow_hit(&lower).is_none()
         })
-        .filter(|q| core::hold_miss_but_breadth(q).is_none())
+        .filter(|q| core::hold_miss_but_breadth(q, allow_swap).is_none())
         .collect();
     out.sort_by(|a, b| {
         b.aum_shown()
@@ -4029,6 +4045,7 @@ pub fn geo_miss_census(quotes: &[Quote], country_cap: usize) -> Vec<&Quote> {
 pub fn near_miss_reason(q: &Quote) -> Option<String> {
     near_miss_reason_with(
         q,
+        crate::config::hold_allow_swap(),
         crate::config::hold_size_sleeve_ter(),
         crate::config::hold_factor_sleeve(),
         crate::config::hold_sector_sleeve(),
@@ -4041,6 +4058,7 @@ pub fn near_miss_reason(q: &Quote) -> Option<String> {
 /// `leg == 0` and `true` indistinguishable and the fix ungradeable.
 pub fn near_miss_reason_with(
     q: &Quote,
+    allow_swap: bool,
     size_cap: f64,
     factor_on: bool,
     sector_on: bool,
@@ -4050,7 +4068,7 @@ pub fn near_miss_reason_with(
     // correct while a narrow hit implied refusal; (#202) ended that — the size sleeve admits a name
     // BECAUSE of its narrow token, so the old order reported `narrow token "small"` for a fund that
     // was in fact refused three legs later on TER, which is the one number a reader needs.
-    let (leg, msg) = core::hold_miss_leg_with(q, size_cap, factor_on, sector_on, country_cap)?;
+    let (leg, msg) = core::hold_miss_leg_with(q, allow_swap, size_cap, factor_on, sector_on, country_cap)?;
     if leg == 0 {
         if let Some(t) = core::narrow_hit(&q.name.to_lowercase()) {
             return Some(format!("narrow token \"{}\"", t.trim()));
@@ -4072,17 +4090,23 @@ pub fn near_miss_reason_with(
 /// within a tier), capped at 3 per tier so no index family crowds out the others.
 pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     let mut cores: Vec<&Quote> = quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)).collect();
+    // (#233) the swap TER credit, read ONCE here and passed into the comparator — the sort must not
+    // reach for a `OnceLock` once per comparison, and (#204) wants the branch gradeable besides.
+    let swap_credit = crate::config::hold_us_swap_ter_credit();
     cores.sort_by(|a, b| {
-        core::hold_breadth_tier(&a.name)
-            .cmp(&core::hold_breadth_tier(&b.name))
+        // (#233) the tier is now read by THREE terms (the ordering itself, `dom_rank`, `net_ter`),
+        // so it is computed once per side instead of re-derived at each — non-negotiable #4.
+        let (ta, tb) = (core::hold_breadth_tier(&a.name), core::hold_breadth_tier(&b.name));
+        ta.cmp(&tb)
             // (#224) a KNOWN size outranks an unknown one, ahead of every other tiebreak. AUM was the
             // LAST term, so once leg 5 stopped refusing unknowns a fund with no size at all could sort
             // above a €40B incumbent on domicile or TER alone and push it out of `hold_per_tier`.
             // This keeps that admission purely ADDITIVE: an unknown-AUM fund can only fill a free slot.
             // Byte-identical the day it landed — no unknown-AUM fund reaches `cores`.
             .then(a.aum_shown().is_none().cmp(&b.aum_shown().is_none()))
-            .then(dom_rank(a).cmp(&dom_rank(b)))
-            .then(a.ter_shown().unwrap_or(9.9).total_cmp(&b.ter_shown().unwrap_or(9.9)))
+            .then(dom_rank(a, ta).cmp(&dom_rank(b, tb)))
+            .then(core::net_ter(a.ter_shown(), ta, a.replication, swap_credit)
+                .total_cmp(&core::net_ter(b.ter_shown(), tb, b.replication, swap_credit)))
             .then(b.aum_shown().unwrap_or(0.0).total_cmp(&a.aum_shown().unwrap_or(0.0)))
     });
     let mut seen: HashSet<&str> = HashSet::new();
@@ -4291,7 +4315,7 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     }
     // (#203) …and the half of leg 0 the NARROW census cannot see: no GEO token, no tilt word, every
     // other leg clear. Arithmetic is in `geo_miss_census` (gradeable); this only formats it.
-    let geo_miss = geo_miss_census(quotes, crate::config::hold_per_tier_country());
+    let geo_miss = geo_miss_census(quotes, crate::config::hold_allow_swap(), crate::config::hold_per_tier_country());
     if !geo_miss.is_empty() {
         println!("  GEO blind spot — {} ETFs carry no GEO token yet clear every other leg (top 15 by AUM):",
             geo_miss.len());
@@ -5242,7 +5266,20 @@ mod tests {
         let mut lu = Quote::stub("B", "€1", "", "f");
         lu.domicile = Some("LU".to_string());
         let unk = Quote::stub("C", "€1", "", "f");
-        assert!(dom_rank(&ie) < dom_rank(&lu) && dom_rank(&lu) < dom_rank(&unk));
+        assert!(dom_rank(&ie, 0) < dom_rank(&lu, 0) && dom_rank(&lu, 0) < dom_rank(&unk, 0));
+        // (#233) the withholding override, at the tier it applies to and at one that it does not.
+        // A pure fn of (Quote, tier), so this reaches the branch WITHOUT flipping the OnceLock —
+        // which is the whole reason `hold_allow_swap` is threaded rather than read ((#204)).
+        let mut lu_swap = Quote::stub("D", "€1", "", "f");
+        lu_swap.domicile = Some("LU".to_string());
+        lu_swap.replication = Some("Swap");
+        assert_eq!(dom_rank(&lu_swap, 3), 0, "(#233) a swap fund pays no US withholding -> no domicile penalty");
+        assert_eq!(dom_rank(&lu_swap, 4), 1, "…and outside the US tier it is an ordinary LU fund again");
+        assert_eq!(dom_rank(&lu_swap, 0), 1, "…including tier 0, which this round deliberately leaves uncredited");
+        let mut lu_phys = Quote::stub("E", "€1", "", "f");
+        lu_phys.domicile = Some("LU".to_string());
+        lu_phys.replication = Some("Full");
+        assert_eq!(dom_rank(&lu_phys, 3), 1, "a PHYSICAL LU fund at tier 3 keeps the full penalty");
         // (REV-YoY/EPS-YoY/NET%) stock-only FY snapshot: stock prints signed %s / margin level, an
         // un-enriched stock -> n/a, ETF/crypto -> — (no income statement)
         let mut st = Quote::stub("S", "€1", "", "Co");
@@ -7043,7 +7080,11 @@ mod tests {
         assert_eq!(core::hold_miss_reason(&m), None, "TER exactly at the cap is admitted, not evicted");
         m = broad.clone();
         m.replication = Some("Swap");
-        assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("replication Swap (needs physical)"));
+        // (#233) config-dependent since the knob shipped, so it is spelled off the knob — the leg is
+        // INERT under tests/ci-settings.yaml and a literal would assert the opposite there.
+        assert_eq!(core::hold_miss_reason(&m).as_deref(),
+            (!crate::config::hold_allow_swap()).then_some("replication Swap (needs physical)"),
+            "the swap leg answers only while the knob refuses swap");
         m = broad.clone();
         m.use_of_profits = Some("Dist");
         assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("share class Dist (needs Acc)"));
@@ -7531,7 +7572,7 @@ mod tests {
             "the KNOWN size sorts first even though it loses on domicile and on TER");
 
         // and the guard is real: with the term absent, the later tiebreaks would have inverted this.
-        assert!(dom_rank(&unknown) < dom_rank(&big), "IE beats DE — the term this one jumps ahead of");
+        assert!(dom_rank(&unknown, 0) < dom_rank(&big, 0), "IE beats DE — the term this one jumps ahead of");
         assert!(unknown.ter_shown() < big.ter_shown(), "and it is cheaper — the next term too");
     }
 
@@ -7647,7 +7688,15 @@ mod tests {
 
         let quotes = vec![leg0, leg1, leg2, leg3, leg4, leg5, leg5b, good, stock, us];
         let funnel = hold_funnel(&quotes);
-        assert_eq!(funnel, [1, 1, 1, 1, 1, 2, 1], "one fund per leg, TWO on AUM, one qualified: {funnel:?}");
+        // (#233) leg 3 is INERT under tests/ci-settings.yaml, so its fixture (`SWAP.DE`) either dies
+        // there or falls all the way through to the qualified tail — it clears every other leg by
+        // construction. Spelled off the knob rather than as a literal, exactly as (#231) had to do
+        // for the two cap tests when `hold_per_tier_us` shipped: a hardcoded histogram asserts the
+        // opposite of the shipped answer in one of the two regimes CI runs. The SUM is invariant and
+        // is asserted unconditionally on the next line, which is what catches a fund going missing.
+        let swap_refused = usize::from(!crate::config::hold_allow_swap());
+        assert_eq!(funnel, [1, 1, 1, swap_refused, 1, 2, 2 - swap_refused],
+            "one fund per leg, TWO on AUM, the swap fund on whichever side the knob puts it: {funnel:?}");
         assert_eq!(funnel.iter().sum::<usize>(), 8, "the stock and the US listing are out of scope");
         assert_eq!(funnel.len(), core::HOLD_LEGS.len() + 1, "one slot per leg plus the qualified tail");
         // the tail slot is the SAME verdict `hold_suitable` gives — one definition, two readers
@@ -7696,8 +7745,8 @@ mod tests {
         // (#210) the cap is passed in, not read: ci-settings SHIPS 0.35 now, so `near_miss_reason`'s
         // knob-reading form answers differently per config regime. Off -> the token is the reason;
         // on -> the size sleeve rehabilitates the very same name and there is no near-miss at all.
-        assert_eq!(near_miss_reason_with(small, 0.0, false, false, 0).as_deref(), Some("narrow token \"small\""));
-        assert_eq!(near_miss_reason_with(small, 0.35, false, false, 0), None, "the sleeve admits it outright");
+        assert_eq!(near_miss_reason_with(small, false, 0.0, false, false, 0).as_deref(), Some("narrow token \"small\""));
+        assert_eq!(near_miss_reason_with(small, false, 0.35, false, false, 0), None, "the sleeve admits it outright");
         let mut dist = q("VWRL.DE", "Vanguard FTSE All-World UCITS ETF Dist");
         dist.use_of_profits = Some("Dist");
         assert_eq!(near_miss_reason(&dist).as_deref(), Some("share class Dist (needs Acc)"));
@@ -7748,7 +7797,7 @@ mod tests {
         let mut us = core_etf("AVUV", "Avantis Prime Global UCITS ETF", 9e9, cap);
         us.market = "USA".into();
         let quotes = [quotes, vec![us]].concat();
-        let got: Vec<&str> = geo_miss_census(&quotes, 0).iter().map(|q| q.ticker.as_str()).collect();
+        let got: Vec<&str> = geo_miss_census(&quotes, false, 0).iter().map(|q| q.ticker.as_str()).collect();
         // 0DZP.L STAYS a blind spot after (#211) and that is the pin: delete the trailing space in
         // ("msci em ", 2) and the eurozone fund gets a tier and vanishes from this list.
         assert_eq!(got, vec!["DBXD.DE", "0DZP.L", "LGGE.DE"],
@@ -7758,9 +7807,20 @@ mod tests {
         // tokens, so (#227) gave each of them a sleeve while `geo_hit` kept answering None, and this
         // census went on reporting them for four rounds. TWO funds cross the parameter and one does
         // not, so neither a dropped argument nor a constant-true predicate can satisfy both halves.
-        let got: Vec<&str> = geo_miss_census(&quotes, 7).iter().map(|q| q.ticker.as_str()).collect();
+        let got: Vec<&str> = geo_miss_census(&quotes, false, 7).iter().map(|q| q.ticker.as_str()).collect();
         assert_eq!(got, vec!["LGGE.DE"],
             "(#231) only the fund NO sleeve can claim is a blind spot");
+        // (#233) the census reports what the LANE would admit, so it has to learn the swap knob too.
+        // A synthetic fund with no GEO token is not a blind spot today — it dies on replication one
+        // leg before breadth is even asked — and IS one once the leg goes inert. One fund crosses the
+        // new parameter and the other three do not, so a dropped argument cannot satisfy both halves.
+        let mut swap_blind = core_etf("SWPB.DE", "Amundi Nowhere Index UCITS ETF", 4e9, 0.10);
+        swap_blind.replication = Some("Swap");
+        let quotes = [quotes, vec![swap_blind]].concat();
+        let got: Vec<&str> = geo_miss_census(&quotes, false, 7).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(got, vec!["LGGE.DE"], "(#233) swap OFF -> the synthetic fund never reaches the breadth leg");
+        let got: Vec<&str> = geo_miss_census(&quotes, true, 7).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(got, vec!["SWPB.DE", "LGGE.DE"], "(#233) swap ON -> it is a real blind spot, sorted by AUM");
     }
 
     /// (#204) `near_miss_reason` must report the TOKEN only when breadth is what actually refused.
@@ -7773,18 +7833,18 @@ mod tests {
     #[test]
     fn near_miss_reason_names_the_leg_that_actually_refused() {
         let thin = core_etf("IUSN.DE", "iShares MSCI World Small Cap UCITS ETF", 5e8, 0.30);
-        assert_eq!(near_miss_reason_with(&thin, 0.0, false, false, 0).as_deref(), Some("narrow token \"small\""),
+        assert_eq!(near_miss_reason_with(&thin, false, 0.0, false, false, 0).as_deref(), Some("narrow token \"small\""),
             "sleeve OFF: breadth IS the refusal, so the token is the answer");
-        assert_eq!(near_miss_reason_with(&thin, 0.35, false, false, 0).as_deref(), Some("AUM €0.5B < €1B floor"),
+        assert_eq!(near_miss_reason_with(&thin, false, 0.35, false, false, 0).as_deref(), Some("AUM €0.5B < €1B floor"),
             "sleeve ON: breadth passed, so report the leg that did refuse");
 
         let pricey = core_etf("WSML.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.40);
-        assert_eq!(near_miss_reason_with(&pricey, 0.35, false, false, 0).as_deref(), Some("TER 0.40% > 0.35% cap"),
+        assert_eq!(near_miss_reason_with(&pricey, false, 0.35, false, false, 0).as_deref(), Some("TER 0.40% > 0.35% cap"),
             "the sleeve's OWN cap is what the TER leg quotes");
 
         let ok = core_etf("SMLW.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.30);
-        assert_eq!(near_miss_reason_with(&ok, 0.35, false, false, 0), None, "sleeve ON and every leg clear");
-        assert_eq!(near_miss_reason_with(&ok, 0.0, false, false, 0).as_deref(), Some("narrow token \"small\""),
+        assert_eq!(near_miss_reason_with(&ok, false, 0.35, false, false, 0), None, "sleeve ON and every leg clear");
+        assert_eq!(near_miss_reason_with(&ok, false, 0.0, false, false, 0).as_deref(), Some("narrow token \"small\""),
             "the SAME fund is refused with the sleeve off — non-negotiable #1, read through the reader");
     }
 

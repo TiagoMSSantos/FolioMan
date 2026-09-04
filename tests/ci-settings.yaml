@@ -3778,6 +3778,182 @@ buy_heuristic:
                                  #   REVERT: set false, which restores name-token-only and drops CSUS.SW
                                  #   back out of the pond. Nothing else reads the flag; `config.rs` keeps
                                  #   false as its config-less Default (same split as `print_h2h_mid_ladder`).
+  hold_allow_swap: true          # (#233 / MEASURED 2026-09-04, LIVE THREE-ARM A/B) — admit SWAP-BASED
+                                 # (synthetic) ETFs to the CORE lane. Round 53 refused them outright for
+                                 # counterparty risk over a decades hold; this arm prices the other side
+                                 # of that trade and finds it is paid twice over. SHIPS TRUE.
+                                 # 
+                                 #   THE NON-NEGOTIABLE #5 BREACH, WHICH IS HALF THE REASON: the leg was
+                                 #   `!matches!(q.replication, Some("Full"|"Opt"|"Samp"|"Hybr"))`, so
+                                 #   `None` FAILED. `fetch.rs` records `replicationMethod` present on only
+                                 #   ~70% of BF rows, and unlike `use_of_profits` (which has `use_from_name`)
+                                 #   replication has NO name fallback. Three funds in ten were refused for a
+                                 #   datum that was never fetched. (#224) made exactly this argument for AUM
+                                 #   one leg later and fixed it; the same rule was never applied here.
+                                 # 
+                                 #   THE FUNNEL, one pond, all three arms (4597 EU-buyable, 4808 tickers
+                                 #   from cache on every arm — identical pond, so this attributes):
+                                 #     control  ... TER 293 · replication 196 · not Acc  85 · AUM  85 · QUALIFIED  84
+                                 #     armed    ... TER 293 · replication   0 · not Acc 167 · AUM 158 · QUALIFIED 125
+                                 #   The 196 account for themselves EXACTLY: 82 die one leg later at
+                                 #   `not Acc`, 73 at `AUM`, and 41 REACH QUALIFIED. That 41 is the whole
+                                 #   admission yield — the plan's stop rule asked for precisely this split
+                                 #   because a funnel leg going to 0 proves nothing on its own.
+                                 # 
+                                 #   THE CORE TABLE, control -> admit-only (credit held at 0.00, so this is
+                                 #   admission and the ALREADY-SHIPPED sort, with no new sort key firing):
+                                 #     developed  + SC0J.DE Invesco MSCI World      0.05% €7.9B Swap IE
+                                 #                - UETW.DE UBS Core MSCI World     0.06% €9.9B Full IE
+                                 #     Europe     + SC0D.DE Invesco EURO STOXX 50   0.05% €1.2B Swap IE
+                                 #                - XESC.DE Xtrackers Euro Stoxx 50 0.09% €6.2B Full LU
+                                 #   Both are SAME-FAMILY displacements, which is why the row count HELD at
+                                 #   47. SC0J beats UETW on raw TER alone (both IE, so `dom_rank` ties);
+                                 #   SC0D beats XESC on `dom_rank` (IE 0 < LU 1) AND on raw TER. Neither
+                                 #   needed the credit. Cheaper funds the lane had simply been blind to.
+                                 # 
+                                 #   THE PLAN'S OWN PREDICTION WAS WRONG, AND IS RECORDED WRONG: it said the
+                                 #   rows would come from ex-US (supply 2, 1 family, cap 3) and Asia-Pacific
+                                 #   (supply 1, 1 family, cap 3), the two sleeves with free slots. BOTH STAYED
+                                 #   AT THEIR EXACT CONTROL SUPPLY — 2 and 1. Not one swap fund is an ex-US or
+                                 #   Asia-Pacific core. The gain came from displacement in the crowded sleeves
+                                 #   instead. Supply per sleeve, control -> armed: all-world 7->10 · developed
+                                 #   7->11 · emerging 6->11 · US 17->34 · ex-US 2->2 · Europe 8->11 · Japan
+                                 #   5->5 · Asia-Pacific 1->1 · small-cap 4->4 · world factor 4->4 · world
+                                 #   sector 10->11 · single-country 13->21.
+                                 # 
+                                 #   COST, AND IT IS REAL: the GEO BLIND SPOT goes 5 -> 30. (#231) had just
+                                 #   cut it 19 -> 5. The 25 additions are overwhelmingly NOT equity index
+                                 #   funds — XEON.DE (EUR overnight rate swap), CSBGU0.SW (7-10y Treasury),
+                                 #   IUST.DE (TIPS), JEST.MI (ultra-short income), YCSH.DE (cash), AUUSI.SW
+                                 #   and AUCHAH.SW (gold), ICOM.L (diversified commodity swap), plus the
+                                 #   JPMorgan "Research Enhanced" active book. THE FINDING BEHIND THAT: the
+                                 #   replication leg was doing ACCIDENTAL DUTY as a bond/commodity/cash
+                                 #   filter, because those wrappers are overwhelmingly synthetic. Removing it
+                                 #   exposes that the broad-index NAME leg does not catch them on its own.
+                                 #   NOTHING LEAKS INTO THE TABLE: they carry no GEO token, and the sleeve
+                                 #   ladder cannot place a fund without one — proven by the row count holding
+                                 #   at 47 and the whole-line table diff showing four changed lines, all four
+                                 #   equity index funds. But a future round that WIDENS the GEO vocabulary
+                                 #   must re-check this cohort first. See LEFT OPEN below.
+                                 # 
+                                 #   NOT GRADEABLE, AND NEVER WILL BE, same as `hold_geo_tokens` above:
+                                 #   `backtest::stamp_asset_class` fills only name, instrument_type and
+                                 #   sector, so every backtest quote dies on the TER leg (leg 2) and no walk
+                                 #   ever reaches leg 3 or the sort. Live diff plus judgement is the only
+                                 #   footing this lane has. Not PRE-PIT — there is no PIT lane to be pre to.
+                                 #   `growth_gate_reachability_pin` was CHECKED, not assumed: it probes
+                                 #   `GATE_PROBES` over the growth gates only, and `backtest.rs` contains no
+                                 #   reference to `hold_miss`, `hold_suitable` or `replication` at all. So
+                                 #   non-negotiable #3 does not bite here.
+                                 # 
+                                 #   PASSED, NOT READ — (#204)'s rule: `hold_miss_leg_with` takes `allow_swap`
+                                 #   as an argument and threads it to `hold_miss_leg_at`, exactly as
+                                 #   `size_cap`/`factor_on`/`sector_on`/`country_cap` already are. A branch
+                                 #   that fires only when a process-wide OnceLock is on is a branch the
+                                 #   mutation gate cannot reach. With the knob ON the leg is INERT: admitting
+                                 #   `Swap` and `None` together exhausts the match, so it refuses nobody.
+                                 #   `HOLD_LEGS` keeps all six entries and its indices, so the funnel
+                                 #   histogram does not shift shape.
+                                 # 
+                                 #   REVERT: set false, which restores round 53's counterparty rule exactly
+                                 #   as it shipped — SC0J/SC0D/SPXS/MXUS drop out, UETW/XESC/SPYL/XD9U return,
+                                 #   and the blind spot returns to 5. `config.rs` keeps false as its
+                                 #   config-less Default (same split as `print_h2h_mid_ladder`), so the
+                                 #   #5 breach survives in the config-less regime ON PURPOSE: closing it
+                                 #   unconditionally would move the shipped lane and break non-negotiable #1.
+  hold_us_swap_ter_credit: 0.10  # (#233 / JUDGEMENT VALUE, NOT FITTED / MEASURED 2026-09-04) — TER credit,
+                                 # in percentage points, given to a SWAP fund at GEO tier 3 (US) only,
+                                 # because a synthetic US-index fund legally avoids the US dividend
+                                 # withholding a physical one pays. `core.rs` and this file both already
+                                 # recorded that fact; nothing priced it until now.
+                                 # 
+                                 #   THE DERIVATION, and it is arithmetic, not a fit: 15% Irish treaty rate
+                                 #   x ~1.2% S&P 500 trailing yield = ~0.18pp/yr saved, less the swap spread
+                                 #   a synthetic fund actually pays its counterparty (0-10bp), leaves ~0.10.
+                                 #   Per year, for US exposure:
+                                 #     IE physical  TER 0.03 + withholding ~0.18 (15%)  = net ~0.21
+                                 #     LU physical  TER 0.03 + withholding ~0.36 (30%)  = net ~0.39
+                                 #     LU swap      TER 0.15 + withholding  ~0.00       = net ~0.15
+                                 # 
+                                 #   ONE DEFINITION (non-negotiable #4): `core::us_withholding_free(repl,
+                                 #   tier)` is the single spelling of "this fund dodges the withholding" —
+                                 #   true for Some("Swap") at tier 3 and nowhere else. BOTH sort keys read
+                                 #   it; neither re-spells it. `core::net_ter(ter, tier, repl, credit)`
+                                 #   replaces the bare `ter_shown().unwrap_or(9.9)` at the call site, so the
+                                 #   9.9 sentinel moved INSIDE the helper rather than being re-spelled.
+                                 #   `picks::dom_rank` gains the tier and returns 0 when `us_withholding_free`
+                                 #   — NOT a new policy: `dom_rank` (IE 0 / other 1 / None 2) IS the
+                                 #   withholding proxy, and a fund that avoids the withholding entirely has
+                                 #   no domicile penalty left to pay. Without it the credit is UNREACHABLE,
+                                 #   since `dom_rank` sorts ahead of TER.
+                                 # 
+                                 #   MEASURED, admit-only -> admit+credit. The funnel and the whole census
+                                 #   are BYTE-IDENTICAL across these two arms — the credit admits nobody, it
+                                 #   only reorders — and exactly two rows move, both at tier 3:
+                                 #     US  + SPXS.L Invesco S&P 500  0.05% €35.7B Swap IE  (net -0.05)
+                                 #         - SPYL.DE SPDR S&P 500    0.03% €15.4B Full IE  (net  0.03)
+                                 #     US  + MXUS.L Invesco MSCI USA 0.05%  €7.5B Swap IE  (net -0.05)
+                                 #         - XD9U.L Xtrackers MSCI USA 0.03% €11.0B Full IE (net 0.03)
+                                 #   Both flips are the net-cost arithmetic and nothing else, and both would
+                                 #   fire at any credit above 0.02. The credit is scoped to tier 3 and ONLY
+                                 #   tier 3 moved — that containment is the result this arm was run to get.
+                                 # 
+                                 #   THE PLAN'S FINDING 4 WAS WRONG, AND IS RECORDED WRONG: it predicted tier
+                                 #   3 WOULD NOT MOVE at 0.10, on the arithmetic that AUM5.DE (0.15% raw, LU,
+                                 #   `s&p 500` family) needs the credit to exceed 0.12 to beat SPYL.DE under
+                                 #   `hold_family_first`. That arithmetic is CORRECT and AUM5.DE indeed still
+                                 #   does not print. The error was scope: it checked ONE fund. The pond also
+                                 #   holds IE-DOMICILED swap funds at 0.05%, which need only 0.02. The
+                                 #   0.12 break is a fact about AUM5.DE, never about whether the knob bites.
+                                 #   AUM5.DE does now carry the `H` (hold-core) flag in the momentum table —
+                                 #   admitted, ranked, and beaten inside its own family by SPXS.L.
+                                 # 
+                                 #   NOT AN ARGMAX (#220): 0.10 was fixed from the treaty arithmetic BEFORE
+                                 #   the runs and was NOT moved afterwards. A value was explicitly REFUSED
+                                 #   during planning for being reverse-engineered from an outcome — 0.13, to
+                                 #   force AUM5.DE visible. The measured flips at 0.02 mean the shipped value
+                                 #   carries 5x margin it was not tuned for, which is the shape a judgement
+                                 #   value should have.
+                                 # 
+                                 #   `dom_rank`'s tier-3 OVERRIDE IS CURRENTLY INERT and the receipt says so
+                                 #   rather than claiming the win: every fund in all four US rows is IE, so
+                                 #   `dom_rank` was already 0 for each. The override pays only when an LU or
+                                 #   other-domicile swap fund is the cheapest in its family. It is armed
+                                 #   because without it the credit is unreachable for exactly that fund, not
+                                 #   because it moved a row today.
+                                 # 
+                                 #   THE WORLD TIERS ARE LEFT UNCREDITED ON PURPOSE. A swap MSCI World fund
+                                 #   is ~65-72% US, so a partial credit there is defensible — but it needs a
+                                 #   per-tier US-weight table of judgement values, which is a second round's
+                                 #   argument and a second round's receipt. Outside tier 3 a swap fund is
+                                 #   admitted and sorts on its real domicile and raw TER, which is precisely
+                                 #   how SC0J and SC0D won their rows.
+                                 # 
+                                 #   STOP RULE, pre-registered, adjudicated in full: row COUNT held 47/47/47
+                                 #   (not refused); no entrant fails a leg other than replication — all four
+                                 #   print, so all four cleared every leg (not refused); every displacement
+                                 #   is explained by the net-cost arithmetic above (not refused). The fourth
+                                 #   clause — "a row moves at a tier OTHER than 3 for a reason other than a
+                                 #   free slot being filled" — FIRED BY THE LETTER, at developed and Europe.
+                                 #   It is read against its stated purpose, which is CREDIT CONTAINMENT, and
+                                 #   that purpose is satisfied exactly: those two moves happen in the arm
+                                 #   where the credit is 0.00, so no credit leaked anywhere. The clause was
+                                 #   mis-drafted, not the result. Recorded rather than quietly reinterpreted.
+                                 # 
+                                 #   LEFT OPEN for (#234), both surfaced BY this round's census and neither
+                                 #   acted on here:
+                                 #   (a) THE US SLEEVE'S FAMILY COUNT MOVED 4 -> 5 (supply 17 -> 34). Under
+                                 #       (#220) — the family count IS the cap — `hold_per_tier_us: 4`, set by
+                                 #       (#231) to the then-count of 4, now mechanically earns 5, and a 48th
+                                 #       row with it. NOT taken in this commit: the three arms were built to
+                                 #       attribute admission against sort, and a cap raise in the same commit
+                                 #       conflates a third effect with both. It needs its own arm.
+                                 #   (b) the bond/cash/gold/commodity cohort now sitting in the blind spot,
+                                 #       above. Harmless today, a trap for any round that widens GEO tokens.
+                                 # 
+                                 #   REVERT: set 0.0, which makes `net_ter` the identity on `ter_shown` and
+                                 #   `dom_rank` its pre-(#233) three-way, returning SPYL.DE and XD9U.L to the
+                                 #   US sleeve. The admission knob above is INDEPENDENT and stays true.
   hold_name_tokens: false        # (#102 / finding C9 / MEASURED 2026-09-01 by (#195)) — shipping OFF,
                                  # which is name-token-only, today's behaviour. No longer UNMEASURED:
                                  # the sweep its own receipt asked for has now been run, and the answer
