@@ -1448,7 +1448,7 @@ const GEO: [(&str, u8); 36] = [
 /// both sat among the 22 rows the ≤3/sleeve cap hides, which is why the printed table never showed
 /// the bug and no receipt caught it. NDUS.L clears every other leg on live facts (TER 0.18%, AUM
 /// €1.24B), so this token is the only thing standing between it and the CORE list.
-const NARROW: [&str; 56] = [
+const NARROW: [&str; 61] = [
     "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
     "industrial",
     // (#222) THE REST OF GICS. `(#200)` found "industrial" missing and named the defect exactly — a
@@ -1646,6 +1646,70 @@ const NARROW: [&str; 56] = [
     // REVERT: drop the six. That returns SPP1.DE to tier 0, ENAM.MI/ESEH.PA/SPXE.MI/USEE.DE/500X.AS
     // to tier 3, EEUE.PA to tier 5, and CEUU.AS/EEMU.PA to the single-country sleeve.
     "hdg", "min te", "leaders", "enhanced", " acc h", " eur h",
+    // (#244) GEARING AND THE OPTION OVERLAYS, MOVED HERE FROM `NASDAQ_NOT` — the round (#239)
+    // pre-registered in its own words: "Closing the global hole is its own round, and this comment
+    // is the receipt for it." Four of these five tokens ARE that list, relocated verbatim; only
+    // "put write" is new vocabulary.
+    //
+    // WHAT WAS WRONG. `NARROW` spelled no gearing, so `geo_tier_at`'s fall-through filed a 2x
+    // tracker in the GEOGRAPHIC or SINGLE-COUNTRY sleeve at leg 0 and left TER to refuse it one leg
+    // later. (#227) pinned that placement and said so plainly. TER is the wrong leg to carry this:
+    // it prices a wrapper, and a CHEAP wrapper walks straight through. The audit found both halves
+    // live — CL2.PA (Amundi MSCI USA Daily (2x) Leveraged, Acc, TER 0.50%) reaches the US BROAD
+    // sleeve, and QQQ5.L (Leverage Shares 5x Long Nasdaq 100, TER 0.15%) is refused by the
+    // share-class leg ALONE. A daily-reset geared ETP is path-dependent enough to lose money in a
+    // rising market; it is not a 20-year hold at any price.
+    //
+    // MEASURED 2026-09-05 by the (#244) admission-leg audit, which lifted TER, the Acc leg and the
+    // AUM floor together and printed all 664 funds clearing leg 0. Those 664 ARE every fund that
+    // passes leg 0 today, so the flip set is CLOSED and this is the whole collateral scan, not a
+    // sample of it:
+    //   flip set, Some(tier) -> None at leg 0                             57
+    //     "leverage" 24 · "daily" 20 · "buffer" 7 · "covered call" 5      56   the relocated four
+    //     "put write"                                                      1   SPXPW.SW, the residue
+    //   by sleeve: single-country 32 · US broad 21 · developed 2 · emerging 2
+    //   of all 57, funds clearing EVERY shipped admission leg              0   <- zero-removals proof
+    //   of the 52 PRINTED CORE rows, rows in the flip set                  0   <- same, read off the
+    //                                                                          live control table
+    // MEASURED LIVE, control then arm on one warm cache, binary verified armed before any number
+    // was read (a `cp -p` restore preserves the old mtime, cargo skips the rebuild and the "arm" is
+    // silently a third control — that is how (#243) nearly published a forged no-op):
+    //   CORE table            52 rows -> 52 rows, SAME SET and SAME ORDER, nothing added or removed
+    //   QUALIFIED             119 -> 119, unmoved
+    //   not broad-index       3888 -> 3947, and the other legs give back exactly those 59:
+    //                         UCITS 4->0 · TER 233->181 · not Acc 179->176 · AUM 147->147
+    // The closed-set prediction above was +57 and the run gave +59: the four UCITS failures are
+    // geared too and are now caught a leg EARLIER, and the probe pond was 4566 against the control's
+    // 4570. The prediction was made before the run and is left as written.
+    //
+    // "bank" WAS MEASURED AND REFUSED, and that refusal is why the population is read before a token
+    // ships: it hits DZMW.DE, DZUS.DE and DZEU.DE — DZ BANK's plain MSCI World, S&P 500 and EURO
+    // STOXX 50 trackers. The ISSUER is a bank. A sector token that reads an issuer's name is (#200)'s
+    // defect inverted, so the Europe-600-Banks funds keep their placement and this list stays out.
+    //
+    // "dividend" WAS ALSO MEASURED AND NOT SHIPPED: 16 yield-tilt funds carry it with no earlier
+    // narrow token, VHYA.L/VHYL.L (FTSE All-World High Dividend Yield) among them at tier 0. Every
+    // one is a tilt of an index this table already owns, and every one loses the cheapest-TER sort to
+    // the plain tracker it tilts — so the token would refuse a census and move no row. Taxonomy, not
+    // a hazard. Recorded here so a later round need not re-measure it.
+    //
+    // A RELOCATION, SO `NASDAQ_NOT` IS DELETED RATHER THAN DUPLICATED (non-negotiable #4, one
+    // definition). Every sleeve-rescue arm already refuses a fund carrying any OTHER narrow token —
+    // `nasdaq_sleeve_tier`'s third conjunct and the same clause in `size_`/`factor_`/
+    // `sector_sleeve_tier` — so once these tokens are in `NARROW` the sleeve-scoped check is
+    // unreachable. That conjunct is also what makes the append AIRTIGHT where a sleeve-scoped list
+    // never was: a "2x Technology" fund would have kept its SECTOR rescue.
+    //
+    // APPENDED, NOT INSERTED, for (#234)'s reason verbatim. A geared Nasdaq-100 name still matches
+    // "nasdaq" first and is refused by the third conjunct, so the census's "refused FIRST on this
+    // token" convention is unchanged for that whole suite.
+    //
+    // (#227)'s PIN IS UPDATED, NOT DROPPED — its geared-DAX fund now returns None instead of
+    // COUNTRY_TIER. That test going red IS the feature; it exists so this change cannot be silent.
+    //
+    // REVERT: drop the five tokens and restore `NASDAQ_NOT`. That returns all 56 geared, inverse and
+    // overlay funds to the sleeve their name's geography spells, refused on TER alone.
+    "covered call", "buffer", "leverage", "daily", "put write",
 ];
 
 /// (#102) Does an ALREADY-lowercased `n` carry `t` at the START OF A WORD? The tightened matcher
@@ -2168,24 +2232,6 @@ const NASDAQ_NARROW: &str = "nasdaq";
 /// Smart Grid" — thematics that merely license the exchange's name.
 const NASDAQ: [&str; 2] = ["nasdaq 100", "nasdaq-100"];
 
-/// (#239) …and the WRAPPER classes [`NARROW`] cannot spell, refused HERE rather than globally.
-/// Gearing and option overlays are not the index: a 5x daily-reset tracker and a call-writing
-/// overlay have different 20-year distributions from the thing they name, and the first is
-/// path-dependent enough to lose money in a rising market.
-///
-/// SCOPED TO THIS SLEEVE ON PURPOSE. Appending these to [`NARROW`] would move the SHIPPED lane —
-/// `(#227)` pins a geared DAX fund at [`COUNTRY_TIER`] on the stated ground that "NARROW does not
-/// spell leverage", and non-negotiable #1 refuses a default-on change smuggled in under an
-/// unrelated round. Behind the default-0 cap this list is inert, so it costs the shipped lane
-/// nothing. Closing the global hole is its own round, and this comment is the receipt for it.
-///
-/// LIVE COST TODAY: ZERO. Every covered-call and buffer product in the `(#239)` census was already
-/// refused on TER. The one that matters is `QQQ5.L` (Leverage Shares 5x Long Nasdaq 100, TER 0.15%,
-/// domicile XS), refused ONLY by the share-class-unknown leg — itself a non-negotiable #5 breach a
-/// later round is meant to close. On the day it does, THIS LIST is the only thing between a 5x
-/// daily-reset ETP and the CORE table a 20-year holder reads.
-const NASDAQ_NOT: [&str; 4] = ["covered call", "buffer", "leverage", "daily"];
-
 /// (#239) The FIFTH sleeve-rescue arm, structurally identical to [`size_sleeve_tier`]: a fund whose
 /// FIRST narrow token is this sleeve's, carrying no OTHER narrow token, is claimed back out of leg 0.
 ///
@@ -2207,9 +2253,6 @@ fn nasdaq_sleeve_tier(n: &str, first: &str, cap: usize) -> Option<u8> {
         return None;
     }
     if NARROW.iter().any(|t| *t != NASDAQ_NARROW && hit(n, t)) {
-        return None;
-    }
-    if NASDAQ_NOT.iter().any(|t| hit(n, t)) {
         return None;
     }
     Some(NASDAQ_TIER)
@@ -6268,6 +6311,53 @@ mod tests {
     // would refuse a legitimate FACTOR row seated by (#228). The name says "value" and nothing else.
     assert_eq!(narrow_hit("xtrackers msci world value ucits etf 1c"), Some("value"),
         "(#243) `enhanced` lives only in the benchmark, and NARROW never reads the benchmark");
+    assert_eq!(NARROW.len(), 61, "(#244) five more tokens; the length is pinned so a silent edit cannot pass");
+    // (#244) THE FIVE GEARING/OVERLAY TOKENS, each pinned to the live fund that measured it, with
+    // EVERY SLEEVE SWITCHED ON. That is the strong form: none of the five appears in `SIZE`,
+    // `FACTOR`, `SECTOR` or the Nasdaq token, so no rescue arm can claim them back and the refusal
+    // is not an artifact of a sleeve being off. CL2.PA is the one that mattered — it reached the US
+    // BROAD sleeve and was refused by TER alone, at 0.50% against a 0.25% cap that a cheaper
+    // wrapper would have walked straight through.
+    for (n, tok) in [
+        ("amundi msci usa daily (2x) leveraged ucits etf acc", "leverage"),
+        ("l&g dax daily 2x long ucits etf", "daily"),
+        ("wisdomtree emerging markets 3x daily short", "daily"),
+        ("leverage shares -3x short china etp securities", "leverage"),
+        ("global x s&p 500 covered call ucits etf inc", "covered call"),
+        ("global x s&p 500 annual buffer ucits etf", "buffer"),
+        ("ubs us equity defensive put write sf ucits etf usd acc", "put write"),
+    ] {
+        assert_eq!(narrow_hit(n), Some(tok),
+            "(#244) each token is the FIRST hit on its fund — appending is what keeps that true");
+        assert_eq!(geo_tier_at(n, 99.0, true, true, 9, 1), None,
+            "(#244) …and NO tilt sleeve rescues it, so the geared fund leaves the CORE lane outright");
+    }
+    // (#244) …and the AIRTIGHTNESS claim the append is chosen for, which a sleeve-scoped list could
+    // never make. A geared fund whose name ALSO carries an earlier narrow token matches that token
+    // first and reaches its rescue arm — where the arm's own "no OTHER narrow token" conjunct now
+    // refuses it. Constructed names: the pond holds no such product today, which is precisely why
+    // the hole would have gone unmeasured. The sleeve is switched ON in each, or the pin proves
+    // nothing about the rescue it is meant to close.
+    assert_eq!(narrow_hit("xtrackers msci world technology 2x daily leveraged ucits etf"), Some("technolog"),
+        "(#244) an earlier token still wins the first match — appending changed no incumbent verdict");
+    assert_eq!(geo_tier_at("xtrackers msci world technology 2x daily leveraged ucits etf", 0.0, false, true, 0, 0), None,
+        "(#244) …and the SECTOR arm refuses it on the second token, so the rescue cannot launder gearing");
+    assert_eq!(geo_tier_at("ishares msci world small cap 3x daily leveraged ucits etf", 99.0, false, false, 0, 0), None,
+        "(#244) …and the SIZE arm likewise, which is the arm with a live cap today");
+    // (#244) THE TWO TOKENS MEASURED AND DELIBERATELY NOT SHIPPED, pinned so a later round cannot
+    // add them without reading this. "bank" hits an ISSUER: DZ BANK's three funds are plain
+    // trackers and must keep their sleeves. "dividend" would refuse a real yield tilt that already
+    // loses the cheapest-TER sort on its own, so it buys a census entry and no row.
+    for (n, tier) in [
+        ("dz bank msci world ucits etf", 1u8),
+        ("dz bank s&p 500 ucits etf", 3),
+        ("dz bank euro stoxx 50 ucits etf", COUNTRY_TIER),
+    ] {
+        assert_eq!(geo_tier_at(n, 0.0, false, false, 7, 0), Some(tier),
+            "(#244) `bank` is NOT a NARROW token — the issuer is a bank, the fund is a broad tracker");
+    }
+    assert_eq!(geo_tier_at("vanguard ftse all-world high dividend yield ucits etf usd accumulation", 0.0, false, false, 7, 0),
+        Some(0), "(#244) `dividend` is NOT a NARROW token — VHYA.L keeps tier 0 and loses on TER instead");
     // (#233) the withholding escape, and the two sort terms that both have to agree about it.
     // TIER 3 AND `Some("Swap")` — the conjunction is the pin: each half alone is false, so a mutant
     // that drops either one is caught by the neighbours rather than by the positive case.
@@ -6481,12 +6571,13 @@ mod tests {
     // them out of the Europe sleeve into this one. `ftse 100` is the safe spelling.
     assert_eq!(geo_tier_at("vanguard ftse developed europe ex uk ucits etf", 0.0, false, false, 7, 0),
         Some(5), "(#227) an ex-UK fund stays EUROPE, sleeve open or not");
-    // GEARED FUNDS ARE NOT REFUSED HERE, and the receipt says so rather than pretending otherwise:
-    // nothing in `NARROW` spells leverage, so a 2x DAX fund DOES reach this sleeve at leg 0. It dies
-    // one leg later on TER, which the live census confirms for all six geared DAX products in the
-    // pond (0.40%-0.80% against the 0.25% cap). That is the leg carrying the weight — pin it there.
-    assert_eq!(geo_tier_at("l&g dax daily 2x long ucits etf", 0.0, false, false, 7, 0), Some(COUNTRY_TIER),
-        "(#227) a geared fund reaches leg 0 — NARROW does not spell leverage");
+    // (#244) GEARED FUNDS ARE REFUSED HERE NOW, and the direction of this pin is the whole receipt.
+    // (#227) asserted the OPPOSITE — "a 2x DAX fund DOES reach this sleeve at leg 0", dying one leg
+    // later on TER — and (#239) deferred the fix to a round of its own. This is that round: `NARROW`
+    // spells gearing, so the fund never reaches a sleeve and TER never has to carry it. The pin is
+    // UPDATED rather than dropped, because it is what makes the change impossible to ship silently.
+    assert_eq!(geo_tier_at("l&g dax daily 2x long ucits etf", 0.0, false, false, 7, 0), None,
+        "(#244) a geared fund is refused at leg 0 — NARROW now spells leverage");
     // (#228) …and the momentum row's own reachability, both ways round. The token is a NARROW one,
     // so with the factor sleeve OFF the fund is refused at leg 0 exactly as it is today — that is
     // non-negotiable #1 spelled as a test, not an assertion in prose.
@@ -6558,12 +6649,13 @@ mod tests {
     ] {
         assert_eq!(geo_tier_at(no, 0.0, false, false, 0, 1), None, "{no}: {why}");
     }
-    // …and [`NASDAQ_NOT`], the wrapper classes NARROW cannot spell. THIS LIST WAS NOT PLANNED: the
-    // covered-call line below was written as a precision-filter pin and went RED at Some(12), which
-    // is the sleeve claiming an options overlay as a Nasdaq-100 tracker. `QQQ5.L` is the same hole
-    // with live money behind it — 0.15% TER, refused only by the share-class leg a later round is
-    // meant to close. Scoped to the sleeve rather than appended to NARROW, because a global append
-    // would move (#227)'s geared-DAX placement and non-negotiable #1 refuses that.
+    // …and the WRAPPER CLASSES. THIS LIST WAS NOT PLANNED: the covered-call line below was written
+    // as a precision-filter pin and went RED at Some(12), which is the sleeve claiming an options
+    // overlay as a Nasdaq-100 tracker. `QQQ5.L` is the same hole with live money behind it — 0.15%
+    // TER, refused only by the share-class leg. (#239) scoped these four to this sleeve because a
+    // global append would have moved (#227)'s geared-DAX placement; (#244) IS the round that moved
+    // it, so they now live in `NARROW` and `NASDAQ_NOT` is gone. All four still return None — what
+    // changed is WHICH clause refuses them, from the deleted list to the third conjunct below.
     for (no, why) in [
         ("ishares nasdaq-100 covered call ucits etf", "an options overlay is not the index it writes on"),
         ("global x nasdaq 100 buffer ucits etf", "a defined-outcome wrapper caps the upside this lane buys"),

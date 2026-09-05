@@ -5910,6 +5910,85 @@ buy_heuristic:
   #   token that splits an existing bucket. A CAP RAISE CANNOT change it — no cap binds here, because
   #   no sleeve claims any of these 1780 names at all.
 
+  # (#244) NO KNOB — THE ADMISSION-LEG AUDIT, and the round (#239) pre-registered. The audit asked
+  #   (#243)'s question one stage upstream: does an admission LEG refuse an index UNIVERSE the 52
+  #   printed rows do not own, or only dearer WRAPPERS of universes already owned? It REFUSED its own
+  #   thesis, exactly as (#243) did, and found a safety defect instead. Both halves are recorded.
+  #
+  #   METHOD. Legs are ORDERED — `not Acc 179` counts only funds that already cleared TER — so legs
+  #   2 (TER), 4 (Acc) and 5 (AUM) were lifted TOGETHER in one probe and attributed afterwards.
+  #   Legs 4 and 5 are literals with no knob, so they were neutered by a TEMPORARY source edit,
+  #   reverted before commit. The probe config lived in `tests/`, NOT in a scratch dir: `config::
+  #   data_path` resolves caches from the config file's GRANDPARENT directory, and that is why
+  #   (#243)'s probe saw a different pond from its own control. Probe 12007 paced calls against the
+  #   control's 12006 — the same cache tree at last, and the first (#24x) probe directly comparable
+  #   to its control.
+  #
+  #   PER-LEG CENSUS, live control 2026-09-05, 4570 EU-buyable ETFs:
+  #     leg 0 breadth 3888 · leg 1 UCITS 4 · leg 2 TER 233 · leg 3 replication 0 (INERT)
+  #     leg 4 not Acc 179 · leg 5 AUM 147 · QUALIFIED 119
+  #   With 2/4/5 lifted, QUALIFIED rises 119 -> 675 and 664 funds were dumped with benchmark and
+  #   full name. ATTRIBUTION, computed INSIDE the single probe run so no pond difference can enter:
+  #     clear every shipped leg 116 · admitted only by the lift 548
+  #     failing AUM only 147 · TER+AUM 90 · TER+Acc+AUM 89 · Acc+AUM 88 · Acc only 83
+  #     TER ONLY 33 · TER+Acc 18
+  #
+  #   THE PRE-REGISTERED REMEDY IS REFUSED. Only the 33 refused by COST ALONE could earn the
+  #   per-sleeve TER ceiling this round pre-registered (the `hold_size_sleeve_ter` shape, extending
+  #   `core::ter_cap_for`). Reading all 33: NOT ONE is a genuinely unowned broad exposure. Every one
+  #   is a dearer wrapper of an index the table already holds, a sleeve that is a stated
+  #   concentration budget, or a fund that should have been refused further upstream. The stop rule
+  #   was pre-registered as "unowned AND broad AND refused only by cost"; nothing clears all three,
+  #   so NO KNOB SHIPS and the census is the deliverable — the (#241) outcome.
+  #
+  #   AND THE GROWTH LANE IS SHUT, CONFIRMED FROM THE RUN RATHER THAN FROM MEMORY, so that no later
+  #   round re-opens it. The `history` gate SOLE-blocks 2159 names (42% of the 5196 scanned), which
+  #   looks like the largest single lever in the file. It is not one: the repair already exists and
+  #   already runs. `config.rs`'s `history_proxy` splices a curated older same-strategy twin's
+  #   closes, and the live run prints its own verdict —
+  #     "history_proxy discovery: 197 same-index bridge(s) found, none whose twin clears the CAGR
+  #      floor — bridging them only moves the name from the history gate to the cagr gate."
+  #   Bridging RELOCATES the refusal to the 19%/yr CAGR floor, i.e. it becomes threshold tuning,
+  #   which (#181)/(#185) closed with five graded refusals. Nothing to do there.
+  #
+  #   WHAT DID SHIP IS A SAFETY DEFECT THE AUDIT SURFACED, and (#239) wrote its receipt in advance:
+  #   "Closing the global hole is its own round, and this comment is the receipt for it." `NARROW`
+  #   spelled no gearing, so `geo_tier_at`'s fall-through filed geared, inverse and option-overlay
+  #   products in a GEOGRAPHIC or SINGLE-COUNTRY sleeve at leg 0 and left TER to refuse them one leg
+  #   later. TER is the wrong leg for this: it prices a wrapper, so a CHEAP wrapper walks through.
+  #   Both halves are live — CL2.PA (Amundi MSCI USA Daily (2x) Leveraged, Acc, TER 0.50%) reaches
+  #   the US BROAD sleeve, and QQQ5.L (Leverage Shares 5x Long Nasdaq 100, TER 0.15%) was refused by
+  #   the share-class leg ALONE. `core::NASDAQ_NOT`'s four tokens were MOVED into `NARROW` and that
+  #   list DELETED, one definition rather than two (non-negotiable #4); "put write" is the only new
+  #   vocabulary. See the (#244) block in `core.rs` for the full measurement.
+  #     flip set, Some(tier) -> None at leg 0                             57
+  #     of those, clearing EVERY shipped admission leg                     0   zero-removals proof
+  #     of the 52 PRINTED rows, rows in the flip set                       0   read off the control
+  #   MEASURED LIVE, control then arm on one warm cache, binary verified armed first:
+  #     CORE table         52 rows -> 52 rows, SAME SET and SAME ORDER, nothing added or removed
+  #     QUALIFIED          119 -> 119, unmoved
+  #     not broad-index    3888 -> 3947, the other legs giving back exactly those 59:
+  #                        UCITS 4->0 · TER 233->181 · not Acc 179->176 · AUM 147->147
+  #   The closed-set prediction was +57; the run gave +59, because the four UCITS failures are geared
+  #   too and are now caught a leg earlier, and the probe pond was 4566 against the control's 4570.
+  #
+  #   NOT GRADEABLE, STATED PLAINLY. Every `hold_*` surface is display-only —
+  #   `backtest::stamp_asset_class` fills only name/instrument_type/sector, so every backtest quote
+  #   dies on its TER leg and no walk reaches this lane. The ship rule CANNOT adjudicate this round.
+  #   The evidence is the closed-population census above plus the pins in `core.rs`, as (#227) and
+  #   (#239) did before it.
+  #
+  #   TWO TOKENS WERE MEASURED AND DELIBERATELY NOT SHIPPED, recorded so no later round re-measures
+  #   them. "bank" hits an ISSUER, not a sector: DZ BANK's plain MSCI World, S&P 500 and EURO STOXX
+  #   50 trackers (DZMW.DE, DZUS.DE, DZEU.DE) all carry it, and refusing them would be (#200)'s
+  #   defect inverted. "dividend" hits 16 real yield tilts including VHYA.L/VHYL.L at tier 0, but
+  #   every one is a tilt of an index this table already owns and every one loses the cheapest-TER
+  #   sort to the plain tracker it tilts — a census entry and no row. Taxonomy, not a hazard.
+  #
+  #   REVERT: drop the five `NARROW` tokens, restore `core::NASDAQ_NOT` and its sleeve-scoped check,
+  #   and restore (#227)'s pin to Some(COUNTRY_TIER). That returns all 57 geared, inverse and overlay
+  #   funds to the sleeve their name's geography spells, refused on TER alone.
+
   # (#243) NO KNOB — THE CAP AUDIT. Every sleeve cap was re-derived from EXPOSURES rather than family
   #   keys, the audit REFUSED its own thesis (no cap hides an exposure; zero raises earned), and the
   #   uncapped run exposed a different defect instead: eight funds reaching a geographic sleeve on a
