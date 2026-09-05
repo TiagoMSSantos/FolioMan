@@ -5765,6 +5765,84 @@ buy_heuristic:
                                  # pin to 33. The sleeve returns to two keys and the same three rows — and to depending on TER order
                                  # to keep them the right three.
 
+  # (#241) NO KNOB — THE CORE LANE'S REFUSAL SET IS NOW FULLY CENSUSED AND THE LAST UNCOUNTED CELL
+  #   ADMITS NOTHING. Recorded here, right after (#238), because (#238) is what forced the round: with
+  #   every cap at family equilibrium ((#239)) and both starved sleeves measured exhausted ((#226),
+  #   re-adjudicated by (#235)), the only place a new exposure could still hide was a population that
+  #   neither census counts.
+  #
+  #   THE BLIND SPOT, AND WHY IT EXISTED. The two censuses skip each other's subject:
+  #   `picks::narrow_census` requires `core::geo_hit` to be Some; `picks::geo_miss_census` requires
+  #   `core::narrow_hit` to be None. So nothing ever counted names carrying NO GEO token that DO carry
+  #   a NARROW token. That cell is not merely uncounted, it is structurally unreachable: in
+  #   `core::geo_tier_at` a `narrow_hit` routes to four rescue arms and THREE of them open with
+  #   `geo_hit(n)?` — `size_sleeve_tier`, `factor_sleeve_tier` and `sector_sleeve_tier` each REQUIRE a
+  #   geography. Only `nasdaq_sleeve_tier` does not, which is exactly why (#239) — the last real
+  #   exposure this lane gained — had to be found in there BY HAND.
+  #
+  #   MEASURED 2026-09-05, live `screen`, 4566 EU-buyable ETFs, ONE run (a print-only probe in
+  #   `print_hold_core`, deleted before this commit — it moves no table, so it needs no A/B). Trailer
+  #   normal: 11996 paced HTTP calls, 5504 monthly-series cache hits, 4m45s; zero `⚠ ERROR`; CORE table
+  #   unchanged at 52 rows.
+  #
+  #     leg 0 "not broad-index"                        3830
+  #       geo Some + narrow Some  (`narrow_census`)     769   printed
+  #       geo None + narrow Some  (THIS ROUND)         1780   printed — 231 clear every other leg
+  #       geo None + narrow None  (`geo_miss_census`)  1281   DERIVED as the remainder; 40 clear
+  #
+  #   The three cells account for leg 0 EXACTLY, and that is the proof the partition is closed: a name
+  #   with a GEO token and no NARROW token gets a tier and is ADMITTED, so it cannot be in leg 0 at
+  #   all. There is no fourth cell. Nothing about this lane's refusals is unmeasured any more.
+  #
+  #   ALL 231 ADMITS ADJUDICATED BY TOKEN. The token IS the sleeve key — a sleeve keyed on T admits
+  #   exactly T's `clear` count — and these twenty tokens are the whole of the 231:
+  #     hedged 89, hchf 2, h acc 2, hgbp 1   currency-hedged share classes of indices already shown
+  #     bond 68                              FIXED INCOME — bar item 1
+  #     esg 24, sustainab 11, sri 4, paris 4, screened 2, pab 2, climate 1,
+  #       socially responsible 1, islamic 1  screens of indices already shown — and mostly BOND funds
+  #                                          themselves, because NARROW's first match puts every one of
+  #                                          these tokens AHEAD of `bond`, so `bond 68` under-reports
+  #                                          fixed income and the true equity residue is smaller still
+  #     nasdaq 10                            the sleeve (#239) ALREADY SHIPPED at cap 1 — these are the
+  #                                          nine wrappers that cap exists to suppress
+  #     technolog 4, financ 2                sector tilts; the sector sleeve ships at cap 6 ((#225))
+  #     quality 1, small 1, heur 1           factor/size tilts; both sleeves ship ((#228)/(#230))
+  #   Sixty rows printed by AUM; the fifteen non-fixed-income names among them are six Nasdaq-100
+  #   funds, four sector funds, three active "Research Enhanced" products, one Islamic screen and
+  #   XMAW.DE. ZERO new index families. ZERO untilted equity. The bar pre-registered BEFORE the numbers
+  #   were read — EQUITY, a NEW family, shipped knob values, zero removals, (#215) — fails at item 1 or
+  #   item 2 for every one of the twenty tokens, so (#215) is never even reached.
+  #
+  #   THE ONE THING WORTH PINNING. The largest admit is XMAW.DE — Xtrackers MSCI AC World Screened,
+  #   EUR 5.89B, 0.25%, Acc, IE, physical. It is refused because `screened` is a NARROW token, and that
+  #   is CORRECT: it is a screen of ACWI, already printed in the all-world sleeve. But it is invisible
+  #   to GEO for a SECOND, independent reason: `core::GEO` tier 0 spells `all-world`, `all-country`,
+  #   `all country world` and `acwi`, and NONE of the four reaches the abbreviation "AC World". That
+  #   spelling gap is real, and is the same shape (#234) fixed for "global all cap". It is NOT worth a
+  #   token today: a NON-screened "AC World" tracker would carry no narrow token and would therefore
+  #   have surfaced in `geo_miss_census`, and no such name appears among the fifteen largest of its 40
+  #   survivors on this run — whose top of book is money-market, gold, treasury, commodity and active
+  #   quant. The gap currently costs zero rows. IF a plain "MSCI AC World" tracker ever qualifies,
+  #   `("ac world", 0)` is the one-line fix, and the all-world sleeve has the headroom to print it
+  #   (cap 7 from (#207) over 4 families).
+  #
+  #   (#226)'s REVISIT TRIGGER — READ FREE ON THIS RUN, AND IT DID NOT FIRE. That receipt parked three
+  #   institutional-grade cheap funds at EUR 0.5-0.7B with "REVISIT WHEN one of these crosses EUR 1B":
+  #     WEXU.DE  EUR0.63B  0.15% Acc      Amundi MSCI World Ex USA
+  #     HMXS.L   EUR0.52B  0.15% Acc      HSBC MSCI Pacific ex Japan
+  #     LGAG.L   EUR0.68B  0.10% Acc      L&G Asia Pacific ex Japan Equity
+  #   All three still sit under the global EUR 1B AUM floor. ex-US and Asia-Pacific stay EXHAUSTED, not
+  #   throttled, and the floor is not re-opened here — (#224) and (#226) each refused to lower it, and
+  #   lowering it one round after being refused is the argmax (#220) forbids.
+  #
+  #   NOTHING SHIPPED: no knob, no token, no Rust, no config value. The census IS the deliverable,
+  #   exactly as in (#226). REVERT: nothing to revert.
+  #
+  #   DO NOT RE-RUN THIS unless the pond moves materially. What would change the answer: a broad
+  #   passive EQUITY family appearing in the non-bond half of this cell, or `core::NARROW` gaining a
+  #   token that splits an existing bucket. A CAP RAISE CANNOT change it — no cap binds here, because
+  #   no sleeve claims any of these 1780 names at all.
+
   hold_per_tier_nasdaq: 1        # (#239 / MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs) — the
                                  #   THIRTEENTH sleeve, and the FIFTH optional one. 0 -> 1. Rows the CORE
                                  #   table keeps for Nasdaq-100 trackers, in a tier of their own at the very
