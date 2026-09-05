@@ -1208,6 +1208,58 @@ sizing:
                       #   under these caps leaves the remainder UNALLOCATED and the table's total prints
                       #   below 100. That is the intended reading, not a rounding bug.
 
+# (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
+# The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
+# funds that are one bet in N wrappers may exceed X% of gross. A clique is a set of funds each sharing
+# >= 5 of its top-10 holdings with EVERY other member (complete linkage, `screen`'s existing
+# `holdings_overlap_lines` detector, which has printed this defect for rounds without acting on it).
+#
+# WHY IT LOOKED RIGHT. Every concentration constraint in this tool is STOCK-ONLY, in all four places it
+# appears: the (#41) redundancy skip, the (#75) value brake and (#101) `growth_sector_cap` (all three in
+# `picks::lane_split`), and `max_sector_pct` here. (#41) justifies the exemption as "the ETF lane is
+# diversified by construction" — true INSIDE a fund, false ACROSS three funds sharing seven names. And
+# `size_weights` is the one lane where such a knob could ship LIVE rather than off-by-default, because
+# `config::Sizing` is CLAUDE.md's documented exception to "every new knob defaults to current behaviour".
+#
+# WHY IT IS REFUSED — MEASURED, not argued. Live `size` on the 2026-09-05 ranked book (9 names:
+# ABEC.DE LLY.DE / IITU.L XLKS.L SMH.L SEMI.AS LYBK.DE / BNB-EUR BTC-EUR). Clique found:
+# {IITU.L, SEMI.AS, SMH.L}, sharing AMAT AMD AVGO INTC LRCX MU NVDA = 39-59% of each fund.
+#     arm            clique wt   TOTAL deployed   rows newly funded
+#     off (shipped)     12.0%         33.0%          --
+#     max_overlap 10.0  10.0%         31.0%           0
+#     max_overlap  4.0   4.0%         25.0%           0
+# The cap BINDS and scales the block correctly. It funds NOTHING. `spill` hands excess only to rows with
+# room in the SAME class, and every non-clique ETF (XLKS.L, LYBK.DE) already sits at exactly 4.0%
+# `cap: name` — so `has_room` is false for all of them, the excess is stranded, and the sole effect is to
+# deploy LESS. The pre-registered stop rule was "the lowest candidate that does not leave the ETF class
+# unable to deploy its budget"; both candidates strand, so nothing ships. This is the (#241) outcome.
+#
+# THE REFRAME, and the reason no concentration knob can help this book. Per-class deployment, same run:
+#     class    n   budget   deployed   stranded
+#     stock    2     70.0        8.0       62.0
+#     etf      5     25.0       20.0        5.0
+#     crypto   2      5.0        5.0        0.0     <- the only class that fills its budget
+#     TOTAL    9    100.0       33.0       67.0
+# 67 points of gross are unallocated and 62 of them are STOCK-SIDE SUPPLY: at `max_name_pct` 4.0 the
+# stock class needs ~18 names to absorb 70 points and the growth lane admits TWO. The whole ETF side,
+# overlap and all, is worth at most 5 points. So the binding constraint on "more assets to buy" is
+# candidate supply into `size`, not concentration — and any concentration knob makes the number worse.
+# Growth admission is closed on five graded refusals and thresholds are exhausted ((#181)/(#185)), so
+# this is a REFRAME, not a new lead: it prices how little the ETF-side surface was ever worth.
+#
+# BLIND SPOT worth recording. XLKS.L is a fourth US-tech wrapper in the same book and the detector
+# CANNOT see it: it is swap-based and Yahoo returns an empty holdings book, so it has no clique and rides
+# exempt under the missing-data house rule. Same "selection by absent data" shape (#37 funds) fixed one
+# level up for the fund PEG ceiling, reappearing here. Not fixed: with the cap refused there is nothing
+# for it to be a hole IN.
+#
+# NOT DOING, and why, so a later round does not re-derive it: an overlap TRIM in `lane_split` beside the
+# three stock trims is worse, not better. Those three are sound only because a dropped row REFILLS FROM
+# BELOW, which needs a pool deeper than the table; the ETF lane prints "Top 8 of 20 max", i.e. it is
+# EXHAUSTED, and (#143) confirms `lane_split` never cuts to n. A trim there shortens the book outright.
+# RE-OPEN TRIGGER: only if the stock class ever deploys its budget (~18 gated stock candidates), at which
+# point rows with room exist and `spill` has somewhere to send a clique's excess. Nothing else.
+
 # ============================================================================================
 # BUY HEURISTIC (src/picks.rs). Acronyms (CAGR, ROE, P/E, NUPL, SMA, FX, ...): see Glossary in README.md.
 #
