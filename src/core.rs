@@ -1437,7 +1437,7 @@ const GEO: [(&str, u8); 35] = [
 /// both sat among the 22 rows the ≤3/sleeve cap hides, which is why the printed table never showed
 /// the bug and no receipt caught it. NDUS.L clears every other leg on live facts (TER 0.18%, AUM
 /// €1.24B), so this token is the only thing standing between it and the CORE list.
-const NARROW: [&str; 44] = [
+const NARROW: [&str; 50] = [
     "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
     "industrial",
     // (#222) THE REST OF GICS. `(#200)` found "industrial" missing and named the defect exactly — a
@@ -1531,6 +1531,65 @@ const NARROW: [&str; 44] = [
     //
     // REVERT: drop the token. That returns R1GR.AS to tier 3 and the US sleeve to five families.
     "growth",
+    // (#240) THE MISFILES THE TER LEG WAS HIDING. `core::NARROW`'s (#216) block already records one
+    // — WXMEG.SW, which "dies only on TER unknown", so "a pond that serves UBS a TER files a
+    // mega-cap-excluding size tilt in the ex-US GEOGRAPHIC sleeve". `hold_allow_unknown_ter` IS that
+    // pond, arrived: the leg stops hiding them, so they must be spelled. Live census 2026-09-05, run
+    // twice: SEVEN unknown-TER funds clear every other leg, and THREE of the seven are misfiled.
+    //
+    // "latin america" — LAMT.AS (iShares MSCI EM Latin America, EUR 2.1B) matches the GEO key
+    // "msci em " and files a ONE-REGION fund in the EMERGING sleeve. Exactly the shape "em asia" and
+    // "emerging ex" were added for; the vocabulary was short by one region. Collateral scan: 7 funds
+    // in the pond carry it, ZERO of them qualify today, so the token refuses one fund and costs
+    // nothing. The bare word "latin" was measured too and REJECTED — it matches MWEP.L, a qualifying
+    // Europe fund, mid-word. (#195)'s substring hazard, caught by measuring instead of assuming.
+    //
+    // "internet" — KWEH.L (KraneShares CSI China Internet, Acc, IE) files a SINGLE-THEME fund in the
+    // single-country sleeve on its China token. A sector list that spells "semiconduct" and
+    // "biotech" but not this one is (#200)'s defect class again. 15 in the pond, ZERO qualify today.
+    //
+    // "russell 2000" — RU2K.L (iShares Russell 2000 Swap, Acc, IE) is a US SMALL-CAP index filing at
+    // GEO tier 3, the US BROAD sleeve, because its name never says "small". WXMEG.SW's shape
+    // precisely, one size class over. IT IS IN `SIZE` AS WELL, so the fund is RE-FILED into the
+    // small-cap sleeve rather than deleted — a Russell 2000 fund is what that sleeve is for, and
+    // (#215) asks a token to earn its place by what it MOVES, not by what it refuses.
+    //
+    // APPENDED, NOT INSERTED, for (#234)'s reason verbatim — `narrow_hit` returns the FIRST token in
+    // NARROW order and the census's "refused FIRST on this token" convention depends on it. Here it
+    // is also the ZERO-REMOVALS guard: R2US.L (SPDR Russell 2000 US Small Cap, EUR 4.6B) is the ONE
+    // qualifying fund carrying "russell 2000", it is a printed CORE row, and its name ALSO carries
+    // "small". "small" sits at index 14 and wins the first-match, so R2US.L keeps its `SIZE` rescue
+    // and its row. Had this token been inserted ahead of "small", `size_sleeve_tier`'s first
+    // conjunct would still have passed (both are in `SIZE`) — but the pin below asks the question
+    // the ordering answers, so a later reorder cannot break it silently.
+    //
+    // REVERT: drop the three tokens and the `SIZE` entry together. That returns LAMT.AS to the
+    // emerging sleeve, KWEH.L to single-country and RU2K.L to the US sleeve.
+    "latin america", "internet", "russell 2000",
+    // (#240) THE REST OF THE HEDGE SPELLINGS. The (#216) block above opens its own last paragraph
+    // with "AND THE HEDGE SPELLINGS" and adds "heur" and " h acc" because "UBS spells it `hEUR` …
+    // so four UBS Core funds and one SPDR reach a GEO sleeve wearing a currency wrapper the token
+    // was written to refuse". UBS spells the other three the same way and they were never added, so
+    // the same defect stayed open for hCHF, hUSD and hGBP. THE ROUND THAT FOUND IT IS THE ONE THAT
+    // HAD TO: the FIRST arm of `hold_allow_unknown_ter` printed WXUSCH.SW, "UBS MSCI World ex USA
+    // UCITS ETF hCHF acc", into the starved ex-US sleeve — and it would have been the FIRST hedged
+    // share class ever to appear in the CORE table. Measured on the same run: of the 52 rows the
+    // shipped lane prints, ZERO are currency-hedged. The two that look it are not — VUKG.L is FTSE
+    // 100 in GBP and SPIA.SW is the SPI in CHF, each an index quoted in its own home currency, which
+    // is a denomination and not a hedge. So the lane's real policy is "no hedged classes", enforced
+    // by a token list that was three spellings short of saying it.
+    //
+    // WHY IT COSTS NO ROW, MEASURED BEFORE IT SHIPPED: "hchf" matches five funds that qualify today
+    // (ACWIS.SW, EMUCHF.SW, EURCHA.SW, SP500S.SW, WORLD.SW), "husd" two (ACWIU.SW, EMUUSD.SW) and
+    // "hgbp" one (UB0E.L) — EIGHT funds of SUPPLY, and not one of them is a printed row. The three
+    // tokens therefore remove eight names from a census and zero from the table.
+    //
+    // A EUR-based 20-year holder is the reader of this table, so a CHF-hedged class is a currency
+    // bet plus a hedging cost laid over an index they wanted unhedged. That judgement is not new
+    // here — it is what "hedged" has meant in this list since the sleeve existed.
+    //
+    // REVERT: drop the three. That returns WXUSCH.SW to the ex-US sleeve and QQQC.SW to Nasdaq-100.
+    "hchf", "husd", "hgbp",
 ];
 
 /// (#102) Does an ALREADY-lowercased `n` carry `t` at the START OF A WORD? The tightened matcher
@@ -1687,7 +1746,11 @@ pub fn family_first_order(keys: &[(u8, Option<&str>)], on: bool) -> Vec<usize> {
 /// "value", "quality", "momentum", "equal weight" and the volatility tilts are deliberately absent:
 /// they re-weight stocks the lane already owns through MSCI World, which is a tilt, not an exposure.
 /// A small-cap fund holds companies no all-world large-cap tracker holds at all.
-const SIZE: [&str; 1] = ["small"];
+/// (#240) "russell 2000" joins "small" so the sleeve can RESCUE the index by its name rather than
+/// its size word. Both conjuncts of [`size_sleeve_tier`] need it: the first accepts it as the
+/// blocking token for RU2K.L (whose name never says "small"), and the second — "no OTHER narrow
+/// token fires" — is what keeps R2US.L, a printed CORE row carrying BOTH words, in the sleeve.
+const SIZE: [&str; 2] = ["small", "russell 2000"];
 
 /// (#202) The eighth sleeve, ranked last (least diversified). Its own tier because a 0.35% small-cap
 /// fund dropped into the developed sleeve loses the cheapest-TER sort to a 0.20% MSCI World tracker
@@ -2364,6 +2427,7 @@ pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
     hold_miss_leg_with(
         q,
         crate::config::hold_allow_swap(),
+        crate::config::hold_allow_unknown_ter(),
         crate::config::hold_size_sleeve_ter(),
         crate::config::hold_factor_sleeve(),
         crate::config::hold_sector_sleeve(),
@@ -2379,6 +2443,7 @@ pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
 pub fn hold_miss_leg_with(
     q: &Quote,
     allow_swap: bool,
+    allow_unknown_ter: bool,
     size_cap: f64,
     factor_on: bool,
     sector_on: bool,
@@ -2389,13 +2454,19 @@ pub fn hold_miss_leg_with(
     let Some(tier) = geo_tier_at(&lower, size_cap, factor_on, sector_on, country_cap, nasdaq_cap) else {
         return Some((0, "not a broad-index name (sector/thematic/factor tilt)".into()));
     };
-    hold_miss_leg_at(q, tier, allow_swap, size_cap)
+    hold_miss_leg_at(q, tier, allow_swap, allow_unknown_ter, size_cap)
 }
 
 /// (#203) Legs 1..5 for a fund ALREADY placed in `tier` — every leg of [`hold_miss_leg`] except the
 /// breadth one, split out so [`hold_miss_but_breadth`] can ask the other five without re-spelling a
 /// single one of them (non-negotiable #4). `tier` is read at exactly one site, [`ter_cap_for`].
-fn hold_miss_leg_at(q: &Quote, tier: u8, allow_swap: bool, size_cap: f64) -> Option<(usize, String)> {
+fn hold_miss_leg_at(
+    q: &Quote,
+    tier: u8,
+    allow_swap: bool,
+    allow_unknown_ter: bool,
+    size_cap: f64,
+) -> Option<(usize, String)> {
     // (#102) the name token, OR — behind the knob — an EU domicile, which is the FACT the token is a
     // proxy for. `domicile: None` still falls back to the name, so missing data cannot newly pass.
     let eu_domiciled = crate::config::hold_ucits_or_domicile()
@@ -2406,8 +2477,15 @@ fn hold_miss_leg_at(q: &Quote, tier: u8, allow_swap: bool, size_cap: f64) -> Opt
     // (#202) the size sleeve carries its own ceiling: world small-cap funds run ~0.35% against a
     // 0.25% cap fitted to all-world trackers, so one shared number cannot admit both.
     let cap = ter_cap_for(tier, size_cap, crate::config::hold_max_ter());
+    // (#240) missing data PASSES behind the knob (non-negotiable #5), the third leg to be fixed this
+    // way after (#233) did replication and (#224) did AUM. `ter_shown()` is BF's expense ratio with
+    // the Yahoo TER as fallback, so None means BOTH feeds were silent — a datum never fetched, not a
+    // dear fund. The OVER-CAP arm below is deliberately outside the knob and answers at BOTH
+    // settings: a cost we DO know and dislike still refuses, so this can never buy an expensive
+    // fund. Safe to admit because `net_ter(None, ..)` sorts the fund LAST (the 9.9 sentinel), so it
+    // can only take a sleeve slot that would otherwise print nothing.
     match q.ter_shown() {
-        None => return Some((2, "TER unknown".into())),
+        None if !allow_unknown_ter => return Some((2, "TER unknown".into())),
         Some(t) if t > cap => return Some((2, format!("TER {t:.2}% > {cap:.2}% cap"))),
         _ => {}
     }
@@ -2453,8 +2531,8 @@ fn hold_miss_leg_at(q: &Quote, tier: u8, allow_swap: bool, size_cap: f64) -> Opt
 /// Tier 0 (all-world) is passed deliberately: it makes [`ter_cap_for`] apply the BASE cap, never the
 /// size sleeve's, so a hypothetical admission is priced against the lane's own ceiling and the answer
 /// does not move when `hold_size_sleeve_ter` does.
-pub fn hold_miss_but_breadth(q: &Quote, allow_swap: bool) -> Option<(usize, String)> {
-    hold_miss_leg_at(q, 0, allow_swap, 0.0)
+pub fn hold_miss_but_breadth(q: &Quote, allow_swap: bool, allow_unknown_ter: bool) -> Option<(usize, String)> {
+    hold_miss_leg_at(q, 0, allow_swap, allow_unknown_ter, 0.0)
 }
 
 /// Pick the newest FULINS_C download link out of a FIRDS registry payload. Handles both registry
@@ -5434,7 +5512,14 @@ mod tests {
     assert_eq!(hold("Amundi Nasdaq-100 UCITS ETF", Some(0.22), Some("Full"), Some("Acc"), Some(5.8e9)),
         crate::config::hold_per_tier_nasdaq() > 0,
         "(#239) a Nasdaq-100 tracker is hold-suitable EXACTLY when the sleeve is open, in either regime");
-    assert!(!hold("Vanguard S&P 500 UCITS ETF", None, Some("Full"), Some("Acc"), Some(28.8e9))); // no TER (venue fund) -> not vouched cheap
+    // (#240) CONFIG-DEPENDENT now, and spelled off the knob for the reason the swap, Nasdaq and
+    // minimum-volatility lines above are. The comment this replaces read "no TER (venue fund) -> not
+    // vouched cheap", which was the whole non-negotiable #5 breach in one clause: an absent datum is
+    // not a claim that a fund is expensive. The unconditional halves live in the `miss_ter` pins
+    // below, which pass the flag instead of reading it.
+    assert_eq!(hold("Vanguard S&P 500 UCITS ETF", None, Some("Full"), Some("Acc"), Some(28.8e9)),
+        crate::config::hold_allow_unknown_ter(),
+        "(#240) an unknown TER is hold-suitable EXACTLY when the knob admits it, in either regime");
     assert!(!hold("Apple", None, None, None, None)); // a stock -> false
     assert!(hold("Vanguard FTSE All-World UCITS ETF USD Acc", Some(0.22), Some("Full"), Some("Acc"), Some(15e9))); // VWCE: 0.22% all-world under the 0.25 cap
     assert!(!hold("Vanguard FTSE All-World UCITS ETF USD Acc", Some(0.30), Some("Full"), Some("Acc"), Some(15e9))); // 0.30% too dear for a core
@@ -5461,12 +5546,12 @@ mod tests {
         q
     };
     assert_eq!(
-        hold_miss_leg_with(&world_small_q, false, 0.0, false, false, 0, 0).map(|(leg, _)| leg),
+        hold_miss_leg_with(&world_small_q, false, false, 0.0, false, false, 0, 0).map(|(leg, _)| leg),
         Some(0),
         "sleeve off -> refused at leg 0 on the name, whatever its facts"
     );
     assert!(
-        hold_miss_leg_with(&world_small_q, false, 0.35, false, false, 0, 0).is_none(),
+        hold_miss_leg_with(&world_small_q, false, false, 0.35, false, false, 0, 0).is_none(),
         "sleeve on -> the same fund is admitted; this is the row (#210) shipped"
     );
 
@@ -6424,6 +6509,49 @@ mod tests {
     assert_eq!(geo_tier_at("ishares core msci world ucits etf usd acc", 0.0, false, false, 0, 1), Some(1),
         "…and so does developed, the rung a Nasdaq tracker would be mistaken for");
 
+    // (#240) THE MISFILES THE TER LEG WAS HIDING. Each name below cleared every hold leg BUT TER on
+    // the live 2026-09-05 census, so each was a row waiting for the pond to serve one number — and
+    // `NARROW`'s own (#216) block had already warned about exactly this shape with WXMEG.SW, "the
+    // live hazard … it dies only on TER unknown". Asserted with EVERY sleeve wide open, which is the
+    // only setting under which a rescue arm could quietly claim one of them back.
+    for (fund, why) in [
+        ("ishares msci em latin america ucits etf usd (acc)",
+            "LAMT.AS — ONE EM REGION filing in the EMERGING sleeve on the `msci em ` key"),
+        ("kraneshares csi china internet ucits etf eur acc",
+            "KWEH.L — ONE THEME filing in the SINGLE-COUNTRY sleeve on its China token"),
+        ("ubs msci world ex usa ucits etf hchf acc",
+            "WXUSCH.SW — this one PRINTED: the first hedged share class the table would ever show"),
+        ("ubs nasdaq-100 ucits etf hchf acc",
+            "QQQC.SW — the same currency wrapper, one sleeve over"),
+        ("ubs msci acwi ucits etf husd acc", "the hUSD spelling of the same UBS class"),
+        ("ubs msci united kingdom ucits etf hgbp acc", "…and hGBP, so the vocabulary is closed"),
+    ] {
+        assert_eq!(geo_tier_at(fund, 0.35, true, true, 9, 1), None, "{fund}: {why}");
+    }
+    // …and the ONE misfile fixed by RE-FILING rather than by refusal. A Russell 2000 fund IS a US
+    // small-cap fund, which is what the (#202) sleeve exists for, so deleting it would trade one
+    // wrong answer for another. This needs BOTH the `NARROW` entry and the `SIZE` one.
+    let ru2k = "ishares russell 2000 swap ucits etf usd (acc)";
+    assert_eq!(narrow_hit(ru2k), Some("russell 2000"), "(#240) the name never says `small` — that is the defect");
+    assert_eq!(geo_tier_at(ru2k, 0.0, false, false, 0, 0), None,
+        "(#240) with the size sleeve SHUT the token simply refuses, as every NARROW token does");
+    assert_eq!(geo_tier_at(ru2k, 0.35, true, true, 9, 1), Some(SIZE_TIER),
+        "(#240) RU2K.L — a US SMALL-CAP index was filing in the US BROAD sleeve; the SIZE entry re-files it");
+    // THE ORDERING IS LOAD-BEARING, and this pin is what says so out loud. R2US.L is a PRINTED CORE
+    // row whose name carries BOTH "small" (index 14) and "russell 2000" (appended last). `narrow_hit`
+    // returns the FIRST, so the fund keeps the rescue it already had — that is the entire ZERO
+    // REMOVALS argument for this token, and a later reorder of NARROW would break it in silence.
+    let r2us = "state street spdr russell 2000 us small cap ucits etf";
+    assert_eq!(narrow_hit(r2us), Some("small"), "(#240) APPENDED, never inserted — (#234)'s rule, load-bearing here");
+    assert_eq!(geo_tier_at(r2us, 0.35, true, true, 9, 1), Some(SIZE_TIER),
+        "(#240) R2US.L keeps its sleeve, and its row, with the new token live — ZERO REMOVALS");
+    // ZERO REMOVALS for the other three tokens the same way: the UNHEDGED sibling of the class that
+    // motivated them is untouched, so the tokens refuse a wrapper and never an index.
+    assert_eq!(geo_tier_at("ubs msci world ex usa ucits etf usd acc", 0.35, true, true, 9, 1), Some(4),
+        "(#240) the hedge tokens refuse a SHARE CLASS, not the fund — the plain class keeps ex-US");
+    assert_eq!(geo_tier_at("ishares nasdaq 100 swap ucits etf usd (acc)", 0.0, false, false, 0, 1), Some(NASDAQ_TIER),
+        "(#240) N100.L — admitted by the knob, and correctly filed, which is what the round is for");
+
     let size = SIZE_TIER as usize;
     let factor = FACTOR_TIER as usize;
     assert!(!sleeve_visible(size, 0.0, false, false, 0, 0) && !sleeve_visible(factor, 0.0, false, false, 0, 0),
@@ -6476,7 +6604,19 @@ mod tests {
         q.replication = repl;
         q.use_of_profits = Some("Acc");
         q.aum_eur = Some(2.6e9);
-        hold_miss_leg_with(&q, allow_swap, 0.0, false, false, 0, 0)
+        hold_miss_leg_with(&q, allow_swap, false, 0.0, false, false, 0, 0)
+    };
+    // (#240) the TER leg's own PASSED-flag fixture, `miss_swap`'s sibling and for the same reason:
+    // tests/ci-settings.yaml arms `hold_allow_unknown_ter`, so a literal "TER unknown" pin asserts
+    // the opposite there. `ter` is the BF field and `ter_fallback` is left None, so `ter_shown()`
+    // answers None exactly when the caller says so — the datum neither feed carried.
+    let miss_ter = |ter: Option<f64>, allow_unknown_ter: bool| {
+        let mut q = Quote::stub("X", "", "", "Vanguard S&P 500 UCITS ETF");
+        q.expense_ratio = ter;
+        q.replication = Some("Full");
+        q.use_of_profits = Some("Acc");
+        q.aum_eur = Some(2e9);
+        hold_miss_leg_with(&q, false, allow_unknown_ter, 0.0, false, false, 0, 0)
     };
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF USD Acc", Some(0.07), Some("Full"), Some("Acc"), Some(28.8e9)), None); // VUAA passes all
     // (#239) config-dependent, for the reason the `hold` line above is. The MESSAGE keeps an
@@ -6488,7 +6628,17 @@ mod tests {
     assert_eq!(miss("VanEck Semiconductor UCITS ETF", Some(0.15), Some("Full"), Some("Acc"), Some(2.5e9)).as_deref(),
         Some("not a broad-index name (sector/thematic/factor tilt)"));
     assert_eq!(miss("Vanguard S&P 500 ETF", Some(0.03), Some("Full"), Some("Acc"), Some(2e9)).as_deref(), Some("no UCITS token in the name"));
-    assert_eq!(miss("Vanguard S&P 500 UCITS ETF", None, Some("Full"), Some("Acc"), Some(2e9)).as_deref(), Some("TER unknown"));
+    // (#240) the TER leg at BOTH settings of its knob. Leg 2 is the index the funnel buckets on,
+    // so it is pinned alongside the message. The OVER-CAP arm is asked at both settings too: it sits
+    // OUTSIDE the knob on purpose, so a mutant that made the whole leg inert is caught even with the
+    // knob on, and no setting can buy a fund whose cost we know and dislike.
+    assert_eq!(miss_ter(None, false), Some((2, "TER unknown".to_string())),
+        "unknown TER OFF = a datum neither feed carried still refuses, which is the breach itself");
+    assert_eq!(miss_ter(None, true), None, "(#240) unknown TER ON = missing data PASSES, non-negotiable #5");
+    assert_eq!(miss_ter(Some(0.30), false), Some((2, "TER 0.30% > 0.25% cap".to_string())));
+    assert_eq!(miss_ter(Some(0.30), true), Some((2, "TER 0.30% > 0.25% cap".to_string())),
+        "(#240) a KNOWN dear TER refuses at BOTH settings — the knob is about absent data, not price");
+    assert_eq!(miss_ter(Some(0.07), true), None, "a cheap known TER is unaffected by the knob");
     assert_eq!(miss("Vanguard FTSE All-World UCITS ETF", Some(0.30), Some("Full"), Some("Acc"), Some(15e9)).as_deref(), Some("TER 0.30% > 0.25% cap"));
     // (#233) AUM5.DE, the fund this round is about, at both settings of the knob. Leg 3 is the
     // index the funnel buckets on, so it is pinned alongside the message rather than instead of it.

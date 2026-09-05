@@ -3768,6 +3768,133 @@ buy_heuristic:
                                  #
                                  #   REVERT: 0.25 is the shipped value; any other number is a deliberate
                                  #   choice about which funds wear the H flag, display-only either way.
+  hold_allow_unknown_ter: true   # (#240 / MEASURED 2026-09-05, live `screen`, control run TWICE) —
+                                 # ON. The TER leg refuses TWO populations under one funnel count and
+                                 # nothing had ever printed the split. It is 321 funds, the largest
+                                 # non-name refusal in the lane, and it divides:
+                                 #
+                                 #     TER 321 = TER unknown 53 + TER over cap 268
+                                 #
+                                 # The 53 are non-negotiable #5 ("missing data PASSES a gate"): both
+                                 # feeds `Quote::ter_shown` reads — BF's `expense_ratio` and the Yahoo
+                                 # `ter_fallback` — were silent, so those funds were refused for a
+                                 # datum never fetched rather than for a cost. That is the identical
+                                 # breach (#224) closed on the AUM leg and (#233) on replication, and
+                                 # it is the last big one. The 268 are untouched and stay untouched:
+                                 # the OVER-CAP arm sits OUTSIDE this knob and answers at BOTH
+                                 # settings, so no setting of it can buy a fund whose cost we know and
+                                 # dislike. `hold_max_ter` DOES NOT MOVE — that trade was refused at
+                                 # its own key above and this round does not reopen it.
+                                 #
+                                 # WHY IT IS ADDITIVE BY CONSTRUCTION, and the codebase said so first.
+                                 # `core::net_ter`'s doc comment was written for this round before it
+                                 # existed: the 9.9 it returns for a missing TER "is not a real TER —
+                                 # it is 'sort me last' … so it fires only if that leg is ever
+                                 # loosened". This knob is that loosening. An unknown-TER fund sorts
+                                 # BELOW every fund carrying one, so it can only take a sleeve slot
+                                 # that would otherwise print nothing.
+                                 #
+                                 # THE CENSUS (throwaway probe, run twice, identical both times).
+                                 # 53 unknown-TER funds clear legs 0 and 1; SEVEN clear every other
+                                 # leg and are what the knob actually admits:
+                                 #
+                                 #   CA40.PA  EUR4.5B  single-country  Amundi CAC 40 UCITS ETF S Acc
+                                 #   LAMT.AS  EUR2.1B  emerging        iShares MSCI EM Latin America
+                                 #   N100.L   EUR2.1B  Nasdaq-100      iShares NASDAQ 100 Swap
+                                 #   WSTI.AS  EUR1.1B  world sector    iShares MSCI World Info Tech
+                                 #                                       Sector Advanced
+                                 #   KWEH.L   n/a      single-country  KraneShares CSI China Internet
+                                 #   QQQC.SW  n/a      Nasdaq-100      UBS Nasdaq-100 hCHF acc
+                                 #   RU2K.L   n/a      US              iShares Russell 2000 Swap
+                                 #
+                                 # (#215) is satisfied: the knob admits seven funds, not zero.
+                                 #
+                                 # THE AUDIT IS THE ROUND'S REAL FINDING. `core::NARROW`'s (#216)
+                                 # block records WXMEG.SW as a fund that "dies only on TER unknown",
+                                 # and warns that a pond serving UBS a TER "files a mega-cap-excluding
+                                 # size tilt in the ex-US GEOGRAPHIC sleeve". This knob IS that pond.
+                                 # THREE of the seven are misfiled, and all three are fixed AT THE
+                                 # CAUSE in `core::NARROW`, never by narrowing this knob:
+                                 #   LAMT.AS — one EM region in the EMERGING sleeve  -> "latin america"
+                                 #   KWEH.L  — one theme in the SINGLE-COUNTRY sleeve -> "internet"
+                                 #   RU2K.L  — US SMALL CAP in the US BROAD sleeve    -> "russell 2000",
+                                 #             which also joins `core::SIZE` so the fund is RE-FILED
+                                 #             into the small-cap sleeve rather than deleted.
+                                 # Collateral was MEASURED, not assumed, before each token shipped:
+                                 # "latin america" 7 in pond / 0 qualifying, "internet" 15/0,
+                                 # "russell 2000" 11/1 — the 1 being R2US.L, a printed CORE row whose
+                                 # name also carries "small", which wins the first-match at index 14
+                                 # and keeps its rescue. The bare word "latin" was measured and
+                                 # REJECTED: it matches MWEP.L mid-word.
+                                 #
+                                 # AND THE FOURTH MISFILE, WHICH THE FIRST ARM PRINTED. That arm read
+                                 # 52 -> 53 with zero removals, and the new row was WXUSCH.SW, "UBS
+                                 # MSCI World ex USA UCITS ETF hCHF acc" — currency-hedged, 0.1 years
+                                 # old, no TER, no AUM — filling the starved ex-US sleeve (2 of 3).
+                                 # It would have been the FIRST hedged share class the CORE table
+                                 # ever showed. Measured on that same run: of the 52 shipped rows,
+                                 # ZERO are currency-hedged; the two that look it are not, since
+                                 # VUKG.L is FTSE 100 in GBP and SPIA.SW is the SPI in CHF, an index
+                                 # quoted in its home currency being a denomination and not a hedge.
+                                 # So the lane's real policy is "no hedged classes", enforced by a
+                                 # token list three spellings short of saying it — and (#216)'s own
+                                 # last paragraph opens "AND THE HEDGE SPELLINGS", adds "heur" and
+                                 # " h acc" for exactly this defect, and never added UBS's other
+                                 # three. `core::NARROW` now carries "hchf", "husd" and "hgbp".
+                                 # COST, MEASURED BEFORE THEY SHIPPED: eight funds of SUPPLY
+                                 # (ACWIS.SW, EMUCHF.SW, EURCHA.SW, SP500S.SW, WORLD.SW, ACWIU.SW,
+                                 # EMUUSD.SW, UB0E.L) and ZERO printed rows — not one of the eight
+                                 # is in the table. A EUR-based 20-year holder is this table's
+                                 # reader, so a CHF-hedged class is a currency bet plus a hedging
+                                 # cost laid over an index they wanted unhedged.
+                                 #
+                                 # PRE-REGISTERED BEFORE THE ARM RAN: ZERO REMOVALS. `(#214)`'s
+                                 # family-first fill reorders `cores` before the cap, so an
+                                 # unknown-TER fund that is the SOLE member of a new index family can
+                                 # be promoted past a second wrapper and take its slot. Any incumbent
+                                 # displaced REFUSES the arm — no guard was built for a hypothetical.
+                                 #
+                                 # THE CONTROL WAS RUN TWICE and the 52-row CORE table was
+                                 # ticker-identical and ORDER-identical both times, which is what
+                                 # makes the arm diff attributable — (#239) measured a CAC 40 row
+                                 # alternating between two wrappers with its knob OFF and a single
+                                 # control would have scored that as a breach. The split itself is
+                                 # PERISHABLE: it read 54/267 on the first control and 53/268 on the
+                                 # second, one fund having gained a TER between runs. Read the 53 as
+                                 # a magnitude, not a constant.
+                                 #
+                                 # ARM RESULT, with all four fixes in: 52 -> 52 rows, TICKER-identical
+                                 # AND ORDER-identical to the twice-run control. ZERO REMOVALS holds
+                                 # by measurement, not by argument, and nothing was added either —
+                                 # the shipped table is byte-identical. That is the honest shape of
+                                 # this round: it buys CORRECTNESS and SUPPLY, not rows. Precedented
+                                 # exactly — (#196)'s receipt reads "ON admits EXACTLY ONE fund and
+                                 # removes none … the CORE table was byte-identical and only the
+                                 # census line moved".
+                                 #
+                                 # WHAT MOVED, sleeve supply control -> arm:
+                                 #   all-world 11->9 · developed 11->10 · US 33->32 · Europe 11->10
+                                 #   · single-country 23->21   (the eight hedged classes leaving)
+                                 #   small-cap 4->6 · world sector 10->11 · Nasdaq-100 5->6
+                                 #                           (RU2K.L + XRSU.L re-filed, WSTI.AS and
+                                 #                            N100.L admitted by the knob)
+                                 #   ex-US 2->2 · emerging 10->10 · Japan 5->5 · Asia-Pacific 1->1
+                                 # The four funds the knob admits and files correctly are CA40.PA
+                                 # (single-country), N100.L (Nasdaq-100), WSTI.AS (world sector) and
+                                 # RU2K.L (small-cap, after the re-file). Every sleeve they land in
+                                 # is already at its cap and they carry the 9.9 sentinel, so none can
+                                 # print today — they are supply against the day a cheaper incumbent
+                                 # leaves, which is exactly what the sentinel was written to allow.
+                                 #
+                                 # WHY NO ROW: the starved sleeves the round was aimed at are ex-US
+                                 # (2 of 3) and Asia-Pacific (1 of 3), and NEITHER gained a
+                                 # tilt-free, unhedged, Acc candidate. The one that reached ex-US was
+                                 # the hCHF class above. Read that as the finding, not as a failure:
+                                 # supply for those two sleeves does not exist in the pond at the
+                                 # shipped legs, and no admission knob on this leg can conjure it.
+                                 #
+                                 # REVERT: set false. That restores the TER-unknown refusal; the three
+                                 # NARROW tokens revert separately at their own block in `core.rs`.
   hold_ucits_or_domicile: true   # (#102 / finding C9 / MEASURED AND SHIPPED 2026-09-01 by (#196))
                                  # — ON. Was UNMEASURED and OFF; the sweep its own receipt asked for has
                                  # now been run and it admits a real core that spelling was deleting.

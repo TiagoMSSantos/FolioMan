@@ -4047,7 +4047,12 @@ pub fn narrow_census(quotes: &[Quote]) -> Vec<(&'static str, usize)> {
 /// which is what lets one fixture fund pin both sides of this parameter.
 ///
 /// Pure and gradeable, per the rule (#198)'s doc comment set for `print_hold_core`.
-pub fn geo_miss_census(quotes: &[Quote], allow_swap: bool, country_cap: usize) -> Vec<&Quote> {
+pub fn geo_miss_census(
+    quotes: &[Quote],
+    allow_swap: bool,
+    allow_unknown_ter: bool,
+    country_cap: usize,
+) -> Vec<&Quote> {
     let mut out: Vec<&Quote> = quotes
         .iter()
         .filter(|q| eu_buyable(q) && quote_is_etf(q))
@@ -4056,7 +4061,7 @@ pub fn geo_miss_census(quotes: &[Quote], allow_swap: bool, country_cap: usize) -
             core::geo_hit(&lower).or_else(|| core::country_sleeve_tier(&lower, country_cap)).is_none()
                 && core::narrow_hit(&lower).is_none()
         })
-        .filter(|q| core::hold_miss_but_breadth(q, allow_swap).is_none())
+        .filter(|q| core::hold_miss_but_breadth(q, allow_swap, allow_unknown_ter).is_none())
         .collect();
     out.sort_by(|a, b| {
         b.aum_shown()
@@ -4078,6 +4083,7 @@ pub fn near_miss_reason(q: &Quote) -> Option<String> {
     near_miss_reason_with(
         q,
         crate::config::hold_allow_swap(),
+        crate::config::hold_allow_unknown_ter(),
         crate::config::hold_size_sleeve_ter(),
         crate::config::hold_factor_sleeve(),
         crate::config::hold_sector_sleeve(),
@@ -4092,6 +4098,7 @@ pub fn near_miss_reason(q: &Quote) -> Option<String> {
 pub fn near_miss_reason_with(
     q: &Quote,
     allow_swap: bool,
+    allow_unknown_ter: bool,
     size_cap: f64,
     factor_on: bool,
     sector_on: bool,
@@ -4102,7 +4109,8 @@ pub fn near_miss_reason_with(
     // correct while a narrow hit implied refusal; (#202) ended that — the size sleeve admits a name
     // BECAUSE of its narrow token, so the old order reported `narrow token "small"` for a fund that
     // was in fact refused three legs later on TER, which is the one number a reader needs.
-    let (leg, msg) = core::hold_miss_leg_with(q, allow_swap, size_cap, factor_on, sector_on, country_cap, nasdaq_cap)?;
+    let (leg, msg) =
+        core::hold_miss_leg_with(q, allow_swap, allow_unknown_ter, size_cap, factor_on, sector_on, country_cap, nasdaq_cap)?;
     if leg == 0 {
         if let Some(t) = core::narrow_hit(&q.name.to_lowercase()) {
             return Some(format!("narrow token \"{}\"", t.trim()));
@@ -4419,7 +4427,12 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     }
     // (#203) …and the half of leg 0 the NARROW census cannot see: no GEO token, no tilt word, every
     // other leg clear. Arithmetic is in `geo_miss_census` (gradeable); this only formats it.
-    let geo_miss = geo_miss_census(quotes, crate::config::hold_allow_swap(), crate::config::hold_per_tier_country());
+    let geo_miss = geo_miss_census(
+        quotes,
+        crate::config::hold_allow_swap(),
+        crate::config::hold_allow_unknown_ter(),
+        crate::config::hold_per_tier_country(),
+    );
     if !geo_miss.is_empty() {
         println!("  GEO blind spot — {} ETFs carry no GEO token yet clear every other leg (top 15 by AUM):",
             geo_miss.len());
@@ -5465,6 +5478,18 @@ mod tests {
         sizeless.aum_eur = None;
         assert_eq!(hold_core_cmp(&sizeless, 3, &lu_cheap, 3, 0.0, 0.20), Greater,
             "(#224) an unknown-AUM fund can only fill a free slot, however cheap it is");
+        // (#240) THE SENTINEL'S ORDERING HALF, and it is the whole safety argument for admitting a
+        // fund whose TER we never fetched. That `core::net_ter(None, ..)` RETURNS 9.9 is pinned in
+        // `core`; that 9.9 actually puts the fund LAST is not, and it is the half the knob leans on
+        // — an unknown-TER fund can only fill a slot that would otherwise print nothing. Both sides
+        // carry a KNOWN AUM on purpose, so (#224)'s term above cannot answer this pair instead and
+        // let a broken cost term through.
+        let mut terless = priced("IE", Some("Full"), 0.30);
+        terless.expense_ratio = None;
+        assert_eq!(terless.ter_shown(), None, "(#240) the fixture must actually BE the unknown-TER case");
+        assert_eq!(hold_core_cmp(&terless, 3, &ie_dear, 3, 0.0, 0.0), Greater,
+            "(#240) 9.9 sorts an unknown-TER fund BELOW a 0.30% one — the admission is additive by construction");
+        assert_eq!(hold_core_cmp(&ie_dear, 3, &terless, 3, 0.0, 0.0), Less, "…and the reverse call agrees");
         // …and a fund against itself ties all the way down, which is what makes the sort stable.
         assert_eq!(hold_core_cmp(&lu_cheap, 3, &lu_cheap, 3, 0.0, 0.20), Equal,
             "(#235) every term is symmetric, so identical inputs must compare Equal");
@@ -7255,7 +7280,12 @@ mod tests {
         assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("no UCITS token in the name"));
         m = broad.clone();
         m.ter_fallback = None;
-        assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("TER unknown"));
+        // (#240) config-dependent since the knob shipped, spelled off the knob for the reason the
+        // swap pin below is. The BOTH-settings pin that a knob cannot make this leg inert lives in
+        // `core::tests::pure_logic`, where the flag is an argument rather than a `OnceLock` read.
+        assert_eq!(core::hold_miss_reason(&m).as_deref(),
+            (!crate::config::hold_allow_unknown_ter()).then_some("TER unknown"),
+            "the TER-unknown leg answers only while the knob refuses missing data");
         m = broad.clone();
         m.ter_fallback = Some(0.30);
         assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("TER 0.30% > 0.25% cap"));
@@ -7934,8 +7964,8 @@ mod tests {
         // (#210) the cap is passed in, not read: ci-settings SHIPS 0.35 now, so `near_miss_reason`'s
         // knob-reading form answers differently per config regime. Off -> the token is the reason;
         // on -> the size sleeve rehabilitates the very same name and there is no near-miss at all.
-        assert_eq!(near_miss_reason_with(small, false, 0.0, false, false, 0, 0).as_deref(), Some("narrow token \"small\""));
-        assert_eq!(near_miss_reason_with(small, false, 0.35, false, false, 0, 0), None, "the sleeve admits it outright");
+        assert_eq!(near_miss_reason_with(small, false, false, 0.0, false, false, 0, 0).as_deref(), Some("narrow token \"small\""));
+        assert_eq!(near_miss_reason_with(small, false, false, 0.35, false, false, 0, 0), None, "the sleeve admits it outright");
         let mut dist = q("VWRL.DE", "Vanguard FTSE All-World UCITS ETF Dist");
         dist.use_of_profits = Some("Dist");
         assert_eq!(near_miss_reason(&dist).as_deref(), Some("share class Dist (needs Acc)"));
@@ -7986,7 +8016,7 @@ mod tests {
         let mut us = core_etf("AVUV", "Avantis Prime Global UCITS ETF", 9e9, cap);
         us.market = "USA".into();
         let quotes = [quotes, vec![us]].concat();
-        let got: Vec<&str> = geo_miss_census(&quotes, false, 0).iter().map(|q| q.ticker.as_str()).collect();
+        let got: Vec<&str> = geo_miss_census(&quotes, false, false, 0).iter().map(|q| q.ticker.as_str()).collect();
         // 0DZP.L STAYS a blind spot after (#211) and that is the pin: delete the trailing space in
         // ("msci em ", 2) and the eurozone fund gets a tier and vanishes from this list.
         assert_eq!(got, vec!["DBXD.DE", "0DZP.L", "LGGE.DE"],
@@ -7996,7 +8026,7 @@ mod tests {
         // tokens, so (#227) gave each of them a sleeve while `geo_hit` kept answering None, and this
         // census went on reporting them for four rounds. TWO funds cross the parameter and one does
         // not, so neither a dropped argument nor a constant-true predicate can satisfy both halves.
-        let got: Vec<&str> = geo_miss_census(&quotes, false, 7).iter().map(|q| q.ticker.as_str()).collect();
+        let got: Vec<&str> = geo_miss_census(&quotes, false, false, 7).iter().map(|q| q.ticker.as_str()).collect();
         assert_eq!(got, vec!["LGGE.DE"],
             "(#231) only the fund NO sleeve can claim is a blind spot");
         // (#233) the census reports what the LANE would admit, so it has to learn the swap knob too.
@@ -8006,9 +8036,9 @@ mod tests {
         let mut swap_blind = core_etf("SWPB.DE", "Amundi Nowhere Index UCITS ETF", 4e9, 0.10);
         swap_blind.replication = Some("Swap");
         let quotes = [quotes, vec![swap_blind]].concat();
-        let got: Vec<&str> = geo_miss_census(&quotes, false, 7).iter().map(|q| q.ticker.as_str()).collect();
+        let got: Vec<&str> = geo_miss_census(&quotes, false, false, 7).iter().map(|q| q.ticker.as_str()).collect();
         assert_eq!(got, vec!["LGGE.DE"], "(#233) swap OFF -> the synthetic fund never reaches the breadth leg");
-        let got: Vec<&str> = geo_miss_census(&quotes, true, 7).iter().map(|q| q.ticker.as_str()).collect();
+        let got: Vec<&str> = geo_miss_census(&quotes, true, false, 7).iter().map(|q| q.ticker.as_str()).collect();
         assert_eq!(got, vec!["SWPB.DE", "LGGE.DE"], "(#233) swap ON -> it is a real blind spot, sorted by AUM");
     }
 
@@ -8022,18 +8052,18 @@ mod tests {
     #[test]
     fn near_miss_reason_names_the_leg_that_actually_refused() {
         let thin = core_etf("IUSN.DE", "iShares MSCI World Small Cap UCITS ETF", 5e8, 0.30);
-        assert_eq!(near_miss_reason_with(&thin, false, 0.0, false, false, 0, 0).as_deref(), Some("narrow token \"small\""),
+        assert_eq!(near_miss_reason_with(&thin, false, false, 0.0, false, false, 0, 0).as_deref(), Some("narrow token \"small\""),
             "sleeve OFF: breadth IS the refusal, so the token is the answer");
-        assert_eq!(near_miss_reason_with(&thin, false, 0.35, false, false, 0, 0).as_deref(), Some("AUM €0.5B < €1B floor"),
+        assert_eq!(near_miss_reason_with(&thin, false, false, 0.35, false, false, 0, 0).as_deref(), Some("AUM €0.5B < €1B floor"),
             "sleeve ON: breadth passed, so report the leg that did refuse");
 
         let pricey = core_etf("WSML.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.40);
-        assert_eq!(near_miss_reason_with(&pricey, false, 0.35, false, false, 0, 0).as_deref(), Some("TER 0.40% > 0.35% cap"),
+        assert_eq!(near_miss_reason_with(&pricey, false, false, 0.35, false, false, 0, 0).as_deref(), Some("TER 0.40% > 0.35% cap"),
             "the sleeve's OWN cap is what the TER leg quotes");
 
         let ok = core_etf("SMLW.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.30);
-        assert_eq!(near_miss_reason_with(&ok, false, 0.35, false, false, 0, 0), None, "sleeve ON and every leg clear");
-        assert_eq!(near_miss_reason_with(&ok, false, 0.0, false, false, 0, 0).as_deref(), Some("narrow token \"small\""),
+        assert_eq!(near_miss_reason_with(&ok, false, false, 0.35, false, false, 0, 0), None, "sleeve ON and every leg clear");
+        assert_eq!(near_miss_reason_with(&ok, false, false, 0.0, false, false, 0, 0).as_deref(), Some("narrow token \"small\""),
             "the SAME fund is refused with the sleeve off — non-negotiable #1, read through the reader");
     }
 
