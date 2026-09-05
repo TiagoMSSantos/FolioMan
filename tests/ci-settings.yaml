@@ -5638,6 +5638,124 @@ buy_heuristic:
                                  # pin to 33. The sleeve returns to two keys and the same three rows — and to depending on TER order
                                  # to keep them the right three.
 
+  hold_per_tier_nasdaq: 1        # (#239 / MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs) — the
+                                 #   THIRTEENTH sleeve, and the FIFTH optional one. 0 -> 1. Rows the CORE
+                                 #   table keeps for Nasdaq-100 trackers, in a tier of their own at the very
+                                 #   bottom of the ladder. 0 = the sleeve does not print at all, which is the
+                                 #   code default and byte-identical to the shipped lane (non-negotiable #1).
+                                 #
+                                 #   WHY A ROW EXISTS TO BUY. The lane was measured near-saturated on the
+                                 #   family method: rows = SUM min(supply, cap) = 51, and every cap already
+                                 #   equals its sleeve's family count, so 75 QUALIFIED funds sit behind those
+                                 #   caps as wrappers of indices already printed ((#220)). Raising a cap buys
+                                 #   rows and NO exposure. Both censuses that price where a new family could
+                                 #   come from came back closed: the GEO blind spot's 27 names hold exactly
+                                 #   one broad passive equity tracker (LGGL.L, and its sibling is already
+                                 #   pinned as the fund no sleeve can claim), and the NARROW cost's 740 are
+                                 #   dominated by hedged 88 / screened 88 / esg 78 / sri 59 — wrappers and
+                                 #   screens of indices already shown, correctly refused for this mandate.
+                                 #
+                                 #   NEITHER CENSUS CAN SEE THE NASDAQ-100. `narrow_census` counts only
+                                 #   geo-broad names and a Nasdaq fund carries no GEO token; `geo_miss_census`
+                                 #   counts only names with NO narrow token and `nasdaq` is one. It falls in
+                                 #   the unmeasured remainder of leg 0's 3820 refusals — the last large,
+                                 #   cheap, EU-buyable, accumulating exposure the lane refused outright.
+                                 #
+                                 #   WHAT WAS MEASURED. 66 EU-buyable ETFs carry `nasdaq` as their FIRST
+                                 #   narrow token. Applying every hold leg at the UNMOVED 0.25% cap, exactly
+                                 #   FIVE are admitted, and all five are plain Nasdaq-100 index trackers:
+                                 #     NASD.L  EUR 5.70B  0.22%  Acc  Swap  LU  Amundi Core Nasdaq-100 Swap
+                                 #     EQQS.L  EUR 2.02B  0.20%  Acc  Swap  IE  Invesco NASDAQ-100 Swap
+                                 #     XNAS.L  EUR 1.98B  0.20%  Acc  Full  IE  Xtrackers NASDAQ 100 1C
+                                 #     ANX.PA  EUR 1.52B  0.23%  Acc  Swap  LU  Amundi Nasdaq-100 Swap EUR
+                                 #     ANXU.L  n/a        0.23%  Acc  ?     LU  Amundi Nasdaq-100 Swap USD
+                                 #   ONE index across all five, so THE CAP IS 1: the measured family count,
+                                 #   never a number that yields a nicer table ((#220)). Four of the five are
+                                 #   reachable only because (#233) armed `hold_allow_swap`.
+                                 #
+                                 #   WHY THIS IS NOT THE CAP RAISE (#234) REFUSED, and this paragraph is the
+                                 #   whole receipt — read it before reverting. (#234) pre-registered
+                                 #   `hold_per_tier_us` 4 -> 5, found the fifth family was `russell 1000`
+                                 #   carrying only iShares Russell 1000 GROWTH, and refused the raise on
+                                 #   `geo_tier`'s own rule: THE RULE IS GEOGRAPHY, NEVER INDUSTRY OR STYLE.
+                                 #   A financials-free top-100-by-listing-venue is not a geography either, so
+                                 #   that objection lands here too — WHICH IS EXACTLY WHY THIS ROUND DOES NOT
+                                 #   TOUCH THE GEO LADDER. `hold_per_tier_us` is unchanged at 4, `core::GEO`
+                                 #   gains nothing, and no fund changes tier. The admission runs through
+                                 #   `geo_tier_at`'s narrow_hit branch — the documented sleeve-rescue hatch
+                                 #   (#202) size, (#217) factor, (#218) sector and (#227) country each used
+                                 #   before it, here for the fifth time. A separately LABELLED sleeve is also
+                                 #   better information for a 20-year holder than a fifth US row would have
+                                 #   been: it reads as a concentration bet, not as a US market tracker.
+                                 #
+                                 #   THE PRECISION FILTER EARNS ITS PLACE. `core::NARROW`'s bare `nasdaq`
+                                 #   STAYS — it is what still refuses the rest of the exchange's suite. The
+                                 #   sleeve requires one of `core::NASDAQ` ("nasdaq 100" / "nasdaq-100"; both
+                                 #   spellings are live, and XNAS.L at EUR 1.98B is the unhyphenated one), and
+                                 #   refuses any name carrying a SECOND narrow token. That third conjunct is
+                                 #   not decoration: it refuses NESG.L/N1EU.DE/BCFM.DE (esg), IEWQ.SW (equal
+                                 #   weight), NDXH.PA/NSDCH.SW (hedged) and ANAE.MI (" h acc") by name.
+                                 #
+                                 #   `core::NASDAQ_NOT` WAS NOT PLANNED AND IS THE ROUND'S REAL FINDING. The
+                                 #   first cut of the sleeve ADMITTED a covered-call overlay — the pre-
+                                 #   registered stop rule's own hazard, caught by a test written to prove the
+                                 #   opposite. NARROW spells neither option overlays nor gearing ((#227) pins
+                                 #   that gap explicitly: "a geared fund reaches leg 0"). The live one is
+                                 #   QQQ5.L, Leverage Shares 5x Long Nasdaq 100, TER 0.15%, domicile XS,
+                                 #   refused TODAY only by the share-class-unknown leg — itself the non-
+                                 #   negotiable #5 breach a later round is meant to close. On the day it does,
+                                 #   NASDAQ_NOT is the only thing between a 5x daily-reset ETP and the CORE
+                                 #   table. It is SCOPED TO THIS SLEEVE, not appended to NARROW, because a
+                                 #   global append would move (#227)'s shipped geared-DAX placement and
+                                 #   non-negotiable #1 refuses a default-on change smuggled in here. Closing
+                                 #   the global hole is its own round; this comment is the receipt for it.
+                                 #
+                                 #   WHAT DID NOT MOVE, all pre-registered as stop rules before the run:
+                                 #   `hold_per_tier_us` (that is (#234)'s refusal and it stands), `hold_max_ter`
+                                 #   (CSNDX.SW at 0.33% and EQAC.SW/PUST.PA/PNAS.PA at 0.30% stay OUT — this
+                                 #   file already refused exactly that trade for a sleeve whose funds sat five
+                                 #   basis points over), `ter_cap_for` (no ceiling of its own, the stance
+                                 #   (#217)/(#218)/(#227) each took), and `NO_US_TIERS` — the Nasdaq-100 is
+                                 #   100% US equity, so (#235)'s withholding charge MUST reach this sleeve and
+                                 #   a silent exemption would price an Irish tracker as if it held none.
+                                 #
+                                 #   ZERO REMOVALS, the other pre-registered rule: a new BOTTOM rung is pure
+                                 #   addition. `nasdaq` appears in none of SIZE/FACTOR/SECTOR/COUNTRY and the
+                                 #   arm is the LAST `or_else` in the chain, so no fund an older sleeve claims
+                                 #   can move. Pinned in `core::tests::pure_logic` with the new cap OPEN,
+                                 #   which is the only setting under which the claim could fail.
+                                 #
+                                 #   NOT GRADED BY THE BACKTEST SHIP RULE, and cannot be: the CORE table is
+                                 #   the `screen` hold lane, which no backtest path reaches. The evidence is
+                                 #   the census above plus a live control-vs-arm `screen`, run BACK TO BACK on
+                                 #   one warm cache, both trailers healthy (4m52s / 4m47s, no DEGRADED).
+                                 #
+                                 #   LIVE RESULT: 51 -> 52 rows. Exactly ONE ticker added and NONE lost, with
+                                 #   the 51 shared rows in identical order — EQQS.L, Invesco NASDAQ-100 Swap
+                                 #   UCITS ETF Acc, 0.20%, EUR 2.0B, +17% CAGR over 5.5y, printing last in a
+                                 #   sleeve of its own. The CORE funnel attributes the change completely: leg
+                                 #   0 falls 3729 -> 3700, and those 29 names reappear exactly at the legs
+                                 #   that then refuse them (TER +19, not Acc +4, AUM +4, QUALIFIED +2). Both
+                                 #   ponds total 4466, so no fund entered or left the pool.
+                                 #
+                                 #   ONE THING THE A/B TURNED UP THAT IS NOT THIS ROUND'S DOING, recorded so
+                                 #   the next reader does not misattribute it: the CAC 40 row alternates
+                                 #   between CA40.PA and CACC.PA — two Amundi wrappers of ONE index at an
+                                 #   identical 0.25% and EUR 4.5B. A SECOND control run with the knob still at
+                                 #   0 printed CACC.PA too, so the flip is a same-family tie resolving on pond
+                                 #   order and is present with this sleeve shut. Leg 0 read 3729 in BOTH
+                                 #   controls, which is what makes the attribution above safe. The country
+                                 #   sleeve keeps nine families and nine rows throughout. Worth its own round:
+                                 #   a tie on (TER, AUM) currently has no stable tiebreak, and the two
+                                 #   wrappers differ in listed history (1.2y vs 7.7y), which is not nothing
+                                 #   for a lane that prints a CAGR column.
+                                 #
+                                 #   REVERT: set back to 0. The sleeve stops printing and the lane is
+                                 #   byte-identical to (#238) — no other knob and no GEO token moved, so the
+                                 #   revert is this one number. Revert also if a live run shows the row taken
+                                 #   by anything other than a plain Nasdaq-100 tracker, or if any incumbent
+                                 #   sleeve loses a fund (ZERO REMOVALS).
+
   hold_per_tier: 3               # (#197) MEASURED 2026-09-01 AND HELD AT THE SHIPPED LITERAL — rows kept
                                  # per breadth sleeve in the buy-and-hold CORE table. Was a bare
                                  # `const HOLD_PER_TIER: usize = 3` in picks.rs; this names it, and the
