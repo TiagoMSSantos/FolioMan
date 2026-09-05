@@ -3664,7 +3664,14 @@ fn use_from_name(name: &str) -> Option<&'static str> {
     let word = |t: &[&str]| lower.split(|c: char| !c.is_alphanumeric()).any(|w| t.contains(&w));
     if word(&["acc", "accumulating"]) {
         Some("Acc")
-    } else if word(&["dist", "distributing"]) {
+    // (#242) `dis` joins the list because the tokeniser could not see UBS's short spelling: "USD
+    // A-dis" splits to ["usd", "a", "dis"] and neither `dist` nor `distributing` matched a token of
+    // it. Found by measurement, not by reading — arming a leg-4 knob printed WXUSD.SW, "UBS MSCI
+    // World ex USA UCITS ETF USD A-dis", into the CORE table as an UNKNOWN share class when it is a
+    // genuinely DISTRIBUTING one. Word-boundary matching is what makes the short token safe: only a
+    // standalone `dis` matches, so "Discovery" does not, and it stays on the ONE-SIDED Dist half
+    // this function was built around, so it can still only REFUSE and never admit.
+    } else if word(&["dist", "distributing", "dis"]) {
         Some("Dist")
     } else {
         None
@@ -5337,6 +5344,13 @@ pub(crate) mod tests {
         assert_eq!(use_from_name("SPDR S&P Global Dividend Aristocrats Distributing"), Some("Dist"));
         assert_eq!(use_from_name("VanEck Vaccine and Genomics UCITS ETF"), None); // substring trap
         assert_eq!(use_from_name("Xtrackers MSCI World UCITS ETF 1C"), None); // no token -> honest n/a
+        // (#242) the short UBS spelling, and the substring trap that makes it safe to add.
+        assert_eq!(use_from_name("UBS MSCI World ex USA UCITS ETF USD A-dis"), Some("Dist"),
+            "(#242) `A-dis` IS a distributing share class — this is the fund that reached the CORE table");
+        assert_eq!(use_from_name("UBS MSCI World ex USA UCITS ETF USD A-acc"), Some("Acc"),
+            "…and its Acc twin still reads Acc, so the fix stays one-sided");
+        assert_eq!(use_from_name("Invesco Discovery UCITS ETF"), None,
+            "(#242) substring trap: `discovery` is one token and is not `dis`");
 
         // (#224) resolve_use_of: BF authoritative, the name a fallback — EXCEPT a name spelling Dist.
         let vxud = "Vanguard Funds PLC - Vanguard FTSE All-World Ex-U.S. UCITS ETF USD Dist";

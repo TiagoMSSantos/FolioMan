@@ -3895,6 +3895,73 @@ buy_heuristic:
                                  #
                                  # REVERT: set false. That restores the TER-unknown refusal; the three
                                  # NARROW tokens revert separately at their own block in `core.rs`.
+
+  # (#242) NO KNOB — THE FOURTH MISSING-DATA LEG WAS BUILT, MEASURED AND REFUSED. Recorded here,
+  #   against (#240), because a reader who sees replication ((#233)), AUM ((#224)) and TER ((#240))
+  #   all fixed for non-negotiable #5 will ask why the SHARE-CLASS leg was not, and this is the
+  #   answer: it was, it printed a distributing fund and removed a row, and it was reverted.
+  #
+  #   WHAT WAS BUILT. `hold_allow_unknown_use`, default false, splitting leg 4's `!= Some("Acc")`
+  #   so a `None` share class passes while the Dist arm answers at BOTH settings — the exact shape
+  #   (#240) used on leg 2's over-cap arm. Plus the additivity term (#224) invented, mirrored into
+  #   `picks::hold_core_cmp`: a KNOWN share class outranks an unknown one, ahead of domicile and
+  #   price, so an unknown-use fund can only fill a slot that would otherwise sit empty.
+  #
+  #   MEASURED 2026-09-05, live `screen`, 4566 EU-buyable ETFs, control run TWICE (52 rows,
+  #   ticker- AND order-identical both times) then the arm on the same warm cache. Trailers normal,
+  #   zero `⚠ ERROR`. THE PRIZE, read off the funnel and bigger than (#238) estimated:
+  #
+  #     control   not Acc 192 · AUM 164 · QUALIFIED 125
+  #     arm       not Acc 126 · AUM 199 · QUALIFIED 156
+  #
+  #   so leg 4's 192 = 66 UNKNOWN + 126 genuinely Dist ((#238) guessed 54/119). Of the 66 released,
+  #   35 died one leg later at the EUR 1B floor, 31 reached QUALIFIED, and the caps absorbed all but
+  #   two. THE TWO THAT PRINTED ARE BOTH REFUSALS:
+  #
+  #     WXUSD.SW  "UBS MSCI World ex USA UCITS ETF USD A-dis"  — ADDED to the ex-US sleeve, and
+  #               `A-dis` IS UBS's A-DISTRIBUTING class. Not unverifiable: verifiably the wrong
+  #               share class, in an Acc-only table, which is (#222)'s tax cost exactly. The
+  #               pre-registered stop rule ("every printed row hand-verified Accumulating, refuse
+  #               all if one fails") fired on the FIRST row it was applied to.
+  #     TPXE.PA   "Amundi Index Solutions - Amundi Japan Topix" — REPLACED JPJY.PA (SPDR MSCI Japan,
+  #               Acc, IE, 0.12%, EUR 1.0B). A REMOVAL, and in JAPAN — a SATURATED sleeve the round
+  #               predicted could not move at all.
+  #
+  #   WHY THE ADDITIVITY ARGUMENT FAILED, AND IT IS A GENERAL FINDING. The comparator term works: it
+  #   orders an unknown-use fund last WITHIN its group. But `core::family_first_order` re-sorts on
+  #   (tier, !first_of_family) AFTERWARDS, and it is SUPPOSED to promote a fund that brings a NEW
+  #   INDEX FAMILY over one that is its family's second representative. TPXE.PA is Topix, a family
+  #   the Japan sleeve did not carry; JPJY.PA was the SECOND MSCI Japan name behind IJPA.L. So the
+  #   new family outranked the incumbent by design, and no comparator term can prevent it —
+  #   `family_first_order` runs after the comparator and reads only the order, not the reason for it.
+  #   THE TECHNIQUE (#224) AND (#240) RELIED ON DOES NOT GENERALISE: it holds only while the admitted
+  #   population brings NO new family into a saturated sleeve, which was true of unknown-AUM and
+  #   unknown-TER funds by luck and is FALSE here. Any future admission round must check that
+  #   condition BEFORE claiming additivity — the round's own falsifiable prediction ("rows can appear
+  #   only in ex-US and Asia-Pacific, the two sleeves with free slots") was wrong for this reason.
+  #
+  #   THE ONE FIX THAT SHIPPED, and it is in `fetch.rs`, not here. `fetch::use_from_name` word-splits
+  #   and matched only `dist`/`distributing`, so UBS's short spelling was invisible: "USD A-dis"
+  #   tokenises to ["usd", "a", "dis"]. `dis` is now in that list. It stays on the ONE-SIDED Dist
+  #   half (#224) built, so it can still only REFUSE and never admit, and it needs no knob for the
+  #   same reason (#224)'s did not. VERIFIED BYTE-IDENTICAL: a third live run with the fix in and the
+  #   knob gone returned the same 52 rows in the same order as the twice-run control, with the funnel
+  #   unchanged at `not Acc 192 · AUM 164 · QUALIFIED 125` — it changes only the REASON a fund that
+  #   was already refused is refused. Zero of the 52 shipped names carry a standalone `dis` token, so
+  #   there is no false positive to find, and word-boundary matching is what makes the short token
+  #   safe ("Discovery" is one token and is not `dis`).
+  #
+  #   NOTHING ELSE SHIPPED: no knob, no config value, no comparator term. The measurement IS the
+  #   deliverable, as in (#226) and (#241). REVERT: nothing to revert here; the `fetch.rs` token
+  #   reverts by deleting `"dis"` from `use_from_name`'s Dist list.
+  #
+  #   DO NOT RE-OPEN leg 4 by loosening it. The 66 are real and non-negotiable #5 still says missing
+  #   data should pass, but the two things that would have to change first are now named: the
+  #   share-class datum must be RESOLVED rather than assumed (the `dis` token is one such fix, issuer
+  #   codes like Xtrackers' `1C`/`1D` are another and would ADMIT, so they need their own knob and
+  #   their own argument), and the family-first interaction above must be answered. Until both, this
+  #   leg buys a distributing fund and a removal.
+
   hold_ucits_or_domicile: true   # (#102 / finding C9 / MEASURED AND SHIPPED 2026-09-01 by (#196))
                                  # — ON. Was UNMEASURED and OFF; the sweep its own receipt asked for has
                                  # now been run and it admits a real core that spelling was deleting.
