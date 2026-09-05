@@ -5910,6 +5910,138 @@ buy_heuristic:
   #   token that splits an existing bucket. A CAP RAISE CANNOT change it — no cap binds here, because
   #   no sleeve claims any of these 1780 names at all.
 
+  # (#243) NO KNOB — THE CAP AUDIT. Every sleeve cap was re-derived from EXPOSURES rather than family
+  #   keys, the audit REFUSED its own thesis (no cap hides an exposure; zero raises earned), and the
+  #   uncapped run exposed a different defect instead: eight funds reaching a geographic sleeve on a
+  #   name that abbreviates a tilt the benchmark writes out. Recorded here, right after (#241),
+  #   because (#241) closed the last ADMISSION surface and the cap was the only surface left.
+  #
+  #   WHY THE AUDIT HAD TO HAPPEN. (#197) rested the cap on "every sleeve prints at least as many rows
+  #   as it has index FAMILIES, so a further slot buys only another WRAPPER of an index already
+  #   shown", and all eight per-sleeve overrides were then set from the family count, each saying "the
+  #   measured family count and NOTHING ELSE". (#238) broke that equivalence — the rule holds "only
+  #   while the keys partition EXPOSURES" — but only all-world ((#207)) and emerging ((#238)) were
+  #   ever audited that way. The funnel reads QUALIFIED 128 against a 52-row table, so ~76 qualified
+  #   funds are refused by caps ALONE. If a cap were under its sleeve's true universe count, raising
+  #   it would buy a real exposure, which is exactly the standing ask.
+  #
+  #   METHOD. One live `screen` with ALL NINE caps lifted to 99, so the table printed every QUALIFIED
+  #   fund (120 rows on that run's pond of 4469; 0 ERROR, 12533 paced calls, 4m41s). Each printed row
+  #   was then read against its BENCHMARK string, and the sleeve's distinct INDEX UNIVERSES counted by
+  #   hand — not its family keys and not its benchmark strings.
+  #
+  #   THE CENSUS. supply / distinct benchmarks / shipped cap / TRUE UNIVERSES:
+  #     all-world      9  7b  cap 7  = 5   ACWI, ACWI IMI, FTSE All-World, FTSE Global All Cap, Solactive GBS
+  #     developed      9  4b  cap 3  = 3   MSCI World, FTSE Developed, Solactive GBS Developed
+  #     emerging      10  5b  cap 3  = 3   already adjudicated by (#238)
+  #     US            28 11b  cap 4  = 3   S&P 500, MSCI USA, FTSE North America
+  #     ex-US          2  1b  cap 3  = 1   cap not binding
+  #     Europe        10  5b  cap 4  = 3   Dev Europe, Dev Europe ex-UK, STOXX 600
+  #     Japan          5  3b  cap 3  = 3   FTSE Japan, MSCI Japan, MSCI Japan IMI  <-- UNDER-KEYED, see below
+  #     Asia-Pacific   1  1b  cap 3  = 1   cap not binding
+  #     small-cap      5  4b  cap 4  = 4
+  #     world factor   5  5b  cap 5  = 5
+  #     world sector  11 11b  cap 6  = concentration budget, see below
+  #     single-country 20 13b cap 9  = concentration budget, see below
+  #     Nasdaq-100     5  2b  cap 1  = 1   already adjudicated by (#239)
+  #
+  #   FINDING 1 — NO CAP HIDES AN EXPOSURE. Every cap is at or ABOVE its sleeve's true universe count.
+  #   Three print STRICTLY above it (all-world 7 over 5, US 4 over 3, Europe 4 over 3), so those
+  #   sleeves already spend slots on wrappers. NOT LOWERED: removing rows is not the ask, and (#220)
+  #   forbids re-fitting a cap to a fresh argmax in either direction. Recorded honestly so the next
+  #   round does not "discover" the same three and read them as headroom.
+  #
+  #   FINDING 2 — THE BENCHMARK COLUMN IS NOT A CAP-SETTING INSTRUMENT EITHER. Every `b > cap` gap in
+  #   the table above is an ARTIFACT: family-token hats for unknown-benchmark funds, plus TR-variant,
+  #   currency-hedged, ESG-screened, min-TE-optimised and different-provider cuts of ONE index. It
+  #   over-counts the same way family keys do, one level down. That closes "the caps were set from the
+  #   wrong number" permanently — both available numbers over-count, and only a hand read of the
+  #   universes answers.
+  #
+  #   FINDING 3 — THE EXPOSURE TEST CANNOT BRAKE A TILT SLEEVE, so it must not be applied to one.
+  #   Every sector is disjoint from every other sector, and every country from every other country, by
+  #   construction. Applying (#197)'s rule uniformly would therefore license sector 6 -> 11 and country
+  #   9 -> 13 MECHANICALLY, on a test that cannot refuse anything there. (#197)'s logic was built for
+  #   sleeves whose funds DUPLICATE each other. ON A TILT SLEEVE THE CAP IS A DELIBERATE CONCENTRATION
+  #   BUDGET, NOT A DE-DUPLICATION RULE: sector holds at 6, single-country at 9. This is a hole (#197)
+  #   never knew it had, and it is written down so the next round does not read the +9 as free.
+  #
+  #   WHAT SHIPPED, PART 1 — `core::GEO` gains `("japan imi", 6)`, 35 tokens -> 36. Japan carries THREE
+  #   universes under TWO family keys: `topix` matches nothing in this pond, and `msci japan` covers
+  #   BOTH plain MSCI Japan (JPJY.PA, DBXJ.DE, LCJP.L) AND MSCI Japan IMI (IJPA.L, benchmark `msci
+  #   japan investable market index`, large+mid+SMALL). IDENTICAL DEFECT TO (#238)'s emerging sleeve
+  #   and the same remedy. The shipped table ALREADY prints the three right rows (VJPA.DE, IJPA.L,
+  #   JPJY.PA) — by TER LUCK, because best-of-`msci japan` happens to be the IMI fund. Any TER move
+  #   making DBXJ.DE or LCJP.L the best of that key would silently drop the IMI universe. Inserted
+  #   BEFORE `msci japan` because GEO is first-match. The size-segment argument is (#207)'s for ACWI
+  #   IMI, verbatim. Cap stays 3; the census moves Japan 2f -> 3f and ZERO rows move.
+  #
+  #   WHAT SHIPPED, PART 2 — `core::NARROW` gains six tokens, 50 -> 56: "hdg", "min te", "leaders",
+  #   "enhanced", " acc h", " eur h". These are ISSUER ABBREVIATIONS OF A TILT THE BENCHMARK SPELLS IN
+  #   FULL — (#242)'s defect class, and (#200)'s before it: a token ABSENT from the list, not one
+  #   matching too loosely. Measured over ALL 120 qualifying funds of the uncapped run, which IS the
+  #   complete collateral population because only a QUALIFIED fund can ever be printed:
+  #     "hdg"      2  SPP1.DE (t0, benchmark `…100% eur hedged index`), CEUU.AS (t11, "USD Hdg")
+  #     "min te"   3  ENAM.MI (t3), EEUE.PA (t5), EEMU.PA (t11); benchmark `…select filtered min te index`
+  #     "leaders"  1  500X.AS (t3), benchmark `s&p 500 esg leaders index` — the NAME drops "ESG"
+  #     "enhanced" 1  USEE.DE (t3), "US Equity Enhanced Active" — actively managed, not an index
+  #     " acc h"   1  SPXE.MI (t3), "EUR Acc H"
+  #     " eur h"   2  SPP1.DE (already refused on "hdg"), ESEH.PA (t3), "EUR H"
+  #   NINE first-token verdicts change and EVERY ONE is None -> token, i.e. a PURE REFUSAL. No
+  #   incumbent changes sleeve, so `family_first_order` cannot reorder a saturated tilt sleeve the way
+  #   (#242) proved it can. None of the six appears in `SIZE`, `FACTOR`, `SECTOR` or the Nasdaq token,
+  #   so no rescue arm claims them and `geo_tier_at` returns None — which is why the tier-11 pair
+  #   LEAVES the single-country sleeve rather than landing elsewhere.
+  #
+  #   " acc h" AND " eur h" ARE NOT NEW POLICY. (#222) already added " h acc" for State Street's
+  #   `EUR H Acc`; these are the SAME hedged suffix in the other word order (`EUR Acc H`) and with the
+  #   class letter left bare (`EUR H`). The list was two word-orders short of saying what it meant.
+  #   Both carry their own leading separator for the reason " pab" and " h acc" do — `hold_name_tokens`
+  #   ships OFF, so the match is a bare `contains` and that space is the whole guard.
+  #
+  #   NARROW STAYS NAME-BASED, AND XDEV.DE IS WHY. "Xtrackers MSCI World Value UCITS ETF 1C" sits on
+  #   benchmark `msci world enhanced value index` and is a legitimate FACTOR-sleeve row seated by
+  #   (#228). Matching these tokens against the BENCHMARK — the obvious structural fix, since the
+  #   benchmark is what spells the tilt out — would REFUSE it. The vocabulary reads the NAME because
+  #   the name is what the issuer chose to call the product. Pinned in `core.rs`.
+  #
+  #   MEASURED 2026-09-05, live `screen`, shipped config, one warm cache, (#239)'s protocol —
+  #   CONTROL THREE TIMES then the arm. All four runs: 0 ERROR, 12006 paced calls, ~4m30s. The three
+  #   controls are BYTE-IDENTICAL to each other in row set AND row order, so the noise floor is zero
+  #   on this pond.
+  #     rows          52 -> 52, SAME SET AND SAME ORDER. Zero removals, zero additions, zero reorders.
+  #     Japan rows    VJPA.DE, IJPA.L, JPJY.PA — unchanged, now held by construction and not by TER luck.
+  #     funnel        not broad-index 3831 -> 3888 (+57) · TER 251 -> 233 · not Acc 192 -> 179 ·
+  #                   AUM 164 -> 147 · QUALIFIED 128 -> 119 (-9)
+  #     supply        all-world 9->8 · US 32->27 · Europe 10->9 · single-country 21->19  (-9 total)
+  #     families      Japan 2f -> 3f. EVERY OTHER SLEEVE'S FAMILY COUNT IS UNCHANGED — not one drops
+  #                   below its cap, so no cap is loosened by this round.
+  #     Sum min(supply, cap) = 52 on BOTH sides, which is the row count and the parse's own check.
+  #   The +57 at leg 0 against only -9 QUALIFIED is arithmetic, not noise: leg 0 runs on the whole
+  #   4570-fund pond, and 48 of the 57 newly-refused names would have died at a later leg anyway
+  #   (-18 TER, -13 not Acc, -17 AUM = -48; 57 - 48 = 9). The nine that count are the nine above.
+  #
+  #   MEASUREMENT TRAP, WRITTEN DOWN BECAUSE IT NEARLY FORGED THIS RECEIPT. Restoring an arm's source
+  #   file with `cp -p` PRESERVES ITS OLD MTIME. If the file was parked before the control runs, cargo
+  #   then sees the source as OLDER than the binary and does not rebuild — the "arm" run is silently a
+  #   THIRD CONTROL, and it reports a perfect zero-change result that looks exactly like a clean
+  #   no-op. Caught here only because the census failed to move Japan 2f -> 3f, which the fix
+  #   guarantees. `touch` the file after restoring it, and confirm the token is IN the binary
+  #   (`grep -c '<token>' target/mutants/folioman`) before reading any number off the run.
+  #
+  #   NOTHING ELSE SHIPPED: no knob, no config value, no cap change. Both changes are code vocabulary,
+  #   exactly as (#234), (#235) and (#238) shipped theirs, so non-negotiable #1 does not apply — there
+  #   is no lane to protect and the goldens do not move.
+  #
+  #   REVERT: drop `("japan imi", 6)` and the six NARROW tokens, and restore both length pins. That
+  #   returns Japan to two family keys, SPP1.DE to tier 0, ENAM.MI/ESEH.PA/SPXE.MI/USEE.DE/500X.AS to
+  #   tier 3, EEUE.PA to tier 5 and CEUU.AS/EEMU.PA to the single-country sleeve. Revert an INDIVIDUAL
+  #   NARROW token if it ever refuses a fund whose index IS the broad one its sleeve is for.
+  #
+  #   DO NOT RE-RUN THE CAP AUDIT unless the pond moves materially. What would change its answer: a
+  #   NEW index universe appearing in a sleeve already at its cap. What would NOT: more wrappers of an
+  #   index already shown, which is what every one of the ~76 cap-refused funds is.
+
   hold_per_tier_nasdaq: 1        # (#239 / MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs) — the
                                  #   THIRTEENTH sleeve, and the FIFTH optional one. 0 -> 1. Rows the CORE
                                  #   table keeps for Nasdaq-100 trackers, in a tier of their own at the very

@@ -1213,7 +1213,7 @@ pub const HOLD_TIERS: usize = 13;
 /// REVERT: drop the three tokens. That returns 47 to the blind spot and puts SPPW/WEBH/DBXJ back.
 /// Revert an INDIVIDUAL token if a later pond has it admit a bond, a commodity or a single-country
 /// index, or file a fund in a tier its index does not track.
-const GEO: [(&str, u8); 35] = [
+const GEO: [(&str, u8); 36] = [
     // 4 = ex-US sleeves. FIRST, because every one of them contains a broader token.
     ("acwi ex", 4), ("world ex", 4), ("ex-usa", 4),
     // 5 = Europe. "ftse developed europe" precedes the generic "ftse developed" below.
@@ -1234,6 +1234,17 @@ const GEO: [(&str, u8); 35] = [
     // simply could not spell it. Vanguard FTSE Japan (VJPA.DE, EUR 1.4B, 0.10%) sat in the blind
     // spot beside three MSCI/TOPIX trackers. It also gives tier 6 a SECOND index family, which is
     // what lets (#214)'s family-first fill reach it in a sleeve whose supply (4) exceeds its cap.
+    // (#243) …and the THIRD family, which (#215) could not see because it counted spellings rather
+    // than universes. Tier 6 carries THREE universes — FTSE Japan, MSCI Japan and MSCI Japan IMI
+    // (IJPA.L, `msci japan investable market index`, large+mid+SMALL) — under only TWO keys, because
+    // "iShares Core MSCI Japan IMI" contains "msci japan" and falls into the same family as the
+    // three plain wrappers. IDENTICAL DEFECT TO (#238)'s emerging sleeve, and the same remedy: the
+    // shipped table ALREADY prints the three right rows (VJPA.DE, IJPA.L, JPJY.PA) — by TER luck,
+    // because best-of-`msci japan` happens to be the IMI fund. Any TER move making DBXJ.DE or
+    // LCJP.L the best of that key silently drops the IMI universe. This token makes it STRUCTURAL.
+    // Placed BEFORE "msci japan" because GEO is first-match: the narrow spelling must win or the
+    // broad one swallows it. The universe argument is (#207)'s for ACWI IMI, verbatim.
+    ("japan imi", 6),
     ("msci japan", 6), ("topix", 6), ("ftse japan", 6),
     // 7 = Asia-Pacific. (#213) SPLIT OUT OF JAPAN, which was the one sleeve holding two disjoint
     // geographies. Because the per-sleeve cap ranks on TER *inside* a sleeve, a 0.20% Pacific fund
@@ -1437,7 +1448,7 @@ const GEO: [(&str, u8); 35] = [
 /// both sat among the 22 rows the ≤3/sleeve cap hides, which is why the printed table never showed
 /// the bug and no receipt caught it. NDUS.L clears every other leg on live facts (TER 0.18%, AUM
 /// €1.24B), so this token is the only thing standing between it and the CORE list.
-const NARROW: [&str; 50] = [
+const NARROW: [&str; 56] = [
     "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
     "industrial",
     // (#222) THE REST OF GICS. `(#200)` found "industrial" missing and named the defect exactly — a
@@ -1590,6 +1601,51 @@ const NARROW: [&str; 50] = [
     //
     // REVERT: drop the three. That returns WXUSCH.SW to the ex-US sleeve and QQQC.SW to Nasdaq-100.
     "hchf", "husd", "hgbp",
+    // (#243) THE ISSUER ABBREVIATIONS THE BENCHMARK SPELLS IN FULL. Found by the cap audit, which
+    // lifted all nine sleeve caps and printed every one of the 120 QUALIFIED funds. That audit's own
+    // thesis — a cap hiding an exposure — was REFUSED (no sleeve holds more universes than its cap;
+    // the (#243) receipt carries the census), but the uncapped table exposed the opposite defect:
+    // eight funds reach a GEOGRAPHIC or SINGLE-COUNTRY sleeve because the NAME abbreviates a tilt the
+    // BENCHMARK writes out in full. (#242)'s defect class exactly, and (#200)'s before it — a token
+    // ABSENT from the list, not one matching too loosely.
+    //
+    // MEASURED 2026-09-05 over ALL 120 qualifying funds, first-match simulated against the shipped
+    // 50-token list. Gross reach below, and it IS the whole collateral scan — only a QUALIFIED fund
+    // can ever be printed, so those 120 are the complete population:
+    //   "hdg"      2 — SPP1.DE (t0, benchmark `…100% eur hedged index`), CEUU.AS (t11, "USD Hdg")
+    //   "min te"   3 — ENAM.MI (t3), EEUE.PA (t5), EEMU.PA (t11); benchmark `…filtered min te index`
+    //   "leaders"  1 — 500X.AS (t3), benchmark `s&p 500 esg leaders index`; the NAME drops "ESG"
+    //   "enhanced" 1 — USEE.DE (t3), "US Equity Enhanced Active" — actively managed, not an index
+    //   " acc h"   1 — SPXE.MI (t3), "EUR Acc H"
+    //   " eur h"   2 — SPP1.DE (already refused on "hdg"), ESEH.PA (t3), "EUR H"
+    // NET: nine first-token verdicts change and EVERY ONE is None -> token, i.e. a pure refusal. Not
+    // one incumbent changes sleeve, so `family_first_order` cannot reorder a saturated tilt sleeve
+    // the way (#242) proved it can. ZERO of the eight is a printed row: they leave a census and not
+    // the table, which is (#240)'s "eight names from a census and zero from the table" verbatim.
+    //
+    // " acc h" and " eur h" CARRY THEIR OWN LEADING SEPARATOR for the reason " pab" and " h acc" do
+    // — `hold_name_tokens` ships OFF, so the match is a bare `contains`. They are not new policy:
+    // (#222) added " h acc" for State Street's `EUR H Acc`, and these are the SAME hedged suffix in
+    // the other word order (`EUR Acc H`) and with the class letter left bare (`EUR H`). The list was
+    // two word-orders short of saying what it already meant.
+    //
+    // NARROW STAYS NAME-BASED, and XDEV.DE is why. "Xtrackers MSCI World Value UCITS ETF 1C" sits on
+    // benchmark `msci world enhanced value index` and is a legitimate FACTOR-sleeve row seated by
+    // (#228). Matching these tokens against the BENCHMARK — the obvious structural fix, since the
+    // benchmark is what spells the tilt out — would refuse it. The vocabulary reads the NAME because
+    // the name is what the issuer chose to call the product.
+    //
+    // NONE of the six appears in SIZE, FACTOR, SECTOR or NASDAQ, checked against those lists: a
+    // narrow hit that no tilt sleeve claims returns None from `geo_tier_at`, so these can only
+    // REFUSE and never re-file. That is what makes the tier-11 pair (CEUU.AS, EEMU.PA) LEAVE the
+    // single-country sleeve rather than land somewhere else — the country sleeve answers only on
+    // `geo_tier_at`'s fall-through, which runs only when `narrow_hit` returns None.
+    //
+    // APPENDED, NOT INSERTED, for (#234)'s reason verbatim.
+    //
+    // REVERT: drop the six. That returns SPP1.DE to tier 0, ENAM.MI/ESEH.PA/SPXE.MI/USEE.DE/500X.AS
+    // to tier 3, EEUE.PA to tier 5, and CEUU.AS/EEMU.PA to the single-country sleeve.
+    "hdg", "min te", "leaders", "enhanced", " acc h", " eur h",
 ];
 
 /// (#102) Does an ALREADY-lowercased `n` carry `t` at the START OF A WORD? The tightened matcher
@@ -6166,7 +6222,52 @@ mod tests {
         "(#238) MSCI EMU is still no emerging family — (#211)'s trailing space survives the split");
     assert_eq!(geo_tier_at("ubs core msci emu ucits etf eur acc", 0.0, false, false, 9, 0), Some(COUNTRY_TIER),
         "…and it still files as SINGLE-COUNTRY, which deleting `msci em ` would have broken");
-    assert_eq!(GEO.len(), 35, "(#238) two more tokens; the length is pinned so a silent edit cannot pass");
+    assert_eq!(GEO.len(), 36, "(#243) one more token; the length is pinned so a silent edit cannot pass");
+    // (#243) JAPAN'S THIRD UNIVERSE — (#238)'s emerging block above, one sleeve over. GEO carried
+    // three Japan spellings but only TWO family keys over three universes, because "iShares Core
+    // MSCI Japan IMI" contains "msci japan" and merged into the plain wrapper's family. The shipped
+    // table already prints the three right rows (VJPA.DE, IJPA.L, JPJY.PA) — by TER LUCK, because
+    // best-of-`msci japan` happens to be the IMI fund. These pins make it structural: a TER move
+    // promoting DBXJ.DE or LCJP.L reddens here instead of silently dropping the IMI universe.
+    assert_eq!(geo_family_of("iShares Core MSCI Japan IMI UCITS ETF USD (Acc)"),
+        Some("japan imi"), "(#243) IMI is large+mid+SMALL — (#207)'s ACWI IMI argument, verbatim");
+    assert_eq!(geo_family_of("State Street SPDR MSCI Japan UCITS ETF"),
+        Some("msci japan"), "…while the parent index is untouched, which is why order matters");
+    assert_eq!(geo_family_of("Vanguard FTSE Japan UCITS ETF USD Accumulation"),
+        Some("ftse japan"), "…and the third family is the one that was never in doubt");
+    for n in ["ishares core msci japan imi ucits etf usd (acc)",
+              "state street spdr msci japan ucits etf",
+              "vanguard ftse japan ucits etf usd accumulation"] {
+        assert_eq!(geo_tier_at(n, 0.0, false, false, 0, 0), Some(6),
+            "(#243) all three Japan universes stay at tier 6 — the added reach cannot misfile");
+    }
+    // (#243) THE SIX ABBREVIATION TOKENS, each pinned to the live fund that measured it. EVERY
+    // SLEEVE IS SWITCHED ON below — size, factor, sector, country, nasdaq — and that is the STRONG
+    // form of the NARROW block's claim: none of the six appears in `SIZE`, `FACTOR`, `SECTOR` or
+    // the Nasdaq token, so no rescue exists and the refusal cannot be an artifact of a sleeve
+    // being off. The `narrow_hit` half is the ordering pin — appending is what keeps each token
+    // FIRST on its own fund without preempting an incumbent's verdict.
+    for (n, tok) in [
+        ("state street spdr msci all country world eur hdg ucits etf (acc)", "hdg"),
+        ("ishares vii plc -ishares core msci emu ucits etf usd hdg acc", "hdg"),
+        ("bnp paribas easy msci usa min te ucits etf cap", "min te"),
+        ("bnp paribas easy msci europe min te ucits etf cap", "min te"),
+        ("bnp paribas easy msci emu min te ucits etf – eur", "min te"),
+        ("state street spdr s&p 500 leaders ucits etf", "leaders"),
+        ("ishares us equity enhanced active ucits etf usd (acc)", "enhanced"),
+        ("state street spdr s&p 500 ucits etf eur acc h", " acc h"),
+        ("bnp paribas easy s&p 500 ucits etf eur h", " eur h"),
+    ] {
+        assert_eq!(narrow_hit(n), Some(tok),
+            "(#243) each token is the FIRST hit on its fund — appending is what keeps that true");
+        assert_eq!(geo_tier_at(n, 99.0, true, true, 9, 1), None,
+            "(#243) …and NO tilt sleeve rescues it, so the fund leaves the CORE lane outright");
+    }
+    // (#243) …and XDEV.DE is why NARROW stays NAME-based. Its BENCHMARK is `msci world enhanced
+    // value index`, so matching these tokens against the benchmark — the obvious structural fix —
+    // would refuse a legitimate FACTOR row seated by (#228). The name says "value" and nothing else.
+    assert_eq!(narrow_hit("xtrackers msci world value ucits etf 1c"), Some("value"),
+        "(#243) `enhanced` lives only in the benchmark, and NARROW never reads the benchmark");
     // (#233) the withholding escape, and the two sort terms that both have to agree about it.
     // TIER 3 AND `Some("Swap")` — the conjunction is the pin: each half alone is false, so a mutant
     // that drops either one is caught by the neighbours rather than by the positive case.
