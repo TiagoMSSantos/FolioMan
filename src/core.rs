@@ -1213,7 +1213,7 @@ pub const HOLD_TIERS: usize = 12;
 /// REVERT: drop the three tokens. That returns 47 to the blind spot and puts SPPW/WEBH/DBXJ back.
 /// Revert an INDIVIDUAL token if a later pond has it admit a bond, a commodity or a single-country
 /// index, or file a fund in a tier its index does not track.
-const GEO: [(&str, u8); 33] = [
+const GEO: [(&str, u8); 35] = [
     // 4 = ex-US sleeves. FIRST, because every one of them contains a broader token.
     ("acwi ex", 4), ("world ex", 4), ("ex-usa", 4),
     // 5 = Europe. "ftse developed europe" precedes the generic "ftse developed" below.
@@ -1335,6 +1335,42 @@ const GEO: [(&str, u8); 33] = [
     // guard `NARROW`'s "sri " uses. The sub-regions it still reaches ("MSCI EM Asia", "MSCI EM ex
     // China") are refused in NARROW below, because GEO's first-match-wins ordering can express a
     // DIFFERENT TIER but never a refusal.
+    // (#238) …and the two REAL indices that pair was merging get their own tokens, ordered
+    // narrow-first for the reason (#237) ordered the Europe pair that way: `hit` is a bare
+    // `contains` and `geo_hit` takes the FIRST match. MEASURED on a live 4568-ETF pond, every one of
+    // the ten QUALIFIED tier-2 funds read by name AND by BF benchmark: SIX are MSCI Emerging Markets,
+    // TWO are MSCI EM (the same index, spelled short), ONE is FTSE Emerging (`ftse emerging index` —
+    // Korea sits in DEVELOPED there, a ~10% constituent difference, not a wrapper) and ONE is
+    // MSCI EM IMI (`…investible market index` — large+mid+SMALL, the universe argument (#207) made
+    // for ACWI IMI). So the sleeve holds THREE exposures and the key was counting TWO — splitting
+    // MSCI EM across both tokens while merging FTSE Emerging and IMI into them.
+    //
+    // THE TABLE DOES NOT MOVE, AND THAT IS THE POINT. `hold_family_first` ships TRUE and the three
+    // printed rows (HEMA.MI, EIMI.L, VFEA.DE) are ALREADY the three exposures — by luck, because
+    // best-of-`emerging` happened to be an MSCI EM fund and best-of-`msci em ` happened to be the IMI
+    // one. Nothing guaranteed that. Any TER move making a second MSCI EM wrapper the best of its key
+    // would have silently dropped FTSE Emerging or IMI off the table. These tokens make the correct
+    // outcome STRUCTURAL rather than accidental. Zero rows added, zero removed, verified live.
+    //
+    // THE CAP STAYS 3 AND (#220) DOES NOT SAY OTHERWISE. The census now reads 4f, but the fourth key
+    // is `msci em ` — a SPELLING of the index `emerging` already keys, not a fourth exposure. (#220)
+    // reads "the cap IS the family count" only while the keys partition EXPOSURES; a cap of 4 here
+    // buys one more MSCI EM WRAPPER, the exact thing the caps exist to suppress. The two spellings
+    // cannot be merged: dropping the trailing space from `msci em ` swallows "MSCI EMU" (see (#211)
+    // immediately below) and deleting the token sends both its funds to the SINGLE-COUNTRY sleeve,
+    // because `msci em ` is a COUNTRY token too.
+    //
+    // NOT SHIPPED, and measured on the same run: the emerging sleeve is EXHAUSTED at three. Of 285
+    // EM-named EU-buyable funds only 10 qualify; the refused remainder is wrappers of these same
+    // three indices, deliberate NARROW refusals (EM Asia, EM ex China, Latin America), ACTIVE and
+    // "enhanced"/quant products, Dist share classes, and sovereign BOND funds. The only broad passive
+    // near-misses are two Solactive EM trackers — Amundi Prime EM and L&G EM, both Acc and cheap —
+    // and both die on the global EUR 1B AUM floor that (#224) and (#226) each refused to lower. So
+    // no token can buy a row here, and (#215) refuses one that admits nothing.
+    //
+    // REVERT: delete both tokens. The sleeve returns to two keys and the same three rows — and to
+    // depending on TER order to keep them the right three.
+    ("ftse emerging", 2), ("em imi", 2),
     ("emerging", 2), ("msci em ", 2),
     // 3 = the US
     // (#215) " us equity" carries a LEADING SPACE and it is LOAD-BEARING, not defensive — the
@@ -5890,7 +5926,32 @@ mod tests {
         Some("ftse developed europe"), "…and the plain one is untouched, which is why order matters");
     assert_eq!(geo_tier_at("vanguard ftse developed europe ex uk ucits etf", 0.0, false, false, 0),
         Some(5), "(#237) …and BOTH tokens sit at tier 5, so the added reach cannot misfile");
-    assert_eq!(GEO.len(), 33, "(#237) one token added; the length is pinned so a silent edit cannot pass");
+    // (#238) THE SAME DEFECT ONE SLEEVE DOWN, and the pins carry the whole argument because the
+    // TABLE DOES NOT MOVE. Each of the four tier-2 keys is pinned to a fund the live pond actually
+    // holds, so a reorder of the block reddens here rather than silently re-merging two indices.
+    assert_eq!(geo_family_of("Vanguard FTSE Emerging Markets UCITS ETF USD Accumulation"),
+        Some("ftse emerging"), "(#238) FTSE Emerging is its own index — Korea sits in DEVELOPED there");
+    assert_eq!(geo_family_of("iShares Core MSCI EM IMI UCITS ETF USD (Acc)"),
+        Some("em imi"), "(#238) …and IMI is large+mid+SMALL, the universe argument (#207) made for ACWI IMI");
+    assert_eq!(geo_family_of("HSBC MSCI Emerging Markets UCITS ETF USD Acc"),
+        Some("emerging"), "…while the parent index is untouched, which is why order matters");
+    assert_eq!(geo_family_of("iShares MSCI EM UCITS ETF USD (Acc)"),
+        Some("msci em "), "…and so is its SHORT SPELLING, which is why the cap stays 3 and not 4");
+    // ALL FOUR SIT AT TIER 2, so per (#234) the added reach cannot misfile.
+    for n in ["vanguard ftse emerging markets ucits etf usd accumulation",
+              "ishares core msci em imi ucits etf usd (acc)",
+              "hsbc msci emerging markets ucits etf usd acc",
+              "ishares msci em ucits etf usd (acc)"] {
+        assert_eq!(geo_tier_at(n, 0.0, false, false, 0), Some(2),
+            "(#238) every tier-2 key stays at tier 2 — the added reach cannot misfile");
+    }
+    // (#211)'s trailing-space guard is what the new tokens must not break: MSCI EMU is a EUROZONE
+    // fund and belongs to the single-country sleeve, never to emerging.
+    assert_eq!(geo_family_of("UBS Core MSCI EMU UCITS ETF EUR acc"), None,
+        "(#238) MSCI EMU is still no emerging family — (#211)'s trailing space survives the split");
+    assert_eq!(geo_tier_at("ubs core msci emu ucits etf eur acc", 0.0, false, false, 9), Some(COUNTRY_TIER),
+        "…and it still files as SINGLE-COUNTRY, which deleting `msci em ` would have broken");
+    assert_eq!(GEO.len(), 35, "(#238) two more tokens; the length is pinned so a silent edit cannot pass");
     // (#233) the withholding escape, and the two sort terms that both have to agree about it.
     // TIER 3 AND `Some("Swap")` — the conjunction is the pin: each half alone is false, so a mutant
     // that drops either one is caught by the neighbours rather than by the positive case.

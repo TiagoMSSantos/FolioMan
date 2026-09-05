@@ -5603,6 +5603,41 @@ buy_heuristic:
                                  #   to a Portuguese holder if a distributing fund reaches this table, so the share-class half needs an
                                  #   argument the TER half does not. 43 and 54 are the sizes of the prize; neither is a licence.
 
+                                 # (#238) THE EMERGING SLEEVE READS 4f AGAINST THIS CAP OF 3, AND THAT IS CORRECT. DO NOT RAISE IT.
+                                 # (#220) reads "the cap IS the family count" only while the keys partition EXPOSURES. Tier 2 now
+                                 # carries FOUR keys over THREE indices, because MSCI Emerging Markets is spelled two ways and no
+                                 # single `contains` token reaches both: `emerging` takes the long spelling, `msci em ` the short.
+                                 # A cap of 4 here buys one more MSCI EM WRAPPER — precisely what the caps exist to suppress.
+                                 #
+                                 # MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs, all TEN qualified tier-2 funds read by
+                                 # NAME and by BF benchmark:
+                                 #     MSCI Emerging Markets  8  Amundi x3, HSBC, SPDR, Xtrackers  (`emerging`) + UBS, iShares (`msci em `)
+                                 #     FTSE Emerging          1  Vanguard VFEA.DE — `ftse emerging index`, Korea sits in DEVELOPED,
+                                 #                               a ~10% constituent difference and not a wrapper
+                                 #     MSCI EM IMI            1  iShares EIMI.L — `…investible market index`, large+mid+SMALL, the
+                                 #                               universe argument (#207) made for ACWI IMI
+                                 # The two new tokens (`ftse emerging`, `em imi`, both tier 2, both narrow-first) exist to make those
+                                 # three families STRUCTURAL. `hold_family_first` ships TRUE and the shipped table ALREADY printed the
+                                 # three right exposures — by luck, because best-of-`emerging` happened to be an MSCI EM fund and
+                                 # best-of-`msci em ` happened to be the IMI one. Any TER move making a second MSCI EM wrapper the best
+                                 # of its key would have silently dropped FTSE Emerging or IMI. A/B on one warm cache: 51 rows -> 51
+                                 # rows, ZERO added, ZERO removed, and the ONLY movement in the whole table is EIMI.L and VFEA.DE
+                                 # swapping rows 11 and 12 inside the sleeve that was re-keyed.
+                                 #
+                                 # THE SLEEVE IS EXHAUSTED AT THREE, measured on the same run — do not re-argue a taller emerging
+                                 # sleeve without re-running this. Of 285 EM-named EU-buyable funds only 10 qualify. The refused
+                                 # remainder is: more wrappers of these same three indices; deliberate NARROW refusals ((#211)'s EM
+                                 # Asia and EM ex China, plus Latin America); ACTIVE and "enhanced"/quant products (Research Enhanced,
+                                 # AlphaDEX, Alpha Enhanced, Quant Active, Magnificent 30, 3D EM, Avantis); Dist share classes; and
+                                 # sovereign BOND funds. The ONLY broad passive near-misses are two Solactive EM trackers — Amundi
+                                 # Prime EM and L&G EM, both Acc and cheap — and both die on the global EUR 1B AUM floor that (#224)
+                                 # and (#226) each refused to lower. So no token buys a row here and (#215) refuses one that admits
+                                 # nothing.
+                                 #
+                                 # REVERT: delete `("ftse emerging", 2)` and `("em imi", 2)` from `core::GEO` and restore the length
+                                 # pin to 33. The sleeve returns to two keys and the same three rows — and to depending on TER order
+                                 # to keep them the right three.
+
   hold_per_tier: 3               # (#197) MEASURED 2026-09-01 AND HELD AT THE SHIPPED LITERAL — rows kept
                                  # per breadth sleeve in the buy-and-hold CORE table. Was a bare
                                  # `const HOLD_PER_TIER: usize = 3` in picks.rs; this names it, and the
