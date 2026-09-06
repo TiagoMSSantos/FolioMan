@@ -56,6 +56,10 @@
      above: three label columns are correct for the ranked tables and nothing else should move. */
   #inflation th, #inflation td { text-align: right; }
   #inflation th:first-child, #inflation td:first-child { text-align: left; }
+  /* (#250) …and the CORE table has FOUR leading label columns (the owned flag, NAME, TICKER, MARKET)
+     plus three trailing ones (USE, REPL, DOM), which is how the terminal block aligns them. */
+  #core th:nth-child(4), #core td:nth-child(4),
+  #core th:nth-last-child(-n+3), #core td:nth-last-child(-n+3) { text-align: left; }
   .empty { padding: .6rem; color: var(--muted); }
   .stale {
     background: var(--warn-bg);
@@ -97,6 +101,23 @@
   <div id="etfs"></div>
   <h2>Crypto</h2>
   <div id="crypto"></div>
+
+  <!-- (#250) The buy-and-hold CORE shortlist, which `screen` has computed and printed below its three
+       rankings all along and this page never carried. It is NOT a fourth ranking: the tables above
+       rank momentum, which floors a broad index fund at 0.0 by construction, so these funds can never
+       appear there however good a 20-year hold they are. The top-N chooser deliberately does not cut
+       it — see `apply()`. -->
+  <h2>CORE — one fund forever</h2>
+  <div id="core"></div>
+  <p class="note" id="hold">
+    Broad, cheap, physical, accumulating UCITS funds, ranked broadest-first — all-world → developed →
+    emerging → US → ex-US → Europe → Japan → Asia-Pacific — then domicile (IE first, for withholding),
+    then cheapest <code>TER</code>, then largest <code>AUM</code>. One row per fund name, capped per
+    sleeve so no index family crowds out the rest. <strong>One all-world fund is already a whole
+    book</strong>; the sleeves under it are for building one yourself. The tables above rank momentum
+    and bury these at 0.0 — that is the ranking working, not a verdict on the fund.
+    <strong>NOT advice.</strong>
+  </p>
 
   <!-- (#249) The footer table `screen` prints below its three rankings, published because its
        cumulative columns are the SAME 2Y/5Y/8Y/20Y the tables above carry — a row reads straight
@@ -229,6 +250,11 @@ function render(data) {
   document
     .getElementById("inflation")
     .replaceChildren(table(data.inflation, "(inflation feeds unavailable)"));
+  // (#250) Same reason the inflation table gets its own empty string: these funds pass their own
+  // suitability filter, not the growth gates, so "(none pass the gates)" would name the wrong test.
+  document
+    .getElementById("core")
+    .replaceChildren(table(data.core, "(no CORE fund qualified)"));
   // Options come from the LONGEST lane, and each table then caps itself at its own length — crypto
   // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
   chooser(Math.max(1, ...LANES.map((lane) => (data[lane] || []).length)));

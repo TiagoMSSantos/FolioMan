@@ -3860,6 +3860,10 @@ pub struct WebTop {
     /// EMPTY is honest and expected off the page's own path (`check`, the offline tests): the site
     /// prints "(inflation feeds unavailable)" rather than a row of zeroes.
     pub inflation: Vec<Vec<(String, String)>>,
+    /// (#250) the buy-and-hold CORE shortlist — `screen` has computed and printed it since the sleeve
+    /// work, and the page never saw it. Same `(header, cell)` row shape as the lanes above. Empty when
+    /// the caller does not carry cores (`check`, and the stock/crypto-only screen filters).
+    pub core: Vec<Vec<(String, String)>>,
 }
 
 /// (#79) Build the page payload from the SAME ranked picks [`print_lane`] is about to print: same
@@ -3870,7 +3874,7 @@ pub struct WebTop {
 /// Widths are NOT applied: the page lays out its own columns, and padding a cell to a terminal width
 /// would only make the browser re-collapse it.
 #[allow(clippy::too_many_arguments)]
-pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap, inflation: &[Vec<(String, String)>]) -> WebTop {
+pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap, inflation: &[Vec<(String, String)>], core: &[Vec<(String, String)>]) -> WebTop {
     let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned, fund_pe);
     let top = |lane: &[(&Quote, f64)], w: &Widths, hide: &[&str]| -> Vec<Vec<(String, String)>> {
         let cols = lane_columns(w, hide);
@@ -3897,6 +3901,7 @@ pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[Strin
         etfs: top(&etf, &etf_widths(w), HIDE_ETF),
         crypto: top(&crypto, w, HIDE_CRYPTO),
         inflation: inflation.to_vec(),
+        core: core.to_vec(),
     }
 }
 
@@ -4242,6 +4247,51 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     cores
 }
 
+/// (#250) The CORE block's column names, in print order. ONE spelling, read by the header line, the
+/// row cells and the page — this table already carries a scar from three lookalike headers, and a
+/// second independently-typed copy is exactly how that happened.
+///
+/// The first column has no name because it is the flag column (`o` = already held), exactly as the
+/// terminal prints it. It reaches the page as a blank header over a mostly-blank column, which is
+/// honest: on the published run there is no broker portfolio to read, so it is empty by construction.
+pub(crate) const HOLD_CORE_COLS: [&str; 11] =
+    ["", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM"];
+
+/// (#250) One CORE row's cells, in `HOLD_CORE_COLS` order. Extracted from [`print_hold_core`], which
+/// is `#[mutants::skip]`ped — the same move (#79) made on `print_lane`: the formatting stays in the
+/// printer (where nothing can grade it) and the DECISIONS come out here, where the gate reaches them.
+///
+/// Every cell is the arithmetic that block already printed: life CAGR to whole percent with a sign,
+/// age to one decimal like the screen table, TER to two, AUM through [`turnover_cell`], and the
+/// `—`/`n/a` fallbacks unchanged. Nothing new is derived — a CORE row on the page is a CORE row in
+/// the terminal, character for character, because there is only one place either can come from.
+pub(crate) fn hold_core_cells(q: &Quote, owned: &Owned) -> Vec<String> {
+    vec![
+        if owned.holds(&q.ticker) { "o".to_string() } else { String::new() },
+        truncate(&q.name, 44),
+        truncate(&q.ticker, 9),
+        truncate(&q.market, 9),
+        q.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%")),
+        q.age_years.map_or("—".to_string(), |a| format!("{a:.1}")), // 1 decimal, as in the screen table
+        q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%")),
+        turnover_cell(q.aum_shown()),
+        q.use_of_profits.unwrap_or("—").to_string(),
+        q.replication.unwrap_or("—").to_string(),
+        q.domicile.as_deref().unwrap_or("n/a").to_string(),
+    ]
+}
+
+/// (#250) The CORE shortlist as page rows — `(header, cell)` pairs, the shape the three ranked lanes
+/// and (#249)'s inflation table already use, so `web/index.html` renders it with the table builder it
+/// has. `cores` is the list [`print_hold_core`] is about to print, passed in rather than rebuilt:
+/// parity with the terminal is then a property of there being one list, not of two calls agreeing.
+pub(crate) fn hold_core_web_rows(cores: &[&Quote], owned: &Owned) -> Vec<Vec<(String, String)>> {
+    cores
+        .iter()
+        .map(|q| HOLD_CORE_COLS.iter().map(|h| (*h).to_string()).zip(hold_core_cells(q, owned)).collect())
+        .collect()
+}
+
 /// The buy-and-hold CORE block. UNGRADEABLE, hence the skip — the same story as [`print_lane`] and
 /// [`print_picks`] above it: every effect this has is a `println!`, and the mutation gate runs
 /// `--lib --test backtest_fixture` with no `--test cli`, so nothing in the killing suite can read
@@ -4265,8 +4315,9 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
 /// `render` (n -> 10) and `* with /` (n -> 2). Both change what prints and neither is killable from
 /// a suite that cannot read stdout, so the duplicated decision goes instead of growing a test.
 #[mutants::skip]
-fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
-    let cores = hold_core_list(quotes);
+fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, owned: &Owned) {
+    // (#250) the list arrives built: `render` needs it for the page payload too, and computing it
+    // twice would both re-sort the whole pond and let the two copies disagree in principle.
     if cores.is_empty() {
         return;
     }
@@ -4478,27 +4529,15 @@ fn print_hold_core(quotes: &[Quote], pinned: &HashSet<&str>, owned: &Owned) {
     }
     // (round 111) leading 1-char cell = the owned-position marker; this list is what a 20yr holder
     // actually buys, so "covered" matters most here. Blank when the overlay is off/empty.
-    println!("  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", "", "NAME", "TICKER", "MARKET", "CAGR", "YRS", "TER", "AUM", "USE", "REPL", "DOM");
+    let h = HOLD_CORE_COLS; // (#250) one spelling of the column names, shared with the cells and the page
+    println!("  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}", h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8], h[9], h[10]);
     let mut any_owned = false;
-    for q in &cores {
-        let cagr = q.life_cagr.map_or("n/a".to_string(), |v| format!("{v:+.0}%"));
-        let yrs = q.age_years.map_or("—".to_string(), |a| format!("{a:.1}")); // 1 decimal, as in the screen table
-        let ter = q.ter_shown().map_or("n/a".to_string(), |t| format!("{t:.2}%"));
-        let own = if owned.holds(&q.ticker) { "o" } else { "" };
-        any_owned |= !own.is_empty();
+    for q in cores {
+        let c = hold_core_cells(q, owned); // (#250) the page publishes these very cells
+        any_owned |= !c[0].is_empty();
         println!(
             "  {:<1} {:<44} {:<9} {:<9} {:>5} {:>4} {:>6} {:>7} {:<4} {:<4} {:<4}",
-            own,
-            truncate(&q.name, 44),
-            truncate(&q.ticker, 9),
-            truncate(&q.market, 9),
-            cagr,
-            yrs,
-            ter,
-            turnover_cell(q.aum_shown()),
-            q.use_of_profits.unwrap_or("—"),
-            q.replication.unwrap_or("—"),
-            q.domicile.as_deref().unwrap_or("n/a"),
+            c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10],
         );
     }
     if any_owned {
@@ -4618,8 +4657,12 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // because `print_lane` consumes them, which is a Vec of (&Quote, f64) and therefore ~free. A write
     // failure is deliberately silent: the page's own staleness banner is what reports a stale payload,
     // and a screen run must not die over a file the terminal user never asked for.
+    // (#250) the CORE shortlist, built ONCE here because both the page and the terminal block below
+    // read it. Same gate that decides whether the block prints decides whether the page carries it.
+    let cores = if ctx.show_hold_core { hold_core_list(quotes) } else { Vec::new() };
+    let core_rows = hold_core_web_rows(&cores, ctx.owned);
     if let Some(path) = ctx.web_out {
-        let top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe, ctx.web_inflation);
+        let top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe, ctx.web_inflation, &core_rows);
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             let _ = std::fs::write(path, json);
         }
@@ -4631,7 +4674,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // every `screen` lane that carries cores (the wide run OR `screen etfs`), never `check`. Empty
     // cores early-return inside, so stock/crypto-only screen filters stay silent.
     if ctx.show_hold_core {
-        print_hold_core(quotes, &pinned_set, ctx.owned);
+        print_hold_core(quotes, &cores, &pinned_set, ctx.owned);
     }
     // gate review: pinned names are shown in their table even when a gate rejects them (score 0.0).
     // Say WHICH gate, so a 0.0 next to strong metrics isn't mistaken for a bug (VVSM stretch, VUAA/
@@ -7449,7 +7492,10 @@ mod tests {
         let mut eth = Quote::stub("ETH-USD", "€3000", "", "Ethereum");
         eth.perf = legs(&[("1Y", 55.0)]);
 
-        let quotes = vec![pin, btc, eth];
+        // (#250) a real CORE fund, so "the key is there" cannot pass on an empty list. It carries NO
+        // perf legs, so it scores None and never reaches `picks` — the ETF-lane assertion below still
+        // measures the empty lane it was written for, and this row can only arrive via the CORE seam.
+        let quotes = vec![pin, btc, eth, core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22)];
         let pinned = vec!["AAPL".to_string()];
         let owned = Owned { stocks: ["aapl".to_string()].into(), ..Default::default() };
 
@@ -7486,6 +7532,26 @@ mod tests {
         assert_eq!(published.len(), 1, "one region in, one region published");
         assert_eq!(published[0][0][1], "EU");
         assert_eq!(published[0][5][1], "48.6%", "the 20Y cell is compounded, and it is not reformatted here");
+        // (#250) …and so does the buy-and-hold CORE shortlist, with the printer's own headers and cells
+        let cores = payload["core"].as_array().expect("CORE table");
+        assert_eq!(cores.len(), 1, "the one qualifying fund, published");
+        assert_eq!(cores[0][1][0], "NAME", "the page's header row is the printer's");
+        assert_eq!(cores[0][1][1], "Vanguard FTSE All-World UCITS ETF");
+        assert_eq!(cores[0][0][1], "", "the broker overlay holds no fund here, and nothing else may fill that cell");
+        let _ = std::fs::remove_file(&web);
+
+        // (#250) the CORE block is caller-gated, and the page follows that gate: a lane that prints no
+        // block publishes no table. Without this the `check` path and the stock/crypto-only screen
+        // filters would ship a shortlist their terminal never showed.
+        let (_no_core, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
+            nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
+            owned: &owned, explain: None, show_hold_core: false, fund_pe: &HashMap::new(),
+            web_out: Some(&web), web_inflation: &infl,
+        });
+        let payload: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&web).expect("payload")).expect("valid JSON");
+        assert!(payload["core"].as_array().expect("the key stays, so the page prints its own empty line").is_empty());
+        assert!(!payload["stocks"].as_array().expect("stocks lane").is_empty(), "only the CORE table is gated off");
         let _ = std::fs::remove_file(&web);
 
         // an --explain for a ticker that isn't in `quotes` at all -> the not-scanned branch, and
@@ -7689,7 +7755,7 @@ mod tests {
         picks.push((&coin, 3.0));
 
         let n = 5;
-        let top = web_top(picks, n, &w, &[], &tuning, &pinned, &owned, &HashMap::new(), &[]);
+        let top = web_top(picks, n, &w, &[], &tuning, &pinned, &owned, &HashMap::new(), &[], &[]);
         let cell = |row: &[(String, String)], hdr: &str| {
             row.iter().find(|(h, _)| h == hdr).map(|(_, c)| c.trim().to_string())
         };
@@ -7744,7 +7810,7 @@ mod tests {
 
         // 8. an absent lane is an EMPTY table, never a fabricated one — the page prints the terminal's
         // "(none pass the gates)" off exactly this.
-        let empty = web_top(vec![], 5, &w, &[], &tuning, &pinned, &owned, &HashMap::new(), &[]);
+        let empty = web_top(vec![], 5, &w, &[], &tuning, &pinned, &owned, &HashMap::new(), &[], &[]);
         assert!(empty.stocks.is_empty() && empty.etfs.is_empty() && empty.crypto.is_empty());
         assert!(empty.generated.ends_with('Z'), "still stamped, so the page can call it stale");
     }
@@ -7862,6 +7928,40 @@ mod tests {
          0)
     }
 
+    /// (#250) The cells the page publishes ARE the cells the terminal prints — one definition, two
+    /// readers. Exact strings for both arms, because `print_hold_core` is `#[mutants::skip]`ped and
+    /// this is the only half of that block the gate can reach: a mutant that drops the sign off the
+    /// CAGR or the fallback off a missing leg has to die here or it lives.
+    #[test]
+    fn hold_core_cells_are_the_printed_cells() {
+        let q = core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22);
+        let owned = Owned { stocks: ["vwce".to_string()].into(), ..Default::default() };
+        assert_eq!(
+            hold_core_cells(&q, &owned),
+            ["o", "Vanguard FTSE All-World UCITS ETF", "VWCE.DE", "Germany", "+9%", "12.0", "0.22%", "€20.0B", "Acc", "Opt", "IE"]
+        );
+        assert_eq!(hold_core_cells(&q, &Owned::default())[0], "", "no broker overlay -> no marker");
+        // every optional leg empty: a missing number prints its fallback, it never blanks a column
+        let mut bare = q.clone();
+        bare.life_cagr = None;
+        bare.age_years = None;
+        bare.expense_ratio = None;
+        bare.aum_eur = None;
+        bare.use_of_profits = None;
+        bare.replication = None;
+        bare.domicile = None;
+        assert_eq!(
+            hold_core_cells(&bare, &Owned::default()),
+            ["", "Vanguard FTSE All-World UCITS ETF", "VWCE.DE", "Germany", "n/a", "—", "n/a", "n/a", "—", "—", "n/a"]
+        );
+        // the page rows carry the printer's own column names, in the printer's order
+        let rows = hold_core_web_rows(&[&q], &Owned::default());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(), HOLD_CORE_COLS);
+        assert_eq!(rows[0].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(), hold_core_cells(&q, &Owned::default()));
+        assert!(hold_core_web_rows(&[], &Owned::default()).is_empty(), "no cores -> no rows");
+    }
+
     /// (QA) `hold_core_list` breadth-major sort + one-row-per-name dedup + the per-tier cap, and the
     /// `print_hold_core` block over it (owned marker, empty-tier-0 hint, pinned near-miss reason). Pure.
     #[test]
@@ -7906,12 +8006,12 @@ mod tests {
         quotes.push(near);
         let owned = Owned { stocks: ["vwce".to_string()].into(), ..Default::default() };
         let pinned: HashSet<&str> = ["VWRL.DE"].into();
-        print_hold_core(&quotes, &pinned, &owned);
+        print_hold_core(&quotes, &hold_core_list(&quotes), &pinned, &owned);
 
         // no all-world fund present -> the "no ACWI fund with facts qualified" hint branch.
         let no_world: Vec<Quote> =
             quotes.iter().filter(|q| core::hold_breadth_tier(&q.name) != 0).cloned().collect();
-        print_hold_core(&no_world, &HashSet::new(), &Owned::default());
+        print_hold_core(&no_world, &hold_core_list(&no_world), &HashSet::new(), &Owned::default());
     }
 
     /// (#199) `hold_funnel` buckets EVERY EU-buyable ETF into the FIRST admission leg that refuses
