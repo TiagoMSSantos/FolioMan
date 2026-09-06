@@ -187,6 +187,28 @@ pub(crate) fn min_cagr_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
     }
 }
 
+/// (#247) The avg-daily-turnover floor THIS quote is judged against, resolved in ONE place.
+///
+/// `min_avg_turnover_eur_stock` 0.0 = INHERIT the global floor, NOT "off" — a MIN bar with a 0
+/// floor admits everything, which would make the neutral default a relaxation (non-negotiable #1).
+/// Same sentinel convention, and same reason, as [`min_cagr_floor`]'s `growth_min_cagr_etf`.
+///
+/// Stocks need their own number because the global one was only ever calibrated on FUNDS: 100K to
+/// kill untradeable listings, then 500K purely to drop four thin ETF SIDE-LISTINGS. `prefer_eu_listing`
+/// then puts 266 US constituents on Xetra lines and that fund-calibrated bar is read on their
+/// turnover — (#232) measured 183 stock fails with the swap on against 17 off.
+///
+/// ONLY THE GROWTH LANE ROUTES THROUGH THIS. `buy_score` (the `[FOIL]` on-sale lane) keeps reading
+/// `min_avg_turnover_eur` directly and MUST keep doing so: non-negotiable #6 forbids improving that
+/// lane, so "finishing the refactor" there would be a defect, not tidiness.
+pub(crate) fn turnover_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
+    if !quote_is_etf(quote) && !is_currency_quoted(&quote.ticker) && tuning.min_avg_turnover_eur_stock > 0.0 {
+        tuning.min_avg_turnover_eur_stock
+    } else {
+        tuning.min_avg_turnover_eur
+    }
+}
+
 /// (#37 funds) A fund's look-through equity-book P/E together with WHERE THE NUMBER CAME FROM.
 ///
 /// `from: None` = Yahoo served this ratio for this fund, or it was copied across venue listings of the
@@ -1142,9 +1164,10 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // configured (settings.yaml `min_avg_turnover_eur`; 0 = off). NOTE: a thin listing can still report a
     // tiny NONZERO turnover (0Y72.L = €0K rounded, i.e. Some(~0), not None) and slip past this gate with a
     // 0 floor -> the identical-horizon artifact those listings ride is caught downstream by #23.
+    let turn_floor = turnover_floor(quote, tuning); // (#247) per-class; stocks read their own
     match quote.avg_turnover_eur {
         None => return None, // untradeable / turnover unknown -> not a deep-liquid compounder
-        Some(v) if tuning.min_avg_turnover_eur > 0.0 && v < tuning.min_avg_turnover_eur => return None,
+        Some(v) if turn_floor > 0.0 && v < turn_floor => return None,
         _ => {}
     }
     // (#33) minimum listing age. Checked EARLY so a too-young name rejects with an explicit reason
@@ -2421,8 +2444,9 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
             fails.push((tag, format!("{label} {p:+.1}% (need >{floor:.0}%)"), p > floor - 15.0));
         }
     }
-    if tuning.min_avg_turnover_eur > 0.0 && turnover < tuning.min_avg_turnover_eur {
-        fails.push(("liquidity", format!("€{:.0}K/day (floor €{:.0}K)", turnover / 1e3, tuning.min_avg_turnover_eur / 1e3), turnover >= tuning.min_avg_turnover_eur * 0.5));
+    let turn_floor = turnover_floor(quote, tuning); // (#247) mirrors the scorer's per-class floor
+    if turn_floor > 0.0 && turnover < turn_floor {
+        fails.push(("liquidity", format!("€{:.0}K/day (floor €{:.0}K)", turnover / 1e3, turn_floor / 1e3), turnover >= turn_floor * 0.5));
     }
     if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
         fails.push(("stretch", format!("+{:.0}% above 200wk SMA (ceiling +{:.0}%)", quote.above_ma_pct, tuning.growth_max_above_ma), quote.above_ma_pct <= tuning.growth_max_above_ma + 25.0));
@@ -9237,6 +9261,58 @@ mod tests {
         etp.ticker = "BTC-EUR".into();
         assert!(scored(&etp, &BuyHeuristic { growth_min_cagr_etf: 99.0, ..d.clone() }),
             "class order is crypto-then-ETF: a crypto ETP takes the coin floor, not the fund one");
+    }
+
+    /// (#247) GATE FENCES, stock lane — the turnover floor's twin of the test above, and it rests on
+    /// the same non-negotiable #1 point: `min_avg_turnover_eur_stock` is a MIN bar, so its 0 default
+    /// INHERITS the global floor instead of opening the gate. Also pins the class routing (a fund and
+    /// a coin must keep reading the global number however the stock floor is set), because the whole
+    /// argument for the knob is that the global one was calibrated on FUNDS and must stay theirs.
+    #[test]
+    fn stock_turnover_floor_is_its_own_and_zero_inherits() {
+        let d = BuyHeuristic::default();
+        let fund = || {
+            let mut q = gate_fixture();
+            q.ticker = "TFND.DE".into();
+            q.name = "Test Core Fund".into();
+            q.instrument_type = "ETF".into();
+            q
+        };
+        let coin = || {
+            let mut q = gate_fixture();
+            q.ticker = "BTC-EUR".into();
+            q
+        };
+        assert_eq!(d.min_avg_turnover_eur_stock, 0.0, "the neutral default IS the inherit sentinel");
+
+        // 0 = INHERIT: a stock is judged on the global floor, exactly as before the knob existed.
+        let global = BuyHeuristic { min_avg_turnover_eur: 500_000.0, ..d.clone() };
+        assert_eq!(turnover_floor(&gate_fixture(), &global), 500_000.0, "0 is inherit, never off");
+
+        // armed: the stock takes its own number and the global one no longer reaches it...
+        let split = BuyHeuristic { min_avg_turnover_eur_stock: 100_000.0, ..global.clone() };
+        assert_eq!(turnover_floor(&gate_fixture(), &split), 100_000.0);
+        // ...while the fund and the coin keep the global floor the 500K raise was calibrated for.
+        assert_eq!(turnover_floor(&fund(), &split), 500_000.0, "the ETF side-listing bar stays theirs");
+        assert_eq!(turnover_floor(&coin(), &split), 500_000.0, "crypto is asked before the stock branch");
+
+        // and it BITES where it is supposed to: a stock just under its own floor is refused, just over
+        // is scored, with the global bar set out of the way so only the stock number can be answering.
+        let armed = BuyHeuristic { min_avg_turnover_eur: 0.0, min_avg_turnover_eur_stock: 100_000.0, ..d.clone() };
+        let with_turnover = |v: f64| {
+            let mut q = gate_fixture();
+            q.avg_turnover_eur = Some(v);
+            q
+        };
+        assert!(growth_score(&with_turnover(100_000.0), &armed).is_some());
+        assert!(growth_score(&with_turnover(99_999.0), &armed).is_none(), "the stock floor must bite");
+        // the mirror must say the same thing, and quote the STOCK floor in its printed reason
+        let (_, reason, _) = gate_failures(&with_turnover(99_999.0), &armed)
+            .unwrap()
+            .into_iter()
+            .find(|(g, _, _)| *g == "liquidity")
+            .expect("the mirror must fire the same gate the scorer did");
+        assert!(reason.contains("floor \u{20ac}100K"), "the reason prints the per-class floor, got {reason}");
     }
 
 

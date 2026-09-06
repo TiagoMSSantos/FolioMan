@@ -1599,6 +1599,67 @@ buy_heuristic:
                                  #   listing a retail order can actually exit. Pinned watchlist names bypass all gates
                                  #   (sentinel score). BACKTEST-BLIND (backtest quotes carry no turnover) — the
                                  #   validated edge and CI gate are untouched. 0 = off
+  min_avg_turnover_eur_stock: 100000 # (#247) SHIPPED. The STOCK lane's own turnover floor. 0 = INHERIT the
+                                 #   number above and NOT "off" — a MIN bar with a 0 floor admits everything, so
+                                 #   0-as-off would make the neutral default a RELAXATION, which non-negotiable #1
+                                 #   forbids. Same sentinel convention, same reason, as growth_min_cagr_etf.
+                                 #   THE DEFECT IS CALIBRATION PROVENANCE, NOT A THRESHOLD TO TASTE.
+                                 #   min_avg_turnover_eur has only ever been calibrated on FUNDS. Read its own block
+                                 #   above: 100K (2026-07-02) because 100K killed genuine junk (Expat Romania €11K/day,
+                                 #   Expat Greece €0, GraniteShares FAANG €0), then 500K (2026-07-03) for ONE stated
+                                 #   purpose — dropping four thin ETF SIDE-LISTINGS (XSLE.DE €327K, CHIP.SW €266K,
+                                 #   WTEC.SW €164K, XSLR.MI €125K). No stock was ever in that argument. Meanwhile
+                                 #   `prefer_eu_listing` moves 266 US constituents onto .DE lines and the fund-calibrated
+                                 #   bar is then read on Xetra turnover: (#232) measured liquidity failing 183 stocks with
+                                 #   the swap on against 17 off — 10.8x — and reserved this as the one lead still open
+                                 #   ("the wrong number for the venue it is being read on ... it keeps its round").
+                                 #   WHY A SECOND NUMBER AND NOT A LOWER ONE. KLA.DE is €436K/day but MPN.DE sits below
+                                 #   the €250K near-miss boundary, i.e. UNDER the ETF side-listings at €266K and €327K.
+                                 #   Any single floor low enough to admit both stocks re-admits the funds the 500K raise
+                                 #   exists to kill. The classes interleave on this axis, so one number cannot serve both.
+                                 #   WHY 100000, and it is NOT reverse-engineered from KLA.DE. It is the value this gate
+                                 #   ALREADY SHIPPED AT, chosen against untradeable listings; stocks simply never inherited
+                                 #   a raise made for funds. KLA.DE clears it with 4.5x headroom. It is ~45x the actual
+                                 #   monthly order (monthly_deploy_eur 2199), so it stays conservative for a retail holder,
+                                 #   and it still refuses the genuinely thin Xetra lines this run printed: 3LN.DE €5K,
+                                 #   3HM.DE €20K, RGO.DE €24K, CDS.DE €47K, SYP.DE €99K.
+                                 #   MEASURED LIVE 2026-09-06, full `screen`, arm vs TWO independent controls (a control
+                                 #   was re-run AFTER the arm, at the 0 sentinel, because the CORE lane drifts run to run):
+                                 #     signal                  ctl-1        ctl-2        arm
+                                 #     stock table          Top 4 of 20  Top 4 of 20  Top 5 of 20
+                                 #     liquidity stocks       185 / 2      185 / 2      136 / 1
+                                 #     liquidity ETFs        1363 / 0     1363 / 0     1363 / 0   <- IDENTICAL, the design check
+                                 #     liquidity crypto         4 / 1        4 / 1        4 / 1   <- IDENTICAL
+                                 #     cleared                     11           11           12
+                                 #     sole-blocked      KLA.DE, MPN.DE   same       MPN.DE only
+                                 #   THE PRIZE IS ONE NAME: KLA Corporation (KLA.DE, €436K/day) enters at RANK 3, not at
+                                 #   the bottom of the book, and takes the stock sector mix from Information Technology 1
+                                 #   to 2. MPN.DE stays refused — it is under €100K, i.e. genuinely thin, which is the
+                                 #   floor doing its job rather than failing to. One name was the PRE-REGISTERED range
+                                 #   (1-2): (#232) had already warned that "even a PERFECT single-gate fix recovers a
+                                 #   handful ... admission dies in DEPTH, not on any one axis". This does not reopen that.
+                                 #   NOT GRADEABLE, AND THAT CLAIM IS VERIFIED RATHER THAN ASSERTED. `core::backtest_quote`
+                                 #   sets avg_turnover_eur to a 1e15 sentinel, so no realistic floor is reachable in the
+                                 #   backtest. (#192) shipped this exact claim FALSELY once and five moving goldens caught
+                                 #   it — so the proof here is the check, not the prose: `cargo t` was run in BOTH regimes
+                                 #   with the knob armed at 100000 and NO golden moved. It ships on judgement plus the live
+                                 #   diff above, same standing as (#246), and claims no horizon.
+                                 #   HONEST CAVEAT ON THE LIVE DIFF. The CORE/fund-facts lane moved between runs (ETFs
+                                 #   missing TER read 144 / 188 / 141 and the GEO blind spot 29 / 30 / 28 across the three
+                                 #   runs). That drift appears BETWEEN THE TWO CONTROLS as well, so it is live fund-facts
+                                 #   noise, not this knob — which by construction cannot touch a fund at all, and the
+                                 #   `stock_turnover_floor_is_its_own_and_zero_inherits` test pins that ETFs and crypto keep
+                                 #   the global number however the stock floor is set.
+                                 #   NON-NEGOTIABLE #4 CAME FREE. The floor was THREE hand-copied spellings (buy_score,
+                                 #   score_parts, gate_failures) and the #2 mirror was held only by two of them happening to
+                                 #   be typed alike. The growth lane's two now route through `picks::turnover_floor`.
+                                 #   THE [FOIL] ON-SALE LANE (`buy_score`) DELIBERATELY STILL READS THE GLOBAL KNOB and must
+                                 #   keep doing so — non-negotiable #6. "Finishing the refactor" there would improve the lane
+                                 #   that exists to lose. The helper's doc says so at the site.
+                                 #   REVERT RULE: set this back to 0 (the inherit sentinel) — the lane is then byte-identical
+                                 #   to before the knob and deleting the key entirely is byte-identical too. Revert if the
+                                 #   floor is ever found admitting a name under ~€50K/day (the junk tier the 100K bar was
+                                 #   originally set to kill), or if the ETF/crypto funnel columns ever move with it.
   endpoint_smooth_days: 105      # LIVE+BACKTEST: the "current price" used by the LONG-horizon MEASUREMENTS (>=1Y
                                  #   perf %/long CAGR legs, range position, drawdown — so the hard range gate) = mean
                                  #   of the closes in the last N TRADING DAYS. 105 ≈ 5 months. The span converts to
