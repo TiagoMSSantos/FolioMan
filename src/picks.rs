@@ -3855,6 +3855,11 @@ pub struct WebTop {
     pub stocks: Vec<Vec<(String, String)>>,
     pub etfs: Vec<Vec<(String, String)>>,
     pub crypto: Vec<Vec<(String, String)>>,
+    /// (#249) The inflation table under them — built by `commands::inflation_web_rows`, same
+    /// `(header, cell)` shape as a lane so the page renders it with the table builder it already has.
+    /// EMPTY is honest and expected off the page's own path (`check`, the offline tests): the site
+    /// prints "(inflation feeds unavailable)" rather than a row of zeroes.
+    pub inflation: Vec<Vec<(String, String)>>,
 }
 
 /// (#79) Build the page payload from the SAME ranked picks [`print_lane`] is about to print: same
@@ -3865,7 +3870,7 @@ pub struct WebTop {
 /// Widths are NOT applied: the page lays out its own columns, and padding a cell to a terminal width
 /// would only make the browser re-collapse it.
 #[allow(clippy::too_many_arguments)]
-pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap) -> WebTop {
+pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[String], tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap, inflation: &[Vec<(String, String)>]) -> WebTop {
     let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned, fund_pe);
     let top = |lane: &[(&Quote, f64)], w: &Widths, hide: &[&str]| -> Vec<Vec<(String, String)>> {
         let cols = lane_columns(w, hide);
@@ -3891,6 +3896,7 @@ pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[Strin
         stocks: top(&stock, w, HIDE_STOCK),
         etfs: top(&etf, &etf_widths(w), HIDE_ETF),
         crypto: top(&crypto, w, HIDE_CRYPTO),
+        inflation: inflation.to_vec(),
     }
 }
 
@@ -4551,6 +4557,10 @@ pub struct RenderCtx<'a> {
     /// element on `render`'s return tuple: widening that tuple arms a return-replacement mutant for
     /// every caller-visible shape, and this is a side effect, not a result.
     pub web_out: Option<&'a std::path::Path>,
+    /// (#249) The inflation rows to publish alongside them, or `&[]` for a caller with no page.
+    /// Built by the caller and not here: `screen` fetches the series long before `render` runs, and
+    /// re-deriving them at the payload write would be a second definition of the same table.
+    pub web_inflation: &'a [Vec<(String, String)>],
 }
 
 pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx: RenderCtx) -> (Option<String>, Vec<String>) {
@@ -4609,7 +4619,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // failure is deliberately silent: the page's own staleness banner is what reports a stale payload,
     // and a screen run must not die over a file the terminal user never asked for.
     if let Some(path) = ctx.web_out {
-        let top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe);
+        let top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe, ctx.web_inflation);
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             let _ = std::fs::write(path, json);
         }
@@ -7448,10 +7458,16 @@ mod tests {
         // `render` that touches disk on the page's behalf.
         let web = crate::config::data_path(".screen_web_smoke.json");
         let _ = std::fs::remove_file(&web);
+        // (#249) the inflation table rides the same write; a real row, so "the key is there" cannot
+        // pass on an empty vec the page would render as "(inflation feeds unavailable)".
+        let infl = crate::commands::inflation_web_rows(
+            &[("EU", (2007..=2026).map(|y| (y, 2.0)).collect())],
+            chrono::NaiveDate::from_ymd_opt(2026, 9, 6).expect("a real date"),
+        );
         let (_text, tickers) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: Some(0.9), sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: None, show_hold_core: true, fund_pe: &HashMap::new(),
-            web_out: Some(&web),
+            web_out: Some(&web), web_inflation: &infl,
         });
         assert!(tickers.iter().any(|t| t == "AAPL"), "pinned gated name must still surface in the ranking");
         assert!(tickers.len() <= 5);
@@ -7465,6 +7481,11 @@ mod tests {
         assert!(!payload["stocks"].as_array().expect("stocks lane").is_empty());
         assert!(payload["etfs"].as_array().expect("etfs lane").is_empty());
         assert!(payload["crypto"].as_array().expect("crypto lane").is_empty());
+        // (#249) and the inflation table reaches the page through the same payload, cells intact
+        let published = payload["inflation"].as_array().expect("inflation table");
+        assert_eq!(published.len(), 1, "one region in, one region published");
+        assert_eq!(published[0][0][1], "EU");
+        assert_eq!(published[0][5][1], "48.6%", "the 20Y cell is compounded, and it is not reformatted here");
         let _ = std::fs::remove_file(&web);
 
         // an --explain for a ticker that isn't in `quotes` at all -> the not-scanned branch, and
@@ -7472,7 +7493,7 @@ mod tests {
         let (miss, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: Some("ZZZZ"), show_hold_core: false, fund_pe: &HashMap::new(),
-            web_out: None,
+            web_out: None, web_inflation: &[],
         });
         assert!(miss.is_some_and(|m| m.contains("wasn't scanned")));
         assert!(!web.exists(), "web_out: None must not write a payload");
@@ -7668,7 +7689,7 @@ mod tests {
         picks.push((&coin, 3.0));
 
         let n = 5;
-        let top = web_top(picks, n, &w, &[], &tuning, &pinned, &owned, &HashMap::new());
+        let top = web_top(picks, n, &w, &[], &tuning, &pinned, &owned, &HashMap::new(), &[]);
         let cell = |row: &[(String, String)], hdr: &str| {
             row.iter().find(|(h, _)| h == hdr).map(|(_, c)| c.trim().to_string())
         };
@@ -7723,7 +7744,7 @@ mod tests {
 
         // 8. an absent lane is an EMPTY table, never a fabricated one — the page prints the terminal's
         // "(none pass the gates)" off exactly this.
-        let empty = web_top(vec![], 5, &w, &[], &tuning, &pinned, &owned, &HashMap::new());
+        let empty = web_top(vec![], 5, &w, &[], &tuning, &pinned, &owned, &HashMap::new(), &[]);
         assert!(empty.stocks.is_empty() && empty.etfs.is_empty() && empty.crypto.is_empty());
         assert!(empty.generated.ends_with('Z'), "still stamped, so the page can call it stale");
     }
@@ -7769,7 +7790,7 @@ mod tests {
             render(&quotes, n, &tuning, &w, RenderCtx {
                 nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
                 owned: &owned, explain: Some(t), show_hold_core: false, fund_pe: &HashMap::new(),
-                web_out: None,
+                web_out: None, web_inflation: &[],
             })
             .0
             .unwrap_or_default()

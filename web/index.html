@@ -52,6 +52,10 @@
   td { border-top: 1px solid var(--rule); }
   /* the first three columns are labels, not numbers */
   th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
+  /* (#249) …but the inflation table has ONE label column. Scoped override, not a change to the rule
+     above: three label columns are correct for the ranked tables and nothing else should move. */
+  #inflation th, #inflation td { text-align: right; }
+  #inflation th:first-child, #inflation td:first-child { text-align: left; }
   .empty { padding: .6rem; color: var(--muted); }
   .stale {
     background: var(--warn-bg);
@@ -94,6 +98,22 @@
   <h2>Crypto</h2>
   <div id="crypto"></div>
 
+  <!-- (#249) The footer table `screen` prints below its three rankings, published because its
+       cumulative columns are the SAME 2Y/5Y/8Y/20Y the tables above carry — a row reads straight
+       across. Portugal is printed in the terminal and deliberately not here: the columns above are
+       deflated by EU HICP and nothing else, so EU is the deflator that was applied and USA is context
+       for dollar-earning names. A third basket that deflates nothing on this page is a number with no
+       use but to be misapplied. -->
+  <h2>Inflation</h2>
+  <div id="inflation"></div>
+  <p class="note" id="real">
+    <strong>These are the numbers already subtracted.</strong> The <code>2Y/5Y/8Y/20Y</code> columns in
+    the three tables above are <em>real</em> returns — the run deflates every ≥1Y horizon by EU HICP
+    before it prints. The EU row here is that deflator, shown so you can see its size:
+    <strong>do not subtract it again.</strong> The USA row is context for dollar-earning names and is
+    never applied to a column. Shorter horizons (1D/1W/1M) are nominal.
+  </p>
+
   <p class="note">
     <code>screen</code>'s three ranked tables — the 20yr+ growth ranking:
     at/near its own ~10y high with a strong proven long-term CAGR and an accelerating recent year,
@@ -134,11 +154,11 @@
 const LANES = ["stocks", "etfs", "crypto"];
 const STALE_HOURS = 36; // one weekday cron miss is fine; two is worth saying out loud
 
-function table(rows) {
+function table(rows, empty = "(none pass the gates)") {
   if (!rows || rows.length === 0) {
     const p = document.createElement("p");
     p.className = "empty";
-    p.textContent = "(none pass the gates)";
+    p.textContent = empty;
     return p;
   }
   const box = document.createElement("div");
@@ -162,8 +182,11 @@ function table(rows) {
 
 // Every row is in the DOM; the chooser only decides how many are VISIBLE. Hiding rather than
 // re-rendering is what keeps this small and what makes changing N instant.
+// (#249) SCOPED TO THE THREE LANES, and that is load-bearing: a bare `tbody` selector also matches
+// the inflation table, so `?top=1` would publish the USA row and hide the EU one — the deflator, on
+// the view most likely to be bookmarked.
 function apply(n) {
-  for (const body of document.querySelectorAll("tbody")) {
+  for (const body of document.querySelectorAll("#stocks tbody, #etfs tbody, #crypto tbody")) {
     [...body.rows].forEach((tr, i) => { tr.hidden = i >= n; });
   }
 }
@@ -201,6 +224,11 @@ function render(data) {
   for (const lane of LANES) {
     document.getElementById(lane).replaceChildren(table(data[lane]));
   }
+  // A run whose inflation feeds all failed publishes an empty list; say that, rather than borrowing
+  // the lanes' "(none pass the gates)", which would read as a gate verdict on a macro series.
+  document
+    .getElementById("inflation")
+    .replaceChildren(table(data.inflation, "(inflation feeds unavailable)"));
   // Options come from the LONGEST lane, and each table then caps itself at its own length — crypto
   // routinely has fewer rows than stocks, and offering an N no lane can fill would be a lie.
   chooser(Math.max(1, ...LANES.map((lane) => (data[lane] || []).length)));

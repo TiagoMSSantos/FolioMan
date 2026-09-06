@@ -131,6 +131,9 @@ pub async fn run(args: Vec<String>) {
         // no payload: `check` ranks a hand-picked watchlist, so its #1 is not the screen's #1 and
         // publishing it would overwrite the page with a different question's answer.
         web_out: None,
+        // (#249) …and therefore no inflation table either: it is published beside the screen's rows,
+        // as the deflator already applied to them, not beside a watchlist reading.
+        web_inflation: &[],
         // `check` inspects named watchlist tickers and fetches no fund holdings, so there is no
         // look-through P/E here and the ETF PEG trim is a no-op. Deliberate: check reports on the
         // names you asked about, it does not cut them from a table.

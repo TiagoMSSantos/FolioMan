@@ -1331,13 +1331,23 @@ pub async fn run(args: Vec<String>) {
         );
     }
 
-    // live EU HICP series to inflation-adjust long-horizon returns, only when enabled
-    let eu_infl = if settings.inflation_adjust.enabled {
-        eprintln!("screen: fetching EU HICP inflation series…");
-        Some(fetch::fetch_eu_inflation(&client, &settings.urls).await)
-    } else {
-        None
-    };
+    // (#249) ONE inflation fetch for the whole run, and it is a DELETION: this used to call
+    // `fetch_eu_inflation` here and `inflation_all` again in the footer, so the EU series was pulled
+    // twice per run. `inflation_all` is the superset (Portugal + USA + EU), the footer's later call is
+    // served from the day-fresh `.fmp_cache` this one writes (`fetch::cached_macro`, MACRO_TTL 24h),
+    // and the page gets its table from the same numbers the footer prints instead of a second pull
+    // that could land on the other side of a cache rollover.
+    eprintln!("screen: fetching inflation series (PT/US/EU HICP)…");
+    let inflations = fetch::inflation_all(&client, &settings.urls).await;
+    // Unchanged semantics for the SCORING half: the EU series reaches `quotes` only when the knob is
+    // on, so a config with `inflation_adjust.enabled: false` still deflates nothing. `unwrap_or_default`
+    // is the empty map the degraded-run check below already tests for.
+    let eu_infl = settings.inflation_adjust.enabled.then(|| {
+        inflations.iter().find(|(label, _)| *label == "EU").map(|(_, series)| series.clone()).unwrap_or_default()
+    });
+    // The page's copy of the footer's table. Built HERE because the payload is written inside
+    // `render`, ~1000 lines before the footer prints — same numbers, two renderers.
+    let infl_rows = crate::commands::inflation_web_rows(&inflations, chrono::Local::now().date_naive());
     // intraday ONLY when the table actually prints 1h/6h/12h — it was hardcoded on, and it costs one
     // extra Yahoo chart request PER NAME (~65s of pacer sleep on a full universe) to fill three display
     // cells nothing scores on. news off (screen never prints headlines).
@@ -1594,6 +1604,7 @@ pub async fn run(args: Vec<String>) {
         show_hold_core: true,
         fund_pe: &fund_pe,
         web_out: Some(&web_out),
+        web_inflation: &infl_rows,
     });
 
     // (round 114) live track record: journal today's ranked slice + the S&P close so `track` can

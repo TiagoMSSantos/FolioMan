@@ -56,6 +56,53 @@ pub(crate) fn parse_explain(cmd: &str, args: Vec<String>) -> (Option<String>, Ve
 mod tests {
     use super::*;
 
+    /// (#249) The page's inflation rows, asserted as EXACT STRINGS. `web/index.html` re-formats
+    /// nothing — it prints these cells verbatim — so a shifted horizon, a renamed header or a
+    /// swapped region lands straight in the published table with no other check between here and
+    /// the site. The horizons are `2Y 5Y 8Y 20Y` because the three ranked tables carry exactly
+    /// those columns; that is the only reason the table is worth publishing, so it is pinned here.
+    #[test]
+    fn inflation_web_rows_publish_usa_and_eu_at_the_growth_tables_horizons() {
+        use std::collections::BTreeMap;
+        let steady: BTreeMap<i32, f64> = (2007..=2026).map(|y| (y, 2.0)).collect(); // healthy: carries the current year
+        let frozen: BTreeMap<i32, f64> = (2007..=2025).map(|y| (y, 3.0)).collect(); // terminated feed, last print 2025
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 6).expect("a real date");
+
+        let rows = inflation_web_rows(
+            &[("Portugal", steady.clone()), ("USA", steady.clone()), ("EU", frozen.clone())],
+            today,
+        );
+        assert_eq!(rows.len(), 2, "Portugal is printed by the footer and NOT published to the page");
+        assert_eq!(
+            rows[0].iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(),
+            ["REGION", "LATEST", "2Y", "5Y", "8Y", "20Y", "AS OF"],
+            "the horizons must match the ranked tables' columns, in order"
+        );
+        // USA first even though `inflation_all` returns Portugal, USA, EU — published order is this
+        // function's, not the fetch's. Cells are compounded, not multiplied: 2%/yr for 20y is +48.6%.
+        assert_eq!(
+            rows[0].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+            ["USA", "2.0%", "4.0%", "10.4%", "17.2%", "48.6%", "2026"]
+        );
+        assert_eq!(
+            rows[1].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+            ["EU", "3.0%", "6.1%", "15.9%", "26.7%", "75.4%", "2025 ⚠ STALE"],
+            "a frozen feed still prints its numbers, and says which year they stop at"
+        );
+
+        // dead feed: every cell n/a, and AS OF says so rather than leaving the row to read as measured
+        let dead = inflation_web_rows(&[("USA", BTreeMap::new()), ("EU", steady.clone())], today);
+        assert_eq!(
+            dead[0].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+            ["USA", "n/a", "n/a", "n/a", "n/a", "n/a", "⚠ no data"]
+        );
+        assert_eq!(dead[1][6].1, "2026", "the healthy row is unaffected by its neighbour's dead feed");
+
+        // a region the fetch never returned is simply absent — never an empty row, never a panic
+        assert_eq!(inflation_web_rows(&[("EU", steady)], today).len(), 1);
+        assert!(inflation_web_rows(&[], today).is_empty());
+    }
+
     /// (round 61) truncate counts CHARS not bytes (fund names carry €/é/ü — a byte slice would
     /// panic mid-codepoint); pct rounds to 1dp and never signs.
     #[test]
@@ -124,6 +171,61 @@ mod tests {
             "no fetch is None — a zero here would print CHEAP for every market, and 0.00% is a rate that really happened"
         );
     }
+}
+
+/// (#249) The Pages site's copy of the inflation table `print_macro_footer` prints below, cut to the
+/// two regions the page publishes and emitted as rows instead of printed.
+///
+/// WHY IT IS ON THE PAGE AT ALL: the three ranked tables carry `2Y 5Y 8Y 20Y` columns and this table
+/// is cumulative at exactly those horizons, so a row reads straight across a growth column with no
+/// arithmetic in the reader's head. That alignment is the whole feature — it is not a coincidence to
+/// rely on silently, so if `core::HORIZONS` or the footer's columns ever move, these move with them.
+///
+/// PORTUGAL IS DROPPED HERE AND ONLY HERE — the terminal footer still prints all three. The page's
+/// growth columns are deflated by EU HICP and nothing else, so the EU row is the deflator that was
+/// actually applied and the USA row is context for dollar-earning names. A third national basket that
+/// deflates nothing on the page is a number with no use but to be misapplied.
+///
+/// Rows are `(header, cell)` pairs — the SAME shape the three lanes use — so `web/index.html` renders
+/// this with the table builder it already has and no cell is formatted in two places.
+///
+/// Nothing here derives a number: [`core::inflation_summary`], [`core::inflation_compounded`] and
+/// [`core::infl_series_stale`] are the three helpers the footer itself calls, and [`pct`] is the
+/// footer's own formatter. `AS OF` carries the footer's three states (healthy year / frozen feed /
+/// dead feed) because a dead feed reaches the page as a row of `n/a` cells, and a page with no other
+/// tell would publish that as if it were measured.
+pub(crate) fn inflation_web_rows(
+    inflations: &[(&'static str, std::collections::BTreeMap<i32, f64>)],
+    today: chrono::NaiveDate,
+) -> Vec<Vec<(String, String)>> {
+    // Published order, not the fetch order: `inflation_all` returns Portugal first, and the page
+    // wants the deflator it applied (EU) read against the dollar context (USA).
+    const PUBLISHED: [&str; 2] = ["USA", "EU"];
+    PUBLISHED
+        .iter()
+        .filter_map(|want| inflations.iter().find(|(label, _)| label == want))
+        .map(|(label, series)| {
+            let (year, latest, _, _) = crate::core::inflation_summary(series);
+            let cum = |years| pct(crate::core::inflation_compounded(series, years));
+            // An empty series has no latest year AND is never "stale" (`infl_series_stale` returns
+            // None on empty, which is why the dead-feed arm reads off `year` rather than re-testing
+            // `is_empty()` — one source for "is there anything here at all").
+            let as_of = match (crate::core::infl_series_stale(series, today), year) {
+                (Some(frozen), _) => format!("{frozen} ⚠ STALE"),
+                (None, Some(y)) => y.to_string(),
+                (None, None) => "⚠ no data".to_string(),
+            };
+            vec![
+                ("REGION".to_string(), (*label).to_string()),
+                ("LATEST".to_string(), pct(latest)),
+                ("2Y".to_string(), cum(2)),
+                ("5Y".to_string(), cum(5)),
+                ("8Y".to_string(), cum(8)),
+                ("20Y".to_string(), cum(20)),
+                ("AS OF".to_string(), as_of),
+            ]
+        })
+        .collect()
 }
 
 /// The macro backdrop you compare the asset tables against: live Euribor 3M, the Certificados de
