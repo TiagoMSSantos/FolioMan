@@ -1422,7 +1422,11 @@ sizing:
 # only through `core::hold_suitable`, whose leg 4 is `q.use_of_profits != Some("Acc")` and has no
 # knob. Both records are written from the SAME `quotes` vec in the same run, so they cannot both be
 # right: either a distributing fund is clearing the Acc leg, or `fund_meta`'s HashMap is colliding on
-# a ticker that lists twice. This PREDATES (#253) — (#246)'s printed line names the identical fund —
+# a ticker that lists twice. IT IS NOT THE NAME-vs-METADATA DISAGREEMENT (#224) ALREADY CENSUSED: that
+# probe swept the whole EU-buyable pond and found exactly two (FSOV.AS, VXUD.DE), both meta=Acc with a
+# Dist name and neither of them WEBG.DE. So re-running that census will not answer this; the question
+# here is journal-vs-admission, not name-vs-metadata. This PREDATES (#253) — (#246)'s printed line
+# names the identical fund —
 # so it does not block this round, and it is recorded here rather than guessed at. It is worth its
 # own round: for a 20-year hold the share class is not cosmetic. Do not cite either record as settled
 # until it is.
@@ -1434,6 +1438,64 @@ sizing:
 # Acc discrepancy above resolves against the shortlist, i.e. if CORE #1 turns out to be genuinely
 # distributing: a distributing wrapper taking 67% of a 20-year budget is a different decision and
 # must be re-argued, not inherited.
+#
+# (#254) NO CODE — SIZING THE HOLD LANE WAS PROBED AND IS INERT BY CONSTRUCTION. The measurement IS
+# the deliverable, as in (#226), (#241) and (#242). Nothing shipped; nothing to revert.
+#
+# THE PROPOSAL, which looks obviously right from outside the code. `screen` prints a CORE shortlist of
+# broad, cheap, accumulating 20-year cores, and `size` prints ten rows of which exactly ONE is a core
+# ((#253)'s remainder tracker). So: add `size --core`, size the shortlist the journal already stores,
+# and the sizing table finally shows the hold lane. It needs no new data — `ScreenState.core` has been
+# on disk since round 55 and (#253) already built the pure seam that reads it.
+#
+# WHY IT CANNOT WORK, MEASURED BEFORE ANY CODE WAS WRITTEN. `size` scores every candidate through
+# `growth_score` and drops the Nones ("None = the name failed the growth gate -> not sized"). The 20
+# journalled CORE tickers were handed to `size` on the command line — the same hand-typed technique
+# (#245) and (#246) used, so this needed no branch, no flag and no build:
+#
+#   $ folioman size WEBG.DE FTSA.AS FAMMAI.MI VALL.L WEBN.DE SPYY.DE VWRA.L VWRD.L FWRA.L FTWD.L \
+#                   SPYI.DE SPSA.DE SSAC.L VHYL.L VHYA.L ACSW.AS EDEL.DE EEAB.DE LYY0.DE VGLD.DE
+#   fetch: 20/20 quotes fetched
+#   No names pass the growth gate — nothing to size.
+#
+# ZERO of 20. Live config, 2026-09-06, .screen_state.json md5 622e137829613f6fc405e6c2b8251b28
+# unchanged before and after. `size --core` would print that same line and nothing else.
+#
+# AND THE TOOL ALREADY SAYS WHY, IN ITS OWN OUTPUT. `folioman check` on three of them:
+#   WEBG.DE  history: 2y listed, no 5y+ record to rank
+#   VWRA.L   cagr: 7.5%/yr (need >=19.0%); cagr-life: 13.3%/yr since listing; 5Y +43.6% (need >75%)
+#   SSAC.L   cagr: 7.9%/yr (need >=19.0%); cagr-life: 12.5%/yr; 5Y +42.7%   (hold-core H — growth
+#            gates don't apply)
+# A whole-world tracker compounds at 7-13%/yr. The growth gate demands >=19.0%/yr, a value that was
+# RE-SWEPT AND HELD ((#135): "19.0 stands"). So the failure is not a mistuned knob and cannot be
+# fixed by loosening one: a broad core fails the growth gate BY DESIGN, and the printed parenthesis
+# "(hold-core H — growth gates don't apply)" is the repo stating that in the output the user reads.
+# The `screen` preamble states the same policy from the other side: the ranked names are "higher-
+# variance, regime-dependent sector/thematic bets", while "for a literal 20-year buy-and-hold the
+# anchor is a broad, cheap, accumulating index core (the H-marked hold-suitable names)".
+#
+# THE GENERAL RULE, which is the point of writing this down. THE GROWTH LANE AND THE HOLD LANE ARE
+# DISJOINT BY DESIGN, and `size` is a GROWTH-LANE surface. Any proposal of the form "let `size` also
+# size the CORE names" is inert while it routes them through `growth_score`, whatever flag it wears.
+# The ONE sanctioned bridge is (#253)'s remainder row, which does not score the tracker at all — it
+# prints an em dash in SCORE and VOL precisely because the growth gate never had an opinion on it.
+#
+# EQUAL-WEIGHTING THE SHORTLIST IS NOT THE FIX EITHER, and this is why no follow-up round should try.
+# The CORE table is a MENU, not a portfolio: it prints one row per index family per tier, so the 20
+# journalled names carry SEVEN all-world trackers (WEBG.DE, VALL.L, WEBN.DE, VWRA.L, FWRA.L, SSAC.L,
+# SPYY.DE) that track substantially the same universe. Equal-weighting them buys the same index seven
+# times and pays seven dealing tickets for it — the identical objection that refused the "spread the
+# remainder across the all-world rows" option inside (#253). Picking ONE row off the menu is what the
+# menu is for, and CORE #1 is already that pick.
+#
+# WHAT WOULD HAVE TO CHANGE FIRST, named so a future round starts from here rather than from the
+# probe: a hold-lane sizer needs a WEIGHTING THAT IS NOT THE GROWTH SCORE, and the only honest ones
+# are an allocation policy across sleeves (how much emerging vs US vs Europe) that this repo has
+# NEVER FITTED and that no backtest path here can grade. Do not invent those numbers as "unfitted
+# judgement values": they would be the largest unmeasured decision in the tool, in the one command
+# that prints percentages a person acts on. RE-OPEN CONDITION: a graded lane that can adjudicate a
+# sleeve allocation, or a decision to size the hold lane equal-weight ACROSS TIERS (one row per tier,
+# not per family) with that restriction argued on its own terms.
 
 # ============================================================================================
 # BUY HEURISTIC (src/picks.rs). Acronyms (CAGR, ROE, P/E, NUPL, SMA, FX, ...): see Glossary in README.md.
