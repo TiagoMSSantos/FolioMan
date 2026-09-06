@@ -1908,6 +1908,58 @@ buy_heuristic:
                                  #   to before the knob and deleting the key entirely is byte-identical too. Revert if the
                                  #   floor is ever found admitting a name under ~€50K/day (the junk tier the 100K bar was
                                  #   originally set to kill), or if the ETF/crypto funnel columns ever move with it.
+                                 #
+                                 #   (#256) THE `no-turnover` REFUSAL IS A LABEL, NOT A GATE — MEASURED 2026-09-06 AND
+                                 #   REFUSED. NOTHING SHIPPED; `picks.rs` is byte-identical to before this round.
+                                 #   THE QUESTION. `picks::refusal_reason` returns "no-turnover" when
+                                 #   `avg_turnover_eur.is_none()`, which drops the name BEFORE any growth gate runs. On
+                                 #   this run that bucket held 172 of 5196 scanned. Non-negotiable #5 says missing data
+                                 #   PASSES a gate, and the only documented exception is the PEG/negative-EPS split — so
+                                 #   this was a SECOND, unwritten exception. The same missing field is read three
+                                 #   different ways in this repo: `core::backtest_quote` sets a 1e15 sentinel (PASSES),
+                                 #   the [FOIL] on-sale lane's `is_some_and` at picks.rs:984 (PASSES), and the growth
+                                 #   lane REFUSES. (#81) justifies the refusal, but only for HALF the None: it argues the
+                                 #   missing-FX-RATE case, where `price_eur` is None too and the row is unpriceable. The
+                                 #   other half — rate known, Yahoo served no VOLUME — is a priceable row, and (#81) does
+                                 #   not reach it. That gap is what this round measured.
+                                 #   MEASURED LIVE, control then arm, adjacent runs on one warm cache, each binary built
+                                 #   fresh (no `cp -p` — see the cp-p-forges-a-control class). Probe = missing turnover
+                                 #   PASSES: the "no-turnover" arm removed from `refusal_reason`, `score_parts`' liquidity
+                                 #   `None => return None` made a fall-through, and `gate_failures`' `?` made
+                                 #   `unwrap_or(f64::INFINITY)` — the #2 mirror moved in lockstep, as it must.
+                                 #     signal                        control        arm
+                                 #     refused (not assessable)          554        382     <- exactly -172
+                                 #     failed                           4630       4802     <- exactly +172, closes
+                                 #     cleared                            12         12     <- THE ANSWER
+                                 #     stocks / ETFs / crypto        5 / 8 / 2  5 / 8 / 2
+                                 #     printed ticker set             IDENTICAL, diffed name by name
+                                 #   ZERO NEW ASSETS. All 172 relocate to a gate that was already going to kill them, and
+                                 #   overwhelmingly to ONE: `history` +152 ETFs / +2 stocks / +9 crypto, every one of them
+                                 #   SOLE-blocked there (its sole column rises by the same amount its fail column does).
+                                 #   The remainder scatter onto cagr, cagr-life, 1Y+, 5Y+, range, range8y and aum. A name
+                                 #   whose turnover Yahoo never served is, in practice, the same young/dataless listing
+                                 #   the history gate already refuses — which (#152) measured as GENUINELY young (0 of 138
+                                 #   short-history equities have a firstTradeDate older than 5y).
+                                 #   WHY NO KNOB SHIPS. The change is not a bug fix — (#81) chose this deliberately — so
+                                 #   under non-negotiable #1 it would need a knob defaulted to today's behaviour. A knob
+                                 #   that cannot move `cleared` on any measured run is one more thing to read and revert.
+                                 #   The funnel would read marginally more honestly (a name filed under the gate that
+                                 #   actually kills it, not in a bucket that hides it), and that is cosmetic.
+                                 #   WHAT IT SETTLES. `no-turnover` is a REPORTING BUCKET, not an admission gate. It is
+                                 #   NOT the #5 violation it looks like, because the names it refuses are refused anyway.
+                                 #   The three-lane inconsistency above is therefore harmless AT TODAY'S DATA and is
+                                 #   written down here so the next round does not re-derive it as a lead.
+                                 #   This closes the last unexamined admission lever on the growth lane. With it the list
+                                 #   is: selection (#127), one gate (#151), two gates (#128), universe (#134), coverage
+                                 #   (#152), pool supply (#241), sleeve caps (#255), and now pre-gate refusal (#256).
+                                 #   RE-OPEN when the `no-turnover` bucket contains a name with a KNOWN price, a 5y+ leg
+                                 #   and a >=19%/yr CAGR — i.e. when a name would clear every gate but for this bucket.
+                                 #   `cleared` moving on the probe is the whole test; it did not move.
+                                 #   ALSO BANKED, and the reason the control had to be re-run: a `screen` control from
+                                 #   EARLIER THE SAME DAY read 2/5/2 with cleared 11, against 5/8/2 with cleared 12 hours
+                                 #   later on the same code. Printed rows can also EXCEED `cleared`, because pinned
+                                 #   watchlist names bypass the gates on a sentinel score. Never grade a screen arm
+                                 #   against a control that was not run adjacent to it.
   endpoint_smooth_days: 105      # LIVE+BACKTEST: the "current price" used by the LONG-horizon MEASUREMENTS (>=1Y
                                  #   perf %/long CAGR legs, range position, drawdown — so the hard range gate) = mean
                                  #   of the closes in the last N TRADING DAYS. 105 ≈ 5 months. The span converts to
