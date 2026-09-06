@@ -116,9 +116,17 @@ fn parse_state(raw: Option<String>) -> (Option<ScreenState>, bool) {
 /// of a scratch-dir write. `None` on every not-known path: no state file yet, a corrupt one
 /// ([`parse_state`] already forks that and warns), a state predating the round-55 `core` field, or
 /// a run that printed no CORE table. Display only: it moves no weight and reads no price.
-pub(crate) fn last_core(raw: Option<String>) -> Option<(String, String)> {
+///
+/// `(#253)` skips any CORE ticker already sized in the table above it, taking the next one down.
+/// While `(#246)` only NAMED this row, a duplicate was harmless prose; now that the row carries the
+/// whole remainder, naming a ticker that already has a sized line would silently double-buy it —
+/// the CORE shortlist and the ranked buy list are both drawn from the same ETF universe, so the
+/// overlap is not hypothetical. `None` gains one more arm with that: every CORE candidate is
+/// already in the table, which means the remainder has no home the caller is not already funding.
+pub(crate) fn last_core(raw: Option<String>, sized: &[String]) -> Option<(String, String)> {
     let state = parse_state(raw).0?;
-    Some((state.date, state.core.first()?.clone()))
+    let core = state.core.into_iter().find(|t| !sized.iter().any(|s| s == t))?;
+    Some((state.date, core))
 }
 
 /// (#248) The RANKED buy candidates as the last `screen` run left them, plus that run's date:
@@ -4204,6 +4212,10 @@ mod tests {
     /// index 0) plus the run date, so a stale shortlist is visible rather than silent. Every
     /// not-known path answers None — no state file, a corrupt one, and a state whose `core` is
     /// empty (written before round 55, or by a run that printed no CORE table).
+    ///
+    /// `(#253)` added the skip over already-sized tickers, so the two arms that matter are pinned
+    /// with the match AWAY from index 0 of a multi-element list: a one-element `sized` matching
+    /// `core[0]` would pass with the filter inverted.
     #[test]
     fn last_core_hands_size_the_broadest_row() {
         let state = |core: Vec<String>| {
@@ -4219,12 +4231,28 @@ mod tests {
         };
         let v = |ts: &[&str]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(
-            last_core(Some(state(v(&["WEBG.DE", "VWCE.DE"])))),
+            last_core(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &[]),
             Some(("2026-09-05".to_string(), "WEBG.DE".to_string()))
         );
-        assert!(last_core(None).is_none()); // no state file yet
-        assert!(last_core(Some("{ truncated".into())).is_none()); // corrupt
-        assert!(last_core(Some(state(Vec::new()))).is_none()); // no CORE printed / pre-round-55
+        assert!(last_core(None, &[]).is_none()); // no state file yet
+        assert!(last_core(Some("{ truncated".into()), &[]).is_none()); // corrupt
+        assert!(last_core(Some(state(Vec::new())), &[]).is_none()); // no CORE printed / pre-round-55
+
+        // (#253) the sized table already funds the broadest row -> take the next one down. The
+        // `sized` list carries a decoy that is NOT on the shortlist, and the match is at index 1
+        // of it, so neither "any/all" nor a reversed containment test can pass this by accident.
+        assert_eq!(
+            last_core(Some(state(v(&["WEBG.DE", "VWCE.DE", "SPYI.DE"]))), &v(&["LLY.DE", "WEBG.DE"])),
+            Some(("2026-09-05".to_string(), "VWCE.DE".to_string()))
+        );
+        // every CORE candidate is already in the table: the remainder has no home the caller is
+        // not already funding, so there is nothing to print.
+        assert!(last_core(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &v(&["VWCE.DE", "WEBG.DE"])).is_none());
+        // a `sized` list that overlaps nothing leaves the broadest row exactly where it was.
+        assert_eq!(
+            last_core(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &v(&["LLY.DE", "ABEC.DE"])),
+            Some(("2026-09-05".to_string(), "WEBG.DE".to_string()))
+        );
     }
 
     /// (#248) the ranked handoff to `size --picks`: the whole list, in render's order, plus the run

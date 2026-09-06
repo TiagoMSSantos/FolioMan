@@ -1358,6 +1358,82 @@ sizing:
 # REVERT RULE: delete the flag branch and the helper; there is no config to unset. Revert if
 # `ScreenState.ranked` ever stops being render's printed order, because the printed line promises the user
 # the order the table showed.
+#
+# (#253) SHIPPED: the `size` remainder becomes a SIZED ROW, not a sentence. No knob, no fetch, no
+# weight moved. src/commands/size.rs (the same `total < 99.5` branch) + `screen::last_core`.
+#
+# THE HOLE, in this file's own words. (#245) measured it: `size` deploys ~33% of gross. (#248)
+# pre-registered it as still open: "STRANDING. 67.0% is still unallocated". (#246) went halfway and
+# said so itself: "This NAMES a default; it allocates nothing and buys nothing." So the tool computed
+# the destination, printed the destination, and left two thirds of a twenty-year equity budget in
+# cash — the one position guaranteed to lose over that horizon, and a bigger loss than any ranking
+# error this command is capable of making. (#246) had already written the argument for closing it:
+# "a tracker sits outside the `max_name_pct` regime by design — it is the market, not a name — which
+# is precisely why it can take a remainder that per-name caps refuse." This round takes it at its
+# word.
+#
+# MEASURED LIVE 2026-09-06, live config (FOLIOMAN_CONFIG=tests/ci-settings.yaml), both arms the same
+# minute off one warm cache, NO `screen` run between them — .screen_state.json md5
+# 622e137829613f6fc405e6c2b8251b28 unchanged across both, so the shortlist cannot have drifted:
+#   control  9 rows  TOTAL 33.0%  + the (#246) prose line naming WEBG.DE
+#   arm      9 rows  TOTAL 33.0%  + WEBG.DE 67.0%  + TOTAL+ 100.0%
+# Everything up to and including the TOTAL line is BYTE-IDENTICAL between the arms (`cmp` on the
+# first 17 lines of each: identical). The deployed budget goes 33.0% -> 100.0% and the basket 9 -> 10.
+# Bare `size` could not be A/B'd this round: the watchlist gates to 0 names on the current config, so
+# it prints "nothing to size" and never reaches the branch. The branch is shared, so it inherits.
+#
+# WHY THE ROW SITS BELOW `TOTAL` AND NOT INSIDE IT. (#245)'s comment on that line is still right — a
+# capped basket summing to 33 is exactly how the caps announce themselves, and folding the tracker in
+# would erase the one number that shows them binding. So: TOTAL (the capped basket, untouched), then
+# the row, then TOTAL+. Two totals, both true, neither hiding the other. SCORE and VOL print an em
+# dash because this instrument never went through the growth gate and must not look as if it had.
+#
+# THE DEDUPE, and why it is new. `last_core` gained a `sized` parameter and skips any CORE ticker
+# already in the table above it, taking the next one down. Under (#246) a duplicate was harmless —
+# naming a fund twice costs nothing. Now the row carries the whole remainder, so naming a ticker that
+# already has a sized line would silently double-fund it, which is the precise failure (#248) closed
+# for `--picks` tickers ("a repeated row would draw its class budget twice"). CORE and the ranked
+# book are drawn from the same ETF universe; the overlap is not hypothetical. It did NOT fire in the
+# live A/B (WEBG.DE is not in the ranked 9), so it is pinned in unit tests instead, with the match at
+# index 1 of a multi-element list so an inverted filter cannot pass them.
+#
+# NOT GRADEABLE by the ship rule, same standing as (#246)/(#248): no backtest path reaches `size`, no
+# golden covers it, it claims no horizon and no edge. `config::Sizing` is non-negotiable #1's ONE
+# DOCUMENTED EXCEPTION, so no default-off knob — and a knob here would ship the 67%-in-cash default
+# as the shipped policy, which is the thing being fixed. Gates: 388/9(1 ignored)/21 in BOTH regimes,
+# clippy -D warnings clean, no golden moved. The gradeable half is again deliberate: `size::run` is
+# `#[mutants::skip]` ((#80), 11 missed mutants inside it), so the logic lives in `screen::last_core`
+# where the mutation gate reaches it and `size` only hands it the bytes.
+#
+# HONEST EDGES. (a) The row is as fresh as the last `screen` run and prints that run's date, so a
+# stale shortlist shows as stale — inherited from (#246) and now load-bearing, because a stale ticker
+# is being SIZED rather than mentioned. (b) It deliberately bypasses `max_name_pct`; at 4%/name the
+# row would take 4 points and leave 63 in cash, answering nothing. (#248) declined to touch that cap
+# as "a 20-year concentration decision" and this does not touch it either — the tracker is exempt
+# because it is the market, not because the cap was softened. (c) Still READ-ONLY: no order, no
+# fetch, no price read, no weight in `size_weights` moved. One printed row. (d) Single-issuer
+# concentration is real and unpriced: 67% of gross in one wrapper is counterparty and provider risk
+# that no gate in this repo measures. The alternative offered and rejected this round was spreading
+# it across the 7 all-world CORE rows — ~9.6% each, seven dealing tickets a month, for the same index
+# seven times.
+#
+# AN OPEN DISCREPANCY, FOUND WHILE MEASURING AND NOT RESOLVED. `ScreenState.fund_meta` tags CORE #1
+# (WEBG.DE) as "Dist", and 7 of the 20 journalled CORE members likewise — yet `hold_core_list` admits
+# only through `core::hold_suitable`, whose leg 4 is `q.use_of_profits != Some("Acc")` and has no
+# knob. Both records are written from the SAME `quotes` vec in the same run, so they cannot both be
+# right: either a distributing fund is clearing the Acc leg, or `fund_meta`'s HashMap is colliding on
+# a ticker that lists twice. This PREDATES (#253) — (#246)'s printed line names the identical fund —
+# so it does not block this round, and it is recorded here rather than guessed at. It is worth its
+# own round: for a 20-year hold the share class is not cosmetic. Do not cite either record as settled
+# until it is.
+#
+# REVERT RULE: restore the single `println!` in the `Some` arm (the `None` arm is already the old line
+# verbatim) and drop `last_core`'s `sized` parameter. There is no config to unset. Revert if the CORE
+# shortlist stops being breadth-major at index 0 — (#246)'s trigger, and stricter now, because an
+# arbitrary fund would be SIZED at two thirds of gross rather than merely named. Revert also if the
+# Acc discrepancy above resolves against the shortlist, i.e. if CORE #1 turns out to be genuinely
+# distributing: a distributing wrapper taking 67% of a 20-year budget is a different decision and
+# must be re-argued, not inherited.
 
 # ============================================================================================
 # BUY HEURISTIC (src/picks.rs). Acronyms (CAGR, ROE, P/E, NUPL, SMA, FX, ...): see Glossary in README.md.

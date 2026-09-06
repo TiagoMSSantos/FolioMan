@@ -133,16 +133,36 @@ pub async fn run(args: Vec<String>) {
         // exposure in one row, and the tool already ranks those: the CORE shortlist, breadth-major,
         // so its first row is the widest one. Read off the last `screen` run (no fetch, no price),
         // dated so a stale shortlist shows as stale. No state file / no CORE yet -> the old line,
-        // unchanged. This NAMES a default; it allocates nothing — the weights above are untouched,
-        // and a tracker sits outside the per-name cap regime by design, being the market rather
-        // than a name.
+        // unchanged.
+        //
+        // (#253) ... and then SIZE it, instead of stopping at the sentence. `(#246)` named the home
+        // and said in its own receipt that it "allocates nothing and buys nothing"; `(#248)`
+        // re-measured the hole at 67.0% of gross and pre-registered it as still open. Two thirds of
+        // a twenty-year equity budget parked in cash is not a neutral default — it is the one
+        // position guaranteed to lose over that horizon, and it loses more than any ranking error
+        // this command could make. The row deliberately sits OUTSIDE the `max_name_pct` regime,
+        // which is `(#246)`'s argument taken at its word: that cap governs single-name risk, and a
+        // whole-world tracker is the market rather than a name, so the 4%/name bar would leave 63
+        // points still in cash and answer nothing. TOTAL above is untouched and still prints the
+        // capped-basket sum — `(#245)`'s point, that a total of 33 is exactly how the caps announce
+        // themselves, is still right and this must not paper over it. So: TOTAL, then the row, then
+        // TOTAL+. SCORE/VOL print an em dash because this instrument never went through the growth
+        // gate and must not look as if it had. Still READ-ONLY: no fetch, no price, no weight in
+        // `size_weights` moved. No state file / no CORE yet / every CORE row already sized -> the
+        // old line, verbatim, because a remainder with no known home is precisely what it is for.
         let rest = 100.0 - total;
+        let sized: Vec<String> = scored.iter().map(|(q, _)| q.ticker.clone()).collect();
         match crate::commands::screen::last_core(
             std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok(),
+            &sized,
         ) {
-            Some((date, core)) => println!(
-                "  ({rest:.1}% unallocated — the caps bind and no name in those classes can take more. Broad-market home for it: {core}, CORE #1 as of the {date} screen run — or add candidates / raise a cap. NOT advice)"
-            ),
+            Some((date, core)) => {
+                println!("  {core:<10} {dash:>7} {dash:>7} {rest:>6.1}%  broad-market · CORE #1, {date} screen", dash = "—");
+                println!("  {:<10} {:>7} {:>7} {:>6.1}%", "TOTAL+", "", "", total + rest);
+                println!(
+                    "  (the {rest:.1}% the caps could not deploy, in one all-world tracker — outside the per-name cap by design: it is the market, not a name. Or add candidates / raise a cap. NOT advice)"
+                );
+            }
             None => println!(
                 "  ({rest:.1}% unallocated — the caps bind and no name in those classes can take more; add candidates or raise a cap)"
             ),
