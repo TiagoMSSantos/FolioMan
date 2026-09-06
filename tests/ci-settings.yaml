@@ -1259,6 +1259,57 @@ sizing:
 # EXHAUSTED, and (#143) confirms `lane_split` never cuts to n. A trim there shortens the book outright.
 # RE-OPEN TRIGGER: only if the stock class ever deploys its budget (~18 gated stock candidates), at which
 # point rows with room exist and `spill` has somewhere to send a clique's excess. Nothing else.
+#
+# (#246) SHIPPED: the `size` remainder line NAMES its destination. Display only — no knob, no weight
+# change, no fetch. src/commands/size.rs (the `total < 99.5` branch) + `screen::last_core`.
+#
+# WHY THIS AND NOT MORE NAMES. (#245) above measured the constraint and it is stock-side SUPPLY, so this
+# round re-read every route to more single names and every one is already adjudicated:
+#   peg 1.6        5 stocks sole-blocked. The 4-arm ladder (1.6/2.0/2.5/off) ran: "1.6 HOLDS" — the 8y
+#                  book gains (+6.2 -> +6.8) while lane edge falls monotonically (+77.1 -> +71.9) and
+#                  BOTH bootstrap lower bounds fall. That receipt forbids re-proposing on sweep evidence.
+#   history/EU-swap 58 sole-blocked, and adjudicated as the swap's DOCUMENTED PRICE: Xetra closes start
+#                  2007-12-31, so the CAGR leg is None whatever the EPS leg did. "NOTHING IS TO BE FIXED."
+#   cagr/cagr-life 418/436 fail but sole-block 0 and 1. Loosening buys nothing.
+#   liquidity 500k a US-calibrated bar read on Xetra turnover, genuinely open — and its own (#232) receipt
+#                  says it sole-blocks 1, "not worth a round on its own". It keeps its round; this is not it.
+# Supply is closed. So this round stops asking for more rows and answers the question the command was
+# already RAISING AND ABANDONING: 67% of gross is unallocated and the line said only "add candidates or
+# raise a cap" — i.e. it named two things the user cannot do this month, and no destination.
+#
+# THE ARGUMENT. Cash is the one asset guaranteed to lose over a 20yr hold, so an unallocated remainder
+# with no home is the most expensive thing this surface can print. 62 of the 67 stranded points are
+# STOCK-CLASS budget with no eligible single names — and a broad all-world tracker is that same equity
+# exposure in one row. The tool already ranks exactly those: `picks::hold_core_list`, breadth-major, whose
+# first row is the widest one on the list. `.screen_state.json` has persisted that shortlist since
+# round 55 (top_picks rows of it) and `ScreenState.core`'s own doc calls it "what a 20yr holder actually
+# buys". So the answer was already computed and already on disk; `size` simply could not see it.
+#
+# MEASURED LIVE 2026-09-06, `size` on the (#245) ranked control (9 tickers). Every SCORE/VOL/SIZE%/CAP
+# cell and the TOTAL are unchanged; the ONLY diff is the remainder line:
+#   before  (67.0% unallocated - the caps bind and no name in those classes can take more; add
+#            candidates or raise a cap)
+#   after   (67.0% unallocated - ... Broad-market home for it: WEBG.DE, CORE #1 as of the 2026-09-05
+#            screen run - or add candidates / raise a cap. NOT advice)
+# (BNB-EUR's SCORE reads 6.5 vs the control's 6.4 — one day of live crypto drift, its SIZE% unchanged
+# at 2.6%. Nothing on the printed path is reachable from this diff.)
+# The no-state arm was run too, against an isolated config root with no `.screen_state.json`: it prints
+# the OLD line verbatim. `screen` cannot move — `last_core` has exactly one production call site and it
+# is in `size.rs`; nothing in `screen::run` calls it.
+#
+# NOT GRADEABLE, stated rather than dressed up. No backtest path reaches `size`, no golden covers it, and
+# the ship rule cannot adjudicate a printed line — this ships on judgement plus the live diff above, the
+# same standing as (#227)/(#239). It claims no horizon and no edge.
+#
+# HONEST EDGES. (a) The named ticker is as fresh as the last `screen` run, so the line PRINTS that run's
+# date and a stale shortlist shows as stale rather than passing silently. (b) A tracker sits outside the
+# `max_name_pct` regime by design — it is the market, not a name — which is precisely why it can take a
+# remainder that per-name caps refuse. (c) This NAMES a default; it allocates nothing and buys nothing.
+# `size` stays READ-ONLY. (d) No new knob: a printed line needs no config surface, and (#245) had just
+# priced what an off-by-default twin of an existing cap is worth.
+# REVERT RULE: delete the match arm; there is no config to unset. Revert if the CORE shortlist ever stops
+# being breadth-major at index 0 (i.e. if `hold_core_cmp` stops sorting breadth-first), because the line
+# would then name an arbitrary fund instead of the widest one — which is the whole justification.
 
 # ============================================================================================
 # BUY HEURISTIC (src/picks.rs). Acronyms (CAGR, ROE, P/E, NUPL, SMA, FX, ...): see Glossary in README.md.

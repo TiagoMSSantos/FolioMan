@@ -2,7 +2,9 @@
 //! (vol-target) inside a per-class risk budget, then capped per name and per sector (`config::Sizing`).
 //! READ-ONLY, never trades — you still type the qty into `trade` yourself. No TICKERS -> the watchlist.
 //! Names that fail the growth gate are dropped (nothing to size). The rows can sum to under 100 when a
-//! cap binds; that remainder is deliberately unallocated, not a rounding error. NOT advice.
+//! cap binds; that remainder is deliberately unallocated, not a rounding error — `(#246)` names the
+//! broad-market default for it (CORE #1, off the last `screen` run) instead of leaving it in cash.
+//! NOT advice.
 
 use crate::picks::{crypto_adjust, growth_score, nupl_factor, perf_pct, size_weights};
 use crate::{config, fetch};
@@ -101,10 +103,27 @@ pub async fn run(args: Vec<String>) {
     let total: f64 = weights.iter().map(|(w, _)| w).sum();
     println!("  {:<10} {:>7} {:>7} {:>6.1}%", "TOTAL", "", "", total);
     if total < 99.5 {
-        println!(
-            "  ({:.1}% unallocated — the caps bind and no name in those classes can take more; add candidates or raise a cap)",
-            100.0 - total,
-        );
+        // (#246) ... and say WHERE it goes. Cash is the one asset guaranteed to lose over 20 years,
+        // so a remainder with no destination is the most expensive thing this command can print —
+        // `(#245)` measured it at 67% of gross, and 62 of those 67 points are stock-class budget
+        // that no eligible single name can absorb. A broad all-world tracker IS that same equity
+        // exposure in one row, and the tool already ranks those: the CORE shortlist, breadth-major,
+        // so its first row is the widest one. Read off the last `screen` run (no fetch, no price),
+        // dated so a stale shortlist shows as stale. No state file / no CORE yet -> the old line,
+        // unchanged. This NAMES a default; it allocates nothing — the weights above are untouched,
+        // and a tracker sits outside the per-name cap regime by design, being the market rather
+        // than a name.
+        let rest = 100.0 - total;
+        match crate::commands::screen::last_core(
+            std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok(),
+        ) {
+            Some((date, core)) => println!(
+                "  ({rest:.1}% unallocated — the caps bind and no name in those classes can take more. Broad-market home for it: {core}, CORE #1 as of the {date} screen run — or add candidates / raise a cap. NOT advice)"
+            ),
+            None => println!(
+                "  ({rest:.1}% unallocated — the caps bind and no name in those classes can take more; add candidates or raise a cap)"
+            ),
+        }
     }
 
     // Entry-state deploy pace — the same validated line `screen` prints (drawdown deployments beat

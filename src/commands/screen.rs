@@ -63,7 +63,7 @@ fn membership_diff(label: &str, prev_date: &str, prev: &[String], now: &[String]
     ))
 }
 
-const SCREEN_STATE_FILE: &str = ".screen_state.json";
+pub(crate) const SCREEN_STATE_FILE: &str = ".screen_state.json";
 
 /// (round 56) Permanent record of every alert this command ever printed. Each alert fires exactly
 /// once — the state file is rewritten right below it — so a scrolled-past terminal or a piped-away
@@ -104,6 +104,21 @@ fn parse_state(raw: Option<String>) -> (Option<ScreenState>, bool) {
             Err(_) => (None, true),
         },
     }
+}
+
+/// (#246) The broadest row of the CORE shortlist as the last `screen` run left it, plus that run's
+/// date: `(date, ticker)`. [`picks::hold_core_list`] sorts the shortlist breadth-major, so index 0
+/// is the widest tracker on it — the one instrument a stranded equity budget can go into without
+/// anyone picking a bet. `size` reads it to NAME a home for the budget its caps cannot deploy
+/// (`(#245)` measured that at 67% of gross, 62 points of it stock-class budget with no eligible
+/// single names). `size` does the file read itself — its `run` is `#[mutants::skip]`, so the I/O
+/// costs nothing to grade — and hands the bytes here, which keeps this half pure and its test free
+/// of a scratch-dir write. `None` on every not-known path: no state file yet, a corrupt one
+/// ([`parse_state`] already forks that and warns), a state predating the round-55 `core` field, or
+/// a run that printed no CORE table. Display only: it moves no weight and reads no price.
+pub(crate) fn last_core(raw: Option<String>) -> Option<(String, String)> {
+    let state = parse_state(raw).0?;
+    Some((state.date, state.core.first()?.clone()))
 }
 
 /// (round 56) Two printed fund picks overlap when they share at least this many of their top-10
@@ -4156,6 +4171,33 @@ mod tests {
         assert_eq!((st.date.as_str(), st.passing), ("2026-07-11", vec!["VUAA.DE".to_string()]));
         let (old, corrupt) = parse_state(Some(r#"{"date":"2026-01-01","passing":[]}"#.into()));
         assert!(old.is_some() && !corrupt);
+    }
+
+    /// (#246) the CORE handoff to `size`: the BROADEST row (the shortlist is breadth-major, so
+    /// index 0) plus the run date, so a stale shortlist is visible rather than silent. Every
+    /// not-known path answers None — no state file, a corrupt one, and a state whose `core` is
+    /// empty (written before round 55, or by a run that printed no CORE table).
+    #[test]
+    fn last_core_hands_size_the_broadest_row() {
+        let state = |core: Vec<String>| {
+            serde_json::to_string(&ScreenState {
+                date: "2026-09-05".into(),
+                passing: Vec::new(),
+                facts: HashMap::new(),
+                fund_meta: HashMap::new(),
+                core,
+                ranked: Vec::new(),
+            })
+            .unwrap()
+        };
+        let v = |ts: &[&str]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            last_core(Some(state(v(&["WEBG.DE", "VWCE.DE"])))),
+            Some(("2026-09-05".to_string(), "WEBG.DE".to_string()))
+        );
+        assert!(last_core(None).is_none()); // no state file yet
+        assert!(last_core(Some("{ truncated".into())).is_none()); // corrupt
+        assert!(last_core(Some(state(Vec::new()))).is_none()); // no CORE printed / pre-round-55
     }
 
     /// (round 68) membership diff: no baseline (empty prev — first run or a state file predating
