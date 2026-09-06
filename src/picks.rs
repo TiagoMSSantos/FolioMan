@@ -1161,13 +1161,15 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // and a name whose turnover Yahoo never served can't be assessed as one. The backtest stays
     // unaffected: backtest_quote sets a SENTINEL turnover (never None there), so this is a LIVE-only gate
     // and the validated edge is untouched. A KNOWN-but-thin turnover is dropped only when a floor is
-    // configured (settings.yaml `min_avg_turnover_eur`; 0 = off). NOTE: a thin listing can still report a
-    // tiny NONZERO turnover (0Y72.L = €0K rounded, i.e. Some(~0), not None) and slip past this gate with a
-    // 0 floor -> the identical-horizon artifact those listings ride is caught downstream by #23.
+    // configured (settings.yaml `min_avg_turnover_eur`; 0 = off — no turnover is below a 0 floor, so
+    // (#247) dropped the explicit `floor > 0.0` guard that only restated it). NOTE: a thin listing can
+    // still report a tiny NONZERO turnover (0Y72.L = €0K rounded, i.e. Some(~0), not None) and slip
+    // past this gate with a 0 floor -> the identical-horizon artifact those listings ride is caught
+    // downstream by #23.
     let turn_floor = turnover_floor(quote, tuning); // (#247) per-class; stocks read their own
     match quote.avg_turnover_eur {
         None => return None, // untradeable / turnover unknown -> not a deep-liquid compounder
-        Some(v) if turn_floor > 0.0 && v < turn_floor => return None,
+        Some(v) if v < turn_floor => return None,
         _ => {}
     }
     // (#33) minimum listing age. Checked EARLY so a too-young name rejects with an explicit reason
@@ -2445,7 +2447,7 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
         }
     }
     let turn_floor = turnover_floor(quote, tuning); // (#247) mirrors the scorer's per-class floor
-    if turn_floor > 0.0 && turnover < turn_floor {
+    if turnover < turn_floor {
         fails.push(("liquidity", format!("€{:.0}K/day (floor €{:.0}K)", turnover / 1e3, turn_floor / 1e3), turnover >= turn_floor * 0.5));
     }
     if !crypto && tuning.growth_max_above_ma > 0.0 && quote.above_ma_pct > tuning.growth_max_above_ma {
@@ -9313,6 +9315,18 @@ mod tests {
             .find(|(g, _, _)| *g == "liquidity")
             .expect("the mirror must fire the same gate the scorer did");
         assert!(reason.contains("floor \u{20ac}100K"), "the reason prints the per-class floor, got {reason}");
+
+        // The mirror's third field is the NEAR-MISS flag, `turnover >= floor / 2` — pin it, and pin that
+        // sitting EXACTLY on the floor is not below it, or that boundary is free to drift.
+        let liq = |v: f64| {
+            gate_failures(&with_turnover(v), &armed)
+                .unwrap_or_default()
+                .into_iter()
+                .find(|(g, _, _)| *g == "liquidity")
+        };
+        assert!(liq(100_000.0).is_none(), "exactly at the floor is not below it");
+        assert!(liq(60_000.0).expect("thin -> the gate fires").2, "above half the floor is a near miss");
+        assert!(!liq(40_000.0).expect("thin -> the gate fires").2, "below half the floor is not");
     }
 
 
