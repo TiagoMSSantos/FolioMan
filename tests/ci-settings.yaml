@@ -6610,6 +6610,41 @@ buy_heuristic:
                                  #   `journal_core_list` field), which reads the same `hold_core_list` under
                                  #   its own `.take(top_picks)`. One cap, not two, on purpose.
                                  # 
+                                 #  (#252) RE-DERIVED A REFUSAL ALREADY ON FILE, AND THE PROCESS LESSON IS THE
+                                 #  DELIVERABLE. (#238) had already written, against this very cap, "THE EMERGING
+                                 #  SLEEVE READS 4f AGAINST THIS CAP OF 3, AND THAT IS CORRECT. DO NOT RAISE IT" —
+                                 #  tier 2 carries FOUR keys over THREE indices because MSCI Emerging Markets is
+                                 #  spelled two ways and no single `contains` token reaches both (`emerging` takes
+                                 #  the long spelling, `msci em ` the short). This round read `emerging 11 (4f)`
+                                 #  off a fresh census, treated it as the last unclaimed sleeve under (#220)'s
+                                 #  rule, planned the ninth override and A/B'd it live before finding the note.
+                                 #  BEFORE PROPOSING ANY PER-SLEEVE CAP, grep this file for the sleeve's name: the
+                                 #  standing refusals are (#238) for emerging and (#234) for the US.
+                                 #
+                                 #  WHAT THE ROUND DID ADD, and the only reason it is recorded. (#238) inferred the
+                                 #  wrapper from benchmark strings; this NAMES the row the cap would actually
+                                 #  admit. Live A/B 2026-09-06, control then arm on one warm cache, each config in
+                                 #  its own directory named literally `ci-settings.yaml` (a probe file under any
+                                 #  other name silently merges this file as its base and the control becomes a
+                                 #  second arm). CTL 53 CORE rows, ARM 54, ADDED IEMA.L, REMOVED nothing — the
+                                 #  mechanical prediction held, since family-first seats one fund per family in
+                                 #  rank order so a cap raised TO the family count appends and cannot displace.
+                                 #  IEMA.L is `iShares MSCI EM UCITS ETF USD (Acc)`, IE00B4L5YC18, tracking MSCI
+                                 #  EMERGING MARKETS — the same index as the already-printed HEMA.L, and the
+                                 #  DEARER wrapper of it at 0.18% against 0.15%. (#238)'s census line had it as
+                                 #  one of the two `msci em ` funds. (#197) refused the same row from the other
+                                 #  direction, counting "one more MSCI EM" among the 22 wrappers this cap hides.
+                                 #
+                                 #  NOTHING SHIPPED: no knob, no config value, no token, no comparator term. The
+                                 #  code was reverted whole and the measurement IS the deliverable, as in (#242).
+                                 #  Gates were green on the arm before the revert — 388/9/21 in both regimes,
+                                 #  clippy clean, no golden moved.
+                                 #
+                                 #  POND DRIFT, so nobody re-reads the two runs as a clean before/after: both saw
+                                 #  4267 EU-buyable ETFs but QUALIFIED 119 (ctl) vs 117 (arm), all-world supply 9
+                                 #  vs 8, Nasdaq-100 7 vs 6. A cap cannot touch admission, so every count
+                                 #  difference is drift between two live fetches. Attribution was on TICKER SETS.
+                                 # 
                                  #   REVERT: 3 is the shipped value and the literal that preceded the knob, so
                                  #   this IS the revert. Raising it re-surfaces the 22 rows above, sector funds
                                  #   included, until NARROW is fixed.
