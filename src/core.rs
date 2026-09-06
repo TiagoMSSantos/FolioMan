@@ -2160,6 +2160,49 @@ pub(crate) fn country_sleeve_tier(n: &str, cap: usize) -> Option<u8> {
     (cap > 0 && COUNTRY.iter().any(|t| hit(n, t))).then_some(COUNTRY_TIER)
 }
 
+/// (#251) The one phrase that reaches a developed-world tracker naming no index at all.
+///
+/// `GEO` keys on INDEX names, and that is why `L&G Global Equity UCITS ETF` (LGGL.L, EUR 1.5B,
+/// 0.10%, full replication, IE) sat in the `GEO blind spot`: it tracks the Solactive Core Developed
+/// Markets Large & Mid Cap index and says so nowhere in its name. `GEO`'s own doc parked it as
+/// "tier 0 or 1 unresolved" because the answer could not be verified offline; the index resolves it
+/// to DEVELOPED, so tier 1.
+///
+/// Why a scoped token and not a `GEO` entry: `GEO`'s doc warns that "a generic `global` token would
+/// admit bonds", and the blind spot holds `iShares Global Aggregate Bond` as live proof. Two things
+/// answer that. The phrase carries `equity`, which no bond, gold, cash or commodity fund in that
+/// census carries; and this arm runs on the FALL-THROUGH, after `geo_hit`, so any fund with a real
+/// geography token keeps the sleeve it already had. That ordering IS the zero-removals proof — the
+/// argument `(#227)` made for the country sleeve, needing no reasoning about `GEO`'s order.
+const DEVELOPED_EQUITY: &str = "global equity";
+
+/// (#251) …and the two things that phrase catches which this lane refuses everywhere. SCOPED TO THIS
+/// ARM rather than appended to `NARROW`, the stance `(#239)` took for `NASDAQ_NOT` and for the same
+/// reason: a global append can move a placement some other sleeve already ships. Both are live names
+/// off the same census:
+///
+///   SAHE.DE  EUR 1.1B  0.25%  Schroder Global Equity ACTIVE UCITS ETF   -> "active"
+///   3DGH.L        n/a    n/a  Robeco 3D Global Equity UCITS ETF GBP(H)  -> "(h)"
+///
+/// `3DGH.L` is the one that matters. Its TER and AUM are BOTH unknown, and `hold_allow_unknown_ter`
+/// (#240) plus the AUM leg's missing-data pass (non-negotiable #5) mean nothing downstream refuses
+/// it — this list is the only thing between a GBP-hedged share class and the CORE table.
+const DEVELOPED_EQUITY_NOT: [&str; 2] = ["active", "(h)"];
+
+/// (#251) Does an ALREADY-lowercased name earn the developed sleeve on [`DEVELOPED_EQUITY`]? Three
+/// conjuncts, all load-bearing: the cap must be OPEN (0 = the arm is inert and the lane is
+/// byte-identical, non-negotiable #1), the phrase must appear, and no guard token may fire.
+///
+/// The cap gates the TOKEN and not merely the row count, and that coupling is the design. At the
+/// shared cap of 3 this token would EVICT rather than add: `hold_family_first` takes the best fund of
+/// each distinct family in rank order, so a fourth family against three slots drops the last one —
+/// VHVE.L, the sole fund of the `ftse developed` family. Losing an exposure is what `(#213)`'s
+/// family-for-family standard refuses, so the phrase is reachable only where a slot exists for it.
+pub(crate) fn developed_equity_tier(n: &str, cap: usize) -> Option<u8> {
+    (cap > 0 && n.contains(DEVELOPED_EQUITY) && !DEVELOPED_EQUITY_NOT.iter().any(|t| n.contains(t)))
+        .then_some(1)
+}
+
 /// (#202) Does an ALREADY-lowercased name earn the size sleeve, given the FIRST narrow token that
 /// fired on it? All four conjuncts are load-bearing: the knob must be on (0.0 = off, and no fund
 /// clears a 0.0% cap anyway), the blocking token must be a market-cap one, NO OTHER narrow token may
@@ -2300,6 +2343,7 @@ pub fn tier_cap(
     tier: usize,
     base: usize,
     all_world: usize,
+    developed: usize,
     us: usize,
     europe: usize,
     size: usize,
@@ -2310,6 +2354,15 @@ pub fn tier_cap(
 ) -> usize {
     if tier == 0 && all_world > 0 {
         all_world
+    } else if tier == 1 && developed > 0 {
+        // (#251) …and the developed sleeve carries its own, next in ladder order after all-world.
+        // Written as the LITERAL 1 for the reason 0, 3 and 5 are: the geographic rungs are positions
+        // in `hold_breadth_tier`'s ladder and have no named constant, unlike the optional sleeves
+        // below. `developed_equity_tier` gives the sleeve a FOURTH index family against a shared cap
+        // of 3, and here the cap does more than hide the fourth — `hold_family_first` would DROP an
+        // incumbent family to seat it. The value is the measured family count and NOTHING ELSE:
+        // (#220)'s rule, read off the census, never an argmax over outcomes.
+        developed
     } else if tier == 3 && us > 0 {
         // (#231) …and the US sleeve carries its own, first in ladder order after all-world. Written
         // as the LITERAL 3 for the reason the line above is written as 0: the geographic rungs are
@@ -2419,6 +2472,7 @@ fn geo_tier(n: &str) -> Option<u8> {
         crate::config::hold_sector_sleeve(),
         crate::config::hold_per_tier_country(),
         crate::config::hold_per_tier_nasdaq(),
+        crate::config::hold_per_tier_developed(),
     )
 }
 
@@ -2433,6 +2487,7 @@ fn geo_tier_at(
     sector_on: bool,
     country_cap: usize,
     nasdaq_cap: usize,
+    developed_cap: usize,
 ) -> Option<u8> {
     if let Some(first) = narrow_hit(n) {
         // (#202) …unless the only narrow thing about it is market cap, and the sleeve is switched on.
@@ -2457,7 +2512,12 @@ fn geo_tier_at(
     // above: a single-market fund carries no tilt word and no geography, so it is the one sleeve
     // whose funds never reach `narrow_hit`'s arm. `geo_hit` FIRST, so a fund with any geography
     // keeps the sleeve it already had and no existing placement can move.
-    geo_hit(n).or_else(|| country_sleeve_tier(n, country_cap))
+    // (#251) …and the sixth arm answers LAST, on the same fall-through and for the same reason: a
+    // developed-world tracker that names no index carries no geography token either, so `geo_hit`
+    // has already had its say and no fund it claims can move to this one. ZERO REMOVALS by ordering.
+    geo_hit(n)
+        .or_else(|| country_sleeve_tier(n, country_cap))
+        .or_else(|| developed_equity_tier(n, developed_cap))
 }
 
 /// Diversification tier of a broad-index fund, for ordering the buy-and-hold CORE broadest-first.
@@ -2532,6 +2592,7 @@ pub fn hold_miss_leg(q: &Quote) -> Option<(usize, String)> {
         crate::config::hold_sector_sleeve(),
         crate::config::hold_per_tier_country(),
         crate::config::hold_per_tier_nasdaq(),
+        crate::config::hold_per_tier_developed(),
     )
 }
 
@@ -2548,9 +2609,12 @@ pub fn hold_miss_leg_with(
     sector_on: bool,
     country_cap: usize,
     nasdaq_cap: usize,
+    developed_cap: usize,
 ) -> Option<(usize, String)> {
     let lower = q.name.to_lowercase();
-    let Some(tier) = geo_tier_at(&lower, size_cap, factor_on, sector_on, country_cap, nasdaq_cap) else {
+    let Some(tier) =
+        geo_tier_at(&lower, size_cap, factor_on, sector_on, country_cap, nasdaq_cap, developed_cap)
+    else {
         return Some((0, "not a broad-index name (sector/thematic/factor tilt)".into()));
     };
     hold_miss_leg_at(q, tier, allow_swap, allow_unknown_ter, size_cap)
@@ -5457,9 +5521,9 @@ mod tests {
         assert!(FACTOR.contains(&"minimum vol"), "(#236) the spelling XDEB.DE actually carries");
         assert!(!FACTOR.contains(&"min vol"),
             "(#236) the alias would key a SECOND family for the SAME exposure — (#215) and (#220) both refuse it");
-        assert_eq!(geo_tier_at("xtrackers msci world minimum volatility ucits etf 1c", 0.0, true, false, 0, 0),
+        assert_eq!(geo_tier_at("xtrackers msci world minimum volatility ucits etf 1c", 0.0, true, false, 0, 0, 0),
             Some(FACTOR_TIER), "(#236) …and the sleeve claims it, which is what (#228) measured as the cost");
-        assert_eq!(geo_tier_at("xtrackers msci world minimum volatility ucits etf 1c", 0.0, false, false, 0, 0),
+        assert_eq!(geo_tier_at("xtrackers msci world minimum volatility ucits etf 1c", 0.0, false, false, 0, 0, 0),
             None, "(#236) …while the factor knob still gates it, so the sleeve stays optional");
     }
 
@@ -5645,12 +5709,12 @@ mod tests {
         q
     };
     assert_eq!(
-        hold_miss_leg_with(&world_small_q, false, false, 0.0, false, false, 0, 0).map(|(leg, _)| leg),
+        hold_miss_leg_with(&world_small_q, false, false, 0.0, false, false, 0, 0, 0).map(|(leg, _)| leg),
         Some(0),
         "sleeve off -> refused at leg 0 on the name, whatever its facts"
     );
     assert!(
-        hold_miss_leg_with(&world_small_q, false, false, 0.35, false, false, 0, 0).is_none(),
+        hold_miss_leg_with(&world_small_q, false, false, 0.35, false, false, 0, 0, 0).is_none(),
         "sleeve on -> the same fund is admitted; this is the row (#210) shipped"
     );
 
@@ -5696,7 +5760,7 @@ mod tests {
         "the second US small-cap index — INERT in today's pond (this one is Dist), shipped as the pair");
     assert_eq!(geo_hit("vanguard funds plc - vanguard ftse global small-cap ucits etf usd acc"), Some(0),
         "FTSE Global Small Cap is developed PLUS emerging, so it is tier 0 and not a US spelling");
-    assert_eq!(geo_tier_at("state street spdr russell 2000 us small cap ucits etf", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("state street spdr russell 2000 us small cap ucits etf", 0.0, false, false, 0, 0, 0), None,
         "…and with the sleeve OFF, NARROW still refuses it: a size tilt never reaches the broad US sleeve");
     assert_eq!(
         size_sleeve_tier("state street spdr russell 2000 us small cap ucits etf", "small", 0.35),
@@ -5714,7 +5778,7 @@ mod tests {
     // so NARROW never fires and no sleeve has to readmit it.
     assert_eq!(geo_hit("vanguard ftse north america ucits etf usd accumulation"), Some(3),
         "(#231) VNRA.L (EUR 2.7B, 0.08%) sat in the blind spot because GEO had no word for its index");
-    assert_eq!(geo_tier_at("vanguard ftse north america ucits etf usd accumulation", 0.0, false, false, 0, 0), Some(3),
+    assert_eq!(geo_tier_at("vanguard ftse north america ucits etf usd accumulation", 0.0, false, false, 0, 0, 0), Some(3),
         "…and it needs no sleeve to get there, unlike every (#230) name");
     // …and it is a FOURTH family, which is the whole of what earns `hold_per_tier_us`. Collapsing it
     // onto any of the three the sleeve already prints would spend the new row on a wrapper.
@@ -5727,7 +5791,7 @@ mod tests {
     ] {
         assert_ne!(geo_family_of("vanguard ftse north america ucits etf usd accumulation"),
             geo_family_of(other), "north america must not collapse onto {why}");
-        assert_eq!(geo_tier_at(other, 0.0, false, false, 0, 0), Some(3), "{why} is still tier 3");
+        assert_eq!(geo_tier_at(other, 0.0, false, false, 0, 0, 0), Some(3), "{why} is still tier 3");
     }
     // A BARE "north america" was REJECTED for the reason (#230) rejected a bare "global small": it
     // would file two different indices under one family. MSCI North America must stay unspellable
@@ -5752,49 +5816,49 @@ mod tests {
     );
     // (#211) the EM spelling gap and the eurozone trap it opens, pinned together. The token has
     // a TRAILING SPACE for exactly one reason and this is it: "MSCI EMU" is a real €3.9B fund.
-    assert_eq!(geo_tier_at("ishares core msci em imi ucits etf usd (acc)", 0.0, false, false, 0, 0), Some(2),
+    assert_eq!(geo_tier_at("ishares core msci em imi ucits etf usd (acc)", 0.0, false, false, 0, 0, 0), Some(2),
         "the €34.8B name the census found; \"emerging\" is a plain substring and cannot see EM");
-    assert_eq!(geo_tier_at("ishares msci em ucits etf usd (acc)", 0.0, false, false, 0, 0), Some(2),
+    assert_eq!(geo_tier_at("ishares msci em ucits etf usd (acc)", 0.0, false, false, 0, 0, 0), Some(2),
         "and the plain one, with nothing after EM but UCITS");
-    assert_eq!(geo_tier_at("ubs core msci emu ucits etf eur acc", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("ubs core msci emu ucits etf eur acc", 0.0, false, false, 0, 0, 0), None,
         "EMU is the EUROZONE — drop the trailing space and this reads as emerging markets");
-    assert_eq!(geo_tier_at("ishares vii plc - ishares msci em asia etf usd acc", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("ishares vii plc - ishares msci em asia etf usd acc", 0.0, false, false, 0, 0, 0), None,
         "a region inside a region: GEO gives it a tier, NARROW takes it back");
-    assert_eq!(geo_tier_at("ishares msci em ex china ucits etf usd acc", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("ishares msci em ex china ucits etf usd acc", 0.0, false, false, 0, 0, 0), None,
         "excluding the largest constituent is a bet, and no China sleeve completes the partition");
-    assert_eq!(geo_tier_at("amundi msci emerging ex china ucits etf acc", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("amundi msci emerging ex china ucits etf acc", 0.0, false, false, 0, 0, 0), None,
         "(#235) EMXC.L — the SAME carve-out spelled out in full, which \"em ex\" cannot see");
-    assert_eq!(geo_tier_at("ubs core msci em ucits etf usd acc", 0.0, false, false, 0, 0), Some(2),
+    assert_eq!(geo_tier_at("ubs core msci em ucits etf usd acc", 0.0, false, false, 0, 0, 0), Some(2),
         "(#235) …and a BROAD EM fund is untouched: the token needs the \" ex\" to fire");
-    assert_eq!(geo_tier_at("vanguard ftse emerging markets ucits etf usd acc", 0.0, false, false, 0, 0), Some(2),
+    assert_eq!(geo_tier_at("vanguard ftse emerging markets ucits etf usd acc", 0.0, false, false, 0, 0, 0), Some(2),
         "(#235) …including the spelling that carries \"emerging\" with no carve-out after it");
     // (#213) the Japan / Asia-Pacific split, and the abbreviation that made the split worth making.
-    assert_eq!(geo_tier_at("ishares vii plc - ishares core msci pac ex-jpn etf usd acc", 0.0, false, false, 0, 0), Some(7),
+    assert_eq!(geo_tier_at("ishares vii plc - ishares core msci pac ex-jpn etf usd acc", 0.0, false, false, 0, 0, 0), Some(7),
         "the €3.5B name the blind-spot census found; only \"msci pac \" can spell iShares' Pac ex-Jpn");
-    assert_eq!(geo_tier_at("ishares core msci pacific ex japan ucits etf", 0.0, false, false, 0, 0), Some(7),
+    assert_eq!(geo_tier_at("ishares core msci pacific ex japan ucits etf", 0.0, false, false, 0, 0, 0), Some(7),
         "the spelled-out form lands in the SAME sleeve — one exposure, one tier");
-    assert_eq!(geo_tier_at("ishares core msci japan imi ucits etf usd (acc)", 0.0, false, false, 0, 0), Some(6),
+    assert_eq!(geo_tier_at("ishares core msci japan imi ucits etf usd (acc)", 0.0, false, false, 0, 0, 0), Some(6),
         "the split did not move Japan: tiers 0-6 are byte-identical to before (#213)");
-    assert_eq!(geo_tier_at("xtrackers msci japan ucits etf 1c", 0.0, false, false, 0, 0), Some(6),
+    assert_eq!(geo_tier_at("xtrackers msci japan ucits etf 1c", 0.0, false, false, 0, 0, 0), Some(6),
         "and neither did the other two rows the Japan sleeve already printed");
-    assert_eq!(geo_tier_at("amundi index msci pacific ucits etf dr", 0.0, false, false, 0, 0), Some(7),
+    assert_eq!(geo_tier_at("amundi index msci pacific ucits etf dr", 0.0, false, false, 0, 0, 0), Some(7),
         "plain MSCI Pacific INCLUDES Japan — which is why the sleeve is labelled Asia-Pacific, not ex-Japan");
-    assert_eq!(geo_tier_at("texas pacific land corporation", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("texas pacific land corporation", 0.0, false, false, 0, 0, 0), None,
         "both tokens are MSCI-qualified: a bare \"pacific\" is a company name, and TPL is in the pond");
 
     // (#215) the three spellings the GEO blind spot proved missing, pinned on their REAL live names.
-    assert_eq!(geo_tier_at("vanguard ftse japan ucits etf usd accumulation", 0.0, false, false, 0, 0), Some(6),
+    assert_eq!(geo_tier_at("vanguard ftse japan ucits etf usd accumulation", 0.0, false, false, 0, 0, 0), Some(6),
         "the Japan sleeve already existed; only FTSE's wording of it was unreachable");
-    assert_eq!(geo_tier_at("amundi prime global ucits etf acc", 0.0, false, false, 0, 0), Some(1),
+    assert_eq!(geo_tier_at("amundi prime global ucits etf acc", 0.0, false, false, 0, 0, 0), Some(1),
         "DEVELOPED markets — Amundi's Prime range omits the index name from the fund name");
-    assert_eq!(geo_tier_at("amundi prime all country world ucits etf acc", 0.0, false, false, 0, 0), Some(0),
+    assert_eq!(geo_tier_at("amundi prime all country world ucits etf acc", 0.0, false, false, 0, 0, 0), Some(0),
         "...and its ACWI sibling must still file at tier 0: the two Prime funds share no token");
-    assert_eq!(geo_tier_at("l&g us equity ucits etf", 0.0, false, false, 0, 0), Some(3));
+    assert_eq!(geo_tier_at("l&g us equity ucits etf", 0.0, false, false, 0, 0, 0), Some(3));
     // the LEADING SPACE on " us equity", pinned as load-bearing. `hold_name_tokens` ships OFF, so
     // the match is a bare `contains` and the space is the whole guard. Drop it and this reads Some(3).
-    assert_eq!(geo_tier_at("fidelity focus equity ucits etf", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("fidelity focus equity ucits etf", 0.0, false, false, 0, 0, 0), None,
         "\"foc-us equity\" is the mid-word accident the leading space exists to refuse");
-    assert_eq!(geo_tier_at("xtrackers msci usa equity ucits etf", 0.0, false, false, 0, 0), Some(3),
+    assert_eq!(geo_tier_at("xtrackers msci usa equity ucits etf", 0.0, false, false, 0, 0, 0), Some(3),
         "\" usa equity\" does not match \" us equity\"; `msci usa` files it at the same tier anyway");
     // the blind spot is mostly FIXED INCOME, and no new token may reach it. GEO is the ONLY thing
     // keeping bonds out of an equity table — `NARROW` has no bond token and there is no
@@ -5805,7 +5869,7 @@ mod tests {
         "amundi core euro government bond ucits etf acc",
         "xtrackers ii eur corporate bond ucits etf 1c",
     ] {
-        assert_eq!(geo_tier_at(bond, 0.0, false, false, 0, 0), None, "{bond}: a bond fund must never reach a sleeve");
+        assert_eq!(geo_tier_at(bond, 0.0, false, false, 0, 0, 0), None, "{bond}: a bond fund must never reach a sleeve");
     }
     // ...and the single-country names stay refused: a blind spot is a name GEO cannot spell, which
     // is a different question from whether the lane wants it.
@@ -5815,7 +5879,7 @@ mod tests {
         "vanguard ftse 100 ucits etf gbp accumulation",
         "ubs core msci emu ucits etf eur acc",
     ] {
-        assert_eq!(geo_tier_at(narrow, 0.0, false, false, 0, 0), None, "{narrow}: single-country is not a broad sleeve");
+        assert_eq!(geo_tier_at(narrow, 0.0, false, false, 0, 0, 0), None, "{narrow}: single-country is not a broad sleeve");
     }
     // (#216) "world ex <anything>" is not the ex-US sleeve. Each of these was live in the pond and
     // filed at tier 4 by the bare "world ex" token; NARROW now refuses them before `geo_hit` runs.
@@ -5826,7 +5890,7 @@ mod tests {
         "amundi msci world ex emu ucits etf acc",
         "ubs msci world ex mega cap ucits etf usd acc",
     ] {
-        assert_eq!(geo_tier_at(bet, 0.0, false, false, 0, 0), None, "{bet}: a world-minus-region bet is not a sleeve");
+        assert_eq!(geo_tier_at(bet, 0.0, false, false, 0, 0, 0), None, "{bet}: a world-minus-region bet is not a sleeve");
     }
     // ...and the ex-US sleeve itself is UNTOUCHED — both incumbents and the FTSE spellings still
     // reach tier 4. `world ex us` (space) and `ex-usa` (hyphen) are two spellings of one partition.
@@ -5836,7 +5900,7 @@ mod tests {
         "xtrackers ftse all world ex us etf 1c usd",                 // AWEX.DE
         "vanguard funds plc - vanguard ftse all-world ex-u.s. ucits etf usd dist",
     ] {
-        assert_eq!(geo_tier_at(exus, 0.0, false, false, 0, 0), Some(4), "{exus}: world-minus-US IS a partition");
+        assert_eq!(geo_tier_at(exus, 0.0, false, false, 0, 0, 0), Some(4), "{exus}: world-minus-US IS a partition");
     }
 
     // (#217) the world FACTOR sleeve. Every name here is LIVE in the pond, and the funds that
@@ -5856,9 +5920,9 @@ mod tests {
         // (#236) the FIFTH family, and the fund (#228) named as the live cost of excluding it
         ("xtrackers msci world minimum volatility ucits etf 1c", "XDEB.DE, 0.25%, €1.1B"),
     ] {
-        assert_eq!(geo_tier_at(fund, 0.0, true, false, 0, 0), Some(FACTOR_TIER), "{why}: the factor sleeve claims it");
-        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0), None, "{why}: …and refuses it with the knob off");
-        assert_eq!(geo_tier_at(fund, 0.35, false, false, 0, 0), None, "{why}: the SIZE knob does not open this sleeve");
+        assert_eq!(geo_tier_at(fund, 0.0, true, false, 0, 0, 0), Some(FACTOR_TIER), "{why}: the factor sleeve claims it");
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0, 0), None, "{why}: …and refuses it with the knob off");
+        assert_eq!(geo_tier_at(fund, 0.35, false, false, 0, 0, 0), None, "{why}: the SIZE knob does not open this sleeve");
     }
     // …and the negatives, which are what keep the sleeve from filling on the wrong axis.
     for (no, why) in [
@@ -5872,8 +5936,8 @@ mod tests {
         // refused is the ALIAS, and that is pinned on the array itself rather than on a name.
         ("ishares edge msci world min vol ucits etf usd (acc)", "\"min vol\" is the alias (#236) refuses"),
     ] {
-        assert_eq!(geo_tier_at(no, 0.0, true, false, 0, 0), None, "{no}: {why}");
-        assert_eq!(geo_tier_at(no, 0.35, true, false, 0, 0), None, "{no}: {why} — with BOTH sleeves open");
+        assert_eq!(geo_tier_at(no, 0.0, true, false, 0, 0, 0), None, "{no}: {why}");
+        assert_eq!(geo_tier_at(no, 0.35, true, false, 0, 0, 0), None, "{no}: {why} — with BOTH sleeves open");
     }
     // the sleeve is ADDITIVE: a plain world tracker is untouched by the knob, at either setting
     for (plain, tier) in [
@@ -5881,8 +5945,8 @@ mod tests {
         ("vanguard ftse all-world ucits etf usd accumulation", 0),
         ("xtrackers msci world ex usa ucits etf 1c usd", 4),
     ] {
-        assert_eq!(geo_tier_at(plain, 0.0, false, false, 0, 0), Some(tier), "{plain}: shipped placement");
-        assert_eq!(geo_tier_at(plain, 0.0, true, false, 0, 0), Some(tier), "{plain}: …unmoved by the factor knob");
+        assert_eq!(geo_tier_at(plain, 0.0, false, false, 0, 0, 0), Some(tier), "{plain}: shipped placement");
+        assert_eq!(geo_tier_at(plain, 0.0, true, false, 0, 0, 0), Some(tier), "{plain}: …unmoved by the factor knob");
     }
     // (#218) the world SECTOR sleeve. Every name here is LIVE in the 2026-09-02 pond, and all nine
     // funds that clear every remaining leg are represented — five families across two geographies,
@@ -5901,9 +5965,9 @@ mod tests {
         ("xtrackers msci world financials ucits etf 1c", "XDWF.L, 0.25%, EUR 1.2B"),
         ("xtrackers msci world industrials ucits etf 1c", "XDWI.L, 0.25%, EUR 1.2B"),
     ] {
-        assert_eq!(geo_tier_at(fund, 0.0, false, true, 0, 0), Some(SECTOR_TIER), "{why}: the sector sleeve claims it");
-        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0), None, "{why}: …and refuses it with the knob off");
-        assert_eq!(geo_tier_at(fund, 0.35, true, false, 0, 0), None, "{why}: neither OTHER sleeve opens this one");
+        assert_eq!(geo_tier_at(fund, 0.0, false, true, 0, 0, 0), Some(SECTOR_TIER), "{why}: the sector sleeve claims it");
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0, 0), None, "{why}: …and refuses it with the knob off");
+        assert_eq!(geo_tier_at(fund, 0.35, true, false, 0, 0, 0), None, "{why}: neither OTHER sleeve opens this one");
     }
     // …and the negatives. The first is the one the whole `SECTOR_GEO` decision turns on.
     for (no, why) in [
@@ -5921,8 +5985,8 @@ mod tests {
         // REGIONAL: a single-country sector fund has no sleeve to complete it with
         ("ishares msci china health care ucits etf", "single-country x sector is two bets, no geography"),
     ] {
-        assert_eq!(geo_tier_at(no, 0.0, false, true, 0, 0), None, "{no}: {why}");
-        assert_eq!(geo_tier_at(no, 0.35, true, true, 0, 0), None, "{no}: {why} — with ALL THREE sleeves open");
+        assert_eq!(geo_tier_at(no, 0.0, false, true, 0, 0, 0), None, "{no}: {why}");
+        assert_eq!(geo_tier_at(no, 0.35, true, true, 0, 0, 0), None, "{no}: {why} — with ALL THREE sleeves open");
     }
     // the sleeve is ADDITIVE: a plain broad tracker is untouched by the knob, at either setting.
     // Tier 3 matters most here — it is the tier `SECTOR_GEO` newly reaches into.
@@ -5931,8 +5995,8 @@ mod tests {
         ("xtrackers msci usa ucits etf 1c", 3),
         ("ishares core msci world ucits etf usd (acc)", 1),
     ] {
-        assert_eq!(geo_tier_at(plain, 0.0, false, false, 0, 0), Some(tier), "{plain}: shipped placement");
-        assert_eq!(geo_tier_at(plain, 0.0, false, true, 0, 0), Some(tier), "{plain}: …unmoved by the sector knob");
+        assert_eq!(geo_tier_at(plain, 0.0, false, false, 0, 0, 0), Some(tier), "{plain}: shipped placement");
+        assert_eq!(geo_tier_at(plain, 0.0, false, true, 0, 0, 0), Some(tier), "{plain}: …unmoved by the sector knob");
     }
     // (#222) the three GICS sectors the sleeve was short, on their REAL live names from the
     // 2026-09-03 pond. All five sit UNDER the AUM floor, so no row moves either way — what these pin
@@ -5944,10 +6008,10 @@ mod tests {
         ("xtrackers msci world consumer discretionary ucits etf 1c", "XDWC.L, 0.25%, EUR 330M"),
         ("franklin s&p 500 consumer discretionary ucits etf usd acc", "FTCD.DE, 0.09%, EUR 2M — tier 3"),
     ] {
-        assert_eq!(geo_tier_at(fund, 0.0, false, true, 0, 0), Some(SECTOR_TIER), "{why}: the sector sleeve claims it");
-        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0), None,
+        assert_eq!(geo_tier_at(fund, 0.0, false, true, 0, 0, 0), Some(SECTOR_TIER), "{why}: the sector sleeve claims it");
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0, 0), None,
             "{why}: …and with the knob OFF it is refused outright — before (#222) this read a GEOGRAPHIC sleeve");
-        assert_eq!(geo_tier_at(fund, 0.35, true, false, 0, 0), None, "{why}: neither OTHER sleeve opens this one");
+        assert_eq!(geo_tier_at(fund, 0.35, true, false, 0, 0, 0), None, "{why}: neither OTHER sleeve opens this one");
     }
     // (#222) THE ONE ROW THIS ROUND ACTUALLY MOVES, and the probe could not see it. iShares spells
     // its S&P 500 sector suite "<Sector> Sector", so before (#222) `narrow_hit` returned the BARE
@@ -5959,13 +6023,13 @@ mod tests {
     // siblings (IITU/IUHC/UIFS/IESU) take. Live 2026-09-03: 2B7A.DE, 0.15%, EUR 1.2B, IE, 9.4y.
     // It takes the fifth sector slot from XDWI.L (Xtrackers MSCI World Industrials, 0.25%, EUR 1.2B)
     // on the sleeve's OWN cheapest-TER order, untouched by this round.
-    assert_eq!(geo_tier_at("ishares s&p 500 utilities sector ucits etf usd (acc)", 0.0, false, true, 0, 0), Some(SECTOR_TIER),
+    assert_eq!(geo_tier_at("ishares s&p 500 utilities sector ucits etf usd (acc)", 0.0, false, true, 0, 0, 0), Some(SECTOR_TIER),
         "2B7A.DE: \"utilit\" must precede \"sector\" in NARROW or SECTOR_OK never gets the chance");
-    assert_eq!(geo_tier_at("ishares s&p 500 utilities sector ucits etf usd (acc)", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("ishares s&p 500 utilities sector ucits etf usd (acc)", 0.0, false, false, 0, 0, 0), None,
         "2B7A.DE: …and the sector knob is still what admits it — off means refused");
     // the guard that keeps the line above honest: a fund naming NO sector still dies on the bare
     // word, which is the whole reason `SECTOR_OK` is a separate list from [`SECTOR`].
-    assert_eq!(geo_tier_at("invesco technology s&p us select sector ucits etf acc", 0.0, false, true, 0, 0), None,
+    assert_eq!(geo_tier_at("invesco technology s&p us select sector ucits etf acc", 0.0, false, true, 0, 0, 0), None,
         "a bare \"sector\" token still names no family — (#218)'s rule survives (#222)");
 
     // the EUROPE half of the same two suites has no sleeve at all: `SECTOR_GEO` stops at tier 3, so
@@ -5977,7 +6041,7 @@ mod tests {
         ("state street spdr msci europe materials ucits etf", "SPYP.DE, EUR 103M"),
         ("xtrackers msci europe utilities ucits etf 1c", "XS6R.L, EUR 80M"),
     ] {
-        assert_eq!(geo_tier_at(no, 0.35, true, true, 0, 0), None, "{no}: {why} — region x sector, with ALL THREE sleeves open");
+        assert_eq!(geo_tier_at(no, 0.35, true, true, 0, 0, 0), None, "{no}: {why} — region x sector, with ALL THREE sleeves open");
     }
     // (#222) the bond funds that carry a GEO token — the hole (#215)'s four pins could not reach,
     // because every one of those is geographically unspellable. These two are not, and `emerging`
@@ -5986,8 +6050,8 @@ mod tests {
         ("vanguard usd emerging markets government bond ucits etf usd accumulation", "VDEA.L, EUR 754M — read tier 2 before (#222)"),
         ("xtrackers ii j.p. morgan usd emerging markets bond ucits etf 2c", "XUEB.L, EUR 73M — same token, same sleeve"),
     ] {
-        assert_eq!(geo_tier_at(bond, 0.0, false, false, 0, 0), None, "{why}: a bond fund must never reach a sleeve");
-        assert_eq!(geo_tier_at(bond, 0.35, true, true, 0, 0), None, "{why}: …nor with ALL THREE sleeves open");
+        assert_eq!(geo_tier_at(bond, 0.0, false, false, 0, 0, 0), None, "{why}: a bond fund must never reach a sleeve");
+        assert_eq!(geo_tier_at(bond, 0.35, true, true, 0, 0, 0), None, "{why}: …nor with ALL THREE sleeves open");
     }
     // (#222) the currency-hedged share classes "hedged" cannot spell. A hedge is a wrapper on the
     // index, not the index, and it is the one NARROW token the sector sleeve is already documented
@@ -5999,11 +6063,11 @@ mod tests {
         ("ubs core s&p 500 ucits etf heur acc", "UEQD.DE, EUR 202M — read tier 3"),
         ("ubs core msci europe ucits etf heur acc", "EUEUA.MI, EUR 135M — read tier 5"),
     ] {
-        assert_eq!(geo_tier_at(h, 0.35, true, true, 0, 0), None, "{why}: a currency wrapper is not the index");
+        assert_eq!(geo_tier_at(h, 0.35, true, true, 0, 0, 0), None, "{why}: a currency wrapper is not the index");
     }
     // ...and the mid-word accident " h acc" exists to refuse, in the (#215) " us equity" shape: a
     // Swiss share class is not a hedge, and only the LEADING SPACE tells the two apart.
-    assert_eq!(geo_tier_at("ishares core msci world ucits etf ch acc", 0.0, false, false, 0, 0), Some(1),
+    assert_eq!(geo_tier_at("ishares core msci world ucits etf ch acc", 0.0, false, false, 0, 0, 0), Some(1),
         "\"ch acc\" must not match \" h acc\" — drop the space and this reads None");
 
     // (#218) the family key, which is what makes the 3 slots hold 3 DIFFERENT sectors rather than
@@ -6159,78 +6223,78 @@ mod tests {
 
     // (#207) the all-world sleeve's own row cap, and the two halves that make it safe: 0 inherits
     // (non-negotiable #1, the shipped lane), and the override reaches tier 0 and nothing else.
-    assert_eq!(tier_cap(0, 3, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(0, 3, 5, 0, 0, 0, 0, 0, 0, 0), 5, "…and tier 0 takes it when set");
-    assert_eq!(tier_cap(1, 3, 5, 0, 0, 0, 0, 0, 0, 0), 3, "developed is untouched");
+    assert_eq!(tier_cap(0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(0, 3, 5, 0, 0, 0, 0, 0, 0, 0, 0), 5, "…and tier 0 takes it when set");
+    assert_eq!(tier_cap(1, 3, 5, 0, 0, 0, 0, 0, 0, 0, 0), 3, "developed is untouched");
     // (#239) `HOLD_TIERS - 1` is the NASDAQ sleeve now, not COUNTRY — the constant moved under this
     // line when the thirteenth tier was appended. What it asserts is unchanged (the all-world
     // override reaches tier 0 and nothing else); the sleeve it happens to name is pinned by symbol
     // AND by literal below, which is why this line is allowed to stay relative.
-    assert_eq!(tier_cap(HOLD_TIERS - 1, 3, 5, 0, 0, 0, 0, 0, 0, 0), 3, "…and so is the last sleeve");
+    assert_eq!(tier_cap(HOLD_TIERS - 1, 3, 5, 0, 0, 0, 0, 0, 0, 0, 0), 3, "…and so is the last sleeve");
     // (#220) the SECTOR override, pinned on the LITERAL tier as well as the symbolic one: the arm
     // is `tier == SECTOR_TIER`, and a mutation that rewrites that constant moves a symbolic
     // assertion with it. 10 is the literal `SECTOR_TIER` this ladder ships.
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 5, 0, 0), 5, "(#220) the sector sleeve takes its own cap");
-    assert_eq!(tier_cap(10, 3, 0, 0, 0, 0, 0, 5, 0, 0), 5, "…and it is tier 10 that does so, spelled as a literal");
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 5, 0, 0), 3, "the sleeve below it is untouched");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0), 5, "(#220) the sector sleeve takes its own cap");
+    assert_eq!(tier_cap(10, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0), 5, "…and it is tier 10 that does so, spelled as a literal");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0), 3, "the sleeve below it is untouched");
     // (#228) the FACTOR override, pinned on the literal tier as well as the symbolic one for
     // (#220)'s stated reason — 9 is the literal `FACTOR_TIER` this ladder ships, and a mutation
     // rewriting that constant would drag a purely symbolic assertion along with it.
-    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 4, 0, 0, 0), 4, "(#228) the factor sleeve takes its own cap");
-    assert_eq!(tier_cap(9, 3, 0, 0, 0, 0, 4, 0, 0, 0), 4, "…and it is tier 9 that does so, spelled as a literal");
-    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 0, 4, 0, 0, 0), 3, "the sleeve below IT is untouched too");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0), 4, "(#228) the factor sleeve takes its own cap");
+    assert_eq!(tier_cap(9, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0), 4, "…and it is tier 9 that does so, spelled as a literal");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0), 3, "the sleeve below IT is untouched too");
     // (#230) the SIZE override, pinned on the literal tier as well as the symbolic one for (#220)'s
     // stated reason — 8 is the literal `SIZE_TIER` this ladder ships, and a mutation rewriting that
     // constant would drag a purely symbolic assertion along with it.
-    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 4, 0, 0, 0, 0), 4, "(#230) the small-cap sleeve takes its own cap");
-    assert_eq!(tier_cap(8, 3, 0, 0, 0, 4, 0, 0, 0, 0), 4, "…and it is tier 8 that does so, spelled as a literal");
-    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 4, 0, 0, 0, 0), 3, "the sleeve ABOVE it is untouched");
-    assert_eq!(tier_cap(7, 3, 0, 0, 0, 4, 0, 0, 0, 0), 3, "…and the Asia-Pacific sleeve below it is too");
-    assert_eq!(tier_cap(0, 3, 7, 0, 0, 4, 0, 0, 0, 0), 7, "all-world keeps its precedence over the size override");
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 4, 0, 0, 0), 3, "…and so is the one above");
-    assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 4, 5, 9, 0), 7,
+    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0), 4, "(#230) the small-cap sleeve takes its own cap");
+    assert_eq!(tier_cap(8, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0), 4, "…and it is tier 8 that does so, spelled as a literal");
+    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(FACTOR_TIER as usize, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0), 3, "the sleeve ABOVE it is untouched");
+    assert_eq!(tier_cap(7, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0), 3, "…and the Asia-Pacific sleeve below it is too");
+    assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 4, 0, 0, 0, 0), 7, "all-world keeps its precedence over the size override");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0), 3, "…and so is the one above");
+    assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 0, 4, 5, 9, 0), 7,
         "all-world keeps its precedence over ALL THREE later overrides");
-    assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 0, 5, 0, 0), 7, "all-world keeps its precedence over the sector override");
-    assert_eq!(tier_cap(1, 3, 0, 0, 0, 0, 0, 5, 0, 0), 3, "…and every ordinary sleeve still reads the shared cap");
+    assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 0, 0, 5, 0, 0), 7, "all-world keeps its precedence over the sector override");
+    assert_eq!(tier_cap(1, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0), 3, "…and every ordinary sleeve still reads the shared cap");
     // (#227) the COUNTRY override, pinned the same two ways for the same reason — 11 is the literal
     // `COUNTRY_TIER` this ladder ships, and a mutation rewriting that constant would drag a purely
     // symbolic assertion along with it.
-    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 7, 0), 7, "(#227) the country sleeve takes its own cap");
-    assert_eq!(tier_cap(11, 3, 0, 0, 0, 0, 0, 0, 7, 0), 7, "…and it is tier 11 that does so, spelled as a literal");
-    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 7, 0), 3, "the sleeve above it is untouched");
-    assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 0, 5, 9, 0), 7, "all-world keeps its precedence over BOTH later overrides");
+    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 7, 0), 7, "(#227) the country sleeve takes its own cap");
+    assert_eq!(tier_cap(11, 3, 0, 0, 0, 0, 0, 0, 0, 7, 0), 7, "…and it is tier 11 that does so, spelled as a literal");
+    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(SECTOR_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 7, 0), 3, "the sleeve above it is untouched");
+    assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 0, 0, 5, 9, 0), 7, "all-world keeps its precedence over BOTH later overrides");
     // (#239) the NASDAQ override, pinned the same two ways for the same reason — 12 is the literal
     // `NASDAQ_TIER` this ladder ships, and a mutation rewriting that constant would drag a purely
     // symbolic assertion along with it.
-    assert_eq!(tier_cap(NASDAQ_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 1), 1, "(#239) the Nasdaq-100 sleeve takes its own cap");
-    assert_eq!(tier_cap(12, 3, 0, 0, 0, 0, 0, 0, 0, 1), 1, "…and it is tier 12 that does so, spelled as a literal");
-    assert_eq!(tier_cap(NASDAQ_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 1), 3, "the sleeve above it is untouched");
-    assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 0, 5, 9, 1), 7, "all-world keeps its precedence over ALL THREE trailing overrides");
+    assert_eq!(tier_cap(NASDAQ_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0, 1), 1, "(#239) the Nasdaq-100 sleeve takes its own cap");
+    assert_eq!(tier_cap(12, 3, 0, 0, 0, 0, 0, 0, 0, 0, 1), 1, "…and it is tier 12 that does so, spelled as a literal");
+    assert_eq!(tier_cap(NASDAQ_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(COUNTRY_TIER as usize, 3, 0, 0, 0, 0, 0, 0, 0, 0, 1), 3, "the sleeve above it is untouched");
+    assert_eq!(tier_cap(0, 3, 7, 0, 0, 0, 0, 0, 5, 9, 1), 7, "all-world keeps its precedence over ALL THREE trailing overrides");
 
     // (#231) the US sleeve's own cap. Tier 3 has no named constant — the geographic rungs are
     // positions in `hold_breadth_tier`'s ladder — so the literal is the ONLY spelling, which makes
     // the neighbour pins below the whole guard against an off-by-one in the arm.
-    assert_eq!(tier_cap(3, 3, 0, 4, 0, 0, 0, 0, 0, 0), 4, "(#231) the US sleeve takes its own cap");
-    assert_eq!(tier_cap(3, 3, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(2, 3, 0, 4, 0, 0, 0, 0, 0, 0), 3, "the emerging sleeve above it is untouched");
-    assert_eq!(tier_cap(4, 3, 0, 4, 0, 0, 0, 0, 0, 0), 3, "…and the ex-US sleeve below it is too");
-    assert_eq!(tier_cap(0, 3, 7, 4, 0, 0, 0, 0, 0, 0), 7, "all-world keeps its precedence over the US override");
-    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 4, 0, 4, 0, 0, 0, 0), 4,
+    assert_eq!(tier_cap(3, 3, 0, 0, 4, 0, 0, 0, 0, 0, 0), 4, "(#231) the US sleeve takes its own cap");
+    assert_eq!(tier_cap(3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(2, 3, 0, 0, 4, 0, 0, 0, 0, 0, 0), 3, "the emerging sleeve above it is untouched");
+    assert_eq!(tier_cap(4, 3, 0, 0, 4, 0, 0, 0, 0, 0, 0), 3, "…and the ex-US sleeve below it is too");
+    assert_eq!(tier_cap(0, 3, 7, 0, 4, 0, 0, 0, 0, 0, 0), 7, "all-world keeps its precedence over the US override");
+    assert_eq!(tier_cap(SIZE_TIER as usize, 3, 0, 0, 4, 0, 4, 0, 0, 0, 0), 4,
         "…and the US override does not leak into the small-cap sleeve, which reads its own");
     // (#237) the SIXTH per-sleeve override, spelled against the literal tier 5 for the reason tiers
     // 0 and 3 are: the geographic rungs have no named constant. Its neighbours on BOTH sides are
     // pinned, because a mutant flipping `==` to `>=` or shifting the literal is caught only there.
-    assert_eq!(tier_cap(5, 3, 0, 0, 4, 0, 0, 0, 0, 0), 4, "(#237) the Europe sleeve takes its own cap");
-    assert_eq!(tier_cap(5, 3, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
-    assert_eq!(tier_cap(4, 3, 0, 0, 4, 0, 0, 0, 0, 0), 3, "the ex-US sleeve above it is untouched");
-    assert_eq!(tier_cap(6, 3, 0, 0, 4, 0, 0, 0, 0, 0), 3, "…and the Japan sleeve below it is too");
-    assert_eq!(tier_cap(0, 3, 7, 0, 4, 0, 0, 0, 0, 0), 7, "all-world keeps its precedence over the Europe override");
-    assert_eq!(tier_cap(3, 3, 0, 4, 9, 0, 0, 0, 0, 0), 4, "…and the US override still answers for its own rung");
+    assert_eq!(tier_cap(5, 3, 0, 0, 0, 4, 0, 0, 0, 0, 0), 4, "(#237) the Europe sleeve takes its own cap");
+    assert_eq!(tier_cap(5, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(4, 3, 0, 0, 0, 4, 0, 0, 0, 0, 0), 3, "the ex-US sleeve above it is untouched");
+    assert_eq!(tier_cap(6, 3, 0, 0, 0, 4, 0, 0, 0, 0, 0), 3, "…and the Japan sleeve below it is too");
+    assert_eq!(tier_cap(0, 3, 7, 0, 0, 4, 0, 0, 0, 0, 0), 7, "all-world keeps its precedence over the Europe override");
+    assert_eq!(tier_cap(3, 3, 0, 0, 4, 9, 0, 0, 0, 0, 0), 4, "…and the US override still answers for its own rung");
     // (#237) THE TOKEN AND THE CAP ARE ONE CHANGE, and this is the half that says why. `hit` is a
     // bare `contains` and `geo_hit` takes the FIRST match, so before this round BOTH funds keyed the
     // same family and the sleeve counted three where the pond holds four.
@@ -6238,7 +6302,7 @@ mod tests {
         Some("ftse developed europe ex uk"), "(#237) the ex-UK spelling is its own family");
     assert_eq!(geo_family_of("Vanguard FTSE Developed Europe UCITS ETF"),
         Some("ftse developed europe"), "…and the plain one is untouched, which is why order matters");
-    assert_eq!(geo_tier_at("vanguard ftse developed europe ex uk ucits etf", 0.0, false, false, 0, 0),
+    assert_eq!(geo_tier_at("vanguard ftse developed europe ex uk ucits etf", 0.0, false, false, 0, 0, 0),
         Some(5), "(#237) …and BOTH tokens sit at tier 5, so the added reach cannot misfile");
     // (#238) THE SAME DEFECT ONE SLEEVE DOWN, and the pins carry the whole argument because the
     // TABLE DOES NOT MOVE. Each of the four tier-2 keys is pinned to a fund the live pond actually
@@ -6256,14 +6320,14 @@ mod tests {
               "ishares core msci em imi ucits etf usd (acc)",
               "hsbc msci emerging markets ucits etf usd acc",
               "ishares msci em ucits etf usd (acc)"] {
-        assert_eq!(geo_tier_at(n, 0.0, false, false, 0, 0), Some(2),
+        assert_eq!(geo_tier_at(n, 0.0, false, false, 0, 0, 0), Some(2),
             "(#238) every tier-2 key stays at tier 2 — the added reach cannot misfile");
     }
     // (#211)'s trailing-space guard is what the new tokens must not break: MSCI EMU is a EUROZONE
     // fund and belongs to the single-country sleeve, never to emerging.
     assert_eq!(geo_family_of("UBS Core MSCI EMU UCITS ETF EUR acc"), None,
         "(#238) MSCI EMU is still no emerging family — (#211)'s trailing space survives the split");
-    assert_eq!(geo_tier_at("ubs core msci emu ucits etf eur acc", 0.0, false, false, 9, 0), Some(COUNTRY_TIER),
+    assert_eq!(geo_tier_at("ubs core msci emu ucits etf eur acc", 0.0, false, false, 9, 0, 0), Some(COUNTRY_TIER),
         "…and it still files as SINGLE-COUNTRY, which deleting `msci em ` would have broken");
     assert_eq!(GEO.len(), 36, "(#243) one more token; the length is pinned so a silent edit cannot pass");
     // (#243) JAPAN'S THIRD UNIVERSE — (#238)'s emerging block above, one sleeve over. GEO carried
@@ -6281,7 +6345,7 @@ mod tests {
     for n in ["ishares core msci japan imi ucits etf usd (acc)",
               "state street spdr msci japan ucits etf",
               "vanguard ftse japan ucits etf usd accumulation"] {
-        assert_eq!(geo_tier_at(n, 0.0, false, false, 0, 0), Some(6),
+        assert_eq!(geo_tier_at(n, 0.0, false, false, 0, 0, 0), Some(6),
             "(#243) all three Japan universes stay at tier 6 — the added reach cannot misfile");
     }
     // (#243) THE SIX ABBREVIATION TOKENS, each pinned to the live fund that measured it. EVERY
@@ -6303,7 +6367,7 @@ mod tests {
     ] {
         assert_eq!(narrow_hit(n), Some(tok),
             "(#243) each token is the FIRST hit on its fund — appending is what keeps that true");
-        assert_eq!(geo_tier_at(n, 99.0, true, true, 9, 1), None,
+        assert_eq!(geo_tier_at(n, 99.0, true, true, 9, 1, 0), None,
             "(#243) …and NO tilt sleeve rescues it, so the fund leaves the CORE lane outright");
     }
     // (#243) …and XDEV.DE is why NARROW stays NAME-based. Its BENCHMARK is `msci world enhanced
@@ -6329,7 +6393,7 @@ mod tests {
     ] {
         assert_eq!(narrow_hit(n), Some(tok),
             "(#244) each token is the FIRST hit on its fund — appending is what keeps that true");
-        assert_eq!(geo_tier_at(n, 99.0, true, true, 9, 1), None,
+        assert_eq!(geo_tier_at(n, 99.0, true, true, 9, 1, 0), None,
             "(#244) …and NO tilt sleeve rescues it, so the geared fund leaves the CORE lane outright");
     }
     // (#244) …and the AIRTIGHTNESS claim the append is chosen for, which a sleeve-scoped list could
@@ -6340,9 +6404,9 @@ mod tests {
     // nothing about the rescue it is meant to close.
     assert_eq!(narrow_hit("xtrackers msci world technology 2x daily leveraged ucits etf"), Some("technolog"),
         "(#244) an earlier token still wins the first match — appending changed no incumbent verdict");
-    assert_eq!(geo_tier_at("xtrackers msci world technology 2x daily leveraged ucits etf", 0.0, false, true, 0, 0), None,
+    assert_eq!(geo_tier_at("xtrackers msci world technology 2x daily leveraged ucits etf", 0.0, false, true, 0, 0, 0), None,
         "(#244) …and the SECTOR arm refuses it on the second token, so the rescue cannot launder gearing");
-    assert_eq!(geo_tier_at("ishares msci world small cap 3x daily leveraged ucits etf", 99.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("ishares msci world small cap 3x daily leveraged ucits etf", 99.0, false, false, 0, 0, 0), None,
         "(#244) …and the SIZE arm likewise, which is the arm with a live cap today");
     // (#244) THE TWO TOKENS MEASURED AND DELIBERATELY NOT SHIPPED, pinned so a later round cannot
     // add them without reading this. "bank" hits an ISSUER: DZ BANK's three funds are plain
@@ -6353,10 +6417,10 @@ mod tests {
         ("dz bank s&p 500 ucits etf", 3),
         ("dz bank euro stoxx 50 ucits etf", COUNTRY_TIER),
     ] {
-        assert_eq!(geo_tier_at(n, 0.0, false, false, 7, 0), Some(tier),
+        assert_eq!(geo_tier_at(n, 0.0, false, false, 7, 0, 0), Some(tier),
             "(#244) `bank` is NOT a NARROW token — the issuer is a bank, the fund is a broad tracker");
     }
-    assert_eq!(geo_tier_at("vanguard ftse all-world high dividend yield ucits etf usd accumulation", 0.0, false, false, 7, 0),
+    assert_eq!(geo_tier_at("vanguard ftse all-world high dividend yield ucits etf usd accumulation", 0.0, false, false, 7, 0, 0),
         Some(0), "(#244) `dividend` is NOT a NARROW token — VHYA.L keeps tier 0 and loses on TER instead");
     // (#233) the withholding escape, and the two sort terms that both have to agree about it.
     // TIER 3 AND `Some("Swap")` — the conjunction is the pin: each half alone is false, so a mutant
@@ -6461,11 +6525,11 @@ mod tests {
         ("franklin ftse india ucits etf", "India"),
         ("franklin ftse china ucits etf", "China"),
     ] {
-        assert_eq!(geo_tier_at(fund, 0.0, false, false, 7, 0), Some(COUNTRY_TIER),
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 7, 0, 0), Some(COUNTRY_TIER),
             "{why}: the country sleeve claims it");
-        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0), None,
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0, 0), None,
             "{why}: …and refuses it with the knob off, which is the shipped lane");
-        assert_eq!(geo_tier_at(fund, 0.35, true, true, 0, 0), None,
+        assert_eq!(geo_tier_at(fund, 0.35, true, true, 0, 0, 0), None,
             "{why}: no OTHER sleeve's knob opens this one");
     }
     // (#234) the two spellings (#233) made reachable. Both were in (#227)'s twenty-refused list —
@@ -6476,9 +6540,9 @@ mod tests {
         ("amundi cac 40 ucits etf acc", "CACC.PA, the fund cac 40 reaches"),
         ("ubs core spi etf chf acc", "SPIA.SW, the fund the delimited spi spelling reaches"),
     ] {
-        assert_eq!(geo_tier_at(fund, 0.0, false, false, 9, 0), Some(COUNTRY_TIER),
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 9, 0, 0), Some(COUNTRY_TIER),
             "{why}: the country sleeve claims it");
-        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0), None,
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0, 0), None,
             "{why}: …and refuses it with the knob off");
     }
     // (#234) THE `spi` HAZARD, which is why the token carries a space on BOTH sides. `hold_name_tokens`
@@ -6488,7 +6552,7 @@ mod tests {
         ("invesco spin-off opportunities ucits etf", "'spin' is not the Swiss Performance Index"),
         ("ishares inspired growth ucits etf", "'inspi' is not 'spi' at a boundary either"),
     ] {
-        assert_ne!(geo_tier_at(no, 0.0, false, false, 9, 0), Some(COUNTRY_TIER), "{no}: {why}");
+        assert_ne!(geo_tier_at(no, 0.0, false, false, 9, 0, 0), Some(COUNTRY_TIER), "{no}: {why}");
     }
     // (#234) THE `growth` GAP. NARROW spelled value, quality, momentum and equal weight but never
     // growth, so a Russell 1000 GROWTH fund read as a US GEOGRAPHIC core — the one fund in the live
@@ -6496,10 +6560,10 @@ mod tests {
     // style half finally enforced.
     assert_eq!(narrow_hit("ishares russell 1000 growth ucits etf usd acc"), Some("growth"),
         "a growth tilt is a STYLE and must be refused before any sleeve sees it");
-    assert_eq!(geo_tier_at("ishares russell 1000 growth ucits etf usd acc", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("ishares russell 1000 growth ucits etf usd acc", 0.0, false, false, 0, 0, 0), None,
         "…so tier 3 must no longer claim it, which is what takes the US sleeve back to four families");
     // …while the PLAIN index keeps its tier, so the token refuses the tilt and not the family.
-    assert_eq!(geo_tier_at("ishares russell 1000 ucits etf usd acc", 0.0, false, false, 0, 0), Some(3),
+    assert_eq!(geo_tier_at("ishares russell 1000 ucits etf usd acc", 0.0, false, false, 0, 0, 0), Some(3),
         "russell 1000 without the tilt is still a US geographic index");
     // APPENDED, NOT INSERTED: `narrow_hit` returns the FIRST token in NARROW order, so a "Quality
     // Dividend Growth" fund must still report "quality" and keep reaching the FACTOR sleeve. Placing
@@ -6515,10 +6579,10 @@ mod tests {
         ("vanguard funds plc - vanguard ftse global all-cap ucits etf usd acc", "the hyphen VALL.L carries"),
         ("vanguard ftse global all cap ucits etf usd acc", "…and the spelling the old token assumed"),
     ] {
-        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0), Some(0), "{why}: all-cap is an ALL-WORLD sleeve");
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 0, 0), Some(0), "{why}: all-cap is an ALL-WORLD sleeve");
     }
     // …and the reach is still bounded by NARROW, which runs first: the ESG share class stays refused.
-    assert_eq!(geo_tier_at("vanguard esg global all cap ucits etf (usd) accumulating", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("vanguard esg global all cap ucits etf (usd) accumulating", 0.0, false, false, 0, 0, 0), None,
         "a tilt word still refuses the fund before any GEO token is consulted");
 
     // (#235) the withholding gate's tier set, pinned against the SLEEVE each tier actually holds
@@ -6533,11 +6597,11 @@ mod tests {
         ("vanguard ftse japan ucits etf usd acc", false, "Japan holds no US share"),
         ("ishares core msci pacific ex japan ucits etf", false, "Pacific ex-Japan holds no US share"),
     ] {
-        let tier = geo_tier_at(fund, 0.0, false, false, 0, 0).unwrap_or_else(|| panic!("{fund}: no tier"));
+        let tier = geo_tier_at(fund, 0.0, false, false, 0, 0, 0).unwrap_or_else(|| panic!("{fund}: no tier"));
         assert_eq!(tier_holds_us_equity(tier), holds_us, "{fund}: {why}");
     }
     // …the single-country sleeve too, which needs its knob open to place the fund at all.
-    let dax = geo_tier_at("xtrackers dax ucits etf 1c", 0.0, false, false, 9, 0).expect("dax tiers");
+    let dax = geo_tier_at("xtrackers dax ucits etf 1c", 0.0, false, false, 9, 0, 0).expect("dax tiers");
     assert_eq!(dax, COUNTRY_TIER);
     assert!(!tier_holds_us_equity(dax), "a single-market fund holds no US share — no US token exists");
     // …and the three rungs that KEEP the charge, tier 8 among them BY DECISION and not by measurement:
@@ -6564,30 +6628,30 @@ mod tests {
         ("ubs msci china esg universal ucits etf", "an ESG overlay is refused before this sleeve"),
         ("ishares msci em ex china ucits etf usd acc", "a carve-out is EMERGING, not a China bet"),
     ] {
-        assert_ne!(geo_tier_at(no, 0.0, false, false, 7, 0), Some(COUNTRY_TIER), "{no}: {why}");
+        assert_ne!(geo_tier_at(no, 0.0, false, false, 7, 0, 0), Some(COUNTRY_TIER), "{no}: {why}");
     }
     // …and the ex-UK case, which is why `core::COUNTRY` may never hold a bare `uk` token: 11 funds
     // in the live pond carry an `ex uk`/`ex-uk` spelling, and such a token would drag every one of
     // them out of the Europe sleeve into this one. `ftse 100` is the safe spelling.
-    assert_eq!(geo_tier_at("vanguard ftse developed europe ex uk ucits etf", 0.0, false, false, 7, 0),
+    assert_eq!(geo_tier_at("vanguard ftse developed europe ex uk ucits etf", 0.0, false, false, 7, 0, 0),
         Some(5), "(#227) an ex-UK fund stays EUROPE, sleeve open or not");
     // (#244) GEARED FUNDS ARE REFUSED HERE NOW, and the direction of this pin is the whole receipt.
     // (#227) asserted the OPPOSITE — "a 2x DAX fund DOES reach this sleeve at leg 0", dying one leg
     // later on TER — and (#239) deferred the fix to a round of its own. This is that round: `NARROW`
     // spells gearing, so the fund never reaches a sleeve and TER never has to carry it. The pin is
     // UPDATED rather than dropped, because it is what makes the change impossible to ship silently.
-    assert_eq!(geo_tier_at("l&g dax daily 2x long ucits etf", 0.0, false, false, 7, 0), None,
+    assert_eq!(geo_tier_at("l&g dax daily 2x long ucits etf", 0.0, false, false, 7, 0, 0), None,
         "(#244) a geared fund is refused at leg 0 — NARROW now spells leverage");
     // (#228) …and the momentum row's own reachability, both ways round. The token is a NARROW one,
     // so with the factor sleeve OFF the fund is refused at leg 0 exactly as it is today — that is
     // non-negotiable #1 spelled as a test, not an assertion in prose.
-    assert_eq!(geo_tier_at("xtrackers msci world momentum ucits etf 1c", 0.0, true, false, 0, 0),
+    assert_eq!(geo_tier_at("xtrackers msci world momentum ucits etf 1c", 0.0, true, false, 0, 0, 0),
         Some(FACTOR_TIER), "(#228) a WORLD momentum fund reaches the factor sleeve");
-    assert_eq!(geo_tier_at("xtrackers msci world momentum ucits etf 1c", 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at("xtrackers msci world momentum ucits etf 1c", 0.0, false, false, 0, 0, 0), None,
         "(#228) …and with the sleeve off it is refused, byte-identical to before the token landed");
     // FACTOR_GEO [0, 1] is UNTOUCHED and still binds: a EUROPE momentum fund is two bets under one
     // name and reaches NO sleeve, with the factor sleeve on or off.
-    assert_eq!(geo_tier_at("ishares msci europe momentum factor ucits etf", 0.0, true, false, 0, 0), None,
+    assert_eq!(geo_tier_at("ishares msci europe momentum factor ucits etf", 0.0, true, false, 0, 0, 0), None,
         "(#228) FACTOR_GEO still refuses a regional factor fund");
     assert_eq!(ter_cap_for(COUNTRY_TIER, 0.35, 0.25), 0.25,
         "(#227) …and the sleeve is judged against the BASE cap, which is what refuses it");
@@ -6618,9 +6682,9 @@ mod tests {
     // All five track the SAME index, so the cap is 1 by (#220): the measured family count, never a
     // number that yields a nicer table. The knob-off half is what non-negotiable #1 rests on.
     let nasdaq_fund = "amundi core nasdaq-100 swap ucits etf acc";
-    assert_eq!(geo_tier_at(nasdaq_fund, 0.35, true, true, 9, 0), None,
+    assert_eq!(geo_tier_at(nasdaq_fund, 0.35, true, true, 9, 0, 0), None,
         "(#239) sleeve off -> refused at leg 0, with ALL FOUR older sleeves wide open");
-    assert_eq!(geo_tier_at(nasdaq_fund, 0.0, false, false, 0, 1), Some(NASDAQ_TIER),
+    assert_eq!(geo_tier_at(nasdaq_fund, 0.0, false, false, 0, 1, 0), Some(NASDAQ_TIER),
         "…and its own cap is the only thing that admits it");
     // the sleeve's own admission rule, exercised directly with the cap PASSED — (#204): a knob is a
     // process-wide OnceLock no test can flip, so a branch reachable only with the sleeve open is one
@@ -6637,7 +6701,7 @@ mod tests {
         ("xtrackers nasdaq 100 ucits etf 1c", "XNAS.L, 0.20%, EUR 1.98B — the UNHYPHENATED spelling"),
         ("amundi nasdaq-100 swap etf eur acc", "ANX.PA, 0.23%, EUR 1.52B"),
     ] {
-        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 1), Some(NASDAQ_TIER), "{why}");
+        assert_eq!(geo_tier_at(fund, 0.0, false, false, 0, 1, 0), Some(NASDAQ_TIER), "{why}");
     }
     // THE PRECISION FILTER. The bare `nasdaq` token STAYS in [`NARROW`] and is what still refuses
     // everything the sleeve must not claim: an exchange is not an index, and a different index of
@@ -6647,7 +6711,7 @@ mod tests {
         ("ishares nasdaq us biotechnology ucits etf", "a sector fund wearing the exchange's name"),
         ("first trust nasdaq clean edge green energy ucits etf", "a theme, not the exchange's top 100"),
     ] {
-        assert_eq!(geo_tier_at(no, 0.0, false, false, 0, 1), None, "{no}: {why}");
+        assert_eq!(geo_tier_at(no, 0.0, false, false, 0, 1, 0), None, "{no}: {why}");
     }
     // …and the WRAPPER CLASSES. THIS LIST WAS NOT PLANNED: the covered-call line below was written
     // as a precision-filter pin and went RED at Some(12), which is the sleeve claiming an options
@@ -6662,7 +6726,7 @@ mod tests {
         ("leverage shares 5x long nasdaq 100 etp", "QQQ5.L — the live one, and daily reset is not a hold"),
         ("granitshares 3x long nasdaq 100 daily etp", "…and the other house's spelling of the same instrument"),
     ] {
-        assert_eq!(geo_tier_at(no, 0.0, false, false, 0, 1), None, "{no}: {why}");
+        assert_eq!(geo_tier_at(no, 0.0, false, false, 0, 1, 0), None, "{no}: {why}");
     }
     // …and the THIRD CONJUNCT, which refuses a Nasdaq-100 wrapper carrying any OTHER narrow token.
     // Not decoration: it is the whole reason the single row stays a plain index tracker. Every name
@@ -6673,7 +6737,7 @@ mod tests {
         ("amundi nasdaq-100 daily hedged eur ucits etf", "NDXH.PA — a currency wrapper, (#222)'s rule"),
         ("amundi nasdaq-100 ucits etf eur h acc", "ANAE.MI — the mid-word hedge class (#215) spells"),
     ] {
-        assert_eq!(geo_tier_at(no, 0.0, false, false, 0, 1), None, "{no}: {why}");
+        assert_eq!(geo_tier_at(no, 0.0, false, false, 0, 1, 0), None, "{no}: {why}");
     }
     // (#239) THE FAMILY KEY, the same regression (#217), (#218) and (#227) each record in turn: a
     // Nasdaq name carries no GEO token, so without the NASDAQ arm on `sleeve_family_of` every fund
@@ -6691,16 +6755,82 @@ mod tests {
         ("xtrackers msci world information technology ucits etf 1c", SECTOR_TIER, "(#218) sector"),
         ("xtrackers dax ucits etf 1c", COUNTRY_TIER, "(#227) country"),
     ] {
-        assert_eq!(geo_tier_at(fund, 0.35, true, true, 9, 1), Some(tier),
+        assert_eq!(geo_tier_at(fund, 0.35, true, true, 9, 1, 0), Some(tier),
             "{why}: keeps its fund with the Nasdaq sleeve OPEN — ZERO REMOVALS");
     }
     // …and the GEOGRAPHIC rungs are untouched too, which is the half a sleeve-only sweep misses.
     // (#234) refused a US cap raise 4->5 because the fifth family was a STYLE, and this round does
     // not reopen that: `hold_per_tier_us` is not read here and does not move.
-    assert_eq!(geo_tier_at("xtrackers msci usa equity ucits etf", 0.0, false, false, 0, 1), Some(3),
+    assert_eq!(geo_tier_at("xtrackers msci usa equity ucits etf", 0.0, false, false, 0, 1, 0), Some(3),
         "(#239) the US sleeve keeps its funds — a separate tier is not the cap raise (#234) refused");
-    assert_eq!(geo_tier_at("ishares core msci world ucits etf usd acc", 0.0, false, false, 0, 1), Some(1),
+    assert_eq!(geo_tier_at("ishares core msci world ucits etf usd acc", 0.0, false, false, 0, 1, 0), Some(1),
         "…and so does developed, the rung a Nasdaq tracker would be mistaken for");
+
+    // (#251) THE SIXTH FALL-THROUGH ARM. `L&G Global Equity UCITS ETF` (LGGL.L, EUR 1.5B, 0.10%, IE,
+    // Acc, full replication) names no index at all — it tracks Solactive Core Developed Markets Large
+    // & Mid Cap — so `GEO`, which keys on INDEX names, cannot see it, and `GEO`'s own doc parked it in
+    // the `GEO blind spot` as "tier 0 or 1 unresolved". The index resolves it: DEVELOPED, tier 1.
+    let lggl = "l&g global equity ucits etf";
+    assert_eq!(geo_tier_at(lggl, 0.35, true, true, 9, 1, 0), None,
+        "(#251) cap 0 -> the arm is INERT with every OLDER sleeve wide open. Non-negotiable #1 rests \
+         on this half, and this is the only setting under which the claim could fail");
+    assert_eq!(geo_tier_at(lggl, 0.0, false, false, 0, 0, 4), Some(1),
+        "…and its own cap is the only thing that admits it, at the developed rung");
+    // the arm's admission rule exercised DIRECTLY with the cap PASSED — (#204)'s rule: the knob is a
+    // process-wide `OnceLock` no test can flip, so a branch that fires only with the sleeve open is
+    // one the mutation gate cannot reach unless the number is an argument.
+    assert_eq!(developed_equity_tier(lggl, 0), None, "0 = the arm is off");
+    assert_eq!(developed_equity_tier(lggl, 4), Some(1), "cap on -> the developed sleeve");
+    assert_eq!(developed_equity_tier("ishares core msci world ucits etf usd acc", 4), None,
+        "…and a fund NAMING its index never reaches this arm — `geo_hit` answered first");
+    // THE TWO GUARDS, both live names off the same census. `3DGH.L` is the one that matters: TER and
+    // AUM are BOTH n/a, so (#240)'s `hold_allow_unknown_ter` and the AUM leg's missing-data pass mean
+    // nothing downstream would refuse it — this list is the only thing between a GBP-hedged share
+    // class and the CORE table.
+    for (no, why) in [
+        ("schroder global equity active ucits etf", "SAHE.DE, EUR 1.1B — an active fund is not an index"),
+        ("robeco 3d global equity ucits etf gbp (h)", "3DGH.L — the hedged class, refused by NAME alone"),
+    ] {
+        assert_eq!(developed_equity_tier(no, 4), None, "{no}: {why}");
+        assert_eq!(geo_tier_at(no, 0.35, true, true, 9, 1, 4), None,
+            "…and the whole ladder agrees with its own arm: {no}");
+    }
+    // THE BOND HAZARD, which `GEO`'s doc calls the whole risk of a generic `global` token. Every name
+    // below is live in the same blind-spot census, and the token carries `equity`, which none of them
+    // does — that word is what makes a marketing phrase safe here.
+    for (no, why) in [
+        ("ishares global aggregate bond ucits etf", "a bond fund — the exact hazard `GEO`'s doc names"),
+        ("invesco physical gold etc", "…a metal"),
+        ("lyxor smart overnight return ucits etf", "…and cash"),
+    ] {
+        assert_eq!(developed_equity_tier(no, 4), None, "{no}: {why}");
+    }
+    // ZERO REMOVALS, this round's pre-registered stop rule, and here it is an ORDERING argument, not
+    // a vocabulary one: the arm is the LAST `or_else` in the chain, so `geo_hit` and the country
+    // sleeve have both already answered and no fund either of them claims can move. Asserted with the
+    // new cap OPEN alongside every sibling, the only setting under which the claim could fail.
+    for (fund, tier, why) in [
+        ("vanguard ftse all-world ucits etf usd acc", 0, "all-world, the rung a `global` token would steal"),
+        ("ishares core msci world ucits etf usd acc", 1, "developed itself — by INDEX, not by the arm"),
+        ("ishares core msci em imi ucits etf", 2, "emerging"),
+        ("xtrackers msci usa equity ucits etf", 3, "US — and (#234)'s refused cap raise is not reopened"),
+        ("ubs msci world ex usa ucits etf usd acc", 4, "ex-US"),
+        ("ishares msci world small cap ucits etf", SIZE_TIER, "(#202) size"),
+        ("xtrackers msci world momentum ucits etf 1c", FACTOR_TIER, "(#228) factor"),
+        ("xtrackers msci world information technology ucits etf 1c", SECTOR_TIER, "(#218) sector"),
+        ("xtrackers dax ucits etf 1c", COUNTRY_TIER, "(#227) country"),
+        ("amundi core nasdaq-100 swap ucits etf acc", NASDAQ_TIER, "(#239) Nasdaq-100"),
+    ] {
+        assert_eq!(geo_tier_at(fund, 0.35, true, true, 9, 1, 4), Some(tier),
+            "{why}: keeps its fund with the developed arm OPEN — ZERO REMOVALS");
+    }
+    // …and the CAP half of the same knob, which is why the token cannot ship alone: at the shared 3 a
+    // fourth family would EVICT VHVE.L (the only `ftse developed` fund) under `hold_family_first`,
+    // and a lost exposure is what (#213)'s family-for-family standard forbids.
+    assert_eq!(tier_cap(1, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0), 4, "(#251) the developed sleeve takes its own cap");
+    assert_eq!(tier_cap(1, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0), 3, "0 = no override, inherit the shared cap");
+    assert_eq!(tier_cap(0, 3, 7, 4, 0, 0, 0, 0, 0, 0, 0), 7, "all-world keeps its precedence over it");
+    assert_eq!(tier_cap(2, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0), 3, "…and the sleeve BELOW it is untouched");
 
     // (#240) THE MISFILES THE TER LEG WAS HIDING. Each name below cleared every hold leg BUT TER on
     // the live 2026-09-05 census, so each was a row waiting for the pond to serve one number — and
@@ -6719,16 +6849,16 @@ mod tests {
         ("ubs msci acwi ucits etf husd acc", "the hUSD spelling of the same UBS class"),
         ("ubs msci united kingdom ucits etf hgbp acc", "…and hGBP, so the vocabulary is closed"),
     ] {
-        assert_eq!(geo_tier_at(fund, 0.35, true, true, 9, 1), None, "{fund}: {why}");
+        assert_eq!(geo_tier_at(fund, 0.35, true, true, 9, 1, 0), None, "{fund}: {why}");
     }
     // …and the ONE misfile fixed by RE-FILING rather than by refusal. A Russell 2000 fund IS a US
     // small-cap fund, which is what the (#202) sleeve exists for, so deleting it would trade one
     // wrong answer for another. This needs BOTH the `NARROW` entry and the `SIZE` one.
     let ru2k = "ishares russell 2000 swap ucits etf usd (acc)";
     assert_eq!(narrow_hit(ru2k), Some("russell 2000"), "(#240) the name never says `small` — that is the defect");
-    assert_eq!(geo_tier_at(ru2k, 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at(ru2k, 0.0, false, false, 0, 0, 0), None,
         "(#240) with the size sleeve SHUT the token simply refuses, as every NARROW token does");
-    assert_eq!(geo_tier_at(ru2k, 0.35, true, true, 9, 1), Some(SIZE_TIER),
+    assert_eq!(geo_tier_at(ru2k, 0.35, true, true, 9, 1, 0), Some(SIZE_TIER),
         "(#240) RU2K.L — a US SMALL-CAP index was filing in the US BROAD sleeve; the SIZE entry re-files it");
     // THE ORDERING IS LOAD-BEARING, and this pin is what says so out loud. R2US.L is a PRINTED CORE
     // row whose name carries BOTH "small" (index 14) and "russell 2000" (appended last). `narrow_hit`
@@ -6736,13 +6866,13 @@ mod tests {
     // REMOVALS argument for this token, and a later reorder of NARROW would break it in silence.
     let r2us = "state street spdr russell 2000 us small cap ucits etf";
     assert_eq!(narrow_hit(r2us), Some("small"), "(#240) APPENDED, never inserted — (#234)'s rule, load-bearing here");
-    assert_eq!(geo_tier_at(r2us, 0.35, true, true, 9, 1), Some(SIZE_TIER),
+    assert_eq!(geo_tier_at(r2us, 0.35, true, true, 9, 1, 0), Some(SIZE_TIER),
         "(#240) R2US.L keeps its sleeve, and its row, with the new token live — ZERO REMOVALS");
     // ZERO REMOVALS for the other three tokens the same way: the UNHEDGED sibling of the class that
     // motivated them is untouched, so the tokens refuse a wrapper and never an index.
-    assert_eq!(geo_tier_at("ubs msci world ex usa ucits etf usd acc", 0.35, true, true, 9, 1), Some(4),
+    assert_eq!(geo_tier_at("ubs msci world ex usa ucits etf usd acc", 0.35, true, true, 9, 1, 0), Some(4),
         "(#240) the hedge tokens refuse a SHARE CLASS, not the fund — the plain class keeps ex-US");
-    assert_eq!(geo_tier_at("ishares nasdaq 100 swap ucits etf usd (acc)", 0.0, false, false, 0, 1), Some(NASDAQ_TIER),
+    assert_eq!(geo_tier_at("ishares nasdaq 100 swap ucits etf usd (acc)", 0.0, false, false, 0, 1, 0), Some(NASDAQ_TIER),
         "(#240) N100.L — admitted by the knob, and correctly filed, which is what the round is for");
 
     let size = SIZE_TIER as usize;
@@ -6797,7 +6927,7 @@ mod tests {
         q.replication = repl;
         q.use_of_profits = Some("Acc");
         q.aum_eur = Some(2.6e9);
-        hold_miss_leg_with(&q, allow_swap, false, 0.0, false, false, 0, 0)
+        hold_miss_leg_with(&q, allow_swap, false, 0.0, false, false, 0, 0, 0)
     };
     // (#240) the TER leg's own PASSED-flag fixture, `miss_swap`'s sibling and for the same reason:
     // tests/ci-settings.yaml arms `hold_allow_unknown_ter`, so a literal "TER unknown" pin asserts
@@ -6809,7 +6939,7 @@ mod tests {
         q.replication = Some("Full");
         q.use_of_profits = Some("Acc");
         q.aum_eur = Some(2e9);
-        hold_miss_leg_with(&q, false, allow_unknown_ter, 0.0, false, false, 0, 0)
+        hold_miss_leg_with(&q, false, allow_unknown_ter, 0.0, false, false, 0, 0, 0)
     };
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF USD Acc", Some(0.07), Some("Full"), Some("Acc"), Some(28.8e9)), None); // VUAA passes all
     // (#239) config-dependent, for the reason the `hold` line above is. The MESSAGE keeps an
@@ -6896,9 +7026,9 @@ mod tests {
     // The line above keeps the unconditional half — a sector fund that names no index is refused at
     // every setting, which is the invariant the sleeve does not touch.
     let sp_tech_lower = "ishares s&p 500 information technology sector ucits etf";
-    assert_eq!(geo_tier_at(sp_tech_lower, 0.0, false, false, 0, 0), None,
+    assert_eq!(geo_tier_at(sp_tech_lower, 0.0, false, false, 0, 0, 0), None,
         "sleeve off -> a sector BET, still barred; round 118's rule is unchanged at the default");
-    assert_eq!(geo_tier_at(sp_tech_lower, 0.0, false, true, 0, 0), Some(SECTOR_TIER),
+    assert_eq!(geo_tier_at(sp_tech_lower, 0.0, false, true, 0, 0, 0), Some(SECTOR_TIER),
         "sleeve on -> the eleventh sleeve, the deliberate exception rather than a loosening");
     // (#210) THIS NAME'S VERDICT IS NOW CONFIG-DEPENDENT, so it is pinned with the cap passed in
     // rather than read: the code default is 0.0 and tests/ci-settings.yaml ships 0.35, and a
@@ -6906,8 +7036,8 @@ mod tests {
     // rule is UNCHANGED at the default — a size tilt is not a geography — and the sleeve is the
     // deliberate, measured exception to it rather than a loosening of it.
     let world_small_lower = "ishares msci world small cap ucits etf";
-    assert_eq!(geo_tier_at(world_small_lower, 0.0, false, false, 0, 0), None, "sleeve off -> a size TILT, still barred");
-    assert_eq!(geo_tier_at(world_small_lower, 0.35, false, false, 0, 0), Some(SIZE_TIER), "sleeve on -> the eighth sleeve");
+    assert_eq!(geo_tier_at(world_small_lower, 0.0, false, false, 0, 0, 0), None, "sleeve off -> a size TILT, still barred");
+    assert_eq!(geo_tier_at(world_small_lower, 0.35, false, false, 0, 0, 0), Some(SIZE_TIER), "sleeve on -> the eighth sleeve");
     assert!(!is_broad_index_name("iShares MSCI World EUR Hedged UCITS ETF"));
     assert!(!is_broad_index_name("iShares MSCI World ESG Screened UCITS ETF"));
     // (#236) config-dependent since min-vol joined FACTOR — `geo_tier` reads the sleeve knobs, and

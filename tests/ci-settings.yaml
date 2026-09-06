@@ -5185,6 +5185,82 @@ buy_heuristic:
                                  #   — developed/EM/US/exUS/Europe/Japan are byte-identical row for row.
                                  #   REVERT RULE: 0. That restores the shared cap on every sleeve, and the
                                  #   only thing lost is four all-world funds.
+  hold_per_tier_developed: 4     # (#251 / MEASURED 2026-09-06, live `screen`) — the FOURTEENTH sleeve
+                                 #   to carry its own cap, and the SIXTH optional one. 0 -> 4. Rows the CORE
+                                 #   table keeps for developed-world trackers (tier 1). 0 is the code default
+                                 #   and is byte-identical to the shipped lane (non-negotiable #1) — and on
+                                 #   THIS knob 0 does a second thing: it also holds the `global equity` arm
+                                 #   in `core::developed_equity_tier` INERT. One number, both switches, so
+                                 #   the token can never admit a fund into a sleeve that is still capped at
+                                 #   the shared 3.
+                                 #
+                                 #   WHY THE TOKEN AND THE CAP SHIP TOGETHER. The developed sleeve prints
+                                 #   MXWO.L 0.05%, F50A.DE 0.05%, VHVE.L 0.12% — three funds, three index
+                                 #   families, cap 3. `hold_family_first: true` takes the best fund of each
+                                 #   distinct family in rank order, so admitting a FOURTH family at cap 3
+                                 #   would keep MXWO, F50A and the newcomer and DROP VHVE.L, the sole fund of
+                                 #   the `ftse developed` family. That is a lost EXPOSURE, which (#213)'s
+                                 #   family-for-family standard forbids. 4 = the measured family count after
+                                 #   the arm opens, never a number that yields a nicer table ((#220)).
+                                 #
+                                 #   WHAT THE ARM ADMITS. `core::GEO`'s doc parked LGGL.L (L&G Global Equity
+                                 #   UCITS ETF, EUR 1.5B, 0.10%, IE, Acc, full replication) in the GEO blind
+                                 #   spot as "tier 0 or 1 unresolved … guessing either is a misfile". That is
+                                 #   now resolved: it tracks the Solactive Core Developed Markets Large & Mid
+                                 #   Cap USD Index NTR (ISIN IE00BFXR5S54, justETF/Fidelity factsheets), so
+                                 #   developed large+mid = TIER 1. Its name carries no index string, so the
+                                 #   only token that reaches it is the marketing phrase `global equity`. That
+                                 #   token sits on the FALL-THROUGH, after `geo_hit` and `country_sleeve_tier`
+                                 #   — the (#227) shape — so no fund with real geography can change sleeve,
+                                 #   which is the whole zero-removals proof. It contains `equity`, so no bond,
+                                 #   gold, cash or commodity name in the blind spot can match it, and two
+                                 #   scoped guards (`active`, `(h)`) refuse the two live funds that otherwise
+                                 #   would: SAHE.DE (Schroder Global Equity ACTIVE) and 3DGH.L (Robeco 3D
+                                 #   Global Equity GBP(H) — TER AND AUM both n/a, so with (#240)'s
+                                 #   `hold_allow_unknown_ter` and the AUM leg's missing-data pass, this guard
+                                 #   is the ONLY thing between a GBP-hedged share class and the table). The
+                                 #   guards are SCOPED TO THE ARM, not appended to `NARROW`, for (#239)'s
+                                 #   reason: a global append could move a shipped placement in another sleeve.
+                                 #
+                                 #   CAVEATS, ON THE RECORD BECAUSE THIS SHIPPED KNOWING THEM. LGGL is the
+                                 #   FOURTH wrapper of developed-world large+mid and at 0.10% is not the
+                                 #   cheapest row (Amundi Prime Global 0.05%); it is a fourth index provider
+                                 #   in a sleeve that prints one fund per provider. Its index applies light
+                                 #   exclusions (pure coal mining, controversial weapons, three-year UN Global
+                                 #   Compact breaches); the lane refuses ESG funds by NAME token (`esg`,
+                                 #   `sri`, `screened`, `sustainab`, `paris`, `pab`, `climate`) and LGGL's
+                                 #   name carries none, so the rule AS WRITTEN admits it.
+                                 #
+                                 #   LIVE A/B, 2026-09-06, control and arm on this machine. THE PAIR IS
+                                 #   NOT POND-MATCHED and the receipt says so rather than rounding it off:
+                                 #   the runs saw 4263 and 4470 EU-buyable ETFs (QUALIFIED 136 vs 112), and
+                                 #   five attempts to re-run them back to back were killed by the OOM
+                                 #   watchdog before printing a line — `screen` peaks on the 169MB history
+                                 #   cache at startup, and lowering `fetch_concurrency_multiplier` to 4 and
+                                 #   running `FOLIOMAN_OFFLINE=1` did not save it. So read every COUNT below
+                                 #   as cross-pond, and only the TICKER facts as measured:
+                                 #     developed sleeve  3 (3f)  ->  4 (4f)      families, the cap's own number
+                                 #     LGGL.L            blind spot -> PRINTED   +14%/yr, 7.8y, 0.10%, EUR 1.5B, Acc, Full, IE
+                                 #     MXWO.L F50A.DE VHVE.L      RETAINED, all three, VHVE.L included — the
+                                 #       eviction this knob exists to prevent did NOT happen
+                                 #   Both runs printed 53 CORE rows. The arm's extra developed row is offset
+                                 #   by Asia-Pacific, whose SUPPLY fell 2 -> 1 between the two ponds (PACUA.SW
+                                 #   absent from the later run) — a pond fact, not this knob's doing: the arm
+                                 #   is the LAST `or_else` in `geo_tier_at` and the cap branch reads `tier ==
+                                 #   1`, neither of which can reach tier 7. The rest of the set diff is
+                                 #   listing-venue churn of the same funds (EXUS.L/EXUS.DE, XDEM.SW/XDEM.DE,
+                                 #   VJPA.L/VJPA.DE …). WHAT CARRIES THE ZERO-REMOVALS CLAIM is therefore the
+                                 #   unit pin, not the pair: `pure_logic` asserts all ten sleeve
+                                 #   representatives keep their tier with this cap OPEN.
+                                 #
+                                 #   ONE DEFECT THE ARM RUN EXPOSED, fixed in the same commit: the `GEO blind
+                                 #   spot` census re-spells `geo_tier_at`'s reachable arms inline, so with the
+                                 #   sixth arm live and that copy un-updated LGGL.L printed in the CORE table
+                                 #   AND in the census of funds the lane cannot see, two lines apart. A census
+                                 #   that contradicts its own table is worse than none — `geo_miss_census`
+                                 #   now takes the cap and the arm (non-negotiable #4).
+                                 #   REVERT RULE: 0. That restores the shared cap on the developed sleeve AND
+                                 #   makes the `global equity` token inert, in one number.
   hold_per_tier_us: 4            # (#234) HELD AT 4 — A RAISE TO 5 WAS PLANNED, PRE-REGISTERED AND THEN
                                  #   REFUSED BY ITS OWN STOP RULE. Recorded here rather than dropped,
                                  #   because the census line that licensed it is still on screen and the
