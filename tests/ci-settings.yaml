@@ -1496,6 +1496,68 @@ sizing:
 # that prints percentages a person acts on. RE-OPEN CONDITION: a graded lane that can adjudicate a
 # sleeve allocation, or a decision to size the hold lane equal-weight ACROSS TIERS (one row per tier,
 # not per family) with that restriction argued on its own terms.
+#
+# (#255) NO CODE — THE TWO TILT-SLEEVE CAPS WERE LIFTED TO 99 AND HIDE ZERO EXPOSURES. The
+# measurement IS the deliverable, as in (#226), (#241), (#242) and (#254). Nothing shipped, nothing
+# to revert. This AMENDS the caps audit's FINDING 3.
+#
+# WHAT THE AUDIT LEFT OPEN. FINDING 3 established that (#197)'s exposure test cannot brake a tilt
+# sleeve — "every sector is disjoint from every other sector, and every country from every other
+# country, by construction" — so applying the rule uniformly "would license sector 6 -> 11 and
+# country 9 -> 13 MECHANICALLY, on a test that cannot refuse anything there". It therefore held both
+# caps as a DELIBERATE CONCENTRATION BUDGET and wrote the +9 down "so the next round does not read it
+# as free". That left the two caps as the ONLY remaining lever on the standing "show more assets"
+# ask, and framed them as a risk-appetite decision no measurement could settle.
+#
+# THE MEASUREMENT SETTLES IT ANYWAY, AND IN THE OTHER DIRECTION. One live `screen` control, then one
+# arm with `hold_per_tier_sector: 99` and `hold_per_tier_country: 99` — the arm config in its own
+# directory and named literally `ci-settings.yaml`, or `config::ci_base_yaml` would have merged the
+# working tree's file and made the control a second arm. Journal backed up and RESTORED after both
+# runs (.screen_state.json md5 622e137829613f6fc405e6c2b8251b28, verified identical afterwards).
+# 2026-09-06. CORE table 53 rows -> 67.
+#
+# THE POND DRIFTED BETWEEN THE RUNS — 4566 EU-buyable ETFs down to 4265 — so most of the raw ticker
+# delta is VENUE SWAPS of one fund (SPYY.DE->ACWD.L, HEMA.MI->HEMA.L, VJPA.DE->VJPA.L, IITU.L->IUIT.L
+# and eleven more). Those are drift, not the caps, and reading them as additions is the error
+# `probe-edge-not-reproducible` describes. ATTRIBUTED ON FUND NAMES, the caps bought exactly 14 rows:
+#
+#   world sector   +5  WSTI.AS / XDWT.L (MSCI World Info Tech), XDWH.L (Health Care),
+#                      XDW0.L (Energy), XDWF.L (Financials)
+#   single-country +9  XESC.DE / C50.PA / MSE.PA / C50U.PA (EURO STOXX 50), CG1.PA / EL4A.DE /
+#                      LYY7.DE (DAX), L100.L (FTSE 100), LYINR.SW (MSCI India)
+#
+# EVERY ONE IS A WRAPPER OF AN INDEX THE TABLE ALREADY PRINTS. The control already carries S&P 500
+# Info Tech, Health Care, Financials, Energy and Utilities plus World Industrials (six GICS sectors),
+# and EURO STOXX 50 (SC0D.DE), DAX (DBXD.DE), FTSE 100 (VUKG.L) and India (FLXI.L) among its nine
+# countries. NOT ONE NEW SECTOR AND NOT ONE NEW COUNTRY APPEARED: no Brazil, Taiwan, Canada,
+# Australia, Italy, Spain or Netherlands exists in this pond above the floor.
+#
+# SO BOTH CAPS ALREADY SIT EXACTLY AT THEIR TRUE UNIVERSE COUNT:
+#   world sector    supply 11, distinct GICS sectors  6, cap 6   -> at count
+#   single-country  supply 18, distinct country indices 9, cap 9 -> at count
+# The `11b` and `12b/13b` benchmark columns that suggested headroom over-count exactly as FINDING 2
+# said they would — provider cuts, swap/DR variants and currency lines of one index — and this is
+# that finding measured on the two sleeves FINDING 2 could not reach.
+#
+# THE COMPARISON IS CLEAN FOR THE SLEEVES UNDER TEST, which is what makes the drift survivable: both
+# runs report an IDENTICAL supply line for both of them — `world sector 11 (6f, 11b/1?)` and
+# `single-country 18 (9f, 12b/5?)` — so the drift removed no candidate from either sleeve and the
+# arm saw the same universe the control did. Where the drift DOES bite (all-world 8->9, developed
+# 11->12, US 25->23) those sleeves' caps were not touched and their rows are not part of the claim.
+#
+# WHAT THIS CLOSES. FINDING 3's concentration-budget argument is now UNNECESSARY for these two
+# sleeves rather than wrong: there is no risk decision to take, because there is nothing behind the
+# cap to buy. Raising either cap adds only duplicate wrappers, which is what (#197) refused for the
+# geographic sleeves and what (#238), (#234) and (#252) each refused again on their own sleeve. With
+# this, EVERY sleeve cap in the ladder is measured to be at or above its exposure count, and the
+# standing "more assets" ask has no remaining admission-side lever: legs 0-5 are each adjudicated
+# ((#196), (#233), (#240), (#242), and the AUM floor twice by (#224)/(#226)), the pond is not the
+# constraint, and now the last two caps are shown empty behind.
+#
+# RE-OPEN CONDITION, the same shape (#216) uses: a fund tracking a GICS sector or a COUNTRY not
+# already printed appears above the EUR 1B floor. Read it off the sleeve supply line — a rise in the
+# distinct-index count, NOT in the fund count and NOT in the benchmark column, both of which move for
+# wrappers. Until then, do not lift either cap and do not re-run this probe.
 
 # ============================================================================================
 # BUY HEURISTIC (src/picks.rs). Acronyms (CAGR, ROE, P/E, NUPL, SMA, FX, ...): see Glossary in README.md.
