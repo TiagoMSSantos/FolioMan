@@ -1,6 +1,8 @@
 //! `size [TICKERS]` — suggested position sizes for the growth picks: weight ∝ score ÷ volatility
 //! (vol-target) inside a per-class risk budget, then capped per name and per sector (`config::Sizing`).
-//! READ-ONLY, never trades — you still type the qty into `trade` yourself. No TICKERS -> the watchlist.
+//! READ-ONLY, never trades — you still type the qty into `trade` yourself. No TICKERS -> the watchlist,
+//! or `--picks` for the last `screen` run's ranked candidates `(#248)` — the watchlist can clear nothing
+//! on a run where the screen ranked nine, and then a bare `size` has nothing to say.
 //! Names that fail the growth gate are dropped (nothing to size). The rows can sum to under 100 when a
 //! cap binds; that remainder is deliberately unallocated, not a rounding error — `(#246)` names the
 //! broad-market default for it (CORE #1, off the last `screen` run) instead of leaving it in cash.
@@ -25,7 +27,28 @@ pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
-    let tickers = if args.is_empty() { settings.tickers.clone() } else { args };
+    // (#248) `--picks` sizes what the last `screen` run RANKED, instead of the watchlist. Opt-in, so a
+    // bare `size` stays byte-identical. The flag is stripped from the ticker list or it would be fetched
+    // as a quote; tickers typed alongside it are kept and appended, minus any the list already holds —
+    // a duplicated row would draw its class budget twice. Nothing is fetched on the no-state path.
+    let picks = args.iter().any(|a| a == "--picks");
+    let named: Vec<String> = args.into_iter().filter(|a| a != "--picks").collect();
+    let tickers = if picks {
+        let Some((date, mut ranked)) = crate::commands::screen::last_ranked(
+            std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok(),
+        ) else {
+            println!("No ranked picks on file — run `screen` first, then `size --picks`.");
+            return;
+        };
+        println!("Sizing the {} ranked pick(s) from the {date} screen run.", ranked.len());
+        let extra: Vec<String> = named.into_iter().filter(|t| !ranked.contains(t)).collect();
+        ranked.extend(extra);
+        ranked
+    } else if named.is_empty() {
+        settings.tickers.clone()
+    } else {
+        named
+    };
 
     let eu_infl = if settings.inflation_adjust.enabled {
         Some(fetch::fetch_eu_inflation(&client, &settings.urls).await)

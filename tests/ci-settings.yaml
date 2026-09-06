@@ -1310,6 +1310,54 @@ sizing:
 # REVERT RULE: delete the match arm; there is no config to unset. Revert if the CORE shortlist ever stops
 # being breadth-major at index 0 (i.e. if `hold_core_cmp` stops sorting breadth-first), because the line
 # would then name an arbitrary fund instead of the widest one — which is the whole justification.
+#
+# (#248) SHIPPED: `size --picks` sizes what the last `screen` run RANKED, instead of the watchlist.
+# CLI flag, no config surface. src/commands/size.rs (the ticker source) + `screen::last_ranked`.
+#
+# THE GAP. Bare `size` sizes `settings.tickers` — a hand-typed watchlist — while `screen` ranks the whole
+# gated pool and journals the result. The two had drifted apart, and this file records how far: (#245) and
+# (#246) could not measure the `size` lane AT ALL without hand-typing the ranked tickers onto the command
+# line ("MEASURED LIVE 2026-09-06, `size` on the (#245) ranked control (9 tickers)"). The list was already
+# computed, already on disk since round 68 (`ScreenState.ranked`), and already reachable through the pure
+# seam (#246) built. `size` simply had no way to ask for it.
+#
+# MEASURED LIVE 2026-09-06, live config, both arms the same minute, NO `screen` run — the state file's
+# md5 is unchanged across both:
+#   size          4 rows  TOTAL 16.0%  84.0% unallocated   ABEA.DE IITU.L BTC-EUR VVSM.DE
+#   size --picks  9 rows  TOTAL 33.0%  67.0% unallocated   ABEC.DE LLY.DE BNB-EUR IITU.L BTC-EUR
+#                                                          XLKS.L SMH.L SEMI.AS LYBK.DE
+# Deployed budget DOUBLES (16.0 -> 33.0) and the basket goes 4 -> 9 names. The 67.0% reproduces (#245)'s
+# measured 67% exactly — which is the check that this flag reads the same list (#245) hand-typed.
+# Note ABEA.DE (watchlist) vs ABEC.DE (ranked): the same issuer, different share line. The screen picks
+# the line it ranks; the watchlist carries the one the operator typed. Not a defect, worth knowing.
+#
+# A PREMISE THAT DID NOT SURVIVE MEASUREMENT, recorded because the plan carried it. `ScreenState.passing`
+# reads 0 on the 2026-09-05 state and is documented as "watchlist tickers that cleared every growth gate",
+# so bare `size` was PREDICTED to print "nothing to size". It does not — it sizes 4. `passing` is written
+# by whatever config that `screen` run loaded and is a stale baseline for the drift alerts; it is NOT the
+# filter `size` applies (`growth_score(...).is_some()`). The A/B above is the measurement; the prediction
+# was wrong and is not the claim. Do not re-cite `passing` as a statement about `size`.
+#
+# WHY OPT-IN AND NOT A NEW DEFAULT. Bare `size` stays byte-identical — non-negotiable #1's ask, even
+# though `config::Sizing` is exempt from it. A silent union of a hand-curated watchlist with a machine-
+# ranked list under one set of caps would also make the printed TOTAL unattributable. NO SILENT FALLBACK
+# either: `--picks` with no state file says so and points at `screen`, because the flag was typed on
+# purpose and sizing a different list than the one asked for is the exact failure this round removes.
+# Tickers typed alongside `--picks` are appended minus duplicates — a repeated row would draw its class
+# budget twice.
+#
+# WHAT THIS DOES NOT FIX, pre-registered before the run. STRANDING. 67.0% is still unallocated, the stock
+# budget still cannot be filled at a 4%/name cap, and (#246)'s CORE #1 line still fires — correctly. The
+# prize was "size can see the picks", not "the caps stop binding". `max_name_pct` was NOT touched: it is a
+# 20-year concentration decision, not a plumbing one.
+#
+# NOT GRADEABLE by the ship rule, same standing as (#246): no backtest path reaches `size`, no golden
+# covers it, and it claims no horizon. The gradeable half is deliberate — `size::run` is
+# `#[mutants::skip]` (its (#80) receipt records 11 missed mutants inside it), so the logic lives in
+# `screen::last_ranked`, which the gate DOES grade, and `size` only hands it the bytes. Same split (#246).
+# REVERT RULE: delete the flag branch and the helper; there is no config to unset. Revert if
+# `ScreenState.ranked` ever stops being render's printed order, because the printed line promises the user
+# the order the table showed.
 
 # ============================================================================================
 # BUY HEURISTIC (src/picks.rs). Acronyms (CAGR, ROE, P/E, NUPL, SMA, FX, ...): see Glossary in README.md.

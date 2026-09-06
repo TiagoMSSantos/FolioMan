@@ -121,6 +121,22 @@ pub(crate) fn last_core(raw: Option<String>) -> Option<(String, String)> {
     Some((state.date, state.core.first()?.clone()))
 }
 
+/// (#248) The RANKED buy candidates as the last `screen` run left them, plus that run's date:
+/// `(date, tickers)`. `size --picks` sizes these instead of the watchlist, because the two had drifted
+/// apart to the point of uselessness: on the 2026-09-05 state this list held 9 names while `passing` —
+/// the watchlist names clearing every growth gate — held 0, so bare `size` printed "nothing to size" on
+/// a run that had just ranked nine. Order is render's (best first) and is preserved; `size` re-scores
+/// and re-sorts anyway, but a caller reading this list should see the order the table printed.
+///
+/// Pure for [`last_core`]'s reason verbatim: `size::run` is `#[mutants::skip]`, so it does the file read
+/// and hands the bytes here, where the gate can actually grade the logic. `None` on every not-known
+/// path — no state file, a corrupt one ([`parse_state`] already forks that and warns), a state predating
+/// the round-68 `ranked` field, or a run that ranked nothing. Reads no price and moves no weight.
+pub(crate) fn last_ranked(raw: Option<String>) -> Option<(String, Vec<String>)> {
+    let state = parse_state(raw).0?;
+    (!state.ranked.is_empty()).then_some((state.date, state.ranked))
+}
+
 /// (round 56) Two printed fund picks overlap when they share at least this many of their top-10
 /// holdings — half the book, past coincidence: buying both mostly doubles the same mega-caps.
 const HOLDINGS_OVERLAP_MIN: usize = 5;
@@ -4198,6 +4214,33 @@ mod tests {
         assert!(last_core(None).is_none()); // no state file yet
         assert!(last_core(Some("{ truncated".into())).is_none()); // corrupt
         assert!(last_core(Some(state(Vec::new()))).is_none()); // no CORE printed / pre-round-55
+    }
+
+    /// (#248) the ranked handoff to `size --picks`: the whole list, in render's order, plus the run
+    /// date. Every not-known path answers None — no state file, a corrupt one, and a state whose
+    /// `ranked` is empty (written before round 68, or by a run that ranked nothing).
+    #[test]
+    fn last_ranked_hands_size_the_buy_candidates() {
+        let state = |ranked: Vec<String>| {
+            serde_json::to_string(&ScreenState {
+                date: "2026-09-05".into(),
+                passing: Vec::new(),
+                facts: HashMap::new(),
+                fund_meta: HashMap::new(),
+                core: Vec::new(),
+                ranked,
+            })
+            .unwrap()
+        };
+        let v = |ts: &[&str]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            last_ranked(Some(state(v(&["ABEC.DE", "LLY.DE", "BTC-EUR"])))),
+            Some(("2026-09-05".to_string(), v(&["ABEC.DE", "LLY.DE", "BTC-EUR"]))),
+            "the order render printed is the order size receives"
+        );
+        assert!(last_ranked(None).is_none()); // no state file yet
+        assert!(last_ranked(Some("{ truncated".into())).is_none()); // corrupt
+        assert!(last_ranked(Some(state(Vec::new()))).is_none()); // ranked nothing / pre-round-68
     }
 
     /// (round 68) membership diff: no baseline (empty prev — first run or a state file predating
