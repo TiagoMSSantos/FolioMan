@@ -1202,7 +1202,12 @@ sizing:
                       #   scoring positive drew 33% — the whole stock class's share — for no reason but
                       #   being the only coin in the table. 5 is the standing answer to "how much may sit
                       #   in the class that has drawn down 80%+ in every cycle it has had".
-  max_name_pct: 4.0   # no single row over this % of gross; excess is redistributed WITHIN its class
+  max_name_pct: 6.0   # (#262) no single ISSUER over this % of gross; excess is redistributed WITHIN its class.
+                      #   Was 4.0, and read PER TICKER — so the 2026-09-07 book ran 8.0% Alphabet (ABEC.DE 4.0
+                      #   + ABEA.DE 4.0) under a line that printed "max 4.0%/name". `size::first_per_issuer`
+                      #   now collapses the twin BEFORE the weights are struck, which LOWERS the true
+                      #   single-issuer maximum 8.0 -> 6.0 while raising deployed 37.0 -> 42.0. Revert: 4.0
+                      #   (and the dedupe reverts separately — the two are independent).
   max_sector_pct: 25.0 # no GICS sector over this %, stock class only (an ETF's sector label means something
                       #   else and a coin has none). CONSEQUENCE: a class too small to absorb its budget
                       #   under these caps leaves the remainder UNALLOCATED and the table's total prints
@@ -1709,6 +1714,87 @@ sizing:
 #   if the Acc/Dist discrepancy resolves in a way that discredits `fund_meta` (edge (d)).
 #
 
+# (#262) SHIPPED: `max_name_pct` is a per-ISSUER cap now, and it moved 4.0 -> 6.0 in the same round.
+# Two changes, deliberately paired, because they move real risk in OPPOSITE directions.
+#
+# THE DEFECT. `max_name_pct` printed as "max 4.0%/name" and was applied per TICKER. On the 2026-09-07
+# book ABEC.DE and ABEA.DE are both Alphabet — verified as byte-identical `q.name` ("Alphabet", 8
+# chars) in `.screen_web.json`, where names are carried untruncated (the longest ETF name in that file
+# is 55 chars and intact) — and each drew the full 4.0%. So the sized book ran 8.0% of one issuer under
+# a cap that said 4.0, with nothing on the page disclosing it. The hold lane has collapsed twins since
+# `picks::hold_core_list` (`cores.retain(|q| seen.insert(q.name.as_str()))`, picks.rs:4240); the sizer
+# never got the same treatment. `size::first_per_issuer` now does it, applied to `scored` immediately
+# AFTER the rank sort — so the surviving listing is the better-scoring one — and BEFORE `size_weights`,
+# so a dropped twin never draws a share of its class budget and then gets clamped. It is not a row
+# capped to zero; it is not a row.
+#
+# WHY 6.0 IS THE RIGHT PAIRING AND NOT A SEPARATE ASK. Measured, live, both arms the same minute off
+# one warm cache with `md5sum .screen_state.json` unchanged around each (3ec646698e165ac4046ed7d523a48625):
+#
+#                       rows   TOTAL deployed   TRUE max issuer   spill to CORE
+#   control  4.0/ticker   10           37.0%          8.0%  (!)          63.0%
+#   arm      6.0/issuer    9           42.0%          6.0%              58.0%
+#
+# More of the book in the tool's own ranked picks, less of it in the index, AND the largest single-issuer
+# position FALLS. Strictly better on both axes than what shipped, which is the only reason a cap was
+# allowed to rise in the same commit that made it honest.
+#
+# HOW 42.0 ARISES — mechanism, not arithmetic. `size_weights` normalises each class to its FULL budget
+# before the name cap, then clamps and redistributes the excess to same-class rows with room:
+#   stock:  70.0 over 2 issuers -> both clamp to 6.0 -> 12.0 (58 still stranded: 2 names cannot absorb 70)
+#   ETF:    25.0 over 5 rows -> IITU 8.28 and XLKS 7.48 clamp to 6.0, releasing 3.76 into VVSM/SEMI/LYBK,
+#           which all have room -> 6.0+6.0+5.5+5.0+2.5 = the ENTIRE 25.0 budget, deployed for the first time
+#   crypto:  5.0, budget-bound as always (2.6 + 2.4)
+# 12 + 25 + 5 = 42.0. The ETF row set is the arm's distinctive signature and the thing to re-check on any
+# revert: if that class does not sum to exactly 25.0, the cap is not where this receipt says it is.
+#
+# THIS QUALIFIES `(#261)`'s "the class budget does not bind" FINDING, which was measured at 4.0 and is
+# true only there. Above a 5.0 cap the ETF budget starts binding. Not a contradiction — a boundary
+# `(#261)` did not have to state and now does.
+#
+# AND IT CORRECTS `(#261)` ON ONE FACT. That receipt reasoned from `top_picks: 5`, quoting `(#180)`.
+# `top_picks` is 20 (line 1116 of this file), and the live state's `core` list has 20 rows, so the stock
+# and ETF tables are NOT truncated by display depth. `(#180)`'s conclusion — pool supply is the binding
+# constraint — survives intact; the reason `(#261)` gave for it does not. The gates genuinely admit
+# 3 stocks and 5 ETFs, and that is a gate finding, not a display one.
+#
+# THE DEDUPE KEY is `name.to_lowercase()`, matching `screen`'s fund dedup (screen.rs:600 et al) rather
+# than `hold_core_list`'s raw string. THE TWO ALREADY DISAGREE. Taking the safer of the existing pair
+# is deliberate; unifying them would move the HOLD lane on a sizing round, which is not what was asked
+# for or graded here. Recorded as an open inconsistency, not fixed.
+#
+# AN EMPTY NAME IS ALWAYS KEPT. Twins cannot be proven without a name, and merging every unnamed quote
+# into one row would be a data-quality bug wearing a risk control's clothes — non-negotiable #5, missing
+# data passes. Pinned in `first_per_issuer_keeps_the_best_ranked_listing`.
+#
+# HONEST EDGES.
+#   - WHICH TWIN SURVIVES IS DECIDED BY SCORE, NOT LIQUIDITY. ABEC.DE (19.3) keeps the slot over
+#     ABEA.DE (18.9) even though ABEA.DE is the more liquid listing (~EUR 6M vs ~EUR 2M daily turnover).
+#     Immaterial at retail size and the turnover gate already runs upstream, so no tiebreak was added —
+#     but it is a real ordering choice and this is where it is written down.
+#   - THE CAP IS PER ISSUER, NOT PER RISK. Two different issuers can still be the same bet (VVSM and
+#     SEMI overlap heavily on semiconductors). `max_sector_pct` is the knob for that and it is STOCK-CLASS
+#     ONLY, so the ETF class has no such control at all. Unchanged this round, unmeasured, still open.
+#   - 6.0 IS A JUDGEMENT VALUE, not a fitted one. There is no backtest path to `size_weights`, so no
+#     horizon can grade it; it was chosen as the largest number that leaves the true single-issuer
+#     maximum BELOW where the book already sat unmeasured (8.0). Anything above 8.0 would have to argue
+#     for more concentration than today, and nothing here does.
+#   - The spill line still reads "outside the per-name cap by design". Left verbatim: `(#261)` pinned
+#     that sentence byte-for-byte against `(#253)`, and "it is the market, not a name" is still true.
+#
+# `config::Sizing` IS THE DOCUMENTED EXCEPTION TO NON-NEGOTIABLE #1 (see the doc comment at config.rs:78
+# and CLAUDE.md). No backtest path reaches `picks::size_weights` and no golden covers it, so there is no
+# shipped lane for an off-default to protect and the default IS the policy. Confirmed empirically this
+# round: `git status --short` after the change lists exactly four files and no `tests/fixture/*.golden`.
+# Every `size_weights` unit test constructs its own `Sizing` with an explicit `max_name_pct`
+# (0.0/10.0/20.0/30.0), so nothing pinned the old default and nothing had to be re-baselined.
+#
+# REVERT RULE. `max_name_pct: 4.0` restores the old numbers. The dedupe reverts SEPARATELY — delete the
+# two lines in `size::run` that call `first_per_issuer` — and the two are independent: reverting only
+# the cap leaves an honest 4.0%/issuer book at 33.0% deployed, and reverting only the dedupe restores
+# the 8%-Alphabet defect at a 6.0 cap (12.0% Alphabet), which is the one combination NOT to ship.
+# Refuse this round if a later run shows the ETF class NOT summing to 25.0 at cap 6.0 with 5 fund rows.
+#
 # (#254) NO CODE — SIZING THE HOLD LANE WAS PROBED AND IS INERT BY CONSTRUCTION. The measurement IS
 # the deliverable, as in (#226), (#241) and (#242). Nothing shipped; nothing to revert.
 #

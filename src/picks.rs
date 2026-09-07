@@ -4814,6 +4814,12 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
 /// Now: `config::Sizing` states the class shares, renormalised over the classes actually present; then
 /// `max_name_pct` clamps each row and `max_sector_pct` clamps each GICS sector of the stock class.
 ///
+/// (#262) `max_name_pct` is a per-ISSUER cap, and this function is not what makes it one: the CALLER
+/// hands over an already-deduped list (`size::first_per_issuer`), so one row here is one issuer. Passing
+/// two listings of the same company still clamps them independently and still yields 2× the cap — that
+/// is the bug `(#262)` fixed one level up, deliberately, so that a dropped twin never draws a share of
+/// its class budget in the first place.
+///
 /// Excess from a clamp is redistributed to the UNCLAMPED members of the SAME class in proportion to
 /// their vol-target weight, iterated to a fixpoint. Never across a class — that would let a cap quietly
 /// undo the budget split. So when a class cannot absorb its share (3 stocks under a 4% name cap hold

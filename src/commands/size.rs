@@ -65,6 +65,31 @@ pub(crate) fn size_source(
     }
 }
 
+/// (#262) Indices of the first row per ISSUER, in rank order — every later row carrying a name already
+/// seen is dropped. The caller's list MUST already be sorted best-first, because that is what decides
+/// which listing of a twin pair survives.
+///
+/// WHY THIS EXISTS. `max_name_pct` reads "max 4.0%/name" and was applied per TICKER, so a company with
+/// two European listings drew the cap twice: on 2026-09-07 ABEC.DE and ABEA.DE both sized 4.0% and the
+/// printed book ran 8% Alphabet under a 4% cap, with nothing on the page saying so. The hold lane has
+/// collapsed twins since `picks::hold_core_list` (`cores.retain(|q| seen.insert(q.name.as_str()))`);
+/// the sizer never got the same treatment. Applied BEFORE `size_weights`, so a dropped row never draws
+/// a share of its class budget — it is not a row that got capped to zero, it is not a row.
+///
+/// The key is `name.to_lowercase()`, matching `screen`'s fund dedup rather than `hold_core_list`'s raw
+/// string. The two already disagree; this takes the safer of the pair rather than silently unifying
+/// them, which would move the hold lane on a sizing round.
+///
+/// AN EMPTY NAME IS ALWAYS KEPT. Twins cannot be proven without a name, and merging every unnamed quote
+/// into one row would be a data-quality bug wearing a risk control's clothes — non-negotiable #5,
+/// missing data passes.
+pub(crate) fn first_per_issuer(names: &[&str]) -> Vec<usize> {
+    let mut seen = std::collections::HashSet::new();
+    (0..names.len())
+        .filter(|&i| names[i].is_empty() || seen.insert(names[i].to_lowercase()))
+        .collect()
+}
+
 /// (#80) UNGRADEABLE BY THE MUTATION GATE, and skipped so that stays a stated fact rather than a
 /// trap — the same call already made for `screen::run` and `check::run`. `run` is reachable from
 /// `main.rs` alone, so the only test that exercises it is `size_without_candidates_says_nothing_to_size`
@@ -134,6 +159,9 @@ pub async fn run(args: Vec<String>) {
         })
         .collect();
     scored.sort_by(|a, b| b.1.total_cmp(&a.1)); // best score first; total_cmp: a NaN score must not panic the sort
+    // (#262) ... then one row per ISSUER, best-scoring listing wins. See `first_per_issuer` for why.
+    let keep = first_per_issuer(&scored.iter().map(|(q, _)| q.name.as_str()).collect::<Vec<_>>());
+    let scored: Vec<_> = keep.into_iter().map(|i| scored[i]).collect();
 
     if scored.is_empty() {
         println!("No names pass the growth gate — nothing to size. (try `screen` for candidates)");
@@ -156,7 +184,7 @@ pub async fn run(args: Vec<String>) {
 
     println!("Suggested sizes — weight ∝ score ÷ volatility WITHIN a class budget, then capped (READ-ONLY, NOT advice):");
     println!(
-        "  budget {:.0}/{:.0}/{:.0} stock/ETF/crypto (renormalised over the classes present) · max {:.1}%/name · max {:.1}%/sector\n",
+        "  budget {:.0}/{:.0}/{:.0} stock/ETF/crypto (renormalised over the classes present) · max {:.1}%/issuer · max {:.1}%/sector\n",
         sz.budget_stock, sz.budget_etf, sz.budget_crypto, sz.max_name_pct, sz.max_sector_pct,
     );
     println!("  {:<10} {:>7} {:>7} {:>7}  CAP", "TICKER", "SCORE", "VOL", "SIZE%");
@@ -398,6 +426,34 @@ mod tests {
         let (t, note) = size_source(false, false, Vec::new(), None, &wl).unwrap();
         assert_eq!(t, wl);
         assert!(note.is_some_and(|n| n.contains("watchlist")), "the fallback must not be silent");
+    }
+
+    /// (#262) One row per ISSUER, and the FIRST one — rank order decides which listing of a twin pair
+    /// keeps the slot, because `run` dedupes after the sort. The 2026-09-07 pair is the live case:
+    /// ABEC.DE (score 19.3) and ABEA.DE (18.9) are both "Alphabet", and both used to size 4.0%.
+    #[test]
+    fn first_per_issuer_keeps_the_best_ranked_listing() {
+        // the live case: twins collapse to the FIRST, everything else survives in order.
+        assert_eq!(
+            first_per_issuer(&["Alphabet", "Alphabet", "KLA", "Binance Coin"]),
+            vec![0, 2, 3],
+            "the twin must collapse onto the better-ranked venue",
+        );
+
+        // non-adjacent twins still collapse — the pair need not be neighbours in the ranking.
+        assert_eq!(first_per_issuer(&["Alphabet", "KLA", "Alphabet"]), vec![0, 1]);
+
+        // case differences are the same issuer (`screen`'s fund dedup keys the same way).
+        assert_eq!(first_per_issuer(&["Alphabet", "ALPHABET", "alphabet"]), vec![0]);
+
+        // distinct names ALL survive: this must not be able to thin a book that has no twins.
+        assert_eq!(first_per_issuer(&["A", "B", "C"]), vec![0, 1, 2]);
+
+        // AN EMPTY NAME IS ALWAYS KEPT — non-negotiable #5, missing data passes. Merging unnamed
+        // quotes would be a data-quality bug wearing a risk control's clothes.
+        assert_eq!(first_per_issuer(&["", "", "A", ""]), vec![0, 1, 2, 3]);
+
+        assert!(first_per_issuer(&[]).is_empty(), "empty in -> empty out");
     }
 
     /// (round 114) Gap-table semantics: matched holdings split ACTUAL% over their EUR total, an
