@@ -106,16 +106,39 @@ fn parse_state(raw: Option<String>) -> (Option<ScreenState>, bool) {
     }
 }
 
+/// (#259) The note the spill row carries for a CORE fund's replication method, or `None` for no
+/// note at all. `Some("Swap")` is the only value that says anything.
+///
+/// What this is NOT: a claim that synthetic replication is worse. `(#233)` prices it as a BENEFIT —
+/// [`crate::core::us_withholding_free`] and [`crate::core::net_ter`] credit a swap fund the US
+/// dividend withholding it never pays, where an Irish physical fund pays 15% and a Luxembourg one
+/// 30%. But that credit is TIER 3 ONLY by its own explicit scope decision, and the spill row takes
+/// CORE #1 off a BREADTH-MAJOR sort, so the fund it lands on is an all-world tracker at tier 0/1
+/// essentially always. There the counterparty exposure is real and the modelled offset does not
+/// apply. That asymmetry is the whole content of the note, and it is why this lives here rather
+/// than reading `us_withholding_free` — that function answers a different question (what to SORT
+/// on) and would return false for the same row without saying why.
+///
+/// Physical (Full/Opt/Samp/Hybr) needs no note. UNKNOWN makes NO claim — non-negotiable #5, and it
+/// is not a rare path: `fetch::bf_row_meta` carries `replicationMethod` on only 70% of BF rows with
+/// no name fallback, which is the whole reason `hold_allow_swap` exists at all. Unknown means
+/// "never fetched", never "synthetic".
+fn spill_repl_note(repl: Option<&str>) -> Option<&'static str> {
+    (repl == Some("Swap"))
+        .then_some("swap-replicated: counterparty exposure, and the US-withholding credit is tier-3 only")
+}
+
 /// (#246) The broadest row of the CORE shortlist as the last `screen` run left it, plus that run's
-/// date: `(date, ticker)`. [`picks::hold_core_list`] sorts the shortlist breadth-major, so index 0
-/// is the widest tracker on it — the one instrument a stranded equity budget can go into without
-/// anyone picking a bet. `size` reads it to NAME a home for the budget its caps cannot deploy
-/// (`(#245)` measured that at 67% of gross, 62 points of it stock-class budget with no eligible
-/// single names). `size` does the file read itself — its `run` is `#[mutants::skip]`, so the I/O
-/// costs nothing to grade — and hands the bytes here, which keeps this half pure and its test free
-/// of a scratch-dir write. `None` on every not-known path: no state file yet, a corrupt one
-/// ([`parse_state`] already forks that and warns), a state predating the round-55 `core` field, or
-/// a run that printed no CORE table. Display only: it moves no weight and reads no price.
+/// date and how that fund replicates: `(date, ticker, note)`. [`picks::hold_core_list`] sorts the
+/// shortlist breadth-major, so index 0 is the widest tracker on it — the one instrument a stranded
+/// equity budget can go into without anyone picking a bet. `size` reads it to NAME a home for the
+/// budget its caps cannot deploy (`(#245)` measured that at 67% of gross, 62 points of it
+/// stock-class budget with no eligible single names). `size` does the file read itself — its `run`
+/// is `#[mutants::skip]`, so the I/O costs nothing to grade — and hands the bytes here, which keeps
+/// this half pure and its test free of a scratch-dir write. `None` on every not-known path: no
+/// state file yet, a corrupt one ([`parse_state`] already forks that and warns), a state predating
+/// the round-55 `core` field, or a run that printed no CORE table. Display only: it moves no weight
+/// and reads no price.
 ///
 /// `(#253)` skips any CORE ticker already sized in the table above it, taking the next one down.
 /// While `(#246)` only NAMED this row, a duplicate was harmless prose; now that the row carries the
@@ -123,10 +146,19 @@ fn parse_state(raw: Option<String>) -> (Option<ScreenState>, bool) {
 /// the CORE shortlist and the ranked buy list are both drawn from the same ETF universe, so the
 /// overlap is not hypothetical. `None` gains one more arm with that: every CORE candidate is
 /// already in the table, which means the remainder has no home the caller is not already funding.
-pub(crate) fn last_core(raw: Option<String>, sized: &[String]) -> Option<(String, String)> {
+///
+/// `(#259)` adds the third element, and it needed NO new state. The lookup is `fund_meta`, which
+/// round 54 already keyed on `tracked` = watchlist ∪ [`crate::core::hold_suitable`] — and
+/// [`picks::hold_core_list`] admits on `hold_suitable` too, so CORE ⊆ tracked ⊆ `fund_meta` by
+/// construction. That containment holds at BOTH settings of `hold_allow_swap`: with the knob off no
+/// swap fund is CORE in the first place, and with it on (which `tests/ci-settings.yaml` ships) the
+/// replication leg is inert for CORE and `tracked` alike, so the two sets move together. It is read
+/// off the ticker the walk-down SETTLED on, never the one it skipped past.
+pub(crate) fn last_core(raw: Option<String>, sized: &[String]) -> Option<(String, String, Option<&'static str>)> {
     let state = parse_state(raw).0?;
     let core = state.core.into_iter().find(|t| !sized.iter().any(|s| s == t))?;
-    Some((state.date, core))
+    let note = spill_repl_note(state.fund_meta.get(&core).and_then(|(_use, repl)| repl.as_deref()));
+    Some((state.date, core, note))
 }
 
 /// (#248) The RANKED buy candidates as the last `screen` run left them, plus that run's date:
@@ -4296,23 +4328,35 @@ mod tests {
     /// `(#253)` added the skip over already-sized tickers, so the two arms that matter are pinned
     /// with the match AWAY from index 0 of a multi-element list: a one-element `sized` matching
     /// `core[0]` would pass with the filter inverted.
+    ///
+    /// `(#259)` added the replication note, read off `fund_meta`. The arm worth the most here is
+    /// the LAST one: the note must describe the ticker the walk-down settled on, not the one it
+    /// skipped past. It is pinned in BOTH directions (skipped-swap -> no note, skipped-physical ->
+    /// note) because a single direction passes just as well if the lookup reads `core[0]` blindly.
     #[test]
     fn last_core_hands_size_the_broadest_row() {
-        let state = |core: Vec<String>| {
+        let state_repl = |core: Vec<String>, meta: &[(&str, &str)]| {
             serde_json::to_string(&ScreenState {
                 date: "2026-09-05".into(),
                 passing: Vec::new(),
                 facts: HashMap::new(),
-                fund_meta: HashMap::new(),
+                fund_meta: meta
+                    .iter()
+                    .map(|(t, r)| ((*t).to_string(), (None, Some((*r).to_string()))))
+                    .collect(),
                 core,
                 ranked: Vec::new(),
             })
             .unwrap()
         };
+        // no `fund_meta` at all: the round-50..53 state files, and every fund BF never told us
+        // about. Unknown makes no claim (non-negotiable #5), so the note is None throughout.
+        let state = |core: Vec<String>| state_repl(core, &[]);
         let v = |ts: &[&str]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        const SWAP: &str = "swap-replicated: counterparty exposure, and the US-withholding credit is tier-3 only";
         assert_eq!(
             last_core(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &[]),
-            Some(("2026-09-05".to_string(), "WEBG.DE".to_string()))
+            Some(("2026-09-05".to_string(), "WEBG.DE".to_string(), None))
         );
         assert!(last_core(None, &[]).is_none()); // no state file yet
         assert!(last_core(Some("{ truncated".into()), &[]).is_none()); // corrupt
@@ -4323,7 +4367,7 @@ mod tests {
         // of it, so neither "any/all" nor a reversed containment test can pass this by accident.
         assert_eq!(
             last_core(Some(state(v(&["WEBG.DE", "VWCE.DE", "SPYI.DE"]))), &v(&["LLY.DE", "WEBG.DE"])),
-            Some(("2026-09-05".to_string(), "VWCE.DE".to_string()))
+            Some(("2026-09-05".to_string(), "VWCE.DE".to_string(), None))
         );
         // every CORE candidate is already in the table: the remainder has no home the caller is
         // not already funding, so there is nothing to print.
@@ -4331,7 +4375,42 @@ mod tests {
         // a `sized` list that overlaps nothing leaves the broadest row exactly where it was.
         assert_eq!(
             last_core(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &v(&["LLY.DE", "ABEC.DE"])),
-            Some(("2026-09-05".to_string(), "WEBG.DE".to_string()))
+            Some(("2026-09-05".to_string(), "WEBG.DE".to_string(), None))
+        );
+
+        // (#259) a SWAP CORE #1 carries the note; a physical one does not. Today's real shortlist
+        // is the second case (WEBN.DE, "Opt"), so the shipped surface prints no note — the flag
+        // firing is the exception, which is why the negative arm is pinned too.
+        assert_eq!(
+            last_core(Some(state_repl(v(&["ACWIA.SW"]), &[("ACWIA.SW", "Swap")])), &[]),
+            Some(("2026-09-05".to_string(), "ACWIA.SW".to_string(), Some(SWAP)))
+        );
+        for physical in ["Full", "Opt", "Samp", "Hybr"] {
+            assert_eq!(
+                last_core(Some(state_repl(v(&["WEBN.DE"]), &[("WEBN.DE", physical)])), &[]),
+                Some(("2026-09-05".to_string(), "WEBN.DE".to_string(), None)),
+                "{physical} is physical and needs no note"
+            );
+        }
+        // a fund PRESENT in fund_meta but with no replication datum: still no claim.
+        assert_eq!(
+            last_core(Some(state_repl(v(&["WEBN.DE"]), &[])), &[]),
+            Some(("2026-09-05".to_string(), "WEBN.DE".to_string(), None))
+        );
+
+        // the arm this test exists for: the note follows the ticker the (#253) walk LANDS on.
+        let both = v(&["ACWIA.SW", "WEBN.DE"]);
+        let meta = [("ACWIA.SW", "Swap"), ("WEBN.DE", "Opt")];
+        assert_eq!(
+            last_core(Some(state_repl(both.clone(), &meta)), &v(&["ACWIA.SW"])),
+            Some(("2026-09-05".to_string(), "WEBN.DE".to_string(), None)),
+            "skipped the swap row: the physical one it landed on must not inherit the note"
+        );
+        let meta = [("ACWIA.SW", "Opt"), ("WEBN.DE", "Swap")];
+        assert_eq!(
+            last_core(Some(state_repl(both, &meta)), &v(&["ACWIA.SW"])),
+            Some(("2026-09-05".to_string(), "WEBN.DE".to_string(), Some(SWAP))),
+            "skipped the physical row: the swap one it landed on must carry the note"
         );
     }
 

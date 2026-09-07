@@ -1439,6 +1439,102 @@ sizing:
 # distributing: a distributing wrapper taking 67% of a 20-year budget is a different decision and
 # must be re-argued, not inherited.
 #
+# (#259) SHIPPED: the `size` remainder row SAYS HOW ITS FUND REPLICATES. Display only — no knob, no
+# fetch, no price, no weight moved, no state-format change. src/commands/screen.rs
+# (`spill_repl_note` + `last_core`'s third return element) + src/commands/size.rs (the same
+# `total < 99.5` branch (#246)/(#253) built).
+#
+# WHY, in (#253)'s own words. Its HONEST EDGES (d): "Single-issuer concentration is real and unpriced:
+# 67% of gross in one wrapper is counterparty and provider risk that no gate in this repo measures."
+# That sentence is still true and this round does not close it. What it DOES close is the narrower,
+# cheaper half: the wrapper can be SYNTHETIC and the row did not say so. A swap ETF does not hold the
+# index constituents at all — it holds a total-return swap, and the counterparty is the exposure. For
+# a row deliberately outside `max_name_pct` carrying most of a twenty-year budget, that is the one
+# structural fact a reader needs and could not get.
+#
+# SWAP IS NOT "BAD" HERE AND THE NOTE MUST NEVER BE READ THAT WAY. (#233) prices synthetic replication
+# as a BENEFIT: `core::us_withholding_free` + `core::net_ter` credit a swap fund the US dividend
+# withholding it never pays (an Irish physical fund pays 15%, a Luxembourg one 30%). But that credit is
+# TIER 3 ONLY, by an explicit scope decision in its own doc comment ("a world fund is ~65-72% US, which
+# is a REAL saving too — but pricing it needs a per-tier US-weight table of judgement values"). The
+# spill row takes CORE #1 off a BREADTH-MAJOR sort, so it is an all-world tracker at tier 0/1
+# essentially always. At that tier the counterparty exposure is real and the modelled offset does not
+# apply. That asymmetry is the entire content of the note, and it is why `spill_repl_note` does not
+# just call `us_withholding_free`: that function answers a different question (what to SORT on) and
+# would return false for this row without saying why.
+#
+# NO NEW STATE, AND THE FIRST READING OF THIS WAS WRONG. The round opened on the belief that
+# `fund_meta` could not cover CORE, because `hold_suitable`'s leg 3 requires physical. It does not —
+# that leg is retired by `hold_allow_swap`, which THIS FILE ships true, and that knob is the very
+# reason a swap fund can be CORE #1 at all. The containment runs the other way and is total:
+# `picks::hold_core_list` admits on `eu_buyable && core::hold_suitable`; `screen`'s `tracked` is
+# `settings.tickers.contains(..) || core::hold_suitable(..)`; `fund_meta` is built over `tracked`. So
+# CORE is a SUBSET of tracked at both settings of the knob. Confirmed live below, not just argued.
+#
+# MEASURED LIVE 2026-09-07, live config, off the journalled state (.screen_state.json, date
+# 2026-09-07, CORE n=20):
+#   CORE #1        WEBN.DE, REPL "Opt" (physical-optimised) -> NO NOTE. The row is byte-identical to
+#                  (#253)'s and the spill is 84.0% of gross today (vs (#248)'s 67.0% — it GREW).
+#   containment    0 of 20 CORE tickers absent from `fund_meta`. The subset claim above is now
+#                  observed, not only derived.
+#   REPL census    127 tracked funds: Full 62, Opt 22, Swap 19, unknown 24.
+#   CORE census    3 of 20 carry "Swap" — SC0J.DE (#8), SPXS.L (#15), MXUS.L (#16) — and 1 is unknown
+#                  (ACWIA.SW, #4). The note is REACHABLE on today's data: the (#253) walk-down skips
+#                  CORE rows already sized, and eight skips reach SC0J.DE.
+# The negative result IS the pass condition this round: today's shortlist is headed by a physical
+# fund, so the correct shipped behaviour is a flag that stays silent.
+#
+# THE FLAG IS NARROWER THAN THE RISK, AND THE GAP IS NAMED. ACWIA.SW is "UBS MSCI ACWI SF" — the SF
+# suffix is UBS's own mark for a swap-based share class, and it sits at CORE #4 — yet `fund_meta`
+# carries NO replication datum for it, so the note does not fire. That is not a bug in this round, it
+# is non-negotiable #5 held to: unknown makes no claim. It is also structural — `core.rs`'s own
+# comment says it: "unlike the share-class leg one line down, replication has no name fallback", and
+# `fetch::bf_row_meta` carries `replicationMethod` on only ~70% of BF rows (19 of 127 unknown here,
+# which matches). UPGRADE PATH, if a later round wants it: give replication the name fallback the
+# share-class leg has (`use_from_name`'s shape). That is NOT a display change — it would feed
+# `hold_miss_leg` and could move admission, so it is its own round with its own grade, and it must not
+# be smuggled in behind this note.
+#
+# (#253)'s OPEN Acc/Dist DISCREPANCY: NOT REPRODUCED, AND STILL NOT SETTLED. That receipt recorded
+# `fund_meta` tagging CORE #1 and 7 of 20 CORE members "Dist" while `hold_core_list` admits only
+# through an Acc leg with no knob, and offered a HashMap ticker collision as one hypothesis. On the
+# 2026-09-07 state all 20 CORE members read "Acc", none is missing, and the whole 127-entry map holds
+# ZERO "Dist" (Acc 123, unknown 4). That is new evidence the two records agree, and it is why this
+# round was willing to read the map at all — but (#253) wrote "Do not cite either record as settled
+# until it is", and one clean observation does not resolve a discrepancy nobody has explained. IT IS
+# LOAD-BEARING HERE: this note reads the REPL half of the SAME map, so if the collision hypothesis is
+# ever confirmed, the note inherits the defect and must be reverted with it.
+#
+# NOT GRADEABLE by the ship rule, same standing as (#246)/(#248)/(#253)/(#257): no backtest path
+# reaches `size`, no golden covers it, it claims no horizon and no edge. No knob, so non-negotiable #1
+# has nothing to protect — and `config::Sizing` is untouched. Gates: 390/9(1 ignored)/21 in BOTH
+# regimes, clippy -D warnings clean, no golden moved. The gradeable half is deliberate again:
+# `size::run` is `#[mutants::skip]` ((#80)), so the rule lives in `screen::spill_repl_note` — its own
+# free function rather than a branch inside `last_core`, so the gate gets a clean return-replacement
+# target — and `size` only prints what it is handed.
+#
+# HONEST EDGES. (a) NO END-TO-END POSITIVE. The negative arm was verified through the real CLI; the
+# positive was not. An isolated probe (a scratch dir with its own ci-settings.yaml and a doctored
+# state putting SC0J.DE at CORE #1) did NOT work: `config::anchored_path` did not follow
+# FOLIOMAN_CONFIG to the scratch dir, and the run read a third journal. The live journal was NOT
+# doctored to force it — `size` is read-only there and it stayed so (md5 and mtime unchanged across
+# every run). The positive is pinned in unit tests instead, in BOTH walk-down directions
+# (skipped-swap -> no note, skipped-physical -> note), because one direction alone passes just as well
+# if the lookup reads core[0] blindly. The only untested link is a `format!` inside `#[mutants::skip]`
+# code. (b) The note describes the wrapper, not the counterparty: it does not name the swap
+# counterparty, its collateral, or the collateralisation level, none of which this repo fetches.
+# (c) Unknown replication prints nothing, so absence of a note is NOT evidence of physical
+# replication — see the ACWIA.SW gap above. (d) Still READ-ONLY: no order, no fetch, no price, no
+# weight in `size_weights` moved.
+#
+# REVERT RULE: drop the third element of `last_core`'s return, delete `spill_repl_note`, and restore
+# the single `println!` in size.rs's `Some` arm. There is no config to unset. Revert if the Acc/Dist
+# discrepancy above resolves AGAINST `fund_meta` — a map that mis-keys share class mis-keys
+# replication by the same mechanism, and a wrong note is worse than no note on a row this size. Revert
+# also if `hold_allow_swap` is ever set false: with the leg live no swap fund reaches CORE, the note
+# becomes unreachable by construction, and dead disclosure code should go rather than mislead a reader
+# into thinking the check is still doing something.
+#
 # (#254) NO CODE — SIZING THE HOLD LANE WAS PROBED AND IS INERT BY CONSTRUCTION. The measurement IS
 # the deliverable, as in (#226), (#241) and (#242). Nothing shipped; nothing to revert.
 #

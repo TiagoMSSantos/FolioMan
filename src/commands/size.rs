@@ -156,8 +156,14 @@ pub async fn run(args: Vec<String>) {
             std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok(),
             &sized,
         ) {
-            Some((date, core)) => {
-                println!("  {core:<10} {dash:>7} {dash:>7} {rest:>6.1}%  broad-market · CORE #1, {date} screen", dash = "—");
+            Some((date, core, repl)) => {
+                // (#259) ... and say HOW it replicates, when that is worth saying. This one row can
+                // be two thirds of gross and sits outside `max_name_pct` by design, so a synthetic
+                // wrapper entering it silently is the one disclosure the row was still missing.
+                // Empty for physical AND for unknown — see `screen::spill_repl_note`, which owns the
+                // rule; this end only prints what it is handed.
+                let note = repl.map(|r| format!(" · {r}")).unwrap_or_default();
+                println!("  {core:<10} {dash:>7} {dash:>7} {rest:>6.1}%  broad-market · CORE #1, {date} screen{note}", dash = "—");
                 println!("  {:<10} {:>7} {:>7} {:>6.1}%", "TOTAL+", "", "", total + rest);
                 println!(
                     "  (the {rest:.1}% the caps could not deploy, in one all-world tracker — outside the per-name cap by design: it is the market, not a name. Or add candidates / raise a cap. NOT advice)"
