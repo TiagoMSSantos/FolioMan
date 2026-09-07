@@ -1960,6 +1960,72 @@ buy_heuristic:
                                  #   later on the same code. Printed rows can also EXCEED `cleared`, because pinned
                                  #   watchlist names bypass the gates on a sentinel score. Never grade a screen arm
                                  #   against a control that was not run adjacent to it.
+                                 #   (#257) SHIPPED 2026-09-06: TWO CONCENTRATION DISCLOSURES THAT LIED BY OMISSION.
+                                 #   Display only — no knob, no gate, no threshold, no weight, no extra fetch. Both
+                                 #   halves err'd in the UNSAFE direction: they made the book read WIDER than it is.
+                                 #   The forty-fifth "more names" round, and the literal ask is again NO — but this
+                                 #   time the run says why. `cleared 12` and all 12 print; the per-class display caps
+                                 #   are `20 max` and never bind; the score floor is `min_score.max(0.0)` and holds
+                                 #   nothing back. The lane is SUPPLY-EXHAUSTED AT THE OUTPUT STAGE. What the same run
+                                 #   does show: 15 printed rows are ~9 distinct bets (Alphabet twice, S&P 500 three
+                                 #   times, four US-tech/semis wrappers). So the round went to honesty, not width.
+                                 #   HALF 1 — `holdings_unscanned_line` (src/commands/screen.rs). The overlap footer
+                                 #   groups picks sharing >= HOLDINGS_OVERLAP_MIN top-10 holdings. A fund Yahoo serves
+                                 #   an EMPTY holdings book for is silently absent from every group, so it reads as
+                                 #   "overlaps nothing" when the truth is "was never scanned". That is (#245)'s own
+                                 #   recorded BLIND SPOT (XLKS.L, swap-based) and the (#37 funds) "selection by absent
+                                 #   data" shape. (#245) closed it only for the CAP case ("nothing for it to be a hole
+                                 #   IN"); for DISCLOSURE it was still live. The repair is NOT a `borrow_index_twins`
+                                 #   holdings borrow — that is a second fetch pass built for a knob (#245) REFUSED.
+                                 #   Missing data does not get invented, it gets DECLARED. Scoped to `bench`, the exact
+                                 #   pick set the payload was fetched for. Capped at 15 names with a `+N` tail.
+                                 #   NON-NEGOTIABLE #4: the "can this be scanned" test now has ONE spelling,
+                                 #   `holdings_scannable`, called by the grouper AND by the note that reports its
+                                 #   complement. They cannot disagree about who was scanned.
+                                 #   HALF 2 — `mix_rows` (src/picks.rs). `sector mix`/`market mix` counted printed ROWS.
+                                 #   A pinned dual-class twin reaches the table ON PURPOSE (`ranked` never dedups a
+                                 #   PINNED ticker away), so the line read `Communication Services 2` for ONE company
+                                 #   (live: ABEC.DE + ABEA.DE, both Alphabet). (#27)'s own hint is "treat each sector as
+                                 #   ONE bet when sizing" — the line exists to count BETS. Keyed on `quote.name`, the
+                                 #   SAME "same company = identical Yahoo name" rule `ranked`'s dual-class collapse
+                                 #   already uses, not a second spelling of it (#4 again). The TABLE IS UNTOUCHED — the
+                                 #   pin still shows its row; only the tally changed. Extracted to a free function
+                                 #   because `print_lane` is `#[mutants::skip]` per (#79) and its own doc says its
+                                 #   decisions belong in functions the gate can reach.
+                                 #   MEASURED 2026-09-06, live A/B, control and arm ADJACENT on one warm cache, each
+                                 #   binary built fresh (never `cp -p` between arms):
+                                 #     sector mix  `Communication Services 2, Information Technology 2, Consumer
+                                 #                 Discretionary 1` -> `Information Technology 2, Communication
+                                 #                 Services 1, Consumer Discretionary 1`   (the Alphabet twin)
+                                 #     market mix  `Germany 5` -> `Germany 4`              (same one row)
+                                 #     new line    `not scanned, no holdings book served: ACWIA.SW AUM5.DE MXUS.L
+                                 #                 SC0J.DE SPXS.L VALL.L XLKS.L`
+                                 #     all three printed tables IDENTICAL by fund name between arms. Neither revert
+                                 #     rule fired. The rest of the diff (57 lines) is pond/network drift between the
+                                 #     two runs — fund-facts fallback 225->352, justETF 20->94, ETFs missing TER
+                                 #     407->590, GEO blind spot 33->40, CORE funnel `not Acc` 186->183, price ticks,
+                                 #     AMZ.DE PEG 3.08->3.09 — none of it reachable from a display-only change.
+                                 #   The named cohort is COHERENT and not a bug: ACWIA.SW/SC0J.DE/SPXS.L/MXUS.L/XLKS.L
+                                 #   are swap/synthetic wrappers, VALL.L is 0.0y brand new. Exactly the (#37 funds)
+                                 #   class the note was written for.
+                                 #   PRE-REGISTRATION WAS PARTLY WRONG, recorded because the reason is reusable: it
+                                 #   predicted the note would name "at least XLKS.L and SMH.L". SMH.L appeared in the
+                                 #   note AND in no overlap group. Investigated rather than waved through — SMH.L and
+                                 #   VVSM.DE are the SAME fund ("VanEck Semiconductor") on two venues, and `syms` keeps
+                                 #   ONE venue per fund NAME. VVSM.DE was the fetched-and-grouped leg that run. A VENUE
+                                 #   ARTIFACT, not a data gap. WORTH BANKING: the footer discloses under the FETCHED
+                                 #   venue's ticker, which can differ from the ticker on the PRINTED row. A reader
+                                 #   matching the note to the table by ticker can therefore miss a match.
+                                 #   NON-NEGOTIABLE #1 STANDING. Both halves are defect fixes to DISPLAY, not new
+                                 #   policy, so "every NEW knob defaults to CURRENT behaviour" has nothing to bind:
+                                 #   there is no knob. Same standing as (#246) and (#253), which shipped on-by-default.
+                                 #   VERIFIED, NOT ASSERTED: `git status --short` after `cargo t` in BOTH regimes shows
+                                 #   no tests/fixture/*.golden movement. (#192) shipped that claim falsely once and five
+                                 #   moving goldens caught it.
+                                 #   REVERT RULE: revert either half if a `screen` run shows any of the three tables
+                                 #   gaining or losing a row against the run before it on the same code, or if a fund
+                                 #   named in the "not scanned" note ALSO appears in an overlap group above it — that
+                                 #   second one means `holdings_scannable` has acquired a second spelling.
   endpoint_smooth_days: 105      # LIVE+BACKTEST: the "current price" used by the LONG-horizon MEASUREMENTS (>=1Y
                                  #   perf %/long CAGR legs, range position, drawdown — so the hard range gate) = mean
                                  #   of the closes in the last N TRADING DAYS. 105 ≈ 5 months. The span converts to

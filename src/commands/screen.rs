@@ -153,6 +153,46 @@ const HOLDINGS_OVERLAP_MIN: usize = 5;
 /// that is half NVDA+AVGO+TSM), the risk a 20yr survival screen cares about.
 const TOP_HEAVY_FRACTION: f64 = 0.40;
 
+/// (#257) Whether the overlap scan can see this pick AT ALL — the served book has to reach
+/// `HOLDINGS_OVERLAP_MIN` before `holdings_overlap_lines` will group it. ONE spelling of that test,
+/// read by the grouper and by `holdings_unscanned_line`, which reports its complement
+/// (non-negotiable #4: the two must never be able to disagree about who was scanned).
+fn holdings_scannable(holdings: &std::collections::HashMap<String, Vec<(String, f64)>>, ticker: &str) -> bool {
+    holdings.get(ticker).is_some_and(|h| h.len() >= HOLDINGS_OVERLAP_MIN)
+}
+
+/// (#257) The picks the overlap scan could not see, NAMED instead of silently exempt. The grouper
+/// can only group what Yahoo served, so a fund with an empty or stub holdings book reads as
+/// "overlaps nothing" — and that is the reading that costs money: XLKS.L is a swap-based US-tech
+/// wrapper standing beside three funds the footer DOES print as one bet, so a reader takes it for a
+/// fourth, independent position. It is not. This is the (#37 funds) "selection by absent data"
+/// shape, which `borrow_index_twins` repairs one level up for the fund PEG ceiling and nothing
+/// repairs here. (#245) closed it for a CAP — with the cap refused "there is nothing for it to be a
+/// hole IN" — and left it open for the DISCLOSURE, which is this line. Borrowing a twin's book
+/// would be inventing data for a display note; naming the gap is the honest floor.
+///
+/// `syms` is the pick set the payload was fetched for (funds only, already sorted and deduped).
+/// `None` when every pick was scanned — the footer then reads exactly as it does today.
+fn holdings_unscanned_line(
+    syms: &[String],
+    holdings: &std::collections::HashMap<String, Vec<(String, f64)>>,
+) -> Option<String> {
+    // enough to recognise the cohort, short enough to stay one line — the `NAME_CAP` reasoning, not
+    // the same number: this list is funds only, so it is far shorter than the gate funnel's.
+    const CAP: usize = 15;
+    let missing: Vec<&str> =
+        syms.iter().map(String::as_str).filter(|t| !holdings_scannable(holdings, t)).collect();
+    if missing.is_empty() {
+        return None;
+    }
+    let more = missing.len().saturating_sub(CAP);
+    let tail = if more > 0 { format!(" +{more}") } else { String::new() };
+    Some(format!(
+        "  not scanned, no holdings book served: {}{tail} — absent from the groups above for want of DATA, not for want of overlap",
+        missing[..missing.len().min(CAP)].join(" ")
+    ))
+}
+
 /// (round 57) Group the printed picks that hold most of the same top-10 names, one line per group
 /// of 2+ instead of round-56's O(n²) pair spam. COMPLETE linkage: a pick joins a group only if it
 /// shares ≥ `HOLDINGS_OVERLAP_MIN` holdings with EVERY current member — single-linkage would chain
@@ -162,7 +202,7 @@ const TOP_HEAVY_FRACTION: f64 = 0.40;
 /// whole group, so its own size states how tight the group is.
 fn holdings_overlap_lines(holdings: &std::collections::HashMap<String, Vec<(String, f64)>>) -> Vec<String> {
     let mut tickers: Vec<&String> =
-        holdings.keys().filter(|t| holdings[*t].len() >= HOLDINGS_OVERLAP_MIN).collect();
+        holdings.keys().filter(|t| holdings_scannable(holdings, t)).collect();
     tickers.sort();
     let syms = |t: &str| -> std::collections::HashSet<&str> {
         holdings[t].iter().map(|(s, _)| s.as_str()).collect()
@@ -2242,9 +2282,15 @@ pub async fn run(args: Vec<String>) {
     // which has to run before the tables print); everything in this block stays display-only.
     {
         let clusters = holdings_overlap_lines(&holdings);
-        if !clusters.is_empty() {
+        // (#257) `bench` is the pick set the payload was fetched for, so the note below is scoped to
+        // exactly the funds this footer claims to have judged — no wider, no narrower.
+        let unscanned = holdings_unscanned_line(&bench, &holdings);
+        if !clusters.is_empty() || unscanned.is_some() {
             println!("\nHoldings overlap — picks that are effectively the same position (shared top-10 holdings, so buying several ≈ one concentrated bet):");
             for l in &clusters {
+                println!("{l}");
+            }
+            if let Some(l) = &unscanned {
                 println!("{l}");
             }
         }
@@ -3240,6 +3286,40 @@ mod tests {
         assert_eq!(lines[0], "  3 picks effectively one bet: A.L B.L C.L (shared top-10: S0 S1 S2 S3 +1)");
         assert!(!lines[0].contains("G.L"));
         assert!(holdings_overlap_lines(&HashMap::new()).is_empty());
+    }
+
+    /// (#257) the footer names what it could NOT scan. Absent from the payload entirely (the
+    /// swap-based-wrapper case: Yahoo serves an empty book) and present-but-too-thin are the SAME
+    /// exemption and must both be reported, because both read as "overlaps nothing" otherwise. A
+    /// fund the grouper CAN see is never named, and an all-scanned pick set stays silent so the
+    /// footer reads exactly as it does today. Pinned to the shared predicate: whoever the grouper
+    /// skips is whoever this line names, which is the (#4) guarantee the two share one spelling for.
+    #[test]
+    fn holdings_unscanned_names_the_silent_exemptions() {
+        let syms = |n: usize| -> Vec<(String, f64)> { (0..n).map(|i| (format!("S{i}"), 0.0)).collect() };
+        let mut h: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        h.insert("SEEN.L".into(), syms(10)); // scanned
+        h.insert("THIN.L".into(), syms(3)); // served, under HOLDINGS_OVERLAP_MIN -> exempt
+        h.insert("EMPTY.L".into(), Vec::new()); // served nothing -> exempt
+        let picks: Vec<String> =
+            ["ABSENT.L", "EMPTY.L", "SEEN.L", "THIN.L"].iter().map(|s| s.to_string()).collect();
+        let line = holdings_unscanned_line(&picks, &h).expect("three picks are unscannable");
+        assert!(line.contains("ABSENT.L") && line.contains("EMPTY.L") && line.contains("THIN.L"), "{line}");
+        assert!(!line.contains("SEEN.L"), "a scanned fund must never be named: {line}");
+        assert!(!line.contains('+'), "four picks is under the cap, so no +N tail: {line}");
+        // exactly the grouper's complement, on the same input
+        for t in ["ABSENT.L", "EMPTY.L", "THIN.L"] {
+            assert!(!holdings_scannable(&h, t), "{t} must be invisible to the grouper too");
+        }
+        assert!(holdings_scannable(&h, "SEEN.L"));
+        // every pick scanned -> silent
+        assert_eq!(holdings_unscanned_line(&["SEEN.L".to_string()], &h), None);
+        assert_eq!(holdings_unscanned_line(&[], &h), None);
+        // over the 15 cap -> the remainder is counted, not printed
+        let many: Vec<String> = (0..18).map(|i| format!("M{i:02}.L")).collect();
+        let capped = holdings_unscanned_line(&many, &h).expect("all 18 are absent");
+        assert!(capped.contains(" +3"), "18 unscanned over a 15 cap -> +3: {capped}");
+        assert!(capped.contains("M00.L") && !capped.contains("M15.L"), "{capped}");
     }
 
     /// (round 58) the cluster line quantifies the common set per member: same 5 shared names are

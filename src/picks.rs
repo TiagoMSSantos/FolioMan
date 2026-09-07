@@ -3782,6 +3782,25 @@ fn lane_head(len: usize, n: usize) -> String {
     if len >= n { format!("Top {n}") } else { format!("Top {len} of {n} max") }
 }
 
+/// (#257) The rows the two mix lines COUNT — one per distinct company, in printed order.
+///
+/// They count BETS, not rows: `(#27)`'s own hint is "treat each sector as ONE bet when sizing". A
+/// pinned dual-class twin reaches this table on purpose — `ranked` never dedups a PINNED ticker
+/// away, so the pin always shows its row — and the counts then read `Communication Services 2` for
+/// ONE company (live: ABEC.DE + ABEA.DE, both Alphabet). That errs in the unsafe direction, making
+/// the book look more diversified than it is, which is the one thing a concentration disclosure
+/// must not do. The TABLE is untouched; only what the mix lines tally.
+///
+/// Keyed on `quote.name` — the SAME "same company = identical Yahoo name" rule `ranked`'s
+/// dual-class collapse already uses, not a second spelling of it (non-negotiable #4).
+///
+/// Lives out here rather than inline because `print_lane` is `#[mutants::skip]`: per its own doc,
+/// its decisions belong in functions the gate can reach.
+fn mix_rows<'a>(stock: &[(&'a Quote, f64)], n: usize) -> Vec<&'a Quote> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    stock.iter().take(n).map(|(quote, _)| *quote).filter(|q| seen.insert(q.name.as_str())).collect()
+}
+
 /// UNGRADEABLE, hence the skip — the same story as [`print_picks`] below it, and (#79) proven the
 /// same way: `replace print_lane with ()` was graded 2026-08-17 against `--lib --test
 /// backtest_fixture` and MISSED, because every effect this has is a `println!` and the killing suite
@@ -3809,7 +3828,7 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
         let mix = counts.iter().map(|(k, c)| format!("{k} {c}")).collect::<Vec<_>>().join(", ");
         println!("  ({label}: {mix} — {hint})");
     };
-    let shown: Vec<&Quote> = stock.iter().take(n).map(|(quote, _)| *quote).collect();
+    let shown: Vec<&Quote> = mix_rows(&stock, n);
     if !shown.is_empty() {
         if !sector_of.is_empty() {
             let mut counts: HashMap<&str, usize> = HashMap::new();
@@ -7694,6 +7713,33 @@ mod tests {
         assert_eq!(lane_head(21, 20), "Top 20", "…and so is more than n, which print_picks then caps");
         assert_eq!(lane_head(3, 20), "Top 3 of 20 max", "short = say how many qualified, not a quota");
         assert_eq!(lane_head(0, 20), "Top 0 of 20 max");
+    }
+
+    /// (#257) The mix lines count BETS, not rows. A pinned dual-class twin is printed on purpose but
+    /// is ONE company, so it must be tallied once — counting it twice makes the book read more
+    /// diversified than it is, the one direction a concentration disclosure must never err in. The
+    /// key is `quote.name`, the same rule `ranked`'s dual-class collapse uses. `n` still truncates
+    /// FIRST, so the counts describe the printed rows and not the rows below the cut.
+    #[test]
+    fn mix_rows_counts_companies_not_rows() {
+        let q = |ticker: &str, name: &str| Quote::stub(ticker, "€1.00", "", name);
+        let rows: Vec<(Quote, f64)> = vec![
+            (q("ABEC.DE", "Alphabet"), 9.0),
+            (q("ABEA.DE", "Alphabet"), 8.0), // the pinned dual-class twin: same company, second row
+            (q("KLA.DE", "KLA Corporation"), 7.0),
+            (q("NVD.DE", "NVIDIA"), 6.0),
+        ];
+        let stock: Vec<(&Quote, f64)> = rows.iter().map(|(quote, s)| (quote, *s)).collect();
+        let tickers = |v: &[&Quote]| -> Vec<String> { v.iter().map(|q| q.ticker.clone()).collect() };
+
+        // both Alphabet rows print, but the tally sees one — and it keeps the FIRST (best-ranked) leg
+        assert_eq!(tickers(&mix_rows(&stock, 4)), ["ABEC.DE", "KLA.DE", "NVD.DE"]);
+        // `n` truncates before the dedup, so a name below the cut cannot sneak into the counts
+        assert_eq!(tickers(&mix_rows(&stock, 2)), ["ABEC.DE"]);
+        assert_eq!(tickers(&mix_rows(&stock, 3)), ["ABEC.DE", "KLA.DE"]);
+        assert!(mix_rows(&stock, 0).is_empty());
+        // no twins -> every row is its own bet, order preserved
+        assert_eq!(tickers(&mix_rows(&stock[2..], 2)), ["KLA.DE", "NVD.DE"]);
     }
 
     /// (#79) The ETF lane's own NAME width, extracted from `print_lane` so the payload's ETF row is
