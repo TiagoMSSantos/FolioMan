@@ -9706,6 +9706,54 @@ buy_heuristic:
                                  #   The honest read is that this lever is CLOSED, on the same evidence the other five closed on.
                                  #   REVERT RULE: none needed — nothing shipped. 0.0 IS the shipped value and it is the INHERIT
                                  #   sentinel, so deleting the key entirely is byte-identical too.
+                                 #   (#258) THE 18.0 RUNG, GRADED 2026-09-07. REFUSED ON PRIMARY AT 8y. NOTHING SHIPS; 0.0 STANDS.
+                                 #   WHY IT WAS RUN. (#192) graded ONE rung, 15.0, which admits 131 ETF cutoffs at 8y. The names
+                                 #   actually one notch outside on the LIVE run sit at 17.6-18.5%/yr (cagr sole-blocks 8 ETFs:
+                                 #   ANXU.L ESIF.L FLXK.L MIBA.MI PANX.PA SXLK.L XAIX.DE XUTC.L), i.e. an order of magnitude
+                                 #   fewer. Since (#192)'s mechanism is DILUTION, which scales with admission, the refusal at
+                                 #   15.0 did not carry to 18.0 by argument. It does by measurement.
+                                 #   METHOD. Six `backtest {20,12,8} universe fund pit` runs, control (0.0 = inherit) vs arm
+                                 #   (18.0), adjacent on one warm pond, probe configs each NAMED ci-settings.yaml in their own
+                                 #   directory (any other name silently merges the repo file as base and the control becomes a
+                                 #   second arm). Control verified byte-identical to the repo file with `cmp`. Windows scored
+                                 #   1119/2781/6199 at 20y/12y/8y — no FOLIOMAN_OFFLINE collapse.
+                                 #     PROOF OF ARM (growth-scored / cutoffs, control -> arm):
+                                 #       20y  ETF   0/12   ->   0/12      stock 120/2273 both
+                                 #       12y  ETF   0/3155 ->   1/3155    stock 251/5462 both
+                                 #        8y  ETF   7/9677 ->  17/9677    stock 350/7661 both
+                                 #       The stock column is IDENTICAL at all three horizons — an ETF floor that moved the equity
+                                 #       lane would be a bug, and this is the check that would have caught it.
+                                 #     PRIMARY — top-10 held book, excess mean (median) pts/yr, control -> arm:
+                                 #        8y  +5.2 (+5.4)  ->  +5.1 (+5.2)     BOTH DOWN, 0.1 and 0.2           REFUSES
+                                 #       12y  +3.9 (+4.0)  ->  +3.9 (+4.0)     HELD, both legs
+                                 #       20y  +0.6 (-0.0)  ->  +0.6 (-0.0)     unmoved — ETF 0/12, arm IS the control
+                                 #       No horizon improves, so this is NOT a TIE. It is a PRIMARY refusal at 8y.
+                                 #     GUARDS ALL PASS — reported because the arm was refused on its merits, not on a break:
+                                 #       worst window (top-10)  20y -10.0 = -10.0   12y -6.4 = -6.4   8y -5.5 = -5.5   not worse
+                                 #       rank-1 h2h   8y 19/27 (70%) = control, on the 6-10 book per (#160), >=50% and NOT BELOW
+                                 #       rank-1 h2h  12y 12/19 (63%) = control, same book, same two bars
+                                 #       rank-1 h2h  20y 1/2 (50%) on the 11-20 book, n=2 -> VACUOUS BY RESOLUTION per (#186).
+                                 #         Vacuous is not a pass; the arm still cleared 20y's live MAX guard unchanged.
+                                 #     MECHANISM, from the disjoint rank slices at 8y — (#192)'s finding, reproduced at 1/13th
+                                 #     the admission:
+                                 #       rank 1     +5.9|+7.5  IDENTICAL      no admitted fund ever reaches rank 1
+                                 #       rank 2-5   +5.1|+5.6  IDENTICAL
+                                 #       rank 6-10  -0.2|+1.7  ->  -0.4|+1.4   THE DILUTION, and the whole of the PRIMARY loss
+                                 #       rank 11-20 +2.9|+2.7  ->  +4.9|+4.2   the displaced names improve the slice BELOW
+                                 #     The admitted ETFs land in ranks 6-10 and an equal-weight top-10 pays 1/N for each.
+                                 #   WHAT THIS ACTUALLY ADDS, STATED HONESTLY. (#192)'s RE-ARMING RULE CALLED THIS RESULT IN
+                                 #   ADVANCE: "a floor picked high enough not to hurt is a floor that admits nothing... do not fit
+                                 #   this knob to the grade — that is a search for the value where the harm rounds to zero, not a
+                                 #   finding." That is exactly what 18.0 is, and the run CONFIRMS the prediction rather than
+                                 #   overturning it. The monotone claim was carried by two points; it now has four, and they line
+                                 #   up: 8y admits 131 -> loses 0.5|1.3, admits 10 -> loses 0.1|0.2; 12y admits 12 -> loses 0|0.6,
+                                 #   admits 1 -> loses 0|0. The harm shrinks with admission and NEVER turns positive.
+                                 #   WHAT IT SETTLES. The 15-19 interval is now CLOSED at both ends by measurement, not by
+                                 #   extrapolation. Do not grade a third rung: 17.5 and 17.0 differ from 18.0 only in admitting a
+                                 #   few more of the same wrappers (the sole-blocked eight are US/World INFO TECH and semis
+                                 #   trackers — XUTC.L, SXLK.L, XAIX.DE, XDWT.L are four wrappers of one bet), and (#257) shipped
+                                 #   a disclosure precisely because the book already overstates its independence.
+                                 #   REVERT RULE: none needed — nothing shipped. 0.0 stands as the INHERIT sentinel.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
                                  #   (#3k) 2026-07-29 LOWERED 0.35 -> 0.15 — the WINNER'S-CURSE CURE. New
                                  #   rank-slice/head-to-head instrumentation proved rank 1 was the WORST
