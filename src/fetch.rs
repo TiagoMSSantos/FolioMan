@@ -355,8 +355,10 @@ pub fn parse_chart(j: &Value, ticker: &str) -> Option<Chart> {
     // trim then happens where the as-of slice is known — `core::backtest_quote` for the walk, and the
     // merged-series pass below for the live path, which already re-trims the whole record anyway.
     if !crate::picks::is_currency_quoted(ticker) && !crate::config::splice_trim_point_in_time() {
-        let start =
-            core::splice_trim_start(&dates, &closes, crate::config::splice_max_weekly_rate());
+        // (#263) ...composed with the plateau twin by `max`: a record can carry both lies, and the
+        // trustworthy start is after whichever ends later.
+        let start = core::splice_trim_start(&dates, &closes, crate::config::splice_max_weekly_rate())
+            .max(core::flat_trim_start(&dates, &closes, crate::config::flat_run_max_years()));
         if start > 0 {
             let cut = dates[start];
             dates.drain(..start);
@@ -659,7 +661,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // the monthly-head/daily-tail seam is a joint neither payload contains alone — a redenomination
     // exactly there only becomes a visible step once the two are glued.
     if !crate::picks::is_currency_quoted(ticker) {
-        let start = core::splice_trim_start(&long_dates, &long_closes, crate::config::splice_max_weekly_rate());
+        let start = core::splice_trim_start(&long_dates, &long_closes, crate::config::splice_max_weekly_rate())
+            .max(core::flat_trim_start(&long_dates, &long_closes, crate::config::flat_run_max_years())); // (#263) same `max` compose
         if start > 0 {
             let cut_d = long_dates[start];
             long_dates.drain(..start);

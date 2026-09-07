@@ -2440,6 +2440,78 @@ buy_heuristic:
   # All flow to LIVE screen AND the backtest (train==serve), so a `backtest 12 universe` measures them
   # honestly. UNVALIDATED at flip time — run .claude/run_me.sh steps B/E and REVERT any that drops rho/edge
   # or pushes an OOS half negative. Reversible (set back to false).
+  flat_run_max_years: 2.0        # (#263) 2026-09-07: the splice trimmer's TWIN — trim history BEFORE the
+                                 #   last run of byte-identical consecutive closes spanning 2.0 years or more.
+                                 #   A thin secondary listing's early years are often ONE PLACEHOLDER price
+                                 #   repeated for years, which feeds life_cagr/MAXDD/R² the same fiction a
+                                 #   redenomination does — the splice rule cannot see it because a plateau has
+                                 #   no STEP. Census of the shipped long cache: NVD.DE holds 13.0750 for 71
+                                 #   monthly bars (5.8y), KLA.DE holds 3.267 for 104 (8.6y); longest CLEAN run
+                                 #   is 8 bars = 0.67y (ABEA.DE and AMZ.DE, both the 2008-11 -> 2009-06 GFC
+                                 #   window on Xetra) and 1 bar on ABEC.DE/IITU.L.
+                                 #   TWO-SIDED, and that is why this is a data fix rather than an admission
+                                 #   knob — it does not move a threshold, it stops one being read off a lie:
+                                 #     NVD.DE  cagr-life 13.9%/yr -> 59.9%/yr over 9.3y of real history. That
+                                 #             13.9 was its SOLE gate-review blocker against a 19.0 floor, so
+                                 #             the placeholder decade was refusing NVIDIA outright.
+                                 #     KLA.DE  life 21.2%/yr -> 41.6% over 6.7y, and its 8Y rung of +3962% was
+                                 #             computed off the placeholder. It is RANKED #3 and SIZED today,
+                                 #             so the same defect was flattering a name as well as hiding one.
+                                 #   Clean names are untouched: ABEA/ABEC/AMZ/IITU all trim 0, byte-identical.
+                                 #   YEARS, NEVER BARS. A bar count inherits exactly the granularity defect
+                                 #   `(#117)` measured and refused — the cache holds 1mo/1wk/1d/1h/3mo/1y
+                                 #   series side by side, so "104 bars" means 8.6 years or 5 months depending
+                                 #   on what Yahoo felt like serving.
+                                 #   Equality is EXACT: a placeholder repeats to the last bit, a real close does
+                                 #   not, so a near-flat but genuinely traded stretch survives. A TRAILING
+                                 #   plateau is never trimmed (no post-plateau bar to keep; a stale LAST price
+                                 #   is a different defect) — that also keeps the index addressable at the
+                                 #   point-in-time call site in `backtest_quote`.
+                                 #   Trims 150/5644 series (2.7%), median trimmed series loses 70% of its
+                                 #   record — the same shape and footprint as the splice rule's 138/3346 (4.1%)
+                                 #   and 72%, and correct for the same reason: a record that is mostly
+                                 #   placeholder IS mostly not a record. Where the residue falls under 5y,
+                                 #   `capped_life_cagr` returns None and the bar falls back to the rung ladder
+                                 #   it always used (missing data passes, non-negotiable #5).
+                                 #   2.0 IS A JUDGEMENT VALUE, NOT A FITTED VALLEY, and unlike the splice knob
+                                 #   there is no gap to sit in: the trimmed count moves smoothly (0.75y->220,
+                                 #   1.0->194, 1.5->174, 2.0->150, 3.0->117, 5.0->96). It was chosen as the
+                                 #   midpoint of the OBSERVED separation — 0.67y longest clean, 5.8y shortest
+                                 #   corrupt — with margin either side; the exact value is not load-bearing.
+                                 #   LIVE OUTCOME 2026-09-07, `screen` then `size` on one warm cache, journal
+                                 #   backed up and restored (md5 3ec646698e165ac4046ed7d523a48625 unchanged):
+                                 #   THREE names carried the defect, and all three are attributed on their own
+                                 #   flat span in the cache, never on a funnel count — NVD.DE 5.8y, LLY.DE 4.8y
+                                 #   (44.3 held 2013-02 -> 2017-11), KLA.DE 8.6y.
+                                 #     NVIDIA    SCORE 0.0 -> 4.5, admitted and SIZED at 6.0%
+                                 #     Eli Lilly SCORE 0.0 -> 14.4, admitted and SIZED at 6.0%
+                                 #     KLA       SCORE 8.9 -> 7.0, DEMOTED — its 8Y rung of +3962% was the
+                                 #               placeholder and now correctly reads n/a. The fix costs a name
+                                 #               rank as readily as it grants one; that is the whole point.
+                                 #   The stock class goes from 2 eligible issuers to 4, so `size` deploys
+                                 #   42.0% -> 54.0% of gross into ranked picks and the all-world spill falls
+                                 #   58.0% -> 46.0%. That is the largest single move any round has made to the
+                                 #   deployed fraction, and it came from deleting fiction, not from loosening
+                                 #   a gate: no threshold in this file moved.
+                                 #   BACKTEST-BLIND, exactly as the splice knob records: it changes the INPUT
+                                 #   universe, so before/after edges are two different measurements, never an
+                                 #   A/B. It is NOT graded against the Ship Rule and must not be quoted as if
+                                 #   it were. What WAS required and met is the bless bar the fixture prints —
+                                 #   a live `backtest 12 universe fund pit` with both OOS halves positive:
+                                 #   GROWTH early rho +0.15 | late +0.19, top-10 book +10.4%/yr vs S&P500
+                                 #   +6.5%, excess +3.9 (med +4.0), win 75% of 36, worst -6.4, 2768 windows
+                                 #   scored (NOT the 32 that FOLIOMAN_OFFLINE would give).
+                                 #   NEAR-INERT IN THE WALK, which is the honest reading of why the goldens
+                                 #   barely moved: the same run with the knob off reads 8558 cutoffs vs 8543
+                                 #   (15 fewer, 0.18%) and an IDENTICAL top-10 book, OOS and worst window. The
+                                 #   fixture's growth-scored counts are unchanged (stock 101, ETF 1); only 5
+                                 #   stock cutoffs and some [FOIL] on-sale decimals moved. The corruption sits
+                                 #   on thin EUROPEAN secondary listings, which the mostly-US graded basket
+                                 #   does not hold — so this is a LIVE-SCREEN fix that the backtest can barely
+                                 #   see, and quoting the walk as evidence FOR it would be quoting noise.
+                                 #   Goldens re-blessed on that basis (backtest-8, backtest-12-halflife).
+                                 #   Revert: 0.0 = off, byte-identical — proven this round by flipping only
+                                 #   this line and re-running both regimes green with the goldens untouched.
   splice_max_weekly_rate: 2.0    # (splice) 2026-07-29: trim history BEFORE the last step whose implied
                                  #   WEEKLY growth factor exceeds 2.0 (or drops under 0.5) — vendor series
                                  #   that glue two denominations (0A08.L: MXN head, GBP tail, ×19.59 in 28d)

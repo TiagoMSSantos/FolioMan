@@ -572,6 +572,54 @@ pub fn splice_trim_start(dates: &[NaiveDate], closes: &[f64], max_weekly_rate: f
     start
 }
 
+/// (#263) First index AFTER the last PLATEAU — a run of byte-identical consecutive closes spanning
+/// `max_flat_years` or more. The caller keeps `[start..]`, exactly as with [`splice_trim_start`], and
+/// the two compose by `max`: a record can carry both lies.
+///
+/// THE PLATEAU IS THE SPLICE'S TWIN, not a variant of it. That trimmer catches a vendor series joined
+/// with one impossible STEP; this one catches a vendor series that never moved at all — a thin
+/// secondary listing whose early years Yahoo fills with a single placeholder price repeated for years.
+/// Measured on the shipped long-history cache 2026-09-07: NVD.DE holds 13.0750 for 71 consecutive
+/// monthly bars (2011-04 -> 2017-02, 5.9 years) and KLA.DE holds 3.267 for 104 (2011-02 -> 2019-09,
+/// 8.6 years), against a longest clean run of 8 bars on ABEA.DE and AMZ.DE (the same 2008-11 -> 2009-06
+/// GFC window on Xetra) and 1 on ABEC.DE and IITU.L.
+///
+/// IT LIES IN BOTH DIRECTIONS, which is why this is a data fix and not an admission knob. On NVD.DE the
+/// flat decade drags `growth_min_cagr`'s whole-life bar to 13.9%/yr against a 19.0 floor and REFUSES
+/// NVIDIA outright — the sole blocker on its gate-review line. On KLA.DE the same placeholder inflates
+/// the 8Y rung to +3962% and FLATTERS a name that is ranked and sized today. Trimming answers both with
+/// one rule and moves no threshold.
+///
+/// EQUALITY IS EXACT, and deliberately so: a placeholder repeats to the last bit, a real close does not.
+/// No tolerance, no rounding — a near-flat but genuinely traded stretch is real data and must survive.
+///
+/// A TRAILING PLATEAU IS NEVER TRIMMED (`j + 1 < n`). There would be no post-plateau bar to keep, so
+/// the answer would be "discard the whole record", and a stale LAST price is a different defect with a
+/// different fix. It also keeps the returned index addressable at every call site, including the
+/// point-in-time slice in `backtest_quote`, where `start <= as_of` must hold.
+///
+/// `max_flat_years <= 0.0` -> 0 (knob off, byte-identical). A later plateau overrides an earlier one,
+/// the same precedence [`splice_trim_start`] uses: the trustworthy record starts after the LAST lie.
+pub fn flat_trim_start(dates: &[NaiveDate], closes: &[f64], max_flat_years: f64) -> usize {
+    if max_flat_years <= 0.0 {
+        return 0;
+    }
+    let n = dates.len().min(closes.len());
+    let mut start = 0;
+    let mut i = 0;
+    while i < n {
+        let mut j = i;
+        while j + 1 < n && closes[j + 1] == closes[i] {
+            j += 1;
+        }
+        if j + 1 < n && (dates[j] - dates[i]).num_days() as f64 / 365.25 >= max_flat_years {
+            start = j + 1;
+        }
+        i = j + 1;
+    }
+    start
+}
+
 /// Whole-life CUMULATIVE return %, REAL (deflated) when `infl` is given — the same treatment
 /// `horizon_changes` gives its >=1Y legs, so this number is comparable to the cells it stands in for.
 /// Same reason for the smoothed endpoint: a long leg is measured against `measure_endpoint`, not the
@@ -4068,6 +4116,11 @@ pub fn backtest_quote(
     } else {
         0
     };
+    // (#263) ...and the plateau twin, which needs no such gate: a flat run visible at this cutoff was
+    // flat AT this cutoff, so trimming it asks a question the walk could actually answer. Composed by
+    // `max` — a record can carry both lies, and the trustworthy start is after whichever ends later.
+    let flat = flat_trim_start(&dates[..=as_of], &closes[..=as_of], crate::config::flat_run_max_years());
+    let splice = splice.max(flat);
     let (d, c) = (&dates[splice..=as_of], &closes[splice..=as_of]);
     let mut quote = Quote::stub(ticker, "", "", ticker);
     // (D) as-of dividends. The module header used to say a walk-forward could not reconstruct these,
@@ -4415,6 +4468,52 @@ mod tests {
             assert!(suffix_currency(suf).is_some(), "{suf} has a country but no currency");
             assert!(suffix_country(suf).is_some(), "{suf} has a currency but no country");
         }
+    }
+
+    /// (#263) the plateau twin: a placeholder repeated for years is trimmed, a real flat-ish stretch
+    /// survives, and the NVD.DE shape it was built from produces the admission it was built to produce.
+    #[test]
+    fn flat_trim_start_cuts_placeholder_plateaus() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // the real case, NVD.DE in miniature: one price repeated for ~6 years, then a traded tail.
+        let dates = vec![
+            ymd(2007, 12, 31), ymd(2011, 4, 30), ymd(2014, 1, 31), ymd(2017, 2, 28), ymd(2017, 3, 31),
+            ymd(2026, 9, 7),
+        ];
+        let closes = vec![17.30, 13.075, 13.075, 13.075, 2.4175, 199.74];
+        assert_eq!(flat_trim_start(&dates, &closes, 2.0), 4, "keep the first post-plateau close");
+        // and the point of the round: the placeholder decade REFUSES a compounder the truth admits.
+        let fiction = life_cagr(&dates, &closes).unwrap();
+        let real = life_cagr(&dates[4..], &closes[4..]).unwrap();
+        assert!(fiction < 19.0, "untrimmed fiction clears no 19.0 floor: {fiction}");
+        assert!(real > 19.0, "post-plateau truth does: {real}");
+
+        // a SHORT flat run is real data — the 2008-09 GFC window on Xetra sits at 8 monthly bars, and
+        // trimming it would delete the crash from every record that lived through it.
+        let gfc = vec![ymd(2008, 11, 30), ymd(2009, 3, 31), ymd(2009, 6, 30), ymd(2010, 6, 30)];
+        assert_eq!(flat_trim_start(&gfc, &[5.3633, 5.3633, 5.3633, 7.0], 2.0), 0, "0.6y is not a plateau");
+
+        // EXACT equality: a near-flat but genuinely traded stretch must survive untouched.
+        let near = vec![ymd(2011, 1, 3), ymd(2014, 1, 3), ymd(2017, 1, 3), ymd(2020, 1, 3)];
+        assert_eq!(flat_trim_start(&near, &[10.0, 10.000001, 10.0, 12.0], 2.0), 0);
+
+        // a TRAILING plateau is never trimmed: there is no post-plateau bar, and "discard everything"
+        // is not this function's answer. Also what keeps the index addressable at every call site.
+        let tail = vec![ymd(2011, 1, 3), ymd(2020, 1, 3), ymd(2026, 1, 3)];
+        assert_eq!(flat_trim_start(&tail, &[9.0, 5.0, 5.0], 2.0), 0);
+
+        // off (0.0) is inert, and so is a plateau shorter than the bar it is measured against
+        assert_eq!(flat_trim_start(&dates, &closes, 0.0), 0);
+        assert_eq!(flat_trim_start(&dates, &closes, 20.0), 0);
+
+        // two plateaus -> the LAST one wins, same precedence as the splice trimmer
+        let two = vec![
+            ymd(2005, 1, 3), ymd(2008, 1, 3), ymd(2009, 1, 3),
+            ymd(2012, 1, 3), ymd(2015, 1, 3), ymd(2020, 1, 3),
+        ];
+        assert_eq!(flat_trim_start(&two, &[1.0, 1.0, 2.0, 3.0, 3.0, 4.0], 2.0), 5);
+
+        assert_eq!(flat_trim_start(&[], &[], 2.0), 0, "empty in -> no trim");
     }
 
     /// (splice) the trimmer must cut a redenomination joint, not real market history: the 0A08.L
@@ -7230,7 +7329,12 @@ mod tests {
     // already ships for `1D`) reads it whole.
     let adates: Vec<NaiveDate> =
         (0..1500).map(|d| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap() + chrono::Duration::days(d)).collect();
-    let mut acloses = vec![100.0f64; 1500];
+    // (#263) the baseline alternates by 1e-9 instead of being vec![100.0; 1500]: a perfectly constant
+    // series is a 4-year PLATEAU, and `flat_run_max_years` (shipped 2.0) would trim it before this test
+    // could read a leg. Same precaution, same reason, as the splice note at fetch.rs — synthetic data
+    // has to stay under the data-cleaning bars on purpose. The perturbation is 11 orders below the
+    // spike this test measures, so both assertions below are unchanged.
+    let mut acloses: Vec<f64> = (0..1500).map(|d| 100.0 + f64::from(d % 2) * 1e-9).collect();
     let anchor = 1500 - 1 - 30; // the bar exactly one 30-day "month" back
     acloses[anchor] = 150.0;
     let i1m = HORIZONS.iter().position(|(l, _)| *l == "1M").unwrap();
