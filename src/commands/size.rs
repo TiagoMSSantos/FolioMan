@@ -1,8 +1,9 @@
 //! `size [TICKERS]` — suggested position sizes for the growth picks: weight ∝ score ÷ volatility
 //! (vol-target) inside a per-class risk budget, then capped per name and per sector (`config::Sizing`).
-//! READ-ONLY, never trades — you still type the qty into `trade` yourself. No TICKERS -> the watchlist,
-//! or `--picks` for the last `screen` run's ranked candidates `(#248)` — the watchlist can clear nothing
-//! on a run where the screen ranked nine, and then a bare `size` has nothing to say.
+//! READ-ONLY, never trades — you still type the qty into `trade` yourself. No TICKERS -> the last
+//! `screen` run's RANKED candidates `(#260)`; `--watchlist` sizes the hand-typed list instead, and
+//! `--picks` still names the default. The two had drifted far enough that the default was the worse
+//! list: on 2026-09-07 the watchlist sized 4 names, 16.0% of gross, on a day the screen ranked 15.
 //! Names that fail the growth gate are dropped (nothing to size). The rows can sum to under 100 when a
 //! cap binds; that remainder is deliberately unallocated, not a rounding error — `(#246)` names the
 //! broad-market default for it (CORE #1, off the last `screen` run) instead of leaving it in cash.
@@ -10,6 +11,59 @@
 
 use crate::picks::{crypto_adjust, growth_score, nupl_factor, perf_pct, size_weights};
 use crate::{config, fetch};
+
+/// (#260) Which ticker list `size` sizes, and the line to print about it. `None` = a hard stop the
+/// caller reports and exits on.
+///
+/// THE DEFAULT IS THE RANKED BOOK, and that is a deliberate reversal of `(#248)`, which built
+/// `--picks` as opt-in under the heading "WHY OPT-IN AND NOT A NEW DEFAULT". Its argument was against
+/// a silent UNION of the hand-typed watchlist with the machine-ranked list, which "would make the
+/// printed TOTAL unattributable". That objection does not reach a source SWITCH: exactly one list is
+/// sized and the run says which. Its other reason — bare `size` staying byte-identical — is given up
+/// on purpose, because the two lists had drifted to where the default was the worse one: on
+/// 2026-09-07 the watchlist sized 4 names (16.0% of gross deployed) on a day the screen ranked 15.
+///
+/// PRECEDENCE, and every rung of it is load-bearing:
+/// 1. An explicit ticker list ALWAYS wins, so `size AAPL` still sizes exactly AAPL. Typing names and
+///    getting the ranked book back would be the same failure `(#248)` removed, mirrored.
+/// 2. …unless `--picks` is also given, which keeps `(#248)`'s "ranked plus extras, minus duplicates"
+///    (a repeated row would draw its class budget twice).
+/// 3. `--watchlist` is the way back to the old default, and beats `--picks` when both are typed —
+///    it is the explicit escape hatch, so it wins the contradiction.
+/// 4. Otherwise the ranked book.
+///
+/// THE TWO NO-STATE PATHS DIFFER, and must. A typed `--picks` with nothing on file is a HARD STOP —
+/// `(#248)`'s "NO SILENT FALLBACK ... the flag was typed on purpose and sizing a different list than
+/// the one asked for is the exact failure this round removes", still exactly right. A bare `size`
+/// with nothing on file falls back to the watchlist and SAYS SO, because there the user asked for no
+/// list in particular and silence would be the drift all over again.
+pub(crate) fn size_source(
+    picks: bool,
+    watchlist: bool,
+    named: Vec<String>,
+    ranked: Option<(String, Vec<String>)>,
+    wl: &[String],
+) -> Option<(Vec<String>, Option<String>)> {
+    if watchlist {
+        return Some((if named.is_empty() { wl.to_vec() } else { named }, None));
+    }
+    if !named.is_empty() && !picks {
+        return Some((named, None));
+    }
+    match ranked {
+        Some((date, mut list)) => {
+            let note = format!("Sizing the {} ranked pick(s) from the {date} screen run.", list.len());
+            let extra: Vec<String> = named.into_iter().filter(|t| !list.contains(t)).collect();
+            list.extend(extra);
+            Some((list, Some(note)))
+        }
+        None if picks => None,
+        None => Some((
+            wl.to_vec(),
+            Some("No ranked picks on file — sizing the watchlist instead. Run `screen` for candidates.".into()),
+        )),
+    }
+}
 
 /// (#80) UNGRADEABLE BY THE MUTATION GATE, and skipped so that stays a stated fact rather than a
 /// trap — the same call already made for `screen::run` and `check::run`. `run` is reachable from
@@ -27,28 +81,24 @@ pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
-    // (#248) `--picks` sizes what the last `screen` run RANKED, instead of the watchlist. Opt-in, so a
-    // bare `size` stays byte-identical. The flag is stripped from the ticker list or it would be fetched
-    // as a quote; tickers typed alongside it are kept and appended, minus any the list already holds —
-    // a duplicated row would draw its class budget twice. Nothing is fetched on the no-state path.
+    // (#260) the DEFAULT source is the ranked book now, not the watchlist. The whole decision — and
+    // (#248)'s reversed argument — lives on `size_source`, where the mutation gate can reach it; `run`
+    // is `#[mutants::skip]`. The flags are stripped from the ticker list or they would be fetched as
+    // quotes. The state read is unconditional and costs one small local file; nothing is FETCHED on
+    // any no-state path, which was (#248)'s actual concern.
     let picks = args.iter().any(|a| a == "--picks");
-    let named: Vec<String> = args.into_iter().filter(|a| a != "--picks").collect();
-    let tickers = if picks {
-        let Some((date, mut ranked)) = crate::commands::screen::last_ranked(
-            std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok(),
-        ) else {
-            println!("No ranked picks on file — run `screen` first, then `size --picks`.");
-            return;
-        };
-        println!("Sizing the {} ranked pick(s) from the {date} screen run.", ranked.len());
-        let extra: Vec<String> = named.into_iter().filter(|t| !ranked.contains(t)).collect();
-        ranked.extend(extra);
-        ranked
-    } else if named.is_empty() {
-        settings.tickers.clone()
-    } else {
-        named
+    let watchlist = args.iter().any(|a| a == "--watchlist");
+    let named: Vec<String> = args.into_iter().filter(|a| a != "--picks" && a != "--watchlist").collect();
+    let ranked = crate::commands::screen::last_ranked(
+        std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok(),
+    );
+    let Some((tickers, note)) = size_source(picks, watchlist, named, ranked, &settings.tickers) else {
+        println!("No ranked picks on file — run `screen` first, then `size --picks`.");
+        return;
     };
+    if let Some(note) = note {
+        println!("{note}");
+    }
 
     let eu_infl = if settings.inflation_adjust.enabled {
         Some(fetch::fetch_eu_inflation(&client, &settings.urls).await)
@@ -283,6 +333,49 @@ fn allocation_gap_lines(sized: &[(String, String, Option<f64>, f64)], held: &[(S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#260) which list `size` sizes. The DEFAULT is the ranked book — the reversal of (#248)'s
+    /// opt-in — so every rung of the precedence is pinned here, including the two that must NOT have
+    /// changed: an explicit ticker list still wins outright, and a typed `--picks` with no state file
+    /// is still a hard stop rather than a quiet fallback.
+    #[test]
+    fn size_source_prefers_the_ranked_book() {
+        let v = |ts: &[&str]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let wl = v(&["ABEA.DE", "IITU.L"]);
+        let ranked = || Some(("2026-09-07".to_string(), v(&["ABEC.DE", "KLA.DE"])));
+
+        // bare `size` -> the ranked book, and it says so. THE POINT OF THE ROUND.
+        let (t, note) = size_source(false, false, Vec::new(), ranked(), &wl).unwrap();
+        assert_eq!(t, v(&["ABEC.DE", "KLA.DE"]));
+        assert_eq!(note.as_deref(), Some("Sizing the 2 ranked pick(s) from the 2026-09-07 screen run."));
+
+        // an explicit list still wins outright — typing names and getting the ranked book back would
+        // be (#248)'s own failure mirrored.
+        let (t, note) = size_source(false, false, v(&["NVD.DE"]), ranked(), &wl).unwrap();
+        assert_eq!((t, note), (v(&["NVD.DE"]), None));
+
+        // `--picks` is now a synonym for the default, and still appends extras minus duplicates: a
+        // repeated row would draw its class budget twice.
+        let (t, _) = size_source(true, false, v(&["NVD.DE", "KLA.DE"]), ranked(), &wl).unwrap();
+        assert_eq!(t, v(&["ABEC.DE", "KLA.DE", "NVD.DE"]), "KLA.DE is already ranked and must not repeat");
+
+        // `--watchlist` is the way back, and reproduces the old default exactly.
+        let (t, note) = size_source(false, true, Vec::new(), ranked(), &wl).unwrap();
+        assert_eq!((t, note), (wl.clone(), None));
+        // ... it also beats `--picks` when both are typed: the explicit escape hatch wins.
+        let (t, _) = size_source(true, true, Vec::new(), ranked(), &wl).unwrap();
+        assert_eq!(t, wl);
+        // ... and still yields to an explicit list, like every other path.
+        let (t, _) = size_source(false, true, v(&["NVD.DE"]), ranked(), &wl).unwrap();
+        assert_eq!(t, v(&["NVD.DE"]));
+
+        // THE TWO NO-STATE PATHS DIFFER, and that is (#248)'s rule kept. A typed `--picks` stops
+        // dead; a bare `size` falls back to the watchlist and SAYS so.
+        assert!(size_source(true, false, Vec::new(), None, &wl).is_none());
+        let (t, note) = size_source(false, false, Vec::new(), None, &wl).unwrap();
+        assert_eq!(t, wl);
+        assert!(note.is_some_and(|n| n.contains("watchlist")), "the fallback must not be silent");
+    }
 
     /// (round 114) Gap-table semantics: matched holdings split ACTUAL% over their EUR total, an
     /// unheld sized name reads "not held" with a negative gap, ±5pt gaps get the weight tag, a held

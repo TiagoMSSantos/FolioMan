@@ -1535,6 +1535,80 @@ sizing:
 # becomes unreachable by construction, and dead disclosure code should go rather than mislead a reader
 # into thinking the check is still doing something.
 #
+# (#260) SHIPPED: bare `size` sizes the RANKED BOOK, not the watchlist. CLI default, no config surface,
+# no knob. src/commands/size.rs (`size_source` + `run`) + the two help lines in src/main.rs.
+#
+# THE GAP, and it is plumbing rather than heuristic. On 2026-09-07 `screen` ranked 16 names and the
+# DEFAULT `size` sized 4 — the hand-typed watchlist — deploying 16.0% of gross and handing 84.0% to a
+# single CORE tracker through (#253)'s spill row. The other twelve were already gated, already scored,
+# already ranked and already on disk in `ScreenState.ranked` since round 68. `size` was simply not
+# asking for them. (#248) built `--picks` to ask, then left it opt-in.
+#
+# MEASURED LIVE 2026-09-07, live config, all four arms within the same minute off one warm cache, NO
+# `screen` run between them — .screen_state.json md5 3ec646698e165ac4046ed7d523a48625 verified
+# unchanged before and after EVERY arm:
+#   control (old bare `size`)   4 rows   TOTAL 16.0%   spill 84.0%   ABEA.DE IITU.L BTC-EUR VVSM.DE
+#   arm     (new bare `size`)  10 rows   TOTAL 37.0%   spill 63.0%   ABEC ABEA KLA BNB IITU BTC
+#                                                                    XLKS VVSM SEMI LYBK
+#   `size --watchlist`         BYTE-FOR-BYTE IDENTICAL to the control (`diff` clean)
+#   `size --picks`             BYTE-FOR-BYTE IDENTICAL to the new default (`diff` clean)
+#   `size ABEA.DE`             1 row, TOTAL 4.0%, and NO "Sizing the N ranked pick(s)" line
+# Names sized 4 -> 10, deployed budget 16.0 -> 37.0, and the single-wrapper spill 84.0 -> 63.0. The
+# last three arms are the ones that matter for trust: the old behaviour is REACHABLE, not merely
+# approximated, and neither existing invocation changed meaning.
+#
+# A DELIBERATE REVERSAL OF (#248), and the operator's call this round, not an oversight. That receipt
+# refused this under "WHY OPT-IN AND NOT A NEW DEFAULT" for two reasons, and they end up in different
+# places. (1) "Bare `size` stays byte-identical" — GIVEN UP ON PURPOSE. No knob is involved so
+# non-negotiable #1 does not literally bite, and `config::Sizing` is its documented exception anyway;
+# what mattered was that the default had drifted to being the WORSE list. (2) "A silent union of a
+# hand-curated watchlist with a machine-ranked list under one set of caps would make the printed TOTAL
+# unattributable" — STILL RIGHT, AND STILL HONOURED. This is a source SWITCH, not a union: exactly one
+# list is ever sized and the run prints which. (#248)'s "NO SILENT FALLBACK" rule is likewise kept
+# intact where it applies — a TYPED `--picks` with no state file still stops dead and points at
+# `screen`; only a BARE `size` falls back to the watchlist, and it says so out loud.
+#
+# PRECEDENCE, pinned in `size_source_prefers_the_ranked_book`. An explicit ticker list ALWAYS wins
+# (`size AAPL` sizes AAPL, never the book — typing names and getting the ranked list back would be
+# (#248)'s own failure mirrored); `--picks` keeps appending extras minus duplicates; `--watchlist` is
+# the way back and beats `--picks` when both are typed, being the explicit escape hatch.
+#
+# THE REFRAME THIS ROUND FOUND, and it explains why forty-eight rounds of chasing NAMES moved nothing.
+# (#245) already wrote "the binding constraint on 'more assets to buy' is candidate supply into
+# `size`, not concentration". Sharpen it: the constraint is not name COUNT but SCORE-WEIGHTED supply.
+# `growth_allow_negative_scores` ships false, so the lane floor is `min_score.max(0.0)` = 0.0 and the
+# rows displaying SCORE 0.0 (2026-09-07: NVD.DE AMZ.DE VUAA.DE SPYL.DE AUM5.DE) are tiny positives.
+# `size_weights` is weight proportional to score / vol, so those take ~0% and drop out of the table —
+# 16 ranked names fetched, 10 sized. Adding names NEAR THE FLOOR therefore adds ~0 deployment, which
+# is exactly what every refused admission knob would have done. A future round proposing "more names"
+# must state what those names would SCORE, or it is proposing nothing.
+#
+# NOT GRADEABLE by the ship rule, same standing as (#246)/(#248)/(#253)/(#257)/(#259): no backtest path
+# reaches `size`, no golden covers it, it claims no horizon and no edge. Gates: 391/9(1 ignored)/21 in
+# BOTH regimes (+1 test, the new pin), clippy -D warnings clean, no golden moved. The gradeable half is
+# deliberate: `size::run` is `#[mutants::skip]` ((#80), 11 missed mutants inside it), so the whole
+# decision lives in `size_source`, a free function in the SAME file — only `run` carries the attribute,
+# so unlike (#246)/(#248)/(#253) this round needed no second file to be gradeable.
+#
+# HONEST EDGES. (a) The default now depends on a file the previous `screen` run wrote, so a stale
+# journal sizes a stale book — mitigated only by the printed run date, the same exposure (#246) took on
+# and (#253) made load-bearing. (b) The ranked book carries whatever `screen` ranked, including broad
+# S&P trackers (VUAA.DE SPYL.DE AUM5.DE today) that overlap the CORE spill row; they score ~0 and drop
+# out, so the overlap did not bite here, but a future run where one scores could double-fund the same
+# index — (#253)'s dedupe covers the CORE row against the SIZED table, which is the direction that
+# matters. (c) The state file is now read on EVERY `size` invocation including explicit-ticker ones;
+# that is one small local file and no network, which was (#248)'s actual concern ("Nothing is fetched
+# on the no-state path" — still true). (d) Still READ-ONLY: no order, no weight formula touched,
+# `config::Sizing` untouched, `max_name_pct` still 4.0 — (#248) called that "a 20-year concentration
+# decision, not a plumbing one" and this round is plumbing.
+#
+# REVERT RULE: in `size_source`, move the `watchlist` arm's behaviour to the default and gate the
+# ranked arm behind `picks` again; delete `--watchlist` and the fallback message. There is no config to
+# unset. Revert if `ScreenState.ranked` ever stops being render's printed order ((#248)'s trigger,
+# inherited and now stricter, because that list is what the DEFAULT sizes), or if the ranked book ever
+# starts carrying names the operator would not buy unreviewed — the watchlist's one virtue was that a
+# human typed it, and this round trades that for coverage.
+#
 # (#254) NO CODE — SIZING THE HOLD LANE WAS PROBED AND IS INERT BY CONSTRUCTION. The measurement IS
 # the deliverable, as in (#226), (#241) and (#242). Nothing shipped; nothing to revert.
 #
