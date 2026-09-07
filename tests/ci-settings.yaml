@@ -1207,6 +1207,11 @@ sizing:
                       #   else and a coin has none). CONSEQUENCE: a class too small to absorb its budget
                       #   under these caps leaves the remainder UNALLOCATED and the table's total prints
                       #   below 100. That is the intended reading, not a rounding bug.
+  spill_names: 3      # (#261) CORE trackers that SHARE that remainder, equally. 1 = the exact pre-(#261)
+                      #   behaviour and the revert; 0 is read as 1. The CORE sort is breadth-major, so
+                      #   rows 1..n are the same all-world market from a DIFFERENT issuer with different
+                      #   replication — this buys issuer/counterparty spread and nothing else, which is
+                      #   precisely the risk (#253) shipped this row carrying and recorded as unpriced.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -1609,6 +1614,101 @@ sizing:
 # starts carrying names the operator would not buy unreviewed — the watchlist's one virtue was that a
 # human typed it, and this round trades that for coverage.
 #
+# (#261) SHIPPED: the `size` remainder is SPLIT OVER THREE CORE TRACKERS, not parked in one. One
+# knob (`sizing.spill_names: 3`), no fetch, no gate, no score, no pool, no `max_name_pct` change.
+#
+#   WHAT MOVED, live 2026-09-07, state md5 3ec646698e165ac4046ed7d523a48625 verified UNCHANGED before
+#   and after every arm, all three arms inside six minutes off one warm cache, no `screen` run between:
+#
+#     control (HEAD, 21:27:23)   WEBN.DE  63.0%   CORE #1                      TOTAL+ 100.0%
+#     arm     (#261, 21:32:40)   WEBN.DE  21.0%   CORE #1
+#                                VWRA.L   21.0%   CORE #2
+#                                VALL.L   21.0%   CORE #3                      TOTAL+ 100.0%
+#
+#   `TOTAL` reads 37.0% in BOTH arms — that is what makes the comparison valid rather than a quote
+#   drift dressed as a result. Buy list 11 -> 13 rows; largest single position 63% -> 21%.
+#
+#   THE REVERT IS PROVEN, NOT ASSERTED. `spill_names: 1` re-run on the SAME binary reproduces the
+#   control byte-for-byte — md5 90d84fd293fe7a19edaf92a663c165e0 on both captures, `cmp` silent,
+#   trailing sentence ("in one all-world tracker") included. A knob whose off-position is measured
+#   rather than argued is the only kind worth having on a surface no backtest can grade.
+#
+#   WHY: `(#253)` shipped this row and wrote its own indictment into its HONEST EDGES — "Single-issuer
+#   concentration is real and unpriced: 67% of gross in one wrapper is counterparty and provider risk
+#   that no gate in this repo measures". `(#259)` then narrowed it to a replication FLAG, which says
+#   what the risk is without reducing it. This reduces it. The CORE sort is breadth-major, so rows
+#   1..n are the SAME all-world market from a different issuer with different replication:
+#
+#     WEBN.DE  Amundi        TER 0.07%  Opt   AUM €2.5B     <- carried the whole 63% until now
+#     VWRA.L   Vanguard      TER 0.14%  Opt   AUM €45.5B
+#     VALL.L   Vanguard      TER 0.07%  Full  AUM n/a
+#
+#   WHAT IT DOES NOT BUY, stated plainly so nobody re-reads it as more than it is: three all-world
+#   trackers are ONE market. This diversifies issuer, domicile and replication counterparty. It
+#   diversifies no market risk whatsoever, and it costs ~2bp of blended TER to do it. Note also that
+#   the fund which had been carrying two thirds of gross is the SMALLEST of the three by AUM by an
+#   order of magnitude — CORE #1 is ranked on breadth, never on size or robustness.
+#
+#   THE ARITHMETIC THAT SENT THIS ROUND HERE, and it closes two levers permanently:
+#
+#     deployed = SUM_class min(class budget, n_names x max_name_pct)
+#       stock  min(70, 3 x 4.0) = 12.0    ETF min(25, 5 x 4.0) = 20.0    crypto 5.0   ->  37.0%
+#
+#   (a) THE CLASS BUDGET 70/25/5 DOES NOT BIND. Every stock and ETF row prints `cap: name`, so both
+#       classes sit far below their budgets. Reallocating budget between them is a PROVABLE NO-OP —
+#       refused here without a run, because the identity above is the proof.
+#   (b) ONLY TWO LEVERS EXIST: name count and `max_name_pct`. Name count is closed — the stock lane
+#       passes 3 rows / 2 DISTINCT COMPANIES (ABEC.DE and ABEA.DE are both Alphabet, two venues), and
+#       `(#180)` measured median gated pool 5/6/7 at 20y/12y/8y and said in terms that the entry
+#       "exists so nobody spends another round looking for one". `max_name_pct` is untouched: over 3
+#       stock names a 70% budget needs 23.3%/name, which is a concentration decision `(#248)` already
+#       declined to make as plumbing, and this round is still plumbing.
+#
+#   A CORRECTION TO `(#260)`'s CLOSING REFRAME, recorded because it was load-bearing and it was WRONG.
+#   That receipt read the `SCORE 0.0` rows as tiny positives suppressed by
+#   `growth_allow_negative_scores: false`. They are not. They are `None` — outright gate failures
+#   rendered as 0.0 — and picks.rs's own comment on the `long_leg_fixed` bail says so: "a pinned young
+#   ETF (VUAA 2y, SPYL 3y) prints a reason instead of a mystery 0.0". Five of the six names `size`
+#   drops from the 16-name ranked book are PINNED watchlist entries that fail the gate (VUAA, SPYL,
+#   AUM5, NVD, AMZ); the sixth, LLY.DE, fails it too. Verified directly: `size LLY.DE NVD.DE AMZ.DE
+#   VUAA.DE SPYL.DE AUM5.DE` -> "No names pass the growth gate". `ranked` is the DISPLAYED book
+#   (passing rows + pins), never "rows that passed", and `size` re-scoring them out is correct.
+#   So `(#260)`'s 4 -> 10 stands, but its explanation of the residue does not, and there is no
+#   score-weighted-supply lever hiding behind those zeros.
+#
+#   A DEFECT FIXED IN PASSING. `(#253)`'s walk-down skips CORE names the table already sizes, but the
+#   row printed a HARDCODED "CORE #1" — so a row that had walked past two sized names advertised
+#   itself as the broadest tracker on the shortlist. `last_core` now returns the true shortlist index
+#   and the caller prints `CORE #{i+1}`. Pinned in both directions, including a hole in the MIDDLE of
+#   the list, since an off-by-one that merely renumbers the returned vec passes a leading-skip test.
+#
+#   UNGRADEABLE, AND SAID SO BEFORE SHIPPING RATHER THAN AFTER. No backtest path reaches
+#   `picks::size_weights` and no golden covers `size`, so the ship rule cannot adjudicate this in
+#   EITHER direction — the same footing `(#246)`, `(#248)`, `(#253)` and `(#259)` all shipped on. The
+#   number lives in `config::Sizing`, non-negotiable #1's documented exception, whose own doc comment
+#   already licenses a default that is policy rather than a neutral off-state.
+#
+#   HONEST EDGES:
+#   (a) 3 is a JUDGEMENT VALUE. It is not an argmax and nothing measured it; it is "enough issuers
+#       that no single administrator holds the majority of gross", which 3 satisfies at 21% each and
+#       1 does not at 63%. `(#180)`'s prior applies to any future move: bring a mechanism, not a fit.
+#   (b) NO MINIMUM-REMAINDER FLOOR. A 6% remainder would split into three 2% lines that are pure
+#       trading cost. Not guarded, because the remainder is structurally large — 37% is the CEILING
+#       at today's supply, by the identity above. Revisit only if `TOTAL` ever clears ~90%.
+#   (c) Per-row figures are rounded to 0.1 and need not sum to the remainder exactly; `TOTAL+` prints
+#       `total + rest` and is therefore exact regardless. Cosmetic, and deliberate.
+#   (d) `(#253)`'s OPEN Acc/Dist DISCREPANCY (~line 1503) is STILL open and is now load-bearing on
+#       three rows instead of one, since each reads its note off the same `fund_meta` map.
+#   (e) The split assumes CORE rows 2 and 3 are all-world trackers, which is what breadth-major
+#       sorting gives today (VWRA.L, VALL.L). A shortlist whose second row is NOT all-world would put
+#       21% into something narrower with no gate objecting. Not guarded; `hold_core_list`'s sort is
+#       the only thing standing behind it.
+#
+#   REVERT RULE: set `spill_names: 1` and the surface is byte-identical to `(#253)` — measured above,
+#   not assumed. Revert if the CORE shortlist's top rows stop being all-world trackers (edge (e)), or
+#   if the Acc/Dist discrepancy resolves in a way that discredits `fund_meta` (edge (d)).
+#
+
 # (#254) NO CODE — SIZING THE HOLD LANE WAS PROBED AND IS INERT BY CONSTRUCTION. The measurement IS
 # the deliverable, as in (#226), (#241) and (#242). Nothing shipped; nothing to revert.
 #

@@ -205,18 +205,41 @@ pub async fn run(args: Vec<String>) {
         match crate::commands::screen::last_core(
             std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok(),
             &sized,
+            sz.spill_names,
         ) {
-            Some((date, core, repl)) => {
+            Some((date, rows)) => {
                 // (#259) ... and say HOW it replicates, when that is worth saying. This one row can
                 // be two thirds of gross and sits outside `max_name_pct` by design, so a synthetic
                 // wrapper entering it silently is the one disclosure the row was still missing.
                 // Empty for physical AND for unknown — see `screen::spill_repl_note`, which owns the
                 // rule; this end only prints what it is handed.
-                let note = repl.map(|r| format!(" · {r}")).unwrap_or_default();
-                println!("  {core:<10} {dash:>7} {dash:>7} {rest:>6.1}%  broad-market · CORE #1, {date} screen{note}", dash = "—");
+                //
+                // (#261) ... and split it over the first `spill_names` of them rather than one. The
+                // share is computed ONCE (non-negotiable #4) and every row prints its own CORE index,
+                // so a walk-down that skipped an already-sized name still says which row it settled
+                // on — the old line hardcoded "#1" and could name the third-broadest tracker as the
+                // broadest. TOTAL+ is unchanged and still exact: it sums `total + rest`, never the
+                // rounded per-row figures, so a remainder that does not divide evenly cannot drift it
+                // off 100.0. At `spill_names: 1` every byte below is the `(#253)` line verbatim,
+                // trailing sentence included — that is what makes the knob a real revert.
+                let n = rows.len();
+                let each = rest / n as f64;
+                for (i, core, repl) in rows {
+                    let note = repl.map(|r| format!(" · {r}")).unwrap_or_default();
+                    println!(
+                        "  {core:<10} {dash:>7} {dash:>7} {each:>6.1}%  broad-market · CORE #{rank}, {date} screen{note}",
+                        dash = "—",
+                        rank = i + 1,
+                    );
+                }
                 println!("  {:<10} {:>7} {:>7} {:>6.1}%", "TOTAL+", "", "", total + rest);
+                let home = if n == 1 {
+                    "in one all-world tracker".to_string()
+                } else {
+                    format!("split equally over {n} all-world trackers")
+                };
                 println!(
-                    "  (the {rest:.1}% the caps could not deploy, in one all-world tracker — outside the per-name cap by design: it is the market, not a name. Or add candidates / raise a cap. NOT advice)"
+                    "  (the {rest:.1}% the caps could not deploy, {home} — outside the per-name cap by design: it is the market, not a name. Or add candidates / raise a cap. NOT advice)"
                 );
             }
             None => println!(

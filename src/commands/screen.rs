@@ -128,8 +128,8 @@ fn spill_repl_note(repl: Option<&str>) -> Option<&'static str> {
         .then_some("swap-replicated: counterparty exposure, and the US-withholding credit is tier-3 only")
 }
 
-/// (#246) The broadest row of the CORE shortlist as the last `screen` run left it, plus that run's
-/// date and how that fund replicates: `(date, ticker, note)`. [`picks::hold_core_list`] sorts the
+/// (#246) The broadest rows of the CORE shortlist as the last `screen` run left it, plus that run's
+/// date and how each fund replicates: `(date, [(core index, ticker, note)])`. [`picks::hold_core_list`] sorts the
 /// shortlist breadth-major, so index 0 is the widest tracker on it — the one instrument a stranded
 /// equity budget can go into without anyone picking a bet. `size` reads it to NAME a home for the
 /// budget its caps cannot deploy (`(#245)` measured that at 67% of gross, 62 points of it
@@ -154,11 +154,41 @@ fn spill_repl_note(repl: Option<&str>) -> Option<&'static str> {
 /// swap fund is CORE in the first place, and with it on (which `tests/ci-settings.yaml` ships) the
 /// replication leg is inert for CORE and `tracked` alike, so the two sets move together. It is read
 /// off the ticker the walk-down SETTLED on, never the one it skipped past.
-pub(crate) fn last_core(raw: Option<String>, sized: &[String]) -> Option<(String, String, Option<&'static str>)> {
+///
+/// `(#261)` returns `n` rows instead of one, and the caller splits the remainder equally across them.
+/// The CORE sort is breadth-major, so rows 1..n are the SAME all-world exposure from a DIFFERENT
+/// issuer with a different replication method — which is the only thing the split buys, and the
+/// reason it is worth buying: `(#253)` shipped this row carrying the whole remainder and recorded in
+/// its own HONEST EDGES that "67% of gross in one wrapper is counterparty and provider risk that no
+/// gate in this repo measures". Nothing here diversifies MARKET risk; three all-world trackers are
+/// one market. Fewer than `n` survivors -> what exists, never `None` for a short list.
+///
+/// `(#261)` also carries the CORE INDEX, which fixes a quiet defect. `(#253)`'s walk-down could
+/// settle on `core[2]` while the caller printed a hardcoded "CORE #1", so a row that had skipped two
+/// already-sized names advertised itself as the broadest one. The index is the position in the
+/// SHORTLIST, not in the returned vec, so the skip stays visible.
+pub(crate) fn last_core(
+    raw: Option<String>,
+    sized: &[String],
+    n: usize,
+) -> Option<(String, Vec<(usize, String, Option<&'static str>)>)> {
     let state = parse_state(raw).0?;
-    let core = state.core.into_iter().find(|t| !sized.iter().any(|s| s == t))?;
-    let note = spill_repl_note(state.fund_meta.get(&core).and_then(|(_use, repl)| repl.as_deref()));
-    Some((state.date, core, note))
+    // `n.max(1)`, not `n`: a remainder with a known home always gets at least the one row `(#253)`
+    // shipped. Zero would be a THIRD behaviour — back to `(#246)`'s naming-without-sizing — that
+    // nothing asks for, and `max_name_pct`'s "0 = off" idiom does not transfer, because off here
+    // means parking two thirds of a twenty-year equity budget in cash.
+    let rows: Vec<(usize, String, Option<&'static str>)> = state
+        .core
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| !sized.iter().any(|s| s == *t))
+        .take(n.max(1))
+        .map(|(i, t)| {
+            let note = spill_repl_note(state.fund_meta.get(t).and_then(|(_use, repl)| repl.as_deref()));
+            (i, t.clone(), note)
+        })
+        .collect();
+    (!rows.is_empty()).then_some((state.date, rows))
 }
 
 /// (#248) The RANKED buy candidates as the last `screen` run left them, plus that run's date:
@@ -4354,27 +4384,38 @@ mod tests {
         let state = |core: Vec<String>| state_repl(core, &[]);
         let v = |ts: &[&str]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         const SWAP: &str = "swap-replicated: counterparty exposure, and the US-withholding credit is tier-3 only";
+        // (#261) every arm below predates the multi-row return and is an `n = 1` arm, so it keeps
+        // its exact original shape through this shim — which also pins, on every one of them, that
+        // `n = 1` yields exactly one row. The genuinely new arms come after.
+        let one = |raw: Option<String>, sized: &[String]| -> Option<(String, String, Option<&'static str>)> {
+            last_core(raw, sized, 1).map(|(d, mut rows)| {
+                assert_eq!(rows.len(), 1, "n = 1 must return exactly one row");
+                let (_, t, note) = rows.remove(0);
+                (d, t, note)
+            })
+        };
+
         assert_eq!(
-            last_core(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &[]),
+            one(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &[]),
             Some(("2026-09-05".to_string(), "WEBG.DE".to_string(), None))
         );
-        assert!(last_core(None, &[]).is_none()); // no state file yet
-        assert!(last_core(Some("{ truncated".into()), &[]).is_none()); // corrupt
-        assert!(last_core(Some(state(Vec::new())), &[]).is_none()); // no CORE printed / pre-round-55
+        assert!(one(None, &[]).is_none()); // no state file yet
+        assert!(one(Some("{ truncated".into()), &[]).is_none()); // corrupt
+        assert!(one(Some(state(Vec::new())), &[]).is_none()); // no CORE printed / pre-round-55
 
         // (#253) the sized table already funds the broadest row -> take the next one down. The
         // `sized` list carries a decoy that is NOT on the shortlist, and the match is at index 1
         // of it, so neither "any/all" nor a reversed containment test can pass this by accident.
         assert_eq!(
-            last_core(Some(state(v(&["WEBG.DE", "VWCE.DE", "SPYI.DE"]))), &v(&["LLY.DE", "WEBG.DE"])),
+            one(Some(state(v(&["WEBG.DE", "VWCE.DE", "SPYI.DE"]))), &v(&["LLY.DE", "WEBG.DE"])),
             Some(("2026-09-05".to_string(), "VWCE.DE".to_string(), None))
         );
         // every CORE candidate is already in the table: the remainder has no home the caller is
         // not already funding, so there is nothing to print.
-        assert!(last_core(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &v(&["VWCE.DE", "WEBG.DE"])).is_none());
+        assert!(one(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &v(&["VWCE.DE", "WEBG.DE"])).is_none());
         // a `sized` list that overlaps nothing leaves the broadest row exactly where it was.
         assert_eq!(
-            last_core(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &v(&["LLY.DE", "ABEC.DE"])),
+            one(Some(state(v(&["WEBG.DE", "VWCE.DE"]))), &v(&["LLY.DE", "ABEC.DE"])),
             Some(("2026-09-05".to_string(), "WEBG.DE".to_string(), None))
         );
 
@@ -4382,19 +4423,19 @@ mod tests {
         // is the second case (WEBN.DE, "Opt"), so the shipped surface prints no note — the flag
         // firing is the exception, which is why the negative arm is pinned too.
         assert_eq!(
-            last_core(Some(state_repl(v(&["ACWIA.SW"]), &[("ACWIA.SW", "Swap")])), &[]),
+            one(Some(state_repl(v(&["ACWIA.SW"]), &[("ACWIA.SW", "Swap")])), &[]),
             Some(("2026-09-05".to_string(), "ACWIA.SW".to_string(), Some(SWAP)))
         );
         for physical in ["Full", "Opt", "Samp", "Hybr"] {
             assert_eq!(
-                last_core(Some(state_repl(v(&["WEBN.DE"]), &[("WEBN.DE", physical)])), &[]),
+                one(Some(state_repl(v(&["WEBN.DE"]), &[("WEBN.DE", physical)])), &[]),
                 Some(("2026-09-05".to_string(), "WEBN.DE".to_string(), None)),
                 "{physical} is physical and needs no note"
             );
         }
         // a fund PRESENT in fund_meta but with no replication datum: still no claim.
         assert_eq!(
-            last_core(Some(state_repl(v(&["WEBN.DE"]), &[])), &[]),
+            one(Some(state_repl(v(&["WEBN.DE"]), &[])), &[]),
             Some(("2026-09-05".to_string(), "WEBN.DE".to_string(), None))
         );
 
@@ -4402,16 +4443,69 @@ mod tests {
         let both = v(&["ACWIA.SW", "WEBN.DE"]);
         let meta = [("ACWIA.SW", "Swap"), ("WEBN.DE", "Opt")];
         assert_eq!(
-            last_core(Some(state_repl(both.clone(), &meta)), &v(&["ACWIA.SW"])),
+            one(Some(state_repl(both.clone(), &meta)), &v(&["ACWIA.SW"])),
             Some(("2026-09-05".to_string(), "WEBN.DE".to_string(), None)),
             "skipped the swap row: the physical one it landed on must not inherit the note"
         );
         let meta = [("ACWIA.SW", "Opt"), ("WEBN.DE", "Swap")];
         assert_eq!(
-            last_core(Some(state_repl(both, &meta)), &v(&["ACWIA.SW"])),
+            one(Some(state_repl(both, &meta)), &v(&["ACWIA.SW"])),
             Some(("2026-09-05".to_string(), "WEBN.DE".to_string(), Some(SWAP))),
             "skipped the physical row: the swap one it landed on must carry the note"
         );
+
+        // (#261) n rows, in CORE order, each carrying its position in the SHORTLIST.
+        let four = v(&["WEBG.DE", "VWCE.DE", "SPYI.DE", "VALL.L"]);
+        let (date, rows) = last_core(Some(state(four.clone())), &[], 3).unwrap();
+        assert_eq!(date, "2026-09-05");
+        assert_eq!(
+            rows,
+            vec![
+                (0, "WEBG.DE".to_string(), None),
+                (1, "VWCE.DE".to_string(), None),
+                (2, "SPYI.DE".to_string(), None),
+            ],
+            "three rows, breadth order, indices 0..2"
+        );
+        // asking for more than the shortlist holds returns what exists — NOT None, and not padding.
+        assert_eq!(last_core(Some(state(four.clone())), &[], 99).unwrap().1.len(), 4);
+        // n = 0 still yields the one row (#253) shipped: `n.max(1)`, not `n`, and not "off".
+        assert_eq!(last_core(Some(state(four.clone())), &[], 0).unwrap().1.len(), 1);
+
+        // THE INDEX IS THE SHORTLIST POSITION, not the position in the returned vec. This is the
+        // defect (#261) fixes: with WEBG.DE already sized, the first row printed is CORE #2, and the
+        // old hardcoded "#1" called it the broadest tracker on the list when it is not.
+        assert_eq!(
+            last_core(Some(state(four.clone())), &v(&["WEBG.DE"]), 2).unwrap().1,
+            vec![(1, "VWCE.DE".to_string(), None), (2, "SPYI.DE".to_string(), None)],
+            "the skip must be visible in the index, or the printed rank lies"
+        );
+        // ...and the skip is not just an offset: a hole in the MIDDLE keeps the later indices true.
+        assert_eq!(
+            last_core(Some(state(four)), &v(&["VWCE.DE"]), 3).unwrap().1,
+            vec![
+                (0, "WEBG.DE".to_string(), None),
+                (2, "SPYI.DE".to_string(), None),
+                (3, "VALL.L".to_string(), None),
+            ]
+        );
+        // (#259)'s note is per-row, not per-call: one swap row among physical ones flags only itself.
+        let mixed = v(&["WEBN.DE", "ACWIA.SW", "SC0J.DE"]);
+        assert_eq!(
+            last_core(
+                Some(state_repl(mixed, &[("WEBN.DE", "Opt"), ("ACWIA.SW", "Swap"), ("SC0J.DE", "Full")])),
+                &[],
+                3
+            )
+            .unwrap()
+            .1,
+            vec![
+                (0, "WEBN.DE".to_string(), None),
+                (1, "ACWIA.SW".to_string(), Some(SWAP)),
+                (2, "SC0J.DE".to_string(), None),
+            ]
+        );
+
     }
 
     /// (#248) the ranked handoff to `size --picks`: the whole list, in render's order, plus the run

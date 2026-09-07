@@ -74,6 +74,7 @@ pub struct Sizing {
     pub budget_crypto: f64,  // (P5) share of gross for coins. 5 is a JUDGEMENT VALUE and the one number here with a real consequence: it is the standing answer to "how much of the book may sit in the asset class that has drawn down 80%+ in every cycle it has had"
     pub max_name_pct: f64,   // (P5) no single row may exceed this % of gross. Excess is redistributed to the UNCLAMPED members of the same class in proportion to their vol-target weight, iterated to a fixpoint (capped at 5 passes — the loop is monotone, so a pass that moves nothing ends it). 0 = off
     pub max_sector_pct: f64, // (P5) no GICS sector may exceed this % of gross, STOCK CLASS ONLY: `quote.sector` is filled for equities live, ETFs carry a fund-level sector that means something different, and a coin has none. Applied after the name cap and re-checked with it, since capping a sector hands weight to names that may then breach their own ceiling. 0 = off
+    pub spill_names: usize,  // (#261) how many CORE trackers share the remainder the caps could not deploy. `(#253)` put all of it in ONE fund and said so in its own HONEST EDGES: "67% of gross in one wrapper is counterparty and provider risk that no gate in this repo measures". The CORE list is breadth-major, so the rows below index 0 are the SAME market from different issuers with different replication — splitting buys issuer diversification at ~2bp of blended TER, and buys nothing else, which is the whole claim. 1 = the exact pre-(#261) behaviour, and the revert. 0 is read as 1
 }
 
 /// Defaults are the SHIPPED policy, not a neutral off-state — the one place in this file where a
@@ -82,7 +83,14 @@ pub struct Sizing {
 /// the old equal-class split as the default would just mean the fix ships disabled.
 impl Default for Sizing {
     fn default() -> Self {
-        Self { budget_stock: 70.0, budget_etf: 25.0, budget_crypto: 5.0, max_name_pct: 4.0, max_sector_pct: 25.0 }
+        Self {
+            budget_stock: 70.0,
+            budget_etf: 25.0,
+            budget_crypto: 5.0,
+            max_name_pct: 4.0,
+            max_sector_pct: 25.0,
+            spill_names: 3,
+        }
     }
 }
 
