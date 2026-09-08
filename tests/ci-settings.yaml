@@ -6111,6 +6111,102 @@ buy_heuristic:
                                  #   (#210)'s principle, or if a REGIONAL or ESG-crossed fund ever appears in
                                  #   this sleeve, which would mean `FACTOR_GEO` or the crossing conjunct has been
                                  #   widened and neither should be.
+  hold_family_key_benchmark: true  # (#272) MEASURED 2026-09-08, live `screen`, four foreground arms on one
+                                 #   pre-built binary and a warm cache. KEY THE CORE FAMILY ON THE INDEX
+                                 #   (`Quote::benchmark`) INSTEAD OF THE GEOGRAPHY WORD, GEO token as the
+                                 #   fallback. false = the `core::GEO` token, which is what shipped before
+                                 #   this line and is byte-identical.
+                                 #
+                                 #   WHY. The family key was a GEO *word*, and a word is wrong in BOTH
+                                 #   directions at once. It SPLITS one index into two families — `msci
+                                 #   pacific` / `msci pac `, which is exactly the leak (#269) recorded and
+                                 #   could not close. It MERGES two indices into one wherever a single token
+                                 #   spans them. (#237) built the instrument for this and deliberately
+                                 #   shipped no answer: the census prints `Xf` (the key the cap follows)
+                                 #   beside `Yb` (distinct benchmark literals), so that the question "should
+                                 #   this table be a menu of EXPOSURES or of PRODUCTS?" could be asked
+                                 #   without the answer being smuggled in first. It is now answered: a menu
+                                 #   of EXPOSURES, and an exposure is an index, not a word in a fund name.
+                                 #
+                                 #   NO NORMALIZER, and that is load-bearing. `fetch::bf_row_meta`
+                                 #   lowercases and trims at capture and maps empty to None, and BF itself
+                                 #   normalizes the literal, so same-index funds share the exact string.
+                                 #   Exact `==` is therefore the right comparison; suffix-stripping or fuzzy
+                                 #   matching is neither needed nor wanted, and would re-merge on purpose
+                                 #   the distinctions this round exists to make.
+                                 #
+                                 #   THE LEAK CLOSES, PROVEN ON THE CENSUS AND NOT ON A NAME. Control reads
+                                 #   `Asia-Pacific 2 (2f, 1b)` — two GEO families, ONE benchmark. Under the
+                                 #   new key it reads `1f`, and HMXA.L (HSBC MSCI Pacific ex Japan) leaves
+                                 #   the table as the duplicate of seated CSPXJ.SW that it always was. That
+                                 #   is the ONLY row control prints that ship does not.
+                                 #
+                                 #   MEASURED, by fund NAME on the fixed-width column and never by ticker
+                                 #   (venue dedup drifts tickers between runs; (#269) was nearly fooled):
+                                 #     control  56 rows   keyonly (key ON, caps unchanged)  56 rows
+                                 #     census   (key ON, every cap 99) 122 rows   ship  83 rows
+                                 #   The PRE-REGISTERED prediction held on every arm: the key alone moves
+                                 #   CONTENT, not COUNT (56 -> 56), because the cap still binds; the count
+                                 #   moves only when the caps follow the new family supply. 56 -> 83, +27
+                                 #   rows, ONE eviction and it is the leak.
+                                 #
+                                 #   THE CAPS. `cap = max(shipped cap, new family count)`. NOT the census
+                                 #   count alone — a first pass set each cap TO its family count and evicted
+                                 #   four incumbents (FWRA.L, ISAC.L, XRSU.L and HMXA.L), because a cap equal
+                                 #   to the family count seats exactly one fund per family and destroys every
+                                 #   runner-up slot the shipped table already had. (#220) says a cap is read
+                                 #   off the census and never argmaxed; it does NOT license LOWERING one.
+                                 #   `all_world` 7, `size` 4 and `factor` 5 therefore do not move at all.
+                                 #   Seven do: developed 4->8, us 4->8, europe 4->5, sector 8->16,
+                                 #   country 9->13, nasdaq 1->2, and the shared `hold_per_tier` 3->6
+                                 #   (emerging's new family count; ex-US, Japan and Asia-Pacific are
+                                 #   supply-bound below it). The shared knob does spill: Japan holds 3
+                                 #   families but 5 funds and now prints all 5. Those two extra rows are
+                                 #   runner-ups inside an already-seated family — precisely what
+                                 #   `all_world`'s cap of 7 over 3 families already does on the shipped
+                                 #   table, so it is existing policy applied wider, not a new one.
+                                 #
+                                 #   MISSING DATA PASSES (non-negotiable #5). A fund with no BF index name
+                                 #   keys exactly as it does today, on its GEO token. 19 of 121 CORE-eligible
+                                 #   funds are in that state, so the lane runs on a MIXED key at ~84%
+                                 #   coverage. That is a real limit, not a rounding error: a benchmarked fund
+                                 #   and an unbenchmarked twin of the same index can never match, so a
+                                 #   missing benchmark can mint a phantom family. `Yb` is a FLOOR on the true
+                                 #   index count, never a ceiling.
+                                 #
+                                 #   THE KNOWN COST, one row, recorded rather than hidden. The benchmark key
+                                 #   cannot tell BROAD from NARROW. The GEO word did it by accident, by
+                                 #   merging narrow slices into the broad family so family-first seated the
+                                 #   broad fund. Now every narrow slice of an index is its own family, and
+                                 #   SC0U.DE (Invesco STOXX Europe 600 Optimised Banks) takes a Europe family
+                                 #   slot at row 36. Judged acceptable: the table already carries world-sector
+                                 #   and single-country sleeves, so narrow is in scope by design, and nothing
+                                 #   was traded away to seat it — the caps rose, so (#213)'s family-for-family
+                                 #   standard is not engaged. Five swap-replicated funds enter the same way,
+                                 #   as ADDITIONS and not TRADES, and the REPL column names them as swap.
+                                 #
+                                 #   NOT A DEGENERACY. The sector sleeve reads 16 families over 16 funds, a
+                                 #   perfect 1:1, which was investigated as a suspected collapse to
+                                 #   one-family-per-fund and is not one: a sector sleeve tracks one index per
+                                 #   SECTOR by design, and `16b` distinct benchmark literals over 16 sector
+                                 #   funds is the correct answer. WSTI.AS (iShares, a Sector CAPPED index)
+                                 #   and XDWT.L (Xtrackers, uncapped) are genuinely different indices, as are
+                                 #   an S&P 500 Industrials (US-only) and an MSCI World Industrials (global).
+                                 #
+                                 #   NOT GRADEABLE, and this is display-only. `backtest::stamp_asset_class`
+                                 #   fills only name/instrument_type/sector, so every backtest quote dies on
+                                 #   its TER leg and no walk reaches the CORE lane. There are no horizons to
+                                 #   quote. Judgement plus the live diff, as every CORE round before it.
+                                 #
+                                 #   REVERT RULE. Set false — and revert the seven caps WITH it, they are one
+                                 #   change and reverting the key alone would leave seven caps sitting on a
+                                 #   family count that no longer exists — if any of: BF ever emits two
+                                 #   spellings of one index (the tell is a sleeve whose `Xf` exceeds its true
+                                 #   exposure count, splitting a family exactly as the GEO word did); the
+                                 #   benchmark coverage falls materially below the ~84% measured here, since
+                                 #   the mixed key degrades toward phantom families as coverage drops; or a
+                                 #   narrow slice ever EVICTS a broad incumbent rather than being added
+                                 #   beside it, which would engage (#213) and refuse this outright.
   hold_family_first: true        # (#214) MEASURED 2026-09-02, live `screen`, 4583-EU-buyable-ETF pond.
                                  #   Fill each CORE sleeve FAMILY-FIRST: one pass takes the best fund of each
                                  #   DISTINCT index family (which `core::GEO` token matched), then the
@@ -6224,7 +6320,7 @@ buy_heuristic:
                                  #   — developed/EM/US/exUS/Europe/Japan are byte-identical row for row.
                                  #   REVERT RULE: 0. That restores the shared cap on every sleeve, and the
                                  #   only thing lost is four all-world funds.
-  hold_per_tier_developed: 4     # (#251 / MEASURED 2026-09-06, live `screen`) — the FOURTEENTH sleeve
+  hold_per_tier_developed: 8     # (#251 / MEASURED 2026-09-06, live `screen`) — the FOURTEENTH sleeve
                                  #   to carry its own cap, and the SIXTH optional one. 0 -> 4. Rows the CORE
                                  #   table keeps for developed-world trackers (tier 1). 0 is the code default
                                  #   and is byte-identical to the shipped lane (non-negotiable #1) — and on
@@ -6300,7 +6396,11 @@ buy_heuristic:
                                  #   now takes the cap and the arm (non-negotiable #4).
                                  #   REVERT RULE: 0. That restores the shared cap on the developed sleeve AND
                                  #   makes the `global equity` token inert, in one number.
-  hold_per_tier_us: 4            # (#234) HELD AT 4 — A RAISE TO 5 WAS PLANNED, PRE-REGISTERED AND THEN
+                                 # (#272) RAISED 4 -> 8: the family key is now the benchmark
+                                 #   index, not the GEO word, and this sleeve's family count moved with it.
+                                 #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
+                                 #   `hold_family_key_benchmark` reverts this to 4 in the same change.
+  hold_per_tier_us: 8            # (#234) HELD AT 4 — A RAISE TO 5 WAS PLANNED, PRE-REGISTERED AND THEN
                                  #   REFUSED BY ITS OWN STOP RULE. Recorded here rather than dropped,
                                  #   because the census line that licensed it is still on screen and the
                                  #   next round will otherwise re-derive the same wrong conclusion.
@@ -6446,7 +6546,11 @@ buy_heuristic:
                                  #   name/instrument_type/sector, so every backtest quote dies on its TER leg
                                  #   and no walk reaches this lane. Judgement plus a live diff, never a ship
                                  #   rule verdict.
-  hold_per_tier_europe: 4        # (#237) MEASURED 2026-09-04, live `screen`, control and arm BACK TO
+                                 # (#272) RAISED 4 -> 8: the family key is now the benchmark
+                                 #   index, not the GEO word, and this sleeve's family count moved with it.
+                                 #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
+                                 #   `hold_family_key_benchmark` reverts this to 4 in the same change.
+  hold_per_tier_europe: 5        # (#237) MEASURED 2026-09-04, live `screen`, control and arm BACK TO
                                  #   BACK in one session on one cache, journal `cp -p`'d and restored + `cmp`-verified between every
                                  #   run. Pond 4606 EU-buyable ETFs, QUALIFIED 127. Rows kept in the EUROPE sleeve alone, overriding
                                  #   `hold_per_tier` (3) there; 0 = inherit it, byte-identical, and the DEFAULT (non-negotiable #1).
@@ -6487,6 +6591,10 @@ buy_heuristic:
                                  #   on its TER leg and no walk reaches this lane. Ship Rule v2 cannot adjudicate it and was not
                                  #   invoked. Evidence is the live control/arm pair, the ticker-set diff, and the unit pins. Goldens did
                                  #   NOT move (verified) and both config regimes read 383/9/21.
+                                 # (#272) RAISED 4 -> 5: the family key is now the benchmark
+                                 #   index, not the GEO word, and this sleeve's family count moved with it.
+                                 #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
+                                 #   `hold_family_key_benchmark` reverts this to 4 in the same change.
   hold_per_tier_size: 4          # (#230) MEASURED 2026-09-04, live `screen`, control and probe BACK TO BACK
                                  #   on the same cache, 4564-EU-buyable-ETF pond. Rows kept in the SMALL-CAP
                                  #   sleeve alone, overriding `hold_per_tier` (3) there. 0 = inherit it, the
@@ -6714,7 +6822,7 @@ buy_heuristic:
                                  #   answer. A hardcoded `!` there would be green in one regime and red in the other.
                                  # NOT GRADEABLE, permanently, exactly as the caps around it: `backtest::stamp_asset_class` fills only
                                  # name/instrument_type/sector, so every backtest quote dies on its TER leg and no walk reaches here.
-  hold_per_tier_sector: 8        # (#225) re-read 2026-09-03 — see the amendment at the end of this receipt.
+  hold_per_tier_sector: 16        # (#225) re-read 2026-09-03 — see the amendment at the end of this receipt.
                                  # (#220) MEASURED 2026-09-02, live `screen`, control and probe BACK TO BACK on the same cache.
                                  #   WHAT IT DOES: gives the world SECTOR sleeve its own row cap, overriding the shared `hold_per_tier`
                                  #   there and only there. 0 = inherit it, byte-identical on every sleeve, and the config-less DEFAULT.
@@ -6907,7 +7015,11 @@ buy_heuristic:
                                  # prints 8 rows carrying only 6 families (IUIT.L, WSTI.AS, XDWT.L are three `technolog`
                                  # wrappers). MEASURED in a fifth arm, not reasoned. Put this back to 6 whenever
                                  # `hold_min_aum_eur_new_family` is removed.
-  hold_per_tier_country: 9       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
+                                 # (#272) RAISED 8 -> 16: the family key is now the benchmark
+                                 #   index, not the GEO word, and this sleeve's family count moved with it.
+                                 #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
+                                 #   `hold_family_key_benchmark` reverts this to 8 in the same change.
+  hold_per_tier_country: 13       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
                                  #   BACK on one cache) — 7 -> 9. THE FAMILY COUNT, NOT AN ARGMAX, read
                                  #   off a RE-RUN of (#227)'s own census: two of the twenty spellings it
                                  #   refused now reach a fund, so the sleeve has nine index families and
@@ -7478,7 +7590,11 @@ buy_heuristic:
                                  # CG1.PA, EL4A.DE, LYY7.DE on dax; L100.L on ftse 100), so a raise buys exactly what
                                  # (#197) refuses. The cap and the family count are already equal; there is nothing to
                                  # read off the census.
-  hold_per_tier_nasdaq: 1        # (#239 / MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs) — the
+                                 # (#272) RAISED 9 -> 13: the family key is now the benchmark
+                                 #   index, not the GEO word, and this sleeve's family count moved with it.
+                                 #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
+                                 #   `hold_family_key_benchmark` reverts this to 9 in the same change.
+  hold_per_tier_nasdaq: 2        # (#239 / MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs) — the
                                  #   THIRTEENTH sleeve, and the FIFTH optional one. 0 -> 1. Rows the CORE
                                  #   table keeps for Nasdaq-100 trackers, in a tier of their own at the very
                                  #   bottom of the ladder. 0 = the sleeve does not print at all, which is the
@@ -7596,7 +7712,11 @@ buy_heuristic:
                                  #   by anything other than a plain Nasdaq-100 tracker, or if any incumbent
                                  #   sleeve loses a fund (ZERO REMOVALS).
 
-  hold_per_tier: 3               # (#197) MEASURED 2026-09-01 AND HELD AT THE SHIPPED LITERAL — rows kept
+                                 # (#272) RAISED 1 -> 2: the family key is now the benchmark
+                                 #   index, not the GEO word, and this sleeve's family count moved with it.
+                                 #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
+                                 #   `hold_family_key_benchmark` reverts this to 1 in the same change.
+  hold_per_tier: 6               # (#197) MEASURED 2026-09-01 AND HELD AT THE SHIPPED LITERAL — rows kept
                                  # per breadth sleeve in the buy-and-hold CORE table. Was a bare
                                  # `const HOLD_PER_TIER: usize = 3` in picks.rs; this names it, and the
                                  # naming is what let (#195) and (#196) be read at all.
@@ -7717,6 +7837,10 @@ buy_heuristic:
                                  #   REVERT: 3 is the shipped value and the literal that preceded the knob, so
                                  #   this IS the revert. Raising it re-surfaces the 22 rows above, sector funds
                                  #   included, until NARROW is fixed.
+                                 # (#272) RAISED 3 -> 6: the family key is now the benchmark
+                                 #   index, not the GEO word, and this sleeve's family count moved with it.
+                                 #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
+                                 #   `hold_family_key_benchmark` reverts this to 3 in the same change.
   growth_sector_cap: 0           # (#101 / finding C7) UNMEASURED — an unfitted judgement value, shipping
                                  # 0 (off), which is today's unconstrained table. It is a RISK
                                  # constraint, and the honest thing to say up front is that the

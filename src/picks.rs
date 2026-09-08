@@ -4271,8 +4271,14 @@ fn hold_core_cmp(a: &Quote, ta: u8, b: &Quote, tb: u8, swap_credit: f64, dom_pen
 ///
 /// The family stays an `Option` rather than collapsing to `""`: `None == None`, so two names `GEO`
 /// cannot spell already share a key, which is `family_first_order`'s own rule with nothing re-spelled.
-fn family_key(q: &Quote) -> (u8, Option<&'static str>) {
-    (core::hold_breadth_tier(&q.name), core::sleeve_family_of(&q.name))
+///
+/// (#272) …and WHAT a family is now comes from `core::sleeve_family_at`, which answers with the
+/// fund's benchmark INDEX when `by_bench` is on and with the `GEO` word when it is off. The knob is
+/// a PARAMETER threaded from `hold_core_list`, never a read here — `(#204)`'s rule, and `(#271)` is
+/// the receipt for what a read one level up costs. The lifetime moves with it: the key can now
+/// borrow from the quote, where the token was `&'static`.
+fn family_key(q: &Quote, by_bench: bool) -> (u8, Option<&str>) {
+    (core::hold_breadth_tier(&q.name), core::sleeve_family_at(q, by_bench))
 }
 
 /// (#269) Drop every CORE candidate that ONLY the relaxed AUM floor admitted and whose index family
@@ -4299,7 +4305,7 @@ fn family_key(q: &Quote) -> (u8, Option<&'static str>) {
 /// Both floors are PARAMETERS, not reads, for `(#204)`'s reason: a process-wide `OnceLock` is a knob
 /// no test can flip, so a branch reachable only on an off-default is one the mutation gate cannot
 /// grade. `(#235)` lost seven mutants to exactly that.
-fn retain_new_family_only(cores: &mut Vec<&Quote>, strict: f64, relaxed: f64) {
+fn retain_new_family_only(cores: &mut Vec<&Quote>, strict: f64, relaxed: f64, by_bench: bool) {
     // off: the strict floor is the only floor, nothing below it was ever admitted, and this is a
     // no-op on a list it cannot have changed — non-negotiable #1.
     if relaxed <= 0.0 {
@@ -4307,8 +4313,8 @@ fn retain_new_family_only(cores: &mut Vec<&Quote>, strict: f64, relaxed: f64) {
     }
     let clears_strict = |q: &Quote| q.aum_shown().is_none_or(|a| a >= strict);
     let seated: Vec<(u8, Option<&str>)> =
-        cores.iter().filter(|q| clears_strict(q)).map(|q| family_key(q)).collect();
-    cores.retain(|q| clears_strict(q) || !seated.contains(&family_key(q)));
+        cores.iter().filter(|q| clears_strict(q)).map(|q| family_key(q, by_bench)).collect();
+    cores.retain(|q| clears_strict(q) || !seated.contains(&family_key(q, by_bench)));
 }
 
 /// (round 55) The CORE shortlist selection, shared by the printed block and the screen-state
@@ -4333,10 +4339,14 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // (#269) take back the relaxed-floor admissions that add no index family, before family-first
     // reorders and before the cap rations. Off by default -> returns on its first line, so the list
     // reaching the two passes below is the one that always reached them (non-negotiable #1).
+    // (#272) read the family-key knob ONCE here and thread it into both sites below — never inside
+    // `family_key`, which is `(#204)`'s rule and what `(#271)` was the receipt for.
+    let by_bench = crate::config::hold_family_key_benchmark();
     retain_new_family_only(
         &mut cores,
         crate::config::hold_min_aum_eur(),
         crate::config::hold_min_aum_eur_new_family(),
+        by_bench,
     );
     // cap each breadth tier so every index family shows — else the many MSCI World trackers crowd
     // out the S&P 500 and all-world cores. Sort is breadth-major, so a per-tier counter suffices.
@@ -4352,7 +4362,7 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // (#214) fill each sleeve family-first before the cap runs, so a sleeve spends its three slots
     // on three INDICES where it has three. Off by default -> `family_first_order` returns the
     // identity and this is a no-op, which is non-negotiable #1.
-    let keys: Vec<(u8, Option<&str>)> = cores.iter().map(|q| family_key(q)).collect();
+    let keys: Vec<(u8, Option<&str>)> = cores.iter().map(|q| family_key(q, by_bench)).collect();
     let order = core::family_first_order(&keys, crate::config::hold_family_first());
     let reordered: Vec<&Quote> = order.into_iter().map(|k| cores[k]).collect();
     cores = reordered;
@@ -4513,7 +4523,11 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
     for q in quotes.iter().filter(|q| eu_buyable(q) && core::hold_suitable(q)) {
         let t = core::hold_breadth_tier(&q.name) as usize;
         supply[t] += 1;
-        let fam = core::sleeve_family_of(&q.name).unwrap_or("?");
+        // (#272) `Xf` must report the key the LANE ACTUALLY USED, not the one it used to use. This
+        // line read `sleeve_family_of` directly while the table keyed on `sleeve_family_at`, and a
+        // census that contradicts the table it explains is worse than no census — this function's
+        // own doc says so, and `(#229)` is the round that paid for it.
+        let fam = core::sleeve_family_at(q, crate::config::hold_family_key_benchmark()).unwrap_or("?");
         families[t].insert(fam);
         match q.benchmark.as_deref() {
             Some(b) => benches[t].insert(b.to_string()),
@@ -7585,25 +7599,25 @@ mod tests {
         let big = core_etf("A", "Amundi Stoxx Europe 600 UCITS ETF Acc", 20e9, 0.07);
         let same = core_etf("B", "Xtrackers Stoxx Europe 600 UCITS ETF 1C", 6e8, 0.19);
         let fresh = core_etf("C", "iShares MSCI Europe UCITS ETF EUR Acc", 6e8, 0.12);
-        assert_eq!(family_key(&big).0, family_key(&fresh).0, "premise: ONE sleeve");
-        assert_eq!(family_key(&big), family_key(&same), "premise: the index the sleeve already shows");
-        assert_ne!(family_key(&big), family_key(&fresh), "premise: an index it does not");
+        assert_eq!(family_key(&big, false).0, family_key(&fresh, false).0, "premise: ONE sleeve");
+        assert_eq!(family_key(&big, false), family_key(&same, false), "premise: the index the sleeve already shows");
+        assert_ne!(family_key(&big, false), family_key(&fresh, false), "premise: an index it does not");
 
         // OFF -> a no-op on a list it cannot have changed. Non-negotiable #1.
         let mut off: Vec<&Quote> = vec![&big, &same, &fresh];
-        retain_new_family_only(&mut off, strict, 0.0);
+        retain_new_family_only(&mut off, strict, 0.0, false);
         assert_eq!(tickers(&off), ["A", "B", "C"], "0.0 = off = the strict floor is the only floor");
 
         // ON -> the sub-floor SECOND WRAPPER goes, the sub-floor NEW FAMILY stays. This is the whole
         // knob: (#268) refused a plain 5e8 floor because it let "B" displace "A", and it cannot here.
         let mut on: Vec<&Quote> = vec![&big, &same, &fresh];
-        retain_new_family_only(&mut on, strict, 5e8);
+        retain_new_family_only(&mut on, strict, 5e8, false);
         assert_eq!(tickers(&on), ["A", "C"], "the relaxed floor bought a family, never a second wrapper");
 
         // …and with the incumbent absent, the sub-floor wrapper is the family's FIRST row and stays.
         // Without this the guard could be "drop every sub-floor fund" and still pass everything above.
         let mut alone: Vec<&Quote> = vec![&same];
-        retain_new_family_only(&mut alone, strict, 5e8);
+        retain_new_family_only(&mut alone, strict, 5e8, false);
         assert_eq!(tickers(&alone), ["B"], "nothing seats this family, so the relaxed admission holds");
     }
 
@@ -7619,7 +7633,7 @@ mod tests {
         // relaxed admission itself, nothing would seat the family, and the wrapper would survive.
         let exact = core_etf("A", "Amundi Stoxx Europe 600 UCITS ETF Acc", strict, 0.07);
         let mut at: Vec<&Quote> = vec![&exact, &wrapper];
-        retain_new_family_only(&mut at, strict, 5e8);
+        retain_new_family_only(&mut at, strict, 5e8, false);
         assert_eq!(tickers(&at), ["A"],
             "AUM exactly at the strict floor is SEATED, not itself a relaxed admission");
 
@@ -7629,13 +7643,13 @@ mod tests {
         none.aum_fallback = None;
         assert_eq!(none.aum_shown(), None, "premise: the fund has no AUM datum at all");
         let mut unknown: Vec<&Quote> = vec![&none, &wrapper];
-        retain_new_family_only(&mut unknown, strict, 5e8);
+        retain_new_family_only(&mut unknown, strict, 5e8, false);
         assert_eq!(tickers(&unknown), ["D"],
             "a fund we have no AUM for seats its family rather than being refused for missing data");
 
         // …and the unknown-AUM fund survives even when a strict-floor fund already seats that family
         let mut guarded: Vec<&Quote> = vec![&exact, &none];
-        retain_new_family_only(&mut guarded, strict, 5e8);
+        retain_new_family_only(&mut guarded, strict, 5e8, false);
         assert_eq!(guarded.len(), 2, "missing AUM is never guarded out — it is not a KNOWN sub-floor AUM");
     }
 
@@ -8229,7 +8243,16 @@ mod tests {
             // (#231) a FIFTH, and it is what keeps the cap binding in both config regimes: with
             // `hold_per_tier_us` set the tier admits 4, so four names would fit and the assertion
             // below would stop testing anything. The dearest name is the one capped out either way.
+            // (#272) raised that set to NINE — see the note under the last of them.
             core_etf("XDPE.DE", "Amundi S&P 500 UCITS ETF", 1e9, 0.11),
+            // (#272) FOUR MORE, same reason (#231) added the fifth: `hold_per_tier_us` rose 4 -> 8
+            // when the family key moved to the benchmark index, so five names no longer bind an
+            // eight-slot cap and the assertion below would have stopped testing the cap at all.
+            // Nine distinct names bind BOTH regimes — 3 config-less, 8 under `tests/ci-settings.yaml`.
+            core_etf("SPX5.DE", "Invesco S&P 500 UCITS ETF", 4e9, 0.12),
+            core_etf("HSPX.DE", "HSBC S&P 500 UCITS ETF", 3e9, 0.13),
+            core_etf("BNPP.DE", "BNP Paribas Easy S&P 500 UCITS ETF", 2e9, 0.14),
+            core_etf("UBSP.DE", "UBS S&P 500 UCITS ETF", 2e9, 0.16),
             core_etf("VUAA.L", "Vanguard S&P 500 UCITS ETF", 5e9, 0.15),  // dup NAME -> deduped
             core_etf("MEUD.DE", "Xtrackers MSCI Europe UCITS ETF", 6e9, 0.12), // tier 5
             Quote::stub("AAPL", "€1", "", "Apple Inc."),                   // not a fund -> excluded
@@ -8244,8 +8267,8 @@ mod tests {
         assert!(tiers.windows(2).all(|w| w[0] <= w[1]), "breadth-major order: {tiers:?}");
         assert_eq!(cores.iter().filter(|q| core::hold_breadth_tier(&q.name) == 2).count(), 1, "EM sleeve present");
         // (#231) 4 non-US rows (all-world + developed + EM + Europe) plus whatever tier 3 admits —
-        // spelled off the same helper as the filter, because five S&P names are supplied and the
-        // cap that trims them is 3 config-less and 4 under `tests/ci-settings.yaml`.
+        // spelled off the same helper as the filter, because nine S&P names are supplied and the
+        // cap that trims them is 3 config-less and 8 under `tests/ci-settings.yaml` since (#272).
         assert_eq!(cores.len(), 4 + us_tier_cap(), "1 all-world + 1 world + 1 EM + 1 Europe + the US sleeve, dup dropped");
         let uniq: HashSet<&str> = cores.iter().map(|q| q.name.as_str()).collect();
         assert_eq!(uniq.len(), cores.len(), "one row per fund name");

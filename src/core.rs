@@ -1856,6 +1856,52 @@ pub fn sleeve_family_of(name: &str) -> Option<&'static str> {
     }
 }
 
+/// (#272) …and the SAME question answered by the INDEX instead of the geography word. This is the
+/// one spelling of "which family is this fund in", and every caller — `picks::family_key`, and
+/// through it `family_first_order`, `picks::retain_new_family_only` and the CORE census — goes
+/// through it, so they cannot answer it differently (non-negotiable #4).
+///
+/// WHY THE GEO TOKEN WAS NEVER THE FAMILY. It is a WORD, and a word is wrong in both directions at
+/// once. It SPLITS one index into two families — `msci pacific` and `msci pac ` are the same MSCI
+/// Pacific ex Japan, which is how `(#269)` admitted HMXA.L beside the seated CSPXJ.SW and recorded
+/// the leak. It also MERGES two indices into one — [`family_first_order`]'s own doc records "FTSE
+/// Developed Europe" and "FTSE Developed Europe ex UK" collapsing under a single token. Both
+/// directions cost a row, and every cap calibrated on that count under `(#220)` sat on it.
+///
+/// THE MERGE EXAMPLE IS MEASURED, and the one this round first reached for was WRONG:
+/// [`family_first_order`]'s doc cites "FTSE Developed Europe" against "FTSE Developed Europe ex UK",
+/// but `GEO` carries `ftse developed europe ex uk` as its own token, so that pair separates today
+/// and the doc has rotted. The real pairs, verified against `sleeve_family_of` before this shipped,
+/// are `MSCI World` / `MSCI World IMI` (both `msci world`) and `MSCI ACWI` / `MSCI ACWI IMI` (both
+/// `acwi`) — an IMI index carries small caps, ~99% of investable market cap against ~85%, so those
+/// genuinely are two books wearing one token.
+///
+/// `Quote::benchmark` is BF's own index name, already captured for `history_proxy`'s twin hints and
+/// therefore free here. `(#237)` printed it beside the token as the census's `Yb` column expressly
+/// to ask "should this table be a menu of EXPOSURES or of PRODUCTS" WITHOUT shipping an answer; on
+/// 2026-09-08 the user took that decision and this is it.
+///
+/// NO NORMALIZER, AND NONE IS WANTED. `fetch::bf_row_meta` already lowercases and trims it and maps
+/// empty to `None`, and BF normalizes the string itself, so same-index funds share the literal —
+/// which is why `core::Quote::benchmark`'s own doc says it is never a match key "beyond exact `==`".
+/// Exact equality is precisely what a family key needs. If BF ever emits two spellings of one index
+/// the key splits a family again, and that is the standing risk this helper carries.
+///
+/// MISSING BENCHMARK FALLS BACK TO THE TOKEN, so a fund BF has no index name for keys exactly as it
+/// does today and cannot be newly separated from its own family by absent data (non-negotiable #5).
+/// Coverage was ~84% of the CORE-eligible pond when this shipped, so the lane runs on a MIXED key.
+///
+/// The knob is a PARAMETER for `(#204)`'s reason, and `(#271)` is the receipt for taking it
+/// seriously: threading a knob into the CALLER grades the caller, never the helper above it.
+pub fn sleeve_family_at(q: &Quote, by_benchmark: bool) -> Option<&str> {
+    if by_benchmark {
+        if let Some(b) = q.benchmark.as_deref() {
+            return Some(b);
+        }
+    }
+    sleeve_family_of(&q.name)
+}
+
 /// (#214) The order to FILL a sleeve in, given each candidate's index family in the sleeve's
 /// existing `(domicile, TER, AUM)` order. One pass takes the best fund of each DISTINCT family, in
 /// the order those families first appear; everything else follows in its ORIGINAL order.
@@ -5670,6 +5716,62 @@ mod tests {
             Some(FACTOR_TIER), "(#236) …and the sleeve claims it, which is what (#228) measured as the cost");
         assert_eq!(geo_tier_at("xtrackers msci world minimum volatility ucits etf 1c", 0.0, false, false, 0, 0, 0),
             None, "(#236) …while the factor knob still gates it, so the sleeve stays optional");
+    }
+
+    /// (#272) The family key itself, graded DIRECTLY rather than through `picks::family_key` — which
+    /// is exactly the hole `(#271)` was the receipt for: threading a knob into the caller grades the
+    /// caller, never the helper above it that interprets the knob.
+    ///
+    /// Both directions the GEO token gets wrong are pinned here as REAL cases, not toy strings: two
+    /// spellings of MSCI Pacific ex Japan (the `(#269)` HMXA leak) must be ONE family, and FTSE
+    /// Developed Europe against its ex-UK sibling (`family_first_order`'s own recorded example) must
+    /// be TWO. If BF ever stops sharing one literal per index, the first of these reds.
+    #[test]
+    fn the_family_key_follows_the_index_not_the_geography_word() {
+        let mut hsbc = Quote::stub("HMXA.L", "€10.00", "", "HSBC MSCI Pacific ex Japan UCITS ETF USD Acc");
+        let mut ishares = Quote::stub("CSPXJ.SW", "€10.00", "", "iShares Core MSCI Pacific ex Japan UCITS ETF");
+        hsbc.benchmark = Some("msci pacific ex japan".to_string());
+        ishares.benchmark = Some("msci pacific ex japan".to_string());
+
+        // OFF: the GEO token, byte-identical to what shipped before this knob. Non-negotiable #1.
+        assert_eq!(sleeve_family_at(&hsbc, false), sleeve_family_of(&hsbc.name),
+            "(#272) off = the token, and the token is whatever `sleeve_family_of` says");
+
+        // ON: one index, ONE family -- even though the two names match DIFFERENT GEO tokens, which is
+        // precisely how (#269) seated both and had to record the leak.
+        assert_eq!(sleeve_family_at(&hsbc, true), Some("msci pacific ex japan"));
+        assert_eq!(sleeve_family_at(&hsbc, true), sleeve_family_at(&ishares, true),
+            "(#272) same index = same family, whatever word the name happens to carry");
+
+        // …and the MERGE the token cannot see: two different indices under ONE token become two.
+        // MSCI World and MSCI World IMI are not the same book — IMI carries small caps, ~99% of
+        // investable market cap against ~85% — and `msci world` is a substring of both.
+        let mut broad = Quote::stub("IWDA.L", "€10.00", "", "iShares Core MSCI World UCITS ETF USD (Acc)");
+        let mut imi = Quote::stub("SPPW.DE", "€10.00", "", "SPDR MSCI World IMI UCITS ETF");
+        broad.benchmark = Some("msci world".to_string());
+        imi.benchmark = Some("msci world imi".to_string());
+        assert_eq!(sleeve_family_of(&broad.name), sleeve_family_of(&imi.name), 
+            "premise: the TOKEN collapses these two indices into one family");
+        assert_ne!(sleeve_family_at(&broad, true), sleeve_family_at(&imi, true),
+            "(#272) …and the INDEX does not, which is the row the old key was deleting");
+    }
+
+    /// (#272) MISSING BENCHMARK KEYS AS IT DOES TODAY — non-negotiable #5, and the arm that makes the
+    /// ~16% of the pond BF has no index name for safe. Absent data can never newly split a fund away
+    /// from its own family, and it can never merge it into one either.
+    #[test]
+    fn a_fund_with_no_benchmark_keeps_the_geography_key() {
+        let named = Quote::stub("A", "€10.00", "", "iShares Core MSCI World UCITS ETF USD (Acc)");
+        let mut bench = named.clone();
+        bench.benchmark = Some("msci world".to_string());
+
+        assert_eq!(named.benchmark, None, "premise: `stub` leaves BF's index name absent");
+        assert_eq!(sleeve_family_at(&named, true), sleeve_family_of(&named.name),
+            "(#272) no BF index name -> the GEO token, exactly as it keys today");
+        assert_eq!(sleeve_family_at(&named, true), sleeve_family_at(&named, false),
+            "(#272) …so for an uncovered fund the knob is a no-op in both positions");
+        assert_eq!(sleeve_family_at(&bench, true), Some("msci world"),
+            "(#272) and a covered twin still keys on its index");
     }
 
     /// (#271) `(#269)` shipped `hold_effective_aum_floor` with its ARMING TEST ungraded: the guard's
