@@ -13280,6 +13280,76 @@ buy_heuristic:
   #  the stock sleeve is what strands the size budget: 3 distinct issuers put the class at
   #  min(70, 3 x 8.0) = 24.0 of a 70 budget, so each admitted ISSUER is ~8 points of gross moved off
   #  market beta. The old ladder above is PRE-PIT and cannot answer this.
+  # (#266) 2026-09-08 — THE LADDER RAN ON THE PIT LANE. 1.6 STANDS. EVERY RUNG REFUSED, MONOTONICALLY.
+  #  This discharges the debt `growth_max_peg`'s own doc has carried since the PEG definition changed
+  #  ("RE-MEASURE before trusting any threshold: the shipped 1.5/2.0/2.5/3.0/4.0 sweep priced the OLD
+  #  definition"), and it answers the "WHAT WOULD SETTLE IT" clause of the (#265) block immediately
+  #  above — which asked for exactly six runs at 2.0 and got twelve, across a pre-registered ladder.
+  #  TWELVE RUNS, `backtest {20,12,8} universe fund pit` x growth_max_peg {1.6 control, 1.75, 2.0, 2.5}.
+  #  All four rungs pre-registered BEFORE any result was read, so no rung is a post-hoc argmax ((#120)),
+  #  and a 4-point grid is what distinguishes an interior plateau from a grid edge ((#126)'s standard).
+  #  Each probe config NAMED ci-settings.yaml in its own directory (any other name silently merges the
+  #  repo file as base and the control becomes a second arm), a full copy differing in this ONE key —
+  #  `diff | grep -c '^[<>]'` = 2 on each. windows scored 1120/2768/6157 (control), never the 32 that
+  #  would mean FOLIOMAN_OFFLINE was set.
+  #
+  #    rung        20y mean|med   12y mean|med   8y mean|med    worst 20/12/8    h2h 6-10 (12y|8y)
+  #    1.6 SHIP    +0.6|-0.0      +3.9|+4.0      +5.3|+5.4      -10.0/-6.4/-5.5  12/19 63% | 19/27 70%
+  #    1.75        +0.6|-0.0      +3.9|+3.7      +5.1|+4.8      -10.0/-6.4/-5.5  12/19 63% | 19/27 70%
+  #    2.0         +0.6|-0.0      +3.9|+3.5      +5.0|+4.8      -10.0/-6.4/-5.5  12/19 63% | 19/27 70%
+  #    2.5         +0.6|-0.0      +3.9|+3.5      +4.8|+4.2      -10.0/-6.4/-5.5  12/19 63% | 20/28 71%
+  #
+  #  PRIMARY FAILS AT EVERY RUNG, at BOTH graded horizons, in the SAME direction — an outright refusal,
+  #  never a TIE. 12y median 4.0 -> 3.7 -> 3.5 -> 3.5; 8y mean 5.3 -> 5.1 -> 5.0 -> 4.8; 8y median
+  #  5.4 -> 4.8 -> 4.8 -> 4.2. Monotone in the loosening direction at both horizons: a GRADIENT, not
+  #  noise, which is the strongest form this refusal could have taken. 20y is byte-identical across all
+  #  four arms (peg_yield is too sparse that far back to move the book), so 20y neither refuses nor
+  #  licenses — the (#139) pit lane already reads PRIMARY at 12y AND 8y for exactly this reason.
+  #  NO GUARD BREAKS ANYWHERE. Worst window identical at every rung and every horizon. The (#160)
+  #  governing h2h at 12y/8y is the 6-10 book (`print_h2h_mid_ladder`): unmoved at 63%/70% on three
+  #  rungs and one window BETTER at 2.5, so it is >=50% absolute AND not-below control throughout.
+  #  The 11-20 book at 8y does dip (62% -> 50% -> 44% -> 56%), but (#160) does not read that book at
+  #  8y, and at 20y it is n=2 and VACUOUS BY RESOLUTION per (#186) — the control itself reads 1/2.
+  #  Reported in full because the rule says report it, not because it adjudicates.
+  #
+  #  THE MECHANISM, and it is NOT the (#192)/(#258) dilution story. Those refused because admitted names
+  #  landed in ranks 6-10 and an equal-weight top-10 pays 1/N. Here the disjoint rank slices say
+  #  something sharper: at 12y ranks 2-5, 6-10 and 11-20 are IDENTICAL at every rung and only RANK 1
+  #  moves, and it FALLS (+1.6|+4.7 -> +1.4|+4.1). At 8y every in-book slice falls while the 11-20 book
+  #  CLIMBS MONOTONICALLY: +0.2|+0.8 (1.6) -> +3.8|+6.1 (1.75) -> +5.0|+8.6 (2.0) -> +7.8|+8.8 (2.5).
+  #  So a looser ceiling does not pad the bottom of the book with weak names — it admits EXPENSIVE names
+  #  that rank TOO HIGH and EVICT better ones, and the evicted names then outperform from outside the
+  #  book. Each rung evicts one more. That is the same finding (#126) reached from the other side: the
+  #  value brake pays because cutting the dearest 40% of survivors pays, so this lane wants FEWER dear
+  #  names near the top, not more of them admitted. Two independent measurements, one conclusion.
+  #
+  #  THE PRE-REGISTERED CLASS CHECK PASSED — "the STOCK column must move and the ETF column must not; an
+  #  equity ceiling moving the fund lane is a bug". At 8y, by class (growth-scored / cutoffs):
+  #    control  crypto 0/35   ETF 7/9582   stock 350/7658
+  #    arm 2.0  crypto 0/35   ETF 7/9599   stock 362/7645
+  #  ETF growth-scored is 7 on both sides and crypto is 0 on both; only the stock column moves (+12).
+  #
+  #  AND THE GATE SWEEP'S `TOO TIGHT` FLAG IS NOW FALSIFIED AT FOUR RUNGS BY DIRECT GRADING. Every run
+  #  in this ladder — including the 2.5 arm — still prints
+  #      growth_max_peg ->off  ADMITS NO WORSE THAN THE BOOK  <- TOO TIGHT (loosen this gate)
+  #  with n falling 42 -> 36 -> 30 -> 22 as the ceiling rises. The flag says "loosen" at 1.6, at 1.75,
+  #  at 2.0 AND at 2.5, while the graded book gets monotonically WORSE across those same four rungs. It
+  #  is a POOL diagnostic answering "would the admitted names have been bad on their own?" and it cannot
+  #  see what the ladder measures — where those names LAND in the ranking and whom they displace. This
+  #  is the strongest evidence in the repo for (#151)'s rule, and (#265)'s "permission to measure, never
+  #  a result" is now upgraded from a caution to a measured fact. THE SWEEP FLAG ON THIS GATE IS SPENT:
+  #  it will keep printing green forever and it has been wrong at every rung anyone has tested.
+  #
+  #  STANDING RULE, REAFFIRMED AND NOW PAID FOR: "DO NOT RE-PROPOSE 2.0/2.5/off on sweep evidence alone.
+  #  The ladder is the answer." The ladder has answered. Re-arming needs a NEW mechanism, not a new
+  #  reading of the same flag — the two that would qualify are (a) a non-equal-weight verdict basket,
+  #  since the eviction cost above is a 1/N artifact of equal weighting and would not price the same way
+  #  under conviction weights, and (b) a PEG whose growth term is not `long_cagr_pct` (the definition
+  #  change that made 1.6 stale in the first place is the reason this ladder was owed at all).
+  #  WHAT THIS COSTS LIVE, STATED PLAINLY: the six PEG sole-blocks in the 2026-09-08 funnel stay out —
+  #  1YD.DE Broadcom (PEG 1.67), AP2.DE Applied Materials (1.71), PAR.DE Parker-Hannifin (1.72), FTNT
+  #  Fortinet (2.22), plus 5AP.DE and MPWR above the 2.4 near-miss band. Three of them would have
+  #  entered a 13-name cleared pool at any rung >= 1.75, and the ladder says the book is worse for it.
   growth_max_peg_etf: 2.0        # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in
