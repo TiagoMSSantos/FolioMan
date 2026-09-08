@@ -951,7 +951,7 @@ fn risk_bonus(quote: &Quote, long_cagr: f64, sharpe_weight: f64, calmar_weight: 
 /// - **momentum** — weekly bounce/knife multiplier (`momentum_bounce`/`knife`); 1.0 = off (default:
 ///   weekly timing is noise at a decades horizon).
 /// - **long_reward** — (A) reward for the long leg's CAGR (annualized, comparable across spans;
-///   `long_trend_weight`, and `long_trend_cap` when that cap is on — 0 = off, uncapped, as shipped),
+///   `long_trend_weight`, and `long_trend_cap` when that cap is on — 0 = off, uncapped; ships 30.0 (#270)),
 ///   scaled by **discount_frac** = discount/`discount_cap`
 ///   so a proven compounder only earns it when actually pulled back — at its high the reward → 0.
 /// - **cheap_reward** — (C) reward for sitting below the ~200wk SMA (`cheap_weight`, `cheap_cap`).
@@ -1473,7 +1473,7 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     }
 
     // ---- SCORE ----
-    let trend = capped_trend(long_cagr, tuning); // proven compounding; long_trend_cap 0 = uncapped (shipped)
+    let trend = capped_trend(long_cagr, tuning); // proven compounding; long_trend_cap 0 = uncapped, ships 30.0 (#270)
     let accel = accel_raw(return_1y, long_cagr, tuning); // last year outpacing the long run = building
     // (#48) distance from the name's own 10y high, blended toward neutral by its authority knob:
     // w=1 is the raw `range_pct/100` multiply (0.8..1.0 inside the shipped gate — closer to the high
@@ -3197,7 +3197,7 @@ fn col_cell(key: &str, quote: &Quote, score: f64, alt: Option<f64>, mark: &str, 
         // proven long-term CAGR (%/yr) from the ranked leg — the annualized trend the ranking actually
         // rewards, shown so a reader sees "+14%/yr" and not just a +1344% cumulative blob. This is
         // EXACTLY what `trend_term` multiplies (`--explain`: "trend = growth_trend_weight × CAGR").
-        // Goes through `capped_trend`, so it tracks `long_trend_cap` whatever it is set to — 0 (shipped)
+        // Goes through `capped_trend`, so it tracks `long_trend_cap` whatever it is set to — 30.0 (shipped) (#270)
         // prints the raw leg CAGR, a positive cap prints the clamped one. The cell must never re-derive
         // this: matching the arithmetic is the only reason the column exists.
         "leg" => long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years).map_or("n/a".to_string(), |(c, y)| {
@@ -8761,9 +8761,11 @@ mod tests {
             .collect()
     }
 
-    /// (#144) `long_trend_cap: 0` is OFF (uncapped) and is what `tests/ci-settings.yaml` ships, so this
-    /// is the shipped shape, not a contrived one. Uncapped is also the only shape in which the fat tail
-    /// this transform exists to tame is reachable at all.
+    /// (#144) `long_trend_cap: 0` is OFF (uncapped). (#270) CORRECTION: this claimed uncapped is what
+    /// `tests/ci-settings.yaml` ships — it is NOT, the live lane caps at 30.0 ((#3k) restored it). So this
+    /// is NOT the shipped shape. It stays 0 anyway and the test is unchanged: uncapped is the only shape
+    /// in which the fat tail this transform exists to tame is reachable at all, which is the whole point
+    /// of the case. Read it as the OFF arm, not as the lane.
     fn rank_tuning(w: f64) -> BuyHeuristic {
         BuyHeuristic { growth_rank_normalise: w, long_trend_cap: 0.0, ..BuyHeuristic::default() }
     }

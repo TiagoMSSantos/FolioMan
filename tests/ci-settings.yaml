@@ -2506,6 +2506,15 @@ buy_heuristic:
                                  #   curve that already found the optimum BELOW 30. Uncapping is now measured in both
                                  #   directions and loses in both. 30 STANDS.
                                  #   history: #16 sweep 2026-06-28: 20/30/40/50/1000 all edge ≈ -100337360 (flat) → cap inert on that run; 2026-07-02 re-test 30→50 on `backtest 12 universe` DROPPED growth edge +103.2→+87.7 → 30 read protective (parabolic names mean-revert), kept 30; (#3g) 2026-07-26 full curve confirmed the ceiling wanted to go DOWN (25 +191.2) not up; (#3h) same day removed it anyway on request, measured cost -11.5 edge at 12y; (#3k) restored on 20y-stress measurement
+                                 #   (#270) 2026-09-08 COMMENT-ONLY CORRECTION, no value moved. Five sites in src/ still said this
+                                 #   knob "ships 0 / uncapped" — the pre-(#3h) truth, left standing when (#3k) restored 30.0 three
+                                 #   days later. src/config.rs (3 sites incl. the default receipt) and src/picks.rs (4, incl. the
+                                 #   (#144) rank_tuning doc, whose test sets 0.0 and called that "the shipped shape") now read 30.0.
+                                 #   INDEPENDENT CHECK, not just a re-read: the `growth_fund_scope_by_class` (#87) receipt prices the
+                                 #   trend span as 0.15 x (30 - 19) = 1.65 pts, which is only finite BECAUSE the cap is 30 — the yaml
+                                 #   had already been reasoning off 30 while src/ described 0. No test or golden moves; (#144)'s test
+                                 #   keeps long_trend_cap: 0.0 on purpose (uncapped is the only shape reaching the fat tail it grades)
+                                 #   and is now labelled the OFF arm rather than the lane. REVERT RULE: none — a comment cannot revert.
   health_zero_cagr: -10.0        # [FOIL] long-leg CAGR (%/yr) where on-sale trend_health hits 0; health=1 at flat/rising
 
   # --- (B) total-return inputs + (E) endpoint-robust CAGR + (#8) geomean shape — EDGE-AFFECTING, validate before trusting ---
