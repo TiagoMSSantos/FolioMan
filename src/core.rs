@@ -2726,9 +2726,20 @@ fn hold_miss_leg_at(
     // opposite stance to `growth_min_aum_etf`, the repo's other AUM gate, whose receipt reads
     // "None-AUM names are NOT gated (missing data is not a small fund; BF only covers its venue)".
     // Two gates, one field, one of them argued. A KNOWN AUM below the floor still refuses.
+    // (#267) the floor is a NAMED knob, not the `1e9` literal it was -- the last bare number among
+    // these legs. The message formats ITS OWN floor from the same field (non-negotiable #4), so the
+    // printed reason cannot quote a bar the comparison did not use. The `if let Some` above is
+    // (#224)'s fix and is deliberately untouched: missing AUM still PASSES.
+    let min_aum = crate::config::hold_min_aum_eur();
     if let Some(a) = q.aum_shown() {
-        if a < 1e9 {
-            return Some((5, format!("AUM €{:.1}B < €1B floor", a / 1e9)));
+        if a < min_aum {
+            // the floor drops a trailing ".0" so the DEFAULT 1e9 still prints "€1B floor" exactly as
+            // it always has (non-negotiable #1 -- four tests assert that string, and they run in the
+            // config-less regime where this default is what answers), while 5e8 prints "€0.5B".
+            // `strip_suffix` and not `trim_end_matches`: the latter eats BOTH zeros of "10.0".
+            let floor = format!("{:.1}", min_aum / 1e9);
+            let floor = floor.strip_suffix(".0").unwrap_or(floor.as_str());
+            return Some((5, format!("AUM €{:.1}B < €{floor}B floor", a / 1e9)));
         }
     }
     None

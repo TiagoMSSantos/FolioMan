@@ -4777,6 +4777,63 @@ buy_heuristic:
   #   None crossed EUR 1B; the three moved by single-digit percent in a day, so this is a slow trigger
   #   and re-reading it costs one probe. NOTHING SHIPPED FROM THIS RE-ADJUDICATION either — no knob, no
   #   token, no config value, no Rust. The census is again the whole deliverable.
+  hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
+                                 # AUM floor, in EUR, extracted verbatim from the `1e9` that was
+                                 # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among
+                                 # these legs, every sibling (`hold_max_ter` (#102), `hold_size_sleeve_ter`
+                                 # (#202), `hold_allow_swap` (#233), `hold_allow_unknown_ter` (#240))
+                                 # having been named already. Naming it is byte-identical and that is
+                                 # VERIFIED, not asserted: `cargo t` green in BOTH regimes (393/9/21),
+                                 # clippy clean, NO golden moved, and the four tests that assert the
+                                 # exact string "AUM EUR0.3B < EUR1B floor" still pass unchanged.
+                                 # THE MESSAGE NOW FORMATS ITS OWN FLOOR from this field (non-negotiable
+                                 # #4), so the printed reason can never quote a bar the comparison did
+                                 # not use -- (#102)'s rule when it named `hold_max_ter`. It drops a
+                                 # trailing ".0" so 1e9 still prints "EUR1B" exactly as it always has;
+                                 # `strip_suffix(".0")` and NOT `trim_end_matches('0')`, which would eat
+                                 # both zeros of "10.0". MISSING AUM STILL PASSES, untouched: the leg is
+                                 # inside `if let Some(a) = q.aum_shown()`, which is (#224)'s fix for
+                                 # non-negotiable #5. Only a KNOWN sub-floor AUM refuses.
+                                 #
+                                 # WHY THE VALUE DID NOT MOVE, and this is the honest half. This round
+                                 # was authorised BY USER DECISION to lower the floor to 5e8 -- a POLICY
+                                 # change, not an evidence one, the standing (#227) and (#239) both ship
+                                 # on. (#224) and (#226) had each refused a cut on the test "none of
+                                 # these is a NEW index family for its sleeve", which is correct for a
+                                 # CAP-BOUND sleeve and the wrong test for ex-US (tier 4) and
+                                 # Asia-Pacific (tier 7), both measured EMPTY BEHIND their caps, where a
+                                 # fund needs a free slot and not a new family in order to print.
+                                 # THE LIVE A/B COULD NOT BE RUN: `screen` was OOM-killed three times in
+                                 # a row (at ~100/5174 quotes, then before first output), including with
+                                 # in-flight fetches cut 64 -> 16 on BOTH arms. `builds-oom-under-desktop-
+                                 # load` is the standing note. Shipping 5e8 on (#226)'s BANKED census
+                                 # instead would break this round's own pre-registration and the file's
+                                 # rule that a receipt states what was MEASURED -- and those rows are
+                                 # perishable: (#226) re-read them and all three had moved.
+                                 #
+                                 # PRE-REGISTERED FOR THE NEXT SESSION, written before any run, so the
+                                 # measurement cannot be fitted afterwards. Probe: two adjacent `screen`
+                                 # runs, warm cache, each config NAMED ci-settings.yaml in its own
+                                 # directory, differing in THIS KEY ALONE (verified diff = 2 lines).
+                                 # Diff the CORE rows by fund NAME, never by ticker and never by funnel
+                                 # count. EXPECTED at 5e8: WEXU.DE (Amundi MSCI World ex USA, 0.15%,
+                                 # EUR 0.634B) and HMXS.L (HSBC MSCI Pacific ex Japan, 0.15%, EUR 0.521B)
+                                 # PRINT. EXPECTED NOT TO: LGAG.L, which (#226) records now ALSO refusing
+                                 # at leg 0 as a NARROW/thematic name; and Amundi Prime EM / L&G EM,
+                                 # because the emerging sleeve is CAP-BOUND at 3 with 3 exposures ((#238))
+                                 # and truncates them. So the prediction is +2 ROWS, NOT +5.
+                                 # REFUSE AND SHIP NOTHING IF a fund enters by EVICTING an incumbent:
+                                 # `hold_family_first` reorders and (#251) records that a cap can drop an
+                                 # incumbent family to seat a wrapper. Trading an exposure for a wrapper
+                                 # is what (#213)'s family-for-family standard refuses, and the ask was
+                                 # MORE assets, not different ones. HMXS.L at EUR 0.521B sits just above
+                                 # a 5e8 floor and (#226) measured these moving single-digit percent in a
+                                 # day, so re-read the AUM column on the run itself.
+                                 # HONEST COST, to be carried into that receipt: rows admitted at 5e8 are
+                                 # duplicate EXPOSURES, and sub-EUR-1B funds close and merge -- the real
+                                 # risk this floor was pricing, and NOT gradeable here (`backtest_quote`
+                                 # never reaches this lane, so no horizon can be claimed).
+                                 # REVERT: delete the key. 1e9 is the Default, so the lane is unchanged.
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:
