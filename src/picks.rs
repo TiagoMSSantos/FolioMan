@@ -4342,10 +4342,16 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // (#272) read the family-key knob ONCE here and thread it into both sites below — never inside
     // `family_key`, which is `(#204)`'s rule and what `(#271)` was the receipt for.
     let by_bench = crate::config::hold_family_key_benchmark();
+    // (#273) ARM THE GUARD FROM EITHER RELAXED FLOOR. This argument is used by the guard ONLY as its
+    // on/off test — the filter itself reads `strict` and asks `clears_strict`, so it already guards a
+    // SECTOR-tier admission correctly whichever floor let it through. What it cannot do is guard one
+    // while switched off, and with `hold_min_aum_eur_new_family` at 0.0 the sector floor alone would
+    // admit sub-strict funds into an UNGUARDED list. `max` is the on/off union, NOT a floor value:
+    // nothing downstream compares an AUM against this number.
     retain_new_family_only(
         &mut cores,
         crate::config::hold_min_aum_eur(),
-        crate::config::hold_min_aum_eur_new_family(),
+        crate::config::hold_min_aum_eur_new_family().max(crate::config::hold_sector_sleeve_aum()),
         by_bench,
     );
     // cap each breadth tier so every index family shows — else the many MSCI World trackers crowd

@@ -2515,6 +2515,33 @@ fn ter_cap_for(tier: u8, size_cap: f64, base_cap: f64) -> f64 {
     }
 }
 
+/// (#273) The AUM twin of [`ter_cap_for`]: the sector sleeve's own floor, or the base one.
+///
+/// WHY A SLEEVE-SCOPED FLOOR IS NOT A LOOSENING IN DISGUISE. The EUR 1B base floor is calibrated on
+/// funds holding the WHOLE market. A GICS sector is ~1/11th of it, so that number is not a liquidity
+/// test for a sector fund — it is a whole-market test applied to a slice. `(#237)` ARM 4 derived the
+/// probed value from that ratio, `1e9 / 11 = 9e7`, and NOT from what it admits, which is what keeps
+/// it clear of the argmax `(#220)`/`(#224)` forbid.
+///
+/// `0.0` = off = `base_floor`, byte-identical to what shipped (non-negotiable #1). A sector floor
+/// ABOVE the base is a no-op rather than an error, for [`hold_effective_aum_floor`]'s reason and by
+/// the same `min`: this can only ever LOWER the bar for this ONE sleeve, never raise it anywhere.
+///
+/// `(#237)` ARM 4 was built, measured and then REMOVED because it displaced a row: 2B7C.DE (iShares
+/// S&P 500 Industrials) entered the `industrial` family and pushed out XDWI.L (Xtrackers MSCI World
+/// Industrials), since a sleeve fills cheapest-TER-first WITHIN a family. THAT REASON IS GONE, and
+/// not by assertion: `(#272)` keys the family on the benchmark index, those two funds track
+/// different indices, and the shipped table prints BOTH. The two arguments built on top of the
+/// displacement went with it — "no honest floor value avoids it", and the 14M-wide EUR 687M-701M
+/// window that was the argmax. All three rested on the GEO word merging the two.
+fn aum_floor_for(tier: u8, sector_floor: f64, base_floor: f64) -> f64 {
+    if tier == SECTOR_TIER && sector_floor > 0.0 {
+        sector_floor.min(base_floor)
+    } else {
+        base_floor
+    }
+}
+
 /// (#233) Does this fund escape US dividend withholding entirely? True for a SWAP-based fund in the
 /// US sleeve and nothing else. A synthetic fund holds a total-return swap rather than the shares, so
 /// the counterparty delivers the index return GROSS and no US withholding is levied anywhere in the
@@ -2813,9 +2840,19 @@ fn hold_miss_leg_at(
     // rather than an error: this knob can only ever LOWER the bar, never raise it.
     // The message below still formats from the EFFECTIVE floor (non-negotiable #4), so a fund refused
     // at 5e8 says "€0.5B floor" and cannot quote the 1e9 the comparison did not use.
-    let min_aum = hold_effective_aum_floor(
-        crate::config::hold_min_aum_eur(),
-        crate::config::hold_min_aum_eur_new_family(),
+    // (#273) …and a THIRD floor, scoped to ONE sleeve rather than to a fund's family. It composes
+    // as a further `min` on top of the pair above, and it is read here beside them rather than
+    // threaded as a parameter for the reason those two are: the DECISION lives in `aum_floor_for`,
+    // which takes both numbers as arguments and carries its own direct test, which is the split
+    // `(#271)` paid to learn. `hold_miss_but_breadth` passes tier 0, so this is inert there with no
+    // call-site change — tier 0 is never `SECTOR_TIER`.
+    let min_aum = aum_floor_for(
+        tier,
+        crate::config::hold_sector_sleeve_aum(),
+        hold_effective_aum_floor(
+            crate::config::hold_min_aum_eur(),
+            crate::config::hold_min_aum_eur_new_family(),
+        ),
     );
     if let Some(a) = q.aum_shown() {
         if a < min_aum {
@@ -5779,6 +5816,23 @@ mod tests {
     /// this helper and CI's mutation gate MISSED `replace > with <` at core.rs:2686. That mutant is not
     /// cosmetic — under `relaxed < 0.0` a live 5e8 fails the test, the helper returns `strict`, and the
     /// whole relaxed floor is silently OFF while every other test still passes. Spell all four arms.
+    /// (#273) `aum_floor_for` is the DECISION the sector floor knob buys, so it is graded here and
+    /// directly — `(#271)`'s lesson, which cost a MISSED mutant when a knob was threaded into a call
+    /// site while the helper that interpreted it went ungraded. Spell every arm: the sleeve it scopes
+    /// to, the sleeve it must not touch, the off position, and the `min` that makes it one-directional.
+    #[test]
+    fn the_sector_aum_floor_scopes_to_one_sleeve_and_only_downward() {
+        // armed, and on ITS sleeve: the sector floor replaces the base one
+        assert_eq!(aum_floor_for(SECTOR_TIER, 9e7, 1e9), 9e7, "…kills `tier == SECTOR_TIER` -> `!=`");
+        // armed, WRONG sleeve: the base floor stands. This is the whole point of scoping it.
+        assert_eq!(aum_floor_for(0, 9e7, 1e9), 1e9, "…kills the tier test being dropped altogether");
+        assert_eq!(aum_floor_for(SIZE_TIER, 9e7, 1e9), 1e9, "…and it is not the size sleeve's floor either");
+        // off: byte-identical to what shipped, on every tier (non-negotiable #1)
+        assert_eq!(aum_floor_for(SECTOR_TIER, 0.0, 1e9), 1e9, "…kills `sector_floor > 0.0` -> `>=`");
+        // a sector floor ABOVE the base is a NO-OP, never a raise — the `min` is load-bearing
+        assert_eq!(aum_floor_for(SECTOR_TIER, 2e9, 1e9), 1e9, "…kills `min` -> `max`");
+    }
+
     #[test]
     fn the_relaxed_aum_floor_arms_only_on_a_positive_value() {
         // armed: the knob LOWERS the bar, which is the only thing it may ever do

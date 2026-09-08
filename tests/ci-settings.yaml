@@ -4998,6 +4998,98 @@ buy_heuristic:
                                  #   a direct test spelling all four arms (armed / 0.0 off / negative off / above-strict no-op);
                                  #   the mutant was applied by hand locally and PROVEN to red it, not assumed to.
 
+  hold_sector_sleeve_aum: 90000000 # (#273 / MEASURED 2026-09-08, live `screen`, FIVE arms back to back on the
+                                 #   same warm cache and ONE pre-built binary -- no code differs between arms, so
+                                 #   `cp-p-forges-a-control` cannot bite) -- a THIRD CORE admission AUM floor, scoped to
+                                 #   the WORLD SECTOR SLEEVE instead of to a fund's index family.
+                                 #     WHAT IT DOES: `core::aum_floor_for` returns this value in place of
+                                 #     `hold_effective_aum_floor(...)` for `SECTOR_TIER` alone, and composes as a `min`, so
+                                 #     it can only ever LOWER the bar and only in that one sleeve. 0.0 = OFF = the base
+                                 #     floor on every tier, byte-identical, and the config-less DEFAULT (non-negotiable #1).
+                                 #     WHY 9e7 IS NOT AN ARGMAX. The EUR 1B base floor is calibrated on funds holding the
+                                 #     WHOLE market. A GICS sector is ~1/11th of it, so applying that number to a sector
+                                 #     fund is a whole-market test on a slice, not a liquidity test. The value is DERIVED
+                                 #     FROM THAT RATIO -- 1e9 / 11 is ~9.09e7, taken DOWN to a round 9e7 -- and NOT from what
+                                 #     it admits, and the rounding is DOWNWARD so it cannot be a fitted edge. That derivation is
+                                 #     what keeps it clear of the argmax (#220)/(#224) forbid; it was fixed before the first
+                                 #     arm ran and was not moved after seeing a table.
+                                 #   SPELL IT AS A PLAIN INTEGER, as every other AUM key here does. Not because
+                                 #   `9e7` breaks the lane -- it does not, and that was CHECKED rather than
+                                 #   assumed: serde_yaml 0.9.34 reads `9e7` as f64 90000000.0, identically to the
+                                 #   integer spelling. But a YAML 1.1 reader (python `yaml.safe_load`, the handy
+                                 #   way to lint this file) resolves the same scalar to the STRING '9e7', so the
+                                 #   two readers of this file disagree about its type. The integer spelling is
+                                 #   the one both agree on. The measured arms all used 90000000.
+                                 #     WHY THIS ARM MAY BE RE-OPENED AT ALL. This is (#237) ARM 4, which was built, measured
+                                 #     and then REMOVED on its own pre-registered ZERO-REMOVALS rule: 2B7C.DE (iShares S&P
+                                 #     500 Industrials, 0.15%, EUR 687M) entered the `industrial` family and displaced
+                                 #     XDWI.L (Xtrackers MSCI World Industrials, 0.25%, EUR 1.2B), because a sleeve fills
+                                 #     cheapest-TER-first WITHIN a family. (#272) keys the family on the BENCHMARK INDEX;
+                                 #     those two track different indices and the shipped table prints BOTH. The displacement
+                                 #     cannot recur, and the two arguments built on top of it -- "NO HONEST FLOOR VALUE
+                                 #     AVOIDS IT" and the 14M-wide EUR 687M-701M window -- went with it. ARM 4's receipt
+                                 #     closed "TO SHIP IT LATER it needs a DECISION, not a measurement"; the decision it
+                                 #     named was whether +3 GICS families is worth XDWI.L becoming 2B7C.DE, and that trade
+                                 #     no longer exists. Both of its pre-registered predictions were re-run and HELD.
+                                 #   THE ARMS, and why the naive one is not the answer:
+                                 #     control  shipped HEAD                        83 rows   pond 4300
+                                 #     arm1     floor 9e7, caps unchanged           83 rows   FOUR sector removals
+                                 #     census1  floor 9e7, sector cap 99            world sector 23 (23f, 23b/4?)
+                                 #     ship1    floor 9e7 + sector cap 23           90 rows   pond 4302
+                                 #     ctrl2    sector cap 23, floor OFF            83 rows   pond 4303
+                                 #   arm1's four removals are CAP TRUNCATION, not the floor: the sleeve was sitting AT its
+                                 #   cap of 16, so an admitted family sorts above a seated incumbent and the tail falls off.
+                                 #   Reading arm1 against control would have refused this arm for a defect of the CAP.
+                                 #   ctrl2 IS THE ISOLATING CONTROL and the one this ships on -- same cap, floor the only
+                                 #   difference. ctrl2 -> ship1 is ZERO REMOVALS and +7 rows, every one in the sector sleeve.
+                                 #   ctrl2 was necessary for a second reason: ship1 showed three removals against `control`
+                                 #   in the all-world/emerging/nasdaq sleeves, which a SECTOR_TIER-scoped knob cannot reach.
+                                 #   That was POND DRIFT across runs (EU-buyable ETFs 4300 -> 4301 -> 4302 -> 4303). On a
+                                 #   near-identical pond the floor removes NOTHING. Do not grade this knob against a control
+                                 #   run at a different cap; you will measure the cap.
+                                 #   THE SEVEN ADMITTED, with the closure-risk number the stop rule required:
+                                 #     2B7D.DE  iShares S&P 500 Consumer Staples          EUR 453M  0.15%
+                                 #     WHCA.SW  iShares MSCI World Health Care Advanced   EUR 396M  0.18%
+                                 #     XWTS.L   Xtrackers MSCI World Comm. Services       EUR 359M  0.25%
+                                 #     XDWC.L   Xtrackers MSCI World Consumer Discr.      EUR 345M  0.25%
+                                 #     2B7B.DE  iShares S&P 500 Materials                 EUR 188M  0.15%
+                                 #     WNSF.AS  iShares MSCI World Financials Advanced    EUR 142M  0.18%
+                                 #     WSSC.AS  iShares MSCI World Cons. Staples Advanced EUR 104M  TER n/a
+                                 #   SMALLEST ADMITTED: EUR 104M (WSSC.AS), which also carries no TER. THREE of seven are
+                                 #   sub-EUR-200M. The stop rule refuses the arm only if the new rows are DOMINATED by that
+                                 #   band; 3 of 7 is not a majority, so it does not fire -- but the cost is real and is the
+                                 #   reason the rule was written: a fund that closes inside 20 years is not a 20-year hold.
+                                 #   XWTS.L IS THE PRIZE: MSCI World Communication Services is the TENTH GICS sector, and it
+                                 #   was the pre-registered prediction. Before this knob the table printed 9 of 11.
+                                 #   REAL ESTATE, THE ELEVENTH, IS STILL MISSING AND THIS KNOB CANNOT FETCH IT. No REIT was
+                                 #   admitted, and the AUM leg was never the binding constraint for that population: (#237)
+                                 #   ARM 1 refused adding `real estate`/`property`/`reit` to `SECTOR_GEO`, so no REIT fund
+                                 #   reaches SECTOR_TIER at all. That is a VOCABULARY refusal, and re-opening it is a
+                                 #   separate arm with a separate argument. Do not cite this receipt as evidence for it.
+                                 #   THE COST THIS ARM ADDS, recorded because it is not visible in the row count. THREE of
+                                 #   the seven (WHCA.SW, WNSF.AS, WSSC.AS -- the iShares "Advanced" range) have NO BF row:
+                                 #   they come from the Yahoo fund-facts fallback, whose cache holds [date, TER, AUM] and no
+                                 #   benchmark. Under (#272) a fund with no benchmark falls back to the GEO token, so these
+                                 #   three can be PHANTOM FAMILIES -- a benchmarked fund tracking the same index can never
+                                 #   match them, and the sleeve would seat both. They are admitted anyway because NON-
+                                 #   NEGOTIABLE #5 IS EXPLICIT: missing data PASSES a gate. Refusing a fund for lacking a
+                                 #   benchmark is not a move this repo has. Sector benchmark coverage moved 16b/1? ->
+                                 #   23b/4?, i.e. 19/23 = 83%, materially the ~84% (#272) measured, so (#272)'s own
+                                 #   coverage revert rule is NOT tripped.
+                                 #   UNSETTLED, AND THE NEXT LEVER: whether iShares "Advanced" denotes an ESG/SCREENED index
+                                 #   variant. The NARROW vocabulary refuses `esg`/`screened`/`sri` and does not carry
+                                 #   `advanced`. If it is a screened range, this floor has put three screened sector funds
+                                 #   on a table whose own policy refuses them, and the fix is one NARROW token, not a revert
+                                 #   of this knob. Settling it needs the issuer's index name, which no cache in this repo
+                                 #   holds. Stated here rather than resolved, because the arm's own stop rules all passed.
+                                 #   NOT GRADEABLE, permanently, exactly as the caps and floors around it:
+                                 #   `backtest::stamp_asset_class` fills only name/instrument_type/sector, so every backtest
+                                 #   quote dies on its TER leg and no walk reaches the CORE lane. There are no horizons to
+                                 #   quote. The evidence is the live `screen` diff above and nothing else.
+                                 #   REVERT: delete this key AND put `hold_per_tier_sector` back to 16. THE PAIR, NEVER
+                                 #   ALONE -- at cap 16 with this floor ON the sleeve loses four rows to truncation (arm1).
+                                 #   0.0 is the Default and the config-less lane, so deleting the key restores byte-identity.
+
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:
@@ -6822,7 +6914,7 @@ buy_heuristic:
                                  #   answer. A hardcoded `!` there would be green in one regime and red in the other.
                                  # NOT GRADEABLE, permanently, exactly as the caps around it: `backtest::stamp_asset_class` fills only
                                  # name/instrument_type/sector, so every backtest quote dies on its TER leg and no walk reaches here.
-  hold_per_tier_sector: 16        # (#225) re-read 2026-09-03 — see the amendment at the end of this receipt.
+  hold_per_tier_sector: 23        # (#225) re-read 2026-09-03 — see the amendment at the end of this receipt.
                                  # (#220) MEASURED 2026-09-02, live `screen`, control and probe BACK TO BACK on the same cache.
                                  #   WHAT IT DOES: gives the world SECTOR sleeve its own row cap, overriding the shared `hold_per_tier`
                                  #   there and only there. 0 = inherit it, byte-identical on every sleeve, and the config-less DEFAULT.
@@ -7019,6 +7111,15 @@ buy_heuristic:
                                  #   index, not the GEO word, and this sleeve's family count moved with it.
                                  #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
                                  #   `hold_family_key_benchmark` reverts this to 8 in the same change.
+                                 # (#273) RAISED 16 -> 23: the sector sleeve's own AUM floor
+                                 #   (`hold_sector_sleeve_aum`) admits seven more funds, and the census re-read at
+                                 #   cap 99 reads `world sector 23 (23f, 23b/4?)`. 23 IS THAT FAMILY COUNT, read off
+                                 #   the census and not off a row-count peak -- (#220)'s rule, and (#272)'s
+                                 #   `cap = max(shipped cap, new family count)`, which forbids an argmax but does NOT
+                                 #   license a cut. HOLDING IT AT 16 IS NOT THE CONSERVATIVE CHOICE: with the floor
+                                 #   ON at cap 16 the sleeve was already saturated, so the four newly admitted
+                                 #   families sorted above seated incumbents and truncated the tail -- that is arm1's
+                                 #   four removals. The pair ships together and REVERTS TOGETHER, back to 16.
   hold_per_tier_country: 13       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
                                  #   BACK on one cache) — 7 -> 9. THE FAMILY COUNT, NOT AN ARGMAX, read
                                  #   off a RE-RUN of (#227)'s own census: two of the twenty spellings it
