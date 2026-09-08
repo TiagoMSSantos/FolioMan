@@ -4898,6 +4898,87 @@ buy_heuristic:
                                  # incumbent -- AUM promoted above TER, or a minimum-AUM RATIO before a
                                  # smaller fund may displace a seated one. Do not re-run this A/B without
                                  # one of those; it will return this same table.
+  hold_min_aum_eur_new_family: 500000000
+                                 # (#269 / MEASURED 2026-09-08, live `screen`, five arms BACK TO BACK on the same warm
+                                 # cache and the SAME binary -- no code differs between arms, so `cp-p-forges-a-control`
+                                 # cannot bite) -- a SECOND, LOWER CORE admission AUM floor that buys NEW INDEX FAMILIES
+                                 # ONLY.
+                                 #   WHAT IT DOES: a fund whose AUM sits between this and `hold_min_aum_eur` clears
+                                 #   `core::hold_miss_leg_at`'s AUM leg, and then keeps its slot in `picks::hold_core_list`
+                                 #   only if its (sleeve, index family) key is not already seated there by a fund clearing
+                                 #   the STRICT floor. The relaxed floor can ADD a row and can NEVER take one.
+                                 #   0.0 = OFF = `hold_min_aum_eur` is the only floor, and the config-less DEFAULT.
+                                 #   Byte-identical at the default is VERIFIED, not asserted ((#192)'s scar): `cargo t`
+                                 #   green in BOTH regimes 395/9(1)/21, clippy clean, NO golden moved.
+                                 #
+                                 #   WHY A SECOND FLOOR AND NOT A LOWER ONE. (#268) measured the single floor at 5e8 and
+                                 #   REFUSED it: 5 admits, 3 evictions. (#269) re-read that same run sleeve-by-sleeve and
+                                 #   ITS STATED CAUSE WAS WRONG -- every eviction landed in a sleeve ALREADY AT ITS CAP,
+                                 #   where a cheap sub-floor wrapper of an index the sleeve already showed displaced a
+                                 #   EUR 20B incumbent; every clean admit landed in a sleeve with room. One floor cannot
+                                 #   tell those two cases apart. This one can. `config.rs`'s comments on `hold_min_aum_eur`
+                                 #   and `hold_domicile_penalty` claimed shipped values (5e8, 0.20) that were only ever
+                                 #   PRE-REGISTERED and then refused; (#269) corrects both -- a pre-registration is not a
+                                 #   receipt, and this file is where the difference is supposed to be visible.
+                                 #
+                                 #   MEASURED, control -> ship arm: printed CORE rows 53 -> 56, +3, and ZERO EVICTIONS, so
+                                 #   the pre-registered stop rule ("any eviction at all ships nothing") had nothing to fire
+                                 #   on. Attribution is on fund NAMES, never tickers or funnel counts.
+                                 #     + iShares S&P 500 Consumer Discretionary  EUR 701M 0.15% IE  [consumer]
+                                 #     + Xtrackers MSCI World Materials          EUR 633M 0.25% IE  [material]
+                                 #     + HSBC MSCI Pacific ex Japan              EUR 521M 0.15% IE  [msci pacific]
+                                 #   NAMES, NOT TICKERS, and the run proved why: re-run on the committed config with a
+                                 #   REBUILT binary, the same three funds arrived under DIFFERENT tickers (ICDU.L/IUCD.L,
+                                 #   XDWM.DE/XDWM.L, HMXS.L/HMXA.L) because `hold_core_list` keeps one row per fund NAME and
+                                 #   which VENUE wins moves with the pond. Row count and name set both reproduced exactly.
+                                 #   ONE APPARENT EXTRA SWAP IN THAT RE-RUN IS NOISE, NOT THIS KNOB: the Nasdaq sleeve
+                                 #   (cap 1) showed AXA IM NASDAQ 100 where the other four arms all showed BNP PARIBAS EASY
+                                 #   II Nasdaq 100. Both are EUR 2.5B / 0.14% / IE / physical -- IDENTICAL on every sort
+                                 #   term, so a cap of 1 breaks the tie on pond order, which drifts between adjacent runs.
+                                 #   Both also clear the STRICT floor, so `picks::retain_new_family_only` cannot see either
+                                 #   of them: it only ever filters funds BELOW that floor. Three arms with this knob armed
+                                 #   kept BNP; the fourth flipped. Do not read it as an eviction.
+                                 #   Funnel: AUM-blocked 139 -> 118, QUALIFIED 119 -> 135. Pond 4306 -> 4310 (adjacent-run
+                                 #   drift, per `probe-edge-not-reproducible`).
+                                 #
+                                 #   THE GUARD REFUSED THREE FUNDS AND EVERY REFUSAL IS THE POINT:
+                                 #     SC0C.DE  EUR 584M 0.19% SWAP -- `stoxx europe 600`, already shown by MEUD.PA
+                                 #              (EUR 20.5B, 0.07%, physical). This is the precise swap (#268) refused the
+                                 #              whole probe over, and here it does not happen.
+                                 #     WEXU.DE  `msci world ex usa`, already shown TWICE (EXUS.L, XUSE.AS) even though the
+                                 #              ex-US sleeve sits at 2 of 3 and HAD a free slot. (#267) pre-registered this
+                                 #              as a clean add on exactly that reasoning; it is a third wrapper.
+                                 #     DEAM.DE  Invesco MDAX -- the COUNTRY token `dax` matches "mdax" as a substring, so it
+                                 #              is the same family as DBXD.DE (EUR 7.0B). (#268) called it a new family. It
+                                 #              is not, and `hold_per_tier_country` therefore does NOT move.
+                                 #
+                                 #   HONEST LEAK, AND IT IS NOT IN THE GUARD: HMXA.L is the SAME index as the seated
+                                 #   CSPXJ.SW (iShares Core MSCI Pac ex-J). `core::GEO` spells that one index with TWO
+                                 #   tokens -- "msci pacific" hits the HSBC name, "msci pac " (trailing space) hits the
+                                 #   abbreviated iShares one -- so the coarse key sees two families where there is one.
+                                 #   That is the mirror of the defect `core::family_first_order`'s own doc already admits
+                                 #   (two indices under ONE token, in Europe) running the other way. One of the three rows
+                                 #   is therefore a duplicate EXPOSURE, not new geography. FIXING IT IS THE NEXT RUNG AND
+                                 #   IS DELIBERATELY NOT TAKEN HERE: merging those tokens moves the SHIPPED lane's family
+                                 #   keys, so it needs its own measurement and its own receipt, not a rider on this one.
+                                 #
+                                 #   PAIRED WITH `hold_per_tier_sector: 8`; NEITHER MAY BE REVERTED ALONE. MEASURED, not
+                                 #   reasoned: cap 8 with THIS KNOB OFF prints 8 sector rows carrying only 6 families --
+                                 #   IUIT.L, WSTI.AS and XDWT.L are three `technolog` wrappers -- which is exactly what
+                                 #   (#197) refuses. The cap is correct only while the guard supplies the 7th and 8th
+                                 #   FAMILY instead of the 7th and 8th wrapper.
+                                 #
+                                 #   HONEST COST, carried forward from (#267): sub-EUR-1B funds close and merge over a
+                                 #   20-year hold -- the real risk this floor prices -- and it is NOT gradeable here.
+                                 #   `backtest::stamp_asset_class` fills only name/instrument_type/sector, so every
+                                 #   backtest quote dies on its TER leg and no walk reaches the CORE lane. No horizon is
+                                 #   claimed for this change; it is judgement plus a live diff, the footing (#203), (#211),
+                                 #   (#213), (#215), (#218), (#222), (#226), (#234), (#235) and (#268) all shipped on.
+                                 #
+                                 #   REVERT: delete this key AND put `hold_per_tier_sector` back to 6. 0.0 is the Default,
+                                 #   so deleting this alone does restore the floor -- but it leaves the cap at 8, which is
+                                 #   the measured 8-row/6-family wrapper state above. Revert the pair or neither.
+
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:
@@ -6614,7 +6695,7 @@ buy_heuristic:
                                  #   answer. A hardcoded `!` there would be green in one regime and red in the other.
                                  # NOT GRADEABLE, permanently, exactly as the caps around it: `backtest::stamp_asset_class` fills only
                                  # name/instrument_type/sector, so every backtest quote dies on its TER leg and no walk reaches here.
-  hold_per_tier_sector: 6        # (#225) re-read 2026-09-03 — see the amendment at the end of this receipt.
+  hold_per_tier_sector: 8        # (#225) re-read 2026-09-03 — see the amendment at the end of this receipt.
                                  # (#220) MEASURED 2026-09-02, live `screen`, control and probe BACK TO BACK on the same cache.
                                  #   WHAT IT DOES: gives the world SECTOR sleeve its own row cap, overriding the shared `hold_per_tier`
                                  #   there and only there. 0 = inherit it, byte-identical on every sleeve, and the config-less DEFAULT.
@@ -6789,6 +6870,24 @@ buy_heuristic:
                                  #   breadth-for-cost trade of exactly the kind (#217)/(#218)/(#227) each put to the user explicitly.
                                  #
                                  # NET: this cap does not move, and (#236) changes NO sector-side Rust at all.
+                                 #
+                                 # (#269) 2026-09-08 RAISED 6 -> 8. The value is the FAMILY COUNT read off the live census,
+                                 # never an argmax -- (#220)'s own rule, applied to a census that MOVED. With
+                                 # `hold_min_aum_eur_new_family: 5e8` arming the relaxed floor, the UNCAPPED sector sleeve
+                                 # (this key at 99) supplies 14 rows carrying 8 DISTINCT families: technolog, health,
+                                 # financ, energy, utilit, industrial, consumer, material. The last two are new supply and
+                                 # both arrive sub-EUR-1B -- IUCD.L (EUR 701M, S&P 500 Consumer Discretionary) and XDWM.L
+                                 # (EUR 633M, MSCI World Materials).
+                                 # AT 8 THE SLEEVE PRINTS 8 ROWS CARRYING 8 DISTINCT FAMILIES -- no wrapper, so (#197)'s
+                                 # finding still holds at the new cap, which is the whole test of a cap raise here.
+                                 # WHY NOT 7: at 6, the guard's IUCD.L EVICTED XDWI.L (industrial) rather than joining it,
+                                 # because family-first sorts a new family above a seated incumbent and the cap then
+                                 # truncates the tail. 7 seats IUCD.L and still strands material. 8 is where the census
+                                 # lands, not where the row count peaks.
+                                 # PAIRED WITH THAT KNOB AND NOT REVERTABLE ALONE: at 8 with the floor knob OFF the sleeve
+                                 # prints 8 rows carrying only 6 families (IUIT.L, WSTI.AS, XDWT.L are three `technolog`
+                                 # wrappers). MEASURED in a fifth arm, not reasoned. Put this back to 6 whenever
+                                 # `hold_min_aum_eur_new_family` is removed.
   hold_per_tier_country: 9       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
                                  #   BACK on one cache) — 7 -> 9. THE FAMILY COUNT, NOT AN ARGMAX, read
                                  #   off a RE-RUN of (#227)'s own census: two of the twenty spellings it
@@ -7348,6 +7447,18 @@ buy_heuristic:
   #   NEW index universe appearing in a sleeve already at its cap. What would NOT: more wrappers of an
   #   index already shown, which is what every one of the ~76 cap-refused funds is.
 
+                                 #
+                                 # (#269) 2026-09-08 CONSIDERED AND REFUSED -- this cap does NOT move. (#268) reported
+                                 # DEAM.DE (Invesco MDAX) as a new family the 5e8 floor would buy, and it is not one: the
+                                 # COUNTRY token `dax` matches "mdax" as a substring, so DEAM.DE is the same family as the
+                                 # seated DBXD.DE (EUR 7.0B, 0.09%). The uncapped census (this key at 99, relaxed floor
+                                 # armed) supplies 17 rows carrying exactly 9 DISTINCT families -- dax, euro stoxx 50,
+                                 # msci emu, ftse 100, korea, india, china, cac 40, spi -- which is the whole COUNTRY token
+                                 # table and this cap's current value. Every row behind the cap is a second or third
+                                 # wrapper of a family already printed (XESC.DE, C50.PA, MSE.PA, C50U.PA on euro stoxx 50;
+                                 # CG1.PA, EL4A.DE, LYY7.DE on dax; L100.L on ftse 100), so a raise buys exactly what
+                                 # (#197) refuses. The cap and the family count are already equal; there is nothing to
+                                 # read off the census.
   hold_per_tier_nasdaq: 1        # (#239 / MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs) — the
                                  #   THIRTEENTH sleeve, and the FIFTH optional one. 0 -> 1. Rows the CORE
                                  #   table keeps for Nasdaq-100 trackers, in a tier of their own at the very

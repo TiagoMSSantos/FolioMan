@@ -2671,6 +2671,34 @@ pub fn hold_miss_leg_with(
 /// (#203) Legs 1..5 for a fund ALREADY placed in `tier` — every leg of [`hold_miss_leg`] except the
 /// breadth one, split out so [`hold_miss_but_breadth`] can ask the other five without re-spelling a
 /// single one of them (non-negotiable #4). `tier` is read at exactly one site, [`ter_cap_for`].
+/// (#269) The EFFECTIVE CORE admission AUM floor: the relaxed floor when it is armed, else the
+/// strict one. ONE definition (non-negotiable #4) — the AUM leg filters on it, the leg's printed
+/// reason quotes it, and four tests assert against it. Those three disagreeing is exactly how a
+/// reason starts naming a bar the filter did not use, which is what `(#102)` named `hold_max_ter`
+/// to prevent and what `(#267)` re-stated when it named this floor.
+///
+/// Parameters, not reads, for `(#204)`'s reason: a process-wide `OnceLock` is a knob no test can
+/// flip, so a branch reachable only on an off-default is one the mutation gate cannot grade.
+///
+/// A relaxed floor ABOVE the strict one is a no-op by this `min` rather than an error: the knob can
+/// only ever LOWER the bar, never raise it.
+pub fn hold_effective_aum_floor(strict: f64, relaxed: f64) -> f64 {
+    if relaxed > 0.0 {
+        strict.min(relaxed)
+    } else {
+        strict
+    }
+}
+
+/// (#269) …and how that floor is SPELLED in the reject reason: EUR-billions with a trailing ".0"
+/// dropped, so the 1e9 default still prints "€1B floor" exactly as it always has (non-negotiable #1)
+/// while 5e8 prints "€0.5B". `strip_suffix` and not `trim_end_matches`: the latter eats BOTH zeros
+/// of "10.0". Shared with the tests so a fixture cannot pin a spelling the message does not use.
+pub fn hold_aum_floor_label(floor: f64) -> String {
+    let s = format!("{:.1}", floor / 1e9);
+    s.strip_suffix(".0").unwrap_or(s.as_str()).to_string()
+}
+
 fn hold_miss_leg_at(
     q: &Quote,
     tier: u8,
@@ -2730,15 +2758,22 @@ fn hold_miss_leg_at(
     // these legs. The message formats ITS OWN floor from the same field (non-negotiable #4), so the
     // printed reason cannot quote a bar the comparison did not use. The `if let Some` above is
     // (#224)'s fix and is deliberately untouched: missing AUM still PASSES.
-    let min_aum = crate::config::hold_min_aum_eur();
+    // (#269) …and there are now TWO floors. The relaxed one admits down to a LOWER number, and
+    // `picks::hold_core_list` then keeps only those admissions whose index family its sleeve does not
+    // already show — so this leg asks the WEAKER question and the guard asks the rest. Splitting it
+    // that way is FORCED, not stylistic: this leg sees one fund and cannot know what its sleeve holds.
+    // 0.0 = off, `min` never picks it, and the effective floor is `hold_min_aum_eur` exactly as it
+    // shipped (non-negotiable #1). A relaxed floor ABOVE the strict one is a no-op by the same `min`
+    // rather than an error: this knob can only ever LOWER the bar, never raise it.
+    // The message below still formats from the EFFECTIVE floor (non-negotiable #4), so a fund refused
+    // at 5e8 says "€0.5B floor" and cannot quote the 1e9 the comparison did not use.
+    let min_aum = hold_effective_aum_floor(
+        crate::config::hold_min_aum_eur(),
+        crate::config::hold_min_aum_eur_new_family(),
+    );
     if let Some(a) = q.aum_shown() {
         if a < min_aum {
-            // the floor drops a trailing ".0" so the DEFAULT 1e9 still prints "€1B floor" exactly as
-            // it always has (non-negotiable #1 -- four tests assert that string, and they run in the
-            // config-less regime where this default is what answers), while 5e8 prints "€0.5B".
-            // `strip_suffix` and not `trim_end_matches`: the latter eats BOTH zeros of "10.0".
-            let floor = format!("{:.1}", min_aum / 1e9);
-            let floor = floor.strip_suffix(".0").unwrap_or(floor.as_str());
+            let floor = hold_aum_floor_label(min_aum);
             return Some((5, format!("AUM €{:.1}B < €{floor}B floor", a / 1e9)));
         }
     }
@@ -7101,7 +7136,17 @@ mod tests {
     assert_eq!(miss_swap("Amundi Nasdaq-100 UCITS ETF", Some("Swap"), true).map(|(leg, _)| leg), Some(0),
         "(#233) the breadth leg answers first and the knob cannot reach it");
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF", Some(0.07), Some("Full"), Some("Dist"), Some(2e9)).as_deref(), Some("share class Dist (needs Acc)"));
-    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(0.3e9)).as_deref(), Some("AUM €0.3B < €1B floor"));
+    // (#269) the floor is two knobs now, so the LABEL is derived from the same helper the message
+    // uses rather than hardcoded — under tests/ci-settings.yaml the effective floor is 5e8 and a
+    // literal "€1B floor" asserts the opposite of the shipped answer. 0.3e9 refuses under BOTH
+    // regimes, so only the spelling moves and the assertion stays non-vacuous either way.
+    let aum_floor = hold_effective_aum_floor(
+        crate::config::hold_min_aum_eur(),
+        crate::config::hold_min_aum_eur_new_family(),
+    );
+    let lbl = hold_aum_floor_label(aum_floor);
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(0.3e9)).as_deref(),
+        Some(format!("AUM €0.3B < €{lbl}B floor").as_str()));
     // (#224) a KNOWN size below the floor still refuses (line above); an UNKNOWN one now PASSES.
     // This leg used `is_some_and`, false for None, so it refused funds for data we never had —
     // non-negotiable #5, and the opposite of `growth_min_aum_etf`'s stance on the same field. The
@@ -7109,10 +7154,11 @@ mod tests {
     // flip is visible in the diff. Nothing else on the leg moved: 0.3e9 is unchanged above, and a
     // fund that is otherwise sound is now hold_suitable with no size at all.
     assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), None), None);
-    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(1e9)), None,
-        "the floor is inclusive at exactly €1B, unchanged by the rewrite");
-    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(0.999e9)).as_deref(),
-        Some("AUM €1.0B < €1B floor"), "and just under it still refuses");
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(aum_floor)), None,
+        "the floor is inclusive at exactly its own value, unchanged by the rewrite or by (#269)");
+    let just_under = aum_floor - 1e6;
+    assert_eq!(miss("Vanguard S&P 500 UCITS ETF Acc", Some(0.07), Some("Full"), Some("Acc"), Some(just_under)).as_deref(),
+        Some(format!("AUM €{:.1}B < €{lbl}B floor", just_under / 1e9).as_str()), "and just under it still refuses");
 
     // hold_breadth_tier: broadest (all-world/ACWI) sorts first, then the geographic sleeves
     assert_eq!(hold_breadth_tier("Vanguard FTSE All-World UCITS ETF"), 0);

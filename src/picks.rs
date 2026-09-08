@@ -4262,6 +4262,55 @@ fn hold_core_cmp(a: &Quote, ta: u8, b: &Quote, tb: u8, swap_credit: f64, dom_pen
 /// a decades hold actually cares about — broadest diversification first (one fund = the whole world),
 /// then cheapest TER, then largest AUM (least closure risk). Pure display; touches no score, no gate,
 /// no backtest. Scoped to the wide `screen` universe (empty on the small `check` watchlist anyway).
+/// (#269) The `(tier, index family)` pair that answers "does this sleeve already show that index".
+///
+/// ONE spelling, shared by [`retain_new_family_only`] and by the `keys` [`hold_core_list`] hands to
+/// `core::family_first_order` — the two places that ask that question, which must not be able to
+/// answer it differently (non-negotiable #4). It was typed inline at the second when the first was
+/// written, and one of the two drifting is how the family key silently stops meaning one thing.
+///
+/// The family stays an `Option` rather than collapsing to `""`: `None == None`, so two names `GEO`
+/// cannot spell already share a key, which is `family_first_order`'s own rule with nothing re-spelled.
+fn family_key(q: &Quote) -> (u8, Option<&'static str>) {
+    (core::hold_breadth_tier(&q.name), core::sleeve_family_of(&q.name))
+}
+
+/// (#269) Drop every CORE candidate that ONLY the relaxed AUM floor admitted and whose index family
+/// its sleeve already shows. The relaxed floor can then ADD a row and can never take one.
+///
+/// WHY IT IS NOT PART OF THE AUM LEG in `core::hold_miss_leg_at`: that leg judges ONE fund, and this
+/// question is about the SLEEVE — "is this family already seated" — answerable only once the whole
+/// shortlist exists. So the leg admits down to the relaxed floor and this takes back the admissions
+/// that bought nothing. The split is forced by what each site can see, not chosen for tidiness.
+///
+/// Runs AFTER the one-row-per-name dedup and BEFORE `core::family_first_order`, the only correct
+/// order: before the dedup, a fund's own second venue counts as its family's incumbent and every
+/// relaxed admission guards itself out; after family-first, the reorder has already spent a slot
+/// deciding between candidates this pass is about to drop.
+///
+/// SEATED MEANS CLEARING THE STRICT FLOOR, not merely sorting earlier. Two sub-floor funds of the
+/// same FRESH family therefore both survive here, and the per-tier cap — the thing that actually
+/// rations slots, with a receipt — settles them exactly as it settles two strict-floor funds.
+/// Guarding them against each other would be a second, quieter cap that no receipt covers.
+///
+/// MISSING AUM PASSES ((#224), non-negotiable #5): `is_none_or` seats a fund we have no AUM for and
+/// never guards one, on both sides of the question. Only a KNOWN sub-floor AUM is ever tested.
+///
+/// Both floors are PARAMETERS, not reads, for `(#204)`'s reason: a process-wide `OnceLock` is a knob
+/// no test can flip, so a branch reachable only on an off-default is one the mutation gate cannot
+/// grade. `(#235)` lost seven mutants to exactly that.
+fn retain_new_family_only(cores: &mut Vec<&Quote>, strict: f64, relaxed: f64) {
+    // off: the strict floor is the only floor, nothing below it was ever admitted, and this is a
+    // no-op on a list it cannot have changed — non-negotiable #1.
+    if relaxed <= 0.0 {
+        return;
+    }
+    let clears_strict = |q: &Quote| q.aum_shown().is_none_or(|a| a >= strict);
+    let seated: Vec<(u8, Option<&str>)> =
+        cores.iter().filter(|q| clears_strict(q)).map(|q| family_key(q)).collect();
+    cores.retain(|q| clears_strict(q) || !seated.contains(&family_key(q)));
+}
+
 /// (round 55) The CORE shortlist selection, shared by the printed block and the screen-state
 /// membership diff: EU-buyable hold-suitable funds, one row per fund name (best venue kept),
 /// breadth-major sort (all-world -> World -> S&P 500; IE domicile, cheapest TER, largest AUM
@@ -4281,6 +4330,14 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     });
     let mut seen: HashSet<&str> = HashSet::new();
     cores.retain(|q| seen.insert(q.name.as_str())); // one row per fund (VUAA.DE vs VUAA.L), best-ranked kept
+    // (#269) take back the relaxed-floor admissions that add no index family, before family-first
+    // reorders and before the cap rations. Off by default -> returns on its first line, so the list
+    // reaching the two passes below is the one that always reached them (non-negotiable #1).
+    retain_new_family_only(
+        &mut cores,
+        crate::config::hold_min_aum_eur(),
+        crate::config::hold_min_aum_eur_new_family(),
+    );
     // cap each breadth tier so every index family shows — else the many MSCI World trackers crowd
     // out the S&P 500 and all-world cores. Sort is breadth-major, so a per-tier counter suffices.
     // Sized from core::HOLD_TIERS, NOT a literal: this was `[0u8; 3]` indexed by tier, so adding a
@@ -4295,10 +4352,7 @@ pub fn hold_core_list(quotes: &[Quote]) -> Vec<&Quote> {
     // (#214) fill each sleeve family-first before the cap runs, so a sleeve spends its three slots
     // on three INDICES where it has three. Off by default -> `family_first_order` returns the
     // identity and this is a no-op, which is non-negotiable #1.
-    let keys: Vec<(u8, Option<&str>)> = cores
-        .iter()
-        .map(|q| (core::hold_breadth_tier(&q.name), core::sleeve_family_of(&q.name)))
-        .collect();
+    let keys: Vec<(u8, Option<&str>)> = cores.iter().map(|q| family_key(q)).collect();
     let order = core::family_first_order(&keys, crate::config::hold_family_first());
     let reordered: Vec<&Quote> = order.into_iter().map(|k| cores[k]).collect();
     cores = reordered;
@@ -7475,8 +7529,16 @@ mod tests {
         m.use_of_profits = Some("Dist");
         assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("share class Dist (needs Acc)"));
         m = broad.clone();
-        m.aum_fallback = Some(0.5e9);
-        assert_eq!(core::hold_miss_reason(&m).as_deref(), Some("AUM €0.5B < €1B floor"));
+        // (#269) 0.3e9, not the 0.5e9 this used to hold: tests/ci-settings.yaml now ships an
+        // effective floor of 5e8, which 0.5e9 CLEARS, so the old fixture asserted the opposite of
+        // the shipped answer in one of CI's two regimes. 0.3e9 refuses under both, and the LABEL is
+        // derived from the same helper the message uses rather than hardcoded.
+        m.aum_fallback = Some(0.3e9);
+        let lbl = core::hold_aum_floor_label(core::hold_effective_aum_floor(
+            crate::config::hold_min_aum_eur(),
+            crate::config::hold_min_aum_eur_new_family(),
+        ));
+        assert_eq!(core::hold_miss_reason(&m).as_deref(), Some(format!("AUM €0.3B < €{lbl}B floor").as_str()));
 
         // 5) asset-class split: instrumentType is authoritative, name marker is the fallback
         assert!(quote_is_etf(&broad) && quote_is_etf(&tech));
@@ -7504,6 +7566,77 @@ mod tests {
         q.life_cagr = Some(9.0);
         q.age_years = Some(12.0);
         q
+    }
+
+    /// (#269) The tickers of a CORE candidate list, in order — what the guard's tests assert on.
+    fn tickers<'a>(v: &[&'a Quote]) -> Vec<&'a str> {
+        v.iter().map(|q| q.ticker.as_str()).collect()
+    }
+
+    /// (#269) The relaxed AUM floor ADDS rows and can never take one. Three things the mutation gate
+    /// would otherwise flip in silence: the off-switch, and both answers to the family question.
+    ///
+    /// Every premise is ASSERTED rather than assumed — the two names really are one sleeve and two
+    /// families — so a token moving in `core::GEO` reds this test instead of quietly gutting it into
+    /// a tautology that passes on a guard doing nothing.
+    #[test]
+    fn relaxed_aum_floor_only_buys_a_family_the_sleeve_lacks() {
+        let strict = 1e9;
+        let big = core_etf("A", "Amundi Stoxx Europe 600 UCITS ETF Acc", 20e9, 0.07);
+        let same = core_etf("B", "Xtrackers Stoxx Europe 600 UCITS ETF 1C", 6e8, 0.19);
+        let fresh = core_etf("C", "iShares MSCI Europe UCITS ETF EUR Acc", 6e8, 0.12);
+        assert_eq!(family_key(&big).0, family_key(&fresh).0, "premise: ONE sleeve");
+        assert_eq!(family_key(&big), family_key(&same), "premise: the index the sleeve already shows");
+        assert_ne!(family_key(&big), family_key(&fresh), "premise: an index it does not");
+
+        // OFF -> a no-op on a list it cannot have changed. Non-negotiable #1.
+        let mut off: Vec<&Quote> = vec![&big, &same, &fresh];
+        retain_new_family_only(&mut off, strict, 0.0);
+        assert_eq!(tickers(&off), ["A", "B", "C"], "0.0 = off = the strict floor is the only floor");
+
+        // ON -> the sub-floor SECOND WRAPPER goes, the sub-floor NEW FAMILY stays. This is the whole
+        // knob: (#268) refused a plain 5e8 floor because it let "B" displace "A", and it cannot here.
+        let mut on: Vec<&Quote> = vec![&big, &same, &fresh];
+        retain_new_family_only(&mut on, strict, 5e8);
+        assert_eq!(tickers(&on), ["A", "C"], "the relaxed floor bought a family, never a second wrapper");
+
+        // …and with the incumbent absent, the sub-floor wrapper is the family's FIRST row and stays.
+        // Without this the guard could be "drop every sub-floor fund" and still pass everything above.
+        let mut alone: Vec<&Quote> = vec![&same];
+        retain_new_family_only(&mut alone, strict, 5e8);
+        assert_eq!(tickers(&alone), ["B"], "nothing seats this family, so the relaxed admission holds");
+    }
+
+    /// (#269) Who counts as SEATED: the strict floor is INCLUSIVE, and a fund with NO AUM datum seats
+    /// its family and is never guarded out of the list. The two edges `(#199)` and `(#224)` each caught
+    /// on a different CORE leg, pinned here on the third before the gate has to find them again.
+    #[test]
+    fn relaxed_aum_floor_seats_the_boundary_and_the_unknown() {
+        let strict = 1e9;
+        let wrapper = core_etf("B", "Xtrackers Stoxx Europe 600 UCITS ETF 1C", 6e8, 0.19);
+
+        // exactly AT the strict floor seats the family — `>=`, not `>`. Under `>` this fund would be a
+        // relaxed admission itself, nothing would seat the family, and the wrapper would survive.
+        let exact = core_etf("A", "Amundi Stoxx Europe 600 UCITS ETF Acc", strict, 0.07);
+        let mut at: Vec<&Quote> = vec![&exact, &wrapper];
+        retain_new_family_only(&mut at, strict, 5e8);
+        assert_eq!(tickers(&at), ["A"],
+            "AUM exactly at the strict floor is SEATED, not itself a relaxed admission");
+
+        // missing AUM passes BOTH floors ((#224), non-negotiable #5) — it seats, and it is never guarded
+        let mut none = core_etf("D", "Amundi Stoxx Europe 600 UCITS ETF Acc", 0.0, 0.07);
+        none.aum_eur = None;
+        none.aum_fallback = None;
+        assert_eq!(none.aum_shown(), None, "premise: the fund has no AUM datum at all");
+        let mut unknown: Vec<&Quote> = vec![&none, &wrapper];
+        retain_new_family_only(&mut unknown, strict, 5e8);
+        assert_eq!(tickers(&unknown), ["D"],
+            "a fund we have no AUM for seats its family rather than being refused for missing data");
+
+        // …and the unknown-AUM fund survives even when a strict-floor fund already seats that family
+        let mut guarded: Vec<&Quote> = vec![&exact, &none];
+        retain_new_family_only(&mut guarded, strict, 5e8);
+        assert_eq!(guarded.len(), 2, "missing AUM is never guarded out — it is not a KNOWN sub-floor AUM");
     }
 
     /// (#88) The score must read NOMINAL legs when the fetch filled them, and `perf` otherwise. Both
@@ -8179,8 +8312,17 @@ mod tests {
         // opposite of the shipped answer in one of the two regimes CI runs. The SUM is invariant and
         // is asserted unconditionally on the next line, which is what catches a fund going missing.
         let swap_refused = usize::from(!crate::config::hold_allow_swap());
-        assert_eq!(funnel, [1, 1, 1, swap_refused, 1, 2, 2 - swap_refused],
-            "one fund per leg, TWO on AUM, the swap fund on whichever side the knob puts it: {funnel:?}");
+        // (#269) …and the AUM leg is knob-dependent too, for the identical reason: the effective
+        // floor is 5e8 under tests/ci-settings.yaml, which BOTH of these fixtures clear, so a
+        // hardcoded 2 asserts the opposite of the shipped answer. Counted off the same helper the
+        // leg filters with, so the fixture and the filter cannot drift apart.
+        let aum_floor = core::hold_effective_aum_floor(
+            crate::config::hold_min_aum_eur(),
+            crate::config::hold_min_aum_eur_new_family(),
+        );
+        let aum_refused = [5e8, 7e8].iter().filter(|a| **a < aum_floor).count();
+        assert_eq!(funnel, [1, 1, 1, swap_refused, 1, aum_refused, 4 - swap_refused - aum_refused],
+            "one fund per leg, TWO on AUM, the swap and AUM funds on whichever side their knobs put them: {funnel:?}");
         assert_eq!(funnel.iter().sum::<usize>(), 8, "the stock and the US listing are out of scope");
         assert_eq!(funnel.len(), core::HOLD_LEGS.len() + 1, "one slot per leg plus the qualified tail");
         // the tail slot is the SAME verdict `hold_suitable` gives — one definition, two readers
@@ -8324,10 +8466,19 @@ mod tests {
     /// `leg == 0` and `true` indistinguishable — the cap has to be threaded for this to grade at all.
     #[test]
     fn near_miss_reason_names_the_leg_that_actually_refused() {
-        let thin = core_etf("IUSN.DE", "iShares MSCI World Small Cap UCITS ETF", 5e8, 0.30);
+        // (#269) 3e8, not the 5e8 this used to hold, for the reason `hold_miss_reason`'s AUM fixture
+        // moved: the shipped effective floor is 5e8 and a fund AT it is admitted, which would have
+        // made the second assertion below read `None` under tests/ci-settings.yaml and quietly stop
+        // testing the thing it names. The label is derived from the message's own helper.
+        let thin = core_etf("IUSN.DE", "iShares MSCI World Small Cap UCITS ETF", 3e8, 0.30);
+        let lbl = core::hold_aum_floor_label(core::hold_effective_aum_floor(
+            crate::config::hold_min_aum_eur(),
+            crate::config::hold_min_aum_eur_new_family(),
+        ));
         assert_eq!(near_miss_reason_with(&thin, false, false, 0.0, false, false, 0, 0, 0).as_deref(), Some("narrow token \"small\""),
             "sleeve OFF: breadth IS the refusal, so the token is the answer");
-        assert_eq!(near_miss_reason_with(&thin, false, false, 0.35, false, false, 0, 0, 0).as_deref(), Some("AUM €0.5B < €1B floor"),
+        assert_eq!(near_miss_reason_with(&thin, false, false, 0.35, false, false, 0, 0, 0).as_deref(),
+            Some(format!("AUM €0.3B < €{lbl}B floor").as_str()),
             "sleeve ON: breadth passed, so report the leg that did refuse");
 
         let pricey = core_etf("WSML.DE", "iShares MSCI World Small Cap UCITS ETF", 3e9, 0.40);
