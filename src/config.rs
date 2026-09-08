@@ -1648,6 +1648,20 @@ pub fn hold_family_first() -> bool {
 /// are: `picks::hold_core_list` takes no `tuning`. Read ONCE at the top of that function and threaded
 /// into `core::sleeve_family_at` from there — never read inside the key helper itself, which is
 /// `(#204)`'s rule and the one `(#271)` paid for.
+///
+/// Skipped for [`hold_family_first`]'s reason, which is the same reason in the same shape: the
+/// answer is the AMBIENT config, and the `--lib` suite cannot choose it (`OnceLock`, and
+/// `FOLIOMAN_CONFIG` is process-global). CI's mutation gate pins `tests/ci-settings.yaml`, where
+/// this ships `true`, so `-> false` IS killable there — by a test asserting `true`, which would then
+/// red `unit-tests-configless`, where `false` is the correct answer. `(#171)` keeps those two
+/// regimes apart on purpose and neither may be collapsed to suit a mutant.
+///
+/// Skipping is not evasion here, and the distinction is `(#204)`'s: this function holds NO decision.
+/// It is one field read. The decision is `core::sleeve_family_at`, which takes the flag as an
+/// argument and is graded there — `(#272)` hand-applied `None`, `if true` and `if false` to it and
+/// watched all three die before pushing. That is the split `(#271)` paid to learn: grade the helper
+/// that DECIDES, and skip the accessor that merely reports what the yaml said.
+#[mutants::skip]
 pub fn hold_family_key_benchmark() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
