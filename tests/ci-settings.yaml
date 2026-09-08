@@ -1202,12 +1202,84 @@ sizing:
                       #   scoring positive drew 33% — the whole stock class's share — for no reason but
                       #   being the only coin in the table. 5 is the standing answer to "how much may sit
                       #   in the class that has drawn down 80%+ in every cycle it has had".
-  max_name_pct: 6.0   # (#262) no single ISSUER over this % of gross; excess is redistributed WITHIN its class.
+  max_name_pct: 8.0   # (#264) no single ISSUER over this % of gross; excess is redistributed WITHIN its class.
+                      #   4.0 -> 6.0 (#262) -> 8.0 here. Full receipt below the (#262) paragraph.
                       #   Was 4.0, and read PER TICKER — so the 2026-09-07 book ran 8.0% Alphabet (ABEC.DE 4.0
                       #   + ABEA.DE 4.0) under a line that printed "max 4.0%/name". `size::first_per_issuer`
                       #   now collapses the twin BEFORE the weights are struck, which LOWERS the true
                       #   single-issuer maximum 8.0 -> 6.0 while raising deployed 37.0 -> 42.0. Revert: 4.0
                       #   (and the dedupe reverts separately — the two are independent).
+                      #
+                      # (#264) 6.0 -> 8.0, MEASURED LIVE 2026-09-08. THIS IS THE CEILING, AND IT IS NOT NEW
+                      #   CONCENTRATION. (#262) chose 6.0 as "the maximum BELOW where the book already sat
+                      #   unmeasured (8.0)" and added "anything above 8.0 would have to argue for more
+                      #   concentration than today, and nothing here does". 8.0 is not above 8.0: it is exactly
+                      #   the single-issuer high-water mark the book ALREADY carried on 2026-09-07 (ABEC.DE 4.0
+                      #   + ABEA.DE 4.0 = 8% Alphabet) under a line printing "max 4.0%/name". (#262) stopped one
+                      #   rung short only because its per-ISSUER dedupe was unproven; the dedupe shipped and CI
+                      #   graded it (4 mutants / 4 caught). So this round restores that 8% as a DISCLOSED,
+                      #   CAPPED, PER-ISSUER number. That sentence licenses nothing above 8.0 — this is the last
+                      #   rung, and a further raise needs its own argument, not this receipt.
+                      #
+                      #   WHY THIS ROUND IS A KNOB AND NOT A FIX. Three data leads were investigated and
+                      #   REFUTED by measurement first, so the knob is what is left, not what was easiest:
+                      #     - live cadence: NO BUG. `MEASURE_CADENCE` is pinned 252 while the long cache is 31%
+                      #       monthly, but the DAILY `chart` feeds vol/maxdd (252 correct) and the mixed-cadence
+                      #       merged series feeds only date-based legs. (#117)'s `walk_params` covers the
+                      #       backtest side and ships off.
+                      #     - `LONG_SKIP_NEW` freezing a wrong "too young" verdict for 30 days on a throttled
+                      #       payload: censused 5981 cached series against their own `meta.firstTradeDate` —
+                      #       of 3956 `keep == 0` cases, 3952 are GENUINELY young. 4 misclassified. Not a round.
+                      #     - near-flat plateaus that (#263)'s exact-equality rule cannot see (a EUR listing of a
+                      #       USD stock is frozen price x moving FX, never byte-identical): only 4 survive, and
+                      #       just two are real — KMY.DE (Kimberly-Clark) and 5UR.DE (RTX), both from the SAME
+                      #       2011-04-30 Xetra placeholder cluster as NVD.DE. Neither is a 19%/yr compounder, so
+                      #       neither would enter the lane. (#263) caught the fish that mattered.
+                      #
+                      #   THE IDENTITY, and it predicted the run exactly (pre-registered in the plan, then met):
+                      #     deployed = SUM_class min(class budget, n_issuers x max_name_pct)
+                      #       stock min(70, 4 x 8.0) = 32.0   ETF min(25, 5 x 8.0) = 25.0   crypto 5.0 -> 62.0%
+                      #
+                      #   LIVE A/B, both arms the same minute off one warm cache, REBUILT between arms (never
+                      #   `cp -p`), no `screen` run between — .screen_state.json md5
+                      #   3ec646698e165ac4046ed7d523a48625 unchanged across both, so the book cannot have drifted:
+                      #     control 6.0   ABEC/LLY/KLA/NVD 6.0 each   TOTAL 54.0%   trackers 3 x 15.3%
+                      #     arm     8.0   ABEC/LLY/KLA/NVD 8.0 each   TOTAL 62.0%   trackers 3 x 12.7%
+                      #   Eight points move from ~market return into a sleeve gated at a 19%/yr whole-life floor.
+                      #   Every capped row still reads `cap: name`; NO row reads `cap: sector`. `max_sector_pct`
+                      #   is stock-class only and the four issuers span IT / Comm Services / Health Care, so the
+                      #   worst sector sits near 16 against a 25 ceiling — it was never close to binding.
+                      #
+                      #   (#262)'s PRE-REGISTERED CHECK, HONOURED: "Refuse this round if a later run shows the ETF
+                      #   class NOT summing to 25.0". It sums to 25.0 at 8.0 exactly as at 6.0 (8.0 + 7.5 + 4.0 +
+                      #   3.7 + 1.8) — budget-bound at either cap, so the ETF class is untouched in TOTAL.
+                      #
+                      #   HONEST EDGE, and it is the one thing the identity does NOT show: the ETF class total is
+                      #   unchanged but its COMPOSITION concentrated. A higher cap means less excess spills off the
+                      #   top rows, so IITU.L 6.0 -> 8.0 and XLKS.L 6.0 -> 7.5 (no longer capped at all) while
+                      #   VVSM.DE 5.5 -> 4.0, SEMI.AS 5.0 -> 3.7 and LYBK.DE 2.5 -> 1.8 all FALL. That is the
+                      #   redistribution fixpoint working correctly — weight follows score/vol once the cap stops
+                      #   truncating it — but it means this knob tilts the fund sleeve toward its higher-scoring
+                      #   members as well as deploying more stock. Stated because no line of the table says it.
+                      #
+                      #   NOT GRADEABLE by the ship rule, same standing as (#246)/(#248)/(#253)/(#262): no backtest
+                      #   path reaches `picks::size_weights`, no golden covers it, and it claims no horizon and no
+                      #   edge. This is a RISK PREFERENCE the user set, backed by the identity — not a measured
+                      #   return improvement, and it must never be quoted as one. `config::Sizing` is
+                      #   non-negotiable #1's ONE DOCUMENTED EXCEPTION, so there is no default-off knob: the
+                      #   default IS the policy. Confirmed empirically — `git status --short` after the change
+                      #   lists exactly two files and no `tests/fixture/*.golden`. Gates: 393/9(1 ignored)/21 in
+                      #   BOTH regimes, clippy -D warnings clean.
+                      #   IT IS CONCENTRATION, stated plainly: four companies now carry 32% of gross. The
+                      #   counterweight is 38% in three all-world trackers from different issuers with different
+                      #   replication ((#261)), 25% in five growth ETFs, and 5% crypto. Two of the four issuers
+                      #   (NVIDIA, Eli Lilly) exist in this book ONLY because (#263) shipped on 2026-09-07.
+                      #
+                      #   REVERT RULE. `max_name_pct: 6.0` restores this round exactly; 4.0 goes back past (#262).
+                      #   Revert on ANY of — (a) the stock lane falling back below 4 distinct issuers, which would
+                      #   leave 8.0 concentrating a thinner book than the one measured here; (b) a `cap: sector`
+                      #   appearing on any stock row, which would mean the sector ceiling is now the binding
+                      #   constraint and the name cap is buying nothing; (c) the ETF class ceasing to sum to 25.0.
   max_sector_pct: 25.0 # no GICS sector over this %, stock class only (an ETF's sector label means something
                       #   else and a coin has none). CONSEQUENCE: a class too small to absorb its budget
                       #   under these caps leaves the remainder UNALLOCATED and the table's total prints
