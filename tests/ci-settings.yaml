@@ -11454,6 +11454,38 @@ buy_heuristic:
   #   to beat off on BOTH moments at 8y AND 12y, or where the worst window at 40 comes in deeper than
   #   off at either. A single horizon regressing is a re-open, not a revert.
   growth_value_floor_pct: 40.0
+  # (#265) 2026-09-08 — THE BRAKE IS NOT THE BUG; ITS SILENCE WAS. VALUE UNCHANGED AT 40.0.
+  #   WHAT WAS FOUND. `render` journals the top-`top_picks` of the UNTRIMMED `ranked` list, while every
+  #   printed table comes from `lane_split`, which applies THIS brake plus the (#41) redundancy skip and
+  #   the (#101) sector cap. So a row this brake drops STAYS in the buy list `size --picks`, `trade` and
+  #   `track` all read, and disappears from the only place the user looks. The two halves have disagreed
+  #   for as long as the brake has shipped live ((#126), 2026-08-23); nothing ever printed the difference.
+  #   THE LIVE CASUALTY, 2026-09-08 full run (5195 names scanned, 13 cleared): LLY.DE — Eli Lilly,
+  #   +36%/yr over 10.0y, rank 3 of the 16 journalled names — was sized at 8.0% by `size`, printed as an
+  #   order by `trade`, and shown in NO table. `screen` said 5 stocks; the book it hands on held 6.
+  #   MEASURED, not inferred. Two `screen ABEC.DE ABEA.DE LLY.DE KLA.DE NVD.DE AMZ.DE` runs adjacent on
+  #   one warm cache, probe configs each NAMED ci-settings.yaml in their own directory (any other name
+  #   silently merges the repo file as base and the control becomes a second arm), each built from a real
+  #   merge of tests/ci-settings.yaml + the live overlay, differing in this ONE key:
+  #     growth_value_floor_pct 40.0 (shipped) -> 5 rows, LLY absent
+  #     growth_value_floor_pct  0.0 (arm)     -> 6 rows, LLY.DE at RANK 3, +36%/yr, 10.0y
+  #   Every other row byte-identical across both arms. So THIS brake is the trim that dropped it — not
+  #   the redundancy skip (growth_corr_cap ships 0.0) and not the sector cap (growth_sector_cap ships 0).
+  #   WHAT SHIPPED IS A DISCLOSURE AND NOTHING ELSE. `picks::unshown_ranked` diffs the journalled slice
+  #   against the tickers the three tables actually printed; `print_lane` names the difference on one
+  #   line. No row is re-admitted, no trim is weakened, no gate/score/knob moves, and the tables stay
+  #   byte-identical — every golden proves it. This value STAYS 40.0: (#126) graded it and A2 in the
+  #   (#180) grid re-refused 40 -> 0, so loosening it is a separate and already-refused question.
+  #   WHY DISCLOSE RATHER THAN ALIGN. The other direction — journalling the TRIMMED list — would REMOVE
+  #   a fully gated name from the buy list, the opposite of what was asked, and would overturn (#248)'s
+  #   deliberate decision to point `size --picks` at `ranked`. Disclosure keeps both halves and ends the
+  #   silence, which is the actual defect.
+  #   NOT GRADEABLE and it claims no edge: display-only, same standing as (#246)/(#248)/(#253)/(#262)/
+  #   (#264). It changes what the user SEES, not what the heuristic picks.
+  #   REVERT RULE: delete the `unshown_ranked` call in `print_lane` — the line is pure output and nothing
+  #   downstream reads it. Revert if it ever names a ticker that is NOT in the journal: that would mean
+  #   the per-lane `take(n)` has drifted from `print_picks`'s own cut, and the diff would then be
+  #   measuring table TRUNCATION rather than the trims.
   # (#190) 2026-08-31 — SECTOR-RELATIVE VALUE BRAKE: NOT GRADEABLE. STOP RULE FIRED, NOTHING BUILT.
   #   THE PROPOSAL. This brake ranks each cutoff bucket by `peg_yield` and drops the cheapest-ranked
   #   40% — RAW, across all sectors at once. A peg level is a SECTOR property before it is a stock
@@ -13227,6 +13259,27 @@ buy_heuristic:
   #   warns in code against "fixing" it by attaching a synthetic FundFacts, which would switch the
   #   equity `growth_fund_weight` tilt on for funds as a plumbing side effect. Scoring funds on
   #   valuation needs a bulk source this tool does not have; it is not one knob away.
+  #  (#265) THE "BACKTEST CANNOT VOTE" CLAIM ABOVE IS NOW FALSE, 2026-09-08. MEASURED, NOT SHIPPED —
+  #  this records a RE-OPENED DOOR, not a knob turn. 1.6 still ships.
+  #  The (#50) paragraph rests on `growth_max_peg ->off admits 0 new names (gate not binding on this
+  #  sample)` and concludes byte-identical arms are ZERO EVIDENCE. True of the pool it was written on;
+  #  not true of today's. One `backtest 8 universe fund pit` run on the SHIPPED config prints:
+  #    growth_max_peg ->off  n=42  fwd peer-relative  mean +41.4 | med +2.6 pts
+  #                          vs shipped +3.7  <- ADMITS NO WORSE THAN THE BOOK  <- TOO TIGHT
+  #  n=42, not 0. The gate IS binding on the sample now, so a 1.6 -> 2.0/2.5/off ladder would MEASURE
+  #  something instead of returning the same digits.
+  #  PERMISSION TO MEASURE, NEVER A RESULT — (#151): "A green ADMITS NO WORSE flag is a pool diagnostic
+  #  and NOT a ship signal: both gates it flagged were graded and REFUSED on PRIMARY." Standing verdict
+  #  UNCHANGED, and this receipt's own rule still binds: "DO NOT RE-PROPOSE 2.0/2.5/off on sweep
+  #  evidence alone... The ladder is the answer."
+  #  WHAT WOULD SETTLE IT: six `backtest {20,12,8} universe fund pit` runs, control vs arm at 2.0, Ship
+  #  Rule v2 on the (#139) pit lane (PRIMARY at 12y AND 8y, every 20y GUARD live). Pre-register that the
+  #  STOCK column must move and the ETF column must not — an equity ceiling moving the fund lane is a bug.
+  #  WHY IT IS WORTH RUNNING. peg is the largest STOCK sole-block in the live funnel (2026-09-08: 6 names
+  #  — 1YD.DE, 5AP.DE, AP2.DE, FTNT, MPWR, PAR.DE — against cagr 0 and range 0 stocks sole-blocked), and
+  #  the stock sleeve is what strands the size budget: 3 distinct issuers put the class at
+  #  min(70, 3 x 8.0) = 24.0 of a 70 budget, so each admitted ISSUER is ~8 points of gross moved off
+  #  market beta. The old ladder above is PRE-PIT and cannot answer this.
   growth_max_peg_etf: 2.0        # (#37 funds) the ETF TABLE's valuation ceiling — same PEG units and same arithmetic as
                                  #   growth_max_peg, applied to a fund's look-through equity-book P/E (parse_fund_pe ->
                                  #   picks::fund_peg_yield, dividing by the same long_cagr_pct). A POST-RANK TRIM in

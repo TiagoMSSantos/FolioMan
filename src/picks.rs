@@ -3801,6 +3801,27 @@ fn mix_rows<'a>(stock: &[(&'a Quote, f64)], n: usize) -> Vec<&'a Quote> {
     stock.iter().take(n).map(|(quote, _)| *quote).filter(|q| seen.insert(q.name.as_str())).collect()
 }
 
+/// (#265) The ranked names NO table shows — the gap between what `screen` PRINTS and what the rest of
+/// the tool then ACTS ON.
+///
+/// `render` journals the top-`n` of the UNTRIMMED `ranked` list, while every printed table comes from
+/// [`lane_split`], which applies the post-rank display trims (the (#75) value brake, the (#41)
+/// redundancy skip, the (#101) sector cap). A row those trims drop therefore stays in the buy list
+/// `size --picks`, `trade` and `track` all read, while vanishing from the only place the user looks.
+///
+/// Measured live 2026-09-08, shipped config: LLY.DE (Eli Lilly, +36%/yr over 10.0y) ranked 3rd of 16,
+/// was sized at 8.0% by `size` and printed as an order by `trade` — and appeared in NO table. An A/B
+/// on `growth_value_floor_pct` alone (40.0 -> 0.0, every other byte equal) put it back at rank 3, so
+/// the value brake is the trim that dropped it.
+///
+/// DISCLOSURE ONLY: nothing is re-admitted, no trim is weakened, no gate or score moves — the printed
+/// tables are byte-identical and this line is appended after them. Lives out here rather than inline
+/// because [`print_lane`] is `#[mutants::skip]`: per its own doc, its decisions belong in functions
+/// the gate can reach.
+fn unshown_ranked<'a>(ranked: &[(&'a Quote, f64)], printed: &[&str]) -> Vec<&'a Quote> {
+    ranked.iter().map(|(quote, _)| *quote).filter(|q| !printed.contains(&q.ticker.as_str())).collect()
+}
+
 /// UNGRADEABLE, hence the skip — the same story as [`print_picks`] below it, and (#79) proven the
 /// same way: `replace print_lane with ()` was graded 2026-08-17 against `--lib --test
 /// backtest_fixture` and MISSED, because every effect this has is a `println!` and the killing suite
@@ -3809,6 +3830,9 @@ fn mix_rows<'a>(stock: &[(&'a Quote, f64)], n: usize) -> Vec<&'a Quote> {
 #[mutants::skip]
 #[allow(clippy::too_many_arguments)]
 fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc: &str, sectors: &[String], sector_of: &HashMap<String, String>, tuning: &BuyHeuristic, pinned: &HashSet<&str>, owned: &Owned, fund_pe: &FundPeMap) {
+    // (#265) the EXACT slice `render` journals (`tickers.take(n)`), captured before `lane_split`
+    // consumes `picks` — the reference the disclosure at the end of this function diffs against.
+    let ranked: Vec<(&Quote, f64)> = picks.iter().take(n).copied().collect();
     let (stock, etf, crypto) = lane_split(picks, n, sectors, tuning, pinned, fund_pe);
     // Title carries the selected sector filter so the table says what it's showing ("all" = no filter).
     let secs = if sectors.is_empty() { "all".to_string() } else { sectors.join(", ") };
@@ -3851,6 +3875,25 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
     // Crypto: NOT min_score-trimmed — show ALL potential growers ranked vs Bitcoin (the base), so BTC
     // itself stays visible even when the overext brake docks its score. Capped at n by print_picks.
     print_picks(&format!("{} crypto (ranked vs Bitcoin, the base):", head(crypto.len())), &crypto, n, w, pinned, owned, HIDE_CRYPTO, tuning, fund_pe);
+    // (#265) …and the ranked names none of those three tables printed. `take(n)` per lane mirrors
+    // `print_picks`'s own cut — `lane_split` returns the whole filtered lane, so without it a row the
+    // table truncated would read as trim-dropped. See [`unshown_ranked`] for why this must be said.
+    let printed: Vec<&str> = stock
+        .iter()
+        .take(n)
+        .chain(etf.iter().take(n))
+        .chain(crypto.iter().take(n))
+        .map(|(quote, _)| quote.ticker.as_str())
+        .collect();
+    let hidden = unshown_ranked(&ranked, &printed);
+    if !hidden.is_empty() {
+        println!(
+            "\n  (display trims removed {} ranked name{} from the tables above — each cleared EVERY growth gate and stays in the buy list `size --picks` and `trade` act on: {})",
+            hidden.len(),
+            if hidden.len() == 1 { "" } else { "s" },
+            hidden.iter().map(|q| format!("{} {}", q.ticker, q.name)).collect::<Vec<_>>().join(" · ")
+        );
+    }
 }
 
 /// (#79) The three ranked tables the web page publishes — one per printed table, each row carried as
@@ -10218,6 +10261,17 @@ mod tests {
         // where an absent cohort means "everything is below the floor" and the table empties itself.
         let (v4, _, _) = lane_split(vec![(&unpriced, 8.0)], 10, &all_sectors, &brake50, &none, &no_pe);
         assert_eq!(names(&v4), ["NOPEG"], "no PEG anywhere in the cohort -> no verdict, no cut");
+
+        // (#265) …and whatever a trim dropped is now NAMED, because the journal keeps it and
+        // `size --picks`/`trade` act on it. Reuses the brake cohort above: same rows, same floors.
+        let ranked_slice: Vec<(&Quote, f64)> = vrows();
+        let printed2: Vec<&str> = v2.iter().map(|(q, _)| q.ticker.as_str()).collect();
+        let hid: Vec<&str> =
+            unshown_ranked(&ranked_slice, &printed2).iter().map(|q| q.ticker.as_str()).collect();
+        assert_eq!(hid, ["DEAR", "DEAREST"], "brake50 hid the two dearest — name them, they are still in the buy list");
+        // the shipped default trims nothing, so the line must stay SILENT rather than print an empty list
+        let printed0: Vec<&str> = v0.iter().map(|(q, _)| q.ticker.as_str()).collect();
+        assert!(unshown_ranked(&ranked_slice, &printed0).is_empty(), "0 = off -> nothing hidden, no disclosure");
 
         // (#101) SECTOR CAP — the only thing in the tool that limits concentration. Five stocks, three
         // in one sector, one in another, one carrying no sector at all; scores descend so the cap has to
