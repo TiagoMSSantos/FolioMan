@@ -4987,6 +4987,16 @@ buy_heuristic:
                                  #   REVERT: delete this key AND put `hold_per_tier_sector` back to 6. 0.0 is the Default,
                                  #   so deleting this alone does restore the floor -- but it leaves the cap at 8, which is
                                  #   the measured 8-row/6-family wrapper state above. Revert the pair or neither.
+                                 #
+                                 #   (#271) 2026-09-08 GATE HOLE, found by CI and closed. The mutation gate graded 6 mutants on
+                                 #   (#269) and MISSED one: `replace > with <` in `core::hold_effective_aum_floor`. Not cosmetic —
+                                 #   under `relaxed < 0.0` this live 5e8 fails the arming test, the helper hands back the strict
+                                 #   1e9, and the relaxed floor is silently OFF while every test still passes. It survived because
+                                 #   (#269)'s own guard tests thread strict/relaxed straight into `retain_new_family_only` and so
+                                 #   never call the helper at all — the (#204) parameter-not-OnceLock discipline was followed, and
+                                 #   the helper ABOVE the threaded call was still left ungraded. `hold_effective_aum_floor` now has
+                                 #   a direct test spelling all four arms (armed / 0.0 off / negative off / above-strict no-op);
+                                 #   the mutant was applied by hand locally and PROVEN to red it, not assumed to.
 
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted

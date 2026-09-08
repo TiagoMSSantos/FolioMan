@@ -5672,6 +5672,27 @@ mod tests {
             None, "(#236) …while the factor knob still gates it, so the sleeve stays optional");
     }
 
+    /// (#271) `(#269)` shipped `hold_effective_aum_floor` with its ARMING TEST ungraded: the guard's
+    /// own tests thread `strict`/`relaxed` straight into `retain_new_family_only`, so they never call
+    /// this helper and CI's mutation gate MISSED `replace > with <` at core.rs:2686. That mutant is not
+    /// cosmetic — under `relaxed < 0.0` a live 5e8 fails the test, the helper returns `strict`, and the
+    /// whole relaxed floor is silently OFF while every other test still passes. Spell all four arms.
+    #[test]
+    fn the_relaxed_aum_floor_arms_only_on_a_positive_value() {
+        // armed: the knob LOWERS the bar, which is the only thing it may ever do
+        assert_eq!(hold_effective_aum_floor(1e9, 5e8), 5e8,
+            "(#271) a positive relaxed floor is the effective floor — kills `relaxed < 0.0`");
+        // off: 0.0 is OFF, so the strict floor stands alone and the lane is byte-identical (non-neg #1)
+        assert_eq!(hold_effective_aum_floor(1e9, 0.0), 1e9,
+            "(#271) 0.0 is OFF, not a floor of zero — kills `relaxed >= 0.0`, which would admit everything");
+        // a negative value is OFF too, and must never become the floor through the `min`
+        assert_eq!(hold_effective_aum_floor(1e9, -5e8), 1e9,
+            "(#271) a negative relaxed floor cannot arm — kills `relaxed != 0.0`");
+        // above the strict floor the `min` makes it a no-op: the knob can only lower, never raise
+        assert_eq!(hold_effective_aum_floor(1e9, 2e9), 1e9,
+            "(#271) a relaxed floor ABOVE the strict one is a no-op — kills `min` -> `max`");
+    }
+
     #[test]
     fn pure_logic() {
     assert!((pct_from_high(&[100.0, 80.0, 95.0]) - 5.0).abs() < 1e-9);
