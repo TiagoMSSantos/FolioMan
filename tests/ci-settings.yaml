@@ -4834,6 +4834,70 @@ buy_heuristic:
                                  # risk this floor was pricing, and NOT gradeable here (`backtest_quote`
                                  # never reaches this lane, so no horizon can be claimed).
                                  # REVERT: delete the key. 1e9 is the Default, so the lane is unchanged.
+                                 #
+                                 # (#268) 2026-09-08 THE PROBE RAN. REFUSED ON ITS OWN PRE-REGISTERED STOP
+                                 # RULE -- the floor STAYS at 1e9 and this key does not move. Two adjacent
+                                 # `screen` runs, SAME binary (no code differs between arms, so
+                                 # `cp-p-forges-a-control` cannot bite), warm cache, configs named
+                                 # ci-settings.yaml in their own directories, diff = 2 lines verified.
+                                 # Control 4m38s / 5232 cache hits; arm 4m37s / 5240.
+                                 #
+                                 # THE ROW COUNT MATCHED THE PREDICTION AND THE MECHANISM DID NOT. Printed
+                                 # CORE rows 53 -> 55: net +2, exactly as pre-registered. The net hides
+                                 # FIVE admits and THREE EVICTIONS:
+                                 #   +WEXU.DE  EUR 634M 0.15% Amundi MSCI World Ex USA       PREDICTED
+                                 #   +HMXA.L   EUR 521M 0.15% HSBC MSCI Pacific ex Japan     PREDICTED
+                                 #   +SC0C.DE  EUR 584M 0.19% Invesco STOXX Europe 600       not predicted
+                                 #   +IUCD.L   EUR 701M 0.15% iShares S&P 500 Cons Discr     not predicted
+                                 #   +DEAM.DE  EUR 769M 0.19% Invesco MDAX                   not predicted
+                                 #   -MEUD.PA  EUR 20.5B 0.07% Amundi Core Stoxx Europe 600  EVICTED
+                                 #   -DBXD.DE  EUR 7.0B  0.09% Xtrackers DAX                 EVICTED
+                                 #   -XDWI.L   EUR 1.2B  0.25% Xtrackers MSCI World Indust.  EVICTED
+                                 # (#267) says "REFUSE AND SHIP NOTHING IF a fund enters by EVICTING an
+                                 # incumbent". Three did. The rule fired; nothing ships.
+                                 #
+                                 # WHY -- AND THIS IS THE FINDING WORTH THE ROUND. The CORE sort is
+                                 # breadth-major, then DOMICILE (IE first, withholding) -> cheapest TER ->
+                                 # largest AUM. AUM IS THE WEAKEST TERM IN THAT ORDER, so it can never
+                                 # rescue a seated fund once a better-domiciled rival qualifies. All five
+                                 # admits are IE-domiciled; both big evictions are LU. The Europe sleeve
+                                 # traded a EUR 20.5B 0.07% Opt tracker for a EUR 584M 0.19% SWAP one on
+                                 # the SAME index (STOXX Europe 600) -- 35x smaller, 2.7x the fee, worse
+                                 # replication, identical exposure. The German sleeve traded DAX (large
+                                 # cap, EUR 7.0B, 0.09%) for MDAX (mid cap, EUR 769M, 0.19%), which is not
+                                 # even the same exposure. Both are exactly (#213)'s family-for-family
+                                 # refusal and (#251)'s "a cap drops an incumbent to seat a wrapper".
+                                 #
+                                 # SO THE 1e9 FLOOR WAS LOAD-BEARING FOR A REASON NOBODY HAD WRITTEN DOWN.
+                                 # Not only fund-closure risk -- the stated reason, still true and still
+                                 # ungradeable here (`backtest_quote` never reaches this lane). It was
+                                 # STRUCTURALLY holding large LU incumbents in their sleeves against small
+                                 # IE rivals that outrank them two tiebreaks earlier. Lower the floor and
+                                 # the sleeves refill from the bottom of the AUM column upward.
+                                 #
+                                 # CORRECTIONS TO THE PRE-REGISTRATION, recorded rather than quietly fixed.
+                                 # (a) The Pacific ex-Japan fund is HMXA.L, not HMXS.L; EUR 0.521B and
+                                 # 0.15% both match, so it is the same fund and a ticker-spelling slip in
+                                 # (#267), not a missed prediction. (b) The prediction was right about what
+                                 # it NAMED and incomplete about what it did not: LGAG.L correctly did not
+                                 # print and neither EM fund printed ((#238)'s cap held), but three
+                                 # unpredicted IE funds did. Predicting the admits is not predicting the
+                                 # TABLE -- the next pre-registration must state the EVICTIONS it expects.
+                                 #
+                                 # FUNNEL, for the record and NOT as the verdict (names are the verdict):
+                                 # AUM-blocked 142 -> 119, QUALIFIED 113 -> 136. So 23 more funds clear the
+                                 # floor and the per-tier caps print only 2 net of them: the caps, not the
+                                 # floor, are what the table is made of.
+                                 #
+                                 # POND DRIFT was 4310 -> 4311 EU-buyable ETFs between the runs, TER-blocked
+                                 # 187 -> 188. Live-data noise, and it does NOT explain the result: every
+                                 # one of the five admits is sub-1e9 (EUR 521M-769M), precisely the band
+                                 # this key opened, and all three evictions sit far ABOVE both floors.
+                                 #
+                                 # FOR ANY FUTURE ATTEMPT: a lower floor needs a sort that can defend an
+                                 # incumbent -- AUM promoted above TER, or a minimum-AUM RATIO before a
+                                 # smaller fund may displace a seated one. Do not re-run this A/B without
+                                 # one of those; it will return this same table.
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:
