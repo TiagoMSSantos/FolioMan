@@ -5090,6 +5090,73 @@ buy_heuristic:
                                  #   ALONE -- at cap 16 with this floor ON the sleeve loses four rows to truncation (arm1).
                                  #   0.0 is the Default and the config-less lane, so deleting the key restores byte-identity.
 
+  hold_issuer_share_class_codes: true # (#274 / MEASURED 2026-09-09, live `screen`, control and arm
+                                 #   BACK TO BACK on one warm cache and ONE binary, differing by this single line) -- read an
+                                 #   ISSUER SHARE-CLASS CODE as the accumulating class when the fund's name carries no
+                                 #   `acc`/`dist` word.
+                                 #     WHAT IT DOES: `fetch::share_class_code` reads a `<digits>C` token (Xtrackers/DWS spell
+                                 #     the capitalising class `1C`) as Acc. false = OFF = a coded name stays an honest n/a and
+                                 #     is refused at leg 4, byte-identical, and the config-less DEFAULT (non-negotiable #1).
+                                 #     IT IS A RESOLUTION, NOT A LOOSENING, which is the whole reason it may exist at all.
+                                 #     (#242) built `hold_allow_unknown_use` -- WAIVE the leg for unknown share classes -- and
+                                 #     REFUSED it, then wrote the terms for re-opening: "the share-class datum must be RESOLVED
+                                 #     rather than assumed (the `dis` token is one such fix, issuer codes like Xtrackers'
+                                 #     `1C`/`1D` are another and would ADMIT, so they need their own knob and their own
+                                 #     argument)". `1C` is not a guess about an unknown fund; it is the issuer's own name for
+                                 #     the class. This SHRINKS the n/a set instead of waiving the leg over it.
+                                 #     (#242)'s SECOND condition, the family-first interaction, is answered by (#272): the Japan
+                                 #     sleeve that broke (#242) now runs cap 6 against supply 5, so a new family fills a free
+                                 #     slot instead of truncating a tail.
+                                 #   MEASURED, and the honest size of the prize -- IT BUYS NO BREADTH:
+                                 #     pond 4275 EU-buyable ETFs in BOTH arms, and every funnel stage before the Acc leg
+                                 #     identical (not broad-index 3657, TER 189, replication 0), so this is a clean isolation.
+                                 #       ctrl3  not Acc 174 · AUM 114 · QUALIFIED 141   CORE table 90 rows
+                                 #       arm2   not Acc 172 · AUM 115 · QUALIFIED 142   CORE table 90 rows
+                                 #     TWO funds leave the `not Acc` bucket. One dies immediately at the AUM leg. One qualifies.
+                                 #     THE TABLE DOES NOT GROW: 90 rows before, 90 after. It is ONE SWAP.
+                                 #       +  Xtrackers S&P 500 Swap II UCITS ETF 1C USD  X500.DE  EUR 4.7B  0.05%  LU
+                                 #       -  Amundi PEA S&P 500 UCITS ETF Acc            PSP5.PA  EUR 1.4B  0.12%  FR
+                                 #     WHY IT SWAPS RATHER THAN ADDS, read off the census and not guessed: the US sleeve's
+                                 #     supply moves 26 -> 27 while its FAMILY count stays at 8 (its no-benchmark residue moves
+                                 #     3? -> 4?). The sleeve's cap IS 8, the family count, so a 27th qualifying fund can only
+                                 #     displace inside the family set it already shows. NO CAP RAISE IS AVAILABLE HERE: (#220)
+                                 #     sets a cap to the family count, and that count did not move, so raising it to seat both
+                                 #     would be exactly the argmax (#220)/(#224) forbid. (#197)'s invariant still holds at 8.
+                                 #     (#213) IS NOT ENGAGED: both funds track the S&P 500, so no exposure is traded for a
+                                 #     wrapper -- this is a wrapper traded for a wrapper of the SAME index.
+                                 #   WHY THE SWAP IS ACCEPTED, stated so a future reader can refuse it on its merits: the
+                                 #   arriving fund is better on BOTH axes the sleeve sorts on -- 0.05% against 0.12% (7bp/yr,
+                                 #   ~1.4% of cumulative drag over the 20-year hold this table is for) and EUR 4.7B against
+                                 #   EUR 1.4B. The departing fund is a FRENCH PEA wrapper whose one distinguishing feature is
+                                 #   eligibility for a French tax account, which is worth nothing from Portugal.
+                                 #   THE COST, recorded rather than waved through: X500.DE is a SWAP-based (synthetic) fund, so
+                                 #   this swap trades physical replication for counterparty risk over a 20-year hold. Neither
+                                 #   fund carries a BF replication datum (both print REPL as an em dash), so the replication
+                                 #   leg could not see the difference and did not adjudicate it. If synthetic replication is
+                                 #   later refused on principle, this row is the first one to re-examine.
+                                 #   THE STOP RULE PASSED: (#242)'s rule was that every printed `<digit>C` row be hand-verified
+                                 #   ACCUMULATING, and it fired on the first row it was ever applied to. X500.DE is Xtrackers'
+                                 #   `1C` = Capitalising = accumulating. Verified, not assumed.
+                                 #   ONLY THE `C` ARM IS BUILT. The plan carried an unconditional `<digits>D` -> Dist arm on
+                                 #   (#224)'s "one-sided, can only refuse" licence; it was DROPPED after reasoning it through
+                                 #   rather than shipped. A `1D` fund with no BF row already reads n/a and is already refused,
+                                 #   so a D arm changes NO admission -- it only relabels a refusal -- while adding a real
+                                 #   false-positive surface, because `3d` is a token (Global X 3D Printing) and a wrong Dist
+                                 #   refuses a fund silently. A licence to build is not an obligation to.
+                                 #   REACHES ONLY FUNDS WITH NO BF ROW, permanently: a fund whose BF payload names its share
+                                 #   class never consults the name for an Acc. That bounds the prize, and the measurement above
+                                 #   is what it is worth today -- one cheaper wrapper, and no new exposure.
+                                 #   NOT GRADEABLE by the backtest, as every CORE knob: `backtest::stamp_asset_class` fills only
+                                 #   name/instrument_type/sector, so no walk reaches this lane. Live `screen` diff is the whole
+                                 #   evidence base.
+                                 #   PROBE HYGIENE, since it deviates from the shipped file: BOTH arms also ran
+                                 #   `fetch_concurrency_multiplier: 4` instead of 8, because at 8 the run was killed for memory
+                                 #   five times on this machine -- the value this file's own comment calls "the MEMORY/stability
+                                 #   knob". It is identical in both arms and `screen` is network-bound, so it cannot move a fund
+                                 #   set; it is recorded because an unrecorded deviation is how a control gets forged.
+                                 #   REVERT: set this back to false. Nothing else moves with it -- the cap was not raised, so
+                                 #   there is no paired knob, unlike (#273).
+
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:

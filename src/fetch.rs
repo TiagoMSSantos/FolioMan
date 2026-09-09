@@ -627,7 +627,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // display columns + history_proxy twin hints, never scored.
     let mut meta = if is_etf { bf_meta(ticker, &chart.name) } else { BfMeta::default() };
     if is_etf {
-        meta.use_of = resolve_use_of(meta.use_of, &chart.name);
+        meta.use_of = resolve_use_of(meta.use_of, &chart.name, crate::config::hold_issuer_share_class_codes());
     }
 
     // Back-fill history older than the ~10y daily window from the monthly series, so the 20Y column and
@@ -3662,7 +3662,28 @@ fn bf_row_meta(row: &Value) -> BfMeta {
 /// (round 49) Share-class token from the LISTING NAME, the fallback for funds with no BF row
 /// (venue/regulatory sources ship name-only). Word-split kills substring false positives
 /// ("Vaccine" ≠ "acc"). Unknown wording -> None (honest n/a), same stance as bf_row_meta.
-fn use_from_name(name: &str) -> Option<&'static str> {
+/// (#274) An issuer SHARE-CLASS CODE arm for the share-class resolver, behind `codes`.
+///
+/// Xtrackers/DWS spell the accumulating class `1C` (Capitalising) and the distributing one `1D`, and
+/// neither carries an `acc`/`dist` word. Today such a fund with NO BF row reads an honest n/a and is
+/// REFUSED at leg 4. (#242) built and refused a blanket leg-4 loosening and named this as the
+/// principled alternative: RESOLVE the datum instead of ASSUMING it, "and would ADMIT, so they need
+/// their own knob and their own argument" -- which is why `codes` is a parameter and defaults OFF.
+///
+/// ONLY THE `C` ARM IS BUILT, and the plan's unconditional `<digits>D` -> Dist arm was DROPPED on
+/// measurement grounds rather than shipped: a `1D` fund with no BF row already reads n/a and is
+/// already refused, so the D arm changes NO admission -- it only relabels a refusal. Against that
+/// zero benefit it adds a real false-positive surface, because a token like `3d` matches (Global X
+/// 3D Printing), and a wrong Dist REFUSES a fund silently. (#242)'s "one-sided so it is safe"
+/// argument licenses a Dist arm; it does not oblige one. Build it only if a fund is ever found that
+/// needs it.
+///
+/// THE BARE-`c` TRAP, which is why the digits are REQUIRED and not optional: (#242)'s own receipt
+/// names "First Trust ... Class C EUR Distributing", a DISTRIBUTING fund whose name carries a
+/// standalone `c`. Reading `c` as Acc there would admit a distributing fund as accumulating -- the
+/// exact error this repo refuses to make. A leading run of ASCII digits is mandatory, so `1c`
+/// matches and a bare `c` cannot.
+fn use_from_name_at(name: &str, codes: bool) -> Option<&'static str> {
     let lower = name.to_lowercase();
     let word = |t: &[&str]| lower.split(|c: char| !c.is_alphanumeric()).any(|w| t.contains(&w));
     if word(&["acc", "accumulating"]) {
@@ -3677,8 +3698,29 @@ fn use_from_name(name: &str) -> Option<&'static str> {
     } else if word(&["dist", "distributing", "dis"]) {
         Some("Dist")
     } else {
-        None
+        share_class_code(&lower, codes)
     }
+}
+
+/// (#274) `<digits>C` -> Acc, and ONLY when `codes` is on. See [`use_from_name_at`] for why the
+/// leading digits are mandatory and why there is no `D` twin.
+fn share_class_code(lower: &str, codes: bool) -> Option<&'static str> {
+    if !codes {
+        return None;
+    }
+    lower.split(|c: char| !c.is_alphanumeric()).find_map(|w| {
+        let mut chars = w.chars();
+        let last = chars.next_back()?;
+        let digits = chars.as_str();
+        let coded = !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit());
+        (coded && last == 'c').then_some("Acc")
+    })
+}
+
+/// (#274) The `codes`-off caller, so every existing read keeps today's answer verbatim.
+#[cfg(test)]
+fn use_from_name(name: &str) -> Option<&'static str> {
+    use_from_name_at(name, false)
 }
 
 /// (round 49 / #224) The share class for an ETF: Börse Frankfurt's payload, with the listing NAME as
@@ -3696,8 +3738,8 @@ fn use_from_name(name: &str) -> Option<&'static str> {
 /// is the reason leg 5 had to keep one out — before this, the €1B AUM floor was the ONLY thing
 /// standing between a distributing share class and an Acc-only table, which is why it had to land in
 /// the same change as leg 5's missing-data fix.
-fn resolve_use_of(bf: Option<&'static str>, name: &str) -> Option<&'static str> {
-    match use_from_name(name) {
+fn resolve_use_of(bf: Option<&'static str>, name: &str, codes: bool) -> Option<&'static str> {
+    match use_from_name_at(name, codes) {
         dist @ Some("Dist") => dist,
         from_name => bf.or(from_name),
     }
@@ -5357,20 +5399,64 @@ pub(crate) mod tests {
 
         // (#224) resolve_use_of: BF authoritative, the name a fallback — EXCEPT a name spelling Dist.
         let vxud = "Vanguard Funds PLC - Vanguard FTSE All-World Ex-U.S. UCITS ETF USD Dist";
-        assert_eq!(resolve_use_of(Some("Acc"), vxud), Some("Dist"),
+        assert_eq!(resolve_use_of(Some("Acc"), vxud, false), Some("Dist"),
             "the one real disagreement: BF says Accumulating, the fund's own name says Dist -> name wins");
-        assert_eq!(resolve_use_of(None, vxud), Some("Dist"), "and with BF silent it is still Dist");
-        assert_eq!(resolve_use_of(Some("Acc"), "First Trust Low Duration Global Government Bond UCITS ETF Class C EUR Distributing"),
+        assert_eq!(resolve_use_of(None, vxud, false), Some("Dist"), "and with BF silent it is still Dist");
+        assert_eq!(resolve_use_of(Some("Acc"), "First Trust Low Duration Global Government Bond UCITS ETF Class C EUR Distributing", false),
             Some("Dist"), "the second disagreeing fund, spelled the long way");
         // the override is ONE-SIDED: a name saying Acc must NOT beat a BF payload saying Dist, or this
         // could newly admit a distributing fund to the Acc-gated CORE table instead of only refusing.
-        assert_eq!(resolve_use_of(Some("Dist"), "Vanguard S&P 500 UCITS ETF USD (Acc)"), Some("Dist"),
+        assert_eq!(resolve_use_of(Some("Dist"), "Vanguard S&P 500 UCITS ETF USD (Acc)", false), Some("Dist"),
             "BF still wins in the ADMITTING direction — only Dist overrides");
         // agreement and silence both behave exactly as before (round 49 unchanged)
-        assert_eq!(resolve_use_of(Some("Acc"), "Vanguard S&P 500 UCITS ETF USD (Acc)"), Some("Acc"));
-        assert_eq!(resolve_use_of(None, "Vanguard S&P 500 UCITS ETF USD (Acc)"), Some("Acc"), "BF silent -> name fallback");
-        assert_eq!(resolve_use_of(Some("Acc"), "Xtrackers MSCI World UCITS ETF 1C"), Some("Acc"), "nameless -> BF stands");
-        assert_eq!(resolve_use_of(None, "Xtrackers MSCI World UCITS ETF 1C"), None, "both silent -> honest n/a");
+        assert_eq!(resolve_use_of(Some("Acc"), "Vanguard S&P 500 UCITS ETF USD (Acc)", false), Some("Acc"));
+        assert_eq!(resolve_use_of(None, "Vanguard S&P 500 UCITS ETF USD (Acc)", false), Some("Acc"), "BF silent -> name fallback");
+        assert_eq!(resolve_use_of(Some("Acc"), "Xtrackers MSCI World UCITS ETF 1C", false), Some("Acc"), "nameless -> BF stands");
+        assert_eq!(resolve_use_of(None, "Xtrackers MSCI World UCITS ETF 1C", false), None, "both silent -> honest n/a");
+    }
+
+    /// (#274) `share_class_code` is the DECISION the issuer-code knob buys, so it is graded here
+    /// directly and not through the config accessor -- the (#204)/(#271) rule, and (#272)'s
+    /// extension of it one level higher.
+    #[test]
+    fn issuer_share_class_codes_admit_only_when_armed_and_only_with_digits() {
+        // ARMED: the code resolves the class the fund's name never spells out.
+        assert_eq!(use_from_name_at("Xtrackers MSCI World UCITS ETF 1C", true), Some("Acc"),
+            "the whole point of the arm — kills `codes` being ignored");
+        assert_eq!(use_from_name_at("Xtrackers MSCI World Value UCITS ETF 2C", true), Some("Acc"),
+            "any digit run, not just 1 — kills a hardcoded \"1c\"");
+        // OFF: byte-identical to what shipped before this knob. Non-negotiable #1.
+        assert_eq!(use_from_name_at("Xtrackers MSCI World UCITS ETF 1C", false), None,
+            "kills the `if !codes` early return being dropped");
+        // THE BARE-`c` TRAP, (#242)'s own counter-example: a DISTRIBUTING fund carrying a lone `c`.
+        let ftc = "First Trust Low Duration Global Government Bond UCITS ETF Class C EUR Distributing";
+        assert_eq!(use_from_name_at(ftc, true), Some("Dist"),
+            "(#242)'s trap: the `distributing` word wins, and it is Dist either way");
+        assert_eq!(share_class_code(&ftc.to_lowercase(), true), None,
+            "…and even reached directly the bare `c` matches NOTHING — kills the digits being optional");
+        // A digit run alone is not a class either, and a `d` code is deliberately NOT read.
+        assert_eq!(share_class_code("global x 3d printing ucits etf", true), None,
+            "no D arm is built, precisely so `3d` cannot forge a Dist");
+        assert_eq!(share_class_code("amundi msci world ucits etf 500", true), None,
+            "kills the trailing letter test being dropped");
+        // The prefix must be ALL digits, not merely contain one. `all` -> `any` survived the first
+        // draft of this test, and a survivor here is not cosmetic: `a1c` is a plausible share-class
+        // token, and reading it as Acc would ADMIT a fund on a class this code never established.
+        assert_eq!(share_class_code("xtrackers msci world ucits etf a1c", true), None,
+            "kills `all` -> `any` on the digit run");
+        assert_eq!(share_class_code("xtrackers msci world ucits etf 1ac", true), None,
+            "…and the digits must be a PREFIX, not anywhere in the token");
+        assert_eq!(share_class_code("xtrackers etf 1c", false), None, "off is off");
+    }
+
+    /// (#274) the knob must not disturb the BF-first precedence `resolve_use_of` already had.
+    #[test]
+    fn issuer_codes_never_override_a_bf_answer_or_a_dist_name() {
+        let x1c = "Xtrackers MSCI World UCITS ETF 1C";
+        assert_eq!(resolve_use_of(Some("Dist"), x1c, true), Some("Dist"),
+            "BF still wins over a name-derived Acc — the code arm may only fill a SILENT BF");
+        assert_eq!(resolve_use_of(None, x1c, true), Some("Acc"), "BF silent -> the code answers");
+        assert_eq!(resolve_use_of(None, x1c, false), None, "…and with the knob off it stays an honest n/a");
     }
 
     /// (round 51) monthly-fetch skip decision: within the 30d TTL -> skip, expired/absent -> fetch.
