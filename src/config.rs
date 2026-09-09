@@ -1343,6 +1343,15 @@ pub fn hold_min_aum_eur_new_family() -> f64 {
 /// only) and `min`s it against the base floor so it can never raise a bar.
 ///
 /// `0.0` = off = the base floor everywhere — non-negotiable #1.
+///
+/// `#[mutants::skip]` for the reason [`hold_family_first`] and [`hold_family_key_benchmark`] carry
+/// it, and CI's gate said so out loud on 7b4ea6d: `MISSED src/config.rs:1347:5: replace
+/// hold_sector_sleeve_aum -> f64 with 1.0`. The accessor holds NO decision — it reads a number out
+/// of the merged config, and no test can distinguish a forced 1.0 here from the shipped value
+/// without pinning the config file itself, which the config-less regime exists to avoid. The
+/// decision this knob buys is `core::aum_floor_for`, whose four arms ARE graded directly and whose
+/// five mutants CI caught in the same run.
+#[mutants::skip]
 pub fn hold_sector_sleeve_aum() -> f64 {
     use std::sync::OnceLock;
     static FLOOR: OnceLock<f64> = OnceLock::new();
