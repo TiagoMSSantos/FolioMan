@@ -5213,6 +5213,81 @@ buy_heuristic:
   #   refusals by 3 each and shrinking every sleeve. An admitting knob cannot shrink supply; that is
   #   how the contamination was caught. Both arms were re-run once the fallback state was shared.
 
+  # (#276) NO KNOB — a CORRECTION to `core::NARROW` and `core::SECTOR`, recorded here because this
+  #   is the shared record and the constants carry no config. FIVE SUPERSECTOR TOKENS: "banks",
+  #   "insur", "basic resource", "automobil", "real estate". NARROW 61 -> 66, SECTOR 13 -> 18.
+  #   Unconditional, so it DOES change the config-less lane — stated plainly rather than claimed
+  #   under non-negotiable #1, exactly as (#222) did for the same kind of edit.
+  #
+  #   WHY (#222) WAS STILL FIVE SHORT AFTER ENUMERATING "THE REST OF GICS": the STOXX Europe 600
+  #   sector suite does not spell GICS. It splits Financials into Banks and Insurance and names
+  #   Basic Resources, Automobiles & Parts and Real Estate outright, so `financ` never matched
+  #   "STOXX Europe 600 Banks" and the fund read as a broad EUROPE sleeve. That is (#200)'s defect
+  #   verbatim — a token ABSENT, not one matching too loosely — found for the third time.
+  #
+  #   IT WAS LIVE AND PRINTING, which is what separates this from the four refused arms of (#236):
+  #   "Invesco STOXX Europe 600 Optimised Banks" (SC0U.DE) held one of the FIVE Europe sleeve slots,
+  #   between iShares Core MSCI Europe and Amundi Core Stoxx Europe 600. A fifth of a sleeve whose
+  #   own header says "broad geographic sleeves" was one industry.
+  #
+  #   MEASURED 2026-09-09, live `screen`, control vs arm back to back on one warm cache, each arm
+  #   its own binary and never copied between them. Pond 4313 EU-buyable ETFs in BOTH, `USE n/a` 850
+  #   in BOTH, no Yahoo fallback in either — a clean isolation.
+  #     control  not broad-index 3689 · TER 192 · not Acc 174 · AUM 116 · QUALIFIED 142 · Europe 14 (5f)
+  #     arm      not broad-index 3708 · TER 177 · not Acc 174 · AUM 113 · QUALIFIED 141 · Europe 13 (4f)
+  #     19 more funds die at the broad-index leg, and the TER and AUM buckets shrink by exactly the
+  #     ones that used to reach them. CORE table 90 rows -> 90 rows. THE ROW COUNT HELD, which was
+  #     the pre-registered stop rule for this rung.
+  #       -  Invesco STOXX Europe 600 Optimised Banks  SC0U.DE  EUR 630M  0.20%  IE
+  #       +  iShares Core MSCI Europe UCITS ETF EUR(Acc) CEBZ.DE  EUR 1.2B  0.12%  IE
+  #
+  #   THE COST, STATED SO A FUTURE ROUND CAN REFUSE IT: the arriving fund is a SECOND LISTING of a
+  #   family the sleeve already shows (IMAE.AS, the same iShares Core MSCI Europe index). Europe
+  #   families fall 5 -> 4 while the sleeve still prints 5 rows, so one slot now shows a duplicate
+  #   exposure instead of a distinct one. That is not a dodge of (#213): NO exposure was traded for
+  #   a wrapper, because the departing row was never a broad-Europe exposure to begin with. The
+  #   sleeve simply has only four broad-Europe families in supply. (#197)'s invariant holds, 5 >= 4.
+  #   THE CAP IS NOT CUT: (#220)/(#272) set a cap to `max(shipped, family count)` and forbid an
+  #   argmax, so a fallen family count licenses NOTHING — `hold_per_tier_europe` stays 5.
+  #   Whether a duplicate listing beats a mislabelled sector bet is a judgement, and it is made
+  #   here on the header's own promise: the table says "broad geographic", and a bank bet in that
+  #   sleeve misleads anyone building a Europe allocation from it. A redundant row does not.
+  #
+  #   PRE-REGISTERED PREDICTIONS, scored honestly:
+  #     WRONG — the plan named XDER.L and XREA.DE as the printing offenders. NEITHER was in the
+  #       table. The offline census read the cached name pond, which is not the live pond, and it
+  #       missed SC0U.DE entirely. The defect was real; the fund named was not. A cache census can
+  #       price a token's REACH and cannot tell you which row is printing today.
+  #     HELD — the freed slot refilled from broad Europe supply and the row count did not fall.
+  #     HELD — the sector sleeve admits NOTHING: world sector supply 23 (23f) in both arms.
+  #       `hold_per_tier_sector` does not move, so (#220) grants no raise.
+  #     HELD — DZMW.DE and DZUS.DE did not move. `banks` IS PLURAL FOR THIS REASON: `hit()` is a
+  #       bare `contains` while `hold_name_tokens` ships false, and "DZ BANK MSCI World" / "DZ BANK
+  #       S&P 500" are genuinely broad trackers a `bank` token would evict on their ISSUER's name.
+  #       This is (#227)'s "NEVER a bare `uk` token" on a new word. A unit test pins both.
+  #
+  #   THE OTHER HALF, and why the five go into SECTOR as well: a US or WORLD fund in one of these
+  #   families is REROUTED to the sector sleeve rather than refused. XUFB.L (Xtrackers MSCI USA
+  #   Banks) is tier 3 and `SECTOR_GEO` holds 3, so it leaves the broad US sleeve for the one where
+  #   a concentrated bet belongs. It does not print today — its `1d` share class dies at leg 4 —
+  #   but the routing is tested directly. The EUROPE names get no such landing: tier 5 is not in
+  #   `SECTOR_GEO`, the region x sector policy pinned in `core.rs` and refused again by (#236) ARM 2.
+  #   THIS ROUND RE-OPENS NEITHER `SECTOR_GEO` NOR `ter_cap_for`.
+  #
+  #   (#222) IS AMENDED, not contradicted: it recorded "real estate", "property" and "reit" as
+  #   probed and NOT shipped for reaching zero funds. A fresh census puts "real estate" at three
+  #   funds escaping into geographic sleeves — XDER.L and XREA.DE among them, visible only after
+  #   (#274) taught the tokeniser their `1C` class. "property" and "reit" still reach zero and are
+  #   still NOT shipped; (#215)'s "specific tokens only" stands for those two.
+  #   (#236) ARM 1 STAYS REFUSED and is not this: it asked for real-estate funds to be ADMITTED to a
+  #   sector sleeve, and all 55 die at leg 0 (44 carry no GEO token at all). This token only REFUSES.
+  #
+  #   REVERT: drop the five from NARROW and from SECTOR, and put both length pins back (66 -> 61,
+  #   18 -> 13). Dropping them from SECTOR ALONE refuses the five families the sector sleeve while
+  #   NARROW keeps them out of the geographic ones — the (#200) behaviour, not the pre-(#276) one.
+  #   NOT GRADEABLE by the backtest, as every CORE-lane change: `backtest::stamp_asset_class` fills
+  #   only name/instrument_type/sector, so no walk reaches this lane.
+
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:

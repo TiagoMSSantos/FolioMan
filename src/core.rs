@@ -1496,7 +1496,7 @@ const GEO: [(&str, u8); 36] = [
 /// both sat among the 22 rows the ≤3/sleeve cap hides, which is why the printed table never showed
 /// the bug and no receipt caught it. NDUS.L clears every other leg on live facts (TER 0.18%, AUM
 /// €1.24B), so this token is the only thing standing between it and the CORE list.
-const NARROW: [&str; 61] = [
+const NARROW: [&str; 66] = [
     "technolog", "information", "info tech", "financ", "semiconduct", "health", "energy",
     "industrial",
     // (#222) THE REST OF GICS. `(#200)` found "industrial" missing and named the defect exactly — a
@@ -1506,9 +1506,32 @@ const NARROW: [&str; 61] = [
     // Utilities" as a DEVELOPED sleeve and "SPDR MSCI Europe Consumer Staples" as a EUROPE one:
     // (#200)'s own sentence, still true for the four sectors it did not enumerate. ONE "consumer"
     // covers both consumer sectors — they are two GICS slices, but neither is a geography and the
-    // distinction buys nothing here. "real estate", "property" and "reit" were probed with these
-    // and returned ZERO reachable funds, so they are NOT shipped: (#215)'s "specific tokens only".
+    // distinction buys nothing here.
     "utilit", "material", "consumer",
+    // (#276) THE SUPERSECTOR NAMES, and the reason (#222) was still five short after enumerating
+    // "the rest of GICS": the STOXX Europe 600 sector suite does not spell GICS. It splits
+    // Financials into Banks and Insurance, and names Basic Resources, Automobiles & Parts and Real
+    // Estate outright — so `financ` never matched "STOXX Europe 600 Banks", and the fund read as a
+    // broad EUROPE sleeve. This is (#200)'s defect verbatim, a token ABSENT rather than loose, found
+    // the same way for the third time.
+    //
+    // LIVE AND PRINTING when this shipped: "Invesco STOXX Europe 600 Optimised Banks" (SC0U.DE) held
+    // one of the FIVE Europe sleeve slots, between iShares Core MSCI Europe and Amundi Core Stoxx
+    // Europe 600 — a fifth of a sleeve whose header says "broad geographic" spent on one industry.
+    // A census of the cached pond puts 20 funds behind these five tokens, across tiers 3 and 5.
+    //
+    // "banks" IS PLURAL ON PURPOSE, and this is (#227)'s "NEVER a bare `uk` token" applied to a new
+    // word: `hit()` is a bare `contains` while `hold_name_tokens` ships false, and the pond holds
+    // "DZ BANK MSCI World", "DZ BANK S&P 500" and "DZ BANK EURO STOXX 50" — three genuinely broad
+    // trackers a `bank` token would evict on their ISSUER's name — plus a whole shelf of
+    // "development bank bonds". None of them contains "banks". The regression test pins all three.
+    //
+    // (#222) recorded "real estate", "property" and "reit" as probed and NOT shipped for reaching
+    // zero funds. THAT IS AMENDED HERE for "real estate" only, on a fresh census: it now refuses
+    // three funds out of geographic sleeves, XDER.L and XREA.DE among them, which became visible
+    // only after (#274) taught the tokeniser their `1C` share class. "property" and "reit" are still
+    // NOT shipped and still reach zero — (#215)'s "specific tokens only" stands for those two.
+    "banks", "insur", "basic resource", "automobil", "real estate",
     "sector", "select", "nasdaq", "small", "mid cap", "communicat", "biotech",
     "esg", "sri ", "socially responsible", "screened",
     "sustainab", "paris", " pab", "climate", "islamic", "value", "momentum", "quality",
@@ -2071,10 +2094,16 @@ const FACTOR_GEO: [u8; 2] = [0, 1];
 /// floor, so this is (#216)'s "inert today, deliberately fixed anyway" and the floor is the mask.
 /// REVERT: drop the three from HERE alone. That refuses them the sector sleeve while [`NARROW`] goes
 /// on keeping them out of the geographic ones — i.e. the (#200) behaviour, not the pre-(#222) one.
-const SECTOR: [&str; 13] = [
+const SECTOR: [&str; 18] = [
     "technolog", "information", "info tech", "financ", "semiconduct",
     "health", "energy", "industrial", "communicat", "biotech",
     "utilit", "material", "consumer",
+    // (#276) the five supersector names, kept in step with [`NARROW`] so a WORLD or US fund in one
+    // of these families can still reach the sector sleeve rather than being refused outright. The
+    // EUROPE ones stay out regardless, because tier 5 is not in [`SECTOR_GEO`] — that is the policy
+    // pinned at the region x sector block below, and (#236) ARM 2 refused widening it. NOT a
+    // loosening: without this line these five would be the only sector families with no sleeve.
+    "banks", "insur", "basic resource", "automobil", "real estate",
 ];
 
 /// (#218) Tokens that may CO-OCCUR with a sector one without disqualifying the fund, but that never
@@ -6365,6 +6394,43 @@ mod tests {
     ] {
         assert_eq!(geo_tier_at(no, 0.35, true, true, 0, 0, 0), None, "{no}: {why} — region x sector, with ALL THREE sleeves open");
     }
+    // (#276) the SUPERSECTOR spellings, which the block above could not catch because STOXX does not
+    // name its slices the way GICS does. SC0U.DE is the one that was PRINTING — it held a Europe
+    // sleeve slot when this shipped — and XUFB.L is the same defect one tier up, in the US sleeve.
+    for (no, why) in [
+        ("invesco stoxx europe 600 optimised banks ucits etf", "SC0U.DE, EUR 630M — WAS PRINTING in the Europe sleeve"),
+        ("ishares stoxx europe 600 banks ucits etf (de)", "EXV1.DE — `financ` never matched \"banks\""),
+        ("multi units luxembourg - amundi stoxx europe 600 insurance ucits etf acc", "INS.MI"),
+        ("ishares stoxx europe 600 basic resources ucits etf (de)", "EXV6.DE"),
+        ("ishares stoxx europe 600 automobiles & parts ucits etf (de) eur acc", "SAOT.AS"),
+        ("xtrackers ftse developed europe real estate ucits etf 1c", "XDER.L — reachable only since (#274) read its `1C`"),
+        ("xtrackers ftse developed europe ex uk real estate ucits etf 1c", "XREA.DE"),
+    ] {
+        assert_eq!(geo_tier_at(no, 0.35, true, true, 0, 0, 0), None, "{no}: {why} — a sector bet in a geographic sleeve, with ALL THREE sleeves open");
+    }
+    // (#276) THE OTHER HALF, and the reason these five go into [`SECTOR`] as well as [`NARROW`]:
+    // a US or WORLD fund in one of the new families is REROUTED to the sector sleeve, not refused.
+    // XUFB.L is tier 3, `SECTOR_GEO` holds 3, so it leaves the broad US sleeve — where it was a
+    // one-industry bet among whole-market trackers — and lands where a concentrated bet belongs.
+    // The Europe names above get no such landing because tier 5 is not in `SECTOR_GEO`, which is
+    // the region x sector policy this round leaves exactly as (#236) ARM 2 left it.
+    assert_eq!(geo_tier_at("xtrackers msci usa banks ucits etf 1d", 0.35, true, true, 0, 0, 0), Some(SECTOR_TIER),
+        "XUFB.L: a US supersector fund belongs to the sector sleeve, not the US one");
+    assert_eq!(geo_tier_at("xtrackers msci usa banks ucits etf 1d", 0.35, true, false, 0, 0, 0), None,
+        "XUFB.L: …and with the sector sleeve off it is refused outright, never returned to tier 3");
+
+    // (#276)/(#227) THE OVER-MATCH GUARD, and the reason the token is `banks` and never `bank`:
+    // `hit()` is a bare `contains` while `hold_name_tokens` ships false, so the singular would evict
+    // these on their ISSUER's name. If this ever reds, the token got looser, not smarter. The third
+    // DZ listing, DZEU.DE "dz bank euro stoxx 50", is deliberately NOT pinned here: it carries no
+    // `GEO` token at all ("euro stoxx 50" is not a geography this list spells) and so reads None for
+    // a reason that has nothing to do with this token — it would pass the guard while proving it.
+    for (yes, tier, why) in [
+        ("dz bank msci world ucits etf", 1, "DZMW.DE — a plain developed-world tracker"),
+        ("dz bank s&p 500 ucits etf", 3, "DZUS.DE — a plain S&P 500 tracker"),
+    ] {
+        assert_eq!(geo_tier_at(yes, 0.35, true, true, 0, 0, 0), Some(tier), "{yes}: {why} — `banks` must not match `bank`");
+    }
     // (#222) the bond funds that carry a GEO token — the hole (#215)'s four pins could not reach,
     // because every one of those is geographically unspellable. These two are not, and `emerging`
     // walked them into an EQUITY sleeve.
@@ -6697,7 +6763,8 @@ mod tests {
     // would refuse a legitimate FACTOR row seated by (#228). The name says "value" and nothing else.
     assert_eq!(narrow_hit("xtrackers msci world value ucits etf 1c"), Some("value"),
         "(#243) `enhanced` lives only in the benchmark, and NARROW never reads the benchmark");
-    assert_eq!(NARROW.len(), 61, "(#244) five more tokens; the length is pinned so a silent edit cannot pass");
+    assert_eq!(NARROW.len(), 66, "(#276) five supersector tokens; the length is pinned so a silent edit cannot pass");
+    assert_eq!(SECTOR.len(), 18, "(#276) …and the same five in SECTOR, so the two lists cannot drift apart");
     // (#244) THE FIVE GEARING/OVERLAY TOKENS, each pinned to the live fund that measured it, with
     // EVERY SLEEVE SWITCHED ON. That is the strong form: none of the five appears in `SIZE`,
     // `FACTOR`, `SECTOR` or the Nasdaq token, so no rescue arm can claim them back and the refusal
