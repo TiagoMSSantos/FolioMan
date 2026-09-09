@@ -5157,6 +5157,62 @@ buy_heuristic:
                                  #   REVERT: set this back to false. Nothing else moves with it -- the cap was not raised, so
                                  #   there is no paired knob, unlike (#273).
 
+  # (#275) NO KNOB — THE ISSUER-WORD PAIR. (#274) taught the tokeniser Xtrackers' `1C`; this round
+  #   found the SAME gap at BNP Paribas Easy, which spells its two share classes as full English
+  #   words, "Capitalisation" and "Distribution". Word-boundary matching means NEITHER was covered:
+  #   `dist` does not match the token `distribution`, and nothing matched `capitalisation` at all.
+  #   BOTH HALVES WERE BUILT. ONE SHIPPED UNCONDITIONALLY, ONE WAS MEASURED AND REFUSED. The split
+  #   is (#224)'s rule, not a compromise: the Dist half is ONE-SIDED and can only ever REFUSE, so it
+  #   needs no knob; the Acc half ADMITS, so it needed a knob, an argument and a measurement.
+  #
+  #   SHIPPED — `distribution` joins the Dist word list in `fetch::use_from_name_at`. Unconditional,
+  #   so it DOES change the config-less lane; stated here rather than claimed under non-negotiable
+  #   #1, exactly as (#222) did for its constants. The goldens do not move — `hold_core_list` is
+  #   called only from `commands::screen`, and no gate reads it.
+  #     MEASURED 2026-09-09, live `screen`, HEAD vs HEAD+token, back to back on one warm cache:
+  #     pond 4313 EU-buyable ETFs in BOTH arms and EVERY funnel stage identical — not broad-index
+  #     3689 · TER 192 · replication 0 · not Acc 174 · AUM 116 · QUALIFIED 142. A clean isolation.
+  #       USE n/a  859 -> 850   nine funds stop reading as an unknown share class
+  #       CORE table  90 rows -> 90 rows, BYTE-IDENTICAL in content AND in order
+  #     IT MOVES NO ROW, and that is the honest size of it. All nine were already dying at the
+  #     broad-index leg. It ships as a CORRECTNESS GUARD on a hazard that is real but currently
+  #     unrealised: a distributing fund whose BF row claims Acc would otherwise reach the Acc-gated
+  #     CORE table, which is the exact error (#224) built `resolve_use_of`'s Dist override to stop.
+  #     A future BF row flipping to Acc on any of 38 such pond names is all it takes.
+  #     REVERT: delete the token. It is one word in one array and it is independently revertible.
+  #
+  #   REFUSED — `hold_issuer_capitalisation`, the Acc half, read `capitalisation` -> Acc. Built with
+  #   its own bool, its own `fetch::capitalisation_word` helper and its own tests, then DELETED after
+  #   measurement. The offline census predicted NINE broad funds dying at leg 4 for want of it, one
+  #   of them (EEAR.DE, world ex-US) landing in a sleeve sitting at 2 of 3 and so purely additive.
+  #     MEASURED 2026-09-09, live `screen`, control vs arm back to back, ONE binary, the configs
+  #     differing by this single line:
+  #       control  not Acc 174 · AUM 116 · QUALIFIED 142   CORE table 90 rows
+  #       arm      not Acc 175 · AUM 116 · QUALIFIED 143   CORE table 90 rows
+  #       row diff: NONE. Not one fund gained, not one lost, order unchanged.
+  #     WHY THE CENSUS WAS WRONG, and it is worth knowing: BÖRSE FRANKFURT ALREADY ANSWERS FOR THIS
+  #     ISSUER. EDEE.DE — "BNP PARIBAS EASY - S&P 500 II UCITS ETF CAPITALISATION" — PRINTS IN THE
+  #     CONTROL TABLE, with the knob OFF, reading USE = Acc off its BF row. The offline census read
+  #     names only and could not see that, so it counted funds the name-fallback never reaches.
+  #     (#274) already wrote the bound this lands on: the name is consulted ONLY for funds with no BF
+  #     row. The pre-registered stop rule was "if neither funnel counter moves, BF already resolves
+  #     all nine and the rung is a measured no-op — say so and revert rather than ship a knob that
+  #     buys nothing". It did not move. It was reverted. (#215)'s rule decides it: a token that
+  #     admits nothing is speculation with a maintenance cost.
+  #     DO NOT REBUILD IT without first checking whether BF's coverage of BNP Paribas Easy has
+  #     REGRESSED. That, and only that, is what would make this half worth anything.
+  #
+  #   NOT GRADEABLE by the backtest, as every CORE-lane change: `backtest::stamp_asset_class` fills
+  #   only name/instrument_type/sector, so no walk reaches this lane. The live `screen` diff is the
+  #   whole evidence base.
+  #   PROBE HYGIENE: probe configs named `ci-settings.yaml` in their own directories, control
+  #   byte-identical to the shipped file, one pre-built binary per source state and never copied
+  #   between arms, foreground, no FOLIOMAN_OFFLINE, rows diffed on the fixed-width NAME column.
+  #   A FIRST PAIR WAS DISCARDED, recorded so the number is not re-derived: Yahoo's crumb handshake
+  #   failed mid-session and one arm fell back to justETF for all fund facts, moving TER and AUM
+  #   refusals by 3 each and shrinking every sleeve. An admitting knob cannot shrink supply; that is
+  #   how the contamination was caught. Both arms were re-run once the fallback state was shared.
+
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:

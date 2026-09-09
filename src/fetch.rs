@@ -3695,7 +3695,22 @@ fn use_from_name_at(name: &str, codes: bool) -> Option<&'static str> {
     // genuinely DISTRIBUTING one. Word-boundary matching is what makes the short token safe: only a
     // standalone `dis` matches, so "Discovery" does not, and it stays on the ONE-SIDED Dist half
     // this function was built around, so it can still only REFUSE and never admit.
-    } else if word(&["dist", "distributing", "dis"]) {
+    // (#275) `distribution` joins it for the same reason one round later, and from the same kind of
+    // evidence: BNP Paribas Easy spells its two share classes as full English words, "Capitalisation"
+    // and "Distribution", and word-boundary matching means `dist` did NOT already cover the second.
+    // 38 pond names carry the whole word and NOT ONE was resolved by any existing token; arming this
+    // line moved the `USE n/a` census from 859 to 850 on a live `screen` run.
+    //
+    // UNCONDITIONAL, and that is (#224)'s rule rather than an oversight: this half is ONE-SIDED and
+    // can only ever REFUSE, so it needs no knob and no permission. Its Acc-side twin does need both,
+    // was built, and was MEASURED AND REFUSED — see the (#275) block in tests/ci-settings.yaml.
+    //
+    // It moved ZERO CORE rows: the table is byte-identical, in content and in order, to the run
+    // without it. All 9 funds it resolves were already dying at the broad-index leg. It ships as a
+    // correctness guard on a hazard that is real but currently unrealised — a distributing fund whose
+    // BF row claims Acc would otherwise reach the Acc-gated CORE table, which is the exact error
+    // (#224) built `resolve_use_of`'s one-sided Dist override to stop.
+    } else if word(&["dist", "distributing", "dis", "distribution"]) {
         Some("Dist")
     } else {
         share_class_code(&lower, codes)
@@ -5396,6 +5411,21 @@ pub(crate) mod tests {
             "…and its Acc twin still reads Acc, so the fix stays one-sided");
         assert_eq!(use_from_name("Invesco Discovery UCITS ETF"), None,
             "(#242) substring trap: `discovery` is one token and is not `dis`");
+        // (#275) BNP Paribas Easy writes the class out as a full English word. `dist` did not cover
+        // it, because the match is per token and not a substring — the same gap (#242) closed for the
+        // short spelling, found the same way, one round later.
+        assert_eq!(use_from_name("BNP Paribas Easy MSCI World II UCITS ETF Distribution"), Some("Dist"),
+            "(#275) EEAH.DE — a live pond name that resolved to NOTHING before this token");
+        assert_eq!(use_from_name("Invesco FTSE All-World UCITS ETF USD Distribution"), Some("Dist"),
+            "(#275) FTWD.L — and it is not one issuer's quirk");
+        assert_eq!(use_from_name("Amundi Redistribution Strategy UCITS ETF"), None,
+            "(#275) substring trap: `redistribution` is one token and is not `distribution`");
+        assert_eq!(
+            resolve_use_of(Some("Acc"), "BNP Paribas Easy MSCI World II UCITS ETF Distribution", false),
+            Some("Dist"),
+            "(#275) THE HAZARD: the name overrides a BF row claiming Acc, so a distributing fund \
+             cannot reach the Acc-gated CORE table"
+        );
 
         // (#224) resolve_use_of: BF authoritative, the name a fallback — EXCEPT a name spelling Dist.
         let vxud = "Vanguard Funds PLC - Vanguard FTSE All-World Ex-U.S. UCITS ETF USD Dist";
