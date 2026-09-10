@@ -9759,6 +9759,215 @@ mod tests {
     }
 
 
+    /// (#277) A tuning with every OPTION-READING gate ARMED, and set to a bar the populated fixture
+    /// below clears. This half is the whole point: at `BuyHeuristic::default()` most of these knobs
+    /// are 0.0, so their gate short-circuits before it ever reads the field, and a sweep run against
+    /// the defaults is VACUOUS in exactly (#149)'s sense — it reports "missing data passed" about a
+    /// gate that was never asked. Proven, not assumed: mutating the age gate to refuse on `None`
+    /// left a defaults-only version of this test GREEN.
+    ///
+    /// Crypto-only knobs stay off — the fixture is an equity, so arming them would be the same
+    /// vacuity in the other direction.
+    fn armed_tuning() -> BuyHeuristic {
+        BuyHeuristic {
+            growth_min_age_years: 5.0,
+            growth_min_aum_etf: 1e8,
+            growth_min_range_pct_8y: 80.0,
+            growth_require_lifetime_uptrend: true,
+            growth_max_vol: 40.0,
+            growth_max_daily_1m: 10.0,
+            growth_max_peg: 2.0,
+            growth_require_peg: true,
+            growth_min_net_margin: 5.0,
+            growth_max_margin_swing: 10.0,
+            growth_max_dilution_pct: 2.0,
+            growth_min_interest_cover: 3.0,
+            growth_min_fcf_margin: 5.0,
+            growth_min_net_cash_rev: -50.0,
+            ..BuyHeuristic::default()
+        }
+    }
+
+    /// (#277) The fundamentals half of the fixture: every field an ARMED gate reads, carrying a value
+    /// that clears it. `peg_yield` 80 beats the `growth_max_peg: 2.0` bar of 100/2 = 50.
+    fn full_factors() -> core::FundFactors {
+        core::FundFactors {
+            peg_yield: Some(80.0),
+            eps_ttm: Some(5.0),
+            net_margin: Some(20.0),
+            margin_stability: Some(-1.0),
+            buyback_yield: Some(1.0),
+            interest_cover: Some(20.0),
+            fcf_margin: Some(25.0),
+            net_cash_rev: Some(10.0),
+            ..core::FundFactors::default()
+        }
+    }
+
+    /// (#277) [`gate_fixture`] with every Option the scorer reads FILLED IN with a passing value. The
+    /// distinction from `gate_fixture` is what makes the sweep mean anything: that one leaves most
+    /// fields `None` already, so blanking one there is a no-op. Only a field that was CARRYING a value
+    /// can demonstrate that losing it is survivable.
+    fn full_fixture() -> Quote {
+        let mut q = gate_fixture();
+        q.age_years = Some(30.0);
+        q.aum_eur = Some(1e10);
+        q.volatility_pct = Some(1.0);
+        q.downside_dev_pct = Some(0.7);
+        q.max_daily_1m = Some(3.0);
+        q.mom_pct = Some(2.0);
+        q.pe_ratio = Some(20.0);
+        q.roe = Some(18.0);
+        q.expense_ratio = Some(0.07);
+        q.trend_cagr = Some(15.0);
+        q.life_cagr = Some(18.0);
+        q.capped_cagr = Some(18.0);
+        q.life_return_pct = Some(900.0);
+        q.tr_cagr = Some(19.0);
+        q.roll5y_pos_pct = Some(100.0);
+        q.roll10y_pos_pct = Some(100.0);
+        q.worst_5y_pct = Some(5.0);
+        q.worst_10y_pct = Some(25.0);
+        q.underwater_yrs = Some(1.0);
+        q.fund_factor = Some(10.0);
+        q.fund = Some(full_factors());
+        q.price_eur = Some(100.0);
+        q.sector = Some("Technology".into());
+        q.stats_8y = Some(core::Stats8 {
+            range_pct: 92.0,
+            trend_r2: 0.95,
+            max_drawdown_pct: 20.0,
+            underwater_yrs: Some(1.0),
+        });
+        q
+    }
+
+    /// (#277) NON-NEGOTIABLE #5 AS AN EXECUTABLE ORACLE: missing data PASSES a gate.
+    ///
+    /// The rule is stated in prose and re-argued per gate in a dozen comments ("no `stats_8y` = under
+    /// 8y of record", "no fundamentals at all -> passes, like every other data gate"). Prose does not
+    /// fail a build. This blanks ONE field at a time on a quote that scores with everything present,
+    /// under a tuning where every gate reading that field is ARMED, and asserts the scorer still ranks
+    /// it. A future gate that reads `unwrap_or` into a refusal, or swaps an `is_some_and` for a
+    /// `map_or(true, ..)`, reds here instead of silently dropping live names.
+    ///
+    /// It runs the sweep on an ETF as well as an equity, because two gates
+    /// (`growth_min_aum_etf`, and the `is_noneur_etf` damp) are unreachable for a plain stock.
+    ///
+    /// PINNING THE EXCEPTIONS IS HALF ITS VALUE: an exception nobody can enumerate is indistinguishable
+    /// from a bug, and the project rule names only ONE (the PEG/negative-EPS split) where the code has
+    /// FOUR. The other three are asserted below. If a fifth is ever added it must be added here.
+    #[test]
+    fn missing_data_passes_every_gate() {
+        let t = armed_tuning();
+        let etf = || {
+            let mut q = full_fixture();
+            q.instrument_type = "ETF".into();
+            q
+        };
+        for (lane, base) in [("equity", full_fixture as fn() -> Quote), ("etf", etf as fn() -> Quote)] {
+            assert!(
+                score_parts(&base(), &t).is_some(),
+                "{lane}: the populated fixture must score under the ARMED tuning, or the sweep proves nothing"
+            );
+
+            let blanks: [(&str, fn(&mut Quote)); 24] = [
+                ("age_years", |q| q.age_years = None),
+                ("aum_eur", |q| q.aum_eur = None),
+                ("volatility_pct", |q| q.volatility_pct = None),
+                ("downside_dev_pct", |q| q.downside_dev_pct = None),
+                ("max_daily_1m", |q| q.max_daily_1m = None),
+                ("mom_pct", |q| q.mom_pct = None),
+                ("pe_ratio", |q| q.pe_ratio = None),
+                ("roe", |q| q.roe = None),
+                ("expense_ratio", |q| q.expense_ratio = None),
+                ("trend_cagr", |q| q.trend_cagr = None),
+                ("life_cagr", |q| q.life_cagr = None),
+                ("capped_cagr", |q| q.capped_cagr = None),
+                ("life_return_pct", |q| q.life_return_pct = None),
+                ("tr_cagr", |q| q.tr_cagr = None),
+                ("roll5y_pos_pct", |q| q.roll5y_pos_pct = None),
+                ("roll10y_pos_pct", |q| q.roll10y_pos_pct = None),
+                ("worst_5y_pct", |q| q.worst_5y_pct = None),
+                ("worst_10y_pct", |q| q.worst_10y_pct = None),
+                ("underwater_yrs", |q| q.underwater_yrs = None),
+                ("fund_factor", |q| q.fund_factor = None),
+                ("fund (every fundamental at once)", |q| q.fund = None),
+                ("price_eur", |q| q.price_eur = None),
+                ("sector", |q| q.sector = None),
+                ("stats_8y", |q| q.stats_8y = None),
+            ];
+            // and one field at a time INSIDE the fundamentals, which is the sharper case: a row that
+            // reports everything except the one datum an armed gate wants.
+            let ff_blanks: [(&str, fn(&mut core::FundFactors)); 7] = [
+                ("fund.peg_yield", |f| f.peg_yield = None),
+                ("fund.net_margin", |f| f.net_margin = None),
+                ("fund.margin_stability", |f| f.margin_stability = None),
+                ("fund.buyback_yield", |f| f.buyback_yield = None),
+                ("fund.interest_cover", |f| f.interest_cover = None),
+                ("fund.fcf_margin", |f| f.fcf_margin = None),
+                ("fund.net_cash_rev", |f| f.net_cash_rev = None),
+            ];
+
+            for (field, blank) in blanks {
+                let mut q = base();
+                blank(&mut q);
+                assert!(
+                    score_parts(&q, &t).is_some(),
+                    "{lane}/{field}: blanking it REFUSED the quote — missing data must PASS a gate (non-negotiable #5)"
+                );
+                // (non-negotiable #2) the mirror must tell the same story once the field is missing,
+                // or the funnel labels a name with a reason the scorer never applied.
+                assert_eq!(
+                    gate_failures(&q, &t).is_some_and(|f| f.is_empty()),
+                    score_parts(&q, &t).is_some(),
+                    "{lane}/{field}: the mirror and the scorer disagree once the field is missing"
+                );
+            }
+            for (field, blank) in ff_blanks {
+                let mut q = base();
+                let mut f = full_factors();
+                blank(&mut f);
+                q.fund = Some(f);
+                assert!(
+                    score_parts(&q, &t).is_some(),
+                    "{lane}/{field}: blanking it REFUSED the quote — missing data must PASS a gate (non-negotiable #5)"
+                );
+                assert_eq!(
+                    gate_failures(&q, &t).is_some_and(|g| g.is_empty()),
+                    score_parts(&q, &t).is_some(),
+                    "{lane}/{field}: the mirror and the scorer disagree once the field is missing"
+                );
+            }
+        }
+
+        // THE FOUR EXCEPTIONS, pinned so the sweep above cannot quietly absorb one.
+        let mut no_turnover = full_fixture();
+        no_turnover.avg_turnover_eur = None;
+        assert!(
+            score_parts(&no_turnover, &t).is_none(),
+            "(#20) unknown turnover is a DELIBERATE refusal, and the SECOND exception — the project rule names only the PEG split"
+        );
+
+        let mut neg_eps = full_fixture();
+        neg_eps.fund = Some(core::FundFactors { peg_yield: None, eps_ttm: Some(-1.0), ..full_factors() });
+        assert!(
+            score_parts(&neg_eps, &t).is_none(),
+            "the DOCUMENTED exception: no PEG plus a negative EPS refuses, where no PEG alone passes"
+        );
+
+        // THIRD and FOURTH: `long_leg_fixed(..)?` and `perf_pct(quote, \"1Y\")?` are `?`, not gates —
+        // a name with no long leg or no 1Y return has no rankable record at all, so the scorer cannot
+        // score it rather than choosing to refuse it. Different in kind from the two above, identical
+        // in effect, and worth pinning for the same reason: it is a `None` on missing data.
+        let mut no_legs = full_fixture();
+        no_legs.perf = legs(&[("1M", 2.0), ("1Y", 20.0)]);
+        assert!(score_parts(&no_legs, &t).is_none(), "no long leg -> unrankable, not gated");
+        let mut no_1y = full_fixture();
+        no_1y.perf = legs(&[("1M", 2.0), ("5Y", 200.0)]);
+        assert!(score_parts(&no_1y, &t).is_none(), "no 1Y return -> unrankable, not gated");
+    }
+
     /// (funnel) `gate_failures` MIRRORS `score_parts` rather than sharing its gates — a duplication
     /// picks.rs justifies with "drift only mislabels the tail, never the rank". That justification dies
     /// the moment the screen's gate funnel aims a knob at the mirror's counts: a mislabel then aims the

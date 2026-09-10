@@ -5288,6 +5288,51 @@ buy_heuristic:
   #   NOT GRADEABLE by the backtest, as every CORE-lane change: `backtest::stamp_asset_class` fills
   #   only name/instrument_type/sector, so no walk reaches this lane.
 
+  # (#277) NO KNOB — an EXECUTABLE ORACLE for non-negotiable #5 ("missing data PASSES a gate"), plus
+  #   the finding that made it worth writing: the rule has FOUR exceptions and the written rule names
+  #   ONE. Test-only. No config key, no behaviour change, no golden moves; `git status` after the
+  #   change showed `src/picks.rs` alone.
+  #
+  #   WHAT IT DOES (`picks::tests::missing_data_passes_every_gate`): builds a quote that scores with
+  #   EVERY Option the scorer reads filled in, blanks exactly one field, and asserts `score_parts`
+  #   still returns Some. 24 quote fields plus 7 `FundFactors` fields, swept twice — once as an
+  #   equity, once as an ETF, because `growth_min_aum_etf` is unreachable for a plain stock. Each
+  #   blank also re-asserts non-negotiable #2, that `gate_failures` agrees with the scorer once the
+  #   datum is gone; a mirror that invents a reason for an absent field mislabels the funnel.
+  #
+  #   THE ARMED TUNING IS THE WHOLE POINT, and it is the part a careless version gets wrong. At
+  #   `BuyHeuristic::default()` fourteen of these gates are 0.0/false, so the `knob > 0.0` guard
+  #   short-circuits before the field is ever read. A defaults-only sweep therefore reports "missing
+  #   data passed" about gates that were never asked — VACUOUS in exactly (#149)'s sense. MEASURED,
+  #   not argued: the first version of this test was written against the defaults, the age gate was
+  #   hand-mutated to `map_or(true, ..)` so it REFUSES on `None`, and the test stayed GREEN. Under
+  #   `armed_tuning()` the same mutant reds, and so does the same mutation on the net-margin gate.
+  #   Both mutants were applied by hand, watched red, reverted, and the file md5-checked back to its
+  #   pre-mutation value — (#271) and (#272) both paid for skipping that step.
+  #
+  #   THE FINDING — the rule as written is incomplete. `picks::score_parts` returns None on absent
+  #   data in FOUR places, and the project rule names only the first:
+  #     1. PEG absent AND `eps_ttm <= 0` — the documented split. A negative earner with no PEG is not
+  #        a name with no datum; the datum it has is the disqualifying one.
+  #     2. `avg_turnover_eur: None` — (#20)'s deliberate refusal, documented in code and NOT in the
+  #        rule. Unknown turnover is unassessable rather than passing.
+  #     3. no long leg (`long_leg_fixed(..)?`).
+  #     4. no 1Y return (`perf_pct(quote, "1Y")?`).
+  #   3 and 4 differ in KIND from 1 and 2: they are `?` on a value the score is COMPUTED from, not
+  #   gates that chose to refuse — a name with no return history has nothing to rank, so the scorer
+  #   cannot score it. Identical in EFFECT though, and both are pinned in the test beside the other
+  #   two, because an exception nobody can enumerate is indistinguishable from a bug. NOTHING WAS
+  #   CHANGED to fix this: all four are correct as they stand. What was wrong was the count.
+  #
+  #   NOT A GATE AND NOT GRADEABLE: it adds no condition to `score_parts`, so non-negotiable #3
+  #   (`growth_gate_reachability_pin`) does not apply and the backtest cannot see it. The 402/9/21
+  #   suite is green in BOTH regimes ((#171)'s pinned and config-less lanes) and clippy is clean.
+  #
+  #   REVERT: delete `armed_tuning`, `full_factors`, `full_fixture` and the test. Nothing else reads
+  #   them. Reverting costs the guard and restores no behaviour, since there is none to restore.
+  #   IF A FIFTH EXCEPTION IS EVER ADDED it must be added to that test in the open, with its own
+  #   receipt — the test failing is how a silent fifth one gets caught.
+
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:
