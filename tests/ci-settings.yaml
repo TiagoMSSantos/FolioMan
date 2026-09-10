@@ -5333,6 +5333,40 @@ buy_heuristic:
   #   IF A FIFTH EXCEPTION IS EVER ADDED it must be added to that test in the open, with its own
   #   receipt — the test failing is how a silent fifth one gets caught.
 
+  # (#278) NO KNOB — closes a COVERAGE HOLE in non-negotiable #2's guard. Test-only, same shape as
+  #   (#277) and built on its fixture. No config key, no behaviour change, no golden moves.
+  #
+  #   THE HOLE: `gate_failures_agrees_with_the_scorer` is the test the project rule names as the
+  #   enforcer of "a gate added to `score_parts` MUST be mirrored in `gate_failures`". It sweeps ten
+  #   quotes across three tunings — and all three leave THIRTEEN gates at a knob value that
+  #   short-circuits them. `growth_max_peg`, `growth_require_peg`, `growth_min_net_margin`,
+  #   `growth_max_margin_swing`, `growth_max_dilution_pct`, `growth_min_interest_cover`,
+  #   `growth_min_fcf_margin`, `growth_min_net_cash_rev`, `growth_min_age_years`,
+  #   `growth_min_aum_etf`, `growth_min_range_pct_8y`, `growth_max_vol`, `growth_max_daily_1m`.
+  #   Every fundamentals gate in the scorer was in that list. Their two arms could disagree outright
+  #   and the whole suite would stay green, so the rule was enforced for the gates that happened to
+  #   be armed and trusted for the rest.
+  #
+  #   WHAT IT DOES (`picks::tests::every_armed_gate_is_mirrored`): takes (#277)'s `armed_tuning` and
+  #   `full_fixture` and pushes ONE field to a FAILING value at a time, fifteen cases. Each asserts
+  #   three things — the scorer refuses, the mirror agrees it refuses, and the mirror NAMES at least
+  #   one gate. The third is the one worth spelling out: an empty failure list passes a bare
+  #   agreement check while the funnel drops the name with no reason printed, which is (#149)'s
+  #   vacuity wearing a different hat.
+  #
+  #   IT IS THE OTHER DIRECTION FROM (#277), and both are needed. (#277) asks what happens when the
+  #   datum is ABSENT (it must pass); this asks what happens when the datum is PRESENT AND BAD (both
+  #   arms must refuse, and say so). A mirror can be correct on one and wrong on the other.
+  #
+  #   PROVEN, NOT ASSUMED: the interest-cover arm of `gate_failures` was hand-mutated to
+  #   `if false`, leaving the scorer's arm intact so only the MIRROR broke. The test red with the
+  #   right case named. Restored and md5-checked back to its pre-mutation value.
+  #
+  #   ALL FIFTEEN PASS TODAY — this found no drift. That is the result, not a disappointment: the
+  #   mirror was correct and is now checkable. The finding is that it was never checked.
+  #
+  #   REVERT: delete the test. It reads (#277)'s two helpers and nothing reads it.
+
   hold_max_ter: 0.25             # (#102 / finding C9) MEASURED ONLY AS THE STATUS QUO — this is the
                                  # literal that shipped inside `core::hold_miss_reason`, extracted
                                  # verbatim, so the value carries whatever justification it always had:

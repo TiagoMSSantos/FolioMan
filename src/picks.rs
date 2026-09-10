@@ -9968,6 +9968,73 @@ mod tests {
         assert!(score_parts(&no_1y, &t).is_none(), "no 1Y return -> unrankable, not gated");
     }
 
+    /// (#278) The OTHER direction of non-negotiable #2, and the coverage hole it closes.
+    ///
+    /// `gate_failures_agrees_with_the_scorer` sweeps ten quotes across three tunings, but every one of
+    /// those tunings leaves the FUNDAMENTALS knobs at their defaults — `growth_max_peg`,
+    /// `growth_require_peg`, `growth_min_net_margin`, `growth_max_margin_swing`,
+    /// `growth_max_dilution_pct`, `growth_min_interest_cover`, `growth_min_fcf_margin`,
+    /// `growth_min_net_cash_rev` — plus `growth_min_age_years`, `growth_min_aum_etf`,
+    /// `growth_min_range_pct_8y`, `growth_max_vol` and `growth_max_daily_1m`. Thirteen gates whose
+    /// mirror nothing verified: their `score_parts` arm and their `gate_failures` arm could disagree
+    /// and the whole suite would stay green.
+    ///
+    /// This takes (#277)'s armed tuning and its populated fixture and pushes ONE field to a FAILING
+    /// value at a time. Each case asserts three things: the scorer refuses, the mirror agrees it
+    /// refuses, and the mirror NAMES at least one gate — a silent empty failure list would let the
+    /// funnel drop a name with no reason printed, which is the (#149) vacuity problem wearing a
+    /// different hat.
+    #[test]
+    fn every_armed_gate_is_mirrored() {
+        let t = armed_tuning();
+        let ff = |f: core::FundFactors| {
+            let mut q = full_fixture();
+            q.fund = Some(f);
+            q
+        };
+
+        let mut too_young = full_fixture();
+        too_young.age_years = Some(1.0);
+        let mut tiny_fund = full_fixture();
+        tiny_fund.instrument_type = "ETF".into();
+        tiny_fund.aum_eur = Some(1e6);
+        let mut off_8y_high = full_fixture();
+        off_8y_high.stats_8y = Some(core::Stats8 { range_pct: 50.0, ..off_8y_high.stats_8y.clone().unwrap() });
+        let mut wild = full_fixture();
+        wild.volatility_pct = Some(99.0);
+        let mut gappy = full_fixture();
+        gappy.max_daily_1m = Some(50.0);
+        let mut sinking = full_fixture();
+        sinking.trend_cagr = Some(-1.0);
+
+        let cases: &[(&str, Quote)] = &[
+            ("age_years below growth_min_age_years", too_young),
+            ("aum_eur below growth_min_aum_etf", tiny_fund),
+            ("stats_8y.range_pct below growth_min_range_pct_8y", off_8y_high),
+            ("volatility_pct above growth_max_vol", wild),
+            ("max_daily_1m above growth_max_daily_1m", gappy),
+            ("trend_cagr negative under growth_require_lifetime_uptrend", sinking),
+            ("peg_yield below the growth_max_peg bar", ff(core::FundFactors { peg_yield: Some(10.0), ..full_factors() })),
+            ("no peg and a negative eps_ttm", ff(core::FundFactors { peg_yield: None, eps_ttm: Some(-1.0), ..full_factors() })),
+            ("eps_never_reported under growth_require_peg", ff(core::FundFactors { eps_never_reported: true, ..full_factors() })),
+            ("net_margin below growth_min_net_margin", ff(core::FundFactors { net_margin: Some(1.0), ..full_factors() })),
+            ("margin_stability past growth_max_margin_swing", ff(core::FundFactors { margin_stability: Some(-50.0), ..full_factors() })),
+            ("buyback_yield past growth_max_dilution_pct", ff(core::FundFactors { buyback_yield: Some(-5.0), ..full_factors() })),
+            ("interest_cover below growth_min_interest_cover", ff(core::FundFactors { interest_cover: Some(1.0), ..full_factors() })),
+            ("fcf_margin below growth_min_fcf_margin", ff(core::FundFactors { fcf_margin: Some(-10.0), ..full_factors() })),
+            ("net_cash_rev below growth_min_net_cash_rev", ff(core::FundFactors { net_cash_rev: Some(-90.0), ..full_factors() })),
+        ];
+
+        for (why, q) in cases {
+            assert!(score_parts(q, &t).is_none(), "{why}: the failing value did not refuse — the gate is not armed by armed_tuning()");
+            let fails = gate_failures(q, &t);
+            assert!(
+                fails.as_ref().is_some_and(|f| !f.is_empty()),
+                "{why}: the scorer refused but the mirror did not — non-negotiable #2, and the funnel would drop this name unexplained"
+            );
+        }
+    }
+
     /// (funnel) `gate_failures` MIRRORS `score_parts` rather than sharing its gates — a duplication
     /// picks.rs justifies with "drift only mislabels the tail, never the rank". That justification dies
     /// the moment the screen's gate funnel aims a knob at the mirror's counts: a mislabel then aims the
