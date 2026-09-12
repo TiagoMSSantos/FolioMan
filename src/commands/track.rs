@@ -37,6 +37,32 @@ pub struct Snapshot {
     /// byte-identical to every line already on disk, and `default` keeps old lines readable.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub core: Vec<(String, Option<f64>)>,
+    /// (#286) THE EXECUTED BOOK: `(ticker, SIZE%)` exactly as `size` would fund that run — gate
+    /// failures already dropped, one row per issuer, weighted by score / volatility inside a class
+    /// budget and then capped. `rows` is the RANKED list and `track` graded its top slice
+    /// equal-weight, which is not the book anyone is told to buy: on the 2026-09-12 run the ranked
+    /// 12 size to weights from 8.0% down to 1.8%, and two of them fall outside the graded ten
+    /// entirely. `screen::run` fills this from `size::sized_book`, the one spelling of that
+    /// pipeline.
+    ///
+    /// NO PRICE HERE, and that is not an omission. Every sized ticker is already in `rows` with that
+    /// day's close; a second copy of the same price is the drift non-negotiable #4 exists to stop,
+    /// and `sized_rows` does the join. NO KNOB either — this is journal data, like `aum` (round 34)
+    /// and `spx_off_hi`, both of which ship unconditionally. `core` is gated only because `(#103)`
+    /// had already built `journal_core_list` before there was a grader for it.
+    ///
+    /// `skip_serializing_if` keeps a run that sizes nothing byte-identical to every line on disk;
+    /// `default` keeps every older line readable.
+    /// MEASURED 2026-09-12: these weights are scored on the SCREEN's own numbers. The rows its buy
+    /// table marks `#` scored with live fundamentals, which `size --picks` never fetches — it re-derives
+    /// the score price-only. On that run IITU.L read 6.3 here against 6.5 there, SMH.L 4.7 against 5.0,
+    /// SEMI.AS 4.6 against 5.0, and the three uncapped ETF weights moved by ≤0.2pp as a result. The
+    /// CLASS sums are identical (ETF 25.0% both ways) and no name enters or leaves, because the
+    /// divergence redistributes inside one budget rather than changing what clears a gate or a cap.
+    /// Journalling the screen's version is deliberate: it is the better-informed one and it is the one
+    /// the printed buy table ranked on, so the record matches what the user was shown that day.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sized: Vec<(String, f64)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -141,20 +167,29 @@ struct Graded {
 /// Grade one of a snapshot's lists against today's prices. `None` = nothing gradeable (too young,
 /// empty list, no priced rows).
 ///
-/// (#285) THE LIST AND ITS CUT ARE PARAMETERS, because there are two books to grade and only one
+/// (#285) THE LIST AND ITS CUT ARE PARAMETERS, because there are three books to grade and only one
 /// piece of arithmetic may exist for them (non-negotiable #4):
 ///
-/// * the momentum book — `snap.rows` cut at [`BOOK`], which is what every surface graded before this
-///   round and what `verdict_stats` and the screen's trust line still grade;
+/// * the momentum book — `snap.rows` cut at [`BOOK`], which is what every surface graded before
+///   `(#285)` and what `verdict_stats` and the screen's trust line still grade;
 /// * the CORE hold shortlist — `snap.core` cut at `Sizing::spill_cut()`, the number of trackers
-///   `size` actually spills the undeployed remainder into.
+///   `size` actually spills the undeployed remainder into;
+/// * (#286) the EXECUTED book — [`sized_rows`], uncut, the only one of the three that is not
+///   equal-weight.
+///
+/// (#286) EACH ROW CARRIES ITS WEIGHT and the fold is `Σ w·r / Σ w`. The two equal-weight lanes hand
+/// `1.0` to every row through [`equal`], which does not merely approximate what they computed
+/// before: `1.0 * x` is exactly `x` in IEEE754 and a sum of n ones is exactly n, so those two tables
+/// print the identical float they printed when `grade` could only average. A second weighted fold
+/// living beside this one is what #4 forbids, and it is also how two tables of the same book start
+/// disagreeing.
 ///
 /// `date` and `spx` still come off the snapshot, deliberately: the window and the benchmark leg are
 /// properties of the RUN, not of which of that run's lists is being graded. That is also what makes
-/// the two tables comparable — same endpoints, same index, same convention, one function.
+/// the tables comparable — same endpoints, same index, same convention, one function.
 fn grade(
     snap: &Snapshot,
-    rows: &[(String, Option<f64>)],
+    rows: &[(&str, Option<f64>, f64)],
     cut: usize,
     today: chrono::NaiveDate,
     px_now: &dyn Fn(&str) -> Option<f64>,
@@ -165,23 +200,50 @@ fn grade(
     if days < 1 {
         return None; // today's snapshot: zero-day window grades nothing
     }
-    let rets: Vec<f64> = rows
+    let rets: Vec<(f64, f64)> = rows
         .iter()
         .take(cut)
-        .filter_map(|(t, px_then)| {
+        .filter_map(|(t, px_then, w)| {
             let (then_px, now_px) = (px_then.filter(|p| *p > 0.0)?, px_now(t)?);
-            Some(now_px / then_px - 1.0)
+            Some((*w, now_px / then_px - 1.0))
         })
         .collect();
     if rets.is_empty() {
         return None;
     }
-    let book_pct = 100.0 * rets.iter().sum::<f64>() / rets.len() as f64;
+    // A book whose priced rows all weigh nothing is not a 0% book, it is an ungraded one — and the
+    // division below would hand back a NaN that prints as a real number.
+    let wsum: f64 = rets.iter().map(|(w, _)| w).sum();
+    if wsum <= 0.0 {
+        return None;
+    }
+    let book_pct = 100.0 * rets.iter().map(|(w, r)| w * r).sum::<f64>() / wsum;
     let spy_pct = snap.spx.filter(|p| *p > 0.0).zip(spx_now).map(|(then_px, now_px)| 100.0 * (now_px / then_px - 1.0));
     Some(Graded { date: snap.date.clone(), days, priced: rets.len(), book_pct, spy_pct })
 }
 
-/// The column header both tables print. (#285) One spelling, so the CORE block underneath cannot
+/// (#286) An EQUAL-WEIGHT lane as [`grade`] wants it. The 1.0 is not a convention to be read as
+/// "unweighted" — see `grade`'s doc for why it is exactly the pre-weight arithmetic.
+fn equal(rows: &[(String, Option<f64>)]) -> Vec<(&str, Option<f64>, f64)> {
+    rows.iter().map(|(t, p)| (t.as_str(), *p, 1.0)).collect()
+}
+
+/// (#286) The EXECUTED book as [`grade`] wants it: each sized ticker, the close `rows` journalled
+/// for it on that run, and the weight `size` gave it.
+///
+/// THE JOIN IS THE POINT. `sized` deliberately carries no price, because `rows` already holds one
+/// for every ticker it can name and two copies of one number drift (non-negotiable #4). A sized
+/// ticker absent from `rows` — which nothing writes today, since both come off the same run's
+/// `ranked_now` — lands here as `None` and `grade` drops it from the book and from N, the same way
+/// it drops a delisted momentum row.
+fn sized_rows(snap: &Snapshot) -> Vec<(&str, Option<f64>, f64)> {
+    snap.sized
+        .iter()
+        .map(|(t, w)| (t.as_str(), snap.rows.iter().find(|(r, _)| r == t).and_then(|(_, p)| *p), *w))
+        .collect()
+}
+
+/// The column header every table prints. (#285) One spelling, so the CORE block underneath cannot
 /// drift out of alignment with the momentum block the first time a column width moves.
 ///
 /// A CONST AND NOT A FUNCTION, and the mutation gate is why. As `fn table_header() -> String` it
@@ -234,6 +296,28 @@ fn graded_row(g: &Graded) -> String {
 /// DELIBERATELY NOT FOLDED INTO `verdict_stats`. That fold is shared with the screen's trust line,
 /// which is a claim about the momentum book; mixing a second book into it would silently move a
 /// number two surfaces currently agree on, which is the exact drift its own doc exists to prevent.
+/// (#286) One lane, graded across every journalled run: `(runs carrying this lane, runs, printed
+/// rows)`. The arithmetic of "grade them all and format each" is shared; the WORDS are not, because
+/// each lane owes the reader a different sentence about what it is and how it is weighted. Two
+/// closures to push those sentences in here would be more code than the four lines they replace.
+fn graded_rows<'a>(
+    snaps: &'a [Snapshot],
+    rows_of: &dyn Fn(&'a Snapshot) -> Vec<(&'a str, Option<f64>, f64)>,
+    cut: usize,
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> (usize, usize, Vec<String>) {
+    // no emptiness filter before `grade`: it already answers None for a list with no priced rows,
+    // and a second guard saying the same thing is a second place to get it wrong.
+    let rows = snaps
+        .iter()
+        .filter_map(|s| grade(s, &rows_of(s), cut, today, px_now, spx_now))
+        .map(|g| graded_row(&g))
+        .collect();
+    (snaps.iter().filter(|s| !rows_of(s).is_empty()).count(), snaps.len(), rows)
+}
+
 fn core_section(
     snaps: &[Snapshot],
     cut: usize,
@@ -241,15 +325,7 @@ fn core_section(
     px_now: &dyn Fn(&str) -> Option<f64>,
     spx_now: Option<f64>,
 ) -> String {
-    let total = snaps.len();
-    let journalled = snaps.iter().filter(|s| !s.core.is_empty()).count();
-    // no filter on `core` emptiness here: `grade` already answers None for a list with no priced
-    // rows, and a second guard saying the same thing is a second place to get it wrong.
-    let rows: Vec<String> = snaps
-        .iter()
-        .filter_map(|s| grade(s, &s.core, cut, today, px_now, spx_now))
-        .map(|g| graded_row(&g))
-        .collect();
+    let (journalled, total, rows) = graded_rows(snaps, &|s| equal(&s.core), cut, today, px_now, spx_now);
     if rows.is_empty() {
         return format!(
             "\n  CORE hold shortlist: nothing gradeable yet. A line needs a day of age and at least one\n  \
@@ -268,6 +344,48 @@ fn core_section(
     )
 }
 
+/// (#286) The third table, and the only one that grades what the user was actually told to buy.
+///
+/// The two above grade LISTS. This grades the BOOK: `size` drops the names that fail the growth
+/// gate, keeps one listing per issuer, and weights what survives by score / volatility inside a
+/// class budget before capping it — so its membership and its weights both differ from the ranked
+/// top-10 the first table prints. Until this round nothing recorded that, and it cannot be
+/// reconstructed after the fact, because the weights depend on each name's volatility as of the run.
+///
+/// It grades the GROWTH half only. Those weights sum to whatever the caps could deploy — 70.0% on
+/// the 2026-09-12 run — and the undeployed remainder goes to the CORE trackers the table above
+/// grades. The two sections together cover the book; neither is the whole of it, and the blurbs say
+/// so rather than leaving the reader to add them up.
+fn sized_section(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    // usize::MAX, not a cut: the sizing IS the cut. A row that reached this list already survived
+    // the gate, the issuer dedup and the caps, and dropping its tail would grade a book nobody holds.
+    let (journalled, total, rows) = graded_rows(snaps, &sized_rows, usize::MAX, today, px_now, spx_now);
+    if rows.is_empty() {
+        return format!(
+            "\n  Executed book: nothing gradeable yet. A line needs a day of age and at least one priced\n  \
+             row before it grades, and only {journalled} of {total} journalled run(s) carry a sized book at\n  \
+             all. The record starts the run AFTER this ships and cannot be backdated — the weights depend\n  \
+             on each name's volatility as of that run, so no later run can recover them."
+        );
+    }
+    let body = rows.join("\n");
+    format!(
+        "\n  Executed book — that run's ranked list put through `size`'s weighting, WEIGHTED as it funds\n  \
+         it. Not the same book as the first table: names failing the growth gate are gone, only one\n  \
+         listing per issuer survives, and what is left is weighted by score / volatility inside a class\n  \
+         budget, then capped. Covers the deployed half only — the remainder the caps could not place is\n  \
+         the CORE block above. Scored on the SCREEN's numbers, which use live fundamentals; a later\n  \
+         `size --picks` re-derives them price-only, so its uncapped rows can differ by a few tenths of a\n  \
+         point (class sums are identical). EUR seat, price-only returns, same windows. NOT advice.\n  \
+         Journalled on {journalled} of {total} run(s).\n\n{TABLE_HEADER}\n{body}"
+    )
+}
+
 /// Fold every gradeable snapshot with a benchmark leg into the verdict numbers:
 /// (wins, graded_n, excess_sum). The ONE source for the summary — track's table and the screen's
 /// live-track-record line both consume this, so the two surfaces can't disagree.
@@ -279,7 +397,7 @@ pub(crate) fn verdict_stats(
 ) -> (usize, usize, f64) {
     snaps
         .iter()
-        .filter_map(|s| grade(s, &s.rows, BOOK, today, px_now, spx_now))
+        .filter_map(|s| grade(s, &equal(&s.rows), BOOK, today, px_now, spx_now))
         .filter_map(|g| g.spy_pct.map(|spy| g.book_pct - spy))
         .fold((0, 0, 0.0), |(wins, n, sum), ex| (wins + (ex > 0.0) as usize, n + 1, sum + ex))
 }
@@ -335,7 +453,7 @@ pub(crate) fn trials_note(
 ) -> String {
     let ages: Vec<i64> = snaps
         .iter()
-        .filter_map(|s| grade(s, &s.rows, BOOK, today, px_now, spx_now))
+        .filter_map(|s| grade(s, &equal(&s.rows), BOOK, today, px_now, spx_now))
         .filter(|g| g.spy_pct.is_some())
         .map(|g| g.days)
         .collect();
@@ -421,7 +539,7 @@ pub async fn run(args: Vec<String>) {
     println!("{TABLE_HEADER}");
     let today = chrono::Local::now().date_naive();
     for snap in &snaps {
-        if let Some(g) = grade(snap, &snap.rows, BOOK, today, &px_now, spx_now) {
+        if let Some(g) = grade(snap, &equal(&snap.rows), BOOK, today, &px_now, spx_now) {
             println!("{}", graded_row(&g));
         }
     }
@@ -438,6 +556,9 @@ pub async fn run(args: Vec<String>) {
     // momentum book's verdict and belongs next to the momentum table — a second table wedged between
     // them would invite the reader to attribute one to the other.
     println!("{}", core_section(&snaps, core_cut, today, &px_now, spx_now));
+    // (#286) and the book those two lists actually become once `size` has had them. Last, because it
+    // is the only weighted table and the reader should meet the two equal-weight ones first.
+    println!("{}", sized_section(&snaps, today, &px_now, spx_now));
     if push {
         let delivered = fetch::push(
             &client,
@@ -465,12 +586,19 @@ mod tests {
             rows: rows.iter().map(|(t, p)| (t.to_string(), *p)).collect(),
             aum: Vec::new(),
             core: Vec::new(),
+            sized: Vec::new(),
         }
     }
 
     /// The same snapshot with a journalled CORE shortlist — the half `journal_core_list` writes.
     fn with_core(mut s: Snapshot, core: &[(&str, Option<f64>)]) -> Snapshot {
         s.core = core.iter().map(|(t, p)| (t.to_string(), *p)).collect();
+        s
+    }
+
+    /// The same snapshot with a journalled SIZED book — the half `screen` writes from `sized_book`.
+    fn with_sized(mut s: Snapshot, sized: &[(&str, f64)]) -> Snapshot {
+        s.sized = sized.iter().map(|(t, w)| (t.to_string(), *w)).collect();
         s
     }
 
@@ -483,7 +611,7 @@ mod tests {
         px: &dyn Fn(&str) -> Option<f64>,
         spx: Option<f64>,
     ) -> Option<Graded> {
-        grade(s, &s.rows, BOOK, today, px, spx)
+        grade(s, &equal(&s.rows), BOOK, today, px, spx)
     }
 
     /// (round 34) backward-compat: a PRE-r34 journal line (no `aum` key, and no `spx_off_hi`) still
@@ -631,7 +759,7 @@ mod tests {
         let book = grade_book(&s, today, &px, Some(105.0)).expect("momentum grades");
         assert!((book.book_pct - 10.0).abs() < 1e-9, "the momentum lane is untouched: {}", book.book_pct);
 
-        let core = grade(&s, &s.core, 2, today, &px, Some(105.0)).expect("CORE grades");
+        let core = grade(&s, &equal(&s.core), 2, today, &px, Some(105.0)).expect("CORE grades");
         assert_eq!(core.priced, 2, "the cut is the cut: the third CORE name is not in this book");
         assert!((core.book_pct + 10.0).abs() < 1e-9, "graded the CORE list, not the rows: {}", core.book_pct);
         // same window, same benchmark leg — that is what makes the two tables comparable at all.
@@ -639,7 +767,7 @@ mod tests {
         assert!((core.spy_pct.unwrap() - book.spy_pct.unwrap()).abs() < 1e-9);
 
         // a wider cut than the list holds takes what exists, and the third name pulls the book up
-        assert!(grade(&s, &s.core, 99, today, &px, Some(105.0)).unwrap().priced == 3);
+        assert!(grade(&s, &equal(&s.core), 99, today, &px, Some(105.0)).unwrap().priced == 3);
         // ...and today's journal: no CORE list -> nothing gradeable, never a zero
         assert!(grade(&snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), &[], 3, today, &px, Some(105.0)).is_none());
     }
@@ -689,6 +817,132 @@ mod tests {
         assert_eq!(out.matches("2026-06-16").count(), 1, "only the line carrying a CORE list grades: {out}");
         assert!(out.contains("-15.0pp"), "the CORE book lost by 15pp: {out}");
         assert!(out.lines().last().unwrap().ends_with("  no"), "...and the BEAT? column must say so: {out}");
+    }
+
+    /// (#286) `grade` now folds a WEIGHTED book, and the weight is the whole reason this round
+    /// exists: `size` does not fund the ranked list equally, so grading it equally grades a book
+    /// nobody holds.
+    ///
+    /// The three arms are the three ways this can be got wrong. First, the equal-weight lanes must
+    /// be BYTE-identical to what round 68 shipped — `1.0 * x` is exactly `x` and `sum of 1.0` is
+    /// exactly `n` in IEEE754, so this is not an approximation and is asserted as an equality.
+    /// Second, an unequal book must land somewhere only the weights can put it. Third, a book whose
+    /// priced rows all weigh nothing is an UNGRADED book, not a 0% one — the fold would divide by
+    /// zero and hand back a NaN that prints as a real number.
+    #[test]
+    fn grade_folds_the_weights_it_is_handed() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "UP" => Some(110.0),
+            "DOWN" => Some(90.0),
+            _ => None,
+        };
+        let s = snap("2026-06-16", Some(100.0), &[("UP", Some(100.0)), ("DOWN", Some(100.0))]);
+
+        // Equal weights are the IDENTITY, and this is asserted as a bit-for-bit equality against the
+        // pre-round-68 expression spelled out — `100 * sum(r) / n`. Not against 0.0: these two legs
+        // sum to 1.11e-16 rather than zero (0.1 and -0.1 are neither exact in binary), so the old
+        // code never printed a zero here either and `grade_semantics` has always used a tolerance.
+        // A tolerance would pass for a fold that is merely CLOSE; this pins that nothing moved.
+        let flat = grade(&s, &equal(&s.rows), BOOK, today, &px, Some(105.0)).expect("grades");
+        let unweighted = 100.0 * ((110.0 / 100.0 - 1.0) + (90.0 / 100.0 - 1.0)) / 2.0;
+        assert_eq!(flat.book_pct, unweighted, "equal weights are the identity, not an approximation");
+
+        // 3:1 in favour of the winner -> +5.0, which no unweighted fold of these two rows can reach
+        let tilted: Vec<(&str, Option<f64>, f64)> = vec![("UP", Some(100.0), 30.0), ("DOWN", Some(100.0), 10.0)];
+        let g = grade(&s, &tilted, BOOK, today, &px, Some(105.0)).expect("grades");
+        assert!((g.book_pct - 5.0).abs() < 1e-9, "the weights moved the book: {}", g.book_pct);
+        assert_eq!(g.priced, 2, "weighting is not a filter — both rows are still in the book");
+
+        // every priced row weighs nothing -> ungradeable, never 0.0% and never NaN
+        let zeroed: Vec<(&str, Option<f64>, f64)> = vec![("UP", Some(100.0), 0.0), ("DOWN", Some(100.0), 0.0)];
+        assert!(grade(&s, &zeroed, BOOK, today, &px, Some(105.0)).is_none(), "a weightless book is not a flat one");
+    }
+
+    /// (#286) `sized_rows` — the join, and the one place it can be got wrong. The weight lives in
+    /// `sized` and the price lives in `rows`, because journalling the price twice is exactly the
+    /// drift non-negotiable #4 exists to stop. A sized ticker with no row is therefore unpriced
+    /// rather than an error: `grade` drops it the same way it drops any other unpriced row.
+    #[test]
+    fn sized_rows_joins_the_weight_to_the_price_in_rows() {
+        let s = with_sized(
+            snap("2026-06-16", Some(100.0), &[("UP", Some(100.0)), ("DOWN", None)]),
+            &[("UP", 8.0), ("DOWN", 3.0), ("GHOST", 1.0)],
+        );
+        let rows = sized_rows(&s);
+        assert_eq!(rows, vec![("UP", Some(100.0), 8.0), ("DOWN", None, 3.0), ("GHOST", None, 1.0)]);
+
+        // and the join is by TICKER, not by position: the two lists are ordered independently —
+        // `sized` comes out of `size_weights` sorted by score, `rows` out of the screen's own order.
+        let shuffled = with_sized(
+            snap("2026-06-16", Some(100.0), &[("B", Some(20.0)), ("A", Some(10.0))]),
+            &[("A", 5.0), ("B", 6.0)],
+        );
+        assert_eq!(sized_rows(&shuffled), vec![("A", Some(10.0), 5.0), ("B", Some(20.0), 6.0)]);
+    }
+
+    /// (#286) The executed-book block. The empty arm is the shipped state — 13 of 13 journal lines
+    /// carry no sized book — and it must not lie: no table, no zero, and it says how many runs carry
+    /// one so "nothing recorded yet" and "recorded this morning" stay distinguishable.
+    ///
+    /// The graded arm is where this table earns its place next to the other two: the SAME two names
+    /// that grade to 0.0% equal-weight grade to +5.0% at the weights `size` actually funds, so a
+    /// section that silently fell back to `equal` would print the first table's number here.
+    #[test]
+    fn sized_section_grades_the_weighted_book_not_the_list() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "UP" => Some(110.0),
+            "DOWN" => Some(90.0),
+            _ => None,
+        };
+
+        // no journal, and a journal carrying no sized book: both are "nothing yet", not a zero
+        for snaps in [vec![], vec![snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))])]] {
+            let out = sized_section(&snaps, today, &px, Some(105.0));
+            assert!(out.contains("nothing gradeable yet"), "{out}");
+            assert!(out.contains("cannot be backdated"), "the perishability is the point: {out}");
+            assert!(!out.contains("BEAT?"), "an empty table reads as a measured result: {out}");
+            assert!(!out.contains('%'), "and so does a zero: {out}");
+        }
+
+        let snaps = vec![
+            snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), // no sized book -> no row
+            with_sized(
+                snap("2026-06-16", Some(100.0), &[("UP", Some(100.0)), ("DOWN", Some(100.0))]),
+                &[("UP", 30.0), ("DOWN", 10.0)],
+            ),
+        ];
+        // +2.0% index, deliberately NOT the +5.0% that would tie the book: `graded_row` compares the
+        // raw floats and this book is 5.000000000000004, so a tie fixture here would assert a win
+        // and read as a bug in the row formatter. The tie is already pinned, on exact inputs, by
+        // `graded_row_calls_only_a_strict_win_a_win`.
+        let out = sized_section(&snaps, today, &px, Some(102.0));
+        assert!(out.contains(TABLE_HEADER), "the executed block must print THE header: {out}");
+        assert!(out.contains("Journalled on 1 of 2 run(s)."), "{out}");
+        assert_eq!(out.matches("2026-06-16").count(), 1, "only the line carrying a sized book grades: {out}");
+        assert!(out.contains("+5.0%"), "graded at the FUNDED weights, not equal-weight (which is 0.0%): {out}");
+        assert!(out.contains("+3.0pp"), "+5.0 book against a +2.0 index: {out}");
+        assert!(out.lines().last().unwrap().ends_with("  yes"), "and it beat the index: {out}");
+    }
+
+    /// (#286) The knob-off guarantee for the journal, the same one `(#103)` wrote for the CORE list:
+    /// `.screen_snapshots.jsonl` is the user's own gitignored record, appended to forever, so a new
+    /// field that widened every line unconditionally would be a format change nobody could diff.
+    /// Empty -> `skip_serializing_if` drops the key and the line is byte-identical to the one this
+    /// build's predecessor wrote. Populated -> it round-trips. Absent -> `serde(default)` reads it.
+    #[test]
+    fn an_empty_sized_book_leaves_the_journal_line_byte_identical() {
+        let mut s = snap("2026-06-01", Some(100.0), &[("A", Some(10.0))]);
+        let off = serde_json::to_string(&s).unwrap();
+        assert!(!off.contains("sized"), "OFF must not widen the line: {off}");
+        s.sized = vec![("ABEC.DE".into(), 8.0), ("LYBK.DE".into(), 1.8)];
+        let on = serde_json::to_string(&s).unwrap();
+        assert!(on.contains(r#""sized":[["ABEC.DE",8.0],["LYBK.DE",1.8]]"#), "{on}");
+        assert_eq!(serde_json::from_str::<Snapshot>(&on).unwrap().sized, s.sized);
+        // and every line already on disk — none of which carries the key — still reads
+        let line = r#"{"date":"2026-06-01","spx":100.0,"rows":[["A",10.0]]}"#;
+        assert!(serde_json::from_str::<Snapshot>(line).unwrap().sized.is_empty());
     }
 
     /// (#285) `graded_row` is the ONE row formatter. The BEAT? decision is its only judgement and

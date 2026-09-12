@@ -90,6 +90,67 @@ pub(crate) fn first_per_issuer(names: &[&str]) -> Vec<usize> {
         .collect()
 }
 
+/// (#286) THE EXECUTED BOOK: which candidates `size` actually funds, and at what weight. Every line
+/// of it was lifted VERBATIM out of `run`, and the lift is the point. `run` is `#[mutants::skip]` —
+/// it is wiring, and the attribute below says so in its own words — so the scoring, the crypto
+/// adjust, the issuer dedup and the weighting have all sat where the mutation gate cannot reach
+/// them. Here the gate grades them.
+///
+/// The second reason is `screen`, and it is the reason this round exists. `track` grades the ranked
+/// top-10 EQUAL-WEIGHT, which is not the book anyone is told to buy: gate failures are dropped, one
+/// row survives per issuer, and what is left is weighted by score / volatility inside a class budget
+/// and then capped. Journalling that needs ONE spelling of it (non-negotiable #4), not a copy in
+/// `screen` drifting against the original here. `size --picks` sizes the ranked list off
+/// `.screen_state.json`, so a screen run calling this on its own `ranked_now` quotes computes the
+/// same rows the user sees minutes later.
+///
+/// `nupl` comes IN and `cfactor`/`btc_1y` are derived HERE, rather than each caller deriving them:
+/// two callers re-deriving a scoring input is exactly how the `cagr` column drifted off the score it
+/// was printing (see `long_leg_fixed`'s doc for that case, which cost a round to find).
+///
+/// Returns `(quote, score, weight %, cap reason)` in sized order — best score first, one row per
+/// issuer. EMPTY means nothing passed the growth gate; the caller says so in its own words, because
+/// `size` and `screen` owe the user different sentences about it. No fetch, no I/O, no state read.
+pub(crate) fn sized_book<'a>(
+    quotes: &[&'a crate::core::Quote],
+    tuning: &config::BuyHeuristic,
+    sz: &config::Sizing,
+    nupl: Option<f64>,
+) -> Vec<(&'a crate::core::Quote, f64, f64, Option<&'static str>)> {
+    // (Item 17) the SAME crypto NUPL + BTC-relative adjustments `screen`/`check` apply at render
+    // time, so crypto sizes rank the way the picks tables showed them, not on the raw price-only
+    // score. Equities pass through `crypto_adjust` unchanged.
+    let cfactor = nupl_factor(nupl, tuning);
+    let btc_1y = quotes.iter().find(|q| q.ticker.starts_with("BTC-")).and_then(|q| perf_pct(q, "1Y"));
+    // score with the SAME growth lane `screen` uses; None = the name failed the growth gate -> not sized.
+    let mut scored: Vec<_> = quotes
+        .iter()
+        .filter_map(|q| growth_score(q, tuning).map(|s| (*q, crypto_adjust(q, s, tuning, cfactor, btc_1y))))
+        .collect();
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1)); // best score first; total_cmp: a NaN score must not panic the sort
+    // (#262) ... then one row per ISSUER, best-scoring listing wins. See `first_per_issuer` for why.
+    let keep = first_per_issuer(&scored.iter().map(|(q, _)| q.name.as_str()).collect::<Vec<_>>());
+    let scored: Vec<_> = keep.into_iter().map(|i| scored[i]).collect();
+    // (Item 6) pass the asset class as the cluster key so a correlated block (all crypto) is one risk
+    // bucket, not N independent bets.
+    // (P5) `asset_class` rather than the raw `instrument_type` string: that field is Yahoo's free text,
+    // so "EQUITY" and "" split the stock class into two buckets that each drew a full share. The sector
+    // rides along for the stock-class sector cap.
+    //
+    // An empty `scored` needs no guard: `size_weights` finds no class carrying weight and returns an
+    // empty vec by its own divide-by-zero rule, so the zip below yields nothing. A branch here would
+    // be a second statement of that rule, and the one in `size_weights` is the one with the test.
+    let weights = size_weights(
+        &scored
+            .iter()
+            .map(|(q, s)| (*s, q.volatility_pct, crate::picks::asset_class(q), q.sector.as_deref()))
+            .collect::<Vec<_>>(),
+        sz,
+    );
+    scored.into_iter().zip(weights).map(|((q, s), (w, cap))| (q, s, w, cap)).collect()
+}
+
+
 /// (#80) UNGRADEABLE BY THE MUTATION GATE, and skipped so that stays a stated fact rather than a
 /// trap — the same call already made for `screen::run` and `check::run`. `run` is reachable from
 /// `main.rs` alone, so the only test that exercises it is `size_without_candidates_says_nothing_to_size`
@@ -143,44 +204,19 @@ pub async fn run(args: Vec<String>) {
         fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
     }
 
-    // (Item 17) apply the SAME crypto NUPL + BTC-relative adjustments `screen`/`check` do at render time,
-    // so crypto sizes rank the way the picks tables showed them, not on the raw price-only score. Whole-
-    // market NUPL fetched once; equities pass through crypto_adjust unchanged.
+    // (Item 17) whole-market NUPL, fetched once. The adjustment it drives lives in `sized_book`.
     let nupl = fetch::fetch_nupl(&client, &settings.urls).await;
-    let cfactor = nupl_factor(nupl, &settings.buy_heuristic);
-    let btc_1y = quotes.iter().find(|q| q.ticker.starts_with("BTC-")).and_then(|q| perf_pct(q, "1Y"));
 
-    // score with the SAME growth lane `screen` uses; None = the name failed the growth gate -> not sized.
-    let mut scored: Vec<_> = quotes
-        .iter()
-        .filter_map(|q| {
-            growth_score(q, &settings.buy_heuristic)
-                .map(|s| (q, crypto_adjust(q, s, &settings.buy_heuristic, cfactor, btc_1y)))
-        })
-        .collect();
-    scored.sort_by(|a, b| b.1.total_cmp(&a.1)); // best score first; total_cmp: a NaN score must not panic the sort
-    // (#262) ... then one row per ISSUER, best-scoring listing wins. See `first_per_issuer` for why.
-    let keep = first_per_issuer(&scored.iter().map(|(q, _)| q.name.as_str()).collect::<Vec<_>>());
-    let scored: Vec<_> = keep.into_iter().map(|i| scored[i]).collect();
+    // (#286) the whole pipeline — score, crypto adjust, issuer dedup, weight, cap — now lives in
+    // `sized_book`, where the mutation gate can reach it and where `screen` reads the same rows to
+    // journal them. Nothing below this line changed: the printing is what `run` was always for.
+    let sz = &settings.sizing;
+    let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &settings.buy_heuristic, sz, nupl);
 
-    if scored.is_empty() {
+    if book.is_empty() {
         println!("No names pass the growth gate — nothing to size. (try `screen` for candidates)");
         return;
     }
-
-    // (Item 6) pass the asset class as the cluster key so a correlated block (all crypto) is one risk
-    // bucket, not N independent bets.
-    // (P5) `asset_class` rather than the raw `instrument_type` string: that field is Yahoo's free text,
-    // so "EQUITY" and "" split the stock class into two buckets that each drew a full share. The sector
-    // rides along for the stock-class sector cap.
-    let sz = &settings.sizing;
-    let weights = size_weights(
-        &scored
-            .iter()
-            .map(|(q, s)| (*s, q.volatility_pct, crate::picks::asset_class(q), q.sector.as_deref()))
-            .collect::<Vec<_>>(),
-        sz,
-    );
 
     println!("Suggested sizes — weight ∝ score ÷ volatility WITHIN a class budget, then capped (READ-ONLY, NOT advice):");
     println!(
@@ -188,7 +224,7 @@ pub async fn run(args: Vec<String>) {
         sz.budget_stock, sz.budget_etf, sz.budget_crypto, sz.max_name_pct, sz.max_sector_pct,
     );
     println!("  {:<10} {:>7} {:>7} {:>7}  CAP", "TICKER", "SCORE", "VOL", "SIZE%");
-    for ((q, s), (w, cap)) in scored.iter().zip(&weights) {
+    for &(q, s, w, cap) in &book {
         println!(
             "  {:<10} {:>7.1} {:>7} {:>6.1}%  {}",
             q.ticker,
@@ -201,7 +237,7 @@ pub async fn run(args: Vec<String>) {
     // The total is NOT decoration. A capped basket deliberately does not deploy its whole budget — with
     // too few names in a class the remainder has nowhere to go that respects the caps — and printing 100
     // when the rows sum to 40 would hide exactly the fact these caps exist to surface.
-    let total: f64 = weights.iter().map(|(w, _)| w).sum();
+    let total: f64 = book.iter().map(|(_, _, w, _)| w).sum();
     println!("  {:<10} {:>7} {:>7} {:>6.1}%", "TOTAL", "", "", total);
     if total < 99.5 {
         // (#246) ... and say WHERE it goes. Cash is the one asset guaranteed to lose over 20 years,
@@ -229,7 +265,7 @@ pub async fn run(args: Vec<String>) {
         // `size_weights` moved. No state file / no CORE yet / every CORE row already sized -> the
         // old line, verbatim, because a remainder with no known home is precisely what it is for.
         let rest = 100.0 - total;
-        let sized: Vec<String> = scored.iter().map(|(q, _)| q.ticker.clone()).collect();
+        let sized: Vec<String> = book.iter().map(|(q, ..)| q.ticker.clone()).collect();
         match crate::commands::screen::last_core(
             std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok(),
             &sized,
@@ -315,16 +351,15 @@ pub async fn run(args: Vec<String>) {
         }
     }
     if !held.is_empty() {
-        let sized: Vec<(String, String, Option<f64>, f64)> = scored
+        let sized: Vec<(String, String, Option<f64>, f64)> = book
             .iter()
-            .zip(&weights)
-            .map(|((q, _), w)| {
+            .map(|&(q, _, w, _)| {
                 let key = if crate::picks::is_currency_quoted(&q.ticker) {
                     format!("c:{}", crate::picks::underlying(&q.ticker).to_lowercase())
                 } else {
                     format!("s:{}", crate::picks::yahoo_base(&q.ticker))
                 };
-                (q.ticker.clone(), key, q.price_eur, w.0)
+                (q.ticker.clone(), key, q.price_eur, w)
             })
             .collect();
         println!("\nAllocation gap — actual broker weights vs the SIZE% split (matched names only; NOT advice):");
@@ -387,6 +422,57 @@ fn allocation_gap_lines(sized: &[(String, String, Option<f64>, f64)], held: &[(S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Quote that clears `picks::growth_score`'s whole gate stack, built from `core::Quote::stub`
+    /// plus only the fields those gates actually read. It is NOT a copy of picks.rs's `buy_heuristic`
+    /// fixture — that one is a 60-line struct literal local to a test fn and unreachable from here,
+    /// and duplicating it would be a second spelling of "a scoring quote" (non-negotiable #4). The
+    /// stub carries every other field at its own default, so a gate this fixture does not name is a
+    /// gate that reads missing data — which passes, per non-negotiable #5.
+    fn scoring_quote(ticker: &str, name: &str, cum_20y: f64, vol: f64) -> crate::core::Quote {
+        let mut q = crate::core::Quote::stub(ticker, "€1.00", "", name);
+        // Contiguous history: a real name carrying a 20Y leg carries every shorter one. The rungs
+        // below are the same cumulative return annualized down, so `long_leg_fixed` picks 20Y and
+        // every shorter gate reads a consistent number rather than a fixture artifact.
+        let g = 1.0 + cum_20y / 100.0;
+        q.perf = crate::core::HORIZONS
+            .iter()
+            .map(|(_l, d)| Some(("x".to_string(), (g.powf(*d as f64 / 7300.0) - 1.0) * 100.0)))
+            .collect();
+        q.avg_turnover_eur = Some(1e9); // (#20) unknown turnover is a hard refusal, so it must be known
+        q.range_pct = 100.0; // at its high — the growth lane's on-sale mirror
+        q.volatility_pct = Some(vol);
+        q
+    }
+
+    /// (#286) `sized_book` — the whole `size` pipeline, lifted out of a `#[mutants::skip]` `run` so
+    /// the gate can reach it and so `screen` can journal the same book without a second spelling.
+    /// What this pins: it scores, it drops what the gate refuses, it keeps ONE row per issuer, and
+    /// the weights it returns are the ones `run` prints.
+    #[test]
+    fn sized_book_is_the_executed_book() {
+        let tuning = config::BuyHeuristic::default();
+        let sz = config::Sizing::default();
+        let quotes = vec![
+            scoring_quote("AAA.DE", "Alpha Corp", 900.0, 2.0),
+            scoring_quote("AAA2.DE", "Alpha Corp", 700.0, 2.0), // same issuer -> the loser is dropped
+            scoring_quote("BBB.DE", "Beta Corp", 500.0, 4.0),
+            crate::core::Quote::stub("DEAD.DE", "€1.00", "", "Gamma Corp"), // no history, no turnover
+        ];
+        let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &tuning, &sz, None);
+
+        let tickers: Vec<&str> = book.iter().map(|(q, ..)| q.ticker.as_str()).collect();
+        assert_eq!(tickers, vec!["AAA.DE", "BBB.DE"], "gate refusals and the issuer dedup both bite: {tickers:?}");
+        assert!(book[0].1 > book[1].1, "sorted by score, best first: {:?}", book.iter().map(|(_, s, ..)| *s).collect::<Vec<_>>());
+        assert!(book.iter().all(|(_, _, w, _)| *w > 0.0), "a sized row carries a real weight");
+        let total: f64 = book.iter().map(|(_, _, w, _)| w).sum();
+        assert!(total > 0.0 && total <= 100.0, "weights are percentages of gross: {total}");
+
+        // EMPTY is a real answer, not a bug: nothing cleared the gate, so there is nothing to fund.
+        // This is the arm `run`'s early return and `screen`'s journal both depend on.
+        let none = vec![crate::core::Quote::stub("DEAD.DE", "€1.00", "", "Gamma Corp")];
+        assert!(sized_book(&none.iter().collect::<Vec<_>>(), &tuning, &sz, None).is_empty());
+    }
 
     /// (#260) which list `size` sizes. The DEFAULT is the ranked book — the reversal of (#248)'s
     /// opt-in — so every rung of the precedence is pinned here, including the two that must NOT have

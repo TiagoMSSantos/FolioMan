@@ -1749,6 +1749,28 @@ pub async fn run(args: Vec<String>) {
         } else {
             Vec::new()
         },
+        // (#286) and the book those rows BECOME. `rows` is the ranked list; `size --picks` reads
+        // exactly that list back off `.screen_state.json` and funds something else out of it —
+        // gate failures dropped, one listing per issuer, weighted by score / volatility inside a
+        // class budget, then capped. Nothing recorded that, and nothing could recover it later:
+        // the weights depend on each name's volatility as of this run.
+        //
+        // `size::sized_book` is called rather than reproduced. It is the ONE spelling of that
+        // pipeline (non-negotiable #4) and it is pure — no fetch, no price, no state read — so this
+        // costs a scoring pass over a dozen quotes and writes one field. `nupl` is the same value
+        // `render` was handed above, so the crypto rows adjust exactly as the printed table does.
+        //
+        // Weights only; the price is already in `rows` for every one of these tickers, and
+        // `track::sized_rows` does the join.
+        sized: crate::commands::size::sized_book(
+            &ranked_now.iter().filter_map(|t| quotes.iter().find(|q| &q.ticker == t)).collect::<Vec<_>>(),
+            &settings.buy_heuristic,
+            &settings.sizing,
+            nupl,
+        )
+        .iter()
+        .map(|&(q, _, w, _)| (q.ticker.clone(), w))
+        .collect(),
     });
 
     // (r15) footer population: ranked book + pinned extras — the held/watched names sit in the
@@ -3754,7 +3776,7 @@ mod tests {
                 f += 1;
             }
             rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), rows }
         };
         // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
         let past = vec![
@@ -3798,7 +3820,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), rows }
         };
         // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
         // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
@@ -3831,6 +3853,7 @@ mod tests {
             rows: names.iter().map(|t| (t.to_string(), Some(1.0))).collect(),
             aum: Vec::new(),
             core: Vec::new(),
+            sized: Vec::new(),
         };
         // fully stable: same top set across 3 screens → every pair retains all → 1.0
         let stable = vec![
@@ -3883,7 +3906,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), rows }
         };
         // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
         // E always rank 12 (past the top-10 cut → no point) · D never appears
@@ -3915,6 +3938,7 @@ mod tests {
             rows: at.iter().map(|(t, c, _)| (t.to_string(), *c)).collect(),
             aum: at.iter().map(|(t, _, a)| (t.to_string(), *a)).collect(),
             core: Vec::new(),
+            sized: Vec::new(),
         };
         let journal = vec![
             snap(

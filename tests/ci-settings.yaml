@@ -4862,6 +4862,85 @@ buy_heuristic:
   #   None crossed EUR 1B; the three moved by single-digit percent in a day, so this is a slow trigger
   #   and re-reading it costs one probe. NOTHING SHIPPED FROM THIS RE-ADJUDICATION either — no knob, no
   #   token, no config value, no Rust. The census is again the whole deliverable.
+  # (#286) 2026-09-12 - THE EXECUTED BOOK IS RECORDED AND GRADED. `track` gained a THIRD table.
+  #   NO GATE, SCORE, WEIGHT OR PICK MOVES. `size --picks` output is BYTE-IDENTICAL before and after
+  #   (md5 be56d9b1cbf84a9d0531997aa24d7ac1, same binary-fresh build, same warm cache) — that identity
+  #   is the whole check on the extraction, since the round's main act was lifting a pipeline out of a
+  #   `#[mutants::skip]` entry point without moving a number.
+  #
+  #   THE GAP (#285) LEFT, IN ITS OWN WORDS: "It grades the SHORTLIST, not the executed book." It is
+  #   wider than that sentence admits. `track` graded the ranked top-10 EQUAL-WEIGHT. `size` funds
+  #   something else entirely out of the same list: gate failures dropped, ONE listing per issuer,
+  #   then weighted by score / volatility inside a class budget and capped. On the 2026-09-12 run the
+  #   12 ranked names size from 8.0% down to 1.8%, and two of them (SEMI.AS 3.5%, LYBK.DE 1.8%) fall
+  #   outside the graded top-10 altogether. No record existed of the book the user is told to buy.
+  #
+  #   WHAT SHIPS: `size::sized_book` (the pipeline, now gradeable and called by BOTH commands, so
+  #   there is one spelling of the executed book per non-negotiable #4); `Snapshot.sized` as
+  #   `(ticker, SIZE%)` with `serde(default, skip_serializing_if)` so every line already on disk is
+  #   byte-identical and still parses; a WEIGHTED `grade` folding `sum(w*r) / sum(w)`; and the
+  #   `Executed book` section. NO KNOB: the field is journal data like `aum` and `spx_off_hi`, both of
+  #   which ship unconditionally. `journal_core_list` was gated only because (#103) had already built
+  #   that knob, not because a new field needs one.
+  #
+  #   MEASURED DIVERGENCE - THE ONE FINDING THIS ROUND DID NOT EXPECT, AND IT IS PRE-EXISTING.
+  #   `screen` and `size --picks` DO NOT SCORE THE SAME NAMES THE SAME WAY on the same day. The rows
+  #   the buy table marks `#` scored with LIVE FUNDAMENTALS, which `size` never fetches — it re-derives
+  #   the score price-only. 2026-09-12, live `screen` then `size --picks` minutes apart, same config,
+  #   same state:
+  #
+  #     ticker     screen SCORE   size SCORE   VOL (both)   journal wt   size wt
+  #     IITU.L         6.3           6.5          1.4%         8.0%       8.0%
+  #     XLKS.L         5.9           5.9          1.4%         8.0%       7.8%
+  #     SMH.L          4.7           5.0          2.5%         3.7%       3.8%
+  #     SEMI.AS        4.6           5.0          2.6%         3.5%       3.6%
+  #     LYBK.DE        1.4           1.4          1.5%         1.8%       1.8%
+  #
+  #   THE DIVERGENCE IS BOUNDED AND IT REDISTRIBUTES, IT DOES NOT ADMIT. Identical ticker set both
+  #   ways; every NAME-CAPPED row identical; only uncapped rows move, by <=0.2pp; and the CLASS sums
+  #   are identical (ETF 25.0% both ways, book total 70.0% both ways). Nothing enters or leaves a gate
+  #   or a cap — the ETF budget is simply split differently among the rows sharing it. Two consecutive
+  #   `size --picks` runs reproduce 7.8/3.8/3.6 exactly, so this is NOT price noise between runs.
+  #
+  #   THE JOURNAL RECORDS THE SCREEN'S VERSION, DELIBERATELY. It is the better-informed one (it has
+  #   fundamentals) and it is the one the printed buy table ranked on, so the record matches what the
+  #   user was shown that day. The section header and the `sized` field doc both SAY this, with the
+  #   numbers above, rather than claiming an exactness that does not hold. Making `size` fetch
+  #   fundamentals would close the gap and is NOT done here: it costs a network round trip on a
+  #   read-only command and would change `size --picks` output, which is the one thing this round
+  #   proved it did not touch.
+  #
+  #   LIVE PROBE, 2026-09-12, probe config `ci-settings.yaml` under its own dir, `screen` FOREGROUND
+  #   (4m24s, 11983 paced calls), five root state files backed up and RESTORED byte-identical
+  #   (.screen_state.json 222dd28f..., .screen_web.json 3164ac90..., .screen_snapshots.jsonl
+  #   ab913d0a..., .screen_alerts.log da4a891e..., .folioman_turnover_screen.txt 15289543...):
+  #     - `track` before: "0 of 13 journalled run(s) carry a sized book" — no table, no zero.
+  #     - the appended line carries `sized` 12 rows summing 70.0%, `core` 20 rows, and EVERY sized
+  #       ticker is priced in `rows` (the subset invariant `sized_rows` joins on).
+  #     - `track` after: "1 of 13" — a same-day snapshot grades a zero-day window BY DESIGN.
+  #   NOTE `append_snapshot` returns early when the last line carries today's date, so a same-day
+  #   re-run appends NOTHING. A probe that does not clear that line measures the stale line and reads
+  #   as a silent no-op; this one cost a run to learn.
+  #
+  #   THE SUPPLY QUESTION DID NOT MOVE, AND THIS IS THE TENTH REFUSAL. Asked a sixth time for "more
+  #   assets to buy and hold 20+ years". The register, so round 70 does not re-derive it: every growth
+  #   gate (#138) "the gate stack carries NO live lead"; the score floor (#86), knob-gated and already
+  #   pinned both ways; the `no-turnover` refusal (#256), 172 names relocated and ZERO admitted; the
+  #   `history` gate (#152); history bridging (round 66), 194 bridges, none clears the next gate; pool
+  #   width, +65% wider pond moved the median gated pool by zero names; all ten CORE sleeve caps
+  #   (#220)/(#234), where the cap IS the family count; the domicile sort (#235), built, measured,
+  #   refused. NEW AND DECISIVE: the funnel reads 13 quotes clearing every gate against 12 names
+  #   ranked, so the last unfired admission knob's whole supply gain is ONE quote, consistent with a
+  #   venue duplicate. There is no name being withheld.
+  #
+  #   HONEST EDGES. (a) It delivers NO new asset today — it starts a clock, first reading one run
+  #   later, and nothing is backdated. (b) It grades the DEPLOYED half only: those weights sum to
+  #   70.0%, not 100; the 30.0% the caps strand is the CORE block's job, and the two sections together
+  #   cover the book. (c) Equal-weight is no longer the only convention in the output, so the three
+  #   tables are not interchangeable — each header states its own weighting. (d) The weighted fold is
+  #   BIT-IDENTICAL on the two equal-weight lanes, asserted as an equality against the pre-(#286)
+  #   expression spelled out, not against a tolerance and not against a zero those legs never produced.
+  #   REVERT RULE: none — this receipt records a measurement and a record, not a value.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among
