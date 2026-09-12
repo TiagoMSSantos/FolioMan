@@ -3814,12 +3814,19 @@ fn mix_rows<'a>(stock: &[(&'a Quote, f64)], n: usize) -> Vec<&'a Quote> {
 /// on `growth_value_floor_pct` alone (40.0 -> 0.0, every other byte equal) put it back at rank 3, so
 /// the value brake is the trim that dropped it.
 ///
-/// DISCLOSURE ONLY: nothing is re-admitted, no trim is weakened, no gate or score moves — the printed
-/// tables are byte-identical and this line is appended after them. Lives out here rather than inline
-/// because [`print_lane`] is `#[mutants::skip]`: per its own doc, its decisions belong in functions
-/// the gate can reach.
-fn unshown_ranked<'a>(ranked: &[(&'a Quote, f64)], printed: &[&str]) -> Vec<&'a Quote> {
-    ranked.iter().map(|(quote, _)| *quote).filter(|q| !printed.contains(&q.ticker.as_str())).collect()
+/// DISCLOSURE ONLY: nothing is re-admitted, no trim is weakened, no gate or score moves — the three
+/// printed tables are byte-identical and everything this feeds is appended after them. Lives out here
+/// rather than inline because [`print_lane`] is `#[mutants::skip]`: per its own doc, its decisions
+/// belong in functions the gate can reach.
+///
+/// (#284) THE SCORE NOW COMES BACK OUT WITH THE QUOTE, because the sentence (#265) shipped was half a
+/// fix. It named LLY.DE and VRT and said `size`/`trade` act on them — but a bare ticker-and-name list
+/// is not something a reader can act on. No price, no CAGR, no age, no score: none of the columns the
+/// decision needs. The caller prints these rows through the SAME [`print_picks`] the three tables use,
+/// and a table needs the `(quote, score)` pair this used to map away. The FILTER is untouched; only
+/// what it carries changed.
+fn unshown_ranked<'a>(ranked: &[(&'a Quote, f64)], printed: &[&str]) -> Vec<(&'a Quote, f64)> {
+    ranked.iter().copied().filter(|(q, _)| !printed.contains(&q.ticker.as_str())).collect()
 }
 
 /// UNGRADEABLE, hence the skip — the same story as [`print_picks`] below it, and (#79) proven the
@@ -3891,8 +3898,45 @@ fn print_lane(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, kind: &str, desc:
             "\n  (display trims removed {} ranked name{} from the tables above — each cleared EVERY growth gate and stays in the buy list `size --picks` and `trade` act on: {})",
             hidden.len(),
             if hidden.len() == 1 { "" } else { "s" },
-            hidden.iter().map(|q| format!("{} {}", q.ticker, q.name)).collect::<Vec<_>>().join(" · ")
+            hidden.iter().map(|(q, _)| format!("{} {}", q.ticker, q.name)).collect::<Vec<_>>().join(" · ")
         );
+        // (#284) …and then PRINT them, instead of stopping at the sentence — the shape (#253) used one
+        // command over, when (#246) named the home for the uninvested remainder and (#253) went back
+        // and sized it. (#265) closed the INVISIBILITY and left the rows UNACTIONABLE: ticker and name
+        // carry no price, no CAGR, no age and no score, so a reader who wants to buy what `size` is
+        // already sizing has to go and find every column by hand.
+        //
+        // WHY THIS IS NOT A LOOSENED TRIM, which is the thing it could be mistaken for. Every row here
+        // is one `lane_split` dropped from a TABLE and `render` nevertheless journalled into `ranked`,
+        // so `size --picks`, `trade` and `track` have always acted on it. The trims still trim, the
+        // three tables above are byte-identical, and no gate, score, weight or graded number moves.
+        // What changes is that the tool stops showing the user less than it buys.
+        //
+        // Rendered through the SAME `print_picks`, with each row's OWN lane widths and hide-set, so a
+        // promoted row prints EXACTLY as it would have in the table that dropped it — one rendering
+        // rule rather than a second spelling of it (non-negotiable #4). Split by the SAME two
+        // predicates `lane_split` partitions on, for the same reason.
+        //
+        // The crypto arm is normally EMPTY (that lane takes no score trim at all, deliberately) and is
+        // written anyway: the `take(n)` above also strands a row a table merely TRUNCATED, and a coin
+        // in that position must not vanish for want of an arm. A lane with nothing hidden prints
+        // nothing — `print_picks` would otherwise render its "(none pass the gates)" line, which would
+        // be a lie here: these rows passed every gate, which is the whole point of the block.
+        let (crypto_hid, equity_hid): (Vec<_>, Vec<_>) =
+            hidden.iter().copied().partition(|(q, _)| is_currency_quoted(&q.ticker));
+        let (etf_hid, stock_hid): (Vec<_>, Vec<_>) =
+            equity_hid.into_iter().partition(|(q, _)| quote_is_etf(q));
+        let etf_w = etf_widths(w);
+        for (rows, label, widths, hide) in [
+            (&stock_hid, "stocks", w, HIDE_STOCK),
+            (&etf_hid, "ETFs", &*etf_w, HIDE_ETF),
+            (&crypto_hid, "crypto", w, HIDE_CRYPTO),
+        ] {
+            if !rows.is_empty() {
+                let title = format!("  …those {} {label} in full — already in the buy list, shown here because no table above could:", rows.len());
+                print_picks(&title, rows, n, widths, pinned, owned, hide, tuning, fund_pe);
+            }
+        }
     }
 }
 
@@ -10718,6 +10762,14 @@ mod tests {
         let brake25 = BuyHeuristic { growth_value_floor_pct: 25.0, ..d.clone() };
         let (v1, _, _) = lane_split(vrows(), 10, &all_sectors, &brake25, &none, &no_pe);
         assert_eq!(names(&v1), ["CHEAP", "MID", "DEAR", "NOPEG"], "the dearest quarter goes; a name with no PEG stays");
+        // (#284) …and DEAREST comes back out of `unshown_ranked` WITH ITS SCORE, which is the whole of
+        // what this round changed. `print_picks` takes `(quote, score)` pairs, so a dropped row that
+        // arrived here as a bare `&Quote` could be NAMED in a sentence and never RENDERED as a table
+        // row — (#265)'s half-fix. `printed` is what the tables actually showed; the gap is the block.
+        let shown_v1: Vec<&str> = v1.iter().map(|(q, _)| q.ticker.as_str()).collect();
+        let back = unshown_ranked(&vrows(), &shown_v1);
+        assert_eq!(names(&back), ["DEAREST"], "(#284) the row the value brake dropped is the row the disclosure prints");
+        assert_eq!(back[0].1, 9.0, "(#284) …carrying the score it was RANKED on, not one re-derived at the print site");
         // AT the floor is not below it — the same boundary `drop_bottom_book` uses (`v < t` rejects).
         let brake50 = BuyHeuristic { growth_value_floor_pct: 50.0, ..d.clone() };
         let (v2, _, _) = lane_split(vrows(), 10, &all_sectors, &brake50, &none, &no_pe);
@@ -10736,7 +10788,7 @@ mod tests {
         let ranked_slice: Vec<(&Quote, f64)> = vrows();
         let printed2: Vec<&str> = v2.iter().map(|(q, _)| q.ticker.as_str()).collect();
         let hid: Vec<&str> =
-            unshown_ranked(&ranked_slice, &printed2).iter().map(|q| q.ticker.as_str()).collect();
+            unshown_ranked(&ranked_slice, &printed2).iter().map(|(q, _)| q.ticker.as_str()).collect();
         assert_eq!(hid, ["DEAR", "DEAREST"], "brake50 hid the two dearest — name them, they are still in the buy list");
         // the shipped default trims nothing, so the line must stay SILENT rather than print an empty list
         let printed0: Vec<&str> = v0.iter().map(|(q, _)| q.ticker.as_str()).collect();

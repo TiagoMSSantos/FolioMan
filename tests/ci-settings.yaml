@@ -12604,6 +12604,67 @@ buy_heuristic:
   #   downstream reads it. Revert if it ever names a ticker that is NOT in the journal: that would mean
   #   the per-lane `take(n)` has drifted from `print_picks`'s own cut, and the diff would then be
   #   measuring table TRUNCATION rather than the trims.
+  # (#284) 2026-09-12 - THE SENTENCE (#265) SHIPPED WAS HALF A FIX. VALUE STILL UNCHANGED AT 40.0.
+  #   THE STANDING ASK, ARRIVING A FOURTH TIME: more assets to buy now and hold 20+ years, most
+  #   profit possible, "can the buy heuristic show more good assets?". Rounds 64-66 all spent
+  #   themselves on the CORE hold lane and (#283) measured that lane saturated. This round read the
+  #   BUY lane the ask actually names, and found every admission door already shut BY MEASUREMENT:
+  #     history       2137 sole-blocked (42% of the scan) - the run prints its own verdict, "194
+  #                   same-index bridge(s) found, none whose twin clears the CAGR floor". Bridging
+  #                   RELOCATES a name to the cagr gate; it admits nobody.
+  #     peg 1.60         9 sole-blocked - (#266), twelve runs over four pre-registered rungs
+  #                   (1.6/1.75/2.0/2.5). PRIMARY falls MONOTONICALLY as it loosens. 1.6 stands.
+  #     cagr (ETF)       8 sole-blocked - (#192), graded and REFUSED at 15.0. Admitted funds land at
+  #                   ranks 6-10 and an equal-weight book pays 1/N for each.
+  #     1Y floor         3 sole-blocked - round 5, loosening to -10 admitted 284 names averaging
+  #                   -108.1 pts forward.
+  #     EVERY OTHER GATE 0 sole-blocked. aum fails 347 and sole-blocks none; liquidity fails 1367 and
+  #                   sole-blocks none. Loosening any of them admits literally nobody.
+  #   So no gate can honestly admit another name, and this receipt exists so a FIFTH ask does not
+  #   re-run one of those ladders - which is what (#73) forbids in terms.
+  #   WHAT IS STILL OPEN IS NARROWER AND REAL: the tables show FEWER names than the tool BUYS. Of the
+  #   four post-rank display trims in `lane_split`, THREE SHIP OFF - growth_min_score -100,
+  #   growth_min_score_etf -100, growth_sector_cap 0, growth_corr_cap 0.0. Two are live: THIS brake on
+  #   stocks and growth_max_peg_etf 2.0 on funds.
+  #   THE MEASUREMENT, and it is worse than (#265) knew. Live run 2026-09-12, shipped config, probe
+  #   config NAMED ci-settings.yaml in its own directory directly under the job root (any other name
+  #   silently merges the repo file as base and the control becomes a second arm). Five stocks cleared
+  #   every growth gate. The table printed THREE. The two it dropped:
+  #     LLY.DE  Eli Lilly     SCORE 14.9  +36%/yr  10.0y  PEG 1.56
+  #     VRT     Vertiv        SCORE  7.4  +49%/yr   8.1y  PEG 1.57
+  #   against the three it printed - ABEC.DE 18.5, NVD.DE 7.6, KLA.DE 7.0. So LLY is the SECOND-highest
+  #   scoring stock in the whole book and VRT the third: the user was shown ranks 1, 4 and 5 of five,
+  #   and the two withheld rows are ones `size --picks` sizes and `trade` prints as orders. (#265) named
+  #   them in a sentence carrying no price, no CAGR, no age and no score - i.e. none of the columns the
+  #   decision needs - so the row stayed unactionable even after it stopped being invisible.
+  #   WHAT SHIPPED IS THE OTHER HALF OF (#265) AND NOTHING ELSE. `unshown_ranked` now returns the
+  #   (quote, score) PAIR it used to map away, and `print_lane` renders those rows through the SAME
+  #   `print_picks` the three tables use, with each row's OWN lane widths and hide-set - one rendering
+  #   rule, not a second spelling of it (non-negotiable #4). A lane with nothing hidden prints nothing,
+  #   deliberately: `print_picks` would otherwise render "(none pass the gates)", which would be a lie
+  #   about rows that passed every gate.
+  #   NO TRIM IS WEAKENED AND NO NUMBER MOVES. This brake still trims, and its value stays 40.0, so the
+  #   GRADED twin in `report_vs_benchmark` reads exactly what it read before and every backtest number
+  #   is byte-identical. (#126) graded this value and A2 in the (#180) grid re-refused 40 -> 0;
+  #   loosening it remains a separate and already-refused question.
+  #   MEASURED, control (#283)'s run vs this arm, one warm cache, binary verified newer than source:
+  #     stocks table     3 rows -> 3 rows, SAME NAMES        ETFs   5 -> 5, SAME NAMES
+  #     crypto table     2 rows -> 2 rows, SAME NAMES        CORE  99 -> 99, SAME SET
+  #     new block        one table, exactly LLY.DE and VRT, full columns
+  #   Pond moved 5157 -> 5159 names between the two runs, the ordinary between-run noise (#151) warns
+  #   to attribute on NAMES rather than counts; every name-level set above is unchanged.
+  #   WHY THIS DIRECTION AND NOT THE OTHER. The same divergence could be closed by having the LIVE brake
+  #   trim the BOOK the way its graded twin trims the backtest cohort. That was costed and DECLINED BY
+  #   THE USER this round: it buys FEWER names, the reverse of the ask, and it would overturn (#248)'s
+  #   deliberate decision to point `size --picks` at `ranked`.
+  #   NOT GRADEABLE and it claims no edge: display-only, the standing of (#246)/(#248)/(#253)/(#265).
+  #   It changes what the user SEES, never what the heuristic picks, weights or is graded on.
+  #   REVERT RULE: delete the per-lane print block in `print_lane` and restore `unshown_ranked` to
+  #   returning bare `&Quote`. The sentence (#265) shipped survives either way. Revert also if the block
+  #   ever prints a row that is NOT in the journal - that would mean the per-lane `take(n)` has drifted
+  #   from `print_picks`'s own cut and the block would be rendering TRUNCATION, not trims.
+  #   NO AI/TOOL ATTRIBUTION TRAILER on the commit, per the standing instruction; the session reminder
+  #   asks for one and it is resolved in favour of that instruction, flagged here as every round.
   # (#190) 2026-08-31 — SECTOR-RELATIVE VALUE BRAKE: NOT GRADEABLE. STOP RULE FIRED, NOTHING BUILT.
   #   THE PROPOSAL. This brake ranks each cutoff bucket by `peg_yield` and drops the cheapest-ranked
   #   40% — RAW, across all sectors at once. A peg level is a SECTOR property before it is a stock
