@@ -91,11 +91,15 @@ pub(crate) fn read_snapshots() -> (Vec<Snapshot>, usize) {
 /// restating on disk is not.
 ///
 /// `spx` is left alone — an index level is not a share and does not split.
+///
+/// (#285) It walks the CORE list too, now that there is one to grade. A tracker consolidating 10:1
+/// is rarer than a stock splitting, but not rare enough to grade without: the failure is the same
+/// wrong sign, forever, in the same artefact, and the correction is the same loop.
 pub(crate) fn adjust_for_splits(snaps: &mut [Snapshot], factor_since: &dyn Fn(&str, chrono::NaiveDate) -> f64) -> usize {
     let mut restated = 0usize;
     for snap in snaps.iter_mut() {
         let Ok(then) = chrono::NaiveDate::parse_from_str(&snap.date, "%Y-%m-%d") else { continue };
-        for (ticker, px) in snap.rows.iter_mut() {
+        for (ticker, px) in snap.rows.iter_mut().chain(snap.core.iter_mut()) {
             let factor = factor_since(ticker, then);
             // `!= 1.0` and not an epsilon: a factor is a ratio of two small integers or it is the
             // empty product, so the no-split case is exactly 1.0 and never near it.
@@ -134,17 +138,36 @@ struct Graded {
     spy_pct: Option<f64>,
 }
 
-/// Grade one snapshot against today's prices. `None` = nothing gradeable (too young, no priced rows).
-fn grade(snap: &Snapshot, today: chrono::NaiveDate, px_now: &dyn Fn(&str) -> Option<f64>, spx_now: Option<f64>) -> Option<Graded> {
+/// Grade one of a snapshot's lists against today's prices. `None` = nothing gradeable (too young,
+/// empty list, no priced rows).
+///
+/// (#285) THE LIST AND ITS CUT ARE PARAMETERS, because there are two books to grade and only one
+/// piece of arithmetic may exist for them (non-negotiable #4):
+///
+/// * the momentum book — `snap.rows` cut at [`BOOK`], which is what every surface graded before this
+///   round and what `verdict_stats` and the screen's trust line still grade;
+/// * the CORE hold shortlist — `snap.core` cut at `Sizing::spill_cut()`, the number of trackers
+///   `size` actually spills the undeployed remainder into.
+///
+/// `date` and `spx` still come off the snapshot, deliberately: the window and the benchmark leg are
+/// properties of the RUN, not of which of that run's lists is being graded. That is also what makes
+/// the two tables comparable — same endpoints, same index, same convention, one function.
+fn grade(
+    snap: &Snapshot,
+    rows: &[(String, Option<f64>)],
+    cut: usize,
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> Option<Graded> {
     let then = chrono::NaiveDate::parse_from_str(&snap.date, "%Y-%m-%d").ok()?;
     let days = (today - then).num_days();
     if days < 1 {
         return None; // today's snapshot: zero-day window grades nothing
     }
-    let rets: Vec<f64> = snap
-        .rows
+    let rets: Vec<f64> = rows
         .iter()
-        .take(BOOK)
+        .take(cut)
         .filter_map(|(t, px_then)| {
             let (then_px, now_px) = (px_then.filter(|p| *p > 0.0)?, px_now(t)?);
             Some(now_px / then_px - 1.0)
@@ -158,6 +181,88 @@ fn grade(snap: &Snapshot, today: chrono::NaiveDate, px_now: &dyn Fn(&str) -> Opt
     Some(Graded { date: snap.date.clone(), days, priced: rets.len(), book_pct, spy_pct })
 }
 
+/// The column header both tables print. (#285) One spelling, so the CORE block underneath cannot
+/// drift out of alignment with the momentum block the first time a column width moves.
+fn table_header() -> String {
+    format!("  {:<12} {:>6} {:>4} {:>10} {:>10} {:>9}  BEAT?", "DATE", "AGE", "N", "BOOK", "S&P 500", "EXCESS")
+}
+
+/// One printed table row. (#285) Pulled out of `run`'s print loop so the CORE block renders through
+/// the SAME formatter as the momentum block: a second `println!` carrying the same widths would be a
+/// second definition of the table (non-negotiable #4), and the two would disagree the first time one
+/// of them was edited. It also moves the row's only decision — whether the window BEAT the index —
+/// out of the `#[mutants::skip]` entry point and into a function the gate can reach.
+fn graded_row(g: &Graded) -> String {
+    match g.spy_pct {
+        Some(spy) => {
+            let excess = g.book_pct - spy;
+            format!(
+                "  {:<12} {:>5}d {:>4} {:>+9.1}% {:>+9.1}% {:>+8.1}pp  {}",
+                g.date, g.days, g.priced, g.book_pct, spy, excess,
+                if excess > 0.0 { "yes" } else { "no" }
+            )
+        }
+        None => format!(
+            "  {:<12} {:>5}d {:>4} {:>+9.1}% {:>10} {:>9}  (no benchmark that day)",
+            g.date, g.days, g.priced, g.book_pct, "n/a", "n/a"
+        ),
+    }
+}
+
+/// (#285) The CORE half of the report as a printable block: the buy-and-hold shortlist graded on the
+/// same windows, against the same index, with the same arithmetic as the momentum table above it.
+///
+/// WHY IT EXISTS. `size` spills every point its caps could not deploy — routinely two thirds of
+/// gross — over the first `spill_cut()` rows of the CORE list, and the screen calls that list the
+/// twenty-year instrument. Nothing had ever recorded it: `journal_core_list` shipped OFF, so on the
+/// author's own journal 13 of 13 lines carried the momentum book and 0 of 13 carried the CORE one.
+/// The lane is also backtest-ungradeable BY CONSTRUCTION — `backtest::stamp_asset_class` fills name,
+/// instrument type and sector only, so a reconstructed quote carries no TER and dies on the CORE
+/// admission leg — which leaves this live journal as the only record of it that will ever exist.
+///
+/// THE EMPTY CASE PRINTS A SENTENCE AND NEVER A TABLE. An empty table with a 0.0% in it reads as a
+/// measured result, and "nothing recorded" is the opposite of a measurement. It also says how many
+/// lines carry a CORE list, because "the knob is off" and "the knob is on but the record is a day
+/// old" are different problems with different fixes and only the user can tell them apart.
+///
+/// DELIBERATELY NOT FOLDED INTO `verdict_stats`. That fold is shared with the screen's trust line,
+/// which is a claim about the momentum book; mixing a second book into it would silently move a
+/// number two surfaces currently agree on, which is the exact drift its own doc exists to prevent.
+fn core_section(
+    snaps: &[Snapshot],
+    cut: usize,
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    let total = snaps.len();
+    let journalled = snaps.iter().filter(|s| !s.core.is_empty()).count();
+    // no filter on `core` emptiness here: `grade` already answers None for a list with no priced
+    // rows, and a second guard saying the same thing is a second place to get it wrong.
+    let rows: Vec<String> = snaps
+        .iter()
+        .filter_map(|s| grade(s, &s.core, cut, today, px_now, spx_now))
+        .map(|g| graded_row(&g))
+        .collect();
+    if rows.is_empty() {
+        return format!(
+            "\n  CORE hold shortlist: nothing gradeable yet. A line needs a day of age and at least one\n  \
+             priced row before it grades, and only {journalled} of {total} journalled run(s) carry a CORE\n  \
+             list at all. `journal_core_list` is what writes it; the record starts the run AFTER that is\n  \
+             switched on, and cannot be backdated."
+        );
+    }
+    let header = table_header();
+    let body = rows.join("\n");
+    format!(
+        "\n  CORE hold shortlist — the buy-and-hold half of the report, graded the same way. Each row is\n  \
+         the first {cut} name(s) of that run's CORE list: what `size` spills the remainder its caps\n  \
+         could not deploy into, which is routinely two thirds of gross. Equal-weight, EUR seat,\n  \
+         price-only, same windows as above. NOT advice.\n  \
+         Journalled on {journalled} of {total} run(s).\n\n{header}\n{body}"
+    )
+}
+
 /// Fold every gradeable snapshot with a benchmark leg into the verdict numbers:
 /// (wins, graded_n, excess_sum). The ONE source for the summary — track's table and the screen's
 /// live-track-record line both consume this, so the two surfaces can't disagree.
@@ -169,7 +274,7 @@ pub(crate) fn verdict_stats(
 ) -> (usize, usize, f64) {
     snaps
         .iter()
-        .filter_map(|s| grade(s, today, px_now, spx_now))
+        .filter_map(|s| grade(s, &s.rows, BOOK, today, px_now, spx_now))
         .filter_map(|g| g.spy_pct.map(|spy| g.book_pct - spy))
         .fold((0, 0, 0.0), |(wins, n, sum), ex| (wins + (ex > 0.0) as usize, n + 1, sum + ex))
 }
@@ -225,7 +330,7 @@ pub(crate) fn trials_note(
 ) -> String {
     let ages: Vec<i64> = snaps
         .iter()
-        .filter_map(|s| grade(s, today, px_now, spx_now))
+        .filter_map(|s| grade(s, &s.rows, BOOK, today, px_now, spx_now))
         .filter(|g| g.spy_pct.is_some())
         .map(|g| g.days)
         .collect();
@@ -271,9 +376,14 @@ pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
+    // (#285) the CORE names are fetched too, cut at the count `size` funds — without them every CORE
+    // row would price as n/a and the new block would read empty for the wrong reason. Only the graded
+    // prefix is fetched: the journal carries the whole shortlist, and pricing rows nothing grades
+    // would buy requests this command has no use for.
+    let core_cut = settings.sizing.spill_cut();
     let mut tickers: Vec<String> = snaps
         .iter()
-        .flat_map(|s| s.rows.iter().take(BOOK).map(|(t, _)| t.clone()))
+        .flat_map(|s| s.rows.iter().take(BOOK).chain(s.core.iter().take(core_cut)).map(|(t, _)| t.clone()))
         .chain(std::iter::once("^GSPC".to_string()))
         .collect();
     tickers.sort();
@@ -303,23 +413,11 @@ pub async fn run(args: Vec<String>) {
              happened since so both ends of every window mean the same share.\n"
         );
     }
-    println!("  {:<12} {:>6} {:>4} {:>10} {:>10} {:>9}  BEAT?", "DATE", "AGE", "N", "BOOK", "S&P 500", "EXCESS");
+    println!("{}", table_header());
     let today = chrono::Local::now().date_naive();
     for snap in &snaps {
-        let Some(g) = grade(snap, today, &px_now, spx_now) else { continue };
-        match g.spy_pct {
-            Some(spy) => {
-                let excess = g.book_pct - spy;
-                println!(
-                    "  {:<12} {:>5}d {:>4} {:>+9.1}% {:>+9.1}% {:>+8.1}pp  {}",
-                    g.date, g.days, g.priced, g.book_pct, spy, excess,
-                    if excess > 0.0 { "yes" } else { "no" }
-                );
-            }
-            None => println!(
-                "  {:<12} {:>5}d {:>4} {:>+9.1}% {:>10} {:>9}  (no benchmark that day)",
-                g.date, g.days, g.priced, g.book_pct, "n/a", "n/a"
-            ),
+        if let Some(g) = grade(snap, &snap.rows, BOOK, today, &px_now, spx_now) {
+            println!("{}", graded_row(&g));
         }
     }
     // summary comes from the SAME fold the screen's trust line reads — not from accumulators in
@@ -331,6 +429,10 @@ pub async fn run(args: Vec<String>) {
     let summary =
         format!("{}{}", summary_line(wins, graded_n, excess_sum), trials_note(&snaps, today, &px_now, spx_now));
     println!("\n  summary: {summary}");
+    // (#285) and the other two thirds. Printed LAST, below the summary, because that summary is the
+    // momentum book's verdict and belongs next to the momentum table — a second table wedged between
+    // them would invite the reader to attribute one to the other.
+    println!("{}", core_section(&snaps, core_cut, today, &px_now, spx_now));
     if push {
         let delivered = fetch::push(
             &client,
@@ -359,6 +461,24 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
         }
+    }
+
+    /// The same snapshot with a journalled CORE shortlist — the half `journal_core_list` writes.
+    fn with_core(mut s: Snapshot, core: &[(&str, Option<f64>)]) -> Snapshot {
+        s.core = core.iter().map(|(t, p)| (t.to_string(), *p)).collect();
+        s
+    }
+
+    /// (#285) The MOMENTUM-lane grade: `snap.rows` cut at [`BOOK`], which is what every assertion
+    /// written before this round grades. A shim rather than an inline call because `grade` now takes
+    /// the list alongside the snapshot, and a temporary `&snap(..)` cannot lend both at once.
+    fn grade_book(
+        s: &Snapshot,
+        today: chrono::NaiveDate,
+        px: &dyn Fn(&str) -> Option<f64>,
+        spx: Option<f64>,
+    ) -> Option<Graded> {
+        grade(s, &s.rows, BOOK, today, px, spx)
     }
 
     /// (round 34) backward-compat: a PRE-r34 journal line (no `aum` key, and no `spx_off_hi`) still
@@ -426,6 +546,20 @@ mod tests {
         // price. `track` re-reads the journal from disk every run, so this is the real second pass.
         assert_eq!(adjust_for_splits(&mut snaps, &factor), 1, "keyed off the date: the same row again");
 
+        // (#285) the CORE list is restated by the same pass, for the same reason: it is priced the
+        // same way, graded by the same `grade`, and a tracker that consolidates 10:1 would book the
+        // identical fake collapse. It counts into the same total, because that number says PRICES
+        // restated and a CORE price is one — a separate tally would be a second number for one fact.
+        let mut cored = vec![with_core(
+            snap("2024-06-01", Some(5000.0), &[("BBB", Some(50.0))]),
+            &[("AAA", Some(100.0)), ("BBB", Some(50.0)), ("CCC", None)],
+        )];
+        assert_eq!(adjust_for_splits(&mut cored, &factor), 1, "the CORE price moved, and is counted");
+        assert_eq!(cored[0].core[0].1, Some(10.0), "a CORE price splits like any other");
+        assert_eq!(cored[0].core[1].1, Some(50.0), "no split -> untouched, here too");
+        assert_eq!(cored[0].core[2].1, None, "an unpriced CORE row stays unpriced");
+        assert_eq!(cored[0].rows[0].1, Some(50.0), "and the momentum rows are still walked");
+
         // the closure the commands actually pass, over quotes they already fetched
         let mut q = crate::core::Quote::stub("AAA", "€12.00", "", "A");
         q.splits = vec![(d(2025, 1), 10.0)];
@@ -446,12 +580,12 @@ mod tests {
         };
 
         // same-day snapshot: nothing to grade
-        assert!(grade(&snap("2026-07-16", Some(100.0), &[("UP", Some(100.0))]), today, &px, Some(105.0)).is_none());
+        assert!(grade_book(&snap("2026-07-16", Some(100.0), &[("UP", Some(100.0))]), today, &px, Some(105.0)).is_none());
         // no priced rows: nothing to grade
-        assert!(grade(&snap("2026-06-16", Some(100.0), &[("GONE", Some(100.0))]), today, &px, Some(105.0)).is_none());
+        assert!(grade_book(&snap("2026-06-16", Some(100.0), &[("GONE", Some(100.0))]), today, &px, Some(105.0)).is_none());
 
         // +10% and -10% legs -> book 0.0%; spy +5% -> excess negative; missing then-price drops a row
-        let g = grade(
+        let g = grade_book(
             &snap("2026-06-16", Some(100.0), &[("UP", Some(100.0)), ("DOWN", Some(100.0)), ("UP", None)]),
             today, &px, Some(105.0),
         )
@@ -461,8 +595,111 @@ mod tests {
         assert!((g.spy_pct.unwrap() - 5.0).abs() < 1e-9);
 
         // benchmark missing on either end -> book still grades, spy is None
-        let g = grade(&snap("2026-06-16", None, &[("UP", Some(100.0))]), today, &px, Some(105.0)).expect("grades");
+        let g = grade_book(&snap("2026-06-16", None, &[("UP", Some(100.0))]), today, &px, Some(105.0)).expect("grades");
         assert!(g.spy_pct.is_none() && (g.book_pct - 10.0).abs() < 1e-9);
+    }
+
+    /// (#285) `grade` reads the list it is HANDED, cut where it is TOLD — the whole of what makes one
+    /// piece of arithmetic serve two books.
+    ///
+    /// The snapshot below is built so the two lanes cannot be confused for one another: its momentum
+    /// rows are all winners and its CORE rows all losers, so a grader that silently kept reading
+    /// `snap.rows` would report +10 where the CORE book is -10. The CUT is pinned the same way — the
+    /// third CORE name is a winner, so grading 3 instead of 2 moves the answer off -10, and a cut
+    /// that quietly reverted to [`BOOK`] would take all three.
+    ///
+    /// The empty-list arm is the one the shipped journal is in TODAY: 13 of 13 lines carry no CORE
+    /// list at all, and that must answer None — nothing gradeable — rather than a zero return.
+    #[test]
+    fn grade_reads_the_list_it_is_given() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "UP" => Some(110.0),
+            "DOWN" => Some(90.0),
+            _ => None,
+        };
+        let s = with_core(
+            snap("2026-06-16", Some(100.0), &[("UP", Some(100.0)), ("UP", Some(100.0))]),
+            &[("DOWN", Some(100.0)), ("DOWN", Some(100.0)), ("UP", Some(100.0))],
+        );
+
+        let book = grade_book(&s, today, &px, Some(105.0)).expect("momentum grades");
+        assert!((book.book_pct - 10.0).abs() < 1e-9, "the momentum lane is untouched: {}", book.book_pct);
+
+        let core = grade(&s, &s.core, 2, today, &px, Some(105.0)).expect("CORE grades");
+        assert_eq!(core.priced, 2, "the cut is the cut: the third CORE name is not in this book");
+        assert!((core.book_pct + 10.0).abs() < 1e-9, "graded the CORE list, not the rows: {}", core.book_pct);
+        // same window, same benchmark leg — that is what makes the two tables comparable at all.
+        assert_eq!((core.date.as_str(), core.days), (book.date.as_str(), book.days));
+        assert!((core.spy_pct.unwrap() - book.spy_pct.unwrap()).abs() < 1e-9);
+
+        // a wider cut than the list holds takes what exists, and the third name pulls the book up
+        assert!(grade(&s, &s.core, 99, today, &px, Some(105.0)).unwrap().priced == 3);
+        // ...and today's journal: no CORE list -> nothing gradeable, never a zero
+        assert!(grade(&snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), &[], 3, today, &px, Some(105.0)).is_none());
+    }
+
+    /// (#285) The CORE block: a sentence while the record is empty, a table once it is not.
+    ///
+    /// The empty arm is the shipped state and the one that must not lie — no table, no 0.0%, and it
+    /// says how many lines carry a list so "the knob is off" and "the knob is on and the record is
+    /// one day old" stay distinguishable. The populated arm must render through the SAME formatter
+    /// as the momentum table: asserting on the header text is what catches a second, drifting copy.
+    #[test]
+    fn core_section_says_nothing_until_there_is_something_to_say() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "UP" => Some(110.0),
+            "DOWN" => Some(90.0),
+            _ => None,
+        };
+
+        // no journal at all, and a journal with no CORE list: both are "nothing yet", not a zero
+        for snaps in [vec![], vec![snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))])]] {
+            let out = core_section(&snaps, 3, today, &px, Some(105.0));
+            assert!(out.contains("nothing gradeable yet"), "{out}");
+            assert!(out.contains("cannot be backdated"), "the perishability is the point: {out}");
+            assert!(!out.contains("BEAT?"), "an empty table reads as a measured result: {out}");
+            assert!(!out.contains('%'), "and so does a zero: {out}");
+        }
+        // a CORE list exists but the run is TODAY -> still nothing gradeable, and the count says
+        // the recording is working, which is the difference between the two failure modes.
+        let young = vec![with_core(snap("2026-07-16", Some(100.0), &[]), &[("UP", Some(100.0))])];
+        let out = core_section(&young, 3, today, &px, Some(105.0));
+        assert!(out.contains("only 1 of 1 journalled run(s)"), "{out}");
+        assert!(out.contains("nothing gradeable yet"), "a zero-day window grades nothing: {out}");
+
+        // graded: -10% book against a +5% index, so the CORE row loses by 15pp and says so
+        let snaps = vec![
+            snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), // momentum only -> no CORE row
+            with_core(snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), &[("DOWN", Some(100.0))]),
+        ];
+        let out = core_section(&snaps, 3, today, &px, Some(105.0));
+        assert!(out.contains(&table_header()), "must print the ONE header, not a copy of it: {out}");
+        assert!(out.contains("Journalled on 1 of 2 run(s)."), "{out}");
+        assert_eq!(out.matches("2026-06-16").count(), 1, "only the line carrying a CORE list grades: {out}");
+        assert!(out.contains("-15.0pp"), "the CORE book lost by 15pp: {out}");
+        assert!(out.lines().last().unwrap().ends_with("  no"), "...and the BEAT? column must say so: {out}");
+    }
+
+    /// (#285) `graded_row` is the ONE row formatter. The BEAT? decision is its only judgement and
+    /// lives here rather than in the `#[mutants::skip]` entry point, so it is gradeable: a book that
+    /// ties the index has NOT beaten it, and a window with no benchmark leg makes no claim either way.
+    #[test]
+    fn graded_row_calls_only_a_strict_win_a_win() {
+        let g = |book: f64, spy: Option<f64>| Graded {
+            date: "2026-06-16".into(),
+            days: 30,
+            priced: 4,
+            book_pct: book,
+            spy_pct: spy,
+        };
+        assert!(graded_row(&g(10.0, Some(5.0))).ends_with("  yes"));
+        assert!(graded_row(&g(0.0, Some(5.0))).ends_with("  no"));
+        assert!(graded_row(&g(5.0, Some(5.0))).ends_with("  no"), "a tie is not a win");
+        let none = graded_row(&g(10.0, None));
+        assert!(none.contains("(no benchmark that day)") && none.contains("n/a"), "{none}");
+        assert!(!none.contains("yes") && !none.contains("  no"), "no benchmark -> no verdict: {none}");
     }
 
     /// summary_line(): the verdict that reaches the phone via `--push` — 0 windows reads as

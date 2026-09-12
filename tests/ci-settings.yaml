@@ -4656,7 +4656,7 @@ buy_heuristic:
                                  #   with units.
                                  #   REVERT RULE: none — this receipt records a measurement, not a value. The column itself
                                  #   reverts with `print_held_loser_factors: false`, exactly as (#159) already says.
-  journal_core_list: false       # (#103 / finding C9) UNMEASURED — an unfitted judgement value,
+  journal_core_list: true        # (#103 / finding C9 -> #285) LIVE. UNMEASURED — an unfitted judgement value,
                                  # shipping OFF, which is what every line already sitting in a user's
                                  # `.screen_snapshots.jsonl` holds. There is no sweep for this one and
                                  # there never will be: it does not change a number, it starts a record.
@@ -4685,6 +4685,73 @@ buy_heuristic:
                                  #   the evidence starts from the day you flip it, not retroactively.
                                  #   Every month it stays off is a month of CORE record that cannot be
                                  #   recovered. REVERT: set false; existing widened lines still parse.
+  # (#285) THE KNOB IS FLIPPED, and the grader (#103) called "the patient half" is built. The CORE
+  #   hold shortlist is recorded and graded from this run on. NO GATE, SCORE, WEIGHT OR PICK MOVES —
+  #   this round adds a measurement, not a name. `screen`'s three growth tables and its CORE table
+  #   are byte-identical.
+  #
+  #   THE CENSUS, taken on the author's own `.screen_snapshots.jsonl` 2026-09-12, 13 lines spanning
+  #   2026-07-25 to 2026-09-12:
+  #
+  #     lane                        share of gross      lines carrying a priced record
+  #     momentum book (`rows`)      ~1/3                13 of 13
+  #     CORE hold shortlist         ~2/3 via the spill   0 of 13
+  #
+  #   The second row is the finding. `size` deploys what the caps allow — about a third — and
+  #   `(#253)`/`(#261)` spill the whole remainder over the first `sizing.spill_names` CORE trackers,
+  #   so roughly two thirds of gross goes into the lane this tool calls the twenty-year instrument.
+  #   That lane had no out-of-sample record of any kind. Four consecutive rounds (#281..#284) tuned
+  #   and measured the admission doors of the OTHER third while the larger one was ungraded, which is
+  #   the assumption this receipt exists to break: the question was never only "are the gates shut?",
+  #   it was "is the recommendation any good?", and nothing could answer it.
+  #
+  #   WHY THE LIVE JOURNAL IS THE ONLY PATH THAT WILL EVER EXIST. The CORE lane is BACKTEST-
+  #   UNGRADEABLE BY CONSTRUCTION, not merely ungraded. `backtest::stamp_asset_class` fills exactly
+  #   three fields on a reconstructed quote — name, instrument_type, sector — so a historical fund
+  #   carries no TER, no AUM and no share class, and dies on the CORE admission legs before it can be
+  #   ranked. There is no as-of fund-facts feed this repo reads and no way to synthesise one. So the
+  #   record cannot be simulated, cannot be backfilled, and cannot be recovered: every run made with
+  #   the knob off discarded that day's recommendation permanently. 49 days are already gone.
+  #
+  #   WHAT SHIPS WITH IT (`src/commands/track.rs`):
+  #     * `grade` takes THE LIST AND ITS CUT as parameters instead of hardcoding `rows`/`BOOK`. One
+  #       piece of arithmetic serves both books (non-negotiable #4) — same window, same S&P leg, same
+  #       equal-weight price-only convention — which is also what makes the two tables comparable.
+  #     * `graded_row` and `table_header` are pulled out of `run`'s print loop for the same reason:
+  #       `track::run` is `#[mutants::skip]`, so a second `println!` with the same widths would be an
+  #       ungradeable second definition of the table. The BEAT? decision now sits where the gate can
+  #       reach it, and `graded_row_calls_only_a_strict_win_a_win` pins that a TIE is not a win.
+  #     * `core_section` renders the block. EMPTY PRINTS A SENTENCE, NEVER A TABLE AND NEVER A ZERO —
+  #       an empty table with 0.0% in it reads as a measured result, and "nothing recorded" is the
+  #       opposite of a measurement. It also reports how many lines carry a CORE list, because "the
+  #       knob is off" and "the knob is on and the record is a day old" need different fixes.
+  #     * `adjust_for_splits` walks the CORE list too. (#82) exists because comparing a price quoted
+  #       on the day against a retro-adjusted one books a split as a permanent wrong sign; a tracker
+  #       consolidating 10:1 is rarer than a stock splitting, but not rare enough to grade without.
+  #     * `track` fetches the CORE names, cut at the funded count — without that every CORE row would
+  #       price as n/a and the block would read empty for the wrong reason.
+  #
+  #   THE CUT IS `sizing.spill_names`, NOT A NEW NUMBER. `Sizing::spill_cut()` now reads that knob in
+  #   ONE place, with its documented "0 is read as 1" rule, and both `size` (which funds those rows)
+  #   and `track` (which grades them) call it. Grading 10 rows when 3 receive money would be a track
+  #   record of a book nobody holds. `screen::last_core` keeps its own `n.max(1)` as a parameter
+  #   guard with its own pinned test — that answers for any `n` a caller invents, not for the knob.
+  #
+  #   NOT DONE, DELIBERATELY: the CORE fold is NOT mixed into `verdict_stats`. That fold is shared
+  #   with the screen's trust line and is a claim about the momentum book; joining a second book to
+  #   it would silently move a number two surfaces currently agree on.
+  #
+  #   HONEST EDGES. It delivers no new asset today — it starts a clock, and the first real reading is
+  #   one run away while a trustworthy one is many. It grades the SHORTLIST, not the executed book:
+  #   `size`'s walk-down skips a CORE row already sized in the growth lane, so the funds actually
+  #   bought can differ from the first `spill_names`. Price-only in an EUR seat, distributions not
+  #   added back — the same convention the momentum table uses, which is what keeps them comparable
+  #   and is also why neither is a total-return figure. And `track`'s windows all end TODAY, so
+  #   `trials_note`'s "~1 effective trial" caveat applies to this table exactly as it does above it.
+  #
+  #   REVERT RULE: `journal_core_list: false`. The grader then finds no CORE list on any new line and
+  #   prints its nothing-yet sentence; lines already widened still parse, and `track`'s momentum table
+  #   is unaffected either way. Reverting stops the recording — it does not un-record what was kept.
   # (#226) NO KNOB — the two STARVED CORE sleeves were priced and BOTH pre-registered halves REFUSED.
   #   Recorded here, against `hold_max_ter`, because a per-sleeve override of THIS number is the knob
   #   the round was authorised to add and did not.

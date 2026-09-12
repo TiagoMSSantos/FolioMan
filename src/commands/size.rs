@@ -233,7 +233,10 @@ pub async fn run(args: Vec<String>) {
         match crate::commands::screen::last_core(
             std::fs::read_to_string(config::data_path(crate::commands::screen::SCREEN_STATE_FILE)).ok(),
             &sized,
-            sz.spill_names,
+            // (#285) `spill_cut()`, not the raw knob: the count of CORE rows that receive money is
+            // read in ONE place now, because `track` grades exactly this many and the two must be the
+            // same number by construction rather than by two matching `.max(1)`s.
+            sz.spill_cut(),
         ) {
             Some((date, rows)) => {
                 // (#259) ... and say HOW it replicates, when that is worth saying. This one row can

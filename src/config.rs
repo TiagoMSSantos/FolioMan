@@ -94,6 +94,21 @@ impl Default for Sizing {
     }
 }
 
+impl Sizing {
+    /// (#285) How many CORE rows actually RECEIVE money — the knob read once, with its "0 is read as
+    /// 1" rule applied here and nowhere else (non-negotiable #4). Two surfaces depend on this number
+    /// now: `size`, which splits the undeployed remainder over exactly these rows, and `track`, which
+    /// grades exactly the rows `size` buys. Grading a different count from the funded one would be a
+    /// track record of a book nobody holds — the specific failure the shared definition rules out.
+    ///
+    /// `screen::last_core` keeps its own `n.max(1)` on the way in. That one is a PARAMETER guard with
+    /// its own pinned test, not a second reading of the knob: it answers for any `n` a caller invents,
+    /// while this answers for the configured one.
+    pub fn spill_cut(&self) -> usize {
+        self.spill_names.max(1)
+    }
+}
+
 /// Toggle for showing REAL (inflation-adjusted) returns on the 1Y/5Y/10Y/20Y % columns instead of
 /// nominal. Off by default. When on, deflates by the ACTUAL cumulative EU HICP inflation over each
 /// horizon (fetched live, same source as the `check` footer) — no rate to guess.
@@ -1943,6 +1958,22 @@ fn test_root_override(_name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#285) `spill_cut` is the ONE reading of `spill_names` — the count of CORE rows that receive
+    /// money, and therefore the count `track` must grade. The 0 arm is the load-bearing one: the knob
+    /// documents "0 is read as 1" because off here would mean parking two thirds of a twenty-year
+    /// equity budget in cash, and a grader that read the raw 0 would report an empty record on a book
+    /// that is fully invested. The shipped default is pinned too, so a default move cannot silently
+    /// change which book is being graded.
+    #[test]
+    fn spill_cut_is_the_one_reading_of_the_spill_knob() {
+        let sz = |n: usize| Sizing { spill_names: n, ..Sizing::default() };
+        assert_eq!(sz(0).spill_cut(), 1, "0 is read as 1, never as off");
+        assert_eq!(sz(1).spill_cut(), 1, "1 is the pre-(#261) behaviour and the revert");
+        assert_eq!(sz(3).spill_cut(), 3);
+        assert_eq!(sz(99).spill_cut(), 99, "no ceiling here: the shortlist length is the real one");
+        assert_eq!(Sizing::default().spill_cut(), 3, "the shipped count `size` funds today");
+    }
 
     /// Working dot-files anchor at the repo root (the dir holding the config), never the process
     /// cwd — the scatter this prevents was seen live: cron cwd=$HOME plus runs from a sibling
