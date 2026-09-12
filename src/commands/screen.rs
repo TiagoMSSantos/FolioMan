@@ -42,6 +42,15 @@ struct ScreenState {
     // every code change was checked with manually, now printed + journaled every run.
     #[serde(default)]
     ranked: Vec<String>,
+    // (#287) ticker -> `core::hold_breadth_tier` of that CORE row, for the rows in `core` above.
+    // A parallel MAP, not a `Vec<u8>` beside `core`: two order-coupled vecs are exactly the drift
+    // non-negotiable #4 exists to stop, and this follows `facts`/`fund_meta`, which are keyed the
+    // same way for the same reason. `size` reads it to say WHICH markets the vetted holds its spill
+    // cannot fund actually cover — a bare ticker list cannot distinguish a fourth all-world wrapper
+    // from the emerging-market row that is the genuinely different exposure. serde(default) so
+    // every state file already on disk still loads, and `size` degrades to unlabelled tickers.
+    #[serde(default)]
+    core_tier: std::collections::HashMap<String, u8>,
 }
 
 /// (round 68) One-line membership diff, "+JOINED -DROPPED" (order-insensitive — market drift
@@ -171,7 +180,7 @@ pub(crate) fn last_core(
     raw: Option<String>,
     sized: &[String],
     n: usize,
-) -> Option<(String, Vec<(usize, String, Option<&'static str>)>)> {
+) -> Option<(String, Vec<(usize, String, Option<&'static str>)>, Vec<(String, Option<u8>)>)> {
     let state = parse_state(raw).0?;
     // `n.max(1)`, not `n`: a remainder with a known home always gets at least the one row `(#253)`
     // shipped. Zero would be a THIRD behaviour — back to `(#246)`'s naming-without-sizing — that
@@ -188,7 +197,20 @@ pub(crate) fn last_core(
             (i, t.clone(), note)
         })
         .collect();
-    (!rows.is_empty()).then_some((state.date, rows))
+    // (#287) and the rows the budget does NOT reach. `(#246)` took the first `n` and dropped the rest
+    // on the floor; they are the CORE shortlist's own survivors — every one already cleared the
+    // 20-year hold screen this run — and `size` names them so a reader can see that the remainder has
+    // more homes than `spill_names` funds. Same pass, same `sized` skip, so the two lists partition
+    // the unsized shortlist exactly and cannot disagree about a row. `None` tier = the state file
+    // predates `core_tier`, or the run had no quote for that ticker; `size` prints those unlabelled.
+    let rest: Vec<(String, Option<u8>)> = state
+        .core
+        .iter()
+        .filter(|t| !sized.iter().any(|s| s == *t))
+        .skip(n.max(1))
+        .map(|t| (t.clone(), state.core_tier.get(t).copied()))
+        .collect();
+    (!rows.is_empty()).then_some((state.date, rows, rest))
 }
 
 /// (#248) The RANKED buy candidates as the last `screen` run left them, plus that run's date:
@@ -2143,6 +2165,14 @@ pub async fn run(args: Vec<String>) {
         fund_meta,
         core: core_now.clone(), // still needed below by the holdings-overlap pick set
         ranked: ranked_now.clone(), // still needed below by the order-glue footer
+        // (#287) the tier is a pure function of the fund NAME, so it is read off the quote `core_now`
+        // was built from rather than journalled as a second fact about the row. A ticker whose quote
+        // is missing is simply absent from the map — non-negotiable #5, and `size` prints it under
+        // the unlabelled tail rather than guessing a market for it.
+        core_tier: core_now
+            .iter()
+            .filter_map(|t| quotes.iter().find(|q| &q.ticker == t).map(|q| (t.clone(), core::hold_breadth_tier(&q.name))))
+            .collect(),
     };
     // (round 69) persistence failure must not be silent: a stuck baseline means every drift alert
     // above re-fires (or a pending one never fires) on the next run with no hint why. Serialize
@@ -4364,6 +4394,7 @@ mod tests {
             fund_meta: HashMap::new(),
             core: Vec::new(),
             ranked: Vec::new(),
+            core_tier: HashMap::new(),
         })
         .unwrap();
         let (st, corrupt) = parse_state(Some(valid));
@@ -4400,6 +4431,7 @@ mod tests {
                     .collect(),
                 core,
                 ranked: Vec::new(),
+                core_tier: HashMap::new(),
             })
             .unwrap()
         };
@@ -4412,7 +4444,7 @@ mod tests {
         // its exact original shape through this shim — which also pins, on every one of them, that
         // `n = 1` yields exactly one row. The genuinely new arms come after.
         let one = |raw: Option<String>, sized: &[String]| -> Option<(String, String, Option<&'static str>)> {
-            last_core(raw, sized, 1).map(|(d, mut rows)| {
+            last_core(raw, sized, 1).map(|(d, mut rows, _)| {
                 assert_eq!(rows.len(), 1, "n = 1 must return exactly one row");
                 let (_, t, note) = rows.remove(0);
                 (d, t, note)
@@ -4480,7 +4512,7 @@ mod tests {
 
         // (#261) n rows, in CORE order, each carrying its position in the SHORTLIST.
         let four = v(&["WEBG.DE", "VWCE.DE", "SPYI.DE", "VALL.L"]);
-        let (date, rows) = last_core(Some(state(four.clone())), &[], 3).unwrap();
+        let (date, rows, _) = last_core(Some(state(four.clone())), &[], 3).unwrap();
         assert_eq!(date, "2026-09-05");
         assert_eq!(
             rows,
@@ -4530,6 +4562,50 @@ mod tests {
             ]
         );
 
+        // (#287) the THIRD element: the vetted holds past the funded head. It and `rows` partition
+        // the unsized shortlist exactly — same pass, same `sized` skip — so a row can never be both
+        // funded and reported unfunded, nor fall out of both.
+        let five = v(&["WEBG.DE", "VWCE.DE", "SPYI.DE", "VALL.L", "EIMI.L"]);
+        let (_, rows, rest) = last_core(Some(state(five.clone())), &[], 2).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rest.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(),
+            vec!["SPYI.DE", "VALL.L", "EIMI.L"],
+            "everything past the funded head, in shortlist order"
+        );
+        assert_eq!(rows.len() + rest.len(), five.len(), "the two lists partition the shortlist");
+        // …and a SIZED row is in neither: it is already funded by the book above, so reporting it
+        // as unfunded would be the one way this line could contradict the table it sits under.
+        let (_, rows, rest) = last_core(Some(state(five.clone())), &v(&["VWCE.DE"]), 2).unwrap();
+        assert!(!rest.iter().any(|(t, _)| t == "VWCE.DE"), "a sized row is never unfunded: {rest:?}");
+        assert!(!rows.iter().any(|(_, t, _)| t == "VWCE.DE"));
+        assert_eq!(rows.len() + rest.len(), five.len() - 1, "one row sized, four left to split");
+        // `n.max(1)` governs BOTH halves or they overlap: at n = 0 one row is funded, so the
+        // remainder must start at the SECOND row, not the first.
+        let (_, rows, rest) = last_core(Some(state(five.clone())), &[], 0).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rest.len(), 4, "n = 0 funds one and strands four, never five: {rest:?}");
+        // a shortlist the head exhausts strands nothing, which is what prints no line at all.
+        assert!(last_core(Some(state(five.clone())), &[], 99).unwrap().2.is_empty());
+
+        // The tier rides along when the state file carries it, and is None when it does not — the
+        // pre-(#287) files already on disk. Both are load-bearing: `size` labels the first and
+        // prints the second unlabelled rather than guessing.
+        assert!(rest.iter().all(|(_, tier)| tier.is_none()), "no core_tier in this fixture: {rest:?}");
+        let em = core::hold_breadth_tier("iShares Core MSCI EM IMI UCITS ETF");
+        let with_tier = serde_json::to_string(&ScreenState {
+            date: "2026-09-05".into(),
+            passing: Vec::new(),
+            facts: HashMap::new(),
+            fund_meta: HashMap::new(),
+            core: five.clone(),
+            ranked: Vec::new(),
+            core_tier: [("EIMI.L".to_string(), em)].into_iter().collect(),
+        })
+        .unwrap();
+        let rest = last_core(Some(with_tier), &[], 4).unwrap().2;
+        assert_eq!(rest, vec![("EIMI.L".to_string(), Some(em))],
+            "a journalled tier reaches `size`; the rows without one still ride as None");
     }
 
     /// (#248) the ranked handoff to `size --picks`: the whole list, in render's order, plus the run
@@ -4543,6 +4619,7 @@ mod tests {
                 passing: Vec::new(),
                 facts: HashMap::new(),
                 fund_meta: HashMap::new(),
+                core_tier: HashMap::new(),
                 core: Vec::new(),
                 ranked,
             })

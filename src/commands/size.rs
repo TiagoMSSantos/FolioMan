@@ -90,6 +90,50 @@ pub(crate) fn first_per_issuer(names: &[&str]) -> Vec<usize> {
         .collect()
 }
 
+/// (#287) The vetted 20-year holds the stranded budget does NOT reach, as one printable line.
+///
+/// `size` funds `spill_names` CORE rows and the shortlist holds more — on 2026-09-12, 3 funded out of
+/// 20. The unfunded 17 are not rejects: every one cleared the same hold screen this run and is printed
+/// by `screen`'s CORE table. What a bare ticker list cannot show is that they are not all the SAME
+/// bet — `last_core` walks a breadth-major list, so rows past the funded head are a fourth all-world
+/// wrapper first and genuinely different markets (developed, emerging, regional) after. Grouping by
+/// tier is what makes that visible, and it is the whole content of the line.
+///
+/// Pure and gradeable, unlike the `#[mutants::skip]` `run` that prints it. Empty input -> `None`, so
+/// a shortlist the spill exhausts prints nothing rather than an empty sentence. Tier order, not
+/// count order: the list is breadth-major and re-sorting it by size would hide that shape. A row
+/// whose tier is unknown (a state file predating `core_tier`) lands in a trailing unlabelled group
+/// rather than being dropped or guessed at — non-negotiable #5.
+pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Option<String> {
+    if rest.is_empty() {
+        return None;
+    }
+    let mut groups: Vec<(Option<u8>, Vec<&str>)> = Vec::new();
+    for (t, tier) in rest {
+        match groups.iter_mut().find(|(g, _)| g == tier) {
+            Some((_, v)) => v.push(t),
+            None => groups.push((*tier, vec![t])),
+        }
+    }
+    groups.sort_by_key(|(tier, _)| tier.map_or(u8::MAX, |t| t));
+    let body = groups
+        .iter()
+        .map(|(tier, names)| {
+            let label = tier
+                .and_then(|t| crate::core::HOLD_TIER_LABELS.get(t as usize))
+                .copied()
+                .unwrap_or("unlabelled");
+            format!("{} {label} ({})", names.len(), names.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join(" · ");
+    Some(format!(
+        "  ({} more row(s) cleared the 20-year hold screen this run and get nothing — {funded} funded above: {body}. \
+         Different markets, not more wrappers; `spill_names` sets how many are funded. NOT advice)",
+        rest.len()
+    ))
+}
+
 /// (#286) THE EXECUTED BOOK: which candidates `size` actually funds, and at what weight. Every line
 /// of it was lifted VERBATIM out of `run`, and the lift is the point. `run` is `#[mutants::skip]` —
 /// it is wiring, and the attribute below says so in its own words — so the scoring, the crypto
@@ -274,7 +318,7 @@ pub async fn run(args: Vec<String>) {
             // same number by construction rather than by two matching `.max(1)`s.
             sz.spill_cut(),
         ) {
-            Some((date, rows)) => {
+            Some((date, rows, unfunded)) => {
                 // (#259) ... and say HOW it replicates, when that is worth saying. This one row can
                 // be two thirds of gross and sits outside `max_name_pct` by design, so a synthetic
                 // wrapper entering it silently is the one disclosure the row was still missing.
@@ -308,6 +352,11 @@ pub async fn run(args: Vec<String>) {
                 println!(
                     "  (the {rest:.1}% the caps could not deploy, {home} — outside the per-name cap by design: it is the market, not a name. Or add candidates / raise a cap. NOT advice)"
                 );
+                // (#287) ...and WHICH vetted holds that remainder never reaches. Read-only: no fetch,
+                // no price, no weight moved, and every line above is byte-identical to (#286)'s.
+                if let Some(note) = unfunded_note(&unfunded, n) {
+                    println!("{note}");
+                }
             }
             None => println!(
                 "  ({rest:.1}% unallocated — the caps bind and no name in those classes can take more; add candidates or raise a cap)"
@@ -453,7 +502,7 @@ mod tests {
     fn sized_book_is_the_executed_book() {
         let tuning = config::BuyHeuristic::default();
         let sz = config::Sizing::default();
-        let quotes = vec![
+        let quotes = [
             scoring_quote("AAA.DE", "Alpha Corp", 900.0, 2.0),
             scoring_quote("AAA2.DE", "Alpha Corp", 700.0, 2.0), // same issuer -> the loser is dropped
             scoring_quote("BBB.DE", "Beta Corp", 500.0, 4.0),
@@ -470,8 +519,76 @@ mod tests {
 
         // EMPTY is a real answer, not a bug: nothing cleared the gate, so there is nothing to fund.
         // This is the arm `run`'s early return and `screen`'s journal both depend on.
-        let none = vec![crate::core::Quote::stub("DEAD.DE", "€1.00", "", "Gamma Corp")];
+        let none = [crate::core::Quote::stub("DEAD.DE", "€1.00", "", "Gamma Corp")];
         assert!(sized_book(&none.iter().collect::<Vec<_>>(), &tuning, &sz, None).is_empty());
+    }
+
+    /// (#287) the line that names the vetted holds the spill does not fund. Graded on the three
+    /// things a reader acts on: WHICH markets are missing, HOW MANY, and that nothing was dropped.
+    #[test]
+    fn unfunded_note_groups_the_remainder_by_market() {
+        use crate::core::{hold_breadth_tier, HOLD_TIER_LABELS};
+        let t = |n: &str| Some(hold_breadth_tier(n));
+        // Deliberately handed in an order that is NOT tier order, and with the emerging pair split
+        // across the list: the grouping must be by tier, not by arrival, or two rows of one market
+        // print as two groups.
+        let rest = vec![
+            ("EIMI.L".to_string(), t("iShares Core MSCI EM IMI UCITS ETF")),
+            ("VHVE.L".to_string(), t("Vanguard FTSE Developed World UCITS ETF")),
+            ("SSAC.L".to_string(), t("iShares MSCI ACWI UCITS ETF")),
+            ("PRAM.L".to_string(), t("Amundi MSCI Emerging Markets UCITS ETF")),
+        ];
+        let note = unfunded_note(&rest, 3).expect("a non-empty remainder always prints");
+        assert!(note.contains("4 more row(s)"), "it counts every unfunded row: {note}");
+        assert!(note.contains("3 funded above"), "…against what the spill did fund: {note}");
+        assert!(note.contains("1 all-world (SSAC.L)"), "{note}");
+        assert!(note.contains("1 developed (VHVE.L)"), "{note}");
+        assert!(note.contains("2 emerging (EIMI.L, PRAM.L)"),
+            "same-tier rows merge into ONE group, in arrival order inside it: {note}");
+        // Tier order, broadest first — the shape `last_core` walks. Asserted by POSITION so a sort
+        // that degrades to arrival order (the input above is deliberately scrambled) fails here.
+        let (aw, dev, em) = (
+            note.find("all-world").unwrap(),
+            note.find("developed").unwrap(),
+            note.find("emerging").unwrap(),
+        );
+        assert!(aw < dev && dev < em, "groups print broadest-first: {note}");
+        // Nothing is dropped: the group counts sum to the row count.
+        let counted: usize = HOLD_TIER_LABELS
+            .iter()
+            .filter_map(|l| note.split_once(&format!(" {l} ("))
+                .and_then(|(head, _)| head.rsplit(' ').next()?.parse::<usize>().ok()))
+            .sum();
+        assert_eq!(counted, rest.len(), "every unfunded row lands in exactly one group: {note}");
+    }
+
+    /// (#287) the two arms that are NOT the happy path: an exhausted shortlist, and a state file
+    /// written before `core_tier` existed. Neither may drop a row or invent a market for it.
+    #[test]
+    fn unfunded_note_is_silent_when_empty_and_honest_when_unlabelled() {
+        assert_eq!(unfunded_note(&[], 3), None,
+            "a shortlist the spill exhausts prints NOTHING, not an empty sentence");
+
+        // A pre-(#287) `.screen_state.json` carries no `core_tier`, so every tier is None. The row
+        // still prints — missing data must not delete a vetted hold from the disclosure (#5) — and
+        // it prints under a label that admits it is unknown rather than guessing a market.
+        let old = vec![("WEBN.DE".to_string(), None), ("VWRA.L".to_string(), None)];
+        let note = unfunded_note(&old, 3).unwrap();
+        assert!(note.contains("2 unlabelled (WEBN.DE, VWRA.L)"), "{note}");
+
+        // …and an unlabelled group sorts LAST, behind every real market, because it is the group a
+        // reader can act on least. `u8::MAX` is the sentinel that does it.
+        let mixed = vec![
+            ("OLD.DE".to_string(), None),
+            ("SSAC.L".to_string(), Some(crate::core::hold_breadth_tier("iShares MSCI ACWI UCITS ETF"))),
+        ];
+        let note = unfunded_note(&mixed, 3).unwrap();
+        assert!(note.find("all-world").unwrap() < note.find("unlabelled").unwrap(), "{note}");
+
+        // A tier integer past the end of the label table is the same case, not a panic: `get` is
+        // why. This is the shape a state file from a FUTURE sleeve ladder would have.
+        let future = vec![("???.DE".to_string(), Some(200))];
+        assert!(unfunded_note(&future, 3).unwrap().contains("1 unlabelled (???.DE)"));
     }
 
     /// (#260) which list `size` sizes. The DEFAULT is the ranked book — the reversal of (#248)'s

@@ -4941,6 +4941,82 @@ buy_heuristic:
   #   BIT-IDENTICAL on the two equal-weight lanes, asserted as an equality against the pre-(#286)
   #   expression spelled out, not against a tolerance and not against a zero those legs never produced.
   #   REVERT RULE: none — this receipt records a measurement and a record, not a value.
+  # (#287) 2026-09-12 - THE VETTED HOLDS THE BUDGET DOES NOT FUND ARE NAMED. `size` prints ONE new
+  #   line. NO GATE, SCORE, WEIGHT, CAP OR PICK MOVES, and no new knob exists — the line is pure
+  #   disclosure, so there is no behaviour to default per non-negotiable #1. VERIFIED, not asserted:
+  #   `size --picks` re-captured on a binary-fresh build against the SAME state file as (#286)'s
+  #   capture is BYTE-IDENTICAL through `TOTAL+` and every line above it; the diff is exactly one
+  #   added line and nothing else. `cargo t` 414/9/21 in BOTH regimes (was 412/9/21 — the two new
+  #   tests are `unfunded_note`'s).
+  #
+  #   THE ASK ARRIVED A SEVENTH TIME, VERBATIM: more assets to buy now and hold 20+ years, most
+  #   profit possible; can the buy heuristic show more good assets? THE SUPPLY QUESTION IS CLOSED AND
+  #   THIS ROUND DID NOT RE-OPEN IT. Ten levers now carry a graded refusal, recorded here so round 71
+  #   does not re-derive the table: every growth gate ((#138): "the gate stack carries NO live lead"),
+  #   the score floor ((#86)), the `no-turnover` refusal ((#256): relocated 172 names, admitted zero),
+  #   the `history` gate ((#152)), history bridging (round 66), pool width (a +65% wider pond moved the
+  #   median gated pool by ZERO names), all ten CORE sleeve caps ((#220), (#234)), the domicile sort
+  #   ((#235)), and THIS round's re-check of the `refused` bucket — `picks::refusal_reason` emits only
+  #   leveraged / commodity / stablecoin / no-turnover, plus `gate_failures`' missing-1Y bail, and all
+  #   five were already priced. There is no eleventh lever hiding in the admission path.
+  #
+  #   WHAT RESEARCH FOUND INSTEAD IS ON THE OTHER SIDE OF THE COMMAND. `size` deploys 70.0% to 12
+  #   growth names and strands 30.0%. Every stranded point goes to THREE all-world trackers, and
+  #   `last_core`'s own doc has said what that costs since (#246): "Nothing here diversifies MARKET
+  #   risk; three all-world trackers are one market." The shortlist it reads holds TWENTY vetted
+  #   20-year holds. Seventeen of them are printed by `screen` and funded by nothing. `spill_names` is
+  #   3 and (#261) already recorded that 3 is a judgement value, not a measurement.
+  #
+  #   MEASURED CENSUS, 2026-09-12 live run, read out of the state file this round writes:
+  #     all-world  7   WEBN.DE SPYY.DE VWRA.L SPYI.DE ACWIA.SW FWRA.L SSAC.L
+  #     developed  8   MXWO.L F50A.DE LGGL.L VHVE.L AVWC.DE MWRD.PA UETW.DE SPPW.DE
+  #     emerging   5   HEMA.MI VFEA.DE EIMI.L PRAM.L EMMUSC.SW
+  #   The spill funds the first three, all all-world. THIRTEEN of the seventeen unfunded rows are
+  #   developed or emerging — genuinely different markets, not a fourth wrapper on the same one. That
+  #   is the entire content of the new line, and it is why the line groups by tier rather than just
+  #   listing tickers: a bare list cannot distinguish those two cases.
+  #
+  #   A PLAN CORRECTION WORTH RECORDING: the round-70 plan's prose put MXWO.L in the all-world group,
+  #   making the census 8/7/5. The live run reads 7/8/5. `core::hold_breadth_tier` is right and the
+  #   prose was wrong — MXWO.L is MSCI World, which is DEVELOPED. This is exactly the drift the new
+  #   `HOLD_TIER_LABELS` const exists to stop: the tiers were previously describable only in one
+  #   function's prose, so every caller re-derived them by eye and could re-derive them wrong.
+  #
+  #   THE FUNDING VARIANT WAS REFUSED, NOT FORGOTTEN. Routing the stranded 30.0% down the
+  #   breadth-major list is a REAL TILT: equal thirds across all-world/developed/emerging lifts
+  #   emerging from ~10% of that budget to ~37%. It is unmeasured, so under non-negotiable #1 it would
+  #   have to ship knob-gated OFF and would deliver nothing today. Naming the rows moves no weight,
+  #   needs no backtest, and answers the ask literally — seventeen more vetted names in front of the
+  #   user at the moment money is allocated. Raising `spill_names` was ALSO refused: more wrappers on
+  #   one market is a provider-risk fix, not a profit one, and (#253)'s honest edges already name that
+  #   risk. The new line makes the knob's cost legible so raising it can be a decision, not a default.
+  #
+  #   THE LIVE PROBE, both arms, `screen` FOREGROUND, state backed up and restored with all five md5s
+  #   verified identical (.screen_state.json 222dd28f04c3858cf8581214463816d4, .screen_web.json
+  #   3164ac90a765851d80930a0f96c4b99b, .screen_snapshots.jsonl ab913d0a26a8eab08c2b627a43052e10,
+  #   .screen_alerts.log da4a891ea0d8187e2c81d474c0b44d31, .folioman_turnover_screen.txt
+  #   152895433424d585a862779fe8fce484):
+  #     (a) OLD state, written before this round: no `core_tier`, so all 17 rows print under one
+  #         `unlabelled` group. NOT DROPPED and NOT GUESSED — non-negotiable #5 on a path where
+  #         guessing would print a market the row does not cover.
+  #     (b) NEW state: all 20 CORE tickers carry a tier, no gaps and no extra keys, and the line reads
+  #         "4 all-world · 8 developed · 5 emerging", summing to 17 = 20 - 3.
+  #
+  #   HONEST EDGES. (a) IT FUNDS NOTHING NEW. Seventeen names become visible where money is allocated;
+  #   not one euro moves. If they should be bought, that is the measured round this one refuses to
+  #   fake. (b) The tier is derived from the fund NAME via `hold_breadth_tier`'s `geo_tier` match, so a
+  #   broad fund whose name carries no geography lands in the PINNED `FACTOR_TIER` fallback and would
+  #   print under "factor". (c) It reports the 20-row SHORTLIST, not the wider printed CORE table; the
+  #   line says "cleared the 20-year hold screen this run", which is exactly what the 20 are. (d) The
+  #   census is ONE run's and moves with the pond. (e) `screen` and `size` still score the same names
+  #   a few tenths apart, per (#286)'s measured divergence — unchanged and untouched by this round.
+  #
+  #   ALSO IN THIS COMMIT, and not part of the round: the (#286) push reddened the `lint` CI job while
+  #   local clippy was green. CAUSE FOUND AND FIXED — CI's `rustup component add clippy` pulls current
+  #   stable (1.98) and the local toolchain was 1.97, which does not have `clippy::useless_vec`. Two
+  #   `vec!` literals in (#286)'s own new test are now arrays, and the LOCAL TOOLCHAIN WAS UPDATED to
+  #   1.98.1 so the version gap that hid this cannot hide the next one. No production code changed.
+  #   REVERT RULE: none — this receipt records a disclosure line and a closure table, not a value.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among

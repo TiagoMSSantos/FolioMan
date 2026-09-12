@@ -2837,6 +2837,21 @@ pub fn hold_suitable(q: &Quote) -> bool {
 pub const HOLD_LEGS: [&str; 6] =
     ["not broad-index", "no UCITS", "TER", "replication", "not Acc", "AUM"];
 
+/// (#287) A printable name per breadth tier, indexed BY what [`hold_breadth_tier`] returns. The
+/// same idea as [`HOLD_LEGS`] one line up and for the same reason: the tiers were describable only
+/// in that function's prose, so a caller wanting to say WHICH market a CORE row covers had either to
+/// re-derive the mapping or print a bare integer. `size` prints these when it names the vetted holds
+/// its spill does not fund.
+///
+/// The five optional sleeves are a DESCENDING chain off `HOLD_TIERS` (`SIZE_TIER = FACTOR_TIER - 1`,
+/// … , `NASDAQ_TIER = HOLD_TIERS - 1`), so their positions here are not independently chosen and
+/// cannot be eyeballed — `hold_tier_labels_sit_where_the_chain_puts_them` asserts each one against
+/// its own constant rather than against a literal index.
+pub const HOLD_TIER_LABELS: [&str; HOLD_TIERS] = [
+    "all-world", "developed", "emerging", "US", "ex-US", "Europe", "Japan", "Asia-Pac", // geographic, broadest first
+    "size", "factor", "sector", "country", "NASDAQ", // the five optional sleeves, in chain order
+];
+
 /// TER cap note lives here: `hold_max_ter` ships 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the
 /// canonical one-fund hold — qualifies; below that is S&P/World territory (0.03–0.20%). The reason
 /// string formats the cap from the knob, so it cannot quote a number the check did not use.
@@ -7135,6 +7150,36 @@ mod tests {
     // way this round could put Berkshire Hathaway in the CORE table.
     assert_ne!(hold_breadth_tier("Berkshire Hathaway Inc."), COUNTRY_TIER,
         "(#227) the geography-less fallback is FACTOR_TIER and must never be the country sleeve");
+
+    // (#287) `HOLD_TIER_LABELS` is indexed by exactly what `hold_breadth_tier` returns, so a label
+    // that drifts off the chain would have `size` name the WRONG market for a vetted hold — the one
+    // way this round's disclosure line could mislead. Each optional sleeve is asserted against its
+    // OWN constant, never a literal: the five are a descending chain and `SIZE_TIER = FACTOR_TIER - 1`
+    // is arithmetic a mutation can rewrite, which is the same trap the literal pins above exist for.
+    // The geographic half is pinned through `hold_breadth_tier` itself rather than by index, so the
+    // label is tied to the function's own answer and not to a second spelling of the ladder.
+    assert_eq!(HOLD_TIER_LABELS.len(), HOLD_TIERS, "one label per tier, or an index can panic");
+    assert_eq!(HOLD_TIER_LABELS[SIZE_TIER as usize], "size");
+    assert_eq!(HOLD_TIER_LABELS[FACTOR_TIER as usize], "factor");
+    assert_eq!(HOLD_TIER_LABELS[SECTOR_TIER as usize], "sector");
+    assert_eq!(HOLD_TIER_LABELS[COUNTRY_TIER as usize], "country");
+    assert_eq!(HOLD_TIER_LABELS[NASDAQ_TIER as usize], "NASDAQ");
+    for (fund, label) in [
+        ("Vanguard FTSE All-World UCITS ETF", "all-world"),
+        ("iShares Core MSCI World UCITS ETF", "developed"),
+        ("iShares Core MSCI EM IMI UCITS ETF", "emerging"),
+        ("Vanguard S&P 500 UCITS ETF", "US"),
+        ("SPDR MSCI All Country World ex USA UCITS ETF", "ex-US"),
+    ] {
+        assert_eq!(HOLD_TIER_LABELS[hold_breadth_tier(fund) as usize], label,
+            "{fund} must print as {label}");
+    }
+    // …and no two tiers share a label: `size` groups the unfunded remainder BY this string, so a
+    // duplicate would silently merge two different markets into one printed group.
+    let mut seen = HOLD_TIER_LABELS.to_vec();
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen.len(), HOLD_TIERS, "labels are distinct — grouping by them must not merge tiers");
 
     // (#227) the country sleeve, off and on. OFF is the shipped lane and what non-negotiable #1
     // rests on: every one of these names is refused at leg 0 exactly as it was before this round.
