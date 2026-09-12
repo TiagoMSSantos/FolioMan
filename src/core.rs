@@ -2852,6 +2852,13 @@ pub const HOLD_TIER_LABELS: [&str; HOLD_TIERS] = [
     "size", "factor", "sector", "country", "NASDAQ", // the five optional sleeves, in chain order
 ];
 
+/// (#288) The broadest tier [`hold_breadth_tier`] can return — the top of the geographic half, and
+/// the only market whose name `size`'s spill sentence has ever been allowed to hardcode. A named
+/// constant because the alternative is the literal `0` sprinkled through callers that ask "is this
+/// row the whole market?", which is precisely the eyeballed-index problem the optional sleeves'
+/// descending chain already solved for the other end of this array.
+pub const ALL_WORLD_TIER: u8 = 0;
+
 /// TER cap note lives here: `hold_max_ter` ships 0.25 so FTSE All-World (VWCE/VWRL, 0.22%) — the
 /// canonical one-fund hold — qualifies; below that is S&P/World territory (0.03–0.20%). The reason
 /// string formats the cap from the knob, so it cannot quote a number the check did not use.

@@ -104,6 +104,40 @@ pub(crate) fn first_per_issuer(names: &[&str]) -> Vec<usize> {
 /// count order: the list is breadth-major and re-sorting it by size would hide that shape. A row
 /// whose tier is unknown (a state file predating `core_tier`) lands in a trailing unlabelled group
 /// rather than being dropped or guessed at — non-negotiable #5.
+/// (#288) How many tickers per breadth tier the unfunded-rows line names before falling back to a
+/// bare count. Two: one name can look like a coincidence, two show the sleeve's shape, and the line
+/// has to fit on a terminal beside twelve other sleeves.
+const SPILL_SAMPLE: usize = 2;
+
+/// (#287)/(#288) The printable name of a breadth tier, with the unknown case folded in. ONE
+/// definition (non-negotiable #4): both the funded sentence and the unfunded census ask this
+/// question and an out-of-range tier must degrade the same way in both — to "unlabelled" rather than
+/// to a panic, because the tier arrives from a JSON state file that a future round may renumber.
+pub(crate) fn tier_label(tier: Option<u8>) -> &'static str {
+    tier.and_then(|t| crate::core::HOLD_TIER_LABELS.get(t as usize)).copied().unwrap_or("unlabelled")
+}
+
+/// (#288) The markets the spill actually funds, in row order, deduped — or `None` when they are all
+/// all-world and `(#261)`'s original sentence is still the true one.
+///
+/// `None` is the load-bearing case. `spill_per_tier: false` walks the breadth-major list from the
+/// top, so its rows are all-world in every live run, and returning `None` there is what keeps the
+/// default arm byte-identical to `(#286)`'s capture (non-negotiable #1). Unlabelled rows are dropped
+/// rather than named: a tier this build cannot read is not evidence of a different market, and an
+/// all-unlabelled set therefore also returns `None` and keeps the old wording (non-negotiable #5).
+pub(crate) fn funded_markets(rows: &[(usize, String, Option<&'static str>, Option<u8>)]) -> Option<String> {
+    let mut seen: Vec<u8> = Vec::new();
+    for (.., tier) in rows {
+        match tier {
+            Some(t) if !seen.contains(t) => seen.push(*t),
+            _ => {}
+        }
+    }
+    seen.iter()
+        .any(|t| *t != crate::core::ALL_WORLD_TIER)
+        .then(|| seen.iter().map(|t| tier_label(Some(*t))).collect::<Vec<_>>().join(" + "))
+}
+
 pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Option<String> {
     if rest.is_empty() {
         return None;
@@ -116,14 +150,16 @@ pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Opt
         }
     }
     groups.sort_by_key(|(tier, _)| tier.unwrap_or(u8::MAX));
+    // (#288) counts plus a SAMPLE, not every ticker. `(#287)` printed the full name list because the
+    // remainder it saw was whatever survived `top_picks`' cut — 17 rows. It now sees the whole vetted
+    // list, ~96 rows on 2026-09-12, and a 96-ticker sentence is a wall, not a disclosure. The count
+    // is the fact ("this sleeve has more than the spill funds"); two names make it checkable.
     let body = groups
         .iter()
         .map(|(tier, names)| {
-            let label = tier
-                .and_then(|t| crate::core::HOLD_TIER_LABELS.get(t as usize))
-                .copied()
-                .unwrap_or("unlabelled");
-            format!("{} {label} ({})", names.len(), names.join(", "))
+            let (head, more) = names.split_at(names.len().min(SPILL_SAMPLE));
+            let tail = if more.is_empty() { String::new() } else { format!(", +{}", more.len()) };
+            format!("{} {} ({}{tail})", names.len(), tier_label(*tier), head.join(", "))
         })
         .collect::<Vec<_>>()
         .join(" · ");
@@ -317,6 +353,8 @@ pub async fn run(args: Vec<String>) {
             // read in ONE place now, because `track` grades exactly this many and the two must be the
             // same number by construction rather than by two matching `.max(1)`s.
             sz.spill_cut(),
+            // (#288) which markets the remainder buys. OFF = the (#261) walk-down verbatim.
+            sz.spill_per_tier,
         ) {
             Some((date, rows, unfunded)) => {
                 // (#259) ... and say HOW it replicates, when that is worth saying. This one row can
@@ -335,7 +373,8 @@ pub async fn run(args: Vec<String>) {
                 // trailing sentence included — that is what makes the knob a real revert.
                 let n = rows.len();
                 let each = rest / n as f64;
-                for (i, core, repl) in rows {
+                let markets = funded_markets(&rows);
+                for (i, core, repl, _) in rows {
                     let note = repl.map(|r| format!(" · {r}")).unwrap_or_default();
                     println!(
                         "  {core:<10} {dash:>7} {dash:>7} {each:>6.1}%  broad-market · CORE #{rank}, {date} screen{note}",
@@ -344,10 +383,17 @@ pub async fn run(args: Vec<String>) {
                     );
                 }
                 println!("  {:<10} {:>7} {:>7} {:>6.1}%", "TOTAL+", "", "", total + rest);
-                let home = if n == 1 {
-                    "in one all-world tracker".to_string()
-                } else {
-                    format!("split equally over {n} all-world trackers")
+                // (#288) name the markets when they differ. `(#261)` hardcoded "all-world", which was
+                // true only because `screen` never journalled anything else within reach of the walk.
+                // `None` = every funded row is all-world (or unlabelled), which is what the default
+                // `spill_per_tier: false` produces on today's breadth-major list, so the default arm
+                // prints `(#261)`'s bytes exactly — non-negotiable #1. When they DO differ the old
+                // sentence was not a formatting choice, it was wrong.
+                let home = match (&markets, n) {
+                    (None, 1) => "in one all-world tracker".to_string(),
+                    (None, _) => format!("split equally over {n} all-world trackers"),
+                    (Some(m), 1) => format!("in one {m} tracker"),
+                    (Some(m), _) => format!("split equally over {n} trackers, across {m}"),
                 };
                 println!(
                     "  (the {rest:.1}% the caps could not deploy, {home} — outside the per-name cap by design: it is the market, not a name. Or add candidates / raise a cap. NOT advice)"
@@ -589,6 +635,62 @@ mod tests {
         // why. This is the shape a state file from a FUTURE sleeve ladder would have.
         let future = vec![("???.DE".to_string(), Some(200))];
         assert!(unfunded_note(&future, 3).unwrap().contains("1 unlabelled (???.DE)"));
+    }
+
+    /// (#288) the sentence under the spill rows. `(#261)` hardcoded "all-world trackers", which was
+    /// only ever true because `screen` journalled nothing else within reach of the walk-down.
+    ///
+    /// `None` is the arm that has to hold: it is what keeps `spill_per_tier: false` byte-identical
+    /// to `(#286)`'s shipped capture (non-negotiable #1), so it is pinned on the all-world set, on
+    /// the unlabelled set, and on the empty one.
+    #[test]
+    fn funded_markets_names_the_markets_only_when_they_differ() {
+        use crate::core::hold_breadth_tier as tier;
+        let row = |t: &str, name: Option<&str>| (0usize, t.to_string(), None, name.map(tier));
+        let aw = Some("Vanguard FTSE All-World UCITS ETF");
+        let dev = Some("iShares Core MSCI World UCITS ETF");
+        let em = Some("iShares Core MSCI EM IMI UCITS ETF");
+
+        // Today's shipped arm: every funded row is all-world, so the old sentence is still true and
+        // nothing new prints.
+        assert_eq!(funded_markets(&[row("A", aw), row("B", aw), row("C", aw)]), None);
+        assert_eq!(funded_markets(&[]), None, "no rows, no claim");
+        // Unlabelled rows make NO claim about a market (non-negotiable #5): a state file predating
+        // `core_tier` must not flip the wording, because "different markets" would be a guess.
+        assert_eq!(funded_markets(&[row("A", None), row("B", None)]), None);
+
+        // The tilt arm: name them, broadest-first, deduped.
+        assert_eq!(
+            funded_markets(&[row("A", aw), row("D", dev), row("E", em)]).as_deref(),
+            Some("all-world + developed + emerging")
+        );
+        // A single NON-all-world row still counts as different — this is the arm a `len() > 1` test
+        // would wave through while the line said "all-world" about an emerging tracker.
+        assert_eq!(funded_markets(&[row("E", em)]).as_deref(), Some("emerging"));
+        // Duplicates collapse, and an unlabelled row alongside real ones is dropped rather than
+        // named: it is not evidence of a market.
+        assert_eq!(
+            funded_markets(&[row("A", aw), row("A2", aw), row("X", None), row("D", dev)]).as_deref(),
+            Some("all-world + developed")
+        );
+    }
+
+    /// (#288) the unfunded census now reads the WHOLE vetted list — ~96 rows live, against the 17
+    /// `(#287)` saw past `top_picks`' cut — so it samples each sleeve instead of listing it. The
+    /// count is the fact; the names make it checkable.
+    #[test]
+    fn unfunded_note_samples_a_long_sleeve_instead_of_listing_it() {
+        let em = Some(crate::core::hold_breadth_tier("iShares Core MSCI EM IMI UCITS ETF"));
+        let many: Vec<(String, Option<u8>)> = (0..9).map(|i| (format!("E{i}.L"), em)).collect();
+        let note = unfunded_note(&many, 3).unwrap();
+        assert!(note.contains("9 emerging (E0.L, E1.L, +7)"), "count, a sample, then a residue: {note}");
+        assert!(!note.contains("E8.L"), "a 96-row wall is not a disclosure: {note}");
+        assert!(note.contains("9 more row(s)"), "the total still counts every row: {note}");
+        // At or under the sample size nothing is elided and no residue prints — which is what keeps
+        // `(#287)`'s own assertions ("2 emerging (EIMI.L, PRAM.L)") true byte for byte.
+        let two = many[..SPILL_SAMPLE].to_vec();
+        let note = unfunded_note(&two, 3).unwrap();
+        assert!(note.contains("2 emerging (E0.L, E1.L)") && !note.contains('+'), "{note}");
     }
 
     /// (#260) which list `size` sizes. The DEFAULT is the ranked book — the reversal of (#248)'s

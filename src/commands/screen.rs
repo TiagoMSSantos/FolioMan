@@ -51,6 +51,16 @@ struct ScreenState {
     // every state file already on disk still loads, and `size` degrades to unlabelled tickers.
     #[serde(default)]
     core_tier: std::collections::HashMap<String, u8>,
+    // (#288) every vetted hold this run produced, not the first `top_picks` of them. `core` above is
+    // cut to `top_picks` — a DISPLAY knob, documented as "how many buy candidate rows `check` lists
+    // after the table" — and because `picks::hold_core_list` sorts breadth-major that cut lands
+    // mid-emerging and hides US, ex-US, Europe, Japan, Asia-Pac and all five optional sleeves from
+    // everything downstream. On 2026-09-12 that was 99 printed rows against 20 journalled. Kept
+    // BESIDE `core` rather than replacing it: `core` is the membership diff's baseline and `track`'s
+    // graded CORE lane `(#285)`, and a graded book that silently goes 20 -> 99 mid-series corrupts
+    // its own record. `core_tier` covers this list, so it is keyed by ticker for both.
+    #[serde(default)]
+    core_all: Vec<String>,
 }
 
 /// (round 68) One-line membership diff, "+JOINED -DROPPED" (order-insensitive — market drift
@@ -176,39 +186,88 @@ fn spill_repl_note(repl: Option<&str>) -> Option<&'static str> {
 /// settle on `core[2]` while the caller printed a hardcoded "CORE #1", so a row that had skipped two
 /// already-sized names advertised itself as the broadest one. The index is the position in the
 /// SHORTLIST, not in the returned vec, so the skip stays visible.
+/// `(#288)` takes `per_tier`, which answers the criticism `(#261)`'s own doc makes of itself three
+/// paragraphs up — "Nothing here diversifies MARKET risk; three all-world trackers are one market."
+/// With it set, the walk stops at the FIRST unsized row of each DISTINCT breadth tier instead of the
+/// first `n` rows outright, so the same money buys all-world + developed + emerging rather than three
+/// wrappers on one index. It is `false` by default and the false arm is the `(#261)` walk verbatim
+/// (non-negotiable #1). Fewer distinct tiers than `n` funds what exists rather than padding.
+///
+/// A row whose tier is unknown cannot be grouped, so a state file predating `(#287)`'s `core_tier`
+/// DEGRADES to the walk-down rather than guessing a market for it — non-negotiable #5. That is the
+/// `picked.is_empty()` fallback below, which also covers `per_tier: false`, so there is exactly one
+/// place that decides "the first `n` rows" (non-negotiable #4).
+///
+/// `(#288)` also reads `core_all` in preference to `core`. `screen` journals BOTH: `core` is the
+/// `top_picks`-truncated shortlist the membership diff and `track` have always used, and `core_all`
+/// is every vetted hold the run produced (~99 against 20 on 2026-09-12). Truncating this list was
+/// never a CORE decision — `top_picks` is a display knob — and because the sort is breadth-major the
+/// cut landed mid-emerging and hid every sleeve past it from `size` entirely.
 pub(crate) fn last_core(
     raw: Option<String>,
     sized: &[String],
     n: usize,
-) -> Option<(String, Vec<(usize, String, Option<&'static str>)>, Vec<(String, Option<u8>)>)> {
+    per_tier: bool,
+) -> Option<(String, Vec<(usize, String, Option<&'static str>, Option<u8>)>, Vec<(String, Option<u8>)>)> {
     let state = parse_state(raw).0?;
+    // (#288) the WIDE list when the run journalled one, the 20-row shortlist when it did not. Empty
+    // is the pre-(#288) state file, not "no CORE rows" — `core` is what those runs filled.
+    let list = if state.core_all.is_empty() { &state.core } else { &state.core_all };
     // `n.max(1)`, not `n`: a remainder with a known home always gets at least the one row `(#253)`
     // shipped. Zero would be a THIRD behaviour — back to `(#246)`'s naming-without-sizing — that
     // nothing asks for, and `max_name_pct`'s "0 = off" idiom does not transfer, because off here
     // means parking two thirds of a twenty-year equity budget in cash.
-    let rows: Vec<(usize, String, Option<&'static str>)> = state
-        .core
+    let take = n.max(1);
+    // (#287)/(#288) ONE pass over the open rows, carrying each row's shortlist index and tier.
+    // Both returned lists are built from this, which is what makes them partition it exactly: a row
+    // is funded or reported unfunded, never both and never neither.
+    let open: Vec<(usize, &String, Option<u8>)> = list
         .iter()
         .enumerate()
         .filter(|(_, t)| !sized.iter().any(|s| s == *t))
-        .take(n.max(1))
-        .map(|(i, t)| {
+        .map(|(i, t)| (i, t, state.core_tier.get(t).copied()))
+        .collect();
+    // Which of them the budget funds, as positions within `open`.
+    let mut picked: Vec<usize> = Vec::new();
+    if per_tier {
+        let mut seen: Vec<u8> = Vec::new();
+        for (p, (_, _, tier)) in open.iter().enumerate() {
+            if picked.len() == take {
+                break;
+            }
+            if let Some(t) = tier {
+                if !seen.contains(t) {
+                    seen.push(*t);
+                    picked.push(p);
+                }
+            }
+        }
+    }
+    if picked.is_empty() {
+        picked = (0..open.len().min(take)).collect();
+    }
+    // (#288) the funded rows carry their tier out too. `size` needs it to stop calling every funded
+    // row an "all-world tracker" — with the tilt on that sentence is simply false — and reading it
+    // back out of `rest` is impossible by construction, since these rows are exactly the ones `rest`
+    // excludes. One definition of a row's market, travelling with the row (non-negotiable #4).
+    let rows: Vec<(usize, String, Option<&'static str>, Option<u8>)> = picked
+        .iter()
+        .map(|&p| {
+            let (i, t, tier) = open[p];
             let note = spill_repl_note(state.fund_meta.get(t).and_then(|(_use, repl)| repl.as_deref()));
-            (i, t.clone(), note)
+            (i, t.clone(), note, tier)
         })
         .collect();
     // (#287) and the rows the budget does NOT reach. `(#246)` took the first `n` and dropped the rest
     // on the floor; they are the CORE shortlist's own survivors — every one already cleared the
     // 20-year hold screen this run — and `size` names them so a reader can see that the remainder has
-    // more homes than `spill_names` funds. Same pass, same `sized` skip, so the two lists partition
-    // the unsized shortlist exactly and cannot disagree about a row. `None` tier = the state file
-    // predates `core_tier`, or the run had no quote for that ticker; `size` prints those unlabelled.
-    let rest: Vec<(String, Option<u8>)> = state
-        .core
+    // more homes than `spill_names` funds. `None` tier = the state file predates `core_tier`, or the
+    // run had no quote for that ticker; `size` prints those unlabelled.
+    let rest: Vec<(String, Option<u8>)> = open
         .iter()
-        .filter(|t| !sized.iter().any(|s| s == *t))
-        .skip(n.max(1))
-        .map(|t| (t.clone(), state.core_tier.get(t).copied()))
+        .enumerate()
+        .filter(|(p, _)| !picked.contains(p))
+        .map(|(_, (_, t, tier))| ((*t).clone(), *tier))
         .collect();
     (!rows.is_empty()).then_some((state.date, rows, rest))
 }
@@ -1671,8 +1730,23 @@ pub async fn run(args: Vec<String>) {
     // (round 55) CORE membership diff needs this list; the holdings fetch below needs it too, and that
     // now runs BEFORE render. Pure over `quotes`, so hoisting it changes nothing — the diff still prints
     // in its own footer further down.
-    let core_now: Vec<String> =
-        crate::picks::hold_core_list(&quotes).iter().take(settings.top_picks).map(|q| q.ticker.clone()).collect();
+    // (#288) the WHOLE vetted list, computed once and cut once. `core_now` keeps `top_picks` because
+    // three of its consumers must not widen — the Yahoo holdings fetch below (network cost, and memory
+    // says bulk probing measures the rate limiter), `snapshot.core` (`track`'s graded series), and the
+    // look-through P/E anchor. `core_all` is what `size` reads, and it is the list that was actually
+    // screened: `take(top_picks)` was never a CORE decision, it is a display knob.
+    // (#287) the tier is a pure function of the fund NAME, so it is read off the very quotes the list
+    // was built from rather than journalled as a second fact about the row — one definition, and no
+    // lookup that can miss (non-negotiable #4). Built HERE, with the list, so the `&Quote` borrow of
+    // `quotes` ends on this line instead of living to the write site hundreds of lines below.
+    let (core_all, core_tier): (Vec<String>, std::collections::HashMap<String, u8>) = {
+        let list = crate::picks::hold_core_list(&quotes);
+        (
+            list.iter().map(|q| q.ticker.clone()).collect(),
+            list.iter().map(|q| (q.ticker.clone(), core::hold_breadth_tier(&q.name))).collect(),
+        )
+    };
+    let core_now: Vec<String> = core_all.iter().take(settings.top_picks).cloned().collect();
     // (round 56)/(#37 funds) fund holdings + composition, fetched ONCE here. This used to sit with the
     // overlap footer below, i.e. AFTER the tables printed, because everything it fed was display-only.
     // The look-through P/E it carries is no longer display-only — it drives the ETF PEG trim inside
@@ -2165,14 +2239,11 @@ pub async fn run(args: Vec<String>) {
         fund_meta,
         core: core_now.clone(), // still needed below by the holdings-overlap pick set
         ranked: ranked_now.clone(), // still needed below by the order-glue footer
-        // (#287) the tier is a pure function of the fund NAME, so it is read off the quote `core_now`
-        // was built from rather than journalled as a second fact about the row. A ticker whose quote
-        // is missing is simply absent from the map — non-negotiable #5, and `size` prints it under
-        // the unlabelled tail rather than guessing a market for it.
-        core_tier: core_now
-            .iter()
-            .filter_map(|t| quotes.iter().find(|q| &q.ticker == t).map(|q| (t.clone(), core::hold_breadth_tier(&q.name))))
-            .collect(),
+        // (#288) tiers cover `core_all`, not `core_now`: `size` reads the wide list, so a tier missing
+        // for a row past `top_picks` would print that row "unlabelled" and, with `spill_per_tier` on,
+        // make it unfundable entirely. Both built together far above, at the one place the list exists.
+        core_tier,
+        core_all,
     };
     // (round 69) persistence failure must not be silent: a stuck baseline means every drift alert
     // above re-fires (or a pending one never fires) on the next run with no hint why. Serialize
@@ -4395,6 +4466,7 @@ mod tests {
             core: Vec::new(),
             ranked: Vec::new(),
             core_tier: HashMap::new(),
+            core_all: Vec::new(),
         })
         .unwrap();
         let (st, corrupt) = parse_state(Some(valid));
@@ -4432,6 +4504,9 @@ mod tests {
                 core,
                 ranked: Vec::new(),
                 core_tier: HashMap::new(),
+                // (#288) empty: these fixtures ARE the pre-(#288) state files, so every arm below
+                // also pins that `last_core` still reads `core` when no wide list was journalled.
+                core_all: Vec::new(),
             })
             .unwrap()
         };
@@ -4444,9 +4519,9 @@ mod tests {
         // its exact original shape through this shim — which also pins, on every one of them, that
         // `n = 1` yields exactly one row. The genuinely new arms come after.
         let one = |raw: Option<String>, sized: &[String]| -> Option<(String, String, Option<&'static str>)> {
-            last_core(raw, sized, 1).map(|(d, mut rows, _)| {
+            last_core(raw, sized, 1, false).map(|(d, mut rows, _)| {
                 assert_eq!(rows.len(), 1, "n = 1 must return exactly one row");
-                let (_, t, note) = rows.remove(0);
+                let (_, t, note, _) = rows.remove(0);
                 (d, t, note)
             })
         };
@@ -4512,37 +4587,37 @@ mod tests {
 
         // (#261) n rows, in CORE order, each carrying its position in the SHORTLIST.
         let four = v(&["WEBG.DE", "VWCE.DE", "SPYI.DE", "VALL.L"]);
-        let (date, rows, _) = last_core(Some(state(four.clone())), &[], 3).unwrap();
+        let (date, rows, _) = last_core(Some(state(four.clone())), &[], 3, false).unwrap();
         assert_eq!(date, "2026-09-05");
         assert_eq!(
             rows,
             vec![
-                (0, "WEBG.DE".to_string(), None),
-                (1, "VWCE.DE".to_string(), None),
-                (2, "SPYI.DE".to_string(), None),
+                (0, "WEBG.DE".to_string(), None, None),
+                (1, "VWCE.DE".to_string(), None, None),
+                (2, "SPYI.DE".to_string(), None, None),
             ],
             "three rows, breadth order, indices 0..2"
         );
         // asking for more than the shortlist holds returns what exists — NOT None, and not padding.
-        assert_eq!(last_core(Some(state(four.clone())), &[], 99).unwrap().1.len(), 4);
+        assert_eq!(last_core(Some(state(four.clone())), &[], 99, false).unwrap().1.len(), 4);
         // n = 0 still yields the one row (#253) shipped: `n.max(1)`, not `n`, and not "off".
-        assert_eq!(last_core(Some(state(four.clone())), &[], 0).unwrap().1.len(), 1);
+        assert_eq!(last_core(Some(state(four.clone())), &[], 0, false).unwrap().1.len(), 1);
 
         // THE INDEX IS THE SHORTLIST POSITION, not the position in the returned vec. This is the
         // defect (#261) fixes: with WEBG.DE already sized, the first row printed is CORE #2, and the
         // old hardcoded "#1" called it the broadest tracker on the list when it is not.
         assert_eq!(
-            last_core(Some(state(four.clone())), &v(&["WEBG.DE"]), 2).unwrap().1,
-            vec![(1, "VWCE.DE".to_string(), None), (2, "SPYI.DE".to_string(), None)],
+            last_core(Some(state(four.clone())), &v(&["WEBG.DE"]), 2, false).unwrap().1,
+            vec![(1, "VWCE.DE".to_string(), None, None), (2, "SPYI.DE".to_string(), None, None)],
             "the skip must be visible in the index, or the printed rank lies"
         );
         // ...and the skip is not just an offset: a hole in the MIDDLE keeps the later indices true.
         assert_eq!(
-            last_core(Some(state(four)), &v(&["VWCE.DE"]), 3).unwrap().1,
+            last_core(Some(state(four)), &v(&["VWCE.DE"]), 3, false).unwrap().1,
             vec![
-                (0, "WEBG.DE".to_string(), None),
-                (2, "SPYI.DE".to_string(), None),
-                (3, "VALL.L".to_string(), None),
+                (0, "WEBG.DE".to_string(), None, None),
+                (2, "SPYI.DE".to_string(), None, None),
+                (3, "VALL.L".to_string(), None, None),
             ]
         );
         // (#259)'s note is per-row, not per-call: one swap row among physical ones flags only itself.
@@ -4551,14 +4626,15 @@ mod tests {
             last_core(
                 Some(state_repl(mixed, &[("WEBN.DE", "Opt"), ("ACWIA.SW", "Swap"), ("SC0J.DE", "Full")])),
                 &[],
-                3
+                3,
+                false,
             )
             .unwrap()
             .1,
             vec![
-                (0, "WEBN.DE".to_string(), None),
-                (1, "ACWIA.SW".to_string(), Some(SWAP)),
-                (2, "SC0J.DE".to_string(), None),
+                (0, "WEBN.DE".to_string(), None, None),
+                (1, "ACWIA.SW".to_string(), Some(SWAP), None),
+                (2, "SC0J.DE".to_string(), None, None),
             ]
         );
 
@@ -4566,7 +4642,7 @@ mod tests {
         // the unsized shortlist exactly — same pass, same `sized` skip — so a row can never be both
         // funded and reported unfunded, nor fall out of both.
         let five = v(&["WEBG.DE", "VWCE.DE", "SPYI.DE", "VALL.L", "EIMI.L"]);
-        let (_, rows, rest) = last_core(Some(state(five.clone())), &[], 2).unwrap();
+        let (_, rows, rest) = last_core(Some(state(five.clone())), &[], 2, false).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(
             rest.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(),
@@ -4576,17 +4652,17 @@ mod tests {
         assert_eq!(rows.len() + rest.len(), five.len(), "the two lists partition the shortlist");
         // …and a SIZED row is in neither: it is already funded by the book above, so reporting it
         // as unfunded would be the one way this line could contradict the table it sits under.
-        let (_, rows, rest) = last_core(Some(state(five.clone())), &v(&["VWCE.DE"]), 2).unwrap();
+        let (_, rows, rest) = last_core(Some(state(five.clone())), &v(&["VWCE.DE"]), 2, false).unwrap();
         assert!(!rest.iter().any(|(t, _)| t == "VWCE.DE"), "a sized row is never unfunded: {rest:?}");
-        assert!(!rows.iter().any(|(_, t, _)| t == "VWCE.DE"));
+        assert!(!rows.iter().any(|(_, t, ..)| t == "VWCE.DE"));
         assert_eq!(rows.len() + rest.len(), five.len() - 1, "one row sized, four left to split");
         // `n.max(1)` governs BOTH halves or they overlap: at n = 0 one row is funded, so the
         // remainder must start at the SECOND row, not the first.
-        let (_, rows, rest) = last_core(Some(state(five.clone())), &[], 0).unwrap();
+        let (_, rows, rest) = last_core(Some(state(five.clone())), &[], 0, false).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rest.len(), 4, "n = 0 funds one and strands four, never five: {rest:?}");
         // a shortlist the head exhausts strands nothing, which is what prints no line at all.
-        assert!(last_core(Some(state(five.clone())), &[], 99).unwrap().2.is_empty());
+        assert!(last_core(Some(state(five.clone())), &[], 99, false).unwrap().2.is_empty());
 
         // The tier rides along when the state file carries it, and is None when it does not — the
         // pre-(#287) files already on disk. Both are load-bearing: `size` labels the first and
@@ -4601,11 +4677,120 @@ mod tests {
             core: five.clone(),
             ranked: Vec::new(),
             core_tier: [("EIMI.L".to_string(), em)].into_iter().collect(),
+            core_all: Vec::new(),
         })
         .unwrap();
-        let rest = last_core(Some(with_tier), &[], 4).unwrap().2;
+        let rest = last_core(Some(with_tier), &[], 4, false).unwrap().2;
         assert_eq!(rest, vec![("EIMI.L".to_string(), Some(em))],
             "a journalled tier reaches `size`; the rows without one still ride as None");
+    }
+
+    /// (#288) the spill's SELECTION, the half of it that decides which markets the remainder buys.
+    ///
+    /// `(#261)` walks the breadth-major list from the top, which on every live shortlist means three
+    /// all-world trackers — `last_core`'s own doc calls that out: "three all-world trackers are one
+    /// market". `spill_per_tier` takes the best row of each DISTINCT tier instead.
+    ///
+    /// The arms that carry weight are the ones where the two modes DISAGREE, and the degradations.
+    /// A fixture whose rows all share a tier would pass with the flag ignored, so every arm here is
+    /// built on a list with a repeated tier ahead of a different one.
+    #[test]
+    fn spill_per_tier_funds_one_row_per_market() {
+        // Tiers through `hold_breadth_tier`, never literals: the geographic half is that function's
+        // own business and a renumber must reach this test through it (the `(#287)` lesson).
+        let tier = core::hold_breadth_tier;
+        let aw = tier("Vanguard FTSE All-World UCITS ETF");
+        let dev = tier("iShares Core MSCI World UCITS ETF");
+        let em = tier("iShares Core MSCI EM IMI UCITS ETF");
+        assert!(aw != dev && dev != em, "fixture needs three distinct tiers, got {aw}/{dev}/{em}");
+        let v = |ts: &[&str]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        // TWO all-world rows ahead of the rest: this is the shipped shape, and it is what makes the
+        // two modes disagree. Walk-down at n=3 takes A1,A2,D1; per-tier takes A1,D1,E1.
+        let wide = v(&["A1", "A2", "D1", "D2", "E1"]);
+        let tiers = |pairs: &[(&str, u8)]| -> std::collections::HashMap<String, u8> {
+            pairs.iter().map(|(t, x)| ((*t).to_string(), *x)).collect()
+        };
+        let state = |core_all: Vec<String>, core_tier: std::collections::HashMap<String, u8>| {
+            serde_json::to_string(&ScreenState {
+                date: "2026-09-12".into(),
+                passing: Vec::new(),
+                facts: HashMap::new(),
+                fund_meta: HashMap::new(),
+                core: Vec::new(),
+                ranked: Vec::new(),
+                core_tier,
+                core_all,
+            })
+            .unwrap()
+        };
+        let full = tiers(&[("A1", aw), ("A2", aw), ("D1", dev), ("D2", dev), ("E1", em)]);
+        let names = |raw: String, n: usize, per_tier: bool| -> Vec<String> {
+            last_core(Some(raw), &[], n, per_tier).unwrap().1.into_iter().map(|(_, t, ..)| t).collect()
+        };
+
+        // THE REVERT, pinned: off is the (#261) walk-down, unchanged by any of this.
+        assert_eq!(names(state(wide.clone(), full.clone()), 3, false), v(&["A1", "A2", "D1"]));
+        // ...and on, the same money buys three markets instead of two wrappers on one.
+        assert_eq!(names(state(wide.clone(), full.clone()), 3, true), v(&["A1", "D1", "E1"]));
+        // One row per tier, never two — pinned at a budget WIDER than the tier count, which is the
+        // arm a "dedup then top up from the walk-down" implementation would fail.
+        let picked = last_core(Some(state(wide.clone(), full.clone())), &[], 99, true).unwrap().1;
+        let mut seen: Vec<Option<u8>> = picked.iter().map(|(.., t)| *t).collect();
+        let funded = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), funded, "a tier funded twice: {picked:?}");
+        assert_eq!(funded, 3, "three distinct tiers exist, so three rows are funded — not five");
+        // Tier ORDER, not arrival order: broadest market first, like the list itself.
+        assert_eq!(
+            picked.iter().map(|(.., t)| t.unwrap()).collect::<Vec<_>>(),
+            vec![aw, dev, em],
+            "the funded markets must read broadest-first"
+        );
+        // A budget SMALLER than the tier count stops at the budget, taking the broadest markets.
+        assert_eq!(names(state(wide.clone(), full.clone()), 2, true), v(&["A1", "D1"]));
+
+        // DEGRADATION (non-negotiable #5). A pre-(#287) state file carries no tiers at all, so there
+        // is no market to group by and the tilt must fall back to the walk-down rather than fund one
+        // arbitrary row and strand the rest.
+        let untiered = state(wide.clone(), HashMap::new());
+        assert_eq!(names(untiered.clone(), 3, true), names(untiered, 3, false), "no tiers -> walk-down");
+        // A PARTIALLY tiered file funds what it can identify and does not invent a market for the
+        // rest: A1 is unknown here, so the tilt starts at the first row it can place.
+        let partial = tiers(&[("A2", aw), ("D1", dev)]);
+        assert_eq!(names(state(wide.clone(), partial), 3, true), v(&["A2", "D1"]));
+
+        // The `rows`/`rest` partition `(#287)` pinned must still hold in the tilt arm — it is the
+        // reason both lists come off one pass, and the tilt is exactly where a second walk would
+        // have let a row be funded AND reported unfunded.
+        let (_, rows, rest) = last_core(Some(state(wide.clone(), full.clone())), &[], 3, true).unwrap();
+        assert_eq!(rows.len() + rest.len(), wide.len(), "every row is funded or stranded, never both");
+        assert_eq!(
+            rest.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(),
+            vec!["A2", "D2"],
+            "the rows the tilt skipped OVER are stranded, not dropped"
+        );
+        // ...including a sized row, which belongs to neither list and must not re-enter via the tilt.
+        let (_, rows, rest) = last_core(Some(state(wide.clone(), full.clone())), &v(&["A1"]), 3, true).unwrap();
+        assert_eq!(rows.iter().map(|(_, t, ..)| t.as_str()).collect::<Vec<_>>(), vec!["A2", "D1", "E1"]);
+        assert!(!rest.iter().any(|(t, _)| t == "A1"));
+        assert_eq!(rows.len() + rest.len(), wide.len() - 1);
+
+        // (#288) `core_all` is READ IN PREFERENCE to `core`, and `core` is still the fallback. Both
+        // directions matter: the first is the whole point of the round (the 20-row cut hid ten
+        // sleeves from `size`), the second is every state file already on disk.
+        let both = serde_json::to_string(&ScreenState {
+            date: "2026-09-12".into(),
+            passing: Vec::new(),
+            facts: HashMap::new(),
+            fund_meta: HashMap::new(),
+            core: v(&["NARROW"]),
+            ranked: Vec::new(),
+            core_tier: full,
+            core_all: wide.clone(),
+        })
+        .unwrap();
+        assert_eq!(names(both, 9, false), wide, "the wide list wins when the run journalled one");
     }
 
     /// (#248) the ranked handoff to `size --picks`: the whole list, in render's order, plus the run
@@ -4621,6 +4806,7 @@ mod tests {
                 fund_meta: HashMap::new(),
                 core_tier: HashMap::new(),
                 core: Vec::new(),
+                core_all: Vec::new(),
                 ranked,
             })
             .unwrap()

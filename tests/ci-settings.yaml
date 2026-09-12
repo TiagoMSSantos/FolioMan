@@ -1289,6 +1289,12 @@ sizing:
                       #   rows 1..n are the same all-world market from a DIFFERENT issuer with different
                       #   replication — this buys issuer/counterparty spread and nothing else, which is
                       #   precisely the risk (#253) shipped this row carrying and recorded as unpriced.
+  spill_per_tier: false # (#288) WHICH markets those trackers cover. false = the (#261) walk-down above,
+                      #   i.e. the first `spill_names` unsized CORE rows, which on every live shortlist
+                      #   are all-world (the sort is breadth-major) — three wrappers on one index.
+                      #   true funds the BEST ROW OF EACH DISTINCT breadth tier instead, so the same
+                      #   money buys all-world + developed + emerging. Ships false: non-negotiable #1,
+                      #   and the full receipt is under the `(#288)` block further down.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -5017,6 +5023,100 @@ buy_heuristic:
   #   `vec!` literals in (#286)'s own new test are now arrays, and the LOCAL TOOLCHAIN WAS UPDATED to
   #   1.98.1 so the version gap that hid this cannot hide the next one. No production code changed.
   #   REVERT RULE: none — this receipt records a disclosure line and a closure table, not a value.
+  # (#288) THE VETTED HOLD LIST STOPPED BEING TRUNCATED BY A DISPLAY KNOB, and the remainder may now
+  #   buy a different MARKET instead of a third wrapper on the same index. Two changes, one cause.
+  #
+  #   THE DEFECT. `screen.rs` journalled the CORE shortlist as
+  #   `hold_core_list(&quotes).iter().take(settings.top_picks)`. `top_picks: 20` is documented four
+  #   screens up as "how many 'buy candidate' rows `check` lists after the table" — a DISPLAY knob.
+  #   Nothing downstream of the journal could see past it. Measured funnel, wide `screen` run of
+  #   2026-09-13 (binary built from this tree, probe config at $J/r71a/ci-settings.yaml):
+  #
+  #     EU-buyable ETFs scanned .................. 4532
+  #     clear every CORE admission leg ............  151
+  #     survive the per-sleeve caps and PRINT .....   99
+  #     reach .screen_state.json ..................   20   <- the cut
+  #     funded by `size` ..........................    3
+  #
+  #   Because `hold_core_list` sorts breadth-major, a cut at 20 does not sample the list — it
+  #   DECAPITATES it. Measured tier census of the same run: the 99 printed rows are
+  #   7 all-world · 8 developed · 6 emerging · 9 US · 3 ex-US · 5 Europe · 6 Japan · 4 Asia-Pac ·
+  #   4 size · 5 factor · 23 sector · 17 country · 2 NASDAQ — all thirteen sleeves. The 20 that
+  #   reached the record were 7 all-world · 8 developed · 5 emerging. TEN SLEEVES, 79 vetted rows,
+  #   were invisible to every consumer of the state file. This is exactly honest edge (c) of the
+  #   `(#287)` receipt above ("it reports the 20-row SHORTLIST, not the wider printed CORE table"),
+  #   and the cause turned out to be a knob about table width.
+  #
+  #   FIX 1 — `core_all` beside `core`. `screen` now journals the whole vetted list and tiers every
+  #   row of it. `core` is UNCHANGED at `top_picks` rows and still feeds the CORE membership diff,
+  #   `snapshot.core` (`track`'s graded lane from `(#285)`), the Yahoo holdings fetch and the
+  #   look-through P/E anchor. Widening those was refused, each for its own reason: a drift diff that
+  #   jumped 20 -> 99 would fire on ten sleeves at once on its first run; a graded book that changes
+  #   unit mid-series corrupts its own record; and the holdings fetch is network, where memory says
+  #   bulk probing measures the rate limiter rather than the data. `last_core` reads `core_all` when
+  #   present and falls back to `core` when it is not, so every state file already on disk still works.
+  #
+  #   FIX 2 — `sizing.spill_per_tier`, DEFAULT FALSE. `(#261)` walks the breadth-major list from the
+  #   top, which is three all-world trackers; `last_core`'s own doc has said since `(#261)` that
+  #   "three all-world trackers are one market". With the knob on, the walk takes the first unsized
+  #   row of each DISTINCT tier instead. Measured on the 2026-09-13 state, 30.0% remainder:
+  #     OFF: WEBN.DE #1, SPYY.DE #2, VWRA.L #3   — all-world, all-world, all-world
+  #     ON : WEBN.DE #1, MXWO.L #8, HEMA.MI #16  — all-world, developed, emerging
+  #   TOTAL+ is 100.0% in both arms. The knob moves no gate, admits no row and changes no weight: it
+  #   chooses WHICH of the already-vetted rows the same 30.0% lands on.
+  #
+  #   WHY THIS IS JUDGEMENT AND WILL STAY JUDGEMENT. `backtest.rs` contains ZERO occurrences of
+  #   `spill`, `hold_core`, `hold_suitable`, `hold_breadth_tier`, `sized_book`, `Sizing`, `core_tier`
+  #   or `HOLD_TIERS` across its 8000 lines. The CORE admission legs need per-cutoff TER, AUM,
+  #   domicile and replication, which no free feed carries historically; using today's values would be
+  #   lookahead — the exact defect `backtest_drop_lookahead_sector` exists to prevent. All ~15 sibling
+  #   CORE knobs were judgement-set on live censuses for the same reason. `(#287)` deferred this tilt
+  #   as "unmeasured", which implied a measured round would follow. It will not. The choice is
+  #   judgement-set or never, so this round says so instead of promising a harness.
+  #
+  #   AND THE GROWTH LANE IS STILL CLOSED, re-checked a twelfth way this round rather than re-opened.
+  #   `growth_min_cagr`'s whole 15..22 ladder is swept, 18 was re-tested under Ship Rule v2 (`(#52)`:
+  #   wash, no-ship) and the leg-2 pin was graded and held (`(#73)`). That knob's own receipt states
+  #   the conclusion: "The ranked ETF table is a SECTOR-TILT lane by construction; broad buy-and-hold
+  #   breadth lives in the hold CORE (picks.rs hold_core_list), which bypasses growth_score entirely."
+  #   `class_census` (backtest.rs) says why a growth floor can never admit a broad fund: at 19%/yr the
+  #   bar sits in the RIGHT TAIL of the stock return distribution while a diversified fund IS that
+  #   distribution's mean. ETF pass rates 0/14, 4/2618, 17/8628 at 20/12/8y.
+  #
+  #   THE REVERT IS PROVEN, NOT ASSERTED. `size --picks` re-run on the SAME binary, knob off, against
+  #   the pre-(#288) state file: byte-identical to the `(#287)` capture through TOTAL+ and through the
+  #   remainder sentence. The only line that moved is the unfunded census (see below), plus live price
+  #   drift on two ranked rows (IITU.L 6.5 -> 6.4, XLKS.L 5.9 -> 5.8) which is the quote `size` fetches
+  #   at run time, not this diff. Knob ON against that same pre-(#288) state is byte-identical to knob
+  #   OFF (md5 fc09e20ddfd58b62a07d2956c162a0b4 both): a file with no tiers offers nothing to group by,
+  #   so the tilt DEGRADES to the walk-down rather than guessing a market — non-negotiable #5.
+  #
+  #   THE ONE LINE THAT CHANGED SHAPE. `(#287)`'s unfunded census listed every stranded ticker. It saw
+  #   17 rows; it now sees 95, and a 95-ticker sentence is a wall rather than a disclosure. It prints
+  #   the count per sleeve plus the first two names and a residue: "9 US (SPXS.L, I500.AS, +7)". The
+  #   count is the fact; the two names make it checkable. Live line, 2026-09-13, knob off:
+  #     4 all-world · 8 developed · 6 emerging · 9 US · 3 ex-US · 5 Europe · 6 Japan · 4 Asia-Pac ·
+  #     4 size · 5 factor · 22 sector · 17 country · 2 NASDAQ  = 95 = 99 - 3 funded - 1 already sized.
+  #
+  #   PROBE HYGIENE. Five root state files backed up before the run and restored after, md5-verified
+  #   identical (.screen_state.json 222dd28f04c3858cf8581214463816d4, .screen_web.json
+  #   3164ac90a765851d80930a0f96c4b99b, .screen_snapshots.jsonl ab913d0a26a8eab08c2b627a43052e10,
+  #   .screen_alerts.log da4a891ea0d8187e2c81d474c0b44d31, .folioman_turnover_screen.txt
+  #   152895433424d585a862779fe8fce484) — the same five as `(#287)`, unchanged by four probe arms.
+  #
+  #   HONEST EDGES. (a) WITH THE KNOB OFF NOT ONE EURO MOVES. The record widens and the disclosure
+  #   gets truthful; the allocation is identical. Turning it on is the user's call and lifts emerging
+  #   from ~10% of the stranded budget to ~33%. (b) Equal thirds across three breadth tiers is a
+  #   defensible prior, not a fitted allocation, and nothing here claims otherwise. (c) 95 unfunded
+  #   rows is a CENSUS, not a recommendation — the per-sleeve caps already rationed them and
+  #   `(#220)`/`(#234)` found a further slot in a sleeve buys a WRAPPER, not an exposure. (d) The tier
+  #   comes from the fund NAME via `hold_breadth_tier`'s `geo_tier` match, so a broad fund whose name
+  #   carries no geography lands in the pinned `FACTOR_TIER` fallback. (e) `track` still grades the
+  #   20-row book, so the widened record is not retro-graded and the CORE series keeps its old unit.
+  #   (f) The tilt funds one row per tier in TIER order, so at `spill_names: 3` it can never reach the
+  #   US or Japan sleeves; raising `spill_names` reaches them, and that was not graded either.
+  #   REVERT RULE: `spill_per_tier: false` is the shipped default and the proven revert; the `core_all`
+  #   widening has no knob because a truncated record was never a setting anyone chose.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among
