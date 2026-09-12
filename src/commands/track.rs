@@ -183,9 +183,15 @@ fn grade(
 
 /// The column header both tables print. (#285) One spelling, so the CORE block underneath cannot
 /// drift out of alignment with the momentum block the first time a column width moves.
-fn table_header() -> String {
-    format!("  {:<12} {:>6} {:>4} {:>10} {:>10} {:>9}  BEAT?", "DATE", "AGE", "N", "BOOK", "S&P 500", "EXCESS")
-}
+///
+/// A CONST AND NOT A FUNCTION, and the mutation gate is why. As `fn table_header() -> String` it
+/// built this same fixed string through a `format!` of six literals, which bought nothing at runtime
+/// and cost a mutant: `replace table_header -> String with String::new()` SURVIVED the first push of
+/// this round, because the test asserted `out.contains(&table_header())` and `contains("")` is true
+/// of everything. The test was vacuous, but so was the function — the honest fix is to delete it
+/// rather than to test around it, since a const has no return to replace. The literal is also the
+/// alignment contract itself, which is what `graded_row`'s widths are chosen against.
+const TABLE_HEADER: &str = "  DATE            AGE    N       BOOK    S&P 500    EXCESS  BEAT?";
 
 /// One printed table row. (#285) Pulled out of `run`'s print loop so the CORE block renders through
 /// the SAME formatter as the momentum block: a second `println!` carrying the same widths would be a
@@ -252,14 +258,13 @@ fn core_section(
              switched on, and cannot be backdated."
         );
     }
-    let header = table_header();
     let body = rows.join("\n");
     format!(
         "\n  CORE hold shortlist — the buy-and-hold half of the report, graded the same way. Each row is\n  \
          the first {cut} name(s) of that run's CORE list: what `size` spills the remainder its caps\n  \
          could not deploy into, which is routinely two thirds of gross. Equal-weight, EUR seat,\n  \
          price-only, same windows as above. NOT advice.\n  \
-         Journalled on {journalled} of {total} run(s).\n\n{header}\n{body}"
+         Journalled on {journalled} of {total} run(s).\n\n{TABLE_HEADER}\n{body}"
     )
 }
 
@@ -413,7 +418,7 @@ pub async fn run(args: Vec<String>) {
              happened since so both ends of every window mean the same share.\n"
         );
     }
-    println!("{}", table_header());
+    println!("{TABLE_HEADER}");
     let today = chrono::Local::now().date_naive();
     for snap in &snaps {
         if let Some(g) = grade(snap, &snap.rows, BOOK, today, &px_now, spx_now) {
@@ -675,7 +680,11 @@ mod tests {
             with_core(snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), &[("DOWN", Some(100.0))]),
         ];
         let out = core_section(&snaps, 3, today, &px, Some(105.0));
-        assert!(out.contains(&table_header()), "must print the ONE header, not a copy of it: {out}");
+        // Spelled out, not `contains(&TABLE_HEADER)` against itself: the first push of this round
+        // asserted the output against the header-builder's own result, and `contains("")` is true of
+        // everything, so the gate rightly called that assertion vacuous. This one pins the layout.
+        assert_eq!(TABLE_HEADER, "  DATE            AGE    N       BOOK    S&P 500    EXCESS  BEAT?");
+        assert!(out.contains(TABLE_HEADER), "the CORE block must print THE header: {out}");
         assert!(out.contains("Journalled on 1 of 2 run(s)."), "{out}");
         assert_eq!(out.matches("2026-06-16").count(), 1, "only the line carrying a CORE list grades: {out}");
         assert!(out.contains("-15.0pp"), "the CORE book lost by 15pp: {out}");

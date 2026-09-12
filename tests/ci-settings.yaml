@@ -4717,10 +4717,19 @@ buy_heuristic:
   #     * `grade` takes THE LIST AND ITS CUT as parameters instead of hardcoding `rows`/`BOOK`. One
   #       piece of arithmetic serves both books (non-negotiable #4) — same window, same S&P leg, same
   #       equal-weight price-only convention — which is also what makes the two tables comparable.
-  #     * `graded_row` and `table_header` are pulled out of `run`'s print loop for the same reason:
+  #     * `graded_row` and `TABLE_HEADER` come out of `run`'s print loop for the same reason:
   #       `track::run` is `#[mutants::skip]`, so a second `println!` with the same widths would be an
   #       ungradeable second definition of the table. The BEAT? decision now sits where the gate can
   #       reach it, and `graded_row_calls_only_a_strict_win_a_win` pins that a TIE is not a win.
+  #
+  #       THE HEADER IS A CONST BECAUSE THE MUTATION GATE SAID SO. It shipped as
+  #       `fn table_header() -> String` building a fixed string through a `format!` of six literals,
+  #       and the first push of this round SURVIVED `replace table_header -> String with
+  #       String::new()`: the test asserted `out.contains(&table_header())`, and `contains("")` is
+  #       true of everything. A self-referential assertion grades nothing. The function was as
+  #       vacuous as the test — it computed a constant at runtime — so it was DELETED rather than
+  #       tested around, and a const has no return to replace. The literal is now the alignment
+  #       contract itself, pinned spelled-out, which is what `graded_row`'s widths are chosen against.
   #     * `core_section` renders the block. EMPTY PRINTS A SENTENCE, NEVER A TABLE AND NEVER A ZERO —
   #       an empty table with 0.0% in it reads as a measured result, and "nothing recorded" is the
   #       opposite of a measurement. It also reports how many lines carry a CORE list, because "the
