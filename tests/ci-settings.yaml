@@ -7488,7 +7488,7 @@ buy_heuristic:
                                  #   ON at cap 16 the sleeve was already saturated, so the four newly admitted
                                  #   families sorted above seated incumbents and truncated the tail -- that is arm1's
                                  #   four removals. The pair ships together and REVERTS TOGETHER, back to 16.
-  hold_per_tier_country: 16       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
+  hold_per_tier_country: 17       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
                                  #   BACK on one cache) — 7 -> 9. THE FAMILY COUNT, NOT AN ARGMAX, read
                                  #   off a RE-RUN of (#227)'s own census: two of the twenty spellings it
                                  #   refused now reach a fund, so the sleeve has nine index families and
@@ -8253,6 +8253,90 @@ buy_heuristic:
                                  #   but NOT `treasury`, `gilt`, `aggregate`, `tips`, `nareit` or `epra`. No non-equity fund
                                  #   is SEATED -- all 98 rows were scanned -- so this is a latent trap, not a live bug, and
                                  #   the remedy stays the per-token pond audit rather than a guard for a defect not firing.
+                                 #
+                                 #   (#283 / MEASURED 2026-09-12, live `screen`, warm cache, one pre-built binary) 16 -> 17.
+                                 #   Same arithmetic a third time: max(16, 17), where the seventeenth family is `switzerland`,
+                                 #   added to `core::COUNTRY` this round. Not an argmax -- the family is created deterministically
+                                 #   by the token shipped beside it, which is the argument (#281) and (#282) both used.
+                                 #
+                                 #   THIS REVERSES THE REFUSAL (#282) SHIPPED ONE ROUND AGO, AND SAYS SO. (#282) wrote "pinned in
+                                 #   the test block so a later round does not spend a fourth measurement on it". The fourth
+                                 #   measurement was spent anyway and it found a leg neither (#234) nor (#282) checked. (#234)'s
+                                 #   load-bearing sentence was "`sleeve_family_of` keys a family off the matched token, so shipping
+                                 #   both would print two Swiss rows and defeat the very mechanism (#197)/(#220) built the family
+                                 #   count on". (#272) REPLACED THAT KEY WITH THE BENCHMARK INDEX, and did it precisely to stop one
+                                 #   token standing for two universes. Two families printing two rows is the DESIGN now, not the
+                                 #   defect: (#243) seats three Japanese universes on that argument and (#282) itself seats FTSE and
+                                 #   MSCI North America on it. This was the last place the pre-(#272) mechanism was still quoted.
+                                 #
+                                 #   THE TWO SURVIVING LEGS ARE NOT REFUSALS. SPI is the whole Swiss market at 0.09% against a
+                                 #   capped 20/35 subset at 0.20%; both true, and both are arguments about which fund RANKS FIRST
+                                 #   rather than whether the second may appear. The sort settles rank on its own, and the measured
+                                 #   table proves it: SPIA.SW prints ABOVE SW2CHB.SW and keeps the slot it won on price. Nothing is
+                                 #   traded away, which is the test (#213) sets and the test (#281) failed `ac world` on.
+                                 #
+                                 #   THE BARE WORD IS SAFE AND THAT IS MEASURED, the audit (#281) made mandatory. Fifteen pond names
+                                 #   carry "switzerland" and EVERY ONE IS EQUITY, so the bond-fund trap that refused a bare
+                                 #   `eurozone` does not exist for this word. None of the fifteen carries a GEO token either, so it
+                                 #   cannot hijack a seated row out of another sleeve. THE LIVE FUNNEL ACCOUNTS FOR ALL FIFTEEN: six
+                                 #   die on NARROW (one `esg`, two `socially responsible`, two `hgbp`, one `husd`), so not-broad-index
+                                 #   falls by exactly nine -- TER 178 -> 180 (the two Xtrackers funds at 0.30%), not Acc 188 -> 193
+                                 #   (five Dist/Ukdis), AUM 124 -> 125 (Amundi's accumulating MSCI Switzerland, below the floor), and
+                                 #   QUALIFIED 150 -> 151 (SW2CHB.SW). 2 + 5 + 1 + 1 = 9, no residue.
+                                 #
+                                 #   THE NINE SPELLINGS (#234) LISTED AS REACHING NOTHING WERE RE-MEASURED AND STILL REACH NOTHING:
+                                 #   smi 9 named, ftse mib 8, ibex 3, omx 4, nikkei 11, hang seng 1, tsx/sensex/bovespa 0 -- ZERO
+                                 #   clears each. (#215) governs and they stay unspelled. Only `switzerland` moved.
+                                 #
+                                 #   MEASURED RESULT FOR THE ROUND: 98 rows -> 99, ONE ADDED AND NOTHING EVICTED.
+                                 #     + SW2CHB.SW  UBS MSCI Switzerland 20/35 UCITS ETF CHF acc  EUR 2.6B  0.20%  12.9y
+                                 #   Census: single-country 24 (16f, 12b/5?) -> 25 (17f, 12b/6?). ELEVEN OTHER SLEEVES IDENTICAL TO
+                                 #   THE DIGIT, which is what validates reusing the (#282) run as the control -- (#279) put the
+                                 #   warm-to-warm noise floor at +/-2 rows, so an unchanged eleven-sleeve census is the proof the
+                                 #   pond held.
+                                 #
+                                 #   THE `/6?` IS THE HONEST CAVEAT: SW2CHB.SW has NO BF benchmark name, so its family key is the
+                                 #   GEO/COUNTRY TOKEN FALLBACK and not (#272)'s benchmark. The two Swiss funds separate under BOTH
+                                 #   keys -- `switzerland` against `" spi "` on the fallback, two different indices on the benchmark
+                                 #   -- so the cap raise is licensed either way, but the row printing today rests on the fallback.
+                                 #   Missing data passes (non-negotiable #5) and the test block pins the fallback keys directly.
+                                 #
+                                 #   THE LANE IS SATURATED, AND THIS IS THE MEASUREMENT THAT SAYS SO. Round 67 should be handed this
+                                 #   table rather than re-deriving it. All five doors were priced offline against a join built this
+                                 #   round -- symbol -> longName from the long-history cache (5139 pairs) against the fund-facts
+                                 #   cache (ticker -> TER, AUM, 2196 funds), giving 2009 funds with name, TER and AUM:
+                                 #     1 VOCABULARY  SHUT. Of the 40 funds left in the GEO blind spot, ten are bond funds, four are
+                                 #                   operating companies, one is a leveraged inverse, seven are active, thirteen are
+                                 #                   ESG/dividend/defence and four are EM-Asia trackers `em asia` refuses on purpose.
+                                 #                   ZERO broad passive equity candidates remain.
+                                 #     2 FREE SLOTS  SHUT. ex-US sits at 3 of cap 6 and Asia-Pacific at 5 of cap 6 -- four empty
+                                 #                   slots -- and by door 1 the pond holds nothing that can fill them.
+                                 #     3 CAPS        SHUT. Per-sleeve trims sum to ~51 against a 52-fund gap and every trimming
+                                 #                   sleeve has family count <= cap, so every trimmed fund is a WRAPPER. (#213).
+                                 #     4 AUM FLOOR   SHUT. 195 funds sit in EUR 90M-500M at TER <= 0.25; only 22 are NARROW-clean and
+                                 #                   carry a broad token, and ALL 22 are wrappers of seated indices or distributing
+                                 #                   share classes. Lowering `hold_min_aum_eur_new_family` to the sector floor yields
+                                 #                   ZERO new families, and `retain_new_family_only` would take back nearly all of
+                                 #                   them. The knob is measured-refused, not untried.
+                                 #     5 QUALITY     CLEAN. All 98 seated rows were scanned for a narrowed product wearing a broad
+                                 #                   name. Every flag is an issuer brand (`Prime`, `Core`), a replication method
+                                 #                   (`Swap`) or a real index name (`600`, `100`, `50`). Nothing to evict.
+                                 #
+                                 #   THE TER CAP WAS PRICED TOO AND IS NOT A DOOR. Seventeen funds sit at AUM >= EUR 500M with TER
+                                 #   in 0.25-0.45 and clean of NARROW, but only one carries a token at all (HSBC MSCI China, a
+                                 #   wrapper). Spain (IBEX 35, EUR 873M, 0.30%) and Italy (FTSE MIB, EUR 836M Acc, 0.35%) are
+                                 #   genuinely absent markets, but each needs BOTH a new COUNTRY token AND a sleeve-scoped TER
+                                 #   relaxation -- two changes for two concentrated ~35-name indices at triple the table's median
+                                 #   cost. Declined here, and recorded so round 67 does not re-derive it.
+                                 #
+                                 #   TWO GAPS FOUND AND DECLINED RATHER THAN FIXED. `low volatility` is unspelled in NARROW (only
+                                 #   `min vol`/`minimum vol` are) and is INERT: three pond funds at EUR 122M, 6M and 0M against a
+                                 #   EUR 500M floor, and the largest is an S&P 500 tilt landing in a sleeve already trimming 21.
+                                 #   (#216) fixed inert names that sat "one cost tick away"; four times the floor is not that, and
+                                 #   (#215) governs. Separately NARROW still carries no `gold`, `silver`, `gilt`, `treasury` or
+                                 #   `gvt`/`bnd` spelling, so non-equity funds reach the blind spot -- five gold/silver and two gilt
+                                 #   funds over EUR 500M did this round. LATENT, NOT LIVE: no non-equity fund is seated, re-verified
+                                 #   across all 99 rows, and the remedy stays the per-token pond audit (#281) put in force.
   hold_per_tier_nasdaq: 2        # (#239 / MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs) — the
                                  #   THIRTEENTH sleeve, and the FIFTH optional one. 0 -> 1. Rows the CORE
                                  #   table keeps for Nasdaq-100 trackers, in a tier of their own at the very

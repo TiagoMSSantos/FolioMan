@@ -2229,7 +2229,7 @@ fn sector_sleeve_tier(n: &str, first: &str, on: bool) -> Option<u8> {
 /// NEVER add a bare `uk` token. "FTSE Developed Europe ex UK" contains it, and 11 funds in the live
 /// pond carry an `ex uk`/`ex-uk` spelling — the token would hijack them out of the Europe sleeve
 /// into this one. `ftse 100` is the safe spelling and is what the census measured.
-const COUNTRY: [&str; 12] = [
+const COUNTRY: [&str; 13] = [
     "dax",
     "euro stoxx 50",
     "msci emu",
@@ -2284,13 +2284,44 @@ const COUNTRY: [&str; 12] = [
     // sensex, bovespa, spi etf, core spi) — a token that admits nothing is speculation with a
     // maintenance cost.
     "cac 40",
-    // SWITZERLAND IS SPELLED ONCE, DELIBERATELY. `switzerland` ALSO reaches a fund now (SW2CHB.SW,
-    // "UBS MSCI Switzerland 20/35", EUR 0.0B AUM, 0.20%), so both spellings clear — but they name
-    // the SAME MARKET, and `sleeve_family_of` keys a family off the matched token, so shipping both
-    // would print two Swiss rows and defeat the very mechanism (#197)/(#220) built the family count
-    // on. SPI wins the pick on the fund it reaches, not on the spelling: the whole Swiss market
-    // rather than a capped 20/35 subset, 0.09% against 0.20%, EUR 2.4B against an AUM this pond does
-    // not serve. `switzerland` is MEASURED AND DECLINED, not unmeasured.
+    // (#283) SWITZERLAND IS NOW SPELLED TWICE, AND (#272) IS WHY. (#234) declined `switzerland` on
+    // three legs and (#282) re-checked and kept the refusal. THE LOAD-BEARING LEG HAS SINCE ROTTED:
+    // it read "`sleeve_family_of` keys a family off the matched token, so shipping both would print
+    // two Swiss rows and defeat the very mechanism (#197)/(#220) built the family count on". (#272)
+    // REPLACED THAT KEY WITH THE BENCHMARK INDEX, and did it precisely to stop one token standing
+    // for two universes. Under today's key SPI and MSCI Switzerland 20/35 are two families, and two
+    // families printing two rows is the DESIGN and not the defect — (#243) seats three Japanese
+    // universes on that argument, (#282) seats FTSE and MSCI North America on it and pins them apart
+    // with an `assert_ne!`. This was the LAST place the pre-(#272) mechanism was still quoted.
+    //
+    // THE OTHER TWO LEGS SURVIVE AND ARE NOT REFUSALS. SPI is the whole Swiss market at 0.09%
+    // against a capped 20/35 subset at 0.20%; both true, and both are arguments about which fund
+    // RANKS FIRST rather than about whether the second may appear at all. The sort settles rank on
+    // its own — SPIA.SW is cheaper, keeps its slot, and the new family takes an ADDITIONAL one.
+    // Nothing is traded away, which is the test (#213) sets and the test (#281) failed `ac world`
+    // on. The AUM leg rotted earlier and (#282) recorded it: EUR 2.6B where (#234) read 0.0B.
+    //
+    // THE BARE WORD IS SAFE, MEASURED rather than assumed — the audit (#281) made mandatory.
+    // Fifteen pond names carry "switzerland" and EVERY ONE IS EQUITY, so the bond-fund trap that
+    // refused a bare `eurozone` does not exist for this word. None of the fifteen carries a GEO
+    // token either, so it cannot hijack a seated row out of another sleeve. Exactly one clears every
+    // leg: SW2CHB.SW, "UBS MSCI Switzerland 20/35 UCITS ETF CHF acc", EUR 2.64B at 0.20%, and at
+    // 12.9 years it is the LONGER-RUNNING share class of the two Swiss rows (SPIA.SW reads 1.5).
+    //
+    // THE OTHER FOURTEEN DIE ON LEGS THAT ALREADY EXIST, and the live funnel accounts for every one
+    // of them: SIX on NARROW (one `esg`, two `socially responsible`, two `hgbp`, one `husd`), so
+    // "not broad-index" falls by exactly NINE — of which TWO are the Xtrackers funds at 0.30%
+    // against the 0.25% cap (TER 178 -> 180), FIVE are Dist or Ukdis (not Acc 188 -> 193), ONE is
+    // Amundi's accumulating MSCI Switzerland below the AUM floor (124 -> 125), and ONE is SW2CHB.SW
+    // (QUALIFIED 150 -> 151). 2 + 5 + 1 + 1 = 9, with no unexplained residue.
+    //
+    // RE-MEASURED BESIDE IT, the nine spellings (#234) listed as reaching nothing STILL REACH
+    // NOTHING: smi 9 named, ftse mib 8, ibex 3, omx 4, nikkei 11, hang seng 1, tsx/sensex/bovespa 0
+    // — ZERO clears each. (#215) governs and they stay unspelled. Only `switzerland` moved.
+    //
+    // DISJOINT FROM `" spi "`: no pond name contains both, so first-match order between the two is
+    // free and this sits here for readability rather than for precedence.
+    "switzerland",
     //
     // DELIMITED ON BOTH SIDES for the reason "msci em ", "msci pac " and "sri " are, and the reason
     // this sleeve's own receipt gives for NEVER ADDING A BARE `uk` TOKEN: `hold_name_tokens` ships
@@ -6883,15 +6914,36 @@ mod tests {
     // dropped from NARROW, this is what reddens rather than a 3x ETP reaching a country sleeve.
     assert!(narrow_hit("leverage shares 3x long taiwan etp securities").is_some(),
         "(#282) a leveraged Taiwan ETP is refused BEFORE the country sleeve can admit it");
-    // …and SWITZERLAND STAYS SPELLED ONCE. (#234) measured `switzerland` and DECLINED it: SPI is
-    // the whole Swiss market at 0.09% while MSCI Switzerland 20/35 is a capped subset at 0.20%, so
-    // the second spelling buys a worse fund in a seated market. (#282) re-checked and the one input
-    // that changed is SW2CHB.SW's AUM, which the pond now serves at EUR 2.6B where (#234) read
-    // 0.0B. The TER gap and the capped-subset argument both survive, so the refusal survives.
+    // …and (#283) SWITZERLAND IS NOW SPELLED TWICE. (#234) declined `switzerland` and (#282) kept
+    // the refusal, both resting on a family key that "keys off the matched token" — the mechanism
+    // (#272) REPLACED with the benchmark index. Under today's key SPI and MSCI Switzerland 20/35
+    // are two families, so the second spelling ADDS a row instead of doubling one. The TER gap and
+    // the capped-subset argument survive untouched and are arguments about RANK, which the sort
+    // settles on its own: the cheaper SPI fund keeps its slot on the line below.
     assert_eq!(geo_tier_at("ubs msci switzerland 20/35 ucits etf chf acc", 0.0, false, false, 12, 0, 0),
-        None, "(#282) `switzerland` stays unspelled — (#234) measured and declined it, and still does");
+        Some(COUNTRY_TIER), "(#283) SW2CHB.SW (EUR 2.64B, 0.20%) files SINGLE-COUNTRY");
     assert_eq!(geo_tier_at("ubs core spi etf chf acc", 0.0, false, false, 12, 0, 0),
-        Some(COUNTRY_TIER), "…while SPIA.SW keeps the Swiss slot it won on 0.09% and whole-market breadth");
+        Some(COUNTRY_TIER), "…while SPIA.SW KEEPS the Swiss slot it won on 0.09% and whole-market breadth");
+    // THE GUARD, and the whole basis of the flip: the two Swiss funds must stay DISTINCT families.
+    // If they ever merge, the sleeve counts one family where the pond holds two, and the cap raise
+    // shipped beside this token would be admitting a wrapper instead of seating an index. Same pin
+    // (#282) put on the two North America spellings, for the same reason.
+    //
+    // KEYED THROUGH `sleeve_family_of` AND NOT `geo_family_of`, which is where (#282)'s North
+    // America pin reads because BOTH its tokens are GEO. A single-country fund carries no GEO token
+    // at all, so `geo_family_of` answers None for BOTH funds here and an `assert_ne!` on it would be
+    // vacuously false — caught by this very assertion reddening before it was written correctly.
+    // The COUNTRY arm (#227) added to `sleeve_family_of` is the one that keys this sleeve.
+    assert_ne!(sleeve_family_of("ubs msci switzerland 20/35 ucits etf chf acc"),
+        sleeve_family_of("ubs core spi etf chf acc"),
+        "(#283) MSCI Switzerland 20/35 and the SPI are two families — and why both print");
+    // …and the LIVE lane keys on the BENCHMARK INDEX ((#272), `hold_family_key_benchmark`), with the
+    // token above as its fallback. The two indices differ under BOTH keys, which is what makes the
+    // (#234) mechanism this round overturned inapplicable either way.
+    assert_eq!(sleeve_family_of("ubs msci switzerland 20/35 ucits etf chf acc"), Some("switzerland"),
+        "(#283) the new token is what keys the 20/35 fund");
+    assert_eq!(sleeve_family_of("ubs core spi etf chf acc"), Some(" spi "),
+        "(#283) …and SPIA.SW still keys on the delimited spelling (#234) shipped");
     // A BARE `eurozone` TOKEN IS MEASURED-REFUSED. The pond holds 56 names containing it and 10
     // survive NARROW, but six of those ten are not broad equity: two BNP Paribas Easy FTSE
     // EPRA/NAREIT Eurozone Capped (REITs), Deka Eurozone Rendite Plus 1-10 (bonds), two First Trust
