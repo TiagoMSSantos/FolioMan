@@ -115,7 +115,7 @@ pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Opt
             None => groups.push((*tier, vec![t])),
         }
     }
-    groups.sort_by_key(|(tier, _)| tier.map_or(u8::MAX, |t| t));
+    groups.sort_by_key(|(tier, _)| tier.unwrap_or(u8::MAX));
     let body = groups
         .iter()
         .map(|(tier, names)| {
