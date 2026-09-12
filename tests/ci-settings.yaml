@@ -7465,7 +7465,7 @@ buy_heuristic:
                                  #   ON at cap 16 the sleeve was already saturated, so the four newly admitted
                                  #   families sorted above seated incumbents and truncated the tail -- that is arm1's
                                  #   four removals. The pair ships together and REVERTS TOGETHER, back to 16.
-  hold_per_tier_country: 14       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
+  hold_per_tier_country: 15       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
                                  #   BACK on one cache) — 7 -> 9. THE FAMILY COUNT, NOT AN ARGMAX, read
                                  #   off a RE-RUN of (#227)'s own census: two of the twenty spellings it
                                  #   refused now reach a fund, so the sleeve has nine index families and
@@ -8085,6 +8085,80 @@ buy_heuristic:
                                  #   MUSA.PA, QQQG.L, EEA1.DE). BANKED FOR ROUND 64, not fixed here: a CORE-lane
                                  #   AUM floor is its own arm with its own control, and folding it into a cap
                                  #   measurement would put two variables in one column.
+                                 #
+                                 #   (#281 / MEASURED 2026-09-12, live `screen`, warm cache, one pre-built binary) 14 ->
+                                 #   15, and this time the cap raise is the SECOND half of a change whose first half is
+                                 #   four new geography tokens in `core::GEO`/`core::COUNTRY`. Both halves ship together
+                                 #   because neither is correct alone: the tokens admit a fifteenth single-country index
+                                 #   family, and without the cap that family EVICTS a seated row instead of adding one.
+                                 #
+                                 #   WHAT THE ROUND WAS LOOKING FOR. (#279) raised this cap to 14 and found the lane is
+                                 #   cap-bound rather than supply-bound, so round 64 went looking for supply the
+                                 #   vocabulary could not see. `picks::geo_miss_census` prints the funds that clear every
+                                 #   leg while carrying NO geography token; raising its display cap from 15 to 60 for one
+                                 #   probe run (and reverting it) recovered all 47. Three sleeves had free slots sitting
+                                 #   directly underneath them -- Asia-Pacific held 1 index family against a cap of 6,
+                                 #   Japan 3 against 6 -- so the blind spot, not the caps, was the binding constraint
+                                 #   there.
+                                 #
+                                 #   THE MEASURED RESULT: 91 rows -> 96, FIVE ADDED AND NOTHING EVICTED.
+                                 #
+                                 #     + SPPW.DE  State Street SPDR MSCI World UCITS ETF
+                                 #     + PRAJ.DE  Amundi Prime Japan (Solactive GBS Japan, 0.05% -- the cheapest in the pond)
+                                 #     + LGAG.L   L&G Asia Pacific ex Japan Equity UCITS ETF
+                                 #     + UC48.L   UBS MSCI AC Asia ex Japan SF UCITS ETF
+                                 #     + VEXA.DE  Vanguard FTSE Eurozone UCITS ETF EUR Acc
+                                 #
+                                 #   Census, control -> arm: Japan 5 (3f) -> 6 (4f) · Asia-Pacific 2 (1f) -> 5 (4f) ·
+                                 #   single-country 22 (14f) -> 23 (15f) · developed 14 (7f) -> 13 (6f) · Europe 12 (4f)
+                                 #   UNCHANGED. Europe holding still is the load-bearing negative: the eurozone tokens
+                                 #   went into COUNTRY, not into tier 5, and the census proves they landed where intended.
+                                 #
+                                 #   THE CAP ARITHMETIC IS (#220)/(#272)'s, UNCHANGED: cap = max(shipped cap, live family
+                                 #   count) = max(14, 15) = 15. (#279) held at 14 against observations of 18f/15f/15f/14f
+                                 #   because the family count is noisy run to run and 14 was the floor. That objection
+                                 #   does not apply here: the fifteenth family is `ftse eurozone`, created DETERMINISTICALLY
+                                 #   by a token added this round, so the floor moves with it. Still not an argmax -- the
+                                 #   rule forbids using this to CUT, and nothing was cut.
+                                 #
+                                 #   SPPW.DE IS A KNOCK-ON, NOT A TOKEN ADMISSION, and it is the correctness half of the
+                                 #   round. "Vanguard FTSE Developed Asia Pacific ex Japan" contains `ftse developed`, so
+                                 #   it was never in the blind spot at all -- it was filing into the DEVELOPED sleeve, a
+                                 #   regional Asia bet wearing the label of a global one. Exactly (#222)'s "Xtrackers MSCI
+                                 #   World Utilities" defect. Placing `asia pacific ex japan` ahead of tier 1 moves it to
+                                 #   Asia-Pacific where it belongs, which frees a developed slot, which SPDR MSCI World
+                                 #   fills. Developed's family count falls 7f -> 6f for the same reason and that fall is
+                                 #   the fix, not a loss.
+                                 #
+                                 #   A FIFTH TOKEN WAS BUILT, RUN LIVE AND REFUSED: `("ac world", 0)`. Full measurement is
+                                 #   in the `core::GEO` table beside where it would have gone. Short form: it reaches 5
+                                 #   pond names, exactly one clears every leg (SCWX.DE, EUR 752M, 1.6 years, 0.15%), and
+                                 #   the all-world sleeve was ALREADY EXACTLY AT ITS CAP at 7 supply / 7 slots -- so the
+                                 #   eighth candidate did not add a row, it evicted SSAC.L (iShares MSCI All Country
+                                 #   World, EUR 31.1B, 14.9 years, 0.20%). A 5bp TER edge beat a 40x AUM gap and 13 years
+                                 #   of record, which on a twenty-year hold is backwards, and (#213) already names the
+                                 #   trade: an exposure swapped for a wrapper is refused. Raising the all-world cap to
+                                 #   keep both is NOT available -- max(7, 6f) = 7, and going to 8 is the argmax the rule
+                                 #   exists to forbid.
+                                 #
+                                 #   THE FIVE-TOKEN ARM IS THE CONTROL FOR THAT REFUSAL, so it is recorded rather than
+                                 #   discarded: it read 95 rows, +6/-2, against this four-token arm's 96 rows, +5/-0. The
+                                 #   refused token cost a net row AND cost the table its largest all-world fund. Read the
+                                 #   two arms together and the round's lesson is the one memory already carries -- AUM is
+                                 #   the weakest term in the CORE sort, so a sleeve AT ITS CAP evicts on pennies of TER.
+                                 #   (#235) built and measured-refused the sort fix; the remedy available here is to admit
+                                 #   only where a slot exists, which is what shipped.
+                                 #
+                                 #   NON-NEGOTIABLE #1 HOLDS AT THE DEFAULTS: `src/config.rs` keeps
+                                 #   `hold_per_tier_country: 0`, the sleeve is OFF config-less, and that is VERIFIED by
+                                 #   running the config-less lane rather than asserted -- (#192) shipped that claim falsely
+                                 #   once. The four tokens carry direct tier pins in `core.rs`, each with a guard name that
+                                 #   must NOT move: broad developed stays tier 1, MSCI Europe stays tier 5, and (#243)'s
+                                 #   `japan imi` key survives `prime japan` being inserted above `msci japan`.
+                                 #
+                                 #   STILL BANKED, STILL UNFIXED (carried from (#279)): four rows carry an `n/a` AUM
+                                 #   (ACWL.L, MUSA.PA, QQQG.L, EEA1.DE), which is closure risk on a twenty-year hold. A
+                                 #   CORE-lane AUM floor is its own arm with its own control.
   hold_per_tier_nasdaq: 2        # (#239 / MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs) — the
                                  #   THIRTEENTH sleeve, and the FIFTH optional one. 0 -> 1. Rows the CORE
                                  #   table keeps for Nasdaq-100 trackers, in a tier of their own at the very

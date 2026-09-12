@@ -1261,7 +1261,7 @@ pub const HOLD_TIERS: usize = 13;
 /// REVERT: drop the three tokens. That returns 47 to the blind spot and puts SPPW/WEBH/DBXJ back.
 /// Revert an INDIVIDUAL token if a later pond has it admit a bond, a commodity or a single-country
 /// index, or file a fund in a tier its index does not track.
-const GEO: [(&str, u8); 36] = [
+const GEO: [(&str, u8); 39] = [
     // 4 = ex-US sleeves. FIRST, because every one of them contains a broader token.
     ("acwi ex", 4), ("world ex", 4), ("ex-usa", 4),
     // 5 = Europe. "ftse developed europe" precedes the generic "ftse developed" below.
@@ -1293,6 +1293,13 @@ const GEO: [(&str, u8); 36] = [
     // Placed BEFORE "msci japan" because GEO is first-match: the narrow spelling must win or the
     // broad one swallows it. The universe argument is (#207)'s for ACWI IMI, verbatim.
     ("japan imi", 6),
+    // (#281) …and the FOURTH universe, by the same argument (#243) makes for the third. Amundi's
+    // Prime range tracks Solactive GBS Japan, not MSCI or FTSE or TOPIX, and "Amundi Prime Japan"
+    // (PRAJ.DE, EUR 0.6B, 0.05%) is the CHEAPEST Japan fund in the pond and sat in the blind spot
+    // because no token spells it. The spelling is issuer-scoped on purpose and the precedent is
+    // already in this table: tier 1 carries "prime global" for exactly this range. A bare "japan"
+    // is REFUSED for (#227)'s reason — every "ex Japan" name in the pond contains it.
+    ("prime japan", 6),
     ("msci japan", 6), ("topix", 6), ("ftse japan", 6),
     // 7 = Asia-Pacific. (#213) SPLIT OUT OF JAPAN, which was the one sleeve holding two disjoint
     // geographies. Because the per-sleeve cap ranks on TER *inside* a sleeve, a 0.20% Pacific fund
@@ -1333,9 +1340,41 @@ const GEO: [(&str, u8); 36] = [
     //
     // REVERT: fold tier 7 back into 6 and drop "msci pac ". That restores one mixed sleeve and puts
     // CSPXJ.SW back in the GEO blind spot, where (#213) found it.
+    // (#281) …and the two spellings tier 7 still could not reach, both found in the (#203) blind
+    // spot. "MSCI AC Asia ex Japan" and "AC Asia Pacific ex Japan" are NOT the plain MSCI Pacific
+    // this sleeve already holds: Pacific is developed-only (Australia, HK, Singapore, NZ), where the
+    // AC spellings add emerging Asia — China, Taiwan, Korea, India. Different universes, so under
+    // (#272)'s benchmark key they are different families and (#214)'s family-first fill can reach
+    // them in a sleeve running 2 funds against a cap of 6.
+    //
+    // PLACED BEFORE TIER 1's "ftse developed", AND THAT IS THE CORRECTNESS HALF OF THIS ENTRY.
+    // "Vanguard FTSE Developed Asia Pacific ex Japan" contains "ftse developed", so it does not sit
+    // in the blind spot at all — it was filing into the DEVELOPED sleeve, a regional Asia bet
+    // wearing the label of a global one. Identical defect to (#222)'s "Xtrackers MSCI World
+    // Utilities" reading as DEVELOPED, and it takes the same remedy: the narrow spelling must be
+    // tested first or the broad one swallows it.
+    ("asia pacific ex japan", 7), ("asia ex japan", 7),
     ("msci pac ", 7), ("msci pacific", 7),
     // 0 = the whole planet, DM+EM in one fund
     ("all-world", 0), ("all-country", 0), ("all country world", 0), ("acwi", 0),
+    // (#281) MEASURED-REFUSED: `("ac world", 0)`, MSCI's THIRD spelling of the same planet. It is a
+    // real blind spot — `hit` is a bare `contains`, "acwi" is not in "ac world", and neither
+    // "all-country" nor "all country world" reaches it — but the token was built, run live, and
+    // REFUSED on what it actually did. It reaches 5 pond names, and exactly one clears every other
+    // leg: SCWX.DE, Scalable MSCI AC World Xtrackers, EUR 752M and 1.6 years old at 0.15%. The
+    // all-world sleeve was ALREADY EXACTLY AT ITS CAP (7 supply, 7 slots), so admitting an eighth
+    // candidate does not add a row — it evicts one. The sort (domicile, then TER, then AUM) picked
+    // SCWX.DE over SSAC.L, iShares MSCI All Country World, EUR 31.1B and 14.9 years old at 0.20%:
+    // a 5bp TER edge beating a 40x AUM gap and 13 extra years of track record. On a 20-year hold
+    // that trade is backwards, and (#213) already names it — an exposure traded for a wrapper is
+    // refused. MSCI ACWI stays covered three times over by SPYY.DE, SPYI.DE and ACWIA.SW, so the
+    // token buys no exposure the table lacks.
+    //
+    // RAISING THE ALL-WORLD CAP IS NOT THE ESCAPE HATCH. (#220)/(#272) fix the cap at
+    // max(shipped cap, live family count) = max(7, 6) = 7. Going to 8 to keep both funds would be
+    // an argmax, which that rule exists to forbid. The underlying defect is that AUM is the
+    // weakest sort term and a sleeve at its cap evicts on pennies of TER; (#235) built and
+    // measured-refused the sort fix, so the remedy here is to not admit, not to re-open it.
     // (#234) ONE TOKEN FOR BOTH SPELLINGS, replacing `("global all cap", 0)`. That token could never
     // reach the fund it was written for: Vanguard spells it "FTSE Global All-Cap" with a HYPHEN and
     // `hit` is a bare `contains` with no normalisation, so VALL.L (0.07%, the broadest equity
@@ -2169,10 +2208,27 @@ fn sector_sleeve_tier(n: &str, first: &str, on: bool) -> Option<u8> {
 /// NEVER add a bare `uk` token. "FTSE Developed Europe ex UK" contains it, and 11 funds in the live
 /// pond carry an `ex uk`/`ex-uk` spelling — the token would hijack them out of the Europe sleeve
 /// into this one. `ftse 100` is the safe spelling and is what the census measured.
-const COUNTRY: [&str; 9] = [
+const COUNTRY: [&str; 11] = [
     "dax",
     "euro stoxx 50",
     "msci emu",
+    // (#281) …and the two OTHER spellings of the same currency bloc, which `msci emu` cannot reach:
+    // "Vanguard FTSE Eurozone" (VEXA.DE, EUR 0.6B, 0.07%) and "Amundi Prime Eurozone". They belong
+    // HERE and not in the tier-5 Europe sleeve, because the eurozone is the bloc `msci emu` already
+    // names — filing a synonym one sleeve away would print one exposure twice under two labels,
+    // which is the thing `SECTOR_GEO`'s own policy note calls "two bets wearing the name of one",
+    // and it would break non-negotiable #4 besides.
+    //
+    // SPELLED SPECIFICALLY, NOT AS A BARE `eurozone`, AND THE BARE WORD IS MEASURED-REFUSED. 56 pond
+    // names carry it and 10 survive NARROW, but six of those ten are not broad equity at all:
+    // "BNP Paribas Easy FTSE EPRA/NAREIT Eurozone Capped" (x2) is a REIT fund, "Deka Eurozone
+    // Rendite Plus 1-10" is a bond fund, "First Trust Eurozone AlphaDEX" (x2) is a factor strategy
+    // and "WisdomTree Eurozone Efficient Core" is equity plus treasury futures. NARROW cannot spell
+    // any of them, and nothing downstream in this lane re-checks that a fund is equity — which is
+    // why bonds and gold show up in the (#203) blind spot in the first place. A bare token would
+    // walk all six into a geographic sleeve. This is (#227)'s bare-`uk` rule on a new word.
+    "ftse eurozone",
+    "prime eurozone",
     "ftse 100",
     "korea",
     "india",
@@ -6717,7 +6773,61 @@ mod tests {
         "(#238) MSCI EMU is still no emerging family — (#211)'s trailing space survives the split");
     assert_eq!(geo_tier_at("ubs core msci emu ucits etf eur acc", 0.0, false, false, 9, 0, 0), Some(COUNTRY_TIER),
         "…and it still files as SINGLE-COUNTRY, which deleting `msci em ` would have broken");
-    assert_eq!(GEO.len(), 36, "(#243) one more token; the length is pinned so a silent edit cannot pass");
+    // (#281) THE GEO BLIND SPOT, THREE TOKENS. A census of the funds carrying NO geography token
+    // while clearing every other leg found 47 ETFs, and three sleeves with free slots underneath
+    // them: Asia-Pacific held 1 index family against a cap of 6, Japan 3 against 6. These pins are
+    // the ordering argument — (#222)/(#276) in one line, a narrow spelling must be tested BEFORE
+    // the broad one or the broad one swallows it.
+    //
+    // The Asia pair is a CORRECTNESS fix before it is an admission. "Vanguard FTSE Developed Asia
+    // Pacific ex Japan" contains "ftse developed", so it never sat in the blind spot at all — it
+    // was filing into the DEVELOPED sleeve, a regional Asia bet wearing the label of a global one.
+    // Exactly (#222)'s "Xtrackers MSCI World Utilities" defect, and the same remedy.
+    assert_eq!(geo_family_of("Vanguard FTSE Developed Asia Pacific ex Japan UCITS ETF USD Accumulation"),
+        Some("asia pacific ex japan"), "(#281) the ex-Japan region wins over the `ftse developed` it contains");
+    assert_eq!(geo_tier_at("vanguard ftse developed asia pacific ex japan ucits etf usd accumulation", 0.0, false, false, 0, 0, 0),
+        Some(7), "(#281) …and it files ASIA-PACIFIC, not DEVELOPED — the regional bet keeps its own sleeve");
+    assert_eq!(geo_family_of("UBS MSCI AC Asia ex Japan SF UCITS ETF USD acc"),
+        Some("asia ex japan"), "(#281) AC Asia ex Japan adds emerging Asia — not the developed-only MSCI Pacific");
+    assert_eq!(geo_tier_at("ubs msci ac asia ex japan sf ucits etf usd acc", 0.0, false, false, 0, 0, 0),
+        Some(7), "…and both Asia spellings sit at tier 7, so the added reach cannot misfile");
+    // THE GUARD THAT MUST NOT MOVE: the plain developed-world fund still answers tier 1. If a
+    // future edit widened either Asia token to a bare `asia` or dropped the `ex japan`, this is
+    // what reddens.
+    assert_eq!(geo_tier_at("vanguard ftse developed world ucits etf usd accumulation", 0.0, false, false, 0, 0, 0),
+        Some(1), "(#281) the broad developed sleeve is untouched — the Asia tokens took only their own funds");
+    // (#281) JAPAN'S FOURTH UNIVERSE, and (#243)'s block above is the precedent. Amundi's Prime
+    // range tracks Solactive GBS Japan, which is neither MSCI nor FTSE nor TOPIX, and PRAJ.DE is
+    // the CHEAPEST Japan fund in the pond at 0.05%. `prime global` already ships at tier 1, so the
+    // spelling is the table's own. A bare `japan` is REFUSED for (#227)'s reason — it would
+    // over-match every "ex Japan" name in the pond, which is the whole Asia block above.
+    assert_eq!(geo_family_of("Amundi Index Solutions - Amundi Prime Japan UCITS ETF DR"),
+        Some("prime japan"), "(#281) Solactive GBS Japan is a fourth universe, not an `msci japan` wrapper");
+    assert_eq!(geo_tier_at("amundi index solutions - amundi prime japan ucits etf dr", 0.0, false, false, 0, 0, 0),
+        Some(6), "…and it files JAPAN, beside the three universes (#243) pinned");
+    assert_eq!(geo_family_of("iShares Core MSCI Japan IMI UCITS ETF USD (Acc)"),
+        Some("japan imi"), "(#281) …while (#243)'s IMI key is untouched — `prime japan` went in ABOVE `msci japan`, not through it");
+    assert_eq!(GEO.len(), 39, "(#281) three more tokens; the length is pinned so a silent edit cannot pass");
+    // (#281) EUROZONE IS A COUNTRY-SLEEVE BLOC, NOT BROAD EUROPE, and that placement is
+    // non-negotiable #4: `msci emu` already names this bloc in COUNTRY, so a second home for it
+    // would be two definitions of one exposure. The eurozone excludes the UK, Switzerland and the
+    // Nordics, so filing it at tier 5 beside "MSCI Europe" would let a currency-bloc bet stand in
+    // for the continent.
+    assert_eq!(geo_tier_at("vanguard ftse eurozone ucits etf eur acc", 0.0, false, false, 11, 0, 0),
+        Some(COUNTRY_TIER), "(#281) FTSE Eurozone files SINGLE-COUNTRY beside MSCI EMU, never broad Europe");
+    assert_eq!(geo_tier_at("amundi index solutions - amundi prime eurozone ucits etf dr", 0.0, false, false, 11, 0, 0),
+        Some(COUNTRY_TIER), "…and so does Amundi's Solactive-tracked spelling of the same bloc");
+    // THE GUARD: broad Europe still answers tier 5. "eurozone" does not contain "europe", so the
+    // two vocabularies cannot collide — this pin is what proves it stays that way.
+    assert_eq!(geo_tier_at("ishares core msci europe ucits etf eur (acc)", 0.0, false, false, 11, 0, 0),
+        Some(5), "(#281) MSCI Europe is still broad Europe — the eurozone tokens took only their own bloc");
+    // A BARE `eurozone` TOKEN IS MEASURED-REFUSED. The pond holds 56 names containing it and 10
+    // survive NARROW, but six of those ten are not broad equity: two BNP Paribas Easy FTSE
+    // EPRA/NAREIT Eurozone Capped (REITs), Deka Eurozone Rendite Plus 1-10 (bonds), two First Trust
+    // Eurozone AlphaDEX (factor) and WisdomTree Eurozone Efficient Core (equity plus treasury
+    // futures). Nothing downstream re-checks that an admitted fund is broad equity, so the bare
+    // token would seat a bond fund in an equity sleeve. Naming the two index families instead is
+    // (#227)'s bare-token rule applied to a word rather than a country.
     // (#243) JAPAN'S THIRD UNIVERSE — (#238)'s emerging block above, one sleeve over. GEO carried
     // three Japan spellings but only TWO family keys over three universes, because "iShares Core
     // MSCI Japan IMI" contains "msci japan" and merged into the plain wrapper's family. The shipped
