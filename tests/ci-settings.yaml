@@ -7397,7 +7397,7 @@ buy_heuristic:
                                  #   ON at cap 16 the sleeve was already saturated, so the four newly admitted
                                  #   families sorted above seated incumbents and truncated the tail -- that is arm1's
                                  #   four removals. The pair ships together and REVERTS TOGETHER, back to 16.
-  hold_per_tier_country: 13       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
+  hold_per_tier_country: 14       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
                                  #   BACK on one cache) — 7 -> 9. THE FAMILY COUNT, NOT AN ARGMAX, read
                                  #   off a RE-RUN of (#227)'s own census: two of the twenty spellings it
                                  #   refused now reach a fund, so the sleeve has nine index families and
@@ -7972,6 +7972,51 @@ buy_heuristic:
                                  #   index, not the GEO word, and this sleeve's family count moved with it.
                                  #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
                                  #   `hold_family_key_benchmark` reverts this to 9 in the same change.
+                                 # (#279) RAISED 13 -> 14: (#220)/(#272)'s `cap = max(shipped cap, live family
+                                 #   count)` applied to a RE-READ census, and the single-country sleeve was the ONLY
+                                 #   one of the thirteen sitting below its own family count. Read off four live
+                                 #   `screen` runs on 2026-09-12, same binary, one warm cache:
+                                 #
+                                 #     run        HTTP calls  single-country census   CORE rows
+                                 #     control-1  18285       28 (18f, 18b/11?)       91
+                                 #     control-2  12383       23 (15f, 15b/6?)        90
+                                 #     arm cap14  12377       23 (15f, 15b/6?)        91
+                                 #     arm cap15  ~12380      22 (14f, 14b/5?)        92
+                                 #
+                                 #   THE CLEAN PAIR IS control-2 vs cap14, and it is clean because the two runs
+                                 #   agree on the census to the digit — same pond, one knob. It reads +1 row and
+                                 #   ZERO removals: `BNP Paribas Easy MSCI China A UCITS ETF USD` (EEA1.DE). That
+                                 #   is a NEW INDEX FAMILY and not a wrapper — the sleeve's seated China row is
+                                 #   `Franklin FTSE China` (FLXC.L), and FTSE China is offshore H-shares plus ADRs
+                                 #   where MSCI China A is the mainland A-share market. Two exposures, not two
+                                 #   products, which is exactly what `picks.rs`'s census rule promises the next row
+                                 #   would be.
+                                 #
+                                 #   WHY 14 AND NOT 15, WHICH THE SAME RULE APPEARS TO LICENSE. The family count
+                                 #   IS NOT STABLE RUN TO RUN — four readings gave 18f, 15f, 15f, 14f as the pond
+                                 #   breathed. 14 is the MINIMUM observed, so the deficit against the shipped 13
+                                 #   holds at EVERY observation; 15 holds at only three of four, and a cap fitted to
+                                 #   a number one run contradicts is an argmax wearing a census's clothes, which is
+                                 #   the precise thing (#220) forbids. The cap15 arm was run anyway and could not be
+                                 #   read: its pond differed from the control (22/14f against 23/15f) and its +4/-2
+                                 #   lands two swaps in the all-world and Nasdaq-100 sleeves, which this knob cannot
+                                 #   reach. NOISE, NOT SIGNAL, and recorded so round 64 does not re-run it blind.
+                                 #
+                                 #   THE ROW-SWAP NOISE FLOOR IS MEASURED HERE FOR THE FIRST TIME, and it is the
+                                 #   reason control-1 is listed above rather than discarded. control-1 against the
+                                 #   cap14 arm reads +11/-11 across emerging, Europe, world sector, Pacific and
+                                 #   Nasdaq-100 — sleeves the country cap cannot touch. A cold-cache control is not
+                                 #   a control. `memory: probe-edge-not-reproducible` said so; this is the number.
+                                 #
+                                 #   THE ADMITTED ROW IS 0.2 YEARS OLD WITH NO AUM, AND THAT IS NOT THIS RUNG'S
+                                 #   DOING. 23 of the control's 90 rows are already under five years or carry an
+                                 #   `n/a` CAGR or AUM (five are under 0.2y: WSTI.AS, WNSF.AS, WSSC.AS, 0DZP.L and
+                                 #   QQQG.L at 0.7y). For an index tracker the FUND's age is largely beside the
+                                 #   point -- the exposure is old even when the share class is new -- but an `n/a`
+                                 #   AUM is closure risk on a twenty-year hold, and four rows carry one (ACWL.L,
+                                 #   MUSA.PA, QQQG.L, EEA1.DE). BANKED FOR ROUND 64, not fixed here: a CORE-lane
+                                 #   AUM floor is its own arm with its own control, and folding it into a cap
+                                 #   measurement would put two variables in one column.
   hold_per_tier_nasdaq: 2        # (#239 / MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs) — the
                                  #   THIRTEENTH sleeve, and the FIFTH optional one. 0 -> 1. Rows the CORE
                                  #   table keeps for Nasdaq-100 trackers, in a tier of their own at the very
