@@ -4520,9 +4520,21 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
     // and no admission, cap or order reads it.
     //
     // THE `/N?` SUFFIX IS THE DENOMINATOR, NOT DECORATION — (#151)'s lesson, which cost a round.
-    // `benchmark` is absent on part of the pond; those funds fall back to their GEO family, so `Yb`
-    // UNDER-counts by an unknown amount unless the miss count is read beside it. `fetch::bf_row_meta`
-    // puts the sibling `replicationMethod` at ~70% coverage, so this is expected to bite.
+    // `benchmark` is absent on part of the pond, and `fetch::bf_row_meta` puts the sibling
+    // `replicationMethod` at ~70% coverage, so the gap is expected to bite.
+    //
+    // (#280) …AND UNTIL THIS ROUND THE NUMERATOR WAS A COPY OF `Xf`, so the denominator had nothing
+    // to divide. The uncovered funds used to be inserted into `benches` under their GEO-token
+    // fallback — which is the very string `fam` already holds whenever `hold_family_key_benchmark`
+    // is ON, the lane that ships. `Yb` therefore could not disagree with `Xf` by construction, and
+    // the live run confirmed it: EQUAL IN 13 OF 13 SLEEVES. A column built to ask "exposures or
+    // products?" answered nothing in the only configuration anyone runs.
+    //
+    // Counting the COVERED funds only is what makes the pair readable. `Yb` is now the distinct
+    // indices BF actually named, `/N?` is how many funds it named none for, and `Xf - Yb` is the
+    // number a future round needs before it can argue that resolving those names would buy a row:
+    // families keyed on a WORD rather than on an index. Still DISPLAY ONLY — no admission, cap or
+    // order reads any of the three.
     let mut families: Vec<HashSet<&str>> = (0..core::HOLD_TIERS).map(|_| HashSet::new()).collect();
     let mut benches: Vec<HashSet<String>> = (0..core::HOLD_TIERS).map(|_| HashSet::new()).collect();
     let mut no_bench = [0usize; core::HOLD_TIERS];
@@ -4536,14 +4548,13 @@ fn print_hold_core(quotes: &[Quote], cores: &[&Quote], pinned: &HashSet<&str>, o
         let fam = core::sleeve_family_at(q, crate::config::hold_family_key_benchmark()).unwrap_or("?");
         families[t].insert(fam);
         match q.benchmark.as_deref() {
-            Some(b) => benches[t].insert(b.to_string()),
-            // no BF index name: degrade to the GEO family so the count never over-reports, and tally
-            // the fund so the reader can see how much of `Yb` is really `Xf` wearing a hat.
-            None => {
-                no_bench[t] += 1;
-                benches[t].insert(fam.to_string())
+            Some(b) => {
+                benches[t].insert(b.to_string());
             }
-        };
+            // (#280) no BF index name: tally the fund and count it as NO INDEX. It used to be
+            // inserted here under `fam`, which made `Yb` a restatement of `Xf` — see the block above.
+            None => no_bench[t] += 1,
+        }
     }
     let country_cap = crate::config::hold_per_tier_country();
     const SLEEVE: [&str; core::HOLD_TIERS] =

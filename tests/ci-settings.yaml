@@ -6576,6 +6576,74 @@ buy_heuristic:
                                  #   the mixed key degrades toward phantom families as coverage drops; or a
                                  #   narrow slice ever EVICTS a broad incumbent rather than being added
                                  #   beside it, which would engage (#213) and refuse this outright.
+                                 # (#280) …AND THIS KNOB IS WHAT MADE THE CENSUS'S `Yb` COLUMN A TAUTOLOGY, found
+                                 #   2026-09-12 by reading the code rather than the output. `picks::print_hold_core`
+                                 #   prints each sleeve as `n (Xf, Yb/N?)`, where `Xf` is the key the lane uses and
+                                 #   `Yb` was meant to be the distinct BF index names — (#237) shipped the pair
+                                 #   expressly to ask whether this table should be a menu of EXPOSURES or of
+                                 #   PRODUCTS, without shipping the answer.
+                                 #
+                                 #   With this knob ON the two columns computed THE SAME SET. `Xf` is
+                                 #   `sleeve_family_at(q, true)` = the benchmark when BF sent one, else the GEO
+                                 #   token; the `Yb` tally then inserted the benchmark when BF sent one, ELSE THAT
+                                 #   SAME FALLBACK STRING. Both branches agree, so `Yb` could not disagree with
+                                 #   `Xf` at any pond. The live run confirms it: EQUAL IN 13 OF 13 SLEEVES.
+                                 #   A column that cannot disagree is not evidence, and three rounds read it as if
+                                 #   it were.
+                                 #
+                                 #   FIXED BY DELETING THE FALLBACK INSERT, so `Yb` counts only the funds BF
+                                 #   actually named an index for and `/N?` becomes the numerator it is documented
+                                 #   to be. Measured on one live `screen`, same cap, same warm cache:
+                                 #
+                                 #     sleeve           before        after
+                                 #     all-world        5f, 5b/1?     5f,  4b/1?
+                                 #     developed        8f, 8b/4?     7f,  5b/4?
+                                 #     emerging         6f, 6b/2?     6f,  4b/2?
+                                 #     US               8f, 8b/4?     8f,  6b/5?
+                                 #     world sector    23f,23b/4?    23f, 19b/5?
+                                 #     single-country  14f,14b/4?    14f, 10b/5?
+                                 #     (ex-US, Europe, Japan, Asia-Pacific, small-cap, factor: unchanged — no `/N?`)
+                                 #
+                                 #   The sleeves carrying no uncovered funds do not move AT ALL, which is the shape
+                                 #   the fix predicts and the reason to trust the ones that do. `Xf - Yb` is now
+                                 #   readable as "families keyed on a WORD rather than on an index": 2 in developed,
+                                 #   4 in single-country. THAT is the number round 64 needs before it can argue that
+                                 #   resolving those names would buy a row.
+                                 #
+                                 #   THE TABLE CANNOT MOVE AND THIS IS PROVEN BY CODE, NOT BY THE A/B. `benches`
+                                 #   occurs three times in the crate — its declaration, this insert, and the `zip`
+                                 #   that formats the census line — so no admission, cap or order can read it. That
+                                 #   proof is load-bearing here because the live A/B CANNOT settle it: the same
+                                 #   binary and config swap rows run to run (see (#279)'s noise floor), and this run
+                                 #   swapped ACWL.L->SSAC.L and QQQG.L->XNAS.L at an unchanged 91 rows. Both
+                                 #   departing funds are `n/a`-AUM rows, and the cap15 arm in (#279) produced THE
+                                 #   SAME TWO SWAPS under a different knob. Noise, and named as noise.
+                                 #
+                                 #   NO TEST, AND THAT IS NOT AN OMISSION: `print_hold_core` carries
+                                 #   `#[mutants::skip]` from (#198), whose recorded reason is that its mutants
+                                 #   "change what prints and neither is killable from a suite that cannot read
+                                 #   stdout". The gate does not grade this line, so a test here would assert
+                                 #   nothing the gate asked for.
+                                 #
+                                 #   REFUSED IN THE SAME BREATH — resolving the uncovered names, measured against
+                                 #   the 5494 distinct fund names in the long-history cache and refused TWICE:
+                                 #     * A NAME-DERIVED INDEX FORGES FAMILIES. Walking the words after the matched
+                                 #       GEO token to the first boilerplate word splits `msci world` 232 funds into
+                                 #       103 keys, and the splits are dominated by things that are not indices:
+                                 #       `msci japan`+`min te`, `msci japan`+`eur hdg`, `world ex usa`+`usd i-a3`.
+                                 #       A forged family raises a count, the count licenses a cap, and the cap
+                                 #       admits a WRAPPER — verbatim the trade (#213) refuses and (#197) exists to
+                                 #       prevent. `core::sleeve_family_at`'s own doc already says "NO NORMALIZER,
+                                 #       AND NONE IS WANTED", and telling `min te` from an index needs exactly one.
+                                 #     * THE VOCABULARY-SAFE VARIANT ADMITS NOTHING. The merge pairs the code names
+                                 #       as measured are MSCI World / MSCI World IMI and MSCI ACWI / MSCI ACWI IMI,
+                                 #       fixable by two GEO tokens placed ahead of the broader ones — the pattern
+                                 #       `japan imi` and `ftse developed europe ex uk` already ship. NEITHER INDEX
+                                 #       EXISTS IN THIS POND AS A BROAD FUND: the only `msci world imi` name is
+                                 #       "Amundi MSCI World IMI Value Screened Factor" and the only `acwi imi` is
+                                 #       "FINECO AM MSCI ACWI IMI Cyber Security", and NARROW refuses both before
+                                 #       any sleeve. (#215): a token that admits nothing is speculation with a
+                                 #       maintenance cost. DO NOT RE-PROBE EITHER WITHOUT A WIDER POND.
   hold_family_first: true        # (#214) MEASURED 2026-09-02, live `screen`, 4583-EU-buyable-ETF pond.
                                  #   Fill each CORE sleeve FAMILY-FIRST: one pass takes the best fund of each
                                  #   DISTINCT index family (which `core::GEO` token matched), then the
