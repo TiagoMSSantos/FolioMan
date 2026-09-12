@@ -1261,7 +1261,7 @@ pub const HOLD_TIERS: usize = 13;
 /// REVERT: drop the three tokens. That returns 47 to the blind spot and puts SPPW/WEBH/DBXJ back.
 /// Revert an INDIVIDUAL token if a later pond has it admit a bond, a commodity or a single-country
 /// index, or file a fund in a tier its index does not track.
-const GEO: [(&str, u8); 39] = [
+const GEO: [(&str, u8); 40] = [
     // 4 = ex-US sleeves. FIRST, because every one of them contains a broader token.
     ("acwi ex", 4), ("world ex", 4), ("ex-usa", 4),
     // 5 = Europe. "ftse developed europe" precedes the generic "ftse developed" below.
@@ -1504,6 +1504,27 @@ const GEO: [(&str, u8); 39] = [
     // REVERT: drop the token. That returns VNRA.L to the GEO blind spot and tier 3 to three families,
     // at which point `hold_per_tier_us` stops binding and can go back to 0.
     ("ftse north america", 3),
+    // (#282) …AND THE MSCI SPELLING, WHICH (#231) PRE-REGISTERED RATHER THAN REFUSED. Its words
+    // were "MSCI North America must stay unspellable UNTIL A FUND OF ITS OWN IS MEASURED INTO THE
+    // CENSUS", and the only reason it stayed out was that no such fund survived the corrected
+    // census of that round. One does now: IVNA.DE, "Invesco MSCI North America Swap UCITS ETF USD
+    // Acc", EUR 0.9B at 0.08%, sitting in this round's GEO blind spot having cleared every other
+    // leg. So this is (#231)'s own condition firing, not a reversal of its judgement.
+    //
+    // PROVIDER-PREFIXED, WHICH IS THE WHOLE POINT. (#231) refused a BARE "north america" because it
+    // would file MSCI North America and FTSE North America under ONE family though they are
+    // different indices — the wrapper failure (#197) exists to prevent. Two provider-prefixed
+    // tokens keep them apart, and the strings are DISJOINT: neither fund's name contains the
+    // other's token, so first-match order cannot merge them and placement here is free. The test
+    // block pins that separation, and (#231)'s `assert_eq!(geo_hit(...), None)` on the MSCI
+    // spelling moves to `Some(3)` in the same edit — the pin was guarding the absence, and the
+    // absence is what ended.
+    //
+    // AT 0.08% IT IS THE CHEAPEST NORTH AMERICA ROUTE IN THE POND, tying VNRA.L's TER on a
+    // different index. Tier 3 for (#231)'s reason unchanged: North America is the US plus ~3%
+    // Canada and the ladder has no Canada sleeve, and tier 3 already mixes breadths of one
+    // geography — `s&p 500` is large-cap and `crsp us total market` is the whole market.
+    ("msci north america", 3),
     // (#230) THE US SMALL-CAP INDICES, which this list could not spell. `russell 1000` has been here
     // since the tier existed and `russell 2000` never was, so every US small-cap fund in the pond
     // answered `geo_hit` = None and died at leg 0 — refused for want of a geography, not for being a
@@ -2208,7 +2229,7 @@ fn sector_sleeve_tier(n: &str, first: &str, on: bool) -> Option<u8> {
 /// NEVER add a bare `uk` token. "FTSE Developed Europe ex UK" contains it, and 11 funds in the live
 /// pond carry an `ex uk`/`ex-uk` spelling — the token would hijack them out of the Europe sleeve
 /// into this one. `ftse 100` is the safe spelling and is what the census measured.
-const COUNTRY: [&str; 11] = [
+const COUNTRY: [&str; 12] = [
     "dax",
     "euro stoxx 50",
     "msci emu",
@@ -2231,6 +2252,25 @@ const COUNTRY: [&str; 11] = [
     "prime eurozone",
     "ftse 100",
     "korea",
+    // (#282) TAIWAN, WHICH (#227) MEASURED AS REACHING NOTHING AND THE POND HAS SINCE CHANGED. It
+    // is named in that round's list of spellings that "reached none", and the census that produced
+    // the list ran against a pond which refused every synthetic fund. (#234) re-measured eleven of
+    // those spellings on the post-(#233) pond and found two had started clearing — `cac 40` and
+    // `" spi "` — and shipped them on exactly that evidence. Taiwan was not among the eleven it
+    // re-probed. It clears now: FLXT.L, "Franklin FTSE Taiwan UCITS ETF", EUR 1.0B at 0.19%, in
+    // this round's GEO blind spot having passed every other leg.
+    //
+    // IT IS THE ONLY GENUINELY ABSENT COUNTRY LEFT IN THE CENSUS. Taiwan is roughly 2% of ACWI and
+    // the table held no Taiwanese exposure at all, so unlike a second spelling of a seated market
+    // this token buys a market rather than a wrapper.
+    //
+    // THE BARE WORD IS SAFE HERE, and that is measured rather than assumed — the audit (#281) made
+    // mandatory. Ten pond names carry "taiwan" and every one of them is equity, so the
+    // bond-fund trap that refused a bare `eurozone` does not exist for this word. Four are
+    // leveraged or inverse ETPs ("Leverage Shares 3x Long Taiwan" and kin) and NARROW already
+    // spells `leverage` and `daily`, so they die before any sleeve sees them. Of the rest only
+    // FLXT.L clears: the iShares fund is Dist, and the HSBC and Xtrackers funds fail a later leg.
+    "taiwan",
     "india",
     "china",
     // (#234) BOTH REACHABLE ONLY SINCE (#233). (#227) priced 27 candidate spellings against a pond
@@ -6200,11 +6240,23 @@ mod tests {
             geo_family_of(other), "north america must not collapse onto {why}");
         assert_eq!(geo_tier_at(other, 0.0, false, false, 0, 0, 0), Some(3), "{why} is still tier 3");
     }
-    // A BARE "north america" was REJECTED for the reason (#230) rejected a bare "global small": it
-    // would file two different indices under one family. MSCI North America must stay unspellable
-    // until a fund of its own is measured into the census.
-    assert_eq!(geo_hit("amundi msci north america ucits etf acc"), None,
-        "(#231) the provider prefix is the token; a different index is a different family");
+    // A BARE "north america" IS STILL REJECTED for the reason (#230) rejected a bare "global
+    // small": it would file two different indices under one family. What ENDED in (#282) is the
+    // second half of (#231)'s stance — "MSCI North America must stay unspellable UNTIL A FUND OF
+    // ITS OWN IS MEASURED INTO THE CENSUS". IVNA.DE (EUR 0.9B, 0.08%) is that fund, so the MSCI
+    // spelling ships PROVIDER-PREFIXED, which is what (#231) said the token had to be.
+    assert_eq!(geo_hit("invesco msci north america swap ucits etf usd acc"), Some(3),
+        "(#282) (#231)'s pre-registered condition fired: a fund of its own reached the census");
+    // AND THE SEPARATION IS THE POINT. Two provider-prefixed tokens, two families, never one.
+    assert_ne!(geo_family_of("invesco msci north america swap ucits etf usd acc"),
+        geo_family_of("vanguard ftse north america ucits etf usd accumulation"),
+        "(#282) MSCI and FTSE North America are different indices and must key differently");
+    assert_eq!(geo_family_of("invesco msci north america swap ucits etf usd acc"),
+        Some("msci north america"), "…and the provider prefix is the family key, per (#231)");
+    // THE GUARD THAT MUST NOT MOVE: the FTSE fund still answers its own token. If a future edit
+    // widened either entry to a bare "north america", this is what reddens.
+    assert_eq!(geo_family_of("vanguard ftse north america ucits etf usd accumulation"),
+        Some("ftse north america"), "(#282) (#231)'s key is untouched — the new token went in beside it");
 
     // (#230) "global small" was REJECTED as the tier-0 spelling and this is why: it would file three
     // unrelated strategies under one family. Both of these must stay geographically unspellable.
@@ -6807,7 +6859,7 @@ mod tests {
         Some(6), "…and it files JAPAN, beside the three universes (#243) pinned");
     assert_eq!(geo_family_of("iShares Core MSCI Japan IMI UCITS ETF USD (Acc)"),
         Some("japan imi"), "(#281) …while (#243)'s IMI key is untouched — `prime japan` went in ABOVE `msci japan`, not through it");
-    assert_eq!(GEO.len(), 39, "(#281) three more tokens; the length is pinned so a silent edit cannot pass");
+    assert_eq!(GEO.len(), 40, "(#282) one more token; the length is pinned so a silent edit cannot pass");
     // (#281) EUROZONE IS A COUNTRY-SLEEVE BLOC, NOT BROAD EUROPE, and that placement is
     // non-negotiable #4: `msci emu` already names this bloc in COUNTRY, so a second home for it
     // would be two definitions of one exposure. The eurozone excludes the UK, Switzerland and the
@@ -6821,6 +6873,25 @@ mod tests {
     // two vocabularies cannot collide — this pin is what proves it stays that way.
     assert_eq!(geo_tier_at("ishares core msci europe ucits etf eur (acc)", 0.0, false, false, 11, 0, 0),
         Some(5), "(#281) MSCI Europe is still broad Europe — the eurozone tokens took only their own bloc");
+    // (#282) TAIWAN — the only genuinely absent country the census had left, and a re-measurement
+    // rather than a re-litigation: (#227) recorded the spelling as reaching nothing, and (#234)
+    // shipped `cac 40` and `" spi "` on exactly this evidence after re-probing the changed pond.
+    assert_eq!(geo_tier_at("franklin ftse taiwan ucits etf", 0.0, false, false, 12, 0, 0),
+        Some(COUNTRY_TIER), "(#282) FLXT.L (EUR 1.0B, 0.19%) files SINGLE-COUNTRY");
+    // THE GUARD: the bare word is safe because every "taiwan" name in the pond is equity, and the
+    // leveraged ones die on NARROW before any sleeve sees them. If `leverage` or `daily` were ever
+    // dropped from NARROW, this is what reddens rather than a 3x ETP reaching a country sleeve.
+    assert!(narrow_hit("leverage shares 3x long taiwan etp securities").is_some(),
+        "(#282) a leveraged Taiwan ETP is refused BEFORE the country sleeve can admit it");
+    // …and SWITZERLAND STAYS SPELLED ONCE. (#234) measured `switzerland` and DECLINED it: SPI is
+    // the whole Swiss market at 0.09% while MSCI Switzerland 20/35 is a capped subset at 0.20%, so
+    // the second spelling buys a worse fund in a seated market. (#282) re-checked and the one input
+    // that changed is SW2CHB.SW's AUM, which the pond now serves at EUR 2.6B where (#234) read
+    // 0.0B. The TER gap and the capped-subset argument both survive, so the refusal survives.
+    assert_eq!(geo_tier_at("ubs msci switzerland 20/35 ucits etf chf acc", 0.0, false, false, 12, 0, 0),
+        None, "(#282) `switzerland` stays unspelled — (#234) measured and declined it, and still does");
+    assert_eq!(geo_tier_at("ubs core spi etf chf acc", 0.0, false, false, 12, 0, 0),
+        Some(COUNTRY_TIER), "…while SPIA.SW keeps the Swiss slot it won on 0.09% and whole-market breadth");
     // A BARE `eurozone` TOKEN IS MEASURED-REFUSED. The pond holds 56 names containing it and 10
     // survive NARROW, but six of those ten are not broad equity: two BNP Paribas Easy FTSE
     // EPRA/NAREIT Eurozone Capped (REITs), Deka Eurozone Rendite Plus 1-10 (bonds), two First Trust

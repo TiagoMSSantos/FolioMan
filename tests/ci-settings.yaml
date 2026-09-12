@@ -6837,7 +6837,7 @@ buy_heuristic:
                                  #   index, not the GEO word, and this sleeve's family count moved with it.
                                  #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
                                  #   `hold_family_key_benchmark` reverts this to 4 in the same change.
-  hold_per_tier_us: 8            # (#234) HELD AT 4 — A RAISE TO 5 WAS PLANNED, PRE-REGISTERED AND THEN
+  hold_per_tier_us: 9            # (#234) HELD AT 4 — A RAISE TO 5 WAS PLANNED, PRE-REGISTERED AND THEN
                                  #   REFUSED BY ITS OWN STOP RULE. Recorded here rather than dropped,
                                  #   because the census line that licensed it is still on screen and the
                                  #   next round will otherwise re-derive the same wrong conclusion.
@@ -6987,6 +6987,29 @@ buy_heuristic:
                                  #   index, not the GEO word, and this sleeve's family count moved with it.
                                  #   `cap = max(shipped cap, new family count)` — never lowered. Reverting
                                  #   `hold_family_key_benchmark` reverts this to 4 in the same change.
+                                 #
+                                 #   (#282 / MEASURED 2026-09-12, live `screen`, warm cache, one pre-built binary) 8 -> 9,
+                                 #   and the licence is (#220)/(#272)'s arithmetic unchanged: cap = max(shipped cap, live
+                                 #   family count) = max(8, 9). The ninth family is `msci north america`, added to
+                                 #   `core::GEO` this round, so the count moves deterministically rather than on pond noise.
+                                 #
+                                 #   THE TOKEN WAS PRE-REGISTERED BY (#231), NOT INVENTED HERE. That round shipped
+                                 #   `ftse north america` for VNRA.L and wrote of the other spelling: "MSCI North America
+                                 #   must stay unspellable UNTIL A FUND OF ITS OWN IS MEASURED INTO THE CENSUS." Its only
+                                 #   reason for holding back was that no such fund survived the corrected census. One does
+                                 #   now -- IVNA.DE, Invesco MSCI North America Swap, EUR 0.9B at 0.08%, sitting in this
+                                 #   round's GEO blind spot having cleared every other leg. So this is (#231)'s own
+                                 #   condition firing. Its `assert_eq!(geo_hit(...), None)` pin moved to `Some(3)` in the
+                                 #   same edit, because that pin was guarding the ABSENCE and the absence is what ended.
+                                 #
+                                 #   A BARE `north america` STAYS REFUSED, which is the half of (#231) that did NOT expire:
+                                 #   it would file MSCI and FTSE North America under ONE family though they are different
+                                 #   indices. Both tokens are provider-prefixed and the strings are disjoint, so first-match
+                                 #   order cannot merge them. The test block asserts the two keys differ and that VNRA.L
+                                 #   still answers its own.
+                                 #
+                                 #   CENSUS: US 29 (8f, 6b/5?) -> 30 (9f, 7b/5?), sleeve prints 8 -> 9. AT 0.08% IVNA.DE
+                                 #   TIES VNRA.L for the cheapest North America route in the pond, on a different index.
   hold_per_tier_europe: 5        # (#237) MEASURED 2026-09-04, live `screen`, control and arm BACK TO
                                  #   BACK in one session on one cache, journal `cp -p`'d and restored + `cmp`-verified between every
                                  #   run. Pond 4606 EU-buyable ETFs, QUALIFIED 127. Rows kept in the EUROPE sleeve alone, overriding
@@ -7465,7 +7488,7 @@ buy_heuristic:
                                  #   ON at cap 16 the sleeve was already saturated, so the four newly admitted
                                  #   families sorted above seated incumbents and truncated the tail -- that is arm1's
                                  #   four removals. The pair ships together and REVERTS TOGETHER, back to 16.
-  hold_per_tier_country: 15       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
+  hold_per_tier_country: 16       # (#234 / MEASURED 2026-09-04, live `screen`, control and probe BACK TO
                                  #   BACK on one cache) — 7 -> 9. THE FAMILY COUNT, NOT AN ARGMAX, read
                                  #   off a RE-RUN of (#227)'s own census: two of the twenty spellings it
                                  #   refused now reach a fund, so the sleeve has nine index families and
@@ -8159,6 +8182,77 @@ buy_heuristic:
                                  #   STILL BANKED, STILL UNFIXED (carried from (#279)): four rows carry an `n/a` AUM
                                  #   (ACWL.L, MUSA.PA, QQQG.L, EEA1.DE), which is closure risk on a twenty-year hold. A
                                  #   CORE-lane AUM floor is its own arm with its own control.
+                                 #
+                                 #   (#282 / MEASURED 2026-09-12, live `screen`, warm cache, one pre-built binary) 15 -> 16.
+                                 #   Same arithmetic as the (#281) step above it, one family further on: max(15, 16), where
+                                 #   the sixteenth family is `taiwan`, added to `core::COUNTRY` this round.
+                                 #
+                                 #   TAIWAN IS A RE-MEASUREMENT, NOT A RE-LITIGATION. (#227) named the spelling in its list
+                                 #   of candidates that "reached none", and that census ran against a pond which refused
+                                 #   every synthetic fund. (#234) re-probed eleven of those spellings on the post-(#233)
+                                 #   pond, found `cac 40` and `" spi "` had started clearing, and shipped both on exactly
+                                 #   that evidence. Taiwan was not among the eleven it re-probed. It clears now: FLXT.L,
+                                 #   Franklin FTSE Taiwan, EUR 1.0B at 0.19%. Taiwan is roughly 2% of ACWI and the table
+                                 #   held no Taiwanese exposure at all, so this token buys a MARKET rather than a wrapper --
+                                 #   the distinction (#213) turns on.
+                                 #
+                                 #   THE BARE WORD IS SAFE AND THAT IS MEASURED, the audit (#281) made mandatory after a
+                                 #   bare `eurozone` was caught reaching REITs and bond funds. All ten pond names carrying
+                                 #   "taiwan" are equity. Four are leveraged or inverse ETPs and NARROW already spells
+                                 #   `leverage` and `daily`, so they die before any sleeve sees them; the test block pins
+                                 #   that, so dropping either NARROW token reddens here rather than walking a 3x ETP into a
+                                 #   country sleeve. Of the rest only FLXT.L clears -- the iShares fund is Dist, and the
+                                 #   HSBC and Xtrackers funds fail a later leg.
+                                 #
+                                 #   A THIRD TOKEN WAS PLANNED AND THEN DROPPED ON THE REPO'S OWN PRIOR EVIDENCE.
+                                 #   `switzerland` reaches SW2CHB.SW (UBS MSCI Switzerland 20/35, EUR 2.6B, 0.20%), and
+                                 #   (#234) had already MEASURED AND DECLINED it: Switzerland is seated via `" spi "`
+                                 #   (SPIA.SW, EUR 2.4B, 0.09%), and SPI is the whole Swiss market where MSCI Switzerland
+                                 #   20/35 is a capped large/mid subset at more than twice the TER. Re-checked this round:
+                                 #   the ONE input that changed is the AUM, which the pond now serves at EUR 2.6B where
+                                 #   (#234) read 0.0B. The TER gap and the capped-subset argument both survive, so the
+                                 #   refusal survives with them. Pinned in the test block so a later round does not spend a
+                                 #   fourth measurement on it.
+                                 #
+                                 #   MEASURED RESULT FOR THE ROUND: 96 rows -> 98, TWO ADDED AND NOTHING EVICTED.
+                                 #     + IVNA.DE  Invesco MSCI North America Swap UCITS ETF USD Acc
+                                 #     + FLXT.L   Franklin FTSE Taiwan UCITS ETF
+                                 #   Census: US 29 (8f) -> 30 (9f) · single-country 23 (15f) -> 24 (16f). ELEVEN OTHER
+                                 #   SLEEVES IDENTICAL TO THE DIGIT, which is what validates reusing the (#281) run as the
+                                 #   control instead of burning a second six-minute run -- (#279) put the warm-to-warm noise
+                                 #   floor at +/-2 rows, so an unchanged eleven-sleeve census is the proof the pond held.
+                                 #
+                                 #   THE AGE QUESTION IS ANSWERED AND BOTH BANKED ITEMS CLOSE. (#279) and (#281) each
+                                 #   banked the same worry: young rows and unknown-AUM rows are closure risk on a
+                                 #   twenty-year hold. Measured on the shipped table, the worry is misdirected. 23 of 96
+                                 #   rows run under five years, and FIFTEEN OF THEM HOLD EUR 1B OR MORE -- MEUD.PA at EUR
+                                 #   21.0B and 2.6y, MWRD.PA at EUR 14.6B and 2.7y, EXUS.DE at EUR 6.8B and 2.5y. The `YRS`
+                                 #   column measures the SHARE CLASS, not the index: Amundi Core Stoxx Europe 600 reads 2.6
+                                 #   years at 0.07% and tracks an index dating to 1998. Refusing on age would evict the
+                                 #   cheapest accumulating class of several major exposures, which is backwards against
+                                 #   "most profit".
+                                 #
+                                 #   FUND SIZE IS ALREADY PRICED, TWICE, so age was standing in for a variable the lane
+                                 #   already gates: `hold_min_aum_eur` at EUR 1B strict, and `hold_min_aum_eur_new_family`
+                                 #   at EUR 500M relaxed, the latter admitting only a fund whose (sleeve, family) key is not
+                                 #   already seated by one clearing the strict floor -- it can add a row and can never take
+                                 #   one. The three rows between 100M and 500M are the sector-sleeve admissions (#269)
+                                 #   measured.
+                                 #
+                                 #   AND THE UNKNOWN-AUM RESIDUE IS REFUSED AS A FIX: 2 rows of 98, down from 4 at (#279)
+                                 #   -- MUSA.PA (iShares MSCI USA Swap, 0.05%, 3.9y) and EEA1.DE. Gating them needs a FIFTH
+                                 #   exception to non-negotiable #5, missing data PASSES a gate, and would wrongly evict a
+                                 #   0.05% iShares fund whose AUM is absent from the feed rather than small. Two rows do not
+                                 #   buy a fifth exception. DO NOT BANK EITHER OF THESE AGAIN.
+                                 #
+                                 #   THE VOCABULARY LEVER IS NOW SPENT, and a sixty-sixth round should be told so rather
+                                 #   than handed a fourth token. Of the 43 funds left in the GEO blind spot, 26 are not
+                                 #   equity at all (EUR overnight rate swaps, gold, US Treasuries, TIPS, UK gilts, CLOs,
+                                 #   preferred shares, commodities, EPRA/NAREIT property), four are actively managed and
+                                 #   four are factor products. NARROW is why they survive to the census: it spells `bond`
+                                 #   but NOT `treasury`, `gilt`, `aggregate`, `tips`, `nareit` or `epra`. No non-equity fund
+                                 #   is SEATED -- all 98 rows were scanned -- so this is a latent trap, not a live bug, and
+                                 #   the remedy stays the per-token pond audit rather than a guard for a defect not firing.
   hold_per_tier_nasdaq: 2        # (#239 / MEASURED 2026-09-05, live `screen`, 4568 EU-buyable ETFs) — the
                                  #   THIRTEENTH sleeve, and the FIFTH optional one. 0 -> 1. Rows the CORE
                                  #   table keeps for Nasdaq-100 trackers, in a tier of their own at the very
