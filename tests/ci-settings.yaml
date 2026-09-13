@@ -2936,7 +2936,51 @@ buy_heuristic:
                                  #   axis did not already say. Only after that does moving
                                  #   `deploy_multiplier` onto the 2x2 become a decision rather than a
                                  #   guess, and that move is ship-rule graded, not a print knob.
+                                 #   DISCHARGED by (#306) directly below.
                                  #   REVERT: set 0.
+                                 #
+                                 #   (#306) ROUND 88 CENSUS — the run above, priced on FREE data before
+                                 #   building anything. It cannot give a verdict on this sample.
+                                 #   UNMEASURABLE, not refused: the band stays 0.
+                                 #   DATA: Shiller monthly S&P price/E/PE10 (raw.githubusercontent.com/
+                                 #   datasets/s-and-p-500/main/data/data.csv), the US 3M bill TB3MS
+                                 #   (fred.stlouisfed.org/graph/fredgraph.csv?id=TB3MS), and the ^GSPC
+                                 #   series the backtest itself reads for `bench_drawdown_at`.
+                                 #   METHOD: one entry per `bucket`, dated Jan 1 / Jul 1. Path = the
+                                 #   ENTRY-STATE classes (HIGH = dd > -5, FALL = the other two). Level
+                                 #   = 100*E/P - TB3MS as-of (price and rate one month back, E three
+                                 #   months back), which is what `valuation_state` computes; CAPE
+                                 #   (100/PE10 - TB3MS) is shown beside it. Split at the sign: a band
+                                 #   > 0 only moves rows into NEUTRAL, so these counts bound every band.
+                                 #   PROOF: the path classes reproduce the ENTRY-STATE rows up to whole
+                                 #   missing buckets — 20y 9/2/11 vs 8/2/11, 8y 20/9/17 vs 19/9/16. A
+                                 #   missing bucket only removes windows, so every count below is an
+                                 #   upper bound. The first proxy (the next quarterly ^GSPC bar, i.e.
+                                 #   Mar/Sep) read 8y 23/6/17 and was discarded for failing this.
+                                 #
+                                 #   disagreeing corners, windows: trailing (CAPE)
+                                 #     H     cheap @ high   rich & falling   one trial = 2H
+                                 #     20y    3 (0)          3 (5)            40
+                                 #     12y    8 (4)          3 (6)            24
+                                 #     8y    14 (10)         3 (6)            16
+                                 #   cheap @ high   = 1996-97, 2007-07, 2013-18 (CAPE: 2013-18 only)
+                                 #   rich & falling = 1998-07, 2001-01, 2001-07 (CAPE adds 2006-01,
+                                 #                    2006-07, 2007-01)
+                                 #
+                                 #   READ (pre-registered): the larger disagreeing corner stays under
+                                 #   one independent trial at every horizon (best: 14 of 16 at 8y),
+                                 #   and the corner it would be compared against is 3 windows from two
+                                 #   sell-offs (1998, 2001) — 0.19 of a trial at 8y. No returns were
+                                 #   computed, on purpose: a verdict from that corner is the dot-com
+                                 #   bust retold. `deploy_multiplier` stays on the path axis; no code
+                                 #   moved.
+                                 #   EDGES: TB3MS stands in for Euribor 3M (which starts in 1999; USD
+                                 #   matches the benchmark). Trailing E/P sinks when earnings collapse
+                                 #   (S&P E/P 0.91% in 2009-03), so it can call a crash bottom rich.
+                                 #   Jan/Jul is a first-date proxy, not the pool's own cutoff dates.
+                                 #   RE-OPEN: a disagreeing corner reaching 2H windows on the
+                                 #   backtest's own buckets. That takes another rich-market drawdown
+                                 #   in the history, not a new build.
   growth_acc_drag: false         # (#109 / round 3 §6) UNMEASURED, and UNMEASURABLE on this pool —
                                  # `use_of_profits` is None for every backtest quote, so this is
                                  # backtest-blind by construction like the TER and commodity docks
