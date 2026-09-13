@@ -186,6 +186,45 @@ fn spill_repl_note(repl: Option<&str>) -> Option<&'static str> {
 /// settle on `core[2]` while the caller printed a hardcoded "CORE #1", so a row that had skipped two
 /// already-sized names advertised itself as the broadest one. The index is the position in the
 /// SHORTLIST, not in the returned vec, so the skip stays visible.
+/// `(#289)` WHICH of a run's open CORE rows the spill budget funds, as positions into `tiers`.
+///
+/// Split out of [`last_core`] because `size` is no longer the only caller. `track` grades the CORE
+/// rows `size` funds — that is the whole of `(#286)` — and it was choosing them with its own
+/// `.take(n)`, so the moment `spill_per_tier` was on the grader measured three all-world trackers
+/// while `size` bought three different markets. Two spellings of one selection is non-negotiable #4,
+/// and this is the one spelling.
+///
+/// `per_tier` false is the `(#261)` walk-down: the first `n` rows, in list order. True takes the
+/// FIRST row of each DISTINCT tier, in tier order, up to `n` — the list is breadth-major, so that is
+/// the best all-world, the best developed, the best emerging rather than three wrappers on one index.
+///
+/// A row whose tier is unknown cannot be grouped, so a list with no tiers at all DEGRADES to the
+/// walk-down rather than guessing a market (non-negotiable #5). That is the `is_empty` fallback,
+/// which also serves the `per_tier: false` arm — one place decides "the first `n` rows", not two.
+/// Positions, not tickers: the caller owns the rows and their indices, and handing back borrowed
+/// tickers would make this a second definition of the row itself.
+pub(crate) fn spill_picks(tiers: &[Option<u8>], n: usize, per_tier: bool) -> Vec<usize> {
+    let mut picked: Vec<usize> = Vec::new();
+    if per_tier {
+        let mut seen: Vec<u8> = Vec::new();
+        for (p, tier) in tiers.iter().enumerate() {
+            if picked.len() == n {
+                break;
+            }
+            if let Some(t) = tier {
+                if !seen.contains(t) {
+                    seen.push(*t);
+                    picked.push(p);
+                }
+            }
+        }
+    }
+    if picked.is_empty() {
+        picked = (0..tiers.len().min(n)).collect();
+    }
+    picked
+}
+
 /// `(#288)` takes `per_tier`, which answers the criticism `(#261)`'s own doc makes of itself three
 /// paragraphs up — "Nothing here diversifies MARKET risk; three all-world trackers are one market."
 /// With it set, the walk stops at the FIRST unsized row of each DISTINCT breadth tier instead of the
@@ -228,24 +267,7 @@ pub(crate) fn last_core(
         .map(|(i, t)| (i, t, state.core_tier.get(t).copied()))
         .collect();
     // Which of them the budget funds, as positions within `open`.
-    let mut picked: Vec<usize> = Vec::new();
-    if per_tier {
-        let mut seen: Vec<u8> = Vec::new();
-        for (p, (_, _, tier)) in open.iter().enumerate() {
-            if picked.len() == take {
-                break;
-            }
-            if let Some(t) = tier {
-                if !seen.contains(t) {
-                    seen.push(*t);
-                    picked.push(p);
-                }
-            }
-        }
-    }
-    if picked.is_empty() {
-        picked = (0..open.len().min(take)).collect();
-    }
+    let picked = spill_picks(&open.iter().map(|(_, _, t)| *t).collect::<Vec<_>>(), take, per_tier);
     // (#288) the funded rows carry their tier out too. `size` needs it to stop calling every funded
     // row an "all-world tracker" — with the tilt on that sentence is simply false — and reading it
     // back out of `rest` is impossible by construction, since these rows are exactly the ones `rest`
@@ -4490,6 +4512,37 @@ mod tests {
     /// the LAST one: the note must describe the ticker the walk-down settled on, not the one it
     /// skipped past. It is pinned in BOTH directions (skipped-swap -> no note, skipped-physical ->
     /// note) because a single direction passes just as well if the lookup reads `core[0]` blindly.
+    /// `(#289)` The spill selection itself, now that two surfaces share it.
+    ///
+    /// Reachable only through a state-file fixture until this round, which is why the tilt could sit
+    /// in `size` for a whole round without anything noticing `track` disagreed with it. Every arm
+    /// here is one the funded book can actually land in.
+    ///
+    /// The tier vector is deliberately NOT sorted by tier: the CORE list is breadth-major but a
+    /// sized-out row can leave a hole, and a `picked` built by sorting would fund a row the list
+    /// does not rank there. Positions, not tickers, so the caller keeps owning the rows.
+    #[test]
+    fn spill_picks_funds_one_row_per_market() {
+        let t = |v: &[u8]| v.iter().map(|x| Some(*x)).collect::<Vec<_>>();
+
+        // OFF is the (#261) walk-down verbatim: the first n rows, in list order, duplicates and all.
+        assert_eq!(spill_picks(&t(&[0, 0, 0, 1, 2]), 3, false), vec![0, 1, 2]);
+        // ON takes the FIRST row of each DISTINCT tier, in the order the list ranks them.
+        assert_eq!(spill_picks(&t(&[0, 0, 0, 1, 2]), 3, true), vec![0, 3, 4]);
+        // ...and never twice from one tier, even when that starves the budget.
+        assert_eq!(spill_picks(&t(&[0, 0, 0, 0]), 3, true), vec![0]);
+        // a budget below the tier count stops at the budget, keeping the BROADEST rows.
+        assert_eq!(spill_picks(&t(&[0, 1, 2, 3]), 2, true), vec![0, 1]);
+        // a hole in the ranking is honoured: tier 1 ranks below tier 2 here, and that is the order.
+        assert_eq!(spill_picks(&t(&[0, 2, 1]), 3, true), vec![0, 1, 2]);
+
+        // no tier is knowable -> it cannot guess a market, so it degrades to the walk-down (rule #5)
+        assert_eq!(spill_picks(&[None, None, None], 2, true), vec![0, 1]);
+        // ...and a list shorter than the budget hands back what exists rather than panicking.
+        assert_eq!(spill_picks(&t(&[0]), 3, false), vec![0]);
+        assert!(spill_picks(&[], 3, true).is_empty());
+    }
+
     #[test]
     fn last_core_hands_size_the_broadest_row() {
         let state_repl = |core: Vec<String>, meta: &[(&str, &str)]| {

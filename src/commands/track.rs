@@ -300,9 +300,11 @@ fn graded_row(g: &Graded) -> String {
 /// rows)`. The arithmetic of "grade them all and format each" is shared; the WORDS are not, because
 /// each lane owes the reader a different sentence about what it is and how it is weighted. Two
 /// closures to push those sentences in here would be more code than the four lines they replace.
-fn graded_rows<'a>(
-    snaps: &'a [Snapshot],
-    rows_of: &dyn Fn(&'a Snapshot) -> Vec<(&'a str, Option<f64>, f64)>,
+fn graded_rows(
+    snaps: &[Snapshot],
+    // (#289) higher-ranked, because one caller is now a CLOSURE over the tier lookup rather than a
+    // plain fn item, and a closure cannot name the snapshot lifetime its own rows borrow from.
+    rows_of: &dyn for<'a> Fn(&'a Snapshot) -> Vec<(&'a str, Option<f64>, f64)>,
     cut: usize,
     today: chrono::NaiveDate,
     px_now: &dyn Fn(&str) -> Option<f64>,
@@ -318,14 +320,35 @@ fn graded_rows<'a>(
     (snaps.iter().filter(|s| !rows_of(s).is_empty()).count(), snaps.len(), rows)
 }
 
+/// (#289) …and it grades the rows `size` FUNDS, which is not the same thing as the first `cut` of
+/// them. `size` selects through `screen::last_core`, which honours `sizing.spill_per_tier`; this
+/// grader had its own `.take(cut)`, so with the knob on it measured three all-world trackers while
+/// the book bought all-world + developed + emerging. A record that does not describe the book is the
+/// defect `(#286)` exists to prevent, so both sides now call `screen::spill_picks` and there is one
+/// definition of the selection (non-negotiable #4).
+///
+/// `tier_of` is passed the way `px_now` is, and for the same reason: the tier is a pure function of
+/// the fund NAME, the names arrive with the quotes `run` already fetched, and re-deriving them here
+/// would be a second source for one fact. A ticker with no quote answers `None` and is simply not
+/// groupable — with every tier `None` the selection degrades to the old prefix, which is what a
+/// journal line whose funds no longer quote must do rather than grade a market it guessed.
 fn core_section(
     snaps: &[Snapshot],
     cut: usize,
+    per_tier: bool,
     today: chrono::NaiveDate,
     px_now: &dyn Fn(&str) -> Option<f64>,
+    tier_of: &dyn Fn(&str) -> Option<u8>,
     spx_now: Option<f64>,
 ) -> String {
-    let (journalled, total, rows) = graded_rows(snaps, &|s| equal(&s.core), cut, today, px_now, spx_now);
+    // the annotation is load-bearing: without the expected `for<'a>` type in front of it, inference
+    // gives the closure two unrelated lifetimes and it cannot return rows borrowed from `s`.
+    let funded: &dyn for<'a> Fn(&'a Snapshot) -> Vec<(&'a str, Option<f64>, f64)> = &|s| {
+        let all = equal(&s.core);
+        let tiers: Vec<Option<u8>> = all.iter().map(|(t, ..)| tier_of(t)).collect();
+        crate::commands::screen::spill_picks(&tiers, cut, per_tier).into_iter().map(|i| all[i]).collect()
+    };
+    let (journalled, total, rows) = graded_rows(snaps, funded, cut, today, px_now, spx_now);
     if rows.is_empty() {
         return format!(
             "\n  CORE hold shortlist: nothing gradeable yet. A line needs a day of age and at least one\n  \
@@ -335,11 +358,15 @@ fn core_section(
         );
     }
     let body = rows.join("\n");
+    // (#289) "the first N" was true only while the selection was a prefix. It is not one with the
+    // tilt on, and a blurb describing a different rule than the table used is the drift this file
+    // already carries scars for.
+    let how = if per_tier { ", one per market" } else { ", the broadest first" };
     format!(
         "\n  CORE hold shortlist — the buy-and-hold half of the report, graded the same way. Each row is\n  \
-         the first {cut} name(s) of that run's CORE list: what `size` spills the remainder its caps\n  \
-         could not deploy into, which is routinely two thirds of gross. Equal-weight, EUR seat,\n  \
-         price-only, same windows as above. NOT advice.\n  \
+         the {cut} name(s) of that run's CORE list that `size` funds{how}: what it spills the remainder\n  \
+         its caps could not deploy into, which is routinely two thirds of gross. Equal-weight, EUR\n  \
+         seat, price-only, same windows as above. NOT advice.\n  \
          Journalled on {journalled} of {total} run(s).\n\n{TABLE_HEADER}\n{body}"
     )
 }
@@ -506,7 +533,12 @@ pub async fn run(args: Vec<String>) {
     let core_cut = settings.sizing.spill_cut();
     let mut tickers: Vec<String> = snaps
         .iter()
-        .flat_map(|s| s.rows.iter().take(BOOK).chain(s.core.iter().take(core_cut)).map(|(t, _)| t.clone()))
+        // (#289) the WHOLE CORE list, not its first `core_cut` rows. Which rows `size` funds is no
+        // longer a prefix — `spill_per_tier` picks the best row of each breadth tier — and the tier
+        // is read off the fund NAME, which arrives with the quote. So the names have to be fetched
+        // before the selection can be made, not after. Tickers are deduped across every snapshot
+        // below, so this is ~25-35 symbols in total rather than `core_cut` x the journal's length.
+        .flat_map(|s| s.rows.iter().take(BOOK).chain(s.core.iter()).map(|(t, _)| t.clone()))
         .chain(std::iter::once("^GSPC".to_string()))
         .collect();
     tickers.sort();
@@ -555,7 +587,15 @@ pub async fn run(args: Vec<String>) {
     // (#285) and the other two thirds. Printed LAST, below the summary, because that summary is the
     // momentum book's verdict and belongs next to the momentum table — a second table wedged between
     // them would invite the reader to attribute one to the other.
-    println!("{}", core_section(&snaps, core_cut, today, &px_now, spx_now));
+    // (#289) the tier lookup, built off the quotes already fetched above — one source for the fund
+    // name, and none for the tier beyond `core::hold_breadth_tier` itself.
+    let tier_of = |t: &str| {
+        quotes.iter().find(|q| q.ticker == t).map(|q| crate::core::hold_breadth_tier(&q.name))
+    };
+    println!(
+        "{}",
+        core_section(&snaps, core_cut, settings.sizing.spill_per_tier, today, &px_now, &tier_of, spx_now)
+    );
     // (#286) and the book those two lists actually become once `size` has had them. Last, because it
     // is the only weighted table and the reader should meet the two equal-weight ones first.
     println!("{}", sized_section(&snaps, today, &px_now, spx_now));
@@ -786,10 +826,13 @@ mod tests {
             "DOWN" => Some(90.0),
             _ => None,
         };
+        // (#289) a journal line whose funds no longer quote knows no tiers, and that arm must still
+        // grade — it degrades to the (#261) walk-down, which is what every assertion below pins.
+        let no_tier = |_: &str| None;
 
         // no journal at all, and a journal with no CORE list: both are "nothing yet", not a zero
         for snaps in [vec![], vec![snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))])]] {
-            let out = core_section(&snaps, 3, today, &px, Some(105.0));
+            let out = core_section(&snaps, 3, false, today, &px, &no_tier, Some(105.0));
             assert!(out.contains("nothing gradeable yet"), "{out}");
             assert!(out.contains("cannot be backdated"), "the perishability is the point: {out}");
             assert!(!out.contains("BEAT?"), "an empty table reads as a measured result: {out}");
@@ -798,7 +841,7 @@ mod tests {
         // a CORE list exists but the run is TODAY -> still nothing gradeable, and the count says
         // the recording is working, which is the difference between the two failure modes.
         let young = vec![with_core(snap("2026-07-16", Some(100.0), &[]), &[("UP", Some(100.0))])];
-        let out = core_section(&young, 3, today, &px, Some(105.0));
+        let out = core_section(&young, 3, false, today, &px, &no_tier, Some(105.0));
         assert!(out.contains("only 1 of 1 journalled run(s)"), "{out}");
         assert!(out.contains("nothing gradeable yet"), "a zero-day window grades nothing: {out}");
 
@@ -807,7 +850,7 @@ mod tests {
             snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), // momentum only -> no CORE row
             with_core(snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), &[("DOWN", Some(100.0))]),
         ];
-        let out = core_section(&snaps, 3, today, &px, Some(105.0));
+        let out = core_section(&snaps, 3, false, today, &px, &no_tier, Some(105.0));
         // Spelled out, not `contains(&TABLE_HEADER)` against itself: the first push of this round
         // asserted the output against the header-builder's own result, and `contains("")` is true of
         // everything, so the gate rightly called that assertion vacuous. This one pins the layout.
@@ -817,6 +860,49 @@ mod tests {
         assert_eq!(out.matches("2026-06-16").count(), 1, "only the line carrying a CORE list grades: {out}");
         assert!(out.contains("-15.0pp"), "the CORE book lost by 15pp: {out}");
         assert!(out.lines().last().unwrap().ends_with("  no"), "...and the BEAT? column must say so: {out}");
+    }
+
+    /// `(#289)` The grader grades the rows `size` FUNDS, and the knob moves which rows those are.
+    ///
+    /// Four CORE names at a cut of two, priced so the two candidate books cannot be confused: the
+    /// two all-world rows are both +10%, the developed and emerging rows are both -10%. The
+    /// walk-down funds the first two — both all-world — and reads +10.0%. The tilt funds the best
+    /// all-world and the best developed and reads +0.0%. A grader still carrying its own `.take`
+    /// would print +10.0% in BOTH arms, which is the defect this round exists to remove.
+    ///
+    /// The blurb is asserted too. It said "the first N" for four rounds, and with the tilt on that
+    /// sentence describes a selection the table below it did not make.
+    #[test]
+    fn core_section_grades_the_rows_size_funds() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "AW1" | "AW2" => Some(110.0),
+            "DEV" | "EM" => Some(90.0),
+            _ => None,
+        };
+        let tier_of = |t: &str| match t {
+            "AW1" | "AW2" => Some(crate::core::ALL_WORLD_TIER),
+            "DEV" => Some(1),
+            "EM" => Some(2),
+            _ => None,
+        };
+        let core = [("AW1", Some(100.0)), ("AW2", Some(100.0)), ("DEV", Some(100.0)), ("EM", Some(100.0))];
+        let snaps = vec![with_core(snap("2026-06-16", Some(100.0), &[]), &core)];
+
+        let off = core_section(&snaps, 2, false, today, &px, &tier_of, Some(105.0));
+        assert!(off.contains("+10.0%"), "the walk-down funds AW1 + AW2: {off}");
+        assert!(off.contains("the broadest first"), "...and must say which rule it used: {off}");
+
+        let on = core_section(&snaps, 2, true, today, &px, &tier_of, Some(105.0));
+        assert!(on.contains("+0.0%"), "the tilt funds AW1 + DEV: {on}");
+        assert!(on.contains("one per market"), "...and must say which rule it used: {on}");
+
+        // the tilt cannot invent a market: with no tier knowable it degrades to the walk-down, so
+        // the TABLE is the `off` table. Only the sentence above it differs, because the rule asked
+        // for did differ — the table is what grades, and it must not guess a market (rule #5).
+        let blind = core_section(&snaps, 2, true, today, &px, &|_| None, Some(105.0));
+        let table = |s: &str| s.lines().skip_while(|l| !l.contains("BEAT?")).collect::<Vec<_>>().join("\n");
+        assert_eq!(table(&blind), table(&off), "a tierless journal line grades the walk-down");
     }
 
     /// (#286) `grade` now folds a WEIGHTED book, and the weight is the whole reason this round

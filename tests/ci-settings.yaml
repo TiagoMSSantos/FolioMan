@@ -1289,12 +1289,16 @@ sizing:
                       #   rows 1..n are the same all-world market from a DIFFERENT issuer with different
                       #   replication — this buys issuer/counterparty spread and nothing else, which is
                       #   precisely the risk (#253) shipped this row carrying and recorded as unpriced.
-  spill_per_tier: false # (#288) WHICH markets those trackers cover. false = the (#261) walk-down above,
+  spill_per_tier: true  # (#288) WHICH markets those trackers cover. false = the (#261) walk-down above,
                       #   i.e. the first `spill_names` unsized CORE rows, which on every live shortlist
                       #   are all-world (the sort is breadth-major) — three wrappers on one index.
                       #   true funds the BEST ROW OF EACH DISTINCT breadth tier instead, so the same
-                      #   money buys all-world + developed + emerging. Ships false: non-negotiable #1,
-                      #   and the full receipt is under the `(#288)` block further down.
+                      #   money buys all-world + developed + emerging. `(#289)` made true the default
+                      #   AND fixed `track`, which had its own walk-down and would otherwise have
+                      #   graded three all-world trackers while the book bought three markets. Read
+                      #   the `(#289)` block further down before touching this: the tiers are NESTED,
+                      #   so this is in substance an EM overweight (~3.3% -> ~11.1% of gross), not
+                      #   three independent markets. `false` is the proven, byte-identical revert.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -5117,6 +5121,85 @@ buy_heuristic:
   #   US or Japan sleeves; raising `spill_names` reaches them, and that was not graded either.
   #   REVERT RULE: `spill_per_tier: false` is the shipped default and the proven revert; the `core_all`
   #   widening has no knob because a truncated record was never a setting anyone chose.
+  # (#289) THE MARKET TILT BECAME THE DEFAULT, AND THE GRADER STOPPED MEASURING A DIFFERENT BOOK.
+  #   Two changes, and they had to ship together. `sizing.spill_per_tier` went false -> true, so the
+  #   ~30% of gross the caps cannot deploy now buys the best row of each distinct breadth tier instead
+  #   of the first three rows of a breadth-major list, which were always three all-world wrappers. And
+  #   `track`, which graded that same spill, had its OWN `.take(spill_cut)` — a plain walk-down. Flip
+  #   one without the other and the journal records three all-world trackers while the book buys three
+  #   markets. Both surfaces now call `screen::spill_picks`, one definition (non-negotiable #4).
+  #
+  #   WHY NOW, AND WHY NOTHING WAS ADMITTED. The standing ask is "show more good assets to hold 20+
+  #   years". Admission was re-checked live and is CLOSED on every measurable front:
+  #     CORE funnel, 2026-09-13: 4538 EU-buyable ETFs -> not broad-index 3888 · no UCITS 0 · TER 180 ·
+  #       replication 0 · not Acc 193 · AUM 126 · QUALIFIED 151 -> 99 printed.
+  #     - not broad-index (3888): the GEO blind spot inside it is only 40 funds, and the top 15 by AUM
+  #       are overnight-rate swaps, gold, treasuries, TIPS, commodities, cash and preferred shares —
+  #       correctly refused for a 20-year EQUITY hold. The two real equity names (SAHE.DE, SJEA.DE) are
+  #       deliberately guarded as active, and LGJP.L would EVICT an exposure at a full Japan cap, which
+  #       is the precise trade `(#251)` refuses.
+  #     - 151 -> 99 is the per-sleeve caps, with nearly every sleeve sitting exactly at its cap, and
+  #       `(#220)`/`(#234)` already measured that a further slot buys a WRAPPER, not an exposure.
+  #     - TER (180) is not gating a class: EIMI.L clears at 0.18% and six emerging rows are admitted.
+  #   So the remaining lever on this ask is not WHICH names are vetted; it is which of the 99 the money
+  #   reaches. That is this round.
+  #
+  #   THE SERIES-CONTINUITY OBJECTION IS EMPIRICALLY VOID. `journal_core_list` only went live with
+  #   `(#285)`, and the live journal held 13 snapshot lines of which 0 carried a CORE list. There is no
+  #   graded CORE history to break by re-aiming the grader. This is the cheapest moment the alignment
+  #   will ever have, and it is why the fix ships with the flip rather than after it.
+  #
+  #   WHAT IT DOES TO THE MONEY — STATED, NOT SOLD. The breadth tiers are NESTED BY CONSTRUCTION:
+  #   developed + emerging partition all-world, and US/Europe/Japan are subsets of developed. Funding
+  #   all-world + developed + emerging is therefore NOT three different markets. Taking EM at ~11% of
+  #   an all-world index (index definition, not measured here), on the live 30.0% remainder:
+  #       walk-down (3x all-world):  developed ~26.7% of gross · emerging ~3.3%
+  #       tilt (10/10/10):           developed ~18.9% of gross · emerging ~11.1%
+  #   In substance this is a ~3.4x EMERGING-MARKET OVERWEIGHT within the spill, and the all-world and
+  #   developed legs are near-duplicates of each other. It is an active bet. It is a judgement, not a
+  #   fitted allocation, and it is NOT BACKTESTABLE IN THIS REPO — `backtest.rs` carries zero hold-lane
+  #   tokens and the CORE admission legs need per-cutoff TER/AUM/domicile that no free feed carries
+  #   historically. Anyone who does not want the bet sets `spill_per_tier: false` and gets `(#261)`.
+  #
+  #   LIVE PROOF, 2026-09-13, one `screen` run (547 lines, QUALIFIED 151, core_all 99, tier census
+  #   7 all-world · 8 developed · 6 emerging · 9 US · 3 ex-US · 5 Europe · 6 Japan · 4 Asia-Pac ·
+  #   4 size · 5 factor · 23 sector · 17 country · 2 NASDAQ), both arms reading the SAME state file:
+  #     size --picks, tilt ON  : WEBN.DE CORE #1 · MXWO.L CORE #8 · HEMA.MI CORE #16, 10.0% each,
+  #       TOTAL+ 100.0%, sentence "split equally over 3 trackers, across all-world + developed +
+  #       emerging". Unfunded census: 6 all-world · 7 developed · 5 emerging · 9 US · 3 ex-US ·
+  #       5 Europe · 6 Japan · 4 Asia-Pac · 4 size · 5 factor · 22 sector · 17 country · 2 NASDAQ = 95.
+  #     size --picks, tilt OFF : WEBN.DE #1 · SPYY.DE #2 · VWRA.L #3, sentence "split equally over 3
+  #       all-world trackers". THE REVERT IS PROVEN, not asserted.
+  #     track, both arms, on a backdated copy of the journalled CORE line whose all-world entry prices
+  #       were halved so the two candidate books cannot read alike: tilt +33.3% (one halved all-world +
+  #       two unhalved non-all-world), walk-down +100.0% (three halved all-world), N = 3 in both. Before
+  #       this round BOTH arms read +100.0%. That difference IS the defect, and it is now gone. The
+  #       backdated line was appended to a copy and the journal restored md5-identical
+  #       (0e020e86c51141fcdf3c53289fa4d174).
+  #     The blurb now names the rule the table used: "that `size` funds, one per market" with the tilt
+  #       on, "the broadest first" with it off. It read "the first N" for four rounds, which with the
+  #       tilt on describes a selection the table below it did not make.
+  #
+  #   SUPERSEDES `(#288)` HONEST EDGE (e) — "`track` still grades the 20-row book, so the widened record
+  #   is not retro-graded" — which was true of the walk-down and is not true of the tilt.
+  #
+  #   HONEST EDGES. (a) THIS ROUND MOVES REAL MONEY. Rounds 70 and 71 changed only what is recorded and
+  #   displayed; this one changes the allocation `size` prints. (b) `size` selects from the 99-row
+  #   `core_all`, `track` from the 20-row `snapshot.core`. At `spill_names: 3` both reach tiers 0/1/2
+  #   and agree; if `spill_names` ever rises past the tiers present in the 20-row list they diverge
+  #   again, and nothing pins that today. (c) `spill_names` was NOT raised: because the tiers are
+  #   nested, a fourth and fifth row buy US and ex-US, both already inside all-world — more overlap,
+  #   not more market. (d) The tilt does not learn to SKIP nested tiers. That is the obvious next
+  #   question and it is a design change, not a default flip; it is recorded here as the open question.
+  #   (e) The tier comes from the fund NAME via `hold_breadth_tier`'s `geo_tier` match, so a broad fund
+  #   whose name carries no geography lands in the pinned `FACTOR_TIER` fallback. (f) A journal line
+  #   whose funds no longer quote knows no tiers; the selection then DEGRADES to the walk-down rather
+  #   than guessing a market (non-negotiable #5), pinned in both `spill_picks` and `core_section`.
+  #   (g) The `screen` run above was a genuine shipped-policy run and its state was KEPT, not rolled
+  #   back — it is the first journal line in the repo's history to carry a CORE list (1 of 14).
+  #   REVERT RULE: `spill_per_tier: false` restores `(#261)`'s walk-down in BOTH surfaces at once,
+  #   which is the whole point of there being one selection; the `track` fix itself has no knob,
+  #   because a grader measuring a book nobody holds was never a setting anyone chose.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among
