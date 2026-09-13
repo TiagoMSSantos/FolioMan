@@ -1637,6 +1637,7 @@ pub async fn run(args: Vec<String>) {
     report_relative_strength(&samples, &bench, tuning.split_purge_months);
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
     let verdict = report_entry_state(&samples, &bench, years, tuning);
+    report_sized_book(&samples, &bench, years, tuning, &settings.sizing, settings.top_picks);
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
     // the watchlist's ~50-survivor sample is not the method's proof, and must never overwrite it.
     // The screen's method footer reads this file back.
@@ -3054,6 +3055,80 @@ fn report_entry_state(
     println!("  (a class with a handful of windows is a regime story, not a statistic. If a state over-delivers, the");
     println!("   guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)");
     verdict
+}
+
+/// (#290) One ~6-month bucket of the book `size` would actually have bought: `book` and `spy` are
+/// terminal multiples (1.0 = flat), `deployed` is the percent of gross the weights placed in names.
+struct SizedBucket {
+    book: f64,
+    spy: f64,
+    deployed: f64,
+}
+
+/// (#290) The JOURNALED pool (the same filter `report_entry_state` builds `base` with) under the
+/// weighting the user executes instead of an equal-weight top-N: per bucket, rank by growth score,
+/// cut at `top_picks` (the ranked book `size --picks` reads), then hand those quotes to
+/// `size::sized_book`, the ONE spelling of issuer dedupe + score/vol weights + name and sector caps.
+/// Whatever the weights leave unallocated earns the bucket's benchmark leg, the stand-in for the
+/// index trackers the live spill buys.
+fn sized_buckets(
+    samples: &[Sample],
+    bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
+    years: i64,
+    tuning: &BuyHeuristic,
+    sz: &config::Sizing,
+    top: usize,
+) -> BTreeMap<i32, SizedBucket> {
+    let (bd, bc) = bench;
+    let mut pool: BTreeMap<i32, Vec<(f64, &Sample, f64)>> = BTreeMap::new();
+    for s in samples {
+        if picks::asset_class(&s.quote) == 0 {
+            continue;
+        }
+        let Some(score) = growth_score(&s.quote, tuning) else { continue };
+        let Some(br) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+        pool.entry(bucket(s.date)).or_default().push((score, s, br));
+    }
+    pool.into_iter()
+        .map(|(bk, mut rows)| {
+            rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+            rows.truncate(top);
+            let quotes: Vec<&Quote> = rows.iter().map(|r| &*r.1.quote).collect();
+            // (weight fraction, name multiple, bench multiple) per funded row, joined back by identity.
+            let legs: Vec<(f64, f64, f64)> = crate::commands::size::sized_book(&quotes, tuning, sz, None)
+                .iter()
+                .filter_map(|(q, _, w, _)| rows.iter().find(|r| std::ptr::eq(*q, &*r.1.quote)).map(|r| (w / 100.0, 1.0 + r.1.realized / 100.0, 1.0 + r.2 / 100.0)))
+                .collect();
+            let spy = legs.iter().map(|l| l.2).sum::<f64>() / legs.len() as f64;
+            let deployed = legs.iter().map(|l| l.0).sum::<f64>();
+            let book = legs.iter().map(|l| l.0 * l.1).sum::<f64>() + (1.0 - deployed) * spy;
+            (bk, SizedBucket { book, spy, deployed: deployed * 100.0 })
+        })
+        .collect()
+}
+
+/// (#290) Prints the sized book on the JOURNALED row's columns. The stats are `book_stats`' own:
+/// each bucket becomes one row, and top-1 of a one-row bucket is that row. Diagnostic only; the
+/// journal and SHIP RULE stay on the equal-weight top-`VERDICT_TOP`.
+fn report_sized_book(
+    samples: &[Sample],
+    bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
+    years: i64,
+    tuning: &BuyHeuristic,
+    sz: &config::Sizing,
+    top: usize,
+) {
+    let sized = sized_buckets(samples, bench, years, tuning, sz, top);
+    let m: BTreeMap<i32, Vec<(f64, f64, f64)>> =
+        sized.iter().map(|(bk, s)| (*bk, vec![(0.0, (s.book - 1.0) * 100.0, (s.spy - 1.0) * 100.0)])).collect();
+    if let Some((b, _, e, w, wo, el, la)) = book_stats(&m, 1, years) {
+        let deployed = sized.values().map(|s| s.deployed).sum::<f64>() / sized.len() as f64;
+        println!(
+            "  {:<28} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}, deployed {deployed:.0}%) [diagnostic: the book `size` funds, top-{top}; remainder earns the index]",
+            "all entries (SIZED)",
+            sized.len(),
+        );
+    }
 }
 
 /// Only the free SEC/income-statement factors are listed (roe, the round-107 survival levels and — since
@@ -6384,6 +6459,50 @@ mod tests {
         assert_eq!(sat, 2, "10 <= basket and 4 <= basket are saturated; 11 is not");
         assert_eq!(h2h_mid.n, pools.len() - sat, "the GUARD tallies the non-saturated buckets");
         assert_eq!(h2h_mid.n, 1, "and here that is the single 11-name bucket");
+    }
+
+    #[test]
+    fn sized_buckets_price_the_funded_book() {
+        // (#290) Hand arithmetic on `Sizing::default()`: a lone stock renormalises to 100% of gross, clamps
+        // at max_name_pct 8, and the other 92% earns the benchmark leg. Bench +50 over 1y on every date.
+        let q = crate::commands::size::tests::scoring_quote;
+        let d = NaiveDate::from_ymd_opt(2000, 1, 3).unwrap();
+        let bench = (
+            ["2000-01-03", "2000-07-03", "2001-01-03", "2001-07-03"].iter().map(|s| s.parse().unwrap()).collect(),
+            vec![100.0, 100.0, 150.0, 150.0],
+        );
+        let at = |date, realized, quote| Sample { date, realized, relative: 0.0, quote: Arc::new(quote), fund: None, trail: Vec::new() };
+        let (tuning, sz) = (BuyHeuristic::default(), config::Sizing::default());
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+
+        // lone name: 0.08 * 2.0 + 0.92 * 1.5 = 1.54
+        let one = [at(d, 100.0, q("AAA.DE", "Alpha", 900.0, 2.0))];
+        let m = sized_buckets(&one, &bench, 1, &tuning, &sz, 10);
+        let s = &m[&bucket(d)];
+        assert!(close(s.book, 1.54) && close(s.spy, 1.5) && close(s.deployed, 8.0), "{} {} {}", s.book, s.spy, s.deployed);
+
+        // two issuers, both clamped at 8: 0.08 * 2.0 + 0.08 * 0.5 + 0.84 * 1.5 = 1.46, deployed 16. The worse
+        // name comes FIRST in the input, so the cut at top-1 below proves ranking, not input order.
+        // A gate-refused stub and an out-of-window date never enter the pool, so no bucket, no NaN.
+        let late = NaiveDate::from_ymd_opt(2001, 1, 3).unwrap();
+        let two = [
+            at(d, -50.0, q("BBB.DE", "Beta", 500.0, 4.0)),
+            at(d, 100.0, q("AAA.DE", "Alpha", 900.0, 2.0)),
+            at(NaiveDate::from_ymd_opt(2000, 7, 3).unwrap(), 0.0, core::Quote::stub("DEAD.DE", "€1.00", "", "Dead")),
+            at(late, 0.0, q("CCC.DE", "Gamma", 900.0, 2.0)),
+        ];
+        let m = sized_buckets(&two, &bench, 1, &tuning, &sz, 10);
+        assert_eq!(m.keys().copied().collect::<Vec<_>>(), vec![bucket(d)]);
+        let s = &m[&bucket(d)];
+        assert!(close(s.book, 1.46) && close(s.spy, 1.5) && close(s.deployed, 16.0), "{} {} {}", s.book, s.spy, s.deployed);
+        let s = &sized_buckets(&two, &bench, 1, &tuning, &sz, 1)[&bucket(d)];
+        assert!(close(s.book, 1.54) && close(s.deployed, 8.0), "top-1 keeps the better score: {}", s.book);
+
+        // twin listings of one issuer fund ONE weight, the better-ranked one's; a 0.5 bench leg on the loser
+        // would drag spy if it were counted.
+        let twins = [at(d, -50.0, q("AAA2.DE", "Alpha", 700.0, 2.0)), at(d, 100.0, q("AAA.DE", "Alpha", 900.0, 2.0))];
+        let s = &sized_buckets(&twins, &bench, 1, &tuning, &sz, 10)[&bucket(d)];
+        assert!(close(s.book, 1.54) && close(s.deployed, 8.0), "twin collapses onto the winner: {}", s.book);
     }
 
     #[test]

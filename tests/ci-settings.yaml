@@ -5200,6 +5200,52 @@ buy_heuristic:
   #   REVERT RULE: `spill_per_tier: false` restores `(#261)`'s walk-down in BOTH surfaces at once,
   #   which is the whole point of there being one selection; the `track` fix itself has no knob,
   #   because a grader measuring a book nobody holds was never a setting anyone chose.
+  # (#290) THE BACKTEST NOW GRADES THE BOOK `size` BUYS, NOT ONLY AN EQUAL-WEIGHT TOP-10. No knob moved.
+  #   Every growth-admission refusal on file ((#219), (#266) and the other three) names ONE
+  #   re-open: "a graded objective that is not an equal-weight top-N, since the 1/N dilution IS the
+  #   mechanism". The user does not hold an equal-weight top-10. `size` weights score / vol inside class
+  #   budgets, caps each issuer at `max_name_pct` and each sector at `max_sector_pct`, and leaves the rest
+  #   to index trackers. Until this round no backtest path reached `picks::size_weights`, so whether the
+  #   dilution argument survives on the executed book was unmeasurable, not refused.
+  #
+  #   WHAT PRINTS. `backtest` adds one row under ENTRY-STATE, `all entries (SIZED)`, on the JOURNALED
+  #   row's pool and columns. Per ~6-month bucket: rank by growth score, cut at `top_picks` (the ranked
+  #   book `size --picks` reads), hand those quotes to `size::sized_book` (the one spelling of issuer
+  #   dedupe + weights + caps, non-negotiable #4), and let the unallocated share earn the bucket's
+  #   benchmark leg. Stats are `book_stats` itself, one row per bucket at n = 1. Diagnostic only: the
+  #   journal, SHIP RULE v2 and the screen footer stay on the equal-weight top-`VERDICT_TOP`.
+  #
+  #   LIVE, `backtest N universe fund pit`, 2026-09-13, this config, MAX monthly history, journal md5
+  #   unchanged (95a9188a7b2838266e4ba853e29b7bd9):
+  #     20y (21 windows)  top-10 +7.2%/yr  excess +0.6  win 52%  worst -10.0  OOS -1.6/+2.6
+  #                       SIZED  +7.0%/yr  excess +0.3  win 57%  worst  -2.2  OOS -0.2/+0.8  deployed 44%
+  #     12y (36 windows)  top-10 +10.0%/yr excess +3.6  win 75%  worst  -6.4  OOS +2.1/+5.0
+  #                       SIZED  +8.3%/yr  excess +1.8  win 75%  worst  -2.0  OOS +0.9/+2.8  deployed 53%
+  #      8y (44 windows)  top-10 +11.1%/yr excess +4.4  win 82%  worst  -5.5  OOS +3.6/+5.1
+  #                       SIZED  +9.3%/yr  excess +2.5  win 84%  worst  -3.7  OOS +1.7/+3.4  deployed 59%
+  #
+  #   READING. The sized book trails the top-10 by 0.2 / 1.7 / 1.8 points a year and keeps a positive
+  #   excess at every horizon, with a worst window 1.8-7.8 points shallower. The names it funds are not the
+  #   weaker part: excess / deployed is roughly 0.7 / 3.4 / 4.2 against the top-10's 0.6 / 3.6 / 4.4 (a
+  #   linear approximation of annualised numbers, a sanity check and not a statistic). The gap is the
+  #   41-56% that never reaches a name and earns the index. A bucket deploys below 100 only when every
+  #   funded row sits at a name or sector cap (or scores <= 0), so on THIS book a further admitted name is paid for out of index
+  #   money, not out of a better-ranked name's weight. That is the opposite of the 1/N mechanism the
+  #   refusals were graded on, and it is a hypothesis for round 74, not a result.
+  #
+  #   HONEST LIMITS. (a) The backtest pool is ~all stocks, so the class budget renormalises to 100% stock:
+  #   this grades name caps, sector caps, score / vol and the stranded remainder, not the live 70/25/5
+  #   split. (b) The remainder earns the S&P 500 leg, not the all-world + developed + emerging trackers
+  #   `spill_per_tier` buys. (c) Pins, crypto NUPL and fund-tilt enrichment are not modelled; the cut is
+  #   on gated growth rows only. (d) No money moves and no name is added: this is a ruler. (e) The fixture
+  #   goldens deploy only 12-19%, because the frozen pool has few gated names per bucket; the live lane
+  #   is the reading, the goldens only pin the arithmetic.
+  #
+  #   PRE-REGISTERED, ROUND 74. Re-grade the refused growth-admission arms on the SIZED row, 20y and 8y
+  #   first, same lane. Bar, against the shipped arm on the same run: SIZED book up at BOTH horizons, and
+  #   BOTH OOS halves up. Deltas, not signs, because the shipped 20y early half already reads -0.2.
+  #   Deployed must rise too, or the arm moved weight between names and the mechanism above is not what
+  #   paid. An arm failing any leg stays refused, and the refusal then holds on both objectives.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among

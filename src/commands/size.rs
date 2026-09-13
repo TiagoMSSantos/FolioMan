@@ -515,7 +515,7 @@ fn allocation_gap_lines(sized: &[(String, String, Option<f64>, f64)], held: &[(S
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A Quote that clears `picks::growth_score`'s whole gate stack, built from `core::Quote::stub`
@@ -524,7 +524,7 @@ mod tests {
     /// and duplicating it would be a second spelling of "a scoring quote" (non-negotiable #4). The
     /// stub carries every other field at its own default, so a gate this fixture does not name is a
     /// gate that reads missing data — which passes, per non-negotiable #5.
-    fn scoring_quote(ticker: &str, name: &str, cum_20y: f64, vol: f64) -> crate::core::Quote {
+    pub(crate) fn scoring_quote(ticker: &str, name: &str, cum_20y: f64, vol: f64) -> crate::core::Quote {
         let mut q = crate::core::Quote::stub(ticker, "€1.00", "", name);
         // Contiguous history: a real name carrying a 20Y leg carries every shorter one. The rungs
         // below are the same cumulative return annualized down, so `long_leg_fixed` picks 20Y and

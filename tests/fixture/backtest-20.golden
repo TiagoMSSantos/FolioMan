@@ -245,6 +245,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   all entries (top-10)         book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1   (windows 22) [unconditional, JOURNALED]
   (a class with a handful of windows is a regime story, not a statistic. If a state over-delivers, the
    guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)
+  all entries (SIZED)          book +7.3%/yr  excess +0.7  win 73%  worst -0.6  OOS +1.4/+0.0   (windows 22, deployed 15%) [diagnostic: the book `size` funds, top-20; remainder earns the index]
 
 ── CORR-CAP probe: greedy top-10 by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held 20y ──
   cap  off  book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1  [cap off = plain top-10 book]
