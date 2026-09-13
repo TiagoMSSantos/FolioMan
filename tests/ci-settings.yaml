@@ -5444,6 +5444,26 @@ buy_heuristic:
   #   Also fixed: `Sizing::max_sector_pct`'s doc still said "STOCK CLASS ONLY", stale since (#293).
   #   REVERT: `size::US_SPILL_WEIGHT = 1.0` (every share is rest / n again, byte-identical); delete the
   #   buy-list print in `screen::run`.
+  #
+  # (#297) ROUND 79: THE PASTE-READY ORDERS BUY THE BUY NOW BOOK. Same standing ask. (#295) printed the book
+  #   `size` funds, and that left two different books on one screen: `order_glue` split the monthly deploy
+  #   EQUALLY over the ranked top-10. On 2026-09-13 that meant BNB-EUR and BTC-EUR at 10% each (20% in coins
+  #   against `budget_crypto: 5`), LYBK.DE and SEMI.AS never bought, and nothing for the 37.5% in trackers.
+  #   DECIDED by the user this round, on the (#290) rows above. At 20y the SIZED book reads +7.0 vs the
+  #   top-10's +7.2 %/yr, worst window -2.2 vs -10.0, early OOS -0.2 vs -1.6; at 12y/8y the top-10 earns 1.7/1.8
+  #   more. The backtest pool is non-crypto, so the orders' 20% in coins was never graded at all.
+  #   SHIPPED: `size::buy_weights` is the BUY NOW book as (ticker, % of gross), ONE definition for the printed
+  #   list and the orders; `order_glue` buys deploy x weight / price per row. LIVE (a copy of the live config
+  #   with a synthetic `monthly_deploy_eur: 1000`; every state file restored and md5-verified after):
+  #     16 orders = the 16 BUY NOW rows. Coins EUR 26 + 24 = 5% (were 2 x 10%). Trackers EUR 75/75/75/150
+  #     (were none). ABEC.DE 1000 x 8.0% / 291.90 = 0.2741. Every tracker quoted, so no <QTY> placeholder.
+  #   HONEST EDGES. By decision, this gives up return to get a shallower worst window: on the graded record the
+  #   equal top-10 earns more at 12y/8y and ~0.2/yr more at 20y (stock-only pool, remainder earning the S&P
+  #   leg, not these trackers). `sim` still replays the equal top-10: most journal lines predate the `sized`
+  #   field (#286), so it has no book to replay for them. The screen trust line and `track`'s first table
+  #   still grade the top-10 list; `track` grades the sized book in its own table.
+  #   REVERT: split `deploy_eur` equally in `order_glue`, and build its rows from `ranked_now` cut at
+  #   `track::BOOK` again.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among

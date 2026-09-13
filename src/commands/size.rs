@@ -162,24 +162,34 @@ pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&
     if sized.is_empty() && core.is_empty() {
         return None;
     }
-    let rest = 100.0 - sized.iter().map(|(_, w)| w).sum::<f64>();
+    let book = buy_weights(sized, core);
     let mut out = format!(
         "BUY NOW — the 20-year book `size --picks` funds: {} pick(s) + {} tracker(s), % of gross. NOT advice",
         sized.len(),
         core.len()
     );
-    for (t, w) in sized {
-        out += &format!("\n  {t:<10} {w:>5.1}%  growth pick");
-    }
-    let tiers: Vec<Option<u8>> = core.iter().map(|(.., tier)| *tier).collect();
-    for ((_, t, repl, tier), share) in core.iter().zip(spill_split(rest, &tiers)) {
-        let note = repl.map(|r| format!(" · {r}")).unwrap_or_default();
-        out += &format!("\n  {t:<10} {share:>5.1}%  {} tracker{note}", tier_label(*tier));
+    for (i, (t, w)) in book.iter().enumerate() {
+        let what = match i.checked_sub(sized.len()).and_then(|j| core.get(j)) {
+            None => "growth pick".to_string(),
+            Some((.., repl, tier)) => format!("{} tracker{}", tier_label(*tier), repl.map(|r| format!(" · {r}")).unwrap_or_default()),
+        };
+        out += &format!("\n  {t:<10} {w:>5.1}%  {what}");
     }
     if core.is_empty() {
+        let rest = 100.0 - book.iter().map(|(_, w)| w).sum::<f64>();
         out += &format!("\n  ({rest:.1}% unallocated — no CORE tracker journalled to take it)");
     }
     Some(out)
+}
+
+/// (#297) The BUY NOW book as `(ticker, % of gross)`: the growth picks at their sized weights, then the
+/// CORE trackers at their `spill_split` share of what the picks left. ONE definition (non-negotiable #4)
+/// for the printed list and `screen`'s paste-ready orders, so the orders cannot buy another book.
+pub(crate) fn buy_weights(sized: &[(String, f64)], core: &[(usize, String, Option<&'static str>, Option<u8>)]) -> Vec<(String, f64)> {
+    let rest = 100.0 - sized.iter().map(|(_, w)| w).sum::<f64>();
+    let tiers: Vec<Option<u8>> = core.iter().map(|(.., tier)| *tier).collect();
+    let trackers = core.iter().map(|(_, t, ..)| t.clone()).zip(spill_split(rest, &tiers));
+    sized.iter().cloned().chain(trackers).collect()
 }
 
 pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Option<String> {
@@ -848,6 +858,8 @@ pub(crate) mod tests {
         use crate::core::{ALL_WORLD_TIER, US_TIER};
         let picks = [("NVD.DE".to_string(), 5.6), ("IITU.L".to_string(), 4.4)];
         let core = [(0, "WEBN.DE".to_string(), None, Some(ALL_WORLD_TIER)), (21, "SPXS.L".to_string(), Some("swap"), Some(US_TIER))];
+        let w = |t: &str, w: f64| (t.to_string(), w);
+        assert_eq!(buy_weights(&picks, &core), vec![w("NVD.DE", 5.6), w("IITU.L", 4.4), w("WEBN.DE", 30.0), w("SPXS.L", 60.0)]);
         let head = "  NVD.DE       5.6%  growth pick\n  IITU.L       4.4%  growth pick";
         assert_eq!(
             buy_list(&picks, &core).as_deref(),

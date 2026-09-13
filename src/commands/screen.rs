@@ -2582,18 +2582,19 @@ pub async fn run(args: Vec<String>) {
     // screen stops being manual retyping. Broker per class (stocks/ETFs → Trading212, crypto →
     // Binance); exact T212 symbols only exist for names already held (t212_raw), others print a
     // placeholder; Binance pairs are derivable for every coin. QTY = this month's deploy € (base ×
-    // entry-state multiplier, same math as the top line) split equally across the book — the
-    // equal-weight top-10 IS the validated backtest/track book. Each command still runs trade's own
-    // real-money confirm gate; nothing here sends anything.
+    // entry-state multiplier, same math as the top line) × each row's weight in the BUY NOW book
+    // printed above. (#297) It was the equal-weight top-10, which is what the backtest grades, but it is
+    // not the book this screen tells you to buy: it held both coins at 10% each and no trackers. Each
+    // command still runs trade's own real-money confirm gate; nothing here sends anything.
     {
         let deploy_scaled =
             deploy_scaled_eur(settings.monthly_deploy_eur, spx_off_hi).map(|(_, total)| total);
-        let book: Vec<&String> = ranked_now.iter().take(crate::commands::track::BOOK).collect();
+        let book = crate::commands::size::buy_weights(&sized_now, &buy_core);
         // (round 117) fetch the full T212 instrument list (7-day cached, silent-empty without a
         // key) only when some stock/ETF row can't already be resolved from held positions — a
         // fully-held book or a keyless run costs zero extra HTTP. The ISIN map (inverted from the
         // ETF universe's ISIN→Yahoo cache) gives the resolver its exact-match path.
-        let need_instruments = book.iter().any(|t| {
+        let need_instruments = book.iter().any(|(t, _)| {
             !crate::picks::is_currency_quoted(t)
                 && !t212_raw.iter().any(|r| crate::picks::t212_base(r) == crate::picks::yahoo_base(t))
         });
@@ -2614,14 +2615,14 @@ pub async fn run(args: Vec<String>) {
         // (round 118) tally which resolution rung produced each symbol — the stderr report below
         // makes a keyed verification run self-explaining and turns a silent resolver miss (stale
         // ISIN cache, quietly-empty instruments fetch) into a visible placeholder count.
-        let mut glue_rows: Vec<(String, Option<f64>, &'static str, Option<String>)> = Vec::new();
+        let mut glue_rows: Vec<(String, Option<f64>, &'static str, Option<String>, f64)> = Vec::new();
         let (mut n_owned, mut n_isin, mut n_base, mut n_binance, mut n_ph) = (0usize, 0usize, 0usize, 0usize, 0usize);
-        for t in &book {
-            let price = quotes.iter().find(|q| &q.ticker == *t).and_then(|q| q.price_eur);
+        for (t, w) in &book {
+            let price = quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur);
             if crate::picks::is_currency_quoted(t) {
                 n_binance += 1;
                 let sym = format!("{}EUR", crate::picks::underlying(t).to_uppercase());
-                glue_rows.push(((*t).clone(), price, "binance", Some(sym)));
+                glue_rows.push((t.clone(), price, "binance", Some(sym), *w));
             } else {
                 let resolved = resolve_t212(t, &t212_raw, &instruments, &isin_of);
                 match &resolved {
@@ -2630,7 +2631,7 @@ pub async fn run(args: Vec<String>) {
                     Some(_) => n_base += 1,
                     None => n_ph += 1,
                 }
-                glue_rows.push(((*t).clone(), price, "trading212", resolved.map(|(sym, _)| sym)));
+                glue_rows.push((t.clone(), price, "trading212", resolved.map(|(sym, _)| sym), *w));
             }
         }
         if let Some(glue) = order_glue(&glue_rows, deploy_scaled) {
@@ -3199,39 +3200,38 @@ fn resolve_t212(
 }
 
 /// (round 116) order-glue: the top book as paste-ready `trade` commands. Rows =
-/// (yahoo ticker, price €, broker, broker symbol if known); `deploy_eur` = this month's scaled
-/// deploy total, split equally across the rows (the equal-weight book). Unknown broker symbol →
+/// (yahoo ticker, price €, broker, broker symbol if known, % of gross); `deploy_eur` = this month's
+/// scaled deploy total. (#297) Each row buys deploy × its weight in the BUY NOW book
+/// (`size::buy_weights`); round 116 split it equally over the top-10, which put both coins at 10%
+/// each against a 5% crypto budget and bought none of the trackers. Unknown broker symbol →
 /// `<T212_SYMBOL>` placeholder (T212 forms are only knowable from held positions); no deploy set
 /// or no price → `<QTY>`. Never prints an empty section; commands only PRINT here — sending one
 /// still walks trade's real-money confirm gate.
-fn order_glue(rows: &[(String, Option<f64>, &'static str, Option<String>)], deploy_eur: Option<f64>) -> Option<String> {
+fn order_glue(rows: &[(String, Option<f64>, &'static str, Option<String>, f64)], deploy_eur: Option<f64>) -> Option<String> {
     if rows.is_empty() {
         return None;
     }
-    let n = rows.len();
-    let slice = deploy_eur.map(|d| d / n as f64);
-    let mut out = String::from("\nPaste-ready orders — ");
-    match slice {
-        Some(s) => out.push_str(&format!(
-            "€{:.0} this month ÷ {n} names ≈ €{s:.0} each. Review each; every command asks its own real-money 'yes'. NOT advice.\n",
-            s * n as f64
+    let mut out = String::from("\nPaste-ready orders — the BUY NOW book above, ");
+    match deploy_eur {
+        Some(d) => out.push_str(&format!(
+            "€{d:.0} this month × each row's weight. Review each; every command asks its own real-money 'yes'. NOT advice.\n"
         )),
         None => out.push_str(
             "set monthly_deploy_eur for sized QTY. Review each; every command asks its own real-money 'yes'. NOT advice.\n",
         ),
     }
     let mut unheld = false;
-    for (ticker, price, broker, sym) in rows {
+    for (ticker, price, broker, sym, w) in rows {
         let sym_cell = sym.clone().unwrap_or_else(|| {
             unheld = true;
             "<T212_SYMBOL>".to_string()
         });
-        let qty_cell = match (slice, price) {
-            (Some(s), Some(p)) if *p > 0.0 => format!("{:.4}", s / p),
+        let qty_cell = match (deploy_eur, price) {
+            (Some(d), Some(p)) if *p > 0.0 => format!("{:.4}", d * w / 100.0 / p),
             _ => "<QTY>".to_string(),
         };
         let price_note = price.map_or(String::new(), |p| format!(" @ €{p:.2}"));
-        out.push_str(&format!("  folioman trade {broker} buy {sym_cell} {qty_cell}   # {ticker}{price_note}\n"));
+        out.push_str(&format!("  folioman trade {broker} buy {sym_cell} {qty_cell}   # {ticker} {w:.1}%{price_note}\n"));
     }
     if unheld {
         out.push_str("  # <T212_SYMBOL> = not currently held, so the Trading212 ticker form is unknown — look it up in the app once.\n");
@@ -3360,33 +3360,36 @@ mod tests {
         assert!(zero_budget.contains("free €400") && !zero_budget.contains("deploy"));
     }
 
-    /// (round 116) order-glue semantics: empty book prints nothing; sized rows split the deploy €
-    /// equally (qty = slice ÷ price) across both brokers; missing deploy or missing symbol degrade
-    /// to placeholders (never a guessed number), and the unheld footnote only prints when earned.
+    /// (round 116) order-glue semantics: empty book prints nothing; (#297) each row buys the deploy €
+    /// × its BUY NOW weight (qty = € ÷ price) across both brokers; missing deploy, missing or zero
+    /// price, or missing symbol degrade to placeholders (never a guessed number), and the unheld
+    /// footnote only prints when earned.
     #[test]
     fn order_glue_semantics() {
         assert!(order_glue(&[], Some(1000.0)).is_none());
         let rows = vec![
-            ("AAPL".to_string(), Some(150.0), "trading212", Some("AAPL_US_EQ".to_string())),
-            ("BTC-EUR".to_string(), Some(75000.0), "binance", Some("BTCEUR".to_string())),
+            ("AAPL".to_string(), Some(150.0), "trading212", Some("AAPL_US_EQ".to_string()), 80.0),
+            ("BTC-EUR".to_string(), Some(75000.0), "binance", Some("BTCEUR".to_string()), 20.0),
         ];
         let sized = order_glue(&rows, Some(300.0)).unwrap();
-        assert!(sized.contains("€300 this month ÷ 2 names ≈ €150 each"));
-        assert!(sized.contains("folioman trade trading212 buy AAPL_US_EQ 1.0000"));
-        assert!(sized.contains("folioman trade binance buy BTCEUR 0.0020"));
+        assert!(sized.contains("the BUY NOW book above, €300 this month × each row's weight"));
+        assert!(sized.contains("folioman trade trading212 buy AAPL_US_EQ 1.6000   # AAPL 80.0% @ €150.00"));
+        assert!(sized.contains("folioman trade binance buy BTCEUR 0.0008   # BTC-EUR 20.0%"));
         assert!(!sized.contains("<T212_SYMBOL>") && !sized.contains("look it up"));
         let no_deploy = order_glue(&rows, None).unwrap();
         assert!(no_deploy.contains("set monthly_deploy_eur") && no_deploy.contains("<QTY>"));
         let unheld = order_glue(
-            &[("SXLK.L".to_string(), Some(156.62), "trading212", None)],
+            &[("SXLK.L".to_string(), Some(156.62), "trading212", None, 100.0)],
             Some(300.0),
         )
         .unwrap();
         assert!(unheld.contains("<T212_SYMBOL>") && unheld.contains("look it up"));
-        assert!(unheld.contains("# SXLK.L @ €156.62"));
-        // priceless row can't size a qty even with a deploy set
-        let no_price = order_glue(&[("X".to_string(), None, "trading212", None)], Some(100.0)).unwrap();
+        assert!(unheld.contains("# SXLK.L 100.0% @ €156.62"));
+        // priceless or zero-priced row can't size a qty even with a deploy set
+        let no_price = order_glue(&[("X".to_string(), None, "trading212", None, 10.0)], Some(100.0)).unwrap();
         assert!(no_price.contains("<QTY>"));
+        let zero = order_glue(&[("Z".to_string(), Some(0.0), "trading212", None, 10.0)], Some(100.0)).unwrap();
+        assert!(zero.contains("<QTY>"), "{zero}");
     }
 
     /// (round 117) symbol resolution priority: owned beats instruments; ISIN-exact prefers the
