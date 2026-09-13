@@ -5486,6 +5486,29 @@ buy_heuristic:
   #   exactly the weight the book already chose.
   #   REVERT: drop the Binance arm and the tag in `order_glue`, the euro prefix in `trade::parse_order`,
   #   and `eur` in `binance::order`.
+  # (#299) ROUND 81: SCORE-ONLY SIZING WEIGHTS, GRADED ON THE SIZED ROW AND REFUSED AS INERT. Same
+  #   standing ask. `picks::size_weights` weights score / vol inside a class budget, and that divisor had
+  #   never been graded against an alternative. The arm was a throwaway build, never committed: the raw
+  #   weight became the score alone, in the first split and in the spill. The control was the shipped
+  #   binary on the same config, in the same session.
+  #   PRE-REGISTERED BAR, written before either run: SIZED excess up at 20y AND 8y, both OOS halves not
+  #   down, windows scored equal. Deployed is reported, not a leg: a weighting arm admits nothing.
+  #   PREDICTED INERT: SIZED deployed is about the 8% name cap times the median gated pool (5 x 8 = 40
+  #   against 44%, 7 x 8 = 56 against 59%), so almost every funded row already sits at the cap and a
+  #   weighting rule has nothing left to move.
+  #   `backtest N universe fund pit`, 2026-09-13. The control reproduced the (#290) rows exactly:
+  #          SIZED excess   worst          OOS halves               deployed    windows
+  #     20y  +0.3 -> +0.3   -2.2 -> -2.2   -0.2/+0.8 -> -0.1/+0.8   44 -> 44%   21 -> 21
+  #      8y  +2.5 -> +2.5   -3.7 -> -3.7   +1.7/+3.4 -> +1.7/+3.4   59 -> 59%   44 -> 44
+  #   The 20y output differs from its control only in that early half (and one cache count); the 8y
+  #   output is identical line for line. REFUSED: excess is flat at both horizons.
+  #   LIVE `size --picks`, same state: TOTAL 62.5 -> 62.3%. Weight only moves inside the technology
+  #   sector cap (IITU.L 5.6 -> 4.4, XLKS.L 5.2 -> 3.9, SMH.L 2.6 -> 3.4, SEMI.AS 2.4 -> 3.4, NVD.DE
+  #   5.6 -> 5.1, KLA.DE 4.1 -> 5.1); every name-capped row stays at 8.0.
+  #   WHERE THIS LEAVES THE ASK: admission ((#291)), the name cap ((#292)(a)), the factor slot ((#294))
+  #   and now the weighting rule are priced, so the SIZED book is admission x name cap + index. Do not
+  #   re-probe the divisor, the sector cap or the spill split on this row unless the gated pool widens.
+  #   Nothing ships, so there is nothing to revert.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among
