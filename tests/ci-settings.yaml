@@ -5372,6 +5372,40 @@ buy_heuristic:
   #   are two quote fetches on the same day, so the vols moved slightly between them.
   #   REVERT: pass `&Default::default()` as `funds` in `size::run` and `screen::run`. Stocks keep the cap
   #   (and `size` keeps its sector join), and with no fund sectors the math is the stock-only cap again.
+  #
+  # (#294) ROUND 77: A FACTOR TRACKER IN THE SPILL, GRADED AND REFUSED. Same standing ask. Growth admission
+  #   is closed (above) and the spill already funds four breadth tiers ((#289)/(#292)), so the one ungraded
+  #   buy-and-hold lever left was a world factor tilt: CORE tier 9, i.e. XDEV.DE value, XDEQ.DE quality,
+  #   XDEM.DE momentum, XDEB.DE minimum volatility (TER 0.25 each), against the funded developed leg MXWO.L
+  #   at TER 0.05.
+  #   BAR, WRITTEN BEFORE ANY NUMBER WAS COMPUTED: HALF the paper excess must beat the +0.20 TER gap in EVERY
+  #   rolling 20y window (paper min > +0.40 pts/yr), and on the 12y mean too; momentum must also pass on US
+  #   data from 1927. The halving stands in for paper-vs-fund costs and post-publication decay.
+  #   DATA, free: the Ken French data library (mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp),
+  #   Developed_6_Portfolios_ME_{Prior_12_2,OP,BE-ME} and 6_Portfolios_ME_Prior_12_2, value-weighted monthly,
+  #   USD; the "BIG Hi" portfolio minus Mkt-RF+RF of the matching 3-factor file; CAGR difference; windows
+  #   start every January and July:
+  #                                20y win   mean    min   > +0.40   12y mean   8y mean
+  #     developed momentum HiPRIOR     32   +1.53  +0.23     31/32     +1.65     +1.80   FAILS (2000 start)
+  #     developed quality  HiOP        33   +1.22  +0.59     33/33     +1.24     +1.49   PASSES
+  #     developed value    HiBM        33   -0.43  -2.15     10/33     -0.31     -0.46   FAILS
+  #     US momentum        HiPRIOR    160   +3.36  -0.42   152/160     +3.15     +3.13   FAILS
+  #   Minimum volatility and equal weight (MWEP.L) have no free long series here and were not graded.
+  #   REFUSED ANYWAY, BY DECISION, ON THE ONE LIVE WINDOW. The halving was an assumption about how much of a
+  #   paper premium a fund keeps, and XDEQ.DE measures it. EUR adjusted closes from the long-history cache,
+  #   2014-10 -> 2026-08 (11.8y): XDEQ.DE -0.10 pts/yr vs CW8.PA and -0.27 vs H4ZJ.DE, while paper quality
+  #   over the same months read +1.83. Calendar years 2015-2025 average ~+0.2/yr live against ~+2.3/yr on
+  #   paper, so the fund kept ~10%, not 50%, and the signs disagree in 3 of 11 years (2015, 2020, 2024).
+  #   MSCI Quality (ROE, leverage, earnings variability) is not Ken French operating profitability. Worth
+  #   had it shipped: one spill slot, ~7.5% of gross x the premium, +0.02..+0.09 pts/yr of the book on
+  #   paper and ~0 on the live record. (DBXW.DE and SPYI.DE series in the cache are broken; not used.)
+  #   NOT A RE-OPEN TRIGGER: XDEM.DE read +2.08/+2.25 live over the same window, but momentum FAILED the bar
+  #   above, and choosing it after seeing the numbers is the argmax this file forbids. Re-open only with a
+  #   NEW bar written before the data, on a free 20y+ series of the index the fund actually tracks. Value
+  #   failed outright; do not re-grade it on this data.
+  #   FOR WHOEVER BUILDS A FACTOR SLOT: `screen::spill_picks` funds the FIRST row of a tier, and tier 9's
+  #   first row is MWEP.L (equal weight, 2.0y), not a graded factor. A tier reach alone buys the wrong fund.
+  #   No code changed. REVERT: delete this block.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among
