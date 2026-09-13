@@ -1637,7 +1637,32 @@ pub async fn run(args: Vec<String>) {
     report_relative_strength(&samples, &bench, tuning.split_purge_months);
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
     let verdict = report_entry_state(&samples, &bench, years, tuning);
-    report_sized_book(&samples, &bench, years, tuning, &settings.sizing, settings.top_picks);
+    // (#308) the indexes the spill's trackers follow, so the SIZED remainder earns what `size` buys with
+    // it: all-world / developed / emerging per tier, the US tier on `bench` itself, weighted by
+    // `size::spill_split`. Free Yahoo series; MSCI EM has no free history, so VEIEX (from 1994). Price-only,
+    // so the total-return lane keeps the plain benchmark leg, as do the daily lane, every tier past
+    // emerging, and any leg that fails to fetch. No legs at all prints the (#290) row unchanged.
+    const SPILL_LEGS: [(&str, &str); 3] = [("^892400-USD-STRD", "MSCI ACWI"), ("^990100-USD-STRD", "MSCI World"), ("VEIEX", "VEIEX")];
+    let mut spill_series = Vec::new();
+    if monthly && !crate::config::use_adjusted_close() {
+        for (sym, _) in SPILL_LEGS {
+            spill_series.push(fetch::fetch_history_long(&client, &settings.urls, sym).await.map(|c| (c.dates, c.closes)));
+        }
+    }
+    let spill_leg = |t: u8| spill_series.get(usize::from(t)).and_then(Option::as_ref);
+    let tiers: Vec<u8> = (0..settings.sizing.spill_cut()).map(|i| if settings.sizing.spill_per_tier { i as u8 } else { 0 }).collect();
+    let spill: Vec<(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))> = if tiers.iter().any(|t| spill_leg(*t).is_some()) {
+        let split = crate::commands::size::spill_split(1.0, &tiers.iter().map(|t| Some(*t)).collect::<Vec<_>>());
+        split.into_iter().zip(&tiers).map(|(w, t)| (w, spill_leg(*t).unwrap_or(&bench))).collect()
+    } else {
+        Vec::new()
+    };
+    report_sized_book(&samples, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill);
+    if !spill.is_empty() {
+        let name = |t: u8| spill_leg(t).and(SPILL_LEGS.get(usize::from(t))).map_or(bench_sym, |l| l.1);
+        let legs: Vec<String> = tiers.iter().zip(&spill).map(|(t, (w, _))| format!("{} {:.0}%", name(*t), w * 100.0)).collect();
+        println!("  {:<28} (#308) the remainder above earns the spill's index legs, price-only: {}", "", legs.join(" · "));
+    }
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
     // the watchlist's ~50-survivor sample is not the method's proof, and must never overwrite it.
     // The screen's method footer reads this file back.
@@ -3069,8 +3094,10 @@ struct SizedBucket {
 /// weighting the user executes instead of an equal-weight top-N: per bucket, rank by growth score,
 /// cut at `top_picks` (the ranked book `size --picks` reads), then hand those quotes to
 /// `size::sized_book`, the ONE spelling of issuer dedupe + score/vol weights + name and sector caps.
-/// Whatever the weights leave unallocated earns the bucket's benchmark leg, the stand-in for the
-/// index trackers the live spill buys.
+/// Whatever the weights leave unallocated earns `spill`: (#308) the indexes the live spill's trackers
+/// follow, at `size::spill_split`'s weights. A leg that starts after the entry, or has no full window
+/// left, earns the row's benchmark leg instead, and with no legs at all (offline, the daily lane, the
+/// total-return lane) the remainder earns the benchmark leg bit-for-bit as (#290) shipped it.
 fn sized_buckets(
     samples: &[Sample],
     bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
@@ -3078,6 +3105,7 @@ fn sized_buckets(
     tuning: &BuyHeuristic,
     sz: &config::Sizing,
     top: usize,
+    spill: &[(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))],
 ) -> BTreeMap<i32, SizedBucket> {
     let (bd, bc) = bench;
     let mut pool: BTreeMap<i32, Vec<(f64, &Sample, f64)>> = BTreeMap::new();
@@ -3094,14 +3122,29 @@ fn sized_buckets(
             rows.sort_by(|a, b| b.0.total_cmp(&a.0));
             rows.truncate(top);
             let quotes: Vec<&Quote> = rows.iter().map(|r| &*r.1.quote).collect();
-            // (weight fraction, name multiple, bench multiple) per funded row, joined back by identity.
-            let legs: Vec<(f64, f64, f64)> = crate::commands::size::sized_book(&quotes, tuning, sz, None, &Default::default())
+            // (weight fraction, name multiple, bench multiple, remainder multiple) per funded row, joined back by identity.
+            let legs: Vec<(f64, f64, f64, f64)> = crate::commands::size::sized_book(&quotes, tuning, sz, None, &Default::default())
                 .iter()
-                .filter_map(|(q, _, w, _)| rows.iter().find(|r| std::ptr::eq(*q, &*r.1.quote)).map(|r| (w / 100.0, 1.0 + r.1.realized / 100.0, 1.0 + r.2 / 100.0)))
+                .filter_map(|(q, _, w, _)| rows.iter().find(|r| std::ptr::eq(*q, &*r.1.quote)).map(|r| {
+                    let bench = 1.0 + r.2 / 100.0;
+                    let hold = if spill.is_empty() {
+                        bench
+                    } else {
+                        spill
+                            .iter()
+                            .map(|(sw, (d, c))| {
+                                let fwd = d.first().is_some_and(|f| *f <= r.1.date).then(|| benchmark_fwd(d, c, r.1.date, years)).flatten();
+                                sw * (1.0 + fwd.unwrap_or(r.2) / 100.0)
+                            })
+                            .sum()
+                    };
+                    (w / 100.0, 1.0 + r.1.realized / 100.0, bench, hold)
+                }))
                 .collect();
             let spy = legs.iter().map(|l| l.2).sum::<f64>() / legs.len() as f64;
+            let hold = legs.iter().map(|l| l.3).sum::<f64>() / legs.len() as f64;
             let deployed = legs.iter().map(|l| l.0).sum::<f64>();
-            let book = legs.iter().map(|l| l.0 * l.1).sum::<f64>() + (1.0 - deployed) * spy;
+            let book = legs.iter().map(|l| l.0 * l.1).sum::<f64>() + (1.0 - deployed) * hold;
             (bk, SizedBucket { book, spy, deployed: deployed * 100.0 })
         })
         .collect()
@@ -3117,8 +3160,9 @@ fn report_sized_book(
     tuning: &BuyHeuristic,
     sz: &config::Sizing,
     top: usize,
+    spill: &[(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))],
 ) {
-    let sized = sized_buckets(samples, bench, years, tuning, sz, top);
+    let sized = sized_buckets(samples, bench, years, tuning, sz, top, spill);
     let m: BTreeMap<i32, Vec<(f64, f64, f64)>> =
         sized.iter().map(|(bk, s)| (*bk, vec![(0.0, (s.book - 1.0) * 100.0, (s.spy - 1.0) * 100.0)])).collect();
     if let Some((b, _, e, w, wo, el, la)) = book_stats(&m, 1, years) {
@@ -6503,9 +6547,17 @@ mod tests {
 
         // lone name: 0.08 * 2.0 + 0.92 * 1.5 = 1.54
         let one = [at(d, 100.0, q("AAA.DE", "Alpha", 900.0, 2.0))];
-        let m = sized_buckets(&one, &bench, 1, &tuning, &sz, 10);
+        let m = sized_buckets(&one, &bench, 1, &tuning, &sz, 10, &[]);
         let s = &m[&bucket(d)];
         assert!(close(s.book, 1.54) && close(s.spy, 1.5) && close(s.deployed, 8.0), "{} {} {}", s.book, s.spy, s.deployed);
+
+        // (#308) the remainder earns the spill legs instead. A doubles; B starts AFTER the entry, so it earns
+        // the bench leg rather than reading its later window (+200): 0.08 * 2.0 + 0.92 * (0.5 * 2.0 + 0.5 *
+        // 1.5) = 1.77, and spy stays the benchmark leg.
+        let a = (vec![d, NaiveDate::from_ymd_opt(2001, 1, 3).unwrap()], vec![100.0, 200.0]);
+        let b = (vec![NaiveDate::from_ymd_opt(2000, 7, 3).unwrap(), NaiveDate::from_ymd_opt(2001, 7, 3).unwrap()], vec![100.0, 300.0]);
+        let s = &sized_buckets(&one, &bench, 1, &tuning, &sz, 10, &[(0.5, &a), (0.5, &b)])[&bucket(d)];
+        assert!(close(s.book, 1.77) && close(s.spy, 1.5) && close(s.deployed, 8.0), "{} {} {}", s.book, s.spy, s.deployed);
 
         // two issuers, both clamped at 8: 0.08 * 2.0 + 0.08 * 0.5 + 0.84 * 1.5 = 1.46, deployed 16. The worse
         // name comes FIRST in the input, so the cut at top-1 below proves ranking, not input order.
@@ -6517,17 +6569,17 @@ mod tests {
             at(NaiveDate::from_ymd_opt(2000, 7, 3).unwrap(), 0.0, core::Quote::stub("DEAD.DE", "€1.00", "", "Dead")),
             at(late, 0.0, q("CCC.DE", "Gamma", 900.0, 2.0)),
         ];
-        let m = sized_buckets(&two, &bench, 1, &tuning, &sz, 10);
+        let m = sized_buckets(&two, &bench, 1, &tuning, &sz, 10, &[]);
         assert_eq!(m.keys().copied().collect::<Vec<_>>(), vec![bucket(d)]);
         let s = &m[&bucket(d)];
         assert!(close(s.book, 1.46) && close(s.spy, 1.5) && close(s.deployed, 16.0), "{} {} {}", s.book, s.spy, s.deployed);
-        let s = &sized_buckets(&two, &bench, 1, &tuning, &sz, 1)[&bucket(d)];
+        let s = &sized_buckets(&two, &bench, 1, &tuning, &sz, 1, &[])[&bucket(d)];
         assert!(close(s.book, 1.54) && close(s.deployed, 8.0), "top-1 keeps the better score: {}", s.book);
 
         // twin listings of one issuer fund ONE weight, the better-ranked one's; a 0.5 bench leg on the loser
         // would drag spy if it were counted.
         let twins = [at(d, -50.0, q("AAA2.DE", "Alpha", 700.0, 2.0)), at(d, 100.0, q("AAA.DE", "Alpha", 900.0, 2.0))];
-        let s = &sized_buckets(&twins, &bench, 1, &tuning, &sz, 10)[&bucket(d)];
+        let s = &sized_buckets(&twins, &bench, 1, &tuning, &sz, 10, &[])[&bucket(d)];
         assert!(close(s.book, 1.54) && close(s.deployed, 8.0), "twin collapses onto the winner: {}", s.book);
     }
 

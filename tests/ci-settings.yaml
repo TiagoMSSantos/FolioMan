@@ -5286,12 +5286,62 @@ buy_heuristic:
   #   on gated growth rows only. (d) No money moves and no name is added: this is a ruler. (e) The fixture
   #   goldens deploy only 12-19%, because the frozen pool has few gated names per bucket; the live lane
   #   is the reading, the goldens only pin the arithmetic.
+  #   (b) DISCHARGED by (#308) below: the remainder earns the spill's index legs on a live run.
   #
   #   PRE-REGISTERED, ROUND 74. Re-grade the refused growth-admission arms on the SIZED row, 20y and 8y
   #   first, same lane. Bar, against the shipped arm on the same run: SIZED book up at BOTH horizons, and
   #   BOTH OOS halves up. Deltas, not signs, because the shipped 20y early half already reads -0.2.
   #   Deployed must rise too, or the arm moved weight between names and the mechanism above is not what
   #   paid. An arm failing any leg stays refused, and the refusal then holds on both objectives.
+  # (#308) ROUND 91: THE SIZED ROW'S REMAINDER NOW EARNS THE SPILL'S INDEX LEGS, NOT THE S&P ALONE. No knob moved.
+  #   Standing ask plus "add the backtest and forward test that are missing". FORWARD: nothing is missing.
+  #   `track` grades the CORE rows `size` funds at `size::spill_split`'s weights (`core_section`) and the sized
+  #   half (`sized_section`); `sim` replays the whole BUY NOW book (`size::buy_weights`). BACKTEST: (#290)'s
+  #   limit (b). `sized_buckets` let the 41-56% the caps strand earn ^GSPC, while live `size` spills it one
+  #   tracker per tier, all-world / developed / emerging / US at 1/1/1/2. backtest.rs had no hold lane.
+  #
+  #   FREE CENSUS FIRST, 2026-09-13. Yahoo `v8/finance/chart/<sym>?period1=0&period2=1789000000&interval=1mo`,
+  #   price-only, Jan/Jul starts. Blend = (^892400-USD-STRD MSCI ACWI + ^990100-USD-STRD MSCI World + VEIEX
+  #   + 2 x ^GSPC) / 5, minus ^GSPC, pts/yr:
+  #     20y  median -1.02  min -1.91  blend ahead  1/25 windows
+  #     12y  median -0.99  min -3.26  blend ahead 14/41 windows
+  #      8y  median -2.58  min -4.22  blend ahead 15/49 windows
+  #   MSCI EM (^891800-USD-STRD) and EAFE return 0 bars free and EEM starts 2003, so VEIEX (1994-06) is the
+  #   emerging leg. Through `chart_json_long` (range=max) ACWI and World arrive as 3mo bars, like ^GSPC.
+  #
+  #   WHAT CHANGED. `run` fetches the three legs (monthly, price-only lane only) and hands `sized_buckets`
+  #   (weight, series) pairs from `spill_split(1.0, tiers 0..spill_cut())`; the US tier and every tier past
+  #   emerging ride `bench`. Per funded row the remainder earns sum w x (1 + leg forward return); a leg that
+  #   starts after the entry, or has no full window, earns the row's bench leg. No leg fetched -> `spill`
+  #   empty -> the (#290) arithmetic bit-for-bit, which keeps the five offline goldens byte-identical
+  #   (FOLIOMAN_OFFLINE fetches return None silently). A live run prints one line under the row naming the
+  #   legs. `spy`, and so excess, stays the S&P. Pinned by `sized_buckets_price_the_funded_book` (the 1.77 case).
+  #
+  #   LIVE, `backtest N universe fund pit`, this config, HEAD binary vs this commit's, back to back, state
+  #   restored and all 17 md5s verified after every run:
+  #          SIZED book     excess        win         worst         OOS halves              deployed
+  #     20y  +7.0 -> +6.5   +0.3 -> -0.1  57 -> 48%   -2.2 -> -2.8  -0.2/+0.8 -> -0.5/+0.1  44%
+  #     12y  +8.3 -> +8.2   +1.8 -> +1.8  75 -> 83%   -2.0 -> -2.5  +0.9/+2.8 -> +1.4/+2.1  53%
+  #      8y  +9.3 -> +9.5   +2.5 -> +2.7  84 -> 89%   -3.7 -> -4.7  +1.7/+3.4 -> +2.9/+2.6  59%
+  #   The control column reproduces the (#290) rows above to the digit.
+  #   READING. At the horizon the ask names, the book `size` executes no longer beats the S&P on this
+  #   backtest: excess +0.3 -> -0.1, the late half +0.8 -> +0.1. Same names, same weights; only the index
+  #   money moved. 12y holds and 8y rises; why the 8y sample favours the blend is not decomposed here (the
+  #   census has it ahead in 15 of 49 windows). Only `report_sized_book` calls `sized_buckets`, so no other
+  #   row of the report can move with it.
+  #
+  #   HONEST EDGES. (a) Price-only on both sides; ex-US and emerging yield more than the S&P, so part of the
+  #   gap is dividends. (b) Index legs carry no TER; VEIEX is a fund and carries its own. (c) Quarterly bars
+  #   on ACWI / World / ^GSPC. (d) The tiers are nested: World is mostly US and ACWI holds both, so the
+  #   tilt is emerging and ex-US weight, not four markets. (e) The daily and total-return lanes, and every
+  #   tier past emerging except US, still earn the S&P. (f) Run noise: the 20y pair also differs on
+  #   unrelated OOS-rho and edge lines, and the 8y arm resolved 6138 tickers to the control's 6139 (windows
+  #   scored identical). (g) THE RE-OPEN RULER MOVED. Every SIZED grade on file priced the remainder at the
+  #   S&P. An arm that changed `deployed` swapped index money for names, and that money now earns less at
+  #   20y and more at 8y on this sample, so old deltas shift in opposite directions by horizon; (#292)(a)'s
+  #   max_name_pct 12 lifted deployed ~15 points. Nothing is re-graded here, and nothing re-opens on this
+  #   receipt alone.
+  #   REVERT: pass `&[]` from `run` (or delete the leg fetch); the row returns to the control column above.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.
