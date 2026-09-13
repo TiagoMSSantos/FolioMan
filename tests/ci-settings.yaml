@@ -5509,6 +5509,36 @@ buy_heuristic:
   #   and now the weighting rule are priced, so the SIZED book is admission x name cap + index. Do not
   #   re-probe the divisor, the sector cap or the spill split on this row unless the gated pool widens.
   #   Nothing ships, so there is nothing to revert.
+  # (#300) ROUND 82: `sim` REPLAYS THE BUY NOW BOOK. Same standing ask. (#297) made `screen`'s orders buy
+  #   `size::buy_weights` (the sized picks, then the funded CORE trackers at their `spill_split` share), but
+  #   `sim` and the screen's follow-the-screen digest still paper-bought the equal top-10 of each month's
+  #   first snapshot: coins at 10% each and no trackers, a book nobody executes. USER DECISION: replay the
+  #   BUY NOW book, from each month's first line carrying `sized`, else its first line (the equal top-10,
+  #   the pre-(#300) path, byte-identical).
+  #   WHAT CHANGED: `sim::monthly_firsts` ranks a book-carrying line ahead of every book-less one in its
+  #   month; `sim::buy_event` weights by `buy_weights` over `screen::spill_picks` of the journalled CORE rows
+  #   (tiers by fund name, as `track` reads them). Unpriced rows, and lots whose slice does not clear the
+  #   fee, drop once and the rest renormalise to the budget. No new knob, selection or weight.
+  #   LIVE `sim`, job journal (14 lines, one carrying a book: 09-13), synthetic monthly_deploy_eur 1000,
+  #   2026-09-13, HEAD binary -> this one:
+  #     buys    07-25 and 08-01 identical; September 09-02 (9 names, equal) -> 09-13 (12 picks + WEBN.DE,
+  #             MXWO.L, HEMA.MI)
+  #     total   EUR 4000 in -> 4172 (+4.3%, S&P +1.1%, +3.2 pp) -> 4136 (+3.4%, S&P +1.0%, +2.4 pp)
+  #     fees    EUR 27 -> 33
+  #   HONEST EDGES: the lower total is not a grade. September's basket is 0 days old, so it reads the fee
+  #   drag plus the 09-02 -> 09-13 move it no longer buys. Lines before 09-13 carry no book and replay as
+  #   before. The 09-13 CORE prefix has no US row, so September funds 3 trackers, not 4. A CORE row that is
+  #   also a sized pick would buy twice; `size::last_core` skips those and this replay does not (none today).
+  #   FEE DRAG, RECEIPT ONLY, NOT BUILT. `SIM_FEE_EUR` charges EUR 1 per name, so at EUR 1000 on the 09-13
+  #   book a lot pays: 8% names EUR 80 -> 1.25%, trackers EUR 100 -> 1.0%, SMH.L 36.83 -> 2.7%, SEMI.AS
+  #   35.13 -> 2.8%, BNB-EUR 26.37 -> 3.8%, BTC-EUR 23.63 -> 4.2%, LYBK.DE 18.05 -> 5.5%. Total EUR 15, 1.5%
+  #   of the contribution; the five lots under EUR 50 hold EUR 140 and pay EUR 5 (3.6%). CANDIDATE: fold
+  #   lots under EUR X into the trackers. At X = 50 that is 10 lots and EUR 10 (1.0%), about 0.5 pp of every
+  #   contribution, so roughly 0.5% of terminal value over a 20y DCA. Not built: it deletes five names
+  #   including both coins, against the breadth ask; the EUR 1/name is the sim's assumption, unverified per
+  #   broker; X is illustrative; and the SIZED backtest row models no fees, so nothing here can grade it.
+  #   A lot at deploy x weight >= EUR 100 already pays <= 1%.
+  #   REVERT: `monthly_firsts` back to date-only, and drop `buy_event`'s book arm with its two parameters.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among

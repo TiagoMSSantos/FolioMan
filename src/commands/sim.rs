@@ -1,13 +1,16 @@
 //! `sim` — paper-DCA of the screen's own advice, executed with (pretend) money: each calendar
 //! month, income arrives (`monthly_deploy_eur` × the deploy-line entry-state multiplier) and buys
-//! the equal-weight top-10 of that month's FIRST screen snapshot at the journaled prices, €1 fee
-//! per name bought. Pure replay of `.screen_snapshots.jsonl` — no state of its own: every run
+//! the BUY NOW book of that month's first screen snapshot carrying one (`size::buy_weights`: the
+//! sized picks at their weights, then the funded CORE trackers) — else the equal-weight top-10 of
+//! its FIRST snapshot — at the journaled prices, €1 fee per name bought. Pure replay of
+//! `.screen_snapshots.jsonl` — no state of its own: every run
 //! recomputes the whole ledger, so the rule lives in code+config (versioned) and there is no
 //! second file to drift. This is the cumulative €-weighted cousin of `track`: track grades each
 //! past top-10 per window, sim compounds them into one fee-aware portfolio vs an S&P 500 DCA of
 //! the same cashflows. Price-only, EUR seat, dividends not counted. NOT advice.
 
-use crate::commands::screen::deploy_scaled_eur;
+use crate::commands::screen::{deploy_scaled_eur, spill_picks};
+use crate::commands::size::buy_weights;
 use crate::commands::track::{Snapshot, BOOK, SNAPSHOT_FILE};
 use crate::{config, fetch};
 use std::collections::BTreeMap;
@@ -15,8 +18,8 @@ use std::collections::BTreeMap;
 /// Flat fee per distinct name per buy event (user's broker: ≥1€ per asset buy).
 const SIM_FEE_EUR: f64 = 1.0;
 
-/// One executed monthly buy: the month's budget split equal-weight across the snapshot's priced
-/// top rows. `deployed` = the full budget (fees included); `mult_known` = false means the journal
+/// One executed monthly buy: the month's budget split across the snapshot's priced book at its
+/// weights. `deployed` = the full budget (fees included); `mult_known` = false means the journal
 /// line predates the `spx_off_hi` field, so the ×1 multiplier is a fallback, not a measured state.
 struct Event {
     date: String,
@@ -46,14 +49,16 @@ fn next_ym((y, m): (i32, u32)) -> (i32, u32) {
     if m == 12 { (y + 1, 1) } else { (y, m + 1) }
 }
 
-/// First snapshot of each calendar month, keyed by (year, month) — the buy dates. Input order
-/// does not matter; within a month the earliest date wins.
+/// The buy snapshot of each calendar month, keyed by (year, month) — the buy dates. Input order
+/// does not matter; within a month the earliest line carrying a BUY NOW book (`sized`) wins, else
+/// the earliest line. (#300) A book-less line only knows the ranked rows, and buying those is the
+/// equal top-10 the user does not execute, so the month waits for the book when one was journalled.
 fn monthly_firsts(snaps: &[Snapshot]) -> BTreeMap<(i32, u32), &Snapshot> {
     let mut firsts: BTreeMap<(i32, u32), &Snapshot> = BTreeMap::new();
     for s in snaps {
         let Some(key) = ym(&s.date) else { continue };
         match firsts.get(&key) {
-            Some(prev) if prev.date <= s.date => {}
+            Some(prev) if (prev.sized.is_empty(), &prev.date) <= (s.sized.is_empty(), &s.date) => {}
             _ => {
                 firsts.insert(key, s);
             }
@@ -62,28 +67,47 @@ fn monthly_firsts(snaps: &[Snapshot]) -> BTreeMap<(i32, u32), &Snapshot> {
     firsts
 }
 
-/// Execute one buy: equal-weight split of `budget` across the top [`BOOK`] rows that carried a
-/// price (unpriced rows drop and the split grows — same priced-N honesty as `track`). Returns
-/// None when nothing is buyable (no priced rows, or the per-name slice would not clear the fee)
-/// so the caller can keep that month's income as pending cash instead of vaporising it.
-fn buy_event(snap: &Snapshot, budget: f64, mult: f64, mult_known: bool) -> Option<Event> {
-    let priced: Vec<(&str, f64)> = snap
-        .rows
-        .iter()
-        .take(BOOK)
-        .filter_map(|(t, p)| p.filter(|p| *p > 0.0).map(|p| (t.as_str(), p)))
-        .collect();
+/// Execute one buy of `budget` across the line's book at the journaled prices. (#300) A line
+/// carrying `sized` buys the BUY NOW book `screen` printed and ordered — `size::buy_weights` over
+/// the sized picks and the CORE rows `screen::spill_picks` funds, tiers by `tier_of` — else the top
+/// [`BOOK`] rows at equal weight. An unpriced row drops and the split grows (same priced-N honesty
+/// as `track`); so does a lot whose slice would not clear the fee, once, which only grows the
+/// rest. Returns None when nothing is buyable so the caller can keep that month's income as
+/// pending cash instead of vaporising it.
+fn buy_event(
+    snap: &Snapshot,
+    budget: f64,
+    mult: f64,
+    mult_known: bool,
+    sz: &config::Sizing,
+    tier_of: &dyn Fn(&str) -> Option<u8>,
+) -> Option<Event> {
+    let price = |t: &str| snap.rows.iter().chain(&snap.core).find(|(r, _)| r == t).and_then(|(_, p)| *p);
+    let book: Vec<(String, f64)> = if snap.sized.is_empty() {
+        snap.rows.iter().take(BOOK).map(|(t, _)| (t.clone(), 1.0)).collect()
+    } else {
+        let tiers: Vec<Option<u8>> = snap.core.iter().map(|(t, _)| tier_of(t)).collect();
+        let core: Vec<_> = spill_picks(&tiers, sz.spill_cut(), sz.spill_per_tier)
+            .into_iter()
+            .map(|i| (0, snap.core[i].0.clone(), None, tiers[i]))
+            .collect();
+        buy_weights(&snap.sized, &core)
+    };
+    let mut priced: Vec<(String, f64, f64)> =
+        book.into_iter().filter_map(|(t, w)| price(&t).filter(|p| *p > 0.0).map(|p| (t, p, w))).collect();
+    let sum: f64 = priced.iter().map(|(.., w)| w).sum();
+    priced.retain(|(.., w)| budget * w / sum > SIM_FEE_EUR);
     let k = priced.len();
     if k == 0 {
         return None;
     }
-    let alloc = budget / k as f64;
-    if alloc <= SIM_FEE_EUR {
-        return None;
-    }
+    let sum: f64 = priced.iter().map(|(.., w)| w).sum();
     let lots = priced
-        .iter()
-        .map(|(t, px)| ((*t).to_string(), (alloc - SIM_FEE_EUR) / px, alloc))
+        .into_iter()
+        .map(|(t, px, w)| {
+            let alloc = budget * w / sum;
+            (t, (alloc - SIM_FEE_EUR) / px, alloc)
+        })
         .collect();
     Some(Event {
         date: snap.date.clone(),
@@ -100,7 +124,13 @@ fn buy_event(snap: &Snapshot, budget: f64, mult: f64, mult_known: bool) -> Optio
 /// with a snapshot deploys base × entry-state multiplier plus any accrued gap cash; a month
 /// without one banks its base at ×1 (income arrives regardless — it just deploys late, at the
 /// next event's prices). `base` must be > 0 (gated in `run`).
-fn ledger(snaps: &[Snapshot], base: f64, now_ym: (i32, u32)) -> Ledger {
+fn ledger(
+    snaps: &[Snapshot],
+    base: f64,
+    now_ym: (i32, u32),
+    sz: &config::Sizing,
+    tier_of: &dyn Fn(&str) -> Option<u8>,
+) -> Ledger {
     let firsts = monthly_firsts(snaps);
     let Some(start) = firsts.keys().next().copied() else {
         return Ledger { events: Vec::new(), pending_months: 0 };
@@ -114,7 +144,7 @@ fn ledger(snaps: &[Snapshot], base: f64, now_ym: (i32, u32)) -> Ledger {
                 // ponytail: unwrap_or is unreachable (base > 0 gated) — kept total, no panic path
                 let (mult, scaled) = deploy_scaled_eur(base, snap.spx_off_hi).unwrap_or((1.0, base));
                 let budget = scaled + f64::from(pending) * base;
-                match buy_event(snap, budget, mult, snap.spx_off_hi.is_some()) {
+                match buy_event(snap, budget, mult, snap.spx_off_hi.is_some(), sz, tier_of) {
                     Some(ev) => {
                         pending = 0;
                         events.push(ev);
@@ -194,8 +224,10 @@ pub(crate) fn digest(
     now_ym: (i32, u32),
     px_now: &dyn Fn(&str) -> Option<f64>,
     spx_now: Option<f64>,
+    sz: &config::Sizing,
+    tier_of: &dyn Fn(&str) -> Option<u8>,
 ) -> Option<(String, f64, f64, Option<f64>, usize, usize)> {
-    let led = ledger(snaps, base, now_ym);
+    let led = ledger(snaps, base, now_ym, sz, tier_of);
     let since = led.events.first()?.date.clone();
     let held = holdings(&led.events);
     let held_n = held.len();
@@ -269,9 +301,12 @@ pub async fn run(_args: Vec<String>) {
     // most the names that appear only in non-month-first snapshots, which costs a handful of quotes.
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
+    // (#300) plus each line's CORE rows and sized picks: a BUY NOW book reaches both, and past BOOK.
     let mut tickers: Vec<String> = snaps
         .iter()
-        .flat_map(|s| s.rows.iter().take(BOOK).map(|(t, _)| t.clone()))
+        .flat_map(|s| {
+            s.rows.iter().take(BOOK).chain(&s.core).map(|(t, _)| t.clone()).chain(s.sized.iter().map(|(t, _)| t.clone()))
+        })
         .chain(std::iter::once("^GSPC".to_string()))
         .collect();
     tickers.sort();
@@ -287,7 +322,9 @@ pub async fn run(_args: Vec<String>) {
         &crate::commands::track::split_factor_from(&quotes),
     );
 
-    let led = ledger(&snaps, base, now_key);
+    // (#300) the tier off the quotes just fetched, exactly as `track::run` builds it.
+    let tier_of = |t: &str| quotes.iter().find(|q| q.ticker == t).map(|q| crate::core::hold_breadth_tier(&q.name));
+    let led = ledger(&snaps, base, now_key, &settings.sizing, &tier_of);
     if led.events.is_empty() {
         println!("Nothing bought yet — {SNAPSHOT_FILE} has no priced monthly snapshot to buy from.");
         return;
@@ -295,7 +332,8 @@ pub async fn run(_args: Vec<String>) {
 
     println!(
         "Paper DCA — the screen's own monthly advice executed with pretend money: each month's\n\
-         first snapshot, equal-weight top-{BOOK} at the journaled prices, base €{base:.0} × the\n\
+         first BUY NOW book (sized picks + funded CORE trackers, as `screen` orders it), else its\n\
+         first snapshot's equal-weight top-{BOOK}, at the journaled prices, base €{base:.0} × the\n\
          deploy-line entry-state multiplier, €{SIM_FEE_EUR:.0} fee per name bought. Pure replay of\n\
          {SNAPSHOT_FILE} (rerun = recompute, no sim state). Price-only, EUR, dividends not\n\
          counted. NOT advice.\n"
@@ -428,20 +466,30 @@ mod tests {
         }
     }
 
+    fn no_tier(_: &str) -> Option<u8> {
+        None
+    }
+
     /// monthly_firsts(): first snapshot of each calendar month wins regardless of input order;
-    /// malformed dates drop.
+    /// malformed dates drop. (#300) A line carrying a BUY NOW book beats every book-less line in
+    /// its month whichever is read first, the earliest book wins, and a full tie keeps the first read.
     #[test]
     fn monthly_firsts_semantics() {
+        let booked = |date: &str, t: &str| Snapshot { sized: vec![(t.into(), 8.0)], ..snap(date, None, None, &[(t, Some(1.0))]) };
         let snaps = vec![
-            snap("2026-07-20", None, None, &[("A", Some(1.0))]),
             snap("2026-07-16", None, None, &[("B", Some(1.0))]),
+            booked("2026-07-28", "H"),
+            snap("2026-07-20", None, None, &[("A", Some(1.0))]),
+            booked("2026-07-25", "E"),
+            snap("2026-08-09", None, None, &[("G", Some(1.0))]),
             snap("2026-08-03", None, None, &[("C", Some(1.0))]),
+            snap("2026-08-03", None, None, &[("F", Some(1.0))]),
             snap("garbage", None, None, &[("D", Some(1.0))]),
         ];
         let firsts = monthly_firsts(&snaps);
         assert_eq!(firsts.len(), 2);
-        assert_eq!(firsts[&(2026, 7)].date, "2026-07-16");
-        assert_eq!(firsts[&(2026, 8)].date, "2026-08-03");
+        assert_eq!(firsts[&(2026, 7)].date, "2026-07-25");
+        assert_eq!(firsts[&(2026, 8)].rows[0].0, "C");
     }
 
     /// buy_event(): equal-weight split of the budget across priced top rows — €1 fee inside each
@@ -449,8 +497,9 @@ mod tests {
     /// priced rows or a slice that can't clear the fee → None (the month stays cash).
     #[test]
     fn buy_event_math() {
+        let sz = config::Sizing::default();
         let s = snap("2026-07-16", None, None, &[("A", Some(10.0)), ("B", Some(20.0)), ("C", None)]);
-        let e = buy_event(&s, 300.0, 1.0, false).expect("priced rows buy");
+        let e = buy_event(&s, 300.0, 1.0, false, &sz, &no_tier).expect("priced rows buy");
         // 2 priced rows: alloc 150 each, invested 149, qty = 149/px
         assert_eq!(e.lots.len(), 2);
         assert_eq!(e.fees, 2.0 * SIM_FEE_EUR);
@@ -462,11 +511,42 @@ mod tests {
         let rows: Vec<(String, Option<f64>)> =
             (0..12).map(|i| (format!("T{i}"), Some(10.0))).collect();
         let s = Snapshot { date: "2026-07-16".into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), rows };
-        assert_eq!(buy_event(&s, 3000.0, 1.0, true).unwrap().lots.len(), BOOK);
+        assert_eq!(buy_event(&s, 3000.0, 1.0, true, &sz, &no_tier).unwrap().lots.len(), BOOK);
 
         // nothing priced, or degenerate budget (slice ≤ fee) → None
-        assert!(buy_event(&snap("2026-07-16", None, None, &[("A", None)]), 300.0, 1.0, false).is_none());
-        assert!(buy_event(&snap("2026-07-16", None, None, &[("A", Some(1.0))]), 1.0, 1.0, false).is_none());
+        assert!(buy_event(&snap("2026-07-16", None, None, &[("A", None)]), 300.0, 1.0, false, &sz, &no_tier).is_none());
+        assert!(buy_event(&snap("2026-07-16", None, None, &[("A", Some(1.0))]), 1.0, 1.0, false, &sz, &no_tier).is_none());
+
+        // (#300) a line carrying `sized` buys the BUY NOW book: the picks at their sized weights, priced
+        // off `rows`, then the funded CORE rows at `spill_split` of the remaining 30, priced off `core`,
+        // the US one at 2x. R is ranked but outside the book, so it buys nothing.
+        let tier_of = |t: &str| match t {
+            "AW" => Some(crate::core::ALL_WORLD_TIER),
+            "US" => Some(crate::core::US_TIER),
+            _ => None,
+        };
+        let mut s = snap("2026-09-13", None, None, &[("A", Some(10.0)), ("R", Some(5.0)), ("B", Some(20.0))]);
+        s.sized = vec![("A".into(), 60.0), ("B".into(), 10.0)];
+        s.core = vec![("AW".into(), Some(50.0)), ("US".into(), Some(100.0))];
+        let e = buy_event(&s, 1000.0, 1.0, true, &sz, &tier_of).expect("the book buys");
+        let want = [("A", 600.0, 10.0), ("B", 100.0, 20.0), ("AW", 100.0, 50.0), ("US", 200.0, 100.0)];
+        assert_eq!(e.lots.len(), want.len());
+        for ((t, qty, cost), (wt, wc, px)) in e.lots.iter().zip(want) {
+            assert_eq!(t, wt);
+            assert!((cost - wc).abs() < 1e-9 && (qty - (wc - SIM_FEE_EUR) / px).abs() < 1e-9, "{t}");
+        }
+        assert_eq!(e.fees, 4.0 * SIM_FEE_EUR);
+
+        // a slice of exactly the fee drops (B and AW get 1.0 each), and the rest grow to the budget
+        let lots = |e: Event| e.lots.into_iter().map(|(t, _, c)| (t, c)).collect::<Vec<_>>();
+        let e = buy_event(&s, 10.0, 1.0, true, &sz, &tier_of).expect("A and US clear the fee");
+        assert_eq!(e.fees, 2.0 * SIM_FEE_EUR);
+        assert_eq!(lots(e), [("A".to_string(), 7.5), ("US".to_string(), 2.5)]);
+
+        // a tracker journalled at a zero close is unpriced: it drops and the rest grow
+        s.core[0].1 = Some(0.0);
+        let e = buy_event(&s, 900.0, 1.0, true, &sz, &tier_of).unwrap();
+        assert_eq!(lots(e), [("A".to_string(), 600.0), ("B".to_string(), 100.0), ("US".to_string(), 200.0)]);
     }
 
     /// ledger(): a month with a snapshot deploys base × the SAME deploy_scaled_eur composition the
@@ -481,7 +561,7 @@ mod tests {
             snap("2026-07-16", Some(100.0), None, &[("A", Some(10.0))]),
             snap("2026-09-02", Some(100.0), deep, &[("A", Some(10.0))]),
         ];
-        let led = ledger(&snaps, base, (2026, 10));
+        let led = ledger(&snaps, base, (2026, 10), &config::Sizing::default(), &no_tier);
         assert_eq!(led.events.len(), 2);
         // July: no off-hi journaled → ×1 fallback, flagged unknown
         assert!(!led.events[0].mult_known);
@@ -496,12 +576,12 @@ mod tests {
 
         // a month whose snapshot has NO priced rows buys nothing — its income stays pending
         // (the ledger wiring of buy_event's None, not just buy_event standalone)
-        let led = ledger(&[snap("2026-07-16", None, None, &[("A", None)])], base, (2026, 7));
+        let led = ledger(&[snap("2026-07-16", None, None, &[("A", None)])], base, (2026, 7), &config::Sizing::default(), &no_tier);
         assert!(led.events.is_empty());
         assert_eq!(led.pending_months, 1);
 
         // future-dated journal line (start after `now`) → nothing to replay, no panic, no pending
-        let led = ledger(&[snap("2027-01-05", None, None, &[("A", Some(1.0))])], base, (2026, 7));
+        let led = ledger(&[snap("2027-01-05", None, None, &[("A", Some(1.0))])], base, (2026, 7), &config::Sizing::default(), &no_tier);
         assert!(led.events.is_empty() && led.pending_months == 0);
     }
 
@@ -603,7 +683,7 @@ mod tests {
             _ => None,
         };
         let (since, cost, value, bench, priced, held) =
-            digest(&snaps, 300.0, (2026, 6), &px, Some(120.0)).expect("two events priced");
+            digest(&snaps, 300.0, (2026, 6), &px, Some(120.0), &config::Sizing::default(), &no_tier).expect("two events priced");
         assert_eq!(since, "2026-05-10");
         assert_eq!((priced, held), (2, 2));
         assert!((cost - 600.0).abs() < 1e-9); // 300 May + 300 June, fully priced
@@ -615,15 +695,15 @@ mod tests {
         // a hole (B unpriced today) → cost/value shrink BOTH sides and the index twin drops
         let px_hole = |t: &str| (t == "A").then_some(15.0);
         let (_, cost, value, bench, priced, held) =
-            digest(&snaps, 300.0, (2026, 6), &px_hole, Some(120.0)).expect("A still priced");
+            digest(&snaps, 300.0, (2026, 6), &px_hole, Some(120.0), &config::Sizing::default(), &no_tier).expect("A still priced");
         assert_eq!((priced, held), (1, 2));
         assert!((cost - 450.0).abs() < 1e-9);
         assert!((value - (14.9 + 299.0 / 12.0) * 15.0).abs() < 1e-9);
         assert!(bench.is_none());
 
         // empty journal / nothing priced today → None (screen stays silent)
-        assert!(digest(&[], 300.0, (2026, 6), &px, Some(120.0)).is_none());
-        assert!(digest(&snaps, 300.0, (2026, 6), &|_| None, Some(120.0)).is_none());
+        assert!(digest(&[], 300.0, (2026, 6), &px, Some(120.0), &config::Sizing::default(), &no_tier).is_none());
+        assert!(digest(&snaps, 300.0, (2026, 6), &|_| None, Some(120.0), &config::Sizing::default(), &no_tier).is_none());
 
         // line shapes: fair twin spelled out; hole marked + twin replaced by n/a
         let line = digest_line(300.0, "2026-05-10", 600.0, 783.6, Some(685.0), 2, 2);

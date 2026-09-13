@@ -2694,8 +2694,11 @@ pub async fn run(args: Vec<String>) {
             // unset knob, nothing bought yet, or nothing priced today = silent.
             if settings.monthly_deploy_eur > 0.0 {
                 let now_ym = (chrono::Datelike::year(&today), chrono::Datelike::month(&today));
+                // (#300) the tier off this run's quotes, as `track` builds it, so a journalled BUY NOW
+                // book replays with the trackers `size` funded.
+                let tier_of = |t: &str| quotes.iter().find(|q| q.ticker == t).map(|q| crate::core::hold_breadth_tier(&q.name));
                 if let Some((since, cost, value, bench, priced, held)) = crate::commands::sim::digest(
-                    &snaps, settings.monthly_deploy_eur, now_ym, &px_now, spx_now,
+                    &snaps, settings.monthly_deploy_eur, now_ym, &px_now, spx_now, &settings.sizing, &tier_of,
                 ) {
                     println!(
                         "\n{}",
