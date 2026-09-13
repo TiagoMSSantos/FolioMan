@@ -91,7 +91,7 @@ fn buy_event(
             .into_iter()
             .map(|i| (0, snap.core[i].0.clone(), None, tiers[i]))
             .collect();
-        buy_weights(&snap.sized, &core)
+        buy_weights(&snap.sized, &core, sz.lot_floor_pct(Some(budget)))
     };
     let mut priced: Vec<(String, f64, f64)> =
         book.into_iter().filter_map(|(t, w)| price(&t).filter(|p| *p > 0.0).map(|p| (t, p, w))).collect();
@@ -542,6 +542,15 @@ mod tests {
         let e = buy_event(&s, 10.0, 1.0, true, &sz, &tier_of).expect("A and US clear the fee");
         assert_eq!(e.fees, 2.0 * SIM_FEE_EUR);
         assert_eq!(lots(e), [("A".to_string(), 7.5), ("US".to_string(), 2.5)]);
+
+        // (#301) min_lot_eur 150 of this month's 1000 is a 15% floor: B's EUR 100 lot folds into the trackers
+        let floor = config::Sizing { min_lot_eur: 150.0, ..config::Sizing::default() };
+        let e = buy_event(&s, 1000.0, 1.0, true, &floor, &tier_of).expect("the folded book buys");
+        let want = [("A", 600.0), ("AW", 400.0 / 3.0), ("US", 800.0 / 3.0)];
+        assert_eq!(e.lots.len(), want.len());
+        for ((t, _, cost), (wt, wc)) in e.lots.iter().zip(want) {
+            assert!(t == wt && (cost - wc).abs() < 1e-9, "{t} {cost}");
+        }
 
         // a tracker journalled at a zero close is unpriced: it drops and the rest grow
         s.core[0].1 = Some(0.0);

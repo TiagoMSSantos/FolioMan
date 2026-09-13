@@ -1301,6 +1301,8 @@ sizing:
                       #   the `(#289)` block further down before touching this: the tiers are NESTED,
                       #   so this is in substance an EM overweight (~3.3% -> ~11.1% of gross), not
                       #   three independent markets. `false` is the proven, byte-identical revert.
+  min_lot_eur: 0.0    # (#301) a growth pick whose lot (deploy EUR x weight) is under this folds into
+                      #   the trackers, so a per-order fee stops eating small lots. Off; read (#301).
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -5539,6 +5541,25 @@ buy_heuristic:
   #   broker; X is illustrative; and the SIZED backtest row models no fees, so nothing here can grade it.
   #   A lot at deploy x weight >= EUR 100 already pays <= 1%.
   #   REVERT: `monthly_firsts` back to date-only, and drop `buy_event`'s book arm with its two parameters.
+  # (#301) ROUND 83: `sizing.min_lot_eur`, THE FEE FLOOR (#300) RECORDED. Same standing ask. USER DECISIONS:
+  #   build it, and fold inside `size::buy_weights`, so the BUY NOW list, the paste-ready orders and `sim`
+  #   all show the one folded book (non-negotiable #4).
+  #   WHAT CHANGED: `Sizing::lot_floor_pct` reads X EUR as 100 * X / deploy EUR, in % of gross (no positive
+  #   deploy -> 0). `buy_weights` drops a pick under that floor, and its weight joins the remainder
+  #   `spill_split` hands the trackers. With no tracker to take it, nothing folds (non-negotiable #5).
+  #   `buy_list` counts the kept picks and prints how many folded. `screen` reads the floor off the scaled
+  #   deploy line, `sim` off each month's own budget. Default 0.0 = off, the pre-(#301) book byte-identical.
+  #   LIVE `sim`, same job journal and synthetic EUR 1000 as (#300), this binary, knob absent -> 50, 2026-09-13:
+  #     control equals (#300)'s shipped run bar quote drift (07-25 +0.1% -> +0.2%, total EUR 4136 -> 4137)
+  #     09-13   15 names -> 10. SMH.L SEMI.AS BNB-EUR BTC-EUR LYBK.DE (14.0 of gross) fold, so WEBN.DE,
+  #             MXWO.L and HEMA.MI split 44.0, not 30.0 (EUR 100 -> 147 each). Fees EUR 15 -> 10
+  #     total   EUR 4000 in -> 4137 (+3.4%, S&P +2.4 pp) -> 4142 (+3.6%, +2.5 pp); fees EUR 33 -> 28
+  #   HONEST EDGES: the whole +5 is the fee saved. September's basket is 0 days old, so no price move has
+  #   separated the folded names from the trackers yet. The EUR 1/name is `sim`'s SIM_FEE_EUR, not a verified
+  #   broker charge: set X from the broker's real fee, or leave it 0. X = 50 folds both coins, so the crypto
+  #   budget moves into equity trackers. No backtest row models fees, so nothing grades it. The journal's
+  #   only book predates the (#293) sector cap, and the months before it carry no book, so they are unchanged.
+  #   REVERT: `min_lot_eur: 0`, the default. The code revert drops `floor_pct` from `buy_weights`/`buy_list`.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among

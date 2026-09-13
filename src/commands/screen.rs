@@ -2303,7 +2303,8 @@ pub async fn run(args: Vec<String>) {
     let buy_core = last_core(serde_json::to_string(&state).ok(), &sized_tickers, settings.sizing.spill_cut(), settings.sizing.spill_per_tier)
         .map(|(_, rows, _)| rows)
         .unwrap_or_default();
-    if let Some(list) = crate::commands::size::buy_list(&sized_now, &buy_core) {
+    let lot_floor = settings.sizing.lot_floor_pct(deploy_scaled_eur(settings.monthly_deploy_eur, spx_off_hi).map(|(_, t)| t));
+    if let Some(list) = crate::commands::size::buy_list(&sized_now, &buy_core, lot_floor) {
         println!("\n{list}");
     }
 
@@ -2589,7 +2590,7 @@ pub async fn run(args: Vec<String>) {
     {
         let deploy_scaled =
             deploy_scaled_eur(settings.monthly_deploy_eur, spx_off_hi).map(|(_, total)| total);
-        let book = crate::commands::size::buy_weights(&sized_now, &buy_core);
+        let book = crate::commands::size::buy_weights(&sized_now, &buy_core, lot_floor);
         // (round 117) fetch the full T212 instrument list (7-day cached, silent-empty without a
         // key) only when some stock/ETF row can't already be resolved from held positions — a
         // fully-held book or a keyless run costs zero extra HTTP. The ISIN map (inverted from the

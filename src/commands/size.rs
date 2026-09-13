@@ -158,18 +158,19 @@ pub(crate) fn spill_split(rest: f64, tiers: &[Option<u8>]) -> Vec<f64> {
 /// CORE trackers at their `spill_split` share of what the picks left. Until this round a `screen` run
 /// ended on ranked tables and the book itself, ~40% of it trackers, printed only under `size --picks`.
 /// Pure; `screen::run` only prints it. `None` = nothing to buy, so a run with no book stays silent.
-pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&'static str>, Option<u8>)]) -> Option<String> {
+pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&'static str>, Option<u8>)], floor_pct: f64) -> Option<String> {
     if sized.is_empty() && core.is_empty() {
         return None;
     }
-    let book = buy_weights(sized, core);
+    let book = buy_weights(sized, core, floor_pct);
+    let picks = book.len() - core.len();
     let mut out = format!(
         "BUY NOW — the 20-year book `size --picks` funds: {} pick(s) + {} tracker(s), % of gross. NOT advice",
-        sized.len(),
+        picks,
         core.len()
     );
     for (i, (t, w)) in book.iter().enumerate() {
-        let what = match i.checked_sub(sized.len()).and_then(|j| core.get(j)) {
+        let what = match i.checked_sub(picks).and_then(|j| core.get(j)) {
             None => "growth pick".to_string(),
             Some((.., repl, tier)) => format!("{} tracker{}", tier_label(*tier), repl.map(|r| format!(" · {r}")).unwrap_or_default()),
         };
@@ -179,17 +180,23 @@ pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&
         let rest = 100.0 - book.iter().map(|(_, w)| w).sum::<f64>();
         out += &format!("\n  ({rest:.1}% unallocated — no CORE tracker journalled to take it)");
     }
+    if picks < sized.len() {
+        out += &format!("\n  ({} pick(s) under the min_lot_eur floor folded into the trackers)", sized.len() - picks);
+    }
     Some(out)
 }
 
 /// (#297) The BUY NOW book as `(ticker, % of gross)`: the growth picks at their sized weights, then the
 /// CORE trackers at their `spill_split` share of what the picks left. ONE definition (non-negotiable #4)
-/// for the printed list and `screen`'s paste-ready orders, so the orders cannot buy another book.
-pub(crate) fn buy_weights(sized: &[(String, f64)], core: &[(usize, String, Option<&'static str>, Option<u8>)]) -> Vec<(String, f64)> {
-    let rest = 100.0 - sized.iter().map(|(_, w)| w).sum::<f64>();
+/// for the printed list, `screen`'s paste-ready orders and `sim`, so none of them can buy another book.
+/// (#301) A pick under `floor_pct` (`Sizing::lot_floor_pct`) folds into that remainder, unless no tracker
+/// is there to take it (non-negotiable #5). 0.0 keeps every pick.
+pub(crate) fn buy_weights(sized: &[(String, f64)], core: &[(usize, String, Option<&'static str>, Option<u8>)], floor_pct: f64) -> Vec<(String, f64)> {
+    let picks: Vec<(String, f64)> = sized.iter().filter(|(_, w)| core.is_empty() || *w >= floor_pct).cloned().collect();
+    let rest = 100.0 - picks.iter().map(|(_, w)| w).sum::<f64>();
     let tiers: Vec<Option<u8>> = core.iter().map(|(.., tier)| *tier).collect();
     let trackers = core.iter().map(|(_, t, ..)| t.clone()).zip(spill_split(rest, &tiers));
-    sized.iter().cloned().chain(trackers).collect()
+    picks.into_iter().chain(trackers).collect()
 }
 
 pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Option<String> {
@@ -859,10 +866,10 @@ pub(crate) mod tests {
         let picks = [("NVD.DE".to_string(), 5.6), ("IITU.L".to_string(), 4.4)];
         let core = [(0, "WEBN.DE".to_string(), None, Some(ALL_WORLD_TIER)), (21, "SPXS.L".to_string(), Some("swap"), Some(US_TIER))];
         let w = |t: &str, w: f64| (t.to_string(), w);
-        assert_eq!(buy_weights(&picks, &core), vec![w("NVD.DE", 5.6), w("IITU.L", 4.4), w("WEBN.DE", 30.0), w("SPXS.L", 60.0)]);
+        assert_eq!(buy_weights(&picks, &core, 0.0), vec![w("NVD.DE", 5.6), w("IITU.L", 4.4), w("WEBN.DE", 30.0), w("SPXS.L", 60.0)]);
         let head = "  NVD.DE       5.6%  growth pick\n  IITU.L       4.4%  growth pick";
         assert_eq!(
-            buy_list(&picks, &core).as_deref(),
+            buy_list(&picks, &core, 0.0).as_deref(),
             Some(
                 format!(
                     "BUY NOW — the 20-year book `size --picks` funds: 2 pick(s) + 2 tracker(s), % of gross. NOT advice\n{head}\n  \
@@ -871,8 +878,18 @@ pub(crate) mod tests {
                 .as_str()
             )
         );
+        // (#301) a floor at 5.6: NVD.DE sits on it and stays, IITU.L's 4.4 folds and the trackers split 94.4
         assert_eq!(
-            buy_list(&picks, &[]).as_deref(),
+            buy_list(&picks, &core, 5.6).as_deref(),
+            Some(
+                "BUY NOW — the 20-year book `size --picks` funds: 1 pick(s) + 2 tracker(s), % of gross. NOT advice\n  \
+                 NVD.DE       5.6%  growth pick\n  WEBN.DE     31.5%  all-world tracker\n  SPXS.L      62.9%  US tracker · swap\n  \
+                 (1 pick(s) under the min_lot_eur floor folded into the trackers)"
+            )
+        );
+        // ...and with no tracker to take it, the same floor folds nothing
+        assert_eq!(
+            buy_list(&picks, &[], 5.6).as_deref(),
             Some(
                 format!(
                     "BUY NOW — the 20-year book `size --picks` funds: 2 pick(s) + 0 tracker(s), % of gross. NOT advice\n{head}\n  \
@@ -881,7 +898,7 @@ pub(crate) mod tests {
                 .as_str()
             )
         );
-        assert_eq!(buy_list(&[], &[]), None);
+        assert_eq!(buy_list(&[], &[], 0.0), None);
     }
 
     /// (#288) the unfunded census now reads the WHOLE vetted list — ~96 rows live, against the 17
