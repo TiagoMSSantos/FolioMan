@@ -5246,6 +5246,46 @@ buy_heuristic:
   #   BOTH OOS halves up. Deltas, not signs, because the shipped 20y early half already reads -0.2.
   #   Deployed must rise too, or the arm moved weight between names and the mechanism above is not what
   #   paid. An arm failing any leg stays refused, and the refusal then holds on both objectives.
+  # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
+  #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
+  #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.
+  #
+  #   (a) `growth_min_cagr` 19.0 -> 15.0, the GATE SWEEP's -4 rung, flagged "ADMITS NO WORSE THAN THE BOOK"
+  #   at 20y, 12y AND 8y (67 / 154 / 334 newly admitted), graded on the SIZED row:
+  #                       median pool  SIZED book  SIZED OOS    deployed  top-10 book
+  #     20y  shipped 19.0      5         +7.0      -0.2/+0.8     44%       +7.2
+  #          arm     15.0      8         +7.4      -0.5/+1.8     60%       +7.5
+  #      8y  shipped 19.0      7         +9.3      +1.7/+3.4     59%      +11.1
+  #          arm     15.0     10         +9.2      +2.0/+2.6     74%      +10.8
+  #   REFUSED on three legs: 8y book -0.1, 20y early half -0.3, 8y late half -0.8 (and the 8y worst window
+  #   deepens -3.7 -> -4.4). It DOES add names, +3 median pool and +15 points deployed at both horizons,
+  #   and they do not pay. The refusal now holds on both objectives. The sweep flag compares the admits'
+  #   MEDIAN with the book's median name; it does not price the book, which is what (#219) found too.
+  #   CONTROL RE-RUN, not banked: the shipped config run twice about an hour apart reproduced every graded
+  #   row (top-10, SIZED, POOL CENSUS, GATE SWEEP) exactly. The files differ only in live fetch-log
+  #   counts, the per-era rank-rho edge rows, and one ticker at 8y (6128 -> 6129). The arm's 8y run scores
+  #   45 windows against 44: the lower floor reaches one more bucket.
+  #
+  #   (b) RESCUE LANE. `backtest ... fund` now prints `RESCUE-LANE probe` under the factor books: the stocks
+  #   the growth gates REJECT, fund-covered, ranked by op_margin / roic / fcf_margin (named before the run
+  #   so the verdict is not an argmax over twenty factors), top-10 held, same `book_stats`. Bar: beat the
+  #   fund-covered growth_score baseline's excess at BOTH 8y and 12y, OOS both +.
+  #     12y  baseline excess +3.8   op_margin +1.8 (OOS +3.9/-0.4)  roic +4.1 (+5.4/+2.7)  fcf_margin +0.7 (+0.5/+0.9)
+  #      8y  baseline excess +4.6   op_margin +2.2 (OOS +4.9/-0.5)  roic +3.1 (+6.6/-0.3)  fcf_margin -0.2 (+2.1/-2.6)
+  #   ALL THREE REFUSED. roic is the only row to clear 12y, and it misses 8y on excess and on the late half.
+  #   Not a coverage mirage: every book holds 10.0 names per window. It is thin, though: 10 windows at 12y
+  #   and 18 at 8y, because the SEC filings start around 2009, and a 20y hold cannot be graded at all.
+  #   RE-OPEN only if a later run, with more windows as the filings age, shows roic clearing BOTH
+  #   horizons. The probe stays in `report_book_by_factor` (`#[mutants::skip]`, fund-only, no golden) for
+  #   exactly that, re-grading itself on every `fund` run. Do not add factors to it hunting for a winner.
+  #
+  #   WHERE THE ASK STANDS. Every idea tested this round that ADDS names is refused: gate hysteresis
+  #   (EXIT PROBE: the newly-failed trail the kept-passing by a median of -50.1 at 8y and -15.4 at 12y;
+  #   20y is SPLIT, median +73.0 the other way on 57 names), the two-style union (its value book holds
+  #   1.9-3.2 names a window, so the combo holds FEWER names than the growth book alone), CORR-CAP (20y
+  #   worst -10.0 -> -10.6), the CAGR floor in (a), and the rescue lane in (b). Deploying faster in
+  #   drawdowns already ships (rounds 112/115). What is left is mandate, not measurement: grep this file for
+  #   "no remaining admission-side lever", the summary every widening round should read first.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among

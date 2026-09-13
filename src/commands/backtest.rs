@@ -3238,6 +3238,32 @@ fn report_book_by_factor(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Ve
     println!("  (a factor beating growth_score's held-book excess with OOS both + is a better held-book selector -> ship it.");
     println!("   every row here is SEC-computed and free — roe, the round-107 survival levels and (#43) roic,");
     println!("   which is DERIVED (EBIT ÷ equity+net debt), not the premium `FundRow::roic` that never populates.)");
+    // (#291) RESCUE LANE. Every admission knob that ADDS names is refused, the last one on the sized book
+    // too. This asks what no row above can: among the stocks the growth gates REJECT, does a quality
+    // ranking find a held book worth buying? Same pool filter and same `book_stats` as the factor rows,
+    // gate test inverted, stocks only (the SEC factors are company-level). Three factors named before the
+    // run, so the verdict is not an argmax over twenty. `names/window` is the (#136) coverage-mirage
+    // guard: a "top-10" holding two names is not a book.
+    if any {
+        println!("\n── RESCUE-LANE probe (rank gate-REJECTED fund-covered stocks by a quality factor, top-{n} held {years}y, vs the growth_score baseline above) ──");
+        for (name, get) in factors.iter().filter(|(nm, _)| matches!(*nm, "op_margin" | "roic" | "fcf_margin")) {
+            let mut by: BTreeMap<i32, Vec<(f64, f64, f64)>> = BTreeMap::new();
+            for s in samples {
+                if picks::asset_class(&s.quote) != 2 || growth_score(&s.quote, tuning).is_some() {
+                    continue;
+                }
+                let Some(fv) = s.fund.as_ref().and_then(get) else { continue };
+                let Some(br) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+                by.entry(bucket(s.date)).or_default().push((fv, s.realized, br));
+            }
+            if let Some((b, _, e, w, wo, el, la)) = book_stats(&by, n, years) {
+                let held = by.values().map(|v| v.len().min(n)).sum::<usize>() as f64 / by.len() as f64;
+                println!("  {name:<14} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}   (windows {}, names/window {held:.1})", by.len());
+            }
+        }
+        println!("  (pre-registered (#291): a row beating the baseline's excess at BOTH 8y and 12y, OOS both +, earns a rescue-lane");
+        println!("   round. SEC coverage does not reach a 20y hold, so this can never be graded at the 20y horizon.)");
+    }
 
     // BLEND sweep: pure-value beat pure-score standalone — but pure-value alone risks value-traps the
     // gates miss, so find the growth_fund_weight KNEE where tilting growth_score toward the baked
