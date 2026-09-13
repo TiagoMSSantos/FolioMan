@@ -3095,7 +3095,7 @@ fn sized_buckets(
             rows.truncate(top);
             let quotes: Vec<&Quote> = rows.iter().map(|r| &*r.1.quote).collect();
             // (weight fraction, name multiple, bench multiple) per funded row, joined back by identity.
-            let legs: Vec<(f64, f64, f64)> = crate::commands::size::sized_book(&quotes, tuning, sz, None)
+            let legs: Vec<(f64, f64, f64)> = crate::commands::size::sized_book(&quotes, tuning, sz, None, &Default::default())
                 .iter()
                 .filter_map(|(q, _, w, _)| rows.iter().find(|r| std::ptr::eq(*q, &*r.1.quote)).map(|r| (w / 100.0, 1.0 + r.1.realized / 100.0, 1.0 + r.2 / 100.0)))
                 .collect();

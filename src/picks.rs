@@ -4984,7 +4984,8 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
 /// used to do gave a lone positive-scoring coin 33% of gross — the whole stock class's share — for no
 /// reason but being the only member of its class, and nothing capped a single name or a single sector.
 /// Now: `config::Sizing` states the class shares, renormalised over the classes actually present; then
-/// `max_name_pct` clamps each row and `max_sector_pct` clamps each GICS sector of the stock class.
+/// `max_name_pct` clamps each row and `max_sector_pct` clamps each GICS sector — (#293) across every
+/// class, a fund counting its weight x the share of its top look-through sector.
 ///
 /// (#262) `max_name_pct` is a per-ISSUER cap, and this function is not what makes it one: the CALLER
 /// hands over an already-deduped list (`size::first_per_issuer`), so one row here is one issuer. Passing
@@ -4999,14 +5000,14 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
 /// is the answer to "you don't hold enough names to put this much here", and the caller prints the total
 /// so it is visible rather than normalised away.
 ///
-/// `scored` = `(growth score, volatility_pct, asset_class, GICS sector)`; the returned weights are
+/// `scored` = `(growth score, volatility_pct, asset_class, (GICS sector, share))`; the returned weights are
 /// aligned to it and each carries the constraint BINDING ON THE FINAL NUMBER — `"name"`, `"sector"`, or
 /// `None` for a row the caps never touched. A missing or near-zero vol is floored at `MIN_VOL` so a
 /// no-history name can't grab the basket; a non-positive score contributes 0; a name with NO sector is
 /// exempt from the sector cap (missing data passes, the house rule) and can still receive spill.
 /// Empty in -> empty out; an all-zero pool -> all zeros, never a NaN.
 pub fn size_weights(
-    scored: &[(f64, Option<f64>, u8, Option<&str>)],
+    scored: &[(f64, Option<f64>, u8, Option<(&str, f64)>)],
     cfg: &crate::config::Sizing,
 ) -> Vec<(f64, Option<&'static str>)> {
     const MIN_VOL: f64 = 0.5; // % daily-return stdev floor: only catches near-zero/no-history vol (a calm
@@ -5040,8 +5041,9 @@ pub fn size_weights(
         .collect();
 
     let members = |cls: usize| -> Vec<usize> { (0..scored.len()).filter(|&i| class_of(i) == cls).collect() };
+    // (#293) every class: a stock's whole weight, a fund's weight x the share its top sector holds
     let sector_sum = |w: &[f64], sec: &str| -> f64 {
-        (0..scored.len()).filter(|&i| class_of(i) == 2 && scored[i].3 == Some(sec)).map(|i| w[i]).sum()
+        (0..scored.len()).filter_map(|i| scored[i].3.filter(|(s, _)| *s == sec).map(|(_, share)| w[i] * share)).sum()
     };
     // A row may receive spill only while BOTH of its ceilings still have room. Checking the sector here
     // and not just the name is what stops two capped sectors ping-ponging the same excess between them:
@@ -5051,8 +5053,7 @@ pub fn size_weights(
         raw[i] > 0.0
             && (cfg.max_name_pct <= 0.0 || w[i] < cfg.max_name_pct - EPS)
             && (cfg.max_sector_pct <= 0.0
-                || class_of(i) != 2
-                || scored[i].3.is_none_or(|s| sector_sum(w, s) < cfg.max_sector_pct - EPS))
+                || scored[i].3.is_none_or(|(s, _)| sector_sum(w, s) < cfg.max_sector_pct - EPS))
     };
     // Hand `excess` to the rows in `pool` that still have room, split by vol-target weight. Returns
     // false when there is nowhere to put it — the excess then stays UNALLOCATED, which is the whole
@@ -5088,31 +5089,36 @@ pub fn size_weights(
             })
             .collect()
     };
-    // The same for the sector cap. STOCK CLASS ONLY: an ETF's `sector` is a fund-level label meaning
-    // something different from a company's GICS line, and a coin has none at all — capping either on
-    // this field would compare two things that share a name and nothing else.
+    // The same for the sector cap, over EVERY class since (#293): a fund's slot is its top look-through
+    // sector and share (`size::fund_sectors`), never its own fund-level label, and a coin carries none.
+    // What a clamp frees goes back to the class that gave it up, so the cap never undoes the budget split.
     let clamp_sectors = |w: &mut [f64]| -> Vec<(Vec<usize>, f64)> {
         if cfg.max_sector_pct <= 0.0 {
             return Vec::new();
         }
-        let idx = members(2);
-        let mut sectors: Vec<&str> = idx.iter().filter_map(|&i| scored[i].3).collect();
+        let mut sectors: Vec<&str> = scored.iter().filter_map(|r| r.3.map(|(s, _)| s)).collect();
         sectors.sort_unstable();
         sectors.dedup();
         let mut out = Vec::new();
         for sec in sectors {
-            let grp: Vec<usize> = idx.iter().copied().filter(|&i| scored[i].3 == Some(sec)).collect();
-            let tot: f64 = grp.iter().map(|&i| w[i]).sum();
+            let grp: Vec<usize> = (0..scored.len()).filter(|&i| scored[i].3.is_some_and(|(s, _)| s == sec)).collect();
+            let tot = sector_sum(w, sec);
             if tot <= cfg.max_sector_pct + EPS {
                 continue;
             }
             // scale the whole sector down proportionally rather than clamping its largest row: the
             // constraint is on the BLOCK, so every member funded it and every member pays for it
             let scale = cfg.max_sector_pct / tot;
+            let mut freed = [0.0f64; 3];
             for &i in &grp {
+                freed[class_of(i)] += w[i] * (1.0 - scale);
                 w[i] *= scale;
             }
-            out.push((idx.iter().copied().filter(|&i| scored[i].3 != Some(sec)).collect(), tot - cfg.max_sector_pct));
+            for (c, &f) in freed.iter().enumerate() {
+                if f > EPS {
+                    out.push((members(c).into_iter().filter(|i| !grp.contains(i)).collect(), f));
+                }
+            }
         }
         out
     };
@@ -5144,8 +5150,7 @@ pub fn size_weights(
         .map(|i| {
             let at_name = cfg.max_name_pct > 0.0 && w[i] >= cfg.max_name_pct - EPS;
             let at_sector = cfg.max_sector_pct > 0.0
-                && class_of(i) == 2
-                && scored[i].3.is_some_and(|s| sector_tot(s) >= cfg.max_sector_pct - EPS);
+                && scored[i].3.is_some_and(|(s, _)| sector_tot(s) >= cfg.max_sector_pct - EPS);
             let cap = if w[i] <= EPS {
                 None // an unfunded row is not "capped", it just scored nothing
             } else if at_name {
@@ -5345,7 +5350,7 @@ mod tests {
         crate::config::Sizing { max_name_pct: 0.0, max_sector_pct: 0.0, ..Default::default() }
     }
     /// weights only, for the assertions that don't care which constraint bound
-    fn sizes(scored: &[(f64, Option<f64>, u8, Option<&str>)], cfg: &crate::config::Sizing) -> Vec<f64> {
+    fn sizes(scored: &[(f64, Option<f64>, u8, Option<(&str, f64)>)], cfg: &crate::config::Sizing) -> Vec<f64> {
         size_weights(scored, cfg).into_iter().map(|(w, _)| w).collect()
     }
 
@@ -5391,8 +5396,8 @@ mod tests {
     /// away, a sector cap that ignores an unknown sector, and a basket quietly renormalised back to 100.
     #[test]
     fn size_weights_caps_names_then_sectors_and_leaves_the_rest_unallocated() {
-        let tech = Some("Technology");
-        let fin = Some("Financials");
+        let tech = Some(("Technology", 1.0));
+        let fin = Some(("Financials", 1.0));
         // ONE class, name cap only. Four equal names would take 25 each; the cap holds each to 10 and
         // there is nobody left to hand the excess to, so 60% is deliberately NOT allocated.
         let c = crate::config::Sizing { max_name_pct: 10.0, max_sector_pct: 0.0, ..Default::default() };
@@ -5457,9 +5462,7 @@ mod tests {
     /// Seven more survived and are NOT chased here, because no input separates them from the original:
     ///   - `3486 raw[i] > 0.0 -> >=`: `raw` is non-negative by construction, and a zero-`raw` row that
     ///     joins `free` adds 0 to `tot` and receives `0 / tot * excess` = 0. Identical output. EQUIVALENT.
-    ///   - `3489 class_of(i) != 2 -> ==`: this would need a NON-stock row carrying a sector string that a
-    ///     stock also carries and has already pushed to its ceiling. `clamp_sectors`' own comment says why
-    ///     that input does not exist — a coin has no GICS line and an ETF's is a fund label.
+    ///   - `3489 class_of(i) != 2 -> ==`: the conjunct is gone since (#293), which caps every class.
     ///   - `3487 <`, `3490 <`, `3490 -> +`, `3541 -> -` shifted to their `<=`/`+EPS` twins: these differ
     ///     only when a weight lands bit-exactly on `cap ± 1e-9`. A test pinning that is pinning float dust.
     ///   - `3490 - EPS -> / EPS`: turns the sector ceiling into 3e10, so `has_room` stops blocking and the
@@ -5470,7 +5473,7 @@ mod tests {
         let tech = Some("Technology");
         let fin = Some("Financials");
         let sized = |rows: &[(f64, u8, Option<&str>)], cfg: &crate::config::Sizing| -> Vec<f64> {
-            let s: Vec<_> = rows.iter().map(|&(sc, cl, sec)| (sc, Some(1.0), cl, sec)).collect();
+            let s: Vec<_> = rows.iter().map(|&(sc, cl, sec)| (sc, Some(1.0), cl, sec.map(|x| (x, 1.0)))).collect();
             sizes(&s, cfg)
         };
 
@@ -5486,11 +5489,11 @@ mod tests {
         // off `cfg.max_sector_pct > 0.0`, and 0.0 is the off value AND a legal setting, so `>` and `>=`
         // differ exactly at the shipped default: under `>=` every sectored stock is labelled "sector"
         // while nothing is capping it. Every other test here passes `None` sectors and cannot see it.
-        let off = size_weights(&[(60.0, Some(1.0), 2, tech), (60.0, Some(1.0), 2, fin)], &uncapped());
+        let off = size_weights(&[(60.0, Some(1.0), 2, tech.map(|x| (x, 1.0))), (60.0, Some(1.0), 2, fin.map(|x| (x, 1.0)))], &uncapped());
         assert!(off.iter().all(|(_, cap)| cap.is_none()), "caps off -> no row is bound by one: {off:?}");
 
-        // 3. `sector_sum` must total THIS sector and only the stock class. Two mutations of it survived —
-        // counting every stock (`&&` -> `||`) and counting every OTHER sector (`==` -> `!=`) — because the
+        // 3. `sector_sum` must total THIS sector. Two mutations of it survived — counting every stock
+        // (`&&` -> `||`, a conjunct (#293) removed) and counting every OTHER sector (`==` -> `!=`) — because the
         // existing sector test is symmetric: three tech against one financial, where both readings happen
         // to clear the same ceiling. Here the sectors are LOPSIDED, so a wrong total blocks the spill.
         // Tech alone would hold 80; capped at 30 it hands 50 to the financials, which then breach their
@@ -5535,6 +5538,36 @@ mod tests {
         assert!((cascade_sec[2] - 30.0).abs() < 1e-9, "the first recipient settles ON its cap: {cascade_sec:?}");
         assert!((cascade_sec[3] - 30.0).abs() < 1e-9, "and the second pass carries the rest to the third: {cascade_sec:?}");
         assert!((cascade_sec.iter().sum::<f64>() - 90.0).abs() < 1e-9, "three sectors at 30 hold 90: {cascade_sec:?}");
+    }
+
+    /// (#293) The sector cap across classes. A tech stock at 20 and a fund at 30 holding half its book in
+    /// tech count 20 + 30 x 0.5 = 35 against a 25 cap, so both scale by 5/7. What each gives up goes back
+    /// to its OWN class — the stock's 5.71 to the other stock, the fund's 8.57 to the other fund. The two
+    /// recipients carry unequal raw weight (60 vs 40), so a pooled cross-class spill lands the two amounts
+    /// the other way round, and a share read as a divisor totals 80, not 35. Both fail here.
+    #[test]
+    fn size_weights_counts_fund_share_and_spills_within_class() {
+        let c = crate::config::Sizing {
+            budget_stock: 50.0,
+            budget_etf: 50.0,
+            budget_crypto: 0.0,
+            max_name_pct: 0.0,
+            max_sector_pct: 25.0,
+            ..Default::default()
+        };
+        let w = size_weights(
+            &[
+                (40.0, Some(1.0), 2, Some(("Tech", 1.0))),
+                (60.0, Some(1.0), 2, None),
+                (60.0, Some(1.0), 1, Some(("Tech", 0.5))),
+                (40.0, Some(1.0), 1, None),
+            ],
+            &c,
+        );
+        let want = [20.0 * 5.0 / 7.0, 30.0 + 20.0 * 2.0 / 7.0, 30.0 * 5.0 / 7.0, 20.0 + 30.0 * 2.0 / 7.0];
+        assert!(w.iter().zip(want).all(|((x, _), y)| (x - y).abs() < 1e-9), "{w:?} vs {want:?}");
+        let caps: Vec<_> = w.iter().map(|(_, cap)| *cap).collect();
+        assert_eq!(caps, vec![Some("sector"), None, Some("sector"), None], "{w:?}");
     }
 
     /// (#14/#15) the long-CAGR pipeline: `core::trend_cagr` fits the log-price SLOPE (perfectly

@@ -1280,8 +1280,9 @@ sizing:
                       #   leave 8.0 concentrating a thinner book than the one measured here; (b) a `cap: sector`
                       #   appearing on any stock row, which would mean the sector ceiling is now the binding
                       #   constraint and the name cap is buying nothing; (c) the ETF class ceasing to sum to 25.0.
-  max_sector_pct: 25.0 # no GICS sector over this %, stock class only (an ETF's sector label means something
-                      #   else and a coin has none). CONSEQUENCE: a class too small to absorb its budget
+  max_sector_pct: 25.0 # no GICS sector over this % of gross. (#293) a fund counts by its top look-through
+                      #   sector x share, a stock by its whole weight, a coin not at all; freed weight spills
+                      #   within its own class. CONSEQUENCE: a class too small to absorb its budget
                       #   under these caps leaves the remainder UNALLOCATED and the table's total prints
                       #   below 100. That is the intended reading, not a rounding bug.
   spill_names: 4      # (#292) 3 -> 4: the fourth tier `spill_per_tier` reaches is US. Read the (#292) receipt.
@@ -5337,6 +5338,40 @@ buy_heuristic:
   #   so: names that newly fail a gate trail the kept ones by -50.1 at 8y and -15.4 at 12y, but lead by
   #   a median +73.0 at 20y. "Let it run" is the 20-year answer, not a universal one. Display-only.
   #   REVERT: the two literals in `size::allocation_gap_lines`.
+  #
+  # (#293) ROUND 76: THE BOOK `size` BUYS NOW OBEYS THE SECTOR CAP IT PRINTS. Same standing ask. No graded
+  #   lever adds names or 20y profit (admission closed above, (#292)(a) refused), so this round made the
+  #   book the user actually buys obey the caps already graded and chosen. Two defects, live 2026-09-13:
+  #   (1) THE CAP WAS STOCK-CLASS ONLY. Funds carry a sector through their holdings: IITU 8 x 1.0 + XLKS
+  #       8 x 0.912 + SMH 3.68 x 1.0 + SEMI 3.51 x 0.999, beside NVD.DE 8 + KLA.DE 8, put 38.5% of gross in
+  #       Information Technology against `max_sector_pct: 25.0`, and NVIDIA at >= 10.1% through the funds
+  #       (a floor: XLKS lists no holdings) against `max_name_pct: 8.0`. That is the concentration
+  #       (#292)(a) refused, reached through the fund class.
+  #   (2) `size` NEVER JOINED SECTORS. `fetch::quotes` leaves `sector` None and only `screen` stamped it,
+  #       so `size` printed "max 25.0%/sector" and never applied it (inert that day: tech stocks held 16).
+  #   Top-sector share over the 84 cached funds: 58 broad funds at 20-50%, the NASDAQ-100 family 60.8%,
+  #   AI/Taiwan funds 79-81%, 15 sector funds >= 90%. Every fund `size` has ever funded is >= 91%.
+  #   DESIGN (decided, not graded): a fund counts toward the cap as weight x its TOP look-through sector's
+  #   share (Yahoo sector names mapped to GICS by name, `size::YAHOO_GICS`), a stock its whole weight, a
+  #   coin nothing. What a clamp frees spills within its own class only, so the budget split holds. ON,
+  #   no knob. `size` now joins the constituents CSVs itself (an EU line through the resolver's cache),
+  #   and `screen`'s journalled `sized` passes the same fund sectors, so the two stay one book.
+  #   LIVE, same state file: the 2026-09-13 snapshot `sized` row before, `size --picks` on the new binary after.
+  #                           before       after
+  #     IT look-through         38.5        25.0   (printed weights x cached shares read 25.04: rounding)
+  #     NVIDIA floor            10.1         7.1
+  #     NVD.DE / KLA.DE        8 / 8   5.6 / 4.1
+  #     IITU.L / XLKS.L        8 / 8   5.6 / 5.2
+  #     SMH.L / SEMI.AS    3.7 / 3.5   2.6 / 2.4
+  #     LYBK.DE                  1.8         8.0   (the fund class's freed weight, now at its name cap)
+  #     deployed                70.0        62.5   (the 7.5 points go to the CORE spill trackers)
+  #   HONEST LIMITS. NOT BACKTESTABLE: holdings are today's snapshot and the backtest passes no fund
+  #   sectors, so its SIZED row is unchanged by construction (goldens pass unblessed). Top sector only:
+  #   XLKS's ~7% Financials is not counted. Name look-through is NOT built: the sector cap brings NVIDIA
+  #   under 8 today; build it when a single name leaks past 8 on its own. Adds no names. Before and after
+  #   are two quote fetches on the same day, so the vols moved slightly between them.
+  #   REVERT: pass `&Default::default()` as `funds` in `size::run` and `screen::run`. Stocks keep the cap
+  #   (and `size` keeps its sector join), and with no fund sectors the math is the stock-only cap again.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among

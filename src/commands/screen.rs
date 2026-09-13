@@ -1897,6 +1897,7 @@ pub async fn run(args: Vec<String>) {
             &settings.buy_heuristic,
             &settings.sizing,
             nupl,
+            &crate::commands::size::fund_sectors(&mix), // (#293) the same look-through `size` caps by
         )
         .iter()
         .map(|&(q, _, w, _)| (q.ticker.clone(), w))

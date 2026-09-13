@@ -196,6 +196,7 @@ pub(crate) fn sized_book<'a>(
     tuning: &config::BuyHeuristic,
     sz: &config::Sizing,
     nupl: Option<f64>,
+    funds: &std::collections::HashMap<String, (&'static str, f64)>,
 ) -> Vec<(&'a crate::core::Quote, f64, f64, Option<&'static str>)> {
     // (Item 17) the SAME crypto NUPL + BTC-relative adjustments `screen`/`check` apply at render
     // time, so crypto sizes rank the way the picks tables showed them, not on the raw price-only
@@ -215,7 +216,9 @@ pub(crate) fn sized_book<'a>(
     // bucket, not N independent bets.
     // (P5) `asset_class` rather than the raw `instrument_type` string: that field is Yahoo's free text,
     // so "EQUITY" and "" split the stock class into two buckets that each drew a full share. The sector
-    // rides along for the stock-class sector cap.
+    // rides along for the sector cap: (#293) a stock's GICS line at its whole weight, a fund's top
+    // look-through sector at its share (`funds`, empty in the backtest), a coin none. A fund's own
+    // `sector` label is never read.
     //
     // An empty `scored` needs no guard: `size_weights` finds no class carrying weight and returns an
     // empty vec by its own divide-by-zero rule, so the zip below yields nothing. A branch here would
@@ -223,11 +226,49 @@ pub(crate) fn sized_book<'a>(
     let weights = size_weights(
         &scored
             .iter()
-            .map(|(q, s)| (*s, q.volatility_pct, crate::picks::asset_class(q), q.sector.as_deref()))
+            .map(|(q, s)| {
+                let class = crate::picks::asset_class(q);
+                let sector = match class {
+                    2 => q.sector.as_deref().map(|sec| (sec, 1.0)),
+                    1 => funds.get(&q.ticker).copied(),
+                    _ => None,
+                };
+                (*s, q.volatility_pct, class, sector)
+            })
             .collect::<Vec<_>>(),
         sz,
     );
     scored.into_iter().zip(weights).map(|((q, s), (w, cap))| (q, s, w, cap)).collect()
+}
+
+/// (#293) Yahoo's fund sector names (`fetch::pretty_sector`) against the GICS spelling the constituents
+/// CSV gives a stock, so a fund and a stock in the same sector meet under one cap.
+const YAHOO_GICS: [(&str, &str); 11] = [
+    ("Technology", "Information Technology"),
+    ("Financial Services", "Financials"),
+    ("Healthcare", "Health Care"),
+    ("Consumer Cyclical", "Consumer Discretionary"),
+    ("Consumer Defensive", "Consumer Staples"),
+    ("Basic Materials", "Materials"),
+    ("Communication Services", "Communication Services"),
+    ("Industrials", "Industrials"),
+    ("Energy", "Energy"),
+    ("Utilities", "Utilities"),
+    ("Real Estate", "Real Estate"),
+];
+
+/// (#293) Each fund's TOP look-through sector and the share it holds, GICS-spelled, for `sized_book`.
+/// Top only: a fund's second sector is not counted (XLKS carries ~7% Financials beside its tech). A
+/// fund with no weightings or an unmapped name is absent, and absent is exempt (missing data passes).
+pub(crate) fn fund_sectors(
+    mix: &std::collections::HashMap<String, fetch::FundMix>,
+) -> std::collections::HashMap<String, (&'static str, f64)> {
+    mix.iter()
+        .filter_map(|(t, (sectors, ..))| {
+            let (name, share) = sectors.first()?; // heaviest first: `parse_fund_sectors` sorts them
+            YAHOO_GICS.iter().find(|(y, _)| *y == name.as_str()).map(|&(_, gics)| (t.clone(), (gics, *share)))
+        })
+        .collect()
 }
 
 
@@ -290,8 +331,24 @@ pub async fn run(args: Vec<String>) {
     // (#286) the whole pipeline — score, crypto adjust, issuer dedup, weight, cap — now lives in
     // `sized_book`, where the mutation gate can reach it and where `screen` reads the same rows to
     // journal them. Nothing below this line changed: the printing is what `run` was always for.
+    // (#293) `fetch::quotes` leaves `sector` None and only `screen` joined it, so the sector cap printed
+    // below never bound here. The same CSVs `screen <tickers>` joins; an EU line finds its US row through
+    // the resolver's cache (read only, nothing is resolved here). Then each fund's top look-through sector.
+    let sector_of = fetch::sector_map(&client, &settings.urls, &[]).await;
+    let us = fetch::invert_eu(
+        &std::fs::read_to_string(config::data_path(fetch::EU_LISTING_CACHE_PATH))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
+    );
+    for q in &mut quotes {
+        q.sector = sector_of.get(&q.ticker).or_else(|| us.get(&q.ticker).and_then(|u| sector_of.get(u))).cloned();
+    }
+    let fund_tickers: Vec<String> =
+        quotes.iter().filter(|q| crate::picks::asset_class(q) == 1).map(|q| q.ticker.clone()).collect();
+    let (_, mix) = fetch::yahoo_top_holdings(&client, &fund_tickers).await;
     let sz = &settings.sizing;
-    let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &settings.buy_heuristic, sz, nupl);
+    let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &settings.buy_heuristic, sz, nupl, &fund_sectors(&mix));
 
     if book.is_empty() {
         println!("No names pass the growth gate — nothing to size. (try `screen` for candidates)");
@@ -556,7 +613,7 @@ pub(crate) mod tests {
             scoring_quote("BBB.DE", "Beta Corp", 500.0, 4.0),
             crate::core::Quote::stub("DEAD.DE", "€1.00", "", "Gamma Corp"), // no history, no turnover
         ];
-        let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &tuning, &sz, None);
+        let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &tuning, &sz, None, &Default::default());
 
         let tickers: Vec<&str> = book.iter().map(|(q, ..)| q.ticker.as_str()).collect();
         assert_eq!(tickers, vec!["AAA.DE", "BBB.DE"], "gate refusals and the issuer dedup both bite: {tickers:?}");
@@ -568,7 +625,53 @@ pub(crate) mod tests {
         // EMPTY is a real answer, not a bug: nothing cleared the gate, so there is nothing to fund.
         // This is the arm `run`'s early return and `screen`'s journal both depend on.
         let none = [crate::core::Quote::stub("DEAD.DE", "€1.00", "", "Gamma Corp")];
-        assert!(sized_book(&none.iter().collect::<Vec<_>>(), &tuning, &sz, None).is_empty());
+        assert!(sized_book(&none.iter().collect::<Vec<_>>(), &tuning, &sz, None, &Default::default()).is_empty());
+    }
+
+    /// (#293) A fund's top look-through sector, GICS-spelled, with its share; nothing for a fund whose
+    /// top sector has no GICS twin or that reports no weightings at all.
+    #[test]
+    fn fund_sectors_maps_the_top_sector_to_gics() {
+        let row = |s: &[(&str, f64)]| -> fetch::FundMix { (s.iter().map(|&(n, w)| (n.to_string(), w)).collect(), None, None, None) };
+        let mix = std::collections::HashMap::from([
+            ("IITU.L".to_string(), row(&[("Technology", 1.0)])),
+            ("XLKS.L".to_string(), row(&[("Technology", 0.912), ("Financial Services", 0.07)])),
+            ("ODD.DE".to_string(), row(&[("Other", 0.9)])),
+            ("NONE.DE".to_string(), row(&[])),
+        ]);
+        let got = fund_sectors(&mix);
+        assert_eq!(got.get("IITU.L"), Some(&("Information Technology", 1.0)), "{got:?}");
+        assert_eq!(got.get("XLKS.L"), Some(&("Information Technology", 0.912)), "the share rides along: {got:?}");
+        assert_eq!(got.len(), 2, "unmapped or empty -> absent, and absent is exempt: {got:?}");
+    }
+
+    /// (#293) The sector slot `sized_book` hands `size_weights`: a stock's own GICS line, a fund's entry
+    /// in `funds`. Two tech stocks and a tech fund over the 25% cap all sit on the sector ceiling; with no
+    /// entry the fund is exempt and keeps its whole class budget.
+    #[test]
+    fn sized_book_caps_a_fund_by_its_look_through_sector() {
+        let tuning = config::BuyHeuristic::default();
+        let sz = config::Sizing { max_name_pct: 0.0, max_sector_pct: 25.0, ..config::Sizing::default() };
+        let mut quotes = [
+            scoring_quote("AAA.DE", "Alpha Corp", 900.0, 2.0),
+            scoring_quote("BBB.DE", "Beta Corp", 900.0, 2.0),
+            scoring_quote("TECH.DE", "Tech Fund", 900.0, 2.0),
+        ];
+        for q in &mut quotes[..2] {
+            q.sector = Some("Information Technology".into());
+        }
+        quotes[2].instrument_type = "ETF".into();
+        let caps = |funds: &std::collections::HashMap<String, (&'static str, f64)>| -> Vec<(String, Option<&'static str>)> {
+            let book = sized_book(&quotes.iter().collect::<Vec<_>>(), &tuning, &sz, None, funds);
+            book.iter().map(|(q, _, _, cap)| (q.ticker.clone(), *cap)).collect()
+        };
+        let tag = |v: &[(String, Option<&'static str>)], t: &str| v.iter().find(|r| r.0 == t).and_then(|r| r.1);
+        let looked = caps(&std::collections::HashMap::from([("TECH.DE".to_string(), ("Information Technology", 1.0))]));
+        assert_eq!(looked.len(), 3, "all three are sized: {looked:?}");
+        assert!(["AAA.DE", "BBB.DE", "TECH.DE"].iter().all(|t| tag(&looked, t) == Some("sector")), "{looked:?}");
+        let blind = caps(&Default::default());
+        assert_eq!(tag(&blind, "AAA.DE"), Some("sector"), "a stock's own line still caps it: {blind:?}");
+        assert_eq!(tag(&blind, "TECH.DE"), None, "no entry -> the fund is exempt: {blind:?}");
     }
 
     /// (#287) the line that names the vetted holds the spill does not fund. Graded on the three
