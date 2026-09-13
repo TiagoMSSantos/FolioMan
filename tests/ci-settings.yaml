@@ -1286,7 +1286,7 @@ sizing:
                       #   under these caps leaves the remainder UNALLOCATED and the table's total prints
                       #   below 100. That is the intended reading, not a rounding bug.
   spill_names: 4      # (#292) 3 -> 4: the fourth tier `spill_per_tier` reaches is US. Read the (#292) receipt.
-                      #   (#261) CORE trackers that SHARE that remainder, equally. 1 = the exact pre-(#261)
+                      #   (#261) CORE trackers that SHARE that remainder; (#296) a US one at 2x. 1 = the exact pre-(#261)
                       #   behaviour and the revert; 0 is read as 1. The CORE sort is breadth-major, so
                       #   rows 1..n are the same all-world market from a DIFFERENT issuer with different
                       #   replication — this buys issuer/counterparty spread and nothing else, which is
@@ -5406,6 +5406,44 @@ buy_heuristic:
   #   FOR WHOEVER BUILDS A FACTOR SLOT: `screen::spill_picks` funds the FIRST row of a tier, and tier 9's
   #   first row is MWEP.L (equal weight, 2.0y), not a graded factor. A tier reach alone buys the wrong fund.
   #   No code changed. REVERT: delete this block.
+  #
+  # (#295)/(#296) ROUND 78: `screen` PRINTS THE BOOK IT FUNDS, AND THE SPILL GIVES ITS US TRACKER 2x. Same
+  #   standing ask. Growth admission is closed (above); the name cap and a factor slot are refused ((#292)(a),
+  #   (#294)). Two more ideas die on data this file already holds: an EMERGING overweight in the spill
+  #   ((#292)(b) VFINX minus VEIEX: US ahead only 17/25 20y windows, min -2.76, so no every-window bar can
+  #   pass for either side) and an incumbent-safe CORE sort ((#269) already admits new families at 5e8 with
+  #   zero evictions).
+  #   (#295) SHIPPED: `screen` prints a BUY NOW block, `size::buy_list`: each growth pick at its `sized_book`
+  #   weight, then the CORE trackers `last_core` funds at their share of the remainder, 100% of gross in all.
+  #   Before, `screen` journalled that book (`sized`, (#286)) and never printed it, and the trackers (37.5%
+  #   of gross today) showed only under `size --picks`. It reads the state `screen` just built, not the
+  #   file, so a failed write cannot print an old CORE. No fetch, no gate, no weight moved. LIVE 2026-09-13
+  #   (a copy of the live config and state; every state file restored and md5-verified after):
+  #     12 picks = 62.5%: ABEC.DE 8.0, LLY.DE 8.0, VRT 8.0, LYBK.DE 8.0, NVD.DE 5.6, IITU.L 5.6, XLKS.L 5.4,
+  #       KLA.DE 4.1, BNB-EUR 2.6, SMH.L 2.5, BTC-EUR 2.4, SEMI.AS 2.4
+  #     4 trackers = 37.5%: WEBN.DE 7.5, MXWO.L 7.5, HEMA.MI 7.5, SPXS.L 15.0 (the rows `size --picks` printed)
+  #   (#296) SHIPPED: `size::spill_split` gives the US tier (`core::US_TIER`) 2 shares of the spill and every
+  #   other tier 1, an unknown tier 1 (rule #5). ONE helper feeds `size`'s rows, the buy list and `track`'s
+  #   CORE table, so the table grades the weights actually paid. Evidence is (#292)(b)'s: S&P 500 minus MSCI
+  #   World, 54/54 rolling 20y windows since 1980, mean +1.64, min +0.79 pts/yr. A const, no knob, like (#293).
+  #   LIVE `size --picks`, same state file, old binary -> new:
+  #     WEBN.DE / MXWO.L / HEMA.MI   9.4 -> 7.5 each     SPXS.L 9.4 -> 15.0     TOTAL+ 100.0 -> 100.0
+  #   So the US tracker holds 40% of the spill instead of 25%, and emerging falls 9.4 -> 7.5% of gross. The
+  #   spill's US look-through, from index definitions and not measured here (all-world ~64% US, developed
+  #   ~72%, emerging 0): ~59% -> ~67%, near all-world's own mix instead of below it. WORTH, IF the gaps repeat:
+  #   1.875 points of gross move from each of the other three into the US, x their gaps (developed +1.64,
+  #   emerging +1.34, all-world unmeasured and taken as developed's) = about +0.09 pts/yr of the whole book.
+  #   HONEST EDGES. Hindsight: one country's record, the century's winner, and the windows overlap, so 46
+  #   years hold ~2-3 independent 20y periods. The growth picks are already US-heavy (LLY, VRT, NVD, KLA and
+  #   the tech funds), so this deepens one market's valuation risk; it adds no name and no market. SPXS.L is
+  #   swap-replicated, so 15% of gross now sits on one swap counterparty, up from 9.4%. NOT BACKTESTABLE:
+  #   backtest.rs has no hold lane. `track`: lines with no US row grade bit-identically (every weight is
+  #   exactly 1.0); the lines since (#292) that carry SPXS.L now grade it at 2x, though it was paid 1x on
+  #   those days. Stated, not backfilled. OPEN EDGE: `size` prints no spill once 99.5% is deployed, while the
+  #   buy list would still list trackers near 0%; unreachable at 62.5% today.
+  #   Also fixed: `Sizing::max_sector_pct`'s doc still said "STOCK CLASS ONLY", stale since (#293).
+  #   REVERT: `size::US_SPILL_WEIGHT = 1.0` (every share is rest / n again, byte-identical); delete the
+  #   buy-list print in `screen::run`.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among

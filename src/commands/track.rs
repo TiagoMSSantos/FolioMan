@@ -174,8 +174,8 @@ struct Graded {
 ///   `(#285)` and what `verdict_stats` and the screen's trust line still grade;
 /// * the CORE hold shortlist — `snap.core` cut at `Sizing::spill_cut()`, the number of trackers
 ///   `size` actually spills the undeployed remainder into;
-/// * (#286) the EXECUTED book — [`sized_rows`], uncut, the only one of the three that is not
-///   equal-weight.
+/// * (#286) the EXECUTED book — [`sized_rows`], uncut, weighted as `size` weights it. (#296) The CORE
+///   rows carry `size::spill_split`'s weights too, all exactly 1.0 unless a US row is funded.
 ///
 /// (#286) EACH ROW CARRIES ITS WEIGHT and the fold is `Σ w·r / Σ w`. The two equal-weight lanes hand
 /// `1.0` to every row through [`equal`], which does not merely approximate what they computed
@@ -346,7 +346,10 @@ fn core_section(
     let funded: &dyn for<'a> Fn(&'a Snapshot) -> Vec<(&'a str, Option<f64>, f64)> = &|s| {
         let all = equal(&s.core);
         let tiers: Vec<Option<u8>> = all.iter().map(|(t, ..)| tier_of(t)).collect();
-        crate::commands::screen::spill_picks(&tiers, cut, per_tier).into_iter().map(|i| all[i]).collect()
+        let picked = crate::commands::screen::spill_picks(&tiers, cut, per_tier);
+        // (#296) at the weights `size` pays them. A remainder of n keeps every non-US weight exactly 1.0.
+        let w = crate::commands::size::spill_split(picked.len() as f64, &picked.iter().map(|&i| tiers[i]).collect::<Vec<_>>());
+        picked.into_iter().zip(w).map(|(i, w)| (all[i].0, all[i].1, w)).collect()
     };
     let (journalled, total, rows) = graded_rows(snaps, funded, cut, today, px_now, spx_now);
     if rows.is_empty() {
@@ -365,8 +368,8 @@ fn core_section(
     format!(
         "\n  CORE hold shortlist — the buy-and-hold half of the report, graded the same way. Each row is\n  \
          the {cut} name(s) of that run's CORE list that `size` funds{how}: what it spills the remainder\n  \
-         its caps could not deploy into, which is routinely two thirds of gross. Equal-weight, EUR\n  \
-         seat, price-only, same windows as above. NOT advice.\n  \
+         its caps could not deploy into, which is routinely two thirds of gross. Weighted as `size`\n  \
+         pays them (a US row 2x, the rest equal), EUR seat, price-only, same windows as above. NOT advice.\n  \
          Journalled on {journalled} of {total} run(s).\n\n{TABLE_HEADER}\n{body}"
     )
 }
@@ -903,6 +906,26 @@ mod tests {
         let blind = core_section(&snaps, 2, true, today, &px, &|_| None, Some(105.0));
         let table = |s: &str| s.lines().skip_while(|l| !l.contains("BEAT?")).collect::<Vec<_>>().join("\n");
         assert_eq!(table(&blind), table(&off), "a tierless journal line grades the walk-down");
+    }
+
+    /// (#296) the CORE table grades the spill at the weights `size` pays it, through the same
+    /// `size::spill_split`. AW +10% and US -10% read -3.3% with the US row at 2x; equal would read +0.0%.
+    #[test]
+    fn core_section_weights_the_us_tier_as_size_does() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "AW" => Some(110.0),
+            "US" => Some(90.0),
+            _ => None,
+        };
+        let tier_of = |t: &str| match t {
+            "AW" => Some(crate::core::ALL_WORLD_TIER),
+            "US" => Some(crate::core::US_TIER),
+            _ => None,
+        };
+        let snaps = vec![with_core(snap("2026-06-16", Some(100.0), &[]), &[("AW", Some(100.0)), ("US", Some(100.0))])];
+        let on = core_section(&snaps, 2, true, today, &px, &tier_of, Some(105.0));
+        assert!(on.contains("-3.3%"), "AW 1 share + US 2 shares = (10 - 20) / 3: {on}");
     }
 
     /// (#286) `grade` now folds a WEIGHTED book, and the weight is the whole reason this round

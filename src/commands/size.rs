@@ -138,6 +138,50 @@ pub(crate) fn funded_markets(rows: &[(usize, String, Option<&'static str>, Optio
         .then(|| seen.iter().map(|t| tier_label(Some(*t))).collect::<Vec<_>>().join(" + "))
 }
 
+/// (#296) What the US tracker weighs in the spill, against 1 for every other one. Evidence is the
+/// (#292) receipt's free Yahoo series: S&P 500 minus MSCI World, 54 of 54 rolling 20y windows since
+/// 1980, mean +1.64, min +0.79 pts/yr. The tiers are nested, so this tilts the spill toward the US; it
+/// adds no market. A const, not a knob, like (#293): 1.0 is the equal split and the revert.
+const US_SPILL_WEIGHT: f64 = 2.0;
+
+/// (#296) The remainder `rest` split over the funded trackers, by tier. ONE definition (non-negotiable
+/// #4) for `size`'s rows, `screen`'s buy list and `track`'s CORE grade. An unknown tier weighs 1
+/// (non-negotiable #5): a tier this build cannot read is not evidence of the US. With no US row every
+/// share is `rest / n` exactly, so the pre-(#296) output is unchanged.
+pub(crate) fn spill_split(rest: f64, tiers: &[Option<u8>]) -> Vec<f64> {
+    let w = |t: &Option<u8>| if *t == Some(crate::core::US_TIER) { US_SPILL_WEIGHT } else { 1.0 };
+    let sum: f64 = tiers.iter().map(w).sum();
+    tiers.iter().map(|t| rest * w(t) / sum).collect()
+}
+
+/// (#295) THE BUY LIST `screen` prints: the growth picks at the weights `sized_book` gave them, then the
+/// CORE trackers at their `spill_split` share of what the picks left. Until this round a `screen` run
+/// ended on ranked tables and the book itself, ~40% of it trackers, printed only under `size --picks`.
+/// Pure; `screen::run` only prints it. `None` = nothing to buy, so a run with no book stays silent.
+pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&'static str>, Option<u8>)]) -> Option<String> {
+    if sized.is_empty() && core.is_empty() {
+        return None;
+    }
+    let rest = 100.0 - sized.iter().map(|(_, w)| w).sum::<f64>();
+    let mut out = format!(
+        "BUY NOW — the 20-year book `size --picks` funds: {} pick(s) + {} tracker(s), % of gross. NOT advice",
+        sized.len(),
+        core.len()
+    );
+    for (t, w) in sized {
+        out += &format!("\n  {t:<10} {w:>5.1}%  growth pick");
+    }
+    let tiers: Vec<Option<u8>> = core.iter().map(|(.., tier)| *tier).collect();
+    for ((_, t, repl, tier), share) in core.iter().zip(spill_split(rest, &tiers)) {
+        let note = repl.map(|r| format!(" · {r}")).unwrap_or_default();
+        out += &format!("\n  {t:<10} {share:>5.1}%  {} tracker{note}", tier_label(*tier));
+    }
+    if core.is_empty() {
+        out += &format!("\n  ({rest:.1}% unallocated — no CORE tracker journalled to take it)");
+    }
+    Some(out)
+}
+
 pub(crate) fn unfunded_note(rest: &[(String, Option<u8>)], funded: usize) -> Option<String> {
     if rest.is_empty() {
         return None;
@@ -428,10 +472,12 @@ pub async fn run(args: Vec<String>) {
                 // rounded per-row figures, so a remainder that does not divide evenly cannot drift it
                 // off 100.0. At `spill_names: 1` every byte below is the `(#253)` line verbatim,
                 // trailing sentence included — that is what makes the knob a real revert.
+                //
+                // (#296) ... and weight it: `spill_split` gives the US row 2 shares, the rest 1.
                 let n = rows.len();
-                let each = rest / n as f64;
+                let tiers: Vec<Option<u8>> = rows.iter().map(|(.., tier)| *tier).collect();
                 let markets = funded_markets(&rows);
-                for (i, core, repl, _) in rows {
+                for ((i, core, repl, _), each) in rows.into_iter().zip(spill_split(rest, &tiers)) {
                     let note = repl.map(|r| format!(" · {r}")).unwrap_or_default();
                     println!(
                         "  {core:<10} {dash:>7} {dash:>7} {each:>6.1}%  broad-market · CORE #{rank}, {date} screen{note}",
@@ -450,6 +496,9 @@ pub async fn run(args: Vec<String>) {
                     (None, 1) => "in one all-world tracker".to_string(),
                     (None, _) => format!("split equally over {n} all-world trackers"),
                     (Some(m), 1) => format!("in one {m} tracker"),
+                    (Some(m), _) if tiers.contains(&Some(crate::core::US_TIER)) => {
+                        format!("split over {n} trackers, across {m}, the US one at {US_SPILL_WEIGHT}x the others")
+                    }
                     (Some(m), _) => format!("split equally over {n} trackers, across {m}"),
                 };
                 println!(
@@ -778,6 +827,49 @@ pub(crate) mod tests {
             funded_markets(&[row("A", aw), row("A2", aw), row("X", None), row("D", dev)]).as_deref(),
             Some("all-world + developed")
         );
+    }
+
+    /// (#296) the split `size`, `screen` and `track` all read: the US tier takes 2 shares, every other
+    /// tier 1, an unknown tier 1 (rule #5), and with no US row it is the equal split exactly.
+    #[test]
+    fn spill_split_weights_the_us_tier() {
+        use crate::core::{ALL_WORLD_TIER, HOLD_TIER_LABELS, US_TIER};
+        assert_eq!(HOLD_TIER_LABELS[US_TIER as usize], "US");
+        assert_eq!(spill_split(37.5, &[Some(ALL_WORLD_TIER), Some(1), Some(2), Some(US_TIER)]), vec![7.5, 7.5, 7.5, 15.0]);
+        assert_eq!(spill_split(30.0, &[Some(ALL_WORLD_TIER), Some(1), None]), vec![10.0, 10.0, 10.0]);
+        assert_eq!(spill_split(37.5, &[]), Vec::<f64>::new());
+    }
+
+    /// (#295) the buy list `screen` prints: picks at their sized weight, trackers at their `spill_split`
+    /// share of what the picks left, so the list reads 100% of gross. No trackers -> the remainder is
+    /// named as unallocated, and nothing at all -> no block.
+    #[test]
+    fn buy_list_prints_picks_and_trackers() {
+        use crate::core::{ALL_WORLD_TIER, US_TIER};
+        let picks = [("NVD.DE".to_string(), 5.6), ("IITU.L".to_string(), 4.4)];
+        let core = [(0, "WEBN.DE".to_string(), None, Some(ALL_WORLD_TIER)), (21, "SPXS.L".to_string(), Some("swap"), Some(US_TIER))];
+        let head = "  NVD.DE       5.6%  growth pick\n  IITU.L       4.4%  growth pick";
+        assert_eq!(
+            buy_list(&picks, &core).as_deref(),
+            Some(
+                format!(
+                    "BUY NOW — the 20-year book `size --picks` funds: 2 pick(s) + 2 tracker(s), % of gross. NOT advice\n{head}\n  \
+                     WEBN.DE     30.0%  all-world tracker\n  SPXS.L      60.0%  US tracker · swap"
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(
+            buy_list(&picks, &[]).as_deref(),
+            Some(
+                format!(
+                    "BUY NOW — the 20-year book `size --picks` funds: 2 pick(s) + 0 tracker(s), % of gross. NOT advice\n{head}\n  \
+                     (90.0% unallocated — no CORE tracker journalled to take it)"
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(buy_list(&[], &[]), None);
     }
 
     /// (#288) the unfunded census now reads the WHOLE vetted list — ~96 rows live, against the 17

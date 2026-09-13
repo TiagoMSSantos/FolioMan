@@ -1848,6 +1848,18 @@ pub async fn run(args: Vec<String>) {
     // (round 114) live track record: journal today's ranked slice + the S&P close so `track` can
     // grade every past top-10 on prices that didn't exist when it ranked. One line per day (a
     // same-day rerun adds nothing); a failed append warns inside and never fails the screen.
+    // (#295) the executed book is bound here, not built inline below, so the buy list printed after the
+    // state write shows the same rows this journals. The field's comment says why it is `sized_book`.
+    let sized_now: Vec<(String, f64)> = crate::commands::size::sized_book(
+        &ranked_now.iter().filter_map(|t| quotes.iter().find(|q| &q.ticker == t)).collect::<Vec<_>>(),
+        &settings.buy_heuristic,
+        &settings.sizing,
+        nupl,
+        &crate::commands::size::fund_sectors(&mix), // (#293) the same look-through `size` caps by
+    )
+    .iter()
+    .map(|&(q, _, w, _)| (q.ticker.clone(), w))
+    .collect();
     crate::commands::track::append_snapshot(&crate::commands::track::Snapshot {
         date: run_date.clone(),
         spx: spx.first().and_then(|q| q.price_eur),
@@ -1892,16 +1904,7 @@ pub async fn run(args: Vec<String>) {
         //
         // Weights only; the price is already in `rows` for every one of these tickers, and
         // `track::sized_rows` does the join.
-        sized: crate::commands::size::sized_book(
-            &ranked_now.iter().filter_map(|t| quotes.iter().find(|q| &q.ticker == t)).collect::<Vec<_>>(),
-            &settings.buy_heuristic,
-            &settings.sizing,
-            nupl,
-            &crate::commands::size::fund_sectors(&mix), // (#293) the same look-through `size` caps by
-        )
-        .iter()
-        .map(|&(q, _, w, _)| (q.ticker.clone(), w))
-        .collect(),
+        sized: sized_now.clone(),
     });
 
     // (r15) footer population: ranked book + pinned extras — the held/watched names sit in the
@@ -2291,6 +2294,17 @@ pub async fn run(args: Vec<String>) {
         );
         eprintln!("{warn}");
         journal(&run_date, &[warn]);
+    }
+
+    // (#295) THE BUY LIST: the book `size --picks` would fund off this run, picks plus the CORE trackers
+    // that take the remainder. Read off the state just built, not the file, so a failed write above
+    // cannot print yesterday's CORE.
+    let sized_tickers: Vec<String> = sized_now.iter().map(|(t, _)| t.clone()).collect();
+    let buy_core = last_core(serde_json::to_string(&state).ok(), &sized_tickers, settings.sizing.spill_cut(), settings.sizing.spill_per_tier)
+        .map(|(_, rows, _)| rows)
+        .unwrap_or_default();
+    if let Some(list) = crate::commands::size::buy_list(&sized_now, &buy_core) {
+        println!("\n{list}");
     }
 
     // (A2) GATE FUNNEL: the counts behind the tails below. Printed first because it is the only thing
