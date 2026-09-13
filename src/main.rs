@@ -11,7 +11,7 @@
 //!   folioman track [--push]        grade every past `screen` top-10 vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
 //!   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first-snapshot top-10 (€1/name fee) vs an S&P 500 DCA of the same cashflows
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
-//!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY>   LIVE order (real money, confirmed)
+//!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money, confirmed)
 //!
 //! No TICKERS -> uses config/settings.yaml watchlist. Edit that file for defaults.
 //!
@@ -36,7 +36,7 @@ folioman — review ETF/stock/crypto holdings. Read-only, never trades.
   folioman track [--push]        grade every past `screen` top-10 vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first-snapshot top-10 (€1/name fee) vs an S&P 500 DCA of the same cashflows
   folioman accounts              cash available + holdings per broker (read-only; env creds)
-  folioman trade <broker> <buy|sell> <SYMBOL> <QTY>   LIVE order (real money; brokers:
+  folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; brokers:
                                  trading212 | binance | tr — creds from env, confirmed y/N)
 
 No TICKERS -> uses config/settings.yaml watchlist.";

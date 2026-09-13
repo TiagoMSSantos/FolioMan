@@ -5464,6 +5464,28 @@ buy_heuristic:
   #   still grade the top-10 list; `track` grades the sized book in its own table.
   #   REVERT: split `deploy_eur` equally in `order_glue`, and build its rows from `ranked_now` cut at
   #   `track::BOOK` again.
+  # (#298) ROUND 80: THE COIN ORDERS SPEND EUROS. Same standing ask. Every graded profit lever is priced
+  #   above ((#291) admission, (#292)(a) name cap, (#294) factor slot, (#296) US tilt), so this round fixed
+  #   the one real-money defect in what (#297) shipped: `order_glue` printed every row as a base quantity
+  #   to 4 decimals and `broker::binance::order` sent it verbatim. Binance's public exchangeInfo on
+  #   2026-09-13: BNBEUR LOT_SIZE step 0.001, BTCEUR 0.00001, both NOTIONAL minNotional 5.00 with
+  #   applyMinToMarket. At EUR 1000 the book printed BNBEUR 0.0421 (not a multiple of 0.001, so Binance
+  #   rejects it) and BTCEUR 0.0004 (EUR 26.67 against a EUR 23.63 row, +13%); a coin row under EUR 5 is
+  #   rejected outright.
+  #   DECIDED by the user: spend euros rather than round down to the step. SHIPPED: a Binance row prints
+  #   the euros to spend (deploy x weight, 2 decimals, no price needed); `trade` takes a euro-sign amount
+  #   for Binance only (refused before the prompt on Trading212/TR, and `inf` is now refused too), and
+  #   `binance::order` sends it as `quoteOrderQty`, so Binance sizes the fill to its own step. A row under
+  #   `binance::MIN_ORDER_EUR` is printed and tagged, not dropped. `trade::run` and `binance::order` are
+  #   `#[mutants::skip]` (stdin prompt, env creds, live POST); their branches live in `parse_order` and
+  #   `binance::order_query`, both pinned.
+  #   LIVE (the (#297) synthetic EUR 1000 copy): BNBEUR EUR 26.48, BTCEUR EUR 23.52, the 14 Trading212
+  #   rows unchanged, no tag. HONEST EDGES. Trading212 quantities stay at 4 decimals; their precision
+  #   limits need the keyed instrument metadata, so they are unverified. MIN_ORDER_EUR copies a 5.00 that
+  #   Binance can move, and Binance's own rejection is the backstop. No return number moves: this spends
+  #   exactly the weight the book already chose.
+  #   REVERT: drop the Binance arm and the tag in `order_glue`, the euro prefix in `trade::parse_order`,
+  #   and `eur` in `binance::order`.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among

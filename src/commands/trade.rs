@@ -1,10 +1,10 @@
-//! `trade <broker> <buy|sell> <SYMBOL> <QTY>` — place a single **live MARKET order**.
+//! `trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>` — place a single **live MARKET order**.
 //! REAL MONEY, IRREVERSIBLE. Credentials are read from environment variables only (see
 //! `src/broker.rs`); nothing trade-related is ever read from `settings.yaml`.
 //!
 //! Brokers: `trading212` (ticker form `AAPL_US_EQ`, sent EXACTLY as typed — venue letters are
-//! meaningfully lowercase, e.g. `VUAGl_EQ`), `binance` (pair like `BTCEUR`, qty in base asset),
-//! `tr`/`traderepublic` (unofficial, login only — see broker docs).
+//! meaningfully lowercase, e.g. `VUAGl_EQ`), `binance` (pair like `BTCEUR`, qty in base asset, or
+//! `€AMOUNT` to spend euros), `tr`/`traderepublic` (unofficial, login only — see broker docs).
 //!
 //! Every order prints a summary and requires typing `yes` to send — kept even in live mode
 //! as a fat-finger guard, because the action can't be undone.
@@ -12,12 +12,13 @@
 use crate::{broker, fetch};
 use std::io::Write;
 
-const USAGE: &str = "usage: folioman trade <trading212|binance|tr> <buy|sell> <SYMBOL> <QTY>";
+const USAGE: &str = "usage: folioman trade <trading212|binance|tr> <buy|sell> <SYMBOL> <QTY|€AMOUNT>";
 
-/// Parse + validate the order args: (broker, side, symbol, qty). EVERYTHING is validated here —
-/// including the broker name — so a bad invocation errors BEFORE the real-money confirm prompt,
-/// never after the user has already typed `yes`.
-fn parse_order(args: &[String]) -> Result<(String, String, String, f64), String> {
+/// Parse + validate the order args: (broker, side, symbol, amount, eur). EVERYTHING is validated
+/// here — including the broker name — so a bad invocation errors BEFORE the real-money confirm
+/// prompt, never after the user has already typed `yes`. (#298) `eur` = the amount carried a `€`
+/// prefix: euros to spend, which only Binance takes (`quoteOrderQty`); a base quantity otherwise.
+fn parse_order(args: &[String]) -> Result<(String, String, String, f64, bool), String> {
     if args.len() != 4 {
         return Err(USAGE.to_string());
     }
@@ -39,17 +40,28 @@ fn parse_order(args: &[String]) -> Result<(String, String, String, f64), String>
     } else {
         args[2].to_uppercase()
     };
-    // NaN fails the > 0.0 filter, so it lands in the same rejection as 0/-1/non-numeric
-    let qty: f64 = args[3]
+    // (#298) `screen` prints Binance rows as `€26.37`, a spend with no lot step to miss. Trading212
+    // and TR orders take a quantity, so a `€` there is refused here rather than read as one.
+    let (raw, eur) = args[3].strip_prefix('€').map_or((args[3].as_str(), false), |a| (a, true));
+    if eur && broker_name != "binance" {
+        return Err("€AMOUNT is Binance-only (it sends quoteOrderQty); Trading212 and TR take a QTY".to_string());
+    }
+    // NaN fails the > 0.0 filter and inf fails is_finite, so both land in the same rejection as
+    // 0/-1/non-numeric
+    let qty: f64 = raw
         .parse()
         .ok()
-        .filter(|q: &f64| *q > 0.0)
+        .filter(|q: &f64| q.is_finite() && *q > 0.0)
         .ok_or_else(|| "QTY must be a positive number".to_string())?;
-    Ok((broker_name, side, symbol, qty))
+    Ok((broker_name, side, symbol, qty, eur))
 }
 
+/// `#[mutants::skip]` for the reason spelled out on `track::run`: a command entry point is reachable
+/// only through `--test cli`, which the gate does not run. Here it is also a stdin prompt and a live
+/// real-money order. Every rule it enforces is [`parse_order`], pinned below; this is the wiring.
+#[mutants::skip]
 pub async fn run(args: Vec<String>) {
-    let (broker_name, side, symbol, qty) = match parse_order(&args) {
+    let (broker_name, side, symbol, qty, eur) = match parse_order(&args) {
         Ok(order) => order,
         Err(e) => {
             eprintln!("{e}");
@@ -58,7 +70,8 @@ pub async fn run(args: Vec<String>) {
     };
 
     // irreversible-money confirm gate (kept in live mode on purpose — fat-finger guard)
-    println!("⚠ REAL LIVE ORDER — {broker_name}: {side} {qty} {symbol}");
+    let what = if eur { format!("€{qty} of {symbol}") } else { format!("{qty} {symbol}") };
+    println!("⚠ REAL LIVE ORDER — {broker_name}: {side} {what}");
     print!("This spends real money and cannot be undone. Type 'yes' to send: ");
     std::io::stdout().flush().ok();
     let mut input = String::new();
@@ -71,7 +84,7 @@ pub async fn run(args: Vec<String>) {
     let client = fetch::client_long();
     let res = match broker_name.as_str() {
         "trading212" | "t212" => broker::trading212::order(&client, &side, &symbol, qty).await,
-        "binance" => broker::binance::order(&client, &side, &symbol, qty).await,
+        "binance" => broker::binance::order(&client, &side, &symbol, qty, eur).await,
         "tr" | "traderepublic" => broker::tr::order(&client, &side, &symbol, qty).await,
         // parse_order already rejected anything else; keep a defensive arm rather than a panic
         _ => {
@@ -107,16 +120,24 @@ mod tests {
         assert!(parse_order(&args(&["robinhood", "buy", "AAPL", "1"])).is_err());
         // side
         assert!(parse_order(&args(&["binance", "hold", "BTCEUR", "1"])).is_err());
-        // qty: zero, negative, NaN and non-numeric all rejected the same way
-        for bad in ["0", "-1", "NaN", "one"] {
+        // qty: zero, negative, NaN, infinite and non-numeric all rejected the same way
+        for bad in ["0", "-1", "NaN", "inf", "one"] {
             assert!(parse_order(&args(&["binance", "buy", "BTCEUR", bad])).is_err(), "qty {bad} must be rejected");
         }
         // happy path: broker+side lowercased, qty parsed; symbol case is broker POLICY —
         // T212 verbatim (venue letters are meaningfully lowercase), binance uppercased
-        let (b, s, sym, q) = parse_order(&args(&["T212", "Buy", "VUAGl_EQ", "1.5"])).expect("valid order");
-        assert_eq!((b.as_str(), s.as_str(), sym.as_str()), ("t212", "buy", "VUAGl_EQ"));
+        let (b, s, sym, q, eur) = parse_order(&args(&["T212", "Buy", "VUAGl_EQ", "1.5"])).expect("valid order");
+        assert_eq!((b.as_str(), s.as_str(), sym.as_str(), eur), ("t212", "buy", "VUAGl_EQ", false));
         assert!((q - 1.5).abs() < 1e-12);
-        let (_, _, sym, _) = parse_order(&args(&["binance", "buy", "btceur", "0.1"])).expect("valid order");
+        let (_, _, sym, _, _) = parse_order(&args(&["binance", "buy", "btceur", "0.1"])).expect("valid order");
         assert_eq!(sym, "BTCEUR");
+        // (#298) a `€` amount is euros to spend, Binance only, under the same positive-number check
+        let (_, _, _, q, eur) = parse_order(&args(&["binance", "buy", "BTCEUR", "€23.63"])).expect("valid € order");
+        assert!(eur && (q - 23.63).abs() < 1e-12);
+        let refused = parse_order(&args(&["t212", "buy", "VUAGl_EQ", "€5"])).unwrap_err();
+        assert!(refused.contains("Binance-only"), "{refused}");
+        for bad in ["€", "€0", "€-1", "€inf"] {
+            assert!(parse_order(&args(&["binance", "buy", "BTCEUR", bad])).is_err(), "amount {bad} must be rejected");
+        }
     }
 }

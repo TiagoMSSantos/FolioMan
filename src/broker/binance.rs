@@ -121,19 +121,35 @@ pub fn sign(secret: &str, msg: &str) -> String {
     hex::encode(mac.finalize().into_bytes())
 }
 
+/// (#298) The smallest market order Binance fills on the pairs `screen` prints: `exchangeInfo`'s
+/// NOTIONAL `minNotional` is 5.00 on BTCEUR and BNBEUR, with `applyMinToMarket` (read 2026-09-13).
+/// `screen::order_glue` tags a coin row under it; Binance's own rejection stays the backstop.
+pub const MIN_ORDER_EUR: f64 = 5.0;
+
+/// (#298) The signed order query. `eur` sends `quoteOrderQty` (spend this much of the quote asset, EUR
+/// on the pairs `screen` prints, and Binance sizes the fill to its lot step) instead of `quantity`
+/// (base asset, which must land on the pair's LOT_SIZE step: BNBEUR's is 0.001). Pure, so the one
+/// branch a real-money order turns on is pinned offline.
+fn order_query(symbol: &str, side: &str, amount: f64, eur: bool, ts: u128) -> String {
+    let field = if eur { "quoteOrderQty" } else { "quantity" };
+    format!("symbol={symbol}&side={}&type=MARKET&{field}={amount}&recvWindow=5000&timestamp={ts}", side.to_uppercase())
+}
+
 /// Binance spot MARKET order via the live API. `symbol` = pair, e.g. `BTCEUR`. `qty` = base
-/// asset amount. HMAC-signed query, key in the `X-MBX-APIKEY` header.
-pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64) -> Result<String, String> {
+/// asset amount, or euros to spend when `eur` ([`order_query`]). HMAC-signed query, key in the
+/// `X-MBX-APIKEY` header.
+///
+/// UNGRADEABLE, hence the skip, for `summary`'s reason: env credentials and a signed POST to a
+/// hardcoded `api.binance.com`. The branch that picks the amount field is [`order_query`], pinned below.
+#[mutants::skip]
+pub async fn order(client: &Client, side: &str, symbol: &str, qty: f64, eur: bool) -> Result<String, String> {
     let key = env_var("BINANCE_API_KEY")?;
     let secret = env_var("BINANCE_API_SECRET")?;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_millis();
-    let side_u = side.to_uppercase(); // BUY / SELL
-    let query = format!(
-        "symbol={symbol}&side={side_u}&type=MARKET&quantity={qty}&recvWindow=5000&timestamp={ts}"
-    );
+    let query = order_query(symbol, side, qty, eur, ts);
     let sig = sign(&secret, &query);
     let url = format!("https://api.binance.com/api/v3/order?{query}&signature={sig}");
     let resp = client
@@ -178,6 +194,19 @@ mod tests {
             json!({ "asset": "SOL", "free": "oops", "locked": "0" }),
         ];
         assert_eq!(extract_amounts(&rows), vec![("BTC".to_string(), 0.75)]);
+    }
+
+    /// (#298) The amount field is the whole difference between spending €23.63 and buying 23.63 BTC.
+    #[test]
+    fn order_query_picks_the_amount_field() {
+        assert_eq!(
+            order_query("BTCEUR", "buy", 23.63, true, 1),
+            "symbol=BTCEUR&side=BUY&type=MARKET&quoteOrderQty=23.63&recvWindow=5000&timestamp=1"
+        );
+        assert_eq!(
+            order_query("BTCEUR", "sell", 0.001, false, 1),
+            "symbol=BTCEUR&side=SELL&type=MARKET&quantity=0.001&recvWindow=5000&timestamp=1"
+        );
     }
 
     /// Rendering: stable/fiat lands under `cash` and everything else under `holdings`, dust and

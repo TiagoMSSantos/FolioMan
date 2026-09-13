@@ -3205,7 +3205,8 @@ fn resolve_t212(
 /// (`size::buy_weights`); round 116 split it equally over the top-10, which put both coins at 10%
 /// each against a 5% crypto budget and bought none of the trackers. Unknown broker symbol →
 /// `<T212_SYMBOL>` placeholder (T212 forms are only knowable from held positions); no deploy set
-/// or no price → `<QTY>`. Never prints an empty section; commands only PRINT here — sending one
+/// or no price → `<QTY>`. (#298) A Binance row prints the € to spend instead (`trade` sends it as
+/// `quoteOrderQty`), so it needs no price, and is tagged under `binance::MIN_ORDER_EUR`. Never prints an empty section; commands only PRINT here — sending one
 /// still walks trade's real-money confirm gate.
 fn order_glue(rows: &[(String, Option<f64>, &'static str, Option<String>, f64)], deploy_eur: Option<f64>) -> Option<String> {
     if rows.is_empty() {
@@ -3227,11 +3228,20 @@ fn order_glue(rows: &[(String, Option<f64>, &'static str, Option<String>, f64)],
             "<T212_SYMBOL>".to_string()
         });
         let qty_cell = match (deploy_eur, price) {
+            // (#298) a Binance row spends euros (`trade` sends `quoteOrderQty`): the exact weight, no
+            // price, no lot step. A base quantity to 4 decimals missed BNBEUR's 0.001 step outright.
+            (Some(d), _) if *broker == "binance" => format!("€{:.2}", d * w / 100.0),
             (Some(d), Some(p)) if *p > 0.0 => format!("{:.4}", d * w / 100.0 / p),
             _ => "<QTY>".to_string(),
         };
+        let min = crate::broker::binance::MIN_ORDER_EUR;
+        let min_note = if *broker == "binance" && deploy_eur.is_some_and(|d| d * w / 100.0 < min) {
+            format!(" — under Binance's €{min:.0} minimum, it rejects this")
+        } else {
+            String::new()
+        };
         let price_note = price.map_or(String::new(), |p| format!(" @ €{p:.2}"));
-        out.push_str(&format!("  folioman trade {broker} buy {sym_cell} {qty_cell}   # {ticker} {w:.1}%{price_note}\n"));
+        out.push_str(&format!("  folioman trade {broker} buy {sym_cell} {qty_cell}   # {ticker} {w:.1}%{price_note}{min_note}\n"));
     }
     if unheld {
         out.push_str("  # <T212_SYMBOL> = not currently held, so the Trading212 ticker form is unknown — look it up in the app once.\n");
@@ -3361,9 +3371,10 @@ mod tests {
     }
 
     /// (round 116) order-glue semantics: empty book prints nothing; (#297) each row buys the deploy €
-    /// × its BUY NOW weight (qty = € ÷ price) across both brokers; missing deploy, missing or zero
-    /// price, or missing symbol degrade to placeholders (never a guessed number), and the unheld
-    /// footnote only prints when earned.
+    /// × its BUY NOW weight (qty = € ÷ price) across both brokers; (#298) a Binance row prints that €
+    /// itself, priced or not, tagged only when strictly under Binance's minimum; missing deploy,
+    /// missing or zero price, or missing symbol degrade to placeholders (never a guessed number), and
+    /// the unheld footnote only prints when earned.
     #[test]
     fn order_glue_semantics() {
         assert!(order_glue(&[], Some(1000.0)).is_none());
@@ -3374,8 +3385,23 @@ mod tests {
         let sized = order_glue(&rows, Some(300.0)).unwrap();
         assert!(sized.contains("the BUY NOW book above, €300 this month × each row's weight"));
         assert!(sized.contains("folioman trade trading212 buy AAPL_US_EQ 1.6000   # AAPL 80.0% @ €150.00"));
-        assert!(sized.contains("folioman trade binance buy BTCEUR 0.0008   # BTC-EUR 20.0%"));
-        assert!(!sized.contains("<T212_SYMBOL>") && !sized.contains("look it up"));
+        assert!(sized.contains("folioman trade binance buy BTCEUR €60.00   # BTC-EUR 20.0% @ €75000.00"));
+        assert!(!sized.contains("<T212_SYMBOL>") && !sized.contains("look it up") && !sized.contains("minimum"));
+        let small = order_glue(
+            &[
+                ("BNB-EUR".to_string(), Some(600.0), "binance", Some("BNBEUR".to_string()), 1.5),
+                ("ETH-EUR".to_string(), None, "binance", Some("ETHEUR".to_string()), 10.0),
+                ("TINY".to_string(), Some(10.0), "trading212", Some("TINY_EQ".to_string()), 1.0),
+            ],
+            Some(300.0),
+        )
+        .unwrap();
+        assert!(small.contains("buy BNBEUR €4.50   # BNB-EUR 1.5% @ €600.00 — under Binance's €5 minimum, it rejects this"), "{small}");
+        assert!(small.contains("buy ETHEUR €30.00   # ETH-EUR 10.0%\n"), "{small}");
+        assert!(small.contains("buy TINY_EQ 0.3000   # TINY 1.0% @ €10.00"), "{small}");
+        assert_eq!(small.matches("minimum").count(), 1, "{small}");
+        let at_min = order_glue(&[("BTC-EUR".to_string(), Some(75000.0), "binance", Some("BTCEUR".to_string()), 5.0)], Some(100.0)).unwrap();
+        assert!(at_min.contains("buy BTCEUR €5.00") && !at_min.contains("minimum"), "{at_min}");
         let no_deploy = order_glue(&rows, None).unwrap();
         assert!(no_deploy.contains("set monthly_deploy_eur") && no_deploy.contains("<QTY>"));
         let unheld = order_glue(

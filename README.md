@@ -45,14 +45,14 @@ stay neutral and everything else still works.
 
 ### `trade` — live orders (real money, opt-in)
 
-`folioman trade <broker> <buy|sell> <SYMBOL> <QTY>` places one **live market order**. It runs
+`folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>` places one **live market order**. It runs
 only when you invoke it, prints the order, and waits for you to type `yes`. **Credentials come
 from environment variables only — never `settings.yaml`:**
 
 | Broker | Env vars | Notes |
 |--------|----------|-------|
 | Trading212 | `TRADING212_API_KEY` | Live endpoint = real money. Ticker form `AAPL_US_EQ`. |
-| Binance | `BINANCE_API_KEY`, `BINANCE_API_SECRET` | Spot market order. Pair like `BTCEUR`, qty in base asset. |
+| Binance | `BINANCE_API_KEY`, `BINANCE_API_SECRET` | Spot market order. Pair like `BTCEUR`, qty in base asset, or `€AMOUNT` to spend euros (`quoteOrderQty`, how `screen` prints coin orders). |
 | Trade Republic | `TR_PHONE`, `TR_PIN`, `TR_ACCEPT_UNOFFICIAL=1` | No official API; login only, order placement not implemented — trade in the app. |
 
 ⚠️ Live trading is irreversible. Use withdrawal-disabled, IP-allowlisted keys; double-check
@@ -85,7 +85,9 @@ your monthly base × 1 near the high, × 1.5 in a pullback, × 2 in a drawdown �
 month?" arithmetic done for you. Not advice.
 
 Below the tables, `screen` prints the top book as **paste-ready `trade` commands** (stocks/ETFs →
-Trading212, crypto → Binance), QTY sized from that deploy € split equally across the book. Exact
+Trading212, crypto → Binance): the BUY NOW book, each row buying that deploy € × its weight. A
+Trading212 row prints a quantity; a Binance row prints the euros to spend (`€26.37`), tagged when
+it falls under Binance's €5 order minimum. Exact
 Trading212 symbols are resolved from your held positions first, then from the full T212
 instrument list (fetched with your API key, cached a week in `.t212_instruments.json`) by ISIN or
 unique base symbol — only genuinely ambiguous or unlisted names still print a `<T212_SYMBOL>`
