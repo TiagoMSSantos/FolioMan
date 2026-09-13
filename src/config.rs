@@ -76,7 +76,6 @@ pub struct Sizing {
     pub max_sector_pct: f64, // (P5) no GICS sector may exceed this % of gross. (#293) A stock counts its whole weight, a fund its weight x its TOP look-through sector's share (`size::fund_sectors`), a coin nothing; freed weight spills within its own class. Applied after the name cap and re-checked with it, since capping a sector hands weight to names that may then breach their own ceiling. 0 = off
     pub spill_names: usize,  // (#261) how many CORE trackers share the remainder the caps could not deploy. `(#253)` put all of it in ONE fund and said so in its own HONEST EDGES: "67% of gross in one wrapper is counterparty and provider risk that no gate in this repo measures". The CORE list is breadth-major, so the rows below index 0 are the SAME market from different issuers with different replication — splitting buys issuer diversification at ~2bp of blended TER, and buys nothing else, which is the whole claim. 1 = the exact pre-(#261) behaviour, and the revert. 0 is read as 1
     pub spill_per_tier: bool, // (#288) fund the best row of each DISTINCT breadth tier instead of the first `spill_names` rows. The CORE shortlist is breadth-major, so the walk-down always lands on three all-world trackers -- `screen::last_core`'s own doc says "three all-world trackers are one market". true spreads the same money over all-world/developed/emerging instead. `(#289)` made it the DEFAULT, and states the consequence plainly rather than selling it as diversification: the tiers are NESTED (developed + emerging partition all-world), so on the live ~30% remainder this is in substance an emerging-market overweight, ~3.3% -> ~11.1% of gross, and the all-world and developed legs are near-duplicates of each other. That is a judgement, it is not backtestable in this repo, and `false` is the exact pre-(#288) walk-down, byte-identical.
-    pub min_lot_eur: f64, // (#301) a growth pick whose lot (deploy EUR x weight) is under this many EUR folds into the CORE trackers instead of buying, so a per-order fee stops eating small lots (`sim` charges EUR 1/name: a EUR 18 lot pays 5.5%). Read once by `lot_floor_pct`, applied once in `size::buy_weights`, so the BUY NOW list, the orders and `sim` fold alike. It DELETES names, coins included, and no backtest row models fees, so nothing grades it. No tracker to take the weight, or no deploy EUR set -> nothing folds. 0 = off, the pre-(#301) book byte-identical
 }
 
 /// Defaults are the SHIPPED policy, not a neutral off-state — the one place in this file where a
@@ -93,7 +92,6 @@ impl Default for Sizing {
             max_sector_pct: 25.0,
             spill_names: 4, // (#292) 3 -> 4: `spill_per_tier` walks tiers in order, so the fourth row is the US tier. See the (#292) receipt
             spill_per_tier: true, // (#289) ON, per the doc block above: `size` has no backtest and no golden, so an off-by-default would just ship the fix disabled. `false` reverts to the (#261) walk-down.
-            min_lot_eur: 0.0, // (#301) off: the fee is the sim's assumption, not a broker's, so X is the user's to set
         }
     }
 }
@@ -110,13 +108,6 @@ impl Sizing {
     /// while this answers for the configured one.
     pub fn spill_cut(&self) -> usize {
         self.spill_names.max(1)
-    }
-
-    /// (#301) `min_lot_eur` as a % of gross for a month deploying `deploy_eur`, the ONE conversion
-    /// (non-negotiable #4) `screen` and `sim` both feed `size::buy_weights`. No positive deploy -> 0.0:
-    /// with no EUR to size a lot there is no lot to call small (non-negotiable #5).
-    pub fn lot_floor_pct(&self, deploy_eur: Option<f64>) -> f64 {
-        deploy_eur.filter(|d| *d > 0.0).map_or(0.0, |d| 100.0 * self.min_lot_eur / d)
     }
 }
 
@@ -1984,18 +1975,6 @@ mod tests {
         assert_eq!(sz(3).spill_cut(), 3);
         assert_eq!(sz(99).spill_cut(), 99, "no ceiling here: the shortlist length is the real one");
         assert_eq!(Sizing::default().spill_cut(), 4, "the shipped count `size` funds today, (#292)");
-    }
-
-    /// (#301) the fee floor in % of gross: EUR 50 of a EUR 1000 month is 5%. Off by default, and a
-    /// missing or non-positive deploy never manufactures a floor.
-    #[test]
-    fn lot_floor_pct_reads_eur_over_deploy() {
-        let sz = Sizing { min_lot_eur: 50.0, ..Sizing::default() };
-        assert_eq!(sz.lot_floor_pct(Some(1000.0)), 5.0);
-        assert_eq!(Sizing::default().lot_floor_pct(Some(1000.0)), 0.0, "shipped off");
-        for d in [None, Some(0.0), Some(-1.0)] {
-            assert_eq!(sz.lot_floor_pct(d), 0.0, "{d:?}");
-        }
     }
 
     /// Working dot-files anchor at the repo root (the dir holding the config), never the process

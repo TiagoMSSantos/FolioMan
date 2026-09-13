@@ -9,7 +9,7 @@
 //!   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife] [stress]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep, `stress` = inject crashed/delisted losers (survivorship check)
 //!   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
 //!   folioman track [--push]        grade every past `screen` top-10 vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
-//!   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (€1/name fee) vs an S&P 500 DCA of the same cashflows
+//!   folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
 //!   folioman accounts              cash + holdings per broker (read-only; env creds)
 //!   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money, confirmed)
 //!
@@ -34,7 +34,7 @@ folioman — review ETF/stock/crypto holdings. Read-only, never trades.
   folioman backtest [YEARS] [TICKERS...|universe] [fund] [insider] [tune] [halflife] [stress]  walk-forward lanes vs peer-relative return + OOS + ablation; `tune` = honest train/test weight search; `fund` = FMP as-of fundamentals, `insider` = SEC Form-4 net buys, `halflife` = hold-period net-edge sweep, `stress` = inject crashed/delisted losers (survivorship check)
   folioman alert  [TICKERS...]   ntfy.sh push for tickers >= drop_pct below high
   folioman track [--push]        grade every past `screen` top-10 vs the S&P 500 at today's prices; --push also ntfys the summary (monthly cron)
-  folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (€1/name fee) vs an S&P 500 DCA of the same cashflows
+  folioman sim                   paper-DCA the screen's advice: monthly_deploy_eur × entry state buys each month's first BUY NOW book, else first-snapshot top-10 (broker fees) vs an S&P 500 DCA of the same cashflows
   folioman accounts              cash available + holdings per broker (read-only; env creds)
   folioman trade <broker> <buy|sell> <SYMBOL> <QTY|€AMOUNT>   LIVE order (real money; brokers:
                                  trading212 | binance | tr — creds from env, confirmed y/N)

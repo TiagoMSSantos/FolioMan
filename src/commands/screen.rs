@@ -2303,8 +2303,7 @@ pub async fn run(args: Vec<String>) {
     let buy_core = last_core(serde_json::to_string(&state).ok(), &sized_tickers, settings.sizing.spill_cut(), settings.sizing.spill_per_tier)
         .map(|(_, rows, _)| rows)
         .unwrap_or_default();
-    let lot_floor = settings.sizing.lot_floor_pct(deploy_scaled_eur(settings.monthly_deploy_eur, spx_off_hi).map(|(_, t)| t));
-    if let Some(list) = crate::commands::size::buy_list(&sized_now, &buy_core, lot_floor) {
+    if let Some(list) = crate::commands::size::buy_list(&sized_now, &buy_core) {
         println!("\n{list}");
     }
 
@@ -2590,7 +2589,7 @@ pub async fn run(args: Vec<String>) {
     {
         let deploy_scaled =
             deploy_scaled_eur(settings.monthly_deploy_eur, spx_off_hi).map(|(_, total)| total);
-        let book = crate::commands::size::buy_weights(&sized_now, &buy_core, lot_floor);
+        let book = crate::commands::size::buy_weights(&sized_now, &buy_core);
         // (round 117) fetch the full T212 instrument list (7-day cached, silent-empty without a
         // key) only when some stock/ETF row can't already be resolved from held positions — a
         // fully-held book or a keyless run costs zero extra HTTP. The ISIN map (inverted from the
@@ -2698,8 +2697,12 @@ pub async fn run(args: Vec<String>) {
                 // (#300) the tier off this run's quotes, as `track` builds it, so a journalled BUY NOW
                 // book replays with the trackers `size` funded.
                 let tier_of = |t: &str| quotes.iter().find(|q| q.ticker == t).map(|q| crate::core::hold_breadth_tier(&q.name));
+                // (#302) each lot pays its broker's fee, off the same quotes.
+                let fee_of = |t: &str| {
+                    crate::commands::sim::fee_rate(t, quotes.iter().find(|q| q.ticker == t).and_then(|q| q.quote_currency.as_deref()))
+                };
                 if let Some((since, cost, value, bench, priced, held)) = crate::commands::sim::digest(
-                    &snaps, settings.monthly_deploy_eur, now_ym, &px_now, spx_now, &settings.sizing, &tier_of,
+                    &snaps, settings.monthly_deploy_eur, now_ym, &px_now, spx_now, &settings.sizing, &tier_of, &fee_of,
                 ) {
                     println!(
                         "\n{}",

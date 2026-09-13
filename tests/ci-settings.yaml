@@ -1301,8 +1301,6 @@ sizing:
                       #   the `(#289)` block further down before touching this: the tiers are NESTED,
                       #   so this is in substance an EM overweight (~3.3% -> ~11.1% of gross), not
                       #   three independent markets. `false` is the proven, byte-identical revert.
-  min_lot_eur: 0.0    # (#301) a growth pick whose lot (deploy EUR x weight) is under this folds into
-                      #   the trackers, so a per-order fee stops eating small lots. Off; read (#301).
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -5560,6 +5558,46 @@ buy_heuristic:
   #   budget moves into equity trackers. No backtest row models fees, so nothing grades it. The journal's
   #   only book predates the (#293) sector cap, and the months before it carry no book, so they are unchanged.
   #   REVERT: `min_lot_eur: 0`, the default. The code revert drops `floor_pct` from `buy_weights`/`buy_list`.
+  #   SUPERSEDED by (#302): removed. The brokers `screen` orders through charge no per-order fee.
+  # (#302) ROUND 84: `sim` CHARGES WHAT TRADING 212 AND BINANCE CHARGE; `min_lot_eur` GOES. Same standing
+  #   ask. FINDING: `SIM_FEE_EUR` charged EUR 1 per name ("user's broker: >= 1 EUR per asset buy"), which is
+  #   Trade Republic's one-off order price. But `screen`'s paste-ready orders send stocks and ETFs to
+  #   trading212 and coins to binance. Public fee pages read 2026-09-13 (BrokerChooser and quantroutine for
+  #   Trading 212, bitdegree and tradersunion for Binance): Trading 212 charges no commission, only 0.15% FX
+  #   on a non-EUR line; Binance spot charges 0.1% (0.075% paid in BNB).
+  #   USER DECISIONS: the buys execute on Trading 212 + Binance, so charge each lot its broker's fee; and
+  #   delete (#301)'s `min_lot_eur`, whose fold dropped five names to save a fee nobody pays.
+  #   WHAT CHANGED:
+  #     - `sim::fee_rate(ticker, quote currency)`: a coin pays 0.1%. `picks::is_currency_quoted` is the same
+  #       predicate `screen` routes to binance on (non-negotiable #4). Any other line pays 0.15% when its
+  #       quote currency is known and not EUR; an unknown one pays 0 (non-negotiable #5).
+  #     - `buy_event` takes each lot's fee out of its own slice: qty = slice x (1 - rate) / price.
+  #     - A coin slice under `binance::MIN_ORDER_EUR` drops once and the rest renormalise. No other lot has
+  #       a floor.
+  #     - `run` and the screen digest read the rate off the quotes they already fetch.
+  #     - The S&P twin buys fee-free, as a EUR-listed tracker on Trading 212 does.
+  #     - DELETED: `SIM_FEE_EUR`, `sizing.min_lot_eur`, `Sizing::lot_floor_pct`, and the fold in
+  #       `buy_weights`/`buy_list`. The knob was off by default, so the BUY NOW list and orders are
+  #       unchanged.
+  #   LIVE `sim`, same job journal and synthetic EUR 1000 as (#300)/(#301), 2026-09-13, the 2765457 binary
+  #   (knob absent) -> this one:
+  #     buys    all three identical, same names (07-25 10, 08-01 8, 09-13 15 incl. BTC-EUR and BNB-EUR)
+  #     fees    07-25 EUR 10 -> 2, 08-01 8 -> 2, 09-13 15 -> 1; total 33 -> 5 (0.8% -> 0.1% of invested)
+  #     total   EUR 4000 in -> 4138 (+3.5%; S&P 4041, +1.0%; +2.4 pp) -> 4167 (+4.2%; S&P 4044, +1.1%; +3.1 pp)
+  #   The +29 is the 28 of fees saved plus rounding. The twin's +3 is its old EUR 1 per buy.
+  #   HONEST EDGES:
+  #     - The rates come from public summaries, not the user's statements.
+  #     - The Trading 212 account is assumed to be in EUR.
+  #     - FX is keyed on the Yahoo quote currency of the journalled line. Trading 212 may fill a `.DE` pick
+  #       on its US line, costing at most 0.15% more on that lot.
+  #     - The BNB discount is not assumed. Spreads are not modelled, and were not under EUR 1/name either.
+  #     - The orders still print a coin row under EUR 5, tagged. None falls under it at EUR 1000 today.
+  #     - Price-only, dividends not counted. No backtest row models fees.
+  #     - Every EUR fee figure in (#300) and (#301) was computed at EUR 1/name and overstates the drag
+  #       about 7x.
+  #   WHERE THIS LEAVES THE ASK: all 15 September names buy, and the whole fee drag is 0.1% of invested. No
+  #   fee rule is worth a name of breadth; do not rebuild a lot floor.
+  #   REVERT: `git revert` this commit. That also restores `min_lot_eur` at its off default.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among

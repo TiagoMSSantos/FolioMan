@@ -199,11 +199,12 @@ fn trade_abort_at_confirm_no_order() {
 /// The full paper-DCA replay off a seeded journal — the one command that computes a real result with
 /// no network at all, since every price it needs was journaled at rank time.
 ///
-/// The quantities are the assertion that matters. AAA's 4.7536 is two months of arithmetic: January
-/// splits €500 over two names and takes a €1 fee off each (€249 ÷ €100 = 2.49), February does the same
-/// at a higher price (€249 ÷ €110 = 2.2636). A fee applied to the wrong side of the split, or a budget
-/// divided before the fee, moves that number — which is exactly what a silent regression here looks
-/// like. Nothing wall-clock-dependent is asserted: the accrued "pending cash" months grow every month
+/// The quantities are the assertion that matters. AAA's 4.7727 is two months of arithmetic: January
+/// splits €500 over two names (€250 ÷ €100 = 2.5), February does the same at a higher price
+/// (€250 ÷ €110 = 2.2727). (#302) Offline no line carries a quote currency and none is a coin, so every
+/// lot pays €0 in broker fees; the fee arithmetic itself is pinned in `sim`'s unit tests. A budget split
+/// wrongly, or a price read off the wrong month, moves that number — which is exactly what a silent
+/// regression here looks like. Nothing wall-clock-dependent is asserted: the accrued "pending cash" months grow every month
 /// this test survives, so they are deliberately left alone.
 #[test]
 fn sim_replays_the_journal_offline() {
@@ -215,9 +216,9 @@ fn sim_replays_the_journal_offline() {
     );
     assert_eq!(code, 0);
     assert!(stdout.contains("Paper DCA"), "header missing: {stdout}");
-    assert!(stdout.contains("2024-01-05  ×1  invested €500 (fees €2)"), "january buy missing: {stdout}");
-    assert!(stdout.contains("2024-02-02  ×1  invested €500 (fees €2)"), "february buy missing: {stdout}");
-    assert!(stdout.contains("4.7536"), "AAA qty (2.49 + 2.2636 over two months) missing: {stdout}");
+    assert!(stdout.contains("2024-01-05  ×1  invested €500 (fees €0)"), "january buy missing: {stdout}");
+    assert!(stdout.contains("2024-02-02  ×1  invested €500 (fees €0)"), "february buy missing: {stdout}");
+    assert!(stdout.contains("4.7727"), "AAA qty (2.5 + 2.2727 over two months) missing: {stdout}");
     assert!(stdout.contains("invested €1000 since 2024-01-05"), "summary missing: {stdout}");
     // offline every holding is unpriceable: it must degrade to a dash, never to a fabricated zero
     assert!(stdout.contains("→ now n/a"), "unpriced basket should read n/a: {stdout}");

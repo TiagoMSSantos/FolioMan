@@ -2,7 +2,7 @@
 //! month, income arrives (`monthly_deploy_eur` × the deploy-line entry-state multiplier) and buys
 //! the BUY NOW book of that month's first screen snapshot carrying one (`size::buy_weights`: the
 //! sized picks at their weights, then the funded CORE trackers) — else the equal-weight top-10 of
-//! its FIRST snapshot — at the journaled prices, €1 fee per name bought. Pure replay of
+//! its FIRST snapshot — at the journaled prices, less each lot's broker fee. Pure replay of
 //! `.screen_snapshots.jsonl` — no state of its own: every run
 //! recomputes the whole ledger, so the rule lives in code+config (versioned) and there is no
 //! second file to drift. This is the cumulative €-weighted cousin of `track`: track grades each
@@ -15,8 +15,23 @@ use crate::commands::track::{Snapshot, BOOK, SNAPSHOT_FILE};
 use crate::{config, fetch};
 use std::collections::BTreeMap;
 
-/// Flat fee per distinct name per buy event (user's broker: ≥1€ per asset buy).
-const SIM_FEE_EUR: f64 = 1.0;
+/// (#302) What a lot pays the broker `screen`'s orders route it to, per public fee pages read
+/// 2026-09-13: Trading 212 charges no commission, only a 0.15% FX markup on a line not quoted in EUR;
+/// Binance spot charges 0.1% (0.075% when paid in BNB, not assumed).
+const T212_FX_FEE: f64 = 0.0015;
+const BINANCE_FEE: f64 = 0.001;
+
+/// (#302) One lot's fee rate, routed like `screen`'s orders: a coin buys on Binance, anything else on
+/// Trading 212, which charges only FX off a non-EUR quote. An unknown currency charges nothing (#5).
+pub(crate) fn fee_rate(ticker: &str, quote_currency: Option<&str>) -> f64 {
+    if crate::picks::is_currency_quoted(ticker) {
+        BINANCE_FEE
+    } else if quote_currency.is_some_and(|c| c != "EUR") {
+        T212_FX_FEE
+    } else {
+        0.0
+    }
+}
 
 /// One executed monthly buy: the month's budget split across the snapshot's priced book at its
 /// weights. `deployed` = the full budget (fees included); `mult_known` = false means the journal
@@ -71,9 +86,9 @@ fn monthly_firsts(snaps: &[Snapshot]) -> BTreeMap<(i32, u32), &Snapshot> {
 /// carrying `sized` buys the BUY NOW book `screen` printed and ordered — `size::buy_weights` over
 /// the sized picks and the CORE rows `screen::spill_picks` funds, tiers by `tier_of` — else the top
 /// [`BOOK`] rows at equal weight. An unpriced row drops and the split grows (same priced-N honesty
-/// as `track`); so does a lot whose slice would not clear the fee, once, which only grows the
-/// rest. Returns None when nothing is buyable so the caller can keep that month's income as
-/// pending cash instead of vaporising it.
+/// as `track`); so does a coin lot under Binance's order minimum, once, which only grows the rest.
+/// Each lot pays `fee_of` × its slice out of that slice. Returns None when nothing is buyable so the
+/// caller can keep that month's income as pending cash instead of vaporising it.
 fn buy_event(
     snap: &Snapshot,
     budget: f64,
@@ -81,6 +96,7 @@ fn buy_event(
     mult_known: bool,
     sz: &config::Sizing,
     tier_of: &dyn Fn(&str) -> Option<u8>,
+    fee_of: &dyn Fn(&str) -> f64,
 ) -> Option<Event> {
     let price = |t: &str| snap.rows.iter().chain(&snap.core).find(|(r, _)| r == t).and_then(|(_, p)| *p);
     let book: Vec<(String, f64)> = if snap.sized.is_empty() {
@@ -91,22 +107,26 @@ fn buy_event(
             .into_iter()
             .map(|i| (0, snap.core[i].0.clone(), None, tiers[i]))
             .collect();
-        buy_weights(&snap.sized, &core, sz.lot_floor_pct(Some(budget)))
+        buy_weights(&snap.sized, &core)
     };
     let mut priced: Vec<(String, f64, f64)> =
         book.into_iter().filter_map(|(t, w)| price(&t).filter(|p| *p > 0.0).map(|p| (t, p, w))).collect();
     let sum: f64 = priced.iter().map(|(.., w)| w).sum();
-    priced.retain(|(.., w)| budget * w / sum > SIM_FEE_EUR);
-    let k = priced.len();
-    if k == 0 {
+    priced.retain(|(t, _, w)| {
+        !crate::picks::is_currency_quoted(t) || budget * w / sum >= crate::broker::binance::MIN_ORDER_EUR
+    });
+    if priced.is_empty() {
         return None;
     }
     let sum: f64 = priced.iter().map(|(.., w)| w).sum();
+    let mut fees = 0.0;
     let lots = priced
         .into_iter()
         .map(|(t, px, w)| {
             let alloc = budget * w / sum;
-            (t, (alloc - SIM_FEE_EUR) / px, alloc)
+            let fee = alloc * fee_of(&t);
+            fees += fee;
+            (t, (alloc - fee) / px, alloc)
         })
         .collect();
     Some(Event {
@@ -114,7 +134,7 @@ fn buy_event(
         mult,
         mult_known,
         deployed: budget,
-        fees: k as f64 * SIM_FEE_EUR,
+        fees,
         spx: snap.spx,
         lots,
     })
@@ -130,6 +150,7 @@ fn ledger(
     now_ym: (i32, u32),
     sz: &config::Sizing,
     tier_of: &dyn Fn(&str) -> Option<u8>,
+    fee_of: &dyn Fn(&str) -> f64,
 ) -> Ledger {
     let firsts = monthly_firsts(snaps);
     let Some(start) = firsts.keys().next().copied() else {
@@ -144,7 +165,7 @@ fn ledger(
                 // ponytail: unwrap_or is unreachable (base > 0 gated) — kept total, no panic path
                 let (mult, scaled) = deploy_scaled_eur(base, snap.spx_off_hi).unwrap_or((1.0, base));
                 let budget = scaled + f64::from(pending) * base;
-                match buy_event(snap, budget, mult, snap.spx_off_hi.is_some(), sz, tier_of) {
+                match buy_event(snap, budget, mult, snap.spx_off_hi.is_some(), sz, tier_of, fee_of) {
                     Some(ev) => {
                         pending = 0;
                         events.push(ev);
@@ -159,15 +180,14 @@ fn ledger(
     Ledger { events, pending_months: pending }
 }
 
-/// The boring twin: the same gross cashflow into the S&P 500 at the same dates, one 1€ fee per
-/// event, priced off the journaled ^GSPC close. Returns (cost €, index units, covered events) —
-/// events whose line carried no ^GSPC close are skipped, `covered` keeps that visible.
+/// The boring twin: the same gross cashflow into the S&P 500 at the same dates, priced off the
+/// journaled ^GSPC close, fee-free as a EUR-listed tracker on Trading 212 is (#302). Returns (cost €,
+/// index units, covered events) — events whose line carried no ^GSPC close are skipped, `covered`
+/// keeps that visible.
 fn benchmark(events: &[Event]) -> (f64, f64, usize) {
     events.iter().filter_map(|e| e.spx.filter(|s| *s > 0.0).map(|s| (e.deployed, s))).fold(
         (0.0, 0.0, 0),
-        |(cost, units, n), (deployed, spx)| {
-            (cost + deployed, units + (deployed - SIM_FEE_EUR) / spx, n + 1)
-        },
+        |(cost, units, n), (deployed, spx)| (cost + deployed, units + deployed / spx, n + 1),
     )
 }
 
@@ -226,8 +246,9 @@ pub(crate) fn digest(
     spx_now: Option<f64>,
     sz: &config::Sizing,
     tier_of: &dyn Fn(&str) -> Option<u8>,
+    fee_of: &dyn Fn(&str) -> f64,
 ) -> Option<(String, f64, f64, Option<f64>, usize, usize)> {
-    let led = ledger(snaps, base, now_ym, sz, tier_of);
+    let led = ledger(snaps, base, now_ym, sz, tier_of, fee_of);
     let since = led.events.first()?.date.clone();
     let held = holdings(&led.events);
     let held_n = held.len();
@@ -324,7 +345,8 @@ pub async fn run(_args: Vec<String>) {
 
     // (#300) the tier off the quotes just fetched, exactly as `track::run` builds it.
     let tier_of = |t: &str| quotes.iter().find(|q| q.ticker == t).map(|q| crate::core::hold_breadth_tier(&q.name));
-    let led = ledger(&snaps, base, now_key, &settings.sizing, &tier_of);
+    let fee_of = |t: &str| fee_rate(t, quotes.iter().find(|q| q.ticker == t).and_then(|q| q.quote_currency.as_deref()));
+    let led = ledger(&snaps, base, now_key, &settings.sizing, &tier_of, &fee_of);
     if led.events.is_empty() {
         println!("Nothing bought yet — {SNAPSHOT_FILE} has no priced monthly snapshot to buy from.");
         return;
@@ -334,9 +356,9 @@ pub async fn run(_args: Vec<String>) {
         "Paper DCA — the screen's own monthly advice executed with pretend money: each month's\n\
          first BUY NOW book (sized picks + funded CORE trackers, as `screen` orders it), else its\n\
          first snapshot's equal-weight top-{BOOK}, at the journaled prices, base €{base:.0} × the\n\
-         deploy-line entry-state multiplier, €{SIM_FEE_EUR:.0} fee per name bought. Pure replay of\n\
-         {SNAPSHOT_FILE} (rerun = recompute, no sim state). Price-only, EUR, dividends not\n\
-         counted. NOT advice.\n"
+         deploy-line entry-state multiplier, less broker fees (Trading 212: 0.15% FX on a non-EUR\n\
+         line; Binance: 0.1%). Pure replay of {SNAPSHOT_FILE} (rerun = recompute, no sim state).\n\
+         Price-only, EUR, dividends not counted. NOT advice.\n"
     );
     if restated > 0 {
         println!(
@@ -470,6 +492,21 @@ mod tests {
         None
     }
 
+    fn no_fee(_: &str) -> f64 {
+        0.0
+    }
+
+    /// fee_rate(): routed like `screen`'s orders (#302) — a coin pays Binance's 0.1% whatever its quote
+    /// currency; any other line pays Trading 212's 0.15% FX only off a known non-EUR quote.
+    #[test]
+    fn fee_rate_routes_like_the_orders() {
+        assert_eq!(fee_rate("BTC-EUR", Some("EUR")), 0.001);
+        assert_eq!(fee_rate("AAPL", Some("USD")), 0.0015);
+        assert_eq!(fee_rate("VUAG.L", Some("GBp")), 0.0015);
+        assert_eq!(fee_rate("SAP.DE", Some("EUR")), 0.0);
+        assert_eq!(fee_rate("SAP.DE", None), 0.0);
+    }
+
     /// monthly_firsts(): first snapshot of each calendar month wins regardless of input order;
     /// malformed dates drop. (#300) A line carrying a BUY NOW book beats every book-less line in
     /// its month whichever is read first, the earliest book wins, and a full tie keeps the first read.
@@ -492,30 +529,38 @@ mod tests {
         assert_eq!(firsts[&(2026, 8)].rows[0].0, "C");
     }
 
-    /// buy_event(): equal-weight split of the budget across priced top rows — €1 fee inside each
-    /// slice; an unpriced row drops and the split grows (k=2 → bigger slices, fewer fees); no
-    /// priced rows or a slice that can't clear the fee → None (the month stays cash).
+    /// buy_event(): equal-weight split of the budget across priced top rows, each lot's fee taken out
+    /// of its own slice; an unpriced row drops and the split grows; nothing priced, or nothing but a
+    /// coin under Binance's order minimum → None (the month stays cash).
     #[test]
     fn buy_event_math() {
         let sz = config::Sizing::default();
         let s = snap("2026-07-16", None, None, &[("A", Some(10.0)), ("B", Some(20.0)), ("C", None)]);
-        let e = buy_event(&s, 300.0, 1.0, false, &sz, &no_tier).expect("priced rows buy");
-        // 2 priced rows: alloc 150 each, invested 149, qty = 149/px
+        let e = buy_event(&s, 300.0, 1.0, false, &sz, &no_tier, &no_fee).expect("priced rows buy");
+        // 2 priced rows: alloc 150 each, no fee, qty = 150/px
         assert_eq!(e.lots.len(), 2);
-        assert_eq!(e.fees, 2.0 * SIM_FEE_EUR);
-        assert!((e.lots[0].1 - 149.0 / 10.0).abs() < 1e-9);
-        assert!((e.lots[1].1 - 149.0 / 20.0).abs() < 1e-9);
+        assert_eq!(e.fees, 0.0);
+        assert!((e.lots[0].1 - 150.0 / 10.0).abs() < 1e-9);
+        assert!((e.lots[1].1 - 150.0 / 20.0).abs() < 1e-9);
         assert!((e.lots.iter().map(|(_, _, c)| c).sum::<f64>() - 300.0).abs() < 1e-9);
 
         // top-BOOK cap: an 11th row never buys
         let rows: Vec<(String, Option<f64>)> =
             (0..12).map(|i| (format!("T{i}"), Some(10.0))).collect();
         let s = Snapshot { date: "2026-07-16".into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), rows };
-        assert_eq!(buy_event(&s, 3000.0, 1.0, true, &sz, &no_tier).unwrap().lots.len(), BOOK);
+        assert_eq!(buy_event(&s, 3000.0, 1.0, true, &sz, &no_tier, &no_fee).unwrap().lots.len(), BOOK);
 
-        // nothing priced, or degenerate budget (slice ≤ fee) → None
-        assert!(buy_event(&snap("2026-07-16", None, None, &[("A", None)]), 300.0, 1.0, false, &sz, &no_tier).is_none());
-        assert!(buy_event(&snap("2026-07-16", None, None, &[("A", Some(1.0))]), 1.0, 1.0, false, &sz, &no_tier).is_none());
+        // nothing priced → None
+        assert!(buy_event(&snap("2026-07-16", None, None, &[("A", None)]), 300.0, 1.0, false, &sz, &no_tier, &no_fee).is_none());
+        // (#302) a coin slice of exactly Binance's €5 minimum buys, a cent under drops; a line holding
+        // nothing else → None, and beside a stock the stock grows to the whole budget
+        let coin = snap("2026-07-16", None, None, &[("BTC-EUR", Some(1.0))]);
+        for (budget, buys) in [(4.99, false), (5.0, true), (6.0, true)] {
+            assert_eq!(buy_event(&coin, budget, 1.0, false, &sz, &no_tier, &no_fee).is_some(), buys, "€{budget}");
+        }
+        let mixed = snap("2026-07-16", None, None, &[("A", Some(1.0)), ("BTC-EUR", Some(1.0))]);
+        let e = buy_event(&mixed, 9.0, 1.0, false, &sz, &no_tier, &no_fee).expect("A buys");
+        assert_eq!(e.lots, [("A".to_string(), 9.0, 9.0)]);
 
         // (#300) a line carrying `sized` buys the BUY NOW book: the picks at their sized weights, priced
         // off `rows`, then the funded CORE rows at `spill_split` of the remaining 30, priced off `core`,
@@ -528,33 +573,34 @@ mod tests {
         let mut s = snap("2026-09-13", None, None, &[("A", Some(10.0)), ("R", Some(5.0)), ("B", Some(20.0))]);
         s.sized = vec![("A".into(), 60.0), ("B".into(), 10.0)];
         s.core = vec![("AW".into(), Some(50.0)), ("US".into(), Some(100.0))];
-        let e = buy_event(&s, 1000.0, 1.0, true, &sz, &tier_of).expect("the book buys");
+        let e = buy_event(&s, 1000.0, 1.0, true, &sz, &tier_of, &no_fee).expect("the book buys");
         let want = [("A", 600.0, 10.0), ("B", 100.0, 20.0), ("AW", 100.0, 50.0), ("US", 200.0, 100.0)];
         assert_eq!(e.lots.len(), want.len());
         for ((t, qty, cost), (wt, wc, px)) in e.lots.iter().zip(want) {
             assert_eq!(t, wt);
-            assert!((cost - wc).abs() < 1e-9 && (qty - (wc - SIM_FEE_EUR) / px).abs() < 1e-9, "{t}");
+            assert!((cost - wc).abs() < 1e-9 && (qty - wc / px).abs() < 1e-9, "{t}");
         }
-        assert_eq!(e.fees, 4.0 * SIM_FEE_EUR);
 
-        // a slice of exactly the fee drops (B and AW get 1.0 each), and the rest grow to the budget
+        // (#302) each lot pays its own rate out of its own slice (A 0.15% of 600, B 0.1% of 100, the
+        // trackers nothing); the cost stays the slice, so the fee lives in the qty
+        let fee_of = |t: &str| match t {
+            "A" => 0.0015,
+            "B" => 0.001,
+            _ => 0.0,
+        };
+        let e = buy_event(&s, 1000.0, 1.0, true, &sz, &tier_of, &fee_of).unwrap();
+        assert!((e.fees - 1.0).abs() < 1e-9);
+        assert!((e.lots[0].1 - 599.1 / 10.0).abs() < 1e-9 && (e.lots[1].1 - 99.9 / 20.0).abs() < 1e-9);
+        assert_eq!(e.lots[0].2, 600.0);
+
+        // (#302) no minimum on a stock or tracker lot: at €10, B and AW still buy €1 each
         let lots = |e: Event| e.lots.into_iter().map(|(t, _, c)| (t, c)).collect::<Vec<_>>();
-        let e = buy_event(&s, 10.0, 1.0, true, &sz, &tier_of).expect("A and US clear the fee");
-        assert_eq!(e.fees, 2.0 * SIM_FEE_EUR);
-        assert_eq!(lots(e), [("A".to_string(), 7.5), ("US".to_string(), 2.5)]);
-
-        // (#301) min_lot_eur 150 of this month's 1000 is a 15% floor: B's EUR 100 lot folds into the trackers
-        let floor = config::Sizing { min_lot_eur: 150.0, ..config::Sizing::default() };
-        let e = buy_event(&s, 1000.0, 1.0, true, &floor, &tier_of).expect("the folded book buys");
-        let want = [("A", 600.0), ("AW", 400.0 / 3.0), ("US", 800.0 / 3.0)];
-        assert_eq!(e.lots.len(), want.len());
-        for ((t, _, cost), (wt, wc)) in e.lots.iter().zip(want) {
-            assert!(t == wt && (cost - wc).abs() < 1e-9, "{t} {cost}");
-        }
+        let e = buy_event(&s, 10.0, 1.0, true, &sz, &tier_of, &no_fee).expect("every lot buys");
+        assert_eq!(lots(e), [("A".to_string(), 6.0), ("B".to_string(), 1.0), ("AW".to_string(), 1.0), ("US".to_string(), 2.0)]);
 
         // a tracker journalled at a zero close is unpriced: it drops and the rest grow
         s.core[0].1 = Some(0.0);
-        let e = buy_event(&s, 900.0, 1.0, true, &sz, &tier_of).unwrap();
+        let e = buy_event(&s, 900.0, 1.0, true, &sz, &tier_of, &no_fee).unwrap();
         assert_eq!(lots(e), [("A".to_string(), 600.0), ("B".to_string(), 100.0), ("US".to_string(), 200.0)]);
     }
 
@@ -570,7 +616,7 @@ mod tests {
             snap("2026-07-16", Some(100.0), None, &[("A", Some(10.0))]),
             snap("2026-09-02", Some(100.0), deep, &[("A", Some(10.0))]),
         ];
-        let led = ledger(&snaps, base, (2026, 10), &config::Sizing::default(), &no_tier);
+        let led = ledger(&snaps, base, (2026, 10), &config::Sizing::default(), &no_tier, &no_fee);
         assert_eq!(led.events.len(), 2);
         // July: no off-hi journaled → ×1 fallback, flagged unknown
         assert!(!led.events[0].mult_known);
@@ -585,12 +631,12 @@ mod tests {
 
         // a month whose snapshot has NO priced rows buys nothing — its income stays pending
         // (the ledger wiring of buy_event's None, not just buy_event standalone)
-        let led = ledger(&[snap("2026-07-16", None, None, &[("A", None)])], base, (2026, 7), &config::Sizing::default(), &no_tier);
+        let led = ledger(&[snap("2026-07-16", None, None, &[("A", None)])], base, (2026, 7), &config::Sizing::default(), &no_tier, &no_fee);
         assert!(led.events.is_empty());
         assert_eq!(led.pending_months, 1);
 
         // future-dated journal line (start after `now`) → nothing to replay, no panic, no pending
-        let led = ledger(&[snap("2027-01-05", None, None, &[("A", Some(1.0))])], base, (2026, 7), &config::Sizing::default(), &no_tier);
+        let led = ledger(&[snap("2027-01-05", None, None, &[("A", Some(1.0))])], base, (2026, 7), &config::Sizing::default(), &no_tier, &no_fee);
         assert!(led.events.is_empty() && led.pending_months == 0);
     }
 
@@ -639,7 +685,7 @@ mod tests {
             mult: 1.0,
             mult_known: true,
             deployed: 480.0,
-            fees: 2.0 * SIM_FEE_EUR,
+            fees: 0.0,
             spx: Some(5000.0),
             lots: vec![("UP".to_string(), 2.0, 240.0), ("GONE".to_string(), 1.0, 240.0)],
         };
@@ -651,8 +697,8 @@ mod tests {
         assert!(event_now(&e, &|_| None).is_none()); // nothing priced → n/a, not fake 0%
     }
 
-    /// benchmark(): same gross cashflow into the journaled ^GSPC close minus one fee per event;
-    /// events without a benchmark leg are skipped and the covered count says so.
+    /// benchmark(): same gross cashflow into the journaled ^GSPC close, fee-free (#302); events
+    /// without a benchmark leg are skipped and the covered count says so.
     #[test]
     fn benchmark_math() {
         let mk = |deployed: f64, spx: Option<f64>| Event {
@@ -660,16 +706,16 @@ mod tests {
             mult: 1.0,
             mult_known: true,
             deployed,
-            fees: SIM_FEE_EUR,
+            fees: 0.0,
             spx,
             lots: vec![],
         };
         let (cost, units, n) = benchmark(&[mk(1000.0, Some(100.0)), mk(500.0, None)]);
         assert_eq!(n, 1);
         assert!((cost - 1000.0).abs() < 1e-9);
-        assert!((units - 999.0 / 100.0).abs() < 1e-9);
-        // index +10% since → value 1098.9 vs cost 1000 → the fee drag shows up honestly
-        assert!((units * 110.0 - 1098.9).abs() < 1e-6);
+        assert!((units - 1000.0 / 100.0).abs() < 1e-9);
+        // index +10% since → value 1100 vs cost 1000
+        assert!((units * 110.0 - 1100.0).abs() < 1e-6);
 
         // a zero ^GSPC close is not a price — the event skips like a missing leg
         assert_eq!(benchmark(&[mk(1000.0, Some(0.0))]).2, 0);
@@ -692,27 +738,27 @@ mod tests {
             _ => None,
         };
         let (since, cost, value, bench, priced, held) =
-            digest(&snaps, 300.0, (2026, 6), &px, Some(120.0), &config::Sizing::default(), &no_tier).expect("two events priced");
+            digest(&snaps, 300.0, (2026, 6), &px, Some(120.0), &config::Sizing::default(), &no_tier, &no_fee).expect("two events priced");
         assert_eq!(since, "2026-05-10");
         assert_eq!((priced, held), (2, 2));
         assert!((cost - 600.0).abs() < 1e-9); // 300 May + 300 June, fully priced
-        // May: A 149/10, B 149/20 · June: A 299/12 → value = (14.9+299/12)·15 + 7.45·25
-        assert!((value - 783.5).abs() < 1e-9);
-        // index twin: (299/100 + 299/110) units × 120 today — fee-adjusted at each buy
-        assert!((bench.expect("fair comparison") - (299.0 / 100.0 + 299.0 / 110.0) * 120.0).abs() < 1e-9);
+        // May: A 150/10, B 150/20 · June: A 300/12 → value = (15+25)·15 + 7.5·25
+        assert!((value - 787.5).abs() < 1e-9);
+        // index twin: (300/100 + 300/110) units × 120 today
+        assert!((bench.expect("fair comparison") - (300.0 / 100.0 + 300.0 / 110.0) * 120.0).abs() < 1e-9);
 
         // a hole (B unpriced today) → cost/value shrink BOTH sides and the index twin drops
         let px_hole = |t: &str| (t == "A").then_some(15.0);
         let (_, cost, value, bench, priced, held) =
-            digest(&snaps, 300.0, (2026, 6), &px_hole, Some(120.0), &config::Sizing::default(), &no_tier).expect("A still priced");
+            digest(&snaps, 300.0, (2026, 6), &px_hole, Some(120.0), &config::Sizing::default(), &no_tier, &no_fee).expect("A still priced");
         assert_eq!((priced, held), (1, 2));
         assert!((cost - 450.0).abs() < 1e-9);
-        assert!((value - (14.9 + 299.0 / 12.0) * 15.0).abs() < 1e-9);
+        assert!((value - (15.0 + 300.0 / 12.0) * 15.0).abs() < 1e-9);
         assert!(bench.is_none());
 
         // empty journal / nothing priced today → None (screen stays silent)
-        assert!(digest(&[], 300.0, (2026, 6), &px, Some(120.0), &config::Sizing::default(), &no_tier).is_none());
-        assert!(digest(&snaps, 300.0, (2026, 6), &|_| None, Some(120.0), &config::Sizing::default(), &no_tier).is_none());
+        assert!(digest(&[], 300.0, (2026, 6), &px, Some(120.0), &config::Sizing::default(), &no_tier, &no_fee).is_none());
+        assert!(digest(&snaps, 300.0, (2026, 6), &|_| None, Some(120.0), &config::Sizing::default(), &no_tier, &no_fee).is_none());
 
         // line shapes: fair twin spelled out; hole marked + twin replaced by n/a
         let line = digest_line(300.0, "2026-05-10", 600.0, 783.6, Some(685.0), 2, 2);
