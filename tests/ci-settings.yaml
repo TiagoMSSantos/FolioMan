@@ -9440,7 +9440,7 @@ buy_heuristic:
                                  #   3 is the value to try first if someone makes that choice; it is a
                                  #   judgement, not a measurement, and must not acquire a receipt that
                                  #   implies otherwise.
-  growth_gate_on_tr_cagr: false  # (#99) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+  growth_gate_on_tr_cagr: false  # (#99) MEASURED 2026-09-13 AND REFUSED, (#303) at the end of this block. Held OFF,
                                  # the price-only bar every golden and every gate receipt in this file
                                  # was measured under. Read with `growth_min_cagr` and `use_adjusted_close`.
                                  #
@@ -9494,6 +9494,33 @@ buy_heuristic:
                                  #   REVERT RULE: back to false unless the pair (knob + refitted
                                  #   `growth_min_cagr`) clears PRIMARY at 20y AND 8y with rank-1 h2h >=50%
                                  #   at all three horizons.
+                                 #
+                                 #   (#303) ROUND 85, MEASURED 2026-09-13 AND REFUSED. Standing ask: more assets to buy
+                                 #   and hold 20+ years. USER DECISIONS: grade this knob, and ship it only if it clears
+                                 #   BOTH bars fixed before the runs: (#290)'s SIZED bar (excess up at 20y AND 8y, both
+                                 #   OOS halves up, deployed up) AND the revert rule above (PRIMARY up at 20y AND 8y,
+                                 #   rank-1 h2h >=50% at 20y/12y/8y). Config-only arm: same binary, same data root,
+                                 #   `backtest N universe fund pit`, control = this file byte for byte, arm = this line
+                                 #   true. Both controls reproduced (#299) to the digit.
+                                 #     20y  growth windows 120 -> 123; top-10 excess +0.6 -> +0.5, OOS -1.6/+2.6 -> -1.7/+2.6;
+                                 #          SIZED +0.3 -> +0.3, OOS -0.2/+0.8 unchanged, deployed 44 -> 45%; h2h 1/2 -> 2/2
+                                 #      8y  growth windows 357 -> 366; top-10 excess +4.4 -> +4.2, OOS +3.6/+5.1 -> +3.5/+4.9;
+                                 #          SIZED +2.5 -> +2.5, OOS +1.7/+3.4 -> +1.6/+3.3, deployed 59 -> 61%; h2h 5/8 -> 5/8
+                                 #   PRIMARY FALLS at both horizons and SIZED is FLAT at both (8y OOS halves down), so
+                                 #   both bars fail on the first two horizons. The 12y h2h leg and the `growth_min_cagr`
+                                 #   refit rung were pre-registered to run only on a pass, and did not.
+                                 #   MECHANISM, (#219)'s: at 8y rank 1 holds (+5.9) while ranks 2-5 fall +5.1 -> +5.0 and
+                                 #   6-10 fall -0.0 -> -0.5. The payers the uplift admits land mid-book and dilute it; on
+                                 #   SIZED they are funded from index money (deployed +2) and earn no more than it (worst
+                                 #   8y window -3.7 -> -4.3).
+                                 #   HONEST EDGES. (a) Forward returns are price-only on both legs, so an admitted payer is
+                                 #   graded without its payouts: the bar leans AGAINST this knob by about the admitted
+                                 #   names' yield x their weight. (b) The 20y arm saw one more ticker (6132 -> 6133, a
+                                 #   Börse Frankfurt ETF resolution that reached the cache between the two runs); at 20y
+                                 #   ETFs score 0/12 and stock cutoffs are 2273 in both, so the +3 windows are the knob's.
+                                 #   The 8y pair is 6132 in both. (c) The uplift is a LOWER BOUND, as stated above.
+                                 #   RE-OPEN only when the backtest's forward returns are total-return on both legs (the
+                                 #   ^SP500TR blocker in `use_adjusted_close`'s receipt). Nothing ships; nothing to revert.
   backtest_calendar_cadence: false # (#117) MEASURED 2026-08-22 AND REFUSED. Held at false, which is
                                  #   the fixed 12/36/6 bar-count triple (and the daily path's
                                  #   252/750/126) that every golden in tests/fixture and every fitted
