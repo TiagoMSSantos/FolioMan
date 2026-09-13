@@ -90,7 +90,7 @@ impl Default for Sizing {
             budget_crypto: 5.0,
             max_name_pct: 8.0, // (#264) 4.0 -> 6.0 -> 8.0. `(#262)` stopped at 6.0 as "the maximum BELOW where the book already sat unmeasured (8.0)" while its per-ISSUER dedupe was unproven; the dedupe shipped and CI graded it, so this takes the last rung. 8.0 is NOT new concentration — it is exactly the single-issuer high-water mark the book already carried (8% Alphabet), now disclosed, capped and per-issuer. It is also the CEILING: `(#262)`'s sentence licenses nothing above it. Lifts deployed 54.0 -> 62.0; the revert is 6.0
             max_sector_pct: 25.0,
-            spill_names: 3,
+            spill_names: 4, // (#292) 3 -> 4: `spill_per_tier` walks tiers in order, so the fourth row is the US tier. See the (#292) receipt
             spill_per_tier: true, // (#289) ON, per the doc block above: `size` has no backtest and no golden, so an off-by-default would just ship the fix disabled. `false` reverts to the (#261) walk-down.
         }
     }
@@ -1974,7 +1974,7 @@ mod tests {
         assert_eq!(sz(1).spill_cut(), 1, "1 is the pre-(#261) behaviour and the revert");
         assert_eq!(sz(3).spill_cut(), 3);
         assert_eq!(sz(99).spill_cut(), 99, "no ceiling here: the shortlist length is the real one");
-        assert_eq!(Sizing::default().spill_cut(), 3, "the shipped count `size` funds today");
+        assert_eq!(Sizing::default().spill_cut(), 4, "the shipped count `size` funds today, (#292)");
     }
 
     /// Working dot-files anchor at the repo root (the dir holding the config), never the process

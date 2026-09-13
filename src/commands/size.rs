@@ -491,12 +491,14 @@ fn allocation_gap_lines(sized: &[(String, String, Option<f64>, f64)], held: &[(S
             let v = q_held * p.unwrap_or(0.0);
             let actual = v / total * 100.0;
             let gap = actual - sugg;
+            // (#292) the tags steer NEW money, never a sale. The backtest never trims a winner, and
+            // selling one realises the tax the never-sell book defers (+1.1 pts/yr after tax at 20y).
             let tag = if v == 0.0 {
                 "  not held"
             } else if gap > 5.0 {
-                "  overweight"
+                "  overweight: let it run"
             } else if gap < -5.0 {
-                "  underweight"
+                "  underweight: add new money"
             } else {
                 ""
             };
@@ -786,7 +788,7 @@ pub(crate) mod tests {
         ];
         let out = allocation_gap_lines(&sized, &held).join("\n");
         assert!(out.contains("AAPL              100    50.0%    50.0%    +0.0%\n"), "{out}");
-        assert!(out.contains("IITU.L            100    50.0%    30.0%   +20.0%  overweight"), "{out}");
+        assert!(out.contains("IITU.L            100    50.0%    30.0%   +20.0%  overweight: let it run"), "{out}");
         assert!(out.contains("BTC-EUR             0     0.0%    20.0%   -20.0%  not held"), "{out}");
         assert!(out.contains("NVDA       (held, but no EUR price this run"), "{out}");
         assert!(out.contains("held but not sized: SOL qty 2"), "{out}");
@@ -834,8 +836,8 @@ pub(crate) mod tests {
         };
         assert_eq!(tag("EDGEHI"), "", "+5.0 is the edge and the band excludes it: {out:?}");
         assert_eq!(tag("EDGELO"), "", "-5.0 likewise: {out:?}");
-        assert_eq!(tag("DEEPLO"), "underweight", "{out:?}");
-        assert_eq!(tag("BIG"), "overweight", "{out:?}");
+        assert_eq!(tag("DEEPLO"), "underweight: add new money", "{out:?}");
+        assert_eq!(tag("BIG"), "overweight: let it run", "{out:?}");
         assert_eq!(tag("GHOST"), "not held", "unheld outranks unpriced: {out:?}");
     }
 }

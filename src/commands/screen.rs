@@ -225,6 +225,16 @@ pub(crate) fn spill_picks(tiers: &[Option<u8>], n: usize, per_tier: bool) -> Vec
     picked
 }
 
+/// (#292) The CORE rows a journal line carries: the `top_picks` prefix, plus every row `size` funds
+/// past it. `track` re-runs [`spill_picks`] on the journalled list, and the first row of a tier there
+/// is the first row of that tier in `all` exactly when that row is kept, which this guarantees. At
+/// `spill_names: 4` the US tier's first row sat at index 21 of 99 on 2026-09-13, past a 20-row prefix,
+/// so without it `size` bought four trackers while `track` graded three.
+pub(crate) fn journal_core_rows<'a>(all: &'a [String], tiers: &[Option<u8>], top: usize, cut: usize, per_tier: bool) -> Vec<&'a String> {
+    let funded = spill_picks(tiers, cut, per_tier);
+    all.iter().enumerate().filter(|(i, _)| *i < top || funded.contains(i)).map(|(_, t)| t).collect()
+}
+
 /// `(#288)` takes `per_tier`, which answers the criticism `(#261)`'s own doc makes of itself three
 /// paragraphs up — "Nothing here diversifies MARKET risk; three all-world trackers are one market."
 /// With it set, the walk stops at the FIRST unsized row of each DISTINCT breadth tier instead of the
@@ -1754,7 +1764,7 @@ pub async fn run(args: Vec<String>) {
     // in its own footer further down.
     // (#288) the WHOLE vetted list, computed once and cut once. `core_now` keeps `top_picks` because
     // three of its consumers must not widen — the Yahoo holdings fetch below (network cost, and memory
-    // says bulk probing measures the rate limiter), `snapshot.core` (`track`'s graded series), and the
+    // says bulk probing measures the rate limiter), `snapshot.core` (`track`'s graded series; since (#292) it also carries the funded rows past the cut), and the
     // look-through P/E anchor. `core_all` is what `size` reads, and it is the list that was actually
     // screened: `take(top_picks)` was never a CORE decision, it is a display knob.
     // (#287) the tier is a pure function of the fund NAME, so it is read off the very quotes the list
@@ -1860,8 +1870,10 @@ pub async fn run(args: Vec<String>) {
         // the membership diff; journalling it is what lets the buy-and-hold recommendation ever be
         // graded out-of-sample, the way the momentum book already is.
         core: if settings.buy_heuristic.journal_core_list {
-            core_now
-                .iter()
+            // (#292) the prefix PLUS every row `size` funds past it, or `track` grades fewer trackers than `size` buys.
+            let tiers: Vec<Option<u8>> = core_all.iter().map(|t| core_tier.get(t).copied()).collect();
+            journal_core_rows(&core_all, &tiers, settings.top_picks, settings.sizing.spill_cut(), settings.sizing.spill_per_tier)
+                .into_iter()
                 .map(|t| (t.clone(), quotes.iter().find(|q| &q.ticker == t).and_then(|q| q.price_eur)))
                 .collect()
         } else {
@@ -4736,6 +4748,21 @@ mod tests {
         let rest = last_core(Some(with_tier), &[], 4, false).unwrap().2;
         assert_eq!(rest, vec![("EIMI.L".to_string(), Some(em))],
             "a journalled tier reaches `size`; the rows without one still ride as None");
+    }
+
+    /// (#292) The journal keeps the `top_picks` prefix and every FUNDED row past it, and nothing else;
+    /// without the funded extras `track` grades fewer trackers than `size` buys. AW3 sits exactly AT the
+    /// cut and is not funded, so it must drop; US sits past the cut and is funded, so it must stay.
+    #[test]
+    fn journal_core_rows_keeps_funded_rows_past_the_prefix() {
+        let all: Vec<String> = ["AW1", "AW2", "AW3", "DEV", "US"].iter().map(|t| t.to_string()).collect();
+        let tiers = [Some(0), Some(0), Some(0), Some(1), Some(3)];
+        let rows = |cut: usize, per_tier: bool| -> Vec<&str> {
+            journal_core_rows(&all, &tiers, 2, cut, per_tier).into_iter().map(|t| t.as_str()).collect()
+        };
+        assert_eq!(rows(3, true), ["AW1", "AW2", "DEV", "US"]);
+        // the walk-down funds a prefix of the list, so a cut of 3 reaches AW3 and nothing past it
+        assert_eq!(rows(3, false), ["AW1", "AW2", "AW3"]);
     }
 
     /// (#288) the spill's SELECTION, the half of it that decides which markets the remainder buys.

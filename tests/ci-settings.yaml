@@ -1284,7 +1284,8 @@ sizing:
                       #   else and a coin has none). CONSEQUENCE: a class too small to absorb its budget
                       #   under these caps leaves the remainder UNALLOCATED and the table's total prints
                       #   below 100. That is the intended reading, not a rounding bug.
-  spill_names: 3      # (#261) CORE trackers that SHARE that remainder, equally. 1 = the exact pre-(#261)
+  spill_names: 4      # (#292) 3 -> 4: the fourth tier `spill_per_tier` reaches is US. Read the (#292) receipt.
+                      #   (#261) CORE trackers that SHARE that remainder, equally. 1 = the exact pre-(#261)
                       #   behaviour and the revert; 0 is read as 1. The CORE sort is breadth-major, so
                       #   rows 1..n are the same all-world market from a DIFFERENT issuer with different
                       #   replication — this buys issuer/counterparty spread and nothing else, which is
@@ -5286,6 +5287,56 @@ buy_heuristic:
   #   worst -10.0 -> -10.6), the CAGR floor in (a), and the rescue lane in (b). Deploying faster in
   #   drawdowns already ships (rounds 112/115). What is left is mandate, not measurement: grep this file for
   #   "no remaining admission-side lever", the summary every widening round should read first.
+  #
+  # (#292) ROUND 75: THREE IDEAS, THREE VERDICTS. Same standing ask ("more assets to buy now and hold
+  #   20+ years, most profit"). Admission and ordering are closed (above), so this round priced what the
+  #   book does with the names it already has: the name cap, the spill, and the trim cue.
+  #
+  #   (a) REFUSED: `max_name_pct` 8.0 -> 12.0. Graded on the (#290) SIZED row. Probe config = this file
+  #   with that one line changed (difflib: one line), `backtest N universe fund pit`, 2026-09-13. The
+  #   controls are this session's runs of the shipped config (the 20y copy differs in comments only):
+  #          SIZED excess   worst          OOS halves               deployed
+  #     20y  +0.3 -> +0.3   -2.2 -> -3.8   -0.2/+0.8 -> -0.5/+1.1   44 -> 59%
+  #     12y  +1.8 -> +2.1   -2.0 -> -3.7   +0.9/+2.8 -> +0.9/+3.4   53 -> 68%
+  #      8y  +2.5 -> +3.0   -3.7 -> -5.0   +1.7/+3.4 -> +2.0/+4.1   59 -> 73%
+  #   The (#290) bar (excess up at 20y AND 8y, both OOS halves positive) FAILS at 20y: excess flat, the
+  #   early half turns negative, the worst window deepens by 1.6. It pays at 12y/8y only, and the ask
+  #   is 20+ years. A "thin pools only" cap is this same arm: the median gated pool is 5/6/7, so almost
+  #   every bucket is thin already. (#264)'s ceiling stands. Do not re-probe without a new objective.
+  #
+  #   (b) SHIPPED: `spill_names` 3 -> 4, so `spill_per_tier` reaches the US tier (SPXS.L, index 21 of
+  #   the 99-row `core_all` on 2026-09-13) after all-world / developed / emerging. Evidence is free
+  #   Yahoo series, rolling 6-month starts:
+  #     S&P 500 minus MSCI World, price both sides (^GSPC vs ^990100-USD-STRD, daily from 1980):
+  #       20y  54 windows  mean +1.64 pts/yr  min +0.79  US ahead 54/54 (starts before 2000: 40/40)
+  #       12y  70 windows  mean +1.86         min -1.75  US ahead 54/70
+  #        8y  78 windows  mean +1.60         min -6.05  US ahead 51/78
+  #     S&P 500 minus emerging, total return (VFINX vs VEIEX adjusted closes, from 1994):
+  #       20y  25 windows  mean +1.34         min -2.76  US ahead 17/25
+  #   WHAT THAT IS WORTH, STATED RATHER THAN SOLD. The windows overlap, so 46 years hold only ~2-3
+  #   independent 20y periods, and it is one country's record, the century's winner picked in hindsight.
+  #   The tiers stay NESTED (#289): MSCI World is itself mostly US (index definition, not measured here),
+  #   so this is a US tilt inside the spill, with emerging falling from 1/3 to 1/4 of it, not a new
+  #   market. On the live ~30% remainder, 0.30 x 0.25 x ~1.5 is roughly +0.1 pts/yr of the whole book
+  #   IF the past repeats. NOT BACKTESTABLE: backtest.rs has no hold lane. It reverses (#289) honest
+  #   edge (c) ("spill_names was NOT raised") by decision, on the numbers above.
+  #   THE JOURNAL MOVED WITH IT. (#289) edge (b) warned that `size` selects from `core_all` and `track`
+  #   from the 20-row `snapshot.core`, and that the two diverge once `spill_names` reaches a tier the
+  #   prefix lacks. At 4 it does: the live prefix holds tiers 0/1/2 only. `screen` now journals the
+  #   prefix PLUS every funded row past it (`screen::journal_core_rows`; one extra row today), so
+  #   `track`'s own `spill_picks` pass lands on the same four rows `size` buys. Lines journalled before
+  #   this round carry no US row and grade three trackers. That is the record as written; no backfill.
+  #   OPEN EDGE, pre-existing: `size` skips CORE rows the growth book already sized, `track` does not.
+  #   REVERT: `spill_names: 3`. With tiers 0/1/2 inside the prefix, the journal is the old prefix again.
+  #
+  #   (c) SHIPPED: `size`'s allocation-gap tags now say what to do with MONEY. `overweight` ->
+  #   `overweight: let it run`, `underweight` -> `underweight: add new money`. Bands and math unchanged.
+  #   Grounds: every backtest book holds its entry weights to the horizon and never trims, and the
+  #   after-tax deferral edge of never selling over rotating yearly is +1.1/+1.6/+1.1 pts/yr at
+  #   20y/12y/8y, larger than the 20y selection excess itself. EXIT PROBE (above) is SPLIT, and says
+  #   so: names that newly fail a gate trail the kept ones by -50.1 at 8y and -15.4 at 12y, but lead by
+  #   a median +73.0 at 20y. "Let it run" is the 20-year answer, not a universal one. Display-only.
+  #   REVERT: the two literals in `size::allocation_gap_lines`.
   hold_min_aum_eur: 1000000000   # (#267) NAMED ONLY, HELD AT THE SHIPPED LITERAL. The CORE admission
                                  # AUM floor, in EUR, extracted verbatim from the `1e9` that was
                                  # hardcoded in `core::hold_miss_leg_at` -- the LAST bare literal among
