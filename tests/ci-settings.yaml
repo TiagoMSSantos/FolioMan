@@ -5489,6 +5489,34 @@ buy_heuristic:
   #   REVERT: `size::US_SPILL_WEIGHT = 1.0` (every share is rest / n again, byte-identical); delete the
   #   buy-list print in `screen::run`.
   #
+  # (#307) ROUND 89: A NASDAQ-100 SLOT IN THE SPILL, REFUSED ON FREE DATA. Same standing ask. On the shipped
+  #   20y backtest the median gated pool is 5 names against a basket of 10, and ranks 6-10 / 11-20 read
+  #   -1.5 / -0.4 against the S&P, so more growth rows add index-like names, not good ones. The idea: give the
+  #   Nasdaq-100 tracker the CORE table already lists ((#239) sleeve, cap 2) a share of the remainder the
+  #   picks leave, funding one more asset for a 20y hold. BAR, (#296)'s and written before this data: every
+  #   rolling 20y window positive on a free series of the index the fund tracks.
+  #   CENSUS, free Yahoo monthly bars, 2026-09-13 (query1.finance.yahoo.com/v8/finance/chart/<sym>?period1=0&
+  #   period2=<now>&interval=1mo; `range=max` returns quarterly bars on months that do not align, so no window
+  #   pairs up). Nasdaq-100 total return (^XNDX) is not served free, so the total-return leg is the ETFs:
+  #     QQQ - SPY adjclose   20y  83/91 ahead (starts 1999-03..2006-09)  median +4.04  worst  -1.85 @2000-02
+  #                          12y 163/187                                 median +4.53  worst  -5.53 @2000-02
+  #                           8y 208/235                                 median +4.57  worst -11.82 @2000-02
+  #     ^NDX - ^GSPC price   20y 251/252 (starts 1985-10..2006-09)       median +4.58  worst  -0.45 @2000-02
+  #                          20y 159/159 for starts <= 1998-12                         worst  +2.76
+  #   REFUSED: 8 total-return 20y windows behind, every one a 1999-11..2000-08 start; 12y and 8y are worse.
+  #   HONEST EDGES. The windows overlap: 27 years of total-return starts hold ~1.4 independent 20y periods.
+  #   Pre-1999 windows are price-only; the S&P's dividend is worth ~+2.1 pts/yr at 20y (^SP500TR - ^GSPC) and
+  #   the Nasdaq-100's is smaller, so total return can only lower those leads. Both total-return legs are
+  #   ETFs, so fees are in (QQQ ~0.20%, SPY ~0.09%). Hindsight: the index is the forty-year tech winner. The
+  #   growth picks are already tech-heavy (NVD.DE, IITU.L, XLKS.L, SMH.L, SEMI.AS) and the Nasdaq-100 family's
+  #   top sector is 60.8% (the look-through census above), so the slot would deepen the book's one bet.
+  #   NOT RE-OPEN TRIGGERS: the median +4 lead and the 251/252 price record. Choosing a median or price-only
+  #   bar after seeing these numbers is the argmax this file forbids. Re-open only on a NEW bar written
+  #   before the data, on a free 20y+ total-return series of the index.
+  #   UNREACHABLE AS BUILT, for whoever tries: `screen::spill_picks` funds the first row of each DISTINCT tier
+  #   in list order up to `spill_names: 4`, `core::NASDAQ_TIER` is the last tier, and `size::spill_split`
+  #   weights only `core::US_TIER`. No code changed. REVERT: delete this block.
+  #
   # (#297) ROUND 79: THE PASTE-READY ORDERS BUY THE BUY NOW BOOK. Same standing ask. (#295) printed the book
   #   `size` funds, and that left two different books on one screen: `order_glue` split the monthly deploy
   #   EQUALLY over the ranked top-10. On 2026-09-13 that meant BNB-EUR and BTC-EUR at 10% each (20% in coins
