@@ -5439,6 +5439,56 @@ buy_heuristic:
   #   (h) A 20y run now walks twice. (i) A reading, not a trigger: nothing sells anything at 10y.
   #   REVERT: delete the `roll_samples` walk and the `report_roll` call in `backtest::run`; `roll` journals
   #   None and the BUY NOW cell drops its clause.
+  # (#311) ROUND 94: THE ROLL RULER NOW GRADES THE PLAN THE MONEY FOLLOWS, A MONTHLY DCA. PASSED. No knob moved.
+  #   (#310) graded ONE lump buy per bucket. The user contributes the same € every month for 8 years and holds
+  #   to year 20. Picked by the user: grade that plan (96 equal monthly buys, every lot sold at 20y), roll vs
+  #   never-sell, true monthly buys, SIZED gates, a pass REPLACES the (#310) row, plus a `sim` flat-cash line.
+  #
+  #   METHOD. One program per entry bucket the 20y SIZED row grades (fixed before the live run: the fixture
+  #   showed 1970s starts whose screen was empty grading the legs' roll, not the screen). Buy m = 0..95 puts €1
+  #   into that month's book; never-sell holds it to month 240; the roll sells it at m + 120, pays
+  #   `cgt_rate` on that lot's gain (no loss credit), and puts the net into the book of month m + 120 to 240.
+  #   The index arm puts the same € into ^GSPC. %/yr is the money-weighted rate of the after-tax wealth
+  #   (`dca_irr`). A month's book: each name's LATEST point-in-time cutoff in (d - 6 months, d], coins out
+  #   (`month_pool`), ranked as the (#310) books were: top-10 = the ladder pool (value brake, corr cap,
+  #   equal weight), SIZED = `size::sized_book` over the top `top_picks` by growth score, its remainder on the
+  #   spill's index legs ((#308)). A name must have a close at the program end, in both arms. A month where no
+  #   ranked name does puts the whole € on the legs, as BUY NOW does. Price = first bar on or after the date.
+  #   The confirmed rule was "that half-year's cutoffs <= the buy date"; the trailing window replaced it so a
+  #   buy early in a half-year does not pick from a near-empty pond.
+  #   BAR, written before any run: SIZED Δ = roll - never-sell with mean > 0 AND median > 0 AND both OOS halves
+  #   > 0, on >= 12 programs. Top-10 is a reading.
+  #   LIVE, `backtest 20 universe fund pit`, 2026-09-14, this config, 1:44 wall, peak RSS 1.0 GB, 17 state md5s:
+  #     top-10  roll +11.3%/yr  vs never-sell +9.9%/yr  ->  +1.5 (med +1.7) pts/yr  win 95% of 21  worst -0.1  OOS +1.7/+1.2  index DCA +6.5%/yr
+  #     SIZED   roll +8.5%/yr  vs never-sell +7.7%/yr  ->  +0.8 (med +1.2) pts/yr  win 76% of 21  worst -1.1  OOS +1.3/+0.3  index DCA +6.5%/yr
+  #   VERDICT: PASS. SIZED +0.8 / med +1.2 / OOS +1.3 and +0.3 / 21 programs. Smaller than (#310)'s lump +2.1:
+  #   a lot bought in month m holds its re-bought leg only 120 - m months. Every other line of the run matches
+  #   (#310)'s live control but the resolved count (6139 vs 6138).
+  #   Book-months that fell on the legs alone: 172 of 4032 (4.3%), at most 12 per program, counted by a
+  #   throwaway stderr counter removed before the final build; the final binary reprinted the same rows.
+  #
+  #   WHAT CHANGED. `backtest 20` walks its history a second time at 0y (every cutoff, no forward window)
+  #   instead of 10y, and keeps each name's closes. `report_roll` ranks each calendar month once and runs
+  #   `dca_program` per start; `px_at`, `month_pool`, `book_multiple`, `dca_irr` and `dca_program` are pure
+  #   and pinned by their own tests. `top_books` and `roll_rows` are gone. `SizedVerdict.roll` journals the DCA
+  #   SIZED Δ, and BUY NOW's 20y cell reads "buying monthly for 8y, selling each lot at 10y to re-buy the
+  #   screen". `sim` prints the same books bought at ×1 every month against the S&P on that cash, the ruler's
+  #   forward twin; on this job's journal with a probe base: +3.0% vs +1.4% -> +1.7 pp (offline it reads n/a,
+  #   pinned in `sim_replays_the_journal_offline`).
+  #   READING. For someone buying monthly for 8 years and holding to 20, selling each lot at 10 years and
+  #   buying that month's screen beat never selling on this history, after paying the tax twice: +0.8/yr on
+  #   the book `screen` sizes, +1.5/yr on the equal-weight top-10.
+  #
+  #   HONEST EDGES. (a) 21 overlapping programs, starts 1996H2-2006H2, are one or two independent decisions.
+  #   (b) Flat 28% via the shipped empty schedule; losses not credited. (c) Price-only, no FX or fees on any
+  #   buy, sale or re-buy. (d) A quarterly or yearly series fills on its next bar, up to a quarter or year late,
+  #   in both arms alike, and its cutoffs sit in one month's pond in three (the same density (#310) saw).
+  #   (e) Survivorship: the end-close filter keeps names alive 20y after the start, identically in both arms.
+  #   (f) SIZED sells its index remainder too, which a real roll need not: a conservative bound. (g) The
+  #   fixture reads top-10 +0.5, SIZED +0.0 of 22 on frozen data; the golden grades the arithmetic, not the
+  #   verdict. (h) A reading, not a trigger: nothing sells at 10y, and the first real roll date is 2036.
+  #   REVERT: restore (#310)'s `top_books`, `roll_rows`, `report_roll` and 10y walk from 1019ab4; the `sim`
+  #   flat block after the S&P line deletes on its own.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

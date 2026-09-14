@@ -463,6 +463,22 @@ pub async fn run(_args: Vec<String>) {
         }
         _ => println!("  same money into the S&P 500 instead: n/a (no benchmark leg priced)"),
     }
+    // (#311) the backtest DCA ruler's cashflow: the same books at ×1 every month (no journaled S&P state, so
+    // `deploy_scaled_eur` falls back to base), against the S&P on that flat cash.
+    let flat_snaps: Vec<Snapshot> = snaps.iter().cloned().map(|s| Snapshot { spx_off_hi: None, ..s }).collect();
+    let flat = ledger(&flat_snaps, base, now_key, &settings.sizing, &tier_of, &fee_of);
+    let (f_value, f_cost, _) = value_priced(&holdings(&flat.events), &px_now);
+    let (fb_cost, fb_units, fb_n) = benchmark(&flat.events);
+    match px_now("^GSPC") {
+        Some(spx_now) if fb_n > 0 && f_cost > 0.0 => {
+            let (pct, b_pct) = (100.0 * (f_value / f_cost - 1.0), 100.0 * (fb_units * spx_now / fb_cost - 1.0));
+            println!(
+                "  flat ×1 every month instead (the `backtest 20` DCA ruler's cash): {pct:+.1}% vs the S&P 500 on that cash {b_pct:+.1}%  →  {:+.1} pp",
+                pct - b_pct
+            );
+        }
+        _ => println!("  flat ×1 every month instead: n/a (no benchmark leg priced)"),
+    }
     if led.pending_months > 0 {
         println!(
             "  pending cash €{:.0} ({} month(s) without a buyable snapshot — deploys at the next `screen` run)",

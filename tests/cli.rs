@@ -223,6 +223,7 @@ fn sim_replays_the_journal_offline() {
     // offline every holding is unpriceable: it must degrade to a dash, never to a fabricated zero
     assert!(stdout.contains("→ now n/a"), "unpriced basket should read n/a: {stdout}");
     assert!(stdout.contains("0 of 3 positions priced today"), "priced count missing: {stdout}");
+    assert!(stdout.contains("flat ×1 every month instead: n/a"), "(#311) flat-cash line missing: {stdout}");
 }
 
 #[test]

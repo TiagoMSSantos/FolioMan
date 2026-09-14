@@ -73,8 +73,11 @@ pub(crate) const VERDICT_FILE: &str = ".backtest_verdict.json";
 pub(crate) const SIZED_FILE: &str = ".backtest_sized.json";
 /// (#310) The roll point the census graded: sell the whole book after this many years, pay the tax, and
 /// re-buy that day's screen. Fixed a priori, never swept — picking the best of several is the (#120) argmax.
-/// A run at twice this horizon walks its history a second time to grade it ([`report_roll`]).
+/// A run at twice this horizon walks its history a second time, at every cutoff, to grade it ([`report_roll`]).
 const ROLL_YEARS: i64 = 10;
+const ROLL_MONTHS: u32 = ROLL_YEARS as u32 * 12;
+/// (#311) The plan [`report_roll`] grades: this many equal monthly buys (8 years), every lot sold at `2 × ROLL_YEARS`.
+const DCA_MONTHS: u32 = 96;
 
 /// Fewest resolved tickers a wide run must carry before it may overwrite [`VERDICT_FILE`]. Same floor
 /// `backtest_edge_holds` applies to its own sample: below it, the pool is a throttle artefact rather
@@ -209,8 +212,9 @@ pub(crate) struct SizedVerdict {
     pub(crate) worst: f64,
     pub(crate) deployed: f64,
     pub(crate) sizing_fp: String,
-    /// (#310) [`report_roll`]'s SIZED Δ: selling this book at [`ROLL_YEARS`] and re-buying the screen, minus
-    /// never selling, %/yr after tax. Only a `2 × ROLL_YEARS` row carries one.
+    /// (#311) [`report_roll`]'s SIZED Δ: a [`DCA_MONTHS`] monthly-buy plan that sells each lot at [`ROLL_YEARS`] and
+    /// re-buys the screen, minus the same plan never selling, money-weighted %/yr after tax. Only a `2 × ROLL_YEARS`
+    /// row carries one.
     #[serde(default)]
     pub(crate) roll: Option<f64>,
 }
@@ -336,7 +340,9 @@ pub(crate) fn sized_record_line(j: &Journal, tuning_fp: &str, sizing_fp: &str) -
     let cells: Vec<String> = rows
         .iter()
         .map(|(v, s)| {
-            let roll = s.roll.map_or(String::new(), |r| format!("; sell at {ROLL_YEARS}y and re-buy the screen: {r:+.1}/yr vs never-sell, after tax"));
+            let roll = s.roll.map_or(String::new(), |r| {
+                format!("; buying monthly for {}y, selling each lot at {ROLL_YEARS}y to re-buy the screen: {r:+.1}/yr vs never-sell, after tax", DCA_MONTHS / 12)
+            });
             format!(
                 "{}y {:+.1}%/yr ({:+.1} vs index, worst {:+.1}, {:.0}% in names, {} windows, run {}{roll})",
                 v.years, s.book, s.excess, s.worst, s.deployed, s.windows, v.date
@@ -1177,8 +1183,8 @@ pub async fn run(args: Vec<String>) {
     let sector_of = &sector_of;
     let pit_spans = &pit_spans;
     let factor = settings.buy_heuristic.growth_fund_factor.as_str(); // (G) config-selected as-of factor
-    // (#310) the walk takes its horizon and BORROWS the fetch: a `2 × ROLL_YEARS` run walks the same history
-    // again at ROLL_YEARS for `report_roll`. Every other run walks once, exactly as before.
+    // (#310) the walk takes its horizon and BORROWS the fetch: (#311) a `2 × ROLL_YEARS` run walks the same history
+    // again at 0y, every cutoff, for `report_roll`'s DCA books. Every other run walks once, exactly as before.
     let walk = |years: i64| -> Vec<Vec<Sample>> { fetched
         .par_iter()
         .flatten()
@@ -1354,10 +1360,15 @@ pub async fn run(args: Vec<String>) {
         tune_growth(&samples, tuning);
         return;
     }
-    // (#310) the roll's legs: the same walk at ROLL_YEARS, date-sorted like `samples`, so its books are the
-    // ones a `backtest 10` run ranks. Empty at every other horizon.
-    let mut roll_samples: Vec<Sample> = if years == 2 * ROLL_YEARS { walk(ROLL_YEARS).into_iter().flatten().collect() } else { Vec::new() };
-    roll_samples.sort_by_key(|s| s.date);
+    // (#311) the DCA ruler's books: every point-in-time cutoff (a 0y walk needs no forward window), date-sorted for
+    // `month_pool`, and each name's closes to price a buy in any month. Empty at every other horizon.
+    let (mut books, series): (Vec<Sample>, HashMap<&str, (Vec<chrono::NaiveDate>, Vec<f64>)>) = if years == 2 * ROLL_YEARS {
+        let series = fetched.par_iter().flatten().filter_map(|(tk, hist, ..)| hist.parse(tk).map(|c| (tk.as_str(), (c.dates, c.closes)))).collect();
+        (walk(0).into_iter().flatten().collect(), series)
+    } else {
+        Default::default()
+    };
+    books.sort_by_key(|s| s.date);
 
     // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket AND asset class. Pooling raw returns across cutoffs
     // that span different regimes makes the score race CALENDAR LUCK (a 2016 cutoff that mooned vs a
@@ -1728,7 +1739,7 @@ pub async fn run(args: Vec<String>) {
         let legs: Vec<String> = tiers.iter().zip(&spill).map(|(t, (w, _))| format!("{} {:.0}%", name(*t), w * 100.0)).collect();
         println!("  {:<28} (#308) the remainder above earns the spill's index legs, price-only: {}", "", legs.join(" · "));
     }
-    let roll = report_roll(&samples, &roll_samples, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill);
+    let roll = report_roll(&samples, &books, &series, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill);
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
     // the watchlist's ~50-survivor sample is not the method's proof, and must never overwrite it.
     // The screen's method footer reads this file back.
@@ -3255,58 +3266,106 @@ fn report_sized_book(
     None
 }
 
-/// (#310) The ladder's top-`n` book per entry bucket, as its equal-weight terminal multiple: the pool
-/// [`report_vs_benchmark`] ranks (coins out, growth-gated, benchmarkable, value brake, corr cap), rebuilt
-/// for [`report_roll`], which needs it on the `ROLL_YEARS` legs that ladder never prints.
-fn top_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic, n: usize) -> BTreeMap<i32, f64> {
-    let (bd, bc) = bench;
-    let mut by_cutoff: BTreeMap<i32, Vec<&Sample>> = BTreeMap::new();
-    for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
-        by_cutoff.entry(bucket(s.date)).or_default().push(s);
+/// (#311) A close on the first bar at or after `d` (the walk's own forward rule). None when the series ends
+/// before `d`, or when that close is no price: a zero would value a lot at infinity.
+fn px_at(s: &(Vec<chrono::NaiveDate>, Vec<f64>), d: chrono::NaiveDate) -> Option<f64> {
+    s.1.get(s.0.partition_point(|x| *x < d)).copied().filter(|p| *p > 0.0)
+}
+
+/// (#311) The names a DCA buy on `d` picks from: each ticker's LATEST point-in-time cutoff in the six months up
+/// to `d`, coins out. Nothing dated after `d` enters, so there is no look-ahead, and a step-6 monthly walk leaves
+/// exactly one cutoff per name in any six months, so every month sees the whole pond. Ticker-ordered, so a tie
+/// ranks the same way every run. `books` is date-sorted.
+fn month_pool(books: &[Sample], d: chrono::NaiveDate) -> Vec<&Sample> {
+    let from = d - chrono::Months::new(6);
+    let window = &books[books.partition_point(|s| s.date <= from)..books.partition_point(|s| s.date <= d)];
+    let mut latest: BTreeMap<&str, &Sample> = BTreeMap::new();
+    for s in window.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
+        latest.insert(s.quote.ticker.as_str(), s);
     }
-    let (mut rows, mut trail_of) = (Vec::new(), BTreeMap::<i32, HashMap<&str, &[f64]>>::new());
-    for (b, group) in &by_cutoff {
-        let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
-        for (s, scored) in group.iter().zip(picks::growth_scores_ranked(&quotes, tuning)) {
-            let Some(score) = scored else { continue };
-            let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
-            trail_of.entry(*b).or_default().insert(s.quote.ticker.as_str(), s.trail.as_slice());
-            rows.push((*b, score, s.realized, bench_r, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)));
+    latest.into_values().collect()
+}
+
+/// (#311) What €1 put into `book` (ticker, weight fraction) on `from` is worth on `to`. The unfunded remainder
+/// earns `legs` as [`sized_buckets`] prices it: a leg that does not reach back to `from` borrows the benchmark.
+/// None when any leg is unpriced.
+fn book_multiple(
+    book: &[(&str, f64)],
+    from: chrono::NaiveDate,
+    to: chrono::NaiveDate,
+    series: &HashMap<&str, (Vec<chrono::NaiveDate>, Vec<f64>)>,
+    bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
+    legs: &[(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))],
+) -> Option<f64> {
+    let grow = |s: &(Vec<chrono::NaiveDate>, Vec<f64>)| Some(px_at(s, to)? / px_at(s, from)?);
+    let names = book.iter().map(|(t, w)| Some(w * grow(series.get(t)?)?)).sum::<Option<f64>>()?;
+    let rest = legs.iter().map(|(w, s)| Some(w * grow(if s.0.first().is_some_and(|f| *f <= from) { s } else { bench })?)).sum::<Option<f64>>()?;
+    Some(names + (1.0 - book.iter().map(|(_, w)| w).sum::<f64>()) * rest)
+}
+
+/// (#311) The money-weighted %/yr of a DCA program: the one rate at which [`DCA_MONTHS`] €1 buys, a month apart,
+/// grow to `wealth` by month `2 × ROLL_MONTHS`. Bisection on (−100%, +100%), since the future value rises with
+/// the rate. A program ending with exactly what it put in reads at or below zero, never a phantom gain.
+fn dca_irr(wealth: f64) -> f64 {
+    let fv = |r: f64| (0..DCA_MONTHS).map(|m| (1.0 + r).powf(f64::from(2 * ROLL_MONTHS - m) / 12.0)).sum::<f64>();
+    let (mut lo, mut hi) = (-1.0, 1.0);
+    for _ in 0..100 {
+        let mid = (lo + hi) / 2.0;
+        if fv(mid) < wealth {
+            lo = mid;
+        } else {
+            hi = mid;
         }
     }
-    value_floor_trim(&rows, tuning.growth_value_floor_pct)
-        .into_iter()
-        .filter_map(|(b, mut v)| {
-            v.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap());
-            let trails: Vec<&[f64]> = v.iter().map(|x| trail_of.get(&b).and_then(|m| m.get(x.3.as_str())).copied().unwrap_or(&[])).collect();
-            let p = corr_cap_rung(&v, &trails, n, tuning.growth_corr_cap);
-            (!p.is_empty()).then(|| (b, p.iter().map(|x| 1.0 + x.1 / 100.0).sum::<f64>() / p.len() as f64))
-        })
-        .collect()
+    (lo + hi) / 2.0 * 100.0
 }
 
-/// (#310) One row per entry bucket `b` whose re-bought book at `b + 2 × ROLL_YEARS` (buckets are half-years)
-/// is on file: (roll, never-sell) after-tax cumulative %, in the (score, book, index) shape [`book_stats`]
-/// reads, so its "excess" is roll minus hold. Each sale pays `t` on its gain and no loss is credited — the
-/// census's pre-registered rule; crediting losses moved its Δ by 0.03.
-fn roll_rows(hold: &BTreeMap<i32, f64>, legs: &BTreeMap<i32, f64>, t_hold: f64, t_leg: f64) -> BTreeMap<i32, Vec<(f64, f64, f64)>> {
-    let net = |m: f64, t: f64| m - t * (m - 1.0).max(0.0);
-    hold.iter()
-        .filter_map(|(b, h)| {
-            let (first, second) = (legs.get(b)?, legs.get(&(b + 2 * ROLL_YEARS as i32))?);
-            Some((*b, vec![(0.0, (net(*first, t_leg) * net(*second, t_leg) - 1.0) * 100.0, (net(*h, t_hold) - 1.0) * 100.0)]))
-        })
-        .collect()
+/// (#311) One DCA program's after-tax € per arm.
+struct Dca {
+    roll: f64,
+    hold: f64,
+    index: f64,
 }
 
-/// (#310) SELL AT [`ROLL_YEARS`] AND RE-BUY THE SCREEN, against never selling, both after tax. Each entry
-/// bucket's never-sell book pays tax once, at `years`; the roll pays at `ROLL_YEARS`, then buys the book the
-/// bucket `ROLL_YEARS` later bought and pays again at the end. Top-10 is the census's pass bar; SIZED is the
-/// book `size` funds, and its Δ is returned for the journal. Empty `legs` (any other horizon) prints nothing.
+/// (#311) One program starting `start`: [`DCA_MONTHS`] €1 buys a month apart, each into `book(buy date, end)`,
+/// every lot sold at `end = start + 2 × ROLL_MONTHS`. Never-sell holds each lot to `end`. The roll sells it
+/// [`ROLL_MONTHS`] after its buy, pays the gains tax for that hold (no loss credited, (#310)'s rule), and puts the
+/// net into that month's book to `end`. The index takes the same € into the benchmark. Any missing price
+/// drops the whole program, because a partial one would grade fewer € than it spent.
+fn dca_program<B>(
+    start: chrono::NaiveDate,
+    book: impl Fn(chrono::NaiveDate, chrono::NaiveDate) -> Option<B>,
+    value: impl Fn(&B, chrono::NaiveDate, chrono::NaiveDate) -> Option<f64>,
+    index: impl Fn(chrono::NaiveDate, chrono::NaiveDate) -> Option<f64>,
+    base: f64,
+    schedule: &[crate::config::CgtRung],
+) -> Option<Dca> {
+    let at = |m: u32| start.checked_add_months(chrono::Months::new(m));
+    let end = at(2 * ROLL_MONTHS)?;
+    let net = |x: f64, held: u32| x - cgt_rate(i64::from(held / 12), base, schedule) * (x - 1.0).max(0.0);
+    let mut out = Dca { roll: 0.0, hold: 0.0, index: 0.0 };
+    for m in 0..DCA_MONTHS {
+        let (buy, sale) = (at(m)?, at(m + ROLL_MONTHS)?);
+        let (first, second) = (book(buy, end)?, book(sale, end)?);
+        out.hold += net(value(&first, buy, end)?, 2 * ROLL_MONTHS - m);
+        out.roll += net(value(&first, buy, sale)?, ROLL_MONTHS) * net(value(&second, sale, end)?, ROLL_MONTHS - m);
+        out.index += net(index(buy, end)?, 2 * ROLL_MONTHS - m);
+    }
+    Some(out)
+}
+
+/// (#311) DCA ROLL-AFTER-[`ROLL_YEARS`]y. (#310) graded one lump buy; this grades the plan the money follows:
+/// [`DCA_MONTHS`] equal monthly buys into that month's screen, all sold at `years`, against selling each lot at
+/// [`ROLL_YEARS`] and re-buying that month's screen. Both are after tax, as money-weighted %/yr, one program per
+/// half-year start ([`dca_program`]). Each month is ranked once over [`month_pool`]; a program's book is the
+/// ranked names still priced at its end, the same filter in both arms. A month with no such name puts the
+/// whole € on the legs, as BUY NOW does: its picks and trackers always sum to gross. Top-10 is a reading. SIZED is the
+/// pre-registered bar, and its Δ is returned for the journal. Empty `books` (any other horizon) prints nothing.
 #[allow(clippy::too_many_arguments)]
 fn report_roll(
     samples: &[Sample],
-    legs: &[Sample],
+    books: &[Sample],
+    series: &HashMap<&str, (Vec<chrono::NaiveDate>, Vec<f64>)>,
     bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
     years: i64,
     tuning: &BuyHeuristic,
@@ -3314,28 +3373,75 @@ fn report_roll(
     top: usize,
     spill: &[(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))],
 ) -> Option<f64> {
-    if legs.is_empty() {
+    if books.is_empty() {
         return None;
     }
     let base = tuning.capital_gains_tax_pct / 100.0;
-    let (t_hold, t_leg) = (cgt_rate(years, base, &tuning.cgt_hold_schedule), cgt_rate(ROLL_YEARS, base, &tuning.cgt_hold_schedule));
+    let legs = if spill.is_empty() { vec![(1.0, bench)] } else { spill.to_vec() };
+    // one program per entry bucket the `years` SIZED row grades: the era its pond is on file, so a start whose
+    // screen was empty grades the legs' roll, not the screen's
+    let starts: Vec<chrono::NaiveDate> = sized_buckets(samples, bench, years, tuning, sz, top, spill)
+        .into_keys()
+        .filter_map(|b| chrono::NaiveDate::from_ymd_opt(b / 2, (b % 2 * 6 + 1) as u32, 1))
+        .collect();
+    let months: std::collections::BTreeSet<chrono::NaiveDate> = starts
+        .iter()
+        .flat_map(|s| (0..DCA_MONTHS).flat_map(|m| [m, m + ROLL_MONTHS]).filter_map(move |m| s.checked_add_months(chrono::Months::new(m))))
+        .collect();
+    // per month: the ladder's pool (growth-gated, value brake) in rank order, and the SIZED pool by growth score
+    let ranked: BTreeMap<chrono::NaiveDate, (Vec<&Sample>, Vec<&Sample>)> = months
+        .into_par_iter()
+        .map(|d| {
+            let pool = month_pool(books, d);
+            let quotes: Vec<&Quote> = pool.iter().map(|s| s.quote.as_ref()).collect();
+            let rows: Vec<_> = pool
+                .iter()
+                .zip(picks::growth_scores_ranked(&quotes, tuning))
+                .filter_map(|(s, sc)| Some((0, sc?, 0.0, 0.0, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield))))
+                .collect();
+            let by_tk: HashMap<&str, &Sample> = pool.iter().map(|s| (s.quote.ticker.as_str(), *s)).collect();
+            let mut kept = value_floor_trim(&rows, tuning.growth_value_floor_pct).remove(&0).unwrap_or_default();
+            kept.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap());
+            let mut sized: Vec<(f64, &Sample)> = pool.iter().filter_map(|s| Some((growth_score(&s.quote, tuning)?, *s))).collect();
+            sized.sort_by(|a, b| b.0.total_cmp(&a.0));
+            (d, (kept.iter().map(|x| by_tk[x.3.as_str()]).collect(), sized.into_iter().map(|x| x.1).collect()))
+        })
+        .collect();
+    let alive = |s: &Sample, d, end| series.get(s.quote.ticker.as_str()).is_some_and(|x| px_at(x, d).is_some() && px_at(x, end).is_some());
+    let top10 = |d, end| -> Option<Vec<(&str, f64)>> {
+        let v: Vec<&Sample> = ranked.get(&d)?.0.iter().copied().filter(|s| alive(s, d, end)).collect();
+        let trails: Vec<&[f64]> = v.iter().map(|s| s.trail.as_slice()).collect();
+        let p = corr_cap_rung(&v, &trails, VERDICT_TOP, tuning.growth_corr_cap);
+        Some(p.iter().map(|s| (s.quote.ticker.as_str(), 1.0 / p.len() as f64)).collect())
+    };
+    let sized = |d, end| -> Option<Vec<(&str, f64)>> {
+        let q: Vec<&Quote> = ranked.get(&d)?.1.iter().filter(|s| alive(s, d, end)).take(top).map(|s| s.quote.as_ref()).collect();
+        Some(crate::commands::size::sized_book(&q, tuning, sz, None, &Default::default()).into_iter().map(|(q, _, w, _)| (q.ticker.as_str(), w / 100.0)).collect())
+    };
+    let value = |b: &Vec<(&str, f64)>, from, to| book_multiple(b, from, to, series, bench, &legs);
+    let index = |from, to| Some(px_at(bench, to)? / px_at(bench, from)?);
+    let top_programs: BTreeMap<i32, Dca> =
+        starts.par_iter().filter_map(|s| Some((bucket(*s), dca_program(*s, top10, value, index, base, &tuning.cgt_hold_schedule)?))).collect();
+    let sized_programs: BTreeMap<i32, Dca> =
+        starts.par_iter().filter_map(|s| Some((bucket(*s), dca_program(*s, sized, value, index, base, &tuning.cgt_hold_schedule)?))).collect();
     println!(
-        "\n── ROLL-AFTER-{ROLL_YEARS}y (#310): sell the whole book at {ROLL_YEARS}y, pay {:.0}% on the gain, re-buy that bucket's screen; vs never-sell {years}y, both after tax ──",
+        "\n── DCA ROLL-AFTER-{ROLL_YEARS}y (#311): {DCA_MONTHS} equal monthly buys into that month's screen, all sold at {years}y; the roll sells each lot at {ROLL_YEARS}y, pays {:.0}% on the gain, re-buys that month's screen; vs never-sell, after tax, money-weighted ──",
         tuning.capital_gains_tax_pct
     );
-    let lane = |name: &str, hold: BTreeMap<i32, f64>, leg: BTreeMap<i32, f64>| {
-        let rows = roll_rows(&hold, &leg, t_hold, t_leg);
+    let lane = |name: &str, programs: BTreeMap<i32, Dca>| {
+        let cum = |w: f64| ((1.0 + dca_irr(w) / 100.0).powf(years as f64) - 1.0) * 100.0;
+        let rows: BTreeMap<i32, Vec<(f64, f64, f64)>> = programs.iter().map(|(b, p)| (*b, vec![(0.0, cum(p.roll), cum(p.hold))])).collect();
         let (roll, never, d, win, worst, early, late) = book_stats(&rows, 1, years)?;
         let med = median(book_multiples(&rows, 1).iter().map(|(r, h)| ann((r - 1.0) * 100.0, years) - ann((h - 1.0) * 100.0, years)).collect());
+        let idx = programs.values().map(|p| dca_irr(p.index)).sum::<f64>() / programs.len() as f64;
         println!(
-            "  {name:<7} roll {roll:+.1}%/yr  vs never-sell {never:+.1}%/yr  ->  {d:+.1} (med {med:+.1}) pts/yr   win {win:.0}% of {}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}",
+            "  {name:<7} roll {roll:+.1}%/yr  vs never-sell {never:+.1}%/yr  ->  {d:+.1} (med {med:+.1}) pts/yr   win {win:.0}% of {}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}   index DCA {idx:+.1}%/yr",
             rows.len()
         );
         Some(d)
     };
-    let sized = |s: &[Sample], y: i64| sized_buckets(s, bench, y, tuning, sz, top, spill).into_iter().map(|(b, x)| (b, x.book)).collect();
-    lane("top-10", top_books(samples, bench, years, tuning, VERDICT_TOP), top_books(legs, bench, ROLL_YEARS, tuning, VERDICT_TOP));
-    lane("SIZED", sized(samples, years), sized(legs, ROLL_YEARS))
+    lane("top-10", top_programs);
+    lane("SIZED", sized_programs)
 }
 
 /// Only the free SEC/income-statement factors are listed (roe, the round-107 survival levels and — since
@@ -6179,19 +6285,81 @@ mod tests {
         assert!(!tuning_fingerprint(&base).is_empty(), "an empty fingerprint compares unequal to everything -> drift warns forever");
     }
 
-    /// (#310) The roll's tax, by hand. Never-sell 4× nets 3.16× at 28% (216%); two 2× legs at 20% net 1.8×
-    /// each, 3.24× chained (224%). A 0.5× leg pays nothing and gets nothing back; the 3× leg after it pays on
-    /// its 2× gain (0.5 × 2.6 = 1.3×). A bucket whose re-bought leg is not on file drops out.
+    /// (#311) The first bar ON or after the date prices it; a zero close prices nothing; past the end is None.
     #[test]
-    fn roll_rows_taxes_each_sale_and_drops_a_missing_leg() {
-        let hold = BTreeMap::from([(0, 4.0), (1, 0.5), (2, 4.0)]);
-        let legs = BTreeMap::from([(0, 2.0), (20, 2.0), (1, 0.5), (21, 3.0), (2, 2.0)]);
-        let rows = roll_rows(&hold, &legs, 0.28, 0.2);
-        assert_eq!(rows.keys().copied().collect::<Vec<_>>(), [0, 1], "bucket 2 has no re-bought leg at 22");
+    fn px_at_reads_the_first_bar_on_or_after_and_refuses_a_zero_close() {
+        let ymd = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+        let s = (vec![ymd(2000, 1), ymd(2000, 2), ymd(2000, 3)], vec![10.0, 0.0, 30.0]);
+        assert_eq!(px_at(&s, ymd(2000, 1)), Some(10.0), "a bar ON the date is that date's price");
+        assert_eq!(px_at(&s, ymd(1999, 12)), Some(10.0));
+        assert_eq!(px_at(&s, ymd(2000, 2)), None, "a zero close prices nothing");
+        assert_eq!(px_at(&s, ymd(2000, 4)), None, "the series ended");
+    }
+
+    /// (#311) A buy on `d` sees each name's LATEST cutoff in (d − 6 months, d]: a cutoff exactly six months back
+    /// is out, one ON `d` is in, one after `d` is look-ahead and out, and a coin never enters.
+    #[test]
+    fn month_pool_takes_each_names_latest_cutoff_in_the_six_months_to_the_buy() {
+        let ymd = |y, m| NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+        let at = |tk: &str, date| Sample { date, realized: 0.0, relative: 0.0, quote: Arc::new(Quote::stub(tk, "1", "", tk)), fund: None, trail: Vec::new() };
+        let books = [at("OLD", ymd(2000, 1)), at("AAA", ymd(2000, 2)), at("BTC-USD", ymd(2000, 3)), at("AAA", ymd(2000, 5)), at("BBB", ymd(2000, 7)), at("LATE", ymd(2000, 8))];
+        let got: Vec<(&str, NaiveDate)> = month_pool(&books, ymd(2000, 7)).iter().map(|s| (s.quote.ticker.as_str(), s.date)).collect();
+        assert_eq!(got, [("AAA", ymd(2000, 5)), ("BBB", ymd(2000, 7))]);
+    }
+
+    /// (#311) Hand arithmetic: A ×3 at 30%, B ×2 at 20%, and the 50% remainder on two legs. L starts ON the buy
+    /// date, so it prices itself (×3); M starts later, so it borrows the benchmark (×1.5). 0.9 + 0.4 + 0.5 × 2.25 =
+    /// 2.425. A name with no series prices nothing.
+    #[test]
+    fn book_multiple_prices_names_and_the_remainder_on_its_legs() {
+        let ymd = |y| NaiveDate::from_ymd_opt(y, 1, 1).unwrap();
+        let two = |a, b| (vec![ymd(2000), ymd(2010)], vec![a, b]);
+        let series = HashMap::from([("A", two(10.0, 30.0)), ("B", two(5.0, 10.0))]);
+        let bench = (vec![ymd(1999), ymd(2000), ymd(2010)], vec![50.0, 100.0, 150.0]);
+        let (l, m) = (two(20.0, 60.0), (vec![ymd(2005), ymd(2010)], vec![1.0, 9.0]));
+        let legs = [(0.5, &l), (0.5, &m)];
+        let got = book_multiple(&[("A", 0.3), ("B", 0.2)], ymd(2000), ymd(2010), &series, &bench, &legs).unwrap();
+        assert!((got - 2.425).abs() < 1e-12, "{got}");
+        assert_eq!(book_multiple(&[("ZZZ", 0.5)], ymd(2000), ymd(2010), &series, &bench, &legs), None);
+    }
+
+    /// (#311) Every lot compounding at 10%/yr reads 10.0. A program ending with exactly what it put in reads at or
+    /// below zero: the bisection's first midpoint IS 0%, so that tie is what picks the side.
+    #[test]
+    fn dca_irr_recovers_the_rate_every_lot_compounded_at() {
+        let wealth = (0..96).map(|m| 1.1_f64.powf(f64::from(240 - m) / 12.0)).sum::<f64>();
+        assert!((dca_irr(wealth) - 10.0).abs() < 1e-9, "{}", dca_irr(wealth));
+        let flat = dca_irr(96.0);
+        assert!(flat <= 0.0 && flat > -1e-9, "{flat}");
+    }
+
+    /// (#311) Hand-summed program. Every leg grows 1 + months/120 (the index 1 + months/240). A sale held under 15y
+    /// pays 50% of the gain; the schedule excludes all of it from 15y. Never-sell: lots 0..=60 hold ≥ 180 months and
+    /// keep 3 − m/120 (sum 167.75); lots 61..=95 net 2 − m/240 (58.625); total 226.375. Roll: 1.5 at 10y times
+    /// 1.5 − m/240 on the re-bought leg is 2.25 − m/160 per lot, 187.5 in all. Index: 114.375 + 46.8125 = 161.1875.
+    /// Each book is priced from its own buy date, and every book is asked for the survivors at the program's end.
+    #[test]
+    fn dca_program_taxes_each_sale_on_its_own_hold() {
+        let (start, end) = (NaiveDate::from_ymd_opt(2000, 7, 1).unwrap(), NaiveDate::from_ymd_opt(2020, 7, 1).unwrap());
+        let months = |a: NaiveDate, b: NaiveDate| f64::from((b.year() - a.year()) * 12 + b.month() as i32 - a.month() as i32);
+        let rung = [crate::config::CgtRung { min_years: 15.0, excluded_pct: 100.0 }];
+        let p = dca_program(
+            start,
+            |d, e| {
+                assert_eq!(e, end);
+                Some(d)
+            },
+            |b: &NaiveDate, from, to| {
+                assert_eq!(*b, from);
+                Some(1.0 + months(from, to) / 120.0)
+            },
+            |from, to| Some(1.0 + months(from, to) / 240.0),
+            0.5,
+            &rung,
+        )
+        .unwrap();
         let close = |got: f64, want: f64| (got - want).abs() < 1e-9;
-        let (r0, r1) = (rows[&0][0], rows[&1][0]);
-        assert!(close(r0.1, 224.0) && close(r0.2, 216.0), "{r0:?}");
-        assert!(close(r1.1, 30.0) && close(r1.2, -50.0), "{r1:?}");
+        assert!(close(p.hold, 226.375) && close(p.roll, 187.5) && close(p.index, 161.1875), "{} {} {}", p.hold, p.roll, p.index);
     }
 
     /// (#309) The BUY NOW record line: longest horizon first, rows without a SIZED record skipped, and
@@ -6212,7 +6380,7 @@ mod tests {
             Some(
                 "  Graded record of this book (point-in-time backtest, past windows, not a forecast): \
                  20y +6.5%/yr (-0.1 vs index, worst -2.8, 44% in names, 21 windows, run 2026-09-13; \
-                 sell at 10y and re-buy the screen: +2.1/yr vs never-sell, after tax) · \
+                 buying monthly for 8y, selling each lot at 10y to re-buy the screen: +2.1/yr vs never-sell, after tax) · \
                  8y +6.5%/yr (-0.1 vs index, worst -2.8, 44% in names, 21 windows, run 2026-09-12)"
             )
         );
