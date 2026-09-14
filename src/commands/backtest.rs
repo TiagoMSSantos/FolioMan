@@ -3430,13 +3430,21 @@ fn report_roll(
     );
     let lane = |name: &str, programs: BTreeMap<i32, Dca>| {
         let cum = |w: f64| ((1.0 + dca_irr(w) / 100.0).powf(years as f64) - 1.0) * 100.0;
-        let rows: BTreeMap<i32, Vec<(f64, f64, f64)>> = programs.iter().map(|(b, p)| (*b, vec![(0.0, cum(p.roll), cum(p.hold))])).collect();
-        let (roll, never, d, win, worst, early, late) = book_stats(&rows, 1, years)?;
-        let med = median(book_multiples(&rows, 1).iter().map(|(r, h)| ann((r - 1.0) * 100.0, years) - ann((h - 1.0) * 100.0, years)).collect());
-        let idx = programs.values().map(|p| dca_irr(p.index)).sum::<f64>() / programs.len() as f64;
+        let row = |pick: fn(&Dca) -> (f64, f64)| {
+            let rows: BTreeMap<i32, Vec<(f64, f64, f64)>> = programs.iter().map(|(b, p)| (*b, vec![(0.0, cum(pick(p).0), cum(pick(p).1))])).collect();
+            let med = median(book_multiples(&rows, 1).iter().map(|(r, h)| ann((r - 1.0) * 100.0, years) - ann((h - 1.0) * 100.0, years)).collect());
+            Some((book_stats(&rows, 1, years)?, med))
+        };
+        let ((roll, never, d, win, worst, early, late), med) = row(|p| (p.roll, p.hold))?;
         println!(
-            "  {name:<7} roll {roll:+.1}%/yr  vs never-sell {never:+.1}%/yr  ->  {d:+.1} (med {med:+.1}) pts/yr   win {win:.0}% of {}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}   index DCA {idx:+.1}%/yr",
-            rows.len()
+            "  {name:<7} roll {roll:+.1}%/yr  vs never-sell {never:+.1}%/yr  ->  {d:+.1} (med {med:+.1}) pts/yr   win {win:.0}% of {}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}",
+            programs.len()
+        );
+        // (#312) the plan itself against the same € into the index
+        let ((hold, idx, x, win, worst, early, late), med) = row(|p| (p.hold, p.index))?;
+        println!(
+            "  {name:<7} never-sell {hold:+.1}%/yr  vs index DCA {idx:+.1}%/yr  ->  {x:+.1} (med {med:+.1}) pts/yr   win {win:.0}% of {}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}",
+            programs.len()
         );
         Some(d)
     };

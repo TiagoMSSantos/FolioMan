@@ -5489,6 +5489,62 @@ buy_heuristic:
   #   verdict. (h) A reading, not a trigger: nothing sells at 10y, and the first real roll date is 2036.
   #   REVERT: restore (#310)'s `top_books`, `roll_rows`, `report_roll` and 10y walk from 1019ab4; the `sim`
   #   flat block after the S&P line deletes on its own.
+  # (#312) ROUND 95: `max_name_pct` 12 RE-GRADED ON THE DCA RULER. PASSED, OPT-IN ONLY. The default stays 8.0.
+  #   Standing ask, plus "add the backtest and forward tests that are missing". (#311)'s live rows put the
+  #   equal-weight top-10 plan at +9.9%/yr never-sell and the SIZED plan at +7.7, against +6.5 index DCA; SIZED
+  #   leaves 56% of its money on the index legs. (#292)(a) refused 12 on the lump SIZED row: "do not re-probe
+  #   without a new objective". (#311)'s monthly plan is that objective. Picked by the user: fund the picks
+  #   harder, a profit bar with a worst-window guard, and on a pass an opt-in knob, not a new default.
+  #
+  #   WHAT CHANGED (ships whatever the verdict). (1) `backtest 20`'s DCA block prints, per lane, the plan itself
+  #   against the same € into the index: never-sell vs index DCA, with excess, median, win, worst and OOS halves
+  #   (`report_roll`'s `row` closure, `book_stats` over (hold, index)). The roll line loses its `index DCA`
+  #   suffix, which was the same number. (2) `sim` prints the equal-weight top-10 bought on (#311)'s flat ×1
+  #   cash, beside the flat line: `buy_event` with `sized` emptied buys the journal's top BOOK rows at equal
+  #   weight. Offline both read n/a, pinned in `sim_replays_the_journal_offline`. The fixture reads SIZED
+  #   never-sell +0.2 vs index DCA, top-10 +1.8, on frozen data.
+  #
+  #   BAR, written before either run, on the SIZED never-sell vs index DCA row, arm vs control: mean up AND
+  #   median up AND both OOS halves up AND worst no more than 1.0 pt/yr deeper. One arm, 12, no ladder. The
+  #   lump row, the roll Δ, the top-10 rows and `sim` are readings.
+  #   LIVE, `backtest 20 universe fund pit`, 2026-09-14, this config, one binary; the arm is the same file with
+  #   that one line changed (difflib: one line); 17 state md5s verified after each run:
+  #                                  control (8.0)                        arm (12.0)
+  #     SIZED never-sell vs index    +7.7 vs +6.5 -> +1.2 (med +0.9)      +8.2 vs +6.5 -> +1.7 (med +1.4)
+  #       win / worst / OOS          100% of 21 / +0.3 / +0.6/+1.7        100% of 21 / +0.3 / +0.9/+2.4
+  #     SIZED roll vs never-sell     +0.8 (med +1.2) worst -1.1           +0.9 (med +1.3) worst -1.2
+  #     lump 20y SIZED row           book +6.5 excess -0.1 worst -2.8     book +6.6 excess -0.1 worst -4.3
+  #                                  OOS -0.5/+0.1 deployed 44%           OOS -0.8/+0.5 deployed 59%
+  #     top-10 never-sell vs index   +9.9 vs +6.5 -> +3.4 (med +3.5), win 100%, worst +1.6, OOS +2.6/+4.2, both arms
+  #   The two outputs differ on those three SIZED lines and the wall time only: windows scored 1119/120 in both,
+  #   the top-10 lines match to the digit (no run noise), and the control reprints (#311)'s rows exactly.
+  #   VERDICT: PASS. Mean +0.5, median +0.5, OOS +0.3/+0.7, worst level. It closes 0.5 of the 2.2 pts/yr gap
+  #   to the equal-weight top-10.
+  #   FORWARD, `sim` on this job's journal with a probe base (percentages only):
+  #     flat ×1 every month instead: +3.0% vs the S&P 500 on that cash +1.5%  ->  +1.5 pp
+  #     equal-weight top-10 on that flat cash: +3.9% vs the S&P 500 on that cash +1.5%  ->  +2.4 pp
+  #   The journal's `sized` weights were struck at 8, so `sim` cannot replay 12; the top-10 line brackets it
+  #   (12 moves SIZED toward the top-10's 10% a name). A few months of journal, not a verdict.
+  #
+  #   OPT IN. The default stays 8.0 here and in `Sizing::default()`, and (#264)'s ceiling still governs the
+  #   default. To buy on 12, add this to your own config (`Sizing` is `serde(default, deny_unknown_fields)`, so
+  #   one key is a whole block):
+  #     sizing:
+  #       max_name_pct: 12.0
+  #   `size`, BUY NOW's weights and the paste-ready orders follow it; `screen` journals that book, so `sim`
+  #   replays it from then on. BUY NOW's graded-record line warns of sizing drift until `backtest 20`, `12`
+  #   and `8 universe fund pit` are rerun under it.
+  #
+  #   HONEST EDGES. (a) The lump row, one purchase at entry, still fails (#292)'s bar: worst -2.8 -> -4.3, early
+  #   half -0.5 -> -0.8. The pass is for money that goes in monthly; a lump sum carries that tail. (b) 21
+  #   overlapping programs, starts 1996H2-2006H2: one or two independent decisions. (c) Printed to 0.1; every
+  #   leg clears by >= 0.3 except worst, which is level. (d) The backtest passes no fund sectors ((#293)).
+  #   Live, the 25% sector cap binds through the tech funds, so part of what 12 frees can strand there, unseen
+  #   here. (e) Price-only, no FX or fees; (#311)'s edges (b)-(e) apply. (f) Emptying `sized` can move
+  #   `monthly_firsts` to an earlier line of the same month. (g) One arm: 12 is not an optimum, and grading 16
+  #   or 20 on this receipt would be (#120)'s argmax.
+  #   REVERT: to opt out, delete the key. Instruments: drop the second `row` call in `report_roll` (the
+  #   `index DCA` suffix is in 56df354) and the `true` call of `on_flat` in `sim::run`.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.
