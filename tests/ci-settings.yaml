@@ -1301,6 +1301,10 @@ sizing:
                       #   the `(#289)` block further down before touching this: the tiers are NESTED,
                       #   so this is in substance an EM overweight (~3.3% -> ~11.1% of gross), not
                       #   three independent markets. `false` is the proven, byte-identical revert.
+  equal_weight_book: false  # (#313) OPT-IN: buy the graded equal-weight top-10 instead of the vol-target
+                      #   book. Coins keep the crypto-budget weight above; the first 10 other names split
+                      #   the rest equally, with no name or sector cap, and no tracker is funded once the
+                      #   picks fill the book. Read the (#313) receipt. false = the SIZED book, unchanged.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -5545,6 +5549,67 @@ buy_heuristic:
   #   or 20 on this receipt would be (#120)'s argmax.
   #   REVERT: to opt out, delete the key. Instruments: drop the second `row` call in `report_roll` (the
   #   `index DCA` suffix is in 56df354) and the `true` call of `on_flat` in `sim::run`.
+  # (#313) ROUND 96: BUY THE GRADED BOOK, OPT-IN (`sizing.equal_weight_book`). PASSED. The default stays false.
+  #   Standing ask. (#312)'s rows put SIZED never-sell at +1.2 pts/yr over index DCA and the equal-weight
+  #   top-10 at +3.4 on the same 21 programs; SIZED holds 44% of gross in names. Admission stays closed: the
+  #   user ruled out `growth_min_cagr`, and (#24)/(#64) closed `growth_max_above_ma`. Picked by the user: buy
+  #   the top-10 book behind an opt-in knob; coins keep the weight SIZED gives them (the 5% crypto budget) and
+  #   the other names split the rest equally.
+  #
+  #   WHAT CHANGED. (1) `Sizing.equal_weight_book`, default false and not serialised when false, so every
+  #   `sizing_fp` journaled before this round still matches. (2) `size::sized_book`, when on: coin rows keep
+  #   the weight `size_weights` struck; the first `track::BOOK` other rows, in score order after the issuer
+  #   dedup, get (100 - coins) / n each, with no name or sector cap. One spelling, so `size`, BUY NOW, the
+  #   orders, the journaled `sized` (and so `sim`) and both backtest SIZED lanes follow it. (3) `buy_weights`
+  #   funds no tracker when the picks leave under 0.5% (an equal split sums to 100 only up to float dust; 0.5
+  #   is `size`'s own TOTAL cut), so no zero-quantity tracker order prints; `buy_list` counts the trackers it
+  #   funded and names a remainder only when one is left. (4) `size`'s header says which book it prints.
+  #   Pinned in `sized_book_equal_weight_book_buys_the_top_ten` and `buy_list_prints_picks_and_trackers`. The
+  #   goldens are unchanged: the knob is off there.
+  #
+  #   BAR, (#312)'s, written before either run, on the SIZED never-sell vs index DCA row, arm vs control: mean
+  #   up AND median up AND both OOS halves up AND worst no more than 1.0 pt/yr deeper. The lump row, the roll
+  #   Δ, the top-10 rows and `sim` are readings.
+  #   LIVE, `backtest 20 universe fund pit`, 2026-09-14, this config, one binary; the arm is the same file with
+  #   `equal_weight_book: true` inserted under `sizing:` (one line); 17 state md5s verified after each run:
+  #                                  control (off)                        arm (on)
+  #     SIZED never-sell vs index    +7.7 vs +6.5 -> +1.2 (med +0.9)      +9.8 vs +6.5 -> +3.3 (med +3.4)
+  #       win / worst / OOS          100% of 21 / +0.3 / +0.6/+1.7        100% of 21 / +1.6 / +2.6/+3.9
+  #     SIZED roll vs never-sell     +0.8 (med +1.2) win 76% worst -1.1   +0.8 (med +1.1) win 86% worst -1.1
+  #     lump 20y SIZED row           book +6.5 excess -0.1 worst -2.8     book +7.2 excess +0.6 worst -10.0
+  #                                  OOS -0.5/+0.1 deployed 44%           OOS -1.6/+2.6 deployed 100%
+  #     top-10 never-sell vs index   +9.9 vs +6.5 -> +3.4 (med +3.5), win 100%, worst +1.6, OOS +2.6/+4.2, both arms
+  #   Windows scored 1119/120 in both, the top-10 lines match to the digit (no run noise), and the control
+  #   reprints (#312)'s control rows exactly.
+  #   VERDICT: PASS. Mean +2.1, median +2.5, OOS +2.0/+2.2, worst 1.3 better. It closes 2.1 of the 2.2 pts/yr
+  #   gap to the equal-weight top-10. The arm's lump SIZED row prints the top-10 row to the digit.
+  #   FORWARD, `sim` on this job's journal with a probe base (percentages only):
+  #     the journaled books vs the same money into the S&P 500      ->  +1.7 pp
+  #     flat ×1 every month instead: +2.5% vs the S&P 500 on that cash +1.1%  ->  +1.3 pp
+  #     equal-weight top-10 on that flat cash: +3.4% vs the S&P 500 on that cash +1.2%  ->  +2.2 pp
+  #   The journal's `sized` was struck with the knob off, so `sim` cannot replay the arm; the top-10 line is
+  #   its nearest twin (it holds coins at 10% a name, the arm at their 5% budget). A few months, not a verdict.
+  #
+  #   OPT IN. The default stays false here and in `Sizing::default()`. To buy the graded book, add this to your
+  #   own config (`Sizing` is `serde(default, deny_unknown_fields)`, so one key is a whole block):
+  #     sizing:
+  #       equal_weight_book: true
+  #   `size`, BUY NOW's weights, the orders and the journal follow it. BUY NOW's graded-record line warns of
+  #   sizing drift until `backtest 20`, `12` and `8 universe fund pit` are rerun under it. (#312)'s
+  #   `max_name_pct` does not touch the equal rows, and the CORE trackers get nothing while the picks fill the book.
+  #
+  #   HONEST EDGES. (a) The lump row carries the top-10's tail: worst window -2.8 -> -10.0, early half -0.5 ->
+  #   -1.6. The pass is for money that goes in monthly; a lump sum sits in 10 names with no index cushion.
+  #   (b) 21 overlapping programs, starts 1996H2-2006H2: one or two independent decisions. (c) The backtest
+  #   holds no coins, so the coin sleeve is ungraded, and passes no fund sectors, so dropping the sector cap is
+  #   ungraded against a live book of tech funds. (d) The SIZED lane ranks by growth score over the top
+  #   `top_picks`; the top-10 lane adds the value brake and the corr cap. They print the same lump row here,
+  #   not by construction. (e) ~9.5% a name lifts (#264)'s 8% issuer ceiling, by the user's choice, for this
+  #   knob only; a window with 5 names puts ~19% in each. (f) Price-only, no FX or fees; (#311)'s edges
+  #   (b)-(e) apply.
+  #   REVERT: to opt out, delete the key. Code: the `equal_weight_book` field, the tail of `sized_book` after
+  #   `if !sz.equal_weight_book`, the `rest < 0.5` line in `buy_weights`, `buy_list`'s tracker count and
+  #   `size::run`'s header branch.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

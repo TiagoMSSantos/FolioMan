@@ -163,10 +163,10 @@ pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&
         return None;
     }
     let book = buy_weights(sized, core);
+    let trackers = book.len() - sized.len();
     let mut out = format!(
-        "BUY NOW — the 20-year book `size --picks` funds: {} pick(s) + {} tracker(s), % of gross. NOT advice",
+        "BUY NOW — the 20-year book `size --picks` funds: {} pick(s) + {trackers} tracker(s), % of gross. NOT advice",
         sized.len(),
-        core.len()
     );
     for (i, (t, w)) in book.iter().enumerate() {
         let what = match i.checked_sub(sized.len()).and_then(|j| core.get(j)) {
@@ -175,8 +175,8 @@ pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&
         };
         out += &format!("\n  {t:<10} {w:>5.1}%  {what}");
     }
-    if core.is_empty() {
-        let rest = 100.0 - book.iter().map(|(_, w)| w).sum::<f64>();
+    let rest = 100.0 - book.iter().map(|(_, w)| w).sum::<f64>();
+    if trackers == 0 && rest >= 0.5 {
         out += &format!("\n  ({rest:.1}% unallocated — no CORE tracker journalled to take it)");
     }
     Some(out)
@@ -187,6 +187,9 @@ pub(crate) fn buy_list(sized: &[(String, f64)], core: &[(usize, String, Option<&
 /// for the printed list and `screen`'s paste-ready orders, so the orders cannot buy another book.
 pub(crate) fn buy_weights(sized: &[(String, f64)], core: &[(usize, String, Option<&'static str>, Option<u8>)]) -> Vec<(String, f64)> {
     let rest = 100.0 - sized.iter().map(|(_, w)| w).sum::<f64>();
+    // (#313) picks that fill the book fund no tracker: an equal-weight book sums to 100 only up to float
+    // dust, which would print zero-quantity tracker orders. 0.5 is `run`'s own TOTAL line.
+    let core = if rest < 0.5 { &core[..0] } else { core };
     let tiers: Vec<Option<u8>> = core.iter().map(|(.., tier)| *tier).collect();
     let trackers = core.iter().map(|(_, t, ..)| t.clone()).zip(spill_split(rest, &tiers));
     sized.iter().cloned().chain(trackers).collect()
@@ -292,7 +295,25 @@ pub(crate) fn sized_book<'a>(
             .collect::<Vec<_>>(),
         sz,
     );
-    scored.into_iter().zip(weights).map(|((q, s), (w, cap))| (q, s, w, cap)).collect()
+    let book: Vec<_> = scored.into_iter().zip(weights).map(|((q, s), (w, cap))| (q, s, w, cap)).collect();
+    if !sz.equal_weight_book {
+        return book;
+    }
+    // (#313) the graded equal-weight book, opt-in: coins keep the crypto-budget weight struck above, the
+    // first `track::BOOK` other names split the rest equally, uncapped like the backtest's top-10 lane.
+    let coin = |q: &crate::core::Quote| crate::picks::asset_class(q) == 0;
+    let coins: f64 = book.iter().filter(|r| coin(r.0)).map(|r| r.2).sum();
+    let n = book.iter().filter(|r| !coin(r.0)).count().min(crate::commands::track::BOOK);
+    let mut seen = 0;
+    book.into_iter()
+        .filter_map(|(q, s, w, cap)| {
+            if coin(q) {
+                return Some((q, s, w, cap));
+            }
+            seen += 1;
+            (seen <= crate::commands::track::BOOK).then_some((q, s, (100.0 - coins) / n as f64, None))
+        })
+        .collect()
 }
 
 /// (#293) Yahoo's fund sector names (`fetch::pretty_sector`) against the GICS spelling the constituents
@@ -409,11 +430,18 @@ pub async fn run(args: Vec<String>) {
         return;
     }
 
-    println!("Suggested sizes — weight ∝ score ÷ volatility WITHIN a class budget, then capped (READ-ONLY, NOT advice):");
-    println!(
-        "  budget {:.0}/{:.0}/{:.0} stock/ETF/crypto (renormalised over the classes present) · max {:.1}%/issuer · max {:.1}%/sector\n",
-        sz.budget_stock, sz.budget_etf, sz.budget_crypto, sz.max_name_pct, sz.max_sector_pct,
-    );
+    if sz.equal_weight_book {
+        println!(
+            "Suggested sizes — (#313) equal-weight top-{}: coins at their crypto budget, the other names split the rest equally (READ-ONLY, NOT advice):\n",
+            crate::commands::track::BOOK
+        );
+    } else {
+        println!("Suggested sizes — weight ∝ score ÷ volatility WITHIN a class budget, then capped (READ-ONLY, NOT advice):");
+        println!(
+            "  budget {:.0}/{:.0}/{:.0} stock/ETF/crypto (renormalised over the classes present) · max {:.1}%/issuer · max {:.1}%/sector\n",
+            sz.budget_stock, sz.budget_etf, sz.budget_crypto, sz.max_name_pct, sz.max_sector_pct,
+        );
+    }
     println!("  {:<10} {:>7} {:>7} {:>7}  CAP", "TICKER", "SCORE", "VOL", "SIZE%");
     for &(q, s, w, cap) in &book {
         println!(
@@ -733,6 +761,43 @@ pub(crate) mod tests {
         assert_eq!(tag(&blind, "TECH.DE"), None, "no entry -> the fund is exempt: {blind:?}");
     }
 
+    /// (#313) `equal_weight_book`. Off: the vol-target book under its 8% name cap. On: the coin keeps
+    /// that same weight and the first `track::BOOK` other names split the rest equally, uncapped.
+    #[test]
+    fn sized_book_equal_weight_book_buys_the_top_ten() {
+        let tuning = config::BuyHeuristic::default();
+        let names = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta", "Theta", "Iota", "Kappa", "Lambda", "Mu"];
+        let mut quotes: Vec<crate::core::Quote> =
+            names.iter().enumerate().map(|(i, n)| scoring_quote(&format!("S{i}.DE"), n, 1120.0 - 20.0 * i as f64, 2.0)).collect();
+        quotes.push(scoring_quote("BTC-EUR", "Bitcoin", 900.0, 2.0));
+        let refs: Vec<&crate::core::Quote> = quotes.iter().collect();
+        let book = |sz: &config::Sizing, q: &[&crate::core::Quote]| -> Vec<(String, f64, Option<&'static str>)> {
+            sized_book(q, &tuning, sz, None, &Default::default()).iter().map(|(q, _, w, cap)| (q.ticker.clone(), *w, *cap)).collect()
+        };
+        let on = config::Sizing { equal_weight_book: true, ..config::Sizing::default() };
+        let coin_of = |b: &[(String, f64, Option<&'static str>)]| b.iter().find(|r| r.0 == "BTC-EUR").map(|r| r.1);
+
+        let off = book(&config::Sizing::default(), &refs);
+        let coin = coin_of(&off).expect("the coin clears the gate");
+        assert!(coin > 0.0 && off.iter().all(|r| r.1 <= 8.0 + 1e-9), "off: vol-target weights under the name cap: {off:?}");
+
+        let got = book(&on, &refs);
+        assert_eq!(coin_of(&got), Some(coin), "the coin keeps its weight: {got:?}");
+        let stocks: Vec<_> = got.iter().filter(|r| r.0 != "BTC-EUR").collect();
+        let want: Vec<String> = (0..10).map(|i| format!("S{i}.DE")).collect();
+        assert_eq!(stocks.iter().map(|r| r.0.clone()).collect::<Vec<_>>(), want, "the first 10 by score: {got:?}");
+        assert!(stocks.iter().all(|r| (r.1 - (100.0 - coin) / 10.0).abs() < 1e-9 && r.2.is_none()), "equal and uncapped: {got:?}");
+
+        let few: Vec<&crate::core::Quote> = refs[..3].iter().chain(refs.last()).copied().collect();
+        let coin = coin_of(&book(&config::Sizing::default(), &few)).expect("the coin clears the gate");
+        let got = book(&on, &few);
+        assert_eq!(got.len(), 4, "under 10 names every one is bought: {got:?}");
+        assert!(got.iter().filter(|r| r.0 != "BTC-EUR").all(|r| (r.1 - (100.0 - coin) / 3.0).abs() < 1e-9), "{got:?}");
+
+        // off serialises nothing, so a `sizing_fp` journaled before (#313) still matches the default
+        assert!(!crate::commands::backtest::tuning_fingerprint(&config::Sizing::default()).contains("equal_weight_book"));
+    }
+
     /// (#287) the line that names the vetted holds the spill does not fund. Graded on the three
     /// things a reader acts on: WHICH markets are missing, HOW MANY, and that nothing was dropped.
     #[test]
@@ -882,6 +947,19 @@ pub(crate) mod tests {
             )
         );
         assert_eq!(buy_list(&[], &[]), None);
+        // (#313) picks that fill the book fund no tracker and name no remainder; 0.5 left still does both.
+        let full = [("A.DE".to_string(), 60.0), ("B.DE".to_string(), 40.0)];
+        assert_eq!(buy_weights(&full, &core), full.to_vec());
+        assert_eq!(
+            buy_list(&full, &core).as_deref(),
+            Some(
+                "BUY NOW — the 20-year book `size --picks` funds: 2 pick(s) + 0 tracker(s), % of gross. NOT advice\n  \
+                 A.DE        60.0%  growth pick\n  B.DE        40.0%  growth pick"
+            )
+        );
+        let edge = [("A.DE".to_string(), 99.5)];
+        assert_eq!(buy_weights(&edge, &core).len(), 3, "0.5 left still funds the trackers");
+        assert!(buy_list(&edge, &[]).is_some_and(|l| l.ends_with("\n  (0.5% unallocated — no CORE tracker journalled to take it)")));
     }
 
     /// (#288) the unfunded census now reads the WHOLE vetted list — ~96 rows live, against the 17

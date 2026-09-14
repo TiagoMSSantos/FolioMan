@@ -76,6 +76,8 @@ pub struct Sizing {
     pub max_sector_pct: f64, // (P5) no GICS sector may exceed this % of gross. (#293) A stock counts its whole weight, a fund its weight x its TOP look-through sector's share (`size::fund_sectors`), a coin nothing; freed weight spills within its own class. Applied after the name cap and re-checked with it, since capping a sector hands weight to names that may then breach their own ceiling. 0 = off
     pub spill_names: usize,  // (#261) how many CORE trackers share the remainder the caps could not deploy. `(#253)` put all of it in ONE fund and said so in its own HONEST EDGES: "67% of gross in one wrapper is counterparty and provider risk that no gate in this repo measures". The CORE list is breadth-major, so the rows below index 0 are the SAME market from different issuers with different replication — splitting buys issuer diversification at ~2bp of blended TER, and buys nothing else, which is the whole claim. 1 = the exact pre-(#261) behaviour, and the revert. 0 is read as 1
     pub spill_per_tier: bool, // (#288) fund the best row of each DISTINCT breadth tier instead of the first `spill_names` rows. The CORE shortlist is breadth-major, so the walk-down always lands on three all-world trackers -- `screen::last_core`'s own doc says "three all-world trackers are one market". true spreads the same money over all-world/developed/emerging instead. `(#289)` made it the DEFAULT, and states the consequence plainly rather than selling it as diversification: the tiers are NESTED (developed + emerging partition all-world), so on the live ~30% remainder this is in substance an emerging-market overweight, ~3.3% -> ~11.1% of gross, and the all-world and developed legs are near-duplicates of each other. That is a judgement, it is not backtestable in this repo, and `false` is the exact pre-(#288) walk-down, byte-identical.
+    #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `sizing_fp` journaled before (#313) still matches
+    pub equal_weight_book: bool, // (#313) buy the graded book instead of the vol-target one: coins keep the crypto-budget weight `size_weights` strikes, the first `track::BOOK` other names split the rest equally, uncapped like the backtest's equal-weight top-10. false = the (#286) SIZED book, the DEFAULT. See the (#313) receipt
 }
 
 /// Defaults are the SHIPPED policy, not a neutral off-state — the one place in this file where a
@@ -92,6 +94,7 @@ impl Default for Sizing {
             max_sector_pct: 25.0,
             spill_names: 4, // (#292) 3 -> 4: `spill_per_tier` walks tiers in order, so the fourth row is the US tier. See the (#292) receipt
             spill_per_tier: true, // (#289) ON, per the doc block above: `size` has no backtest and no golden, so an off-by-default would just ship the fix disabled. `false` reverts to the (#261) walk-down.
+            equal_weight_book: false, // (#313) opt-in
         }
     }
 }
