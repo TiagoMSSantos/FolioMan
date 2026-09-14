@@ -51,6 +51,8 @@ config/settings.yaml
 
 # wide-backtest method verdict (written by `backtest universe`; the screen footer cites it)
 .backtest_verdict.json
+# its point-in-time twin (written by `backtest universe … pit`; screen's BUY NOW record line cites it)
+.backtest_sized.json
 
 # Trading212 tradable-instrument list (weekly cache; order-glue symbol resolution)
 .t212_instruments.json

@@ -2305,6 +2305,18 @@ pub async fn run(args: Vec<String>) {
         .unwrap_or_default();
     if let Some(list) = crate::commands::size::buy_list(&sized_now, &buy_core) {
         println!("\n{list}");
+        // (#309) what this book earned on the point-in-time backtest, every journaled horizon. Zero fetch;
+        // silent until a `backtest N universe fund pit` run journals a SIZED row.
+        let journal = crate::commands::backtest::parse_journal(
+            &std::fs::read_to_string(crate::config::data_path(crate::commands::backtest::SIZED_FILE)).unwrap_or_default(),
+        );
+        let (tuning_fp, sizing_fp) = (
+            crate::commands::backtest::tuning_fingerprint(&settings.buy_heuristic),
+            crate::commands::backtest::tuning_fingerprint(&settings.sizing),
+        );
+        if let Some(line) = crate::commands::backtest::sized_record_line(&journal, &tuning_fp, &sizing_fp) {
+            println!("{line}");
+        }
     }
 
     // (A2) GATE FUNNEL: the counts behind the tails below. Printed first because it is the only thing

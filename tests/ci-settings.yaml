@@ -5342,6 +5342,51 @@ buy_heuristic:
   #   max_name_pct 12 lifted deployed ~15 points. Nothing is re-graded here, and nothing re-opens on this
   #   receipt alone.
   #   REVERT: pass `&[]` from `run` (or delete the leg fetch); the row returns to the control column above.
+  # (#309) ROUND 92: `screen` PRINTS THE BOUGHT BOOK'S POINT-IN-TIME RECORD UNDER BUY NOW. No knob moved.
+  #   Standing ask plus "give good ideas to improve screen command". BUY NOW (#295) tells the reader what to
+  #   buy, but the only graded number `screen` printed was the method footer's equal-weight top-10, a
+  #   different book. Picked by the user: an expectation line under BUY NOW, point-in-time rows only.
+  #   Looked at, not built: the CORE trackers are already Acc (WEBN.DE, MXWO.L, HEMA.MI, SPXS.L), and
+  #   `resolve_t212` already prefers an ISIN's EUR line. OPEN EDGE, inert today: `track::core_section`,
+  #   `sim::buy_event` and `screen::journal_core_rows` call `spill_picks` without skipping sized tickers,
+  #   while `screen::last_core` skips them; they can differ only if a sized pick is also a CORE tracker.
+  #
+  #   WHY POINT-IN-TIME ONLY. The first draft journaled the SIZED row on the non-PIT wide run, the one that
+  #   feeds the footer. Same config, 2026-09-13, `backtest 20 universe fund`: SIZED +11.2%/yr, excess +3.9,
+  #   worst -0.9, OOS +1.7/+6.1, 37 windows, deployed 59% (top-10 +13.1, excess +5.9). The PIT run below
+  #   reads +6.5 and -0.1. That lane ranks today's survivors, so it would have printed four points of
+  #   survivorship next to the book the reader is told to buy. Refused before commit.
+  #
+  #   WHAT CHANGED. A wide `pit` run, at the same MIN_VERDICT_TICKERS floor, journals to its own
+  #   `.backtest_sized.json` (gitignored). Its rows carry `sized: SizedVerdict` (windows, book, excess, worst,
+  #   deployed, and `sizing_fp`, the `sizing:` block's fingerprint). `.backtest_verdict.json` never sees a
+  #   PIT row; its rows carry `sized: None` (`#[serde(default)]`, so older files still parse). `screen` reads
+  #   the file after the BUY NOW list, zero fetch, and prints every horizon longest first, each with its run
+  #   date, plus a rerun warning if `buy_heuristic` or `sizing:` moved since. No row -> no line. Pinned by
+  #   `sized_record_line_cites_sized_rows_and_both_fingerprints`. The method footer is unchanged.
+  #
+  #   LIVE, this config, `backtest 20 / 12 / 8 universe fund pit` then `screen`, state restored and all 17
+  #   md5s verified after:
+  #          SIZED book  excess  win  worst  OOS halves  deployed  windows
+  #     20y  +6.5        -0.1    48%  -2.8   -0.5/+0.1   44%       21
+  #     12y  +8.2        +1.8    83%  -2.5   +1.4/+2.1   53%       36
+  #      8y  +9.5        +2.7    89%  -4.7   +2.9/+2.6   59%       44
+  #   (#308)'s arm column to the digit. Under the BUY NOW list (12 picks + 4 trackers) `screen` printed:
+  #     Graded record of this book (point-in-time backtest, past windows, not a forecast): 20y +6.5%/yr
+  #     (-0.1 vs index, worst -2.8, 44% in names, 21 windows, run 2026-09-13) · 12y +8.2%/yr (+1.8 vs index,
+  #     worst -2.5, 53% in names, 36 windows, run 2026-09-13) · 8y +9.5%/yr (+2.7 vs index, worst -4.7, 59%
+  #     in names, 44 windows, run 2026-09-13)
+  #   READING. At the 20 years the ask names, the book the reader is told to buy is level with the S&P on
+  #   this backtest; the edge sits at 8-12y. The line now says so where the buy decision is made.
+  #
+  #   HONEST EDGES. (a) Silent until the three PIT backtests are run on the live data root; one holding only
+  #   a top-10 verdict prints nothing. (b) Rows are per horizon with their own dates, so a file can pair an
+  #   old 20y with a new 8y. (c) The warning covers `buy_heuristic` and `sizing:` only; a universe or other
+  #   settings change does not trip it. (d) The PIT pool is historical S&P 500 members plus funds, not the
+  #   pool `screen` ranks today, and the backtest passes no fund sectors ((#293)). (e) Past windows,
+  #   price-only; (#308)'s edges apply.
+  #   REVERT: delete the `SIZED_FILE` branch in `backtest::run` and the record block after `buy_list` in
+  #   `screen::run`; the file goes unread and nothing else moves.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

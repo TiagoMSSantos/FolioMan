@@ -67,6 +67,11 @@ const FUND_LOOKBACK_YRS: i64 = 5;
 /// the method's proof.
 pub(crate) const VERDICT_FILE: &str = ".backtest_verdict.json";
 
+/// (#309) The POINT-IN-TIME twin: wide `pit` runs journal here, each row carrying its SIZED record, and
+/// `screen` prints those under BUY NOW. Kept apart so a PIT number never restates the method footer's
+/// claim (see [`may_write_verdict`]), and a survivor-universe number never grades the book bought.
+pub(crate) const SIZED_FILE: &str = ".backtest_sized.json";
+
 /// Fewest resolved tickers a wide run must carry before it may overwrite [`VERDICT_FILE`]. Same floor
 /// `backtest_edge_holds` applies to its own sample: below it, the pool is a throttle artefact rather
 /// than the method's proof. A healthy run resolves ~4900.
@@ -183,6 +188,23 @@ pub(crate) struct Verdict {
     pub(crate) oos_early: f64,
     pub(crate) oos_late: f64,
     pub(crate) tuning_fp: String,
+    /// (#309) The same run's (#290) SIZED row, so `screen` can print the graded record of the book its
+    /// BUY NOW block tells the reader to buy. Only [`SIZED_FILE`]'s point-in-time rows carry one; `None` on
+    /// every [`VERDICT_FILE`] row and in files written before it existed.
+    #[serde(default)]
+    pub(crate) sized: Option<SizedVerdict>,
+}
+
+/// (#309) The SIZED row as journaled. `sizing_fp` fingerprints the `sizing:` block beside `tuning_fp`,
+/// because the caps and the spill move this row without touching a single `buy_heuristic` knob.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct SizedVerdict {
+    pub(crate) windows: usize,
+    pub(crate) book: f64,
+    pub(crate) excess: f64,
+    pub(crate) worst: f64,
+    pub(crate) deployed: f64,
+    pub(crate) sizing_fp: String,
 }
 
 fn legacy_top() -> usize {
@@ -196,7 +218,7 @@ pub(crate) type Journal = std::collections::BTreeMap<i64, Verdict>;
 
 /// The ONE fingerprint both surfaces use (backtest stamps it, screen compares it) — a tuning
 /// knob changed since the run means the cited numbers were never earned by the current settings.
-pub(crate) fn tuning_fingerprint(t: &BuyHeuristic) -> String {
+pub(crate) fn tuning_fingerprint(t: &impl serde::Serialize) -> String {
     serde_json::to_string(t).unwrap_or_default()
 }
 
@@ -243,17 +265,21 @@ fn merge_verdict(existing: Option<&str>, v: Verdict) -> Journal {
     j
 }
 
-fn write_verdict(v: Verdict) {
-    let path = config::data_path(VERDICT_FILE);
+/// (#309) `file` is [`VERDICT_FILE`] or [`SIZED_FILE`], and the message names the screen line each feeds.
+#[mutants::skip] // the fs shell `read_verdict`'s doc explains; taking `file` put its `-> ()` mutant in diff scope
+fn write_verdict(file: &str, v: Verdict) {
+    let path = config::data_path(file);
     let years = v.years;
     let j = merge_verdict(std::fs::read_to_string(&path).ok().as_deref(), v);
     let ok = serde_json::to_string(&j).ok().and_then(|s| std::fs::write(&path, s).ok());
+    let (what, reader) = if file == SIZED_FILE {
+        ("point-in-time record (SIZED row included)", "the BUY NOW record line cites every horizon")
+    } else {
+        ("method verdict", "the screen footer cites the longest")
+    };
     match ok {
-        Some(()) => eprintln!(
-            "backtest: {years}y method verdict journaled ({} horizons on file) — the screen footer cites the longest",
-            j.len()
-        ),
-        None => eprintln!("WARNING: could not write {VERDICT_FILE} — the screen's method line stays absent/stale"),
+        Some(()) => eprintln!("backtest: {years}y {what} journaled to {file} ({} horizons on file) — {reader}", j.len()),
+        None => eprintln!("WARNING: could not write {file} — the screen line it feeds stays absent/stale"),
     }
 }
 
@@ -287,6 +313,29 @@ pub(crate) fn verdict_line(v: &Verdict, drift: bool, show_n_eff: bool) -> String
         v.oos_early,
         v.oos_late
     )
+}
+
+/// (#309) The graded record of the book `screen`'s BUY NOW block prints: every journaled horizon's SIZED
+/// row, longest first, each with its own run date (a `backtest 8` run updates only its row). A row earned
+/// on other `buy_heuristic` or `sizing:` settings warns instead of passing as current. `None` when no row
+/// carries a SIZED record, which is every journal written before (#309).
+pub(crate) fn sized_record_line(j: &Journal, tuning_fp: &str, sizing_fp: &str) -> Option<String> {
+    let rows: Vec<(&Verdict, &SizedVerdict)> = j.values().rev().filter_map(|v| v.sized.as_ref().map(|s| (v, s))).collect();
+    if rows.is_empty() {
+        return None;
+    }
+    let drift = rows.iter().any(|(v, s)| v.tuning_fp != tuning_fp || s.sizing_fp != sizing_fp);
+    let cells: Vec<String> = rows
+        .iter()
+        .map(|(v, s)| {
+            format!(
+                "{}y {:+.1}%/yr ({:+.1} vs index, worst {:+.1}, {:.0}% in names, {} windows, run {})",
+                v.years, s.book, s.excess, s.worst, s.deployed, s.windows, v.date
+            )
+        })
+        .collect();
+    let tail = if drift { " — ⚠ settings changed since, rerun `folioman backtest N universe fund pit`" } else { "" };
+    Some(format!("  Graded record of this book (point-in-time backtest, past windows, not a forecast): {}{tail}", cells.join(" · ")))
 }
 
 /// One cutoff observation: the date it was scored on and the realized forward return over the holdout.
@@ -1657,7 +1706,7 @@ pub async fn run(args: Vec<String>) {
     } else {
         Vec::new()
     };
-    report_sized_book(&samples, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill);
+    let sized = report_sized_book(&samples, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill);
     if !spill.is_empty() {
         let name = |t: u8| spill_leg(t).and(SPILL_LEGS.get(usize::from(t))).map_or(bench_sym, |l| l.1);
         let legs: Vec<String> = tiers.iter().zip(&spill).map(|(t, (w, _))| format!("{} {:.0}%", name(*t), w * 100.0)).collect();
@@ -1671,9 +1720,21 @@ pub async fn run(args: Vec<String>) {
     // instead of ~4900, and that thin sample overwrote the journal just as surely as a watchlist run
     // would have — the same hazard the comment above warns about, reached by a different route. Hold
     // it to the same ≥500 floor `backtest_edge_holds` uses to decide its own sample is trustworthy.
-    if may_write_verdict(wide, pit, tickers.len()) {
-        if let Some((book, excess, win, worst, oos_early, oos_late, windows)) = verdict {
-            write_verdict(Verdict {
+    // (#309) A wide PIT run, held to the same floor, journals to its own file instead, SIZED record and
+    // all: that is the one `screen` cites under BUY NOW. The method footer's file never sees a PIT row.
+    let journal = if may_write_verdict(wide, pit, tickers.len()) {
+        Some(VERDICT_FILE)
+    } else {
+        if wide {
+            // say so — a silent non-write reads as "the journal is broken", not "this sample was too thin"
+            eprintln!("{}", no_verdict_reason(pit, tickers.len()));
+        }
+        (pit && may_write_verdict(wide, false, tickers.len())).then_some(SIZED_FILE)
+    };
+    if let (Some(file), Some((book, excess, win, worst, oos_early, oos_late, windows))) = (journal, verdict) {
+        write_verdict(
+            file,
+            Verdict {
                 date: chrono::Local::now().date_naive().to_string(),
                 years,
                 top: VERDICT_TOP,
@@ -1685,11 +1746,9 @@ pub async fn run(args: Vec<String>) {
                 oos_early,
                 oos_late,
                 tuning_fp: tuning_fingerprint(tuning),
-            });
-        }
-    } else if wide {
-        // say so — a silent non-write reads as "the journal is broken", not "this sample was too thin"
-        eprintln!("{}", no_verdict_reason(pit, tickers.len()));
+                sized: sized.filter(|_| pit),
+            },
+        );
     }
     // (round 112) the DIVERSIFICATION dimension: does de-correlating the held book beat plain rank order?
     report_corr_cap(&samples, &bench, years, tuning);
@@ -3151,8 +3210,9 @@ fn sized_buckets(
 }
 
 /// (#290) Prints the sized book on the JOURNALED row's columns. The stats are `book_stats`' own:
-/// each bucket becomes one row, and top-1 of a one-row bucket is that row. Diagnostic only; the
-/// journal and SHIP RULE stay on the equal-weight top-`VERDICT_TOP`.
+/// each bucket becomes one row, and top-1 of a one-row bucket is that row. Diagnostic only; SHIP RULE
+/// and the screen's method footer stay on the equal-weight top-`VERDICT_TOP`. (#309) A point-in-time run
+/// journals the row it returns to [`SIZED_FILE`], and `screen` cites it under BUY NOW.
 fn report_sized_book(
     samples: &[Sample],
     bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
@@ -3161,7 +3221,7 @@ fn report_sized_book(
     sz: &config::Sizing,
     top: usize,
     spill: &[(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))],
-) {
+) -> Option<SizedVerdict> {
     let sized = sized_buckets(samples, bench, years, tuning, sz, top, spill);
     let m: BTreeMap<i32, Vec<(f64, f64, f64)>> =
         sized.iter().map(|(bk, s)| (*bk, vec![(0.0, (s.book - 1.0) * 100.0, (s.spy - 1.0) * 100.0)])).collect();
@@ -3172,7 +3232,10 @@ fn report_sized_book(
             "all entries (SIZED)",
             sized.len(),
         );
+        // (#309) a point-in-time run journals this to SIZED_FILE, so `screen` can cite it under BUY NOW.
+        return Some(SizedVerdict { windows: sized.len(), book: b, excess: e, worst: wo, deployed, sizing_fp: tuning_fingerprint(sz) });
     }
+    None
 }
 
 /// Only the free SEC/income-statement factors are listed (roe, the round-107 survival levels and — since
@@ -5794,6 +5857,7 @@ mod tests {
             oos_early: 5.1,
             oos_late: 7.4,
             tuning_fp: "{\"a\":1}".into(),
+            sized: None,
         }
     }
 
@@ -6013,6 +6077,41 @@ mod tests {
         moved.growth_trend_weight += 0.01;
         assert_ne!(tuning_fingerprint(&base), tuning_fingerprint(&moved), "a moved knob must change the fingerprint");
         assert!(!tuning_fingerprint(&base).is_empty(), "an empty fingerprint compares unequal to everything -> drift warns forever");
+    }
+
+    /// (#309) The BUY NOW record line: longest horizon first, rows without a SIZED record skipped, and
+    /// drift on EITHER fingerprint warns. The `sizing:` half is the new one: a moved cap changes the
+    /// SIZED row with every `buy_heuristic` knob untouched.
+    #[test]
+    fn sized_record_line_cites_sized_rows_and_both_fingerprints() {
+        let sized = |years, date: &str| {
+            let mut v = stub_verdict(years, VERDICT_TOP);
+            v.date = date.into();
+            v.sized = Some(SizedVerdict { windows: 21, book: 6.5, excess: -0.1, worst: -2.8, deployed: 44.0, sizing_fp: "S".into() });
+            v
+        };
+        let j = Journal::from([(8, sized(8, "2026-09-12")), (12, stub_verdict(12, VERDICT_TOP)), (20, sized(20, "2026-09-13"))]);
+        let tf = "{\"a\":1}";
+        assert_eq!(
+            sized_record_line(&j, tf, "S").as_deref(),
+            Some(
+                "  Graded record of this book (point-in-time backtest, past windows, not a forecast): \
+                 20y +6.5%/yr (-0.1 vs index, worst -2.8, 44% in names, 21 windows, run 2026-09-13) · \
+                 8y +6.5%/yr (-0.1 vs index, worst -2.8, 44% in names, 21 windows, run 2026-09-12)"
+            )
+        );
+        let warn = " — ⚠ settings changed since, rerun `folioman backtest N universe fund pit`";
+        assert!(sized_record_line(&j, "moved", "S").unwrap().ends_with(warn), "a moved buy_heuristic knob must warn");
+        assert!(sized_record_line(&j, tf, "moved").unwrap().ends_with(warn), "a moved sizing knob must warn");
+        // A stale row WITHOUT a SIZED record is not this line's claim, so it must not warn here.
+        let mut old = stub_verdict(12, VERDICT_TOP);
+        old.tuning_fp = "older".into();
+        let mixed = Journal::from([(12, old), (20, sized(20, "2026-09-13"))]);
+        assert!(!sized_record_line(&mixed, tf, "S").unwrap().contains('⚠'));
+        assert_eq!(sized_record_line(&Journal::from([(12, stub_verdict(12, VERDICT_TOP))]), tf, "S"), None, "a pre-(#309) journal stays silent");
+        let mut moved = config::Sizing::default();
+        moved.max_name_pct += 1.0;
+        assert_ne!(tuning_fingerprint(&config::Sizing::default()), tuning_fingerprint(&moved), "a moved cap must change the sizing fingerprint");
     }
 
     /// (#91) The effective trial count, on the two window counts the finding names, plus the two things
