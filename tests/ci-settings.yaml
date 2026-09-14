@@ -5387,6 +5387,58 @@ buy_heuristic:
   #   price-only; (#308)'s edges apply.
   #   REVERT: delete the `SIZED_FILE` branch in `backtest::run` and the record block after `buy_list` in
   #   `screen::run`; the file goes unread and nothing else moves.
+  # (#310) ROUND 93: A 20y `backtest` GRADES SELLING THE BOOK AT 10y AND RE-BUYING THE SCREEN. PASSED. No knob moved.
+  #   Standing ask: more assets to buy now and hold 20+ years, most profit. Every admission, sizing, spill,
+  #   factor and exit lever is closed on file ((#290)-(#308)). One was never graded: the hold period itself.
+  #   On (#309)'s PIT rows the edge shrinks with the horizon, SIZED excess 8y +2.7, 12y +1.8, 20y -0.1
+  #   (top-10 +5.3 / +3.9 / +0.6), so a book held 20 years spends its second decade level with the S&P.
+  #   Nothing on file answered it: `after_tax_pair`'s yearly rotation taxes the SAME path with no re-screen,
+  #   `hold_period_sweep` grades signal decay, not a re-bought book, and (#65) closed its dissent as noise.
+  #   Picked by the user: a throwaway census first, a committed row only if it passes.
+  #
+  #   CENSUS. A throwaway build (never committed) dumped each bucket's top-10 and SIZED book multiples from
+  #   `backtest 20 universe fund pit` and `backtest 10 universe fund pit`, 2026-09-14, this config. For each
+  #   20y bucket b whose second 10y leg (b + 10y) is complete: hold = the 20y multiple after 28% on the gain;
+  #   roll = (10y multiple at b, after tax) x (10y multiple at b + 10y, after tax); both annualized over 20y.
+  #   Tax is `capital_gains_tax_pct` flat (the schedule ships empty), losses not credited.
+  #   BAR, written before either run: top-10 Δ = roll - hold with mean > 0 AND median > 0 AND both
+  #   chronological OOS halves > 0, on >= 12 windows. SIZED printed as a bound: a full roll also taxes the
+  #   index remainder. Era reading, never gating: a first 10y leg's excess <= the 20y excess + 0.4 means era.
+  #   after tax, %/yr   windows  hold   roll    Δ mean  Δ med  win  worst  OOS halves   index hold / roll
+  #     top-10          20       +6.37  +10.27  +3.90   +2.45  90%  -0.41  +3.95/+3.85  +5.60 / +5.37
+  #     SIZED           20       +5.53  +7.60   +2.07   +1.94  95%  -0.80  +1.70/+2.45  +5.60 / +5.37
+  #   VERDICT: PASS on top-10; the SIZED bound passes too. Top-10 pre-tax excess on those buckets: 20y +0.79,
+  #   first 10y leg +3.90, second +7.55, so HORIZON, not era. The index rolled the same way loses 0.23/yr to
+  #   the second tax bill, so the gain is the re-screen, not a tax artifact.
+  #   SANITY. The dump run reproduced (#309) (top-10 +7.2/+0.6, SIZED +6.5/-0.1/worst -2.8), so the dump was
+  #   inert. The two index legs chain to the 20y index within ±4% in most buckets (max -8%, bar alignment).
+  #   The 10y and 20y pools held the same count in 19 of 20 buckets. Crypto is out of both (`asset_class`).
+  #   Crediting losses moves Δ by 0.03 (top-10 +3.87, SIZED +2.10). The two dotcom entries carry the tail
+  #   (1999H2 +10.5, 2000H1 +11.1); without them top-10 Δ is still +3.13.
+  #
+  #   WHAT CHANGED. A `2 × ROLL_YEARS` run (`ROLL_YEARS` = 10, fixed a priori, never swept) walks its fetched
+  #   history a second time at 10y and prints ROLL-AFTER-10y under the SIZED row. Top-10 comes from
+  #   `top_books` (the TOP_LADDER pool at VERDICT_TOP), SIZED from `sized_buckets`, both composed by
+  #   `roll_rows` (pinned by `roll_rows_taxes_each_sale_and_drops_a_missing_leg`). A wide PIT run journals the
+  #   SIZED Δ as `SizedVerdict.roll` (`#[serde(default)]`, older files still parse), and `screen`'s BUY NOW
+  #   record line appends it to the 20y cell. Every other horizon walks once, as before. No sim cue.
+  #   LIVE CONTROL, committed code, same command, 2026-09-14, 94s wall, all 17 state md5s verified after:
+  #     top-10  roll +10.3%/yr  vs never-sell +6.4%/yr  ->  +3.9 (med +2.5) pts/yr  win 90% of 20  worst -0.4  OOS +3.9/+3.8
+  #     SIZED   roll +7.6%/yr  vs never-sell +5.5%/yr  ->  +2.1 (med +1.9) pts/yr  win 95% of 20  worst -0.8  OOS +1.7/+2.4
+  #   The census to the rounding. Every other line matches the dump run but the resolved count (6139 vs 6138).
+  #   READING. On this history a 20-year holder did better selling the screened book at year 10 and buying
+  #   that day's screen than holding it: +2.1/yr on the book `screen` sizes, after paying the tax twice.
+  #
+  #   HONEST EDGES. (a) 20 overlapping half-year windows from one 1996-2026 history are one or two
+  #   independent roll decisions; every second leg starts 2006H2-2016H2, a US-led run. (b) Flat 28%, losses
+  #   not credited; a real hold schedule moves both arms. (c) Price-only, and the roll's sale and re-buy carry
+  #   no FX or fees. (d) SIZED sells its index remainder too, which a real roll need not: a conservative bound.
+  #   (e) Survivorship: PIT pool and the same end date on both arms, but a 10y leg needs only 10y of history.
+  #   (f) The fixture reads -0.1 (win 32% of 19) on frozen data; the golden grades the arithmetic, not the
+  #   verdict. (g) No forward test exists until the first real roll date, 2036; `sim` and `track` model none.
+  #   (h) A 20y run now walks twice. (i) A reading, not a trigger: nothing sells anything at 10y.
+  #   REVERT: delete the `roll_samples` walk and the `report_roll` call in `backtest::run`; `roll` journals
+  #   None and the BUY NOW cell drops its clause.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

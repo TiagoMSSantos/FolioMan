@@ -71,6 +71,10 @@ pub(crate) const VERDICT_FILE: &str = ".backtest_verdict.json";
 /// `screen` prints those under BUY NOW. Kept apart so a PIT number never restates the method footer's
 /// claim (see [`may_write_verdict`]), and a survivor-universe number never grades the book bought.
 pub(crate) const SIZED_FILE: &str = ".backtest_sized.json";
+/// (#310) The roll point the census graded: sell the whole book after this many years, pay the tax, and
+/// re-buy that day's screen. Fixed a priori, never swept — picking the best of several is the (#120) argmax.
+/// A run at twice this horizon walks its history a second time to grade it ([`report_roll`]).
+const ROLL_YEARS: i64 = 10;
 
 /// Fewest resolved tickers a wide run must carry before it may overwrite [`VERDICT_FILE`]. Same floor
 /// `backtest_edge_holds` applies to its own sample: below it, the pool is a throttle artefact rather
@@ -205,6 +209,10 @@ pub(crate) struct SizedVerdict {
     pub(crate) worst: f64,
     pub(crate) deployed: f64,
     pub(crate) sizing_fp: String,
+    /// (#310) [`report_roll`]'s SIZED Δ: selling this book at [`ROLL_YEARS`] and re-buying the screen, minus
+    /// never selling, %/yr after tax. Only a `2 × ROLL_YEARS` row carries one.
+    #[serde(default)]
+    pub(crate) roll: Option<f64>,
 }
 
 fn legacy_top() -> usize {
@@ -328,8 +336,9 @@ pub(crate) fn sized_record_line(j: &Journal, tuning_fp: &str, sizing_fp: &str) -
     let cells: Vec<String> = rows
         .iter()
         .map(|(v, s)| {
+            let roll = s.roll.map_or(String::new(), |r| format!("; sell at {ROLL_YEARS}y and re-buy the screen: {r:+.1}/yr vs never-sell, after tax"));
             format!(
-                "{}y {:+.1}%/yr ({:+.1} vs index, worst {:+.1}, {:.0}% in names, {} windows, run {})",
+                "{}y {:+.1}%/yr ({:+.1} vs index, worst {:+.1}, {:.0}% in names, {} windows, run {}{roll})",
                 v.years, s.book, s.excess, s.worst, s.deployed, s.windows, v.date
             )
         })
@@ -373,11 +382,11 @@ enum Hist {
 impl Hist {
     /// The deferred parse. `None` = unparseable, or parsed to no bars — which is exactly the pair of
     /// conditions `fetch_history_long` folds into its own `None`, kept here so both paths drop the
-    /// same tickers.
-    fn parse(self, ticker: &str) -> Option<fetch::Chart> {
+    /// same tickers. (#310) Borrowed, so one fetch can be walked at two horizons.
+    fn parse(&self, ticker: &str) -> Option<fetch::Chart> {
         match self {
-            Hist::Raw(r) => fetch::parse_chart_raw(&r, ticker).filter(|c| !c.closes.is_empty()),
-            Hist::Parsed(c) => Some(c),
+            Hist::Raw(r) => fetch::parse_chart_raw(r, ticker).filter(|c| !c.closes.is_empty()),
+            Hist::Parsed(c) => Some(c.clone()),
         }
     }
 }
@@ -1168,8 +1177,10 @@ pub async fn run(args: Vec<String>) {
     let sector_of = &sector_of;
     let pit_spans = &pit_spans;
     let factor = settings.buy_heuristic.growth_fund_factor.as_str(); // (G) config-selected as-of factor
-    let per_ticker: Vec<Vec<Sample>> = fetched
-        .into_par_iter()
+    // (#310) the walk takes its horizon and BORROWS the fetch: a `2 × ROLL_YEARS` run walks the same history
+    // again at ROLL_YEARS for `report_roll`. Every other run walks once, exactly as before.
+    let walk = |years: i64| -> Vec<Vec<Sample>> { fetched
+        .par_iter()
         .flatten()
         .map(|(tk, hist, fund_rows, fx, insider_txns)| {
             // the deferred parse, now on all 8 threads. `None` (bad payload, or no bars) contributes an
@@ -1322,7 +1333,8 @@ pub async fn run(args: Vec<String>) {
             }
             out
         })
-        .collect();
+        .collect() };
+    let per_ticker = walk(years);
 
     let mut samples: Vec<Sample> = per_ticker.into_iter().flatten().collect();
     if too_few_samples(samples.len()) {
@@ -1342,6 +1354,10 @@ pub async fn run(args: Vec<String>) {
         tune_growth(&samples, tuning);
         return;
     }
+    // (#310) the roll's legs: the same walk at ROLL_YEARS, date-sorted like `samples`, so its books are the
+    // ones a `backtest 10` run ranks. Empty at every other horizon.
+    let mut roll_samples: Vec<Sample> = if years == 2 * ROLL_YEARS { walk(ROLL_YEARS).into_iter().flatten().collect() } else { Vec::new() };
+    roll_samples.sort_by_key(|s| s.date);
 
     // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket AND asset class. Pooling raw returns across cutoffs
     // that span different regimes makes the score race CALENDAR LUCK (a 2016 cutoff that mooned vs a
@@ -1712,6 +1728,7 @@ pub async fn run(args: Vec<String>) {
         let legs: Vec<String> = tiers.iter().zip(&spill).map(|(t, (w, _))| format!("{} {:.0}%", name(*t), w * 100.0)).collect();
         println!("  {:<28} (#308) the remainder above earns the spill's index legs, price-only: {}", "", legs.join(" · "));
     }
+    let roll = report_roll(&samples, &roll_samples, &bench, years, tuning, &settings.sizing, settings.top_picks, &spill);
     // (round 27) journal the unconditional method verdict — but ONLY from a wide (`universe`) run:
     // the watchlist's ~50-survivor sample is not the method's proof, and must never overwrite it.
     // The screen's method footer reads this file back.
@@ -1746,7 +1763,7 @@ pub async fn run(args: Vec<String>) {
                 oos_early,
                 oos_late,
                 tuning_fp: tuning_fingerprint(tuning),
-                sized: sized.filter(|_| pit),
+                sized: sized.filter(|_| pit).map(|s| SizedVerdict { roll, ..s }),
             },
         );
     }
@@ -3233,9 +3250,92 @@ fn report_sized_book(
             sized.len(),
         );
         // (#309) a point-in-time run journals this to SIZED_FILE, so `screen` can cite it under BUY NOW.
-        return Some(SizedVerdict { windows: sized.len(), book: b, excess: e, worst: wo, deployed, sizing_fp: tuning_fingerprint(sz) });
+        return Some(SizedVerdict { windows: sized.len(), book: b, excess: e, worst: wo, deployed, sizing_fp: tuning_fingerprint(sz), roll: None });
     }
     None
+}
+
+/// (#310) The ladder's top-`n` book per entry bucket, as its equal-weight terminal multiple: the pool
+/// [`report_vs_benchmark`] ranks (coins out, growth-gated, benchmarkable, value brake, corr cap), rebuilt
+/// for [`report_roll`], which needs it on the `ROLL_YEARS` legs that ladder never prints.
+fn top_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic, n: usize) -> BTreeMap<i32, f64> {
+    let (bd, bc) = bench;
+    let mut by_cutoff: BTreeMap<i32, Vec<&Sample>> = BTreeMap::new();
+    for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
+        by_cutoff.entry(bucket(s.date)).or_default().push(s);
+    }
+    let (mut rows, mut trail_of) = (Vec::new(), BTreeMap::<i32, HashMap<&str, &[f64]>>::new());
+    for (b, group) in &by_cutoff {
+        let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
+        for (s, scored) in group.iter().zip(picks::growth_scores_ranked(&quotes, tuning)) {
+            let Some(score) = scored else { continue };
+            let Some(bench_r) = benchmark_fwd(bd, bc, s.date, years) else { continue };
+            trail_of.entry(*b).or_default().insert(s.quote.ticker.as_str(), s.trail.as_slice());
+            rows.push((*b, score, s.realized, bench_r, s.quote.ticker.clone(), s.fund.as_ref().and_then(|f| f.peg_yield)));
+        }
+    }
+    value_floor_trim(&rows, tuning.growth_value_floor_pct)
+        .into_iter()
+        .filter_map(|(b, mut v)| {
+            v.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap());
+            let trails: Vec<&[f64]> = v.iter().map(|x| trail_of.get(&b).and_then(|m| m.get(x.3.as_str())).copied().unwrap_or(&[])).collect();
+            let p = corr_cap_rung(&v, &trails, n, tuning.growth_corr_cap);
+            (!p.is_empty()).then(|| (b, p.iter().map(|x| 1.0 + x.1 / 100.0).sum::<f64>() / p.len() as f64))
+        })
+        .collect()
+}
+
+/// (#310) One row per entry bucket `b` whose re-bought book at `b + 2 × ROLL_YEARS` (buckets are half-years)
+/// is on file: (roll, never-sell) after-tax cumulative %, in the (score, book, index) shape [`book_stats`]
+/// reads, so its "excess" is roll minus hold. Each sale pays `t` on its gain and no loss is credited — the
+/// census's pre-registered rule; crediting losses moved its Δ by 0.03.
+fn roll_rows(hold: &BTreeMap<i32, f64>, legs: &BTreeMap<i32, f64>, t_hold: f64, t_leg: f64) -> BTreeMap<i32, Vec<(f64, f64, f64)>> {
+    let net = |m: f64, t: f64| m - t * (m - 1.0).max(0.0);
+    hold.iter()
+        .filter_map(|(b, h)| {
+            let (first, second) = (legs.get(b)?, legs.get(&(b + 2 * ROLL_YEARS as i32))?);
+            Some((*b, vec![(0.0, (net(*first, t_leg) * net(*second, t_leg) - 1.0) * 100.0, (net(*h, t_hold) - 1.0) * 100.0)]))
+        })
+        .collect()
+}
+
+/// (#310) SELL AT [`ROLL_YEARS`] AND RE-BUY THE SCREEN, against never selling, both after tax. Each entry
+/// bucket's never-sell book pays tax once, at `years`; the roll pays at `ROLL_YEARS`, then buys the book the
+/// bucket `ROLL_YEARS` later bought and pays again at the end. Top-10 is the census's pass bar; SIZED is the
+/// book `size` funds, and its Δ is returned for the journal. Empty `legs` (any other horizon) prints nothing.
+#[allow(clippy::too_many_arguments)]
+fn report_roll(
+    samples: &[Sample],
+    legs: &[Sample],
+    bench: &(Vec<chrono::NaiveDate>, Vec<f64>),
+    years: i64,
+    tuning: &BuyHeuristic,
+    sz: &config::Sizing,
+    top: usize,
+    spill: &[(f64, &(Vec<chrono::NaiveDate>, Vec<f64>))],
+) -> Option<f64> {
+    if legs.is_empty() {
+        return None;
+    }
+    let base = tuning.capital_gains_tax_pct / 100.0;
+    let (t_hold, t_leg) = (cgt_rate(years, base, &tuning.cgt_hold_schedule), cgt_rate(ROLL_YEARS, base, &tuning.cgt_hold_schedule));
+    println!(
+        "\n── ROLL-AFTER-{ROLL_YEARS}y (#310): sell the whole book at {ROLL_YEARS}y, pay {:.0}% on the gain, re-buy that bucket's screen; vs never-sell {years}y, both after tax ──",
+        tuning.capital_gains_tax_pct
+    );
+    let lane = |name: &str, hold: BTreeMap<i32, f64>, leg: BTreeMap<i32, f64>| {
+        let rows = roll_rows(&hold, &leg, t_hold, t_leg);
+        let (roll, never, d, win, worst, early, late) = book_stats(&rows, 1, years)?;
+        let med = median(book_multiples(&rows, 1).iter().map(|(r, h)| ann((r - 1.0) * 100.0, years) - ann((h - 1.0) * 100.0, years)).collect());
+        println!(
+            "  {name:<7} roll {roll:+.1}%/yr  vs never-sell {never:+.1}%/yr  ->  {d:+.1} (med {med:+.1}) pts/yr   win {win:.0}% of {}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}",
+            rows.len()
+        );
+        Some(d)
+    };
+    let sized = |s: &[Sample], y: i64| sized_buckets(s, bench, y, tuning, sz, top, spill).into_iter().map(|(b, x)| (b, x.book)).collect();
+    lane("top-10", top_books(samples, bench, years, tuning, VERDICT_TOP), top_books(legs, bench, ROLL_YEARS, tuning, VERDICT_TOP));
+    lane("SIZED", sized(samples, years), sized(legs, ROLL_YEARS))
 }
 
 /// Only the free SEC/income-statement factors are listed (roe, the round-107 survival levels and — since
@@ -6079,6 +6179,21 @@ mod tests {
         assert!(!tuning_fingerprint(&base).is_empty(), "an empty fingerprint compares unequal to everything -> drift warns forever");
     }
 
+    /// (#310) The roll's tax, by hand. Never-sell 4× nets 3.16× at 28% (216%); two 2× legs at 20% net 1.8×
+    /// each, 3.24× chained (224%). A 0.5× leg pays nothing and gets nothing back; the 3× leg after it pays on
+    /// its 2× gain (0.5 × 2.6 = 1.3×). A bucket whose re-bought leg is not on file drops out.
+    #[test]
+    fn roll_rows_taxes_each_sale_and_drops_a_missing_leg() {
+        let hold = BTreeMap::from([(0, 4.0), (1, 0.5), (2, 4.0)]);
+        let legs = BTreeMap::from([(0, 2.0), (20, 2.0), (1, 0.5), (21, 3.0), (2, 2.0)]);
+        let rows = roll_rows(&hold, &legs, 0.28, 0.2);
+        assert_eq!(rows.keys().copied().collect::<Vec<_>>(), [0, 1], "bucket 2 has no re-bought leg at 22");
+        let close = |got: f64, want: f64| (got - want).abs() < 1e-9;
+        let (r0, r1) = (rows[&0][0], rows[&1][0]);
+        assert!(close(r0.1, 224.0) && close(r0.2, 216.0), "{r0:?}");
+        assert!(close(r1.1, 30.0) && close(r1.2, -50.0), "{r1:?}");
+    }
+
     /// (#309) The BUY NOW record line: longest horizon first, rows without a SIZED record skipped, and
     /// drift on EITHER fingerprint warns. The `sizing:` half is the new one: a moved cap changes the
     /// SIZED row with every `buy_heuristic` knob untouched.
@@ -6087,7 +6202,7 @@ mod tests {
         let sized = |years, date: &str| {
             let mut v = stub_verdict(years, VERDICT_TOP);
             v.date = date.into();
-            v.sized = Some(SizedVerdict { windows: 21, book: 6.5, excess: -0.1, worst: -2.8, deployed: 44.0, sizing_fp: "S".into() });
+            v.sized = Some(SizedVerdict { windows: 21, book: 6.5, excess: -0.1, worst: -2.8, deployed: 44.0, sizing_fp: "S".into(), roll: (years == 20).then_some(2.1) });
             v
         };
         let j = Journal::from([(8, sized(8, "2026-09-12")), (12, stub_verdict(12, VERDICT_TOP)), (20, sized(20, "2026-09-13"))]);
@@ -6096,7 +6211,8 @@ mod tests {
             sized_record_line(&j, tf, "S").as_deref(),
             Some(
                 "  Graded record of this book (point-in-time backtest, past windows, not a forecast): \
-                 20y +6.5%/yr (-0.1 vs index, worst -2.8, 44% in names, 21 windows, run 2026-09-13) · \
+                 20y +6.5%/yr (-0.1 vs index, worst -2.8, 44% in names, 21 windows, run 2026-09-13; \
+                 sell at 10y and re-buy the screen: +2.1/yr vs never-sell, after tax) · \
                  8y +6.5%/yr (-0.1 vs index, worst -2.8, 44% in names, 21 windows, run 2026-09-12)"
             )
         );

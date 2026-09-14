@@ -247,6 +247,10 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
    guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)
   all entries (SIZED)          book +7.3%/yr  excess +0.7  win 73%  worst -0.6  OOS +1.4/+0.0   (windows 22, deployed 15%) [diagnostic: the book `size` funds, top-20; remainder earns the index]
 
+── ROLL-AFTER-10y (#310): sell the whole book at 10y, pay 28% on the gain, re-buy that bucket's screen; vs never-sell 20y, both after tax ──
+  top-10  roll +8.2%/yr  vs never-sell +8.3%/yr  ->  -0.1 (med -1.9) pts/yr   win 32% of 19   worst -6.3   OOS -1.1/+0.8
+  SIZED   roll +6.2%/yr  vs never-sell +6.3%/yr  ->  -0.0 (med -0.5) pts/yr   win 32% of 19   worst -1.1   OOS -0.4/+0.3
+
 ── CORR-CAP probe: greedy top-10 by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held 20y ──
   cap  off  book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1  [cap off = plain top-10 book]
   cap  0.8  book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1

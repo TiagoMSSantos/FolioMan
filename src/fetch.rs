@@ -162,6 +162,7 @@ pub async fn throttle() {
 /// history alone, and `Quote::stub` leaves both blank, so every fund used to classify as a single stock
 /// (`quote_is_etf` reads exactly these two fields). They come from the same response the backtest
 /// already fetches — surfacing them costs no extra request.
+#[derive(Clone)] // (#310) the backtest walks one fetched chart at two horizons
 pub struct Chart {
     pub dates: Vec<NaiveDate>,
     pub closes: Vec<f64>,
