@@ -191,6 +191,16 @@ fn benchmark(events: &[Event]) -> (f64, f64, usize) {
     )
 }
 
+/// (#315) The same gross cashflow at Série E's best case: each event's € compounds at `core::serie_e_best_pct` from its
+/// buy date to `today`. An unparseable date is skipped, like an event with no benchmark leg, never read as day zero.
+fn serie_e_value(events: &[Event], today: chrono::NaiveDate) -> f64 {
+    events
+        .iter()
+        .filter_map(|e| chrono::NaiveDate::parse_from_str(&e.date, "%Y-%m-%d").ok().map(|d| (e.deployed, d)))
+        .map(|(deployed, d)| deployed * crate::core::serie_e_multiple((today - d).num_days() as f64 / 365.25))
+        .sum()
+}
+
 /// Aggregate every event's lots into one holding per ticker (a name bought in several months is
 /// ONE position): summed qty, summed cost €. Keyed by owned ticker so the map is free of the
 /// events' lifetime; run() prints from this same map, so the shown rows ARE the tested ones.
@@ -463,6 +473,19 @@ pub async fn run(_args: Vec<String>) {
         }
         _ => println!("  same money into the S&P 500 instead: n/a (no benchmark leg priced)"),
     }
+    // (#315) the buy lane's hurdle on the same cash: every buy compounding at Série E's best case since its own date.
+    let e_cost: f64 = led.events.iter().map(|e| e.deployed).sum();
+    let e_value = serie_e_value(&led.events, today);
+    let e_pct = if e_cost > 0.0 { 100.0 * (e_value / e_cost - 1.0) } else { 0.0 };
+    let e_vs = match pl_pct - e_pct {
+        _ if priced_cost <= 0.0 => "n/a (no position priced)".to_string(),
+        d if d >= 0.0 => format!("screen ahead by {d:+.1} pp"),
+        d => format!("screen behind by {d:+.1} pp"),
+    };
+    println!(
+        "  same money at Série E best case {:.1}%/yr: €{e_value:.0} ({e_pct:+.1}%)  →  {e_vs}",
+        crate::core::serie_e_best_pct()
+    );
     // (#311) the `backtest 20` DCA ruler's cashflow: the same books at ×1 every month (no journaled S&P state, so
     // `deploy_scaled_eur` falls back to base), against the S&P on that flat cash. (#312) then the equal-weight
     // top-10 on that cash. (#314) On the book's own buy date: `monthly_firsts` waits for a line carrying `sized`,
@@ -748,6 +771,25 @@ mod tests {
 
         // a zero ^GSPC close is not a price — the event skips like a missing leg
         assert_eq!(benchmark(&[mk(1000.0, Some(0.0))]).2, 0);
+    }
+
+    /// (#315) serie_e_value(): each buy compounds at Série E's best case from its own date; a same-day buy is worth its
+    /// cost, and an unparseable date is skipped rather than compounded from day zero.
+    #[test]
+    fn serie_e_value_compounds_per_buy() {
+        let mk = |date: &str, deployed: f64| Event {
+            date: date.into(),
+            mult: 1.0,
+            mult_known: true,
+            deployed,
+            fees: 0.0,
+            spx: None,
+            lots: vec![],
+        };
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let v = serie_e_value(&[mk("2025-07-16", 1000.0), mk("2026-07-16", 500.0), mk("2026-13-01", 700.0)], today);
+        let want = 1000.0 * 1.045_f64.powf(365.0 / 365.25) + 500.0;
+        assert!((v - want).abs() < 1e-9, "{v} vs {want}");
     }
 
     /// digest(): the screen's one-line fold of the whole ledger — same buy math as `run`

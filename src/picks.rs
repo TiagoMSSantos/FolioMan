@@ -10462,6 +10462,19 @@ mod tests {
             "arming the rank normalisation re-prices every additive term — that is a graded change with a receipt, never an edit"
         );
 
+        // (#315) the buy lane's promise: every growth row's trailing 8Y and 20Y leg beats Série E's best case
+        // compounded over the same window. Raising a floor is a graded change; dropping one under the hurdle
+        // breaks the promise, and `score_on_nominal` is what keeps both sides of the comparison nominal.
+        for (years, floor) in [(8.0, tuning.growth_min_8y_pct), (20.0, tuning.growth_min_20y_pct)] {
+            let hurdle = (core::serie_e_multiple(years) - 1.0) * 100.0;
+            assert!(floor >= hurdle, "{years}Y floor {floor} sits under Série E's best case +{hurdle:.2}% — may rise, never below it");
+        }
+        assert_eq!(
+            raw["inflation_adjust"]["score_on_nominal"].as_bool(),
+            Some(true),
+            "(#315) the Série E floors are nominal bars; scoring on HICP-deflated legs would silently tighten them"
+        );
+
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
         // an empty table, which no value assert above would notice.
         let mut strong = gate_fixture();

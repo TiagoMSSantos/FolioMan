@@ -124,6 +124,9 @@ pub mod markers {
     pub const LATE_RHO: &str = "late rho";
     pub const COHORT_N: &str = "n=";
     pub const PEER_RELATIVE: &str = "peer-relative";
+    /// (#315) The Série E best-case row: the share of start dates whose top-10 book beat 4.5%/yr. Starts with "vs",
+    /// never `VERDICT_ROW`, so the book row stays the first `top-10 ` line the gate finds.
+    pub const SERIE_E: &str = "vs Série E best case (top-10): beat";
     /// The three shipped hard gates the re-probe WARN sweeps, by their GATE SWEEP row labels.
     pub const ABLATED_GATES: &[&str] =
         &["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"];
@@ -144,6 +147,7 @@ pub const GATE_MARKERS: &[&str] = &[
     markers::ABLATED_GATES[0],
     markers::ABLATED_GATES[1],
     markers::ABLATED_GATES[2],
+    markers::SERIE_E,
 ];
 
 /// The basket sizes the ABSOLUTE top-N table grades, and therefore the set [`VERDICT_TOP`] was
@@ -2695,6 +2699,19 @@ fn report_vs_benchmark(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<
             "  top-{n:<2} book {:+.1}%/yr  vs S&P500 {:+.1}%/yr  ->  excess {:+.1} (med {:+.1}) pts/yr   win {win:.0}% of {m}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}   rode {zeros} zeros/{held} holds",
             mean(&book), mean(&spy), mean(&excess), median(excess.clone())
         );
+        // (#315) the buy lane's promise graded forward: the share of start dates whose top-10 book beat Série E's best
+        // case over the same years. CI ratchets this share (tests/network.rs); here it is a row, not a gate.
+        if n == VERDICT_TOP {
+            let k = crate::core::beats_serie_e(&multiples, years as f64);
+            println!(
+                "  {} {:.0}% of {m} windows ({k}) at {:.1}%/yr   median book {:.2}× vs {:.2}×",
+                markers::SERIE_E,
+                100.0 * k as f64 / m as f64,
+                crate::core::serie_e_best_pct(),
+                median(multiples.clone()),
+                crate::core::serie_e_multiple(years as f64)
+            );
+        }
     }
     // (#106) (round 3 §4) the DISTRIBUTION behind the ladder above. Every row printed so far quotes a
     // MEAN across buckets, and `VERDICT_TOP` is the argmax of one of those means over these 13 rungs.

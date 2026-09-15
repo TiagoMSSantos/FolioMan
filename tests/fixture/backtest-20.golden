@@ -46,10 +46,10 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
       cagr                       14 winners    12.0% of the missed wealth   sole blocker:    0 ( 0.0%)
       cagr-life                   5 winners     7.9% of the missed wealth   sole blocker:    4 ( 6.4%)
       -> at most 42.5% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
-      cagr        + cagr-life      5 winners     2.8% of the missed wealth   both near-miss:    0 ( 0.0%)
+      cagr        + cagr-life      4 winners     2.4% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr-life   + stretch        1 winners     1.5% of the missed wealth   both near-miss:    0 ( 0.0%)
       range       + 1Y+            1 winners     0.7% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 5.0% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:42% 2:5% 3:2% 4:9% 5:20% 6:21%
+      -> exactly-2-gate winners hold 4.6% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:42% 2:5% 3:2% 4:6% 5:8% 6:20% 7:17%
     why the ≥10× misses were missed (121 of 131 winners = 98% of their wealth; capture above is the rest):
       range                      43 winners    42.9% of the missed wealth   sole blocker:    1 ( 0.5%)
       history                    32 winners    33.8% of the missed wealth   sole blocker:   32 (33.8%)
@@ -58,13 +58,13 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
       1Y+                         4 winners     1.2% of the missed wealth   sole blocker:    4 ( 1.2%)
       stretch                     1 winners     0.2% of the missed wealth   sole blocker:    1 ( 0.2%)
       -> at most 42.5% of the missed wealth is reachable by loosening ONE gate; the rest fails 2+ gates at once
-      cagr        + cagr-life      7 winners     2.8% of the missed wealth   both near-miss:    0 ( 0.0%)
+      cagr        + cagr-life      6 winners     2.5% of the missed wealth   both near-miss:    0 ( 0.0%)
       range       + 1Y+            5 winners     2.1% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr        + 5Y+            5 winners     1.8% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr-life   + stretch        2 winners     1.8% of the missed wealth   both near-miss:    0 ( 0.0%)
       range       + 5Y+            1 winners     0.6% of the missed wealth   both near-miss:    0 ( 0.0%)
       cagr        + 1Y+            1 winners     0.4% of the missed wealth   both near-miss:    0 ( 0.0%)
-      -> exactly-2-gate winners hold 9.5% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:42% 2:9% 3:5% 4:8% 5:18% 6:17%
+      -> exactly-2-gate winners hold 9.3% of the missed wealth; by gate count (0 = out-ranked, unassessable excluded): 1:42% 2:9% 3:5% 4:6% 5:10% 6:17% 7:11%
   held book's LOSERS by factor (what we BOUGHT and lost, median per side):
     no factor fills both sides — no as-of fundamentals, or the book never lost money
     (0 of 24 factors filled both sides; a factor absent here is uncovered in this pool, not disproven.
@@ -218,6 +218,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   top-3  book +10.2%/yr  vs S&P500 +6.6%/yr  ->  excess +3.6 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.0   rode 0 zeros/38 holds
   top-5  book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
   top-10 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
+  vs Série E best case (top-10): beat 100% of 22 windows (22) at 4.5%/yr   median book 5.64× vs 2.41×
   top-15 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
   top-20 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds
   top-25 book +10.1%/yr  vs S&P500 +6.6%/yr  ->  excess +3.5 (med +1.7) pts/yr   win 73% of 22   worst -2.4   OOS +7.2/-0.1   rode 0 zeros/40 holds

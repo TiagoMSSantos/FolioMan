@@ -1143,7 +1143,21 @@ inflation_adjust:
                       #   own comment both claim. `core::horizon_changes` writes its legs into
                       #   `Quote.perf`, and `Quote.perf` is what `picks::perf_pct` hands to EVERY gate
                       #   and score term, so at `true` the whole growth lane is scored in REAL terms.
-  score_on_nominal: false # (#88) UNMEASURED — an unfitted judgement value, shipping OFF, which is
+  score_on_nominal: true  # (#315) ROUND 98 — ON: the Série E floors (growth_min_8y_pct/20y) are nominal bars,
+                      #   and the backtest that fitted every other bar is nominal too. Invisible to the
+                      #   backtest (always `infl: None`), so graded only by the live screen A/B.
+                      #   LIVE A/B 2026-09-15, one binary, ctl (floors off, false) vs arm (floors on, true):
+                      #   cleared 14 -> 27 names. ETF table 5 -> 16 rows: XUTC.L, SXLK.L, WTEC.L, ANXU.L (18.0-18.7%/yr
+                      #   real, near-misses on cagr 19) clear it nominally, with PUST.PA, ANX.PA, EQQQ.SW, XAID.L,
+                      #   MIBA.MI, FLXK.L, ESIF.DE. Stocks gain AP2.DE and 1YD.DE (PEG near-misses 1.60 / 1.63).
+                      #   Crypto unchanged. BUY NOW 13 -> 20 picks. The 8Y+/20Y+ floors sole-block nobody in the
+                      #   same run, so the whole breadth gain is THIS flip. Caveats: most added ETFs track the
+                      #   same US / world tech indices (one bet, several tickers), and the flip is ungraded
+                      #   forward, only returned to the units every bar was fitted in.
+                      #   THE % COLUMNS FOLLOW IT TOO, contrary to the note below: `picks::col_cell` reads
+                      #   `perf_pct`, so under true the tables print NOMINAL legs (ABEC.DE 5Y +139.6 -> +196.0).
+                      #   That is what makes a row's 8Y column directly comparable with Série E's +42.21%.
+                      #   ---- (#88) shipped OFF as an unfitted judgement value, which was
                       #   today's behaviour byte-for-byte. false = the score keeps reading whatever
                       #   `enabled` produced; true = the score reads a nominal copy while the % columns
                       #   keep the real one, i.e. `enabled` finally means only what it says.
@@ -2209,7 +2223,27 @@ buy_heuristic:
                                  #   (backtest.rs:1224/1456/1519/1560/1610/1728/1781/1872), so no run can vote on this number. `GATE_PROBES`
                                  #   pins it crypto-LIVE / etf+stock-INERT, which is the reachability claim, not an edge claim. If the crypto
                                  #   lane thins unexpectedly, THIS is the knob to take negative — and it no longer loosens equities when you do.
-  growth_min_8y_pct: -1e9        # MEASURED AND REJECTED 2026-08-03 (5-rung stress ladder, +25/+50/+100/+150 vs off): stays OFF.
+  growth_min_8y_pct: 42.22       # (#315) ROUND 98 — ARMED AT SÉRIE E'S BEST CASE. Not an edge knob any more: a PROMISE.
+                                 #   The operator's bar: every growth row must have grown more than Certificados de Aforro Série E at its
+                                 #   best case, 4.5%/yr (3.5 cap + 1.00 top bonus, `core::serie_e_best_pct`), compounded over the WHOLE
+                                 #   window — not year by year. 1.045^8 − 1 = +42.21%; 42.22 because `p <= floor` rejects and 42.2 sits under
+                                 #   it. `shipped_config_pin` refuses any value under the hurdle. Sibling: growth_min_20y_pct +141.18.
+                                 #   UNITS: the floor is nominal, so `inflation_adjust.score_on_nominal` flips true in the same round.
+                                 #   "ALWAYS" MEANS THE TRAILING LEG, WHERE ONE EXISTS. A name with under 8y of record passes this rung by the
+                                 #   shipped skip rule (the 5Y floor and CAGR gates still bind). Forward, no gate promises anything — so the
+                                 #   backtest prints `vs Série E best case (top-10): beat` and tests/network.rs ratchets that share per horizon.
+                                 #   MEASURED 2026-09-15, one binary, ctl (both floors off, score_on_nominal false) vs arm, `backtest N universe fund pit`:
+                                 #   EVERY BOOK ROW IDENTICAL. top-10 20y +7.2%/yr (21 windows) · 12y +10.3 (36) · 8y +12.2 (44); SIZED +6.5 / +8.1 / +9.5.
+                                 #   The only moves are pond drift (5880 vs 5882 tickers: 20y SIZED excess −0.2 vs −0.1, ETF lane 119 vs 120 windows) and
+                                 #   the missed-wealth diagnostics, which now count 8Y+ as a gate. +42.22 over 8y trims no graded book because the
+                                 #   gates already in force sit far above it: growth_min_cagr 19%/yr is +302% over 8y. So the floor costs nothing and
+                                 #   states the promise; it bites only a live name whose long record flatters a flat recent decade (AMGN/GILD above).
+                                 #   FORWARD, the same runs: the top-10 book beat Série E's best case from 76% of 20y start dates (16 of 21, median
+                                 #   book 5.23× vs 2.41×), 72% at 12y (26 of 36, 3.60× vs 1.70×), 77% at 8y (34 of 44, 2.42× vs 1.42×). CI's own args
+                                 #   (`backtest N universe`, no PIT, survivors) read 100% of 37 / 100% of 52 / 90% of 60, and tests/network.rs
+                                 #   ratchets those at 90 / 90 / 80. The point-in-time misses are the honest number: roughly 1 start date in 4 lost
+                                 #   to a savings certificate over the full hold, price-only and pre-tax on both sides.
+                                 #   ---- MEASURED AND REJECTED 2026-08-03 as an edge knob (5-rung stress ladder, +25/+50/+100/+150 vs off) ----
                                  #   Standalone it is noise — rank-1 is IDENTICAL to baseline at every rung AND every horizon, and at the
                                  #   20y king the pool barely moves (n 520 -> 520/520/520/518). Best rung (+150) bought 8y edge +47.8 -> +54.8
                                  #   while changing nothing about who ranks where.
@@ -2239,7 +2273,12 @@ buy_heuristic:
                                  #   never assembles in the survivors-only pool (a name failing +50%/8y while clearing the CAGR and
                                  #   range bars barely exists there). The backtest neither convicts nor acquits: arming it live at 50
                                  #   stays a judgement call riding the live receipt above.
-  growth_min_20y_pct: -1e9       # MEASURED INERT 2026-08-03 (5-rung stress ladder: +200/+400/+800/+1500 vs off). All four rungs returned
+  growth_min_20y_pct: 141.18     # (#315) ROUND 98 — ARMED at Série E's best case over 20y: 1.045^20 − 1 = +141.17%. Read the
+                                 #   growth_min_8y_pct receipt. LIVE-ONLY: the backtest pool carries no 20Y legs (below), so the 20y Série E
+                                 #   row grades the book forward, never this floor.
+                                 #   LIVE 2026-09-15 (screen, arm): 20Y+ fails 73 stocks / 0 ETFs / 0 crypto and SOLE-blocks nobody; no printed
+                                 #   row carries a 20Y leg at all, so today the floor states the promise and costs nothing.
+                                 #   ---- MEASURED INERT 2026-08-03 (5-rung stress ladder: +200/+400/+800/+1500 vs off). All four rungs returned
                                  #   BYTE-IDENTICAL numbers to baseline at all three horizons — edge delta +0.0, n unchanged 520/735/925,
                                  #   every book metric the same. Even a +1500% 20-year cumulative bar rejects nothing, because a 20Y leg the
                                  #   quote does not have is SKIPPED, never failed, and essentially nothing in the backtest pool carries one.

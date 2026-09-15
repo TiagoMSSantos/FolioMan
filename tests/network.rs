@@ -517,6 +517,29 @@ fn backtest_edge_holds() {
             ),
             None => eprintln!("backtest-gate {years}y — no null-model line parsed"),
         }
+        // (#315) the buy lane's promise graded forward: the share of start dates whose top-10 book beat Série E's best
+        // case (4.5%/yr) over the same years. A RATCHET, not a promise — at 20y the near-high entries lose to it. Each
+        // floor is the ship-day reading minus 10 pts (~2 windows at 20y) for run-to-run noise. Raise a floor when a
+        // round lifts its reading; never lower one to get green.
+        // Ship day 2026-09-15 on CI's own args: 20y 100% of 37 windows, 12y 100% of 52, 8y 90% of 60.
+        const SERIE_E_FLOOR: [(i64, f64); 3] = [(20, 90.0), (12, 90.0), (8, 80.0)];
+        let floor = SERIE_E_FLOOR.iter().find(|f| f.0 == years).map_or(0.0, |f| f.1);
+        match num_after(growth, markers::SERIE_E) {
+            Some(share) => {
+                assert!(
+                    share >= floor,
+                    "{years}y: only {share:.0}% of start dates' top-10 book beat Série E's best case, under the ratchet \
+                     floor {floor:.0}% — the book now loses to a savings certificate more often. Fix the change, or \
+                     measure and justify a new floor in the (#315) receipt"
+                );
+                eprintln!("backtest-gate {years}y Série E share {share:.0}% (floor {floor:.0}%)");
+            }
+            None if forced => panic!(
+                "{years}y: GROWTH completed but printed no `{}` row — the Série E ratchet was skipped",
+                markers::SERIE_E
+            ),
+            None => eprintln!("backtest-gate {years}y — no Série E row parsed"),
+        }
         // whole out-of-sample backwards (BOTH halves negative) = the edge doesn't generalize -> collapse.
         match (num_after(growth, markers::EARLY_RHO), num_after(growth, markers::LATE_RHO)) {
             (Some(early), Some(late)) => {

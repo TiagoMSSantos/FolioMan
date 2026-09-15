@@ -115,6 +115,24 @@ pub fn ca_cumulative_gain(base: f64, premium: &[(i64, f64)], years: i64) -> f64 
     (factor - 1.0) * 100.0
 }
 
+/// (#315) Série E's best case as a flat %/yr: its cap plus its top bonus band (3.5 + 1.00 = 4.5). E never pays it past
+/// its 10y prazo; the buy lane's hurdle assumes it does, forever. Read by the ci-settings pin, `backtest` and `sim`.
+pub fn serie_e_best_pct() -> f64 {
+    let e = CA_SERIES.iter().find(|s| s.name == "E").expect("Série E is a CA_SERIES row");
+    e.cap.expect("Série E is capped") + e.premium.last().map_or(0.0, |b| b.1)
+}
+
+/// (#315) €1 compounded at [`serie_e_best_pct`] for `years` (fractional years fine).
+pub fn serie_e_multiple(years: f64) -> f64 {
+    (1.0 + serie_e_best_pct() / 100.0).powf(years)
+}
+
+/// (#315) How many held-book multiples over `years` strictly beat [`serie_e_multiple`]. Equal is not a win.
+pub fn beats_serie_e(multiples: &[f64], years: f64) -> usize {
+    let hurdle = serie_e_multiple(years);
+    multiples.iter().filter(|m| **m > hurdle).count()
+}
+
 /// Yahoo ticker suffix -> market country (listing venue, not legal domicile).
 fn suffix_country(suf: &str) -> Option<&'static str> {
     Some(match suf {
@@ -8322,4 +8340,15 @@ mod tests {
         assert_eq!(ca_premium_range(&[(1, 2.0)]), "+2.00%");
         assert_eq!(ca_premium_range(&[(1, 0.5), (3, 1.0), (5, 2.5)]), "+0.50→+2.50%");
     }
+}
+
+#[test]
+fn serie_e_hurdle() {
+    // (#315) the buy lane's hurdle: E's 3.5% cap + its 1.00 top band, compounded over the whole window
+    assert_eq!(serie_e_best_pct(), 4.5);
+    assert!((serie_e_multiple(8.0) - 1.422101).abs() < 1e-6, "{}", serie_e_multiple(8.0));
+    assert!((serie_e_multiple(20.0) - 2.411714).abs() < 1e-6, "{}", serie_e_multiple(20.0));
+    let h = serie_e_multiple(8.0);
+    // strictly beats: the window AT the hurdle is not a win, one under it never counts
+    assert_eq!(beats_serie_e(&[h, h + 1e-9, h + 1.0, h + 2.0, 1.0], 8.0), 3);
 }

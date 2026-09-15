@@ -16,7 +16,7 @@
 //! that changed, the row that vanished and the row that appeared.
 //!
 //! IT DOUBLES AS THE MARKER CONTRACT, and that is now an ASSERTION rather than a paragraph — see
-//! `gate_markers_are_all_in_the_golden` below, which checks all 14 of `backtest::GATE_MARKERS`
+//! `gate_markers_are_all_in_the_golden` below, which checks all 15 of `backtest::GATE_MARKERS`
 //! against the 12y golden. This paragraph used to make the claim in prose and name 7 of the 14;
 //! nothing executable enforced it, and `tests/network.rs` held its own second copy of the strings.
 //! Renaming a report line therefore means re-blessing this golden, and the diff is the review.
