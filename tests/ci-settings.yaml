@@ -1315,10 +1315,13 @@ sizing:
                       #   the `(#289)` block further down before touching this: the tiers are NESTED,
                       #   so this is in substance an EM overweight (~3.3% -> ~11.1% of gross), not
                       #   three independent markets. `false` is the proven, byte-identical revert.
-  equal_weight_book: true   # (#316) ROUND 99 — ON: buy the graded equal-weight top-10 instead of the vol-target
-                      #   book. Coins keep the crypto-budget weight above; the first 10 other names split
-                      #   the rest equally, with no name or sector cap, and no tracker is funded once the
+  equal_weight_book: true   # (#316) ROUND 99 — ON: buy the graded equal-weight book instead of the vol-target
+                      #   book. Coins keep the crypto-budget weight above; the first `book_names` other names
+                      #   split the rest equally, with no name or sector cap, and no tracker is funded once the
                       #   picks fill the book. Read the (#313) and (#316) receipts. false = the SIZED book.
+  book_names: 20      # (#317) ROUND 100 — how many names that book buys, in score order. 10 = the (#313)/(#316)
+                      #   top-10 and the code default; 20 graded no worse than 10 on the 20y fund pit DCA row.
+                      #   Read the (#317) receipt. 0 is read as 1.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -5754,6 +5757,64 @@ buy_heuristic:
   #   -17.0) on its 200-ticker sample; the fixture pins code, not the market.
   #   REVERT: set the key false and drop the `shipped_config_pin` assert and both `network.rs` ratchets (the knob-off
   #   book reads +4.0 on CI's args, under the 4.4 floor); re-bless the five goldens.
+  # (#317) ROUND 100: WIDEN THE GRADED BOOK FROM 10 TO 20 NAMES (`sizing.book_names`). PASSED.
+  #   Standing ask: more good assets to buy now and hold 20+ years, most profit; add the missing backtest and
+  #   forward tests. Admission stays closed. Picked by the user: let (#316)'s equal-weight book buy the top-20
+  #   instead of the top-10, graded "no worse than 10".
+  #
+  #   WHAT CHANGED. (1) `Sizing.book_names`, default 10 and not serialised at 10, so every `sizing_fp` journaled
+  #   before still matches; `Sizing::book_cut` reads 0 as 1. `size::equal_weights` takes that width instead of
+  #   `track::BOOK`, so `size`, BUY NOW, the orders, the journaled `sized`, both backtest SIZED lanes and `sim`'s
+  #   flat-cash replay buy the same N. `track::BOOK` still sizes screen's stability and rank footers. (2)
+  #   `book_names: 20` here. (3) Pinned in `equal_weights_splits_names_keeps_coins`, a 20-wide arm and the
+  #   10-vs-20 fingerprint in `sized_book_equal_weight_book_buys_the_top_ten`, `book_cut_reads_zero_as_one` and
+  #   `shipped_config_pin`. (4) No golden moves: every fixture golden prints its top-10 and top-20 rows to the
+  #   digit (the 200-ticker sample never fills ten names a window), so the unit tests alone pin the width.
+  #   `tests/network.rs` floors unchanged (4.4 pts/yr, 90%): the reading fell, so none rose.
+  #
+  #   BAR, pre-registered, SIZED never-sell vs index DCA, `backtest 20 universe fund pit`, arm vs control: mean
+  #   and median no more than 0.3 pts/yr lower AND both OOS halves no more than 0.5 lower AND worst no more than
+  #   1.0 deeper AND, on CI's args, the arm's SIZED DCA row >= +4.4 with its Série E share >= 90%. A fail meant
+  #   revert. LIVE, 2026-09-15, one binary; control = HEAD's file (10), arm = the same plus `book_names: 20`;
+  #   17 state md5s verified after every run:
+  #                                  control (10)                         arm (20)
+  #     SIZED never-sell vs index    +9.8 vs +6.5 -> +3.3 (med +3.4)      +9.7 vs +6.5 -> +3.2 (med +3.3)
+  #       win / worst / OOS          100% of 21 / +1.6 / +2.6/+3.9        100% of 21 / +1.7 / +2.6/+3.8
+  #     SIZED beat Série E (DCA)     100% of 21                           100% of 21
+  #     SIZED roll vs never-sell     +0.9 (med +1.1) win 86% worst -1.1   +0.9 (med +1.0) win 86% worst -0.8
+  #     lump 20y SIZED row           book +7.2 excess +0.6 win 52%        book +7.3 excess +0.7 win 57%
+  #                                  worst -10.0 OOS -1.6/+2.6            worst -10.0 OOS -1.4/+2.6
+  #   Windows scored 1119/120 vs 1119/119, and the width-blind top-10 roll row reads +1.3 vs +1.5: run noise of
+  #   that size.
+  #   VERDICT: PASS. Mean -0.1, median -0.1, OOS 0.0/-0.1, worst +0.1; the Série E share holds at 100%.
+  #   `universe fund pit`, control vs arm: 12y SIZED lump excess +3.4 -> +3.5 (worst -6.4 both), 8y +4.3 -> +4.5
+  #   (worst -5.5 both, win 82% -> 84%). The PIT pool holds about 15 names a window: the top-15 and top-20 lump
+  #   rows print to the digit at 20, 12 and 8y.
+  #   CI's own args (`backtest N universe`), arm vs the same run's top-10 rows: 20y DCA +5.2 (med +5.6) vs +5.4
+  #   (med +5.9), worst +1.2 both, OOS +4.5/+5.7 vs +4.6/+6.2, Série E 100% of 37; lump SIZED excess +5.6 vs +5.9
+  #   at 20y, +6.2 vs +6.5 at 12y, +6.4 vs +7.0 at 8y, worst unchanged. On these survivor-biased args ranks
+  #   11-20 cost 0.2-0.6 pts/yr; on the PIT pool they cost nothing measurable.
+  #   LIVE `screen`, arm vs (#316)'s run the same day: the funnel does not move (cleared 27 of 4961 vs 27 of
+  #   4968). BUY NOW goes from 12 picks to 20: the same ten names at 5.3% each instead of 9.5%, the coins at
+  #   2.6 + 2.4, and eight more: WTEC.L, EQQQ.SW, XLKS.L, IUIT.L, XAID.L, MIBA.MI, ANXU.L, SMH.L. Seven of the
+  #   eight are tech funds: the book now holds four Nasdaq-100 wrappers (PUST.PA, ANX.PA, EQQQ.SW, ANXU.L) and
+  #   three US tech-sector ones (SXLK.L, XLKS.L, IUIT.L), beside NVD.DE, 1YD.DE, KLA.DE and AP2.DE.
+  #   FORWARD, `sim` (percentages only), R94's file with and without `book_names: 20`: identical to the digit,
+  #   +2.6% vs the S&P 500 +1.1% (+1.5 pp), +2.2 pp over Série E's best case, `equal_weight_book on that flat
+  #   cash` +1.9% vs +1.0% (+0.9 pp). Inert by construction today: the one journaled `sized` line (2026-09-13)
+  #   carries ten names, so a width of 20 re-splits nothing until `screen` journals a wider book.
+  #
+  #   HONEST EDGES. (a) This buys breadth, not graded return: every PIT reading moved by 0.2 pts/yr or less, and
+  #   the survivor-biased CI args read the wider book lower at every horizon. (b) More tickers, not more
+  #   markets: seven of the eight added names are tech funds, and four Nasdaq-100 plus three US tech-sector
+  #   wrappers sit side by side with no sector cap. Each name's weight about halves; the worst windows did not
+  #   move. (c) The PIT pool binds near 15
+  #   names a window while live clears 27, so the live book's ranks 16-20 are ungraded. (d) (#316)'s edges stand:
+  #   no sector cap, no tracker cushion, coins ungraded, price-only. (e) `sizing_fp` shifts, so BUY NOW's record
+  #   line warns until `backtest 20`, `12` and `8 universe fund pit` re-journal. (f) `track::BOOK` footers stay 10.
+  #   (g) The goldens cannot see the width, and `sim` cannot until a wider book is journaled (see above).
+  #   REVERT: delete `book_names: 20` and its `shipped_config_pin` assert. The code default is the top-10 book;
+  #   the code revert is `equal_weights` back on `track::BOOK` and the `book_names` field and `book_cut` deleted.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

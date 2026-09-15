@@ -10477,7 +10477,12 @@ mod tests {
         assert_eq!(
             raw["sizing"]["equal_weight_book"].as_bool(),
             Some(true),
-            "(#316) BUY NOW buys the graded equal-weight top-10; tests/network.rs ratchets the 20y DCA rows of that book"
+            "(#316) BUY NOW buys the graded equal-weight book; tests/network.rs ratchets the 20y DCA rows of that book"
+        );
+        assert_eq!(
+            raw["sizing"]["book_names"].as_u64(),
+            Some(20),
+            "(#317) that book is the top-20; the 20y fund pit DCA row graded it no worse than the top-10"
         );
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from

@@ -300,17 +300,17 @@ pub(crate) fn sized_book<'a>(
         return book;
     }
     // (#313) the graded equal-weight book, opt-in: coins keep the crypto-budget weight struck above, the
-    // first `track::BOOK` other names split the rest equally, uncapped like the backtest's top-10 lane.
+    // first `book_names` (#317) other names split the rest equally, uncapped like the backtest's top-10 lane.
     let coin = |q: &crate::core::Quote| crate::picks::asset_class(q) == 0;
-    let eq = equal_weights(&book.iter().map(|r| (coin(r.0), r.2)).collect::<Vec<_>>());
+    let eq = equal_weights(&book.iter().map(|r| (coin(r.0), r.2)).collect::<Vec<_>>(), sz.book_cut());
     book.into_iter().zip(eq).filter_map(|((q, s, _, cap), w)| w.map(|w| (q, s, w, if coin(q) { cap } else { None }))).collect()
 }
 
 /// (#314) THE (#313) SPLIT, lifted so `sim` replays the knob's book off a journaled `sized` with the same
 /// arithmetic `sized_book` funds. Rows are `(is_coin, weight %)` in book order: a coin keeps its weight, the
-/// first `track::BOOK` other rows split what is left equally, and every later row is dropped (`None`).
-pub(crate) fn equal_weights(rows: &[(bool, f64)]) -> Vec<Option<f64>> {
-    let book = crate::commands::track::BOOK;
+/// first `book` other rows split what is left equally, and every later row is dropped (`None`). (#317) `book` is
+/// `Sizing::book_cut`.
+pub(crate) fn equal_weights(rows: &[(bool, f64)], book: usize) -> Vec<Option<f64>> {
     let coins: f64 = rows.iter().filter(|r| r.0).map(|r| r.1).sum();
     let n = rows.iter().filter(|r| !r.0).count().min(book);
     let mut seen = 0;
@@ -442,7 +442,7 @@ pub async fn run(args: Vec<String>) {
     if sz.equal_weight_book {
         println!(
             "Suggested sizes — (#313) equal-weight top-{}: coins at their crypto budget, the other names split the rest equally (READ-ONLY, NOT advice):\n",
-            crate::commands::track::BOOK
+            sz.book_cut()
         );
     } else {
         println!("Suggested sizes — weight ∝ score ÷ volatility WITHIN a class budget, then capped (READ-ONLY, NOT advice):");
@@ -803,8 +803,19 @@ pub(crate) mod tests {
         assert_eq!(got.len(), 4, "under 10 names every one is bought: {got:?}");
         assert!(got.iter().filter(|r| r.0 != "BTC-EUR").all(|r| (r.1 - (100.0 - coin) / 3.0).abs() < 1e-9), "{got:?}");
 
-        // off serialises nothing, so a `sizing_fp` journaled before (#313) still matches the default
-        assert!(!crate::commands::backtest::tuning_fingerprint(&config::Sizing::default()).contains("equal_weight_book"));
+        // (#317) `book_names: 20` widens the same split: all twelve names, equal and uncapped
+        let coin = coin_of(&off).expect("the coin clears the gate");
+        let wide = book(&config::Sizing { book_names: 20, ..on }, &refs);
+        let names: Vec<_> = wide.iter().filter(|r| r.0 != "BTC-EUR").collect();
+        assert_eq!(names.len(), 12, "{wide:?}");
+        assert!(names.iter().all(|r| (r.1 - (100.0 - coin) / 12.0).abs() < 1e-9 && r.2.is_none()), "{wide:?}");
+
+        // off serialises nothing, so a `sizing_fp` journaled before (#313) still matches the default; (#317) same for
+        // the default book width, while a non-default one is fingerprinted
+        let fp = |sz: &config::Sizing| crate::commands::backtest::tuning_fingerprint(sz);
+        assert!(!fp(&config::Sizing::default()).contains("equal_weight_book"));
+        assert!(!fp(&config::Sizing::default()).contains("book_names"));
+        assert!(fp(&config::Sizing { book_names: 20, ..config::Sizing::default() }).contains("\"book_names\":20"));
     }
 
     /// (#314) the lifted split `sim` replays: the coin keeps its 5, ten names split 95, the 11th and 12th get nothing.
@@ -815,9 +826,12 @@ pub(crate) mod tests {
         let mut want = vec![Some(9.5), Some(5.0)];
         want.extend([Some(9.5); 9]);
         want.extend([None, None]);
-        assert_eq!(equal_weights(&rows), want);
-        assert_eq!(equal_weights(&[(false, 1.0), (true, 5.0), (false, 1.0)]), [Some(47.5), Some(5.0), Some(47.5)]);
-        assert!(equal_weights(&[]).is_empty());
+        assert_eq!(equal_weights(&rows, 10), want);
+        assert_eq!(equal_weights(&[(false, 1.0), (true, 5.0), (false, 1.0)], 10), [Some(47.5), Some(5.0), Some(47.5)]);
+        assert!(equal_weights(&[], 10).is_empty());
+        // (#317) a 20-name book buys all twelve at 95/12
+        let wide = equal_weights(&rows, 20);
+        assert!(wide.iter().enumerate().all(|(i, w)| *w == Some(if i == 1 { 5.0 } else { 95.0 / 12.0 })), "{wide:?}");
     }
 
     /// (#287) the line that names the vetted holds the spill does not fund. Graded on the three
