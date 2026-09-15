@@ -540,6 +540,41 @@ fn backtest_edge_holds() {
             ),
             None => eprintln!("backtest-gate {years}y — no Série E row parsed"),
         }
+        // (#316) the book BUY NOW buys, graded the way it is bought: monthly, held 20y, after tax. Two ratchets on the
+        // SIZED DCA rows, which print at 20y only: never-sell over the same € into the index (pts/yr), and the share of
+        // programs beating Série E's best case. Floors are the ship-day readings minus 1.0 pt/yr and minus 10 pts.
+        // Raise a floor when a round lifts its reading; never lower one to get green.
+        // Ship day 2026-09-15 on CI's own args: SIZED never-sell +11.6%/yr vs index DCA +6.2%/yr -> +5.4 pts/yr (med +5.9,
+        // win 100% of 37 programs, worst +1.2), Série E 100% of 37.
+        if years == 20 {
+            const SIZED_DCA_FLOOR: f64 = 4.4;
+            const SERIE_E_DCA_FLOOR: f64 = 90.0;
+            let row = |m: &str| growth.lines().find(|l| l.trim_start().starts_with(m));
+            let x = row(markers::SIZED_DCA).and_then(|l| num_after(l, "->"));
+            let share = row(markers::SERIE_E_DCA).and_then(|l| num_after(l, markers::SERIE_E_DCA));
+            match (x, share) {
+                (Some(x), Some(share)) => {
+                    assert!(
+                        x >= SIZED_DCA_FLOOR,
+                        "20y: the SIZED book bought monthly beats index DCA by only {x:+.1} pts/yr, under the ratchet floor \
+                         {SIZED_DCA_FLOOR:+.1} — BUY NOW's book lost its edge over the index. Fix the change, or measure and \
+                         justify a new floor in the (#316) receipt"
+                    );
+                    assert!(
+                        share >= SERIE_E_DCA_FLOOR,
+                        "20y: only {share:.0}% of SIZED DCA programs beat Série E's best case, under the ratchet floor \
+                         {SERIE_E_DCA_FLOOR:.0}%. Fix the change, or measure and justify a new floor in the (#316) receipt"
+                    );
+                    eprintln!("backtest-gate 20y SIZED DCA {x:+.1} pts/yr (floor {SIZED_DCA_FLOOR:+.1}), Série E {share:.0}% (floor {SERIE_E_DCA_FLOOR:.0}%)");
+                }
+                _ if forced => panic!(
+                    "20y: GROWTH completed but no `{}` / `{}` row parsed — the SIZED DCA ratchets were skipped",
+                    markers::SIZED_DCA,
+                    markers::SERIE_E_DCA
+                ),
+                _ => eprintln!("backtest-gate 20y — no SIZED DCA rows parsed"),
+            }
+        }
         // whole out-of-sample backwards (BOTH halves negative) = the edge doesn't generalize -> collapse.
         match (num_after(growth, markers::EARLY_RHO), num_after(growth, markers::LATE_RHO)) {
             (Some(early), Some(late)) => {

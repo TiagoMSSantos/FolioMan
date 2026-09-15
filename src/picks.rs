@@ -10474,6 +10474,11 @@ mod tests {
             Some(true),
             "(#315) the Série E floors are nominal bars; scoring on HICP-deflated legs would silently tighten them"
         );
+        assert_eq!(
+            raw["sizing"]["equal_weight_book"].as_bool(),
+            Some(true),
+            "(#316) BUY NOW buys the graded equal-weight top-10; tests/network.rs ratchets the 20y DCA rows of that book"
+        );
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
         // an empty table, which no value assert above would notice.

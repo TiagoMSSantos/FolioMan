@@ -402,6 +402,17 @@ fn gate_markers_are_all_in_the_golden() {
     );
 }
 
+/// (#316) The 20y twin of the pin above. `tests/network.rs` ratchets the SIZED DCA rows, which print at 20y only, and
+/// panics under the gate when either is missing; this reds offline first on a rename.
+#[test]
+fn dca_markers_are_in_the_20y_golden() {
+    use folioman::commands::backtest::markers::{SERIE_E_DCA, SIZED_DCA};
+    let golden = std::fs::read_to_string(fixture_dir().join("backtest-20.golden")).expect("read backtest-20.golden");
+    for m in [SIZED_DCA, SERIE_E_DCA] {
+        assert!(golden.contains(m), "tests/network.rs ratchets `{m}` at 20y and backtest-20.golden no longer carries it");
+    }
+}
+
 /// Rebuild `tests/fixture/.long_history_cache.json` from a warm real one. `#[ignore]`d: it needs the
 /// developer's own ~125 MB cache, which CI and a fresh clone do not have.
 ///

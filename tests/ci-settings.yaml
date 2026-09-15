@@ -1315,10 +1315,10 @@ sizing:
                       #   the `(#289)` block further down before touching this: the tiers are NESTED,
                       #   so this is in substance an EM overweight (~3.3% -> ~11.1% of gross), not
                       #   three independent markets. `false` is the proven, byte-identical revert.
-  equal_weight_book: false  # (#313) OPT-IN: buy the graded equal-weight top-10 instead of the vol-target
+  equal_weight_book: true   # (#316) ROUND 99 — ON: buy the graded equal-weight top-10 instead of the vol-target
                       #   book. Coins keep the crypto-budget weight above; the first 10 other names split
                       #   the rest equally, with no name or sector cap, and no tracker is funded once the
-                      #   picks fill the book. Read the (#313) receipt. false = the SIZED book, unchanged.
+                      #   picks fill the book. Read the (#313) and (#316) receipts. false = the SIZED book.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -5588,7 +5588,7 @@ buy_heuristic:
   #   or 20 on this receipt would be (#120)'s argmax.
   #   REVERT: to opt out, delete the key. Instruments: drop the second `row` call in `report_roll` (the
   #   `index DCA` suffix is in 56df354) and the `true` call of `on_flat` in `sim::run`.
-  # (#313) ROUND 96: BUY THE GRADED BOOK, OPT-IN (`sizing.equal_weight_book`). PASSED. The default stays false.
+  # (#313) ROUND 96: BUY THE GRADED BOOK, OPT-IN (`sizing.equal_weight_book`). PASSED. (#316) turned it on here.
   #   Standing ask. (#312)'s rows put SIZED never-sell at +1.2 pts/yr over index DCA and the equal-weight
   #   top-10 at +3.4 on the same 21 programs; SIZED holds 44% of gross in names. Admission stays closed: the
   #   user ruled out `growth_min_cagr`, and (#24)/(#64) closed `growth_max_above_ma`. Picked by the user: buy
@@ -5631,7 +5631,7 @@ buy_heuristic:
   #   (#314): that top-10 line bought September on an earlier line than the book; see (#314) for the fix and
   #   the knob's own `sim` line.
   #
-  #   OPT IN. The default stays false here and in `Sizing::default()`. To buy the graded book, add this to your
+  #   OPT IN until (#316), which set it true in this file; `Sizing::default()` stays false. To buy the graded book, add this to your
   #   own config (`Sizing` is `serde(default, deny_unknown_fields)`, so one key is a whole block):
   #     sizing:
   #       equal_weight_book: true
@@ -5652,7 +5652,7 @@ buy_heuristic:
   #   REVERT: to opt out, delete the key. Code: the `equal_weight_book` field, the tail of `sized_book` after
   #   `if !sz.equal_weight_book`, the `rest < 0.5` line in `buy_weights`, `buy_list`'s tracker count and
   #   `size::run`'s header branch.
-  # (#314) ROUND 97: THE (#313) KNOB AT 12y AND 8y, AND ITS OWN `sim` LINE. Readings; the default stays false.
+  # (#314) ROUND 97: THE (#313) KNOB AT 12y AND 8y, AND ITS OWN `sim` LINE. Readings; (#316) turned the knob on.
   #   Standing ask: the missing backtest and forward tests. (#313) graded `equal_weight_book` on the 20y DCA
   #   ruler only. `report_roll` prints nothing at any other horizon, so 12y and 8y have one row to read, the
   #   lump SIZED row; and `sim` had no line that buys the knob's book.
@@ -5699,6 +5699,61 @@ buy_heuristic:
   #   own names. (d) A line journaled before `sized` existed buys the ranked top-10 in all three flat lines.
   #   REVERT: `size::equal_weights` back into `sized_book`'s tail; delete the third `on_flat` call and its cli
   #   assert; the top-10 call back to `&|_: &Snapshot| Vec::new()`.
+  # (#316) ROUND 99: BUY THE GRADED BOOK BY DEFAULT; GRADE IT AGAINST SÉRIE E AND GUARD IT IN CI. PASSED.
+  #   Standing ask: more good assets to buy now and hold 20+ years, most profit; add the missing backtest and
+  #   forward tests. Admission stays closed. Picked by the user: turn (#313)'s `sizing.equal_weight_book` on in
+  #   this file, which the live config merges over, and put a CI guard on its row.
+  #
+  #   WHAT CHANGED. (1) `sizing.equal_weight_book: true` here. `Sizing::default()` stays false, so the config-less
+  #   regime and every hand-built test keep the SIZED book. (2) `report_roll` prints, per DCA lane, the share of
+  #   programs whose after-tax never-sell wealth beat the same buys compounded at Série E's best case
+  #   (`dca_beats_serie_e`, strict at the hurdle; `dca_fv` is `dca_irr`'s future value lifted out unchanged).
+  #   (3) `tests/network.rs` ratchets two 20y rows of the book BUY NOW buys: SIZED never-sell vs index DCA
+  #   >= +4.4 pts/yr, and the SIZED Série E share >= 90%, each the ship-day CI reading minus 1.0 pt/yr or 10 pts;
+  #   a missing row panics under the gate. `dca_markers_are_in_the_20y_golden` pins both markers offline, and
+  #   `shipped_config_pin` pins the knob. (4) Five goldens re-blessed: the SIZED rows follow the knob, and the 20y
+  #   golden gains the two Série E DCA rows.
+  #
+  #   BAR, (#313)'s, re-run on today's data before the flip, SIZED never-sell vs index DCA, arm vs control: mean
+  #   up AND median up AND both OOS halves up AND worst no more than 1.0 pt/yr deeper. A fail meant no flip.
+  #   LIVE, `backtest 20 universe fund pit`, 2026-09-15, one binary; control = HEAD's file, arm = this one;
+  #   17 state md5s verified after every run:
+  #                                  control (off)                        arm (on)
+  #     SIZED never-sell vs index    +7.7 vs +6.5 -> +1.2 (med +0.9)      +9.7 vs +6.5 -> +3.2 (med +3.3)
+  #       win / worst / OOS          100% of 21 / +0.3 / +0.6/+1.7        100% of 21 / +1.6 / +2.5/+3.9
+  #     SIZED beat Série E (DCA)     90% of 21 (19)                       100% of 21 (21)
+  #     SIZED roll vs never-sell     +0.8 (med +1.2) win 86% worst -1.1   +0.8 (med +1.1) win 86% worst -1.0
+  #     lump 20y SIZED row           book +6.5 excess -0.1 worst -2.8     book +7.2 excess +0.6 worst -10.0
+  #                                  OOS -0.5/+0.1 deployed 44%           OOS -1.6/+2.6 deployed 100%
+  #     top-10 never-sell vs index   +3.4 (med +3.5), Série E 100%        +3.4 (med +3.4), Série E 100%
+  #     lump top-10 vs Série E       76% of 21 windows                    76% of 21 windows
+  #   Windows scored 1119/120 vs 1119/119: one window of run noise; the top-10 rows agree within 0.1.
+  #   VERDICT: PASS. Mean +2.0, median +2.4, OOS +1.9/+2.2, worst 1.3 better; (#313)'s reading reproduces within 0.1.
+  #   `universe fund pit`, arm: 12y SIZED lump excess +3.4 (worst -6.4), 8y +4.3 (worst -5.5), (#314)'s arm within
+  #   0.2; lump top-10 vs Série E 72% of 36 and 77% of 44.
+  #   CI's own args (`backtest N universe`), arm: 20y SIZED lump book +13.1 excess +5.9 win 97% worst -0.5; DCA
+  #   never-sell +11.6 vs +6.2 -> +5.4 (med +5.9) win 100% of 37 worst +1.2 OOS +4.6/+6.2 (R98's knob-off run:
+  #   +4.0, win 89%, worst -0.3), Série E 100% of 37. 12y SIZED excess +6.5 worst -7.8 (knob off +4.8), 8y +7.0
+  #   worst -9.2 (knob off +5.0). On these args the SIZED DCA rows print the top-10 rows to the digit.
+  #   LIVE `screen`, arm vs R98's run the same day (knob off): the funnel does not move (cleared 27 of 4968
+  #   vs 27 of 4979). BUY NOW goes from 20 picks + 4 trackers to 12 picks + 0 trackers: ten names at 9.5% each
+  #   (ABEC.DE, LLY.DE, KLA.DE, AP2.DE, NVD.DE, 1YD.DE, VRT, PUST.PA, SXLK.L, ANX.PA) and the coins at 2.6 + 2.4.
+  #   Out: the SIZED book's eight smaller rows (PAR.DE and MIBA.MI at 8% each among them) and all four trackers
+  #   (26.9% of gross). Fewer names, all of gross in the graded ten.
+  #   FORWARD, `sim` (percentages only): the journaled books +2.5% vs the S&P 500 +1.1% (+1.4 pp) and
+  #   +2.1 pp over Série E's best case on the same cash; `equal_weight_book on that flat cash` +1.8% vs +1.0%
+  #   (+0.8 pp). Journal since 2026-07-25, struck with the knob off: weeks, not a verdict.
+  #
+  #   HONEST EDGES. (a) The lump tail is real: worst window -10.0 at 20y, -6.4 at 12y, -5.5 at 8y on the PIT pool.
+  #   The pass is for money that goes in monthly. (b) No CORE tracker is funded while the picks fill the book, so
+  #   there is no index cushion. (c) No sector cap under the knob; the backtest passes no fund sectors, so that is
+  #   ungraded. (d) Coins ungraded; price-only, no FX or fees; 21 overlapping programs are one or two independent
+  #   decisions. (e) The Série E DCA share sets after-tax wealth against a pre-tax 4.5%: strict on the book.
+  #   (f) BUY NOW's graded-record line warns of sizing drift until `backtest 20`, `12` and `8 universe fund pit`
+  #   re-journal under the knob. (g) The frozen 12y-pit golden's SIZED row fell (excess -0.2 -> -4.6, worst
+  #   -17.0) on its 200-ticker sample; the fixture pins code, not the market.
+  #   REVERT: set the key false and drop the `shipped_config_pin` assert and both `network.rs` ratchets (the knob-off
+  #   book reads +4.0 on CI's args, under the 4.4 floor); re-bless the five goldens.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

@@ -127,6 +127,10 @@ pub mod markers {
     /// (#315) The Série E best-case row: the share of start dates whose top-10 book beat 4.5%/yr. Starts with "vs",
     /// never `VERDICT_ROW`, so the book row stays the first `top-10 ` line the gate finds.
     pub const SERIE_E: &str = "vs Série E best case (top-10): beat";
+    /// (#316) The 20y DCA rows of the book BUY NOW buys. The name pads to 7, so "SIZED   roll" never matches. Not in
+    /// [`super::GATE_MARKERS`]: that list is pinned against the 12y golden, and these print at 20y only.
+    pub const SIZED_DCA: &str = "SIZED   never-sell";
+    pub const SERIE_E_DCA: &str = "SIZED   beat Série E best case:";
     /// The three shipped hard gates the re-probe WARN sweeps, by their GATE SWEEP row labels.
     pub const ABLATED_GATES: &[&str] =
         &["growth_max_above_ma ->off", "growth_require_lifetime_uptrend ->off", "growth_maxdd_cap ->off"];
@@ -3320,15 +3324,26 @@ fn book_multiple(
     Some(names + (1.0 - book.iter().map(|(_, w)| w).sum::<f64>()) * rest)
 }
 
+/// (#311) What [`DCA_MONTHS`] €1 buys, a month apart, grow to by month `2 × ROLL_MONTHS` at `r` a year.
+fn dca_fv(r: f64) -> f64 {
+    (0..DCA_MONTHS).map(|m| (1.0 + r).powf(f64::from(2 * ROLL_MONTHS - m) / 12.0)).sum()
+}
+
+/// (#316) How many programs' never-sell wealth beat the same buys compounded at Série E's best case. The wealth is
+/// after tax and Série E is not, so the count is strict on the book.
+fn dca_beats_serie_e(holds: &[f64]) -> usize {
+    let hurdle = dca_fv(crate::core::serie_e_best_pct() / 100.0);
+    holds.iter().filter(|w| **w > hurdle).count()
+}
+
 /// (#311) The money-weighted %/yr of a DCA program: the one rate at which [`DCA_MONTHS`] €1 buys, a month apart,
 /// grow to `wealth` by month `2 × ROLL_MONTHS`. Bisection on (−100%, +100%), since the future value rises with
 /// the rate. A program ending with exactly what it put in reads at or below zero, never a phantom gain.
 fn dca_irr(wealth: f64) -> f64 {
-    let fv = |r: f64| (0..DCA_MONTHS).map(|m| (1.0 + r).powf(f64::from(2 * ROLL_MONTHS - m) / 12.0)).sum::<f64>();
     let (mut lo, mut hi) = (-1.0, 1.0);
     for _ in 0..100 {
         let mid = (lo + hi) / 2.0;
-        if fv(mid) < wealth {
+        if dca_fv(mid) < wealth {
             lo = mid;
         } else {
             hi = mid;
@@ -3462,6 +3477,14 @@ fn report_roll(
         println!(
             "  {name:<7} never-sell {hold:+.1}%/yr  vs index DCA {idx:+.1}%/yr  ->  {x:+.1} (med {med:+.1}) pts/yr   win {win:.0}% of {}   worst {worst:+.1}   OOS {early:+.1}/{late:+.1}",
             programs.len()
+        );
+        // (#316) the same monthly buys against Série E's best case. CI ratchets the SIZED share (tests/network.rs).
+        let k = dca_beats_serie_e(&programs.values().map(|p| p.hold).collect::<Vec<_>>());
+        println!(
+            "  {name:<7} beat Série E best case: {:.0}% of {} programs ({k}), after tax vs {:.1}%/yr",
+            100.0 * k as f64 / programs.len() as f64,
+            programs.len(),
+            crate::core::serie_e_best_pct()
         );
         Some(d)
     };
@@ -6350,6 +6373,14 @@ mod tests {
 
     /// (#311) Every lot compounding at 10%/yr reads 10.0. A program ending with exactly what it put in reads at or
     /// below zero: the bisection's first midpoint IS 0%, so that tie is what picks the side.
+    /// (#316) Strict at the hurdle, and the hurdle is 4.5%/yr on the program's own lots.
+    #[test]
+    fn dca_beats_serie_e_is_strict_at_the_hurdle() {
+        let hurdle = dca_fv(0.045);
+        assert_eq!(dca_beats_serie_e(&[hurdle, hurdle + 1e-9, 1.0, hurdle * 2.0]), 2);
+        assert!((dca_irr(hurdle) - 4.5).abs() < 1e-9, "{}", dca_irr(hurdle));
+    }
+
     #[test]
     fn dca_irr_recovers_the_rate_every_lot_compounded_at() {
         let wealth = (0..96).map(|m| 1.1_f64.powf(f64::from(240 - m) / 12.0)).sum::<f64>();
