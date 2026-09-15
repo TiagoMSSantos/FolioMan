@@ -10,7 +10,7 @@
 //! the same cashflows. Price-only, EUR seat, dividends not counted. NOT advice.
 
 use crate::commands::screen::{deploy_scaled_eur, spill_picks};
-use crate::commands::size::buy_weights;
+use crate::commands::size::{buy_weights, equal_weights};
 use crate::commands::track::{Snapshot, BOOK, SNAPSHOT_FILE};
 use crate::{config, fetch};
 use std::collections::BTreeMap;
@@ -465,10 +465,13 @@ pub async fn run(_args: Vec<String>) {
     }
     // (#311) the `backtest 20` DCA ruler's cashflow: the same books at ×1 every month (no journaled S&P state, so
     // `deploy_scaled_eur` falls back to base), against the S&P on that flat cash. (#312) then the equal-weight
-    // top-10 on that cash: with `sized` empty, `buy_event` buys the journal's top BOOK rows.
-    let on_flat = |label: &str, top10: bool| {
+    // top-10 on that cash. (#314) On the book's own buy date: `monthly_firsts` waits for a line carrying `sized`,
+    // so emptying it moved a month's buy to an earlier line; ten equal rows summing to 100 keep that date and fund
+    // no tracker. Then the (#313) `equal_weight_book` twin: each journaled `sized` re-split by
+    // `size::equal_weights`, so coins keep their weight. A line journaled before `sized` existed buys the top-10.
+    let on_flat = |label: &str, book: &dyn Fn(&Snapshot) -> Vec<(String, f64)>| {
         let flat_snaps: Vec<Snapshot> =
-            snaps.iter().cloned().map(|s| Snapshot { sized: if top10 { Vec::new() } else { s.sized }, spx_off_hi: None, ..s }).collect();
+            snaps.iter().cloned().map(|s| Snapshot { sized: book(&s), spx_off_hi: None, ..s }).collect();
         let flat = ledger(&flat_snaps, base, now_key, &settings.sizing, &tier_of, &fee_of);
         let (f_value, f_cost, _) = value_priced(&holdings(&flat.events), &px_now);
         let (fb_cost, fb_units, fb_n) = benchmark(&flat.events);
@@ -480,8 +483,15 @@ pub async fn run(_args: Vec<String>) {
             _ => println!("  {label}: n/a (no benchmark leg priced)"),
         }
     };
-    on_flat("flat ×1 every month instead", false);
-    on_flat("equal-weight top-10 on that flat cash", true);
+    on_flat("flat ×1 every month instead", &|s: &Snapshot| s.sized.clone());
+    on_flat("equal-weight top-10 on that flat cash", &|s: &Snapshot| {
+        let n = s.rows.len().min(BOOK) as f64;
+        if s.sized.is_empty() { Vec::new() } else { s.rows.iter().take(BOOK).map(|(t, _)| (t.clone(), 100.0 / n)).collect() }
+    });
+    on_flat("equal_weight_book on that flat cash", &|s: &Snapshot| {
+        let eq = equal_weights(&s.sized.iter().map(|(t, w)| (crate::picks::is_currency_quoted(t), *w)).collect::<Vec<_>>());
+        s.sized.iter().zip(eq).filter_map(|((t, _), w)| w.map(|w| (t.clone(), w))).collect()
+    });
     if led.pending_months > 0 {
         println!(
             "  pending cash €{:.0} ({} month(s) without a buyable snapshot — deploys at the next `screen` run)",

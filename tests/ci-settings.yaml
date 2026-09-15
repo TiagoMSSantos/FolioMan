@@ -5589,6 +5589,8 @@ buy_heuristic:
   #     equal-weight top-10 on that flat cash: +3.4% vs the S&P 500 on that cash +1.2%  ->  +2.2 pp
   #   The journal's `sized` was struck with the knob off, so `sim` cannot replay the arm; the top-10 line is
   #   its nearest twin (it holds coins at 10% a name, the arm at their 5% budget). A few months, not a verdict.
+  #   (#314): that top-10 line bought September on an earlier line than the book; see (#314) for the fix and
+  #   the knob's own `sim` line.
   #
   #   OPT IN. The default stays false here and in `Sizing::default()`. To buy the graded book, add this to your
   #   own config (`Sizing` is `serde(default, deny_unknown_fields)`, so one key is a whole block):
@@ -5597,6 +5599,7 @@ buy_heuristic:
   #   `size`, BUY NOW's weights, the orders and the journal follow it. BUY NOW's graded-record line warns of
   #   sizing drift until `backtest 20`, `12` and `8 universe fund pit` are rerun under it. (#312)'s
   #   `max_name_pct` does not touch the equal rows, and the CORE trackers get nothing while the picks fill the book.
+  #   (#314) reads the knob at 12y and 8y: excess up, worst window deeper, at every horizon.
   #
   #   HONEST EDGES. (a) The lump row carries the top-10's tail: worst window -2.8 -> -10.0, early half -0.5 ->
   #   -1.6. The pass is for money that goes in monthly; a lump sum sits in 10 names with no index cushion.
@@ -5610,6 +5613,53 @@ buy_heuristic:
   #   REVERT: to opt out, delete the key. Code: the `equal_weight_book` field, the tail of `sized_book` after
   #   `if !sz.equal_weight_book`, the `rest < 0.5` line in `buy_weights`, `buy_list`'s tracker count and
   #   `size::run`'s header branch.
+  # (#314) ROUND 97: THE (#313) KNOB AT 12y AND 8y, AND ITS OWN `sim` LINE. Readings; the default stays false.
+  #   Standing ask: the missing backtest and forward tests. (#313) graded `equal_weight_book` on the 20y DCA
+  #   ruler only. `report_roll` prints nothing at any other horizon, so 12y and 8y have one row to read, the
+  #   lump SIZED row; and `sim` had no line that buys the knob's book.
+  #
+  #   WHAT CHANGED. (1) `size::equal_weights`, (#313)'s split lifted out of `sized_book` unchanged, over
+  #   `(is_coin, weight)` in book order; `sized_book` calls it, pinned in `equal_weights_splits_names_keeps_coins`.
+  #   (2) `sim` prints "equal_weight_book on that flat cash": each journaled `sized` re-split by that helper, so
+  #   coins keep their journaled weight, the first ten other rows (already gated, one per issuer, score order)
+  #   split the rest and no tracker is funded. (3) A fix to (#312)'s "equal-weight top-10 on that flat cash".
+  #   It emptied `sized`, and `monthly_firsts` waits for a line carrying `sized`, so emptying it moved each
+  #   booked month's buy to that month's earliest line: September bought on 2026-09-02, not the book's 09-13. It
+  #   now buys the line's top rows at 100/n on the book's own line, which keeps the date and funds no tracker.
+  #
+  #   LIVE, `backtest 12` and `8 universe fund pit`, 2026-09-15, one binary; control = this config, arm = the
+  #   same file with `equal_weight_book: true` under `sizing:`; 17 state md5s verified after every run:
+  #                      control SIZED (off)                           arm SIZED (on)
+  #     12y (36 buckets) book +8.2 excess +1.8 win 83% worst -2.5      book +10.0 excess +3.6 win 75% worst -6.4
+  #                      OOS +1.4/+2.1 deployed 53%                    OOS +2.1/+5.0 deployed 100%
+  #     8y  (44 buckets) book +9.5 excess +2.7 win 89% worst -4.7      book +10.9 excess +4.2 win 82% worst -5.5
+  #                      OOS +2.9/+2.6 deployed 59%                    OOS +3.6/+4.7 deployed 100%
+  #     top-10, both arms: 12y +10.0 excess +3.6 win 75% worst -6.4 OOS +2.1/+5.0; 8y +11.1 excess +4.4 win 82%
+  #                      worst -5.5 OOS +3.6/+5.1
+  #   Windows scored 2769/251 (12y) and 6150/357 (8y) in both arms, the top-10 rows match to the digit, and
+  #   the only other lines that differ are the fundamental factor fit's TEST edges and weights, which move
+  #   between any two runs.
+  #   READING. With (#313)'s 20y row (excess -0.1 -> +0.6, worst -2.8 -> -10.0), the knob lifts lump excess at
+  #   every horizon (+0.7, +1.8, +1.5) and both OOS halves at 12y and 8y, and deepens the worst window at every
+  #   horizon (-7.2, -3.9, -0.8) with a lower win rate at 12y and 8y (-8, -7 pts). The same trade as (#313)'s
+  #   edge (a): more return, a thinner floor, nothing parked in the index.
+  #   FORWARD, `sim` on this job's journal with a probe base (percentages only), vs the S&P 500 on that cash:
+  #     the journaled books vs the same money into the S&P 500             +2.7 pp
+  #     flat x1 every month instead: +3.4% vs +1.0%                        +2.3 pp
+  #     equal-weight top-10 on that flat cash: +3.3% vs +1.0%              +2.3 pp (before fix (3): +4.4% vs +1.1%, +3.3 pp)
+  #     equal_weight_book on that flat cash: +3.3% vs +1.0%                +2.3 pp
+  #   Before (3), the top-10 line's +1.0 pp lead was mostly 11 extra days on a 09-02 buy, not its names; (#313)'s
+  #   forward "+2.2 pp" top-10 reading had the same shift. The journal holds 14 lines and one `sized` (09-13,
+  #   two coins at 2.6 + 2.4 and exactly ten other rows, so 9.5% each); that lot is two days old, so the three
+  #   lines cannot separate yet. The line is wired, not a verdict.
+  #
+  #   HONEST EDGES. (a) Lump, price-only, no FX or fees, no coins in the backtest; 36 and 44 overlapping buckets.
+  #   (b) The arm's 8y SIZED row sits under the top-10 row (+4.2 vs +4.4 excess): the SIZED lane ranks by growth
+  #   score without the value brake and corr cap, (#313)'s edge (d). (c) `sim` re-splits a `sized` struck with
+  #   the knob off; that line holds every row `sized_book` scored, in its order, so the re-split sees the knob's
+  #   own names. (d) A line journaled before `sized` existed buys the ranked top-10 in all three flat lines.
+  #   REVERT: `size::equal_weights` back into `sized_book`'s tail; delete the third `on_flat` call and its cli
+  #   assert; the top-10 call back to `&|_: &Snapshot| Vec::new()`.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

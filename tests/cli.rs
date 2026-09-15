@@ -225,6 +225,7 @@ fn sim_replays_the_journal_offline() {
     assert!(stdout.contains("0 of 3 positions priced today"), "priced count missing: {stdout}");
     assert!(stdout.contains("flat ×1 every month instead: n/a"), "(#311) flat-cash line missing: {stdout}");
     assert!(stdout.contains("equal-weight top-10 on that flat cash: n/a"), "(#312) top-10 line missing: {stdout}");
+    assert!(stdout.contains("equal_weight_book on that flat cash: n/a"), "(#314) knob twin line missing: {stdout}");
 }
 
 #[test]

@@ -302,16 +302,25 @@ pub(crate) fn sized_book<'a>(
     // (#313) the graded equal-weight book, opt-in: coins keep the crypto-budget weight struck above, the
     // first `track::BOOK` other names split the rest equally, uncapped like the backtest's top-10 lane.
     let coin = |q: &crate::core::Quote| crate::picks::asset_class(q) == 0;
-    let coins: f64 = book.iter().filter(|r| coin(r.0)).map(|r| r.2).sum();
-    let n = book.iter().filter(|r| !coin(r.0)).count().min(crate::commands::track::BOOK);
+    let eq = equal_weights(&book.iter().map(|r| (coin(r.0), r.2)).collect::<Vec<_>>());
+    book.into_iter().zip(eq).filter_map(|((q, s, _, cap), w)| w.map(|w| (q, s, w, if coin(q) { cap } else { None }))).collect()
+}
+
+/// (#314) THE (#313) SPLIT, lifted so `sim` replays the knob's book off a journaled `sized` with the same
+/// arithmetic `sized_book` funds. Rows are `(is_coin, weight %)` in book order: a coin keeps its weight, the
+/// first `track::BOOK` other rows split what is left equally, and every later row is dropped (`None`).
+pub(crate) fn equal_weights(rows: &[(bool, f64)]) -> Vec<Option<f64>> {
+    let book = crate::commands::track::BOOK;
+    let coins: f64 = rows.iter().filter(|r| r.0).map(|r| r.1).sum();
+    let n = rows.iter().filter(|r| !r.0).count().min(book);
     let mut seen = 0;
-    book.into_iter()
-        .filter_map(|(q, s, w, cap)| {
-            if coin(q) {
-                return Some((q, s, w, cap));
+    rows.iter()
+        .map(|&(coin, w)| {
+            if coin {
+                return Some(w);
             }
             seen += 1;
-            (seen <= crate::commands::track::BOOK).then_some((q, s, (100.0 - coins) / n as f64, None))
+            (seen <= book).then_some((100.0 - coins) / n as f64)
         })
         .collect()
 }
@@ -796,6 +805,19 @@ pub(crate) mod tests {
 
         // off serialises nothing, so a `sizing_fp` journaled before (#313) still matches the default
         assert!(!crate::commands::backtest::tuning_fingerprint(&config::Sizing::default()).contains("equal_weight_book"));
+    }
+
+    /// (#314) the lifted split `sim` replays: the coin keeps its 5, ten names split 95, the 11th and 12th get nothing.
+    #[test]
+    fn equal_weights_splits_names_keeps_coins() {
+        let mut rows = vec![(false, 9.0), (true, 5.0)];
+        rows.extend([(false, 9.0); 11]);
+        let mut want = vec![Some(9.5), Some(5.0)];
+        want.extend([Some(9.5); 9]);
+        want.extend([None, None]);
+        assert_eq!(equal_weights(&rows), want);
+        assert_eq!(equal_weights(&[(false, 1.0), (true, 5.0), (false, 1.0)]), [Some(47.5), Some(5.0), Some(47.5)]);
+        assert!(equal_weights(&[]).is_empty());
     }
 
     /// (#287) the line that names the vetted holds the spill does not fund. Graded on the three
