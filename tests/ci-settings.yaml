@@ -5815,6 +5815,50 @@ buy_heuristic:
   #   (g) The goldens cannot see the width, and `sim` cannot until a wider book is journaled (see above).
   #   REVERT: delete `book_names: 20` and its `shipped_config_pin` assert. The code default is the top-10 book;
   #   the code revert is `equal_weights` back on `track::BOOK` and the `book_names` field and `book_cut` deleted.
+  # (#318) ROUND 101: SKIP CORRELATED TWINS IN THE EQUAL-WEIGHT BOOK (`sizing.twin_cap: 0.95`). REFUSED.
+  #   Standing ask: more good assets to buy now and hold 20+ years, most profit; add the missing backtest and
+  #   forward tests. Picked by the user: (#317)'s top-20 book holds duplicate wrappers, so skip a name whose
+  #   36-month monthly returns correlate >= 0.95 with a better-scored name already in the book
+  #   (`core::decorrelate_keep`, the (#41) rule) and let the next ranked name move up.
+  #
+  #   WHAT WAS BUILT, THEN REVERTED. (1) `Sizing.twin_cap`, default 0 = off, not serialised at 0. (2)
+  #   `size::sized_book` ran `decorrelate_keep` over `Quote.trail_monthly` right after the (#262) issuer dedupe,
+  #   so `size`, BUY NOW, the orders and the journaled `sized` all skipped the same rows. (3) `backtest::run`
+  #   copied each sample's `trail` onto its quote, so both SIZED lanes graded the skip (their quotes carried
+  #   empty trails). (4) A unit test: the twin is skipped and the next name moves up, off keeps it, an empty
+  #   trail is kept, the fingerprint omits the key at 0. `cargo t` was green. The bar failed; no code ships.
+  #
+  #   BAR, pre-registered. (A) SIZED never-sell vs index DCA, `backtest 20 universe fund pit`, arm vs control:
+  #   mean and median no more than 0.3 pts/yr lower, both OOS halves no more than 0.5 lower, worst no more than
+  #   1.0 deeper; on CI's args the arm's SIZED DCA row >= +4.4 with its Série E share >= 90%. (B) LIVE `screen`:
+  #   BUY NOW keeps its 20 picks and the coins' weights, and every name the knob drops has a kept twin at
+  #   rho >= 0.95 on the cached series. A fail meant revert.
+  #   RUNS, 2026-09-15, one binary; control = HEAD's file, arm = the same plus `twin_cap: 0.95`; 17 state md5s
+  #   verified after every run.
+  #   (A) PASS, BY BEING INERT. 20y fund pit, control = arm on every book row: SIZED DCA +9.7 vs +6.5 -> +3.2
+  #   (med +3.3), win 100% of 21, worst +1.7, OOS +2.6/+3.8, Série E 100% of 21; lump SIZED excess +0.7, worst
+  #   -10.0. 12y and 8y fund pit lump SIZED excess +3.5 (worst -6.4) and +4.5 (worst -5.5) in both arms. CI's
+  #   args: 20y SIZED DCA +5.2 (med +5.6, worst +1.2), Série E 100% of 37, both arms; 12y/8y lump +6.2/+6.4, the
+  #   (#317) readings to the digit. Wired, not dead: `twin_cap: 0.5` moves the 8y fund pit SIZED lump excess
+  #   +4.5 -> +4.3 (OOS +5.4 -> +5.2). At 0.95 the PIT pool, about 15 names a window, holds no twin that close.
+  #   (B) FAIL, TWICE. LIVE `screen`, control vs arm back to back: the funnel moves by pond drift only (ETF
+  #   history 2070 vs 2068). BUY NOW goes from 20 picks to 15: control's 18 names at 5.3% each, the arm's 13 at
+  #   7.3%, the coins at 2.6 + 2.4 in both. Dropped: ANX.PA (PUST.PA's twin, rho 1.000); WTEC.L, XLKS.L and
+  #   IUIT.L (SXLK.L's, 0.989-0.992); and EQQQ.SW, whose cached series reads only 0.934 against PUST.PA, though
+  #   its live trail must have crossed 0.95 against a kept name to be dropped. Added: none. Control's 18 names
+  #   are EVERY name clearing the gates today, so no ranked name was left to move up.
+  #   FORWARD, `sim` (percentages only), (#317)'s file with and without the key, back to back: the journaled
+  #   books are identical; `equal_weight_book on that flat cash` +1.3% vs +1.4% against the S&P 500's +0.4%
+  #   (+0.9 pp both), price timing between the runs. Inert by construction: it replays books as journaled.
+  #
+  #   HONEST EDGES. (a) The live book is supply-bound, not width-bound: `book_names: 20` already buys all 18
+  #   clearing names, so a skip concentrates instead of diversifying (5 of 18 out, each survivor 5.3% -> 7.3%).
+  #   A twin skip only refills once the clearing count exceeds the book width. (b) The duplication it targets
+  #   is real: control holds three Nasdaq-100 wrappers (PUST.PA, ANX.PA, EQQQ.SW, 15.9% of gross) and four
+  #   tech-sector ones (SXLK.L, WTEC.L, XLKS.L, IUIT.L, 21.2%), about 37% in two exposures. (c) The backtest
+  #   cannot see it: the PIT pool carries no 0.95 twins, so (A) passed vacuously. (d) Cached-series rho and the
+  #   live daily trail disagree near the cap (EQQQ.SW above).
+  #   REOPEN when BUY NOW's clearing names exceed `book_names`, so a skipped twin has a replacement; same bar.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.
