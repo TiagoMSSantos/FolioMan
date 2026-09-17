@@ -12923,6 +12923,40 @@ buy_heuristic:
                                  #   trackers — XUTC.L, SXLK.L, XAIX.DE, XDWT.L are four wrappers of one bet), and (#257) shipped
                                  #   a disclosure precisely because the book already overstates its independence.
                                  #   REVERT RULE: none needed — nothing shipped. 0.0 stands as the INHERIT sentinel.
+                                 #   (#319) ROUND 102: RE-GRADED AT 15.0 ON THE EQUAL-WEIGHT 20-NAME SIZED BOOK. REFUSED; 0.0 STANDS.
+                                 #   WHY IT WAS RE-RUN. (#192)/(#258) refused on the retired top-10 PRIMARY. (#316)/(#317) have since shipped an
+                                 #   equal-weight 20-name book, and an external review re-proposed this knob (its P1: a per-class CAGR bar, measured
+                                 #   on the 200-name fixture). Same rung as (#192), so no value was fitted to the grade.
+                                 #   BAR, pre-registered, arm vs a same-day control, `universe fund pit`: (1) 12y AND 8y SIZED lump row excess >=
+                                 #   ctl - 0.3, both OOS halves >= ctl - 0.5, worst >= ctl - 1.0; (2) 20y SIZED DCA row on the same bounds, Série E
+                                 #   >= 90%; (3) CI args, 20y SIZED DCA >= +4.4 and Série E >= 90%; (4) live `screen`: BUY NOW holds MORE non-coin
+                                 #   names than the control.
+                                 #   LIVE 2026-09-17, one binary, 17 state md5s verified after every run:
+                                 #     PROOF OF ARM   ETF growth-scored 12y 0 -> 14 of 3266, 8y 7 -> 123 of 9910; stock identical; 20y ETF 0/12
+                                 #     12y SIZED lump +3.5 OOS +2.3/+4.7 worst -6.4  ->  +3.3 OOS +2.3/+4.3 worst -6.4   PASS, inside the band
+                                 #      8y SIZED lump +4.5 OOS +3.5/+5.4 worst -5.5  ->  +4.4 OOS +3.5/+5.2 worst -5.5   PASS, inside the band
+                                 #     20y SIZED DCA  +3.2 (med +3.3) win 100% of 21, worst +1.7, OOS +2.6/+3.8, Série E 100%: identical   PASS, inert
+                                 #     CI args 20y    SIZED DCA +5.2 (med +5.6), Série E 100% of 37: identical                        PASS, inert
+                                 #     live BUY NOW   18 non-coin names -> 18 (20 picks both, BNB 2.6% + BTC 2.4%)                      FAIL
+                                 #   VERDICT: REFUSED on leg (4). Nothing shipped, so no revert.
+                                 #   READINGS. Every graded number that moved, moved down. Top-10 book 12y +3.8|+4.0 -> +3.6|+3.7, 8y +5.4|+5.8 ->
+                                 #   +4.9|+5.0. Rank 6-10 at 8y +0.7|+1.7 -> -0.9|+0.5, (#192)'s dilution again; rank 11-20 +1.6 -> +4.3 (n 5 -> 14).
+                                 #   20y SIZED roll vs never-sell +0.9 -> +0.6. CI args (vs R101's inert-arm runs, two days older): 12y SIZED
+                                 #   +6.2 -> +6.1, 8y +6.4 -> +6.4. `sim` identical to the byte: it replays journaled books.
+                                 #   WHAT THE LIVE LEG FOUND. Cleared 26 -> 50, yet BUY NOW stays at 20 picks. `screen` feeds `sized_book` the
+                                 #   `render` slice, which is `take(top_picks)` with coins included, so the live book is capped by the `top_picks: 20`
+                                 #   display knob, not by supply. (#318) read the same cap as "supply-bound". The arm SWAPS six names instead of
+                                 #   adding any: out EQQQ.SW XLKS.L IUIT.L XAID.L ANXU.L SMH.L; in XACT-BULL-2.ST (rank 5), XDJE.DE (Nikkei 225 EUR
+                                 #   hedged), WTAI.L (AI), SP5C.L (S&P 500 swap), UST.PA and XDWT.L. The last two correlate 1.000 over 36 months
+                                 #   with PUST.PA and WTEC.L, which the book already holds.
+                                 #   DEFECT SEEN, NOT FIXED. XACT-BULL-2.ST is "XACT Bull 2 ETF" (SE0003051010, TER 0.8%). Its annual prints (2019
+                                 #   +67, 2021 +67, 2022 -29) read as a 2x daily index product, and NARROW's leverage tokens miss "bull 2". Latent
+                                 #   while this floor inherits 19 (it sits at ~17%/yr); it bites the day an ETF floor drops below that.
+                                 #   HONEST EDGES. (a) 20y cannot see funds (ETF 0/12), so the CI-ratcheted row only guarded. (b) The backtest legs
+                                 #   passed inside tolerance while every reading fell; a looser bar would have shipped a swap, not breadth. (c) The
+                                 #   review's fixture numbers (200 survivors) are not a grade; this PIT run is.
+                                 #   REOPEN only if BUY NOW's input is no longer cut at `top_picks`, so admission can add names instead of swapping
+                                 #   them. Grade that cut first, not this floor.
   growth_trend_weight: 0.15      # SCORE: reward per %/yr of the (now long_trend_cap-clamped) leg CAGR.
                                  #   (#3k) 2026-07-29 LOWERED 0.35 -> 0.15 — the WINNER'S-CURSE CURE. New
                                  #   rank-slice/head-to-head instrumentation proved rank 1 was the WORST
