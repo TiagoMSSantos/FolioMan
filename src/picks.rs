@@ -4854,6 +4854,8 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // `screen` universe vs the small `check`/watch set (keyed by size) so their overlaps don't mix.
     let cache = crate::config::data_path(if quotes.len() > 200 { ".folioman_turnover_screen.txt" } else { ".folioman_turnover_watch.txt" });
     let tickers: Vec<String> = picks.iter().map(|(q, _)| q.ticker.clone()).collect();
+    // (#320) which rows the returned cut keeps, flagged here because `print_lane` consumes `picks`.
+    let coins: Vec<(bool, f64)> = picks.iter().map(|(q, _)| (asset_class(q) == 0, 0.0)).collect();
     if let Some(note) = turnover_note(&tickers, n, &cache) {
         println!("{note}");
     }
@@ -4963,9 +4965,12 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
         }),
         _ => None,
     };
-    // (round 68) the same top-n slice turnover_note just measured, handed to the caller so the
-    // screen can DIFF membership by name against its previous run (the note only says how many moved).
-    (text, tickers.into_iter().take(n).collect())
+    // (round 68) the top-n slice, handed to the caller so the screen can DIFF membership by name against
+    // its previous run (the note only says how many moved). (#320) Coins ride free of `n`: only stocks and
+    // ETFs count, the cut both backtest SIZED lanes grade (they drop coins before `truncate(top)`), spelled
+    // by `size::equal_weights`. Counting BNB and BTC left BUY NOW 18 names while its ruler graded 20.
+    let keep = crate::commands::size::equal_weights(&coins, n);
+    (text, tickers.into_iter().zip(keep).filter_map(|(t, k)| k.map(|_| t)).collect())
 }
 
 /// Suggested basket weights (%, summing to 100) for an already-scored list: weight ∝ score ÷
@@ -8233,6 +8238,45 @@ mod tests {
         // a name that IS ranked gets the score walkthrough instead — even below the printed cut,
         // because `target` searches the untrimmed picks.
         assert!(explain("WEAK", 1).contains("SCORE"), "ranked name -> score math, no verdict");
+
+        let _ = std::fs::remove_file(crate::config::data_path(".folioman_turnover_watch.txt"));
+    }
+
+    /// (#320) BUY NOW, `size --picks` and the journaled `sized` all fund `render`'s cut, and a ranked coin
+    /// used to spend one of its `n` slots: BNB and BTC left the 20-name book 18 stocks and ETFs, while both
+    /// backtest SIZED lanes drop coins before they cut. Only stocks and ETFs count against `n` now.
+    #[test]
+    fn render_cut_lets_coins_ride_free() {
+        let tuning = BuyHeuristic::default();
+        let w = Widths::default();
+        let (sectors, sector_of) = (Vec::<String>::new(), HashMap::<String, String>::new());
+        let (pinned, owned) = (Vec::<String>::new(), Owned::default());
+        let stock = |t: &str, cum8: f64| {
+            let mut q = Quote::stub(t, "€100.00", "", &format!("{t} Corp"));
+            q.instrument_type = "EQUITY".into();
+            q.range_pct = 95.0;
+            q.avg_turnover_eur = Some(3.0e9);
+            q.age_years = Some(12.0);
+            q.perf = legs(&[("1Y", 10.0), ("5Y", 40.0), ("8Y", cum8)]);
+            q
+        };
+        // the coin `scoring_regression_pin` scores 9.03 under the same defaults
+        let mut coin = Quote::stub("BTC-EUR", "€1.00", "", "Bitcoin EUR");
+        coin.perf = legs(&[("1M", 5.0), ("1Y", 50.0), ("5Y", 400.0)]);
+        coin.avg_turnover_eur = Some(1e9);
+        coin.range_pct = 70.0;
+        let quotes = vec![stock("STRONG", 400.0), stock("WEAK", 250.0), coin];
+        let cut = |n: usize| {
+            let (_, mut t) = render(&quotes, n, &tuning, &w, RenderCtx {
+                nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
+                owned: &owned, explain: None, show_hold_core: false, fund_pe: &HashMap::new(),
+                web_out: None, web_inflation: &[],
+            });
+            t.sort();
+            t
+        };
+        assert_eq!(cut(1), ["BTC-EUR", "STRONG"], "one stock slot, and the coin does not take it");
+        assert_eq!(cut(2), ["BTC-EUR", "STRONG", "WEAK"]);
 
         let _ = std::fs::remove_file(crate::config::data_path(".folioman_turnover_watch.txt"));
     }

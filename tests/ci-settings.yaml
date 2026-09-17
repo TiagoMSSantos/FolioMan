@@ -5859,6 +5859,48 @@ buy_heuristic:
   #   cannot see it: the PIT pool carries no 0.95 twins, so (A) passed vacuously. (d) Cached-series rho and the
   #   live daily trail disagree near the cap (EQQQ.SW above).
   #   REOPEN when BUY NOW's clearing names exceed `book_names`, so a skipped twin has a replacement; same bar.
+  #
+  # (#320) ROUND 103: COINS STOP EATING BUY NOW'S SLOTS. Same standing ask ("more assets to buy now and hold 20+
+  #   years, most profit"), plus the missing backtest and forward tests. Picked by the user over widening the book
+  #   to 25 and plugging the leveraged-ETP token leak (#319).
+  #
+  #   THE DRIFT. `picks::render` handed `screen` its ranked list cut at `top_picks` (20) with coins counted, and
+  #   BUY NOW, `size --picks`, the orders and the journaled `sized` all fund that list. With BNB and BTC ranked
+  #   the book bought 18 stocks and ETFs, so `book_names: 20` never bound. Both backtest SIZED lanes skip coins
+  #   BEFORE `truncate(top)`: CI graded a coin-free 20 the live book never bought. (#318)'s edge (a), "supply-
+  #   bound, not width-bound", was this cut, as (#319) found; not a shortage of clearing names.
+  #
+  #   WHAT CHANGED. `render` keeps coins free of `n`: only stocks and ETFs count, spelled by
+  #   `size::equal_weights` (coins keep, first N others, later rows dropped). No knob moves, no gate moves, no
+  #   golden moves (the backtest never calls `render`). Pinned by `render_cut_lets_coins_ride_free`: 2 stocks + 1
+  #   coin at n=1 returns the coin and the better stock; HEAD's `take(n)` and a flipped coin flag both red it.
+  #
+  #   BAR, pre-registered. (1) unit test and CI green, `backtest_edge_holds` included. (2) LIVE `screen`, HEAD
+  #   binary vs the arm, same config (`cmp`-identical to this file), same day: BUY NOW's non-coin names =
+  #   min(`book_names`, ranked non-coin); every control name kept; coin weights within 0.1 pt. (3) `size --picks`
+  #   funds the arm's BUY NOW tickers. (4) `sim` replay unchanged. A fail meant revert.
+  #   LIVE 2026-09-17, 17 state md5s verified after every run:
+  #                          control (HEAD)                          arm
+  #     cleared / ranked     28 of 5033; 25 stocks+ETFs + 2 coins    28 of 5034; the same
+  #     BUY NOW              18 names at 5.3% + BNB 2.6, BTC 2.4     20 names at 4.8% + BNB 2.6, BTC 2.4
+  #     adds / losses        -                                       +MIBA.MI +SMH.L / none
+  #     `size --picks`       -                                       the same 22 tickers, nothing else
+  #     `sim`                BUYS rows, QTY and COST identical on all 25 holdings; P/L % moved on 10 of 25
+  #   VERDICT: PASS. On (4): the leg was worded "P/L % identical", but `sim` values holdings at live prices and
+  #   the control sim ran 16 minutes earlier. Every replayed column (buy dates, multipliers, names, invested,
+  #   fees, quantities, cost) is identical, and `sim` never calls `render`.
+  #   THE ADDS, ranks 10 and 11 of the ETF table: MIBA.MI Amundi FTSE MIB (Italy, a market the book did not
+  #   hold; 5Y +153%, max drawdown -25%; highest cached 36-month rho to a kept name 0.67, VJPU.L) and SMH.L
+  #   VanEck Semiconductor (5Y +345%; rho 0.90 to XAID.L, and screen's own overlap line counts it in the
+  #   six-fund semis/tech bet). Both under 8y of record, so the Série E floors judge the legs they have:
+  #   ~20%/yr and ~35%/yr against 4.5.
+  #
+  #   HONEST EDGES. (a) Parity, not return: no backtest can grade it past what CI already grades, because the
+  #   ruler had this shape all along, and the PIT pool holds ~15 names a window. (b) Every name buys less: 5.3%
+  #   -> 4.8%. (c) More ranked coins than `n` would all ride along, inside the same crypto budget (thinner, not
+  #   bigger). (d) `sim` stays inert until October's first book. (e) (#318)'s REOPEN condition now holds: 25
+  #   stocks and ETFs ranked against a 20-name book, so a skipped twin has a replacement.
+  #   REVERT: `git revert` this commit.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.
