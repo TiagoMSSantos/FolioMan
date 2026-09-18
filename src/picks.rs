@@ -10525,8 +10525,12 @@ mod tests {
         );
         assert_eq!(
             raw["sizing"]["book_names"].as_u64(),
-            Some(20),
-            "(#317) that book is the top-20; the 20y fund pit DCA row graded it no worse than the top-10"
+            Some(25),
+            "(#321) that book is the top-25; the 20y fund pit DCA row graded 25 no worse than (#317)'s 20"
+        );
+        assert!(
+            raw["top_picks"].as_u64() >= raw["sizing"]["book_names"].as_u64(),
+            "(#321) `top_picks` cuts the ranked list `size` funds — a book wider than that cut can never fill"
         );
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from

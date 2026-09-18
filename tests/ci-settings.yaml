@@ -1113,7 +1113,8 @@ high_days: 0
 drawdown_pct: 1000.0
 dip_days: 30       # trailing window (days) for the vs-high dip
 drop_pct: 5.0      # `alert` fires when a name is >= this % below that window high
-top_picks: 20      # how many "buy candidate" rows `check` lists after the table
+top_picks: 25      # how many "buy candidate" rows `check` lists after the table, and the cut `picks::render`
+                   #   hands the screen as its ranked book (coins ride free of it since (#320)). (#321) 20 -> 25.
 # deploy-math base (€ you put in per month): `screen` prints "DEPLOY THIS MONTH: €base × entry-state
 # multiplier" (near-high 1×, pullback 1.5×, drawdown 2× — the backtest's deploy-faster shape). 0 = line
 # off. PERSONAL number — set it in the private config/settings.yaml overlay, never here.
@@ -1319,9 +1320,11 @@ sizing:
                       #   book. Coins keep the crypto-budget weight above; the first `book_names` other names
                       #   split the rest equally, with no name or sector cap, and no tracker is funded once the
                       #   picks fill the book. Read the (#313) and (#316) receipts. false = the SIZED book.
-  book_names: 20      # (#317) ROUND 100 — how many names that book buys, in score order. 10 = the (#313)/(#316)
+  book_names: 25      # (#317) ROUND 100 — how many names that book buys, in score order. 10 = the (#313)/(#316)
                       #   top-10 and the code default; 20 graded no worse than 10 on the 20y fund pit DCA row.
-                      #   Read the (#317) receipt. 0 is read as 1.
+                      #   (#321) ROUND 104 widened it to 25, again no worse. The book buys
+                      #   min(this, ranked non-coin), so it is a CEILING: live supply, not this number, sets
+                      #   the row count. Read the (#317) and (#321) receipts. 0 is read as 1.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -5901,6 +5904,73 @@ buy_heuristic:
   #   bigger). (d) `sim` stays inert until October's first book. (e) (#318)'s REOPEN condition now holds: 25
   #   stocks and ETFs ranked against a 20-name book, so a skipped twin has a replacement.
   #   REVERT: `git revert` this commit.
+  #
+  # (#321) ROUND 104: THE EQUAL-WEIGHT BOOK WIDENS FROM 20 TO 25 NAMES. PASSED, SHIPPED. Same standing ask
+  #   ("more assets to buy now and hold 20+ years, most profit, each beating Serie E"), plus the missing
+  #   backtest and forward tests. Picked by the user over dedupe-with-refill; config only, no code.
+  #
+  #   WHAT CHANGED. Two numbers in this file: `top_picks` 20 -> 25 (line ~1116) and `sizing.book_names`
+  #   20 -> 25 (line ~1325). Both move together on purpose — `top_picks` cuts the ranked list `render`
+  #   hands the screen, so a book wider than that cut can never fill; `shipped_config_pin` now asserts
+  #   that inequality as well as the 25. No code, no gate, no golden, no new field (so every journaled
+  #   `sizing_fp` is untouched). (#320) removed the coin cut that had held BUY NOW at 18, and 25 stocks
+  #   and ETFs then cleared the gates against a 20-name book: for the first time the WIDTH bound.
+  #
+  #   BAR, pre-registered, reusing (#317)'s. All four legs needed. "SIZED DCA" = the SIZED never-sell vs
+  #   index DCA row. (1) `backtest 20 universe fund pit`: mean and median >= control -0.3, both OOS halves
+  #   >= -0.5, worst >= -1.0, Serie E share >= 90%. (2) CI args `backtest 20 universe`: SIZED DCA >= +4.4
+  #   and Serie E >= 90%. (3) LIVE `screen` vs a same-day control: BUY NOW holds min(`book_names`, ranked
+  #   non-coin) names, every control name kept, coin weights within 0.1 pt. (4) `size --picks` funds those
+  #   tickers and nothing else; `sim` replay unchanged. A fail meant revert with a receipt-only commit.
+  #
+  #   BACKTEST, 2026-09-18, one binary at e0b9d5d, warm cache, control = this file at HEAD (20):
+  #                                          control (20)            arm (25)
+  #     20y fund pit  SIZED DCA excess       +3.2 (median +3.3)      +3.2 (median +3.3)   -> identical
+  #                   OOS halves / worst     +2.6 / +3.8, +1.7       +2.6 / +3.8, +1.7
+  #                   Serie E share          100% of 21 rows         100% of 21 rows
+  #                   SIZED lump / roll      +0.7 / worst -0.8       +0.7 / worst -0.9
+  #     20y CI args   SIZED DCA excess       +5.2 (median +5.6)      +5.1 (median +5.6)
+  #                   OOS halves / worst     +4.5 / +5.7, +1.2       +4.5 / +5.7, +1.2
+  #                   Serie E / holds        100% of 37              100% of 37, 335 -> 340 holds
+  #     12y fund pit  SIZED lump excess      +3.5 (OOS +2.3/+4.7, worst -6.4)   identical
+  #      8y fund pit  SIZED lump excess      +4.5 (OOS +3.5/+5.4, worst -5.5)   identical
+  #   `windows scored` unchanged on every run (no OFFLINE collapse). ARM PROOF: the SIZED diagnostic line
+  #   reads `top-25`, and the CI-args run banks 340 holds against 335.
+  #
+  #   LIVE, 2026-09-18, one binary, 17 state md5s verified after every run:
+  #                          control (20)                            arm (25)
+  #     scanned / cleared    5043 / 27                               5043 / 27
+  #     lane caps printed    Top 5 of 20 max stocks, 16 of 20 ETFs   Top 5 of 25 max stocks, 16 of 25 ETFs
+  #     BUY NOW              20 names at 4.8% + BNB 2.5, BTC 2.5     24 names at 4.0% + BNB 2.5, BTC 2.5
+  #     adds / losses        -                                       +SEMI.AS +FLXK.L +ESIF.DE +LYBK.DE / none
+  #     `size --picks`       -                                       the same 26 tickers, nothing else
+  #     `sim`                TICKER, QTY, COST, BUYS and P/L % identical on all 25 holdings (0 rows differ)
+  #   VERDICT: PASS on all four legs.
+  #   THE ADDS, ranks 13-16 of the ETF table, all four beating Serie E's 4.5%/yr on the legs they have:
+  #   SEMI.AS VanEck Semiconductor (+30%/yr, 5.1y of record, 5Y +309.9%, max drawdown -45%), FLXK.L
+  #   Franklin Nasdaq-100 (+20%/yr, 7.3y, 5Y +161.4%, 8Y ~+197.3%), ESIF.DE iShares EURO STOXX Banks
+  #   (+24%/yr, 5.8y, 5Y +166.4%, max drawdown -23%), LYBK.DE Amundi EURO STOXX Banks (+21%/yr, 7.9y,
+  #   5Y +332.1%, 8Y ~+212.3%).
+  #
+  #   HONEST EDGES. (a) Breadth, not return. The bar tolerated -0.3 and the arm spent -0.1 of it on the CI
+  #   args; the fund-pit ruler is identical to the digit. (b) The backtest cannot SEE ranks 21-25: the PIT
+  #   pool holds ~15 names a window, so the top-20 and top-25 book rows print identically at every horizon
+  #   and leg 1 passed vacuously. Leg 3 is where the change is real. (c) The live book holds 24, not 25 —
+  #   only 24 stocks and ETFs ranked on 2026-09-18, so the arm buys the whole ranked supply. The width is a
+  #   CEILING, min(`book_names`, ranked non-coin), the same rule (#320) shipped; the literal leg wording
+  #   said 25 and is disclosed here as met in that form. (d) It buys tickers, not exposures: SEMI.AS is a
+  #   0.983 cached-rho twin of held SMH.L, and ESIF.DE/LYBK.DE are 0.928 twins of each other — `screen`
+  #   printed a NEW overlap line for that pair (shared top-10 = 22-58% of each fund), and the semis/tech
+  #   clique it already flagged grew to six funds. (e) Every name buys less: 4.8% -> 4.0%. (f) Coins are
+  #   unchanged at 2.5/2.5 inside the crypto budget, and stay ungraded. (g) Price-only backtest, no FX and
+  #   no fees; (#316)/(#317)/(#320) edges all stand. (h) Receipts above that quote "`top_picks` is 20"
+  #   (~line 1864 and the (#261) correction) describe rounds <= 103 and were true when written.
+  #   REOPEN / NEXT: dedupe-with-refill is now the standing path, and this round makes it cheaper, not
+  #   dearer — `core::decorrelate_keep(.., 0.95)` hand-applied over today's 25 ranked names skips ANX.PA,
+  #   WTEC.L, IUIT.L, XLKS.L, SEMI.AS and XUTC.L, keeps 19, and refills FLXK.L, ESIF.DE and LYBK.DE.
+  #   (#318) and (#245) both refused that cap under conditions — weight stranding under `max_name_pct`,
+  #   no refill pool — that (#313)'s equal weight and (#320)'s cut have voided. Same bar as this round.
+  #   REVERT: `top_picks: 20`, `book_names: 20`, and `shipped_config_pin`'s `Some(25)` back to `Some(20)`.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

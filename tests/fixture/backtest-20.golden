@@ -246,7 +246,7 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   all entries (top-10)         book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1   (windows 22) [unconditional, JOURNALED]
   (a class with a handful of windows is a regime story, not a statistic. If a state over-delivers, the
    guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)
-  all entries (SIZED)          book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1   (windows 22, deployed 100%) [diagnostic: the book `size` funds, top-20; remainder earns the index]
+  all entries (SIZED)          book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1   (windows 22, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── DCA ROLL-AFTER-10y (#311): 96 equal monthly buys into that month's screen, all sold at 20y; the roll sells each lot at 10y, pays 28% on the gain, re-buys that month's screen; vs never-sell, after tax, money-weighted ──
   top-10  roll +8.2%/yr  vs never-sell +7.7%/yr  ->  +0.5 (med -0.4) pts/yr   win 45% of 22   worst -2.7   OOS -1.3/+2.4
