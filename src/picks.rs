@@ -2077,6 +2077,32 @@ pub fn rank_robustness(
         .collect()
 }
 
+/// (#10) Each numeric growth GATE loosened ONE notch, relative to the loaded tuning: (tag, sweep label, loosen).
+/// (#324) One list, two readers. The backtest's GATE SWEEP prices what each notch newly admits on past windows, and
+/// `screen` journals what each would newly admit TODAY so `track` can grade it forward. The tag is the gate's
+/// funnel name, the one `gate_failures` prints. A reopen ships exactly one of these rows, so the set the forward
+/// record grades and the set a reopen would buy are one definition.
+#[allow(clippy::type_complexity)]
+pub fn gate_notches() -> Vec<(&'static str, &'static str, fn(&mut BuyHeuristic))> {
+    vec![
+        ("range", "growth_min_range_pct -10", |t| t.growth_min_range_pct -= 10.0),
+        ("cagr", "growth_min_cagr -4", |t| t.growth_min_cagr -= 4.0),
+        ("1Y+", "growth_min_1y_pct -10", |t| t.growth_min_1y_pct -= 10.0), // restored with the knob: round 5 measured this exact row at n=284 / -108.1 pts fwd and reverted the loosened floor. Re-measured here on the current sample instead of quoted — a POSITIVE flip is the only thing that reopens the question
+        ("1M-knife", "max_1m_drop_pct -10 (deeper)", |t| t.max_1m_drop_pct -= 10.0),
+        ("liquidity", "min_avg_turnover_eur ->0", |t| t.min_avg_turnover_eur = 0.0),
+        ("stretch", "growth_max_above_ma ->off", |t| t.growth_max_above_ma = 0.0), // (#24) fwd return of the extreme-stretch names the gate excludes — validated -125.1 (n=267) at ship time; a POSITIVE flip here says re-probe the ceiling
+        ("lifetime", "growth_require_lifetime_uptrend ->off", |t| t.growth_require_lifetime_uptrend = false), // (#25) fwd return of the lifetime-downtrend names the gate excludes; n=0 while the gate is off
+        ("maxdd", "growth_maxdd_cap ->off", |t| t.growth_maxdd_cap = 0.0), // (#26) fwd return of the deep-drawdown names the gate excludes; n=0 while the gate is off
+        // READ THIS ROW BACKWARDS FROM ITS NEIGHBOURS. Every other row REMOVES a gate and prices the
+        // cohort that gate had been excluding. This one ADDS a rung to `long_leg`'s ladder, so the
+        // cohort it admits was never gated at all — those names had no long CAGR, so they were
+        // unscorable (the `history` reason, 1949 of 4748 EU-buyable names live). Same arithmetic, but
+        // "newly admitted" here means "newly MEASURABLE", not "newly forgiven".
+        ("history", "growth_min_leg_years ->2 (admits the 2Y rung)", |t| t.growth_min_leg_years = 2.0),
+        ("peg", "growth_max_peg ->off", |t| t.growth_max_peg = 0.0), // (#37) fwd return of the names the valuation ceiling excludes — the ceiling's own keep. The ci-settings curve (1.5..4.0) came from six hand-edited configs; this prices the on/off question every run, which is the part that sweep found decisive
+    ]
+}
+
 /// (B) DIAGNOSTIC — read-only, never scored. For a name the growth lane REJECTED, return the ONE gate it
 /// fails IF it fails EXACTLY one of the actionable numeric gates AND fails it by only a small margin: a
 /// "near miss" — a compounder one notch outside the fence (e.g. a great name 25% off its high failing only
@@ -5206,6 +5232,51 @@ fn turnover_note(now: &[String], n: usize, path: &std::path::Path) -> Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#324) Each notch moves exactly ONE knob, by exactly its label's amount. Every gate is armed first (the code
+    /// defaults leave several off, where a notch would move nothing), and the tuning is diffed as JSON so a notch
+    /// that touched a second field shows up too.
+    #[test]
+    fn gate_notches_move_exactly_one_knob() {
+        let armed = BuyHeuristic {
+            growth_min_range_pct: 70.0,
+            growth_min_cagr: 19.0,
+            growth_min_1y_pct: 0.0,
+            max_1m_drop_pct: -25.0,
+            min_avg_turnover_eur: 500_000.0,
+            growth_max_above_ma: 150.0,
+            growth_require_lifetime_uptrend: true,
+            growth_maxdd_cap: -84.0,
+            growth_min_leg_years: 8.0,
+            growth_max_peg: 1.6,
+            ..BuyHeuristic::default()
+        };
+        let before = serde_json::to_value(&armed).unwrap();
+        let got: Vec<(&str, String, serde_json::Value)> = gate_notches()
+            .into_iter()
+            .flat_map(|(tag, _, loosen)| {
+                let mut t = armed.clone();
+                loosen(&mut t);
+                let after = serde_json::to_value(&t).unwrap();
+                let moved: Vec<_> = after.as_object().unwrap().iter().filter(|(k, v)| before.get(k.as_str()) != Some(*v)).map(|(k, v)| (tag, k.clone(), v.clone())).collect();
+                moved
+            })
+            .collect();
+        let want = [
+            ("range", "growth_min_range_pct", serde_json::json!(60.0)),
+            ("cagr", "growth_min_cagr", serde_json::json!(15.0)),
+            ("1Y+", "growth_min_1y_pct", serde_json::json!(-10.0)),
+            ("1M-knife", "max_1m_drop_pct", serde_json::json!(-35.0)),
+            ("liquidity", "min_avg_turnover_eur", serde_json::json!(0.0)),
+            ("stretch", "growth_max_above_ma", serde_json::json!(0.0)),
+            ("lifetime", "growth_require_lifetime_uptrend", serde_json::json!(false)),
+            ("maxdd", "growth_maxdd_cap", serde_json::json!(0.0)),
+            ("history", "growth_min_leg_years", serde_json::json!(2.0)),
+            ("peg", "growth_max_peg", serde_json::json!(0.0)),
+        ];
+        let want: Vec<(&str, String, serde_json::Value)> = want.into_iter().map(|(t, k, v)| (t, k.to_string(), v)).collect();
+        assert_eq!(got, want);
+    }
 
     /// `col_cell` under the SHIPPED tuning — the cells that read config (`leg`: which rung, which CAGR
     /// flavour, `long_trend_cap`) are then asserted against the defaults the screen actually runs with,

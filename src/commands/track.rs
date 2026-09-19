@@ -63,9 +63,10 @@ pub struct Snapshot {
     /// the printed buy table ranked on, so the record matches what the user was shown that day.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sized: Vec<(String, f64)>,
-    /// (#323) THE NEAR-MISS TAIL of the same run: `(ticker, close EUR, gate)` for every name the
-    /// screen's Near-miss block printed — refused on ONE growth gate, narrowly, not pinned, one row
-    /// per fund (`screen::near_miss_tail`, the one definition). Every admission refusal on file was
+    /// (#324) THE NOTCH COHORTS of the same run: `(ticker, close EUR, notch tag)` for every name one
+    /// sweep notch would newly admit (`screen::notch_cohorts` over `picks::gate_notches`), not pinned,
+    /// not crypto, one row per fund. (#323 journalled the narrow near-miss tail, a different set from
+    /// the notch a reopen would ship, so it graded names no reopen would buy.) Every admission refusal on file was
     /// graded on the same backtest windows each round, and every "reopen if" waited on evidence the
     /// journal could not collect, because it only ever held the names that PASSED. This is that
     /// evidence: [`near_section`] grades these names against the book the line bought, per gate, on
@@ -279,7 +280,7 @@ fn flat_rows(snap: &Snapshot) -> Vec<(&str, Option<f64>, f64)> {
     sized_rows(snap).into_iter().zip(flat).filter_map(|((t, p, _), w)| w.map(|w| (t, p, w))).collect()
 }
 
-/// (#323) A line's near-miss tail as [`grade`] wants it, equal-weight: every gate, or just `gate`.
+/// (#323) A line's notch cohorts as [`grade`] wants them, equal-weight: every notch, or just `gate`.
 fn near_rows<'a>(snap: &'a Snapshot, gate: Option<&str>) -> Vec<(&'a str, Option<f64>, f64)> {
     snap.near.iter().filter(|(.., g)| gate.is_none_or(|w| w == g)).map(|(t, p, _)| (t.as_str(), *p, 1.0)).collect()
 }
@@ -517,9 +518,9 @@ fn gate_verdicts(
         .collect()
 }
 
-/// (#323) The fourth table: the NEAR-MISS SHADOW. What each run's gates refused narrowly, held
+/// (#323) The fourth table: the NOTCH SHADOW (#324: what each one-notch loosening would have added). Held
 /// equal-weight on the same windows as the book it bought, then read gate by gate against that book.
-/// This is the forward half of the backtest's NEAR-MISS BOOK rows, and the only out-of-sample
+/// This is the forward half of the backtest's NOTCH BOOK rows, and the only out-of-sample
 /// evidence an admission refusal can ever be re-opened on: every refusal on file was graded on the
 /// same backtest windows each round, which cannot disagree with themselves.
 fn near_section(
@@ -532,8 +533,8 @@ fn near_section(
     let (journalled, total, rows) = graded_rows(snaps, pooled, usize::MAX, today, px_now, spx_now);
     if rows.is_empty() {
         return format!(
-            "\n  Near-miss shadow: nothing gradeable yet. A line needs a day of age and at least one priced\n  \
-             row before it grades, and only {journalled} of {total} journalled run(s) carry a near-miss tail.\n  \
+            "\n  Notch shadow: nothing gradeable yet. A line needs a day of age and at least one priced\n  \
+             row before it grades, and only {journalled} of {total} journalled run(s) carry notch cohorts.\n  \
              The record starts the run AFTER one is journalled and cannot be backdated."
         );
     }
@@ -545,13 +546,13 @@ fn near_section(
         .collect();
     let body = rows.join("\n");
     format!(
-        "\n  Near-miss shadow — the names each run's gates refused NARROWLY on one gate (the screen's\n  \
-         Near-miss block), equal-weight, same windows. A shadow that keeps beating the bought book is a\n  \
-         gate refusing winners. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\n\
+        "\n  Notch shadow — the names each run would have added had ONE gate loosened one sweep notch (the\n  \
+         screen's notch lines), equal-weight, same windows. A cohort that keeps beating the bought book is\n  \
+         a gate refusing winners. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\n\
          {TABLE_HEADER}\n{body}\n\n  \
-         Per gate, one line a month, shadow minus the book that line bought. Receipt (#323): a gate is\n  \
-         loosened one notch when {REOPEN_LINES}+ lines read mean AND median above 0 and its backtest\n  \
-         NEAR-MISS BOOK row's worst window sits within 1.0 of the cleared book's.{gates}"
+         Per notch, one line a month, cohort minus the book that line bought. Receipt (#324): that notch\n  \
+         ships when {REOPEN_LINES}+ lines read mean AND median above 0 AND its backtest NOTCH BOOK row\n  \
+         (cleared + cohort) holds excess within 0.1 and worst within 1.0 of cleared at 20y, 12y and 8y.{gates}"
     )
 }
 
@@ -727,7 +728,7 @@ pub async fn run(args: Vec<String>) {
     );
     // (#322) and the executed book's flat twin, to read against the verdict table's weighted rows.
     println!("{}", sized_section(&snaps, today, &px_now, spx_now));
-    // (#323) and what the gates refused narrowly, read against that same bought book
+    // (#324) and what each one-notch loosening would have added, read against that same bought book
     println!("{}", near_section(&snaps, today, &px_now, spx_now));
     if push {
         let delivered = fetch::push(

@@ -6105,6 +6105,77 @@ buy_heuristic:
   #   so it grades selection, not the sized book. (g) The shadow is printed, never bought.
   #   REVERT: drop the `near:` write in `screen::run` (every reader tolerates its absence) and delete
   #   `report_near_miss_books`' call in `backtest::run`.
+  # (#324) ROUND 107: SHADOW WHAT EACH SWEEP NOTCH WOULD ADMIT, AND GUARD ON THE BOOK IT WOULD BUY. SUPERSEDES (#323)'S RULE.
+  #   Same standing ask. THE CORRECTION. (#323) journalled the NARROW near-miss tail, but its reopen rule ships
+  #   one GATE-SWEEP notch, and for most gates those are different names:
+  #     gate        (#323) journalled                  the notch would admit
+  #     cagr        within 1.5pp (17.5-19)             growth_min_cagr -4 (15-19)
+  #     liquidity   >= 50% of the floor                floor -> 0
+  #     stretch     <= +25 over the ceiling            ceiling off
+  #     peg         a narrow band                      ceiling off
+  #     history     never (not a near miss)            the 2Y rung (~2080 names history alone blocks)
+  #   Only range and 1Y+ matched, so the rule would have bought names nobody graded. Its guard also compared a
+  #   thin gate row's worst window with the cleared book's, and a thin row is deep by construction ((#323) edge d).
+  #   The operator journal held 0 `near` lines, so redefining `near` cost nothing.
+  #   WHAT CHANGED. (1) `picks::gate_notches` is the one list of the ten sweep notches (tag, label, loosen); the
+  #   GATE SWEEP reads it, labels and order unchanged. (2) `screen::notch_cohorts`: per notch, the names it would
+  #   NEWLY admit today (refused at the shipped tuning, cleared once loosened: the sweep's rule), not pinned, not
+  #   crypto, one row per fund, best loosened score first. `Snapshot.near` now journals these as (ticker, close
+  #   EUR, notch tag); the narrow Near-miss block stays, display only. `screen` prints one line per notch: tag,
+  #   label, +N today, first five tickers. (3) `track`'s logic is unchanged (it reads tags generically); its
+  #   wording and footer restate this rule. (4) `backtest`'s NEAR-MISS BOOK becomes NOTCH BOOK: the cleared book,
+  #   then, per notch that admits anything, the UNION book (cleared + cohort), every name equal-weight per bucket,
+  #   with `guard_holds`' verdict. Goldens changed in that section only; the cleared rows are byte-identical.
+  #   (5) Pinned in `gate_notches_move_exactly_one_knob`, `notch_cohorts_are_what_each_notch_newly_admits`,
+  #   `notch_books_add_each_notch_cohort_to_the_cleared_book` and
+  #   `guard_holds_is_excess_within_a_tenth_and_worst_within_one`. They replace
+  #   `near_miss_books_split_cleared_from_one_gate_misses`; `near_miss_tail_is_the_printed_and_journalled_list`
+  #   is now `near_miss_tail_is_the_printed_list`.
+  #
+  #   PRE-REGISTERED REOPEN RULE, written before any union number existed. It replaces (#323)'s.
+  #   Notch g ships, exactly as its GATE-SWEEP label reads, in a new round, only when BOTH hold:
+  #     (i)  FORWARD: `track`'s line for g reads REOPEN SIGNAL: >= 12 monthly journal lines and g's cohort beats
+  #          the bought book on BOTH the mean AND the median of the per-line gap;
+  #     (ii) GUARD: at `backtest 20/12/8 universe fund pit`, g's NOTCH BOOK row holds union excess >= cleared
+  #          excess - 0.1 AND union worst >= cleared worst - 1.0. A horizon where g admits nothing passes (the
+  #          union there IS the cleared book), but at least one horizon must admit.
+  #   Neither half is to be relaxed after the fact. A change to the rule is its own round with its own receipt.
+  #
+  #   IN-SAMPLE GUARD, 2026-09-19, one binary, this config, warm cache (n = samples the notch adds):
+  #                  20y fund pit              12y fund pit              8y fund pit
+  #                  n   excess worst  guard   n   excess worst  guard   n   excess worst  guard
+  #     cleared    119   +0.7  -10.0         249   +3.5   -6.4         347   +4.6   -5.5
+  #     range        2   +0.8   -7.4  pass     2   +3.4   -6.2  pass     2   +4.6   -5.5  pass    HOLDS
+  #     cagr        66   +1.0  -10.0  pass   147   +2.7   -6.4  FAIL   305   +3.5   -4.7  FAIL
+  #     1Y+         28   +0.6  -10.0  pass    40   +3.4   -6.4  pass    56   +4.6   -5.5  pass    HOLDS
+  #     stretch     78   +0.9   -3.7  pass    86   +3.1   -5.7  FAIL    93   +5.0   -5.5  pass
+  #     history     30   +0.5  -10.0  FAIL    63   +2.5   -6.4  FAIL    82   +4.0   -2.8  FAIL
+  #     peg          -     -      -   (none)  14   +3.3   -6.4  FAIL    42   +4.3   -5.5  FAIL
+  #   1M-knife, liquidity, lifetime and maxdd add no sample at any horizon, so under this rule they cannot ship.
+  #   On the union bar the worst window no longer decides anything: no union row is deeper than cleared by more
+  #   than 1.0, so every FAIL above is on excess. Range and 1Y+ hold, which (#323)'s thin-row guard could not
+  #   see; range holds on 2 samples a horizon, 1Y+ on 28 to 56. The cagr -4 notch the 8y sweep flags TOO TIGHT
+  #   (n=305, the same count) costs the book 1.1 excess at 8y and 0.8 at 12y, the answer (#291) gave on SIZED.
+  #   History, the biggest blocked pool, fails at all three. SIZED rows and `windows scored` are byte-identical
+  #   to (#323)'s runs; the only other diffs are pond drift (5975 -> 5977/5978 tickers, +1/+9 ETF cutoffs).
+  #
+  #   LIVE, 2026-09-19, probe data dir, journal and state md5s restored after the run: `screen` printed
+  #   range +0, cagr +28 (CAT1.DE, CF, EME, XPH.DE, XACT-BULL-2.ST), 1Y+ +2 (ORLY, APP), 1M-knife +0,
+  #   liquidity +4, stretch +2, lifetime +0, maxdd +0, history +20 (ARM, GEV, BRES.PA, EMEE.AS, INDA.DE),
+  #   peg +6 (MPWR, ASML, APC.DE, FTNT, ANET). Today's journal line carries the same 62 rows, per notch the same
+  #   count and order. `track` prints "Notch shadow: nothing gradeable yet"; a line needs a day of age.
+  #
+  #   HONEST EDGES. (a) No signal before 12 monthly lines, so a year at the earliest. (b) `track` grades to
+  #   today, so early lines are 1-year returns on a 20-year question; the guard's 20y leg is the long check.
+  #   (c) The history cohort is young by definition, so its forward gap rides one regime. (d) Cohorts exclude
+  #   crypto, as the backtest pool does. (e) The union book is flat equal-weight, not the tilted top-25 the
+  #   operator buys ((#321) (#322)): a pass says the notch does not dilute selection, not that SIZED gains, and
+  #   the ship round still runs the usual SIZED bar. (f) The 5Y+/8Y+/20Y+ leg floors and `volatile` have no
+  #   sweep notch, so nothing shadows them. (g) The cagr cohort holds a 2x leveraged ETP at rank 5, the trap
+  #   (#319) named; a cagr ship would need it screened. (h) No cap per notch: one row per fund held history to
+  #   20 today. The shadow is printed and journalled, never bought.
+  #   REVERT: restore (#323)'s `near` build in `screen::run` from `near_miss_tail` (or drop the write; every reader
+  #   tolerates either) and swap `report_notch_books` back for (#323)'s `report_near_miss_books`.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

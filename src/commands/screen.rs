@@ -694,9 +694,8 @@ fn funnel_lines(quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Vec<St
 /// value; other gates mix floor/ceiling directions, so they keep ticker order), then one row per FUND
 /// (round 54: L&G Gold Mining printed as both AUCO.L and ETLX.DE) — first venue wins.
 ///
-/// (#323) Pulled out of `run` because the printed block is no longer its only reader: the journal
-/// records exactly these rows (`track::Snapshot::near`) and `track` grades them forward, so the list
-/// the user saw and the list that gets graded must be one definition, not two copies of this filter.
+/// (#323) Pulled out of `run` to be journalled; (#324) display-only again, because the journal now records
+/// what each sweep notch would admit (`notch_cohorts`), the set a reopen would actually buy.
 fn near_miss_tail<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::BuyHeuristic) -> Vec<(&'a Quote, &'static str, String)> {
     let mut near: Vec<(&Quote, &'static str, String)> = quotes
         .iter()
@@ -714,6 +713,33 @@ fn near_miss_tail<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::B
     let mut seen_names = std::collections::HashSet::new();
     near.retain(|(q, ..)| seen_names.insert(q.name.to_lowercase()));
     near
+}
+
+/// (#324) What each one-notch loosening (`picks::gate_notches`) would newly admit TODAY: refused at the loaded
+/// tuning and cleared at the loosened one, the rule the backtest's GATE SWEEP and NOTCH BOOK apply to past
+/// windows (`newly_admitted_stats`). Not pinned (the book holds those anyway), not crypto (the backtest pool's
+/// rule), and one row per fund, the best-scoring venue first. `screen` prints a line per notch and journals every
+/// row (`track::Snapshot::near`), so `track` grades each cohort against the book the same run bought.
+/// ponytail: no cap. The history cohort can run to hundreds of rows a line; cap per notch if the journal's size
+/// ever matters.
+#[allow(clippy::type_complexity)]
+fn notch_cohorts<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::BuyHeuristic) -> Vec<(&'static str, &'static str, Vec<&'a Quote>)> {
+    let refused: Vec<&Quote> = quotes
+        .iter()
+        .filter(|q| !pinned.contains(&q.ticker) && picks::asset_class(q) != 0 && growth_score(q, tuning).is_none())
+        .collect();
+    picks::gate_notches()
+        .into_iter()
+        .map(|(tag, label, loosen)| {
+            let mut t = tuning.clone();
+            loosen(&mut t);
+            let mut cohort: Vec<(&Quote, f64)> = refused.iter().filter_map(|q| growth_score(q, &t).map(|s| (*q, s))).collect();
+            cohort.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.ticker.cmp(&b.0.ticker)));
+            let mut funds = std::collections::HashSet::new();
+            cohort.retain(|(q, _)| funds.insert(q.name.to_lowercase()));
+            (tag, label, cohort.into_iter().map(|(q, _)| q).collect())
+        })
+        .collect()
 }
 
 const MULTI_GATE_CAP: usize = 15; // hardcoded like the near-miss margins — a cosmetic tail, not a tuned knob
@@ -1888,8 +1914,8 @@ pub async fn run(args: Vec<String>) {
     .iter()
     .map(|&(q, _, w, _)| (q.ticker.clone(), w))
     .collect();
-    // (#323) built here, not at the print below, so the journal records the rows the block prints
-    let near = near_miss_tail(&quotes, &settings.tickers, &settings.buy_heuristic);
+    // (#324) built here, not at the print below, so the journal records the rows the block prints
+    let notches = notch_cohorts(&quotes, &settings.tickers, &settings.buy_heuristic);
     crate::commands::track::append_snapshot(&crate::commands::track::Snapshot {
         date: run_date.clone(),
         spx: spx.first().and_then(|q| q.price_eur),
@@ -1935,8 +1961,9 @@ pub async fn run(args: Vec<String>) {
         // Weights only; the price is already in `rows` for every one of these tickers, and
         // `track::sized_rows` does the join.
         sized: sized_now.clone(),
-        // (#323) and what the gates refused narrowly, with that day's close, so `track` can grade it
-        near: near.iter().map(|(q, g, _)| (q.ticker.clone(), q.price_eur, g.to_string())).collect(),
+        // (#324) and what each one-notch loosening would have added, with that day's close, so `track`
+        // grades exactly the set a reopen would buy
+        near: notches.iter().flat_map(|(tag, _, c)| c.iter().map(move |q| (q.ticker.clone(), q.price_eur, tag.to_string()))).collect(),
     });
 
     // (r15) footer population: ranked book + pinned extras — the held/watched names sit in the
@@ -2365,16 +2392,24 @@ pub async fn run(args: Vec<String>) {
     // (B) NEAR-MISS tail: names the growth lane rejected on EXACTLY one gate — a compounder one notch
     // outside the fence (e.g. a great name 25% off its high failing only the range gate). Makes the silent
     // exclusions visible so a dropped winner can be eyeballed, without loosening any gate. Empty -> nothing.
-    // Built once above (`near_miss_tail`) and journalled there, so these are the rows `track` grades.
+    let near = near_miss_tail(&quotes, &settings.tickers, &settings.buy_heuristic);
     if !near.is_empty() {
         // Header names all THREE predicates this block applies, not just the first: it needs exactly one
         // failing gate AND a close miss AND a non-pinned name. Advertising only "ONE growth gate" made a
         // pinned name failing one gate narrowly (AAPL, peg 2.14) look like it belonged here when it can
         // never reach this code — the pinned filter runs before closeness is ever tested.
-        println!("\nNear-miss — rejected NARROWLY on ONE growth gate (not ranked above; pinned names: see gate review), loosen intentionally if wanted; journalled, `track` grades them forward (#323):");
+        println!("\nNear-miss — rejected NARROWLY on ONE growth gate (not ranked above; pinned names: see gate review), loosen intentionally if wanted:");
         for (q, gate, why) in &near {
             println!("  {:<8} {:<44.44} {:<10} {why}", q.ticker, q.name, gate);
         }
+    }
+
+    // (#324) what each one-notch loosening would add TODAY, built above and journalled there: the set a
+    // reopen would buy, which `track` grades forward against the book this run bought
+    println!("\nIf ONE gate loosened one sweep notch, today it would add (#324; journalled, `track` grades each cohort against the bought book):");
+    for (tag, label, cohort) in &notches {
+        let first: Vec<&str> = cohort.iter().take(5).map(|q| q.ticker.as_str()).collect();
+        println!("  {tag:<10} {label:<46} +{:<4} {}", cohort.len(), first.join(", "));
     }
 
     // (C) TWO-GATE tail: names failing EXACTLY two gates, both close. The block above needs exactly
@@ -3878,11 +3913,11 @@ mod tests {
         assert!(headline_rows(&[], &titles).is_empty());
     }
 
-    /// (#323) The near-miss tail is ONE list — the block prints it and the journal records it: one gate
+    /// (#323) The near-miss tail is ONE list, the one the block prints: one gate
     /// missed narrowly, never a pinned name, one row per fund, the cagr group closest-to-the-bar first
     /// and the gates in name order.
     #[test]
-    fn near_miss_tail_is_the_printed_and_journalled_list() {
+    fn near_miss_tail_is_the_printed_list() {
         let q = |ticker: &str, name: &str, range: f64, l: &[(&str, f64)]| {
             let mut quote = Quote::stub(ticker, "€1.00", "", name);
             quote.avg_turnover_eur = Some(1e9);
@@ -3907,6 +3942,41 @@ mod tests {
         let tail = near_miss_tail(&quotes, &["PIN".to_string()], &tuning);
         let got: Vec<(&str, &str)> = tail.iter().map(|(q, g, _)| (q.ticker.as_str(), *g)).collect();
         assert_eq!(got, [("NEAR", "cagr"), ("FAR", "cagr"), ("RNG", "range")], "{tail:?}");
+    }
+
+    /// (#324) A cohort is what ONE notch newly admits: the cagr notch (8 -> 4) takes a 6%/yr name and not a
+    /// 3%/yr one, never a name that already clears, never a pinned or currency-quoted one, and one venue per fund.
+    /// Every notch prints, empty ones too.
+    #[test]
+    fn notch_cohorts_are_what_each_notch_newly_admits() {
+        let q = |ticker: &str, name: &str, range: f64, leg8: f64| {
+            let mut quote = Quote::stub(ticker, "€1.00", "", name);
+            quote.avg_turnover_eur = Some(1e9);
+            quote.range_pct = range;
+            quote.age_years = Some(20.0);
+            let l = [("1Y", 10.0), ("5Y", 100.0), ("8Y", leg8)];
+            quote.perf = core::HORIZONS
+                .iter()
+                .map(|(lab, _)| l.iter().find(|(pl, _)| pl == lab).map(|(_, v)| ("x".to_string(), *v)))
+                .collect();
+            quote
+        };
+        let tuning = config::BuyHeuristic { growth_min_5y_pct: 75.0, growth_min_age_years: 5.0, ..config::BuyHeuristic::default() };
+        // 8Y +59.4% = 6.0%/yr (inside the notch), +30% = 3.3%/yr (below it), +214% = 15.4%/yr (clears already)
+        let quotes = vec![
+            q("RNG", "Range Co", 75.0, 214.0),
+            q("IN.DE", "In Co", 90.0, 59.4),
+            q("IN", "In Co", 90.0, 59.4),
+            q("OUT", "Out Co", 90.0, 30.0),
+            q("CLR", "Clear Co", 90.0, 214.0),
+            q("PIN", "Pinned Co", 90.0, 59.4),
+            q("COIN-USD", "Coin", 90.0, 59.4),
+        ];
+        let got = notch_cohorts(&quotes, &["PIN".to_string()], &tuning);
+        assert_eq!(got.len(), picks::gate_notches().len(), "every notch prints, +0 included");
+        let admitted: Vec<(&str, Vec<&str>)> =
+            got.iter().filter(|(.., c)| !c.is_empty()).map(|(tag, _, c)| (*tag, c.iter().map(|q| q.ticker.as_str()).collect())).collect();
+        assert_eq!(admitted, [("range", vec!["RNG"]), ("cagr", vec!["IN"])], "{admitted:?}");
     }
 
     /// The gate tails: the n-arity block (2 and 3), the long-leg floor block, and the four behaviours

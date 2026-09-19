@@ -1563,23 +1563,7 @@ pub async fn run(args: Vec<String>) {
     // changes on `universe`, and read the goldens for what they are: a pin on the arithmetic, not a verdict.
     // (#10) loosen each numeric growth GATE one notch, relative to the loaded tuning (respects settings.yaml
     // overrides). The sweep reports the mean forward return of the names each loosening newly admits.
-    let gate_loosen: Vec<Knob> = vec![
-        knob("growth_min_range_pct -10", |t| t.growth_min_range_pct -= 10.0),
-        knob("growth_min_cagr -4", |t| t.growth_min_cagr -= 4.0),
-        knob("growth_min_1y_pct -10", |t| t.growth_min_1y_pct -= 10.0), // restored with the knob: round 5 measured this exact row at n=284 / -108.1 pts fwd and reverted the loosened floor. Re-measured here on the current sample instead of quoted — a POSITIVE flip is the only thing that reopens the question
-        knob("max_1m_drop_pct -10 (deeper)", |t| t.max_1m_drop_pct -= 10.0),
-        knob("min_avg_turnover_eur ->0", |t| t.min_avg_turnover_eur = 0.0),
-        knob("growth_max_above_ma ->off", |t| t.growth_max_above_ma = 0.0), // (#24) fwd return of the extreme-stretch names the gate excludes — validated -125.1 (n=267) at ship time; a POSITIVE flip here says re-probe the ceiling
-        knob("growth_require_lifetime_uptrend ->off", |t| t.growth_require_lifetime_uptrend = false), // (#25) fwd return of the lifetime-downtrend names the gate excludes; n=0 while the gate is off
-        knob("growth_maxdd_cap ->off", |t| t.growth_maxdd_cap = 0.0), // (#26) fwd return of the deep-drawdown names the gate excludes; n=0 while the gate is off
-        // READ THIS ROW BACKWARDS FROM ITS NEIGHBOURS. Every other row REMOVES a gate and prices the
-        // cohort that gate had been excluding. This one ADDS a rung to `long_leg`'s ladder, so the
-        // cohort it admits was never gated at all — those names had no long CAGR, so they were
-        // unscorable (the `history` reason, 1949 of 4748 EU-buyable names live). Same arithmetic, but
-        // "newly admitted" here means "newly MEASURABLE", not "newly forgiven".
-        knob("growth_min_leg_years ->2 (admits the 2Y rung)", |t| t.growth_min_leg_years = 2.0),
-        knob("growth_max_peg ->off", |t| t.growth_max_peg = 0.0), // (#37) fwd return of the names the valuation ceiling excludes — the ceiling's own keep. The ci-settings curve (1.5..4.0) came from six hand-edited configs; this prices the on/off question every run, which is the part that sweep found decisive
-    ];
+    let gate_loosen: Vec<Knob> = picks::gate_notches().into_iter().map(|(_, label, f)| knob(label, f)).collect();
     report_lane("ON-SALE (buy_score)", &samples, buy_score, tuning, &buy_knobs, years);
     report_lane("GROWTH (growth_score)", &samples, growth_score, tuning, &growth_knobs, years);
     // (#3g) the two levers that decide how hard a HIGH-CAGR name is rewarded: the slope and the ceiling.
@@ -1721,8 +1705,8 @@ pub async fn run(args: Vec<String>) {
     report_relative_strength(&samples, &bench, tuning.split_purge_months);
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
     let verdict = report_entry_state(&samples, &bench, years, tuning);
-    // (#323) the in-sample prior for the near-miss shadow `track` grades forward
-    report_near_miss_books(&samples, &bench, years, tuning);
+    // (#324) the in-sample guard for the notch shadow `track` grades forward
+    report_notch_books(&samples, &bench, years, tuning);
     // (#308) the indexes the spill's trackers follow, so the SIZED remainder earns what `size` buys with
     // it: all-world / developed / emerging per tier, the US tier on `bench` itself, weighted by
     // `size::spill_split`. Free Yahoo series; MSCI EM has no free history, so VEIEX (from 1994). Price-only,
@@ -3100,42 +3084,70 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
     Some((mean(&book), mean(&spy), mean(&excess), win, worst, mean(&excess[..cut]), mean(&excess[cut..])))
 }
 
-/// (#323) The in-sample PRIOR for the near-miss shadow `track` grades forward. Three kinds of row, each held
-/// equal-weight per bucket (`usize::MAX`: the whole set, not a top-N): every name the screen CLEARED, every printed
-/// near miss (one gate, narrowly: `picks::growth_near_miss`), then each gate's near misses alone, by name. The same
-/// pool as `report_entry_state` (non-crypto, benchmarkable). Row: (label, samples, `book_stats`). The reopen guard
-/// reads a gate row's `worst` against the cleared row's.
+/// (#324) The in-sample GUARD for the notch shadow `track` grades forward: the book each reopen would actually buy.
+/// Row one holds every name the screen CLEARED. Then comes one row per sweep notch (`picks::gate_notches`) that newly
+/// admits anything, holding the cleared names PLUS that notch's cohort (refused at `tuning`, cleared once loosened:
+/// the GATE SWEEP's rule). Each is equal-weight per bucket (`usize::MAX`: the whole set, not a top-N), on
+/// `report_entry_state`'s pool (non-crypto, benchmarkable). Row: (label, samples it adds, or holds for `cleared`,
+/// `book_stats`). A union is never thinner than the cleared book, so its worst window is not deep by construction,
+/// the way a thin cohort's alone was under (#323)'s guard.
 #[allow(clippy::type_complexity)]
-fn near_miss_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64))> {
-    let mut books: std::collections::BTreeMap<String, std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>> = Default::default();
+fn notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64))> {
+    let notches: Vec<(&str, BuyHeuristic)> = picks::gate_notches()
+        .into_iter()
+        .map(|(tag, _, loosen)| {
+            let mut t = tuning.clone();
+            loosen(&mut t);
+            (tag, t)
+        })
+        .collect();
+    let mut cleared: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+    let mut added: Vec<Vec<(i32, (f64, f64, f64))>> = vec![Vec::new(); notches.len()];
     for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
         let Some(br) = benchmark_fwd(&bench.0, &bench.1, s.date, years) else { continue };
-        let labels = match (growth_score(&s.quote, tuning), picks::growth_near_miss(&s.quote, tuning)) {
-            (Some(_), _) => vec!["cleared"],
-            (None, Some((gate, _))) => vec!["near-miss", gate],
-            _ => continue,
-        };
-        for l in labels {
-            books.entry(l.to_string()).or_default().entry(bucket(s.date)).or_default().push((0.0, s.realized, br));
+        let row = (0.0, s.realized, br);
+        if growth_score(&s.quote, tuning).is_some() {
+            cleared.entry(bucket(s.date)).or_default().push(row);
+            continue;
+        }
+        for ((_, t), cohort) in notches.iter().zip(added.iter_mut()) {
+            if growth_score(&s.quote, t).is_some() {
+                cohort.push((bucket(s.date), row));
+            }
         }
     }
-    let mut rows: Vec<_> = ["cleared", "near-miss"].iter().filter_map(|l| books.remove_entry(*l)).collect();
-    rows.extend(books);
-    rows.into_iter().filter_map(|(l, b)| Some((l, b.values().map(Vec::len).sum(), book_stats(&b, usize::MAX, years)?))).collect()
+    let Some(base) = book_stats(&cleared, usize::MAX, years) else { return Vec::new() };
+    let mut rows = vec![("cleared".to_string(), cleared.values().map(Vec::len).sum(), base)];
+    for ((tag, _), cohort) in notches.iter().zip(added).filter(|(_, c)| !c.is_empty()) {
+        let mut union = cleared.clone();
+        for (b, row) in &cohort {
+            union.entry(*b).or_default().push(*row);
+        }
+        rows.extend(book_stats(&union, usize::MAX, years).map(|st| (tag.to_string(), cohort.len(), st)));
+    }
+    rows
 }
 
-/// (#323) Prints `near_miss_books`. Print-only, so `replace with ()` is unkillable; the arithmetic is tested there.
+/// (#324) The pre-registered no-worse bar for one notch's union book against the cleared book at ONE horizon: excess
+/// within 0.1 AND worst window within 1.0 (the repo's standing no-worse bar, (#322) leg 2). A notch ships only when
+/// this holds at 20y, 12y and 8y fund pit and `track`'s forward half reads REOPEN SIGNAL.
+fn guard_holds(cleared: &(f64, f64, f64, f64, f64, f64, f64), union: &(f64, f64, f64, f64, f64, f64, f64)) -> bool {
+    union.2 >= cleared.2 - 0.1 && union.4 >= cleared.4 - 1.0
+}
+
+/// (#324) Prints `notch_books` with each row's `guard_holds`. Print-only, so `replace with ()` is unkillable; the
+/// arithmetic and the bar are tested in those two.
 #[mutants::skip]
-fn report_near_miss_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
-    let rows = near_miss_books(samples, bench, years, tuning);
-    if rows.is_empty() {
-        return;
+fn report_notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let rows = notch_books(samples, bench, years, tuning);
+    let Some((_, _, base)) = rows.first().cloned() else { return };
+    println!("\n── NOTCH BOOK (#324): the book each one-notch reopen would buy (cleared + that notch's cohort), every name equal-weight, held {years}y ──");
+    for (l, n, st) in rows {
+        let (b, _, e, w, wo, el, la) = st;
+        let guard = if l == "cleared" { "" } else if guard_holds(&base, &st) { "  guard pass" } else { "  guard FAIL" };
+        println!("  {l:<10} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{guard}");
     }
-    println!("\n── NEAR-MISS BOOK (#323): what the screen cleared vs what it refused by one gate, narrowly; every name equal-weight, held {years}y ──");
-    for (l, n, (b, _, e, w, wo, el, la)) in rows {
-        println!("  {l:<11} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}");
-    }
-    println!("  (`track` grades the same refused set forward; a gate reopens only on 12 monthly lines of forward evidence AND a worst here no deeper than cleared's by > 1.0)");
+    println!("  (n = samples: the cleared book's own, or what the notch adds. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y; `track` grades the same cohorts forward)");
 }
 
 /// (#44 Phase C) Grade each FREE as-of fundamental factor on the HELD-BOOK metric: within the
@@ -8573,6 +8585,46 @@ mod tests {
         s.buy_heuristic
     }
 
+    /// (#324) The shipped tuning on the synthetic world: `cleared` holds only cleared names, each union row adds
+    /// exactly what its notch newly admits (the GATE SWEEP's rule, counted independently here), notches that admit
+    /// nothing print no row, and with no benchmark there is no book.
+    #[test]
+    fn notch_books_add_each_notch_cohort_to_the_cleared_book() {
+        let (samples, tuning) = (synthetic_samples(), shipped_tuning());
+        let (dates, _) = synthetic_universe();
+        let bench = (dates.clone(), (0..dates.len()).map(|i| 1.08_f64.powf(i as f64 / 12.0)).collect());
+        let rows = notch_books(&samples, &bench, 12, &tuning);
+        let got: Vec<(&str, usize)> = rows.iter().map(|(l, n, _)| (l.as_str(), *n)).collect();
+        let fwd = |s: &&Sample| picks::asset_class(&s.quote) != 0 && benchmark_fwd(&bench.0, &bench.1, s.date, 12).is_some();
+        let mut want = vec![("cleared", samples.iter().filter(fwd).filter(|s| growth_score(&s.quote, &tuning).is_some()).count())];
+        for (tag, _, loosen) in picks::gate_notches() {
+            let mut t = tuning.clone();
+            loosen(&mut t);
+            let n = samples.iter().filter(fwd).filter(|s| growth_score(&s.quote, &tuning).is_none() && growth_score(&s.quote, &t).is_some()).count();
+            if n > 0 {
+                want.push((tag, n));
+            }
+        }
+        assert_eq!(got, want);
+        assert_eq!(got, [("cleared", 158), ("cagr", 16), ("1Y+", 31), ("history", 11)]);
+        let book: Vec<f64> = rows.iter().map(|r| r.2 .0).collect();
+        for (b, pin) in book.iter().zip([24.591905072812, 24.473134675704, 25.537195954510, 24.478451418977]) {
+            assert!((b - pin).abs() < 1e-9, "{book:?}");
+        }
+        let verdicts: Vec<bool> = rows[1..].iter().map(|r| guard_holds(&rows[0].2, &r.2)).collect();
+        assert_eq!(verdicts, [false, true, false], "{rows:?}");
+        assert!(notch_books(&samples, &(Vec::new(), Vec::new()), 12, &tuning).is_empty());
+    }
+
+    /// (#324) The guard's two bars, each at its exact boundary and just past it.
+    #[test]
+    fn guard_holds_is_excess_within_a_tenth_and_worst_within_one() {
+        let at = |e: f64, w: f64| guard_holds(&(0.0, 0.0, 1.0, 0.0, -5.0, 0.0, 0.0), &(0.0, 0.0, e, 0.0, w, 0.0, 0.0));
+        assert!(at(0.9, -6.0));
+        assert!(!at(0.89, -6.0));
+        assert!(!at(0.9, -6.01));
+    }
+
     /// The OFFLINE half of the backtest gate. `backtest_edge_holds` (tests/network.rs) asserts two
     /// different things at once — "a scoring-code change or a default-tuning edit broke the edge" AND
     /// "the edge still holds on today's market" — and prices the first at the second's cost: 3000+ live
@@ -8595,24 +8647,6 @@ mod tests {
     /// `edge > 0` would only prove the fixture was bent until it went green. Pinning the VALUE is the
     /// non-circular assert, and it is strictly the stronger one: it fails on any scoring change, not
     /// just on one big enough to flip a sign.
-    /// (#323) The shipped tuning on the synthetic world: the cleared row counts only cleared names, a sample lands
-    /// under its gate AND the pooled row (so the gate rows sum to the pooled one), a far miss appears nowhere, and
-    /// the rows come cleared, near-miss, then gates by name.
-    #[test]
-    fn near_miss_books_split_cleared_from_one_gate_misses() {
-        let (samples, tuning) = (synthetic_samples(), shipped_tuning());
-        let (dates, _) = synthetic_universe();
-        let bench = (dates.clone(), (0..dates.len()).map(|i| 1.08_f64.powf(i as f64 / 12.0)).collect());
-        let rows = near_miss_books(&samples, &bench, 12, &tuning);
-        let got: Vec<(&str, usize)> = rows.iter().map(|(l, n, _)| (l.as_str(), *n)).collect();
-        assert_eq!(got, [("cleared", 158), ("near-miss", 42), ("1Y+", 31), ("cagr", 4), ("cagr-life", 7)]);
-        let cleared = samples.iter().filter(|s| benchmark_fwd(&bench.0, &bench.1, s.date, 12).is_some() && growth_score(&s.quote, &tuning).is_some()).count();
-        assert_eq!((cleared, samples.len()), (158, 500), "300 far misses and unbenchmarkable samples land nowhere");
-        let book = |i: usize| (rows[i].2).0;
-        assert!((book(0) - 24.591905072812).abs() < 1e-9 && (book(1) - 27.618086606583).abs() < 1e-9, "{rows:?}");
-        assert!(near_miss_books(&samples, &(Vec::new(), Vec::new()), 12, &tuning).is_empty());
-    }
-
     #[test]
     fn shipped_tuning_scores_fixture_unchanged() {
         let samples = synthetic_samples();
