@@ -6176,6 +6176,66 @@ buy_heuristic:
   #   20 today. The shadow is printed and journalled, never bought.
   #   REVERT: restore (#323)'s `near` build in `screen::run` from `near_miss_tail` (or drop the write; every reader
   #   tolerates either) and swap `report_notch_books` back for (#323)'s `report_near_miss_books`.
+  # (#325) ROUND 108: REPLAY THE FORWARD RULE ON THE UNSCORED TAIL, AND PRICE THE GATES NO NOTCH COVERED. NOTHING SHIPS.
+  #   Same standing ask. THE GAP. Every graded horizon (20/12/8y) needs its forward window closed, so no graded
+  #   entry is later than ~2018-09, and `track` starts in 2026. Seven years of entries no ship rule ever read,
+  #   while (#324)'s forward half waits a year for 12 monthly lines. `backtest 1 long universe fund pit` walks
+  #   those entries with the full live gate stack (`long` = MAX monthly bars, as the 8y+ runs use).
+  #   WHAT CHANGED. (1) `picks::gate_notches` gains 5Y+ (growth_min_5y_pct -15), range8y
+  #   (growth_min_range_pct_8y -10) and aum (growth_min_aum_etf x0.5), each step that gate's near-miss margin in
+  #   `gate_failures`. The GATE SWEEP, NOTCH BOOK, `screen`'s notch lines and `Snapshot.near` all read the list,
+  #   so each is priced and shadowed with no other change. range8y and aum are LIVE-ONLY (`stats_8y` and
+  #   `aum_eur` are None in every backtest): their sweep rows read "admits 0", and only `track` can grade them.
+  #   The Série E rungs (8Y+, 20Y+) get no notch: they are a mandate ((#315)), so a loosened hurdle never ships.
+  #   (2) `backtest::notch_tail`: for entries after `since` (the last date the 8y horizon closes), per ~6-month
+  #   bucket where both sides exist, the notch cohort's mean realized return minus the cleared book's; n, mean
+  #   and median across lines. `report_notch_tail` prints NOTCH TAIL only when a line exists, so every >= 8y
+  #   run and every golden is unchanged there. The verdict is `track::reopen_verdict`, one rule for both halves.
+  #   (3) Pinned in `gate_notches_move_exactly_one_knob` (+3 rows) and
+  #   `notch_tail_grades_only_entries_after_since`. The goldens gained the three sweep rows and a 5Y+ NOTCH BOOK
+  #   row, nothing else.
+  #
+  #   PRE-REGISTERED RULE, written before any tail number existed. It SUPERSEDES (#324)'s forward half (i).
+  #   Notch g ships, exactly as its GATE-SWEEP label reads, when ALL hold:
+  #     (i)   GUARD: (#324)'s union guard at `backtest 20/12/8 universe fund pit` (excess >= cleared - 0.1 AND
+  #           worst >= cleared - 1.0; at least one horizon admits);
+  #     (ii)  TAIL: NOTCH TAIL at `backtest 1 long universe fund pit` reads >= 12 lines, with the gap > 0 on
+  #           BOTH the mean AND the median (REOPEN SIGNAL);
+  #     (iii) the CI backtest gate stays green.
+  #   If several pass, ship ONE: the best tail median. `track` keeps grading the shipped cohort; REVERT it once 12
+  #   monthly lines read mean AND median < 0.
+  #
+  #   TAIL, 2026-09-19, entries after 2018-09-17, held 1y, this config, one binary:
+  #     notch      lines  mean   median  verdict
+  #     range        1   +62.1  +62.1    needs 12 lines
+  #     cagr        15    -2.8   -3.0    holds (no signal)
+  #     1Y+          9   +28.5  +19.7    needs 12 lines
+  #     stretch      7   +13.4   +7.9    needs 12 lines
+  #     history     14    -6.8   -8.5    holds (no signal)
+  #     peg         15    -7.7   -7.2    holds (no signal)
+  #     5Y+          -      -      -     (no line after 2018-09-17; 12 samples over the whole 1y run)
+  #   GUARD, the new 5Y+ notch (n = samples it adds):
+  #                  20y fund pit              12y fund pit              8y fund pit
+  #     cleared    119   +0.7  -10.0         249   +3.5   -6.4         347   +4.6   -5.5
+  #     5Y+          6   +0.4  -10.0  FAIL    11   +3.2   -6.4  FAIL    12   +4.3   -5.5  FAIL
+  #   NOTHING SHIPS. No notch passes (ii). The three with 12+ lines (cagr, history, peg) all read a NEGATIVE gap,
+  #   and all three also fail the guard: the tail agrees with the in-sample refusals. The two that hold the
+  #   guard (range, 1Y+) are short of lines: 1Y+ is closest, +28.5/+19.7 on 9 lines, 3 half-year buckets
+  #   (~1.5 years of new entries) or `track`'s 12 monthly lines short. 5Y+ fails the guard at all three horizons
+  #   on excess. The 20/12/8y runs match (#324)'s except the new rows and pond drift (5975 -> 5980/5983 tickers;
+  #   the cutoff counts are identical); SIZED and `windows scored` are byte-identical.
+  #   LIVE, 2026-09-19, probe data dir, journal md5 and 17 state files restored: 5Y+ +1 (CVNA), range8y +0,
+  #   aum +0; the other ten lines match (#324)'s. The journal line carries 63 `near` rows, per notch the same
+  #   count and order as printed. `track`: "Notch shadow: nothing gradeable yet".
+  #
+  #   HONEST EDGES. (a) A 1y forward on a 20y question: the tail says "does the cohort keep pace", and the guard's
+  #   20y leg is the long check. (b) Six-month lines with a 1y hold overlap by half, so 12 lines are ~7
+  #   independent reads. (c) One regime: 2018-2025, the mega-cap boom. (d) range8y and aum are backtest-blind,
+  #   so they can never pass (i) and only shadow forward. (e) The Série E floors are left out on purpose.
+  #   (f) A `backtest 1 long ... pit` run journals a 1y SIZED record into `.backtest_sized.json`, and the BUY
+  #   NOW record line then cites it; delete key "1" after a probe, or accept the extra horizon.
+  #   REVERT: drop the three notch entries from `picks::gate_notches` and the `report_notch_tail` call in
+  #   `backtest::run`, and re-bless the goldens.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

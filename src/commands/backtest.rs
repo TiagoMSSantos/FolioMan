@@ -1707,6 +1707,8 @@ pub async fn run(args: Vec<String>) {
     let verdict = report_entry_state(&samples, &bench, years, tuning);
     // (#324) the in-sample guard for the notch shadow `track` grades forward
     report_notch_books(&samples, &bench, years, tuning);
+    // (#325) the forward half, replayed on the entries no graded horizon closes (short runs only)
+    report_notch_tail(&samples, years, tuning);
     // (#308) the indexes the spill's trackers follow, so the SIZED remainder earns what `size` buys with
     // it: all-world / developed / emerging per tier, the US tier on `bench` itself, weighted by
     // `size::spill_split`. Free Yahoo series; MSCI EM has no free history, so VEIEX (from 1994). Price-only,
@@ -3084,6 +3086,18 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
     Some((mean(&book), mean(&spy), mean(&excess), win, worst, mean(&excess[..cut]), mean(&excess[cut..])))
 }
 
+/// (#324) Each `picks::gate_notches` row applied to `tuning`: (tag, loosened tuning), in list order.
+fn notch_tunings(tuning: &BuyHeuristic) -> Vec<(&'static str, BuyHeuristic)> {
+    picks::gate_notches()
+        .into_iter()
+        .map(|(tag, _, loosen)| {
+            let mut t = tuning.clone();
+            loosen(&mut t);
+            (tag, t)
+        })
+        .collect()
+}
+
 /// (#324) The in-sample GUARD for the notch shadow `track` grades forward: the book each reopen would actually buy.
 /// Row one holds every name the screen CLEARED. Then comes one row per sweep notch (`picks::gate_notches`) that newly
 /// admits anything, holding the cleared names PLUS that notch's cohort (refused at `tuning`, cleared once loosened:
@@ -3093,14 +3107,7 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
 /// the way a thin cohort's alone was under (#323)'s guard.
 #[allow(clippy::type_complexity)]
 fn notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64))> {
-    let notches: Vec<(&str, BuyHeuristic)> = picks::gate_notches()
-        .into_iter()
-        .map(|(tag, _, loosen)| {
-            let mut t = tuning.clone();
-            loosen(&mut t);
-            (tag, t)
-        })
-        .collect();
+    let notches = notch_tunings(tuning);
     let mut cleared: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
     let mut added: Vec<Vec<(i32, (f64, f64, f64))>> = vec![Vec::new(); notches.len()];
     for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
@@ -3148,6 +3155,64 @@ fn report_notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f
         println!("  {l:<10} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{guard}");
     }
     println!("  (n = samples: the cleared book's own, or what the notch adds. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y; `track` grades the same cohorts forward)");
+}
+
+/// (#325) The forward half of the reopen rule, replayed where no ship rule ever looked. Every graded horizon
+/// (20/12/8y) needs its forward window to close, so none grades an entry after `since` (the last one the 8y run
+/// closes), and `track` only starts in 2026. A short run (`backtest 1 long ...`) holds those entries. Per ~6-month
+/// bucket after `since`: the notch cohort's mean `realized` minus the cleared book's (the gap `track` reads, cohort
+/// minus the book), a line only where both sides hold a name. Pool and cohort rule are `notch_books`'. Row: (tag,
+/// lines, mean gap, median gap), `track::gate_verdicts`' shape, for each notch with at least one line.
+fn notch_tail(samples: &[Sample], since: chrono::NaiveDate, tuning: &BuyHeuristic) -> Vec<(&'static str, usize, f64, f64)> {
+    let notches = notch_tunings(tuning);
+    let mut cleared: std::collections::BTreeMap<i32, Vec<f64>> = Default::default();
+    let mut added: Vec<std::collections::BTreeMap<i32, Vec<f64>>> = vec![Default::default(); notches.len()];
+    for s in samples.iter().filter(|s| s.date > since && picks::asset_class(&s.quote) != 0) {
+        if growth_score(&s.quote, tuning).is_some() {
+            cleared.entry(bucket(s.date)).or_default().push(s.realized);
+            continue;
+        }
+        for ((_, t), cohort) in notches.iter().zip(added.iter_mut()) {
+            if growth_score(&s.quote, t).is_some() {
+                cohort.entry(bucket(s.date)).or_default().push(s.realized);
+            }
+        }
+    }
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    notches
+        .iter()
+        .zip(added)
+        .filter_map(|((tag, _), cohort)| {
+            let mut gaps: Vec<f64> = cohort.iter().filter_map(|(b, v)| cleared.get(b).map(|k| mean(v) - mean(k))).collect();
+            gaps.sort_by(f64::total_cmp);
+            (!gaps.is_empty()).then(|| (*tag, gaps.len(), mean(&gaps), percentile(&gaps, 50.0)))
+        })
+        .collect()
+}
+
+/// (#325) Prints `notch_tail` with `track`'s own verdict, so both halves of the rule read one function. `since` is
+/// the last entry the shortest graded horizon (8y) closes: the latest cutoff plus `years`, less 8. At 8y and longer
+/// nothing is after it and the section is absent (every golden). Print-only, so `replace with ()` is unkillable.
+#[mutants::skip]
+fn report_notch_tail(samples: &[Sample], years: i64, tuning: &BuyHeuristic) {
+    let Some(since) = samples
+        .iter()
+        .map(|s| s.date)
+        .max()
+        .and_then(|d| d.checked_add_months(chrono::Months::new(12 * years as u32)))
+        .and_then(|d| d.checked_sub_months(chrono::Months::new(96)))
+    else {
+        return;
+    };
+    let rows = notch_tail(samples, since, tuning);
+    if rows.is_empty() {
+        return;
+    }
+    println!("\n── NOTCH TAIL (#325): entries after {since}, which no graded horizon (20/12/8y) closes; each notch's cohort minus the cleared book, one line per ~6-month bucket, held {years}y ──");
+    for (tag, n, mean, median) in rows {
+        println!("  {tag:<10} lines {n:<3} mean {mean:+.1}  median {median:+.1} pts  {}", crate::commands::track::reopen_verdict(n, mean, median));
+    }
+    println!("  (Receipt (#325): this stands in for `track`'s forward half. A notch ships on REOPEN SIGNAL here AND its NOTCH BOOK guard at 20y, 12y and 8y AND a green backtest gate; one notch a round)");
 }
 
 /// (#44 Phase C) Grade each FREE as-of fundamental factor on the HELD-BOOK metric: within the
@@ -8614,6 +8679,34 @@ mod tests {
         let verdicts: Vec<bool> = rows[1..].iter().map(|r| guard_holds(&rows[0].2, &r.2)).collect();
         assert_eq!(verdicts, [false, true, false], "{rows:?}");
         assert!(notch_books(&samples, &(Vec::new(), Vec::new()), 12, &tuning).is_empty());
+    }
+
+    /// (#325) The tail replay on the synthetic world: only entries after `since` count, a line needs a cohort name AND
+    /// a cleared name in its bucket, and its gap is cohort mean minus cleared mean (recounted independently here).
+    #[test]
+    fn notch_tail_grades_only_entries_after_since() {
+        let (samples, tuning) = (synthetic_samples(), shipped_tuning());
+        let mut dates: Vec<chrono::NaiveDate> = samples.iter().map(|s| s.date).collect();
+        dates.sort();
+        let (first, mid, last) = (dates[0], dates[dates.len() / 2], dates[dates.len() - 1]);
+        let lines = |since: chrono::NaiveDate, t: &BuyHeuristic| {
+            let after: Vec<&Sample> = samples.iter().filter(|s| s.date > since && picks::asset_class(&s.quote) != 0).collect();
+            let cleared: std::collections::BTreeSet<i32> = after.iter().filter(|s| growth_score(&s.quote, &tuning).is_some()).map(|s| bucket(s.date)).collect();
+            let cohort: std::collections::BTreeSet<i32> = after.iter().filter(|s| growth_score(&s.quote, &tuning).is_none() && growth_score(&s.quote, t).is_some()).map(|s| bucket(s.date)).collect();
+            cohort.intersection(&cleared).count()
+        };
+        for (since, pins) in [
+            (first.pred_opt().unwrap(), [("cagr", 15, -256.895200120187, -226.014181682842), ("1Y+", 26, 826.404569217314, 795.020641750035)]),
+            (mid, [("cagr", 6, -138.124976295149, 206.849918000722), ("1Y+", 15, 704.172422548712, 380.238989311686)]),
+        ] {
+            let rows = notch_tail(&samples, since, &tuning);
+            let want: Vec<(&str, usize)> = notch_tunings(&tuning).iter().map(|(tag, t)| (*tag, lines(since, t))).filter(|(_, n)| *n > 0).collect();
+            assert_eq!(rows.iter().map(|r| (r.0, r.1)).collect::<Vec<_>>(), want, "since {since}");
+            for ((tag, n, mean, median), (ptag, pn, pmean, pmedian)) in rows.iter().zip(pins) {
+                assert!((*tag, *n) == (ptag, pn) && (mean - pmean).abs() < 1e-9 && (median - pmedian).abs() < 1e-9, "since {since}: {rows:?}");
+            }
+        }
+        assert!(notch_tail(&samples, last, &tuning).is_empty(), "nothing is after the last entry");
     }
 
     /// (#324) The guard's two bars, each at its exact boundary and just past it.

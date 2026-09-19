@@ -2100,6 +2100,13 @@ pub fn gate_notches() -> Vec<(&'static str, &'static str, fn(&mut BuyHeuristic))
         // "newly admitted" here means "newly MEASURABLE", not "newly forgiven".
         ("history", "growth_min_leg_years ->2 (admits the 2Y rung)", |t| t.growth_min_leg_years = 2.0),
         ("peg", "growth_max_peg ->off", |t| t.growth_max_peg = 0.0), // (#37) fwd return of the names the valuation ceiling excludes — the ceiling's own keep. The ci-settings curve (1.5..4.0) came from six hand-edited configs; this prices the on/off question every run, which is the part that sweep found decisive
+        // (#325) the armed gates no notch priced or shadowed. Each step is that gate's near-miss margin in
+        // `gate_failures`. range8y and aum are LIVE-ONLY (`stats_8y` and `aum_eur` are None in every backtest), so
+        // their sweep rows read "admits 0" and only `track` can grade them. The Série E rungs (8Y+, 20Y+) are a
+        // mandate ((#315)), not a notch: a loosened hurdle could never ship.
+        ("5Y+", "growth_min_5y_pct -15", |t| t.growth_min_5y_pct -= 15.0),
+        ("range8y", "growth_min_range_pct_8y -10 (live-only)", |t| t.growth_min_range_pct_8y -= 10.0),
+        ("aum", "growth_min_aum_etf x0.5 (live-only)", |t| t.growth_min_aum_etf *= 0.5),
     ]
 }
 
@@ -5249,6 +5256,9 @@ mod tests {
             growth_maxdd_cap: -84.0,
             growth_min_leg_years: 8.0,
             growth_max_peg: 1.6,
+            growth_min_5y_pct: 75.0,
+            growth_min_range_pct_8y: 80.0,
+            growth_min_aum_etf: 100_000_000.0,
             ..BuyHeuristic::default()
         };
         let before = serde_json::to_value(&armed).unwrap();
@@ -5273,6 +5283,9 @@ mod tests {
             ("maxdd", "growth_maxdd_cap", serde_json::json!(0.0)),
             ("history", "growth_min_leg_years", serde_json::json!(2.0)),
             ("peg", "growth_max_peg", serde_json::json!(0.0)),
+            ("5Y+", "growth_min_5y_pct", serde_json::json!(60.0)),
+            ("range8y", "growth_min_range_pct_8y", serde_json::json!(70.0)),
+            ("aum", "growth_min_aum_etf", serde_json::json!(50_000_000.0)),
         ];
         let want: Vec<(&str, String, serde_json::Value)> = want.into_iter().map(|(t, k, v)| (t, k.to_string(), v)).collect();
         assert_eq!(got, want);

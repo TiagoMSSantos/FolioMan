@@ -477,9 +477,9 @@ const REOPEN_LINES: usize = 12;
 /// (#323) The pre-registered reading of one gate's forward record. `lines` monthly gaps, shadow minus
 /// the bought book: a REOPEN SIGNAL needs the full year AND both the mean and the median strictly
 /// above zero — the mean alone is one survivor's, the median alone ignores how much a winner won.
-fn reopen_verdict(lines: usize, mean: f64, median: f64) -> &'static str {
+pub(crate) fn reopen_verdict(lines: usize, mean: f64, median: f64) -> &'static str {
     if lines < REOPEN_LINES {
-        "needs 12 monthly lines"
+        "needs 12 lines"
     } else if mean > 0.0 && median > 0.0 {
         "REOPEN SIGNAL"
     } else {
@@ -1287,7 +1287,7 @@ mod tests {
         let row = |gate: &str| out.lines().find(|l| l.trim_start().starts_with(gate)).unwrap_or_default().to_string();
         let cagr = row("cagr ");
         assert!(cagr.contains("1 line(s)") && cagr.matches("+15.0pp").count() == 2, "mean and median: {cagr}");
-        assert!(cagr.contains("needs 12 monthly lines"), "{cagr}");
+        assert!(cagr.contains("needs 12 lines"), "{cagr}");
         assert_eq!(row("peg ").matches("-5.0pp").count(), 2, "{out}");
     }
 
@@ -1326,7 +1326,7 @@ mod tests {
     /// (#323) The pre-registered reading: a year of monthly lines, and BOTH statistics strictly above 0.
     #[test]
     fn reopen_verdict_needs_a_year_and_both_statistics() {
-        assert_eq!(reopen_verdict(11, 5.0, 5.0), "needs 12 monthly lines");
+        assert_eq!(reopen_verdict(11, 5.0, 5.0), "needs 12 lines");
         assert_eq!(reopen_verdict(12, 5.0, 5.0), "REOPEN SIGNAL");
         assert_eq!(reopen_verdict(12, 5.0, 0.0), "holds", "a zero median is not a win");
         assert_eq!(reopen_verdict(12, 0.0, 5.0), "holds", "nor a zero mean");
