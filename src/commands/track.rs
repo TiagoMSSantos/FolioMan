@@ -262,7 +262,7 @@ fn book_rows(snap: &Snapshot) -> Vec<(&str, Option<f64>, f64)> {
 /// exist when it ranked — the forward half of the backtest's SIZED comparison.
 fn flat_rows(snap: &Snapshot) -> Vec<(&str, Option<f64>, f64)> {
     let coins: Vec<(bool, f64)> = snap.sized.iter().map(|(t, w)| (crate::picks::is_currency_quoted(t), *w)).collect();
-    let flat = crate::commands::size::equal_weights(&coins, usize::MAX);
+    let flat = crate::commands::size::equal_weights(&coins, usize::MAX, 1.0);
     sized_rows(snap).into_iter().zip(flat).filter_map(|((t, p, _), w)| w.map(|w| (t, p, w))).collect()
 }
 

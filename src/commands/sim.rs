@@ -512,7 +512,7 @@ pub async fn run(_args: Vec<String>) {
         if s.sized.is_empty() { Vec::new() } else { s.rows.iter().take(BOOK).map(|(t, _)| (t.clone(), 100.0 / n)).collect() }
     });
     on_flat("equal_weight_book on that flat cash", &|s: &Snapshot| {
-        let eq = equal_weights(&s.sized.iter().map(|(t, w)| (crate::picks::is_currency_quoted(t), *w)).collect::<Vec<_>>(), settings.sizing.book_cut());
+        let eq = equal_weights(&s.sized.iter().map(|(t, w)| (crate::picks::is_currency_quoted(t), *w)).collect::<Vec<_>>(), settings.sizing.book_cut(), settings.sizing.head_share());
         s.sized.iter().zip(eq).filter_map(|((t, _), w)| w.map(|w| (t.clone(), w))).collect()
     });
     if led.pending_months > 0 {

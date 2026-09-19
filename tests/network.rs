@@ -547,6 +547,8 @@ fn backtest_edge_holds() {
         // Ship day 2026-09-15 on CI's own args: SIZED never-sell +11.6%/yr vs index DCA +6.2%/yr -> +5.4 pts/yr (med +5.9,
         // win 100% of 37 programs, worst +1.2), Série E 100% of 37. (#317) the top-20 book, same day and args: +11.4 vs
         // +6.2 -> +5.2 (med +5.6, win 100% of 37, worst +1.2), Série E 100% of 37; the reading fell, so no floor rose.
+        // (#322) the head-tilted book, 2026-09-19: +5.3 (med +5.7, worst +1.2) against a same-day flat control of
+        // +5.1, Série E 100% of 37; still under the +5.4 ship day, so no floor rose.
         if years == 20 {
             const SIZED_DCA_FLOOR: f64 = 4.4;
             const SERIE_E_DCA_FLOOR: f64 = 90.0;

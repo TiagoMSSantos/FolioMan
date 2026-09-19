@@ -302,17 +302,21 @@ pub(crate) fn sized_book<'a>(
     // (#313) the graded equal-weight book, opt-in: coins keep the crypto-budget weight struck above, the
     // first `book_names` (#317) other names split the rest equally, uncapped like the backtest's top-10 lane.
     let coin = |q: &crate::core::Quote| crate::picks::asset_class(q) == 0;
-    let eq = equal_weights(&book.iter().map(|r| (coin(r.0), r.2)).collect::<Vec<_>>(), sz.book_cut());
+    let eq = equal_weights(&book.iter().map(|r| (coin(r.0), r.2)).collect::<Vec<_>>(), sz.book_cut(), sz.head_share());
     book.into_iter().zip(eq).filter_map(|((q, s, _, cap), w)| w.map(|w| (q, s, w, if coin(q) { cap } else { None }))).collect()
 }
 
 /// (#314) THE (#313) SPLIT, lifted so `sim` replays the knob's book off a journaled `sized` with the same
 /// arithmetic `sized_book` funds. Rows are `(is_coin, weight %)` in book order: a coin keeps its weight, the
-/// first `book` other rows split what is left equally, and every later row is dropped (`None`). (#317) `book` is
-/// `Sizing::book_cut`.
-pub(crate) fn equal_weights(rows: &[(bool, f64)], book: usize) -> Vec<Option<f64>> {
+/// first `book` other rows split what is left, and every later row is dropped (`None`). (#317) `book` is
+/// `Sizing::book_cut`. (#322) The split is in shares: each of the first [`HEAD`] names takes `head`
+/// (`Sizing::head_share`), every later one 1. At `head` 1.0 every share is 1 and the sum of n ones is exactly n,
+/// so the flat book is the same float it was before the tilt existed.
+pub(crate) fn equal_weights(rows: &[(bool, f64)], book: usize, head: f64) -> Vec<Option<f64>> {
     let coins: f64 = rows.iter().filter(|r| r.0).map(|r| r.1).sum();
     let n = rows.iter().filter(|r| !r.0).count().min(book);
+    let share = |rank: usize| if rank <= HEAD { head } else { 1.0 };
+    let shares: f64 = (1..=n).map(share).sum();
     let mut seen = 0;
     rows.iter()
         .map(|&(coin, w)| {
@@ -320,10 +324,15 @@ pub(crate) fn equal_weights(rows: &[(bool, f64)], book: usize) -> Vec<Option<f64
                 return Some(w);
             }
             seen += 1;
-            (seen <= book).then_some((100.0 - coins) / n as f64)
+            (seen <= book).then(|| (100.0 - coins) * share(seen) / shares)
         })
         .collect()
 }
+
+/// (#322) How many names at the top of the equal-weight book take `Sizing::head_weight`: the backtest's own
+/// rank-slice boundary (rank 1 / 2-5 / 6-10), where on the point-in-time pool ranks 1-5 out-earned 6-10 at
+/// every horizon. ponytail: a const, not a knob — one boundary was graded; make it a knob when a second is.
+const HEAD: usize = 5;
 
 /// (#293) Yahoo's fund sector names (`fetch::pretty_sector`) against the GICS spelling the constituents
 /// CSV gives a stock, so a fund and a stock in the same sector meet under one cap.
@@ -826,12 +835,27 @@ pub(crate) mod tests {
         let mut want = vec![Some(9.5), Some(5.0)];
         want.extend([Some(9.5); 9]);
         want.extend([None, None]);
-        assert_eq!(equal_weights(&rows, 10), want);
-        assert_eq!(equal_weights(&[(false, 1.0), (true, 5.0), (false, 1.0)], 10), [Some(47.5), Some(5.0), Some(47.5)]);
-        assert!(equal_weights(&[], 10).is_empty());
+        assert_eq!(equal_weights(&rows, 10, 1.0), want);
+        assert_eq!(equal_weights(&[(false, 1.0), (true, 5.0), (false, 1.0)], 10, 1.0), [Some(47.5), Some(5.0), Some(47.5)]);
+        assert!(equal_weights(&[], 10, 1.0).is_empty());
         // (#317) a 20-name book buys all twelve at 95/12
-        let wide = equal_weights(&rows, 20);
+        let wide = equal_weights(&rows, 20, 1.0);
         assert!(wide.iter().enumerate().all(|(i, w)| *w == Some(if i == 1 { 5.0 } else { 95.0 / 12.0 })), "{wide:?}");
+    }
+
+    /// (#322) the head tilt: the first five names take `head` shares each, the sixth 1, over the 95 the coin leaves.
+    /// Six names at head 2 are 11 shares, so 95·2/11 each for ranks 1-5 and 95/11 for rank 6 — rank 5 is IN the head.
+    #[test]
+    fn equal_weights_pays_the_head_its_shares() {
+        let mut rows = vec![(true, 5.0)];
+        rows.extend([(false, 9.0); 7]);
+        let (h, t) = (95.0 * 2.0 / 11.0, 95.0 / 11.0);
+        assert_eq!(equal_weights(&rows, 6, 2.0), [Some(5.0), Some(h), Some(h), Some(h), Some(h), Some(h), Some(t), None]);
+        let mut flat = vec![Some(5.0)];
+        flat.extend([Some(95.0 / 6.0); 6]);
+        flat.push(None);
+        assert_eq!(equal_weights(&rows, 6, 1.0), flat, "head 1.0 is the flat book, bit for bit");
+        assert_eq!(equal_weights(&rows[..3], 10, 2.0), [Some(5.0), Some(47.5), Some(47.5)], "an all-head book is flat");
     }
 
     /// (#287) the line that names the vetted holds the spill does not fund. Graded on the three

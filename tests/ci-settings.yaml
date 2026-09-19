@@ -1325,6 +1325,10 @@ sizing:
                       #   (#321) ROUND 104 widened it to 25, again no worse. The book buys
                       #   min(this, ranked non-coin), so it is a CEILING: live supply, not this number, sets
                       #   the row count. Read the (#317) and (#321) receipts. 0 is read as 1.
+  head_weight: 2.0    # (#322) ROUND 105 — each of that book's first five names (`size::HEAD`, the backtest's
+                      #   rank-1 / 2-5 slice boundary) weighs 2 shares against a later name's 1, so on 24 names
+                      #   the head holds 6.6% each and the rest 3.3%. Coins untouched. 1.0 = the flat (#313)
+                      #   book and the code default. Read the (#322) receipt. Anything not above 0 is read as 1.
 
 # (#245) REFUSED: a HOLDINGS-OVERLAP CAP on the sizing table. Built in full, measured live, reverted.
 # The knob would have been `max_overlap_pct`, the ETF-side twin of `max_sector_pct` above: no set of
@@ -5971,6 +5975,71 @@ buy_heuristic:
   #   (#318) and (#245) both refused that cap under conditions — weight stranding under `max_name_pct`,
   #   no refill pool — that (#313)'s equal weight and (#320)'s cut have voided. Same bar as this round.
   #   REVERT: `top_picks: 20`, `book_names: 20`, and `shipped_config_pin`'s `Some(25)` back to `Some(20)`.
+  # (#322) ROUND 105: TILT THE EQUAL-WEIGHT BOOK TOWARD ITS TOP FIVE (`sizing.head_weight: 2.0`). PASSED, SHIPPED.
+  #   Same standing ask: more good assets to buy now and hold 20+ years, most profit. WHY THIS LEVER. Since
+  #   (#321) the book is wider (25) than live supply (24 stocks and ETFs cleared on 2026-09-18) and than the
+  #   PIT pool (~15 names a window), so BUY NOW buys every cleared name at one weight and SCORE ORDER MOVES
+  #   NOTHING. Admission is closed (#181 #255 #266 #291 #303-#305 #319), the pond is spent (Nasdaq-100 already
+  #   in; S&P 400 moved the gated median by 0, #173), and the exit/pullback lane was refuted from free rows
+  #   (r104 EXIT PROBE: names that just failed the gate lag the kept ones by -72/-23/-134 at 8y/12y/20y). Book
+  #   SHAPE is the lever left, and the r104 fund-pit rank slices price it: ranks 2-5 beat ranks 6-10 by
+  #   +1.7/+4.9/+4.2 pts/yr excess at 20y/12y/8y. The operator picked profit over name count, and all 24
+  #   names stay bought.
+  #   WHAT CHANGED. (1) `Sizing.head_weight`, default 1.0 and not serialised at 1.0, so every journaled
+  #   `sizing_fp` still matches; `head_share` reads anything not above 0 as 1. (2) `size::equal_weights` splits
+  #   in shares: the first `HEAD` (5) non-coin names take `head`, the rest 1, over what the coins leave. At 1.0
+  #   it is the same float as before (goldens byte-identical at the default). It reaches `size`, BUY NOW, the
+  #   orders, both backtest SIZED lanes (lump and DCA) and `sim`'s equal_weight_book line. (3) This line.
+  #   (4) Pinned in `equal_weights_pays_the_head_its_shares`, `head_share_reads_non_positive_as_flat` and
+  #   `shipped_config_pin`.
+  #   BAR, written before any run: (1) `backtest 20 universe fund pit` SIZED DCA vs index DCA: mean AND median
+  #   above control, both OOS halves >= control -0.2, worst >= control -1.0, Serie E share >= 90%. (2) 12y and
+  #   8y fund pit SIZED lump excess: mean >= control -0.1, OOS halves >= -0.5, worst >= -1.0. (3) CI args
+  #   `backtest 20 universe`: SIZED DCA >= +4.4. (4) LIVE: same names as a same-day control, top five at 2x,
+  #   coin weights within 0.1; `size --picks` funds the same tickers; `sim` carries the tilt. Fail = delete.
+  #
+  #   BACKTEST, 2026-09-19, one binary, warm cache, control = this file at HEAD (1.0), arm = + `head_weight: 2.0`:
+  #                                          control (flat)          arm (head 2x)
+  #     20y fund pit  SIZED DCA excess       +3.2 (median +3.3)      +3.5 (median +3.4)
+  #                   OOS halves / worst     +2.6 / +3.8, +1.7       +2.6 / +4.2, +1.7
+  #                   Serie E share          100% of 21              100% of 21
+  #                   SIZED lump / roll      +0.7 win 57%, +0.9      +0.7 win 67%, +1.0
+  #     20y CI args   SIZED DCA excess       +5.1 (median +5.6)      +5.3 (median +5.7)
+  #                   OOS halves / worst     +4.5 / +5.7, +1.2       +4.6 / +6.1, +1.2
+  #                   Serie E / SIZED lump   100% of 37, +5.6        100% of 37, +5.8
+  #     12y fund pit  SIZED lump excess      +3.5 (OOS +2.3/+4.7, worst -6.4, win 75%)   +3.7 (+2.3/+5.2, -6.4, 81%)
+  #      8y fund pit  SIZED lump excess      +4.5 (OOS +3.5/+5.4, worst -5.5)            +4.8 (+3.6/+6.0, -4.5)
+  #   `windows scored` identical in every pair. NOISE: the 20y and 8y fund-pit pairs were run twice; the pond
+  #   drifted by 1-3 tickers between runs (5968-5973), and every SIZED number reproduced to the digit in both
+  #   the control and the arm, so the whole move is the tilt. ARM PROOF: the control's BUY NOW record line warns
+  #   "settings changed since" against the arm's journaled `sizing_fp`.
+  #
+  #   LIVE, 2026-09-19, one binary, state md5s verified after every run:
+  #     scanned / cleared    5084 / 27, both runs
+  #     BUY NOW              control: 24 names at 4.0% + BNB 2.5, BTC 2.5
+  #                          arm: ABEA.DE LLY.DE AP2.DE KLA.DE PAR.DE at 6.6%, the other 19 at 3.3%, BNB 2.5, BTC 2.5
+  #     `size --picks`       the same 26 tickers, the same split
+  #     `sim`                byte-identical to control at 2x AND at 50x. Precision-blind, not unwired: the journal's
+  #                          only executed-book lot (2026-09-13) is 6 days old; hand-replayed, it returns -0.10% flat,
+  #                          -0.18% at 2x, -0.33% at 50x, and it is EUR 1000 of 4000 invested, so <= 0.06 pp of the
+  #                          total, under the 0.1 the line prints.
+  #   VERDICT: PASS on all four legs.
+  #
+  #   HONEST EDGES. (a) It is concentration: the top five hold 33% of gross against 20% flat, and all five are
+  #   single stocks today (Alphabet, Eli Lilly, Applied Materials, KLA, Parker-Hannifin), two of them
+  #   semiconductor equipment. (b) The prior and the bar share one dataset: the tilt was chosen off r104's
+  #   fund-pit rank slices and graded on the same pool, so leg 1 is partly in-sample. Both OOS halves rose, but
+  #   they are halves of that same pool. `track`'s flat twin (commit a07f337) is the out-of-sample judge.
+  #   (c) One rung graded (2x) at one fixed boundary (5). No 1.5x/3x grid on the same data, on purpose.
+  #   (d) The 20y fund-pit LUMP excess did not move (+0.7 both; only its win rate did). The gain is in the DCA
+  #   program and at 12y/8y. The CI-args 20y lump's early OOS half slipped +4.9 -> +4.8. (e) Uncapped like the
+  #   flat book; 6.6% sits under `max_name_pct` 8 today, but that cap does not bind on this book. (f) The live
+  #   record line under BUY NOW warns "settings changed since" until `backtest N universe fund pit` reruns,
+  #   because `head_weight: 2.0` is fingerprinted. (g) Price-only backtest, no FX and no fees; the (#316)
+  #   through (#321) edges all stand.
+  #   REOPEN / REVERT: revert when, over >= 6 monthly journal lines carrying a tilted book, `track`'s flat twin
+  #   beats the executed book on the mean of those rows. Revert = delete `head_weight: 2.0` and its
+  #   `shipped_config_pin` assert (the code default is flat and byte-identical).
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

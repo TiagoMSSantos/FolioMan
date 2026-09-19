@@ -80,6 +80,8 @@ pub struct Sizing {
     pub book_names: usize, // (#317) how many non-coin names `equal_weight_book` buys, equal-weighted, in score order. Read through `book_cut`. 10 = the (#313) book, the DEFAULT
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `sizing_fp` journaled before (#313) still matches
     pub equal_weight_book: bool, // (#313) buy the graded book instead of the vol-target one: coins keep the crypto-budget weight `size_weights` strikes, the first `book_cut` (#317) other names split the rest equally, uncapped like the backtest's equal-weight top-10. false = the (#286) SIZED book, the DEFAULT. See the (#313) receipt
+    #[serde(skip_serializing_if = "is_flat_head")] // flat serialises nothing, so every `sizing_fp` journaled before (#322) still matches
+    pub head_weight: f64, // (#322) what each of the equal-weight book's first `size::HEAD` non-coin names weighs against a later name's 1: 2.0 pays ranks 1-5 double. Read through `head_share`. 1.0 = the flat (#313) book, the DEFAULT. See the (#322) receipt
 }
 
 /// Defaults are the SHIPPED policy, not a neutral off-state — the one place in this file where a
@@ -98,12 +100,17 @@ impl Default for Sizing {
             spill_per_tier: true, // (#289) ON, per the doc block above: `size` has no backtest and no golden, so an off-by-default would just ship the fix disabled. `false` reverts to the (#261) walk-down.
             equal_weight_book: false, // (#313) opt-in
             book_names: 10, // (#317) the graded top-10
+            head_weight: 1.0, // (#322) flat
         }
     }
 }
 
 fn is_default_book(n: &usize) -> bool {
     *n == Sizing::default().book_names
+}
+
+fn is_flat_head(w: &f64) -> bool {
+    *w == Sizing::default().head_weight
 }
 
 impl Sizing {
@@ -124,6 +131,12 @@ impl Sizing {
     /// else, so `size`'s header, the funded book and `sim`'s replay agree.
     pub fn book_cut(&self) -> usize {
         self.book_names.max(1)
+    }
+
+    /// (#322) The head's weight in shares of a tail name's 1: `head_weight`, anything not above 0 read as
+    /// flat. A zero head over a book no wider than it would divide by zero, and a negative one would sell.
+    pub fn head_share(&self) -> f64 {
+        if self.head_weight > 0.0 { self.head_weight } else { 1.0 }
     }
 }
 
@@ -1982,6 +1995,18 @@ mod tests {
     fn book_cut_reads_zero_as_one() {
         let sz = |n: usize| Sizing { book_names: n, ..Sizing::default() };
         assert_eq!((sz(0).book_cut(), sz(1).book_cut(), sz(20).book_cut()), (1, 1, 20));
+    }
+
+    /// (#322) `head_share` reads anything not above 0 as flat, and flat serialises nothing, so every `sizing_fp`
+    /// journaled before the knob existed still matches the default.
+    #[test]
+    fn head_share_reads_non_positive_as_flat() {
+        let sz = |w: f64| Sizing { head_weight: w, ..Sizing::default() };
+        let got = (sz(-1.0).head_share(), sz(0.0).head_share(), sz(0.5).head_share(), sz(2.0).head_share());
+        assert_eq!(got, (1.0, 1.0, 0.5, 2.0));
+        let fp = |w| serde_json::to_string(&sz(w)).unwrap();
+        assert!(!fp(1.0).contains("head_weight"), "{}", fp(1.0));
+        assert!(fp(2.0).contains(r#""head_weight":2.0"#), "{}", fp(2.0));
     }
 
     /// (#285) `spill_cut` is the ONE reading of `spill_names` — the count of CORE rows that receive

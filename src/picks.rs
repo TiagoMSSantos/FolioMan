@@ -4969,7 +4969,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     // its previous run (the note only says how many moved). (#320) Coins ride free of `n`: only stocks and
     // ETFs count, the cut both backtest SIZED lanes grade (they drop coins before `truncate(top)`), spelled
     // by `size::equal_weights`. Counting BNB and BTC left BUY NOW 18 names while its ruler graded 20.
-    let keep = crate::commands::size::equal_weights(&coins, n);
+    let keep = crate::commands::size::equal_weights(&coins, n, 1.0); // the cut only: weights unread
     (text, tickers.into_iter().zip(keep).filter_map(|(t, k)| k.map(|_| t)).collect())
 }
 
@@ -10531,6 +10531,11 @@ mod tests {
         assert!(
             raw["top_picks"].as_u64() >= raw["sizing"]["book_names"].as_u64(),
             "(#321) `top_picks` cuts the ranked list `size` funds — a book wider than that cut can never fill"
+        );
+        assert_eq!(
+            raw["sizing"]["head_weight"].as_f64(),
+            Some(2.0),
+            "(#322) the book's top five weigh 2x; graded up at 20y DCA and no worse at 12y/8y"
         );
 
         // …and that the lane still SCORES under them. A gate quartet this strict is one typo away from
