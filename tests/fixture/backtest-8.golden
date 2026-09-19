@@ -245,6 +245,17 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   all entries (top-10)         book +11.9%/yr  excess +5.4  win 64%  worst -14.0  OOS +10.6/+0.2   (windows 42) [unconditional, JOURNALED]
   (a class with a handful of windows is a regime story, not a statistic. If a state over-delivers, the
    guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)
+
+── NEAR-MISS BOOK (#323): what the screen cleared vs what it refused by one gate, narrowly; every name equal-weight, held 8y ──
+  cleared     n=102    book +11.9%/yr  excess +5.4  win 64%  worst -14.0  OOS +10.6/+0.2
+  near-miss   n=33     book +9.3%/yr  excess +2.9  win 55%  worst -14.2  OOS +2.7/+3.1
+  1Y+         n=12     book +3.9%/yr  excess -2.3  win 50%  worst -22.7  OOS +4.1/-8.7
+  5Y+         n=4      book -0.8%/yr  excess -4.4  win 0%  worst -6.7  OOS -6.3/-2.5
+  cagr        n=5      book +12.9%/yr  excess +3.3  win 75%  worst -6.2  OOS +0.9/+5.7
+  cagr-life   n=7      book +20.0%/yr  excess +8.2  win 100%  worst +3.6  OOS +12.9/+5.2
+  range       n=2      book +23.6%/yr  excess +16.8  win 100%  worst +15.9  OOS +17.8/+15.9
+  stretch     n=3      book -0.0%/yr  excess +0.3  win 33%  worst -1.7  OOS +3.6/-1.4
+  (`track` grades the same refused set forward; a gate reopens only on 12 monthly lines of forward evidence AND a worst here no deeper than cleared's by > 1.0)
   all entries (SIZED)          book +11.9%/yr  excess +5.4  win 64%  worst -14.0  OOS +10.6/+0.2   (windows 42, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── CORR-CAP probe: greedy top-10 by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held 8y ──

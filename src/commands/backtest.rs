@@ -1721,6 +1721,8 @@ pub async fn run(args: Vec<String>) {
     report_relative_strength(&samples, &bench, tuning.split_purge_months);
     // (round 108) the WHEN dimension: does the market's state at entry predict the held book?
     let verdict = report_entry_state(&samples, &bench, years, tuning);
+    // (#323) the in-sample prior for the near-miss shadow `track` grades forward
+    report_near_miss_books(&samples, &bench, years, tuning);
     // (#308) the indexes the spill's trackers follow, so the SIZED remainder earns what `size` buys with
     // it: all-world / developed / emerging per tier, the US tier on `bench` itself, weighted by
     // `size::spill_split`. Free Yahoo series; MSCI EM has no free history, so VEIEX (from 1994). Price-only,
@@ -3096,6 +3098,44 @@ fn book_stats(by_bucket: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
     let worst = excess.iter().cloned().fold(f64::INFINITY, f64::min);
     let cut = m / 2;
     Some((mean(&book), mean(&spy), mean(&excess), win, worst, mean(&excess[..cut]), mean(&excess[cut..])))
+}
+
+/// (#323) The in-sample PRIOR for the near-miss shadow `track` grades forward. Three kinds of row, each held
+/// equal-weight per bucket (`usize::MAX`: the whole set, not a top-N): every name the screen CLEARED, every printed
+/// near miss (one gate, narrowly: `picks::growth_near_miss`), then each gate's near misses alone, by name. The same
+/// pool as `report_entry_state` (non-crypto, benchmarkable). Row: (label, samples, `book_stats`). The reopen guard
+/// reads a gate row's `worst` against the cleared row's.
+#[allow(clippy::type_complexity)]
+fn near_miss_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64))> {
+    let mut books: std::collections::BTreeMap<String, std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>> = Default::default();
+    for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
+        let Some(br) = benchmark_fwd(&bench.0, &bench.1, s.date, years) else { continue };
+        let labels = match (growth_score(&s.quote, tuning), picks::growth_near_miss(&s.quote, tuning)) {
+            (Some(_), _) => vec!["cleared"],
+            (None, Some((gate, _))) => vec!["near-miss", gate],
+            _ => continue,
+        };
+        for l in labels {
+            books.entry(l.to_string()).or_default().entry(bucket(s.date)).or_default().push((0.0, s.realized, br));
+        }
+    }
+    let mut rows: Vec<_> = ["cleared", "near-miss"].iter().filter_map(|l| books.remove_entry(*l)).collect();
+    rows.extend(books);
+    rows.into_iter().filter_map(|(l, b)| Some((l, b.values().map(Vec::len).sum(), book_stats(&b, usize::MAX, years)?))).collect()
+}
+
+/// (#323) Prints `near_miss_books`. Print-only, so `replace with ()` is unkillable; the arithmetic is tested there.
+#[mutants::skip]
+fn report_near_miss_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let rows = near_miss_books(samples, bench, years, tuning);
+    if rows.is_empty() {
+        return;
+    }
+    println!("\n── NEAR-MISS BOOK (#323): what the screen cleared vs what it refused by one gate, narrowly; every name equal-weight, held {years}y ──");
+    for (l, n, (b, _, e, w, wo, el, la)) in rows {
+        println!("  {l:<11} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}");
+    }
+    println!("  (`track` grades the same refused set forward; a gate reopens only on 12 monthly lines of forward evidence AND a worst here no deeper than cleared's by > 1.0)");
 }
 
 /// (#44 Phase C) Grade each FREE as-of fundamental factor on the HELD-BOOK metric: within the
@@ -8555,6 +8595,24 @@ mod tests {
     /// `edge > 0` would only prove the fixture was bent until it went green. Pinning the VALUE is the
     /// non-circular assert, and it is strictly the stronger one: it fails on any scoring change, not
     /// just on one big enough to flip a sign.
+    /// (#323) The shipped tuning on the synthetic world: the cleared row counts only cleared names, a sample lands
+    /// under its gate AND the pooled row (so the gate rows sum to the pooled one), a far miss appears nowhere, and
+    /// the rows come cleared, near-miss, then gates by name.
+    #[test]
+    fn near_miss_books_split_cleared_from_one_gate_misses() {
+        let (samples, tuning) = (synthetic_samples(), shipped_tuning());
+        let (dates, _) = synthetic_universe();
+        let bench = (dates.clone(), (0..dates.len()).map(|i| 1.08_f64.powf(i as f64 / 12.0)).collect());
+        let rows = near_miss_books(&samples, &bench, 12, &tuning);
+        let got: Vec<(&str, usize)> = rows.iter().map(|(l, n, _)| (l.as_str(), *n)).collect();
+        assert_eq!(got, [("cleared", 158), ("near-miss", 42), ("1Y+", 31), ("cagr", 4), ("cagr-life", 7)]);
+        let cleared = samples.iter().filter(|s| benchmark_fwd(&bench.0, &bench.1, s.date, 12).is_some() && growth_score(&s.quote, &tuning).is_some()).count();
+        assert_eq!((cleared, samples.len()), (158, 500), "300 far misses and unbenchmarkable samples land nowhere");
+        let book = |i: usize| (rows[i].2).0;
+        assert!((book(0) - 24.591905072812).abs() < 1e-9 && (book(1) - 27.618086606583).abs() < 1e-9, "{rows:?}");
+        assert!(near_miss_books(&samples, &(Vec::new(), Vec::new()), 12, &tuning).is_empty());
+    }
+
     #[test]
     fn shipped_tuning_scores_fixture_unchanged() {
         let samples = synthetic_samples();

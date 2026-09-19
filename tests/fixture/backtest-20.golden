@@ -246,6 +246,16 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   all entries (top-10)         book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1   (windows 22) [unconditional, JOURNALED]
   (a class with a handful of windows is a regime story, not a statistic. If a state over-delivers, the
    guidance is DEPLOY NEW MONEY FASTER when it occurs — never hold cash waiting; the table can't see cash drag.)
+
+── NEAR-MISS BOOK (#323): what the screen cleared vs what it refused by one gate, narrowly; every name equal-weight, held 20y ──
+  cleared     n=40     book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1
+  near-miss   n=15     book +5.8%/yr  excess -0.9  win 45%  worst -15.7  OOS +0.7/-2.2
+  1Y+         n=7      book +8.1%/yr  excess +1.6  win 60%  worst -4.9  OOS +7.1/-2.0
+  5Y+         n=2      book +5.7%/yr  excess -2.4  win 50%  worst -4.9  OOS +0.1/-4.9
+  cagr        n=1      book +7.1%/yr  excess -1.2  win 0%  worst -1.2  OOS -0.0/-1.2
+  range       n=2      book +14.2%/yr  excess +6.6  win 100%  worst +1.8  OOS +11.4/+1.8
+  stretch     n=3      book -7.2%/yr  excess -11.8  win 0%  worst -17.3  OOS -17.3/-9.0
+  (`track` grades the same refused set forward; a gate reopens only on 12 monthly lines of forward evidence AND a worst here no deeper than cleared's by > 1.0)
   all entries (SIZED)          book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1   (windows 22, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── DCA ROLL-AFTER-10y (#311): 96 equal monthly buys into that month's screen, all sold at 20y; the roll sells each lot at 10y, pays 28% on the gain, re-buys that month's screen; vs never-sell, after tax, money-weighted ──
