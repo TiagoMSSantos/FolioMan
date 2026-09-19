@@ -68,7 +68,7 @@ fn next_ym((y, m): (i32, u32)) -> (i32, u32) {
 /// does not matter; within a month the earliest line carrying a BUY NOW book (`sized`) wins, else
 /// the earliest line. (#300) A book-less line only knows the ranked rows, and buying those is the
 /// equal top-10 the user does not execute, so the month waits for the book when one was journalled.
-fn monthly_firsts(snaps: &[Snapshot]) -> BTreeMap<(i32, u32), &Snapshot> {
+pub(crate) fn monthly_firsts(snaps: &[Snapshot]) -> BTreeMap<(i32, u32), &Snapshot> {
     let mut firsts: BTreeMap<(i32, u32), &Snapshot> = BTreeMap::new();
     for s in snaps {
         let Some(key) = ym(&s.date) else { continue };
@@ -537,6 +537,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
+            near: Vec::new(),
         }
     }
 
@@ -599,7 +600,7 @@ mod tests {
         // top-BOOK cap: an 11th row never buys
         let rows: Vec<(String, Option<f64>)> =
             (0..12).map(|i| (format!("T{i}"), Some(10.0))).collect();
-        let s = Snapshot { date: "2026-07-16".into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), rows };
+        let s = Snapshot { date: "2026-07-16".into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), rows };
         assert_eq!(buy_event(&s, 3000.0, 1.0, true, &sz, &no_tier, &no_fee).unwrap().lots.len(), BOOK);
 
         // nothing priced → None

@@ -688,6 +688,34 @@ fn funnel_lines(quotes: &[core::Quote], tuning: &config::BuyHeuristic) -> Vec<St
     out
 }
 
+/// Tail (B): names the growth lane rejected on EXACTLY one gate, narrowly — a compounder one notch
+/// outside the fence. Pinned names are skipped (round 52: the gate-review footer already explains
+/// them). Sorted by gate, the cagr group closest-to-the-bar first (round 53: its `why` starts with the
+/// value; other gates mix floor/ceiling directions, so they keep ticker order), then one row per FUND
+/// (round 54: L&G Gold Mining printed as both AUCO.L and ETLX.DE) — first venue wins.
+///
+/// (#323) Pulled out of `run` because the printed block is no longer its only reader: the journal
+/// records exactly these rows (`track::Snapshot::near`) and `track` grades them forward, so the list
+/// the user saw and the list that gets graded must be one definition, not two copies of this filter.
+fn near_miss_tail<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::BuyHeuristic) -> Vec<(&'a Quote, &'static str, String)> {
+    let mut near: Vec<(&Quote, &'static str, String)> = quotes
+        .iter()
+        .filter(|q| !pinned.contains(&q.ticker))
+        .filter_map(|q| growth_near_miss(q, tuning).map(|(g, why)| (q, g, why)))
+        .collect();
+    let cagr_val = |gate: &str, why: &str| {
+        if gate == "cagr" { why.split('%').next().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0) } else { 0.0 }
+    };
+    near.sort_by(|a, b| {
+        a.1.cmp(b.1)
+            .then_with(|| cagr_val(b.1, &b.2).partial_cmp(&cagr_val(a.1, &a.2)).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| a.0.ticker.cmp(&b.0.ticker))
+    });
+    let mut seen_names = std::collections::HashSet::new();
+    near.retain(|(q, ..)| seen_names.insert(q.name.to_lowercase()));
+    near
+}
+
 const MULTI_GATE_CAP: usize = 15; // hardcoded like the near-miss margins — a cosmetic tail, not a tuned knob
 
 /// Tails (C) and (C3): names failing EXACTLY `n` growth gates, every one of them close. Blocks are kept
@@ -1860,6 +1888,8 @@ pub async fn run(args: Vec<String>) {
     .iter()
     .map(|&(q, _, w, _)| (q.ticker.clone(), w))
     .collect();
+    // (#323) built here, not at the print below, so the journal records the rows the block prints
+    let near = near_miss_tail(&quotes, &settings.tickers, &settings.buy_heuristic);
     crate::commands::track::append_snapshot(&crate::commands::track::Snapshot {
         date: run_date.clone(),
         spx: spx.first().and_then(|q| q.price_eur),
@@ -1905,6 +1935,8 @@ pub async fn run(args: Vec<String>) {
         // Weights only; the price is already in `rows` for every one of these tickers, and
         // `track::sized_rows` does the join.
         sized: sized_now.clone(),
+        // (#323) and what the gates refused narrowly, with that day's close, so `track` can grade it
+        near: near.iter().map(|(q, g, _)| (q.ticker.clone(), q.price_eur, g.to_string())).collect(),
     });
 
     // (r15) footer population: ranked book + pinned extras — the held/watched names sit in the
@@ -2333,34 +2365,14 @@ pub async fn run(args: Vec<String>) {
     // (B) NEAR-MISS tail: names the growth lane rejected on EXACTLY one gate — a compounder one notch
     // outside the fence (e.g. a great name 25% off its high failing only the range gate). Makes the silent
     // exclusions visible so a dropped winner can be eyeballed, without loosening any gate. Empty -> nothing.
-    // (round 52) pinned names skipped: the gate-review footer above already explains them, and the
-    // same ticker printing twice with the same reason read as a bug (VVSM stretch receipt).
-    let mut near: Vec<(&Quote, &'static str, String)> = quotes.iter()
-        .filter(|q| !settings.tickers.contains(&q.ticker))
-        .filter_map(|q| growth_near_miss(q, &settings.buy_heuristic).map(|(g, why)| (q, g, why)))
-        .collect();
+    // Built once above (`near_miss_tail`) and journalled there, so these are the rows `track` grades.
     if !near.is_empty() {
-        // (round 53) within the cagr group (the bulk) closest-to-the-bar first — the `why` string
-        // starts with the value, higher = closer to the floor. Other gates mix floor/ceiling
-        // directions, one sort rule would be wrong for half of them; they keep ticker order.
-        let cagr_val = |gate: &str, why: &str| {
-            if gate == "cagr" { why.split('%').next().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0) } else { 0.0 }
-        };
-        near.sort_by(|a, b| {
-            a.1.cmp(b.1)
-                .then_with(|| cagr_val(b.1, &b.2).partial_cmp(&cagr_val(a.1, &a.2)).unwrap_or(std::cmp::Ordering::Equal))
-                .then_with(|| a.0.ticker.cmp(&b.0.ticker))
-        });
         // Header names all THREE predicates this block applies, not just the first: it needs exactly one
         // failing gate AND a close miss AND a non-pinned name. Advertising only "ONE growth gate" made a
         // pinned name failing one gate narrowly (AAPL, peg 2.14) look like it belonged here when it can
-        // never reach this code — the pinned filter above runs before closeness is ever tested.
-        println!("\nNear-miss — rejected NARROWLY on ONE growth gate (not ranked above; pinned names: see gate review), loosen intentionally if wanted:");
-        // (round 54) one row per FUND: the same UCITS fund lists on several venues (L&G Gold Mining
-        // printed as both AUCO.L and ETLX.DE) — the momentum tables dedup by underlying, this block
-        // didn't. First occurrence wins = the closest venue, thanks to the sort above.
-        let mut seen_names = std::collections::HashSet::new();
-        for (q, gate, why) in near.iter().filter(|(q, ..)| seen_names.insert(q.name.to_lowercase())) {
+        // never reach this code — the pinned filter runs before closeness is ever tested.
+        println!("\nNear-miss — rejected NARROWLY on ONE growth gate (not ranked above; pinned names: see gate review), loosen intentionally if wanted; journalled, `track` grades them forward (#323):");
+        for (q, gate, why) in &near {
             println!("  {:<8} {:<44.44} {:<10} {why}", q.ticker, q.name, gate);
         }
     }
@@ -3866,6 +3878,37 @@ mod tests {
         assert!(headline_rows(&[], &titles).is_empty());
     }
 
+    /// (#323) The near-miss tail is ONE list — the block prints it and the journal records it: one gate
+    /// missed narrowly, never a pinned name, one row per fund, the cagr group closest-to-the-bar first
+    /// and the gates in name order.
+    #[test]
+    fn near_miss_tail_is_the_printed_and_journalled_list() {
+        let q = |ticker: &str, name: &str, range: f64, l: &[(&str, f64)]| {
+            let mut quote = Quote::stub(ticker, "€1.00", "", name);
+            quote.avg_turnover_eur = Some(1e9);
+            quote.range_pct = range;
+            quote.age_years = Some(20.0);
+            quote.perf = core::HORIZONS
+                .iter()
+                .map(|(lab, _)| l.iter().find(|(pl, _)| pl == lab).map(|(_, v)| ("x".to_string(), *v)))
+                .collect();
+            quote
+        };
+        let tuning = config::BuyHeuristic { growth_min_5y_pct: 75.0, growth_min_age_years: 5.0, ..config::BuyHeuristic::default() };
+        // 8Y +71.8% = 7.0%/yr and +80% = 7.6%/yr, both a notch under the 8.0 floor; everything else clears
+        let cagr = |t: &str, name: &str, leg: f64| q(t, name, 90.0, &[("1Y", 10.0), ("5Y", 100.0), ("8Y", leg)]);
+        let quotes = vec![
+            q("RNG", "Range Co", 75.0, &[("1Y", 10.0), ("5Y", 100.0), ("8Y", 214.0)]),
+            cagr("FAR", "Far Co", 71.8),
+            cagr("NEAR.DE", "Near Co", 80.0),
+            cagr("NEAR", "Near Co", 80.0),
+            cagr("PIN", "Pinned Co", 80.0),
+        ];
+        let tail = near_miss_tail(&quotes, &["PIN".to_string()], &tuning);
+        let got: Vec<(&str, &str)> = tail.iter().map(|(q, g, _)| (q.ticker.as_str(), *g)).collect();
+        assert_eq!(got, [("NEAR", "cagr"), ("FAR", "cagr"), ("RNG", "range")], "{tail:?}");
+    }
+
     /// The gate tails: the n-arity block (2 and 3), the long-leg floor block, and the four behaviours
     /// that are easy to break silently — dedup by FUND NAME before the histogram (so its counts match
     /// the rows), the pinned skip, the empty note that ONLY the three-gate block carries, and the floor
@@ -3975,7 +4018,7 @@ mod tests {
                 f += 1;
             }
             rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), rows }
         };
         // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
         let past = vec![
@@ -4019,7 +4062,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), rows }
         };
         // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
         // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
@@ -4053,6 +4096,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
+            near: Vec::new(),
         };
         // fully stable: same top set across 3 screens → every pair retains all → 1.0
         let stable = vec![
@@ -4105,7 +4149,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), rows }
         };
         // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
         // E always rank 12 (past the top-10 cut → no point) · D never appears
@@ -4138,6 +4182,7 @@ mod tests {
             aum: at.iter().map(|(t, _, a)| (t.to_string(), *a)).collect(),
             core: Vec::new(),
             sized: Vec::new(),
+            near: Vec::new(),
         };
         let journal = vec![
             snap(

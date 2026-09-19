@@ -63,6 +63,17 @@ pub struct Snapshot {
     /// the printed buy table ranked on, so the record matches what the user was shown that day.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sized: Vec<(String, f64)>,
+    /// (#323) THE NEAR-MISS TAIL of the same run: `(ticker, close EUR, gate)` for every name the
+    /// screen's Near-miss block printed — refused on ONE growth gate, narrowly, not pinned, one row
+    /// per fund (`screen::near_miss_tail`, the one definition). Every admission refusal on file was
+    /// graded on the same backtest windows each round, and every "reopen if" waited on evidence the
+    /// journal could not collect, because it only ever held the names that PASSED. This is that
+    /// evidence: [`near_section`] grades these names against the book the line bought, per gate, on
+    /// prices that did not exist when they were refused. The gate travels with the name because the
+    /// reopen rule reads one gate at a time and a journal line cannot be backdated.
+    /// Journal data, no knob, same serde contract as `sized`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub near: Vec<(String, Option<f64>, String)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -125,7 +136,9 @@ pub(crate) fn adjust_for_splits(snaps: &mut [Snapshot], factor_since: &dyn Fn(&s
     let mut restated = 0usize;
     for snap in snaps.iter_mut() {
         let Ok(then) = chrono::NaiveDate::parse_from_str(&snap.date, "%Y-%m-%d") else { continue };
-        for (ticker, px) in snap.rows.iter_mut().chain(snap.core.iter_mut()) {
+        // (#323) and the near-miss tail, which `near_section` grades the same way
+        let lanes = snap.rows.iter_mut().chain(snap.core.iter_mut()).map(|(t, p)| (&*t, p));
+        for (ticker, px) in lanes.chain(snap.near.iter_mut().map(|(t, p, _)| (&*t, p))) {
             let factor = factor_since(ticker, then);
             // `!= 1.0` and not an epsilon: a factor is a ratio of two small integers or it is the
             // empty product, so the no-split case is exactly 1.0 and never near it.
@@ -266,6 +279,11 @@ fn flat_rows(snap: &Snapshot) -> Vec<(&str, Option<f64>, f64)> {
     sized_rows(snap).into_iter().zip(flat).filter_map(|((t, p, _), w)| w.map(|w| (t, p, w))).collect()
 }
 
+/// (#323) A line's near-miss tail as [`grade`] wants it, equal-weight: every gate, or just `gate`.
+fn near_rows<'a>(snap: &'a Snapshot, gate: Option<&str>) -> Vec<(&'a str, Option<f64>, f64)> {
+    snap.near.iter().filter(|(.., g)| gate.is_none_or(|w| w == g)).map(|(t, p, _)| (t.as_str(), *p, 1.0)).collect()
+}
+
 /// (#322) Every ticker `run` prices: each line's graded lanes and the benchmark. `sized` was graded
 /// but never FETCHED — only `rows.take(BOOK)` and `core` were — so a bought name ranked past ten had
 /// no price today and dropped out of the executed book silently (2 of 12 on the 2026-09-13 line;
@@ -277,6 +295,7 @@ fn fetch_set(snaps: &[Snapshot]) -> Vec<String> {
         // by breadth tier, and the tier is read off the fund NAME, which arrives with the quote.
         .flat_map(|s| {
             s.rows.iter().take(BOOK).chain(&s.core).map(|(t, _)| t).chain(s.sized.iter().map(|(t, _)| t))
+                .chain(s.near.iter().map(|(t, ..)| t)) // (#323)
         })
         .cloned()
         .chain(std::iter::once("^GSPC".to_string()))
@@ -447,6 +466,92 @@ fn sized_section(
          the gap is what the book's weighting earned or cost on prices that did not exist when it ranked.\n  \
          Scored on the SCREEN's numbers, which use live fundamentals. EUR seat, price-only returns, same\n  \
          windows. NOT advice. Journalled on {journalled} of {total} run(s).\n\n{TABLE_HEADER}\n{body}"
+    )
+}
+
+/// (#323) Monthly lines a gate's shadow needs before its verdict can say anything but "wait": a year,
+/// written before the first line was journalled. The receipt holds the rule; this is its clock.
+const REOPEN_LINES: usize = 12;
+
+/// (#323) The pre-registered reading of one gate's forward record. `lines` monthly gaps, shadow minus
+/// the bought book: a REOPEN SIGNAL needs the full year AND both the mean and the median strictly
+/// above zero — the mean alone is one survivor's, the median alone ignores how much a winner won.
+fn reopen_verdict(lines: usize, mean: f64, median: f64) -> &'static str {
+    if lines < REOPEN_LINES {
+        "needs 12 monthly lines"
+    } else if mean > 0.0 && median > 0.0 {
+        "REOPEN SIGNAL"
+    } else {
+        "holds"
+    }
+}
+
+/// (#323) Per gate: `(gate, monthly lines, mean gap, median gap)`, where a gap is that gate's
+/// near-miss shadow minus the book the SAME line bought ([`book_rows`]), both graded to today. One
+/// line per month (`sim::monthly_firsts`, which prefers a line carrying an executed book), because
+/// `track` grades every line against one endpoint and a same-week rerun is not a second trial. A line
+/// whose book or shadow cannot grade contributes nothing — a missing gap is not a zero one. Median is
+/// nearest-rank (`backtest::percentile`), the repo's one rule.
+fn gate_verdicts(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> Vec<(String, usize, f64, f64)> {
+    let mut gaps: std::collections::BTreeMap<&str, Vec<f64>> = Default::default();
+    for s in crate::commands::sim::monthly_firsts(snaps).into_values() {
+        let Some(book) = grade(s, &book_rows(s), usize::MAX, today, px_now, spx_now) else { continue };
+        let gates: std::collections::BTreeSet<&str> = s.near.iter().map(|(.., g)| g.as_str()).collect();
+        for g in gates {
+            if let Some(n) = grade(s, &near_rows(s, Some(g)), usize::MAX, today, px_now, spx_now) {
+                gaps.entry(g).or_default().push(n.book_pct - book.book_pct);
+            }
+        }
+    }
+    gaps.into_iter()
+        .map(|(g, mut v)| {
+            v.sort_by(f64::total_cmp);
+            let mean = v.iter().sum::<f64>() / v.len() as f64;
+            (g.to_string(), v.len(), mean, crate::commands::backtest::percentile(&v, 50.0))
+        })
+        .collect()
+}
+
+/// (#323) The fourth table: the NEAR-MISS SHADOW. What each run's gates refused narrowly, held
+/// equal-weight on the same windows as the book it bought, then read gate by gate against that book.
+/// This is the forward half of the backtest's NEAR-MISS BOOK rows, and the only out-of-sample
+/// evidence an admission refusal can ever be re-opened on: every refusal on file was graded on the
+/// same backtest windows each round, which cannot disagree with themselves.
+fn near_section(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    let pooled: &dyn for<'a> Fn(&'a Snapshot) -> Vec<(&'a str, Option<f64>, f64)> = &|s| near_rows(s, None);
+    let (journalled, total, rows) = graded_rows(snaps, pooled, usize::MAX, today, px_now, spx_now);
+    if rows.is_empty() {
+        return format!(
+            "\n  Near-miss shadow: nothing gradeable yet. A line needs a day of age and at least one priced\n  \
+             row before it grades, and only {journalled} of {total} journalled run(s) carry a near-miss tail.\n  \
+             The record starts the run AFTER one is journalled and cannot be backdated."
+        );
+    }
+    let gates: String = gate_verdicts(snaps, today, px_now, spx_now)
+        .iter()
+        .map(|(g, n, mean, med)| {
+            format!("\n    {g:<10} {n:>3} line(s)  mean {mean:>+7.1}pp  median {med:>+7.1}pp  {}", reopen_verdict(*n, *mean, *med))
+        })
+        .collect();
+    let body = rows.join("\n");
+    format!(
+        "\n  Near-miss shadow — the names each run's gates refused NARROWLY on one gate (the screen's\n  \
+         Near-miss block), equal-weight, same windows. A shadow that keeps beating the bought book is a\n  \
+         gate refusing winners. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\n\
+         {TABLE_HEADER}\n{body}\n\n  \
+         Per gate, one line a month, shadow minus the book that line bought. Receipt (#323): a gate is\n  \
+         loosened one notch when {REOPEN_LINES}+ lines read mean AND median above 0 and its backtest\n  \
+         NEAR-MISS BOOK row's worst window sits within 1.0 of the cleared book's.{gates}"
     )
 }
 
@@ -622,6 +727,8 @@ pub async fn run(args: Vec<String>) {
     );
     // (#322) and the executed book's flat twin, to read against the verdict table's weighted rows.
     println!("{}", sized_section(&snaps, today, &px_now, spx_now));
+    // (#323) and what the gates refused narrowly, read against that same bought book
+    println!("{}", near_section(&snaps, today, &px_now, spx_now));
     if push {
         let delivered = fetch::push(
             &client,
@@ -650,6 +757,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
+            near: Vec::new(),
         }
     }
 
@@ -662,6 +770,13 @@ mod tests {
     /// The same snapshot with a journalled SIZED book — the half `screen` writes from `sized_book`.
     fn with_sized(mut s: Snapshot, sized: &[(&str, f64)]) -> Snapshot {
         s.sized = sized.iter().map(|(t, w)| (t.to_string(), *w)).collect();
+        s
+    }
+
+    /// (#323) The same snapshot with a journalled near-miss tail — the half `screen` writes from
+    /// `near_miss_tail`.
+    fn with_near(mut s: Snapshot, near: &[(&str, Option<f64>, &str)]) -> Snapshot {
+        s.near = near.iter().map(|(t, p, g)| (t.to_string(), *p, g.to_string())).collect();
         s
     }
 
@@ -755,6 +870,16 @@ mod tests {
         assert_eq!(cored[0].core[1].1, Some(50.0), "no split -> untouched, here too");
         assert_eq!(cored[0].core[2].1, None, "an unpriced CORE row stays unpriced");
         assert_eq!(cored[0].rows[0].1, Some(50.0), "and the momentum rows are still walked");
+
+        // (#323) and the near-miss tail, which `near_section` grades the same way
+        let mut neared = vec![with_near(
+            snap("2024-06-01", Some(5000.0), &[]),
+            &[("AAA", Some(100.0), "cagr"), ("BBB", Some(50.0), "peg")],
+        )];
+        assert_eq!(adjust_for_splits(&mut neared, &factor), 1, "the near-miss price moved, and is counted");
+        assert_eq!(neared[0].near[0].1, Some(10.0), "a near-miss price splits like any other");
+        assert_eq!(neared[0].near[1].1, Some(50.0), "no split -> untouched");
+        assert_eq!(neared[0].near[0].2, "cagr", "the gate is not a price");
 
         // the closure the commands actually pass, over quotes they already fetched
         let mut q = crate::core::Quote::stub("AAA", "€12.00", "", "A");
@@ -1083,12 +1208,15 @@ mod tests {
     fn fetch_set_prices_every_graded_lane() {
         let names: Vec<String> = (0..=BOOK).map(|i| format!("R{i:02}")).collect();
         let rows: Vec<(&str, Option<f64>)> = names.iter().map(|t| (t.as_str(), Some(1.0))).collect();
-        let s = with_sized(
-            with_core(snap("2026-06-16", Some(100.0), &rows), &[("CORE", Some(1.0)), ("R00", Some(1.0))]),
-            &[("R10", 4.0), ("BTC-EUR", 5.0)],
+        let s = with_near(
+            with_sized(
+                with_core(snap("2026-06-16", Some(100.0), &rows), &[("CORE", Some(1.0)), ("R00", Some(1.0))]),
+                &[("R10", 4.0), ("BTC-EUR", 5.0)],
+            ),
+            &[("NM", Some(1.0), "cagr")], // (#323) refused, yet graded — so priced
         );
         let mut want: Vec<String> = names[..BOOK].to_vec();
-        want.extend(["BTC-EUR", "CORE", "R10", "^GSPC"].map(String::from));
+        want.extend(["BTC-EUR", "CORE", "NM", "R10", "^GSPC"].map(String::from));
         want.sort();
         assert_eq!(fetch_set(&[s.clone(), s]), want, "sorted, deduped across lanes and lines");
     }
@@ -1110,6 +1238,98 @@ mod tests {
         // and every line already on disk — none of which carries the key — still reads
         let line = r#"{"date":"2026-06-01","spx":100.0,"rows":[["A",10.0]]}"#;
         assert!(serde_json::from_str::<Snapshot>(line).unwrap().sized.is_empty());
+
+        // (#323) the near-miss tail keeps the same contract: absent key, round-trip, old lines read
+        assert!(!off.contains("near"), "an empty tail must not widen the line: {off}");
+        s.near = vec![("EME".into(), Some(612.5), "cagr".into())];
+        let on = serde_json::to_string(&s).unwrap();
+        assert!(on.contains(r#""near":[["EME",612.5,"cagr"]]"#), "{on}");
+        assert_eq!(serde_json::from_str::<Snapshot>(&on).unwrap().near, s.near);
+        assert!(serde_json::from_str::<Snapshot>(line).unwrap().near.is_empty());
+    }
+
+    /// (#323) The shadow table grades the near-miss tail equal-weight on the line's own window — +10.0%
+    /// here, the cagr name +20 and the peg name 0 — and only on lines carrying one. The per-gate rows
+    /// read each gate against the book that SAME line bought (+5.0% at its funded 30/10): cagr +15.0,
+    /// peg -5.0 — not against the index, and not against the pooled shadow.
+    #[test]
+    fn near_section_grades_the_refused_names_against_the_bought_book() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "UP" => Some(110.0),
+            "DOWN" => Some(90.0),
+            "NC" => Some(120.0),
+            "NP" => Some(100.0),
+            _ => None,
+        };
+        for snaps in [vec![], vec![snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))])]] {
+            let out = near_section(&snaps, today, &px, Some(105.0));
+            assert!(out.contains("nothing gradeable yet"), "{out}");
+            assert!(out.contains("cannot be backdated"), "the perishability is the point: {out}");
+            assert!(!out.contains("BEAT?"), "an empty table reads as a measured result: {out}");
+            assert!(!out.contains('%'), "and so does a zero: {out}");
+        }
+
+        let line = with_near(
+            with_sized(
+                snap("2026-06-16", Some(100.0), &[("UP", Some(100.0)), ("DOWN", Some(100.0))]),
+                &[("UP", 30.0), ("DOWN", 10.0)],
+            ),
+            &[("NC", Some(100.0), "cagr"), ("NP", Some(100.0), "peg")],
+        );
+        let snaps = vec![snap("2026-05-16", Some(100.0), &[("UP", Some(100.0))]), line];
+        let out = near_section(&snaps, today, &px, Some(101.0));
+        assert!(out.contains(TABLE_HEADER), "the shadow must print THE header: {out}");
+        assert!(out.contains("Journalled on 1 of 2 run(s)."), "{out}");
+        assert_eq!(out.matches("2026-05-16").count(), 0, "a line with no tail grades nothing: {out}");
+        assert!(out.contains("+10.0%") && out.contains("+9.0pp"), "pooled +10.0 against a +1.0 index: {out}");
+        let row = |gate: &str| out.lines().find(|l| l.trim_start().starts_with(gate)).unwrap_or_default().to_string();
+        let cagr = row("cagr ");
+        assert!(cagr.contains("1 line(s)") && cagr.matches("+15.0pp").count() == 2, "mean and median: {cagr}");
+        assert!(cagr.contains("needs 12 monthly lines"), "{cagr}");
+        assert_eq!(row("peg ").matches("-5.0pp").count(), 2, "{out}");
+    }
+
+    /// (#323) One gap per MONTH, from the line `monthly_firsts` keeps (a later same-month line whose
+    /// shadow doubled must not enter); a line whose book cannot grade adds nothing, and nor does a gate
+    /// whose shadow cannot; mean and nearest-rank median over what is left.
+    #[test]
+    fn gate_verdicts_read_one_line_a_month() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "B" => Some(100.0),
+            "N1" => Some(115.0),
+            "N2" => Some(95.0),
+            "N3" => Some(140.0),
+            "X" => Some(200.0),
+            _ => None,
+        };
+        let line = |date: &str, book: &str, near: &[(&str, Option<f64>, &str)]| {
+            with_near(snap(date, Some(100.0), &[(book, Some(100.0))]), near)
+        };
+        let snaps = vec![
+            line("2026-03-02", "B", &[("N1", Some(100.0), "cagr")]),
+            line("2026-03-20", "B", &[("X", Some(100.0), "cagr")]),
+            line("2026-04-02", "B", &[("N2", Some(100.0), "cagr")]),
+            line("2026-05-02", "B", &[("N3", Some(100.0), "cagr"), ("NP", Some(100.0), "peg")]),
+            line("2026-06-02", "GONE", &[("N1", Some(100.0), "cagr")]),
+        ];
+        let v = gate_verdicts(&snaps, today, &px, Some(101.0));
+        assert_eq!(v.len(), 1, "peg's only name is unpriced -> no gap, not a zero one: {v:?}");
+        let (gate, n, mean, med) = &v[0];
+        assert_eq!((gate.as_str(), *n), ("cagr", 3));
+        assert!((mean - 50.0 / 3.0).abs() < 1e-9, "+15, -5, +40: {mean}");
+        assert!((med - 15.0).abs() < 1e-9, "{med}");
+    }
+
+    /// (#323) The pre-registered reading: a year of monthly lines, and BOTH statistics strictly above 0.
+    #[test]
+    fn reopen_verdict_needs_a_year_and_both_statistics() {
+        assert_eq!(reopen_verdict(11, 5.0, 5.0), "needs 12 monthly lines");
+        assert_eq!(reopen_verdict(12, 5.0, 5.0), "REOPEN SIGNAL");
+        assert_eq!(reopen_verdict(12, 5.0, 0.0), "holds", "a zero median is not a win");
+        assert_eq!(reopen_verdict(12, 0.0, 5.0), "holds", "nor a zero mean");
+        assert_eq!(reopen_verdict(40, -1.0, 5.0), "holds", "one survivor's mean cannot carry it the other way either");
     }
 
     /// (#285) `graded_row` is the ONE row formatter. The BEAT? decision is its only judgement and
