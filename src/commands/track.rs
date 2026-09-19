@@ -1,4 +1,4 @@
-//! `track` — live out-of-sample track record: how did each past `screen` top-10 actually do?
+//! `track` — live out-of-sample track record: how did each past `screen` book actually do?
 //!
 //! Every `screen` run appends its ranked top slice (tickers + EUR prices + the S&P 500 close) to
 //! `.screen_snapshots.jsonl` (working dir, gitignored; one JSON line per day — a same-day rerun
@@ -171,7 +171,7 @@ struct Graded {
 /// piece of arithmetic may exist for them (non-negotiable #4):
 ///
 /// * the momentum book — `snap.rows` cut at [`BOOK`], which is what every surface graded before
-///   `(#285)` and what `verdict_stats` and the screen's trust line still grade;
+///   `(#285)`, and (#322) what [`book_rows`] still grades for a line journalled before `sized` was;
 /// * the CORE hold shortlist — `snap.core` cut at `Sizing::spill_cut()`, the number of trackers
 ///   `size` actually spills the undeployed remainder into;
 /// * (#286) the EXECUTED book — [`sized_rows`], uncut, weighted as `size` weights it. (#296) The CORE
@@ -243,6 +243,49 @@ fn sized_rows(snap: &Snapshot) -> Vec<(&str, Option<f64>, f64)> {
         .collect()
 }
 
+/// (#322) THE book a run told the user to buy, and the one lane the verdict grades: the executed book
+/// when the line journalled one, else — every line before (#286) — the top-[`BOOK`] equal-weight slice
+/// the verdict always graded. It used to grade that slice even on lines carrying the executed book,
+/// which since (#321) is up to 25 names at weights no top-10 shares, so the trust line under BUY NOW
+/// was a claim about a different book. Uncut: [`grade`] takes `usize::MAX` for it.
+fn book_rows(snap: &Snapshot) -> Vec<(&str, Option<f64>, f64)> {
+    if snap.sized.is_empty() {
+        equal(&snap.rows).into_iter().take(BOOK).collect()
+    } else {
+        sized_rows(snap)
+    }
+}
+
+/// (#322) The same names as [`sized_rows`], re-weighted flat the way `sizing.equal_weight_book` pays
+/// them: coins keep their journalled weight, every other name splits the rest equally. Graded beside
+/// the executed book so a weighting rule can be judged against its flat twin on prices that did not
+/// exist when it ranked — the forward half of the backtest's SIZED comparison.
+fn flat_rows(snap: &Snapshot) -> Vec<(&str, Option<f64>, f64)> {
+    let coins: Vec<(bool, f64)> = snap.sized.iter().map(|(t, w)| (crate::picks::is_currency_quoted(t), *w)).collect();
+    let flat = crate::commands::size::equal_weights(&coins, usize::MAX);
+    sized_rows(snap).into_iter().zip(flat).filter_map(|((t, p, _), w)| w.map(|w| (t, p, w))).collect()
+}
+
+/// (#322) Every ticker `run` prices: each line's graded lanes and the benchmark. `sized` was graded
+/// but never FETCHED — only `rows.take(BOOK)` and `core` were — so a bought name ranked past ten had
+/// no price today and dropped out of the executed book silently (2 of 12 on the 2026-09-13 line;
+/// up to 15 of 25 since (#321)). Sorted and deduped across the whole journal.
+fn fetch_set(snaps: &[Snapshot]) -> Vec<String> {
+    let mut tickers: Vec<String> = snaps
+        .iter()
+        // (#289) the WHOLE CORE list, not its first `core_cut` rows: which rows `size` funds is picked
+        // by breadth tier, and the tier is read off the fund NAME, which arrives with the quote.
+        .flat_map(|s| {
+            s.rows.iter().take(BOOK).chain(&s.core).map(|(t, _)| t).chain(s.sized.iter().map(|(t, _)| t))
+        })
+        .cloned()
+        .chain(std::iter::once("^GSPC".to_string()))
+        .collect();
+    tickers.sort();
+    tickers.dedup();
+    tickers
+}
+
 /// The column header every table prints. (#285) One spelling, so the CORE block underneath cannot
 /// drift out of alignment with the momentum block the first time a column width moves.
 ///
@@ -294,8 +337,8 @@ fn graded_row(g: &Graded) -> String {
 /// old" are different problems with different fixes and only the user can tell them apart.
 ///
 /// DELIBERATELY NOT FOLDED INTO `verdict_stats`. That fold is shared with the screen's trust line,
-/// which is a claim about the momentum book; mixing a second book into it would silently move a
-/// number two surfaces currently agree on, which is the exact drift its own doc exists to prevent.
+/// which is a claim about the book BUY NOW bought (#322); mixing the CORE list into it would silently
+/// move a number two surfaces currently agree on, which is the exact drift its own doc exists to prevent.
 /// (#286) One lane, graded across every journalled run: `(runs carrying this lane, runs, printed
 /// rows)`. The arithmetic of "grade them all and format each" is shared; the WORDS are not, because
 /// each lane owes the reader a different sentence about what it is and how it is weighted. Two
@@ -374,18 +417,13 @@ fn core_section(
     )
 }
 
-/// (#286) The third table, and the only one that grades what the user was actually told to buy.
+/// (#322) The third table: the executed book's FLAT TWIN. The verdict above now grades the book `size`
+/// funded, weighted as it funded it ([`book_rows`]); this grades the same names on the same windows at
+/// the weights `sizing.equal_weight_book` would have paid them. The gap between the two is what the
+/// weighting rule earned or cost out of sample — identical rows mean the book was already flat.
 ///
-/// The two above grade LISTS. This grades the BOOK: `size` drops the names that fail the growth
-/// gate, keeps one listing per issuer, and weights what survives by score / volatility inside a
-/// class budget before capping it — so its membership and its weights both differ from the ranked
-/// top-10 the first table prints. Until this round nothing recorded that, and it cannot be
-/// reconstructed after the fact, because the weights depend on each name's volatility as of the run.
-///
-/// It grades the GROWTH half only. Those weights sum to whatever the caps could deploy — 70.0% on
-/// the 2026-09-12 run — and the undeployed remainder goes to the CORE trackers the table above
-/// grades. The two sections together cover the book; neither is the whole of it, and the blurbs say
-/// so rather than leaving the reader to add them up.
+/// (#286) it was the executed book itself, printed apart from a verdict that graded the ranked top-10.
+/// With the verdict on the executed book that table would print the same numbers twice.
 fn sized_section(
     snaps: &[Snapshot],
     today: chrono::NaiveDate,
@@ -393,32 +431,29 @@ fn sized_section(
     spx_now: Option<f64>,
 ) -> String {
     // usize::MAX, not a cut: the sizing IS the cut. A row that reached this list already survived
-    // the gate, the issuer dedup and the caps, and dropping its tail would grade a book nobody holds.
-    let (journalled, total, rows) = graded_rows(snaps, &sized_rows, usize::MAX, today, px_now, spx_now);
+    // the gate, the issuer dedup and the book width, and dropping its tail would grade a book nobody holds.
+    let (journalled, total, rows) = graded_rows(snaps, &flat_rows, usize::MAX, today, px_now, spx_now);
     if rows.is_empty() {
         return format!(
-            "\n  Executed book: nothing gradeable yet. A line needs a day of age and at least one priced\n  \
-             row before it grades, and only {journalled} of {total} journalled run(s) carry a sized book at\n  \
-             all. The record starts the run AFTER this ships and cannot be backdated — the weights depend\n  \
-             on each name's volatility as of that run, so no later run can recover them."
+            "\n  Flat twin of the executed book: nothing gradeable yet. A line needs a day of age and at least\n  \
+             one priced row before it grades, and only {journalled} of {total} journalled run(s) carry an\n  \
+             executed book at all. The record starts the run AFTER one is journalled and cannot be backdated."
         );
     }
     let body = rows.join("\n");
     format!(
-        "\n  Executed book — that run's ranked list put through `size`'s weighting, WEIGHTED as it funds\n  \
-         it. Not the same book as the first table: names failing the growth gate are gone, only one\n  \
-         listing per issuer survives, and what is left is weighted by score / volatility inside a class\n  \
-         budget, then capped. Covers the deployed half only — the remainder the caps could not place is\n  \
-         the CORE block above. Scored on the SCREEN's numbers, which use live fundamentals; a later\n  \
-         `size --picks` re-derives them price-only, so its uncapped rows can differ by a few tenths of a\n  \
-         point (class sums are identical). EUR seat, price-only returns, same windows. NOT advice.\n  \
-         Journalled on {journalled} of {total} run(s).\n\n{TABLE_HEADER}\n{body}"
+        "\n  Flat twin — the SAME names each run's executed book bought, re-weighted flat: coins keep their\n  \
+         weight, every other name splits the rest equally. Set it against the verdict table's dated rows:\n  \
+         the gap is what the book's weighting earned or cost on prices that did not exist when it ranked.\n  \
+         Scored on the SCREEN's numbers, which use live fundamentals. EUR seat, price-only returns, same\n  \
+         windows. NOT advice. Journalled on {journalled} of {total} run(s).\n\n{TABLE_HEADER}\n{body}"
     )
 }
 
 /// Fold every gradeable snapshot with a benchmark leg into the verdict numbers:
 /// (wins, graded_n, excess_sum). The ONE source for the summary — track's table and the screen's
-/// live-track-record line both consume this, so the two surfaces can't disagree.
+/// live-track-record line both consume this, so the two surfaces can't disagree. (#322) Each line
+/// grades [`book_rows`]: the book it told the user to buy.
 pub(crate) fn verdict_stats(
     snaps: &[Snapshot],
     today: chrono::NaiveDate,
@@ -427,7 +462,7 @@ pub(crate) fn verdict_stats(
 ) -> (usize, usize, f64) {
     snaps
         .iter()
-        .filter_map(|s| grade(s, &equal(&s.rows), BOOK, today, px_now, spx_now))
+        .filter_map(|s| grade(s, &book_rows(s), usize::MAX, today, px_now, spx_now))
         .filter_map(|g| g.spy_pct.map(|spy| g.book_pct - spy))
         .fold((0, 0, 0.0), |(wins, n, sum), ex| (wins + (ex > 0.0) as usize, n + 1, sum + ex))
 }
@@ -525,27 +560,12 @@ pub async fn run(args: Vec<String>) {
         return;
     }
 
-    // one paced fetch for the union of every snapshot's book tickers + the benchmark
+    // one paced fetch for the union of every snapshot's graded tickers + the benchmark
     let settings = config::load();
     let client = fetch::client();
     let fx_cache = fetch::fx_cache();
-    // (#285) the CORE names are fetched too, cut at the count `size` funds — without them every CORE
-    // row would price as n/a and the new block would read empty for the wrong reason. Only the graded
-    // prefix is fetched: the journal carries the whole shortlist, and pricing rows nothing grades
-    // would buy requests this command has no use for.
     let core_cut = settings.sizing.spill_cut();
-    let mut tickers: Vec<String> = snaps
-        .iter()
-        // (#289) the WHOLE CORE list, not its first `core_cut` rows. Which rows `size` funds is no
-        // longer a prefix — `spill_per_tier` picks the best row of each breadth tier — and the tier
-        // is read off the fund NAME, which arrives with the quote. So the names have to be fetched
-        // before the selection can be made, not after. Tickers are deduped across every snapshot
-        // below, so this is ~25-35 symbols in total rather than `core_cut` x the journal's length.
-        .flat_map(|s| s.rows.iter().take(BOOK).chain(s.core.iter()).map(|(t, _)| t.clone()))
-        .chain(std::iter::once("^GSPC".to_string()))
-        .collect();
-    tickers.sort();
-    tickers.dedup();
+    let tickers = fetch_set(&snaps);
     let quotes = fetch::quotes(
         &client, &settings.urls, &fx_cache, &tickers, settings.dip_days, settings.high_days,
         false, false, &settings.anchor_windows, None, settings.inflation_adjust.score_on_nominal,
@@ -559,10 +579,11 @@ pub async fn run(args: Vec<String>) {
     let restated = adjust_for_splits(&mut snaps, &split_factor_from(&quotes));
 
     println!(
-        "Track record — the screen's own past top-10s graded on prices that did not exist when they\n\
-         ranked (equal-weight, EUR seat, price-only like the backtest). Excess = book − S&P 500 over\n\
-         the same window. Delisted/unpriced names drop out and FLATTER the book — the N column keeps\n\
-         that honest. NOT advice.\n"
+        "Track record — the book each past `screen` run said to buy, graded on prices that did not exist\n\
+         when it ranked: the executed book at the weights `size` funded (a run journalled before that\n\
+         book was grades its top-10 equal-weight). EUR seat, price-only like the backtest. Excess =\n\
+         book − S&P 500 over the same window. Delisted/unpriced names drop out and FLATTER the book —\n\
+         the N column keeps that honest. NOT advice.\n"
     );
     if restated > 0 {
         println!(
@@ -574,7 +595,7 @@ pub async fn run(args: Vec<String>) {
     println!("{TABLE_HEADER}");
     let today = chrono::Local::now().date_naive();
     for snap in &snaps {
-        if let Some(g) = grade(snap, &equal(&snap.rows), BOOK, today, &px_now, spx_now) {
+        if let Some(g) = grade(snap, &book_rows(snap), usize::MAX, today, &px_now, spx_now) {
             println!("{}", graded_row(&g));
         }
     }
@@ -587,8 +608,8 @@ pub async fn run(args: Vec<String>) {
     let summary =
         format!("{}{}", summary_line(wins, graded_n, excess_sum), trials_note(&snaps, today, &px_now, spx_now));
     println!("\n  summary: {summary}");
-    // (#285) and the other two thirds. Printed LAST, below the summary, because that summary is the
-    // momentum book's verdict and belongs next to the momentum table — a second table wedged between
+    // (#285) and the CORE list. Printed LAST, below the summary, because that summary is the bought
+    // book's verdict and belongs next to the bought book's table — a second table wedged between
     // them would invite the reader to attribute one to the other.
     // (#289) the tier lookup, built off the quotes already fetched above — one source for the fund
     // name, and none for the tier beyond `core::hold_breadth_tier` itself.
@@ -599,8 +620,7 @@ pub async fn run(args: Vec<String>) {
         "{}",
         core_section(&snaps, core_cut, settings.sizing.spill_per_tier, today, &px_now, &tier_of, spx_now)
     );
-    // (#286) and the book those two lists actually become once `size` has had them. Last, because it
-    // is the only weighted table and the reader should meet the two equal-weight ones first.
+    // (#322) and the executed book's flat twin, to read against the verdict table's weighted rows.
     println!("{}", sized_section(&snaps, today, &px_now, spx_now));
     if push {
         let delivered = fetch::push(
@@ -608,7 +628,7 @@ pub async fn run(args: Vec<String>) {
             &settings.urls,
             &settings.ntfy_topic,
             &format!("Track record: {summary}"),
-            "Screen's own past top-10s graded at today's prices vs the S&P 500 — live out-of-sample. NOT advice.",
+            "Each past screen's bought book graded at today's prices vs the S&P 500 — live out-of-sample. NOT advice.",
         )
         .await;
         if !delivered {
@@ -990,19 +1010,19 @@ mod tests {
         assert_eq!(sized_rows(&shuffled), vec![("A", Some(10.0), 5.0), ("B", Some(20.0), 6.0)]);
     }
 
-    /// (#286) The executed-book block. The empty arm is the shipped state — 13 of 13 journal lines
-    /// carry no sized book — and it must not lie: no table, no zero, and it says how many runs carry
-    /// one so "nothing recorded yet" and "recorded this morning" stay distinguishable.
+    /// (#322) The flat-twin block. The empty arm must not lie: no table, no zero, and it says how many
+    /// runs carry an executed book so "nothing recorded yet" and "recorded this morning" stay apart.
     ///
-    /// The graded arm is where this table earns its place next to the other two: the SAME two names
-    /// that grade to 0.0% equal-weight grade to +5.0% at the weights `size` actually funds, so a
-    /// section that silently fell back to `equal` would print the first table's number here.
+    /// The graded arm pins the three ways the twin could be wrong. The executed book (30/10/10) grades
+    /// +8.0%; the twin must print +2.0%, which is the coin at its journalled 10 and the other two
+    /// splitting 90 — not +8.0% (the funded weights again) and not +6.7% (the coin flattened too).
     #[test]
-    fn sized_section_grades_the_weighted_book_not_the_list() {
+    fn sized_section_grades_the_flat_twin_of_the_bought_book() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
         let px = |t: &str| match t {
             "UP" => Some(110.0),
             "DOWN" => Some(90.0),
+            "BTC-EUR" => Some(120.0),
             _ => None,
         };
 
@@ -1015,24 +1035,62 @@ mod tests {
             assert!(!out.contains('%'), "and so does a zero: {out}");
         }
 
-        let snaps = vec![
-            snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), // no sized book -> no row
-            with_sized(
-                snap("2026-06-16", Some(100.0), &[("UP", Some(100.0)), ("DOWN", Some(100.0))]),
-                &[("UP", 30.0), ("DOWN", 10.0)],
-            ),
-        ];
-        // +2.0% index, deliberately NOT the +5.0% that would tie the book: `graded_row` compares the
-        // raw floats and this book is 5.000000000000004, so a tie fixture here would assert a win
-        // and read as a bug in the row formatter. The tie is already pinned, on exact inputs, by
-        // `graded_row_calls_only_a_strict_win_a_win`.
-        let out = sized_section(&snaps, today, &px, Some(102.0));
-        assert!(out.contains(TABLE_HEADER), "the executed block must print THE header: {out}");
+        let bought = with_sized(
+            snap("2026-06-16", Some(100.0), &[("UP", Some(100.0)), ("DOWN", Some(100.0)), ("BTC-EUR", Some(100.0))]),
+            &[("UP", 30.0), ("DOWN", 10.0), ("BTC-EUR", 10.0)],
+        );
+        let executed = grade(&bought, &book_rows(&bought), usize::MAX, today, &px, Some(101.0)).unwrap();
+        assert!((executed.book_pct - 8.0).abs() < 1e-9, "the verdict grades the funded weights: {}", executed.book_pct);
+
+        let snaps = vec![snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), bought];
+        let out = sized_section(&snaps, today, &px, Some(101.0));
+        assert!(out.contains(TABLE_HEADER), "the twin must print THE header: {out}");
         assert!(out.contains("Journalled on 1 of 2 run(s)."), "{out}");
         assert_eq!(out.matches("2026-06-16").count(), 1, "only the line carrying a sized book grades: {out}");
-        assert!(out.contains("+5.0%"), "graded at the FUNDED weights, not equal-weight (which is 0.0%): {out}");
-        assert!(out.contains("+3.0pp"), "+5.0 book against a +2.0 index: {out}");
-        assert!(out.lines().last().unwrap().ends_with("  yes"), "and it beat the index: {out}");
+        assert!(out.contains("+2.0%"), "coin kept at 10, the rest flat at 45 each: {out}");
+        assert!(out.contains("+1.0pp"), "+2.0 book against a +1.0 index: {out}");
+    }
+
+    /// (#322) The verdict grades the book each line BOUGHT. A line carrying an executed book grades it
+    /// at its funded weights (+5.0%, where its top-10 equal-weight reads 0.0%); a line from before one
+    /// was journalled grades its top-10 equal-weight, and its rank-11 row stays out of it.
+    #[test]
+    fn verdict_grades_the_book_each_line_bought() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "UP" => Some(110.0),
+            "DOWN" => Some(90.0),
+            _ => None,
+        };
+        let bought = with_sized(
+            snap("2026-06-16", Some(100.0), &[("UP", Some(100.0)), ("DOWN", Some(100.0))]),
+            &[("UP", 30.0), ("DOWN", 10.0)],
+        );
+        let (wins, n, sum) = verdict_stats(&[bought], today, &px, Some(102.0));
+        assert_eq!((wins, n), (1, 1));
+        assert!((sum - 3.0).abs() < 1e-9, "+5.0 funded book against +2.0: {sum}");
+
+        let mut rows = vec![("DOWN", Some(100.0)); BOOK];
+        rows.push(("UP", Some(100.0))); // rank 11: outside a top-10 book
+        let (wins, n, sum) = verdict_stats(&[snap("2026-06-16", Some(100.0), &rows)], today, &px, Some(102.0));
+        assert_eq!((wins, n), (0, 1));
+        assert!((sum - (-10.0 - 2.0)).abs() < 1e-9, "the top-10 at -10.0 against +2.0: {sum}");
+    }
+
+    /// (#322) `run` prices exactly this set. The rank-11 row is fetched only because it was BOUGHT —
+    /// before (#322) it was graded as part of the executed book and never priced, so it dropped out.
+    #[test]
+    fn fetch_set_prices_every_graded_lane() {
+        let names: Vec<String> = (0..=BOOK).map(|i| format!("R{i:02}")).collect();
+        let rows: Vec<(&str, Option<f64>)> = names.iter().map(|t| (t.as_str(), Some(1.0))).collect();
+        let s = with_sized(
+            with_core(snap("2026-06-16", Some(100.0), &rows), &[("CORE", Some(1.0)), ("R00", Some(1.0))]),
+            &[("R10", 4.0), ("BTC-EUR", 5.0)],
+        );
+        let mut want: Vec<String> = names[..BOOK].to_vec();
+        want.extend(["BTC-EUR", "CORE", "R10", "^GSPC"].map(String::from));
+        want.sort();
+        assert_eq!(fetch_set(&[s.clone(), s]), want, "sorted, deduped across lanes and lines");
     }
 
     /// (#286) The knob-off guarantee for the journal, the same one `(#103)` wrote for the CORE list:

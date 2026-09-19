@@ -2676,11 +2676,12 @@ pub async fn run(args: Vec<String>) {
         &crate::commands::track::split_factor_from(&quotes),
     );
 
-    // (trust line) the ranking's own live out-of-sample grade: every past journaled top-10 at
-    // today's prices vs the S&P 500 — same fold as `track` (verdict_stats), so the two can't
-    // disagree. Zero new fetches: past books are ex-universe names, so this run's quotes already
-    // price them (a narrow watchlist run may grade fewer rows; track's table stays the honest
-    // view). Today's own snapshot is 0 days old and grades nothing, so no self-grade.
+    // (trust line) the ranking's own live out-of-sample grade: every past journaled book (#322: the
+    // executed one, else the top-10) at today's prices vs the S&P 500 — same fold as `track`
+    // (verdict_stats), so the two can't disagree. Zero new fetches: past books are ex-universe
+    // names, so this run's quotes already price them (a narrow watchlist run may grade fewer rows;
+    // track's table stays the honest view). Today's own snapshot is 0 days old and grades nothing,
+    // so no self-grade.
     {
         if !snaps.is_empty() {
             let today = chrono::Local::now().date_naive();
@@ -2694,7 +2695,7 @@ pub async fn run(args: Vec<String>) {
                 // two surfaces cannot quote one fold with two different confidences. This is the line
                 // a buy decision actually reads.
                 println!(
-                    "\nLive track record — this ranking's past top-10s at today's prices: {}{} (details: `folioman track`)",
+                    "\nLive track record — this ranking's past bought books at today's prices: {}{} (details: `folioman track`)",
                     crate::commands::track::summary_line(wins, n, sum),
                     crate::commands::track::trials_note(&snaps, today, &px_now, spx_now)
                 );
