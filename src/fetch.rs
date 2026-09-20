@@ -580,6 +580,10 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // stay the listing's own (turnover reads a 30-bar TRAILING window, untouched by a prepend).
     // Same-currency twins only — a cross-currency splice would bake FX drift into the CAGR.
     let mut history_proxied = false;
+    // (#327) the listing's OWN first bar, captured before the splice can overwrite it: everything older
+    // than this is borrowed, and only borrowed bars are charged the fee gap below.
+    let own_first = chart.dates.first().copied();
+    let mut donor_ter = None;
     if let Some(proxy) = crate::config::history_proxy().get(ticker) {
         match chart_json(client, urls, proxy, "10y").await.as_ref().and_then(|j| parse_chart(j, proxy)) {
             Some(p) if p.currency == chart.currency => {
@@ -591,6 +595,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
                     volumes.extend_from_slice(&chart.volumes);
                     (chart.dates, chart.closes, chart.volumes) = (dates, closes, volumes);
                     history_proxied = true;
+                    donor_ter = bf_ter_exact(proxy); // map lookup, no request — the donor's own fee
                 } else {
                     eprintln!("fetch: history_proxy {proxy} for {ticker} has no bars predating the listing (or no overlap) — splice skipped");
                 }
@@ -669,6 +674,23 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
             long_dates.drain(..start);
             long_closes.drain(..start);
             long_divs.retain(|(d, _)| *d >= cut_d);
+        }
+    }
+
+    // (#327) The fee gap on BORROWED years only. The donor is a fund too, already net of its own fees,
+    // so the honest charge is the DIFFERENCE — charging this listing's whole TER would bill it twice for
+    // the years it did not exist. Signed on purpose: a cheaper share class of the same index really
+    // would have kept more, and that is the one thing that genuinely separates two wrappers on one
+    // benchmark. Either fee unknown -> no charge, never a guess. Applied here because it must land
+    // before `life_cagr` and the perf legs are derived from this series, and because the TER is only
+    // known by now — the splice itself runs long before the fundamentals fetch.
+    // BOTH series, or the two disagree about the same borrowed year: `long_*` feeds the horizon legs
+    // and `life_cagr`, `chart.*` feeds range/SMA/R²/trail_monthly. Its own bars (>= own_first) are
+    // untouched in both, so the daily tail the long series copied above is charged exactly once.
+    if history_proxied {
+        if let (Some(first), Some(own), Some(donor)) = (own_first, ter, donor_ter) {
+            core::charge_ter_gap(&long_dates, &mut long_closes, first, own - donor);
+            core::charge_ter_gap(&chart.dates, &mut chart.closes, first, own - donor);
         }
     }
 

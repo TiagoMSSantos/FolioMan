@@ -2642,6 +2642,72 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     Some(fails)
 }
 
+/// (#327) How much older a donor must be before its history is worth borrowing. Under two years the
+/// splice prepends almost nothing and the pair is churn, not evidence.
+pub(crate) const PROXY_MIN_AGE_GAP_YEARS: f64 = 2.0;
+
+/// (#327) The pairs `bridge_hint_lines` below can only SUGGEST. Its doc records why auto-applying was
+/// rejected: a wrong twin silently corrupts CAGR, and a benchmark STRING is a weak promise — it comes
+/// from one venue's metadata, it is absent for ~16% of funds, and it says nothing about what the two
+/// wrappers actually did. This lane makes the opposite bet on stronger evidence: it matches on the
+/// PRICES, demanding shape and magnitude together (`core::proxy_corr`), which is a claim the data
+/// supports rather than a label. It stays off by default and its pairs are journalled before they are
+/// ever applied, so a bad twin is visible in a file rather than buried in a CAGR.
+///
+/// RESCUE ONLY: the subject must be a fund that FAILS the history gate today; a name already clearing
+/// it keeps its own numbers exactly, which is what lets a run's book move by additions alone. Donors
+/// must be funds that PASS it, quote in the SAME currency (the splice refuses a cross-currency twin
+/// at apply time, and an FX-drifted CAGR is worse than no CAGR), and be at least
+/// `PROXY_MIN_AGE_GAP_YEARS` older. Best match wins: correlation desc, then donor age desc, then
+/// ticker asc — a total order, so the same pool always yields the same map.
+pub fn discover_proxies(pool: &[Quote], tuning: &BuyHeuristic) -> std::collections::BTreeMap<String, String> {
+    let has_leg = |q: &Quote| long_leg_fixed(q, tuning.fixed_cagr_years, tuning.growth_min_leg_years).is_some();
+    let donors: Vec<&Quote> = pool.iter().filter(|q| quote_is_etf(q) && has_leg(q)).collect();
+    pool.iter()
+        .filter(|q| quote_is_etf(q) && !has_leg(q))
+        .filter_map(|young| {
+            let mut hits: Vec<(f64, f64, &str)> = donors
+                .iter()
+                .filter(|d| d.ticker != young.ticker)
+                .filter(|d| d.quote_currency.is_some() && d.quote_currency == young.quote_currency)
+                .filter(|d| {
+                    matches!((d.age_years, young.age_years), (Some(old), Some(new)) if old - new >= PROXY_MIN_AGE_GAP_YEARS)
+                })
+                .filter_map(|d| {
+                    core::proxy_corr(&young.trail_monthly, &d.trail_monthly)
+                        .map(|rho| (rho, d.age_years.unwrap_or(0.0), d.ticker.as_str()))
+                })
+                .collect();
+            hits.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.total_cmp(&a.1)).then(a.2.cmp(b.2)));
+            hits.first().map(|(_, _, donor)| (young.ticker.clone(), (*donor).to_string()))
+        })
+        .collect()
+}
+
+/// (#327) Carry forward the pairs already in force, and the oscillation that makes this necessary.
+///
+/// `discover_proxies` is RESCUE-ONLY: it pairs a fund that fails the history gate. A fund the splice
+/// already rescued PASSES that gate — but only because of the splice — so the next discovery drops it,
+/// the wholesale journal forgets it, the run after that un-splices it, and it fails again. Measured, not
+/// theorised: a first run found 154 pairs and the second found 7, because 147 of them had just been
+/// rescued. So a pair whose splice ACTUALLY LANDED this run (`history_proxied`) is kept.
+///
+/// `prior` is the journalled map alone, never the merged one: a hand-curated pair must not leak into the
+/// discovered file, or deleting it from the config would leave it silently in force forever. A pair whose
+/// splice stopped landing — donor delisted, currency changed, no overlap left — is simply not carried,
+/// which is how a stale pair leaves without anyone pruning it.
+pub fn carry_proxies(
+    found: &mut std::collections::BTreeMap<String, String>,
+    pool: &[Quote],
+    prior: &std::collections::BTreeMap<String, String>,
+) {
+    for q in pool.iter().filter(|q| q.history_proxied) {
+        if let Some(donor) = prior.get(&q.ticker) {
+            found.entry(q.ticker.clone()).or_insert_with(|| donor.clone());
+        }
+    }
+}
+
 /// (history_proxy hints) For subject ETFs that failed the history/young gate, say when an older fund
 /// tracking the IDENTICAL BF benchmark index exists in the scanned pool — exactly the case the
 /// `history_proxy` config bridges, which the user must curate by hand and can't discover from the
@@ -11291,5 +11357,76 @@ mod tests {
         // ...and MVRV never leaks into the PEG column. They are different quantities (P/B vs P/E ÷ g)
         // and the whole reason MVRV got its own column is that one header cannot mean both.
         assert_eq!(col_cell("peg", &cheap, 0.0, None, "", &on, &no_pe), "—");
+    }
+
+    /// (#327) LIVE discovery, off the data every `screen` Quote already carries — `trail_monthly`,
+    /// `age_years`, `quote_currency` — so pairing a whole pool costs no request. Four refusals are
+    /// pinned beside the one admit, because each is a way this could quietly pair nonsense: a young
+    /// fund is not paired with a leveraged twin, nor with one in another currency, nor with one barely
+    /// older than itself, and a fund that ALREADY has its long leg is never rescued (rescue-only).
+    #[test]
+    fn discover_proxies_pairs_only_a_same_series_older_twin() {
+        let pat = |k: usize| if k.is_multiple_of(3) { 4.0 } else { -1.0 };
+        let trail: Vec<f64> = (0..30).map(pat).collect();
+        // an ETF with a 5Y leg (the donor side) or without one (the rescue side)
+        let etf = |tk: &str, age: f64, has_leg: bool, ccy: Option<&str>, t: &[f64]| {
+            let mut q = Quote::stub(tk, "€100.00", "", "Some Index UCITS ETF Acc");
+            q.instrument_type = "ETF".into();
+            q.age_years = Some(age);
+            q.quote_currency = ccy.map(str::to_string);
+            q.trail_monthly = t.to_vec();
+            q.perf = legs(if has_leg { &[("1Y", 10.0), ("5Y", 60.0)] } else { &[("1Y", 10.0)] });
+            q
+        };
+        let tuning = BuyHeuristic { growth_min_leg_years: 5.0, ..BuyHeuristic::default() };
+        let two_x: Vec<f64> = trail.iter().map(|r| r * 2.0).collect();
+
+        let pool = vec![
+            etf("YOUNG", 3.0, false, Some("EUR"), &trail),  // the only name needing a rescue
+            etf("OLD", 15.0, true, Some("EUR"), &trail),    // the twin: same moves, 12y older, same ccy
+            etf("LEVER", 15.0, true, Some("EUR"), &two_x),  // same shape, twice the compounding
+            etf("USD", 15.0, true, Some("USD"), &trail),    // perfect twin in the wrong currency
+            etf("BARELY", 4.5, true, Some("EUR"), &trail),  // perfect twin, only 1.5y older
+            etf("PROVEN", 12.0, true, Some("EUR"), &trail), // has its own leg -> never a rescue SUBJECT
+        ];
+        // PROVEN is an equally legal DONOR, so the pick is the age tie-break doing its job: correlation
+        // ties at 1.00 and the older twin wins, because more borrowed years is the whole point.
+        let got = discover_proxies(&pool, &tuning);
+        assert_eq!(got.into_iter().collect::<Vec<_>>(), [("YOUNG".to_string(), "OLD".to_string())]);
+
+        // drop BOTH legal twins and nothing is paired — the three refusals above are load-bearing, not
+        // incidental losers to a better candidate.
+        let thin: Vec<Quote> = pool.into_iter().filter(|q| !matches!(q.ticker.as_str(), "OLD" | "PROVEN")).collect();
+        assert!(discover_proxies(&thin, &tuning).is_empty());
+    }
+
+    /// (#327) The oscillation guard. A rescued fund passes the gate it was rescued from, so discovery
+    /// stops naming it — and a wholesale journal would then forget it and un-splice it next run. This
+    /// is the measured failure (154 pairs, then 7), reduced to three names.
+    #[test]
+    fn carry_proxies_keeps_a_pair_that_is_already_in_force() {
+        let q = |tk: &str, on: bool| {
+            let mut q = Quote::stub(tk, "€100.00", "", "Some Index UCITS ETF Acc");
+            q.history_proxied = on;
+            q
+        };
+        // RESCUED is spliced right now; LAPSED is journalled but its splice stopped landing; NEW is
+        // this run's fresh find and must survive the merge untouched.
+        let pool = vec![q("RESCUED", true), q("LAPSED", false)];
+        let prior: std::collections::BTreeMap<String, String> =
+            [("RESCUED".to_string(), "D1".to_string()), ("LAPSED".to_string(), "D2".to_string())].into();
+        let mut found: std::collections::BTreeMap<String, String> = [("NEW".to_string(), "D3".to_string())].into();
+        carry_proxies(&mut found, &pool, &prior);
+        assert_eq!(
+            found.into_iter().collect::<Vec<_>>(),
+            [("NEW".to_string(), "D3".to_string()), ("RESCUED".to_string(), "D1".to_string())],
+            "a landed pair is carried, a lapsed one is dropped, a fresh one is kept"
+        );
+
+        // and a fresh find WINS over the journalled donor for the same young ticker — re-pairing is how
+        // a better twin replaces a worse one, so the carry must never overwrite this run's verdict.
+        let mut repaired: std::collections::BTreeMap<String, String> = [("RESCUED".to_string(), "BETTER".to_string())].into();
+        carry_proxies(&mut repaired, &pool, &prior);
+        assert_eq!(repaired["RESCUED"], "BETTER");
     }
 }

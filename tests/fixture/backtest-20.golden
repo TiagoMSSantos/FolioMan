@@ -261,6 +261,10 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
   5Y+        n=2      book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.2  guard pass
   regime     n=8      book +9.8%/yr  excess +3.2  win 70%  worst -4.9  OOS +7.2/-0.5  guard FAIL
   (n = samples: the cleared book's own, or what the notch adds. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y; `track` grades the same cohorts forward)
+
+── PROXY BOOK (#327): the cleared book split by where its history came from, every name equal-weight, held 20y ──
+  own history  n=40     book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1
+  (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y)
   all entries (SIZED)          book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1   (windows 22, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── DCA ROLL-AFTER-10y (#311): 96 equal monthly buys into that month's screen, all sold at 20y; the roll sells each lot at 10y, pays 28% on the gain, re-buys that month's screen; vs never-sell, after tax, money-weighted ──

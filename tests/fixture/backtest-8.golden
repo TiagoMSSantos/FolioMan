@@ -260,6 +260,10 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   5Y+        n=4      book +11.7%/yr  excess +5.3  win 64%  worst -14.0  OOS +10.3/+0.2  guard FAIL
   regime     n=8      book +11.3%/yr  excess +4.9  win 63%  worst -14.2  OOS +9.8/+0.2  guard FAIL
   (n = samples: the cleared book's own, or what the notch adds. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y; `track` grades the same cohorts forward)
+
+── PROXY BOOK (#327): the cleared book split by where its history came from, every name equal-weight, held 8y ──
+  own history  n=102    book +11.9%/yr  excess +5.4  win 64%  worst -14.0  OOS +10.6/+0.2
+  (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y)
   all entries (SIZED)          book +11.9%/yr  excess +5.4  win 64%  worst -14.0  OOS +10.6/+0.2   (windows 42, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── CORR-CAP probe: greedy top-10 by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held 8y ──

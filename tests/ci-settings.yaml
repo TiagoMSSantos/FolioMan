@@ -6236,6 +6236,109 @@ buy_heuristic:
   #   NOW record line then cites it; delete key "1" after a probe, or accept the extra horizon.
   #   REVERT: drop the three notch entries from `picks::gate_notches` and the `report_notch_tail` call in
   #   `backtest::run`, and re-bless the goldens.
+  # (#327) ROUND 110: HISTORY BY PROXY — LET A YOUNG WRAPPER INHERIT A PROVEN SERIES. MEASURED AND REFUSED.
+  # THE FINDING THAT SET THE ROUND. Today's live gate funnel sole-blocks by gate:
+  #     history 65 stocks / 2006 ETFs / 18 crypto, ALL SOLE     cagr 2/5/0     1Y+ 2/0/2     range 0/0/0
+  # `history` sole-blocks 2089 names; every other gate sole-blocks single digits. Six rounds ((#290)-(#326))
+  # moved value constants and every one was refused; none touched the gate that actually binds. And `history`
+  # is not an age test: `picks::long_leg_fixed` needs a `perf_pct` answer on a rung >= `growth_min_leg_years`,
+  # and `perf` legs are None unless the FETCHED SERIES reaches back that far. A 2021-listed UCITS S&P 500 ETF
+  # fails it while the index behind it is 60 years old and an older share class has traded since 2010.
+  #
+  # NOT the refused `history` notch ((#325)), which lowers the bar and judges a young name on its short record
+  # (tail -6.8/-8.5, guard FAIL). This SUPPLIES the missing years; the name must still clear cagr, 1Y+, range
+  # and the Serie E rungs on the longer series. No value bar moves.
+  #
+  # THE MATCH RULE, fixed before any number existed and never tuned: >= 24 overlapping MONTHLY returns,
+  # correlation >= 0.99, cumulative overlap return within +-3%, donor >= 2y older, same currency (live).
+  # The magnitude leg is the one correlation cannot do — a 2x/inverse/hedged twin correlates ~1.00 and
+  # compounds elsewhere, and (#319) already let a "Bull 2" ETP reach rank 5 off a shape-only judgement.
+  # Pairing is FROZEN at the young listing's first 800 days and judged only on bars inside it.
+  #
+  # PLUMBING (most of it pre-existed, hand-fed with 3 entries, and had never been graded):
+  #   core::proxy_corr / charge_ter_gap        the three legs, and the fee charge on BORROWED bars only
+  #   picks::discover_proxies / carry_proxies  live pairing off `trail_monthly`+`age_years`+`quote_currency`
+  #   config::history_proxy_auto               the knob. ABSENT from this file -> OFF, code default false
+  #   backtest::discover_backtest_proxies      point-in-time pairing inside the walk (see WHY below)
+  #   backtest::apply_proxy + the own_first guard   re-proves each pair, then refuses every cutoff older
+  #                                            than the listing's OWN first bar
+  #   PROXY BOOK report                        the cleared book split by provenance, on (#324)'s guard
+  #
+  # WHY THE WALK DISCOVERS ITS OWN PAIRS. The live map names only funds that fail the history gate TODAY —
+  # every one listed after 2021, because an older fund has its own leg and is never a rescue subject. Not one
+  # can contribute a graded sample: a 2021 entry's 8y window closes in 2029. Applied to the backtest the live
+  # map is PROVABLY INERT (measured: arm == control, byte-identical). So the walk pairs the names that WERE
+  # young at the cutoffs it grades, by the same rule, frozen at each listing's own first eligibility.
+  #
+  # IT BINDS, LIVE. Two consecutive `screen` runs on the same config, second one with the map in force:
+  #     spliced      0 -> 154        ETF `history` sole-blocks   2006 -> 1859
+  #     cleared     27 -> 29         BUY NOW picks               26 -> 27
+  # 161 pairs journalled at convergence. The book's adds: ANAV.DE (<- UST.PA) and NESG.L (<- ANXU.L);
+  # LYBK.DE fell out.
+  #
+  # THE NO-HARM TABLE (`backtest {20,12,8} universe fund pit`, control vs arm, same binary, same data dir):
+  #     20y  SIZED  +7.3/+0.7/-10.0   ==  arm         12y  +10.4/+3.9/-6.4  ==  arm
+  #      8y  SIZED  +11.5/+4.8/-4.3   ==  arm (OOS late +5.9 -> +5.8, one name)
+  # No harm anywhere. The arm scored MORE windows (8y 6150 -> 6470, 12y 2769 -> 2806, 269 PIT twins across
+  # 5693 series) — the splice really did make those names assessable.
+  #
+  # THE GUARD TABLE, and why it cannot decide anything:
+  #     20y  own history n=120   + proxied  NO ROW      12y  own n=251   + proxied  NO ROW
+  #      8y  own history n=357   + proxied  n=1  guard pass
+  # ONE sample. 269 pairs, ~320 extra scored windows, one gradeable admit. A guard that passes on n=1 has
+  # measured nothing, and this is the case (#327) pre-registered as "a finding, not a failure".
+  #
+  # THE FORWARD HALF (`backtest 1 long universe fund pit`, the only horizon whose rescued cohort has CLOSED
+  # windows — (#325)'s tail lane):
+  #     control  own history n=643  book +16.7/yr  excess +7.3  win 64%  worst -43.0  OOS +9.2/+5.5
+  #     arm      own history n=629  book +16.8/yr  excess +7.4  win 64%  worst -43.0  OOS +9.2/+5.6
+  #     arm      + proxied   n=22   book +16.7/yr  excess +7.4  win 64%  worst -43.0  guard pass
+  # Harmless and immaterial: 22 proxied samples out of 651, worst identical to the tenth of a point. Note the
+  # arm's OWN row FELL 643 -> 629: 14 of those 22 were samples that cleared on their own bars in the control
+  # and merely changed provenance, so the genuinely new admits are ~8 — 1.2% of the book, at the horizon
+  # furthest from the 20-year hold this lane exists for.
+  #
+  # THE MECHANISM, which is the real verdict and is structural rather than statistical. The match rule
+  # requires corr >= 0.99 AND cumulative within +-3% against a donor ALREADY IN THE POOL. A rescued fund is
+  # therefore, by construction, a near-perfect twin of something the screen can already score — so if the
+  # donor clears the gates, the twin clears them too, and the "new" name is a duplicate of one already
+  # ranked. Live, that is exactly what happened: the book already held ANX.PA, EQQQ.SW and PUST.PA, and the
+  # two admits were ANAV.DE and NESG.L — the FOURTH and FIFTH Nasdaq-100 wrapper. In an equal-weight book
+  # that is 5 of 27 slots on one index: concentration wearing breadth's clothes, the same failure (#317)
+  # found ("live adds were 7 tech-fund wrappers") and (#318) tried to fix with a twin skip.
+  #
+  # THE OSCILLATION, found by running it twice. Discovery is rescue-only, so a fund the splice rescued PASSES
+  # the gate it was rescued from and the next discovery stops naming it; a wholesale journal then forgets it
+  # and the run after un-splices it. Measured: run 1 found 154 pairs, run 2 found 7. `picks::carry_proxies`
+  # keeps a pair whose splice actually landed, and only that. After the fix: 154 new + 5 carried -> 159 -> 161,
+  # converging. A pair whose splice stops landing is not carried, which is how a stale pair leaves.
+  #
+  # NOTHING SHIPS. `history_proxy_auto` stays absent from this file and false in the code. What ships is the
+  # machinery and the PROXY BOOK row, so every future run prices this for free the way (#324)'s notch rows do,
+  # and so a reopen starts from a printed number instead of a fresh build.
+  #
+  # HONEST EDGES:
+  #  (a) the donor is a fund, so its own fees and tracking error ride along; only the TER DIFFERENCE is
+  #      charged, because charging the young fund's whole TER would bill it twice for years it did not exist.
+  #  (b) TER is live-only: `fetch.rs` knows both fees, the walk does not, so the backtest arm charges NOTHING.
+  #      The graded arm is therefore the GENEROUS case and it still admitted one name.
+  #  (c) `quote_currency` is None on a backtest Quote, so the same-currency refusal is live-only; the walk's
+  #      guard is the three-legged return match plus the age gap.
+  #  (d) the donor's history is the STRATEGY's, not the wrapper's. A 2021 fund never earned those years; it
+  #      only tracks something that did. The `~` marker says so on every row.
+  #  (e) live application lands on the NEXT run by design — the splice happens at fetch, before the pool is
+  #      ranked — so a pair sits in a file a human can read and delete before it moves a CAGR.
+  #  (f) the thresholds (24 / 0.99 / 3% / 2y / 800d) were fixed before the first run and never tuned.
+  #  (g) the live map and the walk's map never overlap by construction (b), so what was graded is the RULE on
+  #      historical names, not the 161 pairs the live run would apply. Same rule, different names, stated
+  #      rather than papered over.
+  #
+  # REVERT: `history_proxy_auto` out of config.rs, `discover_proxies`/`carry_proxies` out of picks.rs,
+  # `month_series`/`discover_backtest_proxies`/`apply_proxy`/`proxy_books` and the `own_first` guard out of
+  # backtest.rs, `proxy_corr`/`charge_ter_gap` out of core.rs, the `own_first`/`donor_ter` capture and the
+  # charge out of fetch.rs, and re-bless. The curated 3-entry `history_proxy` map is older than this round
+  # and stays.
+
   # (#326) ROUND 109: A REGIME VALVE ON THE TWO PROCYCLICAL FLOORS. MEASURED AND REFUSED.
   #   Same standing ask, asked differently. Every prior round moved a gate CONSTANT ((#290)-(#325), all
   #   refused); none asked what the constant is measured AGAINST. Each gate is absolute at every date

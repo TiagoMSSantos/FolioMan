@@ -1710,6 +1710,10 @@ pub async fn run(args: Vec<String>) {
     )
     .await;
     stamp_regime(&mut quotes, spx.first());
+    // (#327) the twins for the funds dying on the history gate. Read-only over the pool that was just
+    // fetched, so it costs no request and cannot move THIS run's book — what it finds is journalled and
+    // spliced by the next run's fetch, through the same `history_proxy` path the curated map uses.
+    eprintln!("{}", journal_proxies(&quotes, &settings.buy_heuristic));
     // rank order kept (Vec) so the fundamentals footer below prints in table order, not hash order
     let target_order: Vec<String> = {
         let is_stock = |q: &&Quote| !crate::picks::is_currency_quoted(&q.ticker) && !crate::picks::quote_is_etf(q);
@@ -3161,9 +3165,6 @@ fn entry_state_line(off_hi: f64) -> String {
     format!("Entry state: S&P 500 {off_hi:.1}% off its high — {state}. {read}. NOT advice.")
 }
 
-/// (round 112) Loud top banner for the ACTIONABLE entry states (pullback/drawdown). `None` at near-high
-/// (<5% off) — nothing to do, so the quiet footer covers it. `Some` boxed multi-line printed ABOVE the
-/// ranking tables so the deploy-faster signal isn't buried below them like the round-109 footer was.
 /// (#326) Copy the market's state onto every quote, so the regime valve (`picks::regime_floor`) can read
 /// it from a gate that takes only `(&Quote, &BuyHeuristic)`. The index's own `range_pct` comes off the
 /// same `fetch::quotes` builder every name uses, over the same ~10y window, so the two percentiles are
@@ -3177,6 +3178,41 @@ fn stamp_regime(quotes: &mut [Quote], spx: Option<&Quote>) {
     }
 }
 
+/// (#327) Discover same-series twins for the funds dying on the history gate, journal them, and say
+/// what happened in ONE line. The pairs found here are applied by the NEXT run, not this one: the
+/// splice lives in the fetch (`fetch.rs`, the `history_proxy` path) and the series it would rewrite
+/// were fetched before this pool was ranked. That lag is deliberate rather than a limitation to work
+/// around — a pair lands in a file a human can read and delete before it ever moves a CAGR.
+/// Discovery itself is free: it reads `trail_monthly`, `age_years` and `quote_currency`, all already
+/// on every quote, and issues no request. With the knob off nothing is written and the line is a
+/// suggestion, which is exactly what `bridge_hint_lines` has always printed.
+fn journal_proxies(quotes: &[Quote], tuning: &crate::config::BuyHeuristic) -> String {
+    let mut found = crate::picks::discover_proxies(quotes, tuning);
+    let fresh = found.len();
+    // a rescued fund passes the gate it was rescued from, so discovery no longer names it — see
+    // `carry_proxies`, without which the journal oscillates and un-splices 147 names every other run.
+    crate::picks::carry_proxies(&mut found, quotes, &crate::config::auto_proxy_load());
+    let on = crate::config::history_proxy_auto();
+    if on {
+        crate::config::auto_proxy_save(&found);
+    }
+    let spliced = quotes.iter().filter(|q| q.history_proxied).count();
+    let tail = if on {
+        format!("{} carried forward, journalled for the next run; {spliced} spliced in this one", found.len() - fresh)
+    } else {
+        "discovery OFF (history_proxy_auto) — suggestions only, nothing spliced".to_string()
+    };
+    format!(
+        "history_proxy: {fresh} new same-series twin(s) found for funds short of the history gate ({}mo overlap, corr ≥{:.2}, ±{:.0}% cumulative) — {tail}",
+        crate::core::PROXY_MIN_MONTHS,
+        crate::core::PROXY_MIN_CORR,
+        crate::core::PROXY_MAX_CUM_GAP * 100.0,
+    )
+}
+
+/// (round 112) Loud top banner for the ACTIONABLE entry states (pullback/drawdown). `None` at near-high
+/// (<5% off) — nothing to do, so the quiet footer covers it. `Some` boxed multi-line printed ABOVE the
+/// ranking tables so the deploy-faster signal isn't buried below them like the round-109 footer was.
 fn entry_state_banner(off_hi: f64) -> Option<String> {
     if off_hi < 5.0 {
         return None;

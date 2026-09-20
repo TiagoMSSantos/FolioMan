@@ -3373,6 +3373,61 @@ pub fn asof_avg(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, half: i6
     Some(vals.iter().sum::<f64>() / vals.len() as f64)
 }
 
+/// (#327) Overlap a proxy pair must show before one series may donate its history to another.
+/// 24 months so the verdict rests on two full years, not a lucky quarter.
+pub const PROXY_MIN_MONTHS: usize = 24;
+/// (#327) Same SHAPE: month-over-month moves must line up almost exactly. Two wrappers on one index
+/// run ~1.00; anything tracking a different basket falls away long before this.
+pub const PROXY_MIN_CORR: f64 = 0.99;
+/// (#327) Same MAGNITUDE: cumulative overlap return within 3%. This is the leg correlation cannot do
+/// — a 2x, inverse or currency-hedged twin correlates ~1.00 and compounds to a different number, and
+/// (#319) already let a "Bull 2" ETP reach rank 5 off a shape-only judgement.
+pub const PROXY_MAX_CUM_GAP: f64 = 0.03;
+
+/// (#327) May `donor` donate its history to `own`? Both arguments are monthly returns (%) from
+/// `monthly_returns_tail`, which resamples the live daily chart and the backtest's monthly slice
+/// identically — so the two paths judge a pair by the same arithmetic rather than by two functions
+/// happening to agree. Some(rho) only when ALL THREE legs hold: `PROXY_MIN_MONTHS` of overlap,
+/// correlation >= `PROXY_MIN_CORR`, and cumulative returns within `PROXY_MAX_CUM_GAP`. None = refused,
+/// and the caller keeps the plain series. Age, currency and "is it even a fund" are the caller's to
+/// check: this function only answers whether the two moved as one.
+pub fn proxy_corr(own: &[f64], donor: &[f64]) -> Option<f64> {
+    let k = own.len().min(donor.len());
+    if k < PROXY_MIN_MONTHS {
+        return None;
+    }
+    let (a, b) = (&own[own.len() - k..], &donor[donor.len() - k..]);
+    let rho = corr_tail(a, b)?;
+    if rho < PROXY_MIN_CORR {
+        return None;
+    }
+    let cum = |r: &[f64]| r.iter().fold(1.0, |acc, x| acc * (1.0 + x / 100.0));
+    let (ca, cb) = (cum(a), cum(b));
+    if ca <= 0.0 || cb <= 0.0 || (cb / ca - 1.0).abs() > PROXY_MAX_CUM_GAP {
+        return None;
+    }
+    Some(rho)
+}
+
+/// (#327) Charge a fee gap against BORROWED years only. The donor is itself a fund, already net of
+/// its own fees, so the honest charge is the DIFFERENCE (`own TER − donor TER`), not the young fund's
+/// whole TER — and the difference is signed: a cheaper share class of the same index genuinely would
+/// have kept more. Scales every close dated before `own_first` UP by `gap`%/yr compounded over the
+/// distance back, which lowers the measured growth into `own_first` by exactly that gap. Bars from
+/// `own_first` on are the listing's own and are never touched.
+pub fn charge_ter_gap(dates: &[NaiveDate], closes: &mut [f64], own_first: NaiveDate, gap_pct: f64) {
+    if gap_pct == 0.0 {
+        return;
+    }
+    for (d, c) in dates.iter().zip(closes.iter_mut()) {
+        if *d >= own_first {
+            break; // spliced series is chronological: the borrowed head is done
+        }
+        let years = (own_first - *d).num_days() as f64 / 365.25;
+        *c *= (1.0 + gap_pct / 100.0).powf(years);
+    }
+}
+
 /// Extend a young listing's series with a configured older twin's history (`history_proxy`):
 /// rebase the proxy so its close as-of the listing's first bar equals the listing's first close,
 /// prepend only proxy bars strictly BEFORE that first bar, then the listing's own series
@@ -8350,6 +8405,55 @@ mod tests {
         assert_eq!(ca_premium_range(&[]), "—");
         assert_eq!(ca_premium_range(&[(1, 2.0)]), "+2.00%");
         assert_eq!(ca_premium_range(&[(1, 0.5), (3, 1.0), (5, 2.5)]), "+0.50→+2.50%");
+    }
+
+    /// (#327) The three legs of the proxy match, one refusal each. The MAGNITUDE leg is the reason this
+    /// is not just `corr_tail >= 0.99`: a 2x tracker of the same index correlates ~1.00 by construction
+    /// and compounds to a different number entirely, and (#319) already let a "Bull 2" ETP reach rank 5
+    /// off a shape-only judgement. The noisy-twin case is the admit: two wrappers on one benchmark
+    /// differ by tracking error and fees, never by nothing, so a test that only accepts identity would
+    /// pass here and refuse every real pair.
+    #[test]
+    fn proxy_corr_needs_shape_and_magnitude_and_overlap() {
+        // the pattern DRIFTS on purpose: a near-zero-sum one compounds a 2x twin to the same place and
+        // the magnitude leg would pass vacuously (it did, on the first draft of this test).
+        let own: Vec<f64> = (0..30usize).map(|i| if i.is_multiple_of(3) { 4.0 } else { -1.0 }).collect();
+        // same series -> admitted, and the correlation is exactly 1
+        assert_eq!(proxy_corr(&own, &own), Some(1.0));
+        // a 2x twin: perfectly correlated, wildly different compounding -> REFUSED on magnitude
+        let two_x: Vec<f64> = own.iter().map(|r| r * 2.0).collect();
+        assert!(corr_tail(&own, &two_x).unwrap() > 0.999, "the 2x twin must still correlate ~1");
+        assert_eq!(proxy_corr(&own, &two_x), None);
+        // an inverse twin: correlation -1 -> refused on shape before magnitude is consulted
+        assert_eq!(proxy_corr(&own, &own.iter().map(|r| -r).collect::<Vec<_>>()), None);
+        // 23 months of overlap -> refused on evidence, whatever the numbers say
+        assert_eq!(proxy_corr(&own[..23], &own[..23]), None);
+        assert!(proxy_corr(&own[..24], &own[..24]).is_some());
+        // a real same-index twin: tracking error on every month, same destination -> ADMITTED
+        let noisy: Vec<f64> = own.iter().enumerate().map(|(i, r)| r + if i % 2 == 0 { 0.03 } else { -0.03 }).collect();
+        assert!(proxy_corr(&own, &noisy).is_some(), "a noisy same-index twin must pass");
+    }
+
+    /// (#327) The fee charge lands on BORROWED bars only. Own bars byte-identical is the whole point:
+    /// a fund's real record must not move because something older was glued under it.
+    #[test]
+    fn charge_ter_lowers_only_the_borrowed_years() {
+        let dates: Vec<NaiveDate> = (0..4).map(|i| NaiveDate::from_ymd_opt(2016 + i, 1, 1).unwrap()).collect();
+        let own_first = dates[2]; // 2018: bars 0 and 1 are borrowed, 2 and 3 are the listing's own
+        let mut closes = vec![100.0, 100.0, 100.0, 100.0];
+        charge_ter_gap(&dates, &mut closes, own_first, 1.0);
+        assert_eq!(&closes[2..], &[100.0, 100.0], "the listing's own bars must not move");
+        // 2 years back at +1%/yr -> the older bar is raised most, so growth INTO the listing reads lower
+        assert!((closes[0] - 100.0 * 1.01f64.powf(2.0)).abs() < 0.05, "{}", closes[0]);
+        assert!(closes[0] > closes[1] && closes[1] > 100.0);
+        // a cheaper young listing (negative gap) genuinely would have kept more -> borrowed bars fall
+        let mut cheaper = vec![100.0; 4];
+        charge_ter_gap(&dates, &mut cheaper, own_first, -1.0);
+        assert!(cheaper[0] < 100.0 && cheaper[3] == 100.0);
+        // no gap -> no touch at all
+        let mut flat = vec![100.0; 4];
+        charge_ter_gap(&dates, &mut flat, own_first, 0.0);
+        assert_eq!(flat, vec![100.0; 4]);
     }
 }
 

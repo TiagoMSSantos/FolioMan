@@ -1187,6 +1187,45 @@ pub async fn run(args: Vec<String>) {
         pit_unserved(&tickers, &pit_spans, &served)
     };
 
+    // (#327) The donor series, parsed ONCE and only for tickers some young listing actually names. The walk
+    // defers chart parsing on purpose (it is most of a wide run's CPU), so an all-pairs scan here would double
+    // the hottest cost to answer a question live `screen` already answers for free off `trail_monthly`. A donor
+    // the pool did not fetch is simply absent and its pairs refuse — the map is a candidate list, never a promise.
+    // (#327) The pairs this WALK will use: the configured/journalled map, plus — when the knob is on —
+    // the ones discovered point-in-time from the graded pool itself, which are the only ones whose
+    // forward windows can close. Curated entries win, exactly as they do live.
+    let proxy_map: BTreeMap<String, String> = if config::history_proxy_auto() {
+        let months: Vec<(&str, i32, Vec<i32>, Vec<f64>)> = fetched
+            .par_iter()
+            .flatten()
+            .filter_map(|(tk, hist, ..)| {
+                let c = hist.parse(tk)?;
+                let first = *c.dates.first()?;
+                let (keys, rets) = month_series(&c.dates, &c.closes);
+                Some((tk.as_str(), first.year() * 12 + first.month() as i32, keys, rets))
+            })
+            .collect();
+        let found = discover_backtest_proxies(&months);
+        eprintln!("backtest: history_proxy discovered {} point-in-time twin(s) across {} series", found.len(), months.len());
+        let mut map = config::history_proxy().clone();
+        for (young, donor) in found {
+            map.entry(young).or_insert(donor);
+        }
+        map
+    } else {
+        config::history_proxy().clone()
+    };
+    let proxy_map = &proxy_map;
+    let donors: HashMap<&str, (Vec<chrono::NaiveDate>, Vec<f64>)> = {
+        let wanted: HashSet<&str> = proxy_map.values().map(|s| s.as_str()).collect();
+        fetched
+            .par_iter()
+            .flatten()
+            .filter(|(tk, ..)| wanted.contains(tk.as_str()))
+            .filter_map(|(tk, hist, ..)| hist.parse(tk).map(|c| (tk.as_str(), (c.dates, c.closes))))
+            .collect()
+    };
+    let donors = &donors;
     let etf_set = &etf_set;
     let sector_of = &sector_of;
     let pit_spans = &pit_spans;
@@ -1212,6 +1251,11 @@ pub async fn run(args: Vec<String>) {
             // ETF-scoped gate (the physical-gold/ETC bar among them). Yahoo's own `instrumentType`
             // tag leads because an ETF shortName often carries no "ETF"/"UCITS" marker at all.
             let (dates, closes) = (chart.dates, chart.closes);
+            // (#327) the listing's OWN first bar, read before anything older can be glued under it. Everything
+            // before it on the spliced series is the donor's, and `own_first` is what keeps the walk from
+            // standing in 1999 and buying a fund that listed in 2019.
+            let own_first = dates.first().copied();
+            let (dates, closes, history_proxied) = apply_proxy(tk, dates, closes, proxy_map, donors);
             let (cls_name, cls_type) = (chart.name, chart.instrument_type);
             // (#122) the ticker no longer resolves to the company it names — its bars past the remap are
             // a different instrument's. Drop the whole series rather than its tail: the remap date is not
@@ -1247,6 +1291,15 @@ pub async fn run(args: Vec<String>) {
                     i += step;
                     continue;
                 }
+                // (#327) THE PROXY'S POINT-IN-TIME GUARD. A spliced series carries bars from years before this
+                // ticker was listed, and `core::backtest_quote` slices `[splice..=as_of]` without asking whether
+                // the as-of day was one anybody could have bought on. Without this line a 2019 fund becomes
+                // buyable in 1999 and the borrowed years get scored as its own forward returns. Borrowed bars
+                // are history, never an entry.
+                if own_first.is_some_and(|f| dates[i] < f) {
+                    i += step;
+                    continue;
+                }
                 // forward index: first session at least `years` past the as-of date
                 let target = dates[i] + chrono::Duration::days(years * 365);
                 match dates[i..].iter().position(|d| *d >= target) {
@@ -1267,6 +1320,7 @@ pub async fn run(args: Vec<String>) {
                             continue;
                         }
                         let mut quote = core::backtest_quote(tk, &dates, &closes, &divs, i, cadence, &anchor_windows);
+                        quote.history_proxied = history_proxied; // (#327) provenance, for the PROXY BOOK split
                         stamp_asset_class(&mut quote, &cls_name, &cls_type, etf_set, sector_of);
                         // NOT `years`. `years` is the FORWARD hold horizon; `fund_factors` spends its
                         // third argument as the BACKWARD fundamental lookback (core.rs, `long_ago =
@@ -1714,6 +1768,7 @@ pub async fn run(args: Vec<String>) {
     let verdict = report_entry_state(&samples, &bench, years, tuning);
     // (#324) the in-sample guard for the notch shadow `track` grades forward
     report_notch_books(&samples, &bench, years, tuning);
+    report_proxy_books(&samples, &bench, years, tuning);
     // (#325) the forward half, replayed on the entries no graded horizon closes (short runs only)
     report_notch_tail(&samples, years, tuning);
     // (#308) the indexes the spill's trackers follow, so the SIZED remainder earns what `size` buys with
@@ -3196,6 +3251,155 @@ fn report_notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f
         println!("  {l:<10} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{guard}");
     }
     println!("  (n = samples: the cleared book's own, or what the notch adds. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y; `track` grades the same cohorts forward)");
+}
+
+/// (#327) How much of a young listing's life the pair is judged on. ~26 months, so `PROXY_MIN_MONTHS` (24) of
+/// month-end returns fit inside it with a bar to spare. Deliberately a FIXED window at the listing's start and
+/// not "however much it takes to pass": a verdict allowed to grow its own evidence window until it agrees is
+/// not a test, and the window has to be knowable on the day the pair would first have been used.
+const PROXY_VERIFY_DAYS: i64 = 800;
+
+/// (#327) A ticker's month-end returns with the month each one ENDS in, as `year*12 + month`. The key
+/// is what lets two series of different ages be compared over the same calendar window by index
+/// arithmetic instead of by re-slicing dates per pair — the difference between a discovery pass that
+/// takes seconds and one that takes an hour on a 6000-name pool.
+fn month_series(dates: &[chrono::NaiveDate], closes: &[f64]) -> (Vec<i32>, Vec<f64>) {
+    let (mut keys, mut ends) = (Vec::new(), Vec::new());
+    for (i, d) in dates.iter().enumerate() {
+        let c = match closes.get(i) {
+            Some(&c) if c > 0.0 => c,
+            _ => continue,
+        };
+        let k = d.year() * 12 + d.month() as i32;
+        if keys.last() == Some(&k) {
+            *ends.last_mut().expect("keys and ends are pushed together") = c;
+        } else {
+            keys.push(k);
+            ends.push(c);
+        }
+    }
+    let rets: Vec<f64> = ends.windows(2).map(|w| (w[1] / w[0] - 1.0) * 100.0).collect();
+    (keys[1..].to_vec(), rets) // a return is dated by the month it ENDS in, so drop the first key
+}
+
+/// (#327) Point-in-time twin discovery INSIDE the backtest, and the reason it has to exist.
+///
+/// Live `screen` discovers pairs among the funds that are young TODAY — every one of them listed after
+/// 2021, because an older fund has its own leg and is never a rescue subject. Not one of those names can
+/// contribute a graded sample: a 2021 entry's 8-year window does not close until 2029. Applied to the
+/// backtest, the live map is therefore provably inert, and an arm that equals its control has measured
+/// nothing at all. So the walk pairs the names that WERE young at the cutoffs it grades, by the same
+/// three-legged rule, each pair frozen at that listing's own first eligibility and judged only on bars
+/// from inside it. No config, no hindsight, no live file.
+///
+/// `series` is (ticker, month keys, month returns) per name. Deterministic: best correlation, then the
+/// donor with the longest record, then ticker ascending — the same total order live discovery uses.
+fn discover_backtest_proxies(series: &[(&str, i32, Vec<i32>, Vec<f64>)]) -> BTreeMap<String, String> {
+    let gap = (picks::PROXY_MIN_AGE_GAP_YEARS * 12.0) as i32;
+    // returns over the young listing's verify window, plus the last month key in it
+    let window = |s: &(&str, i32, Vec<i32>, Vec<f64>)| -> Option<(i32, Vec<f64>)> {
+        let end = s.1 + (PROXY_VERIFY_DAYS / 30) as i32;
+        let n = s.2.partition_point(|k| *k <= end);
+        (n >= core::PROXY_MIN_MONTHS).then(|| (end, s.3[..n].to_vec()))
+    };
+    series
+        .par_iter()
+        .filter_map(|young| {
+            let (end, own) = window(young)?;
+            let mut best: Option<(f64, i32, &str)> = None;
+            for d in series.iter().filter(|d| d.0 != young.0 && d.1 <= young.1 - gap) {
+                let (lo, hi) = (d.2.partition_point(|k| *k < young.1), d.2.partition_point(|k| *k <= end));
+                let Some(rho) = core::proxy_corr(&own, &d.3[lo..hi]) else { continue };
+                if best.is_none_or(|(r, f, t)| (rho, -d.1, d.0) > (r, -f, t)) {
+                    best = Some((rho, d.1, d.0));
+                }
+            }
+            best.map(|(_, _, donor)| (young.0.to_string(), donor.to_string()))
+        })
+        .collect()
+}
+
+/// (#327) Apply a configured proxy pair to ONE backtest series, and re-prove it first.
+///
+/// The map is only a candidate list — live `screen` built it from today's trails, and taking that on trust at a
+/// 2005 cutoff would be look-ahead in the pairing itself. So the pair is re-judged here on the young listing's
+/// FIRST `PROXY_VERIFY_DAYS`, the earliest evidence that ever existed for it, with the donor cut to the same
+/// window so `proxy_corr`'s tail alignment is date alignment. Refused -> the plain series, unchanged, and the
+/// ticker simply keeps failing the history gate as it does today.
+///
+/// Returns the (possibly spliced) series and whether it was. The CALLER still owes the point-in-time guard:
+/// the spliced series starts years before this ticker existed, and nothing in here stops a walk from standing
+/// in 1999 and buying a 2019 fund.
+fn apply_proxy(
+    tk: &str,
+    dates: Vec<chrono::NaiveDate>,
+    closes: Vec<f64>,
+    map: &BTreeMap<String, String>,
+    donors: &HashMap<&str, (Vec<chrono::NaiveDate>, Vec<f64>)>,
+) -> (Vec<chrono::NaiveDate>, Vec<f64>, bool) {
+    let (Some(donor), Some(&first)) = (map.get(tk).and_then(|p| donors.get(p.as_str())), dates.first()) else {
+        return (dates, closes, false);
+    };
+    let end = first + chrono::Duration::days(PROXY_VERIFY_DAYS);
+    let cut = |d: &[chrono::NaiveDate], c: &[f64]| {
+        let n = d.iter().take_while(|x| **x <= end).count();
+        core::monthly_returns_tail(&d[..n], &c[..n], usize::MAX)
+    };
+    if core::proxy_corr(&cut(&dates, &closes), &cut(&donor.0, &donor.1)).is_none() {
+        return (dates, closes, false);
+    }
+    match core::splice_history(&dates, &closes, &donor.0, &donor.1) {
+        Some((d, c)) => (d, c, true),
+        None => (dates, closes, false), // donor adds nothing older, or no overlap at the seam
+    }
+}
+
+/// (#327) Bar (ii) for the proxy round, and the reason a `gate_notches` row cannot serve it: a notch re-runs the
+/// gates on the SAME quotes, while the proxy changes the SERIES each quote was built from — no amount of re-scoring
+/// reconstructs that. So the split is by PROVENANCE instead: the book the screen cleared on its names' own bars,
+/// against that book plus the names only the borrowed history made assessable. Same pool, same equal-weight-per-bucket
+/// arithmetic and the same `guard_holds` bar as the notch shadow, so the two tables are read identically. Empty
+/// second row = the splice admitted nobody at this horizon, which is a finding, not a failure.
+#[allow(clippy::type_complexity)]
+fn proxy_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64))> {
+    let mut own: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+    let mut borrowed: Vec<(i32, (f64, f64, f64))> = Vec::new();
+    for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
+        let Some(br) = benchmark_fwd(&bench.0, &bench.1, s.date, years) else { continue };
+        if growth_score(&s.quote, tuning).is_none() {
+            continue;
+        }
+        let row = (0.0, s.realized, br);
+        if s.quote.history_proxied {
+            borrowed.push((bucket(s.date), row));
+        } else {
+            own.entry(bucket(s.date)).or_default().push(row);
+        }
+    }
+    let Some(base) = book_stats(&own, usize::MAX, years) else { return Vec::new() };
+    let mut rows = vec![("own history".to_string(), own.values().map(Vec::len).sum(), base)];
+    if !borrowed.is_empty() {
+        let mut union = own.clone();
+        for (b, row) in &borrowed {
+            union.entry(*b).or_default().push(*row);
+        }
+        rows.extend(book_stats(&union, usize::MAX, years).map(|st| ("+ proxied".to_string(), borrowed.len(), st)));
+    }
+    rows
+}
+
+/// (#327) Prints `proxy_books` against the same bar. Print-only, like `report_notch_books`.
+#[mutants::skip]
+fn report_proxy_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let rows = proxy_books(samples, bench, years, tuning);
+    let Some((_, _, base)) = rows.first().cloned() else { return };
+    println!("\n── PROXY BOOK (#327): the cleared book split by where its history came from, every name equal-weight, held {years}y ──");
+    for (l, n, st) in rows {
+        let (b, _, e, w, wo, el, la) = st;
+        let guard = if l == "own history" { "" } else if guard_holds(&base, &st) { "  guard pass" } else { "  guard FAIL" };
+        println!("  {l:<12} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{guard}");
+    }
+    println!("  (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y)");
 }
 
 /// (#325) The forward half of the reopen rule, replayed where no ship rule ever looked. Every graded horizon
@@ -8780,6 +8984,144 @@ mod tests {
         let verdicts: Vec<bool> = rows[1..].iter().map(|r| guard_holds(&rows[0].2, &r.2)).collect();
         assert_eq!(verdicts, [false, true, false], "{rows:?}");
         assert!(notch_books(&samples, &(Vec::new(), Vec::new()), 12, &tuning).is_empty());
+    }
+
+    /// (#327) `n` monthly bars from `y`/`m`, compounding a return pattern keyed on the ABSOLUTE month
+    /// index — so a young series and an old one built from the same pattern really do move together
+    /// over their overlap, the way two wrappers on one index do. A flat pattern would have no variance
+    /// and `pearson` would refuse it, which is correct and useless as a fixture.
+    fn proxy_series(y: i32, m: u32, off: usize, n: usize, pat: impl Fn(usize) -> f64) -> (Vec<NaiveDate>, Vec<f64>) {
+        let mut closes = vec![100.0];
+        for k in 1..n {
+            closes.push(closes[k - 1] * (1.0 + pat(off + k) / 100.0));
+        }
+        (month_ends(y, m, n), closes)
+    }
+
+    /// (#327) The splice a backtest series is allowed, and the three ways it is refused. The `pat` here
+    /// is the "index" both wrappers track; the young listing starts 168 months into it.
+    #[test]
+    fn apply_proxy_splices_only_a_pair_that_proves_itself() {
+        let pat = |k: usize| if k.is_multiple_of(3) { 4.0 } else { -1.0 };
+        let (yd, yc) = proxy_series(2019, 1, 168, 60, pat); // 2019-01 .. 2023-12
+        let (dd, dc) = proxy_series(2005, 1, 0, 228, pat); // 2005-01 .. 2023-12, the same index
+        let map: BTreeMap<String, String> = [("YOUNG".to_string(), "OLD".to_string())].into();
+        let mut donors: HashMap<&str, (Vec<NaiveDate>, Vec<f64>)> = HashMap::new();
+        donors.insert("OLD", (dd.clone(), dc.clone()));
+
+        // the pair proves itself on the young listing's first ~26 months -> spliced, 168 bars prepended
+        let (d, c, on) = apply_proxy("YOUNG", yd.clone(), yc.clone(), &map, &donors);
+        assert!(on);
+        assert_eq!((d.len(), c.len()), (228, 228));
+        assert_eq!(d[0], ymd(2005, 1, 1));
+        // THE POINT-IN-TIME HAZARD, spelled out: the series now starts 14 years before the listing did.
+        // `run`'s `own_first` guard is the only thing standing between that and a 2005 purchase of a
+        // 2019 fund, and the goldens are its proof (the walk lives inside a `#[mutants::skip]` `run`).
+        assert!(d[0] < yd[0]);
+        assert_eq!(d[168..], yd[..], "the listing's own bars must survive the splice verbatim");
+
+        // a 2x tracker of the SAME index: correlates ~1.00, compounds elsewhere -> refused, series intact
+        let (td, tc) = proxy_series(2005, 1, 0, 228, |k| pat(k) * 2.0);
+        donors.insert("OLD", (td, tc));
+        assert_eq!(apply_proxy("YOUNG", yd.clone(), yc.clone(), &map, &donors), (yd.clone(), yc.clone(), false));
+
+        // a ticker nobody paired, and a pair whose donor the pool never fetched -> untouched, no panic
+        donors.insert("OLD", (dd.clone(), dc.clone()));
+        assert!(!apply_proxy("OTHER", yd.clone(), yc.clone(), &map, &donors).2);
+        assert!(!apply_proxy("YOUNG", yd.clone(), yc.clone(), &map, &HashMap::new()).2);
+
+        // a donor with nothing older than the listing -> `splice_history` declines and so does this
+        donors.insert("OLD", (yd.clone(), yc.clone()));
+        assert!(!apply_proxy("YOUNG", yd.clone(), yc.clone(), &map, &donors).2);
+    }
+
+    /// (#327) The walk's OWN discovery, which is the only kind whose pairs can ever be graded — the live
+    /// map names funds listed after 2021, whose forward windows close in 2029. Same three legs as live
+    /// discovery plus the age gap, checked here through `month_series` so the calendar-key arithmetic
+    /// the pass is built on is exercised rather than assumed.
+    #[test]
+    fn discover_backtest_proxies_pairs_point_in_time() {
+        let pat = |k: usize| if k.is_multiple_of(3) { 4.0 } else { -1.0 };
+        let entry = |tk: &'static str, y: i32, off: usize, n: usize, f: &dyn Fn(usize) -> f64| {
+            let (d, c) = proxy_series(y, 1, off, n, f);
+            let (keys, rets) = month_series(&d, &c);
+            (tk, d[0].year() * 12 + d[0].month() as i32, keys, rets)
+        };
+        let series = vec![
+            entry("YOUNG", 2019, 168, 60, &pat),                      // 2019-01, needs a rescue
+            entry("OLD", 2005, 0, 228, &pat),                         // 14y older, same index
+            entry("LEVER", 2005, 0, 228, &|k| pat(k) * 2.0),          // same shape, twice the compounding
+            entry("BARELY", 2018, 156, 72, &pat),                     // perfect twin, only 1y older
+        ];
+        let got = discover_backtest_proxies(&series);
+        assert_eq!(got.get("YOUNG").map(String::as_str), Some("OLD"));
+        // OLD and LEVER are old enough to be subjects too, but nothing in this pool predates them by
+        // two years, so they pair with nobody — the age gap is a filter on DONORS, not just subjects.
+        assert_eq!(got.len(), 2, "{got:?}"); // YOUNG and BARELY, each onto the one legal donor
+        assert_eq!(got.get("BARELY").map(String::as_str), Some("OLD"));
+
+        // drop OLD and the 2x twin is still refused rather than accepted as the last one standing
+        let thin: Vec<_> = series.into_iter().filter(|s| s.0 != "OLD").collect();
+        assert_eq!(discover_backtest_proxies(&thin).get("YOUNG"), None);
+    }
+
+    /// (#327) The verdict is FROZEN at first eligibility, and that cuts both ways. A donor that drifts
+    /// during the young listing's first two years is refused even though it converges later; one that
+    /// matched then is kept even though it drifts after. Both directions matter: the first stops a pair
+    /// being talked into existence by evidence that did not exist yet, the second is what makes the
+    /// backtest's pairing reproducible at a 2005 cutoff instead of a verdict about today.
+    #[test]
+    fn proxy_pairing_is_frozen_at_first_eligibility() {
+        let pat = |k: usize| if k.is_multiple_of(3) { 4.0 } else { -1.0 };
+        let (yd, yc) = proxy_series(2019, 1, 168, 60, pat);
+        let map: BTreeMap<String, String> = [("YOUNG".to_string(), "OLD".to_string())].into();
+        let mut donors: HashMap<&str, (Vec<NaiveDate>, Vec<f64>)> = HashMap::new();
+
+        // drifts only over the first 30 overlapping months (< 2021-07), agrees ever after -> REFUSED
+        let late = proxy_series(2005, 1, 0, 228, |k| if (168..198).contains(&k) { pat(k) * 3.0 } else { pat(k) });
+        donors.insert("OLD", late);
+        assert!(!apply_proxy("YOUNG", yd.clone(), yc.clone(), &map, &donors).2);
+
+        // agrees over those months, drifts ever after -> ADMITTED on the evidence that existed
+        let early = proxy_series(2005, 1, 0, 228, |k| if k >= 200 { pat(k) * 3.0 } else { pat(k) });
+        donors.insert("OLD", early);
+        assert!(apply_proxy("YOUNG", yd.clone(), yc, &map, &donors).2);
+    }
+
+    /// (#327) Bar (ii): the cleared book split by where its history came from. With nothing borrowed
+    /// there is exactly ONE row and it is the book as it stands today — that is the no-op proof. Mark a
+    /// cleared name's samples as borrowed and a second row appears carrying exactly those samples, so
+    /// the guard is asked about the names the splice added and nothing else.
+    #[test]
+    fn proxy_books_split_the_cleared_book_by_provenance() {
+        let (mut samples, tuning) = (synthetic_samples(), shipped_tuning());
+        let (dates, _) = synthetic_universe();
+        let bench = (dates.clone(), (0..dates.len()).map(|i| 1.08_f64.powf(i as f64 / 12.0)).collect());
+
+        let rows = proxy_books(&samples, &bench, 12, &tuning);
+        assert_eq!(rows.len(), 1, "no borrowed history -> no second row");
+        assert_eq!((rows[0].0.as_str(), rows[0].1), ("own history", 158)); // the same 158 `notch_books` clears
+
+        // borrow one cleared name's history and nothing else
+        let tk = samples
+            .iter()
+            .find(|s| growth_score(&s.quote, &tuning).is_some() && benchmark_fwd(&bench.0, &bench.1, s.date, 12).is_some())
+            .map(|s| s.quote.ticker.clone())
+            .expect("the synthetic world clears at least one name");
+        let borrowed = samples.iter().filter(|s| s.quote.ticker == tk).count();
+        for s in samples.iter_mut().filter(|s| s.quote.ticker == tk) {
+            Arc::make_mut(&mut s.quote).history_proxied = true;
+        }
+        let rows = proxy_books(&samples, &bench, 12, &tuning);
+        let got: Vec<(&str, usize)> = rows.iter().map(|(l, n, _)| (l.as_str(), *n)).collect();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].0, "own history");
+        assert_eq!(got[1].0, "+ proxied");
+        assert_eq!(got[0].1 + got[1].1, 158, "the split moves samples, it never invents or drops them");
+        assert!(got[1].1 > 0 && got[1].1 <= borrowed);
+        // and the guard reads off the pair the same way the notch shadow does
+        assert_eq!(guard_holds(&rows[0].2, &rows[1].2), rows[1].2 .2 >= rows[0].2 .2 - 0.1 && rows[1].2 .4 >= rows[0].2 .4 - 1.0);
+        assert!(proxy_books(&samples, &(Vec::new(), Vec::new()), 12, &tuning).is_empty());
     }
 
     /// (#325) The tail replay on the synthetic world: only entries after `since` count, a line needs a cohort name AND

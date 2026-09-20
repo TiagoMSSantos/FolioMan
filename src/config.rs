@@ -45,6 +45,8 @@ pub struct Settings {
     #[serde(default)]
     pub history_proxy: BTreeMap<String, String>, // young listing -> older SAME-strategy, SAME-currency twin (e.g. VUAA.DE: SXR8.DE); the twin's closes are rebased+prepended so the young wrapper is scored on the strategy's proven history (marked ~ in the table). User-curated only — a wrong twin silently corrupts CAGR
     #[serde(default)]
+    pub history_proxy_auto: bool, // (#327) let `screen` DISCOVER the twins above instead of waiting for a human: a young listing failing the history gate is paired with an older pool name whose overlapping monthly returns match it on shape AND magnitude (`core::proxy_corr`). Discovered pairs are journalled and merged under `history_proxy` on the next run, so the splice, the ~ marker and the same-currency refusal are the SAME code the curated map uses. Off = the pairs are printed as suggestions and nothing is spliced
+    #[serde(default)]
     pub inflation_adjust: InflationAdjust, // show real (inflation-adjusted) returns on the 1Y+ columns
     #[serde(default)]
     pub sizing: Sizing, // (P5) risk budget for the `size` table — class split and the two concentration caps
@@ -1885,11 +1887,53 @@ pub fn history_proxy() -> &'static BTreeMap<String, String> {
     use std::sync::OnceLock;
     static MAP: OnceLock<BTreeMap<String, String>> = OnceLock::new();
     MAP.get_or_init(|| {
-        merged_config()
+        let mut map = merged_config()
             .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
             .map(|s| s.history_proxy)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // (#327) pairs a previous `screen` discovered, merged UNDER the curated ones: a human entry
+        // always wins, so turning the knob on can never silently override a hand-picked twin.
+        if history_proxy_auto() {
+            for (young, donor) in auto_proxy_load() {
+                map.entry(young).or_insert(donor);
+            }
+        }
+        map
     })
+}
+
+/// (#327) Is twin DISCOVERY on? Separate read from the map itself so the map stays a plain merge and
+/// this stays a plain bool. SOFT, like every accessor here: no config -> off.
+pub fn history_proxy_auto() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        merged_config()
+            .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
+            .map(|s| s.history_proxy_auto)
+            .unwrap_or(false)
+    })
+}
+
+/// (#327) Where `screen` journals the twins it discovered. Beside the other state files, so a probe
+/// data dir keeps its own and a restore puts it back with the rest.
+pub const AUTO_PROXY_FILE: &str = ".history_proxy_auto.json";
+
+/// (#327) Read the discovered map. SOFT: a missing or unparsable file is an empty map, never a panic
+/// — the pairs are an optimisation, and a run that cannot read them simply splices nothing.
+pub fn auto_proxy_load() -> BTreeMap<String, String> {
+    std::fs::read(data_path(AUTO_PROXY_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b).ok())
+        .unwrap_or_default()
+}
+
+/// (#327) Write the discovered map, replacing it wholesale — a pair that no longer holds should stop
+/// being applied, so this is a snapshot of what the CURRENT run found, not an accumulating pile.
+pub fn auto_proxy_save(map: &BTreeMap<String, String>) {
+    if let Ok(json) = serde_json::to_vec_pretty(map) {
+        let _ = std::fs::write(data_path(AUTO_PROXY_FILE), json);
+    }
 }
 
 /// (Item 22) Process-once read of the fundamentals source ("fmp" | "sec") for the ranking fund lane.
