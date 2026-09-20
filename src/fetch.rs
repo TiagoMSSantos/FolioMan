@@ -868,6 +868,11 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         tr_cagr,
         history_proxied,
         stats_8y,
+        // (#326) the market's state is not known to a per-name fetch: `screen::run` stamps these from
+        // the ^GSPC quote once every name is in hand. None here keeps the regime valve inert for every
+        // other caller of this builder (`check`, `report`, explicit-args runs).
+        bench_1y_pct: None,
+        bench_range_pct: None,
     }
 }
 

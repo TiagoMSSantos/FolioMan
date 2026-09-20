@@ -1698,6 +1698,18 @@ pub async fn run(args: Vec<String>) {
     // daily budget for columns nobody sees. Display-only fields, so pre-ranking here to learn WHICH
     // tickers will print cannot change the ranking render() computes. Cache-first: warm runs are free.
     let mut quotes = quotes;
+    // (#326) THE MARKET'S STATE, hoisted above every `growth_score` call in this function (the stock
+    // pre-rank below, the fund pass, and `render`). The same ^GSPC quote the entry-state banner has
+    // always used, now also the regime valve's input: with the knob off `stamp_regime` writes two
+    // fields nothing reads, and with it on the 1Y+ and range floors are capped by the index's own
+    // numbers. It MUST stay above the pre-rank — stamping later would gate the live book on a valve
+    // the ranking never saw, which is the train/serve split this repo keeps chasing out of corners.
+    let spx = fetch::quotes(
+        &client, &settings.urls, &fx_cache, &["^GSPC".to_string()], settings.dip_days, settings.high_days,
+        false, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
+    )
+    .await;
+    stamp_regime(&mut quotes, spx.first());
     // rank order kept (Vec) so the fundamentals footer below prints in table order, not hash order
     let target_order: Vec<String> = {
         let is_stock = |q: &&Quote| !crate::picks::is_currency_quoted(&q.ticker) && !crate::picks::quote_is_etf(q);
@@ -1775,11 +1787,7 @@ pub async fn run(args: Vec<String>) {
     // (round 112) entry-state fetch, hoisted ABOVE the tables: S&P 500 % off its high decides how fast
     // new money should go in. Fetched once here; the top banner (when actionable) and the near-high
     // footer both read it. A failed fetch stays silent (None). Display-only.
-    let spx = fetch::quotes(
-        &client, &settings.urls, &fx_cache, &["^GSPC".to_string()], settings.dip_days, settings.high_days,
-        false, false, &settings.anchor_windows, eu_infl.as_ref(), settings.inflation_adjust.score_on_nominal,
-    )
-    .await;
+    // (#326) the fetch itself moved UP, above the first ranking pass: the regime valve reads it.
     let spx_off_hi: Option<f64> = spx.first().map(|q| q.drawdown_pct);
     // Promote the actionable states (pullback/drawdown) to a loud banner ABOVE the ranking — the
     // round-109 footer was buried under the tables where the user never scrolled. Near-high stays a
@@ -3156,6 +3164,19 @@ fn entry_state_line(off_hi: f64) -> String {
 /// (round 112) Loud top banner for the ACTIONABLE entry states (pullback/drawdown). `None` at near-high
 /// (<5% off) — nothing to do, so the quiet footer covers it. `Some` boxed multi-line printed ABOVE the
 /// ranking tables so the deploy-faster signal isn't buried below them like the round-109 footer was.
+/// (#326) Copy the market's state onto every quote, so the regime valve (`picks::regime_floor`) can read
+/// it from a gate that takes only `(&Quote, &BuyHeuristic)`. The index's own `range_pct` comes off the
+/// same `fetch::quotes` builder every name uses, over the same ~10y window, so the two percentiles are
+/// the same measurement — the property the backtest's `bench_range_pct` has to reconstruct by hand.
+/// No ^GSPC quote (a failed fetch) leaves both None, i.e. the valve inert and the floors absolute.
+fn stamp_regime(quotes: &mut [Quote], spx: Option<&Quote>) {
+    let (r1y, range) = spx.map_or((None, None), |q| (crate::picks::perf_pct(q, "1Y"), Some(q.range_pct)));
+    for q in quotes.iter_mut() {
+        q.bench_1y_pct = r1y;
+        q.bench_range_pct = range;
+    }
+}
+
 fn entry_state_banner(off_hi: f64) -> Option<String> {
     if off_hi < 5.0 {
         return None;
@@ -3380,6 +3401,29 @@ mod tests {
     }
 
     /// (round 109) entry-state classes + exact boundaries: <5 near-high, 5–15 pullback, ≥15 drawdown.
+    /// (#326) The LIVE fill for the regime valve. It is the twin of `backtest::stamp_regime`, and the
+    /// failure it guards against is silence: `stats_8y` and `aum_eur` are filled on exactly one path
+    /// each and are therefore blind on the other, and a valve whose market fields were never written
+    /// would read as "the floors never move" instead of as a bug. So: every quote gets the index's
+    /// numbers, they are the index's OWN 1Y leg and range percentile (not a constant), and a missing
+    /// ^GSPC leaves None, which `picks::regime_floor` treats as the absolute floor.
+    #[test]
+    fn stamp_regime_copies_the_index_state_onto_every_quote() {
+        let mut spx = Quote::stub("^GSPC", "€1", "", "S&P 500");
+        spx.range_pct = 22.0;
+        spx.perf = crate::core::HORIZONS
+            .iter()
+            .map(|(l, _)| (*l == "1Y").then(|| ("x".to_string(), -38.0)))
+            .collect();
+        let mut quotes = vec![Quote::stub("A", "€1", "", "A"), Quote::stub("B", "€1", "", "B")];
+        stamp_regime(&mut quotes, Some(&spx));
+        assert!(quotes.iter().all(|q| q.bench_1y_pct == Some(-38.0)), "the index's own 1Y leg reaches every name");
+        assert!(quotes.iter().all(|q| q.bench_range_pct == Some(22.0)), "and its own range percentile");
+        let mut none = vec![Quote::stub("A", "€1", "", "A")];
+        stamp_regime(&mut none, None);
+        assert_eq!((none[0].bench_1y_pct, none[0].bench_range_pct), (None, None), "no index -> valve inert, floors absolute");
+    }
+
     #[test]
     fn entry_state_classes_and_boundaries() {
         assert!(entry_state_line(0.0).contains("NEAR-HIGH"));

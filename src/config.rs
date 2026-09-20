@@ -345,6 +345,19 @@ pub struct BuyHeuristic {
     // --- GROWTH LANE: a SECOND ranking (the mirror of the on-sale lane) for quality names AT/NEAR
     //     their high that are still climbing — proven compounders the on-sale score fades to ~0.
     pub growth_min_range_pct: f64,   // growth GATE (equities): must trade at/above this % of its own ~10y range (near the high); below = it's the on-sale lane's job
+    // (#326) THE REGIME VALVE. Both gates above are ABSOLUTE bars applied at every date, which makes
+    // the screen procyclical: in 2008-11 or 2020-03 almost nothing clears "1Y > 0%" or "near its own
+    // high" — the moment a 20-year buyer should be admitting MORE, not less. Set this and each of the
+    // two floors is capped by the INDEX's counterpart at the same date (`quote.bench_1y_pct` /
+    // `bench_range_pct`): `floor_eff = min(shipped_floor, market + slack)`. `min` makes it strictly
+    // ONE-SIDED — it can only loosen, and only while the market itself sits below the shipped bar, so
+    // in an up market (today: index 1Y positive, index range percentile ~100) the shipped floors bind
+    // and nothing whatsoever changes. The value is the SLACK in points: 0.0 = "no worse than the
+    // market" (a name must merely match the index to clear during a drawdown), negative lets a name
+    // lag the index by that much, positive demands it beat the index. None = OFF, the default and the
+    // revert. Serialises nothing when off, so every `tuning_fp` journaled before (#326) still matches.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub growth_regime_slack_pct: Option<f64>,
     pub growth_min_range_pct_crypto: f64, // growth GATE (crypto): looser range floor so more coins surface — most alts sit well below their ATH yet still out-compound; equities use the strict gate above
     pub growth_min_range_pct_8y: f64,     // growth GATE (equities): the SAME percentile bar as `growth_min_range_pct`, re-measured on the LAST 8 YEARS (`stats_8y.range_pct`). 0 = off (default). The bar above reads the ~10y fetched chart, so a name whose old much-lower closes prop up its percentile clears it while its recent 8 years read as a name in decline — PGR ranked #1 at 2Y -14.0% on exactly that gap. This bar IS what blanks the `S-8Y` column: under the 8Y pin both CAGR floors are neutralized to -inf and `as_8y_window` swaps only range/R2/maxdd/underwater, of which no gate reads R2 or underwater and an 8y maxdd can only be <= the 10y one — so range is the only swapped stat that can newly reject, and an armed gate can never disagree with a blank cell. A quote with NO `stats_8y` (under 8y of record) PASSES: its whole record already is the window and the bar above judged it. LIVE-ONLY BY CONSTRUCTION -> UNMEASURABLE: `stats_8y` is set only in fetch.rs, so it is None in every backtest run and this gate cannot fire there (same standing as the age/AUM gates)
     pub growth_min_range_pct_8y_crypto: f64, // growth GATE (crypto): same, crypto bar. 0 = off (default). Inert at 40 today — BNB and BTC both keep an S-8Y despite sitting 43-53% off their highs
@@ -524,6 +537,7 @@ impl Default for BuyHeuristic {
         BuyHeuristic {
             // gates
             min_1y_pct: 0.0,
+            growth_regime_slack_pct: None,  // (#326) OFF: the absolute floors stand at every date, exactly as before the valve existed
             growth_min_1y_pct: 0.0,        // the value the growth lane hardcoded before this knob existed -> neutral default AND live behaviour at once. Loosening it is measured-negative (see the field doc); ci-settings ships 0.0 with the receipt
             min_1y_pct_crypto: -60.0,      // crypto routinely swings -40% in a year without breaking
             max_1m_drop_pct: -15.0,

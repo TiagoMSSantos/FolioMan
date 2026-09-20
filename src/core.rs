@@ -281,6 +281,15 @@ pub struct Quote {
     pub tr_cagr: Option<f64>,          // (TR-CAGR) life_cagr + the whole-life dividend sum added to the endpoint — LOWER-BOUND total return (payouts added, not reinvested). ≈ life_cagr for Acc funds/non-payers. (#99) NO LONGER DISPLAY-ONLY: with `growth_gate_on_tr_cagr` on, `picks::life_leg_cagr` adds `tr_cagr − life_cagr` to the whole-life reject bar. Filled at BOTH sites since (#99) — fetch and `backtest_quote`, the same `core::tr_life_cagr` over the same `[..=as_of]` slice and the same as-of dividends `div_eur` reads -> train==serve, and the knob is measurable. Knob off = read by the `trcagr` column only, exactly as before
     pub history_proxied: bool,         // (history_proxy) closes bridged from a configured older same-strategy twin — CAGR/YRS describe the STRATEGY, not this listing; rendered as `~` so the bridge is never invisible
     pub stats_8y: Option<Stats8>,      // (S-8Y) the >8y price stats re-measured on the last 8 years, for the 8Y-pinned diagnostic column ONLY — never read by the live score. None = no history older than 8y (its whole record IS the window, so the full-window stats already are the 8y ones) / stub / backtest
+    // (#326) THE MARKET'S OWN STATE at this quote's as-of date — the only two fields on `Quote` that
+    // describe something other than this name. They exist so the regime valve (`picks::regime_floor`)
+    // can cap a procyclical floor with the index's counterpart WITHOUT giving the gate stack a date or
+    // a pool argument: `score_parts` stays pure `(&Quote, &BuyHeuristic)` and every caller (gate sweep,
+    // NOTCH BOOK/TAIL, lane, sim) prices the valve unchanged. Filled at the two sites that build real
+    // quotes — `backtest::stamp_regime` per cutoff and `screen::run` once from the ^GSPC quote. None
+    // anywhere else (stub, `check`, price-only probes) and None means INERT: the shipped floor stands.
+    pub bench_1y_pct: Option<f64>,     // the index's trailing 1Y return (%) at this date; caps `growth_min_1y_pct`
+    pub bench_range_pct: Option<f64>,  // the index's own `range_pct` over the SAME ~10y window names use; caps `growth_min_range_pct`
     pub sector: Option<String>,        // (#44) GICS sector, joined from the constituents CSVs (`fetch::sector_map`) — the sole input to the commodity flag/damp for stocks. Set on BOTH `screen` paths (the universe fetch and, since the explain mismatch, the explicit-args one). None for ETFs/crypto (funds carry no GICS; their path is name tokens), for `check` (its growth table is explicitly "derived from the table above — no extra fetch", a contract worth more than the flag), and for `check`. CORRECTED (#95): the claim that this is None "in the BACKTEST pool -> `is_commodity` false there -> damp ×1.0 -> validated edge untouched" is FALSE and has been since `stamp_asset_class` started stamping it — the same class of stale claim the `sharpe_cap_etf` receipt corrected on 2026-08-02. The damp IS live in the walk, on TODAY's label at every cutoff; `backtest_drop_lookahead_sector` is the knob that makes the old sentence true again
     pub aum_eur: Option<f64>,          // (AUM) fund size from the Börse Frankfurt universe payload, EUR-approximate (BF mixes fund currencies; ±FX is immaterial vs the order-of-magnitude gate). ETFs/ETPs only; None = not a fund / not in BF / backtest -> gate inert
     pub ter_fallback: Option<f64>,     // Yahoo quoteSummary TER (%) for funds with NO BF facts (venue/regulatory-only rows). Read ONLY via ter_shown() for display + H/CORE — kept out of expense_ratio because ter_damp SCORES that field (a merged run moved live ranks; scoring lane closed)
@@ -353,6 +362,8 @@ impl Quote {
             tr_cagr: None,
             history_proxied: false,
             stats_8y: None,
+            bench_1y_pct: None,    // (#326) no market context on a stub -> the regime valve is inert
+            bench_range_pct: None, // (#326) ditto
             sector: None, // (#44) stamped in `screen` from the universe CSV; stubs/backtest stay None
             aum_eur: None,
             ter_fallback: None,

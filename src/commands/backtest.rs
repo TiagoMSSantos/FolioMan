@@ -1360,6 +1360,21 @@ pub async fn run(args: Vec<String>) {
     }
     samples.sort_by_key(|s| s.date); // chronological -> the OOS split is early-vs-late in time
 
+    let bench_sym = if crate::config::use_adjusted_close() { "^SP500TR" } else { "^GSPC" };
+    let bench = if monthly {
+        fetch::fetch_history_long(&client, &settings.urls, bench_sym).await
+    } else {
+        fetch::fetch_history(&client, &settings.urls, bench_sym).await
+    }
+    // (FX) an index LEVEL, never joined to a filing — nothing to convert, so drop the currency. Nor is
+    // it ever scored, so it needs no asset-class stamp either: prices only.
+    .map(|c| (c.dates, c.closes))
+    .unwrap_or_default();
+    // (#326) the market's state at each cutoff, stamped onto the quotes BEFORE any report scores them
+    // (`report_lane`, `gate_audit`, the GATE SWEEP and the NOTCH books all gate through `growth_score`).
+    // With the knob off this writes two fields nothing reads, and every number below is unchanged.
+    stamp_regime(&mut samples, &bench);
+
     // `tune`: honest out-of-sample selection. Search the growth weights on an EARLY train split and
     // report the winner on a LATE test split it never saw — the only way to a trustworthy number when
     // the shipped knobs were hand-tuned on all the data. Does its own per-split de-mean, so branch here
@@ -1690,16 +1705,8 @@ pub async fn run(args: Vec<String>) {
     // (Phase E) with use_adjusted_close on, the picks' realized returns include dividends, so the fair
     // benchmark is the S&P 500 TOTAL-return index (^SP500TR, Yahoo history from 1988) — TR vs TR;
     // default (raw close) keeps the price-only ^GSPC, unchanged.
-    let bench_sym = if crate::config::use_adjusted_close() { "^SP500TR" } else { "^GSPC" };
-    let bench = if monthly {
-        fetch::fetch_history_long(&client, &settings.urls, bench_sym).await
-    } else {
-        fetch::fetch_history(&client, &settings.urls, bench_sym).await
-    }
-    // (FX) an index LEVEL, never joined to a filing — nothing to convert, so drop the currency. Nor is
-    // it ever scored, so it needs no asset-class stamp either: prices only.
-    .map(|c| (c.dates, c.closes))
-    .unwrap_or_default();
+    // (#326) the fetch itself moved UP, to just after the walk: the regime valve needs the index series
+    // before anything scores a sample. `bench` is still the same series, used by every report below.
     report_vs_benchmark(&samples, &bench, years, tuning);
     // (r40) relative strength vs the index — needs the benchmark, so it lives here, after the fetch.
     report_relative_strength(&samples, &bench, tuning.split_purge_months);
@@ -2472,6 +2479,40 @@ fn bench_trailing(dates: &[chrono::NaiveDate], closes: &[f64], date: chrono::Nai
     let start = dates[..=end].iter().rposition(|d| *d <= start_date)?;
     let r = (closes[end] / closes[start] - 1.0) * 100.0;
     r.is_finite().then_some(r)
+}
+
+/// (#326) The trailing window the index's percentile is measured over, matching the "~10y history"
+/// `Quote::range_pct` is documented as.
+const REGIME_RANGE_YEARS: i64 = 10;
+
+/// (#326) The benchmark's OWN `range_pct` at `date`: `core::price_pct_rank` — the very function that
+/// fills `Quote::range_pct` — over the index closes in the trailing [`REGIME_RANGE_YEARS`] window
+/// ending there. The window matters more than it looks: `range_pct` is documented as a percentile in a
+/// name's "~10y history", and over MAX history an exponentially-growing index ranks high even at the
+/// bottom of a crash (most of its closes are ancient and far lower), so a MAX-window percentile would
+/// leave the valve shut exactly when it should open. Trailing-only, like `bench_trailing`.
+fn bench_range_pct(dates: &[chrono::NaiveDate], closes: &[f64], date: chrono::NaiveDate) -> Option<f64> {
+    let end = dates.iter().rposition(|d| *d <= date)?;
+    let first = dates[end] - chrono::Duration::days(REGIME_RANGE_YEARS * 365);
+    let start = dates[..=end].iter().position(|d| *d >= first)?;
+    (end > start).then(|| crate::core::price_pct_rank(&closes[start..=end]))
+}
+
+/// (#326) Stamp each sample's quote with the market's state at ITS OWN cutoff, so the regime valve can
+/// read it from a pure `(&Quote, &BuyHeuristic)` gate. Computed once per distinct cutoff date (the walk
+/// emits the same ~6-month grid for thousands of tickers) and `Arc::make_mut` does not clone here,
+/// since the walk just built each quote and nothing else holds a reference yet.
+fn stamp_regime(samples: &mut [Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>)) {
+    let (bd, bc) = bench;
+    let mut seen: BTreeMap<chrono::NaiveDate, (Option<f64>, Option<f64>)> = BTreeMap::new();
+    for s in samples.iter_mut() {
+        let (r1y, rng) = *seen
+            .entry(s.date)
+            .or_insert_with(|| (bench_trailing(bd, bc, s.date, 1), bench_range_pct(bd, bc, s.date)));
+        let q = std::sync::Arc::make_mut(&mut s.quote);
+        q.bench_1y_pct = r1y;
+        q.bench_range_pct = rng;
+    }
 }
 
 /// (round 108) Benchmark's % below its running high at the last session on/before `date` (≤ 0; 0 = at
@@ -6182,6 +6223,66 @@ mod tests {
         assert!((ann(r, 5) - 8.0).abs() < 0.2); // trailing 5y of +8%/yr -> ~+8%/yr, and materially non-zero
         assert!(r > 40.0); // (1.08^5 − 1)·100 ≈ +47%: the subtracted leg is real, not a rounding ghost
         assert!(bench_trailing(&dates, &closes, ymd(2001, 1, 3), 5).is_none()); // <5y of trailing history
+    }
+
+    /// (#326) `bench_range_pct` is the index's OWN `range_pct`: `core::price_pct_rank` over the trailing
+    /// 10 years ending at the cutoff, the same statistic `Quote::range_pct` carries for a name. Two
+    /// properties decide whether the regime valve can ever open, and both are pinned here:
+    /// (a) at a fresh high the percentile is ~100 (the valve stays shut, so an up market is a no-op),
+    ///     and after a crash it collapses (the valve opens);
+    /// (b) it is TRAILING — a crash that happens LATER must not change an earlier cutoff's number, or
+    ///     the valve would be reading the holdout it is supposed to be graded against.
+    #[test]
+    fn bench_range_pct_is_the_index_percentile_at_the_cutoff() {
+        // 10 years of monthly bars climbing, then a 50% crash in the last year.
+        let dates: Vec<NaiveDate> = (0..132u32).map(|k| ymd(2000 + k as i32 / 12, k % 12 + 1, 1)).collect();
+        let mut closes: Vec<f64> = (0..120).map(|k| 100.0 * 1.005_f64.powi(k)).collect();
+        let peak = *closes.last().unwrap();
+        closes.extend((1..=12).map(|k| peak * (1.0 - 0.5 * k as f64 / 12.0)));
+        let at_peak = bench_range_pct(&dates, &closes, ymd(2009, 12, 1)).unwrap();
+        let at_bottom = bench_range_pct(&dates, &closes, ymd(2010, 12, 1)).unwrap();
+        assert!(at_peak > 95.0, "at a fresh high the index ranks at the top of its own range: {at_peak}");
+        assert!(at_bottom < 15.0, "after halving it ranks near the bottom: {at_bottom}");
+        // (b) the no-peek property: the same cutoff, graded on a series that later crashes, reads the
+        // same as one that stops at the cutoff.
+        let cut = dates.iter().position(|d| *d > ymd(2009, 12, 1)).unwrap();
+        let truncated = bench_range_pct(&dates[..cut], &closes[..cut], ymd(2009, 12, 1)).unwrap();
+        assert!((at_peak - truncated).abs() < 1e-9, "a later crash moved an earlier cutoff: {at_peak} vs {truncated}");
+        assert!(bench_range_pct(&dates, &closes, ymd(1990, 1, 1)).is_none(), "before the series -> no claim");
+    }
+
+    /// (#326) The stamp gives every sample the market state of ITS OWN cutoff, not one number for the
+    /// whole run — the property that makes a per-name pure gate regime-aware. Samples of the same date
+    /// share a value, samples of different dates do not, and a sample the benchmark cannot reach keeps
+    /// None (valve inert) rather than borrowing a neighbour's.
+    #[test]
+    fn stamp_regime_gives_each_sample_its_own_date() {
+        let mut samples = synthetic_samples();
+        samples.sort_by_key(|s| s.date);
+        let dates: Vec<NaiveDate> = (0..40u32).map(|k| ymd(2000 + k as i32 / 4, k % 4 * 3 + 1, 1)).collect();
+        // +2%/quarter, with a 40% break in the middle: a CONSTANT-growth series would hand every cutoff
+        // the same trailing 1Y and the varying-state assert below could not fail.
+        let closes: Vec<f64> = (0..40).map(|k| 100.0 * 1.02_f64.powi(k) * if (16..24).contains(&k) { 0.6 } else { 1.0 }).collect();
+        stamp_regime(&mut samples, &(dates.clone(), closes));
+        let first = samples.first().expect("samples").date;
+        let by_date: BTreeMap<NaiveDate, Vec<Option<f64>>> =
+            samples.iter().fold(BTreeMap::new(), |mut m, s| {
+                m.entry(s.date).or_default().push(s.quote.bench_1y_pct);
+                m
+            });
+        for (d, v) in &by_date {
+            assert!(v.windows(2).all(|w| w[0] == w[1]), "one value per cutoff at {d}: {v:?}");
+        }
+        let stamped: Vec<Option<f64>> = by_date.values().map(|v| v[0]).collect();
+        assert!(stamped.iter().filter(|v| v.is_some()).count() >= 2, "the benchmark must reach most cutoffs: {stamped:?}");
+        assert!(
+            stamped.iter().flatten().any(|v| (v - stamped.iter().flatten().next().expect("a stamped cutoff")).abs() > 1e-9),
+            "different cutoffs must read different market states, not one run-wide number: {stamped:?}"
+        );
+        assert!(
+            samples.iter().filter(|s| s.date < first + chrono::Duration::days(1)).all(|s| s.quote.bench_range_pct.is_none() || s.quote.bench_1y_pct.is_some()),
+            "a cutoff the series cannot reach back a full year from keeps None"
+        );
     }
 
     /// PRICE-RISK probe extractors: pass-through for consistency/worst-5y, and the underwater

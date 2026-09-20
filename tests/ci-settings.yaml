@@ -6236,6 +6236,65 @@ buy_heuristic:
   #   NOW record line then cites it; delete key "1" after a probe, or accept the extra horizon.
   #   REVERT: drop the three notch entries from `picks::gate_notches` and the `report_notch_tail` call in
   #   `backtest::run`, and re-bless the goldens.
+  # (#326) ROUND 109: A REGIME VALVE ON THE TWO PROCYCLICAL FLOORS. MEASURED AND REFUSED.
+  #   Same standing ask, asked differently. Every prior round moved a gate CONSTANT ((#290)-(#325), all
+  #   refused); none asked what the constant is measured AGAINST. Each gate is absolute at every date
+  #   (1Y > 0%, close in the top 20% of its own ~10y range), so the screen is procyclical: it admits most
+  #   names at market tops and fewest at bottoms, which is backwards for a buyer with a 20-year horizon.
+  #   THE VALVE. `picks::regime_floor(shipped, market, slack)` = `shipped.min(market + slack)` when the knob
+  #   is Some and the market value is known, else `shipped`. `min()` is strictly one-sided: it can only
+  #   LOOSEN, and only while the market itself sits under the shipped bar. Wired at four sites (the 1Y+ and
+  #   range floors in `score_parts` and their `gate_failures` mirrors, which must stay textually identical).
+  #   Knob `growth_regime_slack_pct`: None = off, `Some(0.0)` = "in a drawdown a name must merely match the
+  #   index". Option + skip_serializing_if, so every old `tuning_fp` hash is unmoved.
+  #   PLUMBING. Two `Quote` fields carry the market state at that quote's own as-of date, so the gate stack
+  #   stays pure `(&Quote, &BuyHeuristic)` and every caller (sweep, NOTCH BOOK/TAIL, lane, sim) is unchanged:
+  #   `bench_1y_pct` and `bench_range_pct`. `backtest::stamp_regime` fills them per cutoff date (memoised per
+  #   date; `bench_range_pct` = `core::price_pct_rank` over a trailing 10y window, the SAME statistic and
+  #   window names are ranked on, trailing-only so it cannot peek). `screen::stamp_regime` copies ^GSPC's 1Y
+  #   and `range_pct` onto every quote. Both benchmark fetches were hoisted above the first ranking pass;
+  #   neither path adds a request.
+  #   PRE-REGISTERED BAR, written before any number existed. Ships only if ALL hold: (i) NO HARM, the shipped
+  #   SIZED row no-worse at 20/12/8y fund pit; (ii) GUARD, the valve's newly-admitted union book holds
+  #   excess >= cleared - 0.1 AND worst >= cleared - 1.0 at all three; (iii) green CI.
+  #   IT BINDS - a real measurement, not another inert knob. Cleared samples 119 -> 152 (20y), 249 -> 287
+  #   (12y), 347 -> 389 (8y), and the arm reaches one more window at 12y (37 vs 36) and 8y (45 vs 44).
+  #   (i) NO HARM, arm vs control, 2026-09-20, one binary, two configs differing by the one knob:
+  #                       20y             12y             8y
+  #     SIZED excess    +0.7 -> +0.8    +3.7 -> +3.4    +4.8 -> +4.6
+  #     top-10 excess   +0.6 -> +0.6    +3.8 -> +3.4    +5.4 -> +5.1
+  #     top-10 win       52% -> 48%      75% -> 68%      86% -> 84%
+  #   FAILS at 12y and 8y. The 20y DCA rows ((#311)) are byte-identical (SIZED +3.5/yr vs index DCA, roll
+  #   +1.0): the valve does not fire on the monthly DCA buy dates.
+  #   (ii) GUARD, the `regime` notch (n = the samples it adds):
+  #                  20y fund pit              12y fund pit              8y fund pit
+  #     cleared    119   +0.7  -10.0         249   +3.5   -6.4         347   +4.6   -5.5
+  #     regime      33   +0.8  -10.0  pass    38   +3.1   -6.4  FAIL    42   +4.3   -5.5  FAIL
+  #   WHY IT LOSES, and the mechanism is in the zero list: "fell less than the index" in a drawdown is a
+  #   falling-knife filter. The arm rides AIG@b4003 (2008) at ALL three horizons, PBG (-100%, twice) at 8y,
+  #   and one more FMCC/RIG at 20y; 20y zeros go 5/112 holds -> 6/130. A name that outperforms a crashing
+  #   index is often a name the crash has not finished with.
+  #   TAIL ((#325)'s forward half), entries after 2018-09-17, held 1y: regime 3 lines, mean +29.3, median
+  #   +29.5. Positive, but bear-only by construction, so it cannot reach 12 lines outside another drawdown.
+  #   Evidence, not a pass.
+  #   LIVE, 2026-09-20, probe data dir, journal md5 and 16 state files restored: `regime +0` (the market is
+  #   at highs, so the valve is inert), funnel 5097 = 569 refused + 4501 failed + 27 cleared, and the book
+  #   holds the same 20 names (IUIT.L one slot higher on price drift). `track` unchanged.
+  #   NOTHING SHIPS. The knob stays None in the code AND absent from this config. What DOES ship is the
+  #   shadow: the `regime` row in `picks::gate_notches`, so every future run prices the valve for free in the
+  #   GATE SWEEP, the NOTCH BOOK and the NOTCH TAIL, and `screen` + `track` shadow it live. It now falls
+  #   under (#325)'s reopen rule, which it cannot satisfy until a drawdown supplies the lines - which is the
+  #   honest shape of a bear-market valve: it can only be proven in a bear market.
+  #   HONEST EDGES. (a) At 20y only the 2000-02 bear has a closed forward window; 2008 shows up at 12y/8y,
+  #   2020/2022 only in the tail. (b) ^GSPC is a US proxy for a book that holds EU names. (c) The valve is
+  #   inert live until a drawdown, so there will be no live evidence for a year or more. (d) The index
+  #   percentile uses the bench's own fetched history over a trailing 10y window; a different window is a
+  #   different gate. (e) The crypto floors sit below any index drawdown, so `min()` leaves them unchanged.
+  #   (f) slack 0 was fixed before the run and never tuned; a fitted slack would be a new round with its own
+  #   bar. (g) Both no-harm legs that fail are small (0.2-0.4 pts) - but the bar was pre-registered as
+  #   no-worse, and the guard fails on the same two horizons, so the two legs agree.
+  #   REVERT: delete `growth_regime_slack_pct`, the four `regime_floor` calls, the two `Quote` fields with
+  #   both `stamp_regime`s and their hoisted fetches, and the `regime` row in `gate_notches`; re-bless.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

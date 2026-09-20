@@ -177,6 +177,24 @@ pub fn long_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
 /// Both legs of the gate read this — the long rung and the whole-life `life_leg_cagr` bar — because
 /// they are one knob judged twice, and splitting the classes on only one leg would let a fund clear
 /// the rung it was admitted for and die on the other.
+/// (#326) THE REGIME VALVE, one expression for both gates that use it and for their `gate_failures`
+/// mirrors — so the four sites cannot drift the way the 1Y+ and range expressions are warned about
+/// below. `shipped` is the floor the config carries, `market` the INDEX's counterpart at this quote's
+/// as-of date (`Quote::bench_1y_pct` / `bench_range_pct`), `slack` the knob.
+///
+/// `min` is the whole design: the valve can only LOWER a floor, and only while the market itself sits
+/// below it. In an up market the shipped floor is the smaller number and binds unchanged, so turning
+/// the knob on changes precisely nothing until a drawdown — which is what makes this measurable as a
+/// no-harm change rather than as one more loosening. Knob off (`None`) or no market context (`None` on
+/// the quote: every stub, `check`, and any price-only path that never stamps it) returns `shipped`
+/// untouched, so the valve is INERT by default everywhere.
+pub(crate) fn regime_floor(shipped: f64, market: Option<f64>, slack: Option<f64>) -> f64 {
+    match (market, slack) {
+        (Some(m), Some(s)) => shipped.min(m + s),
+        _ => shipped,
+    }
+}
+
 pub(crate) fn min_cagr_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
     if is_currency_quoted(&quote.ticker) {
         tuning.growth_min_cagr_crypto
@@ -1186,7 +1204,13 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     if !crypto && tuning.growth_min_aum_etf > 0.0 && quote_is_etf(quote) && quote.aum_eur.is_some_and(|a| a < tuning.growth_min_aum_etf) {
         return None; // sub-scale fund -> liquidation/merge risk over a decades hold
     }
-    let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
+    // (#326) the valve wraps whichever floor was selected, so the crypto floor is covered too (and in
+    // practice unchanged: it already sits below any index percentile). Same expression in `gate_failures`.
+    let min_range = regime_floor(
+        if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct },
+        quote.bench_range_pct,
+        tuning.growth_regime_slack_pct,
+    );
     if quote.range_pct < min_range {
         return None; // equities: NOT near its high -> the on-sale lane's job. crypto: looser floor (alts run below ATH)
     }
@@ -1245,7 +1269,11 @@ fn score_parts(quote: &Quote, tuning: &BuyHeuristic) -> Option<ScoreParts> {
     // The equity leg reads `growth_min_1y_pct` (default 0.0 = the constant this replaced). Must stay
     // the SAME expression as the `gate_failures` copy — the two disagreeing means a name is silently
     // dropped from the ranking while the tail claims it passes, or vice versa.
-    let y1_floor = if crypto { tuning.min_1y_pct_crypto } else { tuning.growth_min_1y_pct };
+    let y1_floor = regime_floor(
+        if crypto { tuning.min_1y_pct_crypto } else { tuning.growth_min_1y_pct },
+        quote.bench_1y_pct, // (#326) in a -38% year this floor is -38%, not 0%
+        tuning.growth_regime_slack_pct,
+    );
     if return_1y <= y1_floor {
         return None; // not climbing (equities) / a corpse below the crypto floor -> no trend to ride
     }
@@ -2107,6 +2135,13 @@ pub fn gate_notches() -> Vec<(&'static str, &'static str, fn(&mut BuyHeuristic))
         ("5Y+", "growth_min_5y_pct -15", |t| t.growth_min_5y_pct -= 15.0),
         ("range8y", "growth_min_range_pct_8y -10 (live-only)", |t| t.growth_min_range_pct_8y -= 10.0),
         ("aum", "growth_min_aum_etf x0.5 (live-only)", |t| t.growth_min_aum_etf *= 0.5),
+        // (#326) NOT a loosened constant like every row above — this switches the regime valve on, which
+        // caps the 1Y+ and range floors with the index's own counterpart at each date. Its cohort is
+        // therefore empty at every cutoff where the market was above those floors (including today), and
+        // non-empty only in drawdowns. Sitting in this list buys the whole apparatus for free: the GATE
+        // SWEEP prices it, the NOTCH BOOK computes its union guard, the NOTCH TAIL grades it on the
+        // 2018+ entries (which carry 2020 and 2022), and `screen`/`track` shadow it live.
+        ("regime", "growth_regime_slack_pct 0 (bear-only)", |t| t.growth_regime_slack_pct = Some(0.0)),
     ]
 }
 
@@ -2399,9 +2434,17 @@ pub fn gate_failures(quote: &Quote, tuning: &BuyHeuristic) -> Option<Vec<(&'stat
     };
     let return_1y = perf_pct(quote, "1Y")?; // no 1Y data
     let long_cagr = long_cagr_from(quote, tuning, long_cum, long_years);
-    let min_range = if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct };
+    let min_range = regime_floor(
+        if crypto { tuning.growth_min_range_pct_crypto } else { tuning.growth_min_range_pct },
+        quote.bench_range_pct,
+        tuning.growth_regime_slack_pct,
+    ); // (#326) same valve as score_parts, deliberately
     let min_cagr = min_cagr_floor(quote, tuning);
-    let y1_floor = if crypto { tuning.min_1y_pct_crypto } else { tuning.growth_min_1y_pct }; // same expression as score_parts, deliberately
+    let y1_floor = regime_floor(
+        if crypto { tuning.min_1y_pct_crypto } else { tuning.growth_min_1y_pct },
+        quote.bench_1y_pct,
+        tuning.growth_regime_slack_pct,
+    ); // same expression as score_parts, deliberately — (#326) valve included
     let knife = if crypto { tuning.max_1m_drop_pct_crypto } else { tuning.max_1m_drop_pct };
     let r1m = perf_pct(quote, "1M").unwrap_or(0.0);
 
@@ -5286,9 +5329,55 @@ mod tests {
             ("5Y+", "growth_min_5y_pct", serde_json::json!(60.0)),
             ("range8y", "growth_min_range_pct_8y", serde_json::json!(70.0)),
             ("aum", "growth_min_aum_etf", serde_json::json!(50_000_000.0)),
+            // (#326) off serialises nothing, so the key is ABSENT from `before` and appears in `after`
+            // — which is exactly what a diff of the two must call a move.
+            ("regime", "growth_regime_slack_pct", serde_json::json!(0.0)),
         ];
         let want: Vec<(&str, String, serde_json::Value)> = want.into_iter().map(|(t, k, v)| (t, k.to_string(), v)).collect();
         assert_eq!(got, want);
+    }
+
+    /// (#326) The regime valve NEVER tightens. Off, or with no market context, the shipped floor stands
+    /// byte-for-byte; with the market ABOVE the floor the shipped floor still stands (the up-market case,
+    /// which is what makes turning the knob on a no-op today); only a market BELOW the floor lowers it,
+    /// and `slack` shifts that opened floor in either direction.
+    #[test]
+    fn regime_floor_only_loosens_below_the_shipped_bar() {
+        assert_eq!(regime_floor(0.0, Some(-38.0), None), 0.0, "knob off -> absolute floor");
+        assert_eq!(regime_floor(0.0, None, Some(0.0)), 0.0, "no market context -> absolute floor");
+        assert_eq!(regime_floor(0.0, Some(15.0), Some(0.0)), 0.0, "market above the floor -> floor binds");
+        assert_eq!(regime_floor(0.0, Some(-38.0), Some(0.0)), -38.0, "market below -> floor follows the market");
+        assert_eq!(regime_floor(0.0, Some(-38.0), Some(-10.0)), -48.0, "negative slack lets a name lag the index");
+        assert_eq!(regime_floor(0.0, Some(-38.0), Some(50.0)), 0.0, "slack can never push the floor ABOVE the shipped bar");
+        assert_eq!(regime_floor(80.0, Some(20.0), Some(0.0)), 20.0, "the range percentile leg reads the same way");
+    }
+
+    /// (#326) The valve at the GATE, not at the helper: the same name, the same tuning, one drawdown.
+    /// A name that fell LESS than the index clears 1Y+ only once the valve is on; a name that fell much
+    /// harder stays refused, so the valve buys relative strength rather than forgiveness. The up-market
+    /// stamp is the control: with the index positive, the valve-on run scores identically to valve-off.
+    #[test]
+    fn regime_valve_admits_only_names_that_held_up_better_than_the_index() {
+        let armed = BuyHeuristic::default(); // ships growth_min_1y_pct 0.0 and growth_min_range_pct 80.0
+        let on = BuyHeuristic { growth_regime_slack_pct: Some(0.0), ..BuyHeuristic::default() };
+        let name = |r1y: f64, range: f64, bench_1y: Option<f64>, bench_range: Option<f64>| {
+            let mut q = gate_fixture();
+            q.range_pct = range;
+            q.bench_1y_pct = bench_1y;
+            q.bench_range_pct = bench_range;
+            q.perf = legs(&[("1M", 2.0), ("1Y", r1y), ("5Y", 200.0)]);
+            q
+        };
+        // the 2008 shape: index -38% and deep in its own 10y range.
+        let held_up = name(-30.0, 40.0, Some(-38.0), Some(20.0));
+        assert!(growth_score(&held_up, &armed).is_none(), "absolute floors refuse everything in a crash");
+        assert!(growth_score(&held_up, &on).is_some(), "valve admits a name that fell less than the index");
+        let fell_harder = name(-55.0, 10.0, Some(-38.0), Some(20.0));
+        assert!(growth_score(&fell_harder, &on).is_none(), "a name that fell HARDER than the index stays refused");
+        // today's shape: index up on the year and near its high -> the valve is a no-op.
+        let up_market = name(-30.0, 40.0, Some(15.0), Some(98.0));
+        assert!(growth_score(&up_market, &armed).is_none());
+        assert!(growth_score(&up_market, &on).is_none(), "in an up market the valve changes nothing");
     }
 
     /// `col_cell` under the SHIPPED tuning — the cells that read config (`leg`: which rung, which CAGR
@@ -5989,6 +6078,8 @@ mod tests {
             // quotes; tests exercising that gate set avg_turnover_eur = None explicitly. €1B -> liq_bonus
             // ln(1e9/1e9)=0, so it stays rank-neutral for the relational score asserts.
             stats_8y: None, // (S-8Y) display-only diagnostic; None keeps `as_8y_window` the identity here
+            bench_1y_pct: None,    // (#326) no market context -> regime valve inert; the valve's own tests set these
+            bench_range_pct: None,
             splits: Vec::new(), // (#82) journal-replay only (`track`/`sim`); nothing in the score reads it
             sector: None, // (#44) unknown sector -> is_commodity false -> damp inert, as in the backtest
             downside_dev_pct: None, // (r39) backtest-probe-only, never read by the score

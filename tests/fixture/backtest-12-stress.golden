@@ -197,6 +197,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   growth_min_5y_pct -15      n=4    fwd peer-relative  mean -165.1 | med -151.5 pts  vs shipped +6.7  <- ADMITS NO WORSE THAN THE BOOK
   growth_min_range_pct_8y -10 (live-only) admits 0 new names (gate not binding on this sample)
   growth_min_aum_etf x0.5 (live-only) admits 0 new names (gate not binding on this sample)
+  growth_regime_slack_pct 0 (bear-only) n=8    fwd peer-relative  mean -198.3 | med -232.9 pts  vs shipped -74.7
 
 ── EXIT PROBE (growth lane: passed gates ~6mo ago -> what next?) ──
   kept passing   n=46     fwd peer-relative  mean -150.1 | med -196.3 pts
@@ -257,6 +258,7 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
   stretch    n=18     book +7.2%/yr  excess +1.3  win 51%  worst -18.5  OOS +7.4/-4.5  guard FAIL
   history    n=34     book +11.1%/yr  excess +4.9  win 69%  worst -18.5  OOS +10.7/-0.7  guard pass
   5Y+        n=4      book +8.3%/yr  excess +2.1  win 53%  worst -18.5  OOS +9.4/-5.1  guard pass
+  regime     n=8      book +8.3%/yr  excess +2.1  win 54%  worst -18.5  OOS +9.1/-4.5  guard FAIL
   (n = samples: the cleared book's own, or what the notch adds. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y; `track` grades the same cohorts forward)
   all entries (SIZED)          book +8.4%/yr  excess +2.2  win 53%  worst -18.5  OOS +9.5/-5.1   (windows 34, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
