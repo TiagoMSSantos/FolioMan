@@ -1883,22 +1883,34 @@ pub fn life_cagr_max_years() -> f64 {
 /// the screen fan-out, so parse the config ONCE, not thousands of times. SOFT — a missing/invalid
 /// config yields an empty map (no splices), so it never panics in unit tests where the gitignored
 /// settings.yaml is absent.
+/// (#327) Pairs a previous `screen` discovered, merged UNDER the curated ones: a human entry always
+/// wins, so turning the knob on can never silently override a hand-picked twin. Split out of the
+/// accessor because the accessor is a process-wide `OnceLock` no test can flip — the MERGE is a
+/// decision and stays graded, the config read does not and is skipped like its twins here.
+pub fn merge_auto_proxies(
+    mut curated: BTreeMap<String, String>,
+    auto: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    for (young, donor) in auto {
+        curated.entry(young).or_insert(donor);
+    }
+    curated
+}
+
+#[mutants::skip]
 pub fn history_proxy() -> &'static BTreeMap<String, String> {
     use std::sync::OnceLock;
     static MAP: OnceLock<BTreeMap<String, String>> = OnceLock::new();
     MAP.get_or_init(|| {
-        let mut map = merged_config()
+        let map = merged_config()
             .and_then(|v| serde_yaml::from_value::<Settings>(v).ok())
             .map(|s| s.history_proxy)
             .unwrap_or_default();
-        // (#327) pairs a previous `screen` discovered, merged UNDER the curated ones: a human entry
-        // always wins, so turning the knob on can never silently override a hand-picked twin.
         if history_proxy_auto() {
-            for (young, donor) in auto_proxy_load() {
-                map.entry(young).or_insert(donor);
-            }
+            merge_auto_proxies(map, auto_proxy_load())
+        } else {
+            map
         }
-        map
     })
 }
 
@@ -2047,6 +2059,23 @@ fn test_root_override(_name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#327) A hand-curated twin ALWAYS wins over a discovered one. The whole safety story of the
+    /// discovery knob is that turning it on cannot override a human's entry, and this is where that
+    /// holds or does not — the accessor around it is a `OnceLock` no test can flip.
+    #[test]
+    fn merge_auto_proxies_never_overrides_a_curated_twin() {
+        let curated: BTreeMap<String, String> = [("A".into(), "CURATED".into())].into();
+        let auto: BTreeMap<String, String> = [("A".into(), "DISCOVERED".into()), ("B".into(), "FOUND".into())].into();
+        let got = merge_auto_proxies(curated.clone(), auto.clone());
+        assert_eq!(got.get("A").map(String::as_str), Some("CURATED"));
+        assert_eq!(got.get("B").map(String::as_str), Some("FOUND"));
+        assert_eq!(got.len(), 2);
+        // and with nothing discovered the curated map comes back untouched — the knob off is a no-op
+        assert_eq!(merge_auto_proxies(curated.clone(), BTreeMap::new()), curated);
+        // ...while an empty curated map takes every discovered pair
+        assert_eq!(merge_auto_proxies(BTreeMap::new(), auto.clone()), auto);
+    }
 
     /// (#317) `book_cut` reads 0 as 1 and passes any other width through.
     #[test]
