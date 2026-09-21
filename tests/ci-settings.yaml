@@ -6485,6 +6485,119 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#329) ROUND 112: THE NO-WORSE GUARD WAS A TEST OF COHORT SIZE. MEASURED, AMENDED, AND IT REFUSED
+  # THE ONE NOTCH THAT WAS THREE FORWARD LINES FROM SHIPPING.
+  # WHAT SET THE ROUND, and why it is not a twelfth admission knob. Eleven rounds have moved WHICH NAMES
+  # get admitted; nine were refused, every one on the same recorded mechanism (1/N dilution in an
+  # equal-weight book — (#317)/(#319)/(#328)). This round audited the INSTRUMENT that produced those
+  # verdicts instead, because reading the banked rows turned up a defect in the bar itself.
+  #
+  # THE DEFECT, AS ARITHMETIC. `guard_holds` was `union.2 >= cleared.2 - 0.1 && union.4 >= cleared.4 - 1.0`,
+  # and it is applied to the UNION book (cleared + cohort), not to the cohort. With cohort weight
+  # w = n/(cleared_n + n) the union excess is w*e + (1-w)*c, so `union >= c - 0.1` is exactly
+  #     e >= c - 0.1/w
+  # on the cohort itself. The tolerance is DIVIDED BY THE COHORT'S SHARE, so the bar a notch actually faced
+  # scaled with 1/n. Measured 8y row, cleared n=347 excess +4.6 — the implied flat bar beside this round's
+  # placebo band, both in excess points:
+  #     notch      n     excess   flat bar   band bar   band - flat
+  #     range      2       +4.6     -12.85       +4.7       +17.55
+  #     5Y+       12       +4.3      +1.61       +4.6        +2.99
+  #     regime    40       +4.5      +3.63       +4.9        +1.27
+  #     peg       42       +4.3      +3.67       +4.2        +0.53
+  #     1Y+       56       +4.7      +3.88       +4.7        +0.82
+  #     history   81       +4.0      +4.07       +4.5        +0.43
+  #     stretch   88       +5.1      +4.11       +5.3        +1.19
+  #     cagr     305       +3.5      +4.39       +2.9        -1.49
+  # A 17.2-POINT SPREAD IN STRICTNESS ON ONE BOOK, set by cohort size alone. `range` (n=2) was asked to
+  # beat -12.8 when the book it joins sits at +4.6 — its "pass" could not fail arithmetically, the same
+  # vacuity (#327) caught at n=1 and did not fix. `cagr` (n=305) was asked to beat +4.39, i.e. to be BETTER
+  # than the cleared book, for the crime of admitting many names. This is the matched-n guard (#323)(d)
+  # named as "a named change, in a round of its own" and which the journal confirms was never built.
+  #
+  # THE FIX: A CUTOFF-MATCHED PLACEBO BAND. Per cohort, draw n rows at random FROM THE POOL THE SHIPPED
+  # GATES REFUSED, taking the same count from each ~6mo cutoff bucket as the real cohort has there, so
+  # regime mix is held fixed and the comparison is quality-only. Score the union book. Repeat 200 times.
+  # The bar is the p95 of that band: a notch clears only if its union beats 95% of same-size random draws,
+  # which reads as "the gate's boundary picked names materially better than arbitrary names it was also
+  # refusing". No `rand` dependency (the repo has none) — a 3-line xorshift64 reseeded from a fixed
+  # PLACEBO_SEED at the top of every call, so the result never depends on the order notches are evaluated
+  # in and the goldens stay bit-identical at any thread count.
+  #
+  # PRE-REGISTERED BEFORE ANY NUMBER EXISTED, and not retuned after: PLACEBO_DRAWS = 200, PLACEBO_SEED
+  # fixed, percentile = p95 one-sided, and the amendment itself — (#325) clause (i) becomes "union excess
+  # >= the p95 of the same-n placebo band" in place of the flat -0.1. Written into the plan before the band
+  # was run, because a bar chosen after seeing the board it grades is vacuous ((#277)/(#278)).
+  # THE WORST-WINDOW LEG IS DELIBERATELY UNTOUCHED (`union.4 >= cleared.4 - 1.0`). It is diluted the same
+  # way, but a deeper worst window is a real risk signal at any n, and one bar per round.
+  #
+  # MEASURED 2026-09-21, `backtest {20,12,8} universe fund pit`, this config. `windows scored`
+  # 1112 / 2771 / 6179 — no OFFLINE voiding. Verdict board, old flat bar -> new band, all three horizons:
+  #                 20y          12y           8y
+  #     notch     old  new     old  new     old  new
+  #     range    pass  FAIL   pass  FAIL   pass  FAIL     <- vacuous pass, dead at every horizon
+  #     1Y+      pass  FAIL   pass  FAIL   pass  FAIL     <- see below; this is the consequential one
+  #     stretch  pass  FAIL   FAIL  FAIL   pass  FAIL
+  #     regime   pass  FAIL   FAIL  FAIL   pass  FAIL
+  #     cagr     pass  FAIL   FAIL  FAIL   FAIL  pass     <- reopened at 8y only (n=305, the loose end)
+  #     peg         -     -   FAIL  pass   FAIL  pass     <- reopened at 12y and 8y; NO 20y ROW
+  #     history  FAIL  FAIL   FAIL  FAIL   FAIL  FAIL
+  #     5Y+      FAIL  FAIL   FAIL  FAIL   FAIL  FAIL
+  #     sector   pass  FAIL   FAIL  FAIL   FAIL  FAIL     <- (#328)'s door; its 20y pass was the n=22 effect
+  # Net 11 pass -> FAIL, 3 FAIL -> pass. UNDER THE AMENDED BAR NOTHING CLEARS ALL THREE HORIZONS, so no
+  # notch ships and no admission lever survives. The correction is two-directional exactly as predicted:
+  # stricter at small n (where the old tolerance was being divided by a tiny share) and looser at large n
+  # (`cagr` 8y, band +2.9 against a flat +4.39 — the only negative spread on the board).
+  #
+  # THE RESULT THAT JUSTIFIES THE ROUND. `1Y+` is the notch (#325)'s forward rule is LIVE on, at 9 of the
+  # 12 lines it needs. Under the flat bar it passed the backtest leg at all three horizons and was three
+  # monthly lines from shipping. Under the band it fails at all three: 8y excess +4.7 against a band of
+  # +4.7 (it loses on the unrounded figures), 12y +3.4 against +3.7, 20y +0.6 against +1.1. Its old passes
+  # were bought with n=56/40/28 against a cleared book of 347/249/119 — the tolerance divided by a fifth to
+  # a seventh. Had the bar been fixed after (#325) shipped rather than before, it would have been fixed too
+  # late, and a notch would have entered the book on a threshold that was lenient only because its cohort
+  # was small.
+  #
+  # CORROBORATED ON THE UNSCORED TAIL, INDEPENDENTLY. `backtest 1 long universe fund pit` (19964 windows
+  # scored, cleared n=621 excess +7.4) grades a 1y book the three horizons never see. `1Y+` reads n=76
+  # excess +7.1 against a band of +9.0 — its cohort is materially WORSE than a random same-size draw from
+  # the refused pool, on a fourth horizon, by the widest margin on that table. Its NOTCH TAIL row is
+  # unchanged by this round and still reads lines 9, mean +28.5, median +19.7 — which is exactly the trap:
+  # the forward half looked strong while the book test says the names are below the pool they came from.
+  # The tail rule needs 12 lines and the backtest leg now fails at 20y, 12y, 8y AND 1y, so the two halves
+  # finally agree. `peg` passes the 1y band too (n=178, +6.5 vs +6.3), but its tail reads mean -7.0 median
+  # -7.3 — its reopen is backtest-only and its forward signal is NEGATIVE.
+  #
+  # WHAT SHIPS: the instrument and the amended bar. This was a measurement round — there is no arm to
+  # refuse, and what the band DECIDED is reported, not chosen. Any notch that reopens gets its own round
+  # with its own pre-registered bar, exactly as (#328)(e) demands of K.
+  # THE BAND MOVES NO BOOK — proved on frozen data, not asserted. Re-blessing the goldens produced
+  # -49/+49 lines across five files and every `book`/`excess`/`win`/`worst`/`OOS` figure on every row is
+  # byte-identical; the only changes are the new `bar` column, the verdicts re-read against it, and three
+  # legends. The 8y and 12y NOTCH BOOK rows in the live run are likewise byte-identical to (#328)'s, column
+  # for column, apart from the new bar and verdict.
+  #
+  # HONEST EDGES. (a) THE NULL IS GENEROUS. It draws from the WHOLE refused pool, so a random refused name
+  # may have failed five gates while a notch admits names just past ONE boundary. A near-miss-only null is
+  # the named upgrade path and was deliberately not taken; it would raise every bar, never lower one, so
+  # every refusal above survives it and only the two reopens are at risk. (b) The worst-window leg is still
+  # n-biased, untouched on purpose. (c) `peg` has no 20y row at all (the notch admits nobody there), so it
+  # cannot satisfy "at 20y, 12y and 8y" however good its 12y/8y rows are; a missing row is not a pass and
+  # the rule is unchanged on that point. (d) `range8y`/`aum` are backtest-blind ((#325)(d)), so their bars
+  # read `n/a` forever and they fall back to the (#324) flat arithmetic — that fallback path is what
+  # `guard_holds(.., None)` preserves digit for digit, and a test pins it. (e) PROXY BOOK keeps the flat
+  # bar ON PURPOSE: its cohort is a SPLIT of the cleared book (borrowed-history names already in it), not
+  # an admission out of the refused pool, so a refused-pool null would not describe it. (f) The band is
+  # in-sample by construction — it prices the INSTRUMENT, not a forward claim. (g) The 20y rows drifted
+  # slightly from (#328)'s run (cleared 120 -> 119 windows) because the fund-facts cache warmed and the
+  # universe grew ~50 tickers between the two sessions; the 8y/12y rows did not move at all. The goldens,
+  # on frozen data, are the drift-free proof.
+  # REOPEN: `cagr` at 8y and `peg` at 12y/8y now clear a matched-n bar. Neither ships — the rule is all
+  # three horizons — but both are recorded as reopened rather than refused, and either can be taken up in
+  # its own round. The honest first question for both is whether they survive a near-miss null, per (a).
+  # REVERT: drop `PLACEBO_DRAWS`, `PLACEBO_SEED`, `next_rand`, `placebo_bar` and `bar_column`; return
+  # `guard_holds` to two arguments and its `Some` arm's body; return `notch_books`/`sector_books` to
+  # 3-tuples and drop the `refused`/`shape` collection; restore the three legends and the `track.rs`
+  # reopen sentence to the (#324) flat tenth; re-bless.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.

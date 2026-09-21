@@ -245,21 +245,21 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 
 ── NOTCH BOOK (#324): the book each one-notch reopen would buy (cleared + that notch's cohort), every name equal-weight, held 12y ──
   cleared    n=31     book +2.7%/yr  excess -4.6  win 14%  worst -17.0  OOS -0.8/-8.1
-  cagr       n=15     book +2.7%/yr  excess -4.2  win 19%  worst -17.0  OOS -2.0/-6.5  guard pass
-  1Y+        n=4      book +2.1%/yr  excess -5.1  win 13%  worst -23.3  OOS -2.3/-7.6  guard FAIL
-  stretch    n=10     book +0.7%/yr  excess -5.7  win 8%  worst -22.6  OOS -3.1/-8.3  guard FAIL
-  history    n=10     book +3.7%/yr  excess -3.1  win 26%  worst -17.0  OOS +0.7/-6.5  guard pass
-  5Y+        n=4      book +2.7%/yr  excess -4.5  win 14%  worst -17.0  OOS -1.0/-7.9  guard pass
-  regime     n=5      book +2.0%/yr  excess -5.2  win 16%  worst -23.3  OOS -2.3/-7.8  guard FAIL
-  (n = samples: the cleared book's own, or what the notch adds. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y; `track` grades the same cohorts forward)
+  cagr       n=15     book +2.7%/yr  excess -4.2  win 19%  worst -17.0  OOS -2.0/-6.5  bar -2.3  guard FAIL
+  1Y+        n=4      book +2.1%/yr  excess -5.1  win 13%  worst -23.3  OOS -2.3/-7.6  bar -3.8  guard FAIL
+  stretch    n=10     book +0.7%/yr  excess -5.7  win 8%  worst -22.6  OOS -3.1/-8.3  bar -3.4  guard FAIL
+  history    n=10     book +3.7%/yr  excess -3.1  win 26%  worst -17.0  OOS +0.7/-6.5  bar -2.5  guard FAIL
+  5Y+        n=4      book +2.7%/yr  excess -4.5  win 14%  worst -17.0  OOS -1.0/-7.9  bar -3.5  guard FAIL
+  regime     n=5      book +2.0%/yr  excess -5.2  win 16%  worst -23.3  OOS -2.3/-7.8  bar -3.3  guard FAIL
+  (n = samples: the cleared book's own, or what the notch adds. Guard, (#329)-amended: excess >= `bar`, the p95 of 200 same-n cohorts drawn at random from the refused pool and cutoff-matched, AND worst >= cleared -1.0, at 20y, 12y and 8y. `bar n/a` = the null could not match the cohort's shape, so the row falls back to (#324)'s flat -0.1. `track` grades the same cohorts forward)
 
 ── PROXY BOOK (#327): the cleared book split by where its history came from, every name equal-weight, held 12y ──
   own history  n=31     book +2.7%/yr  excess -4.6  win 14%  worst -17.0  OOS -0.8/-8.1
-  (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y)
+  (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y. Keeps (#324)'s flat bar: this row SPLITS the cleared book rather than admitting out of the refused pool, so (#329)'s matched-n null does not describe it)
 
 ── SECTOR BOOK (#328): what a top-1-per-GICS-sector door would add to the cleared book, every name equal-weight, held 12y ──
   cleared      n=31     book +2.7%/yr  excess -4.6  win 14%  worst -17.0  OOS -0.8/-8.1
-  (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own 5y CAGR. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y)
+  (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own 5y CAGR. Guard, (#329)-amended: excess >= `bar`, the p95 of 200 same-n refused cohorts, AND worst >= cleared -1.0, at 20y, 12y and 8y)
   all entries (SIZED)          book +2.7%/yr  excess -4.6  win 14%  worst -17.0  OOS -0.8/-8.1   (windows 21, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── CORR-CAP probe: greedy top-10 by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held 12y ──

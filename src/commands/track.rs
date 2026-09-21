@@ -550,9 +550,12 @@ fn near_section(
          screen's notch lines), equal-weight, same windows. A cohort that keeps beating the bought book is\n  \
          a gate refusing winners. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\n\
          {TABLE_HEADER}\n{body}\n\n  \
-         Per notch, one line a month, cohort minus the book that line bought. Receipt (#324): that notch\n  \
-         ships when {REOPEN_LINES}+ lines read mean AND median above 0 AND its backtest NOTCH BOOK row\n  \
-         (cleared + cohort) holds excess within 0.1 and worst within 1.0 of cleared at 20y, 12y and 8y.{gates}"
+         Per notch, one line a month, cohort minus the book that line bought. Receipt (#324), bar amended\n  \
+         by (#329): that notch ships when {REOPEN_LINES}+ lines read mean AND median above 0 AND its\n  \
+         backtest NOTCH BOOK row (cleared + cohort) holds excess at or above that row's `bar` — the p95 of\n  \
+         same-size cohorts drawn at random from the refused pool — and worst within 1.0 of cleared, at 20y,\n  \
+         12y and 8y. The old flat 0.1 was read off the union, so it asked -12.8 of a 2-name cohort and\n  \
+         +4.4 of a 305-name one; the band asks the same of both.{gates}"
     )
 }
 
@@ -1289,6 +1292,27 @@ mod tests {
         assert!(cagr.contains("1 line(s)") && cagr.matches("+15.0pp").count() == 2, "mean and median: {cagr}");
         assert!(cagr.contains("needs 12 lines"), "{cagr}");
         assert_eq!(row("peg ").matches("-5.0pp").count(), 2, "{out}");
+    }
+
+    /// (#329) THE TWO SURFACES MUST STATE THE SAME BAR. `backtest`'s NOTCH BOOK now prints a per-row
+    /// `bar` — the p95 of same-size cohorts drawn from the refused pool — and grades against it; this
+    /// sentence is the only place a reader of `track` is told what that grading was. It is pinned here
+    /// because it already drifted once: (#324)'s flat tenth outlived the arithmetic that justified it,
+    /// and nothing failed when the two halves disagreed.
+    #[test]
+    fn notch_reopen_text_cites_the_band_not_the_flat_tenth() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| (t == "UP" || t == "NC").then_some(110.0);
+        let line = with_near(
+            with_sized(snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), &[("UP", 30.0)]),
+            &[("NC", Some(100.0), "cagr")],
+        );
+        let out = near_section(&[line], today, &px, Some(105.0));
+        assert!(out.contains("bar"), "the reopen rule must name the band it is read against: {out}");
+        assert!(out.contains("p95") && out.contains("refused pool"), "and say what the band IS: {out}");
+        assert!(out.contains("(#329)"), "carrying the receipt that amended it: {out}");
+        assert!(!out.contains("within 0.1"), "the superseded flat bar must not still be advertised: {out}");
+        assert!(out.contains("worst within 1.0"), "the worst-window leg is untouched and still stated: {out}");
     }
 
     /// (#323) One gap per MONTH, from the line `monthly_firsts` keeps (a later same-month line whose

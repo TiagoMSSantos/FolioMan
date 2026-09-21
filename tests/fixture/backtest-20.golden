@@ -253,22 +253,22 @@ Backtest — WALK-FORWARD score vs 20y-forward PEER-RELATIVE return (de-meaned p
 
 ── NOTCH BOOK (#324): the book each one-notch reopen would buy (cleared + that notch's cohort), every name equal-weight, held 20y ──
   cleared    n=40     book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1
-  range      n=2      book +10.5%/yr  excess +3.9  win 73%  worst -2.4  OOS +7.9/-0.1  guard pass
-  cagr       n=14     book +9.8%/yr  excess +3.2  win 83%  worst -3.7  OOS +4.4/+2.2  guard FAIL
-  1Y+        n=7      book +10.1%/yr  excess +3.6  win 71%  worst -4.9  OOS +7.6/-0.5  guard FAIL
-  stretch    n=18     book +8.8%/yr  excess +2.4  win 70%  worst -6.1  OOS +4.9/+0.0  guard FAIL
-  history    n=26     book +10.6%/yr  excess +4.1  win 81%  worst -2.8  OOS +7.0/+1.5  guard pass
-  5Y+        n=2      book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.2  guard pass
-  regime     n=8      book +9.8%/yr  excess +3.2  win 70%  worst -4.9  OOS +7.2/-0.5  guard FAIL
-  (n = samples: the cleared book's own, or what the notch adds. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y; `track` grades the same cohorts forward)
+  range      n=2      book +10.5%/yr  excess +3.9  win 73%  worst -2.4  OOS +7.9/-0.1  bar +4.7  guard FAIL
+  cagr       n=14     book +9.8%/yr  excess +3.2  win 83%  worst -3.7  OOS +4.4/+2.2  bar +4.6  guard FAIL
+  1Y+        n=7      book +10.1%/yr  excess +3.6  win 71%  worst -4.9  OOS +7.6/-0.5  bar +4.4  guard FAIL
+  stretch    n=18     book +8.8%/yr  excess +2.4  win 70%  worst -6.1  OOS +4.9/+0.0  bar +4.5  guard FAIL
+  history    n=26     book +10.6%/yr  excess +4.1  win 81%  worst -2.8  OOS +7.0/+1.5  bar +4.9  guard FAIL
+  5Y+        n=2      book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.2  bar +3.8  guard FAIL
+  regime     n=8      book +9.8%/yr  excess +3.2  win 70%  worst -4.9  OOS +7.2/-0.5  bar +4.6  guard FAIL
+  (n = samples: the cleared book's own, or what the notch adds. Guard, (#329)-amended: excess >= `bar`, the p95 of 200 same-n cohorts drawn at random from the refused pool and cutoff-matched, AND worst >= cleared -1.0, at 20y, 12y and 8y. `bar n/a` = the null could not match the cohort's shape, so the row falls back to (#324)'s flat -0.1. `track` grades the same cohorts forward)
 
 ── PROXY BOOK (#327): the cleared book split by where its history came from, every name equal-weight, held 20y ──
   own history  n=40     book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1
-  (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y)
+  (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y. Keeps (#324)'s flat bar: this row SPLITS the cleared book rather than admitting out of the refused pool, so (#329)'s matched-n null does not describe it)
 
 ── SECTOR BOOK (#328): what a top-1-per-GICS-sector door would add to the cleared book, every name equal-weight, held 20y ──
   cleared      n=40     book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1
-  (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own 5y CAGR. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y)
+  (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own 5y CAGR. Guard, (#329)-amended: excess >= `bar`, the p95 of 200 same-n refused cohorts, AND worst >= cleared -1.0, at 20y, 12y and 8y)
   all entries (SIZED)          book +10.1%/yr  excess +3.5  win 73%  worst -2.4  OOS +7.2/-0.1   (windows 22, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── DCA ROLL-AFTER-10y (#311): 96 equal monthly buys into that month's screen, all sold at 20y; the roll sells each lot at 10y, pays 28% on the gain, re-buys that month's screen; vs never-sell, after tax, money-weighted ──

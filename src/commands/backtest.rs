@@ -3212,9 +3212,13 @@ fn notch_tunings(tuning: &BuyHeuristic) -> Vec<(&'static str, BuyHeuristic)> {
 /// `book_stats`). A union is never thinner than the cleared book, so its worst window is not deep by construction,
 /// the way a thin cohort's alone was under (#323)'s guard.
 #[allow(clippy::type_complexity)]
-fn notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64))> {
+fn notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64), Option<f64>)> {
     let notches = notch_tunings(tuning);
     let mut cleared: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+    // (#329) every row the shipped gates refused, bucketed — the pool `placebo_bar` draws its null from.
+    // A notch's own cohort is a subset of this by construction and is deliberately left in it: the null
+    // asks what an ARBITRARY refused cohort of that size does, not what the complement does.
+    let mut refused: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
     let mut added: Vec<Vec<(i32, (f64, f64, f64))>> = vec![Vec::new(); notches.len()];
     for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
         let Some(br) = benchmark_fwd(&bench.0, &bench.1, s.date, years) else { continue };
@@ -3223,6 +3227,7 @@ fn notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), y
             cleared.entry(bucket(s.date)).or_default().push(row);
             continue;
         }
+        refused.entry(bucket(s.date)).or_default().push(row);
         for ((_, t), cohort) in notches.iter().zip(added.iter_mut()) {
             if growth_score(&s.quote, t).is_some() {
                 cohort.push((bucket(s.date), row));
@@ -3230,22 +3235,112 @@ fn notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), y
         }
     }
     let Some(base) = book_stats(&cleared, usize::MAX, years) else { return Vec::new() };
-    let mut rows = vec![("cleared".to_string(), cleared.values().map(Vec::len).sum(), base)];
+    let mut rows = vec![("cleared".to_string(), cleared.values().map(Vec::len).sum(), base, None)];
     for ((tag, _), cohort) in notches.iter().zip(added).filter(|(_, c)| !c.is_empty()) {
         let mut union = cleared.clone();
+        let mut shape: std::collections::BTreeMap<i32, usize> = Default::default();
         for (b, row) in &cohort {
             union.entry(*b).or_default().push(*row);
+            *shape.entry(*b).or_default() += 1;
         }
-        rows.extend(book_stats(&union, usize::MAX, years).map(|st| (tag.to_string(), cohort.len(), st)));
+        let bar = placebo_bar(&cleared, &refused, &shape, years);
+        rows.extend(book_stats(&union, usize::MAX, years).map(|st| (tag.to_string(), cohort.len(), st, bar)));
     }
     rows
+}
+
+/// (#329) Draws behind the placebo band, and its seed. BOTH FIXED BEFORE THE FIRST RUN and not to be
+/// retuned afterwards: a bar chosen once its numbers are visible decides nothing.
+const PLACEBO_DRAWS: usize = 200;
+const PLACEBO_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// (#329) xorshift64. The repo carries no random-number dependency, and the band has to read the same
+/// at any thread count for the goldens to be stable, so three lines beat pulling in a crate.
+fn next_rand(state: &mut u64) -> u64 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *state
+}
+
+/// (#329) THE MATCHED-n BAR, and the reason it had to exist. (#324)'s guard reads `union.2 >= cleared.2
+/// - 0.1` off the UNION book, but a cohort of `n` names only carries weight `w = n/(cleared+n)` in that
+/// union, so the union moves `w * (cohort - cleared)` and the bar on the COHORT is really
+/// `cohort >= cleared - 0.1/w`. That scales with `1/n`: measured on the 8y fund pit (cleared n=347,
+/// excess +4.6) it demanded -12.8 of a 2-name cohort and +4.4 of a 305-name one — a 30x spread in
+/// strictness decided by cohort SIZE, not by quality. `range` could not fail it arithmetically, which is
+/// the same vacuity (#327) caught at n=1 and did not fix, and (#323)(d) named a matched-n guard as "a
+/// round of its own".
+///
+/// The fix is a null with the SAME n: draw `shape` many rows from the pool the shipped gates REFUSED and
+/// see what an arbitrary cohort of that exact size does to the union. `shape` is per ~6mo bucket, so the
+/// draw matches the real cohort's cutoff mix name for name and the comparison is quality-only — a cohort
+/// concentrated in one regime is never scored against a null spread over twenty years.
+///
+/// Returns the 95th percentile (nearest-rank) of `PLACEBO_DRAWS` union excesses: the notch must beat 19
+/// of 20 arbitrary same-size cohorts. `None` when a bucket the cohort drew from has no refused rows at
+/// all, which is a shape the null cannot match; the caller then falls back to the (#324) bar and says so.
+///
+/// Draws are WITH REPLACEMENT — the standard bootstrap, and it keeps the inner loop
+/// allocation-free. Per bucket the cohort takes a handful of names from hundreds, so the collision rate
+/// is low enough to leave the percentile alone.
+///
+/// Its ceiling, stated because it flatters the notches: a random refused name may have failed five gates,
+/// while a notch admits names just past ONE boundary, so this null is GENEROUS. Drawing from near-misses
+/// only is the upgrade path and is deliberately not taken here.
+fn placebo_bar(
+    cleared: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
+    refused: &std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>>,
+    shape: &std::collections::BTreeMap<i32, usize>,
+    years: i64,
+) -> Option<f64> {
+    let mut state = PLACEBO_SEED;
+    let mut band = Vec::with_capacity(PLACEBO_DRAWS);
+    for _ in 0..PLACEBO_DRAWS {
+        let mut union = cleared.clone();
+        for (b, k) in shape {
+            let pool = refused.get(b).filter(|p| !p.is_empty())?;
+            let dst = union.entry(*b).or_default();
+            for _ in 0..*k {
+                dst.push(pool[(next_rand(&mut state) % pool.len() as u64) as usize]);
+            }
+        }
+        band.push(book_stats(&union, usize::MAX, years)?.2);
+    }
+    band.sort_by(f64::total_cmp);
+    band.get(((PLACEBO_DRAWS as f64 * 0.95).ceil() as usize).max(1) - 1).copied()
 }
 
 /// (#324) The pre-registered no-worse bar for one notch's union book against the cleared book at ONE horizon: excess
 /// within 0.1 AND worst window within 1.0 (the repo's standing no-worse bar, (#322) leg 2). A notch ships only when
 /// this holds at 20y, 12y and 8y fund pit and `track`'s forward half reads REOPEN SIGNAL.
-fn guard_holds(cleared: &(f64, f64, f64, f64, f64, f64, f64), union: &(f64, f64, f64, f64, f64, f64, f64)) -> bool {
-    union.2 >= cleared.2 - 0.1 && union.4 >= cleared.4 - 1.0
+///
+/// (#329) AMENDED: when `bar` carries a `placebo_bar` reading, the excess leg is judged against THAT
+/// instead of the flat tenth, so the strictness no longer moves with cohort size. `None` reproduces the
+/// (#324) arithmetic verbatim — that is what makes the fallback path provable rather than asserted, and
+/// it is the leg `proxy_books` keeps, since its cohort is a SPLIT of the cleared book rather than an
+/// admission out of the refused pool, so a refused-pool null would not describe it.
+///
+/// The worst-window leg is untouched. It is diluted the same way, but a deeper worst window is a real
+/// risk signal at any n, and one bar per round.
+fn guard_holds(cleared: &(f64, f64, f64, f64, f64, f64, f64), union: &(f64, f64, f64, f64, f64, f64, f64), bar: Option<f64>) -> bool {
+    let excess_ok = match bar {
+        Some(p95) => union.2 >= p95,
+        None => union.2 >= cleared.2 - 0.1,
+    };
+    excess_ok && union.4 >= cleared.4 - 1.0
+}
+
+/// (#329) The `bar` cell for one row of the three guarded tables. Lives here, not inline in the report
+/// bodies, because those carry `#[mutants::skip]` and this is a decision — which bar a reader is told
+/// the verdict was taken against — so it has to stay gradeable. The base row prints nothing: it is the
+/// thing every other row is measured against, so it has no bar of its own.
+fn bar_column(is_base: bool, bar: Option<f64>) -> String {
+    match bar {
+        _ if is_base => String::new(),
+        Some(p95) => format!("  bar {p95:+.1}"),
+        None => "  bar n/a".to_string(),
+    }
 }
 
 /// (#324) Prints `notch_books` with each row's `guard_holds`. Print-only, so `replace with ()` is unkillable; the
@@ -3253,14 +3348,15 @@ fn guard_holds(cleared: &(f64, f64, f64, f64, f64, f64, f64), union: &(f64, f64,
 #[mutants::skip]
 fn report_notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let rows = notch_books(samples, bench, years, tuning);
-    let Some((_, _, base)) = rows.first().cloned() else { return };
+    let Some((_, _, base, _)) = rows.first().cloned() else { return };
     println!("\n── NOTCH BOOK (#324): the book each one-notch reopen would buy (cleared + that notch's cohort), every name equal-weight, held {years}y ──");
-    for (l, n, st) in rows {
+    for (l, n, st, bar) in rows {
         let (b, _, e, w, wo, el, la) = st;
-        let guard = if l == "cleared" { "" } else if guard_holds(&base, &st) { "  guard pass" } else { "  guard FAIL" };
-        println!("  {l:<10} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{guard}");
+        let guard = if l == "cleared" { "" } else if guard_holds(&base, &st, bar) { "  guard pass" } else { "  guard FAIL" };
+        let bar_col = bar_column(l == "cleared", bar);
+        println!("  {l:<10} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{bar_col}{guard}");
     }
-    println!("  (n = samples: the cleared book's own, or what the notch adds. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y; `track` grades the same cohorts forward)");
+    println!("  (n = samples: the cleared book's own, or what the notch adds. Guard, (#329)-amended: excess >= `bar`, the p95 of {PLACEBO_DRAWS} same-n cohorts drawn at random from the refused pool and cutoff-matched, AND worst >= cleared -1.0, at 20y, 12y and 8y. `bar n/a` = the null could not match the cohort's shape, so the row falls back to (#324)'s flat -0.1. `track` grades the same cohorts forward)");
 }
 
 /// (#328) The index's own CAGR over the `years` ending at `date` — the door's backstop, expressed as the
@@ -3326,27 +3422,35 @@ fn stamp_sector_cohorts(samples: &mut [Sample], bench: &(Vec<chrono::NaiveDate>,
 ///
 /// The point-in-time rule is not enforced here; it lives in `stamp_sector_cohorts`, which is the only
 /// place that decides which cutoff's cohort a sample is judged against.
-fn sector_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64))> {
+fn sector_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64), Option<f64>)> {
     let armed = BuyHeuristic { growth_sector_leaders: picks::SECTOR_DOOR_K, ..tuning.clone() };
     let mut cleared: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+    let mut refused: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
     let mut added: Vec<(i32, (f64, f64, f64))> = Vec::new();
     for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
         let Some(br) = benchmark_fwd(&bench.0, &bench.1, s.date, years) else { continue };
         let row = (0.0, s.realized, br);
         if growth_score(&s.quote, tuning).is_some() {
             cleared.entry(bucket(s.date)).or_default().push(row);
-        } else if growth_score(&s.quote, &armed).is_some() {
+            continue;
+        }
+        // (#329) the door admits out of the refused pool exactly as a notch does, so the same null applies.
+        refused.entry(bucket(s.date)).or_default().push(row);
+        if growth_score(&s.quote, &armed).is_some() {
             added.push((bucket(s.date), row));
         }
     }
     let Some(base) = book_stats(&cleared, usize::MAX, years) else { return Vec::new() };
-    let mut out = vec![("cleared".to_string(), cleared.values().map(Vec::len).sum(), base)];
+    let mut out = vec![("cleared".to_string(), cleared.values().map(Vec::len).sum(), base, None)];
     if !added.is_empty() {
         let mut union = cleared.clone();
+        let mut shape: std::collections::BTreeMap<i32, usize> = Default::default();
         for (b, row) in &added {
             union.entry(*b).or_default().push(*row);
+            *shape.entry(*b).or_default() += 1;
         }
-        out.extend(book_stats(&union, usize::MAX, years).map(|st| ("sector-door".to_string(), added.len(), st)));
+        let bar = placebo_bar(&cleared, &refused, &shape, years);
+        out.extend(book_stats(&union, usize::MAX, years).map(|st| ("sector-door".to_string(), added.len(), st, bar)));
     }
     out
 }
@@ -3356,14 +3460,15 @@ fn sector_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), 
 #[mutants::skip]
 fn report_sector_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
     let rows = sector_books(samples, bench, years, tuning);
-    let Some((_, _, base)) = rows.first().cloned() else { return };
+    let Some((_, _, base, _)) = rows.first().cloned() else { return };
     println!("\n── SECTOR BOOK (#328): what a top-{}-per-GICS-sector door would add to the cleared book, every name equal-weight, held {years}y ──", picks::SECTOR_DOOR_K);
-    for (l, n, st) in rows {
+    for (l, n, st, bar) in rows {
         let (b, _, e, w, wo, el, la) = st;
-        let guard = if l == "cleared" { "" } else if guard_holds(&base, &st) { "  guard pass" } else { "  guard FAIL" };
-        println!("  {l:<12} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{guard}");
+        let guard = if l == "cleared" { "" } else if guard_holds(&base, &st, bar) { "  guard pass" } else { "  guard FAIL" };
+        let bar_col = bar_column(l == "cleared", bar);
+        println!("  {l:<12} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{bar_col}{guard}");
     }
-    println!("  (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own {}y CAGR. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y)", tuning.growth_min_leg_years.max(1.0) as i64);
+    println!("  (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own {}y CAGR. Guard, (#329)-amended: excess >= `bar`, the p95 of {PLACEBO_DRAWS} same-n refused cohorts, AND worst >= cleared -1.0, at 20y, 12y and 8y)", tuning.growth_min_leg_years.max(1.0) as i64);
 }
 
 /// (#327) How much of a young listing's life the pair is judged on. ~26 months, so `PROXY_MIN_MONTHS` (24) of
@@ -3509,10 +3614,12 @@ fn report_proxy_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f
     println!("\n── PROXY BOOK (#327): the cleared book split by where its history came from, every name equal-weight, held {years}y ──");
     for (l, n, st) in rows {
         let (b, _, e, w, wo, el, la) = st;
-        let guard = if l == "own history" { "" } else if guard_holds(&base, &st) { "  guard pass" } else { "  guard FAIL" };
+        // (#329) stays on (#324)'s flat bar: the borrowed cohort is a SPLIT of the cleared book, not an
+        // admission out of the refused pool, so a refused-pool null would not describe this row.
+        let guard = if l == "own history" { "" } else if guard_holds(&base, &st, None) { "  guard pass" } else { "  guard FAIL" };
         println!("  {l:<12} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{guard}");
     }
-    println!("  (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y)");
+    println!("  (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y. Keeps (#324)'s flat bar: this row SPLITS the cleared book rather than admitting out of the refused pool, so (#329)'s matched-n null does not describe it)");
 }
 
 /// (#325) The forward half of the reopen rule, replayed where no ship rule ever looked. Every graded horizon
@@ -9133,7 +9240,7 @@ mod tests {
         let (dates, _) = synthetic_universe();
         let bench = (dates.clone(), (0..dates.len()).map(|i| 1.08_f64.powf(i as f64 / 12.0)).collect());
         let rows = notch_books(&samples, &bench, 12, &tuning);
-        let got: Vec<(&str, usize)> = rows.iter().map(|(l, n, _)| (l.as_str(), *n)).collect();
+        let got: Vec<(&str, usize)> = rows.iter().map(|(l, n, _, _)| (l.as_str(), *n)).collect();
         let fwd = |s: &&Sample| picks::asset_class(&s.quote) != 0 && benchmark_fwd(&bench.0, &bench.1, s.date, 12).is_some();
         let mut want = vec![("cleared", samples.iter().filter(fwd).filter(|s| growth_score(&s.quote, &tuning).is_some()).count())];
         for (tag, _, loosen) in picks::gate_notches() {
@@ -9150,8 +9257,20 @@ mod tests {
         for (b, pin) in book.iter().zip([24.591905072812, 24.473134675704, 25.537195954510, 24.478451418977]) {
             assert!((b - pin).abs() < 1e-9, "{book:?}");
         }
-        let verdicts: Vec<bool> = rows[1..].iter().map(|r| guard_holds(&rows[0].2, &r.2)).collect();
-        assert_eq!(verdicts, [false, true, false], "{rows:?}");
+        // (#324)'s flat bar is unchanged by (#329) — passing None must reproduce it digit for digit.
+        let flat: Vec<bool> = rows[1..].iter().map(|r| guard_holds(&rows[0].2, &r.2, None)).collect();
+        assert_eq!(flat, [false, true, false], "{rows:?}");
+        // (#329) every cohort row carries a matched-n band; only the base row has none.
+        assert!(rows[0].3.is_none(), "the cleared row is what the others are measured against");
+        assert!(rows[1..].iter().all(|r| r.3.is_some()), "{rows:?}");
+        // ...and the band must actually CHANGE the board, or it is a column nobody reads. Cleared
+        // excess is 16.5919, so the flat bar asks 16.4919 of all three alike. `cagr` (n=16, union
+        // 16.4731) misses that by 0.019 and clears its own 16.2151 band; `history` (n=11, union
+        // 16.4785) is refused by both — a smaller cohort drawing a STRICTER bar (16.4811) than the
+        // larger one, which is the n-bias running the other way and exactly what (#329) removes.
+        let banded: Vec<bool> = rows[1..].iter().map(|r| guard_holds(&rows[0].2, &r.2, r.3)).collect();
+        assert_eq!(banded, [true, true, false], "{rows:?}");
+        assert_ne!(banded, flat, "a band that never overrules the flat bar is not worth printing");
         assert!(notch_books(&samples, &(Vec::new(), Vec::new()), 12, &tuning).is_empty());
     }
 
@@ -9289,7 +9408,7 @@ mod tests {
         assert_eq!(got[0].1 + got[1].1, 158, "the split moves samples, it never invents or drops them");
         assert!(got[1].1 > 0 && got[1].1 <= borrowed);
         // and the guard reads off the pair the same way the notch shadow does
-        assert_eq!(guard_holds(&rows[0].2, &rows[1].2), rows[1].2 .2 >= rows[0].2 .2 - 0.1 && rows[1].2 .4 >= rows[0].2 .4 - 1.0);
+        assert_eq!(guard_holds(&rows[0].2, &rows[1].2, None), rows[1].2 .2 >= rows[0].2 .2 - 0.1 && rows[1].2 .4 >= rows[0].2 .4 - 1.0);
         assert!(proxy_books(&samples, &(Vec::new(), Vec::new()), 12, &tuning).is_empty());
     }
 
@@ -9324,10 +9443,85 @@ mod tests {
     /// (#324) The guard's two bars, each at its exact boundary and just past it.
     #[test]
     fn guard_holds_is_excess_within_a_tenth_and_worst_within_one() {
-        let at = |e: f64, w: f64| guard_holds(&(0.0, 0.0, 1.0, 0.0, -5.0, 0.0, 0.0), &(0.0, 0.0, e, 0.0, w, 0.0, 0.0));
+        let at = |e: f64, w: f64| guard_holds(&(0.0, 0.0, 1.0, 0.0, -5.0, 0.0, 0.0), &(0.0, 0.0, e, 0.0, w, 0.0, 0.0), None);
         assert!(at(0.9, -6.0));
         assert!(!at(0.89, -6.0));
         assert!(!at(0.9, -6.01));
+    }
+
+    /// (#329) The amended excess leg: a supplied band REPLACES `cleared - 0.1` and ignores the cleared
+    /// row entirely, while `None` falls back to (#324)'s arithmetic. The worst-window leg answers to
+    /// neither — it is the one bar this round left alone.
+    #[test]
+    fn guard_holds_uses_the_band_when_one_is_supplied() {
+        let at = |e: f64, w: f64, bar: Option<f64>| guard_holds(&(0.0, 0.0, 1.0, 0.0, -5.0, 0.0, 0.0), &(0.0, 0.0, e, 0.0, w, 0.0, 0.0), bar);
+        // a band STRICTER than the flat bar refuses what the flat bar waved through
+        assert!(at(0.9, -6.0, None) && !at(0.9, -6.0, Some(2.0)));
+        // and a band LOOSER than it admits what the flat bar refused — the reopen direction
+        assert!(!at(0.5, -6.0, None) && at(0.5, -6.0, Some(0.4)));
+        // exactly at the band passes, a hair under does not
+        assert!(at(2.0, -6.0, Some(2.0)) && !at(1.99, -6.0, Some(2.0)));
+        // the worst-window leg still refuses, whichever bar the excess leg is read against
+        assert!(!at(9.9, -6.01, Some(0.0)) && !at(9.9, -6.01, None));
+    }
+
+    /// (#329) `n` identical rows in bucket `b`: realized `r`%, benchmark `bench`%. At `years = 1` `ann`
+    /// is the identity, so `book_stats` reads excess straight off `r - bench` and every number in the
+    /// band tests below is hand-checkable rather than blessed.
+    fn band_book(b: i32, n: usize, r: f64, bench: f64) -> std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> {
+        [(b, vec![(0.0, r, bench); n])].into_iter().collect()
+    }
+
+    /// (#329) THE CLAIM THE ROUND RESTS ON. (#324)'s flat `cleared - 0.1` is read off the UNION, so the
+    /// bar it puts on a COHORT is `cleared - 0.1/w` and scales with `1/n`. The matched-n band does not:
+    /// it tracks the book closely when the cohort is tiny, and falls away as the cohort grows, which is
+    /// exactly the bias being removed. Shaped like the 8y fund pit (cleared excess +4.6).
+    #[test]
+    fn placebo_bar_is_stricter_at_small_n_and_looser_at_large_n() {
+        let cleared = band_book(0, 200, 14.6, 10.0); // excess +4.6
+        let refused = band_book(0, 200, 10.0, 10.0); // arbitrary refused names: excess 0.0
+        let flat = 4.6 - 0.1; // what (#324) would have demanded of EVERY cohort, whatever its size
+        let bar = |k: usize| placebo_bar(&cleared, &refused, &[(0, k)].into_iter().collect(), 1).unwrap();
+        let (small, large) = (bar(2), bar(100));
+        // 2 names can barely move a 200-name book, so an arbitrary pair already lands near +4.6 —
+        // the bar TIGHTENS, and `range`'s free pass at n=2 dies.
+        assert!(small > flat, "a 2-name cohort must answer to a bar near the book, got {small}");
+        // 100 names dilute it heavily, so demanding +4.5 there was charging for SIZE, not quality.
+        assert!(large < flat, "a 100-name cohort must not be refused for being large, got {large}");
+        assert!(small > large, "the band must fall away with n: {small} vs {large}");
+    }
+
+    /// (#329) The seed is reset per call, so the band is reproducible — without that the goldens move
+    /// under their own feet. And with a refused pool that VARIES, the draw is what decides the answer:
+    /// a p95 must sit above the all-names mean and strictly inside the best/worst cohorts, which is
+    /// what shows the sampler ran at all rather than returning a constant.
+    #[test]
+    fn placebo_bar_is_deterministic_and_actually_samples() {
+        let cleared = band_book(0, 200, 14.6, 10.0);
+        let refused: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> =
+            [(0, (0..200).map(|i| (0.0, i as f64, 10.0)).collect())].into_iter().collect();
+        let shape: std::collections::BTreeMap<i32, usize> = [(0, 20)].into_iter().collect();
+        let (a, b) = (placebo_bar(&cleared, &refused, &shape, 1).unwrap(), placebo_bar(&cleared, &refused, &shape, 1).unwrap());
+        assert_eq!(a.to_bits(), b.to_bits(), "two calls must agree bit for bit, got {a} then {b}");
+        // 20 rows drawn from realized 0..199 onto a 200-row book at 14.6: mean case 12.32, extremes 3.27 / 21.36
+        assert!(a > 12.32, "a p95 sits above the mean cohort, got {a}");
+        assert!(a < 21.36, "and below the richest cohort the pool can supply, got {a}");
+    }
+
+    /// (#329) The null has to match the cohort's CUTOFF SHAPE, not just its size — otherwise a cohort
+    /// concentrated in one regime is scored against a null spread over twenty years. A bucket the cohort
+    /// drew from with no refused rows is a shape the pool cannot fill, so the band refuses to guess and
+    /// the caller falls back to (#324)'s bar. An empty cohort dilutes nothing and reads the book itself.
+    #[test]
+    fn placebo_bar_refuses_a_shape_the_refused_pool_cannot_fill() {
+        let cleared: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> =
+            [(0, vec![(0.0, 14.6, 10.0); 100]), (1, vec![(0.0, 14.6, 10.0); 100])].into_iter().collect();
+        let refused = band_book(0, 200, 10.0, 10.0); // bucket 1 is empty
+        let spans_both: std::collections::BTreeMap<i32, usize> = [(0, 5), (1, 5)].into_iter().collect();
+        assert!(placebo_bar(&cleared, &refused, &spans_both, 1).is_none(), "bucket 1 has no refused rows to draw");
+        assert!(placebo_bar(&cleared, &refused, &[(0, 5)].into_iter().collect(), 1).is_some(), "bucket 0 alone can be matched");
+        let empty = placebo_bar(&cleared, &refused, &Default::default(), 1).unwrap();
+        assert!((empty - 4.6).abs() < 1e-9, "no cohort, no dilution — the band is the book, got {empty}");
     }
 
     /// The OFFLINE half of the backtest gate. `backtest_edge_holds` (tests/network.rs) asserts two
