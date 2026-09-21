@@ -545,17 +545,24 @@ fn near_section(
         })
         .collect();
     let body = rows.join("\n");
+    // (#330) the deciding basket, read from the one constant the backtest publishes it at, so the two
+    // surfaces cannot state different rules.
+    let top = crate::commands::backtest::VERDICT_TOP;
     format!(
         "\n  Notch shadow — the names each run would have added had ONE gate loosened one sweep notch (the\n  \
          screen's notch lines), equal-weight, same windows. A cohort that keeps beating the bought book is\n  \
          a gate refusing winners. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\n\
          {TABLE_HEADER}\n{body}\n\n  \
          Per notch, one line a month, cohort minus the book that line bought. Receipt (#324), bar amended\n  \
-         by (#329): that notch ships when {REOPEN_LINES}+ lines read mean AND median above 0 AND its\n  \
-         backtest NOTCH BOOK row (cleared + cohort) holds excess at or above that row's `bar` — the p95 of\n  \
-         same-size cohorts drawn at random from the refused pool — and worst within 1.0 of cleared, at 20y,\n  \
-         12y and 8y. The old flat 0.1 was read off the union, so it asked -12.8 of a 2-name cohort and\n  \
-         +4.4 of a 305-name one; the band asks the same of both.{gates}"
+         by (#329) and basket by (#330): that notch ships when {REOPEN_LINES}+ lines read mean AND median\n  \
+         above 0 AND its backtest NOTCH BOOK row reads `ship pass` at the top-{top} basket — the\n  \
+         one the journaled verdict publishes, where a cohort name must OUTRANK an incumbent to be bought —\n  \
+         holding excess at or above that column's `bar`, the p95 of same-size cohorts drawn at random from\n  \
+         the refused pool, and worst within 1.0 of cleared, at 20y, 12y and 8y. The old flat 0.1 was read\n  \
+         off the union, so it asked -12.8 of a 2-name cohort and +4.4 of a 305-name one; the band asks the\n  \
+         same of both. The uncapped column it was read on charged every admit at full weight, so any\n  \
+         below-mean cohort had to drag it — arithmetic, not evidence; `ship inert` is a cohort the\n  \
+         published book never buys at all.{gates}"
     )
 }
 
@@ -1313,6 +1320,29 @@ mod tests {
         assert!(out.contains("(#329)"), "carrying the receipt that amended it: {out}");
         assert!(!out.contains("within 0.1"), "the superseded flat bar must not still be advertised: {out}");
         assert!(out.contains("worst within 1.0"), "the worst-window leg is untouched and still stated: {out}");
+    }
+
+    /// (#330) AND THE SAME BASKET. The bar was only half the instrument: (#324)..(#329) read it off the
+    /// UNCAPPED union, where every admit is bought at full weight and any below-mean cohort must drag the
+    /// book by arithmetic. The verdict now comes from the top-`VERDICT_TOP` basket the tool actually
+    /// publishes, and a reader of `track` has to be told which book was graded — otherwise the forward
+    /// half keeps quoting a rule the backtest half stopped applying, which is exactly the drift (#329)
+    /// caught a round too late to be comfortable about.
+    #[test]
+    fn notch_reopen_text_cites_the_ship_basket() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| (t == "UP" || t == "NC").then_some(110.0);
+        let line = with_near(
+            with_sized(snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))]), &[("UP", 30.0)]),
+            &[("NC", Some(100.0), "cagr")],
+        );
+        let out = near_section(&[line], today, &px, Some(105.0));
+        let basket = format!("top-{}", crate::commands::backtest::VERDICT_TOP);
+        assert!(out.contains(&basket), "the rule must name the basket it is decided at ({basket}): {out}");
+        assert!(out.contains("ship pass"), "and the verdict cell a reader would go and look at: {out}");
+        assert!(out.contains("ship inert"), "including the third verdict, which is the point of (#330): {out}");
+        assert!(out.contains("(#330)"), "carrying the receipt that amended it: {out}");
+        assert!(out.contains("OUTRANK"), "and why a capped basket is a different question: {out}");
     }
 
     /// (#323) One gap per MONTH, from the line `monthly_firsts` keeps (a later same-month line whose

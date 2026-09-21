@@ -6485,6 +6485,115 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#330) ROUND 113: THE ADMISSION GUARD WAS GRADING A BOOK THE TOOL NEVER PUBLISHES. RE-READ AT THE
+  # SHIP BASKET, A 2-NAME COHORT MOVES MORE THAN A 305-NAME ONE, AND `peg`'S THREE REOPENS EVAPORATE.
+  # WHAT SET THE ROUND. (#329) fixed the BAR the notch board is read against and the board still refused
+  # every admission. This round audited the RULER instead. `book_stats(book, n, years)` takes a basket and
+  # keeps the top-n by rank key per ~6mo bucket. Every table passes a real one — the journaled verdict
+  # passes VERDICT_TOP (10), SIZED passes the live `Sizing` — EXCEPT the three that decide admissions
+  # (NOTCH BOOK, SECTOR BOOK, PROXY BOOK), which passed `usize::MAX`.
+  #
+  # THE DEFECT, AS ARITHMETIC. Uncapped, every admit is bought at FULL WEIGHT, so the union is a plain
+  # weighted average and ANY cohort whose mean sits below the book's MUST drag it. The refusal is
+  # arithmetic, not evidence. It is (#329)'s defect one level up: (#329) corrected the bar for cohort
+  # size, but the ruler still priced HOW MANY names a notch admits instead of HOW GOOD ITS BEST ARE.
+  #
+  # THE FIX. Each row is now read at two baskets: uncapped (kept verbatim, so every banked receipt stays
+  # readable against the same number) and at VERDICT_TOP, where a cohort name must OUTRANK an incumbent to
+  # be bought. The ship verdict is taken at VERDICT_TOP. Three pieces were needed:
+  #   - A REAL RANK KEY. `notch_books`/`sector_books` built every row `(0.0, realized, bench)`. Harmless
+  #     uncapped (the whole bucket is taken and a mean ignores order) and ARBITRARY at top-N. Rows now
+  #     carry the score they would be sorted by: shipped score when cleared, loosened score for a cohort.
+  #   - THE BAND DRAWN AT THE BASKET IT GRADES. `placebo_bar` -> `placebo_bars`, returning both p95s from
+  #     ONE draw sequence, so the uncapped bar is bit-identical to (#329)'s. `shape` carries the cohort's
+  #     RANKS per bucket rather than a count, and each drawn refused row inherits the rank of the cohort
+  #     row it stands in for — outcomes shuffled, positions held. Without that the drawn rows carry the
+  #     refused pool's unscored key, never enter a capped basket, and every top-N band is vacuously the
+  #     cleared book.
+  #   - A THIRD VERDICT. `ship_verdict` returns inert | pass | FAIL. A cohort that never reaches the
+  #     published basket leaves the row bit-identical to cleared: it would change nothing the tool prints,
+  #     which is neither a pass nor a cost. (#324)..(#329) printed that as `guard FAIL`.
+  # PRE-REGISTERED BEFORE ANY NUMBER EXISTED: the deciding basket is VERDICT_TOP and is NOT retuned (it was
+  # pinned a priori precisely to delete a fitted parameter); the bar is (#329)'s band redrawn at the same
+  # basket; and the package arm would run ONLY if exactly one notch read `pass` at all three horizons.
+  #
+  # THE SURPRISE, AND IT IS THE FINDING: A CAPPED BASKET IS *MORE* SENSITIVE TO A SMALL COHORT, NOT LESS.
+  # Weight flips from SIZE to RANK — a name that outranks an incumbent is bought at 1/N whatever n is,
+  # where uncapped it is bought at n/(cleared+n). Measured 8y (cleared n=347, uncapped +4.6, top10 +4.4):
+  #     notch      n     uncapped   top10     what changed
+  #     range      2       +4.6      +4.4     bit-identical to cleared uncapped; MOVES at the basket
+  #     cagr     305       +3.5      +3.9     305 names drag less: only its best reach the ten slots
+  # `range`'s uncapped row is the vacuous no-op (#327) saw at n=1 and (#329) named and could not grade.
+  # The plan for this round predicted the opposite (that small cohorts would read `inert`); MEASURED, NO
+  # ROW READS `inert` AT ANY HORIZON — every cohort reaches the basket. The verdict is kept anyway: it is
+  # what stops a notch being charged for dilution the published book never pays, and it is now pinned by
+  # `inert_is_not_reported_as_a_pass_or_a_fail` and `ship_basket_ignores_a_cohort_that_never_reaches_it`.
+  #
+  # MEASURED 2026-09-21, `backtest {20,12,8} universe fund pit`, this config. `windows scored`
+  # 1112 / 2771 / 6179 — identical to (#329)'s run, no OFFLINE voiding and no pond drift this time.
+  # SHIP VERDICT AT top10, all nine notches plus the sector door:
+  #                  20y            12y             8y
+  #     notch      top10  bar    top10  bar     top10  bar
+  #     range      +0.7 +1.1     +3.4 +3.6      +4.4 +4.5      FAIL / FAIL / FAIL
+  #     cagr       +0.9 +1.3     +2.8 +3.1      +3.9 +3.6      FAIL / FAIL / PASS
+  #     1Y+        +0.3 +0.9     +3.2 +3.6      +4.4 +4.4      FAIL / FAIL / FAIL
+  #     stretch    +0.7 +2.2     +3.0 +4.2      +4.7 +5.0      FAIL / FAIL / FAIL
+  #     history    +0.4 +1.7     +2.6 +3.5      +3.9 +4.5      FAIL / FAIL / FAIL
+  #     peg           -    -     +3.3 +3.3      +4.2 +4.2      -    / FAIL / FAIL
+  #     5Y+        +0.3 +1.2     +3.2 +3.5      +4.1 +4.4      FAIL / FAIL / FAIL
+  #     regime     +0.6 +0.7     +3.0 +3.4      +4.2 +4.5      FAIL / FAIL / FAIL
+  #     sector     +0.9 +1.1     +3.1 +3.3      +3.9 +4.3      FAIL / FAIL / FAIL
+  # NOTHING CLEARS ALL THREE HORIZONS, so no notch ships and admission stays closed for the tenth round.
+  # AGAINST (#329)'S UNCAPPED BOARD, ONE VERDICT IN 27 FLIPS: `peg` at 8y, pass -> FAIL (+4.2 against a
+  # band of +4.2, lost on the unrounded figures). Every other cell agrees. The basket is therefore a
+  # CONSERVATIVE correction, not a rewrite — and the one row it moves is the one that most needed it.
+  #
+  # CORROBORATED ON THE UNSCORED TAIL. `backtest 1 long universe fund pit` (20008 windows, cleared n=621,
+  # uncapped +7.4 / top10 +7.4) — ALL NINE ROWS FAIL at the ship basket. Two readings matter:
+  #   - `peg` passed the uncapped bar at 12y, 8y AND 1y. At the published basket it fails all three
+  #     (1y: top10 +6.8 against a band of +6.9, where uncapped it read +6.5 against +6.3). ITS THREE
+  #     REOPENS WERE ARTIFACTS OF THE RULER. (#329) recorded them as reopened rather than refused and
+  #     flagged that each needed its own round; this is that answer, and it is no.
+  #   - `1Y+`, the notch (#325)'s forward rule is live on at 9 of 12 lines, fails at 20y, 12y, 8y and 1y
+  #     under both rulers. Its NOTCH TAIL row is unchanged (lines 9, mean +28.5, median +19.7): the
+  #     forward half still looks strong while both book tests say the names are below the pool they came
+  #     from. The two halves continue to disagree and the backtest leg continues to hold the gate shut.
+  #
+  # THE PACKAGE ARM DID NOT RUN, by the rule fixed before the numbers: it needed exactly one notch reading
+  # `pass` at all three horizons and no notch does. Its narrowing half is also now pointed the wrong way —
+  # see (g). `book_names` is NOT narrowed and no gate is loosened in this round.
+  #
+  # THE ROUND MOVES NO EXISTING NUMBER, proved on frozen data rather than asserted. Re-blessing gives
+  # -54/+54 lines across five goldens, and ALL 190 BOOK ROWS ARE IDENTICAL CHARACTER FOR CHARACTER THROUGH
+  # THE `bar` CELL; the only changes are the new top10 cells, `guard` -> `ship`, and three legends.
+  #
+  # HONEST EDGES. (a) BYTE-IDENTITY OF THE UNCAPPED COLUMN IS A PRINTED CLAIM, NOT A BIT CLAIM. Giving the
+  # rows a real rank key re-sorts each bucket, which re-associates the floating-point mean and moves it by
+  # tens of ULPs (~5e-14 on a value of 4.6). Invisible at one decimal, and a test pins the tolerance
+  # rather than pretending the bits agree. (b) THE CAPPED COLUMN IS DECIDED ON A MINORITY OF BUCKETS: the
+  # POOL CENSUS reports only 2 of 21, 4 of 36 and 5 of 44 buckets holding more names than the basket, and
+  # prints VACUOUS for RANKING knobs on that ground. Cohort rows still answer — a notch is POOL-CHANGING,
+  # which the census explicitly exempts — but the sensitivity comes from the buckets a cohort pushes past
+  # ten, not from all of them. (c) `book_names` (live width, 25) and VERDICT_TOP (verdict basket, 10) are
+  # DIFFERENT constants on different code paths; the top10 row is evidence about a narrower book, not a
+  # grade of `book_names`, which only the SIZED row reads. (d) The null is still drawn from the WHOLE
+  # refused pool and so is still generous ((#329)(a)); the near-miss-only null remains the upgrade path.
+  # (e) The band is in-sample by construction — it prices the INSTRUMENT, not a forward claim. (f) Three
+  # rows print a TIE to one decimal (`1Y+` 8y, `peg` 12y and 8y) and are decided on unrounded figures; the
+  # printed digits cannot adjudicate them, which is inherited from (#329) and left alone. (g) THE CLEARED
+  # BOOK ITSELF READS WORSE AT THE BASKET than uncapped — +0.6 vs +0.7, +3.4 vs +3.5, +4.4 vs +4.6, the
+  # same sign at all three horizons, i.e. concentrating into the top ten by `growth_score` costs ~0.1-0.2
+  # excess pts/yr. RECORDED AS VACUOUS, NOT AS A FINDING, because it is exactly the RANKING question the
+  # POOL CENSUS refuses to adjudicate on a saturated column (see (b)). It is the reason the package arm's
+  # narrowing half would have needed its own non-vacuous ruler, and it is a standing hint that BREADTH,
+  # not concentration, is where the remaining edge would be looked for. (h) PROXY BOOK is deliberately
+  # untouched and keeps the uncapped flat bar: its cohort SPLITS the cleared book rather than being
+  # admitted out of the refused pool, so neither the refused-pool null nor the competition story describes
+  # it. REOPEN: none. `cagr` clears 8y alone under both rulers, as it did in (#329), and one horizon is
+  # not the rule. REVERT: return the `book_stats`/`placebo_bars` call sites to `usize::MAX`, drop
+  # `BookRow`, `both_baskets`, `ship_verdict`, `percentile95` and the second column, restore the rank keys
+  # to `(0.0, ..)` and `shape` to a count, restore the three legends and the `track.rs` reopen sentence;
+  # re-bless.
   # (#329) ROUND 112: THE NO-WORSE GUARD WAS A TEST OF COHORT SIZE. MEASURED, AMENDED, AND IT REFUSED
   # THE ONE NOTCH THAT WAS THREE FORWARD LINES FROM SHIPPING.
   # WHAT SET THE ROUND, and why it is not a twelfth admission knob. Eleven rounds have moved WHICH NAMES
