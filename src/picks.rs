@@ -94,7 +94,9 @@ fn long_leg_fixed(quote: &Quote, fixed_years: u32, min_leg_years: f64) -> Option
 /// showing `life_cagr` (whole-life) while the rank ran on this (the 20/8/5 rung, capped). The `peg`
 /// COLUMN was routed here for the same reason — but the PEG *gate* was not, and that was the real
 /// last site: it read `trend_cagr` directly, so column and gate sat on two arms of this one switch.
-/// `long_cagr_pct` below closed that; nothing may divide by a CAGR without coming through here.
+/// `long_cagr_pct` below closed that; nothing may divide by a CAGR without coming through here or
+/// through `peg_cagr_pct`, which (#331) split off so the PEG denominator can carry its own window
+/// without dragging these seven readers with it.
 fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) -> f64 {
     if tuning.use_life_cagr {
         // (#3j) whole-life, listing -> as_of: the `cagr` COLUMN's number, promoted from display to rank.
@@ -156,6 +158,32 @@ fn life_leg_cagr(quote: &Quote) -> Option<f64> {
 /// alternative is inventing a growth figure to divide by.
 pub fn long_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
     long_leg_fixed(quote, tuning.fixed_cagr_years, tuning.growth_min_leg_years).map(|(cum, years)| long_cagr_from(quote, tuning, cum, years))
+}
+
+/// (#331) The CAGR every PEG divides by — the SAME rungs as `long_cagr_pct`, but its OWN window.
+/// `peg_cagr_years` when set, otherwise `fixed_cagr_years` (0 = the age ladder, today's behaviour),
+/// so the shipped config is byte-identical to before this existed.
+///
+/// WHY IT IS A SECOND FUNCTION AND NOT A SECOND CALL SITE. `growth_max_peg` divides by the rung the
+/// AGE ladder picked, which makes the `peg` cell report how long ago a company was good: AMZN priced
+/// on a 20Y rate it last delivered around 2015 printed CHEAPER (1.63) than VRT compounding six times
+/// faster today (1.70), and the ceiling admitted the wrong one of the two. `fixed_cagr_years` fixes
+/// exactly that and was REFUSED at 5, 8 and 10 — not because pinning the PEG window is wrong, but
+/// because that knob pins `long_cagr_from`, whose seven readers include `trend` and `accel`, and the
+/// measured damage was a rank-1 winner's curse monotone in how much the pin shortens an old name's
+/// leg. Splitting the window is what lets the valuation question be asked without re-asking the
+/// ranking one; (#51) and (#266) each name this as the only surviving version of the idea.
+///
+/// ONE definition for both lanes (non-negotiable #4): the equity PEG (`core::peg_yield`, filled live
+/// in `fetch`, as-of in `backtest`, mirrored in `report`) and the fund look-through PEG
+/// (`fund_peg_yield`) all come through here, so the served and graded numbers cannot drift apart —
+/// the same bargain `long_cagr_pct` itself was extracted to make.
+///
+/// None when the quote has no long leg at all, exactly as `long_cagr_pct`: the cell prints `n/a` and
+/// the ceiling declines to price the name, rather than inventing a growth figure to divide by.
+pub fn peg_cagr_pct(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
+    let window = if tuning.peg_cagr_years > 0 { tuning.peg_cagr_years } else { tuning.fixed_cagr_years };
+    long_leg_fixed(quote, window, tuning.growth_min_leg_years).map(|(cum, years)| long_cagr_from(quote, tuning, cum, years))
 }
 
 /// (#192) The CAGR floor `growth_min_cagr` judges THIS quote against — one definition, three readers.
@@ -369,7 +397,7 @@ impl From<f64> for FundPe {
 /// is not a verdict. Reads `.pe` without caring whether it was measured or borrowed: that is the point of
 /// borrowing, and `FundPe::from` carries the provenance to the places that must show it.
 pub fn fund_peg_yield(quote: &Quote, tuning: &BuyHeuristic, fund_pe: &FundPeMap) -> Option<f64> {
-    core::peg_yield_from_pe(fund_pe.get(&quote.ticker)?.pe, long_cagr_pct(quote, tuning))
+    core::peg_yield_from_pe(fund_pe.get(&quote.ticker)?.pe, peg_cagr_pct(quote, tuning))
 }
 
 /// (#3h) The long-leg CAGR as a trend reward takes it: clamped at `long_trend_cap`, unless the cap is
@@ -2325,6 +2353,14 @@ pub fn growth_down_year_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f6
 /// (which divides by it). So the pin's casualties come out of different gates name by name, and the only
 /// thing they share is the counterfactual. Asking "who fails the cagr gate" would miss every name the pin
 /// pushed through `peg` or `calmar` instead, and would also indict names that fail that gate anyway.
+///
+/// (#331) `peg_cagr_years` IS INVISIBLE HERE, BY CONSTRUCTION — and that is a property to preserve, not a
+/// gap to close. This counterfactual re-runs `gate_failures` over the SAME quote, and the PEG fence reads
+/// the STORED `fund.peg_yield`, filled upstream by the three fill sites rather than re-derived per tuning.
+/// So a PEG-window pin cannot change either arm and `broke` comes back empty. The same property is what
+/// lets the backtest grade that knob at all (it re-fills the field as-of), and it is asserted by
+/// `peg_window_moves_the_peg_not_the_score`. If the PEG fence is ever made to re-derive, that test fires
+/// and this block needs the second counterfactual.
 ///
 /// THE CASE THAT PROMPTED IT: at `fixed_cagr_years: 8`, AMZN is scored on its 8Y leg (+15.0%/yr,
 /// 2018-07 -> 2026-07) rather than its 20Y one (+30.4%/yr, $1.34 -> $271.58). A 15.4pp haircut moves it
@@ -9984,6 +10020,98 @@ mod tests {
         }
 
         assert_eq!(rank_robustness(&pool, &t, 64), spread, "seeded: the same universe reproduces exactly");
+    }
+
+    /// (#331) THE ROUND'S CENTRAL CLAIM: `peg_cagr_years` moves the PEG denominator and leaves the
+    /// ranking leg exactly where it was. `fixed_cagr_years` was refused at 5, 8 and 10 precisely because
+    /// it could not do this — it pins `long_cagr_from`, whose seven readers include `trend` and `accel`,
+    /// and the measured damage was a rank-1 winner's curse. A mutant that points `peg_cagr_pct` back at
+    /// `fixed_cagr_years`, or that lets the new window reach `long_cagr_pct`, re-creates that bundle
+    /// silently; only this asymmetry catches it.
+    #[test]
+    fn peg_window_splits_from_the_ranking_leg() {
+        let mut q = gate_fixture();
+        // the AMZN shape: a flattering long rung over a mediocre recent one
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 300.0), ("20Y", 20000.0)]);
+        let (leg8, leg20) = (core::cagr(300.0, 8.0), core::cagr(20000.0, 20.0));
+        assert!(leg20 > leg8 + 5.0, "fixture must carry two legs worth telling apart: {leg8} vs {leg20}");
+
+        let base = BuyHeuristic::default();
+        let peg8 = BuyHeuristic { peg_cagr_years: 8, ..base.clone() };
+
+        assert!((peg_cagr_pct(&q, &peg8).unwrap() - leg8).abs() < 1e-9, "the PEG denominator takes the pinned window");
+        assert!((long_cagr_pct(&q, &peg8).unwrap() - leg20).abs() < 1e-9, "the ranking leg keeps the age ladder");
+        assert_eq!(long_cagr_pct(&q, &peg8), long_cagr_pct(&q, &base), "the ranking leg must not feel the PEG window at all");
+    }
+
+    /// (#331) The neutrality proof non-negotiable #1 asks for: at the shipped `peg_cagr_years: 0` the new
+    /// window INHERITS the ranking one, at every value of `fixed_cagr_years`, so the knob's existence
+    /// cannot move a served or graded number. This is what makes an unchanged golden the round's evidence.
+    #[test]
+    fn peg_window_zero_inherits_the_ranking_window() {
+        let mut q = gate_fixture();
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 300.0), ("10Y", 500.0), ("20Y", 20000.0)]);
+        for pin in [0, 5, 8, 10, 20] {
+            let t = BuyHeuristic { fixed_cagr_years: pin, peg_cagr_years: 0, ..BuyHeuristic::default() };
+            assert_eq!(peg_cagr_pct(&q, &t), long_cagr_pct(&q, &t), "at 0 the PEG window must inherit the ranking one (fixed_cagr_years: {pin})");
+        }
+        assert_eq!(BuyHeuristic::default().peg_cagr_years, 0, "the knob ships OFF — non-negotiable #1");
+    }
+
+    /// (#331) THE SAFETY PROPERTY, and the structural fact the whole round rests on: `growth_score` is
+    /// INVARIANT to `peg_cagr_years`, because the PEG fence reads the STORED `fund.peg_yield` rather than
+    /// re-deriving it. The window reaches the book through the three FILL sites (live enrich, backtest
+    /// loop, report mirror), which is also why `backtest ... universe fund pit` can grade it — and why
+    /// `pin_dropped`'s counterfactual cannot see it. The AMZN case is reproduced end to end: refilled on
+    /// the 8Y window the same name crosses the same ceiling, with its score untouched.
+    #[test]
+    fn peg_window_moves_the_peg_not_the_score() {
+        let mut q = gate_fixture();
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 300.0), ("10Y", 500.0), ("20Y", 20000.0)]);
+        let base = BuyHeuristic { growth_min_cagr: 0.0, ..BuyHeuristic::default() };
+        let want = growth_score(&q, &base);
+        assert!(want.is_some(), "the fixture must RANK, or the invariance below is vacuous");
+
+        for pin in [5, 8, 10] {
+            let t = BuyHeuristic { peg_cagr_years: pin, ..base.clone() };
+            assert_eq!(growth_score(&q, &t), want, "peg_cagr_years {pin} must not move the score — that is the whole point of splitting the window");
+            assert_ne!(peg_cagr_pct(&q, &t), peg_cagr_pct(&q, &base), "...while it DOES move the PEG denominator (pin {pin})");
+        }
+
+        // END TO END. eps 1.00 at a price of 100 -> earnings yield 1%, so peg_yield IS the CAGR and the
+        // printed PEG is 100/CAGR: 3.33 on the 20Y rung, 5.29 on the 8Y one. A ceiling between the two
+        // admits the name on its stale rate and refuses it on its current one — the AMZN row, exactly.
+        let fill = |t: &BuyHeuristic| core::peg_yield(Some(1.0), peg_cagr_pct(&q, t), 100.0);
+        let (loose, pinned) = (fill(&base).unwrap(), fill(&BuyHeuristic { peg_cagr_years: 8, ..base.clone() }).unwrap());
+        assert!(100.0 / loose < 4.0 && 100.0 / pinned > 4.0, "PEG must straddle the ceiling: {:.2} vs {:.2}", 100.0 / loose, 100.0 / pinned);
+
+        let ceiling = BuyHeuristic { growth_max_peg: 4.0, ..base.clone() };
+        let with_peg = |p: f64| {
+            let mut q = q.clone();
+            q.fund = Some(core::FundFactors { peg_yield: Some(p), ..Default::default() });
+            q
+        };
+        assert!(growth_score(&with_peg(loose), &ceiling).is_some(), "filled on the stale long rung, the name clears the ceiling");
+        assert!(growth_score(&with_peg(pinned), &ceiling).is_none(), "refilled on its 8Y record, the SAME name is too dear — the admission the window changes");
+    }
+
+    /// (#331) One PEG definition across both lanes (non-negotiable #4). The fund look-through PEG divides
+    /// by the same `peg_cagr_pct`, so the ETF trim and the equity ceiling cannot drift onto two windows —
+    /// the failure this repo already had once, when the `peg` COLUMN and the PEG GATE sat on two arms of
+    /// the same switch and the tool cut a name at 2.02 in the run it ranked one printing 2.51.
+    #[test]
+    fn fund_peg_yield_follows_the_peg_window() {
+        let mut q = core_etf("F.L", "Broad UCITS ETF Acc", 5e9, 0.07);
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 300.0), ("20Y", 20000.0)]);
+        let pe: FundPeMap = [("F.L".to_string(), FundPe { pe: 25.0, from: None, as_of: None })].into_iter().collect();
+
+        let base = BuyHeuristic::default();
+        let peg8 = BuyHeuristic { peg_cagr_years: 8, ..base.clone() };
+        let (free, pinned) = (fund_peg_yield(&q, &base, &pe).unwrap(), fund_peg_yield(&q, &peg8, &pe).unwrap());
+        assert_ne!(free.to_bits(), pinned.to_bits(), "the fund PEG must follow the PEG window too, or the two lanes divide by different CAGRs");
+        assert!(pinned < free, "the shorter, weaker leg makes the fund look DEARER: {free} -> {pinned}");
+        // and it is the SAME number `peg_cagr_pct` produces — not a re-derivation that can drift
+        assert_eq!(pinned.to_bits(), core::peg_yield_from_pe(25.0, peg_cagr_pct(&q, &peg8)).unwrap().to_bits());
     }
 
     /// (#54) `pin_dropped` must name exactly the cohort the CAGR pin costs, and nobody else. The pin

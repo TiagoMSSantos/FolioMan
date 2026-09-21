@@ -1371,7 +1371,7 @@ pub async fn run(args: Vec<String>) {
                             // until 2026-07-27. backtest_quote fills `perf`, `life_cagr` AND `trend_cagr` at
                             // this cutoff, so every arm of that switch is reconstructable as-of and
                             // train==serve still holds. Keep this in lockstep with fetch.rs's enrich.
-                            f.peg_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, picks::long_cagr_pct(&quote, tuning), p));
+                            f.peg_yield = px.and_then(|p| core::peg_yield(f.eps_ttm, picks::peg_cagr_pct(&quote, tuning), p));
                         }
                         // (G) fold the as-of factor INTO the growth lane so growth_fund_weight is ablatable.
                         // WHICH factor is config-driven (`growth_fund_factor`, default "rev_accel") — set it

@@ -1475,7 +1475,7 @@ pub async fn enrich_fund_factor(client: &Client, urls: &Urls, quotes: &mut [core
         // trend_cagr until 2026-07-27, which under `use_life_cagr: true` is a different arm of the
         // same switch the `peg` COLUMN follows: the gate cut APH at 2.02 while ranking ODFL at 2.51.
         // The backtest loop and report.rs mirror this exact call; all three must move together.
-        ff.peg_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, crate::picks::long_cagr_pct(q, tuning), p));
+        ff.peg_yield = price.and_then(|p| core::peg_yield(ff.eps_ttm, crate::picks::peg_cagr_pct(q, tuning), p));
         q.fund_factor = core::select_fund_factor(&ff, factor);
         // (G+) carry the whole struct so `growth_fund_extra`'s named terms resolve here too. Set AFTER
         // the price-dependent fields above, or the extra terms would read a half-built earnings_yield.

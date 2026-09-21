@@ -6485,6 +6485,130 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#331) ROUND 114: THE PEG DENOMINATOR GOT ITS OWN WINDOW. IT CAN ONLY EVICT, ALL THREE RUNGS ARE
+  # REFUSED, AND THE INSTRUMENT SHIPS AT 0.
+  # WHAT SET THE ROUND, and why it was owed. `growth_max_peg: 1.6` is the growth lane's only valuation
+  # control (`growth_value_weight` is 0.0) and it divided by `picks::long_cagr_pct` — the rung the AGE
+  # LADDER picked. (#51) banked the defect live:
+  #     name   age     rung   that rung's rate   its last 5y   printed PEG   verdict at 1.6
+  #     AMZN   29.2y   20Y    +23.4%/yr             +4.7%/yr   1.63          ADMITTED
+  #     VRT     8.0y    8Y    +47.9%/yr            +65.4%/yr   1.70          REFUSED
+  # AMZN divided its P/E by a rate it last delivered around 2015 and printed CHEAPER than a name compounding
+  # six times faster today — "not a valuation number, an age number". TWO receipts named the surgical fix and
+  # NEITHER BUILT IT: (#51) ("a SEPARATE window for the PEG denominator alone ... the only version of this
+  # idea still alive") and (#266) ("a PEG not divided by `long_cagr_pct`"). This round is that fix.
+  #
+  # WHAT WAS BUILT: ONE CHOKEPOINT, FOUR REPOINTED FILLS (non-negotiable #4). `picks::peg_cagr_pct` takes
+  # `peg_cagr_years` when set, else `fixed_cagr_years`, else the age ladder — the same rungs, its own window.
+  # The four PEG fills route through it (`picks::fund_peg_yield`, `fetch.rs`, `backtest.rs` — the graded path
+  # — and `report.rs`); `long_cagr_pct` keeps ALL SEVEN of its readers (the `growth_min_cagr` gate, trend,
+  # accel, sharpe, calmar, trend_health, the LEG column). THAT ASYMMETRY IS THE ROUND, and it is why this is
+  # not `fixed_cagr_years`, whose 5/8/10 rungs (#51) refused for moving all seven at once.
+  # `pin_dropped` IS UNCHANGED ON PURPOSE: the PEG fence reads the STORED `fund.peg_yield`, filled upstream by
+  # the three fill sites rather than re-derived per tuning, so its counterfactual cannot see this knob at all.
+  # `peg_window_moves_the_peg_not_the_score` asserts that property and fires if the fence is ever made to
+  # re-derive. The same property is what lets the backtest grade the knob at all (it re-fills the field as-of).
+  #
+  # PRE-REGISTERED BEFORE ANY NUMBER EXISTED: the grid {0, 5, 8, 10} (exactly (#51)'s refused rungs, so the
+  # round is a clean subtraction against a banked board), Ship Rule v2 on the pit lane unmodified, default 0 =
+  # byte-identical to today, and "if two rungs pass the SMALLEST ships, never the argmax" ((#120)). Not
+  # retuned after ((#277)/(#278)).
+  #
+  # MEASURED 2026-09-21, `backtest {20,12,8} universe fund pit`, probe configs NAMED ci-settings.yaml one level
+  # under the repo root so the grandparent-anchored data dir stays the repo and the caches are shared.
+  # `windows scored` 1112 / 2771 / 6179 on every run — no OFFLINE voiding. Graded growth n, control 119 / 249 /
+  # 347; arms 119/119/119, 247/240/241, 347/339/334.
+  #     12y      book   excess(med)   worst   OOS         holds   rank-1      h2h
+  #     ctl     +10.3   +3.8 (+4.0)    -6.4   +2.1/+5.5     211   +1.6|+4.7   2/4
+  #     5       +10.3   +3.8 (+3.8)    -6.4   +2.1/+5.5     210   +1.6|+4.7   2/4
+  #     8       +10.3   +3.8 (+4.0)    -6.4   +2.1/+5.5     205   +1.1|+4.7   2/4
+  #     10      +10.5   +4.0 (+3.8)    -6.4   +2.1/+5.9     206   +1.6|+4.7   2/4
+  #      8y      book   excess(med)   worst   OOS         holds   rank-1      h2h
+  #     ctl     +12.2   +5.4 (+5.8)    -5.5   +3.6/+7.3     282   +6.2|+7.5   3/5
+  #     5       +12.0   +5.3 (+5.6)    -5.5   +3.6/+7.0     281   +6.2|+7.5   3/5
+  #     8       +12.1   +5.4 (+5.8)    -5.5   +3.6/+7.2     276   +5.6|+6.3   3/5
+  #     10      +12.3   +5.5 (+5.8)    -5.5   +3.6/+7.4     275   +6.7|+8.5   3/5
+  # AT 20y EVERY ARM IS IDENTICAL TO CONTROL ON EVERY SHIP ROW (excess +0.6 med +0.0, worst -10.0, 112 holds,
+  # rank-1 -3.5|-0.4, h2h 1/2). The knob is INERT on the 20y pit lane.
+  #
+  # FINDING 1 — THE SPLIT WINDOW CAN ONLY EVICT, AND IT IS STRUCTURAL, NOT EMPIRICAL. `long_leg_fixed` falls
+  # back to the age ladder when the pinned leg is absent, deliberately ("that name is a `trust_factor` 0.5
+  # anyway"). So a YOUNG name either already sits on the pinned rung or has no leg there and falls back —
+  # UNCHANGED EITHER WAY. Only an OLD, DECELERATING name moves, and only one direction: lower CAGR -> higher
+  # PEG -> refused. Measured, ZERO ARMS ADMIT A SINGLE NAME at any rung or horizon; every arm shrinks the book
+  # (8y holds 282 -> 281/276/275, graded n 347 -> 347/339/334; 12y holds 211 -> 210/205/206). (#51)'S
+  # ASYMMETRY HAS ONLY ONE ACTIONABLE HALF: the window can evict AMZN, and nothing about it rescues VRT, whose
+  # 1.70 was already computed on its own 8Y rung. To admit VRT you must move the CEILING, not the denominator.
+  # That closes the PEG denominator as a BREADTH lever for good — it is a quality lever or nothing — and it is
+  # the answer to the standing ask ("more assets to buy now and hold 20+ years") this round was opened under.
+  #
+  # FINDING 2 — A PRIMARY CELL PRINTED TO ONE DECIMAL HID A REAL DECLINE. Arm 8 reads `excess +5.4 (med +5.8)`
+  # at 8y, identical to control, which Ship Rule v2 scores as "held" and would PASS. But its book CAGR falls
+  # +12.2 -> +12.1%/yr against an IDENTICAL +6.7% benchmark, and OOS falls +7.3 -> +7.2. The excess cell is
+  # rounded; the adjacent columns are not. On the unrounded evidence arm 8 is DOWN at 8y and PRIMARY fails.
+  # This is (#329)'s own lesson — "byte-identity of a printed mean is a PRINTED claim, not a bit claim" —
+  # applied one level up, to the ship rule's own cell. NO RULE WAS OVERRIDDEN AND NO BAR RETUNED: a coarser
+  # column was read against a finer one. Any future round reading "held" off this table must check the book
+  # CAGR and the OOS pair beside it before calling a horizon flat.
+  #
+  # FINDING 3 — THE RANK-1 WINNER'S CURSE REPRODUCES THROUGH A GATE. Arm 8's 8y rank-1 goes +6.2|+7.5 ->
+  # +5.6|+6.3 and its 12y mean +1.6 -> +1.1 — the same signature (#51) used to refuse `fixed_cagr_years`. The
+  # round's thesis was that a PEG-ONLY window structurally EXCLUDES that mechanism, since it cannot touch
+  # trend/accel. IT DOES NOT. The gate is pool-changing, so evicting names re-composes the basket and the
+  # argmax degrades anyway. A KNOB DOES NOT HAVE TO FEED THE SCORE TO DAMAGE THE RANKING, and (#51)'s
+  # mechanism was over-attributed to the seven readers when a pool change alone is sufficient to produce it.
+  #
+  # VERDICT — Ship Rule v2, pit lane, precedence GUARD > PRIMARY > TIE, stopping at the first that fires.
+  # GUARDS HOLD FOR EVERY ARM: rank-1 h2h 50%/50%/60% at 20y/12y/8y, identical to control; top-10 worst window
+  # bit-identical at -10.0/-6.4/-5.5 everywhere.
+  #   5   NO SHIP  12y median +4.0 -> +3.8; 8y book, mean, median and OOS all down.
+  #   8   NO SHIP  12y genuinely held; 8y down on book CAGR and OOS behind a rounded-flat excess (finding 2).
+  #   10  NO SHIP  8y genuinely UP on book, excess, OOS AND rank-1 (+6.2|+7.5 -> +6.7|+8.5, win 80 -> 82%), but
+  #                12y splits INTERNALLY: mean +3.8 -> +4.0 up, median +4.0 -> +3.8 down, and PRIMARY needs
+  #                mean AND median. Not UNRESOLVED either — that clause needs one horizon cleanly UP and the
+  #                other cleanly DOWN, and a horizon split against itself is neither.
+  # ALL THREE RUNGS REFUSED. THE INSTRUMENT SHIPS AT ITS NEUTRAL DEFAULT 0, as (#327)/(#328)/(#330) each
+  # shipped a graded-and-refused knob, so the PEG denominator can be re-priced later without rebuilding it or
+  # dragging trend/accel along.
+  #
+  # THE BOARD IS BRACKETED, BECAUSE THE POND DRIFTS WITHIN A SESSION. The `fetch:` header grew monotonically
+  # with run order (5936 -> 5945 across the first grid, 5953 -> 5959 across the second) as the ISIN/TER cache
+  # warmed — upstream of this knob, which cannot touch ticker resolution. Run order and arm order were
+  # therefore perfectly confounded. So the deciding grid was RE-RUN back-to-back WITH A CONTROL AT EACH END.
+  # ctlA and ctlB are BYTE-IDENTICAL on every ship row at both 12y and 8y despite 6 tickers of drift between
+  # them, and all four arms reproduced their first-run numbers exactly. Drift moves the DCA/roll rows and the
+  # fetch header; it does NOT move the ship rows. Without that bracket the arm deltas here (0.1-0.2 pts) would
+  # have been the same size as the confound, and unreadable. Bracket a grid whose pond is still warming.
+  #
+  # LIVE, AND THE BRACKET EARNED ITS KEEP HERE TOO. Four foreground `screen` runs (a backgrounded one dies).
+  # ctlA -> ctlB ALONE swaps NVD.DE in and TEY.DE out WITH NO KNOB SET, so that swap is drift; all three arms
+  # had "shown" it against the stale control and it was never theirs. Against the correct control: arm 5 swaps
+  # ANET in / ESIF.DE out, and ARMS 8 AND 10 ARE A LIVE NO-OP. The book is 27 picks at every arm — it is
+  # CAP-BOUND, so an admission knob can only ever read as a swap here. ZERO NAMES ADDED AT ANY RUNG, live or
+  # graded, which is finding 1 confirmed on the surface the tool actually prints.
+  # THE GOLDENS DID NOT MOVE — `git status --porcelain tests/fixture/` empty at the shipped 0, the neutrality
+  # proof non-negotiable #1 asks for. No re-bless.
+  #
+  # HONEST EDGES. (a) The ETF half (`growth_max_peg_etf` via `fund_peg_yield`) is NOT backtest-gradeable —
+  # live diff only — and rides the same window on purpose (#4, one PEG definition for both lanes). (b) 20y is
+  # a GUARD only on the pit lane, (#124) puts its n_eff at ~0.2, and magnitudes are not comparable across
+  # horizons, only signs. (c) `growth_value_floor_pct: 40` is a PERCENTILE, so the denominator swap changes
+  # WHICH 40% is cut at constant count — gate-admissions and brake-swaps are separate effects and were NOT
+  # separated here. (d) (#51)'s live 1 -> 3 was measured under a FULL pin with the ranking legs moving, so it
+  # never predicted this round's live count, and did not. (e) The pinned window is PARTIAL by construction
+  # (the fallback above) and never rejects anything itself — pre-registered as a footnote, it turned out to BE
+  # finding 1. (f) Legal values are only `core::HORIZONS` {1,2,5,8,10,20}; anything else silently does
+  # nothing, and the 8Y boundary is 7.91y not 8.00. (g) The h2h GUARD denominators are 2/4/5 — it passed every
+  # arm and discriminated nothing; it is not evidence the arms are safe. (h) The POOL CENSUS tags all three
+  # columns VACUOUS; this knob is POOL-CHANGING so the (#149) clause exempts it, but that exemption is what
+  # the whole board rests on, and it is the first thing to re-check if the exemption is ever narrowed.
+  # REOPEN: rung 10. It is the only one genuinely UP at 8y — on book, excess, OOS AND rank-1 — and it dies on
+  # a single 12y median over 36 windows. A round that re-opens it needs its own pre-registered bar and should
+  # say IN ADVANCE what it does when one horizon splits mean against median, because that is exactly how this
+  # one died.
+  # REVERT: delete `peg_cagr_years` and `picks::peg_cagr_pct`, return the four fills to `long_cagr_pct`,
+  # restore `pin_dropped`'s doc paragraph and `report.rs`'s `long_cagr` naming, drop the four `peg_window_*`
+  # and `fund_peg_yield_follows_the_peg_window` tests. No golden moves either way.
   # (#330) ROUND 113: THE ADMISSION GUARD WAS GRADING A BOOK THE TOOL NEVER PUBLISHES. RE-READ AT THE
   # SHIP BASKET, A 2-NAME COHORT MOVES MORE THAN A 305-NAME ONE, AND `peg`'S THREE REOPENS EVAPORATE.
   # WHAT SET THE ROUND. (#329) fixed the BAR the notch board is read against and the board still refused
