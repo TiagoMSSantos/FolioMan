@@ -769,6 +769,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     };
 
     Quote {
+        growth_sector_floor: None, // (#328) stamped per run by the caller, never fetched
         ticker: ticker.to_string(),
         price,
         dip: format!("-{:.1}%", d),

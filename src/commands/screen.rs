@@ -1710,6 +1710,18 @@ pub async fn run(args: Vec<String>) {
     )
     .await;
     stamp_regime(&mut quotes, spx.first());
+    // (#328) the sector door's cohort, hoisted here for exactly the reason the regime stamp above is:
+    // it must sit ABOVE every `growth_score` in this function, or the live book would be gated on a
+    // door the ranking never saw. THE LIVE/BACKTEST ASYMMETRY, stated rather than buried: live has one
+    // pool and no earlier cutoff to borrow, so the cohort is the CURRENT pool's, while the backtest
+    // gates each cutoff on the PREVIOUS one. The backstop is ^GSPC's own long CAGR read through
+    // `long_cagr_pct` — the same function, the same leg rules, as the names it is compared against.
+    let bench_cagr = spx.first().and_then(|b| picks::long_cagr_pct(b, &settings.buy_heuristic));
+    let sector_cohort = match bench_cagr {
+        Some(bc) => picks::sector_floors(&quotes.iter().collect::<Vec<_>>(), &settings.buy_heuristic, picks::SECTOR_DOOR_K, bc),
+        None => Default::default(), // no index leg to compare against -> no door, rather than a guess
+    };
+    picks::stamp_sector_floors(&mut quotes, &sector_cohort);
     // (#327) the twins for the funds dying on the history gate. Read-only over the pool that was just
     // fetched, so it costs no request and cannot move THIS run's book — what it finds is journalled and
     // spliced by the next run's fetch, through the same `history_proxy` path the curated map uses.

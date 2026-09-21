@@ -264,6 +264,10 @@ Backtest — WALK-FORWARD score vs 12y-forward PEER-RELATIVE return (de-meaned p
 ── PROXY BOOK (#327): the cleared book split by where its history came from, every name equal-weight, held 12y ──
   own history  n=76     book +8.4%/yr  excess +2.2  win 53%  worst -18.5  OOS +9.5/-5.1
   (n = samples. Guard, pre-registered: a borrowed-history name must leave the book no worse — excess >= -0.1 and worst >= -1.0 against the own-history row, at 20y, 12y and 8y)
+
+── SECTOR BOOK (#328): what a top-1-per-GICS-sector door would add to the cleared book, every name equal-weight, held 12y ──
+  cleared      n=76     book +8.4%/yr  excess +2.2  win 53%  worst -18.5  OOS +9.5/-5.1
+  (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own 5y CAGR. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y)
   all entries (SIZED)          book +8.4%/yr  excess +2.2  win 53%  worst -18.5  OOS +9.5/-5.1   (windows 34, deployed 100%) [diagnostic: the book `size` funds, top-25; remainder earns the index]
 
 ── CORR-CAP probe: greedy top-10 by growth_score, skip names correlating >= cap with the kept book (36mo trailing), held 12y ──

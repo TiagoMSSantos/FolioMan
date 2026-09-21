@@ -1428,6 +1428,11 @@ pub async fn run(args: Vec<String>) {
     // (`report_lane`, `gate_audit`, the GATE SWEEP and the NOTCH books all gate through `growth_score`).
     // With the knob off this writes two fields nothing reads, and every number below is unchanged.
     stamp_regime(&mut samples, &bench);
+    // (#328) the sector door's point-in-time cohort, stamped here for the same reason and at the same
+    // point as the regime above: every report below gates through `growth_score`. With the knob off the
+    // stamp is written and never read, so each number below is unchanged — and the SECTOR BOOK row can
+    // still price the door for free by re-scoring with the knob flipped.
+    stamp_sector_cohorts(&mut samples, &bench, tuning);
 
     // `tune`: honest out-of-sample selection. Search the growth weights on an EARLY train split and
     // report the winner on a LATE test split it never saw — the only way to a trustworthy number when
@@ -1446,6 +1451,10 @@ pub async fn run(args: Vec<String>) {
         Default::default()
     };
     books.sort_by_key(|s| s.date);
+    // (#328) the DCA ruler's books are a SECOND sample set, built after the stamp above, so they need
+    // their own — otherwise the knob would move the lump-sum lane and leave the DCA lane (the ruler
+    // (#311)/(#312)/(#313) actually ship against) quietly unarmed.
+    stamp_sector_cohorts(&mut books, &bench, tuning);
 
     // (#1) de-mean realized return WITHIN each ~6-month cutoff bucket AND asset class. Pooling raw returns across cutoffs
     // that span different regimes makes the score race CALENDAR LUCK (a 2016 cutoff that mooned vs a
@@ -1769,6 +1778,7 @@ pub async fn run(args: Vec<String>) {
     // (#324) the in-sample guard for the notch shadow `track` grades forward
     report_notch_books(&samples, &bench, years, tuning);
     report_proxy_books(&samples, &bench, years, tuning);
+    report_sector_books(&samples, &bench, years, tuning);
     // (#325) the forward half, replayed on the entries no graded horizon closes (short runs only)
     report_notch_tail(&samples, years, tuning);
     // (#308) the indexes the spill's trackers follow, so the SIZED remainder earns what `size` buys with
@@ -3251,6 +3261,109 @@ fn report_notch_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f
         println!("  {l:<10} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{guard}");
     }
     println!("  (n = samples: the cleared book's own, or what the notch adds. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y; `track` grades the same cohorts forward)");
+}
+
+/// (#328) The index's own CAGR over the `years` ending at `date` — the door's backstop, expressed as the
+/// same unit the names are judged in. Built on `bench_trailing`, so it inherits that helper's guarantee
+/// of never reading past the cutoff. `None` when the series doesn't reach back a full window, which
+/// shuts the door for that cutoff rather than guessing.
+///
+/// A total wipeout makes `1 + cum/100` non-positive and `powf` returns NaN; `is_finite` is what stops
+/// that becoming a silently negative floor.
+fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::NaiveDate, years: i64) -> Option<f64> {
+    let cum = bench_trailing(&bench.0, &bench.1, date, years)?;
+    let cagr = ((1.0 + cum / 100.0).powf(1.0 / years as f64) - 1.0) * 100.0;
+    cagr.is_finite().then_some(cagr)
+}
+
+/// (#328) Stamp every sample's point-in-time sector floor. THE ONLY PLACE the PIT rule is decided, and
+/// the reason the door needs no threading: once each `Quote` carries its own floor, all ~20
+/// `growth_score` call sites in this file honour the door without being touched — the wide edit that
+/// would otherwise red the mutation gate.
+///
+/// The cohort for a cutoff is the cutoff BEFORE it. Never its own, which would let a name's own CAGR
+/// help set the bar it is then judged against; never a later one, which is plain look-ahead. The first
+/// cutoff has no predecessor, so its map is empty and the door is shut there — being one step stale is
+/// conservative by construction, and the walk therefore starts in exactly the control's behaviour.
+///
+/// The benchmark leg is `growth_min_leg_years` rather than each name's own rung. ponytail: one window
+/// for the whole cohort, because it is the only leg EVERY ranked name is guaranteed to own — a per-rung
+/// benchmark would compare a 20y name against a 20y index and a 5y name against a 5y index and call
+/// both "beat the market". Upgrade path if the row ever ships: key the cohort by (sector, rung).
+fn stamp_sector_cohorts(samples: &mut [Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), tuning: &BuyHeuristic) {
+    let leg = tuning.growth_min_leg_years.max(1.0) as i64;
+    let mut order: Vec<usize> = (0..samples.len()).collect();
+    order.sort_by_key(|&i| samples[i].date);
+    let mut floors: std::collections::BTreeMap<String, f64> = Default::default();
+    let mut cohort: Vec<Quote> = Vec::new();
+    let mut open: Option<chrono::NaiveDate> = None;
+    for i in order {
+        let date = samples[i].date;
+        if open != Some(date) {
+            // a new cutoff begins: freeze what the PREVIOUS one supplies, then start collecting this one
+            floors = match bench_leg_cagr(bench, date, leg) {
+                Some(bench_cagr) => picks::sector_floors(&cohort.iter().collect::<Vec<_>>(), tuning, picks::SECTOR_DOOR_K, bench_cagr),
+                None => Default::default(), // no full index window at this cutoff -> no door, no guess
+            };
+            cohort.clear();
+            open = Some(date);
+        }
+        cohort.push((*samples[i].quote).clone());
+        let stamp = samples[i].quote.sector.as_deref().and_then(|s| floors.get(s)).copied();
+        std::sync::Arc::make_mut(&mut samples[i].quote).growth_sector_floor = stamp;
+    }
+}
+
+/// (#328) What the sector door would buy, priced exactly the way (#324)'s notch rows and (#327)'s proxy
+/// rows are: the cleared book, then the cleared book PLUS the names the door admits, both equal-weight
+/// and held `years`, so `guard_holds` reads straight off the pair.
+///
+/// FREE AT EVERY RUN. The arm is just `tuning` with the knob flipped to the pre-registered
+/// `picks::SECTOR_DOOR_K`, because `stamp_sector_cohorts` has already written each quote's point-in-time
+/// sector floor whether or not the shipped config arms the knob. So a knob-off run is byte-identical
+/// and STILL prints what the door would have bought — which is what makes a refusal here cost nothing
+/// and keeps the row honest for future rounds.
+///
+/// The point-in-time rule is not enforced here; it lives in `stamp_sector_cohorts`, which is the only
+/// place that decides which cutoff's cohort a sample is judged against.
+fn sector_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) -> Vec<(String, usize, (f64, f64, f64, f64, f64, f64, f64))> {
+    let armed = BuyHeuristic { growth_sector_leaders: picks::SECTOR_DOOR_K, ..tuning.clone() };
+    let mut cleared: std::collections::BTreeMap<i32, Vec<(f64, f64, f64)>> = Default::default();
+    let mut added: Vec<(i32, (f64, f64, f64))> = Vec::new();
+    for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
+        let Some(br) = benchmark_fwd(&bench.0, &bench.1, s.date, years) else { continue };
+        let row = (0.0, s.realized, br);
+        if growth_score(&s.quote, tuning).is_some() {
+            cleared.entry(bucket(s.date)).or_default().push(row);
+        } else if growth_score(&s.quote, &armed).is_some() {
+            added.push((bucket(s.date), row));
+        }
+    }
+    let Some(base) = book_stats(&cleared, usize::MAX, years) else { return Vec::new() };
+    let mut out = vec![("cleared".to_string(), cleared.values().map(Vec::len).sum(), base)];
+    if !added.is_empty() {
+        let mut union = cleared.clone();
+        for (b, row) in &added {
+            union.entry(*b).or_default().push(*row);
+        }
+        out.extend(book_stats(&union, usize::MAX, years).map(|st| ("sector-door".to_string(), added.len(), st)));
+    }
+    out
+}
+
+/// (#328) Prints `sector_books` with `guard_holds`. Print-only, so `replace with ()` is unkillable; the
+/// arithmetic is tested in `sector_books` and the bar in `guard_holds`.
+#[mutants::skip]
+fn report_sector_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>), years: i64, tuning: &BuyHeuristic) {
+    let rows = sector_books(samples, bench, years, tuning);
+    let Some((_, _, base)) = rows.first().cloned() else { return };
+    println!("\n── SECTOR BOOK (#328): what a top-{}-per-GICS-sector door would add to the cleared book, every name equal-weight, held {years}y ──", picks::SECTOR_DOOR_K);
+    for (l, n, st) in rows {
+        let (b, _, e, w, wo, el, la) = st;
+        let guard = if l == "cleared" { "" } else if guard_holds(&base, &st) { "  guard pass" } else { "  guard FAIL" };
+        println!("  {l:<12} n={n:<6} book {b:+.1}%/yr  excess {e:+.1}  win {w:.0}%  worst {wo:+.1}  OOS {el:+.1}/{la:+.1}{guard}");
+    }
+    println!("  (n = samples: the cleared book's own, or what the door adds. Cohort is the PREVIOUS cutoff's stocks, backstopped at the index's own {}y CAGR. Guard, pre-registered: excess >= cleared -0.1 AND worst >= cleared -1.0 at 20y, 12y and 8y)", tuning.growth_min_leg_years.max(1.0) as i64);
 }
 
 /// (#327) How much of a young listing's life the pair is judged on. ~26 months, so `PROXY_MIN_MONTHS` (24) of
@@ -5984,6 +6097,62 @@ mod tests {
     }
     fn sample(date: NaiveDate, realized: f64) -> Sample {
         Sample { date, realized, relative: 0.0, quote: Arc::new(Quote::stub("X", "1", "", "X")), fund: None, trail: Vec::new() }
+    }
+
+    /// (#328) A stock at one cutoff with a chosen 5Y leg and GICS label — the only inputs the sector
+    /// door reads. `realized` is irrelevant here; the door is decided entirely before the forward
+    /// window opens.
+    fn sector_sample(date: NaiveDate, ticker: &str, sector: &str, five_y_cum: f64) -> Sample {
+        let mut q = Quote::stub(ticker, "€100.00", "", ticker);
+        q.instrument_type = "EQUITY".into();
+        q.avg_turnover_eur = Some(1e9);
+        q.range_pct = 90.0;
+        q.sector = Some(sector.into());
+        q.perf = crate::core::HORIZONS
+            .iter()
+            .map(|(l, _)| match *l {
+                "1M" => Some(("x".to_string(), 2.0)),
+                "1Y" => Some(("x".to_string(), 20.0)),
+                "5Y" => Some(("x".to_string(), five_y_cum)),
+                _ => None,
+            })
+            .collect();
+        Sample { date, realized: 0.0, relative: 0.0, quote: Arc::new(q), fund: None, trail: Vec::new() }
+    }
+
+    /// (#328) THE POINT-IN-TIME FREEZE, and the only place it can be checked. The door's whole claim to
+    /// not being look-ahead is that a cutoff is gated on the cohort of the cutoff BEFORE it — so:
+    ///
+    /// - the FIRST cutoff has no predecessor and must come out unstamped (door shut, control behaviour);
+    /// - the SECOND must carry a floor drawn from the FIRST cutoff's names, not from its own — a name
+    ///   must never help set the bar it is then judged against;
+    /// - a sector that only appears LATER must never reach back and stamp an earlier cutoff.
+    ///
+    /// The bench series rises steadily, so `bench_leg_cagr` resolves at every cutoff and the door is
+    /// open on the merits rather than shut by a missing index window.
+    #[test]
+    fn sector_cohort_is_frozen_at_the_previous_cutoff() {
+        let bench = (
+            vec![ymd(1995, 1, 3), ymd(2000, 1, 3), ymd(2005, 1, 3), ymd(2010, 1, 3)],
+            vec![100.0, 120.0, 140.0, 160.0],
+        );
+        let tuning = BuyHeuristic::default();
+        let mut samples = vec![
+            sector_sample(ymd(2000, 1, 3), "OLD", "Energy", 300.0),
+            sector_sample(ymd(2005, 1, 3), "MID", "Energy", 100.0),
+            sector_sample(ymd(2010, 1, 3), "NEW", "Utilities", 100.0),
+        ];
+        stamp_sector_cohorts(&mut samples, &bench, &tuning);
+
+        assert_eq!(samples[0].quote.growth_sector_floor, None, "the first cutoff has no predecessor -> door shut");
+
+        let from_old = picks::long_cagr_pct(&samples[0].quote, &tuning).expect("OLD has a 5Y leg");
+        let own = picks::long_cagr_pct(&samples[1].quote, &tuning).expect("MID has a 5Y leg");
+        let stamped = samples[1].quote.growth_sector_floor.expect("the second cutoff inherits the first's cohort");
+        assert!((stamped - from_old).abs() < 1e-9, "the bar must come from the PREVIOUS cutoff's name, not its own ({stamped} vs own {own})");
+        assert!(stamped > own, "…and here that bar is HARDER than the name's own CAGR, so a self-built cohort would have been the giveaway");
+
+        assert_eq!(samples[2].quote.growth_sector_floor, None, "Utilities never appeared in an earlier cutoff -> nothing to inherit");
     }
 
     /// The too-few-rows guards of `winsor_edge` (<4), `edge_terciles` (<3), `lane_metrics` (<4 scored)

@@ -290,6 +290,20 @@ pub struct Quote {
     // anywhere else (stub, `check`, price-only probes) and None means INERT: the shipped floor stands.
     pub bench_1y_pct: Option<f64>,     // the index's trailing 1Y return (%) at this date; caps `growth_min_1y_pct`
     pub bench_range_pct: Option<f64>,  // the index's own `range_pct` over the SAME ~10y window names use; caps `growth_min_range_pct`
+    /// (#328) The CAGR floor THIS quote's GICS sector earned from the sector door, or None when the
+    /// door found no cohort for it. DERIVED per run and STAMPED by the caller, never fetched and never
+    /// configured: `screen` stamps it from the current pool, `backtest` from the cutoff BEFORE this one
+    /// (point-in-time — a cutoff must never help set the bar it is judged against).
+    ///
+    /// Stamped whether or not the knob is armed, and read only when `growth_sector_leaders > 0`. That
+    /// split is deliberate: it lets the SECTOR BOOK row price the door at every run for free by simply
+    /// re-scoring with the knob flipped, while a knob-off run stays byte-identical.
+    ///
+    /// It lives on the Quote rather than on `BuyHeuristic` because `min_cagr_floor` is per-quote and
+    /// ~20 `growth_score` call sites share one `&BuyHeuristic` — threading a per-cutoff map through all
+    /// of them is the wide edit that reds the mutation gate. `Quote` carries no serde, so this field
+    /// shifts no golden, no cache and no journaled fingerprint.
+    pub growth_sector_floor: Option<f64>,
     pub sector: Option<String>,        // (#44) GICS sector, joined from the constituents CSVs (`fetch::sector_map`) — the sole input to the commodity flag/damp for stocks. Set on BOTH `screen` paths (the universe fetch and, since the explain mismatch, the explicit-args one). None for ETFs/crypto (funds carry no GICS; their path is name tokens), for `check` (its growth table is explicitly "derived from the table above — no extra fetch", a contract worth more than the flag), and for `check`. CORRECTED (#95): the claim that this is None "in the BACKTEST pool -> `is_commodity` false there -> damp ×1.0 -> validated edge untouched" is FALSE and has been since `stamp_asset_class` started stamping it — the same class of stale claim the `sharpe_cap_etf` receipt corrected on 2026-08-02. The damp IS live in the walk, on TODAY's label at every cutoff; `backtest_drop_lookahead_sector` is the knob that makes the old sentence true again
     pub aum_eur: Option<f64>,          // (AUM) fund size from the Börse Frankfurt universe payload, EUR-approximate (BF mixes fund currencies; ±FX is immaterial vs the order-of-magnitude gate). ETFs/ETPs only; None = not a fund / not in BF / backtest -> gate inert
     pub ter_fallback: Option<f64>,     // Yahoo quoteSummary TER (%) for funds with NO BF facts (venue/regulatory-only rows). Read ONLY via ter_shown() for display + H/CORE — kept out of expense_ratio because ter_damp SCORES that field (a merged run moved live ranks; scoring lane closed)
@@ -310,6 +324,7 @@ impl Quote {
     /// A bare row for error/no-data cases (mirrors Python's "err"/"no data" Quote).
     pub fn stub(ticker: &str, price: &str, head: &str, name: &str) -> Quote {
         Quote {
+            growth_sector_floor: None, // (#328) stamped per run by the caller, never fetched
             ticker: ticker.to_string(),
             price: price.to_string(),
             dip: String::new(),

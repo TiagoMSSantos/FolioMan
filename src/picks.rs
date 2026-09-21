@@ -10,7 +10,7 @@ use crate::commands::truncate;
 use crate::config::{BuyHeuristic, Widths};
 use crate::core::{self, Quote, HORIZONS};
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// The longest >2Y leg as (cumulative %, span years): 20Y, else 8Y, else 5Y. None if the asset
 /// has no >2Y history. The cumulative % feeds the corpse GATE; annualized (CAGR) it feeds the SCORE,
@@ -195,11 +195,106 @@ pub(crate) fn regime_floor(shipped: f64, market: Option<f64>, slack: Option<f64>
     }
 }
 
+/// (#328) The K the sector door uses wherever it is stamped: "top K compounders in your own GICS
+/// sector". Fixed here rather than read from the config, because the backtest's SECTOR BOOK row prices
+/// the door at EVERY run whether or not the knob ships armed, and a free standing measurement has to
+/// quote one pre-registered number rather than whatever a probe config was last set to. The config knob
+/// `growth_sector_leaders` decides whether the stamp is READ, not how it is built.
+///
+/// K = 1 is "one leader per sector": the minimum non-arbitrary choice, and ~11 GICS sectors fits inside
+/// a 25-wide book. Chosen before any number existed, and not to be tuned afterwards.
+pub(crate) const SECTOR_DOOR_K: usize = 1;
+
+/// (#328) THE SECTOR DOOR, read side — deliberately the same shape as [`regime_floor`] above, because
+/// it is the same kind of object: a floor that can only ever move DOWN, and only where a cohort says
+/// so. `shipped` is the class floor the config carries, `found` the sector's entry in the cohort map.
+///
+/// `min` is the entire safety argument. No entry (empty map = the knob off, an unlabelled row, a
+/// sector nobody led) returns `shipped` untouched, and an entry ABOVE the shipped floor is discarded
+/// by the same `min` — so the door can only ADD names and can never evict one that clears today.
+/// "No worse" is therefore structural rather than measured, and any refusal at the ship bar is
+/// attributable to the admitted names alone.
+pub(crate) fn sector_floor(shipped: f64, stamped: Option<f64>) -> f64 {
+    match stamped {
+        Some(found) => shipped.min(found),
+        None => shipped,
+    }
+}
+
+/// (#328) Write each quote's sector floor onto it, so the ~20 `growth_score` call sites that share one
+/// `&BuyHeuristic` all see the door without any of them being touched. Both lanes stamp through here —
+/// `screen` over the live pool, `backtest` over one cutoff at a time against the PREVIOUS cutoff's
+/// cohort — so the point-in-time rule lives in the CALLER's choice of `cohort` and the arithmetic lives
+/// in exactly one place.
+///
+/// Stamping is unconditional; `min_cagr_floor` ignores the stamp unless the knob is armed. That is what
+/// lets a knob-off run stay byte-identical while the SECTOR BOOK row still prices the door for free.
+pub(crate) fn stamp_sector_floors(quotes: &mut [Quote], floors: &BTreeMap<String, f64>) {
+    for quote in quotes {
+        quote.growth_sector_floor = quote.sector.as_deref().and_then(|s| floors.get(s)).copied();
+    }
+}
+
+/// (#328) THE SECTOR DOOR, build side: GICS sector → the CAGR a stock must reach to be one of that
+/// sector's top `k` compounders, floored at the benchmark's own CAGR over the same leg.
+///
+/// WHY THIS EXISTS. `growth_min_cagr` is ONE absolute number for every sector, so it admits whichever
+/// sector actually compounded at that rate — since ~2016, US tech nearly alone. The live book on
+/// 2026-09-19 was 21 non-coin names of which ~15 were one bet, and `max_sector_pct` then refused most
+/// of them. A bar relative to a name's OWN sector is the first admission lever that is not another
+/// global constant.
+///
+/// THE BENCHMARK IS THE BACKSTOP, and it is not a new tunable: the ruler this tool is graded on is
+/// excess over the index, so a name compounding below the index cannot add excess no matter how well
+/// it leads a bad sector. `.max(bench_cagr)` raises a weak sector's threshold to the index instead of
+/// dropping the sector wholesale, so a real leader in a soft sector still enters while the knives its
+/// peers are falling on do not. Note the direction is OPPOSITE to (#326)'s regime valve, which capped
+/// a floor BY the index and was refused for admitting exactly those knives.
+///
+/// STOCKS ONLY, and structurally so rather than by convention: `Quote.sector` is None for ETFs and
+/// crypto (core.rs), and rows are skipped outright when it is None — never bucketed together under one
+/// "unknown" sector, which would hand every fund in the pool a shared door. The class checks are
+/// belt-and-braces for any path that learns to stamp a sector on a fund later.
+///
+/// `k == 0` returns an empty map, which makes every `sector_floor` call a no-op and the whole feature
+/// byte-identical. A sector with fewer than `k` ranked stocks is skipped: there is no k-th best to
+/// quote, and inventing one from a thin sector is how a single illiquid name becomes a "leader".
+pub(crate) fn sector_floors(quotes: &[&Quote], tuning: &BuyHeuristic, k: usize, bench_cagr: f64) -> BTreeMap<String, f64> {
+    if k == 0 {
+        return BTreeMap::new();
+    }
+    let mut by_sector: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+    for quote in quotes {
+        if is_currency_quoted(&quote.ticker) || quote_is_etf(quote) {
+            continue;
+        }
+        let (Some(sector), Some(cagr)) = (quote.sector.as_deref(), long_cagr_pct(quote, tuning)) else {
+            continue; // no GICS label, or no long leg to rank on — not a candidate to lead anything
+        };
+        by_sector.entry(sector).or_default().push(cagr);
+    }
+    by_sector
+        .into_iter()
+        .filter_map(|(sector, mut cagrs)| {
+            cagrs.sort_by(|a, b| b.total_cmp(a)); // best first, so index k-1 IS the k-th best
+            let kth = *cagrs.get(k - 1)?;
+            Some((sector.to_string(), kth.max(bench_cagr)))
+        })
+        .collect()
+}
+
 pub(crate) fn min_cagr_floor(quote: &Quote, tuning: &BuyHeuristic) -> f64 {
     if is_currency_quoted(&quote.ticker) {
         tuning.growth_min_cagr_crypto
-    } else if quote_is_etf(quote) && tuning.growth_min_cagr_etf > 0.0 {
-        tuning.growth_min_cagr_etf
+    } else if quote_is_etf(quote) {
+        // (#328) The fund case is split out ahead of the door on purpose. It used to read
+        // `quote_is_etf(quote) && growth_min_cagr_etf > 0.0`, so a fund at the shipped 0.0 INHERIT
+        // sentinel fell through to the equity arm — and hanging the sector door off that arm would
+        // have armed it for ETFs, the one lane the backtest cannot grade (0 of 14 ETF samples reach a
+        // 20y verdict, against 380 of 4619 stock samples). Same number as before for funds either way.
+        if tuning.growth_min_cagr_etf > 0.0 { tuning.growth_min_cagr_etf } else { tuning.growth_min_cagr }
+    } else if tuning.growth_sector_leaders > 0 {
+        sector_floor(tuning.growth_min_cagr, quote.growth_sector_floor)
     } else {
         tuning.growth_min_cagr
     }
@@ -6135,6 +6230,7 @@ mod tests {
             }
         }
         Quote {
+            growth_sector_floor: None,
             ticker: "T".into(), price: "€1.00".into(), dip: "-5.0%".into(), drop_pct: drawdown_pct,
             market: "USA".into(), instrument_type: String::new(), head: String::new(), news_block: String::new(), perf,
             perf_nominal: Vec::new(), // (#88) empty = score on `perf`, which is what every fixture here means
@@ -9145,6 +9241,129 @@ mod tests {
         q.range_pct = 90.0;
         q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0)]);
         q
+    }
+
+    /// (#328) A gate-clearing STOCK with a GICS label and a chosen 5Y leg — the only two inputs the
+    /// sector door reads. Everything else is `gate_fixture`'s, so a door test that fails has failed on
+    /// the door.
+    fn sector_stock(ticker: &str, sector: &str, five_y_cum: f64) -> Quote {
+        let mut q = gate_fixture();
+        q.ticker = ticker.into();
+        q.name = ticker.into();
+        q.sector = Some(sector.into());
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", five_y_cum)]);
+        q
+    }
+
+    /// (#328) The door can only ever LOWER a floor. This is the whole "no worse" argument, and it is
+    /// structural rather than measured: an entry ABOVE the shipped bar is discarded by the same `min`
+    /// that opens the door, so no name that clears today can ever be evicted by turning the knob on.
+    /// Empty map (the knob off) and an unlabelled row both return the shipped bar untouched.
+    #[test]
+    fn sector_floor_only_ever_lowers_the_shipped_bar() {
+        assert_eq!(sector_floor(19.0, Some(11.0)), 11.0, "a stamp below the bar opens the door");
+        assert_eq!(sector_floor(19.0, None), 19.0, "no stamp (no cohort, or an unlabelled row) is untouched");
+        assert_eq!(sector_floor(19.0, Some(25.0)), 19.0, "a stamp ABOVE the bar can NEVER tighten it");
+        // and the stamping step is what turns a sector map into those scalars
+        let floors: BTreeMap<String, f64> = [("Energy".to_string(), 11.0)].into();
+        let mut pool = vec![sector_stock("E", "Energy", 100.0), sector_stock("T", "Technology", 100.0)];
+        pool[1].sector = None;
+        stamp_sector_floors(&mut pool, &floors);
+        assert_eq!(pool[0].growth_sector_floor, Some(11.0), "a labelled row takes its sector's floor");
+        assert_eq!(pool[1].growth_sector_floor, None, "an unlabelled row is left alone");
+        stamp_sector_floors(&mut pool, &BTreeMap::new());
+        assert_eq!(pool[0].growth_sector_floor, None, "knob off (empty map) clears the stamp");
+    }
+
+    /// (#328) The benchmark backstop, and the reason it is folded into the map builder rather than
+    /// checked per quote. A sector whose leader compounds below the index has its threshold RAISED to
+    /// the index — not dropped wholesale — so a genuine leader in a soft sector still enters while the
+    /// knives its peers are falling on do not. (#326)'s regime valve was refused for the opposite
+    /// shape: it capped a floor BY the index and admitted exactly those knives.
+    #[test]
+    fn sector_floors_never_opens_below_the_benchmark() {
+        let t = BuyHeuristic::default();
+        let lead = sector_stock("LEAD", "Energy", 30.0);
+        let lag = sector_stock("LAG", "Energy", 20.0);
+        let pool = [&lead, &lag];
+        let best = long_cagr_pct(&lead, &t).expect("the fixture has a 5Y leg");
+        let open = sector_floors(&pool, &t, 1, 0.0);
+        assert!((open["Energy"] - best).abs() < 1e-9, "no backstop -> the threshold IS the sector's best");
+        let guarded = sector_floors(&pool, &t, 1, 50.0);
+        assert_eq!(guarded["Energy"], 50.0, "a sector leading below the index is raised to the index, not admitted");
+    }
+
+    /// (#328) STOCKS ONLY, and the `None`-bucketing trap that would break it. A fund carrying a stamped
+    /// sector must not set a sector's bar (the backtest grades 0 of 14 ETF samples at 20y, so a
+    /// fund-facing door is unmeasurable), and a row with no GICS label must be skipped outright rather
+    /// than collected under one shared "unknown" sector — which would hand every unlabelled name in the
+    /// pool a door built from the others.
+    #[test]
+    fn sector_floors_skips_funds_and_unlabelled_rows() {
+        let t = BuyHeuristic::default();
+        let mut fund = sector_stock("EQQQ", "Technology", 900.0);
+        fund.instrument_type = "ETF".into();
+        let mut unlabelled = sector_stock("BARE", "Technology", 800.0);
+        unlabelled.sector = None;
+        let stock = sector_stock("REAL", "Technology", 100.0);
+        let got = sector_floors(&[&fund, &unlabelled, &stock], &t, 1, 0.0);
+        let want = long_cagr_pct(&stock, &t).expect("the fixture has a 5Y leg");
+        assert!((got["Technology"] - want).abs() < 1e-9, "only the real stock sets the sector's bar");
+        assert_eq!(got.len(), 1, "the unlabelled row must not have created a bucket of its own");
+    }
+
+    /// (#328) K=0 is OFF and produces an empty map, so every `sector_floor` call is a no-op and the
+    /// whole feature is byte-identical — the default, and what the config-less CI job ((#171)) runs.
+    /// A sector thinner than K is skipped too: there is no k-th best to quote, and inventing one is how
+    /// a single illiquid name would become a "leader".
+    #[test]
+    fn sector_floors_zero_is_off_and_thin_sectors_are_skipped() {
+        let t = BuyHeuristic::default();
+        let only = sector_stock("ONE", "Energy", 100.0);
+        assert!(sector_floors(&[&only], &t, 0, 0.0).is_empty(), "K=0 is off");
+        assert!(sector_floors(&[&only], &t, 2, 0.0).is_empty(), "one name cannot supply a 2nd-best threshold");
+        assert_eq!(sector_floors(&[&only], &t, 1, 0.0).len(), 1, "one name IS a 1st-best threshold");
+    }
+
+    /// (#328) The door AT THE GATE, which is what actually ships — `sector_floor` being correct proves
+    /// nothing if `min_cagr_floor` never consults it. Same name, same tuning, one cohort map: a sector
+    /// leader that the absolute 19%/yr bar refuses is admitted once the map is filled, and the `cagr`
+    /// failure disappears from `gate_failures` (the #2 mirror, so the scorer agrees).
+    #[test]
+    fn sector_door_admits_a_leader_the_absolute_floor_refused() {
+        let mut t = BuyHeuristic { growth_min_cagr: 19.0, ..BuyHeuristic::default() };
+        let leader = sector_stock("LEAD", "Energy", 100.0);
+        let cagr = long_cagr_pct(&leader, &t).expect("the fixture has a 5Y leg");
+        assert!(cagr < 19.0, "the case only means anything if the absolute floor refuses this name");
+        assert_eq!(min_cagr_floor(&leader, &t), 19.0, "door shut -> the absolute floor stands");
+        let shut = gate_failures(&leader, &t).expect("assessable");
+        assert!(shut.iter().any(|(g, _, _)| *g == "cagr"), "door shut -> refused ON the CAGR gate");
+
+        let floors = sector_floors(&[&leader], &t, 1, 0.0);
+        let mut leader = leader.clone();
+        stamp_sector_floors(std::slice::from_mut(&mut leader), &floors);
+        assert_eq!(min_cagr_floor(&leader, &t), 19.0, "STAMPED BUT KNOB OFF -> still byte-identical");
+        t.growth_sector_leaders = 1;
+        assert!(min_cagr_floor(&leader, &t) <= cagr, "door open -> its own CAGR now clears the floor");
+        let open = gate_failures(&leader, &t).expect("assessable");
+        assert!(!open.iter().any(|(g, _, _)| g.starts_with("cagr")), "door open -> neither CAGR leg refuses it: {open:?}");
+    }
+
+    /// (#328) The door lowers the CAGR floor and NOTHING else. A sector leader that fails another gate
+    /// is still refused with the door wide open — so an admit has cleared every other bar on its own
+    /// merits, and the ship bar's "no worse" claim cannot be smuggled past by a name the rest of the
+    /// stack already rejected.
+    #[test]
+    fn sector_door_does_not_bypass_the_other_gates() {
+        let mut t = BuyHeuristic { growth_min_cagr: 19.0, growth_min_range_pct: 80.0, ..BuyHeuristic::default() };
+        let mut leader = sector_stock("LEAD", "Energy", 100.0);
+        leader.range_pct = 10.0; // far off its own high: the range gate's whole job
+        let floors = sector_floors(&[&leader], &t, 1, 0.0);
+        stamp_sector_floors(std::slice::from_mut(&mut leader), &floors);
+        t.growth_sector_leaders = 1;
+        let fails = gate_failures(&leader, &t).expect("assessable");
+        assert!(!fails.iter().any(|(g, _, _)| g.starts_with("cagr")), "the door did open the CAGR gate");
+        assert!(fails.iter().any(|(g, _, _)| *g == "range"), "…and the range gate still refuses it: {fails:?}");
     }
 
     /// (#144) `n` gate-clearing names whose only difference is the 5Y leg, so exactly ONE additive

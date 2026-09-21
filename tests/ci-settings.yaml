@@ -6398,6 +6398,93 @@ buy_heuristic:
   #   no-worse, and the guard fails on the same two horizons, so the two legs agree.
   #   REVERT: delete `growth_regime_slack_pct`, the four `regime_floor` calls, the two `Quote` fields with
   #   both `stamp_regime`s and their hoisted fetches, and the `regime` row in `gate_notches`; re-bless.
+  # (#328) ROUND 111: A SECTOR-RELATIVE SECOND DOOR PAST THE CAGR FLOOR. MEASURED AND REFUSED.
+  # THE FINDING THAT SET THE ROUND. The live book (`.screen_web.json`, generated 2026-09-19) is 21 non-coin
+  # names for a 25-wide book, and ~15 of them are ONE BET:
+  #     ETF  1,3,5   PUST.PA ANX.PA EQQQ.SW    three Nasdaq-100 wrappers
+  #     ETF  2,6,7,14 SXLK.L XLKS.L IUIT.L XUTC.L   four S&P-US-Tech wrappers
+  #     ETF  11,12   SMH.L SEMI.AS             two semiconductor funds
+  #     ETF  4,9     WTEC.L XAID.L             World Tech, AI & Big Data
+  #     stocks 2,3,5 AP2.DE KLA.DE NVD.DE      semis — and `head_weight: 2.0` pays these slots DOUBLE
+  # Non-tech is five ETFs (Japan, Italy, Korea, Euro financials, Euro banks) and ONE stock. `max_sector_pct:
+  # 25.0` then refuses most of what the screen ranked and the remainder spills to index legs ((#296)/(#308)).
+  #
+  # THREE LEVERS ARE DEAD BY ARITHMETIC AND THIS ROUND PROPOSED NONE OF THEM. (a) Width is not binding:
+  # `top_picks`/`book_names` are 25 against 21 supplied. (b) Dedupe-with-refill, the (#321) pre-registered
+  # reopen, has NO REFILL POOL at 25 > 21 — dropping two Nasdaq wrappers leaves 19, which is (#318)
+  # concentrating again. (c) `growth_corr_cap` ships 0.0 (reverted by (#318)) and only covered stocks anyway.
+  #
+  # ROOT CAUSE, and what makes this round different from (#292)/(#294)/(#303)/(#304)/(#319)/(#327): every one
+  # of those moved a GLOBAL constant. `growth_min_cagr: 19.0` is one absolute number across all sectors (ETFs
+  # inherit it at the 0.0 sentinel), so it admits whichever sector actually compounded at 19%/yr — since ~2016
+  # US tech, nearly alone. None of the six made the bar relative to the name's OWN sector.
+  #
+  # THE DOOR. A SECOND way past the CAGR floor, OR'd, never replacing it: a stock also clears when it is the
+  # top-K compounder in its own GICS sector AND its long CAGR beats the benchmark's over the same leg. Both
+  # constants were fixed BEFORE any number existed and were NOT tuned afterwards: K = 1 ("one leader per
+  # sector", ~11 sectors inside a 25-wide book) and the backstop is the INDEX ITSELF, not a new constant —
+  # the ruler is excess over the index, so a name compounding below it cannot add excess. Direction is
+  # OPPOSITE to (#326), which capped a floor BY the index and was refused for admitting falling knives.
+  # STOCKS ONLY, structurally: `Quote.sector` is None for ETFs/crypto, and the census below is why.
+  # POINT-IN-TIME: a cutoff is gated on the cohort of the cutoff BEFORE it, never its own and never a later
+  # one; the first cutoff has no predecessor, so the door is shut there and the walk starts as the control.
+  #
+  # WHY THIS ROUND COULD BE GRADED WHEN SIX ETF-FACING ONES COULD NOT — the per-class census (`class_census`):
+  #     20y  ETF 0/14             stock 380/4619      12y  ETF 4/2618 (0.15%)  stock 572/9134 (6.3%)
+  #      8y  ETF 17/8628 (0.20%)  stock 700/11907 (5.9%)
+  # The 20y lane cannot speak about funds AT ALL. This round lands in the one lane with 380-700 graded rows.
+  #
+  # MEASURED 2026-09-21, `backtest {20,12,8} universe fund pit`, this config, SECTOR BOOK row. `windows
+  # scored` 1112 / 2771 / 6175 — no OFFLINE voiding. Bar, pre-registered: `guard_holds` (excess >= cleared
+  # -0.1 AND worst >= cleared -1.0) at ALL THREE horizons, plus no-harm on SIZED and the Serie E ratchet.
+  #                                                                                          guard
+  #     20y  cleared     n=120  book  +7.3/yr  excess +0.7  win 57%  worst -10.0  OOS -1.4/+2.6
+  #          + door      n=22   book  +7.6/yr  excess +1.0  win 62%  worst -10.0  OOS -1.2/+2.9  pass
+  #     12y  cleared     n=249  book  +9.9/yr  excess +3.5  win 75%  worst  -6.4  OOS +2.3/+4.7
+  #          + door      n=33   book  +9.6/yr  excess +3.2  win 81%  worst  -6.4  OOS +2.3/+4.0  FAIL
+  #      8y  cleared     n=347  book +11.3/yr  excess +4.6  win 84%  worst  -5.5  OOS +3.5/+5.6
+  #          + door      n=33   book +10.9/yr  excess +4.2  win 89%  worst  -5.7  OOS +3.3/+5.1  FAIL
+  #
+  # REFUSED: the bar required all three horizons and the door holds only at 20y (+0.3 excess, worst identical,
+  # both OOS halves up). At 12y and 8y excess falls 0.3 and 0.4 against a 0.1 tolerance.
+  #
+  # THE MECHANISM IS THE INTERESTING PART, and it is the (#317)/(#319) finding in a new place: the WIN RATE
+  # RISES AT EVERY HORIZON (57->62, 75->81, 84->89) while mean excess FALLS at two of them. The door buys
+  # more names that beat the index MORE OFTEN and by LESS. In an equal-weight book each of 33 admits costs a
+  # 1/N slice of the leaders it displaces, so a higher hit rate at a lower mean is a net loss. This is
+  # BREADTH, NOT RETURN — the same verdict as (#317) `book_names: 20` and (#319)'s ETF CAGR floor, and the
+  # third independent confirmation that equal-weight top-N pays 1/N and admission alone cannot beat it.
+  # Only 20y, where the cleared book is thinnest (n=120) and dilution therefore cheapest, comes out ahead.
+  #
+  # NO ARM RUN WAS MADE. Bar (ii) failed on the free row, and bar (i) could not change the verdict, so
+  # spending two more horizons of compute to measure a SIZED row that cannot ship would have been theatre.
+  #
+  # WHAT SHIPS: the MEASUREMENT, not the door. `growth_sector_leaders` ships at 0 (code default, and absent
+  # here), so every number in this repo is byte-identical — proved, not asserted: re-blessing the seven
+  # goldens produced +20 lines and MINUS ZERO, i.e. pure addition of the SECTOR BOOK block. The row itself
+  # prints at EVERY `backtest N universe fund pit` run from now on, priced for free, because the walk stamps
+  # each quote's point-in-time sector floor whether or not the knob is armed and the row simply re-scores
+  # with it flipped. That is this round's version of the (#324) notch shadow and (#326)'s refused valve: a
+  # refused idea stays measured instead of being deleted and re-proposed in a year.
+  #
+  # HONEST EDGES. (a) `quote.sector` in the walk is TODAY's GICS stamped on a historical cutoff
+  # (`backtest_drop_lookahead_sector: false`); there is no as-of GICS feed this tool reads, so the cohort
+  # carries that known look-ahead — it can only FLATTER the door, and the door was refused anyway. (b) The
+  # live cohort is the CURRENT pool's while the backtest's is one cutoff stale, because live has no earlier
+  # cutoff to borrow; disclosed rather than buried. (c) The benchmark leg is `growth_min_leg_years` for the
+  # whole cohort, not each name's own rung — the only leg every ranked name owns; keying by (sector, rung)
+  # is the upgrade path if this ever reopens. (d) The door cannot reach the ETF duplication that MOTIVATED
+  # the round, only the stock lane — so the 15-of-21 one-bet finding above is still open, and the census is
+  # the reason no fund-facing version of it can be graded today. (e) K=1 and the index backstop are choices
+  # of principle, not fitted numbers; a K=2 or a looser backstop is a NEW round with its own pre-registered
+  # bar, not a retune of this one.
+  # REOPEN: the SECTOR BOOK row is the ruler. It reopens if the door ever holds `guard_holds` at all three
+  # horizons — most plausibly on a ruler that does NOT pay 1/N (the (#313) `equal_weight_book` lane or a
+  # cap-weighted book), since dilution is the whole refusal.
+  # REVERT: delete `growth_sector_leaders`, `Quote.growth_sector_floor`, `picks::{SECTOR_DOOR_K, sector_floor,
+  # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
+  # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
+  # call sites, and the `screen::run` stamp; re-bless.
   # (#291) ROUND 74 RAN ON (#290)'S PRE-REGISTERED BAR AND WAS REFUSED; THE QUALITY RESCUE LANE WAS PROBED AND REFUSED.
   #   Standing ask: more assets to buy now and hold 20+ years. Two tests, each graded on a bar written
   #   before its run. `backtest N universe fund pit`, 2026-09-13, this config, journal md5 unchanged.
