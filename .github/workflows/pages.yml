@@ -132,18 +132,6 @@ jobs:
             > /dev/null || { echo "every lane came back empty — not deploying over a good page"; exit 1; }
           jq -r '"generated \(.generated): stocks \(.stocks|length) etfs \(.etfs|length) crypto \(.crypto|length) rows"' .screen_web.json
 
-      # (#333) Hand the journal to the `record` job. The file is TRACKED, so the checkout above put
-      # the existing record in the workspace and `screen` has just appended to it — or not, if a run
-      # earlier today already did. Either way it exists, and `if-no-files-found: error` makes its
-      # absence a red run rather than a day that silently went unrecorded.
-      - name: Upload the journal
-        uses: actions/upload-artifact@v4
-        with:
-          name: screen-journal
-          path: .screen_snapshots.jsonl
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Assemble the site
         run: |
           mkdir -p _site
@@ -156,6 +144,27 @@ jobs:
 
       - id: deploy
         uses: actions/deploy-pages@v5
+
+      # (#333) Hand the journal to the `record` job. The file is TRACKED, so the checkout above put
+      # the existing record in the workspace and `screen` has just appended to it — or not, if a run
+      # earlier today already did. Either way it exists, and `if-no-files-found: error` makes its
+      # absence a red run rather than a day that silently went unrecorded.
+      #
+      # LAST, AFTER THE DEPLOY, ON PURPOSE: publishing the page is this workflow's job and recording
+      # the journal is a passenger, so a broken upload must never be what takes the site down. The
+      # first attempt at this sat before `Assemble the site` and reddened the run without deploying.
+      #
+      # `include-hidden-files` IS LOAD-BEARING: upload-artifact skips dotfiles by default, so without
+      # it this step reports "No files were found with the provided path" for a file that is sitting
+      # right there in the workspace — which is exactly how that first attempt failed.
+      - name: Upload the journal
+        uses: actions/upload-artifact@v4
+        with:
+          name: screen-journal
+          path: .screen_snapshots.jsonl
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
 
   # (#333) COMMIT THE DAY'S JOURNAL LINE BACK, so the forward record survives the runner.
   #
