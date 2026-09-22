@@ -198,6 +198,26 @@ Backtest — WALK-FORWARD score vs 8y-forward PEER-RELATIVE return (de-meaned pe
   growth_min_aum_etf x0.5 (live-only) admits 0 new names (gate not binding on this sample)
   growth_regime_slack_pct 0 (bear-only) n=8    fwd peer-relative  mean -53.7 | med -100.6 pts  vs shipped -52.8
 
+── WEIGHT SWEEP (#334) (each shipped weight x0 / x2 -> top-10 ENTRANTS minus the names they DISPLACED, realized fwd %) ──
+  a weight never gates, so an equal-weight book feels it ONLY through the names it swaps across the edge (#149).
+  RE-PROBE needs mean AND median positive and means a full A/B round, never a weight move. k/N = buckets that swapped.
+  growth_trend_weight x0       no swaps (0/68 buckets)
+  growth_trend_weight x2       no swaps (0/68 buckets)
+  growth_accel_weight x0       no swaps (0/68 buckets)
+  growth_accel_weight x2       no swaps (0/68 buckets)
+  sharpe_weight x0             no swaps (0/68 buckets)
+  sharpe_weight x2             no swaps (0/68 buckets)
+  quality_weight x0            no swaps (0/68 buckets)
+  quality_weight x2            no swaps (0/68 buckets)
+  dividend_weight x0           no swaps (0/68 buckets)
+  dividend_weight x2           no swaps (0/68 buckets)
+  growth_fund_weight x0        no swaps (0/68 buckets)
+  growth_fund_weight x2        no swaps (0/68 buckets)
+  growth_underwater_weight x0  no swaps (0/68 buckets)
+  growth_underwater_weight x2  no swaps (0/68 buckets)
+  growth_proximity_weight x0   no swaps (0/68 buckets)
+  growth_proximity_weight x2   no swaps (0/68 buckets)
+
 ── EXIT PROBE (growth lane: passed gates ~6mo ago -> what next?) ──
   kept passing   n=65     fwd peer-relative  mean +35.6 | med -62.7 pts
   newly FAILED   n=34     fwd peer-relative  mean -66.5 | med -101.5 pts

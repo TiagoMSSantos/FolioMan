@@ -1757,6 +1757,7 @@ pub async fn run(args: Vec<String>) {
     );
     let accepted_med = gate_audit(&samples, growth_score, tuning).map(|(_, _, amed)| amed); // (#9) are the growth lane's hard gates actually selecting winners?
     gate_sweep(&samples, tuning, &gate_loosen, accepted_med); // (#10) which specific gate is too tight?
+    weight_sweep(&samples, tuning); // (#334) which shipped ranking weight is mis-set?
     exit_probe(&samples, growth_score, tuning); // (Item 31) is a mid-hold gate FAILURE a measured sell signal?
     if fund_lane_on(fund, insider) {
         report_fund_lane(&samples, tuning.split_purge_months);
@@ -5626,6 +5627,72 @@ fn newly_admitted_stats(
     Some((newly.len(), mean, med))
 }
 
+/// (#334) The WEIGHT SWEEP's arithmetic, scorer-generic for the same reason `newly_admitted_stats` is. Per
+/// bucket, rank at `base` and at `notched` the way the book loop does (crypto skipped, samples order, stable
+/// descending sort) and cut both at `top`. An equal-weight top-`top` book is set-invariant ((#149)), so a
+/// weight reaches it ONLY through the names it swaps across the edge: the gap is the mean `realized` of the
+/// ENTRANTS minus that of the names they DISPLACED. `realized`, not `relative`: both sides share one bucket,
+/// so the peer mean cancels. Only a PURE swap grades — a notch that grew or shrank the pool changes the
+/// book's size too, and a missing gap is not a zero one. Returns (buckets ranked, one gap per swap).
+fn weight_swap_gaps(
+    samples: &[Sample],
+    scorer: fn(&[&Quote], &BuyHeuristic) -> Vec<Option<f64>>,
+    base: &BuyHeuristic,
+    notched: &BuyHeuristic,
+    top: usize,
+) -> (usize, Vec<f64>) {
+    let mut by_bucket: BTreeMap<i32, Vec<&Sample>> = BTreeMap::new();
+    for s in samples.iter().filter(|s| picks::asset_class(&s.quote) != 0) {
+        by_bucket.entry(bucket(s.date)).or_default().push(s);
+    }
+    let cut = |group: &[&Sample], t: &BuyHeuristic| -> Vec<usize> {
+        let quotes: Vec<&Quote> = group.iter().map(|s| s.quote.as_ref()).collect();
+        let mut ranked: Vec<(usize, f64)> = scorer(&quotes, t).into_iter().enumerate().filter_map(|(i, v)| v.map(|v| (i, v))).collect();
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+        ranked.into_iter().take(top).map(|(i, _)| i).collect()
+    };
+    let mean = |group: &[&Sample], ix: &[usize]| ix.iter().map(|i| group[*i].realized).sum::<f64>() / ix.len() as f64;
+    let gaps = by_bucket
+        .values()
+        .filter_map(|group| {
+            let (was, now) = (cut(group, base), cut(group, notched));
+            let entrants: Vec<usize> = now.iter().copied().filter(|i| !was.contains(i)).collect();
+            let displaced: Vec<usize> = was.iter().copied().filter(|i| !now.contains(i)).collect();
+            (!entrants.is_empty() && entrants.len() == displaced.len()).then(|| mean(group, &entrants) - mean(group, &displaced))
+        })
+        .collect();
+    (by_bucket.len(), gaps)
+}
+
+/// (#334) WHICH shipped ranking weight is mis-set? The GATE SWEEP's twin for the weights, which had no free
+/// instrument at all — only one-off A/B rounds. Each nonzero weight at ×0 and ×2 (`picks::weight_notches`,
+/// pre-registered), priced by what it swaps across the top-`VERDICT_TOP` edge. INFORM ONLY: RE-PROBE means
+/// a full A/B round, never a weight move. `k/N` is the swapped-bucket count, because on a saturated lane
+/// (POOL CENSUS above: `pit`'s median pool 5-7 against a basket of 10) most buckets hold nobody to swap in,
+/// and a row there is a count over the residue. `stress` is the non-vacuous lane: a refusal there is
+/// permanent, a pass proves nothing. The forward half is `screen`'s `Snapshot::swap`, graded by `track`.
+/// The `base` cut is recomputed per notch, as `gate_sweep` does; hoist it if this stage ever shows in a profile.
+fn weight_sweep(samples: &[Sample], tuning: &BuyHeuristic) {
+    println!("\n── WEIGHT SWEEP (#334) (each shipped weight x0 / x2 -> top-{VERDICT_TOP} ENTRANTS minus the names they DISPLACED, realized fwd %) ──");
+    println!("  a weight never gates, so an equal-weight book feels it ONLY through the names it swaps across the edge (#149).");
+    println!("  RE-PROBE needs mean AND median positive and means a full A/B round, never a weight move. k/N = buckets that swapped.");
+    let rows: Vec<String> = picks::weight_notches(tuning)
+        .par_iter()
+        .map(|(label, t)| {
+            let (n, gaps) = weight_swap_gaps(samples, picks::growth_scores_ranked, tuning, t, VERDICT_TOP);
+            if gaps.is_empty() {
+                return format!("  {label:<28} no swaps (0/{n} buckets)");
+            }
+            let (mean, med) = cohort_stats(&gaps);
+            let verdict = gap_verdict(mean, med, "RE-PROBE (entrants beat the displaced)", "holds");
+            format!("  {label:<28} swapped {}/{n} buckets  mean {mean:+.1} | med {med:+.1} pts  -> {verdict}", gaps.len())
+        })
+        .collect();
+    for row in rows {
+        println!("{row}");
+    }
+}
+
 /// (#10) WHICH growth gate is too tight? #9 gives the aggregate verdict; this breaks it down per gate.
 /// For each numeric gate, loosen its threshold one notch (relative to the loaded tuning, so a settings.yaml
 /// override is respected) and report the mean forward peer-relative return of the names that loosening
@@ -6266,6 +6333,47 @@ mod tests {
     }
     fn sample(date: NaiveDate, realized: f64) -> Sample {
         Sample { date, realized, relative: 0.0, quote: Arc::new(Quote::stub("X", "1", "", "X")), fund: None, trail: Vec::new() }
+    }
+
+    /// (#334) A name whose test score is `a + quality_weight × b` (`swap_scorer`), so a `quality_weight`
+    /// notch reorders exactly the names carrying `b > 0`.
+    fn swap_sample(date: NaiveDate, ticker: &str, a: f64, b: f64, realized: f64) -> Sample {
+        let mut q = Quote::stub(ticker, "€1.00", "", ticker);
+        q.range_pct = a;
+        q.avg_turnover_eur = Some(b);
+        Sample { date, realized, relative: 0.0, quote: Arc::new(q), fund: None, trail: Vec::new() }
+    }
+    fn swap_scorer(pool: &[&Quote], t: &BuyHeuristic) -> Vec<Option<f64>> {
+        pool.iter().map(|q| Some(q.range_pct + t.quality_weight * q.avg_turnover_eur.unwrap_or(0.0)).filter(|s| *s > 0.0)).collect()
+    }
+
+    /// (#334) Entrants minus displaced, per bucket, pure swaps only. Two swapping buckets with different
+    /// gaps (one 1-for-1, one 2-for-2 so the per-side MEAN is exercised), a coin that outscores everyone and
+    /// must not count, a tie the notch leaves alone, and a notch that grows a one-name pool, which is not a
+    /// swap and must not grade.
+    #[test]
+    fn weight_swap_gaps_price_entrants_against_the_displaced() {
+        let (a, b, c, d) = (ymd(2010, 1, 5), ymd(2011, 1, 5), ymd(2012, 1, 5), ymd(2013, 1, 5));
+        let samples = vec![
+            swap_sample(a, "A1", 10.0, 0.0, 5.0),
+            swap_sample(a, "A2", 9.0, 0.0, 1.0),
+            swap_sample(a, "A3", 8.0, 5.0, 21.0), // 8 -> 13: in for A2, 21 - 1 = +20
+            swap_sample(a, "BTC-EUR", 100.0, 100.0, 1000.0),
+            swap_sample(b, "B1", 10.0, 0.0, 0.0),
+            swap_sample(b, "B2", 9.0, 0.0, 10.0),
+            swap_sample(b, "B3", 8.0, 4.0, 4.0), // 8 -> 12
+            swap_sample(b, "B4", 7.0, 6.0, 2.0), // 7 -> 13: both in, mean(4, 2) - mean(0, 10) = -2
+            swap_sample(c, "C1", 5.0, 0.0, 0.0),
+            swap_sample(c, "C2", 5.0, 0.0, 0.0),
+            swap_sample(c, "C3", 5.0, 0.0, 9.0),
+            swap_sample(d, "D1", 5.0, 0.0, 0.0),
+            swap_sample(d, "D2", -1.0, 2.0, 50.0), // unscored -> +1: admitted, nobody displaced
+        ];
+        let base = BuyHeuristic { quality_weight: 0.0, ..BuyHeuristic::default() };
+        let notched = BuyHeuristic { quality_weight: 1.0, ..BuyHeuristic::default() };
+        assert_eq!(weight_swap_gaps(&samples, swap_scorer, &base, &notched, 2), (4, vec![20.0, -2.0]));
+        assert_eq!(weight_swap_gaps(&samples, swap_scorer, &base, &base, 2), (4, vec![]), "an unmoved weight swaps nobody");
+        assert_eq!(weight_swap_gaps(&samples, swap_scorer, &base, &notched, 10), (4, vec![]), "a basket holding the whole pool swaps nobody");
     }
 
     /// (#328) A stock at one cutoff with a chosen 5Y leg and GICS label — the only inputs the sector

@@ -2302,6 +2302,29 @@ pub fn gate_notches() -> Vec<(&'static str, &'static str, fn(&mut BuyHeuristic))
     ]
 }
 
+/// (#334) The multipliers every shipped ranking weight is notched by. PRE-REGISTERED ((#277)/(#278)): fixed
+/// before the first run and never tuned after. ×0 prices the term's keep, ×2 prices "more of it".
+pub(crate) const WEIGHT_NOTCHES: [f64; 2] = [0.0, 2.0];
+
+/// (#334) [`gate_notches`]' twin for the RANKING weights: each nonzero [`WEIGHT_DIMS`] weight at every
+/// [`WEIGHT_NOTCHES`] multiple, as (label, notched tuning). One list, two readers, the same way: the
+/// backtest's WEIGHT SWEEP prices what each notch swaps across the top-10 on past windows, and `screen`
+/// journals what it would swap TODAY (`track::Snapshot::swap`) so `track` can grade it forward. A weight
+/// that ships at 0 yields no row — no multiple of 0 moves it.
+pub(crate) fn weight_notches(tuning: &BuyHeuristic) -> Vec<(String, BuyHeuristic)> {
+    WEIGHT_DIMS
+        .iter()
+        .filter(|(_, get, _)| get(tuning) != 0.0)
+        .flat_map(|(label, get, set)| {
+            WEIGHT_NOTCHES.map(|k| {
+                let mut t = tuning.clone();
+                set(&mut t, get(tuning) * k);
+                (format!("{label} x{k}"), t)
+            })
+        })
+        .collect()
+}
+
 /// (B) DIAGNOSTIC — read-only, never scored. For a name the growth lane REJECTED, return the ONE gate it
 /// fails IF it fails EXACTLY one of the actionable numeric gates AND fails it by only a small margin: a
 /// "near miss" — a compounder one notch outside the fence (e.g. a great name 25% off its high failing only
@@ -5565,6 +5588,35 @@ mod tests {
             ("regime", "growth_regime_slack_pct", serde_json::json!(0.0)),
         ];
         let want: Vec<(&str, String, serde_json::Value)> = want.into_iter().map(|(t, k, v)| (t, k.to_string(), v)).collect();
+        assert_eq!(got, want);
+    }
+
+    /// (#334) A zero weight yields no row, and each notch moves exactly ONE weight to exactly its multiple.
+    /// Every `WEIGHT_DIMS` entry is zeroed first, then two are armed, so the row count pins the zero filter.
+    #[test]
+    fn weight_swap_notches_move_one_weight_by_its_multiplier() {
+        let mut armed = BuyHeuristic::default();
+        for (_, _, set) in WEIGHT_DIMS {
+            set(&mut armed, 0.0);
+        }
+        armed.quality_weight = 0.15;
+        armed.growth_proximity_weight = 1.0;
+        let before = serde_json::to_value(&armed).unwrap();
+        let got: Vec<(String, String, serde_json::Value)> = weight_notches(&armed)
+            .into_iter()
+            .flat_map(|(label, t)| {
+                let after = serde_json::to_value(&t).unwrap();
+                let moved: Vec<_> = after.as_object().unwrap().iter().filter(|(k, v)| before.get(k.as_str()) != Some(*v)).map(|(k, v)| (label.clone(), k.clone(), v.clone())).collect();
+                moved
+            })
+            .collect();
+        let want = [
+            ("quality_weight x0", "quality_weight", serde_json::json!(0.0)),
+            ("quality_weight x2", "quality_weight", serde_json::json!(0.3)),
+            ("growth_proximity_weight x0", "growth_proximity_weight", serde_json::json!(0.0)),
+            ("growth_proximity_weight x2", "growth_proximity_weight", serde_json::json!(2.0)),
+        ];
+        let want: Vec<(String, String, serde_json::Value)> = want.into_iter().map(|(l, k, v)| (l.to_string(), k.to_string(), v)).collect();
         assert_eq!(got, want);
     }
 

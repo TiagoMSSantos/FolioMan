@@ -1422,6 +1422,7 @@ sizing:
 # NOT GRADEABLE, stated rather than dressed up. No backtest path reaches `size`, no golden covers it, and
 # the ship rule cannot adjudicate a printed line — this ships on judgement plus the live diff above, the
 # same standing as (#227)/(#239). It claims no horizon and no edge.
+# (#334) STALE since (#290): `backtest::sized_buckets` calls `size::sized_book` (so `picks::size_weights`); SIZED rows print in the goldens.
 #
 # HONEST EDGES. (a) The named ticker is as fresh as the last `screen` run, so the line PRINTS that run's
 # date and a stale shortlist shows as stale rather than passing silently. (b) A tracker sits outside the
@@ -1804,6 +1805,7 @@ sizing:
 #   EITHER direction — the same footing `(#246)`, `(#248)`, `(#253)` and `(#259)` all shipped on. The
 #   number lives in `config::Sizing`, non-negotiable #1's documented exception, whose own doc comment
 #   already licenses a default that is policy rather than a neutral off-state.
+#   (#334) STALE since (#290): `backtest::sized_buckets` calls `size::sized_book` (so `picks::size_weights`); SIZED rows print in the goldens.
 #
 #   HONEST EDGES:
 #   (a) 3 is a JUDGEMENT VALUE. It is not an argmax and nothing measured it; it is "enough issuers
@@ -1900,6 +1902,7 @@ sizing:
 # round: `git status --short` after the change lists exactly four files and no `tests/fixture/*.golden`.
 # Every `size_weights` unit test constructs its own `Sizing` with an explicit `max_name_pct`
 # (0.0/10.0/20.0/30.0), so nothing pinned the old default and nothing had to be re-baselined.
+# (#334) STALE since (#290): `backtest::sized_buckets` calls `size::sized_book` (so `picks::size_weights`); SIZED rows print in the goldens.
 #
 # REVERT RULE. `max_name_pct: 4.0` restores the old numbers. The dedupe reverts SEPARATELY — delete the
 # two lines in `size::run` that call `first_per_issuer` — and the two are independent: reverting only
@@ -6485,6 +6488,100 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#334) ROUND 117: THE RANKING WEIGHTS GET THE BACK+FORWARD PAIR THE GATES ALREADY HAD. INFORM ONLY.
+  #
+  # THE ROUND WAS OPENED AS "ADD MISSING BACK AND FORWARD TESTS", SO THE FIRST JOB WAS A CENSUS OF WHAT
+  # IS MISSING. Lane by lane, what grades it in-sample (`backtest`) and out of sample (`track`):
+  #
+  #   LANE                BACKTEST                                  FORWARD (`track`)          VERDICT
+  #   gates (14 notches)  GATE SWEEP / NOTCH BOOKS / NOTCH TAIL     `near` shadow (#323)       covered: `picks::gate_notches`
+  #   size caps / spill   SIZED row via `size::sized_book` (#290)   `sized` flat twin (#322)   covered
+  #   CORE / hold         REFUSED: `hold_core_list` reads no price, `core` (#285)              forward is its only honest grader
+  #                       so a replay prints one list at every
+  #                       cutoff; the AUM floor is survivorship
+  #   crypto              0 of 18 cutoffs scored                    0 coins in any line        dormant
+  #   RANKING WEIGHTS     one-off A/B rounds only                   NONE                       BOTH MISSING -> this round
+  #
+  # (#333)'s honest edge (e) lists the `size` lane as having no forward instrument; `sized` IS one. The
+  # three receipts above that call `size` ungradeable in-sample are stale since (#290), annotated in place.
+  #
+  # WHAT SHIPS. No knob and no ranking change; `buy_heuristic` stays at 176 keys.
+  # - THE LIST: `picks::weight_notches(tuning)` — every NONZERO entry of `picks::WEIGHT_DIMS` ((#107)'s
+  #   table, not a new hand-written one) at x0 and x2 (`picks::WEIGHT_NOTCHES`). Eight weights are nonzero
+  #   on this file (trend, accel, sharpe, quality, dividend, fund, underwater, proximity): 16 rows. A zero
+  #   weight has no x0/x2 to take, so calmar, smoothness, er, value, turnover and mom121 print nothing.
+  # - BACKTEST: WEIGHT SWEEP, right after GATE SWEEP. Per bucket, rank the non-coin samples by
+  #   `growth_scores_ranked` under the shipped and the notched tuning, cut both at `VERDICT_TOP` = 10, and
+  #   price the ENTRANTS (in the notched top-10, not the shipped) minus the DISPLACED (the reverse),
+  #   realized fwd %. Mean/median via `cohort_stats`, flag via the existing `gap_verdict`.
+  # - FORWARD: `Snapshot.swap` = (ticker, close EUR, notch, entrant?), journalled by `screen::weight_swaps`
+  #   over `picks::live_rank_scores` at `track::BOOK` = 10. `track` grades it as its sixth table, one line
+  #   a month, entrants minus displaced, `reopen_verdict` at 12 monthly lines.
+  #
+  # WHY ENTRANTS MINUS DISPLACED. An equal-weight top-N book is SET-INVARIANT: a weight that only reorders
+  # names inside the ten moves nothing a holder earns, so PRIMARY reads "held" vacuously. The one thing a
+  # weight can change is WHICH names cross the edge, and that is what is priced. It is a within-bucket /
+  # within-line contrast, so (#333)'s config churn cannot corrupt it. REALIZED, not peer-relative: a
+  # weight never gates (`score_parts` has no post-score floor), so both sides come from the same pool and
+  # the peer mean cancels — the NOTCH BOOK/TAIL convention.
+  #
+  # PRE-REGISTERED ((#277)/(#278)): x0 and x2 were fixed before either reader ran. x0 asks "does this term
+  # earn its place at all", x2 "is it under-weighted". A finer grid picked after reading is the
+  # tune-to-the-noise trap; the multipliers are never re-picked off a result.
+  #
+  # FIRST IN-SAMPLE READING, `backtest 12 universe fund {pit,stress}` on this commit. k = buckets swapped;
+  # mean | median of entrants minus displaced, realized pts:
+  #
+  #   NOTCH                         PIT (k of 38)                    STRESS (k of 75)
+  #   growth_trend_weight x0        2    -4.7 |   -4.7  holds        12   -49.8 |   +5.6  SPLIT
+  #   growth_trend_weight x2        0    no swaps                    9    +94.7 |  +52.2  RE-PROBE
+  #   growth_accel_weight x0        4   +77.1 |  +16.5  RE-PROBE     21   -67.1 |  +13.2  SPLIT
+  #   growth_accel_weight x2        0    no swaps                    12  -166.5 | -173.8  holds
+  #   sharpe_weight x0              0                                3   +102.2 | +193.8  RE-PROBE
+  #   sharpe_weight x2              0                                0
+  #   quality_weight x0             0                                2   -247.5 | -247.5  holds
+  #   quality_weight x2             0                                1   +475.4 | +475.4  RE-PROBE
+  #   dividend_weight x0            0                                1   +212.7 | +212.7  RE-PROBE
+  #   dividend_weight x2            1  -140.9 | -140.9  holds        2   +230.6 | +230.6  RE-PROBE
+  #   growth_fund_weight x0         1  -982.9 | -982.9  holds        4     +7.0 |  +88.7  RE-PROBE
+  #   growth_fund_weight x2         0                                1   +258.8 | +258.8  RE-PROBE
+  #   growth_underwater_weight x0   0                                0
+  #   growth_underwater_weight x2   0                                0
+  #   growth_proximity_weight x0    0                                5   +176.4 |  -14.5  SPLIT
+  #   growth_proximity_weight x2    0                                8    -35.1 |  +12.2  SPLIT
+  #
+  # HOW TO READ IT, AND WHY NOTHING MOVED. (a) BOTH columns print POOL CENSUS VACUOUS. Pit's median gated
+  # pool is 6 against a basket of 10 (32 of 36 buckets saturated); stress's is EXACTLY 10 (28 of 52). The
+  # plan expected stress to be the non-vacuous lane; measured, it is borderline. A ranking knob cannot
+  # be adjudicated where the median bucket has nobody outside the basket, which is why each row prints
+  # k/N: a row on 1-4 swapped buckets is an anecdote with a sign. (b) Sixteen notches read at once: seven
+  # RE-PROBE flags on stress, most on k <= 4, is about what chance hands a 16-way read (a k = 1 row flags
+  # on a coin toss). (c) The one clean flag with some n behind it is `growth_trend_weight x2` on stress
+  # (9 of 75, mean AND median positive) — and pit, the lane the ship rule grades, never swaps on it. That
+  # is the lead a later round may open a full A/B on. It is NOT a reason to move the weight. (d) The
+  # forward half is the non-vacuous one: the live admitted pool is ~25 names against a book of 10.
+  #
+  # AUTHORITY: INFORM ONLY. No CI gate reads either half, there is no network WARN, Ship Rule v2 is
+  # unchanged and no weight moved. A RE-PROBE or REOPEN SIGNAL earns a full A/B round on the lanes
+  # (#149)'s lane map names, never a weight edit off the flag.
+  #
+  # HONEST EDGES. (a) The fixture never swaps — its pools never exceed ten — so the goldens pin the 16
+  # labels and "no swaps (0/N buckets)", not the arithmetic; `weight_swap_gaps`' unit test holds that.
+  # (b) The sweep applies neither the value brake (`growth_value_floor_pct`) nor the bench-window filter,
+  # the same simplification `gate_sweep` makes, so its buckets (75) outnumber POOL CENSUS's (52). (c) The
+  # live top-10 is `live_rank_scores` sorted by score then ticker and deduped on fund name — not
+  # `rows.take(BOOK)`: no coins, no >0 floor, no turnover tie-break. (d) A swap row carries its own close,
+  # because an entrant can rank past `rows` and `rows` holds coins; `adjust_for_splits` restates both
+  # copies in one pass. (e) `growth_proximity_weight x0` removes the dock outright, so that row prices a
+  # regime change, not a nudge. (f) Forward n_eff <= 1, as for every `track` section. September's monthly
+  # line predates the field, so the first swap line is 2026-10 and the earliest REOPEN is ~2027-09.
+  # (g) The journal line is wider: up to 16 notches' worth of swap rows a day.
+  #
+  # REVERT: delete `picks::{WEIGHT_NOTCHES, weight_notches}`, `backtest::{weight_swap_gaps, weight_sweep}`
+  # and its call, `screen::weight_swaps` and its `Snapshot` line, `Snapshot.swap` with its `fetch_set` and
+  # `adjust_for_splits` chains, `track::{swap_rows, swap_verdicts, swap_section}` and its print, and the
+  # tests; re-bless. Old journal lines read either way (`serde(default)`).
+  #
   # (#333) ROUND 116: THE RECORD ITSELF. FIVE FORWARD INSTRUMENTS, NONE OF THEM ABLE TO FIRE, BECAUSE
   # THE JOURNAL THEY READ WAS GITIGNORED.
   #

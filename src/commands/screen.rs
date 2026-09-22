@@ -742,6 +742,43 @@ fn notch_cohorts<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::Bu
         .collect()
 }
 
+/// (#334) What each `picks::weight_notches` row would swap across the top-`book` edge TODAY: entrants (in the
+/// notched order), then the names they displace (in the loaded order), each with this run's close — the
+/// forward half of the backtest's WEIGHT SWEEP, journalled as `track::Snapshot::swap`. Ranked on `scorer`
+/// (live: `picks::live_rank_scores`, the admitted non-crypto pool `render` ranks on), best score first with
+/// ticker as the tie-break, one venue per fund the way `notch_cohorts` keeps one. Sides are compared by FUND,
+/// not ticker, so a notch that only flips which venue of one fund scores best is not a swap. A notch that
+/// moves nobody writes no row.
+#[allow(clippy::type_complexity)]
+fn weight_swaps<'a>(
+    quotes: &'a [Quote],
+    tuning: &config::BuyHeuristic,
+    book: usize,
+    scorer: fn(&'a [Quote], &config::BuyHeuristic) -> std::collections::HashMap<&'a str, f64>,
+) -> Vec<(String, Option<f64>, String, bool)> {
+    let top = |t: &config::BuyHeuristic| -> Vec<&'a Quote> {
+        let scores = scorer(quotes, t);
+        let mut ranked: Vec<(&Quote, f64)> = quotes.iter().filter_map(|q| scores.get(q.ticker.as_str()).map(|s| (q, *s))).collect();
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.ticker.cmp(&b.0.ticker)));
+        let mut funds = std::collections::HashSet::new();
+        ranked.retain(|(q, _)| funds.insert(q.name.to_lowercase()));
+        ranked.into_iter().take(book).map(|(q, _)| q).collect()
+    };
+    let missing = |from: &[&'a Quote], other: &[&'a Quote]| -> Vec<&'a Quote> {
+        from.iter().copied().filter(|q| !other.iter().any(|o| o.name.eq_ignore_ascii_case(&q.name))).collect()
+    };
+    let was = top(tuning);
+    picks::weight_notches(tuning)
+        .into_iter()
+        .flat_map(|(label, t)| {
+            let now = top(&t);
+            let row = |q: &Quote, entrant: bool| (q.ticker.clone(), q.price_eur, label.clone(), entrant);
+            let rows: Vec<_> = missing(&now, &was).into_iter().map(|q| row(q, true)).chain(missing(&was, &now).into_iter().map(|q| row(q, false))).collect();
+            rows
+        })
+        .collect()
+}
+
 const MULTI_GATE_CAP: usize = 15; // hardcoded like the near-miss margins — a cosmetic tail, not a tuned knob
 
 /// Tails (C) and (C3): names failing EXACTLY `n` growth gates, every one of them close. Blocks are kept
@@ -2017,6 +2054,8 @@ pub async fn run(args: Vec<String>) {
                 })
                 .collect()
         },
+        // (#334) and what each shipped weight's x0 / x2 notch would swap across the graded top-BOOK
+        swap: weight_swaps(&quotes, &settings.buy_heuristic, crate::commands::track::BOOK, picks::live_rank_scores),
     });
 
     // (r15) footer population: ranked book + pinned extras — the held/watched names sit in the
@@ -4100,6 +4139,46 @@ mod tests {
         assert_eq!(admitted, [("range", vec!["RNG"]), ("cagr", vec!["IN"])], "{admitted:?}");
     }
 
+    /// (#334) Test scorer: `range_pct + quality_weight × avg_turnover_eur`, so a `quality_weight` notch
+    /// reorders exactly the names carrying turnover.
+    fn swap_scorer<'a>(quotes: &'a [Quote], t: &config::BuyHeuristic) -> std::collections::HashMap<&'a str, f64> {
+        quotes.iter().map(|q| (q.ticker.as_str(), q.range_pct + t.quality_weight * q.avg_turnover_eur.unwrap_or(0.0))).collect()
+    }
+
+    /// (#334) With only `quality_weight` (1.0) armed, x0 drops Q (9 -> 4) under the edge and lets R (8.5) in,
+    /// while x2 only lifts Q further and moves nobody, so it writes no row. Q's venue twin Q2 ties it, sits
+    /// FIRST in the input, and must lose on the ticker tie-break and then vanish as the same fund — without
+    /// the dedupe the base book would be both venues. A book holding the whole pool swaps nobody.
+    #[test]
+    fn weight_swaps_are_the_names_a_notch_moves_across_the_book() {
+        let q = |ticker: &str, name: &str, a: f64, b: f64, px: f64| {
+            let mut quote = Quote::stub(ticker, "€1.00", "", name);
+            quote.range_pct = a;
+            quote.avg_turnover_eur = Some(b);
+            quote.price_eur = Some(px);
+            quote
+        };
+        let quotes = vec![
+            q("Q2", "Q Co", 4.0, 5.0, 2.5),
+            q("P", "P Co", 8.8, 0.0, 1.0),
+            q("Q", "Q Co", 4.0, 5.0, 2.0),
+            q("R", "R Co", 8.5, 0.0, 3.0),
+            q("S", "S Co", 1.0, 3.0, 4.0),
+        ];
+        let mut tuning = config::BuyHeuristic::default();
+        for (_, _, set) in picks::WEIGHT_DIMS {
+            set(&mut tuning, 0.0);
+        }
+        tuning.quality_weight = 1.0;
+        let got = weight_swaps(&quotes, &tuning, 2, swap_scorer);
+        let want = vec![
+            ("R".to_string(), Some(3.0), "quality_weight x0".to_string(), true),
+            ("Q".to_string(), Some(2.0), "quality_weight x0".to_string(), false),
+        ];
+        assert_eq!(got, want);
+        assert!(weight_swaps(&quotes, &tuning, 10, swap_scorer).is_empty(), "a book holding the whole pool swaps nobody");
+    }
+
     /// The gate tails: the n-arity block (2 and 3), the long-leg floor block, and the four behaviours
     /// that are easy to break silently — dedup by FUND NAME before the histogram (so its counts match
     /// the rows), the pinned skip, the empty note that ONLY the three-gate block carries, and the floor
@@ -4209,7 +4288,7 @@ mod tests {
                 f += 1;
             }
             rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), rows }
         };
         // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
         let past = vec![
@@ -4253,7 +4332,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), rows }
         };
         // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
         // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
@@ -4287,7 +4366,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), swap: Vec::new(),
         };
         // fully stable: same top set across 3 screens → every pair retains all → 1.0
         let stable = vec![
@@ -4340,7 +4419,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), rows }
         };
         // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
         // E always rank 12 (past the top-10 cut → no point) · D never appears
@@ -4373,7 +4452,7 @@ mod tests {
             aum: at.iter().map(|(t, _, a)| (t.to_string(), *a)).collect(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), swap: Vec::new(),
         };
         let journal = vec![
             snap(

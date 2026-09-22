@@ -97,6 +97,16 @@ pub struct Snapshot {
     /// already on disk, and every older line reads back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub peg: Vec<(String, f64, f64)>,
+    /// (#334) THE WEIGHT SWAP SHADOW: `(ticker, close EUR, weight notch, entrant?)` for every name one of
+    /// `picks::weight_notches` would move across the top-[`BOOK`] edge that day — entrants in the notched
+    /// order, then the names they displace. An equal-weight book feels a ranking weight only through those
+    /// names, so `track` grades entrants against the displaced of the SAME line, a within-line contrast
+    /// config churn cannot corrupt. The close rides on EVERY row, displaced included, though a displaced
+    /// name usually sits in `rows` too: entrants can rank past `rows`, and `rows` carries coins the live
+    /// rank excludes, so no join through `rows` holds. [`adjust_for_splits`] restates both copies in one
+    /// pass, so they cannot drift. Same serde contract as `sized` and `peg`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub swap: Vec<(String, Option<f64>, String, bool)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -161,6 +171,8 @@ pub(crate) fn adjust_for_splits(snaps: &mut [Snapshot], factor_since: &dyn Fn(&s
         let Ok(then) = chrono::NaiveDate::parse_from_str(&snap.date, "%Y-%m-%d") else { continue };
         // (#323) and the near-miss tail, which `near_section` grades the same way
         let lanes = snap.rows.iter_mut().chain(snap.core.iter_mut()).map(|(t, p)| (&*t, p));
+        // (#334) and the weight-swap shadow, both sides
+        let lanes = lanes.chain(snap.swap.iter_mut().map(|(t, p, ..)| (&*t, p)));
         for (ticker, px) in lanes.chain(snap.near.iter_mut().map(|(t, p, _)| (&*t, p))) {
             let factor = factor_since(ticker, then);
             // `!= 1.0` and not an epsilon: a factor is a ratio of two small integers or it is the
@@ -323,6 +335,8 @@ fn fetch_set(snaps: &[Snapshot]) -> Vec<String> {
                 // Chained rather than lifting the take: this field IS the declaration of which names
                 // that shadow grades, so the fetch set follows the journal instead of guessing wider.
                 .chain(s.peg.iter().map(|(t, ..)| t))
+                // (#334) the weight-swap shadow: an entrant can rank past `rows.take(BOOK)`
+                .chain(s.swap.iter().map(|(t, ..)| t))
         })
         .cloned()
         .chain(std::iter::once("^GSPC".to_string()))
@@ -753,6 +767,78 @@ fn peg_section(
 const PEG_HEADER: &str =
     "  DATE            AGE    N  LADDER CHEAP  LADDER RICH    PIN CHEAP     PIN RICH   PIN-LADDER";
 
+/// (#334) One side of one weight notch's swap, as [`grade`] wants it: equal-weight, priced from the
+/// close the swap row journalled itself.
+fn swap_rows<'a>(snap: &'a Snapshot, notch: &str, entrant: bool) -> Vec<(&'a str, Option<f64>, f64)> {
+    snap.swap.iter().filter(|(_, _, n, e)| n == notch && *e == entrant).map(|(t, p, ..)| (t.as_str(), *p, 1.0)).collect()
+}
+
+/// (#334) Per weight notch: `(notch, monthly lines, mean gap, median gap)`, a gap being the names that
+/// notch would move INTO the top-[`BOOK`] minus the names it would push OUT, both graded to today on
+/// the SAME line. [`gate_verdicts`]' twin, read the same way: one line a month, a side that cannot
+/// grade contributes nothing (a missing gap is not a zero one), nearest-rank median.
+fn swap_verdicts(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> Vec<(String, usize, f64, f64)> {
+    let mut gaps: std::collections::BTreeMap<&str, Vec<f64>> = Default::default();
+    for s in crate::commands::sim::monthly_firsts(snaps).into_values() {
+        let notches: std::collections::BTreeSet<&str> = s.swap.iter().map(|(_, _, n, _)| n.as_str()).collect();
+        for n in notches {
+            let side = |entrant| grade(s, &swap_rows(s, n, entrant), usize::MAX, today, px_now, spx_now);
+            if let (Some(i), Some(o)) = (side(true), side(false)) {
+                gaps.entry(n).or_default().push(i.book_pct - o.book_pct);
+            }
+        }
+    }
+    gaps.into_iter()
+        .map(|(n, mut v)| {
+            v.sort_by(f64::total_cmp);
+            let mean = v.iter().sum::<f64>() / v.len() as f64;
+            (n.to_string(), v.len(), mean, crate::commands::backtest::percentile(&v, 50.0))
+        })
+        .collect()
+}
+
+/// (#334) The sixth table: THE WEIGHT-SWAP SHADOW, the forward half of backtest's WEIGHT SWEEP. Every
+/// gate had a forward instrument ([`near_section`]); the RANKING weights had none, so a mis-set weight
+/// could only ever be graded on the backtest windows it was tuned on. An equal-weight top-N book is
+/// set-invariant, so a weight is read at the book's edge: the names its x0 / x2 notch would swap in
+/// against the names they would swap out. INFORM ONLY — a flag earns a full A/B round, never a move.
+fn swap_section(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    let journalled = snaps.iter().filter(|s| !s.swap.is_empty()).count();
+    let total = snaps.len();
+    let verdicts = swap_verdicts(snaps, today, px_now, spx_now);
+    if verdicts.is_empty() {
+        return format!(
+            "\n  Weight-swap shadow: nothing gradeable yet. A line needs a day of age and a priced name on\n  \
+             both sides of a swap, and only {journalled} of {total} journalled run(s) carry swaps. The record\n  \
+             starts the run AFTER one is journalled and cannot be backdated."
+        );
+    }
+    let body: String = verdicts
+        .iter()
+        .map(|(n, k, mean, med)| {
+            format!("\n    {n:<28} {k:>3} line(s)  mean {mean:>+7.1}pp  median {med:>+7.1}pp  {}", reopen_verdict(*k, *mean, *med))
+        })
+        .collect();
+    format!(
+        "\n  Weight-swap shadow (#334) — each shipped ranking weight x0 / x2: the names that notch would move\n  \
+         INTO the top-{BOOK} against the names it would push OUT, equal-weight, same windows. One line a\n  \
+         month, entrants minus displaced. Pre-registered: a notch flags REOPEN SIGNAL at {REOPEN_LINES}+ lines\n  \
+         with mean AND median above 0. INFORM ONLY: a flag earns a full A/B round, never a weight move, and\n  \
+         16 notches read at once will throw a false flag by chance. EUR seat, price-only. NOT advice.\n  \
+         Journalled on {journalled} of {total} run(s).{body}"
+    )
+}
+
 /// Fold every gradeable snapshot with a benchmark leg into the verdict numbers:
 /// (wins, graded_n, excess_sum). The ONE source for the summary — track's table and the screen's
 /// live-track-record line both consume this, so the two surfaces can't disagree. (#322) Each line
@@ -928,6 +1014,7 @@ pub async fn run(args: Vec<String>) {
     // (#324) and what each one-notch loosening would have added, read against that same bought book
     println!("{}", near_section(&snaps, today, &px_now, spx_now));
     println!("{}", peg_section(&snaps, today, &px_now, spx_now));
+    println!("{}", swap_section(&snaps, today, &px_now, spx_now)); // (#334)
     if push {
         let delivered = fetch::push(
             &client,
@@ -956,7 +1043,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), swap: Vec::new(),
         }
     }
 
@@ -984,6 +1071,45 @@ mod tests {
     fn with_peg(mut s: Snapshot, peg: &[(&str, f64, f64)]) -> Snapshot {
         s.peg = peg.iter().map(|(t, l, p)| (t.to_string(), *l, *p)).collect();
         s
+    }
+
+    /// (#334) The same snapshot with a journalled weight-swap shadow: `(ticker, close, notch, entrant?)`.
+    fn with_swap(mut s: Snapshot, swap: &[(&str, Option<f64>, &str, bool)]) -> Snapshot {
+        s.swap = swap.iter().map(|(t, p, n, e)| (t.to_string(), *p, n.to_string(), *e)).collect();
+        s
+    }
+
+    /// (#334) Entrants minus displaced, one line a month: +10 then +20 reads mean 15.0 and nearest-rank
+    /// median 20.0. A month without swaps counts toward the total, not the journalled; a notch whose
+    /// displaced side cannot price grades NOTHING rather than a zero.
+    #[test]
+    fn swap_section_grades_entrants_against_the_displaced() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let px = |t: &str| match t {
+            "E1" => Some(120.0),
+            "E2" => Some(130.0),
+            "D1" | "D2" | "EP" => Some(110.0),
+            _ => None,
+        };
+        let bare = snap("2026-05-16", Some(100.0), &[("A", Some(100.0))]);
+        let empty = swap_section(std::slice::from_ref(&bare), today, &px, Some(100.0));
+        assert!(empty.contains("nothing gradeable yet") && empty.contains("0 of 1"), "{empty}");
+        assert!(empty.contains("cannot be backdated") && !empty.contains("pp"), "{empty}");
+
+        let snaps = vec![
+            with_swap(snap("2026-04-16", Some(100.0), &[]), &[("E1", Some(100.0), "q x0", true), ("D1", Some(100.0), "q x0", false)]),
+            bare,
+            with_swap(
+                snap("2026-06-16", Some(100.0), &[]),
+                &[("E2", Some(100.0), "q x0", true), ("D2", Some(100.0), "q x0", false), ("EP", Some(100.0), "p x2", true), ("DP", Some(100.0), "p x2", false)],
+            ),
+        ];
+        let out = swap_section(&snaps, today, &px, Some(100.0));
+        assert!(out.contains("Journalled on 2 of 3 run(s)."), "{out}");
+        let q = out.lines().find(|l| l.trim_start().starts_with("q x0")).unwrap_or_default();
+        assert!(q.contains("  2 line(s)") && q.contains("mean   +15.0pp") && q.contains("median   +20.0pp"), "{q}");
+        assert!(q.contains("needs 12 lines"), "{q}");
+        assert!(!out.contains("p x2"), "an unpriced side is no gap, not a zero one: {out}");
     }
 
     /// (#332) A PEG cohort's price join reaches into BOTH source lists, because the cohort spans the
@@ -1185,6 +1311,11 @@ mod tests {
         assert_eq!(cored[0].core[1].1, Some(50.0), "no split -> untouched, here too");
         assert_eq!(cored[0].core[2].1, None, "an unpriced CORE row stays unpriced");
         assert_eq!(cored[0].rows[0].1, Some(50.0), "and the momentum rows are still walked");
+
+        // (#334) the weight-swap shadow carries its own close, so the same pass restates it
+        let mut swapped = vec![with_swap(snap("2024-06-01", Some(5000.0), &[]), &[("AAA", Some(100.0), "q x0", false)])];
+        assert_eq!(adjust_for_splits(&mut swapped, &factor), 1, "{:?}", swapped[0].swap);
+        assert_eq!(swapped[0].swap[0].1, Some(10.0), "a swap close splits like any other");
 
         // (#323) and the near-miss tail, which `near_section` grades the same way
         let mut neared = vec![with_near(
@@ -1530,8 +1661,9 @@ mod tests {
             ),
             &[("NM", Some(1.0), "cagr")], // (#323) refused, yet graded — so priced
         );
+        let s = with_swap(s, &[("SW", Some(1.0), "quality_weight x2", true)]); // (#334) an entrant past the book
         let mut want: Vec<String> = names[..BOOK].to_vec();
-        want.extend(["BTC-EUR", "CORE", "NM", "R10", "^GSPC"].map(String::from));
+        want.extend(["BTC-EUR", "CORE", "NM", "R10", "SW", "^GSPC"].map(String::from));
         want.sort();
         assert_eq!(fetch_set(&[s.clone(), s]), want, "sorted, deduped across lanes and lines");
     }
@@ -1561,6 +1693,14 @@ mod tests {
         assert!(on.contains(r#""near":[["EME",612.5,"cagr"]]"#), "{on}");
         assert_eq!(serde_json::from_str::<Snapshot>(&on).unwrap().near, s.near);
         assert!(serde_json::from_str::<Snapshot>(line).unwrap().near.is_empty());
+
+        // (#334) and the weight-swap shadow
+        assert!(!off.contains("swap"), "an empty shadow must not widen the line: {off}");
+        s.swap = vec![("EME".into(), Some(612.5), "quality_weight x0".into(), true)];
+        let on = serde_json::to_string(&s).unwrap();
+        assert!(on.contains(r#""swap":[["EME",612.5,"quality_weight x0",true]]"#), "{on}");
+        assert_eq!(serde_json::from_str::<Snapshot>(&on).unwrap().swap, s.swap);
+        assert!(serde_json::from_str::<Snapshot>(line).unwrap().swap.is_empty());
     }
 
     /// (#323) The shadow table grades the near-miss tail equal-weight on the line's own window — +10.0%
