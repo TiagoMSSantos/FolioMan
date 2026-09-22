@@ -1017,6 +1017,15 @@ mod tests {
             assert_eq!(peg_rows(&s, pinned, cheap).len(), 2, "halves must match in size or the split prices cohort size");
             assert!(!names(pinned, cheap).contains(&"C"), "the median name belongs to neither half");
         }
+
+        // TIES BREAK ON TICKER, so which name lands in which half cannot depend on journal order.
+        // Journalled Z-before-Y at one identical peg_yield, the cheap half must still read Y.
+        let tied = with_peg(
+            snap("2026-01-01", Some(100.0), &[("Y", Some(1.0)), ("Z", Some(1.0))]),
+            &[("Z", 50.0, 50.0), ("Y", 50.0, 50.0)],
+        );
+        assert_eq!(peg_rows(&tied, false, true).iter().map(|(t, ..)| *t).collect::<Vec<_>>(), vec!["Y"]);
+        assert_eq!(peg_rows(&tied, false, false).iter().map(|(t, ..)| *t).collect::<Vec<_>>(), vec!["Z"]);
     }
 
     /// (#332) THE DECIDING STATISTIC IS THE CHEAP HALF, and this is the test that pins it: moving the
@@ -1058,6 +1067,10 @@ mod tests {
         let (n2, mean2, med2) = peg_verdict(&[s], today, &rich_moved, Some(100.0));
         assert_eq!(n2, n);
         assert!((mean2 - mean).abs() < 1e-9 && (med2 - med).abs() < 1e-9, "the rich half must not reach the verdict: {mean2} vs {mean}");
+
+        // A line with no PEG cohort folds to a stated zero, not to a NaN wearing a percent sign.
+        let bare = snap("2026-01-01", Some(100.0), &[("A", Some(100.0))]);
+        assert_eq!(peg_verdict(&[bare], today, &base, Some(100.0)), (0, 0.0, 0.0));
     }
 
     /// (#332) The section prints both denominators, the pre-registered bar, and says so plainly when
@@ -1078,6 +1091,7 @@ mod tests {
         assert!(out.contains("90d    4 "), "N is the whole cohort, not one half: {out}");
         assert!(out.contains("+50.0%") && out.contains("-50.0pp"), "both halves and the delta must print: {out}");
         assert!(out.contains("needs 12 lines") && out.contains("Ship Rule v2 PRIMARY at 12y AND 8y"), "{out}");
+        assert!(out.contains("Journalled on 1 of 1 run(s)"), "a line carrying a cohort must be counted as carrying one: {out}");
         assert!(out.contains("10Y window"), "the pinned rung must be named in the prose: {out}");
     }
 

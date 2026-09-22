@@ -10198,6 +10198,12 @@ mod tests {
         falling.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", -50.0), ("20Y", 20000.0)]);
         assert_eq!(peg_repriced(&falling, &base, &pinned, served), None);
         assert_eq!(peg_repriced(&falling, &pinned, &base, served), None, "the None-out is symmetric in the two windows");
+        // ZERO is on the None side of the boundary, not the Some side: `> 0.0`, not `>= 0.0`. A flat
+        // record divides the PEG by nothing, and admitting it would hand the grader an infinity.
+        let mut flat = q.clone();
+        flat.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 0.0), ("20Y", 20000.0)]);
+        assert_eq!(peg_cagr_pct(&flat, &pinned), Some(0.0), "fixture must actually pin a zero CAGR");
+        assert_eq!(peg_repriced(&flat, &base, &pinned, served), None, "a zero CAGR is not a denominator");
     }
 
     /// (#54) `pin_dropped` must name exactly the cohort the CAGR pin costs, and nobody else. The pin
