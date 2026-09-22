@@ -621,7 +621,7 @@ fn journal_px(snap: &Snapshot, ticker: &str) -> Option<f64> {
 /// AN ODD COHORT DROPS ITS MEDIAN NAME FROM BOTH HALVES rather than lengthening one of them. The two
 /// halves must be the same size or the comparison starts pricing cohort SIZE, which is precisely the
 /// defect (#329) spent a round removing from the notch bar.
-fn peg_rows<'a>(snap: &'a Snapshot, pinned: bool, cheap: bool) -> Vec<(&'a str, Option<f64>, f64)> {
+fn peg_rows(snap: &Snapshot, pinned: bool, cheap: bool) -> Vec<(&str, Option<f64>, f64)> {
     let mut ranked: Vec<(&str, f64)> =
         snap.peg.iter().map(|(t, ladder, pin)| (t.as_str(), if pinned { *pin } else { *ladder })).collect();
     ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
@@ -1053,7 +1053,7 @@ mod tests {
 
         // C doubles; everything else sits still. Ladder cheap holds it, the pin does not.
         let base = |t: &str| Some(if t == "C" { 200.0 } else { 100.0 });
-        let (n, mean, med) = peg_verdict(&[s.clone()], today, &base, Some(100.0));
+        let (n, mean, med) = peg_verdict(std::slice::from_ref(&s), today, &base, Some(100.0));
         assert_eq!(n, 1);
         assert!((mean - -100.0 / 3.0).abs() < 1e-9 && (med - -100.0 / 3.0).abs() < 1e-9, "mean {mean} med {med}");
         assert_eq!(reopen_verdict(n, mean, med), "needs 12 lines", "one line can never be a reopen");
@@ -1080,7 +1080,7 @@ mod tests {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
         let px = |t: &str| Some(if t == "A" { 200.0 } else { 100.0 });
         let bare = snap("2026-01-01", Some(100.0), &[("A", Some(100.0))]);
-        let empty = peg_section(&[bare.clone()], today, &px, Some(100.0));
+        let empty = peg_section(std::slice::from_ref(&bare), today, &px, Some(100.0));
         assert!(empty.contains("nothing gradeable yet") && empty.contains("0 of 1"), "{empty}");
         assert!(!empty.contains('%'), "the empty case must not print a table: {empty}");
 
