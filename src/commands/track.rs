@@ -75,6 +75,28 @@ pub struct Snapshot {
     /// Journal data, no knob, same serde contract as `sized`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub near: Vec<(String, Option<f64>, String)>,
+    /// (#332) THE PEG DENOMINATOR SHADOW: `(ticker, served peg_yield, the same PEG re-priced on the
+    /// pinned window)` for every ranked or notch name this run could price a PEG for.
+    ///
+    /// (#331) gave the PEG denominator its own window (`peg_cagr_years`) and REFUSED all three rungs
+    /// on the backtest, shipping the knob inert at 0. That refusal has no forward half. `near` above
+    /// shadows would-be ADMITS, and the split window admits nobody at any rung — it is structurally
+    /// EVICT-ONLY, because `picks::long_leg_fixed` falls back to the age ladder for exactly the young
+    /// names a pin would rescue. So the one question left open — *is a pinned PEG a better valuation
+    /// number than an age-ladder one?* — was un-gradeable by every instrument on file.
+    ///
+    /// This is that instrument, and it does NOT grade admission. It grades RANKING POWER: split these
+    /// names into a cheap half and a rich half under each denominator, hold both, and see which
+    /// denominator's cheap half does better ([`peg_section`]). A name both windows agree on lands in
+    /// the same half twice and cancels; only the names the pin RE-RANKS can move the verdict.
+    ///
+    /// NO PRICE HERE, for the reason `sized` states: `rows` and `near` already carry that day's close
+    /// for every ticker this can name, and a second copy is the drift non-negotiable #4 exists to
+    /// stop. [`journal_px`] does the join. NO KNOB either — journal data, like `aum` and `spx_off_hi`.
+    /// Same serde contract as `sized`: a run that prices no PEG stays byte-identical to the lines
+    /// already on disk, and every older line reads back.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub peg: Vec<(String, f64, f64)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -297,6 +319,10 @@ fn fetch_set(snaps: &[Snapshot]) -> Vec<String> {
         .flat_map(|s| {
             s.rows.iter().take(BOOK).chain(&s.core).map(|(t, _)| t).chain(s.sized.iter().map(|(t, _)| t))
                 .chain(s.near.iter().map(|(t, ..)| t)) // (#323)
+                // (#332) the PEG cohort, which reaches past `rows.take(BOOK)` into the ranked tail.
+                // Chained rather than lifting the take: this field IS the declaration of which names
+                // that shadow grades, so the fetch set follows the journal instead of guessing wider.
+                .chain(s.peg.iter().map(|(t, ..)| t))
         })
         .cloned()
         .chain(std::iter::once("^GSPC".to_string()))
@@ -566,6 +592,167 @@ fn near_section(
     )
 }
 
+/// (#332) The pinned denominator window this journal shadows: `peg_cagr_years: 10`.
+///
+/// PRE-REGISTERED, and fixed before the first line accrued. (#331) graded rungs 5, 8 and 10 and
+/// refused all three; rung 10 is the one its receipt names as the reopen — the only arm genuinely UP
+/// at 8y on book CAGR, excess, OOS and rank-1, dead on a single 12y median over 36 windows. Journalling
+/// all three and reopening on whichever won afterwards is the tune-after-the-fact trap (#277)/(#278)
+/// exist to stop, so the record carries ONE rung and the choice cannot be revisited once evidence is in.
+pub const PEG_PIN_YEARS: u32 = 10;
+
+/// (#332) That day's close for a journalled ticker, from whichever list already carries one. `peg`
+/// holds no price of its own: its names are drawn from `rows` ∪ `near`, and both of those do.
+fn journal_px(snap: &Snapshot, ticker: &str) -> Option<f64> {
+    snap.rows
+        .iter()
+        .find(|(t, _)| t == ticker)
+        .and_then(|(_, p)| *p)
+        .or_else(|| snap.near.iter().find(|(t, ..)| t == ticker).and_then(|(_, p, _)| *p))
+}
+
+/// (#332) One half of one denominator's split, as [`grade`] wants it: equal-weight, priced from the
+/// close the same line journalled.
+///
+/// HIGH `peg_yield` IS CHEAP — the field is `100/PEG`, the same inversion `growth_max_peg` compares
+/// against — so the cheap half is the TOP of a descending sort. Ties break on ticker, so the split is
+/// deterministic rather than dependent on journal order.
+///
+/// AN ODD COHORT DROPS ITS MEDIAN NAME FROM BOTH HALVES rather than lengthening one of them. The two
+/// halves must be the same size or the comparison starts pricing cohort SIZE, which is precisely the
+/// defect (#329) spent a round removing from the notch bar.
+fn peg_rows<'a>(snap: &'a Snapshot, pinned: bool, cheap: bool) -> Vec<(&'a str, Option<f64>, f64)> {
+    let mut ranked: Vec<(&str, f64)> =
+        snap.peg.iter().map(|(t, ladder, pin)| (t.as_str(), if pinned { *pin } else { *ladder })).collect();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    let half = ranked.len() / 2;
+    let slice = if cheap { &ranked[..half] } else { &ranked[ranked.len() - half..] };
+    slice.iter().map(|(t, _)| (*t, journal_px(snap, t), 1.0)).collect()
+}
+
+/// (#332) One line's four half-returns: `(graded leg, ladder cheap, ladder rich, pin cheap, pin rich)`.
+/// None unless ALL FOUR halves grade — a line that can price three of them describes no comparison.
+fn peg_halves(
+    snap: &Snapshot,
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> Option<(Graded, f64, f64, f64, f64)> {
+    let g = |pinned, cheap| grade(snap, &peg_rows(snap, pinned, cheap), usize::MAX, today, px_now, spx_now);
+    let (lc, lr, pc, pr) = (g(false, true)?, g(false, false)?, g(true, true)?, g(true, false)?);
+    let pcts = (lc.book_pct, lr.book_pct, pc.book_pct, pr.book_pct);
+    Some((lc, pcts.0, pcts.1, pcts.2, pcts.3))
+}
+
+/// (#332) One printed row of the PEG shadow. `N` is the WHOLE cohort, not one half: the halves are
+/// each `N/2` by construction and printing that instead would understate what the line graded.
+fn peg_row(snap: &Snapshot, g: &Graded, lc: f64, lr: f64, pc: f64, pr: f64) -> String {
+    format!(
+        "  {:<12} {:>5}d {:>4} {:>+12.1}% {:>+11.1}% {:>+11.1}% {:>+10.1}% {:>+12.1}pp",
+        g.date,
+        g.days,
+        snap.peg.len(),
+        lc,
+        lr,
+        pc,
+        pr,
+        pc - lc
+    )
+}
+
+/// (#332) The deciding statistic's record: `(monthly lines, mean, median)` of the pinned cheap half
+/// minus the ladder cheap half. One line a month (`sim::monthly_firsts`, the same clock
+/// [`gate_verdicts`] runs on, because a same-week rerun is not a second trial).
+///
+/// THE CHEAP HALF IS THE ONLY HALF THE BOOK EVER BUYS. A spread (cheap minus rich) would pay the pin
+/// for sorting names the tool is never long, so a denominator that merely dumps losers harder would
+/// read as an improvement the book never collects. Both halves grade over the SAME window to the same
+/// endpoint, so the market leg cancels with no spread needed to control for it — the benchmark does
+/// not enter this arithmetic at all. A line that cannot grade contributes nothing; a missing gap is
+/// not a zero one. Median is nearest-rank (`backtest::percentile`), the repo's one rule.
+fn peg_verdict(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> (usize, f64, f64) {
+    let mut gaps: Vec<f64> = crate::commands::sim::monthly_firsts(snaps)
+        .into_values()
+        .filter_map(|s| peg_halves(s, today, px_now, spx_now).map(|(_, lc, _, pc, _)| pc - lc))
+        .collect();
+    gaps.sort_by(f64::total_cmp);
+    if gaps.is_empty() {
+        return (0, 0.0, 0.0);
+    }
+    let mean = gaps.iter().sum::<f64>() / gaps.len() as f64;
+    (gaps.len(), mean, crate::commands::backtest::percentile(&gaps, 50.0))
+}
+
+/// (#332) The fifth table: THE PEG DENOMINATOR SHADOW — which denominator is the better valuation
+/// number, graded on prices that did not exist when either ranked.
+///
+/// WHY IT EXISTS. (#331) split the PEG denominator from the ranking leg (`peg_cagr_years`) and refused
+/// rungs 5, 8 and 10, shipping the knob inert at 0. Nothing could grade that refusal forward. The
+/// notch shadow above is the forward half of an ADMISSION refusal and journals would-be admits, and
+/// this knob admits nobody at any rung: it is structurally EVICT-ONLY, because `picks::long_leg_fixed`
+/// falls back to the age ladder for exactly the young names a pin would rescue. So the question the
+/// round actually asked — is a PEG divided by a PINNED window a better valuation number than one
+/// divided by whatever rung the AGE ladder happened to pick — had no out-of-sample instrument at all.
+///
+/// IT GRADES RANKING, NOT ADMISSION, and the distinction is the point. Every name here is ranked by
+/// each denominator, split at the median into a cheap half and a rich half, and both halves are held
+/// equal-weight over the same window. A name the two windows agree on lands in the same half twice and
+/// cancels out; only the names the pin RE-RANKS can move the verdict. The cohort spans the ranked book
+/// AND the notch names, so the PEG range is the full one rather than the narrow band left under the
+/// ceiling — and because both denominators score the IDENTICAL name set, any bias in that set is
+/// common-mode and cancels in the difference.
+fn peg_section(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+) -> String {
+    let rows: Vec<String> = snaps
+        .iter()
+        .filter_map(|s| peg_halves(s, today, px_now, spx_now).map(|(g, lc, lr, pc, pr)| peg_row(s, &g, lc, lr, pc, pr)))
+        .collect();
+    let journalled = snaps.iter().filter(|s| !s.peg.is_empty()).count();
+    let total = snaps.len();
+    if rows.is_empty() {
+        return format!(
+            "\n  PEG denominator shadow: nothing gradeable yet. A line needs a day of age and at least one\n  \
+             priced name in each half before it grades, and only {journalled} of {total} journalled run(s)\n  \
+             carry a PEG cohort. The record starts the run AFTER one is journalled and cannot be backdated."
+        );
+    }
+    let (n, mean, med) = peg_verdict(snaps, today, px_now, spx_now);
+    let body = rows.join("\n");
+    format!(
+        "\n  PEG denominator shadow — the SAME names ranked by two PEGs: the shipped one, whose growth term\n  \
+         is whatever rung the AGE ladder picked, and the same PEG re-priced on a pinned {PEG_PIN_YEARS}Y window\n  \
+         (`peg_cagr_years`, graded and refused by (#331), shipping inert at 0). Each denominator splits the\n  \
+         cohort at its median into a cheap half and a rich half, held equal-weight over the same window. A\n  \
+         name both windows agree on cancels; only re-ranked names move this. Ranked book + notch names, EUR\n  \
+         seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\n\
+         {PEG_HEADER}\n{body}\n\n  \
+         Verdict, one line a month: PIN CHEAP minus LADDER CHEAP, {n} line(s), mean {mean:+.1}pp, median\n  \
+         {med:+.1}pp — {}. The cheap half is the ONLY half this tool is ever long, so the spread against the\n  \
+         rich half is reported but does NOT decide: a denominator that merely dumps losers harder earns the\n  \
+         book nothing. Pre-registered by (#332) before the first line accrued: `peg_cagr_years: {PEG_PIN_YEARS}`\n  \
+         re-opens when {REOPEN_LINES}+ monthly lines read mean AND median above 0 AND a re-run backtest passes\n  \
+         Ship Rule v2 PRIMARY at 12y AND 8y on the pit lane — the exact leg rung {PEG_PIN_YEARS} failed on, where a 12y\n  \
+         median of 36 windows fell while its mean rose. Both halves grade to one shared endpoint, so this\n  \
+         record's n_eff is <= 1 however many lines accrue, the same ceiling `effective_trials` states below.",
+        reopen_verdict(n, mean, med)
+    )
+}
+
+/// (#332) The PEG shadow's column header. A const for the reason [`TABLE_HEADER`] is one: it IS the
+/// alignment contract [`peg_row`]'s widths are chosen against, and a `format!` of literals would buy
+/// nothing at runtime while handing the mutation gate a free survivor.
+const PEG_HEADER: &str =
+    "  DATE            AGE    N  LADDER CHEAP  LADDER RICH    PIN CHEAP     PIN RICH   PIN-LADDER";
+
 /// Fold every gradeable snapshot with a benchmark leg into the verdict numbers:
 /// (wins, graded_n, excess_sum). The ONE source for the summary — track's table and the screen's
 /// live-track-record line both consume this, so the two surfaces can't disagree. (#322) Each line
@@ -740,6 +927,7 @@ pub async fn run(args: Vec<String>) {
     println!("{}", sized_section(&snaps, today, &px_now, spx_now));
     // (#324) and what each one-notch loosening would have added, read against that same bought book
     println!("{}", near_section(&snaps, today, &px_now, spx_now));
+    println!("{}", peg_section(&snaps, today, &px_now, spx_now));
     if push {
         let delivered = fetch::push(
             &client,
@@ -768,7 +956,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(),
+            near: Vec::new(), peg: Vec::new(),
         }
     }
 
@@ -789,6 +977,108 @@ mod tests {
     fn with_near(mut s: Snapshot, near: &[(&str, Option<f64>, &str)]) -> Snapshot {
         s.near = near.iter().map(|(t, p, g)| (t.to_string(), *p, g.to_string())).collect();
         s
+    }
+
+    /// (#332) The same snapshot with a journalled PEG cohort: `(ticker, served peg_yield, the same
+    /// PEG re-priced on the pinned window)`.
+    fn with_peg(mut s: Snapshot, peg: &[(&str, f64, f64)]) -> Snapshot {
+        s.peg = peg.iter().map(|(t, l, p)| (t.to_string(), *l, *p)).collect();
+        s
+    }
+
+    /// (#332) A PEG cohort's price join reaches into BOTH source lists, because the cohort spans the
+    /// ranked book AND the notch names and `peg` deliberately carries no price of its own.
+    #[test]
+    fn journal_px_joins_from_rows_and_from_near() {
+        let s = with_near(snap("2026-01-01", Some(100.0), &[("IN_ROWS", Some(10.0))]), &[("IN_NEAR", Some(20.0), "cagr")]);
+        assert_eq!(journal_px(&s, "IN_ROWS"), Some(10.0));
+        assert_eq!(journal_px(&s, "IN_NEAR"), Some(20.0), "a notch name must price, or half the cohort silently drops");
+        assert_eq!(journal_px(&s, "NOWHERE"), None);
+    }
+
+    /// (#332) HIGH `peg_yield` IS CHEAP (the field is `100/PEG`), the two halves are the same size,
+    /// and an ODD cohort drops its median name from both rather than lengthening one.
+    #[test]
+    fn peg_rows_splits_cheap_from_rich_on_the_chosen_denominator() {
+        let px = [("A", 1.0), ("B", 1.0), ("C", 1.0), ("D", 1.0), ("E", 1.0)];
+        // ladder ranks A cheapest (90) down to E (10); the PIN exactly reverses that order.
+        let s = with_peg(
+            snap("2026-01-01", Some(100.0), &px.map(|(t, p)| (t, Some(p)))),
+            &[("A", 90.0, 10.0), ("B", 70.0, 30.0), ("C", 50.0, 50.0), ("D", 30.0, 70.0), ("E", 10.0, 90.0)],
+        );
+        let names = |pinned, cheap| peg_rows(&s, pinned, cheap).iter().map(|(t, ..)| *t).collect::<Vec<_>>();
+        assert_eq!(names(false, true), vec!["A", "B"], "cheap = the TOP of a descending peg_yield sort");
+        assert_eq!(names(false, false), vec!["D", "E"]);
+        // the pin reverses the ranking, so the two denominators disagree about every name but the median
+        assert_eq!(names(true, true), vec!["E", "D"]);
+        assert_eq!(names(true, false), vec!["B", "A"]);
+        // 5 names -> 2 + 2, and C (the median) is in neither half under either denominator
+        for (pinned, cheap) in [(false, true), (false, false), (true, true), (true, false)] {
+            assert_eq!(peg_rows(&s, pinned, cheap).len(), 2, "halves must match in size or the split prices cohort size");
+            assert!(!names(pinned, cheap).contains(&"C"), "the median name belongs to neither half");
+        }
+    }
+
+    /// (#332) THE DECIDING STATISTIC IS THE CHEAP HALF, and this is the test that pins it: moving the
+    /// RICH half's realized return — by any amount, in either direction — must not move the verdict.
+    /// A spread-based ruler would fail this, and would pay a denominator for sorting names the tool is
+    /// never long.
+    #[test]
+    fn peg_verdict_reads_the_cheap_half_only() {
+        // Six names, halves of three. The two denominators agree that E and F are RICH and that A and
+        // B are CHEAP; they disagree about exactly one slot — the ladder calls C cheap, the pin calls D
+        // cheap. So the verdict is (D - C)/3 and E, F can never reach it.
+        let names = [
+            ("A", 90.0, 95.0),
+            ("B", 80.0, 85.0),
+            ("C", 70.0, 65.0), // ladder: cheap   pin: rich
+            ("D", 60.0, 75.0), // ladder: rich    pin: cheap
+            ("E", 50.0, 55.0), // rich under both
+            ("F", 40.0, 45.0), // rich under both
+        ];
+        let rows: Vec<(&str, Option<f64>)> = names.iter().map(|(t, ..)| (*t, Some(100.0))).collect();
+        let s = with_peg(snap("2026-01-01", Some(100.0), &rows), &names);
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        assert_eq!(peg_rows(&s, false, true).iter().map(|(t, ..)| *t).collect::<Vec<_>>(), vec!["A", "B", "C"]);
+        assert_eq!(peg_rows(&s, true, true).iter().map(|(t, ..)| *t).collect::<Vec<_>>(), vec!["A", "B", "D"]);
+
+        // C doubles; everything else sits still. Ladder cheap holds it, the pin does not.
+        let base = |t: &str| Some(if t == "C" { 200.0 } else { 100.0 });
+        let (n, mean, med) = peg_verdict(&[s.clone()], today, &base, Some(100.0));
+        assert_eq!(n, 1);
+        assert!((mean - -100.0 / 3.0).abs() < 1e-9 && (med - -100.0 / 3.0).abs() < 1e-9, "mean {mean} med {med}");
+        assert_eq!(reopen_verdict(n, mean, med), "needs 12 lines", "one line can never be a reopen");
+
+        // Now send E and F — rich under BOTH denominators — to the moon. The verdict must not budge.
+        let rich_moved = |t: &str| Some(match t {
+            "C" => 200.0,
+            "E" | "F" => 500.0,
+            _ => 100.0,
+        });
+        let (n2, mean2, med2) = peg_verdict(&[s], today, &rich_moved, Some(100.0));
+        assert_eq!(n2, n);
+        assert!((mean2 - mean).abs() < 1e-9 && (med2 - med).abs() < 1e-9, "the rich half must not reach the verdict: {mean2} vs {mean}");
+    }
+
+    /// (#332) The section prints both denominators, the pre-registered bar, and says so plainly when
+    /// there is nothing to grade — an empty table with a 0.0 in it reads as a measurement.
+    #[test]
+    fn peg_section_grades_two_denominators_on_one_name_set() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let px = |t: &str| Some(if t == "A" { 200.0 } else { 100.0 });
+        let bare = snap("2026-01-01", Some(100.0), &[("A", Some(100.0))]);
+        let empty = peg_section(&[bare.clone()], today, &px, Some(100.0));
+        assert!(empty.contains("nothing gradeable yet") && empty.contains("0 of 1"), "{empty}");
+        assert!(!empty.contains('%'), "the empty case must not print a table: {empty}");
+
+        let names = [("A", 90.0, 10.0), ("B", 70.0, 30.0), ("C", 30.0, 70.0), ("D", 10.0, 90.0)];
+        let rows: Vec<(&str, Option<f64>)> = names.iter().map(|(t, ..)| (*t, Some(100.0))).collect();
+        let out = peg_section(&[with_peg(snap("2026-01-01", Some(100.0), &rows), &names)], today, &px, Some(100.0));
+        assert!(out.contains(PEG_HEADER), "{out}");
+        assert!(out.contains("90d    4 "), "N is the whole cohort, not one half: {out}");
+        assert!(out.contains("+50.0%") && out.contains("-50.0pp"), "both halves and the delta must print: {out}");
+        assert!(out.contains("needs 12 lines") && out.contains("Ship Rule v2 PRIMARY at 12y AND 8y"), "{out}");
+        assert!(out.contains("10Y window"), "the pinned rung must be named in the prose: {out}");
     }
 
     /// (#285) The MOMENTUM-lane grade: `snap.rows` cut at [`BOOK`], which is what every assertion

@@ -400,6 +400,40 @@ pub fn fund_peg_yield(quote: &Quote, tuning: &BuyHeuristic, fund_pe: &FundPeMap)
     core::peg_yield_from_pe(fund_pe.get(&quote.ticker)?.pe, peg_cagr_pct(quote, tuning))
 }
 
+/// (#332) THE `peg_yield` this name is judged on, whichever lane it sits in: the fund look-through
+/// PEG for a fund, the stored equity PEG otherwise. The same switch the `peg` COLUMN and the two
+/// ceilings (`growth_max_peg`, `growth_max_peg_etf`) already make, named ONCE so a reader that grades
+/// the number cannot end up grading a different one than the gate cut on (non-negotiable #4).
+///
+/// None = this name has no PEG at all — no look-through P/E, no positive earnings, or no positive
+/// CAGR to divide by. Unjudgeable, which every trim already treats as "not a verdict".
+pub fn served_peg_yield(quote: &Quote, tuning: &BuyHeuristic, fund_pe: &FundPeMap) -> Option<f64> {
+    if quote_is_etf(quote) {
+        fund_peg_yield(quote, tuning, fund_pe)
+    } else {
+        quote.fund.as_ref().and_then(|f| f.peg_yield)
+    }
+}
+
+/// (#332) The SAME served PEG, re-priced on a different denominator window — what the number would
+/// have been under `pinned` instead of `base`, so `track` can grade two denominators against each
+/// other on one set of names.
+///
+/// IT RESCALES RATHER THAN RE-DERIVES, and that is the whole reason it is three lines. `core::peg_yield`
+/// is `earnings_yield x cagr` — exactly LINEAR in the CAGR — and the earnings leg does not depend on
+/// the window at all. So the ratio of the two CAGRs carries the entire difference, and the served
+/// value stays the one source of the PEG. Deriving a second PEG here would need the equity lane's
+/// eps+price and the fund lane's look-through P/E re-fetched and re-switched, which is a parallel
+/// definition of exactly the number (#37) was extracted to have only one of.
+///
+/// None when EITHER window has no positive CAGR: that is the identical None-out `core::peg_yield`
+/// makes, kept here rather than silently returning a sign-nonsense ratio.
+pub fn peg_repriced(quote: &Quote, base: &BuyHeuristic, pinned: &BuyHeuristic, served: f64) -> Option<f64> {
+    let b = peg_cagr_pct(quote, base).filter(|&g| g > 0.0)?;
+    let p = peg_cagr_pct(quote, pinned).filter(|&g| g > 0.0)?;
+    Some(served * p / b)
+}
+
 /// (#3h) The long-leg CAGR as a trend reward takes it: clamped at `long_trend_cap`, unless the cap is
 /// OFF. `0` = off, the same convention `growth_maxdd_cap` / `growth_max_above_ma` / `fixed_cagr_years`
 /// already use.
@@ -10112,6 +10146,58 @@ mod tests {
         assert!(pinned < free, "the shorter, weaker leg makes the fund look DEARER: {free} -> {pinned}");
         // and it is the SAME number `peg_cagr_pct` produces — not a re-derivation that can drift
         assert_eq!(pinned.to_bits(), core::peg_yield_from_pe(25.0, peg_cagr_pct(&q, &peg8)).unwrap().to_bits());
+    }
+
+    /// (#332) `served_peg_yield` must route each lane to the number its own ceiling cuts on: the fund
+    /// look-through PEG for a fund, the stored equity PEG otherwise. Getting this switch wrong would
+    /// have the journal grade a number no gate ever read.
+    #[test]
+    fn served_peg_yield_picks_the_lane_the_ceiling_uses() {
+        let tuning = BuyHeuristic::default();
+        let mut etf = core_etf("F.L", "Broad UCITS ETF Acc", 5e9, 0.07);
+        etf.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 300.0), ("20Y", 20000.0)]);
+        // the stored equity PEG is deliberately WRONG for a fund; the fund lane must ignore it
+        etf.fund = Some(core::FundFactors { peg_yield: Some(999.0), ..Default::default() });
+        let pe: FundPeMap = [("F.L".to_string(), FundPe { pe: 25.0, from: None, as_of: None })].into_iter().collect();
+        assert_eq!(
+            served_peg_yield(&etf, &tuning, &pe).map(f64::to_bits),
+            fund_peg_yield(&etf, &tuning, &pe).map(f64::to_bits),
+            "a fund is priced on its look-through P/E, not on a stored equity PEG"
+        );
+        // no look-through P/E at all -> no PEG. Unjudgeable is not a verdict.
+        assert_eq!(served_peg_yield(&etf, &tuning, &FundPeMap::new()), None);
+
+        let mut stock = gate_fixture();
+        stock.fund = Some(core::FundFactors { peg_yield: Some(42.0), ..Default::default() });
+        assert_eq!(served_peg_yield(&stock, &tuning, &pe), Some(42.0), "an equity reads the PEG its own ceiling was handed");
+    }
+
+    /// (#332) `peg_repriced` RESCALES the served PEG rather than deriving a second one, and it is exact
+    /// because `core::peg_yield` is `earnings_yield x cagr` — linear in the CAGR, with an earnings leg
+    /// that does not depend on the window. Asserted against the real thing, not against the arithmetic
+    /// it replaces, so a future change to `peg_yield`'s shape fails here instead of drifting silently.
+    #[test]
+    fn peg_repriced_matches_a_full_rederivation() {
+        let mut q = core_etf("F.L", "Broad UCITS ETF Acc", 5e9, 0.07);
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 300.0), ("20Y", 20000.0)]);
+        let pe: FundPeMap = [("F.L".to_string(), FundPe { pe: 25.0, from: None, as_of: None })].into_iter().collect();
+        let base = BuyHeuristic::default();
+        let pinned = BuyHeuristic { peg_cagr_years: 8, ..base.clone() };
+
+        let served = served_peg_yield(&q, &base, &pe).unwrap();
+        let got = peg_repriced(&q, &base, &pinned, served).unwrap();
+        let derived = fund_peg_yield(&q, &pinned, &pe).unwrap();
+        assert!((got - derived).abs() < 1e-9, "rescale must equal the re-derivation: {got} vs {derived}");
+        assert!(got < served, "the shorter, weaker leg makes this name DEARER: {served} -> {got}");
+        // a window that changes nothing returns the served value untouched
+        assert_eq!(peg_repriced(&q, &base, &base, served).map(f64::to_bits), Some(served.to_bits()));
+
+        // NEGATIVE growth on either side is a sign-nonsense PEG — the same None-out `core::peg_yield`
+        // makes, kept here rather than handed to a grader as a real number.
+        let mut falling = q.clone();
+        falling.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", -50.0), ("20Y", 20000.0)]);
+        assert_eq!(peg_repriced(&falling, &base, &pinned, served), None);
+        assert_eq!(peg_repriced(&falling, &pinned, &base, served), None, "the None-out is symmetric in the two windows");
     }
 
     /// (#54) `pin_dropped` must name exactly the cohort the CAGR pin costs, and nobody else. The pin

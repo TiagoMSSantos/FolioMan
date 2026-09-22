@@ -6485,6 +6485,113 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#332) ROUND 115: THE FORWARD HALF (#331) OWED — A PEG DENOMINATOR SHADOW, PRE-REGISTERED ON
+  # RUNG 10 BEFORE ITS FIRST LINE ACCRUED.
+  #
+  # WHAT WAS MISSING. (#331) split the PEG denominator from the ranking leg (`peg_cagr_years`), graded
+  # rungs 5, 8 and 10 on `backtest {20,12,8} universe fund pit`, REFUSED all three and shipped the knob
+  # inert at 0. It shipped with no forward instrument, and the reason it gave was sound but incomplete:
+  # the forward machinery on file is `Snapshot.near` + `near_section`, which shadows what a sweep notch
+  # would ADMIT, and the split window admits NOBODY at any rung or horizon. It is structurally
+  # EVICT-ONLY, because `picks::long_leg_fixed` falls back to the age ladder for exactly the young names
+  # a pin would rescue. So a notch-shaped shadow of this knob would have journalled empty cohorts
+  # forever.
+  #
+  # But "this knob admits nobody" is not the same claim as "there is nothing to grade". The round's
+  # actual question was never about admission. It was: IS A PEG DIVIDED BY A PINNED WINDOW A BETTER
+  # VALUATION NUMBER THAN ONE DIVIDED BY WHATEVER RUNG THE AGE LADDER HAPPENED TO PICK? (#51) banked
+  # that defect live — AMZN (29.2y, 20Y rung +23.4%/yr, last 5y +4.7%/yr) printed PEG 1.63 and was
+  # ADMITTED; VRT (8.0y, +47.9%/yr) printed 1.70 and was REFUSED; "that is not a valuation number, it is
+  # an age number" — and NO instrument on file could answer it out of sample. That is what this builds.
+  #
+  # IT GRADES RANKING, NOT ADMISSION, and that is the whole move. Every ranked or notch name this run
+  # can price a PEG for is journalled twice: under the denominator the tool SERVED, and under the same
+  # PEG re-priced on a pinned 10Y window. `track` ranks the cohort by each denominator, splits it at the
+  # median into a cheap half and a rich half, and holds both equal-weight over the same window. A name
+  # both windows agree on lands in the same half twice and CANCELS; only the names the pin RE-RANKS can
+  # move the verdict.
+  #
+  # THE DECIDING STATISTIC IS THE CHEAP HALF ALONE — `pin cheap` minus `ladder cheap` — and the rich
+  # half is printed but does not decide. This tool is long-only. A spread (cheap minus rich) would pay a
+  # denominator for correctly sorting names the book is never long, so a window that merely dumps losers
+  # harder would read as an improvement the book never collects. The usual reason to prefer a spread is
+  # to control for the market leg, and it does not apply here: both halves grade over the SAME window to
+  # the SAME endpoint, so the market cancels without it and the benchmark is not in the arithmetic at
+  # all. `peg_verdict_reads_the_cheap_half_only` pins this: it sends the two names that are rich under
+  # BOTH denominators to +400% and asserts the verdict does not move by 1e-9.
+  #
+  # THE COHORT IS THE RANKED BOOK UNION THE NOTCH NAMES, deliberately. Every ranked name already cleared
+  # the PEG ceiling, so on their own the cohort spans a narrow band with little left to separate. The
+  # notch names widen the PEG range to the full one. That mixes cleared and refused names, which would
+  # be a confound for a LEVEL — but the two denominators score the IDENTICAL name set, so any bias in
+  # that set is common-mode and cancels in the difference. Measured on the 2026-09-21 control screen:
+  # 29 of 29 printed rows across all three tables carry a real PEG, 0 `n/a`, so the ranked half of the
+  # cohort is fully covered. The notch half is NOT measured yet — a name refused for having no earnings
+  # has no PEG under either window and drops out correctly, but how many that is will only be known from
+  # the first journalled line. Honest edge, not a claim.
+  #
+  # THE PIN IS RUNG 10 AND THE CHOICE IS CLOSED. `track::PEG_PIN_YEARS = 10`. (#331) names rung 10 as
+  # the reopen: the only arm genuinely UP at 8y on book CAGR (+12.2 -> +12.3), excess (+5.4 -> +5.5),
+  # OOS (+7.3 -> +7.4) and rank-1, dead on a single 12y median over 36 windows (mean +3.8 -> +4.0 UP,
+  # median +4.0 -> +3.8 DOWN, and PRIMARY needs both). Journalling all three rungs and re-opening on
+  # whichever one won afterwards is exactly the tune-after-the-fact trap (#277)/(#278) exist to stop, so
+  # the record carries ONE rung, fixed before the first line accrued and not revisitable once evidence
+  # is in.
+  #
+  # THE PRE-REGISTERED BAR, written here before there was anything to read it against:
+  # `peg_cagr_years: 10` RE-OPENS when 12+ monthly lines (`REOPEN_LINES`, `sim::monthly_firsts`, the
+  # same clock the notch shadow runs on) read MEAN AND MEDIAN of `pin cheap - ladder cheap` strictly
+  # above 0, AND a re-run `backtest {12,8} universe fund pit` passes Ship Rule v2 PRIMARY at 12y AND 8y
+  # — the exact leg it failed on. Two legs, because neither alone is enough: the backtest windows cannot
+  # disagree with themselves, and this journal's n_eff is <= 1 by construction (`effective_trials` —
+  # every line grades to one shared endpoint, so twelve nested windows are closer to one observation
+  # than to twelve). Neither number may be retuned after a line accrues.
+  #
+  # WHAT IT COST. `picks::served_peg_yield` names the lane switch ONCE — fund look-through PEG for a
+  # fund, stored equity PEG otherwise, the same switch the `peg` COLUMN and both ceilings already make —
+  # so a grader cannot end up grading a number no gate ever read (non-negotiable #4; this repo has the
+  # scar, when the cell computed its own PEG and the gate read another and the tool cut a name at 2.02
+  # in the run it ranked one printing 2.51).
+  #
+  # `picks::peg_repriced` RESCALES rather than re-derives, and that is why it is three lines.
+  # `core::peg_yield` is `earnings_yield x cagr` — exactly LINEAR in the CAGR — and the earnings leg does
+  # not depend on the window at all, so the ratio of the two CAGRs carries the entire difference and the
+  # served value stays the ONE source of the PEG. Deriving a second PEG would need the equity lane's
+  # eps+price and the fund lane's look-through P/E re-fetched and re-switched: a parallel definition of
+  # precisely the number (#37) was extracted to have only one of. `peg_repriced_matches_a_full_rederivation`
+  # asserts it against `fund_peg_yield` itself rather than against the arithmetic, so a future change to
+  # `peg_yield`'s shape fails the test instead of drifting silently. Both windows must have POSITIVE
+  # growth or it returns None — the identical None-out `core::peg_yield` already makes, and symmetric in
+  # the two windows.
+  #
+  # `Snapshot.peg` carries NO PRICE, for the reason `sized` states: `rows` and `near` already hold that
+  # day's close for every ticker it can name, and a second copy is the drift non-negotiable #4 exists to
+  # stop. `track::journal_px` does the join across BOTH lists, because the cohort spans both. NO KNOB
+  # either — journal data, like `aum` and `spx_off_hi`. Same serde contract as `sized`: a run that prices
+  # no PEG stays byte-identical to every line on disk, and every older line reads back. `fetch_set` gains
+  # one chain over `peg` rather than lifting its `rows.take(BOOK)`: the field IS the declaration of which
+  # names this shadow grades, so the fetch set follows the journal instead of guessing wider.
+  #
+  # AN ODD COHORT DROPS ITS MEDIAN NAME FROM BOTH HALVES rather than lengthening one. The halves must be
+  # the same size or the comparison starts pricing cohort SIZE — the defect (#329) spent a whole round
+  # removing from the notch bar, where a 2-name cohort faced an implied bar of -12.85 and a 305-name one
+  # faced +4.39 on the same book. Ties break on ticker so the split cannot depend on journal order.
+  #
+  # WHAT THIS DOES NOT CLAIM. It does not re-open (#331); the knob still ships at 0 and the backtest
+  # refusal stands. It does not measure ADMISSION and cannot: the split window admits nobody, so no
+  # instrument will ever show it widening the book, and breadth must come from the CEILING
+  # (`growth_max_peg`) rather than the denominator. It grades price only, EUR seat, dividends not
+  # counted, same conventions as every other `track` section. And it is EMPTY TODAY — the journal holds
+  # one line (2026-09-21) carrying no `peg` field at all, the record starts the run AFTER this ships and
+  # cannot be backdated, so the earliest this bar can be read is 12 monthly lines out. The section says
+  # so in words rather than printing a table with a 0.0 in it, because an empty table reads as a
+  # measurement and "nothing recorded" is the opposite of one.
+  #
+  # REVERT: drop `Snapshot.peg` and its `fetch_set` chain, `journal_px`, `peg_rows`, `peg_halves`,
+  # `peg_row`, `peg_verdict`, `peg_section`, `PEG_HEADER`, `PEG_PIN_YEARS`, the `peg:` fill in
+  # `screen::run`, and `picks::served_peg_yield` / `picks::peg_repriced`. No golden moves either way —
+  # this writes a journal field and prints a section; it touches no gate, no score and no ranking.
+  #
   # (#331) ROUND 114: THE PEG DENOMINATOR GOT ITS OWN WINDOW. IT CAN ONLY EVICT, ALL THREE RUNGS ARE
   # REFUSED, AND THE INSTRUMENT SHIPS AT 0.
   # WHAT SET THE ROUND, and why it was owed. `growth_max_peg: 1.6` is the growth lane's only valuation

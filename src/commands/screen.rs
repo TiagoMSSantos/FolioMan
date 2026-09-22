@@ -1988,6 +1988,35 @@ pub async fn run(args: Vec<String>) {
         // (#324) and what each one-notch loosening would have added, with that day's close, so `track`
         // grades exactly the set a reopen would buy
         near: notches.iter().flat_map(|(tag, _, c)| c.iter().map(move |q| (q.ticker.clone(), q.price_eur, tag.to_string()))).collect(),
+        // (#332) and THE PEG DENOMINATOR SHADOW: every ranked or notch name this run can price a PEG
+        // for, under the denominator the tool SERVED and under the pinned one `track` grades it
+        // against. The union of the two lists is deliberate — the ranked names all cleared the PEG
+        // ceiling, so on their own the cohort spans a narrow band with little left to separate.
+        //
+        // No price written: both source lists already carry this run's close for every one of these
+        // tickers, and `track::journal_px` does the join. Names with no PEG under either window are
+        // simply absent — unjudgeable is not a verdict, the same rule every PEG trim already follows.
+        peg: {
+            let pinned = config::BuyHeuristic {
+                peg_cagr_years: crate::commands::track::PEG_PIN_YEARS,
+                ..settings.buy_heuristic.clone()
+            };
+            let mut names: Vec<&str> = ranked_now
+                .iter()
+                .map(String::as_str)
+                .chain(notches.iter().flat_map(|(_, _, c)| c.iter().map(|q| q.ticker.as_str())))
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            names
+                .iter()
+                .filter_map(|t| quotes.iter().find(|q| q.ticker == **t))
+                .filter_map(|q| {
+                    let served = picks::served_peg_yield(q, &settings.buy_heuristic, &fund_pe)?;
+                    Some((q.ticker.clone(), served, picks::peg_repriced(q, &settings.buy_heuristic, &pinned, served)?))
+                })
+                .collect()
+        },
     });
 
     // (r15) footer population: ranked book + pinned extras — the held/watched names sit in the
@@ -4180,7 +4209,7 @@ mod tests {
                 f += 1;
             }
             rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), rows }
         };
         // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
         let past = vec![
@@ -4224,7 +4253,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), rows }
         };
         // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
         // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
@@ -4258,7 +4287,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(),
+            near: Vec::new(), peg: Vec::new(),
         };
         // fully stable: same top set across 3 screens → every pair retains all → 1.0
         let stable = vec![
@@ -4311,7 +4340,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), rows }
         };
         // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
         // E always rank 12 (past the top-10 cut → no point) · D never appears
@@ -4344,7 +4373,7 @@ mod tests {
             aum: at.iter().map(|(t, _, a)| (t.to_string(), *a)).collect(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(),
+            near: Vec::new(), peg: Vec::new(),
         };
         let journal = vec![
             snap(
