@@ -46,8 +46,18 @@ config/settings.yaml
 # alert per-ticker dip dedup (tickers already pinged; recovery clears)
 .alert_dips
 
-# ranked-snapshot journal (one line per screen day; `track` grades it)
-.screen_snapshots.jsonl
+# (#333) `.screen_snapshots.jsonl` IS TRACKED — it used to be listed here, and that was the defect.
+# It is the ranked-snapshot journal, one line per screen day, and the record all five of `track`'s
+# forward sections read. Every one of them needs 12 MONTHLY lines before its verdict can say anything
+# but "wait", so the file has to survive a year of probe runs to be worth anything. Untracked it did
+# not: 48 lines spanning 2026-07-16..09-08 were lost to a probe's backup/restore, silently, leaving
+# one line behind. `append_snapshot` is append-only and never truncates, so the code was never the
+# culprit — the missing history was. Tracked, a stray write is a visible diff and one `git checkout`
+# undoes it. ~843 B a line, and the Pages job commits each day's line back.
+#
+# The `.screen_web.json` reasoning four entries up does NOT carry over. That file is a SNAPSHOT, so a
+# committed copy is only ever someone's stale local run; this one is append-only HISTORY, where a
+# local run's line is a contribution rather than a staleness.
 
 # wide-backtest method verdict (written by `backtest universe`; the screen footer cites it)
 .backtest_verdict.json

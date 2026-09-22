@@ -132,6 +132,18 @@ jobs:
             > /dev/null || { echo "every lane came back empty — not deploying over a good page"; exit 1; }
           jq -r '"generated \(.generated): stocks \(.stocks|length) etfs \(.etfs|length) crypto \(.crypto|length) rows"' .screen_web.json
 
+      # (#333) Hand the journal to the `record` job. The file is TRACKED, so the checkout above put
+      # the existing record in the workspace and `screen` has just appended to it — or not, if a run
+      # earlier today already did. Either way it exists, and `if-no-files-found: error` makes its
+      # absence a red run rather than a day that silently went unrecorded.
+      - name: Upload the journal
+        uses: actions/upload-artifact@v4
+        with:
+          name: screen-journal
+          path: .screen_snapshots.jsonl
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Assemble the site
         run: |
           mkdir -p _site
@@ -144,6 +156,66 @@ jobs:
 
       - id: deploy
         uses: actions/deploy-pages@v5
+
+  # (#333) COMMIT THE DAY'S JOURNAL LINE BACK, so the forward record survives the runner.
+  #
+  # `screen` appends one line per day to `.screen_snapshots.jsonl` and that line is the ONLY record
+  # all five of `track`'s forward sections read — the verdict book, the CORE shortlist, the flat twin,
+  # the notch shadow covering all 14 gate refusals, and (#332)'s PEG shadow. Every one of them needs
+  # 12 MONTHLY lines before its verdict can say anything but "wait" (`track::REOPEN_LINES`). Until
+  # this job existed the line died with the ephemeral runner, and the record accrued only when someone
+  # ran `screen` locally and kept the file — which it did not survive: 48 lines spanning
+  # 2026-07-16..09-08 were lost to a probe's backup/restore, leaving one line behind.
+  #
+  # ONE COMMIT A DAY, and the cron needs no help to get there. `append_snapshot` returns early when
+  # the journal's last line already carries today's date, so the first run of the day appends and this
+  # job pushes it; every later run of the ~288 writes nothing, and this job finds a clean diff and
+  # pushes nothing.
+  #
+  # A SECOND JOB RATHER THAN A STEP IN `publish`, and the reason is the FMP key. Job-level permissions
+  # REPLACE the workflow block, so this job holds `contents: write` and none of publish's
+  # `pages: write` / `id-token: write` — while `publish`, which is the job that sees
+  # `secrets.FMP_API_KEY`, keeps `contents: read`. Nothing that can push to main ever holds the key.
+  #
+  # NO LOOP: a push authored by GITHUB_TOKEN does not trigger workflows, so this cannot re-enter
+  # `on: push`. If that ever changed, the same-date guard above makes the triggered run a no-op.
+  # The workflow-level `concurrency: pages` serialises runs, so two of our own pushes cannot race;
+  # the rebase-and-retry below is for a HUMAN push landing between this job's checkout and its push.
+  record:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: screen-journal
+      - name: Commit today's line
+        run: |
+          if git diff --quiet -- .screen_snapshots.jsonl; then
+            echo "journal unchanged — today's line was already recorded"
+            exit 0
+          fi
+          # The date comes from the line itself, not from `date`, so a run crossing midnight UTC
+          # cannot label a snapshot with a day it was not taken on.
+          day=$(tail -n 1 .screen_snapshots.jsonl | jq -r .date)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .screen_snapshots.jsonl
+          git commit -m "chore(track): journal the $day ranked snapshot"
+          for attempt in 1 2; do
+            if git pull --rebase && git push; then
+              echo "recorded $day"
+              exit 0
+            fi
+            echo "push attempt $attempt lost a race with a concurrent push; retrying"
+          done
+          echo "could not push the journal line for $day"
+          exit 1
 
   # Actions housekeeping: a Pages run is superseded the moment the next one deploys, so delete this
   # workflow's older SUCCESSFUL runs (their logs go with them). Mirrors ci.yml's cleanup-runs job,

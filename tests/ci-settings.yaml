@@ -6485,6 +6485,92 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#333) ROUND 116: THE RECORD ITSELF. FIVE FORWARD INSTRUMENTS, NONE OF THEM ABLE TO FIRE, BECAUSE
+  # THE JOURNAL THEY READ WAS GITIGNORED.
+  #
+  # THE ROUND WAS OPENED AS "ADD MORE FORWARD TESTS" AND THE CENSUS REFUSED THE PREMISE. `track`
+  # already prints five: the verdict/executed book, the CORE shortlist (#285/#286), the flat-weight
+  # twin, the notch shadow `near` (#323/#324 — the instrument for all fourteen gate refusals) and the
+  # PEG shadow `peg` (#332, shipped the day before this). Every one of them reopens on
+  # `track::REOPEN_LINES = 12` MONTHLY lines, read through `sim::monthly_firsts`. So the question was
+  # never how many instruments exist. It is whether the record they read survives long enough to be
+  # read. Measured, it does not:
+  #
+  #   SECTION                      FIELD     RECOVERABLE MONTHLY LINES   BAR
+  #   verdict / executed book      rows      3  (2026-07, -08, -09)       12
+  #   CORE shortlist               core      2                            12
+  #   flat-weight twin             sized     1                            12
+  #   notch shadow — all 14 gates  near      0                            12
+  #   PEG shadow (#332)            peg       0                            12
+  #
+  # The longest journal ever assembled is 48 DAILY lines spanning 2026-07-16..2026-09-08, and it
+  # survives only as scratch copies outside the repo. The live `.screen_snapshots.jsonl` held ONE line
+  # (2026-09-21) when this round opened. Eighteen dates carry CONFLICTING payloads across those copies
+  # — probe arms have written into the record, and nothing in a line said which config produced it.
+  #
+  # THE CODE WAS NEVER THE CULPRIT. `track::append_snapshot` is append-only: it opens with
+  # `.append(true)`, returns early when the last line already carries today's date, and truncates
+  # nothing on any path. The 48 lines were lost to a probe's backup-and-restore, silently, because the
+  # file was UNTRACKED — one machine, no history, no restore path. A tracked file cannot be lost that
+  # way: a stray write is a diff, and one `git checkout` undoes it.
+  #
+  # THE DECISIVE FIND IS THAT CI ALREADY TAKES THE MEASUREMENT AND THROWS IT AWAY. `.github/workflows/
+  # pages.yml` has been running `./target/release/folioman screen` every five minutes on
+  # `tests/ci-settings.yaml` — the exact committed config `cargo t` grades — since (#114), and the
+  # journal line died with the ephemeral runner every time. There is no `config/settings.yaml` on the
+  # author's machine either, so a local `screen` resolves to that same base: CI's book and a local one
+  # are the SAME INSTRUMENT, not a proxy for it. And because `append_snapshot` skips a date already
+  # present, a tracked journal makes the */5 cron self-limit to exactly ONE line per day — the first
+  # run appends and the new `record` job pushes it, the other ~287 write nothing and push nothing.
+  #
+  # WHAT SHIPS IS A `.gitignore` DELETION, ONE UPLOAD STEP AND ONE JOB. No Rust. `record` is a SECOND
+  # job rather than a step in `publish` because job-level permissions REPLACE the workflow block: it
+  # holds `contents: write` and neither `pages: write` nor `id-token: write`, while `publish` — the
+  # job holding `secrets.FMP_API_KEY` — keeps `contents: read`. Nothing that can push to main ever
+  # sees the key. `cleanup-runs` established that pattern; this follows it.
+  #
+  # THREE REFUSALS TO ADD CODE, EACH LOAD-BEARING:
+  #
+  # 1. THE RECOVERED HISTORY IS NOT MERGED BACK. 311 commits have touched this file since 2026-07-16
+  #    and 105 of them changed a `buy_heuristic` VALUE — about 1.5 a day, so twelve monthly lines span
+  #    roughly 550 config changes. That does not damage four of the five sections, because they are
+  #    WITHIN-LINE contrasts: `near` compares the notch cohort against the book bought in the SAME
+  #    line, `peg` compares two denominators over the SAME name set, `sized` compares flat against
+  #    weighted on the SAME book. Churn changes which names appear; it cannot corrupt a contrast
+  #    scored inside one line. Only the verdict table is an absolute LEVEL (book vs ^GSPC) and only it
+  #    is churn-sensitive. Merging the 3 recoverable months would therefore hand lines to exactly the
+  #    one section that cannot use them and ZERO to the four that could. Clean slate, stated as a
+  #    choice so a later round does not "restore" it as a favour.
+  #
+  # 2. NO PROVENANCE FIELD ON `Snapshot`. Once the journal is committed, THE COMMIT THAT ADDS A LINE
+  #    IS ITS PROVENANCE — `git log -- .screen_snapshots.jsonl` gives the exact config tree for any
+  #    line, including which arm wrote it. A `cfg` field would be a second spelling of what git
+  #    already stores, which is what non-negotiable #4 exists to prevent.
+  #
+  # 3. NO LOCKOUT IN `append_snapshot`. The obvious guard — refuse unless the resolved config is the
+  #    canonical `tests/ci-settings.yaml` — would break `tests/cli.rs`'s `screen-offline` case, which
+  #    deliberately pins the write under an ISOLATED temp config and whose comment calls that
+  #    assertion "the one worth having twice over". Tracking the file IS the contamination fix, and a
+  #    better one: the guard would have silently dropped lines, while a diff asks.
+  #
+  # HONEST EDGES. (a) The record starts at ONE line and cannot be backdated, so the earliest any bar
+  # can fire is twelve monthly lines out, about 2027-09. This round buys no verdict; it buys the
+  # possibility of one. (b) `effective_trials` stays <= 1 for every section regardless, because all
+  # windows still end TODAY — that is a property of grading to today, not of the record's length, and
+  # no amount of accrual fixes it. The named upgrade is grading each snapshot at its own maturity
+  # (`d_i + H`); `fetch::fetch_history` (10y daily, cached) already exists, so the blocker it cites is
+  # ~90 cached chart calls rather than a wall — but it grades zero rows on a young record, so it stays
+  # named, not built. (c) A local `screen` run now dirties the tree; do not `git add -A` after a
+  # probe, and `git checkout -- .screen_snapshots.jsonl` if one lands. (d) The repo is PUBLIC and a
+  # line publishes tickers, EUR closes and PERCENT weights — no euro amounts and no portfolio size,
+  # and the Pages site already publishes the top rows. (e) The CORE/hold lane's admission doors, the
+  # `size` lane's caps and spill, and the entire crypto lane still have NO forward instrument at all;
+  # that is the next round's question, and it is worth more once the record actually accrues.
+  #
+  # REVERT: restore the `.screen_snapshots.jsonl` line in `.gitignore`,
+  # `git rm --cached .screen_snapshots.jsonl`, drop the `record` job and the `Upload the journal`
+  # step. No Rust, no golden, no gate, no score and no ranking is touched either way.
+  #
   # (#332) ROUND 115: THE FORWARD HALF (#331) OWED — A PEG DENOMINATOR SHADOW, PRE-REGISTERED ON
   # RUNG 10 BEFORE ITS FIRST LINE ACCRUED.
   #
