@@ -530,13 +530,17 @@ const REOPEN_LINES: usize = 12;
 /// the bought book: a REOPEN SIGNAL needs the full year AND both the mean and the median strictly
 /// above zero — the mean alone is one survivor's, the median alone ignores how much a winner won.
 pub(crate) fn reopen_verdict(lines: usize, mean: f64, median: f64) -> &'static str {
-    if lines < REOPEN_LINES {
-        "needs 12 lines"
-    } else if mean > 0.0 && median > 0.0 {
-        "REOPEN SIGNAL"
-    } else {
-        "holds"
+    match clears(lines, mean, median) {
+        None => "needs 12 lines",
+        Some(true) => "REOPEN SIGNAL",
+        Some(false) => "holds",
     }
+}
+
+/// (#336) The rule under [`reopen_verdict`], spelled once so [`chain_section`] reads the same year and
+/// the same two statistics in its own words: `None` until [`REOPEN_LINES`], then mean AND median > 0.
+fn clears(lines: usize, mean: f64, median: f64) -> Option<bool> {
+    (lines >= REOPEN_LINES).then_some(mean > 0.0 && median > 0.0)
 }
 
 /// (#323) Per gate: `(gate, monthly lines, mean gap, median gap)`, where a gap is that gate's
@@ -1029,6 +1033,82 @@ fn exit_section(
     )
 }
 
+/// (#336) Each month's executed book held to the NEXT month's graded line: `(that line's date, names
+/// held, graded)`
+/// per consecutive pair of `sim::monthly_firsts`. The end prices come off the later line itself —
+/// `rows` for the names it still ranks, (#335)'s `exit` for the ones its book dropped, which is the
+/// whole of the earlier book bar a coin that left `rows` — so the windows follow one another instead of
+/// all ending today, and nothing is fetched. [`grade`] does the arithmetic, unpriced names and all.
+fn chain_links(snaps: &[Snapshot]) -> Vec<(String, usize, Graded)> {
+    let firsts: Vec<&Snapshot> = crate::commands::sim::monthly_firsts(snaps).into_values().collect();
+    firsts
+        .windows(2)
+        .filter_map(|w| {
+            let (m, n) = (w[0], w[1]);
+            let end = chrono::NaiveDate::parse_from_str(&n.date, "%Y-%m-%d").ok()?;
+            let px = |t: &str| {
+                n.rows.iter().map(|(x, p)| (x, *p)).chain(n.exit.iter().map(|(x, p, _)| (x, *p))).find(|(x, _)| *x == t)?.1.filter(|p| *p > 0.0)
+            };
+            let book = book_rows(m);
+            grade(m, &book, usize::MAX, end, &px, n.spx.filter(|p| *p > 0.0)).map(|g| (n.date.clone(), book.len(), g))
+        })
+        .collect()
+}
+
+/// (#336) The ninth table: THE CHAINED RECORD. The verdict table grades every line to today, so its
+/// windows nest on one endpoint and a year of them is ~1 trial (`trials_note`); these links do not
+/// overlap, so twelve are twelve. Inform only: the trust line and the push still read the table.
+fn chain_section(snaps: &[Snapshot]) -> String {
+    let links = chain_links(snaps);
+    if links.is_empty() {
+        return format!(
+            "\n  Chained record: nothing gradeable yet. A link needs two months' graded lines with a priced\n  \
+             book name, and the {} journalled run(s) do not span two months yet.",
+            snaps.len()
+        );
+    }
+    let body: String = links
+        .iter()
+        .map(|(to, held, g)| {
+            let pct = |v: Option<f64>| v.map_or("     —".to_string(), |v| format!("{v:>+6.1}"));
+            let excess = g.spy_pct.map(|s| g.book_pct - s);
+            format!(
+                "\n    {}  {to}  {:>4}  {}  {}  {}  {:>2}/{}",
+                g.date, g.days, pct(Some(g.book_pct)), pct(g.spy_pct), pct(excess), g.priced, held
+            )
+        })
+        .collect();
+    let both: Vec<(f64, f64)> = links.iter().filter_map(|(.., g)| g.spy_pct.map(|s| (g.book_pct, s))).collect();
+    let compound = |leg: fn(&(f64, f64)) -> f64| 100.0 * (both.iter().map(|r| 1.0 + leg(r) / 100.0).product::<f64>() - 1.0);
+    let mut ex: Vec<f64> = both.iter().map(|(b, s)| b - s).collect();
+    ex.sort_by(f64::total_cmp);
+    let footer = match ex.len() {
+        0 => "\n  no link carries an S&P leg at both ends yet — nothing to compare.".to_string(),
+        k => {
+            let (mean, med) = (ex.iter().sum::<f64>() / k as f64, crate::commands::backtest::percentile(&ex, 50.0));
+            let verdict = match clears(k, mean, med) {
+                None => "needs 12 links",
+                Some(true) => "BEATS S&P",
+                Some(false) => "TRAILS",
+            };
+            format!(
+                "\n  links {k} | compounded book {:+.1}% vs S&P {:+.1}% | monthly excess mean {mean:+.1}pp  median {med:+.1}pp  {verdict}",
+                compound(|r| r.0),
+                compound(|r| r.1)
+            )
+        }
+    };
+    format!(
+        "\n  Chained record (#336) — each month's executed book held to the NEXT month's graded line and priced\n  \
+         from that line's journalled closes (`rows`, and `exit` for the names it dropped), S&P leg the same\n  \
+         two days. The windows follow one another, so N links are N draws, not the ~1 the verdict table is\n  \
+         worth. Pre-registered: BEATS S&P at {REOPEN_LINES}+ links with mean AND median monthly excess above 0,\n  \
+         else TRAILS. Inform only: no gate, trust line or push reads it. Unpriced names drop, N shows how\n  \
+         many. EUR seat, price-only. NOT advice.\n\n    \
+         held from   to          days  book %   S&P %  excess   N{body}{footer}"
+    )
+}
+
 /// Fold every gradeable snapshot with a benchmark leg into the verdict numbers:
 /// (wins, graded_n, excess_sum). The ONE source for the summary — track's table and the screen's
 /// live-track-record line both consume this, so the two surfaces can't disagree. (#322) Each line
@@ -1071,10 +1151,9 @@ pub(crate) fn summary_line(wins: usize, graded_n: usize, excess_sum: f64) -> Str
 /// buckets, and that receipt says so itself: applied to a differently-shaped count it "would be a
 /// wrong number wearing the right label".
 ///
-/// ponytail: the upgrade path is grading each snapshot at its own maturity (`d_i + H`) instead of at
-/// today, which makes the windows sequential and lets this grow past 1. It needs per-ticker history
-/// rather than the one current-price fetch `run` makes, and on a record this young it would grade
-/// zero rows — so it is named, not built.
+/// (#336) The sequential version is built as [`chain_section`]: each month's book graded to the next
+/// month's line, off closes that line journals (`rows` + `exit`), so it needs no per-ticker history.
+/// This count stays as it is, because it describes the verdict table, which still grades to today.
 fn effective_trials(oldest_days: i64, newest_days: i64) -> f64 {
     if oldest_days <= 0 {
         return 0.0;
@@ -1207,6 +1286,7 @@ pub async fn run(args: Vec<String>) {
     println!("{}", swap_section(&snaps, today, &px_now, spx_now)); // (#334)
     println!("{}", ladder_section(&snaps, today, &px_now, spx_now)); // (#335)
     println!("{}", exit_section(&snaps, today, &px_now, spx_now));
+    println!("{}", chain_section(&snaps)); // (#336)
     if push {
         let delivered = fetch::push(
             &client,
@@ -2151,6 +2231,57 @@ mod tests {
         assert_eq!(reopen_verdict(12, 5.0, 0.0), "holds", "a zero median is not a win");
         assert_eq!(reopen_verdict(12, 0.0, 5.0), "holds", "nor a zero mean");
         assert_eq!(reopen_verdict(40, -1.0, 5.0), "holds", "one survivor's mean cannot carry it the other way either");
+    }
+
+    #[test]
+    fn chain_grades_each_book_at_the_next_months_line() {
+        // Oct still ranks A, and journals B — which its book dropped — only in `exit`.
+        let mut oct = snap("2026-10-01", Some(110.0), &[("A", Some(120.0)), ("C", Some(50.0)), ("D", Some(40.0))]);
+        oct.exit = vec![("B".into(), Some(90.0), false)];
+        let snaps = vec![
+            snap("2026-09-21", Some(100.0), &[("A", Some(100.0)), ("B", Some(100.0))]),
+            snap("2026-09-22", Some(1.0), &[("A", Some(1.0)), ("B", Some(1.0))]), // same month: not a link
+            oct,
+            // Nov: C closes at 0 and D is gone, so Oct's book grades on A alone.
+            snap("2026-11-02", Some(99.0), &[("A", Some(60.0)), ("C", Some(0.0))]),
+        ];
+        let out = chain_section(&snaps);
+        // Sep: A +20, B -10 -> +5 against +10. Oct: A -50 against 110 -> 99.
+        assert!(out.contains("\n    2026-09-21  2026-10-01    10    +5.0   +10.0    -5.0   2/2"), "{out}");
+        assert!(out.contains("\n    2026-10-01  2026-11-02    32   -50.0   -10.0   -40.0   1/3"), "{out}");
+        // 1.05 x 0.5 and 1.1 x 0.9; nearest-rank median of two is the upper one.
+        assert!(
+            out.contains("links 2 | compounded book -47.5% vs S&P -1.0% | monthly excess mean -22.5pp  median -5.0pp  needs 12 links"),
+            "{out}"
+        );
+        assert!(chain_section(&snaps[..2]).contains("nothing gradeable yet"), "one month is no link");
+    }
+
+    #[test]
+    fn chain_verdict_needs_twelve_links_and_both_statistics() {
+        // `n` month-start lines, A and the S&P compounding at their own monthly rates.
+        let months = |n: usize, a: f64, spx: f64| -> Vec<Snapshot> {
+            (0..n)
+                .map(|i| {
+                    let date = format!("{}-{:02}-01", 2025 + i / 12, i % 12 + 1);
+                    snap(&date, Some(100.0 * spx.powi(i as i32)), &[("A", Some(100.0 * a.powi(i as i32)))])
+                })
+                .collect()
+        };
+        let beats = chain_section(&months(13, 1.02, 1.01));
+        assert!(beats.contains("links 12 |") && beats.ends_with("BEATS S&P"), "{beats}");
+        let young = chain_section(&months(12, 1.02, 1.01));
+        assert!(young.contains("links 11 |") && young.ends_with("needs 12 links"), "{young}");
+        let trails = chain_section(&months(13, 1.005, 1.01));
+        assert!(trails.contains("links 12 |") && trails.ends_with("TRAILS"), "{trails}");
+        // A zero benchmark close voids the S&P leg of both links it touches: they print, uncounted.
+        let mut holed = months(13, 1.02, 1.01);
+        holed[6].spx = Some(0.0);
+        let holed = chain_section(&holed);
+        assert!(holed.contains("links 10 |") && holed.contains("     —"), "{holed}");
+        let mut blind = months(3, 1.02, 1.01);
+        blind.iter_mut().for_each(|s| s.spx = None);
+        assert!(chain_section(&blind).ends_with("nothing to compare."), "no S&P leg anywhere");
     }
 
     /// (#285) `graded_row` is the ONE row formatter. The BEAT? decision is its only judgement and

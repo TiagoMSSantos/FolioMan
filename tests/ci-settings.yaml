@@ -6488,6 +6488,59 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#336) ROUND 119: THE FORWARD RECORD STOPS NESTING. THE EXECUTED BOOK IS CHAINED MONTH TO MONTH.
+  #
+  # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD TESTS CAN WE ADD" AGAIN. (#335)'s census left
+  # no backtest lane without a forward twin bar the two it skipped on purpose (ENTRY-STATE: a regime read
+  # on few classes; caps/damps: both backtest lanes vacuous), and the backtest already carries walk-
+  # forward, halves, the held-out test, the block bootstrap, the null model and scrambling. So the hole
+  # this round fills is not a lane. It is how `track` counts.
+  #
+  # THE HOLE. Every `track` table grades each line from its date to TODAY. The windows nest on one
+  # endpoint, so a year of monthly lines is ~1 trial, not 12 — `trials_note` prints that on every run
+  # (#146), and `effective_trials`' doc named the fix (grade each line at its own maturity) and called it
+  # blocked on per-ticker history. Every REOPEN rule in the eight tables reads 12 such lines.
+  #
+  # WHY IT IS UNBLOCKED. Since (#335) each month's graded line journals the previous month's executed
+  # book in full: the names it still ranks carry a close in `rows`, the ones its book dropped a close in
+  # `exit`, and `spx` is on every line. So month m's book can be priced at month m+1's line off the
+  # journal alone: no new field, no fetch, no history.
+  #
+  # WHAT SHIPS. No knob and no ranking change; `buy_heuristic` stays at 176 keys. No backtest code, no
+  # golden moved, no new journal field.
+  # - `track::chain_links`: consecutive `sim::monthly_firsts` lines (m, n) -> the existing `grade` of
+  #   `book_rows(m)` with n's date as the end, n's `rows` then `exit` as the price lookup, n's `spx` as the
+  #   benchmark end. `grade` does the arithmetic, unpriced names included (dropped, N shows how many).
+  # - `track::chain_section`, the ninth table: one row per link (held from, to, days, book %, S&P %,
+  #   excess, N priced / held), then links | compounded book vs S&P | monthly excess mean and nearest-rank
+  #   median | verdict. Links with an S&P leg at both ends are the ones counted.
+  # - `track::clears`: `reopen_verdict`'s rule (12 lines, mean AND median > 0), spelled once so the
+  #   chain reads the same bar in its own words. `reopen_verdict`'s three words are unchanged.
+  #
+  # PRE-REGISTERED READING. Monthly excess = book minus S&P over one link. Under 12 counted links: needs
+  # 12 links. At 12+: BEATS S&P when mean AND median are above 0, else TRAILS.
+  #
+  # AUTHORITY: INFORM ONLY. No CI gate, no WARN. The trust line, the verdict table's summary and the
+  # `--push` text are untouched and still read the nested fold; a later round may move them once the
+  # chain has 12 links, never before.
+  #
+  # FIRST READING, `track` on 2026-09-23: nothing gradeable. The committed journal holds 3 lines, all
+  # 2026-09 (everything older died before (#333) tracked the file), so the first link is the 2026-09-21
+  # line -> the first October line, and 12 counted links arrive ~2027-09. There is nothing to backfill.
+  #
+  # HONEST EDGES. (a) The first link is a partial month (10 days); a month the cron misses makes a
+  # two-month link. Both still follow one another, which is the property that matters; the days column
+  # shows the span. (b) Unpriced names drop and re-weight the rest, as in the verdict table. From October
+  # that is only a quote that failed that day or a coin that left `rows` (`exit` skips coins), not a
+  # name that fell out of the book. (c) Config churn between two lines is inside the link: the book was
+  # bought under month m's rules, and that is the book being graded. (d) EUR seat, price-only, no
+  # dividends, no fees (`sim` is the fee-aware ledger). (e) Twelve links are twelve draws of ONE book's
+  # monthly excess, still serially correlated through the names it keeps; better than ~1, not iid.
+  # (f) Both ends are split-restated by `run` before any table reads them, so they share one share unit.
+  #
+  # REVERT: delete `track::{chain_links, chain_section}`, its `run` print and its two tests; fold
+  # `clears` back into `reopen_verdict`.
+  #
   # (#335) ROUND 118: THE RANK LADDER AND THE EXIT PROBE GET THEIR FORWARD TWINS. PRE-REGISTERED READING.
   #
   # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD TESTS CAN WE ADD", SO IT STARTED FROM (#334)'s
