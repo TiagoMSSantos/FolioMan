@@ -6488,6 +6488,67 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#335) ROUND 118: THE RANK LADDER AND THE EXIT PROBE GET THEIR FORWARD TWINS. PRE-REGISTERED READING.
+  #
+  # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD TESTS CAN WE ADD", SO IT STARTED FROM (#334)'s
+  # CENSUS. After (#334) every backtest lane had a forward twin in `track` except these:
+  #
+  #   BACKTEST LANE (in-sample, exists)                   FORWARD TWIN   THIS ROUND
+  #   top-N ladder + rank-1 vs 6-10 head-to-head          none           RANK LADDER
+  #   EXIT PROBE, kept passing vs newly FAILED (Item 31)  none           EXIT SHADOW
+  #   ENTRY-STATE (index drawdown at entry)               none           skipped: a regime read, few classes
+  #   caps / damps                                        none           skipped: both backtest lanes vacuous
+  #
+  # WHAT SHIPS. No knob and no ranking change; `buy_heuristic` stays at 176 keys. No backtest code, so no
+  # golden moved: the in-sample halves already exist and are named below as each twin's partner.
+  # - RANK LADDER, `track`'s seventh table. `track::ladder` = the line's `rows` in rank order, kept to
+  #   the names `sized` bought (an unbought pin drops), minus coins, equal-weight. Cut at `size::HEAD` (5,
+  #   now `pub(crate)`) and `track::BOOK` (10). NO NEW FIELD: `rows` already journals the whole ranked
+  #   book (25 names on the 2026-09-23 line, all priced), so it grades every line on disk.
+  # - EXIT SHADOW, the eighth table. `Snapshot.exit` = (ticker, close EUR, still passes?) for every
+  #   non-coin name the PREVIOUS month's graded book held (`track::prior_month`, the `sim::monthly_firsts`
+  #   line) that this run's book dropped. "Passes" = `picks::live_rank_scores` membership. `screen`
+  #   writes it through `track::journal_exits` before its append. KEPT = in both months' books; FAILED =
+  #   exits that no longer pass; OUT-RANKED = exits that still pass. All graded from the flip line.
+  # - Both tables share `track::monthly_gaps`: one line a month, a side that cannot grade adds nothing,
+  #   nearest-rank median, `reopen_verdict`'s 12 lines with mean AND median above 0.
+  #
+  # WHY THE EXIT HAS TO BE JOURNALLED. A name that left the book has no close in `rows` from then on.
+  # Grading it from its last in-book close would count the fall that pushed it out: look-ahead.
+  #
+  # PRE-REGISTERED READING. Each gap is oriented so ABOVE 0 = the shipped assumption is wrong:
+  #
+  #   GAP                     ABOVE 0 MEANS                                   RE-OPENS               IN-SAMPLE TWIN
+  #   6-10 minus 1-5          the 2x head tilt pays the wrong five            (#322) `head_weight`   rank-1 vs 6-10 h2h
+  #   11-25 minus 1-10        the rank carries nothing past ten               (#321) book width      top-N ladder
+  #   kept minus failed       refused names lag the held ones: hold-through   Item 31, sell-on-fail  EXIT PROBE
+  #                           a gate failure costs money
+  #   kept minus out-ranked   informational only, prints no verdict
+  #
+  # AUTHORITY. No CI gate, no WARN, nothing moves automatically. A REOPEN SIGNAL earns a full A/B round on
+  # the receipt it names, never an edit off the flag.
+  #
+  # FIRST READING, `track` on 2026-09-23 over the committed journal: 6-10 minus 1-5 -0.1pp, 11-25 minus
+  # 1-10 -0.5pp, one monthly line one day old — proof the section runs, not evidence. Exit: nothing
+  # gradeable, 0 of 3 lines carry exits.
+  #
+  # HONEST EDGES. (a) The ladder's first monthly line is 2026-09, so its earliest REOPEN is ~2027-08. The
+  # first `exit` lands on the first October line, so the earliest exit REOPEN is ~2027-09. (b) n_eff <= 1,
+  # as for every `track` section: all windows grade to today. (c) Config churn: a gate tightened between
+  # months FAILS names. That is the operational question (would a holder sell what today's rules
+  # refuse?), not the backtest's fixed-tuning one. (d) An exited name missing from today's quotes is
+  # unpriced and grades nothing. (e) Forward KEPT = still in the book; backtest "kept" = still passes the
+  # gates. The two agree while the backtest pools stay at or under the basket. (f) Three gaps read at
+  # once, so one of them will flag by chance: a flag earns an A/B round, never a move. (g) `journal_exits`
+  # is a second journal read on `screen::run`'s path. It returns tickers only, priced from today's quotes,
+  # so the read-once test's price concern does not apply; that test's doc says so. (h) A line from before
+  # `sized` ladders all of `rows`, of which `track` fetches only the first ten, so its tail grades nothing.
+  #
+  # REVERT: delete `track::{Rows, monthly_gaps, ladder, ladder_section, prior_month, exits, journal_exits,
+  # EXIT_DECIDES, exit_section}` and their prints, `Snapshot.exit` with its `fetch_set` and
+  # `adjust_for_splits` chains, the `screen::run` field, and the tests; `size::HEAD` goes back to private.
+  # Old journal lines read either way (`serde(default)`).
+  #
   # (#334) ROUND 117: THE RANKING WEIGHTS GET THE BACK+FORWARD PAIR THE GATES ALREADY HAD. INFORM ONLY.
   #
   # THE ROUND WAS OPENED AS "ADD MISSING BACK AND FORWARD TESTS", SO THE FIRST JOB WAS A CENSUS OF WHAT

@@ -332,7 +332,7 @@ pub(crate) fn equal_weights(rows: &[(bool, f64)], book: usize, head: f64) -> Vec
 /// (#322) How many names at the top of the equal-weight book take `Sizing::head_weight`: the backtest's own
 /// rank-slice boundary (rank 1 / 2-5 / 6-10), where on the point-in-time pool ranks 1-5 out-earned 6-10 at
 /// every horizon. ponytail: a const, not a knob — one boundary was graded; make it a knob when a second is.
-const HEAD: usize = 5;
+pub(crate) const HEAD: usize = 5;
 
 /// (#293) Yahoo's fund sector names (`fetch::pretty_sector`) against the GICS spelling the constituents
 /// CSV gives a stock, so a fund and a stock in the same sector meet under one cap.
