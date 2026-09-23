@@ -4395,7 +4395,7 @@ const SP500_HISTORY_CACHE_PATH: &str = ".sp500_history.json";
 /// to stop scoring 1996 with a pool chosen in 2026.
 /// (#173) EXTRA point-in-time membership sources (`Urls.membership_csv`), merged into the S&P 500 map
 /// below. An entry starting with `http` is fetched; anything else is read from DISK, which is what
-/// lets a locally reconstructed index (`data/sp400_spans.csv`, built offline by
+/// lets a locally reconstructed index (`tests/sp400_spans.csv`, built offline by
 /// `tools/membership_from_wikipedia.py`) be graded with no network at all.
 ///
 /// NOT CACHED, and that is deliberate. `.sp500_history.json` exists because its source is a remote GET
@@ -6806,7 +6806,7 @@ pub(crate) mod tests {
     }
 
     /// (#173) The DISK branch of an extra membership source — the branch a graded arm actually takes,
-    /// since `data/sp400_spans.csv` is reconstructed offline and committed rather than fetched. The
+    /// since `tests/sp400_spans.csv` is reconstructed offline and committed rather than fetched. The
     /// stub server serves a DIFFERENT list, so a version that fetched instead of reading the file
     /// would return `WRONG` and fail here. No transport is reached, so this needs no `THROTTLE` pin.
     #[tokio::test]

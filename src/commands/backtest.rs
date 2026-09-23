@@ -919,7 +919,7 @@ fn ticker_mapping_is_dead(instrument_type: &str, name: &str) -> bool {
 /// before the cache warmed and turned every one of them into a served empty answer.
 ///
 /// A name that dies therefore contributes NOTHING to this walk, not a loss. That is the direction the
-/// bias runs, and it is not small: `docs/heuristic-v2-spec.md` builds its case on Bessembinder's
+/// bias runs, and it is not small: the heuristic v2 spec builds its case on Bessembinder's
 /// median delisted return of −91.95%, and not one such return is in this dataset. Stronger still, the
 /// count of members whose series ends more than a year before today is **ZERO out of 1206** — `CFC`
 /// (Countrywide, out of the index 2008-07) has bars through 2026-08 and `MOLX` (acquired 2013) through

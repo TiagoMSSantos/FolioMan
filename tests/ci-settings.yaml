@@ -678,7 +678,7 @@
 #   1206, whose series ends more than a year before today: ZERO. `CFC` (Countrywide, out of the index
 #   2008-07) carries bars through 2026-08; `MOLX` (acquired 2013) through 2026-07. `LEH`, `WCOM`, `CC`
 #   and `ABK` are not in the membership map at all. So this dataset contains no delisting events of any
-#   kind, and Bessembinder's median delisted return of -91.95% — which docs/heuristic-v2-spec.md builds
+#   kind, and Bessembinder's median delisted return of -91.95% — which the heuristic v2 spec builds
 #   its case on — is absent from every number this repo has ever printed. A name that dies simply stops
 #   contributing samples, which biases the edge UP by an amount nothing here can size.
 #
@@ -818,7 +818,7 @@
 # (#160) 2026-08-29 — THE rank-1 h2h GUARD IS RE-BASED ONTO THE 6-10 BOOK AT 12y AND 8y, AND GAINS A
 #   NOT-WORSE BAR THERE. No code, no shipped value, no golden moves: this is a GRADING-RULE change,
 #   the one (#151) pre-registered in writing — "that is a grading-rule change and wants its own round
-#   — but it is where a thin-pool GUARD should go". CLAUDE.md's Ship rule v2 block is amended to
+#   — but it is where a thin-pool GUARD should go". the local house rules' Ship rule v2 block is amended to
 #   match; THAT FILE IS GITIGNORED, SO THIS BLOCK IS THE SHARED RECORD.
 #
 #   THE RULE, AS IT NOW READS:
@@ -1341,7 +1341,7 @@ sizing:
 # `picks::lane_split`), and `max_sector_pct` here. (#41) justifies the exemption as "the ETF lane is
 # diversified by construction" — true INSIDE a fund, false ACROSS three funds sharing seven names. And
 # `size_weights` is the one lane where such a knob could ship LIVE rather than off-by-default, because
-# `config::Sizing` is CLAUDE.md's documented exception to "every new knob defaults to current behaviour".
+# `config::Sizing` is the local house rules' documented exception to "every new knob defaults to current behaviour".
 #
 # WHY IT IS REFUSED — MEASURED, not argued. Live `size` on the 2026-09-05 ranked book (9 names:
 # ABEC.DE LLY.DE / IITU.L XLKS.L SMH.L SEMI.AS LYBK.DE / BNB-EUR BTC-EUR). Clique found:
@@ -1897,7 +1897,7 @@ sizing:
 #     that sentence byte-for-byte against `(#253)`, and "it is the market, not a name" is still true.
 #
 # `config::Sizing` IS THE DOCUMENTED EXCEPTION TO NON-NEGOTIABLE #1 (see the doc comment at config.rs:78
-# and CLAUDE.md). No backtest path reaches `picks::size_weights` and no golden covers it, so there is no
+# and the local house rules). No backtest path reaches `picks::size_weights` and no golden covers it, so there is no
 # shipped lane for an off-default to protect and the default IS the policy. Confirmed empirically this
 # round: `git status --short` after the change lists exactly four files and no `tests/fixture/*.golden`.
 # Every `size_weights` unit test constructs its own `Sizing` with an explicit `max_name_pct`
@@ -2068,7 +2068,7 @@ buy_heuristic:
                                  #   LIVE (equities): the growth lane's 1Y floor — reject if 1Y % <= this. 0.0 = must be climbing this year.
                                  #   Was a hardcoded 0.0 until the knob was restored; this value is the constant it replaced, so shipping
                                  #   it changes nothing. It is written down because the number is EARNED, not conservative-by-default.
-                                 #   MEASURED AND REVERTED ONCE (round 5, 2026-07-03, `.claude/growth_heuristic_plan.md:205`), on the same
+                                 #   MEASURED AND REVERTED ONCE (round 5, 2026-07-03, local plan notes), on the same
                                  #   question that brought the knob back — "aren't down-1Y-but-up-5Y names good growth candidates?":
                                  #     same-batch triple: baseline edge +106.6 (OOS +0.11|+0.06) | floor -10 -> +101.1 | floor -20 -> +94.4
                                  #     decisive: the n=284 names a -10 floor NEWLY ADMITS average -108.1 pts forward peer-relative.
@@ -2587,7 +2587,7 @@ buy_heuristic:
 
   # --- (B) total-return inputs + (E) endpoint-robust CAGR + (#8) geomean shape — EDGE-AFFECTING, validate before trusting ---
   # All flow to LIVE screen AND the backtest (train==serve), so a `backtest 12 universe` measures them
-  # honestly. UNVALIDATED at flip time — run .claude/run_me.sh steps B/E and REVERT any that drops rho/edge
+  # honestly. UNVALIDATED at flip time — run the local probe script's steps B/E and REVERT any that drops rho/edge
   # or pushes an OOS half negative. Reversible (set back to false).
   flat_run_max_years: 2.0        # (#263) 2026-09-07: the splice trimmer's TWIN — trim history BEFORE the
                                  #   last run of byte-identical consecutive closes spanning 2.0 years or more.
@@ -4041,7 +4041,7 @@ buy_heuristic:
                                  #   instruments pointed the same way — the rank slices invert, Spearman
                                  #   collapses +0.25 -> +0.03 (8y) and +0.10 -> -0.03 (12y), and 87-99% of
                                  #   the ungated missed wealth files under `out-ranked`. The mechanism
-                                 #   proposed here is the one `docs/heuristic-v2-spec.md:125-128` names:
+                                 #   proposed here is the one the heuristic v2 spec names:
                                  #   "Rank->inverse-normal, not raw z-scores. Fundamental distributions
                                  #   are fat-tailed and a single outlier will otherwise dominate the
                                  #   composite." `base` sums eleven UNBOUNDED LEVELS in mutually
@@ -4316,7 +4316,7 @@ buy_heuristic:
                                  # WHY IT IS LOW, from (#106) read on the same runs: the book never holds more than
                                  # ~10 names, because the gates admit no more than that. This is an ADMISSION
                                  # problem, not a ranking problem, and it inverts the standing plan - every open
-                                 # task in docs/heuristic-v2-tasks.md (P1-P4) proposes adding MORE exclusions, each
+                                 # task in the v2 task pack (P1-P4) proposes adding MORE exclusions, each
                                  # to be graded by `gate_audit`, whose mean is blind to precisely the rejected
                                  # 30-bagger this line counts. Those tasks are not refuted by this reading, but they
                                  # can no longer be started on their stated priors alone.
@@ -14377,7 +14377,7 @@ buy_heuristic:
                                  #   alone; it has now been brought, measured, and refused on the metric that ships.
                                  #   (#178) RE-CHECK AT THE NEW BASKET SIZE — REFUSED, AND NOW DEAD PERMANENTLY.
                                  #   (#70) refused 0.35 on a TOP-3 worst window; (#120) moved the graded basket
-                                 #   to top-10, which CLAUDE.md says makes any such refusal re-checkable, so it
+                                 #   to top-10, which the local house rules say makes any such refusal re-checkable, so it
                                  #   was re-checked on `universe fund stress` — the lane (#70) set it on, and
                                  #   non-vacuous (median gated pool 11 > basket 10 at both horizons). It loses
                                  #   on PRIMARY at BOTH horizons (20y median +6.0 -> +5.4, 8y mean +6.9 -> +6.8)
@@ -15788,7 +15788,7 @@ buy_heuristic:
   #   weight HELPS (Δ edge >= 0), or standalone earnings_yield loses an OOS half. A lane OOS half that
   #   price-only ALSO loses is regime weather, not the tilt (2026-07-17 early audit: lane early half
   #   -0.03 with price-only -0.04, ablation removal cost -8.6 edge, standalone ey +0.20|+0.23 -> kept;
-  #   receipts .claude/bt_audit_2026-07-17.txt).
+  #   receipts in the local 2026-07-17 audit notes).
   #
   #   (#178) RE-RUN ON A NON-VACUOUS LANE — AND THE KNOB IS STRUCTURALLY INERT THERE. UNGRADEABLE,
   #   NOT "held", and the backlog item stays OPEN. (#147) above measured this knob twice on
@@ -17764,7 +17764,7 @@ buy_heuristic:
   # ---- (P2)/(P3) ACCRUALS AND ASSET GROWTH: MEASURED, AND NEITHER EARNS A KNOB ----
   # (#124) 2026-08-23. There is no knob here to hang a receipt on, deliberately — this block IS the
   # receipt, and it records why `growth_max_accrual_gap` and `growth_max_asset_cagr` were NOT added.
-  # docs/heuristic-v2-tasks.md P2 and P3 both say: STOP and run the standalone factor probe before
+  # The v2 task pack's P2 and P3 both say: STOP and run the standalone factor probe before
   # writing the gate. That probe needs no code — `report_book_by_factor` already prints a line for all
   # 20 registered factors, `accrual_gap` and `asset_growth` included, on any `fund` run. It was run:
   # `universe fund pit` at 20y/12y/8y via tests/diag-ci-settings.yaml.
@@ -18992,7 +18992,7 @@ urls:
   # the S&P map. `backtest::pit_pool` builds its pool as `spans.keys()`, so merged names arrive
   # with NO edit to backtest.rs at all and no second pond — which is exactly the precondition
   # pit_pool's own doc comment states. An entry not starting with `http` is read from disk, so
-  # `data/sp400_spans.csv` (1085 names, 27 KB, generated by tools/membership_from_wikipedia.py)
+  # `tests/sp400_spans.csv` (1085 names, 27 KB, generated by tools/membership_from_wikipedia.py)
   # reproduces this offline. Deliberately NOT cached: a filename-keyed cache would serve one graded
   # arm's membership file to the other.
   #
@@ -19056,7 +19056,7 @@ urls:
   # one; do not cite (#151)'s n=4 as current.
   #
   # (#173) also documents the sibling key that does NOT appear below because it defaults empty:
-  #   membership_csv: ["data/sp400_spans.csv"]   # extra point-in-time membership, off by default
+  #   membership_csv: ["tests/sp400_spans.csv"]   # extra point-in-time membership, off by default
   # ============================================================================================
   #
   #
@@ -19088,7 +19088,7 @@ urls:
   # the grading apparatus needs repair. The 48% was an artifact of a missing word on a command line.
   # Note also that `fund` TIGHTENS the pool (5/6/7 against 5/7/9): the live PEG gate removes names.
   #
-  # THE POND ARM, RE-ADJUDICATED ON THE CANONICAL LANE. Same two overlays, same `data/sp400_spans.csv`,
+  # THE POND ARM, RE-ADJUDICATED ON THE CANONICAL LANE. Same two overlays, same `tests/sp400_spans.csv`,
   # six fresh runs.
   #
   #   PRE-REGISTERED CONFOUND, MEASURED AND CLEARED. 0 of the 785 new names were in `.sec_cache`

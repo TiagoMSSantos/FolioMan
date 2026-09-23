@@ -20,8 +20,6 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-**/CLAUDE.md
-**/*.claude
 **/*.lock
 # …except the Cargo lockfile: binaries commit it (Cargo's guidance), so a dependency regression
 # can only arrive as a reviewable `cargo update` commit — never ambush a CI run — and the RustSec

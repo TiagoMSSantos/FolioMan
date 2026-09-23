@@ -1956,7 +1956,7 @@ pub fn growth_score(quote: &Quote, tuning: &BuyHeuristic) -> Option<f64> {
 }
 
 /// (#144) Φ⁻¹, the inverse standard-normal CDF — Acklam's rational approximation, |abs error| < 1.15e-9
-/// across the open interval. Returned RAW; the ±3 clip `docs/heuristic-v2-spec.md:125` calls for is
+/// across the open interval. Returned RAW; the ±3 clip the heuristic v2 spec calls for is
 /// applied at the call site, so this stays a plain Φ⁻¹ that a test can check against known quantiles.
 ///
 /// No new crate for this: the dependency table's own note ("No new crate — serde is already a
@@ -2017,7 +2017,7 @@ fn inv_norm_tail(q: f64, sign: f64) -> f64 {
 /// `ter_damp`, `commodity_damp`, `fx_damp`, `acc_damp`) and `liq_bonus`. Two separate reasons, both
 /// worth stating so a later session does not "complete" this list:
 ///   - a damp is a bounded RATIO in 0..1, not an unbounded level, so it is not the fat-tail failure
-///     `docs/heuristic-v2-spec.md:128` describes and normalising it would flatten a deliberate
+///     the heuristic v2 spec describes and normalising it would flatten a deliberate
 ///     penalty into a rank position;
 ///   - `liq_bonus` lands OUTSIDE the multiplier stack, where `score_parts` already records that a
 ///     constant is genuinely rank-inert.
@@ -9315,10 +9315,7 @@ mod tests {
     /// later runs -> the overlap note (Jaccard %, moved count, singular/plural). Pure fs, no network.
     #[test]
     fn turnover_note_roundtrip() {
-        let dir = std::env::var("CLAUDE_JOB_DIR")
-            .map(|d| format!("{d}/tmp"))
-            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
-        let path = std::path::PathBuf::from(format!("{dir}/fm_turnover_test_{}.txt", std::process::id()));
+        let path = std::env::temp_dir().join(format!("fm_turnover_test_{}.txt", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let s = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
 
