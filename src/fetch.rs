@@ -1133,7 +1133,7 @@ fn ttm_eps_from_concept(j: &Value, today: NaiveDate) -> Option<f64> {
 /// Disk-cached + budget-capped via [`cached_fund_json`]. None unless FMP_API_KEY is set AND the symbol is
 /// an FMP-covered ETF — FMP's free tier is US-centric, so EU-listed UCITS ETFs (e.g. VUAA.DE) often
 /// return nothing and the column stays n/a for them.
-/// ponytail: scale is the FMP convention; if a known US ETF prints 100× off, drop the ×100 here.
+/// shortcut: scale is the FMP convention; if a known US ETF prints 100× off, drop the ×100 here.
 #[mutants::skip] // (#209) async network shell — see `bf_ter_cascade` for why, and for the decisions.
 async fn fetch_expense(client: &Client, urls: &Urls, ticker: &str, name: &str) -> Option<f64> {
     // Börse Frankfurt TER (captured for free during the universe build) first — it covers the EU UCITS
@@ -2258,6 +2258,12 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
 /// The key carries a VERSION DIGIT because this cache has no TTL: a parse that was wrong when it was
 /// written stays wrong forever. `inst1` -> `inst2` retires the class picker that shipped BRK-B at EPS
 /// 46,563 (Class A) — see `parse_sec_instance`. Bump it again on any change to what that parser picks.
+///
+/// The instance read is the EXTRACTED one beside the inline-XBRL 10-K: same folder, primary document
+/// name with ".htm" swapped for "_htm.xml". That URL is hardcoded like the `yahoo_crumb` endpoints —
+/// lift it into `Urls` only if a test needs to stub it. `#[mutants::skip]`: network-bound, and no offline
+/// test reaches it; its parser, `parse_sec_instance`, is the tested half.
+#[mutants::skip]
 async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> std::collections::BTreeMap<NaiveDate, (f64, Option<f64>)> {
     use std::sync::atomic::Ordering;
     let cache = sec_cache_path(&format!("{ticker}_inst2"));
@@ -2281,9 +2287,6 @@ async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> s
                     .and_then(|forms| forms.iter().position(|f| f.as_str().is_some_and(is_annual_form)));
                 if let Some(i) = newest.filter(|_| SEC_FETCHES.fetch_add(1, Ordering::Relaxed) < SEC_FETCH_BUDGET) {
                     if let (Some(acc), Some(doc)) = (get("accessionNumber", i), get("primaryDocument", i)) {
-                        // the EXTRACTED instance sitting beside the inline-XBRL 10-K: same folder, primary
-                        // document name with ".htm" swapped for "_htm.xml". ponytail: hardcoded like the
-                        // `yahoo_crumb` endpoints — lift into `Urls` only if a test needs to stub it.
                         let url = format!(
                             "https://www.sec.gov/Archives/edgar/data/{}/{}/{}_htm.xml",
                             cik.trim_start_matches('0'),
@@ -2820,7 +2823,7 @@ fn isin_domicile(isin: &str) -> Option<String> {
 
 /// Yahoo cookie+crumb pair for the query2 quoteSummary API (required since 2023). Fetched once per
 /// process, best-effort: a race just repeats the two-request handshake, first `set` wins.
-/// ponytail: endpoints hardcoded — lift into `Urls` only if a test ever needs to stub them.
+/// shortcut: endpoints hardcoded — lift into `Urls` only if a test ever needs to stub them.
 static YQ_AUTH: std::sync::OnceLock<Option<(String, String)>> = std::sync::OnceLock::new();
 
 /// A full browser UA, for Yahoo only. The bare `"Mozilla/5.0"` the rest of this file sends is now
@@ -2930,7 +2933,7 @@ fn is_crumb(token: &str) -> bool {
 /// most funds; Yahoo used to fill the holes and no longer can (its crumb handshake is dead upstream).
 /// justETF is keyless and covers EU UCITS funds, which is exactly the population BF misses.
 ///
-/// ponytail: an HTML scrape, with a known ceiling — two `data-testid` anchors, no HTML parser, no new
+/// shortcut: an HTML scrape, with a known ceiling — two `data-testid` anchors, no HTML parser, no new
 /// dependency. `data-testid` attributes are what justETF's own test suite selects on, so they are the
 /// most stable handles the page offers, but they are still not an API. If the page moves, both values
 /// go `None` and the cells stay `n/a` exactly as they are today; nothing guesses.
@@ -3632,7 +3635,7 @@ const BF_TER_KEYS: &[&str] = &["ter", "totalExpenseRatio", "ongoingCharges", "on
 /// VUAA = 0.0007 = its known 0.07%), so ×100 to percent. None if absent / nonsense.
 /// BF nests the fund detail ONE level down (keyData / overview / performance sub-objects), so scan the
 /// row's own keys AND one level into any sub-object. Value may arrive as a number OR a string ("0,20%").
-/// ponytail: if BF ever flips back to percent, ×100 blows past the <5 sanity filter -> ter_n=0 -> the
+/// shortcut: if BF ever flips back to percent, ×100 blows past the <5 sanity filter -> ter_n=0 -> the
 /// first-row-fields diagnostic fires; drop the ×100 then.
 fn bf_row_ter(row: &Value) -> Option<f64> {
     fn num(v: &Value) -> Option<f64> {
@@ -4165,11 +4168,13 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
 /// `aaData` above ~1000 rows per request, so ask 1000 at a time until a short page. Per-page
 /// retry mirrors Lisbon's 2-attempt shape (a transient blip emptied that leg once). Degrades to
 /// whatever pages arrived (or empty, with a diagnostic) — the BF leg still builds the universe.
+/// Hard stop at 10 pages (~10k rows): the list is ~3.3k, so a runaway server cannot loop us.
+/// `#[mutants::skip]`: network-bound, and no offline test reaches it.
+#[mutants::skip]
 pub async fn fetch_euronext_etf_isins(client: &Client, urls: &Urls) -> Vec<String> {
     const PAGE: usize = 1000;
     let mut isins: Vec<String> = Vec::new();
     let mut last_status = String::from("no response");
-    // ponytail: hard stop at 10 pages (~10k rows) — the list is ~3.3k; a runaway server can't loop us
     'pages: for page in 0..10 {
         let start = page * PAGE;
         // raw body (not `.form()`) so the `args[...]` key keeps its literal brackets; WITHOUT
@@ -4378,7 +4383,7 @@ pub async fn sector_map(client: &Client, urls: &Urls, sectors: &[String]) -> std
 
 /// (PIT) `.sp500_history.json` — the point-in-time S&P 500 membership map, cached FOREVER.
 ///
-/// ponytail: no TTL, deliberately. The index changes a handful of times a year and every cutoff a
+/// shortcut: no TTL, deliberately. The index changes a handful of times a year and every cutoff a
 /// walk-forward run scores is in the PAST, so a month-stale copy moves nothing it measures. The
 /// ceiling that buys: a name added to the index since the file was written is invisible to `pit` and
 /// will be counted as one more name the pool never had, rather than as a member. `rm
@@ -4467,7 +4472,7 @@ async fn fetch_sp500_base(client: &Client, urls: &Urls) -> core::MemberSpans {
 /// (EU listing) US symbol -> its verified Xetra Yahoo symbol (`GOOGL` -> `ABEA.DE`). Only read when
 /// `prefer_eu_listing` is on, and the mapping is stable, so resolutions are remembered forever.
 ///
-/// ponytail: ONE file, not the positive/negative pair `fetch_xetra_etfs` keeps. A known-absent twin is
+/// shortcut: ONE file, not the positive/negative pair `fetch_xetra_etfs` keeps. A known-absent twin is
 /// stored as the EMPTY STRING, which costs no TTL machinery and no second const. The ceiling that buys:
 /// a negative never expires, so a listing that appears later stays unseen until this file is deleted.
 /// Cheap failure — the name simply keeps its US row — and `rm .eu_listing_cache.json` is the upgrade
@@ -4492,7 +4497,7 @@ const XETRA_EXCH_CODE: &str = "GY";
 /// rather than its venue — the exact failure that killed the Yahoo-search route, where `?q=AAPL`
 /// offered Thai DRs and an Argentine CEDEAR as if they were Apple.
 ///
-/// ponytail: Xetra ONLY, no venue ladder. All ten probed S&P names carried `GY`, `LN` returns
+/// shortcut: Xetra ONLY, no venue ladder. All ten probed S&P names carried `GY`, `LN` returns
 /// non-EUR depositary lines (`0RIH`, `0QYP`), and a preference order over `NA`/`FP`/`IM`/`SW` is
 /// guesswork until a real run reports a Xetra miss. Add fallbacks when that count is a number.
 fn figi_eu_symbol(data: &Value) -> Option<String> {

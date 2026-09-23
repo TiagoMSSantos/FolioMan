@@ -8,6 +8,12 @@
 
 use crate::{config, core, fetch, picks};
 
+/// The fund factor scores on ANNUAL EPS, like the valuation cell: it skips fetch.rs's `sec_ttm_eps`
+/// TTM override, so report stays self-consistent, and diverges from screen only for mid-ramp US
+/// growers (where the valuation line already shows the same annual ey).
+/// `#[mutants::skip]`: a command entry, reachable only through the CLI, which the mutation gate's
+/// offline suite never runs — the same reason `screen::run` and `track::run` carry it.
+#[mutants::skip]
 pub async fn run(args: Vec<String>) {
     let settings = config::load();
     let client = fetch::client();
@@ -136,9 +142,6 @@ pub async fn run(args: Vec<String>) {
                 // mismatch this mirror exists to prevent. `fund_factors` leaves every price-dependent
                 // factor None by construction; each call site must fill the one it selects.
                 ff.peg_yield = close.and_then(|p| core::peg_yield(ff.eps_ttm, peg_cagr, p));
-                // ponytail: annual EPS like the valuation cell above — skips fetch.rs's sec_ttm_eps
-                // TTM override, so report stays self-consistent; diverges from screen only for
-                // mid-ramp US growers (where the valuation line already shows the same annual ey).
                 scored.fund_factor =
                     core::select_fund_factor(&ff, &settings.buy_heuristic.growth_fund_factor);
                 // (G+) same struct the extra terms read, set after the price-dependent fields above
@@ -156,6 +159,10 @@ pub async fn run(args: Vec<String>) {
 /// guard, the incomplete-year `*` mark, the empty-rollup note — are unit-testable offline (same
 /// seam split as the trading212 render_summary). Returns (text, whether a fiscal-year table
 /// rendered) for run()'s exit-code rule.
+///
+/// The `*` mark: 2-3 quarters = a genuinely partial quarterly (FMP) year. 1 = an annual filing (SEC
+/// EDGAR rolls a fiscal year into one row) OR the rare newest-FMP-year-with-only-Q1, which is not
+/// flagged. 4+ = a full quarterly year. The source can't be told per row, so this is close, not exact.
 fn render_annual(
     ticker: &str, source: &str, rows: &[core::FundRow], today: chrono::NaiveDate,
     close_filer: Option<f64>, peg_cagr: Option<f64>, tuning: &config::BuyHeuristic, // (#37) the one CAGR every PEG divides by — (#331) `picks::peg_cagr_pct`, which carries its OWN window and is no longer the ranking leg
@@ -192,9 +199,6 @@ fn render_annual(
             Some(p) => core::yoy_pct(a.shares, Some(p)).map(|d| -d),
             None => sh_delta(a.shares, older.and_then(|o| o.shares)),
         };
-        // 2-3 quarters = a genuinely partial quarterly (FMP) year; mark it. 1 = an annual filing
-        // (SEC EDGAR rolls a fiscal year into one row) OR the rare newest-FMP-year-with-only-Q1, which
-        // we don't flag. 4+ = a full quarterly year. ponytail: can't tell source per-row, this is close.
         let mark = if (2..4).contains(&a.quarters) { "*" } else { "" };
         out.push_str(&format!(
             "{:>5}{} {:>10} {:>8} {:>7} {:>7} {:>7} {:>9} {:>8} {:>8}\n",

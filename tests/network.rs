@@ -353,7 +353,7 @@ fn backtest_edge_holds() {
         );
         return;
     }
-    // ponytail: size+mtime, not a parse. Deciding whether to skip by deserializing 88 MB of JSON costs
+    // shortcut: size+mtime, not a parse. Deciding whether to skip by deserializing 88 MB of JSON costs
     // more than either wrong guess — a wrong "warm" just fetches the misses, a wrong "cold" just skips.
     if !forced {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fetch::LONG_CACHE_FILE);

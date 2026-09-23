@@ -720,7 +720,7 @@ fn near_miss_tail<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::B
 /// windows (`newly_admitted_stats`). Not pinned (the book holds those anyway), not crypto (the backtest pool's
 /// rule), and one row per fund, the best-scoring venue first. `screen` prints a line per notch and journals every
 /// row (`track::Snapshot::near`), so `track` grades each cohort against the book the same run bought.
-/// ponytail: no cap. The history cohort can run to hundreds of rows a line; cap per notch if the journal's size
+/// shortcut: no cap. The history cohort can run to hundreds of rows a line; cap per notch if the journal's size
 /// ever matters.
 #[allow(clippy::type_complexity)]
 fn notch_cohorts<'a>(quotes: &'a [Quote], pinned: &[String], tuning: &config::BuyHeuristic) -> Vec<(&'static str, &'static str, Vec<&'a Quote>)> {
@@ -1607,7 +1607,7 @@ pub async fn run(args: Vec<String>) {
     // deliberate (see the comment above and `picks.rs`), and rewriting a ticker the user typed on
     // purpose is worse than telling them it is being shadowed.
     if settings.prefer_eu_listing {
-        // ponytail: the cache read is duplicated from `resolve_eu_listings` rather than shared. Four
+        // shortcut: the cache read is duplicated from `resolve_eu_listings` rather than shared. Four
         // lines of "read a JSON file or default" do not earn a graded function plus the test to kill
         // its mutant — and this call site must NOT resolve anything, only read what is already known.
         let eu: std::collections::HashMap<String, String> =
@@ -1989,7 +1989,7 @@ pub async fn run(args: Vec<String>) {
         // `aum_shown()` (BF `aum_eur` ∨ Yahoo `aum_fallback`) — the SAME value the table's AUM column
         // prints, so the journal matches what the user sees, and BF's intermittent universe
         // enrichment doesn't starve the signal. Non-funds carry None and never produce a reading.
-        // ponytail: aum_shown source is stable within a user's consistent monthly full-runs; a rare
+        // shortcut: aum_shown source is stable within a user's consistent monthly full-runs; a rare
         // cross-source switch could blip one reading — split into per-source fields only if observed.
         aum: ranked_now
             .iter()

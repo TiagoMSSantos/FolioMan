@@ -906,7 +906,7 @@ pub fn fmt_money2(x: f64) -> String {
 /// screen — the default) or 12 (the long-horizon backtest's monthly bars). The backtest sets it once
 /// per run so `measure_endpoint` can convert the config's TRADING-DAYS span into the same calendar
 /// span in bars — the validated smoothing window means the same amount of TIME on either cadence
-/// (train == serve). ponytail: process-wide atomic, fine because one backtest run = one cadence.
+/// (train == serve). shortcut: process-wide atomic, fine because one backtest run = one cadence.
 static MEASURE_CADENCE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(252);
 
 /// Called by the backtest before scoring cutoffs built on non-daily bars (12 = monthly).
@@ -1007,11 +1007,11 @@ pub fn sector_matches(haystack: &str, sectors: &[String]) -> bool {
 /// "GICS Sector", ... — Symbol and Sector carry no commas in this dataset, but the Security NAME
 /// can (quoted, e.g. `"Casey's General Stores, Inc."`), which shifts the sector one column right
 /// under a naive split. The sector rides along so the screen can print the top table's sector mix.
+/// Only the ONE quoted comma seen in this dataset is handled; a two-comma name would need a real CSV
+/// parser — add one only if the sector mix ever prints another garbage label.
 pub fn sector_symbol(csv_line: &str, sectors: &[String]) -> Option<(String, String)> {
     let cols: Vec<&str> = csv_line.splitn(5, ',').collect();
     let sym = cols.first()?.trim();
-    // ponytail: only the ONE quoted comma seen in this dataset is handled; a two-comma name would
-    // need a real CSV parser — add one only if the sector mix ever prints another garbage label.
     let name = cols.get(1)?.trim();
     let shifted = name.starts_with('"') && !name.ends_with('"');
     // a 2-column list (Symbol,Name — e.g. the nasdaq-100 CSV) carries no sector: keep the row
@@ -3785,7 +3785,7 @@ pub fn insider_net_buys(txns: &[InsiderTx], cutoff: NaiveDate, window_days: i64)
 }
 
 /// (Item 3) A per-name blend of the available as-of factors for the `"composite"` `growth_fund_factor`.
-/// ponytail: a plain mean of the factors present — they're all growth-%/points of similar magnitude, so
+/// shortcut: a plain mean of the factors present — they're all growth-%/points of similar magnitude, so
 /// averaging is a defensible first cut. CEILING: a true cross-sectional rank-normalisation (0..1 across
 /// the cutoff's universe) would be scale-clean, but `select_fund_factor` sees ONE name with no peer
 /// context; lift it to a universe rank in the backtest layer IF the sweep shows the composite earns its
@@ -4207,7 +4207,7 @@ pub fn pe_from_earnings_yield(ey: Option<f64>) -> Option<f64> {
 /// SEC levels (clean ratio), left None by the live path (EUR price vs USD levels would skew). None unless
 /// EBITDA is POSITIVE (EV/EBITDA is meaningless for a loss-maker — a negative multiple isn't "cheap", so
 /// it None-outs rather than fabricating a signal), shares are positive, and EV ends up positive.
-/// ponytail: net_debt None (rare — cash is the SEC anchor) degrades EV to market-cap only; the leverage
+/// shortcut: net_debt None (rare — cash is the SEC anchor) degrades EV to market-cap only; the leverage
 /// leg simply drops for that name. Tighten to require net_debt only if the probe shows an edge worth it.
 pub fn ev_ebitda_yield(ebitda: Option<f64>, shares: Option<f64>, net_debt: Option<f64>, price: f64) -> Option<f64> {
     match (ebitda, shares) {
@@ -4273,7 +4273,7 @@ pub struct AnnualReport {
 /// it); each annual margin = the REVENUE-WEIGHTED mean of the quarter margins, which equals
 /// Σ(profit)/Σ(revenue) exactly (a quarter's margin% is profit/revenue), so no absolute profit line is
 /// needed. A quarter missing a margin (or revenue) just drops out of that margin's weighting, never
-/// fabricating a 0. ponytail: groups by `period_end.year()` — a non-Dec fiscal year can straddle the
+/// fabricating a 0. shortcut: groups by `period_end.year()` — a non-Dec fiscal year can straddle the
 /// calendar split; the `quarters` count exposes it, true fiscal-period grouping deferred until it bites.
 pub fn annual_rollup(rows: &[FundRow]) -> Vec<AnnualReport> {
     let mut by_year: BTreeMap<i32, Vec<&FundRow>> = BTreeMap::new();

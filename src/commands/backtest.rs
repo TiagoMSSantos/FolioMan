@@ -651,7 +651,7 @@ const STEP_SESSIONS: usize = 126;
 /// Need ~3y of history BEFORE a cutoff to form/score the long trend fairly.
 const MIN_HISTORY: usize = 750;
 /// (Item 9) Conservative round-trip trading cost (bps) charged against the gross edge per unit of
-/// turnover. ponytail: a const, not a config knob — the backtest is a dev `cargo run` (already
+/// turnover. shortcut: a const, not a config knob — the backtest is a dev `cargo run` (already
 /// recompiles); promote to config only if a non-dev needs to tune cost without a build.
 const ROUND_TRIP_BPS: f64 = 20.0;
 
@@ -661,7 +661,7 @@ const ROUND_TRIP_BPS: f64 = 20.0;
 /// crashed-and-alive mega/large-caps with deep Yahoo history (score at many cutoffs, then bleed forward)
 /// plus a few bankrupt/failed tickers whose truncated series ends near ZERO (the strongest correction —
 /// each is a cutoff with a ~−100% forward window). Any that Yahoo no longer serves return None and are
-/// harmlessly skipped, so the list can over-include. ponytail: a hand-picked loser set, NOT point-in-time
+/// harmlessly skipped, so the list can over-include. shortcut: a hand-picked loser set, NOT point-in-time
 /// index reconstruction (a data-vendor problem) — enough to tell "edge is real" from "edge is survivorship".
 const STRESS_TICKERS: &[&str] = &[
     // crashed-and-alive, long history, once-large
@@ -1150,7 +1150,7 @@ pub async fn run(args: Vec<String>) {
                 // into the filer's books first — dividing a EUR EPS by a USD close is off by the whole FX
                 // rate and looks entirely plausible. Same currency (every US filer) takes the None arm: no
                 // fetch, no multiply, sample bit-identical. That's what makes this change additive.
-                // ponytail: one uncached FX chart pair per foreign ticker (~2 extra fetches each). Share a
+                // shortcut: one uncached FX chart pair per foreign ticker (~2 extra fetches each). Share a
                 // series cache across tickers if the foreign slice ever shows up in the run time.
                 let filer_ccy = fund_rows.as_ref().and_then(|r| r.last().and_then(|x| x.currency.clone()));
                 // `Hist::Raw` reaches here only when `fund` is off, and `filer_ccy` is `Some` only when
@@ -1999,7 +1999,7 @@ fn sweep_cutoffs(
 /// forward windows from the SAME fetched history (fetched once per ticker, then sliced per window), and
 /// prints each window's gross edge, turnover, and NET edge (gross − turnover×ROUND_TRIP_BPS). The right
 /// rebalance cadence is the one that maximises NET — longer holds pay less turnover but may catch less
-/// signal, so there's an optimum. ponytail: duplicates ~20 lines of run's walk-forward on purpose, to keep
+/// signal, so there's an optimum. shortcut: duplicates ~20 lines of run's walk-forward on purpose, to keep
 /// this opt-in dev path from touching the validated default dispatch; the fetch is cached so the re-walk is
 /// cheap. Price-only (no fund/insider) — this measures the price signal's decay, not the fund tilt.
 #[allow(clippy::too_many_arguments)]
@@ -3444,7 +3444,7 @@ fn bench_leg_cagr(bench: &(Vec<chrono::NaiveDate>, Vec<f64>), date: chrono::Naiv
 /// cutoff has no predecessor, so its map is empty and the door is shut there — being one step stale is
 /// conservative by construction, and the walk therefore starts in exactly the control's behaviour.
 ///
-/// The benchmark leg is `growth_min_leg_years` rather than each name's own rung. ponytail: one window
+/// The benchmark leg is `growth_min_leg_years` rather than each name's own rung. shortcut: one window
 /// for the whole cohort, because it is the only leg EVERY ranked name is guaranteed to own — a per-rung
 /// benchmark would compare a 20y name against a 20y index and a 5y name against a 5y index and call
 /// both "beat the market". Upgrade path if the row ever ships: key the cohort by (sector, rung).

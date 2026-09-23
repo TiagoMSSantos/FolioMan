@@ -2333,7 +2333,7 @@ pub(crate) fn weight_notches(tuning: &BuyHeuristic) -> Vec<(String, BuyHeuristic
 /// history / no 1Y data — nothing to "almost pass"), OR it clears every gate (would be ranked), OR it
 /// fails ≥2 (not a near miss). Returns (gate_name, human "why" string) for the printed tail in `screen`.
 ///
-/// ponytail: MIRRORS the gates in `score_parts` instead of sharing them — this is cosmetic (a printed
+/// shortcut: MIRRORS the gates in `score_parts` instead of sharing them — this is cosmetic (a printed
 /// tail), so duplicating the checks keeps the load-bearing, edge-validated scorer untouched. Drift only
 /// mislabels the tail, never the rank. Keep in sync if a `score_parts` gate changes.
 pub fn growth_near_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(&'static str, String)> {
@@ -2429,7 +2429,7 @@ pub fn growth_down_year_miss(quote: &Quote, tuning: &BuyHeuristic) -> Option<(f6
 /// a name here is not one the tool judged bad, it is one the tool declined to judge on its own longest
 /// record. Whether that trade is worth making is `fixed_cagr_years`' own receipt, not this block's.
 ///
-/// ponytail: evaluates the gates twice per name rather than threading a second CAGR through the scorer.
+/// shortcut: evaluates the gates twice per name rather than threading a second CAGR through the scorer.
 /// This is a printed footer over a few thousand quotes, so the second pass is free at this scale, and it
 /// keeps the edge-validated path untouched — the same bargain `growth_near_miss` already took.
 pub struct PinDrop {

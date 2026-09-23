@@ -143,7 +143,8 @@ fn buy_event(
 /// Replay the journal month by month from the first snapshot's month through `now_ym`: a month
 /// with a snapshot deploys base × entry-state multiplier plus any accrued gap cash; a month
 /// without one banks its base at ×1 (income arrives regardless — it just deploys late, at the
-/// next event's prices). `base` must be > 0 (gated in `run`).
+/// next event's prices). `base` must be > 0 (gated in `run`), which makes the `unwrap_or` on the
+/// deploy multiplier unreachable; it stays so the function is total, with no panic path.
 fn ledger(
     snaps: &[Snapshot],
     base: f64,
@@ -162,7 +163,6 @@ fn ledger(
     while m <= now_ym {
         match firsts.get(&m) {
             Some(snap) => {
-                // ponytail: unwrap_or is unreachable (base > 0 gated) — kept total, no panic path
                 let (mult, scaled) = deploy_scaled_eur(base, snap.spx_off_hi).unwrap_or((1.0, base));
                 let budget = scaled + f64::from(pending) * base;
                 match buy_event(snap, budget, mult, snap.spx_off_hi.is_some(), sz, tier_of, fee_of) {
