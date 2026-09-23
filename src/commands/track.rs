@@ -115,6 +115,18 @@ pub struct Snapshot {
     /// that pushed it out, which is look-ahead. Same serde contract as `sized`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exit: Vec<(String, Option<f64>, bool)>,
+    /// (#337) THE CARRY: `(ticker, close EUR)` for every name the PREVIOUS month's graded line
+    /// ([`prior_month`]) grades that this line's `rows` and `exit` do not already price — [`carry`]
+    /// builds it. Eight of the nine forward tables grade every line to TODAY, so their windows nest and
+    /// their 12-line rules rest on about one effective trial. (#336) broke the nesting for the executed
+    /// book by pricing month m's book at month m+1's line, which works because the book's names are in
+    /// `rows` or `exit` a month later. The cohorts are not: the near-miss tail, the PEG and weight-swap
+    /// shadows, the exits and the CORE list sit mostly outside `rows`, and a close nobody journalled on
+    /// the day can never be backfilled. So this journals them now; the chained readers come later, from
+    /// data that exists. Journal data, no knob, one copy per price (non-negotiable #4), same serde
+    /// contract as `sized`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub carry: Vec<(String, Option<f64>)>,
 }
 
 /// Append today's ranked slice — unless the journal already ends with this date (same-day rerun).
@@ -183,6 +195,8 @@ pub(crate) fn adjust_for_splits(snaps: &mut [Snapshot], factor_since: &dyn Fn(&s
         let lanes = lanes.chain(snap.swap.iter_mut().map(|(t, p, ..)| (&*t, p)));
         // (#335) and the exit shadow, which carries its own close for the same reason
         let lanes = lanes.chain(snap.exit.iter_mut().map(|(t, p, _)| (&*t, p)));
+        // (#337) and the carry, which is nothing but closes
+        let lanes = lanes.chain(snap.carry.iter_mut().map(|(t, p)| (&*t, p)));
         for (ticker, px) in lanes.chain(snap.near.iter_mut().map(|(t, p, _)| (&*t, p))) {
             let factor = factor_since(ticker, then);
             // `!= 1.0` and not an epsilon: a factor is a ratio of two small integers or it is the
@@ -954,7 +968,7 @@ fn prior_month<'a>(snaps: &'a [Snapshot], date: &str) -> Option<&'a Snapshot> {
 /// (#335) The names `prev`'s book bought that `book_now` no longer holds, in `prev`'s order, each with
 /// what `look` reads today: `(close EUR, still passes the gates?)`. Coins are out: the live rank never
 /// passes one, so every coin would read as FAILED.
-fn exits(prev: Option<&Snapshot>, book_now: &[String], look: &dyn Fn(&str) -> (Option<f64>, bool)) -> Vec<(String, Option<f64>, bool)> {
+pub(crate) fn exits(prev: Option<&Snapshot>, book_now: &[String], look: &dyn Fn(&str) -> (Option<f64>, bool)) -> Vec<(String, Option<f64>, bool)> {
     prev.map(book_rows)
         .unwrap_or_default()
         .into_iter()
@@ -966,19 +980,31 @@ fn exits(prev: Option<&Snapshot>, book_now: &[String], look: &dyn Fn(&str) -> (O
         .collect()
 }
 
-/// (#335) [`exits`] against the journal on disk. `screen` calls it BEFORE appending today's line, which
-/// is why it cannot reuse the read `screen` makes after the append. That read is restated for splits
-/// and pinned to one call (screen's `the_journal_is_read_once_and_restated_once`) because its footers
-/// read PRICES; this one hands back tickers only, with today's close from `look`, so nothing un-restated
-/// leaves it. `#[mutants::skip]`: a file read wired to two tested fns, reachable only from `screen::run`.
+/// (#337) Today's close for every ticker `prev`'s line grades ([`fetch_set`], so the carry and what
+/// `track` prices cannot drift) that `today`'s `rows` and `exit` do not already price. The benchmark
+/// is out: every line carries `spx`. Sorted, one row per ticker; no `prev`, nothing to carry.
+pub(crate) fn carry(prev: Option<&Snapshot>, today: &Snapshot, look: &dyn Fn(&str) -> Option<f64>) -> Vec<(String, Option<f64>)> {
+    let priced = |t: &str| today.rows.iter().any(|(x, _)| x == t) || today.exit.iter().any(|(x, ..)| x == t);
+    fetch_set(prev.map(std::slice::from_ref).unwrap_or_default())
+        .into_iter()
+        .filter(|t| t != "^GSPC" && !priced(t))
+        .map(|t| {
+            let px = look(&t);
+            (t, px)
+        })
+        .collect()
+}
+
+/// (#335) The journal's [`prior_month`] line for `date`, read off disk. `screen` calls it BEFORE
+/// appending today's line, which is why it cannot reuse the read `screen` makes after the append. That
+/// read is restated for splits and pinned to one call (screen's `the_journal_is_read_once_and_restated_once`)
+/// because its footers read PRICES; this line only feeds [`exits`] and (#337) [`carry`], which take its
+/// TICKERS and price them with today's close, so nothing un-restated leaves it. `#[mutants::skip]`: a
+/// file read wired to a tested fn, reachable only from `screen::run`.
 #[mutants::skip]
-pub(crate) fn journal_exits(
-    date: &str,
-    book_now: &[String],
-    look: &dyn Fn(&str) -> (Option<f64>, bool),
-) -> Vec<(String, Option<f64>, bool)> {
+pub(crate) fn journal_prior(date: &str) -> Option<Snapshot> {
     let (snaps, _) = read_snapshots();
-    exits(prior_month(&snaps, date), book_now, look)
+    prior_month(&snaps, date).cloned()
 }
 
 /// (#335) The gap that decides the exit shadow; the other one prints for information.
@@ -1315,7 +1341,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(),
         }
     }
 
@@ -1429,6 +1455,27 @@ mod tests {
         let bare = snap("2026-09-01", None, &[("P", Some(1.0)), ("A", Some(1.0))]);
         assert_eq!(exits(Some(&bare), &now, &look), vec![("P".to_string(), None, false)]);
         assert!(exits(None, &now, &look).is_empty());
+    }
+
+    /// (#337) Every name last month's line grades, minus what today's `rows` (R1) and `exit` (R3)
+    /// already price and minus the benchmark, sorted, each with today's close — `None` when the quote
+    /// has none. The book's rank-11 name past `rows.take(BOOK)` would be here too: the set is
+    /// `fetch_set`'s, whose test covers each lane. No prior month, nothing to carry.
+    #[test]
+    fn carry_prices_last_months_graded_names_the_line_does_not() {
+        let prev = with_core(
+            with_near(snap("2026-09-01", Some(100.0), &[("R1", Some(1.0)), ("R2", Some(1.0)), ("R3", Some(1.0))]), &[("NM", Some(1.0), "cagr")]),
+            &[("CORE", Some(1.0))],
+        );
+        let prev = with_exit(with_swap(with_peg(prev, &[("PG", 0.1, 0.2)]), &[("SW", Some(1.0), "q x2", true)]), &[("EX", Some(1.0), false)]);
+        let today = with_exit(snap("2026-10-01", Some(110.0), &[("R1", Some(2.0)), ("NEW", Some(2.0))]), &[("R3", Some(2.0), true)]);
+        let look = |t: &str| (t != "NM").then_some(2.0);
+        let got = carry(Some(&prev), &today, &look);
+        let want: Vec<(String, Option<f64>)> = ["CORE", "EX", "NM", "PG", "R2", "SW"]
+            .map(|t| (t.to_string(), (t != "NM").then_some(2.0)))
+            .into();
+        assert_eq!(got, want);
+        assert!(carry(None, &today, &look).is_empty());
     }
 
     /// (#335) From the flip line: A and B were held both months (+10), C left failing (-20), D left
@@ -1709,6 +1756,12 @@ mod tests {
         let mut exited = vec![with_exit(snap("2024-06-01", Some(5000.0), &[]), &[("AAA", Some(100.0), false)])];
         assert_eq!(adjust_for_splits(&mut exited, &factor), 1, "{:?}", exited[0].exit);
         assert_eq!(exited[0].exit[0].1, Some(10.0), "an exit close splits like any other");
+
+        // (#337) and the carry, which is nothing but closes
+        let mut carried = vec![snap("2024-06-01", Some(5000.0), &[])];
+        carried[0].carry = vec![("AAA".into(), Some(100.0)), ("BBB".into(), Some(50.0))];
+        assert_eq!(adjust_for_splits(&mut carried, &factor), 1, "{:?}", carried[0].carry);
+        assert_eq!(carried[0].carry, vec![("AAA".into(), Some(10.0)), ("BBB".into(), Some(50.0))]);
 
         // (#323) and the near-miss tail, which `near_section` grades the same way
         let mut neared = vec![with_near(
@@ -2103,6 +2156,14 @@ mod tests {
         assert!(on.contains(r#""exit":[["EME",612.5,false]]"#), "{on}");
         assert_eq!(serde_json::from_str::<Snapshot>(&on).unwrap().exit, s.exit);
         assert!(serde_json::from_str::<Snapshot>(line).unwrap().exit.is_empty());
+
+        // (#337) and the carry
+        assert!(!off.contains("carry"), "an empty carry must not widen the line: {off}");
+        s.carry = vec![("EME".into(), Some(612.5)), ("NOQ".into(), None)];
+        let on = serde_json::to_string(&s).unwrap();
+        assert!(on.contains(r#""carry":[["EME",612.5],["NOQ",null]]"#), "{on}");
+        assert_eq!(serde_json::from_str::<Snapshot>(&on).unwrap().carry, s.carry);
+        assert!(serde_json::from_str::<Snapshot>(line).unwrap().carry.is_empty());
     }
 
     /// (#323) The shadow table grades the near-miss tail equal-weight on the line's own window — +10.0%

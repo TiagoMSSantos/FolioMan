@@ -537,7 +537,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(),
         }
     }
 
@@ -600,7 +600,7 @@ mod tests {
         // top-BOOK cap: an 11th row never buys
         let rows: Vec<(String, Option<f64>)> =
             (0..12).map(|i| (format!("T{i}"), Some(10.0))).collect();
-        let s = Snapshot { date: "2026-07-16".into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), rows };
+        let s = Snapshot { date: "2026-07-16".into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), rows };
         assert_eq!(buy_event(&s, 3000.0, 1.0, true, &sz, &no_tier, &no_fee).unwrap().lots.len(), BOOK);
 
         // nothing priced → None

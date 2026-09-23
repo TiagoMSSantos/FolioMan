@@ -1977,7 +1977,9 @@ pub async fn run(args: Vec<String>) {
     .collect();
     // (#324) built here, not at the print below, so the journal records the rows the block prints
     let notches = notch_cohorts(&quotes, &settings.tickers, &settings.buy_heuristic);
-    crate::commands::track::append_snapshot(&crate::commands::track::Snapshot {
+    // (#335) last month's graded line, read BEFORE today's append: `exit` and (#337) `carry` diff against it
+    let prior = crate::commands::track::journal_prior(&run_date);
+    let mut line = crate::commands::track::Snapshot {
         date: run_date.clone(),
         spx: spx.first().and_then(|q| q.price_eur),
         spx_off_hi,
@@ -2061,11 +2063,18 @@ pub async fn run(args: Vec<String>) {
         exit: {
             let admitted = picks::live_rank_scores(&quotes, &settings.buy_heuristic);
             let book: Vec<String> = sized_now.iter().map(|(t, _)| t.clone()).collect();
-            crate::commands::track::journal_exits(&run_date, &book, &|t| {
+            crate::commands::track::exits(prior.as_ref(), &book, &|t| {
                 (quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur), admitted.contains_key(t))
             })
         },
+        carry: Vec::new(),
+    };
+    // (#337) and today's close for every name last month's line grades that this line does not price,
+    // so each cohort can be graded month to month the way (#336) chains the book
+    line.carry = crate::commands::track::carry(prior.as_ref(), &line, &|t| {
+        quotes.iter().find(|q| q.ticker == t).and_then(|q| q.price_eur)
     });
+    crate::commands::track::append_snapshot(&line);
 
     // (r15) footer population: ranked book + pinned extras — the held/watched names sit in the
     // table (sentinel score) but carried no footer data until now. Starred rows = pinned extras.
@@ -4297,7 +4306,7 @@ mod tests {
                 f += 1;
             }
             rows.push(("DEEP".to_string(), Some(1.0))); // rank 11 — past the book cut
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), rows }
         };
         // ALL: 5/5 (=1.0) · MOST: 4/5 (=0.8 boundary) · HALF: 3/5 (=0.6) · DEEP: rank-11 in all 5
         let past = vec![
@@ -4341,7 +4350,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), rows }
         };
         // UP [8,7,5,3] climbs · UP2 [9,6,4,2] climbs · DOWN [2,3,6,7] fades · FLAT [10×4] flat ·
         // THIN present only twice (<3) · BELOW always at rank 12 (past the top-10 cut → no point)
@@ -4375,7 +4384,7 @@ mod tests {
             aum: Vec::new(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(),
         };
         // fully stable: same top set across 3 screens → every pair retains all → 1.0
         let stable = vec![
@@ -4428,7 +4437,7 @@ mod tests {
             for (n, r) in at {
                 rows[*r - 1] = (n.to_string(), Some(1.0));
             }
-            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), rows }
+            Snapshot { date: date.into(), spx: None, spx_off_hi: None, aum: Vec::new(), core: Vec::new(), sized: Vec::new(), near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(), rows }
         };
         // A durably #2 (mean 2.0) · B bounces 1/5/9 (mean 5.0) · C only twice (< 3 appearances) ·
         // E always rank 12 (past the top-10 cut → no point) · D never appears
@@ -4461,7 +4470,7 @@ mod tests {
             aum: at.iter().map(|(t, _, a)| (t.to_string(), *a)).collect(),
             core: Vec::new(),
             sized: Vec::new(),
-            near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(),
+            near: Vec::new(), peg: Vec::new(), swap: Vec::new(), exit: Vec::new(), carry: Vec::new(),
         };
         let journal = vec![
             snap(
@@ -4512,9 +4521,9 @@ mod tests {
     /// occur in this test's own source and count themselves. For the same reason, no comment or
     /// message anywhere in this file may write either call with its parenthesis attached.
     ///
-    /// (#335) `track::journal_exits` is a second read on `run`'s path, by design: it runs BEFORE the
-    /// append and hands back tickers only, pricing each from today's quotes, so no journaled price
-    /// leaves it to restate.
+    /// (#335) `track::journal_prior` is a second read on `run`'s path, by design: it runs BEFORE the
+    /// append, and only its TICKERS are used — `exits` and (#337) `carry` price each from today's
+    /// quotes, so no journaled price leaves it to restate.
     #[test]
     fn the_journal_is_read_once_and_restated_once() {
         let src = include_str!("screen.rs");

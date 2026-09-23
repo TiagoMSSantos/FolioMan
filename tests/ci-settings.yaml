@@ -6488,6 +6488,52 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#337) ROUND 120: EVERY GRADED COHORT GETS A CLOSE ONE MONTH LATER. JOURNAL ONLY, NO READER YET.
+  #
+  # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD TESTS CAN WE ADD" A THIRD TIME. The lanes are
+  # done ((#335)'s census), and (#336) stopped the executed book's forward record nesting. The other
+  # eight `track` tables still grade each line to TODAY, so their 12-line REOPEN rules rest on about one
+  # effective trial. Chaining them the way (#336) chains the book needs each cohort's close at the NEXT
+  # month's line, and the journal does not have it: the book's names reappear in `rows` or `exit` a month
+  # later, the cohorts' names mostly do not. Measured on the committed journal (the 2026-09-21 line as
+  # the prior, the 2026-09-23 line as today): the prior line grades 115 names, and 96 of them sit in
+  # neither of today's `rows` nor `exit` — the near-miss tail, the PEG and swap shadows, the CORE list.
+  #
+  # WHY NOW, WITH NO READER. A reader can be written in any later round. A close nobody journalled on the
+  # day can never be backfilled, and every month without one is a link lost from every chained reader
+  # for good. So this round only writes.
+  #
+  # WHAT SHIPS. No knob and no ranking change; `buy_heuristic` stays at 176 keys. No backtest code, no
+  # golden moved, no table changed.
+  # - `Snapshot.carry: Vec<(ticker, close EUR)>`, written on EVERY line (like `exit`; the reader picks
+  #   the monthly one). Same serde contract as `sized`: empty -> the key is absent and the line is byte-
+  #   identical; old lines read with an empty carry.
+  # - `track::carry(prev, today, look)`: `fetch_set` of the prior month's line (the exact set `track`
+  #   grades off it, so the two cannot drift) minus `^GSPC` minus every ticker today's `rows` or `exit`
+  #   already prices (one copy per price, non-negotiable #4), priced with today's close.
+  # - `track::journal_prior` replaces `journal_exits`: `screen` still reads the journal once before its
+  #   append, now handing the prior line to both `exits` and `carry`. Only its tickers are used; every
+  #   price comes from today's quotes, so nothing un-restated leaves it.
+  # - `adjust_for_splits` walks the carry like any other lane.
+  #
+  # COST. ~2.4KB a line on the sample above, ~0.9MB a year at one CI line a day.
+  #
+  # FIRST CARRY: the first October line (September has no prior month, and the 2026-09-23 line is
+  # already written). The first chained cohort link needs that line AND a November line.
+  #
+  # UNLOCKS, NOT BUILT: chained near-miss per notch, PEG cheap-minus-rich per denominator, swap entrants
+  # minus displaced, exit kept minus failed, CORE list vs S&P — each graded month m -> month m+1 like
+  # (#336)'s book, with its own non-nested 12-link rule.
+  #
+  # HONEST EDGES. (a) A name missing from today's quotes journals `None`; a chained reader drops it the
+  # way `grade` drops any unpriced name. (b) A daily line's carry is written against the PRIOR MONTH's
+  # line, so the second line of a month repeats most of the first one's carry; only the monthly line
+  # will be read, and that repetition is the ~0.9MB. (c) A ticker renamed between two months carries
+  # `None` under its old name; the chain has no rename map, same as every table today.
+  #
+  # REVERT: delete `Snapshot.carry`, `track::carry`, its `adjust_for_splits` lane, the screen assignment
+  # and the three test blocks; rename `journal_prior` back to `journal_exits` returning `exits(..)`.
+  #
   # (#336) ROUND 119: THE FORWARD RECORD STOPS NESTING. THE EXECUTED BOOK IS CHAINED MONTH TO MONTH.
   #
   # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD TESTS CAN WE ADD" AGAIN. (#335)'s census left
