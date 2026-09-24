@@ -6488,6 +6488,45 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#341) ROUND 124: THE BACKTEST'S THREAD-COUNT PROMISE AND THE CHAINED RECORD'S HISTORY GET TESTS.
+  #
+  # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" A SEVENTH TIME,
+  # while (#340)'s census ran. Asked: both tests that do not wait on it, one back and one forward.
+  #
+  # BACK: `backtest_report_is_bit_identical_on_one_thread` and `..._tune_report_...` in
+  # tests/backtest_fixture.rs. The backtest's standing rule is "output is BIT-IDENTICAL at any thread
+  # count" (stable date sort, parallel stages collect in input order, PRNG streams stay serial). No test
+  # stated it: every golden ran at the machine's own core count, so a scheduling-order leak would only
+  # ever show as a flaky golden on some other box. The two tests re-run `12` and `12 tune` (its 500 draws
+  # are the other parallel stage) with RAYON_NUM_THREADS=1 against the SAME goldens: nothing to bless.
+  # `backtest::run` builds no pool at the default `compute_threads: 0`, so the env var sizes it.
+  # COST, mutants-profile binary: `12` 0.72s serial vs 0.55s on 8 threads, `12 tune` 1.14s vs 0.60s,
+  # far under the gates' 20s per-mutant timeout, so the tests stay in the fixture suite the gates run.
+  # `20`, `8`, `12 halflife` and `12 stress` were also run serially: output identical, not pinned.
+  # SANITY: `samples.reverse()` planted before the stable date sort, only when rayon runs one thread.
+  # Both tests red (12y late rho -0.12 -> -0.13; tune TRAIN rho +0.19 -> +0.15); every default-thread
+  # golden stayed green, which is the gap these close. Reverted, `cmp` clean.
+  #
+  # FORWARD: `chain_record_ignores_order_and_never_rewrites_history` in track.rs. Every (#338) reopen
+  # verdict and `track`'s ninth table read `chain_links` over `sim::monthly_firsts`. That record is only
+  # honest if it is ORDER-FREE (the journal is appended by the CI cron and by local runs) and
+  # APPEND-STABLE (a new month must never rewrite an earlier link). Only hand-built journals tested it.
+  # The sweep: 300 random journals (seed 0x9E37_79B9_7F4A_7C15), 6-40 lines each over 18 months, a
+  # 12-ticker pool, month gaps, several lines a month with and without a `sized` book, unpriced and zero
+  # closes, `exit`/`carry` rows, SPX sometimes missing. Each journal's links must be identical, to the
+  # f64 bit, after a shuffle and after cutting the journal at every month. Measured: all 300 journals
+  # chain a link, 1234 links have no SPX leg, 2872 month windows price a book name through
+  # `exit`/`carry` only; 0.17s. SANITY: (a) `monthly_firsts` keeping the first-SEEN line on a `sized`
+  # tie reds it at draw 0 on order; (b) `chain_links` grading every link to the journal's last month
+  # reds it at draw 0 on append. Honest note: `sim::monthly_firsts_semantics` and
+  # `chain_grades_each_book_at_the_next_months_line` red on (a) and (b) too. The sweep adds breadth, not
+  # a kill those two miss. Reverted, `cmp` clean.
+  #
+  # WHAT SHIPS. Tests only (plus `pin_at`, `pin` with an optional thread count). 0 in-diff mutants. No
+  # knob, no ranking change, no golden moved.
+  #
+  # REVERT: drop the three tests; fold `pin_at` back into `pin`.
+  #
   # (#339) ROUND 122: A MUTATION CENSUS OF THE BUY DECISION PATH. 116 SURVIVORS KILLED, 21 EQUIVALENT.
   #
   # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" A FIFTH TIME.

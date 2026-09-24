@@ -242,6 +242,12 @@ fn normalize(raw: &str) -> String {
 /// slowest single run (~3.5s / ~47s). Peak RSS is 38 MB per run, so six at once is ~230 MB — this
 /// repo's OOM history is the linker, not test processes.
 fn pin(args: &[&str], golden_name: &str) {
+    pin_at(args, golden_name, None);
+}
+
+/// `pin` with rayon's pool forced to `threads` workers. `backtest::run` builds no pool at the default
+/// `compute_threads: 0`, so `RAYON_NUM_THREADS` is what sizes it.
+fn pin_at(args: &[&str], golden_name: &str, threads: Option<&str>) {
     let cache = fixture_dir().join(".long_history_cache.json");
     assert!(
         cache.is_file(),
@@ -250,13 +256,15 @@ fn pin(args: &[&str], golden_name: &str) {
         cache.display()
     );
 
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
-        .arg("backtest")
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"));
+    cmd.arg("backtest")
         .args(args)
         .env("FOLIOMAN_CONFIG", fixture_dir().join("config/settings.yaml"))
-        .env("FOLIOMAN_OFFLINE", "1") // no socket may be opened; a fixture miss must not become a live fetch
-        .output()
-        .expect("spawn folioman");
+        .env("FOLIOMAN_OFFLINE", "1"); // no socket may be opened; a fixture miss must not become a live fetch
+    if let Some(n) = threads {
+        cmd.env("RAYON_NUM_THREADS", n);
+    }
+    let out = cmd.output().expect("spawn folioman");
     assert!(out.status.success(), "backtest exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr));
     let got = normalize(&format!(
         "{}{}",
@@ -298,6 +306,23 @@ fn pin(args: &[&str], golden_name: &str) {
 #[test]
 fn backtest_report_is_pinned_on_frozen_data() {
     pin(&["12"], "backtest-12.golden");
+}
+
+/// (#341) THE THREAD-COUNT INVARIANT, stated. Backtest output must be BIT-IDENTICAL at any thread
+/// count: the date sort is stable, so within-date order is inherited from collection order, and
+/// `bootstrap_edge_ci`'s pools and rank ties read it. Parallel stages therefore collect in input order
+/// and every seeded stream stays serial. Every other golden runs at the machine's own core count, so an
+/// order leak would surface only as a golden flaking on some other box. One worker is the canonical
+/// serial order; it must print the SAME golden, so nothing here is ever blessed. ~0.7s serial.
+#[test]
+fn backtest_report_is_bit_identical_on_one_thread() {
+    pin_at(&["12"], "backtest-12.golden", Some("1"));
+}
+
+/// (#341) The same claim for `tune`'s 500 draws, the other parallel stage with a seeded stream. ~1.1s.
+#[test]
+fn backtest_tune_report_is_bit_identical_on_one_thread() {
+    pin_at(&["12", "tune"], "backtest-12-tune.golden", Some("1"));
 }
 
 /// 20y is the horizon SHIP RULE v2 leads on and the screen footer quotes. Longest forward window ->

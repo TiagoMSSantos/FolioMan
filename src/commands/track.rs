@@ -2581,4 +2581,86 @@ mod tests {
         }
         assert!(n >= 4, "{n} line(s): the tracked journal shrank");
     }
+
+    /// (#341) The chained record (`chain_links` over `sim::monthly_firsts`) on RANDOM journals: it must
+    /// be ORDER-FREE, because lines arrive from a CI cron and from local runs, and APPEND-STABLE, because
+    /// a new month that rewrote an earlier link would let the forward record rewrite its own history.
+    /// Journals carry month gaps, several lines a month with and without a `sized` book, unpriced and
+    /// zero closes, and `exit`/`carry` rows, so all three `link_px` sources are hit. Dates are unique per
+    /// journal because `append_snapshot` refuses a date already present.
+    #[test]
+    fn chain_record_ignores_order_and_never_rewrites_history() {
+        const POOL: [&str; 12] = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
+        struct Rng(u64);
+        impl Rng {
+            fn f(&mut self) -> f64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                (self.0 >> 11) as f64 / (1u64 << 53) as f64
+            }
+            fn below(&mut self, n: usize) -> usize { (self.f() * n as f64) as usize }
+            fn px(&mut self) -> Option<f64> {
+                match self.below(20) { 0 | 1 => None, 2 => Some(0.0), _ => Some(50.0 + 100.0 * self.f()) }
+            }
+        }
+        let key = |links: &[(String, usize, Graded)]| -> Vec<_> {
+            links.iter().map(|(d, n, g)| (d.clone(), *n, g.date.clone(), g.days, g.priced, g.book_pct.to_bits(), g.spy_pct.map(f64::to_bits))).collect()
+        };
+        let mut r = Rng(0x9E37_79B9_7F4A_7C15);
+        let (draws, mut linked, mut no_spx, mut side_priced) = (300, 0, 0, 0);
+        for i in 0..draws {
+            let mut dates = std::collections::BTreeSet::new();
+            let lines = 6 + r.below(35);
+            while dates.len() < lines {
+                let m = r.below(18);
+                dates.insert(format!("{}-{:02}-{:02}", 2025 + m / 12, m % 12 + 1, 1 + r.below(28)));
+            }
+            let mut j: Vec<Snapshot> = dates.iter().map(|d| {
+                let mut names = POOL.to_vec();
+                for k in (1..names.len()).rev() { names.swap(k, r.below(k + 1)); }
+                let (ranked, rest) = names.split_at(4 + r.below(7));
+                let rows: Vec<_> = ranked.iter().map(|t| (*t, r.px())).collect();
+                let spx = (r.below(5) > 0).then(|| 3000.0 + 3000.0 * r.f());
+                let mut s = snap(d, spx, &rows);
+                if r.below(2) == 0 {
+                    let mut book = Vec::new();
+                    for t in ranked {
+                        if r.below(3) > 0 {
+                            book.push((*t, 1.0 + 9.0 * r.f()));
+                        }
+                    }
+                    s = with_sized(s, &book);
+                }
+                let (ex, ca) = rest.split_at(rest.len() / 2);
+                let exits: Vec<_> = ex.iter().map(|t| (*t, r.px(), r.below(2) == 0)).collect();
+                s = with_exit(s, &exits);
+                s.carry = ca.iter().map(|t| (t.to_string(), r.px())).collect();
+                s
+            }).collect();
+
+            let full = chain_links(&j);
+            linked += usize::from(!full.is_empty());
+            no_spx += full.iter().filter(|(_, _, g)| g.spy_pct.is_none()).count();
+            let firsts: Vec<&Snapshot> = crate::commands::sim::monthly_firsts(&j).into_values().collect();
+            side_priced += firsts.windows(2).filter(|w| {
+                book_rows(w[0]).iter().any(|(t, ..)| !w[1].rows.iter().any(|(x, _)| x == t) && link_px(w[1], t).is_some())
+            }).count();
+
+            // append-stable: the journal cut after each month grades exactly the full run's links up to it
+            for m in dates.iter().map(|d| &d[..7]).collect::<std::collections::BTreeSet<_>>() {
+                let cut: Vec<Snapshot> = j.iter().filter(|s| &s.date[..7] <= m).cloned().collect();
+                let kept: Vec<_> = key(&full).into_iter().filter(|k| &k.0[..7] <= m).collect();
+                assert_eq!(key(&chain_links(&cut)), kept, "draw {i}: appending the months after {m} rewrote an earlier link");
+            }
+            // order-free: the same lines in any order pick the same monthly lines and grade the same links
+            let firsts_sorted: Vec<String> = firsts.iter().map(|s| s.date.clone()).collect();
+            for k in (1..j.len()).rev() { j.swap(k, r.below(k + 1)); }
+            let firsts_shuffled: Vec<String> = crate::commands::sim::monthly_firsts(&j).values().map(|s| s.date.clone()).collect();
+            assert_eq!(firsts_shuffled, firsts_sorted, "draw {i}: monthly_firsts depends on line order");
+            assert_eq!(key(&chain_links(&j)), key(&full), "draw {i}: chain_links depends on line order");
+        }
+        assert!(linked * 10 >= draws * 8, "only {linked} of {draws} journals chained a link: the sweep is vacuous");
+        assert!(no_spx > 0 && side_priced > 0, "no_spx {no_spx}, side_priced {side_priced}: a branch went unswept");
+    }
 }
