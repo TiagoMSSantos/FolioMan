@@ -6527,6 +6527,72 @@ buy_heuristic:
   #
   # REVERT: drop the three tests; fold `pin_at` back into `pin`.
   #
+  # (#340) ROUND 123: A MUTATION CENSUS OF THE BACKTEST, TRACK AND SIM. 81 SURVIVORS KILLED, 8
+  # EQUIVALENT, 115 KNOWN GAPS IN PRINT-ONLY REPORTS.
+  #
+  # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" A SIXTH TIME.
+  # Asked: all four test kinds; census everything in the three files but the tuple fan-out; where the
+  # scorer and `gate_failures` disagree, the mirror follows the scorer; kill the verdict path first.
+  #
+  # A (52afd7b): the census takes an `exclude` input (cargo-mutants `-E`). backtest.rs lists 18,801
+  # mutants and 16,772 are constant-tuple swaps of five `-> Option<(f64 x 7)>` fns (proxy_books,
+  # book_stats, drop_bottom_book, corr_cap_book, report_entry_state), whose Some/None pair (#67) already
+  # pins. Dropping just those swaps fits the rest in one dispatch. B (0ab4ade): a random gate-mirror
+  # sweep (4000 seeded draws, 471 rank, all 27 gate labels fire; a planted `<` -> `<=` in
+  # `gate_failures` alone reds it at draw 224) and a parse of the committed journal, line by line.
+  #
+  # THE CENSUS (run 36038046824 on 52afd7b, 2h06m over 16 shards): files `src/commands/backtest.rs
+  # src/commands/track.rs src/commands/sim.rs`, regex `.`, exclude
+  # `^src/commands/backtest\.rs:.*replace (proxy_books|book_stats|drop_bottom_book|corr_cap_book|report_entry_state) -> `.
+  # 3053 in scope: 2699 caught, 204 missed, 11 timeout (a hang is a detection), 139 unviable.
+  #
+  # THE RULE the 204 were triaged by. KILL: any survivor a unit test reaches through a RETURNED value:
+  # the ship rule, bootstrap, walk-forward, the track/sim readers, the verdict and sized journals. Where
+  # the logic sat inline in a `()` report, a tiny helper was lifted out. GAP: a survivor whose only
+  # effect is stdout of a `()` report (a label, a print-only threshold, a sample-size guard, a
+  # knob-gated diagnostic). EQUIVALENT: no input tells it apart. Gaps and equivalents are listed here
+  # only: no skip attributes, no mutants.toml.
+  #
+  # - 81 KILLED. track.rs 12, sim.rs 2: the journal's append/read shell (same-day rerun skipped, corrupt
+  #   lines counted), a split factor <= 0, a one-day grade window, a zero then-price, a tie is not a win,
+  #   an over-cap crypto lot, a zero bench. backtest.rs 67:
+  #   `read_verdict` (the lib-test scratch root makes fs shells testable), `bench_leg_cagr` 7 (+21%
+  #   over 2y is 10%/yr), `month_series` 5, `discover_backtest_proxies` 10 (a new fixture: higher rho
+  #   wins, an exact tie goes to the older listing in either pool order, the gap is exactly 24 months,
+  #   only the verify window is judged, a donor delisted 20 months in has no overlap to lend),
+  #   `drop_bottom_book` 11 (p=0/50/100 cut different rows, p=100 indexes the top value, a floor every
+  #   row sits on rejects nobody), `bootstrap_edge_ci` 9 (both bands pinned to the bit, and a level
+  #   shift of every row moves no band: the fixture's bottom half was all zeros, so `t + b` read as
+  #   `t - b`), `report_entry_state` 2 (a two-point bench still forms the JOURNALED book),
+  #   `report_roll` 1 (the liveness `&&` lifted into `priced_at_both`), `union_book` 4 (the SPY leg),
+  #   and one-line boundaries in `pick_sweep_winner` 3, `held_loser_factors` 3, `book_deciles` 2,
+  #   `recall_capture` 2, `walk_params` 2, `bench_range_pct`, `exit_probe`, `missed_winner_reasons`,
+  #   `persistence_base_rate`, `purged_cut`. Line numbers below are 52afd7b's.
+  # - 8 EQUIVALENT:
+  #   461:75 annualized_edge_tag `- 1.0` -> `+`/`/`: the constant cancels in ann(top) - ann(bot).
+  #   4446:24 drop_bottom_book `p > 0.0` -> `>=`: at p=0 the floor is the minimum and rejects nobody.
+  #   3592:60 discover `*k < young.1` -> `<=`: `proxy_corr` tail-aligns, so for any donor that spans
+  #   the verify window the one extra leading month is cut off either way. (A donor delisted INSIDE
+  #   the window is tail-aligned to different months under both spellings: a known limit, not pinned.)
+  #   3594:65 discover tie-break `>` -> `>=`: the key ends in the ticker, so two keys are never equal.
+  #   5064:41 bootstrap `next() % len` -> `+`: `(next + len + o) % len` is `(next + o) % len`.
+  #   5095:20 bootstrap `edges.len() < iters / 2` -> `<=`: documented unpinned in the source.
+  #   5200:10 recall_capture `w_n > 0` -> `>=`: w_n = 0 forces w_mult = 0, and the second leg refuses.
+  # - 115 GAPS, print-only, by fn: report_two_style_book 44, report_lane 19 (band label, outlier tag,
+  #   the `print_base_rates` arm, `< 4` guards; none touch the gated edge arithmetic),
+  #   report_fund_lane 17, report_vs_benchmark 9, tune_growth 8 (its SHIP/NOT verdict is stdout only),
+  #   hold_period_sweep 4, report_corr_cap 3, report_entry_state 2 (3790/3791, the printed class
+  #   closures), mono_str 2, gate_sweep 2, weight_curve 2, annualized_edge_tag 1 (462:22),
+  #   emit_probe 1, sector_books 1 (feeds only `report_sector_books`).
+  #
+  # PROOF RULE, as in (#339): a census re-run on this commit with the same three inputs must list
+  # exactly the 8 equivalents and 115 gaps as missed, matched by fn + operator, not line.
+  #
+  # WHAT SHIPS. Tests, plus one lifted helper (`priced_at_both`, behaviour unchanged). No knob, no
+  # ranking change, no golden moved.
+  #
+  # REVERT: drop the (#340) asserts and tests; inline `priced_at_both` back into `report_roll`.
+  #
   # (#339) ROUND 122: A MUTATION CENSUS OF THE BUY DECISION PATH. 116 SURVIVORS KILLED, 21 EQUIVALENT.
   #
   # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" A FIFTH TIME.

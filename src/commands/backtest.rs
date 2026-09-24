@@ -265,13 +265,10 @@ fn latest_verdict(raw: &str) -> Option<Verdict> {
     parse_journal(raw).into_values().next_back()
 }
 
-/// DELIBERATELY UNPINNED, along with [`write_verdict`] below, and the reason is the split above.
-/// Both are now pure fs shells: resolve a path, hand the bytes to a tested pure function, hand the
-/// result back. A mutation audit still reports `read_verdict -> None` and `write_verdict -> ()` as
-/// surviving, and that is honest — nothing asserts the fs call happens. Killing them needs a test
-/// that drives `config::data_path`, which resolves through the process-global `FOLIOMAN_CONFIG`; one
-/// such test already exists in config.rs and is documented as the only one, because a second would
-/// race it. Two untested `std::fs` one-liners is the cheaper failure mode than a racy suite.
+/// A pure fs shell, like [`write_verdict`] below: resolve a path, hand the bytes to a tested pure
+/// function. (#340) Pinned by `read_verdict_reads_the_journal_file`: under `cargo test --lib`
+/// `config::data_path` re-roots into a per-process scratch dir, so the race that once kept it
+/// unpinned is gone. `write_verdict` stays skipped: past the fs call its arms only pick a message.
 pub(crate) fn read_verdict() -> Option<Verdict> {
     latest_verdict(&std::fs::read_to_string(config::data_path(VERDICT_FILE)).ok()?)
 }
@@ -3938,6 +3935,12 @@ fn px_at(s: &(Vec<chrono::NaiveDate>, Vec<f64>), d: chrono::NaiveDate) -> Option
     s.1.get(s.0.partition_point(|x| *x < d)).copied().filter(|p| *p > 0.0)
 }
 
+/// (#340) Priced on BOTH ends of a roll window, the liveness rule `report_roll`'s book is built on. A helper
+/// so the `&&` is graded by a unit test; inline, it was reachable only through the sized journal.
+fn priced_at_both(s: &(Vec<chrono::NaiveDate>, Vec<f64>), d: chrono::NaiveDate, end: chrono::NaiveDate) -> bool {
+    px_at(s, d).is_some() && px_at(s, end).is_some()
+}
+
 /// (#311) The names a DCA buy on `d` picks from: each ticker's LATEST point-in-time cutoff in the six months up
 /// to `d`, coins out. Nothing dated after `d` enters, so there is no look-ahead, and a step-6 monthly walk leaves
 /// exactly one cutoff per name in any six months, so every month sees the whole pond. Ticker-ordered, so a tie
@@ -4084,7 +4087,7 @@ fn report_roll(
             (d, (kept.iter().map(|x| by_tk[x.3.as_str()]).collect(), sized.into_iter().map(|x| x.1).collect()))
         })
         .collect();
-    let alive = |s: &Sample, d, end| series.get(s.quote.ticker.as_str()).is_some_and(|x| px_at(x, d).is_some() && px_at(x, end).is_some());
+    let alive = |s: &Sample, d, end| series.get(s.quote.ticker.as_str()).is_some_and(|x| priced_at_both(x, d, end));
     let top10 = |d, end| -> Option<Vec<(&str, f64)>> {
         let v: Vec<&Sample> = ranked.get(&d)?.0.iter().copied().filter(|s| alive(s, d, end)).collect();
         let trails: Vec<&[f64]> = v.iter().map(|s| s.trail.as_slice()).collect();
@@ -6561,6 +6564,19 @@ mod tests {
         // degenerate cuts pass through rather than indexing `rows[cut]` off the end.
         assert_eq!(purged_cut(&rows, 0, 12, |s: &Sample| s.date), 0);
         assert_eq!(purged_cut(&rows, 40, 12, |s: &Sample| s.date), 40);
+        // (#340) a row exactly `months*30` days back sits ON the edge and is purged with the overlap.
+        let edge: Vec<Sample> = (0..4).map(|i| sample(ymd(2010, 1, 1) + chrono::Duration::days(30 * i), 0.0)).collect();
+        assert_eq!(purged_cut(&edge, 3, 1, |s: &Sample| s.date), 2);
+    }
+
+    /// (#340) Two dates a year apart are enough to measure a bar rate, and the rate counts GAPS
+    /// (`len - 1`), not dates: one gap in one year is ~1 bar/yr -> (1, 3, 1).
+    #[test]
+    fn walk_params_counts_gaps_between_two_dates() {
+        let two = [ymd(2021, 1, 1), ymd(2022, 1, 1)];
+        assert_eq!(walk_params(&two, true, (9, 9, 9)), (1, 3, 1));
+        assert_eq!(walk_params(&two, false, (9, 9, 9)), (9, 9, 9), "calendar off keeps the run's constants");
+        assert_eq!(walk_params(&two[..1], true, (9, 9, 9)), (9, 9, 9), "one date measures nothing");
     }
 
     /// (#89) The block length is real, and 0 is exactly the one-bucket resample every band in this repo
@@ -6614,6 +6630,14 @@ mod tests {
         let band_at = |b: usize| bootstrap_edge_ci(&rows, score_is_the_price, &t, 400, 5.0, 95.0, b);
         assert!(band_at(10).is_some(), "100/10 -> exactly ten whole blocks, which is enough");
         assert!(band_at(11).is_none(), "100/11 is under ten whole blocks -> no band, however honest the length");
+        // (#340) The bands to the bit. The width asserts above survive a broken xorshift or a wrong
+        // block index as long as the band still widens; a seeded stream on frozen rows has one answer.
+        assert_eq!((one, eight), ((64.5, 88.5), (41.82692307692308, 108.17307692307692)));
+        // the edge is a SPREAD: moving every row's level moves no band. The bottom half above is all
+        // zeros, which is why `t + b` read the same as `t - b` there.
+        let shifted: Vec<Sample> = rows.iter().map(|s| Sample { relative: s.relative - 50.0, ..s.clone() }).collect();
+        let lvl = bootstrap_edge_ci(&shifted, score_is_the_price, &t, 400, 5.0, 95.0, 1).unwrap();
+        assert!((lvl.0 - one.0).abs() < 1e-9 && (lvl.1 - one.1).abs() < 1e-9, "{lvl:?} vs {one:?}");
     }
 
     /// (#120) The gate's search string and the basket it grades are ONE number. `markers::VERDICT_ROW`
@@ -6899,6 +6923,18 @@ mod tests {
         let truncated = bench_range_pct(&dates[..cut], &closes[..cut], ymd(2009, 12, 1)).unwrap();
         assert!((at_peak - truncated).abs() < 1e-9, "a later crash moved an earlier cutoff: {at_peak} vs {truncated}");
         assert!(bench_range_pct(&dates, &closes, ymd(1990, 1, 1)).is_none(), "before the series -> no claim");
+        // (#340) one bar in the window is no range: a percentile of a single close would read as a claim.
+        assert!(bench_range_pct(&dates[..1], &closes[..1], ymd(2000, 1, 1)).is_none());
+    }
+
+    /// (#340) The benchmark leg's CAGR is the compounded rate, not the cumulative return split evenly:
+    /// +21% over two years is 10%/yr. Every operator in the formula moves this one number.
+    #[test]
+    fn bench_leg_cagr_compounds_the_trailing_return() {
+        let bench = (vec![ymd(2000, 1, 1), ymd(2002, 1, 1)], vec![100.0, 121.0]);
+        let got = bench_leg_cagr(&bench, ymd(2002, 1, 1), 2).unwrap();
+        assert!((got - 10.0).abs() < 1e-9, "{got}");
+        assert!(bench_leg_cagr(&bench, ymd(2001, 1, 1), 2).is_none(), "no full window behind the date -> no leg");
     }
 
     /// (#326) The stamp gives every sample the market state of ITS OWN cutoff, not one number for the
@@ -7210,6 +7246,10 @@ mod tests {
         assert_eq!(px_at(&s, ymd(1999, 12)), Some(10.0));
         assert_eq!(px_at(&s, ymd(2000, 2)), None, "a zero close prices nothing");
         assert_eq!(px_at(&s, ymd(2000, 4)), None, "the series ended");
+        // (#340) a roll window needs a price at BOTH ends
+        assert!(priced_at_both(&s, ymd(2000, 1), ymd(2000, 3)));
+        assert!(!priced_at_both(&s, ymd(2000, 1), ymd(2000, 4)), "priced at entry, but the series ended");
+        assert!(!priced_at_both(&s, ymd(2000, 2), ymd(2000, 3)), "a zero close at entry");
     }
 
     /// (#311) A buy on `d` sees each name's LATEST cutoff in (d − 6 months, d]: a cutoff exactly six months back
@@ -7624,6 +7664,10 @@ mod tests {
         // cannot see this case; only the `w_mult > 0.0` guard stands between the report and a NaN.
         let wiped = vec![row(unassessable("Z1"), -100.0), row(unassessable("Z2"), -100.0)];
         assert!(missed_winner_reasons(&wiped, &[], &t, 1, 1.0, 0.0).is_none());
+        // (#340) `recall_capture` carries the same guard: counted winners worth nothing -> None.
+        assert!(recall_capture(&wiped, &[], 1, 1.0, 0.0).is_none());
+        // (#340) a winner exactly ON `min_multiple` counts: CLEAN's 10.0x keeps the table alive at a 10x bar.
+        assert_eq!(missed_winner_reasons(&pool, &scored, &t, 1, 1.0, 10.0).map(|x| x.w_n), Some(2));
     }
 
     /// (#159) `held_loser_factors` has three claims and each one rots differently if it breaks.
@@ -7688,6 +7732,11 @@ mod tests {
         let ovs: Vec<(&Sample, f64)> = ov.iter().enumerate().map(|(i, x)| (x, 10.0 - i as f64)).collect();
         let r = held_loser_factors(&ovs, 3, &["roe"]);
         assert_eq!(r[0].auc, 0.5, "W(1) < L(5) < W2(9): one pair wins, one loses -> 0.5: {r:?}");
+        // (#340) a bucket of exactly two is read, and a name that ends flat is a winner, not a loser.
+        let edge = [row("W", 10.0, Some(9.0), None), row("FLAT", 0.0, Some(5.0), None), row("L", -10.0, Some(1.0), None)];
+        let es: Vec<(&Sample, f64)> = edge.iter().enumerate().map(|(i, x)| (x, 10.0 - i as f64)).collect();
+        assert_eq!(held_loser_factors(&es, 3, &["roe"])[0].n_win, 2, "FLAT (0.0) votes with the winners");
+        assert_eq!(held_loser_factors(&[es[0], es[2]], 2, &["roe"]).len(), 1, "two names are enough to split");
     }
 
     /// (#165) `auc` is the ruler the held-loser table ranks factors on, so the values that DEFINE it
@@ -7714,6 +7763,19 @@ mod tests {
         // Empty either side is a guard, not a path: nothing to separate reads as no separation.
         assert_eq!(auc(&[], &[1.0]), 0.5);
         assert_eq!(auc(&[1.0], &[]), 0.5);
+    }
+
+    /// (#340) The fs shell the screen footer reads through; the only test touching VERDICT_FILE in the
+    /// lib-test scratch root.
+    #[test]
+    fn read_verdict_reads_the_journal_file() {
+        let path = config::data_path(VERDICT_FILE);
+        let j = Journal::from([(20, stub_verdict(20, VERDICT_TOP)), (8, stub_verdict(8, VERDICT_TOP))]);
+        std::fs::write(&path, serde_json::to_string(&j).unwrap()).unwrap();
+        let got = read_verdict().map(|v| v.years);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(got, Some(20), "the longest horizon is the row the footer cites");
+        assert!(read_verdict().is_none(), "no file, no verdict");
     }
 
     /// (round 27) the journaled method verdict: serde roundtrip is identity (the screen reads back
@@ -7789,6 +7851,10 @@ mod tests {
         let mean_mult = book_multiples(&m, 1).iter().map(|(b, _)| b).sum::<f64>() / 10.0;
         assert!((mean_mult - 4.4).abs() < 1e-9, "{mean_mult}");
         assert!(book_deciles(&std::collections::BTreeMap::new(), 1).is_none()); // empty -> None, not 0%
+        // (#340) a window that ties the index, ending exactly where it began, is below neither.
+        let flat = std::collections::BTreeMap::from([(0, vec![(1.0, 0.0, 0.0)])]);
+        let (_, below_index, below_one, _) = book_deciles(&flat, 1).unwrap();
+        assert_eq!((below_index, below_one), (0.0, 0.0));
     }
 
     /// (#149) The vacuity census is a GUARD on every future receipt, so its boundaries are pinned
@@ -7995,6 +8061,24 @@ mod tests {
             corr_cap_book(&[], &bd, &bc, years, &tuning, 2, f64::INFINITY).is_none(),
             "no rows cannot yield a book"
         );
+
+        // (#340) The floor's arithmetic, which the Some/None pair above cannot see: p=0 is off, p=50
+        // and p=100 cut different rows, p=100 indexes the top value rather than one past it, and a
+        // floor every row sits on rejects nobody.
+        let rev: fn(&core::FundFactors) -> Option<f64> = |f| f.rev_cagr;
+        let d = |p: f64, g: fn(&core::FundFactors) -> Option<f64>| drop_bottom_book(&samples, &bd, &bc, years, &tuning, 2, p, g);
+        let (off, half, top) = (d(0.0, rev), d(50.0, rev), d(100.0, rev));
+        assert!(top.is_some(), "p=100 keeps the top name per bucket");
+        assert_ne!(half, off, "p=50 must cut something");
+        assert_ne!(half, top, "p=50 and p=100 are different floors");
+        assert_ne!(top, off, "p=100 must cut something");
+        assert_eq!(d(50.0, |_| Some(1.0)), off, "a floor every row sits on rejects nobody");
+
+        // (#340) The verdict journal's source needs only two bench points: entry and exit. Anchored on
+        // the last cutoff, every sample prices off the first point, so a two-point leg still forms a book.
+        let d0 = samples.iter().map(|s| s.date).max().unwrap();
+        let two = (vec![d0, d0 + chrono::Duration::days(20 * 365)], vec![100.0, 150.0]);
+        assert!(report_entry_state(&samples, &two, years, &tuning).is_some(), "a two-point bench is a bench");
     }
 
     /// (round 106) `union_book`: dedupe by ticker (an overlapping pick takes ONE slot), value leg
@@ -8018,6 +8102,10 @@ mod tests {
         let (b, _, n, ov) = union_book(&noey, 1, 2).unwrap(); // no ey anywhere -> growth-only book
         assert!((b - 2.0).abs() < 1e-9 && n == 1 && ov == 0, "{b} {n}");
         assert!(union_book(&rows, 0, 0).is_none()); // nothing picked -> None
+        // (#340) the SPY leg is the same equal-weight mean of terminal multiples: +20% and +40% -> 1.3x.
+        let spy = vec![("A".to_string(), 9.0, None, 0.0, 20.0), ("B".to_string(), 5.0, None, 0.0, 40.0)];
+        let (_, s, n, _) = union_book(&spy, 2, 0).unwrap();
+        assert!((s - 1.3).abs() < 1e-9 && n == 2, "{s} {n}");
     }
 
     /// (round 108) `bench_drawdown_at`: at the high -> 0, halved -> −50 at the trough, recovered ->
@@ -8134,6 +8222,8 @@ mod tests {
         assert!(gap_verdict(gap, gap_med, "hold", "sell").starts_with("SPLIT"), "must not call a sell on the tail");
         // fewer than 4 on a side is no claim at all
         assert!(exit_probe(&build([-1.0; 4])[..6], scorer, &BuyHeuristic::default()).is_none());
+        // (#340) BOTH sides need four: four kept against three newly-failed is still no claim.
+        assert!(exit_probe(&build([-1.0; 4])[..14], scorer, &BuyHeuristic::default()).is_none());
     }
 
     /// Peer-bucket key + the de-meaning that turns realized returns into the SELECTION signal rho
@@ -8284,6 +8374,10 @@ mod tests {
         // nothing clears the bar (one below baseline, one missing an OOS half) -> None (ship nothing)
         let none = [("x", 8.0, Some(0.1), Some(0.1)), ("y", 10.0, Some(0.1), None)];
         assert_eq!(pick_sweep_winner(&none, 9.0), None);
+        // (#340) every bar is strict: an edge only EQUAL to the baseline, or a flat OOS half, earns nothing.
+        assert_eq!(pick_sweep_winner(&[("tie", 9.0, Some(0.1), Some(0.1))], 9.0), None);
+        assert_eq!(pick_sweep_winner(&[("a0", 10.0, Some(0.0), Some(0.1))], 9.0), None);
+        assert_eq!(pick_sweep_winner(&[("b0", 10.0, Some(0.1), Some(0.0))], 9.0), None);
     }
 
     /// `edge_terciles` must read the score-sorted gradient: a score that tracks the return reads a
@@ -8663,6 +8757,7 @@ mod tests {
         let none = BuyHeuristic { growth_min_cagr: 99.0, ..BuyHeuristic::default() };
         assert_eq!(persistence_base_rate(&pool, &none, 10, none.growth_min_cagr), None);
         assert_eq!(persistence_base_rate(&[], &t, 10, t.growth_min_cagr), None, "an empty pool says nothing");
+        assert_eq!(persistence_base_rate(&pool, &t, 10, 0.0), None, "(#340) a bar of 0 is off, whatever the pool holds");
     }
 
     /// (#108) The holding-period schedule. Three things have to hold, and the first is the golden rule:
@@ -9524,6 +9619,59 @@ mod tests {
         // drop OLD and the 2x twin is still refused rather than accepted as the last one standing
         let thin: Vec<_> = series.into_iter().filter(|s| s.0 != "OLD").collect();
         assert_eq!(discover_backtest_proxies(&thin).get("YOUNG"), None);
+    }
+
+    /// (#340) `month_series` exactly: a non-positive close is no bar, the last close in a month is its
+    /// end, and each return is keyed by the month it ENDS in (`year*12 + month`).
+    #[test]
+    fn month_series_keys_each_return_by_its_end_month() {
+        let d = [ymd(2020, 1, 15), ymd(2020, 1, 31), ymd(2020, 2, 10), ymd(2020, 3, 5), ymd(2020, 3, 20)];
+        let (keys, rets) = month_series(&d, &[100.0, 0.0, 110.0, -1.0, 99.0]);
+        assert_eq!(keys, vec![2020 * 12 + 2, 2020 * 12 + 3]);
+        assert_eq!(rets.len(), 2);
+        assert!((rets[0] - 10.0).abs() < 1e-9 && (rets[1] + 10.0).abs() < 1e-9, "{rets:?}");
+    }
+
+    /// (#340) What the census found unpinned in the discovery pass. Among LEGAL donors the higher rho
+    /// wins, a perfect tie goes to the longer record, and neither depends on the order the pool lists
+    /// them in. The age gap is exactly two years: a perfect twin 18 months older is refused. Only the
+    /// verify window is judged, so a listing that drifts after it keeps its pair. And overlap must be
+    /// real months inside that window: a donor delisted 20 months in has no 24 to lend, whatever it
+    /// traded before the young listing existed.
+    #[test]
+    fn discover_backtest_proxies_ranks_donors_and_judges_only_the_window() {
+        let pat = |k: usize| if k.is_multiple_of(3) { 4.0 } else { -1.0 };
+        let alt = |k: usize| if k.is_multiple_of(2) { 3.0 } else { -2.0 };
+        let quad = |k: usize| if k.is_multiple_of(4) { 5.0 } else { -1.5 };
+        let hex = |k: usize| if k.is_multiple_of(6) { 6.0 } else { -1.0 };
+        // `off` is months since 2005-01, so every series reads the pattern at the same absolute month.
+        let entry = |tk: &'static str, y: i32, m: u32, n: usize, f: &dyn Fn(usize) -> f64| {
+            let (d, c) = proxy_series(y, m, ((y - 2005) * 12) as usize + m as usize - 1, n, f);
+            let (keys, rets) = month_series(&d, &c);
+            (tk, d[0].year() * 12 + d[0].month() as i32, keys, rets)
+        };
+        let oldest = entry("OLDEST", 2005, 1, 228, &pat);
+        // the same record under a 2010 listing claim: an exact rho tie, so only age can break it
+        let twin = ("TWIN", 2010 * 12 + 1, oldest.2.clone(), oldest.3.clone());
+        // NOISY (2016-01) clears every leg on a lower rho, and most of its record postdates YOUNG's listing.
+        let noisy = entry("NOISY", 2016, 1, 96, &|k| pat(k) + if k.is_multiple_of(7) { 0.3 } else { 0.0 });
+        for donors in [[noisy.clone(), oldest.clone(), twin.clone()], [twin.clone(), oldest.clone(), noisy.clone()]] {
+            let mut pool = vec![
+                entry("YOUNG", 2019, 1, 60, &pat),
+                entry("Y2", 2019, 1, 60, &alt),
+                entry("N2", 2017, 7, 78, &alt), // a perfect twin only 18 months older
+                entry("Y3", 2019, 1, 60, &|k| if k < 168 + 27 { quad(k) } else { -quad(k) }),
+                entry("D3", 2005, 1, 228, &quad),
+                entry("Y4", 2019, 1, 60, &hex),
+                entry("G4", 2005, 1, 189, &hex), // delisted 2020-09, 20 months into Y4's window
+            ];
+            pool.extend(donors);
+            let got = discover_backtest_proxies(&pool);
+            assert_eq!(got.get("YOUNG").map(String::as_str), Some("OLDEST"), "{got:?}");
+            assert_eq!(got.get("Y2"), None, "18 months is under the two-year gap");
+            assert_eq!(got.get("Y3").map(String::as_str), Some("D3"), "judged on the window, not on what came after");
+            assert_eq!(got.get("Y4"), None, "20 months of real overlap is under PROXY_MIN_MONTHS");
+        }
     }
 
     /// (#327) The verdict is FROZEN at first eligibility, and that cuts both ways. A donor that drifts

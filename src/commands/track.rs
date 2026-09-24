@@ -1875,6 +1875,11 @@ mod tests {
         let from_quotes = split_factor_from(std::slice::from_ref(&q));
         assert_eq!(from_quotes("AAA", d(2024, 6)), 10.0);
         assert_eq!(from_quotes("ZZZ", d(2024, 6)), 1.0, "unknown ticker leaves the price alone");
+
+        // (#340) a non-positive factor is no split at all: the price stays and nothing is counted
+        let mut zeroed = vec![snap("2024-06-01", None, &[("AAA", Some(100.0))])];
+        assert_eq!(adjust_for_splits(&mut zeroed, &|_, _| 0.0), 0);
+        assert_eq!(zeroed[0].rows[0].1, Some(100.0));
     }
 
     /// grade(): zero-day windows and unpriced books grade nothing; a priced book computes the
@@ -1890,6 +1895,11 @@ mod tests {
 
         // same-day snapshot: nothing to grade
         assert!(grade_book(&snap("2026-07-16", Some(100.0), &[("UP", Some(100.0))]), today, &px, Some(105.0)).is_none());
+        // (#340) a ONE-day window is the shortest that grades
+        let g = grade_book(&snap("2026-07-15", Some(100.0), &[("UP", Some(100.0))]), today, &px, Some(105.0));
+        assert_eq!(g.map(|g| g.days), Some(1));
+        // (#340) a zero close then is no price, not an infinite return
+        assert!(grade_book(&snap("2026-06-16", Some(100.0), &[("UP", Some(0.0))]), today, &px, Some(105.0)).is_none());
         // no priced rows: nothing to grade
         assert!(grade_book(&snap("2026-06-16", Some(100.0), &[("GONE", Some(100.0))]), today, &px, Some(105.0)).is_none());
 
@@ -2494,6 +2504,33 @@ mod tests {
         let (wins, n, sum) = verdict_stats(&snaps, today, &px, Some(105.0));
         assert_eq!((wins, n), (1, 2));
         assert!((sum - (5.0 - 15.0)).abs() < 1e-9);
+
+        // (#340) a tie with the index is not a win: book +5 vs index +5 counts in n, not in wins
+        let flat = |t: &str| (t == "UP").then_some(105.0);
+        let (wins, n, _) = verdict_stats(&[snap("2026-06-16", Some(100.0), &[("UP", Some(100.0))])], today, &flat, Some(105.0));
+        assert_eq!((wins, n), (0, 1));
+    }
+
+    /// (#340) The journal's own file I/O, which only `run`s reached before. Under `cargo test --lib`
+    /// `config::data_path` re-roots into the per-process scratch dir, and this is the only test that
+    /// touches SNAPSHOT_FILE there, so it cannot race another.
+    #[test]
+    fn journal_appends_once_a_day_and_counts_corrupt_lines() {
+        let path = crate::config::data_path(SNAPSHOT_FILE);
+        let _ = std::fs::remove_file(&path);
+        append_snapshot(&snap("2026-01-02", Some(1.0), &[("A", Some(1.0))]));
+        append_snapshot(&snap("2026-01-02", Some(2.0), &[("B", Some(1.0))])); // same-day rerun: skipped
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).unwrap();
+            writeln!(f, "not json\n\n{{\"half\":").unwrap();
+        }
+        append_snapshot(&snap("2026-01-05", None, &[("C", Some(1.0))])); // an unparseable last line is no date
+        let (snaps, corrupt) = read_snapshots();
+        let _ = std::fs::remove_file(&path);
+        let got: Vec<_> = snaps.iter().map(|s| (s.date.as_str(), s.rows[0].0.as_str())).collect();
+        assert_eq!(got, [("2026-01-02", "A"), ("2026-01-05", "C")]);
+        assert_eq!(corrupt, 2, "two corrupt lines; a blank one is not corruption");
     }
 
     /// effective_trials(): the ratio that says a nested-window record is worth about one trial.

@@ -614,6 +614,12 @@ mod tests {
         let mixed = snap("2026-07-16", None, None, &[("A", Some(1.0)), ("BTC-EUR", Some(1.0))]);
         let e = buy_event(&mixed, 9.0, 1.0, false, &sz, &no_tier, &no_fee).expect("A buys");
         assert_eq!(e.lots, [("A".to_string(), 9.0, 9.0)]);
+        // (#340) the minimum reads the coin's OWN slice of a sized book: 60 of 80 points of €10 is €7.50
+        let heavy = Snapshot {
+            sized: vec![("BTC-EUR".into(), 60.0), ("A".into(), 20.0)],
+            ..snap("2026-07-16", None, None, &[("A", Some(1.0)), ("BTC-EUR", Some(1.0))])
+        };
+        assert_eq!(buy_event(&heavy, 10.0, 1.0, false, &sz, &no_tier, &no_fee).expect("both buy").lots.len(), 2);
 
         // (#300) a line carrying `sized` buys the BUY NOW book: the picks at their sized weights, priced
         // off `rows`, then the funded CORE rows at `spill_split` of the remaining 30, priced off `core`,
@@ -826,6 +832,10 @@ mod tests {
         assert_eq!((priced, held), (1, 2));
         assert!((cost - 450.0).abs() < 1e-9);
         assert!((value - (15.0 + 300.0 / 12.0) * 15.0).abs() < 1e-9);
+        assert!(bench.is_none());
+        // (#340) a zero index close today is no index price: no twin, rather than a €0 one
+        let (_, _, _, bench, _, _) =
+            digest(&snaps, 300.0, (2026, 6), &px, Some(0.0), &config::Sizing::default(), &no_tier, &no_fee).unwrap();
         assert!(bench.is_none());
 
         // empty journal / nothing priced today → None (screen stays silent)
