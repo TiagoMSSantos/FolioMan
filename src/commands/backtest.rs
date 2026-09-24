@@ -3690,7 +3690,7 @@ fn report_proxy_books(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f
 /// closes), and `track` only starts in 2026. A short run (`backtest 1 long ...`) holds those entries. Per ~6-month
 /// bucket after `since`: the notch cohort's mean `realized` minus the cleared book's (the gap `track` reads, cohort
 /// minus the book), a line only where both sides hold a name. Pool and cohort rule are `notch_books`'. Row: (tag,
-/// lines, mean gap, median gap), `track::gate_verdicts`' shape, for each notch with at least one line.
+/// lines, mean gap, median gap), `track::monthly_gaps`' shape, for each notch with at least one line.
 fn notch_tail(samples: &[Sample], since: chrono::NaiveDate, tuning: &BuyHeuristic) -> Vec<(&'static str, usize, f64, f64)> {
     let notches = notch_tunings(tuning);
     let mut cleared: std::collections::BTreeMap<i32, Vec<f64>> = Default::default();

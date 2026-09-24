@@ -6488,6 +6488,71 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#338) ROUND 121: EVERY SHADOW IS CHAINED MONTH TO MONTH. A REOPEN NEEDS BOTH READINGS TO CLEAR.
+  #
+  # THE ROUND WAS OPENED AS "CAN WE ADD MORE TESTS?" (#337) journalled `carry` with no reader; this round
+  # is the reader. Asked: chained cohort readers, for the EXISTING deciding contrasts only, and a reopen
+  # needs BOTH readings to clear (chosen over "chained informs only").
+  #
+  # WHY. Eight `track` tables grade every monthly line to TODAY, so their windows share one endpoint
+  # and nest: a year of lines is ~1 effective trial, and each 12-line REOPEN rule rested on that. A
+  # chained reading grades month m's cohorts to month m+1's line, priced off that line's own journal,
+  # so its links do not overlap and twelve are twelve, as (#336) already does for the executed book.
+  #
+  # WHAT SHIPS. No knob and no ranking change; `buy_heuristic` stays at 176 keys. No journal field, no
+  # golden moved, no backtest code (one doc line in `notch_tail` repointed off a deleted fn).
+  # - `track::verdict_rows`: one row per label, NESTED `N line(s) mean median` (`monthly_gaps`, as
+  #   before) then CHAINED `K link(s) mean median`: the SAME pairs of each monthly line graded to the
+  #   next monthly line, through the same `monthly_gaps` fold on a one-line slice. Same `grade`, same
+  #   nearest-rank median; only the endpoint moves. No benchmark leg: every gap is a within-line
+  #   contrast, so the market cancels.
+  # - `track::link_px`: a link's close for a name off the later line: `rows`, then `exit`, then `carry`,
+  #   a non-positive close is no price. (#336)'s `chain_links` now reads it too, so its book chain also
+  #   prices a coin that left `rows`.
+  # - `track::both_verdict`: a reading that fails -> `holds`, whatever the other says; nested short ->
+  #   `needs 12 lines`; chained short -> `needs 12 links`; both clear -> `REOPEN SIGNAL`. Clearing is
+  #   `clears`, unchanged: 12+ and mean AND median strictly above 0.
+  # - The five per-label tables read through it with their pairs unchanged and inline: `near` per gate
+  #   (cohort minus the book the line bought), PEG (pin cheap minus ladder cheap), swap per notch
+  #   (entrants minus displaced), the ladder's two rank gaps, the exit shadow (only `kept minus failed`
+  #   decides; `kept minus out-ranked` stays `inform only`). `gate_verdicts`, `peg_verdict` and
+  #   `swap_verdicts` are deleted, folded into `verdict_rows`. `reopen_verdict` stays: backtest's NOTCH
+  #   TAIL reads it.
+  #
+  # THE AMENDED BARS, PRE-REGISTERED BEFORE THE FIRST LINK EXISTS (the journal holds September lines
+  # only, so nothing here was read before it was written). Each adds "AND 12+ chained links, mean AND
+  # median above 0" to: the notch reopen of (#324)/(#329)/(#330) (the NOTCH BOOK `ship pass` leg is
+  # untouched), (#332)'s PEG reopen (the Ship Rule v2 PRIMARY re-run leg is untouched), (#334)'s swap
+  # flag (still INFORM ONLY), (#335)'s two ladder flags and its exit flag.
+  #
+  # PEG NESTED SEMANTICS MOVED BY ONE HAIR. `peg_verdict` counted a line only when all FOUR halves
+  # graded; the verdict now needs only the two cheap halves it reads. It can add a line, never change
+  # a gap. The printed PEG table still needs all four. An empty verdict now says so ("no month's first
+  # line grades yet") instead of the old `0 line(s) ... +0.0pp`.
+  #
+  # CLOCK. Near and ladder: the first link is Sep -> Oct, on the first October line (~2026-10-01), and
+  # 12 links land ~2027-09. PEG, swap and exit: the September monthly line (2026-09-21) predates `peg`
+  # and `swap`, and `exit` is first written in October, so their first link is Oct -> Nov and 12 land
+  # ~2027-10. The bar now binds on the chain, about a month after 12 nested lines.
+  #
+  # NOT BUILT, BY CHOICE: CORE list vs S&P and the verdict/twin tables (absolute levels, not contrasts),
+  # and any new contrast (PEG cheap-minus-rich stays refused as a decider, see (#332)).
+  #
+  # MUTATION GATE: 38 in-diff mutants, no tuple-return fan-out. `verdict_rows` returns the printed rows
+  # as a String, and the pairs stay inline closures, because a helper returning `Pairs` would hand the
+  # gate over a thousand return mutants.
+  #
+  # HONEST EDGES. (a) Labels come from the nested reading: a label whose side is priced at the next
+  # line but never today (a delisting) chains without printing. (b) A gate or notch present one month
+  # and absent the next simply accrues fewer lines and links. (c) Both readings pick the SAME line per
+  # month (`sim::monthly_firsts`), so a month whose first line predates a lane grades neither.
+  #
+  # REVERT: delete `track::{Pairs, both_verdict, verdict_rows, link_px}` (restore `chain_links`' inline
+  # closure over `rows` + `exit`); restore `gate_verdicts`, `peg_verdict`, `swap_verdicts`, the five
+  # sections' own `reopen_verdict` row loops and their prose; put `monthly_gaps`' `pairs` back to
+  # `&dyn Fn(&'a Snapshot) -> Vec<(&'static str, Rows<'a>, Rows<'a>)>`; drop the three new tests and
+  # restore the two rewritten test bodies to call the restored fns.
+  #
   # (#337) ROUND 120: EVERY GRADED COHORT GETS A CLOSE ONE MONTH LATER. JOURNAL ONLY, NO READER YET.
   #
   # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD TESTS CAN WE ADD" A THIRD TIME. The lanes are
@@ -6519,7 +6584,8 @@ buy_heuristic:
   # COST. ~2.4KB a line on the sample above, ~0.9MB a year at one CI line a day.
   #
   # FIRST CARRY: the first October line (September has no prior month, and the 2026-09-23 line is
-  # already written). The first chained cohort link needs that line AND a November line.
+  # already written). That same line closes the first chained cohort link: its carry prices the cohorts
+  # of the September monthly line. (Corrected by (#338): this said the link also needed a November line.)
   #
   # UNLOCKS, NOT BUILT: chained near-miss per notch, PEG cheap-minus-rich per denominator, swap entrants
   # minus displaced, exit kept minus failed, CORE list vs S&P — each graded month m -> month m+1 like

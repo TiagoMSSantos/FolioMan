@@ -557,35 +557,17 @@ fn clears(lines: usize, mean: f64, median: f64) -> Option<bool> {
     (lines >= REOPEN_LINES).then_some(mean > 0.0 && median > 0.0)
 }
 
-/// (#323) Per gate: `(gate, monthly lines, mean gap, median gap)`, where a gap is that gate's
-/// near-miss shadow minus the book the SAME line bought ([`book_rows`]), both graded to today. One
-/// line per month (`sim::monthly_firsts`, which prefers a line carrying an executed book), because
-/// `track` grades every line against one endpoint and a same-week rerun is not a second trial. A line
-/// whose book or shadow cannot grade contributes nothing — a missing gap is not a zero one. Median is
-/// nearest-rank (`backtest::percentile`), the repo's one rule.
-fn gate_verdicts(
-    snaps: &[Snapshot],
-    today: chrono::NaiveDate,
-    px_now: &dyn Fn(&str) -> Option<f64>,
-    spx_now: Option<f64>,
-) -> Vec<(String, usize, f64, f64)> {
-    let mut gaps: std::collections::BTreeMap<&str, Vec<f64>> = Default::default();
-    for s in crate::commands::sim::monthly_firsts(snaps).into_values() {
-        let Some(book) = grade(s, &book_rows(s), usize::MAX, today, px_now, spx_now) else { continue };
-        let gates: std::collections::BTreeSet<&str> = s.near.iter().map(|(.., g)| g.as_str()).collect();
-        for g in gates {
-            if let Some(n) = grade(s, &near_rows(s, Some(g)), usize::MAX, today, px_now, spx_now) {
-                gaps.entry(g).or_default().push(n.book_pct - book.book_pct);
-            }
-        }
+/// (#338) The bar every per-label table reads since (#338): a REOPEN SIGNAL needs the NESTED reading
+/// (monthly lines graded to today) AND the CHAINED one (each month held to the next month's line), each
+/// by [`clears`]. A reading that fails holds the verdict whatever the other says; otherwise the one
+/// still short of its year names what the verdict waits on. Each is `(count, mean, median)`.
+fn both_verdict(nested: (usize, f64, f64), chained: (usize, f64, f64)) -> &'static str {
+    match (clears(nested.0, nested.1, nested.2), clears(chained.0, chained.1, chained.2)) {
+        (Some(false), _) | (_, Some(false)) => "holds",
+        (None, _) => "needs 12 lines",
+        (_, None) => "needs 12 links",
+        (Some(true), Some(true)) => "REOPEN SIGNAL",
     }
-    gaps.into_iter()
-        .map(|(g, mut v)| {
-            v.sort_by(f64::total_cmp);
-            let mean = v.iter().sum::<f64>() / v.len() as f64;
-            (g.to_string(), v.len(), mean, crate::commands::backtest::percentile(&v, 50.0))
-        })
-        .collect()
 }
 
 /// (#323) The fourth table: the NOTCH SHADOW (#324: what each one-notch loosening would have added). Held
@@ -608,12 +590,20 @@ fn near_section(
              The record starts the run AFTER one is journalled and cannot be backdated."
         );
     }
-    let gates: String = gate_verdicts(snaps, today, px_now, spx_now)
-        .iter()
-        .map(|(g, n, mean, med)| {
-            format!("\n    {g:<10} {n:>3} line(s)  mean {mean:>+7.1}pp  median {med:>+7.1}pp  {}", reopen_verdict(*n, *mean, *med))
-        })
-        .collect();
+    // (#323) per gate, that gate's cohort minus the book the SAME line bought; a line whose book or
+    // shadow cannot grade adds nothing.
+    let gates = verdict_rows(
+        snaps,
+        today,
+        px_now,
+        spx_now,
+        &|s| {
+            let gates: std::collections::BTreeSet<&str> = s.near.iter().map(|(.., g)| g.as_str()).collect();
+            gates.into_iter().map(|g| (g, book_rows(s), near_rows(s, Some(g)))).collect()
+        },
+        10,
+        None,
+    );
     let body = rows.join("\n");
     // (#330) the deciding basket, read from the one constant the backtest publishes it at, so the two
     // surfaces cannot state different rules.
@@ -623,9 +613,10 @@ fn near_section(
          screen's notch lines), equal-weight, same windows. A cohort that keeps beating the bought book is\n  \
          a gate refusing winners. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\n\
          {TABLE_HEADER}\n{body}\n\n  \
-         Per notch, one line a month, cohort minus the book that line bought. Receipt (#324), bar amended\n  \
-         by (#329) and basket by (#330): that notch ships when {REOPEN_LINES}+ lines read mean AND median\n  \
-         above 0 AND its backtest NOTCH BOOK row reads `ship pass` at the top-{top} basket — the\n  \
+         Per notch, one line a month, cohort minus the book that line bought, graded to today AND (#338)\n  \
+         chained to the next month's line. Receipt (#324), bar amended by (#329), basket by (#330) and\n  \
+         chain by (#338): that notch ships when {REOPEN_LINES}+ lines AND {REOPEN_LINES}+ links each read mean AND\n  \
+         median above 0 AND its backtest NOTCH BOOK row reads `ship pass` at the top-{top} basket — the\n  \
          one the journaled verdict publishes, where a cohort name must OUTRANK an incumbent to be bought —\n  \
          holding excess at or above that column's `bar`, the p95 of same-size cohorts drawn at random from\n  \
          the refused pool, and worst within 1.0 of cleared, at 20y, 12y and 8y. The old flat 0.1 was read\n  \
@@ -704,34 +695,6 @@ fn peg_row(snap: &Snapshot, g: &Graded, lc: f64, lr: f64, pc: f64, pr: f64) -> S
     )
 }
 
-/// (#332) The deciding statistic's record: `(monthly lines, mean, median)` of the pinned cheap half
-/// minus the ladder cheap half. One line a month (`sim::monthly_firsts`, the same clock
-/// [`gate_verdicts`] runs on, because a same-week rerun is not a second trial).
-///
-/// THE CHEAP HALF IS THE ONLY HALF THE BOOK EVER BUYS. A spread (cheap minus rich) would pay the pin
-/// for sorting names the tool is never long, so a denominator that merely dumps losers harder would
-/// read as an improvement the book never collects. Both halves grade over the SAME window to the same
-/// endpoint, so the market leg cancels with no spread needed to control for it — the benchmark does
-/// not enter this arithmetic at all. A line that cannot grade contributes nothing; a missing gap is
-/// not a zero one. Median is nearest-rank (`backtest::percentile`), the repo's one rule.
-fn peg_verdict(
-    snaps: &[Snapshot],
-    today: chrono::NaiveDate,
-    px_now: &dyn Fn(&str) -> Option<f64>,
-    spx_now: Option<f64>,
-) -> (usize, f64, f64) {
-    let mut gaps: Vec<f64> = crate::commands::sim::monthly_firsts(snaps)
-        .into_values()
-        .filter_map(|s| peg_halves(s, today, px_now, spx_now).map(|(_, lc, _, pc, _)| pc - lc))
-        .collect();
-    gaps.sort_by(f64::total_cmp);
-    if gaps.is_empty() {
-        return (0, 0.0, 0.0);
-    }
-    let mean = gaps.iter().sum::<f64>() / gaps.len() as f64;
-    (gaps.len(), mean, crate::commands::backtest::percentile(&gaps, 50.0))
-}
-
 /// (#332) The fifth table: THE PEG DENOMINATOR SHADOW — which denominator is the better valuation
 /// number, graded on prices that did not exist when either ranked.
 ///
@@ -769,7 +732,20 @@ fn peg_section(
              carry a PEG cohort. The record starts the run AFTER one is journalled and cannot be backdated."
         );
     }
-    let (n, mean, med) = peg_verdict(snaps, today, px_now, spx_now);
+    // (#332) THE CHEAP HALF IS THE ONLY HALF THE BOOK EVER BUYS, so only the two cheap halves decide: a
+    // cheap-minus-rich spread would pay the pin for sorting names the tool is never long. Both grade over
+    // the SAME window, so the market leg cancels and the benchmark never enters the difference.
+    let verdict = verdict_rows(
+        snaps,
+        today,
+        px_now,
+        spx_now,
+        &|s| vec![("pin cheap minus ladder cheap", peg_rows(s, false, true), peg_rows(s, true, true))],
+        28,
+        None,
+    );
+    // the month's first line can predate the cohort (the 2026-09-21 line does): say so, not a bare colon
+    let verdict = if verdict.is_empty() { "\n    no month's first line grades yet — needs 12 lines".to_string() } else { verdict };
     let body = rows.join("\n");
     format!(
         "\n  PEG denominator shadow — the SAME names ranked by two PEGs: the shipped one, whose growth term\n  \
@@ -779,15 +755,15 @@ fn peg_section(
          name both windows agree on cancels; only re-ranked names move this. Ranked book + notch names, EUR\n  \
          seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).\n\n\
          {PEG_HEADER}\n{body}\n\n  \
-         Verdict, one line a month: PIN CHEAP minus LADDER CHEAP, {n} line(s), mean {mean:+.1}pp, median\n  \
-         {med:+.1}pp — {}. The cheap half is the ONLY half this tool is ever long, so the spread against the\n  \
-         rich half is reported but does NOT decide: a denominator that merely dumps losers harder earns the\n  \
-         book nothing. Pre-registered by (#332) before the first line accrued: `peg_cagr_years: {PEG_PIN_YEARS}`\n  \
-         re-opens when {REOPEN_LINES}+ monthly lines read mean AND median above 0 AND a re-run backtest passes\n  \
-         Ship Rule v2 PRIMARY at 12y AND 8y on the pit lane — the exact leg rung {PEG_PIN_YEARS} failed on, where a 12y\n  \
-         median of 36 windows fell while its mean rose. Both halves grade to one shared endpoint, so this\n  \
-         record's n_eff is <= 1 however many lines accrue, the same ceiling `effective_trials` states below.",
-        reopen_verdict(n, mean, med)
+         Verdict, one line a month, graded to today and (#338) chained to the next month's line:{verdict}\n\n  \
+         The cheap half is the ONLY half this tool is ever long, so the spread against the rich half is\n  \
+         reported but does NOT decide: a denominator that merely dumps losers harder earns the book nothing.\n  \
+         Pre-registered by (#332) before the first line accrued, chain added by (#338) before the first link:\n  \
+         `peg_cagr_years: {PEG_PIN_YEARS}` re-opens when {REOPEN_LINES}+ monthly lines AND {REOPEN_LINES}+ chained links each\n  \
+         read mean AND median above 0 AND a re-run backtest passes Ship Rule v2 PRIMARY at 12y AND 8y on the\n  \
+         pit lane — the exact leg rung {PEG_PIN_YEARS} failed on, where a 12y median of 36 windows fell while its\n  \
+         mean rose. The lines grade to one shared endpoint, so their n_eff is <= 1 however many accrue, the\n  \
+         same ceiling `effective_trials` states below; the links do not overlap, so twelve are twelve."
     )
 }
 
@@ -803,35 +779,6 @@ fn swap_rows<'a>(snap: &'a Snapshot, notch: &str, entrant: bool) -> Vec<(&'a str
     snap.swap.iter().filter(|(_, _, n, e)| n == notch && *e == entrant).map(|(t, p, ..)| (t.as_str(), *p, 1.0)).collect()
 }
 
-/// (#334) Per weight notch: `(notch, monthly lines, mean gap, median gap)`, a gap being the names that
-/// notch would move INTO the top-[`BOOK`] minus the names it would push OUT, both graded to today on
-/// the SAME line. [`gate_verdicts`]' twin, read the same way: one line a month, a side that cannot
-/// grade contributes nothing (a missing gap is not a zero one), nearest-rank median.
-fn swap_verdicts(
-    snaps: &[Snapshot],
-    today: chrono::NaiveDate,
-    px_now: &dyn Fn(&str) -> Option<f64>,
-    spx_now: Option<f64>,
-) -> Vec<(String, usize, f64, f64)> {
-    let mut gaps: std::collections::BTreeMap<&str, Vec<f64>> = Default::default();
-    for s in crate::commands::sim::monthly_firsts(snaps).into_values() {
-        let notches: std::collections::BTreeSet<&str> = s.swap.iter().map(|(_, _, n, _)| n.as_str()).collect();
-        for n in notches {
-            let side = |entrant| grade(s, &swap_rows(s, n, entrant), usize::MAX, today, px_now, spx_now);
-            if let (Some(i), Some(o)) = (side(true), side(false)) {
-                gaps.entry(n).or_default().push(i.book_pct - o.book_pct);
-            }
-        }
-    }
-    gaps.into_iter()
-        .map(|(n, mut v)| {
-            v.sort_by(f64::total_cmp);
-            let mean = v.iter().sum::<f64>() / v.len() as f64;
-            (n.to_string(), v.len(), mean, crate::commands::backtest::percentile(&v, 50.0))
-        })
-        .collect()
-}
-
 /// (#334) The sixth table: THE WEIGHT-SWAP SHADOW, the forward half of backtest's WEIGHT SWEEP. Every
 /// gate had a forward instrument ([`near_section`]); the RANKING weights had none, so a mis-set weight
 /// could only ever be graded on the backtest windows it was tuned on. An equal-weight top-N book is
@@ -845,43 +792,52 @@ fn swap_section(
 ) -> String {
     let journalled = snaps.iter().filter(|s| !s.swap.is_empty()).count();
     let total = snaps.len();
-    let verdicts = swap_verdicts(snaps, today, px_now, spx_now);
-    if verdicts.is_empty() {
+    // (#334) per notch, the names it would move INTO the top-BOOK minus the names it would push OUT
+    let body = verdict_rows(
+        snaps,
+        today,
+        px_now,
+        spx_now,
+        &|s| {
+            let notches: std::collections::BTreeSet<&str> = s.swap.iter().map(|(_, _, n, _)| n.as_str()).collect();
+            notches.into_iter().map(|n| (n, swap_rows(s, n, false), swap_rows(s, n, true))).collect()
+        },
+        28,
+        None,
+    );
+    if body.is_empty() {
         return format!(
             "\n  Weight-swap shadow: nothing gradeable yet. A line needs a day of age and a priced name on\n  \
              both sides of a swap, and only {journalled} of {total} journalled run(s) carry swaps. The record\n  \
              starts the run AFTER one is journalled and cannot be backdated."
         );
     }
-    let body: String = verdicts
-        .iter()
-        .map(|(n, k, mean, med)| {
-            format!("\n    {n:<28} {k:>3} line(s)  mean {mean:>+7.1}pp  median {med:>+7.1}pp  {}", reopen_verdict(*k, *mean, *med))
-        })
-        .collect();
     format!(
         "\n  Weight-swap shadow (#334) — each shipped ranking weight x0 / x2: the names that notch would move\n  \
          INTO the top-{BOOK} against the names it would push OUT, equal-weight, same windows. One line a\n  \
          month, entrants minus displaced. Pre-registered: a notch flags REOPEN SIGNAL at {REOPEN_LINES}+ lines\n  \
-         with mean AND median above 0. INFORM ONLY: a flag earns a full A/B round, never a weight move, and\n  \
-         16 notches read at once will throw a false flag by chance. EUR seat, price-only. NOT advice.\n  \
-         Journalled on {journalled} of {total} run(s).{body}"
+         AND (#338) {REOPEN_LINES}+ chained links, each with mean AND median above 0. INFORM ONLY: a flag\n  \
+         earns a full A/B round, never a weight move, and 16 notches read at once will throw a false flag\n  \
+         by chance. EUR seat, price-only. NOT advice. Journalled on {journalled} of {total} run(s).{body}"
     )
 }
 
 /// (#335) One side of a within-line comparison, as [`grade`] wants it.
 type Rows<'a> = Vec<(&'a str, Option<f64>, f64)>;
 
+/// (#338) What a line compares: `(label, first list, second list)`. The label may borrow from the line
+/// (a notch's gate, a swap's weight), which is why the readers take the pairs higher-ranked.
+type Pairs<'a> = Vec<(&'a str, Rows<'a>, Rows<'a>)>;
+
 /// (#335) Per label: `(label, monthly lines, mean gap, median gap)`, a gap being one line's second list
-/// minus its first, both graded to today. [`swap_verdicts`]' fold for any pair of lists a line can
-/// name: one line a month, a side that cannot grade contributes nothing (a missing gap is not a zero
-/// one), nearest-rank median.
+/// minus its first, both graded to today. The fold behind every per-label table: one line a month, a
+/// side that cannot grade contributes nothing (a missing gap is not a zero one), nearest-rank median.
 fn monthly_gaps<'a>(
     snaps: &'a [Snapshot],
     today: chrono::NaiveDate,
     px_now: &dyn Fn(&str) -> Option<f64>,
     spx_now: Option<f64>,
-    pairs: &dyn Fn(&'a Snapshot) -> Vec<(&'static str, Rows<'a>, Rows<'a>)>,
+    pairs: &dyn for<'x> Fn(&'x Snapshot) -> Pairs<'x>,
 ) -> Vec<(String, usize, f64, f64)> {
     let mut gaps: std::collections::BTreeMap<&str, Vec<f64>> = Default::default();
     for s in crate::commands::sim::monthly_firsts(snaps).into_values() {
@@ -897,6 +853,46 @@ fn monthly_gaps<'a>(
             v.sort_by(f64::total_cmp);
             let mean = v.iter().sum::<f64>() / v.len() as f64;
             (g.to_string(), v.len(), mean, crate::commands::backtest::percentile(&v, 50.0))
+        })
+        .collect()
+}
+
+/// (#338) One row per label `pairs` names, read twice. NESTED: [`monthly_gaps`], every monthly line graded
+/// to today, so the windows share one endpoint and a year of them is ~1 trial. CHAINED: the same pairs
+/// of each monthly line graded to the NEXT monthly line, priced off that line's journal ([`link_px`]),
+/// so the links do not overlap and N are N. Same pairs, same [`grade`], same fold; only the endpoint
+/// moves. [`both_verdict`] reads the two, and a label other than `decides`, when one is named, reads
+/// "inform only". Labels come from the nested reading, which always has a line more than the chain.
+/// A String and not the numbers on purpose: a tuple-vec return hands the mutation gate dozens of
+/// return mutants for one fold.
+fn verdict_rows(
+    snaps: &[Snapshot],
+    today: chrono::NaiveDate,
+    px_now: &dyn Fn(&str) -> Option<f64>,
+    spx_now: Option<f64>,
+    pairs: &dyn for<'x> Fn(&'x Snapshot) -> Pairs<'x>,
+    width: usize,
+    decides: Option<&str>,
+) -> String {
+    let firsts: Vec<&Snapshot> = crate::commands::sim::monthly_firsts(snaps).into_values().collect();
+    let mut links: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+    for w in firsts.windows(2) {
+        let Ok(end) = chrono::NaiveDate::parse_from_str(&w[1].date, "%Y-%m-%d") else { continue };
+        for (g, _, gap, _) in monthly_gaps(std::slice::from_ref(w[0]), end, &|t| link_px(w[1], t), None, pairs) {
+            links.entry(g).or_default().push(gap);
+        }
+    }
+    monthly_gaps(snaps, today, px_now, spx_now, pairs)
+        .into_iter()
+        .map(|(g, n, mean, med)| {
+            let mut v = links.remove(&g).unwrap_or_default();
+            v.sort_by(f64::total_cmp);
+            let k = v.len();
+            let (cm, cmed) = if k == 0 { (0.0, 0.0) } else { (v.iter().sum::<f64>() / k as f64, crate::commands::backtest::percentile(&v, 50.0)) };
+            let verdict = if decides.is_none_or(|d| d == g) { both_verdict((n, mean, med), (k, cm, cmed)) } else { "inform only" };
+            format!(
+                "\n    {g:<width$} {n:>3} line(s)  mean {mean:>+7.1}pp  median {med:>+7.1}pp  | {k:>3} link(s)  mean {cm:>+7.1}pp  median {cmed:>+7.1}pp  {verdict}"
+            )
         })
         .collect()
 }
@@ -923,35 +919,38 @@ fn ladder_section(
     spx_now: Option<f64>,
 ) -> String {
     let head = crate::commands::size::HEAD;
-    let gaps = monthly_gaps(snaps, today, px_now, spx_now, &|s| {
-        let l = ladder(s);
-        let at = |i: usize| i.min(l.len());
-        vec![
-            ("6-10 minus 1-5", l[..at(head)].to_vec(), l[at(head)..at(BOOK)].to_vec()),
-            ("11-25 minus 1-10", l[..at(BOOK)].to_vec(), l[at(BOOK)..].to_vec()),
-        ]
-    });
-    if gaps.is_empty() {
+    let body = verdict_rows(
+        snaps,
+        today,
+        px_now,
+        spx_now,
+        &|s| {
+            let l = ladder(s);
+            let at = |i: usize| i.min(l.len());
+            vec![
+                ("6-10 minus 1-5", l[..at(head)].to_vec(), l[at(head)..at(BOOK)].to_vec()),
+                ("11-25 minus 1-10", l[..at(BOOK)].to_vec(), l[at(BOOK)..].to_vec()),
+            ]
+        },
+        22,
+        None,
+    );
+    if body.is_empty() {
         return format!(
             "\n  Rank ladder: nothing gradeable yet. A line needs a day of age and a priced name on both sides\n  \
              of a rank cut, and none of the {} journalled run(s) has one yet.",
             snaps.len()
         );
     }
-    let body: String = gaps
-        .iter()
-        .map(|(g, n, mean, med)| {
-            format!("\n    {g:<22} {n:>3} line(s)  mean {mean:>+7.1}pp  median {med:>+7.1}pp  {}", reopen_verdict(*n, *mean, *med))
-        })
-        .collect();
     format!(
         "\n  Rank ladder (#335) — each run's executed book cut by rank: 1-{head} (the names `head_weight` pays\n  \
          double), {}-{BOOK}, and the tail past {BOOK}. Coins and unbought pins out, each slice equal-weight on\n  \
          the SAME line, same windows, one line a month, lower slice minus higher. Pre-registered: a gap\n  \
-         flags REOPEN SIGNAL at {REOPEN_LINES}+ lines with mean AND median above 0. `6-10 minus 1-5` re-opens\n  \
-         (#322) `head_weight`, the tilt paying the wrong five (in-sample twin: backtest's rank-1 vs 6-10\n  \
-         head-to-head); `11-25 minus 1-10` re-opens (#321)'s width, the rank carrying nothing past ten (twin:\n  \
-         the top-N ladder). A flag earns an A/B round, never a move. EUR seat, price-only. NOT advice.{body}",
+         flags REOPEN SIGNAL at {REOPEN_LINES}+ lines AND (#338) {REOPEN_LINES}+ chained links, each with mean AND\n  \
+         median above 0. `6-10 minus 1-5` re-opens (#322) `head_weight`, the tilt paying the wrong five\n  \
+         (in-sample twin: backtest's rank-1 vs 6-10 head-to-head); `11-25 minus 1-10` re-opens\n  \
+         (#321)'s width, the rank carrying nothing past ten (twin: the top-N ladder). A flag earns an A/B\n  \
+         round, never a move. EUR seat, price-only. NOT advice.{body}",
         head + 1
     )
 }
@@ -1021,18 +1020,26 @@ fn exit_section(
     px_now: &dyn Fn(&str) -> Option<f64>,
     spx_now: Option<f64>,
 ) -> String {
-    let gaps = monthly_gaps(snaps, today, px_now, spx_now, &|s| {
-        let before: Vec<&str> = prior_month(snaps, &s.date).map(book_rows).unwrap_or_default().into_iter().map(|(t, ..)| t).collect();
-        let kept: Rows = book_rows(s)
-            .into_iter()
-            .filter(|(t, ..)| !crate::picks::is_currency_quoted(t) && before.contains(t))
-            .map(|(t, p, _)| (t, p, 1.0))
-            .collect();
-        let left = |passes: bool| s.exit.iter().filter(|e| e.2 == passes).map(|(t, p, _)| (t.as_str(), *p, 1.0)).collect::<Vec<_>>();
-        vec![(EXIT_DECIDES, left(false), kept.clone()), ("kept minus out-ranked", left(true), kept)]
-    });
+    let body = verdict_rows(
+        snaps,
+        today,
+        px_now,
+        spx_now,
+        &|s| {
+            let before: Vec<&str> = prior_month(snaps, &s.date).map(book_rows).unwrap_or_default().into_iter().map(|(t, ..)| t).collect();
+            let kept: Rows = book_rows(s)
+                .into_iter()
+                .filter(|(t, ..)| !crate::picks::is_currency_quoted(t) && before.contains(t))
+                .map(|(t, p, _)| (t, p, 1.0))
+                .collect();
+            let left = |passes: bool| s.exit.iter().filter(|e| e.2 == passes).map(|(t, p, _)| (t.as_str(), *p, 1.0)).collect::<Vec<_>>();
+            vec![(EXIT_DECIDES, left(false), kept.clone()), ("kept minus out-ranked", left(true), kept)]
+        },
+        22,
+        Some(EXIT_DECIDES),
+    );
     let journalled = snaps.iter().filter(|s| !s.exit.is_empty()).count();
-    if gaps.is_empty() {
+    if body.is_empty() {
         return format!(
             "\n  Exit shadow: nothing gradeable yet. A line needs a day of age, a book the month before, and a\n  \
              priced name on both sides, and only {journalled} of {} journalled run(s) carry exits. The record\n  \
@@ -1040,31 +1047,38 @@ fn exit_section(
             snaps.len()
         );
     }
-    let body: String = gaps
-        .iter()
-        .map(|(g, n, mean, med)| {
-            let verdict = if g == EXIT_DECIDES { reopen_verdict(*n, *mean, *med) } else { "inform only" };
-            format!("\n    {g:<22} {n:>3} line(s)  mean {mean:>+7.1}pp  median {med:>+7.1}pp  {verdict}")
-        })
-        .collect();
     format!(
         "\n  Exit shadow (#335) — each month, the names last month's book held that this month's KEPT, against\n  \
          the ones it dropped: FAILED no longer pass a gate, OUT-RANKED still pass but lost the seat. Graded\n  \
          from the day they left, equal-weight, one line a month. Pre-registered: `{EXIT_DECIDES}` flags\n  \
-         REOPEN SIGNAL at {REOPEN_LINES}+ lines with mean AND median above 0 — the refused names went on to\n  \
-         lag the held ones, so a sell-on-fail rule re-opens (Item 31; in-sample twin: backtest's EXIT PROBE).\n  \
-         A flag earns an A/B round, never a move. EUR seat, price-only. NOT advice. Journalled on\n  \
-         {journalled} of {} run(s).{body}",
+         REOPEN SIGNAL at {REOPEN_LINES}+ lines AND (#338) {REOPEN_LINES}+ chained links, each with mean AND median\n  \
+         above 0 — the refused names went on to lag the held ones, so a sell-on-fail rule re-opens\n  \
+         (Item 31; in-sample twin: backtest's EXIT PROBE). A flag earns an A/B round, never a move. EUR seat,\n  \
+         price-only. NOT advice. Journalled on {journalled} of {} run(s).{body}",
         snaps.len()
     )
 }
 
+/// (#338) A link's close for `t`, off the later line's own journal: `rows` for the names it ranks, (#335)
+/// `exit` for the ones its book dropped, (#337) `carry` for every other name the earlier line graded.
+/// One price source for every chained reading, the book's included. A non-positive close is no price.
+fn link_px(n: &Snapshot, t: &str) -> Option<f64> {
+    n.rows
+        .iter()
+        .map(|(x, p)| (x, *p))
+        .chain(n.exit.iter().map(|(x, p, _)| (x, *p)))
+        .chain(n.carry.iter().map(|(x, p)| (x, *p)))
+        .find(|(x, _)| *x == t)?
+        .1
+        .filter(|p| *p > 0.0)
+}
+
 /// (#336) Each month's executed book held to the NEXT month's graded line: `(that line's date, names
 /// held, graded)`
-/// per consecutive pair of `sim::monthly_firsts`. The end prices come off the later line itself —
-/// `rows` for the names it still ranks, (#335)'s `exit` for the ones its book dropped, which is the
-/// whole of the earlier book bar a coin that left `rows` — so the windows follow one another instead of
-/// all ending today, and nothing is fetched. [`grade`] does the arithmetic, unpriced names and all.
+/// per consecutive pair of `sim::monthly_firsts`. The end prices come off the later line itself
+/// ([`link_px`]) — `rows` for the names it still ranks, (#335)'s `exit` for the ones its book dropped,
+/// (#338) `carry` for a coin that left `rows` — so the windows follow one another instead of all
+/// ending today, and nothing is fetched. [`grade`] does the arithmetic, unpriced names and all.
 fn chain_links(snaps: &[Snapshot]) -> Vec<(String, usize, Graded)> {
     let firsts: Vec<&Snapshot> = crate::commands::sim::monthly_firsts(snaps).into_values().collect();
     firsts
@@ -1072,11 +1086,8 @@ fn chain_links(snaps: &[Snapshot]) -> Vec<(String, usize, Graded)> {
         .filter_map(|w| {
             let (m, n) = (w[0], w[1]);
             let end = chrono::NaiveDate::parse_from_str(&n.date, "%Y-%m-%d").ok()?;
-            let px = |t: &str| {
-                n.rows.iter().map(|(x, p)| (x, *p)).chain(n.exit.iter().map(|(x, p, _)| (x, *p))).find(|(x, _)| *x == t)?.1.filter(|p| *p > 0.0)
-            };
             let book = book_rows(m);
-            grade(m, &book, usize::MAX, end, &px, n.spx.filter(|p| *p > 0.0)).map(|g| (n.date.clone(), book.len(), g))
+            grade(m, &book, usize::MAX, end, &|t| link_px(n, t), n.spx.filter(|p| *p > 0.0)).map(|g| (n.date.clone(), book.len(), g))
         })
         .collect()
 }
@@ -1478,6 +1489,82 @@ mod tests {
         assert!(carry(None, &today, &look).is_empty());
     }
 
+    /// (#338) One price source for every link: the later line's `rows` first, then `exit`, then
+    /// `carry`. A zero or missing close is no price, and a name the line never journalled has none.
+    #[test]
+    fn link_px_prices_off_rows_then_exit_then_carry() {
+        let mut n = with_exit(snap("2026-10-01", None, &[("R", Some(10.0)), ("Z", Some(0.0))]), &[("E", Some(20.0), false)]);
+        n.carry = vec![("C".into(), Some(30.0)), ("R".into(), Some(99.0)), ("E".into(), Some(98.0)), ("U".into(), None)];
+        assert_eq!(["R", "E", "C", "Z", "U", "X"].map(|t| link_px(&n, t)), [Some(10.0), Some(20.0), Some(30.0), None, None, None]);
+    }
+
+    /// (#338) The both-must-clear bar: a failing reading holds whatever the other says, a short one
+    /// names what the verdict waits on (the nested year first), and only two cleared years reopen.
+    #[test]
+    fn both_verdict_needs_both_readings_to_clear() {
+        let (win, short, lose, flat) = ((12, 5.0, 5.0), (11, 5.0, 5.0), (12, 5.0, -1.0), (12, 0.0, 5.0));
+        assert_eq!(both_verdict(win, win), "REOPEN SIGNAL");
+        assert_eq!(both_verdict(win, short), "needs 12 links");
+        assert_eq!(both_verdict(short, win), "needs 12 lines");
+        assert_eq!(both_verdict(short, short), "needs 12 lines");
+        assert_eq!(both_verdict(lose, short), "holds", "a failed year holds before the other has one");
+        assert_eq!(both_verdict(short, lose), "holds");
+        assert_eq!(both_verdict(win, flat), "holds", "a zero mean is not a win");
+        assert_eq!(both_verdict(flat, win), "holds");
+    }
+
+    /// (#338) Both readings off one set of pairs. September's exits are priced at October only through
+    /// October's `carry`, October's at November the same way. `a` (failed exits minus rows) reads lines
+    /// -11, -20 to today and links +22, -10; `b` (passing exits) lines -21, +30 and links -11, +10; `c`
+    /// (the notch cohort, never carried) grades a line and no link. The same-month rerun, whose exits
+    /// halve, enters neither reading. Nearest-rank on two values takes the higher one.
+    #[test]
+    fn verdict_rows_reads_nested_and_chained_off_one_set_of_pairs() {
+        fn pairs(s: &Snapshot) -> Pairs<'_> {
+            let left = |passes: bool| s.exit.iter().filter(|e| e.2 == passes).map(|(t, p, _)| (t.as_str(), *p, 1.0)).collect();
+            vec![("a", equal(&s.rows), left(false)), ("b", equal(&s.rows), left(true)), ("c", equal(&s.rows), near_rows(s, None))]
+        }
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 12, 2).unwrap();
+        let px = |t: &str| match t {
+            "H" => Some(121.0),
+            "XF" => Some(110.0),
+            "XP" => Some(100.0),
+            "YF" => Some(90.0),
+            "YP" => Some(140.0),
+            "NC" => Some(150.0),
+            _ => None,
+        };
+        let sep = with_near(
+            with_exit(snap("2026-09-02", None, &[("H", Some(100.0))]), &[("XF", Some(100.0), false), ("XP", Some(100.0), true)]),
+            &[("NC", Some(100.0), "cagr")],
+        );
+        let rerun = with_exit(snap("2026-09-20", None, &[("H", Some(100.0))]), &[("XF", Some(50.0), false), ("XP", Some(50.0), true)]);
+        let mut oct = with_exit(snap("2026-10-02", None, &[("H", Some(110.0))]), &[("YF", Some(100.0), false), ("YP", Some(100.0), true)]);
+        oct.carry = vec![("XF".into(), Some(132.0)), ("XP".into(), Some(99.0))];
+        let mut nov = snap("2026-11-02", None, &[("H", Some(121.0))]);
+        nov.carry = vec![("YF".into(), Some(100.0)), ("YP".into(), Some(120.0))];
+        let snaps = [sep, rerun, oct, nov];
+        let read = |decides: Option<&str>| -> Vec<String> {
+            verdict_rows(&snaps, today, &px, None, &pairs, 4, decides)
+                .lines()
+                .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+        assert_eq!(
+            read(None),
+            [
+                "a 2 line(s) mean -15.5pp median -11.0pp | 2 link(s) mean +6.0pp median +22.0pp needs 12 lines",
+                "b 2 line(s) mean +4.5pp median +30.0pp | 2 link(s) mean -0.5pp median +10.0pp needs 12 lines",
+                "c 1 line(s) mean +29.0pp median +29.0pp | 0 link(s) mean +0.0pp median +0.0pp needs 12 lines",
+            ]
+        );
+        let split = read(Some("b"));
+        assert!(split[0].ends_with("inform only") && split[1].ends_with("needs 12 lines") && split[2].ends_with("inform only"), "{split:?}");
+        assert_eq!(verdict_rows(&snaps[..1], today, &px, None, &pairs, 4, None).matches(" 0 link(s)").count(), 3, "one month is no link");
+        assert_eq!(verdict_rows(&[], today, &px, None, &pairs, 4, None), "");
+    }
+
     /// (#335) From the flip line: A and B were held both months (+10), C left failing (-20), D left
     /// still passing (+30). Kept minus failed +30.0 decides; kept minus out-ranked -20.0 informs. F is
     /// new, E left unjournalled and the coin is held both months: none of them is KEPT or graded.
@@ -1614,10 +1701,13 @@ mod tests {
 
         // C doubles; everything else sits still. Ladder cheap holds it, the pin does not.
         let base = |t: &str| Some(if t == "C" { 200.0 } else { 100.0 });
-        let (n, mean, med) = peg_verdict(std::slice::from_ref(&s), today, &base, Some(100.0));
-        assert_eq!(n, 1);
-        assert!((mean - -100.0 / 3.0).abs() < 1e-9 && (med - -100.0 / 3.0).abs() < 1e-9, "mean {mean} med {med}");
-        assert_eq!(reopen_verdict(n, mean, med), "needs 12 lines", "one line can never be a reopen");
+        let verdict = |px: &dyn Fn(&str) -> Option<f64>| {
+            let out = peg_section(std::slice::from_ref(&s), today, px, Some(100.0));
+            out.lines().find(|l| l.trim_start().starts_with("pin cheap minus ladder cheap")).unwrap_or_default().to_string()
+        };
+        let row = verdict(&base);
+        assert!(row.contains(" 1 line(s)") && row.matches("-33.3pp").count() == 2, "(D - C)/3, mean and median: {row}");
+        assert!(row.contains("needs 12 lines"), "one line can never be a reopen: {row}");
 
         // Now send E and F — rich under BOTH denominators — to the moon. The verdict must not budge.
         let rich_moved = |t: &str| Some(match t {
@@ -1625,13 +1715,12 @@ mod tests {
             "E" | "F" => 500.0,
             _ => 100.0,
         });
-        let (n2, mean2, med2) = peg_verdict(&[s], today, &rich_moved, Some(100.0));
-        assert_eq!(n2, n);
-        assert!((mean2 - mean).abs() < 1e-9 && (med2 - med).abs() < 1e-9, "the rich half must not reach the verdict: {mean2} vs {mean}");
+        assert_eq!(verdict(&rich_moved), row, "the rich half must not reach the verdict");
 
-        // A line with no PEG cohort folds to a stated zero, not to a NaN wearing a percent sign.
+        // (#338) A line with no PEG cohort prints no verdict row at all, not a zero wearing a percent sign.
         let bare = snap("2026-01-01", Some(100.0), &[("A", Some(100.0))]);
-        assert_eq!(peg_verdict(&[bare], today, &base, Some(100.0)), (0, 0.0, 0.0));
+        let out = peg_section(&[bare], today, &base, Some(100.0));
+        assert!(!out.contains("line(s)") && !out.contains("pp"), "{out}");
     }
 
     /// (#332) The section prints both denominators, the pre-registered bar, and says so plainly when
@@ -1654,6 +1743,13 @@ mod tests {
         assert!(out.contains("needs 12 lines") && out.contains("Ship Rule v2 PRIMARY at 12y AND 8y"), "{out}");
         assert!(out.contains("Journalled on 1 of 1 run(s)"), "a line carrying a cohort must be counted as carrying one: {out}");
         assert!(out.contains("10Y window"), "the pinned rung must be named in the prose: {out}");
+
+        // (#338) The month's first line predates the cohort: the table grades the later line, and the
+        // verdict says it has no line rather than printing nothing after its colon.
+        let later = with_peg(snap("2026-01-02", Some(100.0), &rows), &names);
+        let out = peg_section(&[bare, later], today, &px, Some(100.0));
+        assert!(out.contains("+50.0%") && out.contains("no month's first line grades yet"), "{out}");
+        assert!(!out.contains("line(s)"), "{out}");
     }
 
     /// (#285) The MOMENTUM-lane grade: `snap.rows` cut at [`BOOK`], which is what every assertion
@@ -2276,12 +2372,14 @@ mod tests {
             line("2026-05-02", "B", &[("N3", Some(100.0), "cagr"), ("NP", Some(100.0), "peg")]),
             line("2026-06-02", "GONE", &[("N1", Some(100.0), "cagr")]),
         ];
-        let v = gate_verdicts(&snaps, today, &px, Some(101.0));
-        assert_eq!(v.len(), 1, "peg's only name is unpriced -> no gap, not a zero one: {v:?}");
-        let (gate, n, mean, med) = &v[0];
-        assert_eq!((gate.as_str(), *n), ("cagr", 3));
-        assert!((mean - 50.0 / 3.0).abs() < 1e-9, "+15, -5, +40: {mean}");
-        assert!((med - 15.0).abs() < 1e-9, "{med}");
+        // (#338) read off the section: the fold is `verdict_rows`' now, the per-gate pairs `near_section`'s
+        let out = near_section(&snaps, today, &px, Some(101.0));
+        let row = |gate: &str| out.lines().find(|l| l.trim_start().starts_with(gate)).map(str::to_string);
+        assert_eq!(row("peg "), None, "peg's only name is unpriced -> no gap, not a zero one: {out}");
+        let cagr = row("cagr ").unwrap_or_default();
+        assert!(cagr.contains("  3 line(s)"), "{cagr}");
+        assert!(cagr.contains("mean   +16.7pp"), "+15, -5, +40: {cagr}");
+        assert!(cagr.contains("median   +15.0pp"), "{cagr}");
     }
 
     /// (#323) The pre-registered reading: a year of monthly lines, and BOTH statistics strictly above 0.
