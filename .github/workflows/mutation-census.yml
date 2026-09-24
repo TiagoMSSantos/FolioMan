@@ -12,6 +12,12 @@ name: Mutation census
 # COST, from ci.yml's BUDGET block (runner-measured): ~166s build per mutant, two workers per tree, so
 # ~83s of wall clock each, plus ~556s cold start. The default slice (the buy decision path in picks.rs
 # and the core.rs metrics it reads) lists 1,647 mutants: ~103 per shard, ~2.4h per runner.
+#
+# (#340) `exclude` is a -E filter on the same names. backtest.rs lists 18,801 mutants, and 16,772 of
+# them are return-value swaps of five fns returning wide tuples (proxy_books, book_stats,
+# drop_bottom_book, corr_cap_book, report_entry_state): ~27h per shard. Excluding just those swaps
+# grades the rest of backtest.rs (their body operators included) plus track.rs and sim.rs in one
+# 3,053-mutant dispatch, ~4.4h.
 on:
   workflow_dispatch:
     inputs:
@@ -21,6 +27,9 @@ on:
       regex:
         description: "cargo mutants -F filter on the mutant name"
         default: '^src/picks\.rs:.*(in|replace) (score_parts|gate_failures|compose_score|buy_score|growth_scores_ranked|inv_norm|inv_norm_tail|trust_factor|momentum_factor|value_factor|risk_bonus|min_cagr_floor|long_leg|long_leg_fixed|life_leg_cagr|peg_cagr_pct|capped_trend|trend_health|regime_floor|turnover_floor|sector_floor|sector_floors|implied_growth_pct|expected_return_pct|normalized_dip|sustained_decline_factor|long_cagr_pct|long_cagr_from|fund_peg_yield|served_peg_yield|peg_repriced|nupl_factor)(::|$| ->)|^src/core\.rs:.*(in|replace) (trend_cagr|trend_r2|trend_streak|rolling_positive_pct|worst_rolling_pct|life_cagr|tr_life_cagr|volatility_pct|downside_deviation_pct|calendar_year_returns|eps_yoy_split_safe|roic_return|pearson|flat_trim_start|splice_trim_start|splice_history|hold_miss_leg_at|ranks|ev_ebitda_yield)(::|$| ->)'
+      exclude:
+        description: "cargo mutants -E filter: mutant names to drop (empty = none)"
+        default: ''
 
 # Its own group and NEVER cancelled: in ci.yml's group, the daily journal commit would cancel a
 # multi-hour census the moment the Pages cron pushed it.
@@ -57,6 +66,7 @@ jobs:
           CARGO_INCREMENTAL: 1
           FILES: ${{ inputs.files }}
           RE: ${{ inputs.regex }}
+          EX: ${{ inputs.exclude }}
           SHARD: ${{ matrix.shard }}
         # The baseline stays ON, unlike the gate's `--baseline skip`: no unit-tests job runs before this
         # one, and a suite that is red here would grade every mutant CAUGHT.
@@ -65,8 +75,9 @@ jobs:
           read -ra names <<< "${FILES}"
           files=()
           for f in "${names[@]}"; do files+=(--file "$f"); done
+          ex=(); [ -n "${EX}" ] && ex=(-E "${EX}")
           timeout --signal=INT --kill-after=60s 330m \
-            cargo mutants "${files[@]}" -F "${RE}" --shard "${SHARD}/16" --sharding round-robin \
+            cargo mutants "${files[@]}" -F "${RE}" "${ex[@]}" --shard "${SHARD}/16" --sharding round-robin \
               -j 2 --copy-target=false --timeout 20 --profile mutants \
               -- --lib --test backtest_fixture || echo "cargo mutants exit $? (the files are the verdict)"
       - uses: actions/upload-artifact@v7
@@ -92,12 +103,14 @@ jobs:
         env:
           FILES: ${{ inputs.files }}
           RE: ${{ inputs.regex }}
+          EX: ${{ inputs.exclude }}
         run: |
           set -uo pipefail
           read -ra names <<< "${FILES}"
           files=()
           for f in "${names[@]}"; do files+=(--file "$f"); done
-          listed=$(cargo mutants --list "${files[@]}" -F "${RE}" | wc -l)
+          ex=(); [ -n "${EX}" ] && ex=(-E "${EX}")
+          listed=$(cargo mutants --list "${files[@]}" -F "${RE}" "${ex[@]}" | wc -l)
           mkdir -p out
           for k in caught missed timeout unviable; do
             cat census/*/"$k".txt 2>/dev/null | sort > "out/$k.txt"
