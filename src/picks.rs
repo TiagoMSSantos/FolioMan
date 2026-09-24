@@ -11035,6 +11035,153 @@ mod tests {
         assert!(art.iter().any(|(g, _, close)| *g == "artifact" && !*close));
     }
 
+    /// (#340) The same one claim as `gate_failures_agrees_with_the_scorer`, on RANDOM draws instead of
+    /// ten hand-picked quotes. Every field a gate reads and every knob that arms one is drawn from a
+    /// small grid that holds its line, so draws land EXACTLY on a line often (the `<` vs `<=` case a
+    /// hand-picked row has to aim for), armed knobs meet missing fields, coins meet equity knobs, and
+    /// several gates fire at once. Seeded xorshift64, `rank_robustness`' stream, so a failure names a
+    /// draw index that reproduces.
+    ///
+    /// Not vacuous by construction: both verdicts must occur in at least 5% of draws, and every label
+    /// `gate_failures` can emit must fire at least once. A new gate label joins `LABELS`.
+    #[test]
+    fn gate_failures_agrees_with_the_scorer_on_random_draws() {
+        const DRAWS: usize = 4000;
+        const LABELS: [&str; 27] = [
+            "young", "history", "aum", "range", "range8y", "cagr", "cagr-life", "1Y+", "1M-knife", "artifact",
+            "5Y+", "8Y+", "20Y+", "liquidity", "stretch", "lifetime", "volatile", "spike", "mvrv", "peg",
+            "margin", "swing", "dilution", "cover", "fcf", "netcash", "maxdd",
+        ];
+        struct Rng(u64);
+        impl Rng {
+            fn f(&mut self) -> f64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                (self.0 >> 11) as f64 / (1u64 << 53) as f64
+            }
+            fn hit(&mut self, p: f64) -> bool { self.f() < p }
+            fn pick(&mut self, grid: &[f64]) -> f64 { grid[(self.f() * grid.len() as f64) as usize] }
+            /// a knob: left at `cur` or armed at a grid value
+            fn arm(&mut self, cur: f64, grid: &[f64]) -> f64 { if self.hit(0.2) { self.pick(grid) } else { cur } }
+            /// a field: a grid value, or None with probability `none`
+            fn opt(&mut self, grid: &[f64], none: f64) -> Option<f64> { if self.hit(none) { None } else { Some(self.pick(grid)) } }
+        }
+        let mut r = Rng(0x9E37_79B9_7F4A_7C15);
+        let d = BuyHeuristic::default();
+        let (mut clears, mut ranks_none) = (0, 0);
+        let mut seen = std::collections::BTreeSet::new();
+        for i in 0..DRAWS {
+            let mut q = gate_fixture();
+            match r.pick(&[0.0, 1.0, 2.0]) as u8 {
+                1 => { q.ticker = "FUND.DE".into(); q.instrument_type = "ETF".into(); }
+                2 => { q.ticker = "BTC-EUR".into(); q.instrument_type = "CRYPTOCURRENCY".into(); }
+                _ => {}
+            }
+            if r.hit(0.02) { q.name = "Some Index 2x Daily Leveraged".into(); }
+            if r.hit(0.2) { q.avg_turnover_eur = r.opt(&[5e4, 1e5, 5e5, 1e6], 0.1); }
+            q.age_years = r.opt(&[2.0, 5.0, 10.0, 30.0], 0.4);
+            q.aum_eur = r.opt(&[5e7, 1e8, 1e10], 0.4);
+            if r.hit(0.3) { q.range_pct = r.pick(&[50.0, 70.0, 80.0]); }
+            q.bench_range_pct = r.opt(&[40.0, 60.0], 0.7);
+            q.bench_1y_pct = r.opt(&[-10.0, 5.0], 0.7);
+            q.stats_8y = r.opt(&[60.0, 80.0, 95.0], 0.5)
+                .map(|range_pct| crate::core::Stats8 { range_pct, trend_r2: 0.9, max_drawdown_pct: 30.0, underwater_yrs: None });
+            let m1 = if r.hit(0.3) { r.pick(&[-23.0, -18.0, -15.0]) } else { 2.0 };
+            let mut p = vec![("1M", m1)];
+            if r.hit(0.05) { let a = r.pick(&[0.5, 212.9]); p = vec![("1D", a), ("1W", a), ("1M", a)]; }
+            // 1Y and 5Y keep the fixture's clearing value unless redrawn onto or past their floors
+            let y1 = if r.hit(0.3) { r.pick(&[-10.0, -5.0, 0.0]) } else { 20.0 };
+            let y5 = if r.hit(0.3) { r.pick(&[-15.0, -5.0, 0.0]) } else { 200.0 };
+            for (leg, grid, none) in [
+                ("1Y", &[y1][..], 0.05), ("5Y", &[y5][..], 0.15),
+                ("8Y", &[0.0, 50.0, 400.0][..], 0.6), ("10Y", &[300.0][..], 0.7), ("20Y", &[0.0, 1000.0][..], 0.7),
+            ] {
+                if let Some(v) = r.opt(grid, none) { p.push((leg, v)); }
+            }
+            q.perf = legs(&p);
+            q.trend_cagr = r.opt(&[-1.0, 0.0, 5.0], 0.4);
+            q.life_cagr = r.opt(&[-2.0, 0.0, 10.0, 20.0, 30.0], 0.3);
+            q.capped_cagr = r.opt(&[15.0, 25.0], 0.7);
+            q.tr_cagr = r.opt(&[25.0], 0.7);
+            q.growth_sector_floor = r.opt(&[10.0], 0.5);
+            if r.hit(0.3) { q.above_ma_pct = r.pick(&[150.0, 160.0, 200.0]); }
+            q.volatility_pct = r.opt(&[1.0, 3.0, 3.5, 6.0], 0.4);
+            q.max_daily_1m = r.opt(&[3.0, 10.0, 12.0], 0.4);
+            q.mvrv = r.opt(&[1.0, 2.0, 3.5], 0.4);
+            if r.hit(0.3) { q.max_drawdown_pct = r.pick(&[60.0, 84.0, 95.0]); }
+            if r.hit(0.5) {
+                q.fund = Some(crate::core::FundFactors {
+                    peg_yield: r.opt(&[25.0, 50.0, 80.0], 0.3),
+                    eps_ttm: r.opt(&[-1.0, 0.0, 5.0], 0.3),
+                    net_margin: r.opt(&[5.0, 10.0, 20.0], 0.3),
+                    margin_stability: r.opt(&[-8.0, -5.0, -1.0], 0.3),
+                    buyback_yield: r.opt(&[-6.0, -3.0, 1.0], 0.3),
+                    interest_cover: r.opt(&[2.0, 3.0, 20.0], 0.3),
+                    fcf_margin: r.opt(&[-5.0, 0.0, 25.0], 0.3),
+                    net_cash_rev: r.opt(&[-30.0, -20.0, 10.0], 0.3),
+                    eps_never_reported: r.hit(0.1),
+                    ..crate::core::FundFactors::default()
+                });
+            }
+
+            let mut t = d.clone();
+            t.growth_min_age_years = r.arm(t.growth_min_age_years, &[5.0, 10.0]);
+            t.growth_min_aum_etf = r.arm(t.growth_min_aum_etf, &[1e8]);
+            t.growth_min_range_pct = r.arm(t.growth_min_range_pct, &[70.0, 80.0]);
+            t.growth_min_range_pct_crypto = r.arm(t.growth_min_range_pct_crypto, &[0.0, 70.0]);
+            t.growth_regime_slack_pct = if r.hit(0.2) { Some(r.pick(&[0.0, 10.0])) } else { t.growth_regime_slack_pct };
+            t.growth_min_range_pct_8y = r.arm(t.growth_min_range_pct_8y, &[80.0]);
+            t.growth_min_range_pct_8y_crypto = r.arm(t.growth_min_range_pct_8y_crypto, &[80.0]);
+            t.fixed_cagr_years = r.arm(t.fixed_cagr_years as f64, &[0.0, 10.0]) as u32;
+            t.growth_min_leg_years = r.arm(t.growth_min_leg_years, &[5.0, 8.0]);
+            t.growth_min_cagr = r.arm(t.growth_min_cagr, &[10.0, 20.0, 30.0]);
+            t.growth_min_cagr_crypto = r.arm(t.growth_min_cagr_crypto, &[5.0, 30.0]);
+            t.growth_min_cagr_etf = r.arm(t.growth_min_cagr_etf, &[0.0, 15.0]);
+            t.growth_sector_leaders = r.arm(t.growth_sector_leaders as f64, &[0.0, 3.0]) as usize;
+            t.use_life_cagr = r.hit(0.1);
+            t.use_trend_cagr = r.hit(0.1);
+            t.growth_min_1y_pct = r.arm(t.growth_min_1y_pct, &[-5.0, 0.0]);
+            t.min_1y_pct_crypto = r.arm(t.min_1y_pct_crypto, &[-40.0, 0.0]);
+            t.max_1m_drop_pct = r.arm(t.max_1m_drop_pct, &[-18.0, -15.0]);
+            t.max_1m_drop_pct_crypto = r.arm(t.max_1m_drop_pct_crypto, &[-15.0]);
+            t.growth_min_5y_pct = r.arm(t.growth_min_5y_pct, &[-5.0, 0.0]);
+            t.growth_min_5y_pct_crypto = r.arm(t.growth_min_5y_pct_crypto, &[0.0]);
+            t.growth_min_8y_pct = r.arm(t.growth_min_8y_pct, &[0.0, 50.0]);
+            t.growth_min_20y_pct = r.arm(t.growth_min_20y_pct, &[0.0, 1000.0]);
+            t.min_avg_turnover_eur = r.arm(t.min_avg_turnover_eur, &[1e5, 5e5]);
+            t.min_avg_turnover_eur_stock = r.arm(t.min_avg_turnover_eur_stock, &[0.0, 1e6]);
+            t.growth_max_above_ma = r.arm(t.growth_max_above_ma, &[0.0, 150.0]);
+            t.growth_require_lifetime_uptrend = r.hit(0.5);
+            t.growth_max_vol_crypto = r.arm(t.growth_max_vol_crypto, &[3.0, 5.0]);
+            t.growth_max_vol = r.arm(t.growth_max_vol, &[3.0]);
+            t.growth_max_daily_1m = r.arm(t.growth_max_daily_1m, &[10.0]);
+            t.crypto_max_mvrv = r.arm(t.crypto_max_mvrv, &[2.0]);
+            t.growth_max_peg = r.arm(t.growth_max_peg, &[0.0, 2.0]);
+            t.growth_require_peg = r.hit(0.2);
+            t.growth_min_net_margin = r.arm(t.growth_min_net_margin, &[10.0]);
+            t.growth_max_margin_swing = r.arm(t.growth_max_margin_swing, &[5.0]);
+            t.growth_max_dilution_pct = r.arm(t.growth_max_dilution_pct, &[3.0]);
+            t.growth_min_interest_cover = r.arm(t.growth_min_interest_cover, &[3.0]);
+            t.growth_min_fcf_margin = r.arm(t.growth_min_fcf_margin, &[0.0]);
+            t.growth_min_net_cash_rev = r.arm(t.growth_min_net_cash_rev, &[-20.0]);
+            t.growth_maxdd_cap = r.arm(t.growth_maxdd_cap, &[0.0, 60.0, 84.0]);
+            t.growth_maxdd_cap_crypto = r.arm(t.growth_maxdd_cap_crypto, &[84.0]);
+
+            let fails = gate_failures(&q, &t);
+            let ranks = growth_score(&q, &t).is_some();
+            assert_eq!(fails.as_ref().is_some_and(|f| f.is_empty()), ranks,
+                "draw {i}: gate_failures {fails:?}, scorer ranks={ranks} — the mirror drifted from score_parts");
+            clears += usize::from(ranks);
+            ranks_none += usize::from(!ranks);
+            seen.extend(fails.into_iter().flatten().map(|(g, ..)| g));
+        }
+        assert!(clears * 20 >= DRAWS && ranks_none * 20 >= DRAWS, "{clears} of {DRAWS} draws rank: the sweep is lopsided");
+        let missing: Vec<_> = LABELS.iter().filter(|l| !seen.contains(*l)).collect();
+        assert!(missing.is_empty(), "no draw fired {missing:?}: those gates are unswept");
+        assert!(seen.iter().all(|g| LABELS.contains(g)), "{seen:?}: a new gate label must join LABELS");
+    }
+
     /// (P1) the four SURVIVAL gates. Nothing else in the suite arms them — they ship OFF, so the
     /// goldens walk straight past every line of them — and an unarmed gate is indistinguishable from
     /// a gate that rejects everything. Each case below pins one of the four claims the gates make:

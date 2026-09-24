@@ -2552,4 +2552,33 @@ mod tests {
             serde_json::from_str(r#"{"date":"2026-07-01","spx":5000.0,"rows":[["A",1.0]]}"#).unwrap();
         assert!(old.spx_off_hi.is_none());
     }
+
+    /// (#340) The COMMITTED journal parses whole. `read_snapshots` skips a line it cannot parse with a
+    /// stderr warning only, so a new `Snapshot` field without `#[serde(default)]` would drop every
+    /// older line — the whole forward record — while `snapshot_roundtrip` stays green on its
+    /// hand-written line. This reads the real file (tracked since (#333), a line a day from CI), so
+    /// each daily commit grades itself too. Second claim: no journalled key is dropped on the way in,
+    /// because a renamed or removed field parses fine and silently loses its history.
+    #[test]
+    fn committed_journal_parses_every_line() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(SNAPSHOT_FILE);
+        let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let mut n = 0;
+        for (i, l) in raw.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
+            n += 1;
+            let snap: Snapshot = serde_json::from_str(l).unwrap_or_else(|e| {
+                panic!("{SNAPSHOT_FILE} line {}: {e} — a new Snapshot field needs #[serde(default)]", i + 1)
+            });
+            let kept = serde_json::to_value(&snap).unwrap();
+            let serde_json::Value::Object(line) = serde_json::from_str(l).unwrap() else {
+                panic!("{SNAPSHOT_FILE} line {} is not an object", i + 1)
+            };
+            for (k, v) in line {
+                let empty = v.is_null() || v.as_array().is_some_and(|a| a.is_empty());
+                assert!(empty || kept.get(&k).is_some(),
+                    "{SNAPSHOT_FILE} line {}: key `{k}` is dropped on parse, so its history is lost", i + 1);
+            }
+        }
+        assert!(n >= 4, "{n} line(s): the tracked journal shrank");
+    }
 }
