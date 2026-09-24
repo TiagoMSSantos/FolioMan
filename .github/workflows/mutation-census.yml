@@ -1,0 +1,117 @@
+name: Mutation census
+
+# (#339) THE WHOLE-FUNCTION GRADE THE DIFF GATE NEVER GIVES. ci.yml's `mutants` job grades `--in-diff`
+# only, so code that has not changed since the gate arrived has never been graded at all — and a
+# measured audit once found whole functions that could be stubbed with every test still green. This
+# grades a chosen slice IN FULL, sharded across runners, and publishes the survivors. It decides
+# nothing: a survivor is a test to write (or an equivalent mutant to list in the receipt), never a red.
+#
+# MANUAL ONLY, on purpose. ci.yml keeps "NO `schedule:`" and this keeps it too; a census is run when a
+# round sets out to kill its survivors, then run again on the same slice to prove the kills.
+#
+# COST, from ci.yml's BUDGET block (runner-measured): ~166s build per mutant, two workers per tree, so
+# ~83s of wall clock each, plus ~556s cold start. The default slice (the buy decision path in picks.rs
+# and the core.rs metrics it reads) lists 1,647 mutants: ~103 per shard, ~2.4h per runner.
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: "source files to mutate (space-separated)"
+        default: "src/picks.rs src/core.rs"
+      regex:
+        description: "cargo mutants -F filter on the mutant name"
+        default: '^src/picks\.rs:.*(in|replace) (score_parts|gate_failures|compose_score|buy_score|growth_scores_ranked|inv_norm|inv_norm_tail|trust_factor|momentum_factor|value_factor|risk_bonus|min_cagr_floor|long_leg|long_leg_fixed|life_leg_cagr|peg_cagr_pct|capped_trend|trend_health|regime_floor|turnover_floor|sector_floor|sector_floors|implied_growth_pct|expected_return_pct|normalized_dip|sustained_decline_factor|long_cagr_pct|long_cagr_from|fund_peg_yield|served_peg_yield|peg_repriced|nupl_factor)(::|$| ->)|^src/core\.rs:.*(in|replace) (trend_cagr|trend_r2|trend_streak|rolling_positive_pct|worst_rolling_pct|life_cagr|tr_life_cagr|volatility_pct|downside_deviation_pct|calendar_year_returns|eps_yoy_split_safe|roic_return|pearson|flat_trim_start|splice_trim_start|splice_history|hold_miss_leg_at|ranks|ev_ebitda_yield)(::|$| ->)'
+
+# Its own group and NEVER cancelled: in ci.yml's group, the daily journal commit would cancel a
+# multi-hour census the moment the Pages cron pushed it.
+concurrency:
+  group: mutation-census
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    # 350 of GitHub's 360; the step's own 330m SIGINT fires first, so a shard that overruns still
+    # writes what it graded.
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      # 16 of the 20 concurrent runners a free account gets: the other 4 keep the 5-minute Pages cron
+      # and push CI moving while this runs. Shards are 0-based (`--shard 16/16` is an error).
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@cargo-mutants
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: folioman-ci
+          save-if: false   # sixteen writers of one key would only churn the cache the gate reads
+      - name: grade one shard
+        env:
+          # Same regime as the diff gate (see its comments): the pinned fixture, and incremental on.
+          FOLIOMAN_CONFIG: tests/ci-settings.yaml
+          CARGO_INCREMENTAL: 1
+          FILES: ${{ inputs.files }}
+          RE: ${{ inputs.regex }}
+          SHARD: ${{ matrix.shard }}
+        # The baseline stays ON, unlike the gate's `--baseline skip`: no unit-tests job runs before this
+        # one, and a suite that is red here would grade every mutant CAUGHT.
+        run: |
+          set -uo pipefail
+          read -ra names <<< "${FILES}"
+          files=()
+          for f in "${names[@]}"; do files+=(--file "$f"); done
+          timeout --signal=INT --kill-after=60s 330m \
+            cargo mutants "${files[@]}" -F "${RE}" --shard "${SHARD}/16" --sharding round-robin \
+              -j 2 --copy-target=false --timeout 20 --profile mutants \
+              -- --lib --test backtest_fixture || echo "cargo mutants exit $? (the files are the verdict)"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: census-${{ matrix.shard }}
+          path: mutants.out
+          retention-days: 30
+
+  report:
+    needs: census
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@cargo-mutants
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: census-*
+          path: census
+      - name: survivors
+        env:
+          FILES: ${{ inputs.files }}
+          RE: ${{ inputs.regex }}
+        run: |
+          set -uo pipefail
+          read -ra names <<< "${FILES}"
+          files=()
+          for f in "${names[@]}"; do files+=(--file "$f"); done
+          listed=$(cargo mutants --list "${files[@]}" -F "${RE}" | wc -l)
+          mkdir -p out
+          for k in caught missed timeout unviable; do
+            cat census/*/"$k".txt 2>/dev/null | sort > "out/$k.txt"
+          done
+          graded=$(cat out/*.txt | wc -l)
+          {
+            echo "listed ${listed}, graded ${graded} (ungraded $((listed - graded)))"
+            for k in caught missed timeout unviable; do echo "- ${k}: $(wc -l < "out/$k.txt")"; done
+            for k in missed timeout unviable; do
+              echo; echo "### ${k}"; echo '```'; cat "out/$k.txt"; echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: census-missed
+          path: out
+          retention-days: 30
