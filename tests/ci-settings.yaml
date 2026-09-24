@@ -6488,6 +6488,64 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#339) ROUND 122: A MUTATION CENSUS OF THE BUY DECISION PATH. 116 SURVIVORS KILLED, 21 EQUIVALENT.
+  #
+  # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" A FIFTH TIME.
+  # Asked: a mutation census, scoped to the buy decision path; equivalent mutants listed here only (no
+  # skip attributes, no mutants.toml); obvious bugs fixed now.
+  #
+  # WHY. The CI mutation gate runs `--in-diff`: it grades what a push touches and nothing else, so a
+  # function nobody has edited since the gate existed has never been graded. The code that decides what
+  # the screen buys (picks' scorer, gates and factors; core's trend fits, rolling stats and fundamentals
+  # helpers) is mostly that code.
+  #
+  # HOW TO RUN IT. `.github/workflows/mutation-census.yml`, manual only (no `schedule:`, same rule as
+  # ci.yml): `gh workflow run mutation-census.yml` (inputs `files` and `regex` default to this round's
+  # scope), then `gh run download <id> -n census-missed` for the caught/missed/timeout/unviable lists.
+  # 16 round-robin shards, ~2.5h wall; the repo is public, so the minutes are free. It has its own
+  # concurrency group, so the daily journal commit cannot cancel it, and its baseline stays ON because
+  # no unit-test job precedes it in the same run.
+  #
+  # THE CENSUS (run 35970189389 on 69e4196, under this file): 1647 mutants in scope, 1494 caught, 137
+  # missed, 9 timeout (a hang is a detection), 7 unviable. The 137:
+  # - 5 ON ONE DEAD BRANCH, fixed: `life_leg_cagr`'s (#99) dividend-uplift arm read a process-global knob
+  #   that both CI regimes leave off, so no test could ever arm it. Split out
+  #   `life_leg_cagr_with(quote, tr_uplift)`; behaviour unchanged, the arm now tested.
+  # - 111 KILLABLE, killed by asserts added to each function's existing test, plus two new tables:
+  #   `remaining_gates_fence_exactly_and_size_the_miss` (age, AUM, 8y range, the 1Y/1M/5Y legs, artifact,
+  #   stretch, lifetime, MVRV, PEG, net margin, swing, maxdd: exactly on the line clears, close vs not
+  #   close, knob 0 is off) and `hold_leg1_reads_the_domicile_only_when_armed`, REGIME-AWARE on purpose:
+  #   the (#102) domicile arm is the one hold leg behind a process-global knob. The common shape: a gate
+  #   tested well past its line and never ON it, and a near-miss `close` flag nothing read.
+  # - 21 EQUIVALENT (no input can tell them apart):
+  #   core.rs:654 flat_trim_start `<` -> `<=`: the i == n pass is a no-op, both inner tests need j+1 < n.
+  #   core.rs:742 trend_r2 `sxy +=` -> `-=`: sxy only enters squared.
+  #   core.rs:764 x2 and 769, trend_cagr's ymean: sum(dx) = 0, so ymean cancels; the centring is numerics.
+  #   core.rs:4151 roic `assets > 0` -> `>=`: a zero denominator fails the finiteness filter either way.
+  #   core.rs:4682 volatility `-` -> `+`: every return shifts by +200pp, and a stdev is shift-invariant.
+  #   core.rs:4834 trend_streak `direction > 0` -> `>=`: direction is +1 or -1 by then.
+  #   picks.rs:1353:36, 1361:45, 1385:21, 2607:49, 2648:45, 2664:21: a knob's `> 0.0` -> `>=` over a field
+  #   that never goes negative (age, AUM, 8y percentile), so the armed-at-0 test `x < 0` never fires.
+  #   picks.rs:1452:46, 1452:72, 2703:46, 2703:72, the artifact tie `< 1e-6` -> `<=`: past |0.5| two
+  #   doubles differ by a multiple of 2^-54, and fl(1e-6) is not one.
+  #   picks.rs:1820 `growth_turnover_weight > 0` -> `>=`: 0 x ln(max(v/1e9, 1)) is 0.
+  #   picks.rs:3188:22 and 3192:22, nupl's two band edges: both arms return exactly 1.0 there.
+  #   (3188:69, euphoria `< 1.0` -> `<=`, was first filed here as "NUPL <= 1 by construction". It is
+  #   killed instead: euphoria 1.0 is the knob OFF, which must hold for any reading.)
+  #
+  # WHAT SHIPS. Tests, plus the `life_leg_cagr` split: 14 in-diff mutants, all on the split, all killed
+  # by `life_leg_uplift_adds_only_the_dividend_leg`. No knob, no ranking change, no golden moved. No
+  # logic bug was found: every killable survivor was an untested edge, not a wrong one.
+  #
+  # PROOF IS A RE-RUN, NOT THIS TRIAGE. A census on this commit must list exactly the 21 above as
+  # missed; any other survivor is a test that does not bite as claimed.
+  #
+  # REVERT: fold `life_leg_cagr_with` back into `life_leg_cagr` (guard on `gate_on_tr_cagr()`); drop
+  # `life_leg_uplift_adds_only_the_dividend_leg`, `remaining_gates_fence_exactly_and_size_the_miss`,
+  # `hold_leg1_reads_the_domicile_only_when_armed`, `eps_yoy_keeps_the_value_at_both_split_edges`, the
+  # two crypto-twin rows in `price_path_gates_are_non_crypto_and_reject_only_past_their_line` and the
+  # added asserts; delete `.github/workflows/mutation-census.yml`.
+  #
   # (#338) ROUND 121: EVERY SHADOW IS CHAINED MONTH TO MONTH. A REOPEN NEEDS BOTH READINGS TO CLEAR.
   #
   # THE ROUND WAS OPENED AS "CAN WE ADD MORE TESTS?" (#337) journalled `carry` with no reader; this round

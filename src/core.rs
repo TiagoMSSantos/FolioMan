@@ -4946,6 +4946,10 @@ mod tests {
         // sub-week clamp: one ordinary −10% DAY reads as 0.9/wk, not 0.9^7 = 0.48 tripping the floor
         let day_d = vec![ymd(2024, 6, 3), ymd(2024, 6, 4), ymd(2024, 6, 5)];
         assert_eq!(splice_trim_start(&day_d, &[100.0, 90.0, 91.0], 2.0), 0);
+        // EXACTLY the bar is not past it, up or down: a one-week x2 and /2 both keep the whole series
+        let wk = vec![ymd(2024, 6, 3), ymd(2024, 6, 10)];
+        assert_eq!(splice_trim_start(&wk, &[10.0, 20.0], 2.0), 0);
+        assert_eq!(splice_trim_start(&wk, &[20.0, 10.0], 2.0), 0);
         // the DOWN half: a ÷100 GBp->GBP step trims exactly like the ×19.6 one
         let dn_d = vec![ymd(2019, 1, 6), ymd(2019, 2, 3), ymd(2019, 3, 3), ymd(2026, 1, 4)];
         assert_eq!(splice_trim_start(&dn_d, &[500.0, 495.0, 4.95, 6.0], 2.0), 2);
@@ -5082,6 +5086,9 @@ mod tests {
         let mut bad = rising[..WIN + 1].to_vec();
         bad[0] = 0.0;
         assert!(rolling_positive_pct(&bad, 5, 252).is_none());
+        // ...a zero at the window's END skips it too, and a flat window is not a positive one
+        assert!(rolling_positive_pct(&[1.0, 0.0], 1, 1).is_none());
+        assert_eq!(rolling_positive_pct(&[1.0, 1.0], 1, 1), Some(0.0));
         // (r16) decade fork: 6y of history HAS 5y windows but NO 10y window — the 10y stat must
         // say no-claim, never silently reuse the 5y answer (the win_years param must bite).
         let six_yrs: Vec<f64> = (1..=6 * 252).map(|i| i as f64).collect();
@@ -5146,6 +5153,9 @@ mod tests {
         assert!((worst_rolling_pct(&closes, 5, 252).unwrap() + 10.0).abs() < 1e-9);
         assert!(worst_rolling_pct(&vec![1.0; WIN], 5, 252).is_none()); // no full window -> no claim
         assert!(worst_rolling_pct(&[], 5, 252).is_none());
+        // a zero close on EITHER end skips its window, never a -100% or an infinite one
+        assert!(worst_rolling_pct(&[0.0, 2.0], 1, 1).is_none());
+        assert!(worst_rolling_pct(&[1.0, 0.0], 1, 1).is_none());
         // (r16) decade fork: a 5y-window-deep series carries NO 10y claim
         assert!(worst_rolling_pct(&closes, 10, 252).is_none());
     }
@@ -5286,6 +5296,11 @@ mod tests {
         assert_eq!(ev_ebitda_yield(Some(50.0), Some(2.0), Some(0.0), 0.0), None); // non-positive price -> None
         assert_eq!(ev_ebitda_yield(Some(50.0), None, Some(0.0), 10.0), None); // no shares -> no market cap -> None
         assert_eq!(ev_ebitda_yield(Some(10.0), Some(1.0), Some(-100.0), 10.0), None); // net cash swamps mkt cap -> EV<=0 -> None
+        // every guard is STRICT: zero EBITDA, zero shares, a zero price, or an EV of exactly 0 is None
+        assert_eq!(ev_ebitda_yield(Some(0.0), Some(1.0), None, 10.0), None);
+        assert_eq!(ev_ebitda_yield(Some(5.0), Some(0.0), Some(10.0), 10.0), None);
+        assert_eq!(ev_ebitda_yield(Some(5.0), Some(1.0), Some(10.0), 0.0), None);
+        assert_eq!(ev_ebitda_yield(Some(5.0), Some(1.0), Some(-10.0), 10.0), None);
         // (PEG probe) peg_yield = earnings_yield(%) · CAGR(%-number) = 1/PEG · 100. peg_yield == 100 ⇔ PEG == 1; > 100 ⇔ PEG < 1 (cheap for growth)
         assert_eq!(peg_yield(Some(5.0), Some(20.0), 100.0), Some(100.0)); // ey 5% · g 20 = PEG (20/20)=1 marker
         assert_eq!(peg_yield(Some(5.0), Some(40.0), 100.0), Some(200.0)); // faster growth same price -> PEG 0.5 -> yield 200 (>100)
@@ -5420,6 +5435,9 @@ mod tests {
         approx(roic_return(Some(1000.0), Some(30.0), Some(25.0), Some(-50.0), Some(10.0), Some(200.0)), 12.0);
         // net CASH deeper than equity reaches the same branch from the other side
         approx(roic_return(Some(1000.0), Some(30.0), Some(25.0), Some(50.0), Some(10.0), Some(-800.0)), 12.0);
+        // invested capital of EXACTLY 0 takes the assets branch, never a division by zero: NI 1 / ROE 50%
+        // -> equity 2, -2 net debt -> IC 0 -> ROA 25% -> assets 4 -> EBIT 1 / 4 = 25.0%
+        approx(roic_return(Some(2.0), Some(50.0), Some(50.0), Some(50.0), Some(25.0), Some(-2.0)), 25.0);
 
         // BANK / INSURER / REIT: no operating margin filed -> no EBIT under ANY denominator -> None,
         // NOT a fabricated 0. 114 of the 509 cached filers land here and keep scoring on `quality`.
@@ -5521,6 +5539,15 @@ mod tests {
         assert_eq!(s[0].gross_margin, None);
         assert_eq!(s[0].eps, None);
         assert_eq!(s[0].revenue, 10.0);
+    }
+
+    /// The one-year split guard's two edges: no prior share base is nothing to judge (keep the value), and
+    /// a share step of EXACTLY 40% is still a buyback or an issue, not a split (`> 40`, not `>= 40`).
+    #[test]
+    fn eps_yoy_keeps_the_value_at_both_split_edges() {
+        assert_eq!(eps_yoy_split_safe(Some(2.0), Some(1.0), Some(100.0), Some(0.0)), Some(100.0));
+        assert_eq!(eps_yoy_split_safe(Some(2.0), Some(1.0), Some(60.0), Some(100.0)), Some(100.0));
+        assert_eq!(eps_yoy_split_safe(Some(2.0), Some(1.0), Some(200.0), Some(100.0)), None, "a 2:1 split is");
     }
 
     /// `eps_growth` spans `yrs` years, so its split guard walks CONSECUTIVE rows instead of testing the
@@ -6137,6 +6164,8 @@ mod tests {
     assert!((pearson(&[1.0, 2.0, 3.0], &[2.0, 4.0, 6.0]).unwrap() - 1.0).abs() < 1e-9);
     assert!((pearson(&[1.0, 2.0, 3.0], &[6.0, 4.0, 2.0]).unwrap() + 1.0).abs() < 1e-9);
     assert!(pearson(&[1.0, 1.0], &[1.0, 1.0]).is_none()); // zero variance
+    assert!((pearson(&[1.0, 2.0], &[1.0, 2.0]).unwrap() - 1.0).abs() < 1e-9); // two points ARE enough
+    assert!(pearson(&[1.0, 2.0, 3.0], &[1.0, 2.0]).is_none()); // length mismatch
     assert!((spearman(&[1.0, 2.0, 3.0, 4.0], &[10.0, 30.0, 1000.0, 99999.0]).unwrap() - 1.0).abs() < 1e-9); // monotone order -> +1, outlier magnitude ignored
     assert!((spearman(&[1.0, 2.0, 3.0], &[3.0, 2.0, 1.0]).unwrap() + 1.0).abs() < 1e-9);
     assert_eq!(ranks(&[10.0, 30.0, 20.0]), vec![1.0, 3.0, 2.0]);
@@ -7910,6 +7939,8 @@ mod tests {
     // proxy that doesn't reach the listing's start -> None (no rebase anchor)
     let late = vec![NaiveDate::from_ymd_opt(2020, 6, 1).unwrap()];
     assert!(splice_history(&ds, &cs, &late, &[99.0]).is_none());
+    // an own first close of 0 is a dead bar, not an anchor: its factor 0 would zero every proxy bar
+    assert!(splice_history(&ds, &[0.0, 20.0, 30.0], &pd, &pc).is_none());
     assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), 0), Some(10.0));
     assert_eq!(asof_avg(&ds, &cs, NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(), 5), None);
     // (H-cov) the JEDG.L case: a ~4-year daily series must NOT report a 5Y leg. The 5Y anchor window is
@@ -8144,6 +8175,7 @@ mod tests {
     assert!(volatility_pct(&[100.0, 101.0, 102.01, 103.0301], 30).unwrap() < 1e-9); // ~0 (float dust)
     assert!(volatility_pct(&[100.0, 110.0, 100.0, 110.0], 30).unwrap() > 0.0);
     assert_eq!(volatility_pct(&[100.0], 30), None); // too few sessions
+    assert!(volatility_pct(&[100.0, 110.0, 99.0], 30).is_some()); // two returns are enough
 
     // (r39) downside deviation: the SAME walk as volatility_pct with only the down-moves counted.
     // A monotonic riser has real vol (its up-steps vary) but zero downside — that gap IS the term's
@@ -8157,6 +8189,7 @@ mod tests {
     assert!((downside_deviation_pct(&dip, 30).unwrap() - (100.0_f64 / 3.0).sqrt()).abs() < 1e-9);
     assert!(downside_deviation_pct(&dip, 30).unwrap() < volatility_pct(&dip, 30).unwrap());
     assert_eq!(downside_deviation_pct(&[100.0], 30), None); // same too-few guard as its twin
+    assert!(downside_deviation_pct(&[100.0, 110.0, 99.0], 30).is_some());
 
     // (#97) the same asset, measured on monthly bars, prints ~sqrt(21) = 4.6x the daily figure — and
     // every knob reading this field is an ABSOLUTE threshold, so that scale is not a wash.
@@ -8343,6 +8376,10 @@ mod tests {
     assert_eq!(trend_streak(&dd, &[12.0, 11.0, 10.0]).0, "↓");
     assert_eq!(trend_streak(&dd, &[10.0, 10.0, 10.0]), ("→", "0s".to_string(), 0));
     assert_eq!(trend_streak(&dd[..1], &[10.0]), ("→", "0s".to_string(), 0));
+    assert_eq!(trend_streak(&dd[..2], &[10.0, 11.0]), ("↑", "1d".to_string(), 1)); // two closes ARE a run
+    // the direction is read off the LAST two closes, whatever sits mid-series
+    let d5: Vec<NaiveDate> = (1..=5).map(|d| NaiveDate::from_ymd_opt(2024, 1, d).unwrap()).collect();
+    assert_eq!(trend_streak(&d5, &[1.0, 2.0, 5.0, 3.0, 4.0]), ("↑", "1d".to_string(), 1));
 
     assert_eq!(extreme_flags(&[1.0, 2.0, 3.0], 0.001), (true, false));
     assert_eq!(extreme_flags(&[3.0, 2.0, 1.0], 0.001), (false, true));

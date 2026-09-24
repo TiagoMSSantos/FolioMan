@@ -135,11 +135,16 @@ fn long_cagr_from(quote: &Quote, tuning: &BuyHeuristic, cum: f64, years: f64) ->
 /// approximation whenever the yield changed across the cut. Named in the receipt, not hidden here.
 /// Either field missing -> today's leg, unchanged: missing data passes.
 fn life_leg_cagr(quote: &Quote) -> Option<f64> {
+    life_leg_cagr_with(quote, crate::config::gate_on_tr_cagr())
+}
+
+/// `life_leg_cagr` with the (#99) knob passed in. The knob is a process-global read once from the merged
+/// config, and both CI regimes leave it off, so the uplift arm never ran under any test until (#339)'s
+/// census listed it as five surviving mutants.
+fn life_leg_cagr_with(quote: &Quote, tr_uplift: bool) -> Option<f64> {
     let base = quote.capped_cagr.or(quote.life_cagr);
     match (base, quote.tr_cagr, quote.life_cagr) {
-        (Some(b), Some(tr), Some(life)) if crate::config::gate_on_tr_cagr() => {
-            Some(b + (tr - life).max(0.0))
-        }
+        (Some(b), Some(tr), Some(life)) if tr_uplift => Some(b + (tr - life).max(0.0)),
         _ => base,
     }
 }
@@ -6042,6 +6047,9 @@ mod tests {
         assert!(core::trend_cagr(&[1.0, 2.0, 4.0, 8.0], 12).unwrap() > 100.0);
         assert_eq!(core::trend_cagr(&[5.0], 1), None); // <2 usable points
         assert_eq!(core::trend_cagr(&[0.0, -1.0], 1), None); // non-positive skipped -> <2 left
+        assert!((core::trend_cagr(&[1.0, 2.0], 1).unwrap() - 100.0).abs() < 1e-6); // two points ARE a line
+        // a zero close is skipped, not read as ln(0): the fit is the one over the remaining three
+        assert!((core::trend_cagr(&[1.0, 0.0, 2.0, 4.0], 1).unwrap() - core::trend_cagr(&[1.0, 2.0, 4.0], 1).unwrap()).abs() < 1e-9);
         // long_leg_fixed: build a quote carrying 20Y/10Y/5Y legs via the buy_heuristic test's builder shape.
         let perf: Vec<Option<(String, f64)>> = HORIZONS
             .iter()
@@ -6460,6 +6468,9 @@ mod tests {
     let mut peg = quote(0.3, &[("1Y", 3.0), ("5Y", 3.0)]); // crypto at its high: drawdown<3% -> nothing on sale
     peg.ticker = "PEPE-EUR".into();
     assert!(buy_score(&peg, &tuning).is_none());
+    let mut on_sale = quote(3.0, &[("1Y", 3.0), ("5Y", 3.0)]); // exactly 3% off the high IS on sale
+    on_sale.ticker = "PEPE-EUR".into();
+    assert!(buy_score(&on_sale, &tuning).is_some());
     // stablecoin gate (3): excluded even with a fat EUR-leg "drawdown" that clears the 3% peg gate
     assert!(is_stablecoin("USDC-EUR") && is_stablecoin("USDT-USD") && !is_stablecoin("BTC-EUR"));
     // (#21) pegged list also covers the dollar token USDF and the gold tokens (metal peg, not growth)
@@ -6549,6 +6560,8 @@ mod tests {
     assert!((stock_risk - 0.15 * 15.0).abs() < 1e-9 && (etf_risk - 0.15 * 9.0).abs() < 1e-9);
     let off = BuyHeuristic { sharpe_cap_etf: 0.0, ..BuyHeuristic::default() };
     assert!((risk_bonus(&line, 15.0, 0.15, 0.0, &off) - 0.15 * 15.0).abs() < 1e-9); // 0 = off
+    line.volatility_pct = Some(0.0); // a zero-vol line has no Sharpe to reward, not an infinite one
+    assert_eq!(risk_bonus(&line, 15.0, 0.15, 0.0, &sc), 0.0);
     // (E) trend-smoothness reward: same quote, straighter climb (higher trend_r2) -> higher score;
     // weight 0 (default) leaves the score untouched by trend_r2.
     let sm = BuyHeuristic { growth_smoothness_weight: 5.0, ..BuyHeuristic::default() };
@@ -6900,6 +6913,8 @@ mod tests {
     assert!(buy_score(&thin, &liq_t).is_none()); // below liquidity floor
     thin.avg_turnover_eur = Some(5_000_000.0);
     assert!(buy_score(&thin, &liq_t).is_some());
+    thin.avg_turnover_eur = Some(1_000_000.0); // exactly on the floor is not below it
+    assert!(buy_score(&thin, &liq_t).is_some());
     thin.avg_turnover_eur = None; // unknown turnover not punished
     assert!(buy_score(&thin, &liq_t).is_some());
     assert!(buy_score(&quote(40.0, &[("1Y", 10.0), ("5Y", 40.0), ("1M", -30.0)]), &tuning).is_none()); // equity knife
@@ -7195,6 +7210,11 @@ mod tests {
     let neutral_pe = quote(5.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 40.0)]);
     assert!(value_factor(&cheap_pe, tuning.ref_pe) > 1.0 && value_factor(&rich_pe, tuning.ref_pe) < 1.0);
     assert_eq!(value_factor(&neutral_pe, tuning.ref_pe), 1.0);
+    // a negative or zero P/E is non-earning, and ref_pe 0 is the tilt off: all neutral, never clamped
+    let pe_of = |pe: f64| { let mut q = neutral_pe.clone(); q.pe_ratio = Some(pe); q };
+    assert_eq!(value_factor(&pe_of(-5.0), tuning.ref_pe), 1.0);
+    assert_eq!(value_factor(&pe_of(0.0), tuning.ref_pe), 1.0);
+    assert_eq!(value_factor(&cheap_pe, 0.0), 1.0);
     assert!(buy_score(&cheap_pe, &tuning).unwrap() > buy_score(&neutral_pe, &tuning).unwrap());
     // (Item 20) the growth-lane P/E-authority dial: weight 1.0 keeps the raw multiplier, 0.0 neutralises it.
     let raw = value_factor(&rich_pe, tuning.ref_pe); // < 1.0
@@ -7385,6 +7405,10 @@ mod tests {
     // each half independently disable-able — euphoria >= 1.0 kills the damp, capitulation <= 0 the boost.
     assert_eq!(nupl_factor(Some(0.9), &BuyHeuristic { nupl_euphoria: 1.0, ..tuning.clone() }), 1.0);
     assert_eq!(nupl_factor(Some(0.1), &BuyHeuristic { nupl_capitulation: 0.0, ..tuning.clone() }), 1.0);
+    assert_eq!(nupl_factor(Some(-0.2), &BuyHeuristic { nupl_capitulation: 0.0, ..tuning.clone() }), 1.0); // off below 0 too
+    assert_eq!(nupl_factor(Some(1.5), &BuyHeuristic { nupl_euphoria: 1.0, ..tuning.clone() }), 1.0); // off is off at any reading
+    // the boost is LINEAR in the depth below the band: 0.1 is 60% of the way from 0.25 down to 0
+    assert!((nupl_factor(Some(0.1), &tuning) - (1.0 + 0.6 * (tuning.nupl_boost_ceiling - 1.0))).abs() < 1e-9);
     // (Item 17) crypto_adjust: equities pass through untouched (cfactor ignored); crypto is scaled by the
     // whole-market cfactor (btc_1y None -> btc_relative no-op, so the result isolates the NUPL scale). This
     // is what `size` must apply too, or its crypto sizes diverge from the screen tables.
@@ -7411,6 +7435,11 @@ mod tests {
     assert!(core::trend_r2(&[1.0, 2.0, 4.0, 8.0, 16.0]) > 0.999); // perfect exponential -> R²≈1
     assert!(core::trend_r2(&[1.0, 100.0, 2.0, 200.0, 3.0]) < 0.5); // zigzag -> lumpy
     assert_eq!(core::trend_r2(&[5.0]), 0.0); // too short
+    assert!((core::trend_r2(&[1.0, 2.0]) - 1.0).abs() < 1e-12); // two points fit exactly
+    assert_eq!(core::trend_r2(&[1.0, 1.0, 1.0]), 1.0); // flat log-price: zero variance is perfect, not 0/0
+    let e = std::f64::consts::E;
+    assert!((core::trend_r2(&[1.0, e, 1.0, e]) - 0.2).abs() < 1e-12); // sawtooth: sxy^2/(sxx*syy) = 1/5
+    assert!((core::trend_r2(&[1.0, 0.0, 2.0, 4.0]) - core::trend_r2(&[1.0, 2.0, 4.0])).abs() < 1e-12); // zero close skipped
     // (C) max drawdown: worst peak-to-trough
     assert!((core::max_drawdown_pct(&[100.0, 50.0, 75.0]) - 50.0).abs() < 1e-9);
     assert_eq!(core::max_drawdown_pct(&[1.0, 2.0, 3.0]), 0.0); // monotone up -> never down
@@ -7600,6 +7629,11 @@ mod tests {
     hi_roe.roe = Some(-50.0); // loss-making -> no quality bonus
     assert_eq!(quality_reward(&hi_roe, &tuning), 0.0);
     assert_eq!(quality_reward(&quote(20.0, &[("1Y", 10.0)]), &tuning), 0.0); // roe None -> 0
+    // ...and the score ADDS it: the same name with a 30% ROE outranks its no-ROE twin
+    let no_roe = quote(20.0, &[("1Y", 10.0), ("5Y", 40.0)]);
+    let mut with_roe = no_roe.clone();
+    with_roe.roe = Some(30.0);
+    assert!(buy_score(&with_roe, &tuning).unwrap() > buy_score(&no_roe, &tuning).unwrap());
 
     // EU-buyability gate: crypto majors + UCITS ETFs + US/Canada/EU-listed stocks pass; a US-domiciled
     // ETF (no PRIIPs KID) and an Asian-only listing are dropped — EU retail can't buy them.
@@ -8883,6 +8917,23 @@ mod tests {
         let no_world: Vec<Quote> =
             quotes.iter().filter(|q| core::hold_breadth_tier(&q.name) != 0).cloned().collect();
         print_hold_core(&no_world, &hold_core_list(&no_world), &HashSet::new(), &Owned::default());
+    }
+
+    /// (#339) The (#102) domicile arm of the UCITS leg, the one leg that reads a process-global knob. So
+    /// this test is REGIME-AWARE rather than regime-independent: an EU domicile admits a token-free name
+    /// only when the knob is armed (ci-settings ships it on, the code default is off), and the two
+    /// domicile-agnostic rows hold under both. A one-letter domicile must be refused, never sliced.
+    #[test]
+    fn hold_leg1_reads_the_domicile_only_when_armed() {
+        let leg1 = |dom: &str| {
+            let mut q = core_etf("VWRD.DE", "Vanguard FTSE All-World Index Fund", 5e9, 0.22); // no UCITS token
+            q.domicile = Some(dom.to_string());
+            core::hold_miss_but_breadth(&q, false, false).map(|(leg, _)| leg)
+        };
+        let armed = crate::config::hold_ucits_or_domicile();
+        assert_eq!(leg1("IE") != Some(1), armed, "an IE domicile passes leg 1 exactly when the knob is armed");
+        assert_eq!(leg1("US"), Some(1), "a non-EU domicile never stands in for the token");
+        assert_eq!(leg1("I"), Some(1), "a one-letter domicile is refused, never sliced");
     }
 
     /// (#199) `hold_funnel` buckets EVERY EU-buyable ETF into the FIRST admission leg that refuses
@@ -10253,6 +10304,7 @@ mod tests {
         flat.perf = legs(&[("1M", 2.0), ("1Y", 20.0), ("5Y", 200.0), ("8Y", 0.0), ("20Y", 20000.0)]);
         assert_eq!(peg_cagr_pct(&flat, &pinned), Some(0.0), "fixture must actually pin a zero CAGR");
         assert_eq!(peg_repriced(&flat, &base, &pinned, served), None, "a zero CAGR is not a denominator");
+        assert_eq!(peg_repriced(&flat, &pinned, &base, served), None, "nor a numerator's base");
     }
 
     /// (#54) `pin_dropped` must name exactly the cohort the CAGR pin costs, and nobody else. The pin
@@ -11121,6 +11173,9 @@ mod tests {
             ("the crypto twin still rejects that coin", cvol_k, 2.5, coin(vol(9.0)),
                 Some(("9.0%/day swing (cap 2.5%)", false))),
             ("the crypto twin ignores the equity", cvol_k, 2.5, vol(9.0), None),
+            ("the crypto twin spares a coin exactly on it", cvol_k, 2.5, coin(vol(2.5)), None),
+            ("the crypto twin calls a coin just past it close", cvol_k, 2.5, coin(vol(2.8)),
+                Some(("2.8%/day swing (cap 2.5%)", true))),
             // SPIKE -- ceiling on the single largest bar, which no averaging term can see
             ("spike off lets a +40% day through", spike_k, 0.0, spike(40.0), None),
             ("spike spares a name exactly on it", spike_k, 20.0, spike(20.0), None),
@@ -11144,6 +11199,158 @@ mod tests {
                 .find(|(g, ..)| matches!(*g, "volatile" | "spike"))
                 .map(|(_, msg, close)| (msg.as_str(), *close));
             assert_eq!(got, *want, "{label}: wrong price-path verdict (all failures: {fails:?})");
+        }
+    }
+
+    /// (#339) The (#99) dividend uplift. Both CI configs leave `growth_gate_on_tr_cagr` off and the flag is
+    /// read once per process, so this arm never ran under any test. Only a POSITIVE payout gap is added, on
+    /// top of whichever window the `or` picked.
+    #[test]
+    fn life_leg_uplift_adds_only_the_dividend_leg() {
+        let mut q = gate_fixture();
+        q.life_cagr = Some(10.0);
+        q.tr_cagr = Some(13.0);
+        assert_eq!(life_leg_cagr_with(&q, false), Some(10.0), "knob off: the price leg alone");
+        assert_eq!(life_leg_cagr_with(&q, true), Some(13.0), "knob on: plus the 3pp dividend leg");
+        q.capped_cagr = Some(20.0);
+        assert_eq!(life_leg_cagr_with(&q, true), Some(23.0), "the uplift rides the capped window");
+        q.tr_cagr = Some(9.0);
+        assert_eq!(life_leg_cagr_with(&q, true), Some(20.0), "a TR below price never docks");
+        q.tr_cagr = None;
+        assert_eq!(life_leg_cagr_with(&q, true), Some(20.0), "missing TR passes unchanged");
+    }
+
+    /// (#339) Every growth gate the mutation census found graded on one side of its line only. Three row
+    /// kinds, each killing its own mutant family:
+    /// - EXACTLY on the line clears (a `<`/`>` turned `<=`/`>=` rejects it, and the mirror check sees
+    ///   `score_parts` disagree);
+    /// - just past it is `close`, well past it is not (the near-miss margin's operator and sign);
+    /// - the knob at 0 stays off where the field can go negative (a `> 0.0` guard turned `>= 0.0` arms it).
+    /// A clearing row must clear EVERY gate, not only its own.
+    #[test]
+    fn remaining_gates_fence_exactly_and_size_the_miss() {
+        use crate::core::FundFactors;
+        let d = BuyHeuristic::default();
+        let with = |f: fn(&mut Quote)| { let mut q = gate_fixture(); f(&mut q); q };
+        let perf = |p: &[(&str, f64)]| { let mut q = gate_fixture(); q.perf = legs(p); q };
+        let fund = |f: FundFactors| { let mut q = gate_fixture(); q.fund = Some(f); q };
+        let coin = |m: f64| {
+            let mut q = gate_fixture();
+            q.ticker = "BTC-EUR".into();
+            q.instrument_type = "CRYPTOCURRENCY".into();
+            q.mvrv = Some(m);
+            q
+        };
+        let etf = |t: &str, a: f64| {
+            let mut q = gate_fixture();
+            q.ticker = t.into();
+            q.instrument_type = "ETF".into();
+            q.aum_eur = Some(a);
+            q
+        };
+        let r8 = |r: f64| {
+            let mut q = gate_fixture();
+            q.stats_8y = Some(core::Stats8 { range_pct: r, trend_r2: 0.9, max_drawdown_pct: 30.0, underwater_yrs: None });
+            q
+        };
+
+        type Set = fn(&mut BuyHeuristic, f64);
+        let keep: Set = |_, _| {};
+        let age_k: Set = |t, v| t.growth_min_age_years = v;
+        let aum_k: Set = |t, v| t.growth_min_aum_etf = v;
+        let r8_k: Set = |t, v| t.growth_min_range_pct_8y = v;
+        let ma_k: Set = |t, v| t.growth_max_above_ma = v;
+        let life_k: Set = |t, v| t.growth_require_lifetime_uptrend = v > 0.0;
+        let mvrv_k: Set = |t, v| t.crypto_max_mvrv = v;
+        let peg_k: Set = |t, v| t.growth_max_peg = v;
+        let nm_k: Set = |t, v| t.growth_min_net_margin = v;
+        let sw_k: Set = |t, v| t.growth_max_margin_swing = v;
+        let dd_k: Set = |t, v| t.growth_maxdd_cap = v;
+
+        // (label, gate tag, knob, knob value, quote, expected verdict) -- None clears, Some((reason, close)) rejects
+        let cases: &[(&str, &str, Set, f64, Quote, Option<(&str, bool)>)] = &[
+            // AGE, AUM, 8Y RANGE -- fields that never go negative, so the exact-line row is the only fence test
+            ("young spares a name exactly its age", "young", age_k, 5.0, with(|q| q.age_years = Some(5.0)), None),
+            ("aum spares a fund exactly on it", "aum", aum_k, 1e8, etf("FUND.DE", 1e8), None),
+            ("aum ignores a coin filed as an ETF", "aum", aum_k, 1e8, etf("XYZ-EUR", 5e6), None),
+            ("range8y spares a name exactly on it", "range8y", r8_k, 80.0, r8(80.0), None),
+            ("range8y calls 5pp short close", "range8y", r8_k, 80.0, r8(75.0),
+                Some(("75% in 8y range (need ≥80%)", true))),
+            ("range8y stops calling 30pp short close", "range8y", r8_k, 80.0, r8(50.0),
+                Some(("50% in 8y range (need ≥80%)", false))),
+            // PERF LEGS -- the shipped floors: 1Y > 0, 1M > -15, 5Y > 0
+            ("1Y calls a small loss close", "1Y+", keep, 0.0, perf(&[("1M", 2.0), ("1Y", -5.0), ("5Y", 200.0)]),
+                Some(("1Y -5.0% (need >0.0%)", true))),
+            ("1Y stops at its 10pp margin", "1Y+", keep, 0.0, perf(&[("1M", 2.0), ("1Y", -10.0), ("5Y", 200.0)]),
+                Some(("1Y -10.0% (need >0.0%)", false))),
+            ("the knife calls 3pp past it close", "1M-knife", keep, 0.0, perf(&[("1M", -18.0), ("1Y", 20.0), ("5Y", 200.0)]),
+                Some(("1M -18.0% (floor -15.0%)", true))),
+            ("the knife stops at its 8pp margin", "1M-knife", keep, 0.0, perf(&[("1M", -23.0), ("1Y", 20.0), ("5Y", 200.0)]),
+                Some(("1M -23.0% (floor -15.0%)", false))),
+            ("5Y calls a small loss close", "5Y+", keep, 0.0, perf(&[("1M", 2.0), ("1Y", 20.0), ("5Y", -5.0)]),
+                Some(("5Y -5.0% (need >0%)", true))),
+            ("5Y stops at its 15pp margin", "5Y+", keep, 0.0, perf(&[("1M", 2.0), ("1Y", 20.0), ("5Y", -15.0)]),
+                Some(("5Y -15.0% (need >0%)", false))),
+            ("a 0.5% flat bar is not an artifact", "artifact", keep, 0.0,
+                perf(&[("1D", 0.5), ("1W", 0.5), ("1M", 0.5), ("1Y", 20.0), ("5Y", 200.0)]), None),
+            // STRETCH
+            ("stretch spares a name exactly on it", "stretch", ma_k, 150.0, with(|q| q.above_ma_pct = 150.0), None),
+            ("stretch calls 10pp over close", "stretch", ma_k, 150.0, with(|q| q.above_ma_pct = 160.0),
+                Some(("+160% above 200wk SMA (ceiling +150%)", true))),
+            ("stretch stops at its 25pp margin", "stretch", ma_k, 150.0, with(|q| q.above_ma_pct = 200.0),
+                Some(("+200% above 200wk SMA (ceiling +150%)", false))),
+            // LIFETIME -- the trend leg first, the listing-to-date leg only when the trend is not negative
+            ("lifetime off ignores a falling trend", "lifetime", life_k, 0.0, with(|q| q.trend_cagr = Some(-5.0)), None),
+            ("lifetime calls a slight trend decline close", "lifetime", life_k, 1.0, with(|q| q.trend_cagr = Some(-1.0)),
+                Some(("-1.0%/yr whole-life trend (need >0)", true))),
+            ("lifetime stops at its 3pp trend margin", "lifetime", life_k, 1.0, with(|q| q.trend_cagr = Some(-3.0)),
+                Some(("-3.0%/yr whole-life trend (need >0)", false))),
+            ("lifetime calls a slight listing loss close", "lifetime", life_k, 1.0, with(|q| q.life_cagr = Some(-1.0)),
+                Some(("-1.0%/yr since listing (need >0)", true))),
+            ("lifetime stops at its 3pp listing margin", "lifetime", life_k, 1.0, with(|q| q.life_cagr = Some(-3.0)),
+                Some(("-3.0%/yr since listing (need >0)", false))),
+            // MVRV -- a coin-only ceiling
+            ("mvrv off lets any coin through", "mvrv", mvrv_k, 0.0, coin(1.0), None),
+            ("mvrv spares a coin exactly on it", "mvrv", mvrv_k, 1.6, coin(1.6), None),
+            ("mvrv ignores an equity's stray reading", "mvrv", mvrv_k, 1.6, with(|q| q.mvrv = Some(5.0)), None),
+            // PEG
+            ("peg off ignores a loss-maker", "peg", peg_k, 0.0, fund(FundFactors { eps_ttm: Some(-1.0), ..Default::default() }), None),
+            ("peg spares a name exactly on it", "peg", peg_k, 2.0, fund(FundFactors { peg_yield: Some(50.0), ..Default::default() }), None),
+            // NET MARGIN
+            ("margin off ignores a loss", "margin", nm_k, 0.0, fund(FundFactors { net_margin: Some(-5.0), ..Default::default() }), None),
+            ("margin spares a name exactly on it", "margin", nm_k, 10.0, fund(FundFactors { net_margin: Some(10.0), ..Default::default() }), None),
+            ("margin calls 1pp short close", "margin", nm_k, 10.0, fund(FundFactors { net_margin: Some(9.0), ..Default::default() }),
+                Some(("9.0% net margin (floor 10.0%)", true))),
+            ("margin stops at its 2pp margin", "margin", nm_k, 10.0, fund(FundFactors { net_margin: Some(5.0), ..Default::default() }),
+                Some(("5.0% net margin (floor 10.0%)", false))),
+            // MARGIN SWING -- the field is the NEGATIVE std, the reason prints it positive
+            ("swing off ignores a cyclical", "swing", sw_k, 0.0, fund(FundFactors { margin_stability: Some(-3.0), ..Default::default() }), None),
+            ("swing spares a name exactly on it", "swing", sw_k, 5.0, fund(FundFactors { margin_stability: Some(-5.0), ..Default::default() }), None),
+            ("swing calls 1pp over close", "swing", sw_k, 5.0, fund(FundFactors { margin_stability: Some(-6.0), ..Default::default() }),
+                Some(("6.0pp net-margin swing (ceiling 5.0pp)", true))),
+            ("swing stops at its 2pp margin", "swing", sw_k, 5.0, fund(FundFactors { margin_stability: Some(-8.0), ..Default::default() }),
+                Some(("8.0pp net-margin swing (ceiling 5.0pp)", false))),
+            // MAX DRAWDOWN
+            ("maxdd spares a name exactly on it", "maxdd", dd_k, 50.0, with(|q| q.max_drawdown_pct = 50.0), None),
+            ("maxdd calls 2pp over close", "maxdd", dd_k, 50.0, with(|q| q.max_drawdown_pct = 52.0),
+                Some(("-52% worst drawdown (cap -50%)", true))),
+            ("maxdd stops at its 5pp margin", "maxdd", dd_k, 50.0, with(|q| q.max_drawdown_pct = 60.0),
+                Some(("-60% worst drawdown (cap -50%)", false))),
+        ];
+
+        for (label, tag, set, v, q, want) in cases {
+            let mut t = d.clone();
+            set(&mut t, *v);
+            let fails = gate_failures(q, &t).unwrap_or_else(|| panic!("{label}: refused, expected a verdict"));
+            assert_eq!(fails.is_empty(), growth_score(q, &t).is_some(),
+                "{label}: gate_failures and score_parts disagree");
+            if want.is_none() {
+                assert!(fails.is_empty(), "{label}: a clearing row must clear every gate, got {fails:?}");
+            }
+            let got = fails.iter()
+                .find(|(g, ..)| *g == *tag)
+                .map(|(_, msg, close)| (msg.as_str(), *close));
+            assert_eq!(got, *want, "{label}: wrong verdict (all failures: {fails:?})");
         }
     }
 
@@ -11533,6 +11740,9 @@ mod tests {
         let mut falling = dipped.clone();
         falling.perf = legs(&[("1D", -0.5), ("1W", -1.0), ("1M", -5.0), ("1Y", 5.0), ("5Y", 60.0), ("8Y", 100.0), ("10Y", 200.0)]);
         assert_eq!(momentum_factor(&falling, 1.5, 0.5), 0.5, "still falling -> the knife dock");
+        let mut flat_week = dipped.clone();
+        flat_week.perf = legs(&[("1D", 0.0), ("1W", 0.0), ("1M", -5.0), ("1Y", 5.0), ("5Y", 60.0), ("8Y", 100.0), ("10Y", 200.0)]);
+        assert_eq!(momentum_factor(&flat_week, 1.5, 0.5), 0.5, "an unchanged week and day are not green");
         assert!(s(&dipped, &BuyHeuristic { momentum_bounce: 1.5, ..d.clone() }) > s(&dipped, &d),
             "the bounce knob must reach the score (1.0 = neutral, as shipped)");
         assert!(s(&falling, &BuyHeuristic { momentum_knife: 0.5, ..d.clone() }) < s(&falling, &d),
