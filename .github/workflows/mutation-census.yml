@@ -9,9 +9,13 @@ name: Mutation census
 # MANUAL ONLY, on purpose. ci.yml keeps "NO `schedule:`" and this keeps it too; a census is run when a
 # round sets out to kill its survivors, then run again on the same slice to prove the kills.
 #
-# COST, from ci.yml's BUDGET block (runner-measured): ~166s build per mutant, two workers per tree, so
-# ~83s of wall clock each, plus ~556s cold start. The default slice (the buy decision path in picks.rs
-# and the core.rs metrics it reads) lists 1,647 mutants: ~103 per shard, ~2.4h per runner.
+# COST. (#345) The census compiles at opt-level 0, not the profile's 2, because at 2 the compiler WAS
+# the census: run 36149584184 (2,367 mutants, 1h54m) spent 87s building each mutant against 3.7s
+# testing it — 96% build (shard 8: 12,939s of build, 524s of test). CI's unit-tests compiles the whole
+# crate at opt 0 in ~21s. A verdict does not depend on the opt-level: `[profile.mutants]` inherits dev,
+# so debug-assertions and overflow-checks are on at both, and Rust permits no float reassociation.
+# Tests pay for it instead (the fixture runs ~25s at opt 0), but only on the mutants the lib suite
+# leaves alive.
 #
 # (#340) `exclude` is a -E filter on the same names. backtest.rs lists 18,801 mutants, and 16,772 of
 # them are return-value swaps of five fns returning wide tuples (proxy_books, book_stats,
@@ -40,6 +44,15 @@ concurrency:
 permissions:
   contents: read
 
+# (#345) Copied from ci.yml's top-level env and they MUST stay identical. Swatinem/rust-cache hashes
+# every CARGO_* variable into its key, so without these two the census computed a key of its own, found
+# "No cache found" on every shard, and re-downloaded every crate with none of the retry guards ci.yml
+# added for exactly that download. The target/ half of the cache still buys nothing here (see
+# `--copy-target=false` in ci.yml); the registry half is what this restores.
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   census:
     runs-on: ubuntu-latest
@@ -64,12 +77,18 @@ jobs:
           # Same regime as the diff gate (see its comments): the pinned fixture, and incremental on.
           FOLIOMAN_CONFIG: tests/ci-settings.yaml
           CARGO_INCREMENTAL: 1
+          # (#345) Cargo's own env override of `[profile.mutants]`: Cargo.toml — and the local `cargo t`
+          # that shares the profile — stays at opt-level 2. See COST at the top.
+          CARGO_PROFILE_MUTANTS_OPT_LEVEL: 0
           FILES: ${{ inputs.files }}
           RE: ${{ inputs.regex }}
           EX: ${{ inputs.exclude }}
           SHARD: ${{ matrix.shard }}
         # The baseline stays ON, unlike the gate's `--baseline skip`: no unit-tests job runs before this
         # one, and a suite that is red here would grade every mutant CAUGHT.
+        #
+        # `--timeout 90`, up from 20 at opt-level 2: at 0 the fixture alone runs ~25s on a runner
+        # (CI's integration-tests), and two workers share its four cores.
         run: |
           set -uo pipefail
           read -ra names <<< "${FILES}"
@@ -78,7 +97,7 @@ jobs:
           ex=(); [ -n "${EX}" ] && ex=(-E "${EX}")
           timeout --signal=INT --kill-after=60s 330m \
             cargo mutants "${files[@]}" -F "${RE}" "${ex[@]}" --shard "${SHARD}/16" --sharding round-robin \
-              -j 2 --copy-target=false --timeout 20 --profile mutants \
+              -j 2 --copy-target=false --timeout 90 --profile mutants \
               -- --lib --test backtest_fixture || echo "cargo mutants exit $? (the files are the verdict)"
       - uses: actions/upload-artifact@v7
         if: always()
