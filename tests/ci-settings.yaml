@@ -6539,6 +6539,8 @@ buy_heuristic:
   #
   # PROOF RULE: a census re-run on this commit with the same three inputs must list 1007 in scope (the
   # skipped fns' 37 mutants drop out: 25 missed, 12 caught) and exactly the 1 equivalent as missed.
+  # Re-run 36135443497 on 9e6fa0e (53m): 1007 in scope, 945 caught, 61 unviable, 1 missed = exactly
+  # 445:33 `sh_delta`; no new survivor. Proof held.
   #
   # WHAT SHIPS. Tests, and 16 skip attributes. No knob, no ranking change, no golden moved.
   #
