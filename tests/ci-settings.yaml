@@ -6527,8 +6527,8 @@ buy_heuristic:
   #
   # REVERT: drop the three tests; fold `pin_at` back into `pin`.
   #
-  # (#340) ROUND 123: A MUTATION CENSUS OF THE BACKTEST, TRACK AND SIM. 81 SURVIVORS KILLED, 8
-  # EQUIVALENT, 115 KNOWN GAPS IN PRINT-ONLY REPORTS.
+  # (#340) ROUND 123: A MUTATION CENSUS OF THE BACKTEST, TRACK AND SIM. 80 SURVIVORS KILLED, 8
+  # EQUIVALENT, 116 KNOWN GAPS IN PRINT-ONLY REPORTS.
   #
   # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" A SIXTH TIME.
   # Asked: all four test kinds; census everything in the three files but the tuple fan-out; where the
@@ -6553,7 +6553,7 @@ buy_heuristic:
   # knob-gated diagnostic). EQUIVALENT: no input tells it apart. Gaps and equivalents are listed here
   # only: no skip attributes, no mutants.toml.
   #
-  # - 81 KILLED. track.rs 12, sim.rs 2: the journal's append/read shell (same-day rerun skipped, corrupt
+  # - 80 KILLED. track.rs 11, sim.rs 2: the journal's append/read shell (same-day rerun skipped, corrupt
   #   lines counted), a split factor <= 0, a one-day grade window, a zero then-price, a tie is not a win,
   #   an over-cap crypto lot, a zero bench. backtest.rs 67:
   #   `read_verdict` (the lib-test scratch root makes fs shells testable), `bench_leg_cagr` 7 (+21%
@@ -6578,15 +6578,19 @@ buy_heuristic:
   #   5064:41 bootstrap `next() % len` -> `+`: `(next + len + o) % len` is `(next + o) % len`.
   #   5095:20 bootstrap `edges.len() < iters / 2` -> `<=`: documented unpinned in the source.
   #   5200:10 recall_capture `w_n > 0` -> `>=`: w_n = 0 forces w_mult = 0, and the second leg refuses.
-  # - 115 GAPS, print-only, by fn: report_two_style_book 44, report_lane 19 (band label, outlier tag,
+  # - 116 GAPS, print-only, by fn: report_two_style_book 44, report_lane 19 (band label, outlier tag,
   #   the `print_base_rates` arm, `< 4` guards; none touch the gated edge arithmetic),
   #   report_fund_lane 17, report_vs_benchmark 9, tune_growth 8 (its SHIP/NOT verdict is stdout only),
   #   hold_period_sweep 4, report_corr_cap 3, report_entry_state 2 (3790/3791, the printed class
   #   closures), mono_str 2, gate_sweep 2, weight_curve 2, annualized_edge_tag 1 (462:22),
-  #   emit_probe 1, sector_books 1 (feeds only `report_sector_books`).
+  #   emit_probe 1, sector_books 1 (feeds only `report_sector_books`), track.rs append_snapshot 1
+#   (149:8, the `!` before `matches!`: it only picks whether to eprintln the warning; counted a kill
+#   until the re-run below showed it alive).
   #
   # PROOF RULE, as in (#339): a census re-run on this commit with the same three inputs must list
-  # exactly the 8 equivalents and 115 gaps as missed, matched by fn + operator, not line.
+  # exactly the 8 equivalents and 116 gaps as missed, matched by fn + operator, not line. Re-run
+# 36100539917 on 135d14d (2h11m): 3055 graded, 2781 caught, 124 missed = exactly the 8 equivalents
+# + 116 gaps, no new survivor; proof held.
   #
   # WHAT SHIPS. Tests, plus one lifted helper (`priced_at_both`, behaviour unchanged). No knob, no
   # ranking change, no golden moved.
