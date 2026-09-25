@@ -35,7 +35,15 @@ unsafe_code = "forbid"
 
 [profile.release]
 opt-level = 3
-lto = true
+# (#349) "off", was `true` (fat). Fat LTO was the biggest line in CI's slowest job: backtest-gate spent
+# 101s compiling this crate (lib + bin + network harness, each fat-linked) ahead of a ~150s run, and
+# Pages' Build step was 110s. Crate-only compile measured locally: fat 158s, thin 108s, off 59s. The
+# price is ~0.5s per backtest horizon at runtime (20y walk 4.5s -> 5.1s). It moves no result: fat and
+# off binaries on one universe snapshot printed byte-identical 20/12/8y reports (30011, 29504 and 29855
+# bytes; 2349 and 342 windows scored at 20y and 8y). LTO widens what LLVM may inline across crates,
+# never what it may reorder: no fast-math flags either way (see .cargo/config.toml). Not `false`, which
+# is thin-local LTO, a third variant nobody measured.
+lto = "off"
 # (#68) On, because the two profiles disagreed about integer overflow and only the wrong one was
 # tested. `[profile.mutants]` inherits `dev`, so overflow-checks were already on under `cargo t` —
 # while this profile, which builds both the daily screen and CI's `backtest-gate`, set only the two

@@ -282,7 +282,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # same warm cache as the other jobs
+          # (#349) its OWN key, not folioman-ci. This is the only job that builds `--release`, and a
+          # shared key is written by whichever job finishes FIRST after a Cargo.toml/Cargo.lock change —
+          # while this one finishes last. As sole writer, what it restores is always its own release deps.
+          shared-key: folioman-gate
       # (#347) Pages' metadata caches, READ-ONLY (`restore`, never saved from here, so Pages stays their
       # only writer). The path list MUST stay identical to pages.yml's "Restore fetch caches": the
       # cache version hashes it, and any difference silently misses. 2.75 MiB. Cold, the universe
