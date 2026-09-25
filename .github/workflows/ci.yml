@@ -283,6 +283,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: folioman-ci   # same warm cache as the other jobs
+      # (#347) Pages' metadata caches, READ-ONLY (`restore`, never saved from here, so Pages stays their
+      # only writer). The path list MUST stay identical to pages.yml's "Restore fetch caches": the
+      # cache version hashes it, and any difference silently misses. 2.75 MiB. Cold, the universe
+      # fetch was ~167s and resolved ~170 fewer names than the warm ~80s one that Pages ships.
+      # `.long_history_cache.json` stays live, on purpose.
+      - name: Restore Pages' fetch caches
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            .sec_cache
+            .isin_cache.json
+            .venue_isins.json
+            .regulatory_isins.json
+            .fund_facts_cache.json
+            .holdings_cache.json
+            .eu_listing_cache.json
+          key: folioman-fetch-${{ github.run_id }}
+          restore-keys: folioman-fetch-
       - name: walk-forward edge gate (skip-on-throttle, fail-on-collapse)
         # no `--ignored`: with #[ignore] gone that filter selects NOTHING and the job becomes a silent
         # no-op — the same trap that killed network-smoke.

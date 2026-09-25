@@ -372,6 +372,8 @@ fn backtest_edge_holds() {
             return;
         }
     }
+    // (#347) the universe snapshot the three horizons share; see its use below `grade_horizon`.
+    const UNIVERSE: &str = concat!(env!("CARGO_TARGET_TMPDIR"), "/backtest-gate-universe.json");
     // pull the first signed number that follows `marker` in `hay` (e.g. "edge +117.1" -> 117.1).
     fn num_after(hay: &str, marker: &str) -> Option<f64> {
         let rest = &hay[hay.find(marker)? + marker.len()..];
@@ -395,6 +397,7 @@ fn backtest_edge_holds() {
     fn grade_horizon(years: i64, forced: bool) -> bool {
         let out = match std::process::Command::new(env!("CARGO_BIN_EXE_folioman"))
             .args(["backtest", &years.to_string(), "universe"])
+            .env("FOLIOMAN_UNIVERSE_SNAPSHOT", UNIVERSE)
             // pin the child to the committed fixture. Without it a local run scores with the gitignored
             // config/settings.yaml overlay and the gate grades a PER-MACHINE tuning — green on your knobs
             // says nothing about what ships. CI already exports this; setting it here makes the two agree.
@@ -624,7 +627,22 @@ fn backtest_edge_holds() {
     // The first run pays the wide fetch, the other two read it off disk (~127s each). Three horizons
     // cost about +4 min, not 3x. Do NOT "optimize" this back to a single run, and do NOT add a 5y rung:
     // below 8 the run switches to daily cadence and pays a SECOND full fetch.
-    let graded = [20, 12, 8].into_iter().filter(|y| grade_horizon(*y, forced)).count();
+    //
+    // (#347) The universe LIST was the part that was not free: every child fetched it live (~80s warm,
+    // ~167s cold) to walk it for ~5s. `UNIVERSE` makes the first horizon's fetch the other two's list.
+    // Removed up front so no earlier run's list is ever graded, and after any skipped horizon so a
+    // throttled fetch is refetched by the next horizon instead of inherited by it.
+    let _ = std::fs::remove_file(UNIVERSE);
+    let graded = [20, 12, 8]
+        .into_iter()
+        .filter(|y| {
+            let ok = grade_horizon(*y, forced);
+            if !ok {
+                let _ = std::fs::remove_file(UNIVERSE);
+            }
+            ok
+        })
+        .count();
     if graded == 0 {
         // (#57) CI reaches here only if all three horizons skipped, and under the force flag every
         // environmental skip has already been ruled out except a genuine outage. Printing a note and

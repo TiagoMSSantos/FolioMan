@@ -1063,8 +1063,35 @@ pub async fn run(args: Vec<String>) {
         // of 2026-08-18 — the last wide run before the swap — journals 8y at top-3 excess +6.4 pts/yr
         // over 53 windows with both OOS halves positive. That is the sample those receipts describe.
         // `the_backtest_never_reads_the_venue_knob` is what keeps this argument a literal.
-        let universe =
-            fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, false, &[]).await;
+        //
+        // (#347) FOLIOMAN_UNIVERSE_SNAPSHOT names a file: missing -> fetch live and write it there;
+        // present -> read it and skip the fetch. `backtest_edge_holds` sets it so its three horizons
+        // grade ONE universe. The list is a live fetch (~80s warm, ~167s cold) and the walk behind it is
+        // ~5s, so three fetches were most of the gate. Only the returned triple rides along: the BF/YH
+        // statics this fetch also fills are read by `quote_one` and the SEC fund/insider paths, never by
+        // this walk. Measured on ci-settings, fetch arm vs snapshot arm of the same list: 12y and 8y
+        // stdout byte-identical (29504 and 29855 bytes, 5338 names), 83s -> 3s and 78s -> 4s. An empty
+        // or unreadable snapshot falls back to the live fetch.
+        let snapshot = std::env::var_os("FOLIOMAN_UNIVERSE_SNAPSHOT");
+        let saved = snapshot
+            .as_ref()
+            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|b| serde_json::from_slice::<(Vec<String>, HashSet<String>, HashMap<String, String>)>(&b).ok())
+            .filter(|u| !u.0.is_empty());
+        let universe = match saved {
+            Some(u) => {
+                eprintln!("backtest: universe read from FOLIOMAN_UNIVERSE_SNAPSHOT ({} names), not fetched", u.0.len());
+                u
+            }
+            None => {
+                let u = fetch::fetch_universe(&client, &settings.urls, settings.universe_size, settings.universe_prefer_eur, false, &[])
+                    .await;
+                if let (Some(p), Ok(b)) = (&snapshot, serde_json::to_vec(&u)) {
+                    let _ = std::fs::write(p, b);
+                }
+                u
+            }
+        };
         (tickers, etf_set, sector_of) = universe;
     } else if tickers.is_empty() {
         tickers = settings.tickers.clone();
