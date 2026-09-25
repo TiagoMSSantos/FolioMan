@@ -569,6 +569,11 @@ jobs:
   # carry no useful logs but clutter the Actions tab, and `--status completed` does NOT match them —
   # a cancelled run's status is `cancelled`, not `completed`. So sweep them in their own pass. This
   # runs on every main push, so a burst of superseded pushes is cleared on the next run to finish.
+  #
+  # (#346) The cancelled pass also sweeps Mutation census, and ONLY that pass does. A cancelled census
+  # (a queued dispatch superseded by a newer one, or one stopped by hand) holds no verdict. A completed
+  # one is evidence: receipts in tests/ci-settings.yaml cite census runs by ID, and each run's step
+  # summary is the missed list a PROOF RULE is checked against. Never add census to the completed pass.
   cleanup-runs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -582,6 +587,8 @@ jobs:
           for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status completed --limit 200 --json databaseId -q '.[].databaseId'); do
             gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
           done
-          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --status cancelled --limit 200 --json databaseId -q '.[].databaseId'); do
-            gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+          for wf in ci.yml mutation-census.yml; do
+            for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow "$wf" --status cancelled --limit 200 --json databaseId -q '.[].databaseId'); do
+              gh run delete "$id" -R "$GITHUB_REPOSITORY" || true
+            done
           done
