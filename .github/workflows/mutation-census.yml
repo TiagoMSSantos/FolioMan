@@ -15,7 +15,9 @@ name: Mutation census
 # crate at opt 0 in ~21s. A verdict does not depend on the opt-level: `[profile.mutants]` inherits dev,
 # so debug-assertions and overflow-checks are on at both, and Rust permits no float reassociation.
 # Tests pay for it instead (the fixture runs ~25s at opt 0), but only on the mutants the lib suite
-# leaves alive.
+# leaves alive. PROVEN by A/B on the same 2363 mutants: run 36174288986 at 0 against 36172539508 at 2,
+# sorted caught/missed/timeout/unviable files byte-identical (2219/27/0/117). Build per mutant 73.1s ->
+# 5.5s median, test 3.1s -> 7.0s, wall clock 1h54m -> 21m. ci.yml's mutants gate runs at 0 since then.
 #
 # (#340) `exclude` is a -E filter on the same names. backtest.rs lists 18,801 mutants, and 16,772 of
 # them are return-value swaps of five fns returning wide tuples (proxy_books, book_stats,

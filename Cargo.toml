@@ -57,8 +57,12 @@ overflow-checks = true
 # Killing-suite profile for `cargo mutants`. The report pin (tests/backtest_fixture.rs) replays 200
 # tickers of history six times, which at `dev`'s opt-level 0 costs 38s per mutant against an 11s
 # rebuild — the mutation run is then 80% arithmetic that optimises away for free. `opt-level = 2`
-# with no debuginfo turns that into a build-bound run. Not `release`: `lto = true` there costs more
-# link time per mutant than it saves.
+# with no debuginfo turns that into a build-bound run. Not `release`: `lto = true` there (as it was until
+# (#349)) cost more link time per mutant than it saved.
+#
+# (#345) CI inverts this trade on a 4-vCPU runner: both the mutants gate and mutation-census.yml set
+# CARGO_PROFILE_MUTANTS_OPT_LEVEL=0, where a mutant builds in 5.5s against 73.1s at 2 (census medians)
+# and tests in 7.0s against 3.1s. Verdicts were byte-identical across the two. Locally `cargo t` keeps 2.
 #
 # The same trade-off is what the offline test loop wants, so `cargo t` (.cargo/config.toml) runs on
 # this profile too — 6-9s for the whole non-network suite against 400.8s under `--release`. The name
