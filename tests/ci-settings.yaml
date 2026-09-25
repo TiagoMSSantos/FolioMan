@@ -6488,6 +6488,86 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#344) ROUND 127: A MUTATION CENSUS OF THE REST OF PICKS AND CORE. 167 SURVIVORS KILLED, 5 REMOVED
+  # WITH THE CODE THEY LIVED IN, 6 GAPS, 17 EQUIVALENT. ONE FIXTURE BUG FOUND.
+  #
+  # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" A TENTH TIME.
+  # Asked: census everything in `src/picks.rs` and `src/core.rs` that (#339) did not grade (the code that
+  # builds the displayed book and its weights, the slice closest to the standing buy/growth ask); drop
+  # only what was already graded and two fan-out fns; fix a real bug here only if no golden moves.
+  #
+  # THE CENSUS (run 36149584184 on 1660efa, 1h54m over 16 shards): files `src/picks.rs src/core.rs`,
+  # regex `.`, exclude = the workflow's default buy-path regex (what (#339) graded) plus
+  # `^src/core\.rs:.*replace (income_snapshot|inflation_summary) -> ` (513 constant swaps of two 4-tuple
+  # returns that core's own tests pin by value). The exact exclude string:
+  #   ^src/picks\.rs:.*(in|replace) (score_parts|gate_failures|compose_score|buy_score|growth_scores_ranked|inv_norm|inv_norm_tail|trust_factor|momentum_factor|value_factor|risk_bonus|min_cagr_floor|long_leg|long_leg_fixed|life_leg_cagr|peg_cagr_pct|capped_trend|trend_health|regime_floor|turnover_floor|sector_floor|sector_floors|implied_growth_pct|expected_return_pct|normalized_dip|sustained_decline_factor|long_cagr_pct|long_cagr_from|fund_peg_yield|served_peg_yield|peg_repriced|nupl_factor)(::|$| ->)|^src/core\.rs:.*(in|replace) (trend_cagr|trend_r2|trend_streak|rolling_positive_pct|worst_rolling_pct|life_cagr|tr_life_cagr|volatility_pct|downside_deviation_pct|calendar_year_returns|eps_yoy_split_safe|roic_return|pearson|flat_trim_start|splice_trim_start|splice_history|hold_miss_leg_at|ranks|ev_ebitda_yield)(::|$| ->)|^src/core\.rs:.*replace (income_snapshot|inflation_summary) ->
+  # 2367 in scope: 2055 caught, 195 missed (core 116, picks 79), 0 timeout, 117 unviable.
+  #
+  # THE RULE, as in (#340): KILL what a unit test reaches through a returned value (lift a helper out of
+  # a printer where needed); GAP when the only effect is stdout; EQUIVALENT when no input tells it apart.
+  # Line numbers below are 1660efa's.
+  # - 105 KILLED in core.rs. `fund_factors` 31 (a fixture with rows ON each guard: c0/a/b bases, split
+  #   rows, edge and inside-window rows, a negative buyback base), `annual_brief` 27 (a chained +10%/yr
+  #   brief, its step variants, the flat fallback, negative shares, revenue at zero), `nupl_zone` 6,
+  #   `proxy_corr` 4 (a donor at own - 0.125 separates every cum mutant), `horizon_changes` 4 (inflation
+  #   on 1M vs 1Y; a start at last-334 inside the 31-day slack), `backtest_quote` 3 (the as-of `tr_cagr`
+  #   stops at the cutoff: 72 monthly bars, a 50.0 dividend after `as_of`; and the (#94) splice-trim
+  #   gate, lifted to `pit_splice_trim` because `config::splice_trim_point_in_time` is an ambient read the
+  #   --lib suite cannot flip), `fmt_money2` 3, and 1-2 each in `sector_symbol`, `wiki_constituents`,
+  #   `hold_aum_floor_label`, `firds_etf_isins`, `parse_bls_cpi`, `insider_net_buys`, `convert_price`,
+  #   `quality_return`, `peg_yield`, `peg_yield_from_pe`, `annual_rollup`, `income_snapshot`, `yoy_pct`,
+  #   `select_fund_factor`, `monthly_returns_tail`, `dividends_in_window`, `dividend_yields`, `pct_cell`,
+  #   `capped_life_cagr`, `longest_underwater_yrs`, `price_pct_rank`. Tests: `census_344_*` in core.rs.
+  # - 62 KILLED in picks.rs. `explain_growth_score` 21: every conditional row (accel beta, exp.ret, the
+  #   overext brake, TER, commodity, FX, Dist-class tax, the crypto adjustment) prints only when its term
+  #   bites, and nothing had read the breakdown row by row. `col_cell` 14: each class dash ("—") is for
+  #   the class a field does not apply to and only that class; a zero max drawdown reads n/a, not -0%.
+  #   `rank_robustness` 5: the jitter `0.8 + 0.4u` is lifted to `jittered` and graded on a fixed u.
+  #   `render` 5: `turnover_cache` (lifted; 200 names is still the watch set), the pinned sentinel stays
+  #   off usable-but-gated unpinned rows, and an empty --explain is no ticker. `clean_name` 3,
+  #   `proven_but_unranked` 2 and `bridge_hint_lines` 2 (floors met AT equality; a range-only failure is
+  #   not bridgeable), `lane_split` 2 (a stock exactly at `growth_min_score` is padding; a PEG-1.0 fund
+  #   clears the 100/2.0 bar), `btc_relative` 2 (w <= 0 is off, even on a NaN leg), and 1 each in
+  #   `discover_proxies` (a non-fund twin is never a donor), `gate_review_lines` (hold-core tag),
+  #   `perf_fill` (coverage exactly 1.0 is refused), `size_weights` (a sector within EPS of its cap is not
+  #   scaled), `rank_jaccard` (one empty side is total churn) and `geo_miss_census`.
+  #   Tests: `census_344_*` in picks.rs plus asserts in five existing tests. 22 doubtful kills were
+  #   hand-mutated one at a time; all red.
+  # - 5 REMOVED: `rank_robustness` 2237-2239, its private xorshift copy (`^=` -> `|=` x2, shift swaps
+  #   x3). It now calls `backtest::next_rand` (made `pub(crate)`): the same 13/7/17 stream, one
+  #   definition, graded in (#340).
+  # - FIXTURE BUG, `geo_miss_census` 4543 `&&` -> `||`. The (#205) pin fed it AVUV named "Avantis Prime
+  #   Global UCITS ETF", and (#215) later made "prime global" a GEO token. From then on the name alone
+  #   excluded the fund, so the filter the fixture exists to grade went ungraded. Renamed to "Avantis
+  #   Global Equity UCITS ETF"; the mutant now reds. Test-only: no golden, no ranking moved.
+  # - 6 GAPS, `render` stdout only: 5236:8, 5257:38, 5259:12 (`delete !`), 5264:30 x3 (`>`).
+  # - 17 EQUIVALENT.
+  #   core: 581:52 `capped_life_cagr` `<` -> `<=` (days/365.25 is never exactly 5.0); 681:28 `life_return`
+  #   and 784:14 / 787:17 `max_drawdown_pct` (an equal peak or a non-positive price changes nothing);
+  #   3416:12 `proxy_corr` `rho < 0.99` -> `<=`; 3421:18 `||` -> `&&` (with a non-positive cum,
+  #   |cb/ca - 1| >= 1 and is refused anyway); 3421:56 `>` -> `>=` (cb/ca - 1 is a multiple of 2^-53 and
+  #   0.03 is not); 3523:32 `horizon_changes` `half > 0` -> `>=` (the as-of average at +-0 is the as-of
+  #   close); 3880:37 `fund_factors`, 4345:37 `income_snapshot` and 4447:37 `annual_brief` `> 0.0` ->
+  #   `>=` (a zero base divides to inf, which the 40% window refuses).
+  #   picks: 882:61 `dedup_currency_twins` `&&` -> `||` (distinct tickers sharing a base are one -EUR and
+  #   one -USD leg, where both agree); 3176:36 `explain_growth_score` `> 1e-6` -> `>=` (an exact f64 1e-6
+  #   difference needs both values within ~2^-20 of zero, and no gated score is); `size_weights` 5396:16
+  #   (spill is split pro rata to raw, so a raw-0 recipient takes 0 either way), 5397:49 and 5399:69
+  #   (a weight exactly EPS under its cap), 5461:22 (freed weight of exactly EPS).
+  #
+  # PROOF RULE: a census re-run on this commit with the same three inputs must list 2363 in scope
+  # (-9 inline xorshift ops, -3 inline `> 200` ops, -2 ops moved out of `backtest_quote` and +4 in
+  # `pit_splice_trim`, +5 `turnover_cache`, +1 `jittered`) and exactly the 6 gaps and 17 equivalents
+  # above as missed, matched by fn and operator (render's lines move by the `turnover_cache` lift).
+  #
+  # WHAT SHIPS. Tests, three lifted helpers (`pit_splice_trim`, `jittered`, `turnover_cache`) and one
+  # shared PRNG step. No knob, no ranking change, no golden moved. In-diff mutants: 85, all return swaps
+  # the census already graded or ops on the lifted lines; the 4 PRNG-scaling ops were hand-run, all red.
+  #
+  # REVERT: drop the (#344) tests and asserts; inline the three helpers back; restore the private
+  # xorshift in `rank_robustness` and `next_rand`'s private visibility; rename AVUV back (and the `||`
+  # goes ungraded again).
+  #
   # (#343) ROUND 126: A MUTATION CENSUS OF SCREEN, SIZE, REPORT AND CONFIG. 73 SURVIVORS KILLED, 25
   # SKIPPED AS AMBIENT-CONFIG READS, 1 EQUIVALENT, NO GAPS.
   #

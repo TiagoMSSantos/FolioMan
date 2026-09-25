@@ -3297,7 +3297,7 @@ const PLACEBO_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// (#329) xorshift64. The repo carries no random-number dependency, and the band has to read the same
 /// at any thread count for the goldens to be stable, so three lines beat pulling in a crate.
-fn next_rand(state: &mut u64) -> u64 {
+pub(crate) fn next_rand(state: &mut u64) -> u64 {
     *state ^= *state << 13;
     *state ^= *state >> 7;
     *state ^= *state << 17;

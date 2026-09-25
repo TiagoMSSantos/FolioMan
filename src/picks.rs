@@ -2224,6 +2224,17 @@ pub(crate) const WEIGHT_DIMS: [WeightDim; 14] = [
 /// Seeded xorshift64, same stream shape as `tune_growth`'s search, so a re-run reproduces exactly.
 /// Quartiles come from `backtest::percentile` (nearest-rank) — one definition, not two.
 /// Returns ticker -> (median rank, q1, q3), 1-based ranks. Empty when `k == 0` (the shipped state).
+/// (#344) One draw of `rank_robustness`'s perturbed tuning: every `WEIGHT_DIMS` weight scaled by
+/// `0.8 + 0.4u` for a fresh `u` in [0, 1). Lifted so the scaling can be graded on a fixed `u` — inline,
+/// its arithmetic only ever reached a test through a rank IQR, which no mutant of it moved.
+fn jittered(tuning: &BuyHeuristic, next: &mut impl FnMut() -> f64) -> BuyHeuristic {
+    let mut t = tuning.clone();
+    for (_, get, set) in WEIGHT_DIMS {
+        set(&mut t, get(tuning) * (0.8 + 0.4 * next()));
+    }
+    t
+}
+
 pub fn rank_robustness(
     quotes: &[Quote],
     tuning: &BuyHeuristic,
@@ -2233,18 +2244,11 @@ pub fn rank_robustness(
         return HashMap::new();
     }
     let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
-    let mut next = || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        (state >> 11) as f64 / (1u64 << 53) as f64
-    };
+    // (#344) `backtest`'s own xorshift step rather than a second inline copy: same stream, one definition.
+    let mut next = || (crate::commands::backtest::next_rand(&mut state) >> 11) as f64 / (1u64 << 53) as f64;
     let mut ranks: HashMap<&str, Vec<f64>> = HashMap::new();
     for _ in 0..k {
-        let mut t = tuning.clone();
-        for (_, get, set) in WEIGHT_DIMS {
-            set(&mut t, get(tuning) * (0.8 + 0.4 * next()));
-        }
+        let t = jittered(tuning, &mut next);
         let mut scored: Vec<(&str, f64)> = quotes
             .iter()
             .filter(|q| eu_buyable(q))
@@ -5152,6 +5156,13 @@ pub struct RenderCtx<'a> {
     pub web_inflation: &'a [Vec<(String, String)>],
 }
 
+/// (#344) Which churn cache a `render` over `n_quotes` names reads and rewrites: the wide `screen`
+/// universe and the small `check`/watch set keep separate files so their overlaps never mix. Lifted
+/// out of `render` so the size cut is gradeable; inline it only chose a file path no test reads.
+fn turnover_cache(n_quotes: usize) -> &'static str {
+    if n_quotes > 200 { ".folioman_turnover_screen.txt" } else { ".folioman_turnover_watch.txt" }
+}
+
 pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx: RenderCtx) -> (Option<String>, Vec<String>) {
     // Pinned tickers (config `pinned`): always shown in their class table for comparison, even if they
     // fail the growth gate or the sector/score cut. Still subject to eu_buyable (don't show unbuyable).
@@ -5190,7 +5201,7 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     let picks = ranked(quotes, tuning, growth_scorer, 0.0, &pinned_set);
     // (Item 8) churn warning: compare this run's top-N against the last. Separate cache for the wide
     // `screen` universe vs the small `check`/watch set (keyed by size) so their overlaps don't mix.
-    let cache = crate::config::data_path(if quotes.len() > 200 { ".folioman_turnover_screen.txt" } else { ".folioman_turnover_watch.txt" });
+    let cache = crate::config::data_path(turnover_cache(quotes.len()));
     let tickers: Vec<String> = picks.iter().map(|(q, _)| q.ticker.clone()).collect();
     // (#320) which rows the returned cut keeps, flagged here because `print_lane` consumes `picks`.
     let coins: Vec<(bool, f64)> = picks.iter().map(|(q, _)| (asset_class(q) == 0, 0.0)).collect();
@@ -7061,6 +7072,18 @@ mod tests {
     assert_eq!(considered, 2, "both bridges are CONSIDERED; the floor is what drops one");
     assert_eq!(admitting.len(), 1, "discovery lane drops the twin that cannot clear the floor");
     assert!(admitting[0].contains("YNG2.DE") && admitting[0].contains("STRONG.DE"), "{}", admitting[0]);
+    // (#344) a fund failing only RANGE has a record already: a twin cannot repair that, so no hint
+    let mut rng = quote(25.0, &[("1Y", 10.0), ("5Y", 40.0), ("10Y", 200.0)]);
+    rng.ticker = "RNG.DE".into();
+    rng.instrument_type = "ETF".to_string();
+    rng.benchmark = Some("x index".to_string());
+    let rng_fails = gate_failures(&rng, &tuning).expect("assessable");
+    assert!(rng_fails.len() == 1 && rng_fails[0].0 == "range", "fixture must fail range alone: {rng_fails:?}");
+    assert!(bridge_hint_lines(&[&rng], std::slice::from_ref(&old), &tuning, false).0.is_empty());
+    // (#344) and a twin EXACTLY at the floor clears it
+    let c = long_cagr_pct(&strong, &admit_t).expect("strong has a leg");
+    let eq_t = BuyHeuristic { growth_min_cagr: c, growth_min_cagr_etf: c, ..admit_t.clone() };
+    assert_eq!(bridge_hint_lines(&[&yng2], std::slice::from_ref(&strong), &eq_t, true).0.len(), 1);
 
     // --- (AUM) ETF minimum fund-size gate (backtest-blind: aum_eur None -> pass; ETF-only) ---
     let aum_t = BuyHeuristic { growth_min_aum_etf: 100e6, ..BuyHeuristic::default() };
@@ -8348,6 +8371,9 @@ mod tests {
         });
         assert!(tickers.iter().any(|t| t == "AAPL"), "pinned gated name must still surface in the ranking");
         assert!(tickers.len() <= 5);
+        // (#344) and ONLY the pinned one: the coins and the CORE fund are usable but gated and unpinned,
+        // so none of them may borrow the pinned sentinel.
+        assert_eq!(tickers, ["AAPL"]);
         let payload = std::fs::read_to_string(&web).expect("render must write the payload when web_out is set");
         let payload: serde_json::Value = serde_json::from_str(&payload).expect("payload must be valid JSON");
         assert!(payload["generated"].as_str().is_some_and(|g| g.ends_with('Z')), "generated is RFC3339 UTC");
@@ -8394,8 +8420,146 @@ mod tests {
         });
         assert!(miss.is_some_and(|m| m.contains("wasn't scanned")));
         assert!(!web.exists(), "web_out: None must not write a payload");
+        // (#344) an EMPTY --explain is no ticker at all, not a ticker nobody scanned
+        let (blank, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
+            nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
+            owned: &owned, explain: Some(""), show_hold_core: false, fund_pe: &HashMap::new(),
+            web_out: None, web_inflation: &[],
+        });
+        assert!(blank.is_none(), "{blank:?}");
 
         let _ = std::fs::remove_file(crate::config::data_path(".folioman_turnover_watch.txt")); // gitignored cache render wrote
+    }
+
+    /// (#344) The census survivors in `picks.rs` that a returned value CAN reach, one block each.
+    /// Every case sits exactly on the line its mutant moves: a boundary, the one input a guard
+    /// separates, or the one row class a `match` arm is for.
+    #[test]
+    fn census_344_picks_helpers_hold_their_boundaries() {
+        // rank_robustness's jitter: `0.8 + 0.4u` on every weight, graded on a fixed draw
+        let d = BuyHeuristic::default();
+        assert!(WEIGHT_DIMS.iter().any(|(_, get, _)| get(&d) != 0.0), "an all-zero default would make this vacuous");
+        for (u, f) in [(0.0, 0.8), (0.5, 1.0), (1.0, 1.2)] {
+            let t = jittered(&d, &mut || u);
+            for (name, get, _) in WEIGHT_DIMS {
+                assert!((get(&t) - get(&d) * f).abs() < 1e-12, "{name} at u={u}: {} vs {} x {f}", get(&t), get(&d));
+            }
+        }
+        // render's churn cache: the wide universe and the watch set never share a file
+        assert_eq!(turnover_cache(0), ".folioman_turnover_watch.txt");
+        assert_eq!(turnover_cache(200), ".folioman_turnover_watch.txt", "200 is still the watch set");
+        assert_eq!(turnover_cache(201), ".folioman_turnover_screen.txt");
+
+        // btc_relative: a non-positive weight is OFF, and off must not touch the score even on a NaN leg
+        assert_eq!(btc_relative(Some(50.0), Some(0.0), 10.0, -1.0), 10.0, "a negative weight is off, not an inverted tilt");
+        assert_eq!(btc_relative(Some(f64::NAN), Some(0.0), 10.0, 0.0), 10.0, "w = 0 is off, so a NaN leg never reaches the score");
+        // rank_jaccard: ONE side empty is total churn, not "nothing changed"
+        assert_eq!(rank_jaccard(&[], &["A".to_string()], 5), 0.0);
+
+        // size_weights: a sector sitting exactly at its cap (within EPS) is NOT scaled
+        let c = crate::config::Sizing { max_sector_pct: 50.0 - 5e-10, ..uncapped() };
+        assert_eq!(sizes(&[(60.0, Some(1.0), 2, Some(("X", 1.0))), (60.0, Some(1.0), 2, Some(("Y", 1.0)))], &c), [50.0, 50.0]);
+
+        // perf_fill: a record covering the WHOLE rung is refused (that blank is a zero anchor, not a short life)
+        let mut q = gate_fixture();
+        q.life_return_pct = Some(50.0);
+        let fill = BuyHeuristic { perf_fill_coverage_pct: 50.0, ..BuyHeuristic::default() };
+        q.perf = legs(&[("1M", 2.0), ("1Y", 20.0)]);
+        q.age_years = Some(1825.0 / 365.25);
+        assert_eq!(perf_fill(&q, "5Y", &fill), None, "cov = 1.0 is the (H-cov) refusal");
+        q.age_years = Some(1700.0 / 365.25);
+        assert_eq!(perf_fill(&q, "5Y", &fill), Some(50.0), "positive control: 93% coverage fills");
+
+        // lane_split: a stock scoring EXACTLY the floor is padding (`<=` hides it), a hair above shows
+        let floor = BuyHeuristic { growth_min_score: 10.0, ..BuyHeuristic::default() };
+        let s = gate_fixture();
+        let (none, secs, pe): (HashSet<&str>, Vec<String>, FundPeMap) = (HashSet::new(), Vec::new(), HashMap::new());
+        assert!(lane_split(vec![(&s, 10.0)], 10, &secs, &floor, &none, &pe).0.is_empty());
+        assert_eq!(lane_split(vec![(&s, 10.01)], 10, &secs, &floor, &none, &pe).0.len(), 1);
+
+        // gate_review: a hold-core fund failing the growth gates is tagged as such, never as a warning
+        let mut h = core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22);
+        h.avg_turnover_eur = Some(1e9);
+        assert!(core::hold_suitable(&h) && gate_failures(&h, &d).is_some(), "fixture must be hold-core AND gated");
+        let lines = gate_review_lines(&[&h], &d, 8);
+        assert!(lines[0].contains("hold-core H"), "{}", lines[0]);
+    }
+
+    /// (#344) `explain_growth_score` prints each conditional row only when its term bites. The default
+    /// fixture prints none of them; each variant arms exactly one. Before this, the conditions were
+    /// graded by nothing — the breakdown is returned text no test ever read row by row.
+    #[test]
+    fn census_344_explain_prints_a_row_only_when_it_bites() {
+        let q = gate_fixture();
+        let d = BuyHeuristic::default();
+        let ex = |q: &Quote, t: &BuyHeuristic, bump: f64| {
+            let s = growth_score(q, t).expect("the fixture clears the gates");
+            explain_growth_score(q, t, s + bump).expect("a scoring row explains")
+        };
+        let base = ex(&q, &d, 0.0);
+        for quiet in ["×CAGR", "exp.ret  =", "ter_damp     =", "commodity    =", "fx           =", "acc_damp     =", "crypto NUPL", "brake off"] {
+            assert!(!base.contains(quiet), "default must not print {quiet:?}:\n{base}");
+        }
+        assert!(base.contains("overext_damp = 1 − ("), "{base}");
+        assert!(ex(&q, &BuyHeuristic { growth_accel_beta: 0.5, ..d.clone() }, 0.0).contains("0.50×CAGR"));
+        assert!(ex(&q, &BuyHeuristic { growth_er_weight: 1.0, ..d.clone() }, 0.0).contains("exp.ret  ="));
+        assert!(ex(&q, &BuyHeuristic { growth_overext_cap: 0.0, ..d.clone() }, 0.0).contains("brake off, cap 0"));
+        let mut ter = q.clone();
+        ter.expense_ratio = Some(0.2);
+        assert!(ex(&ter, &BuyHeuristic { growth_ter_drag: true, ..d.clone() }, 0.0).contains("ter_damp     ="));
+        let mut energy = q.clone();
+        energy.sector = Some("Energy".into());
+        assert!(ex(&energy, &BuyHeuristic { growth_commodity_damp: 0.8, ..d.clone() }, 0.0).contains("commodity    ="));
+        let mut usd = q.clone();
+        usd.instrument_type = "ETF".into();
+        usd.quote_currency = Some("USD".into());
+        assert!(ex(&usd, &BuyHeuristic { growth_fx_damp: 0.98, ..d.clone() }, 0.0).contains("fx           ="));
+        let mut dist = q.clone();
+        dist.use_of_profits = Some("Dist");
+        dist.div_eur = vec![Some(2.0)];
+        dist.price_eur = Some(100.0);
+        let acc = BuyHeuristic { growth_acc_drag: true, tax_keep_other: 0.5, tax_keep_eu: 0.5, ..d.clone() };
+        assert!(ex(&dist, &acc, 0.0).contains("acc_damp     ="));
+        assert!(ex(&q, &d, 1.0).contains("crypto NUPL"), "a displayed value off the score says why");
+    }
+
+    /// (#344) `col_cell`'s class arms: the dash is for the class a field does not apply to, and ONLY
+    /// that class. Each assertion is the one row a guard flip or a deleted arm would misprint.
+    #[test]
+    fn census_344_col_cell_class_arms() {
+        let mut etf = Quote::stub("CNDX.L", "€100.00", "", "iShares VII PLC - iShares NASDAQ 100 UCITS ETF");
+        etf.instrument_type = "ETF".into();
+        etf.pe_ratio = Some(15.0);
+        etf.roe = Some(20.0);
+        etf.eps_yoy = Some(5.0);
+        etf.buyback_yoy = Some(3.0);
+        etf.aum_eur = Some(5e9);
+        let mut eq = etf.clone();
+        eq.ticker = "EQ".into();
+        eq.name = "Equity Corp".into();
+        eq.instrument_type = "EQUITY".into();
+        assert_eq!(cc("name", &etf, 0.0, None, ""), clean_name(&etf));
+        assert_ne!(cc("name", &etf, 0.0, None, ""), "?");
+        for key in ["pe", "roe", "eps-yoy", "buyback"] {
+            assert_eq!(cc(key, &etf, 0.0, None, ""), "—", "{key} does not apply to a fund");
+        }
+        let aum = cc("aum", &etf, 0.0, None, "");
+        assert!(aum != "—" && aum != "?", "a fund's size prints: {aum}");
+        assert_eq!(cc("pe", &eq, 0.0, None, ""), "15.0");
+        assert_eq!(cc("roe", &eq, 0.0, None, ""), "+20%");
+        assert_eq!(cc("buyback", &eq, 0.0, None, ""), "+3.0%");
+        assert_eq!(cc("aum", &eq, 0.0, None, ""), "—", "a stock has no fund size");
+        eq.max_drawdown_pct = 0.0;
+        assert_eq!(cc("maxdd", &eq, 0.0, None, ""), "n/a", "a zero drawdown is no history, not -0%");
+
+        // clean_name: a coin by TICKER alone (no instrument type) still loses its quote-currency suffix
+        let mut btc = Quote::stub("BTC-EUR", "€1", "", "Bitcoin EUR");
+        btc.instrument_type = String::new();
+        assert_eq!(clean_name(&btc), "Bitcoin");
+        // and an issuer prefix goes when the fund part says ETF, even without UCITS
+        let mut inv = etf.clone();
+        inv.name = "Invesco Markets PLC - Invesco Nasdaq 100 ETF".into();
+        assert!(!clean_name(&inv).contains("PLC"), "{}", clean_name(&inv));
     }
 
     /// (#79) The rank cell's flags. These conditions spent their whole life inside `print_picks`,
@@ -9117,7 +9281,9 @@ mod tests {
         // (#205) same grading hole as `narrow_census`: every quote above is both EU-buyable and an
         // ETF, so `&&` and `||` agree and the filter goes ungraded. This one fails `eu_buyable`,
         // passes `quote_is_etf`, and clears every other filter — under `||` it sorts FIRST on 9e9.
-        let mut us = core_etf("AVUV", "Avantis Prime Global UCITS ETF", 9e9, cap);
+        // (#344) renamed off "Prime Global": (#215) made that a GEO token, so this fund had been
+        // excluded by NAME since, and the `||` it exists to grade survived the census untouched.
+        let mut us = core_etf("AVUV", "Avantis Global Equity UCITS ETF", 9e9, cap);
         us.market = "USA".into();
         let quotes = [quotes, vec![us]].concat();
         let got: Vec<&str> = geo_miss_census(&quotes, false, false, 0, 0).iter().map(|q| q.ticker.as_str()).collect();
@@ -10430,6 +10596,11 @@ mod tests {
         // and the floor tracks a STRICTER knob rather than pinning itself at 5
         let strict_leg = BuyHeuristic { growth_min_leg_years: 10.0, ..unpinned.clone() };
         assert!(proven_but_unranked(&q, &strict_leg).is_some(), "a 20Y leg still clears a 10Y floor");
+        // (#344) both floors are MET at equality, not only above it
+        let exact_leg = BuyHeuristic { growth_min_leg_years: 20.0, ..unpinned.clone() };
+        assert!(proven_but_unranked(&q, &exact_leg).is_some(), "a 20Y leg meets a 20Y floor");
+        let exact_cagr = BuyHeuristic { growth_min_cagr: free_cagr, ..unpinned.clone() };
+        assert!(proven_but_unranked(&q, &exact_cagr).is_some(), "a record AT the floor is proven");
         // ranks -> nothing to explain
         let clean = BuyHeuristic { growth_min_cagr: 0.0, growth_min_range_pct: 0.0, ..t.clone() };
         assert!(growth_score(&q, &clean).is_some() && proven_but_unranked(&q, &clean).is_none(), "a ranked name is not missing");
@@ -12127,6 +12298,10 @@ mod tests {
             "no P/E fetched -> n/a, never a number and never the class-N/A dash");
         // and the ceiling's own arithmetic agrees with the cell it prints: 2.50 > 2.0 is why DEAR.L went.
         assert!(100.0 / fund_peg_yield(&dear, &on, &pe).unwrap() > on.growth_max_peg_etf);
+        // (#344) the bar is 100 / ceiling = 50: a PEG-1.0 fund (peg_yield 100) clears it with room
+        let mid = fund("MID.L");
+        pe.insert("MID.L".into(), 10.0.into());
+        assert_eq!(names(&lane_split(vec![(&mid, 6.0)], 10, &all_sectors, &on, &none, &pe).1), ["MID.L"]);
     }
 
     /// (fund staleness) The `°` legend gate — three independent facts ANDed, and each row below is
@@ -12259,6 +12434,13 @@ mod tests {
             etf("USD", 15.0, true, Some("USD"), &trail),    // perfect twin in the wrong currency
             etf("BARELY", 4.5, true, Some("EUR"), &trail),  // perfect twin, only 1.5y older
             etf("PROVEN", 12.0, true, Some("EUR"), &trail), // has its own leg -> never a rescue SUBJECT
+            {
+                // (#344) a perfect, OLDEST twin that is not a fund: never a donor
+                let mut stock = etf("STOCK", 30.0, true, Some("EUR"), &trail);
+                stock.instrument_type = "EQUITY".into();
+                stock.name = "Some Corp".into();
+                stock
+            },
         ];
         // PROVEN is an equally legal DONOR, so the pick is the age tie-break doing its job: correlation
         // ties at 1.00 and the older twin wins, because more borrowed years is the whole point.

@@ -4490,6 +4490,13 @@ pub fn select_fund_factor(f: &FundFactors, name: &str) -> Option<f64> {
     }
 }
 
+/// (#344) The (#94) as-of splice trim's gate, lifted out of `backtest_quote` so it can be graded:
+/// the knob ships OFF in both regimes, so inside that function its `&&` and its `!` were never read by
+/// any test. Crypto is exempt either way — a coin's real 13x weeks are not redenomination joints.
+fn pit_splice_trim(on: bool, ticker: &str) -> bool {
+    on && !crate::picks::is_currency_quoted(ticker)
+}
+
 /// Build a Quote AS OF index `as_of` (inclusive) from the full history, filling ONLY the price-derived
 /// fields the buy score reads — reusing the exact same horizon/SMA/vol/R²/drawdown fns on the `[..=as_of]`
 /// slices, so the backtest scores a name exactly as the live tool would have on that day. note:
@@ -4520,7 +4527,7 @@ pub fn backtest_quote(
     // the cutoff could actually answer. At the last bar it returns exactly what parse-time trimming
     // returned, so the live path is unchanged. 0 when the knob is off (the series arrived pre-trimmed,
     // so this finds nothing anyway) and for crypto, whose real 13x/wk weeks are not splices.
-    let splice = if crate::config::splice_trim_point_in_time() && !crate::picks::is_currency_quoted(ticker) {
+    let splice = if pit_splice_trim(crate::config::splice_trim_point_in_time(), ticker) {
         splice_trim_start(&dates[..=as_of], &closes[..=as_of], crate::config::splice_max_weekly_rate())
     } else {
         0
@@ -5938,6 +5945,199 @@ mod tests {
         let unverifiable = vec![ys(2025, 10.81, 12.2e9), noshares];
         let ub = annual_brief(&unverifiable).unwrap();
         assert!(!ub.contains("eps"), "{ub}");
+    }
+
+    /// (#344) Census survivors across `core.rs`'s small helpers. Each input sits EXACTLY on the line
+    /// the original and its mutant disagree about — a zero close, a zero base, a window the history
+    /// covers to the day — because an input clear of the line grades nothing.
+    #[test]
+    fn census_344_small_helpers_hold_their_boundaries() {
+        let d = |y: i32, m: u32, day: u32| NaiveDate::from_ymd_opt(y, m, day).unwrap();
+        // a zero close is DROPPED before pairing, never paired: it would read -100% and then +inf
+        assert_eq!(
+            monthly_returns_tail(&[d(2024, 1, 15), d(2024, 2, 15), d(2024, 3, 15)], &[100.0, 0.0, 110.0], 12),
+            monthly_returns_tail(&[d(2024, 1, 15), d(2024, 3, 15)], &[100.0, 110.0], 12)
+        );
+        // the cap window STARTS on a bar dated exactly `last - max_years` (at/after, not after)
+        let last = d(2024, 1, 1);
+        let dates = [last - Duration::days(3000), last - Duration::days(1826), last];
+        let capped = capped_life_cagr(&dates, &[100.0, 100.0, 200.0], 5.0);
+        assert!(capped.is_some() && capped == life_cagr(&dates[1..], &[100.0, 200.0]), "{capped:?}");
+        // a zero close is not a bar, and two real closes are enough to measure
+        assert_eq!(longest_underwater_yrs(&[100.0, 0.0, 90.0], 1), longest_underwater_yrs(&[100.0, 90.0], 1));
+        assert!(longest_underwater_yrs(&[100.0, 90.0], 1).is_some());
+        // zero is not negative, the sign survives, and a 3-digit number takes no separator
+        assert_eq!(fmt_money2(0.0), "0.00");
+        assert_eq!(fmt_money2(-1234.5), "-1,234.50");
+        assert_eq!(fmt_money2(100.0), "100.00");
+        assert_eq!(price_pct_rank(&[100.0, 110.0]), 100.0, "two closes are a history");
+        // every NUPL band boundary belongs to the band ABOVE it
+        for (x, zone) in [(0.0, "Hope/Fear"), (0.25, "Optimism/Anxiety"), (0.3, "Optimism/Anxiety"), (0.5, "Belief/Denial"), (0.75, "Euphoria/Greed")] {
+            assert_eq!(nupl_zone(x), zone, "NUPL {x}");
+        }
+        assert_eq!(sector_symbol("AAPL,Apple Inc., ", &[]), Some(("AAPL".to_string(), "other".to_string())), "a blank sector cell is no sector");
+        let blank = r#"<table id="constituents"><tr><th>Symbol</th></tr><tr><td></td><td>X</td><td>Materials</td></tr></table>"#;
+        assert!(wiki_constituents(blank, &[]).is_empty(), "a row with no symbol is malformed, whatever its sector");
+        assert_eq!(hold_aum_floor_label(1e9), "1");
+        assert_eq!(hold_aum_floor_label(5e8), "0.5");
+        assert_eq!(hold_aum_floor_label(1e10), "10");
+        let rec = "<FinInstrmGnlAttrbts><Id>IE00BJ0KDQ92</Id><FullNm>Xtrackers MSCI World ETF 1C</FullNm><ClssfctnTp>CEOGMS</ClssfctnTp></FinInstrmGnlAttrbts>";
+        assert_eq!(firds_etf_isins(rec), vec!["IE00BJ0KDQ92".to_string()], "an ETF token alone is enough");
+        let bls = |prior: &str| serde_json::json!({"Results": {"series": [{"data": [
+            {"year": "2023", "period": "M12", "value": "300.0"},
+            {"year": "2022", "period": "M12", "value": prior},
+        ]}]}});
+        assert!(parse_bls_cpi(&bls("250.0")).get(&2023).is_some_and(|v| (v - 20.0).abs() < 1e-9));
+        assert!(parse_bls_cpi(&bls("0")).is_empty(), "a zero base is no base");
+        // a perfect-shape twin 2.94% short on cumulative return: inside the 3% bar. Any other way of
+        // compounding the months (divide, multiply the moves, subtract them, skip the /100) lands it
+        // outside, so this one pair grades the whole `cum` closure.
+        let own: Vec<f64> = (0..24).map(|k| if k % 3 == 0 { 4.0 } else { -1.0 }).collect();
+        let donor: Vec<f64> = own.iter().map(|r| r - 0.125).collect();
+        assert!(proxy_corr(&own, &donor).is_some(), "a 2.94% gap is a twin");
+        // horizon_changes: only legs >= 1Y deflate, by exactly the years the leg spans
+        let last = d(2025, 6, 30);
+        let days: Vec<NaiveDate> = (0..400).rev().map(|k| last - Duration::days(k)).collect();
+        let px: Vec<f64> = (0..400).map(|k| 100.0 + k as f64 * 0.1).collect();
+        let none = BTreeMap::new();
+        let infl: BTreeMap<i32, f64> = [(2025, 10.0)].into_iter().collect();
+        let at = |v: &[Option<(String, f64)>], l: &str| v[HORIZONS.iter().position(|(h, _)| *h == l).unwrap()].as_ref().map(|(_, p)| *p);
+        let nominal = horizon_changes(&days, &px, None, &none, None);
+        let real = horizon_changes(&days, &px, None, &none, Some(&infl));
+        assert_eq!(at(&real, "1M"), at(&nominal, "1M"), "short legs are never deflated");
+        let (n1y, r1y) = (at(&nominal, "1Y").unwrap(), at(&real, "1Y").unwrap());
+        assert!((r1y - real_pct(n1y, 10.0)).abs() < 1e-9 && r1y < n1y, "1Y deflates by ONE year: {n1y} -> {r1y}");
+        // a record starting exactly 31 days after the 1Y anchor still reaches it: the slack is inclusive
+        let short: Vec<NaiveDate> = (0..=334).rev().map(|k| last - Duration::days(k)).collect();
+        let sp: Vec<f64> = (0..=334).map(|k| 100.0 + k as f64 * 0.1).collect();
+        assert!(at(&horizon_changes(&short, &sp, None, &none, None), "1Y").is_some());
+        let cutoff = d(2024, 6, 1);
+        let buy = |back: i64| InsiderTx { date: cutoff - Duration::days(back), buy: true };
+        assert_eq!(insider_net_buys(&[buy(10), buy(5)], cutoff, 90), Some(2.0));
+        assert_eq!(convert_price(100.0, "USD", "EUR", Some(0.9), Some(0.0)), None, "a zero rate is an unknown rate");
+        assert!(convert_price(100.0, "USD", "GBP", Some(0.9), Some(1.2)).is_some_and(|p| (p - 75.0).abs() < 1e-9));
+        assert_eq!(quality_return(Some(20.0), Some(0.0), None), Some(20.0), "a zero ROA judges nothing");
+        assert_eq!(peg_yield(Some(0.0), Some(10.0), 100.0), None, "zero earnings is not cheap");
+        assert_eq!(peg_yield_from_pe(0.0, Some(10.0)), None);
+        assert_eq!(yoy_pct(Some(5.0), Some(0.0)), None);
+        let f = FundFactors { gross_margin: Some(3.0), op_margin: Some(4.0), ..Default::default() };
+        assert_eq!(select_fund_factor(&f, "gross_margin"), Some(3.0));
+        assert_eq!(select_fund_factor(&f, "op_margin"), Some(4.0));
+        // shares is a LEVEL: two same-year rows MEAN, never sum
+        let q = |m: u32| FundRow { filed: d(2024, m, 1), period_end: d(2023, m, 28), shares: Some(100.0), ..Default::default() };
+        assert_eq!(annual_rollup(&[q(3), q(6)])[0].shares, Some(100.0));
+        let ar = |year: i32, shares: f64| AnnualReport {
+            year, revenue: 100.0, gross_margin: None, op_margin: None, net_margin: None, eps: None,
+            shares: Some(shares), prior_eps: None, prior_shares: None, quarters: 1,
+        };
+        assert_eq!(income_snapshot(&[ar(2024, -90.0), ar(2023, -100.0)]).unwrap().3, None, "a negative base is no base");
+        let span = [d(2020, 1, 1), d(2021, 1, 1)];
+        assert_eq!(dividends_in_window(&[(d(2020, 6, 1), 1.5)], &span, 366), Some(1.5), "a window covered to the day is covered");
+        assert_eq!(dividend_yields(&[Some(1.0)], Some(0.0))[0], None, "no price, no yield");
+        assert_eq!(dividend_yields(&[Some(2.0)], Some(100.0))[0], Some(2.0));
+        assert_eq!(pct_cell(Some(&(String::new(), 1500.0))), "+1500%");
+        // the lifted splice-trim gate: knob AND not-a-coin
+        assert!(pit_splice_trim(true, "AAPL"));
+        assert!(!pit_splice_trim(true, "BTC-EUR"));
+        assert!(!pit_splice_trim(false, "AAPL"));
+    }
+
+    /// (#344) `fund_factors` carried 32 census survivors, the largest cluster in the file. The main
+    /// fixture lands every factor on a hand-checkable number; each guard, split and window case after
+    /// it puts ONE input on the line its mutant moves.
+    #[test]
+    fn census_344_fund_factors_on_the_line() {
+        let d = |y: i32, m: u32, day: u32| NaiveDate::from_ymd_opt(y, m, day).unwrap();
+        let cutoff = d(2024, 6, 1); // -365d = 2023-06-02, -730d = 2022-06-02, -1095d = 2021-06-02
+        let row = |filed: NaiveDate, pe: NaiveDate| FundRow { filed, period_end: pe, ..Default::default() };
+        let r0 = FundRow { revenue: Some(100.0), op_margin: Some(8.0), net_margin: Some(5.0), eps: Some(2.0), ..row(d(2022, 3, 1), d(2021, 12, 31)) };
+        let r1 = FundRow {
+            revenue: Some(144.0), op_margin: Some(12.0), net_margin: Some(7.0), eps: Some(2.5), prior_eps: Some(2.0), shares: Some(100.0),
+            ..row(d(2023, 3, 1), d(2022, 12, 31))
+        };
+        let r2 = FundRow {
+            revenue: Some(180.0), op_margin: Some(15.0), net_margin: Some(6.0), eps: Some(3.0), prior_eps: Some(2.5), shares: Some(90.0),
+            ..row(d(2024, 3, 1), d(2023, 12, 31))
+        };
+        // filed AFTER the cutoff: a tenfold EPS step that must never reach the chain
+        let late = FundRow { eps: Some(10.0), prior_eps: Some(1.0), ..row(d(2024, 9, 1), d(2024, 6, 30)) };
+        let f = fund_factors(&[r0, r1, r2, late], cutoff, 2);
+        let near = |v: Option<f64>, want: f64| v.is_some_and(|v| (v - want).abs() < 1e-9);
+        assert!(near(f.rev_accel, 25.0 - (1.8f64.sqrt() - 1.0) * 100.0), "1Y +25% less the 2Y CAGR: {:?}", f.rev_accel);
+        assert!(near(f.margin_trend, 3.0), "{:?}", f.margin_trend);
+        assert!(near(f.eps_growth, (1.5f64.sqrt() - 1.0) * 100.0), "chained 1.2 x 1.25: {:?}", f.eps_growth);
+        assert!(near(f.buyback_yield, 10.0), "100 -> 90 shares is a 10% buyback: {:?}", f.buyback_yield);
+        assert!(near(f.margin_stability, -1.0), "sd of 5, 7, 6: {:?}", f.margin_stability);
+
+        // a three-row chain: C0 (no comparative), A (step 2.0), B (the step under test)
+        let c0 = |eps: f64| FundRow { eps: Some(eps), ..row(d(2022, 3, 1), d(2021, 12, 31)) };
+        let a = |shares: Option<f64>| FundRow { eps: Some(2.0), prior_eps: Some(1.0), shares, ..row(d(2023, 3, 1), d(2022, 12, 31)) };
+        let b = |e: f64, p: Option<f64>, shares: Option<f64>| FundRow { eps: Some(e), prior_eps: p, shares, ..row(d(2024, 3, 1), d(2023, 12, 31)) };
+        let eg = |rows: &[FundRow]| fund_factors(rows, cutoff, 2).eps_growth;
+        let endpoint = Some(cagr((3.0 / 2.0 - 1.0) * 100.0, 2.0)); // B's 3.0 over C0's 2.0
+        // a zero comparative breaks the chain, and the endpoint read takes over
+        assert_eq!(eg(&[c0(2.0), a(None), b(3.0, Some(0.0), None)]), endpoint);
+        // a zero or a loss EPS breaks the chain AND fails the endpoint's own positivity test
+        assert_eq!(eg(&[c0(2.0), a(None), b(0.0, Some(2.0), None)]), None);
+        assert_eq!(eg(&[c0(2.0), a(None), b(-1.0, Some(2.0), None)]), None);
+        // no comparative, over a zero-EPS base: the endpoint has no base either
+        assert_eq!(eg(&[c0(0.0), a(None), b(3.0, None, None)]), None);
+        // the split guard: a zero share base guards nothing, and a step of EXACTLY 40% is not a split
+        assert_eq!(eg(&[c0(2.0), a(Some(0.0)), b(3.0, None, Some(100.0))]), endpoint);
+        assert_eq!(eg(&[c0(2.0), a(Some(100.0)), b(3.0, None, Some(60.0))]), endpoint);
+        // the chain's window is (cutoff - (yrs+1)y, cutoff]: a row ON the far edge is out, one inside is in
+        let edge = FundRow { eps: Some(2.5), prior_eps: Some(2.0), ..row(d(2021, 9, 1), d(2021, 6, 2)) };
+        let inside = FundRow { eps: Some(2.5), prior_eps: Some(2.0), ..row(d(2022, 3, 1), d(2021, 12, 31)) };
+        assert_eq!(eg(&[edge, b(3.0, Some(2.5), None)]), Some(cagr((3.0 / 2.5 - 1.0) * 100.0, 2.0)), "edge row out -> endpoint");
+        assert_eq!(eg(&[inside, b(3.0, Some(2.5), None)]), Some(cagr((1.2 * 1.25 - 1.0) * 100.0, 2.0)), "inside -> chained");
+        // buyback's cross-filing fallback: a negative share base is no base
+        let sh = |filed: NaiveDate, pe: NaiveDate, n: f64| FundRow { shares: Some(n), ..row(filed, pe) };
+        let neg = [sh(d(2023, 3, 1), d(2022, 12, 31), -100.0), sh(d(2024, 3, 1), d(2023, 12, 31), -90.0)];
+        assert_eq!(fund_factors(&neg, cutoff, 2).buyback_yield, None);
+    }
+
+    /// (#344) `annual_brief`'s 28 survivors. A chained EPS leg of exactly +10%/yr pins the arithmetic;
+    /// each variant after it breaks ONE leg on its own boundary, and none of them may print an EPS figure.
+    #[test]
+    fn census_344_annual_brief_legs_on_the_line() {
+        let y = |year: i32, revenue: f64, eps: f64, prior: Option<f64>, shares: Option<f64>| AnnualReport {
+            year, revenue, gross_margin: None, op_margin: None, net_margin: None, eps: Some(eps),
+            shares, prior_eps: prior, prior_shares: None, quarters: 1,
+        };
+        let chain = |e: f64, p: f64| {
+            vec![y(2023, 300.0, e, Some(p), None), y(2022, 200.0, 2.42, Some(2.0), None), y(2021, 100.0, 1.0, None, None)]
+        };
+        let b = annual_brief(&chain(3.0, 3.0)).unwrap();
+        assert!(b.contains(" · eps +10%/yr"), "1.21 x 1.00 over two steps: {b}");
+        for (e, p) in [(-1.0, 3.0), (0.0, 3.0), (3.0, 0.0)] {
+            let b = annual_brief(&chain(e, p)).unwrap();
+            assert!(!b.contains("eps"), "step {e}/{p} breaks the chain, and no shares means no fallback: {b}");
+        }
+        // the endpoint fallback (no comparatives): live, and blank at a zero EPS on either end
+        let flat = |first: f64, last: f64| vec![y(2023, 300.0, last, None, Some(100.0)), y(2022, 200.0, first, None, Some(100.0))];
+        assert!(annual_brief(&flat(1.0, 2.0)).unwrap().contains(" · eps +100%/yr"));
+        assert!(!annual_brief(&flat(0.0, 2.0)).unwrap().contains("eps"));
+        assert!(!annual_brief(&flat(1.0, 0.0)).unwrap().contains("eps"));
+        // a negative share count verifies nothing
+        let neg = vec![y(2023, 300.0, 18.0, None, Some(-102.0)), y(2022, 200.0, 15.0, None, Some(-100.0))];
+        assert!(!annual_brief(&neg).unwrap().contains("eps"));
+        // the revenue CAGR needs a positive revenue at BOTH ends
+        for (first, last) in [(0.0, 300.0), (200.0, 0.0)] {
+            let r = vec![y(2023, last, 2.0, None, None), y(2022, first, 1.0, None, None)];
+            assert!(!annual_brief(&r).unwrap().contains("%/yr)"), "revenue {first} -> {last}");
+        }
+    }
+
+    /// (#344) The (#99) total-return leg sums the dividends paid BY the cutoff bar, and no later one.
+    #[test]
+    fn census_344_backtest_quote_tr_cagr_stops_at_the_cutoff() {
+        let dates: Vec<NaiveDate> = (0..72i32).map(|m| NaiveDate::from_ymd_opt(2010 + m / 12, (m % 12) as u32 + 1, 15).unwrap()).collect();
+        let closes: Vec<f64> = (0..72).map(|m| 100.0 + m as f64).collect();
+        let as_of = 59; // 2014-12-15
+        let divs = [(NaiveDate::from_ymd_opt(2012, 6, 15).unwrap(), 1.0), (NaiveDate::from_ymd_opt(2015, 6, 15).unwrap(), 50.0)];
+        let q = backtest_quote("X", &dates, &closes, &divs, as_of, 12, &BTreeMap::new());
+        assert!(q.tr_cagr.is_some());
+        assert_eq!(q.tr_cagr, tr_life_cagr(&dates[..=as_of], &closes[..=as_of], 1.0), "the 2015 payout is after the cutoff");
     }
 
     /// (Item 4) `insider_net_buys` counts P(+1)/S(−1) only in [cutoff−window, cutoff): a same-day or later
