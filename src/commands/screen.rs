@@ -3721,6 +3721,46 @@ mod tests {
     /// (round 50) fact-drift alert semantics: a real TER hike and an AUM halving fire; basis-point
     /// wobble, coverage churn (None<->Some) and unknown-both stay silent.
     #[test]
+    fn journal_appends_dated_trimmed_lines() {
+        // (#343) Owns `.screen_alerts.log` in the lib-test scratch root; nothing else here touches it.
+        let path = crate::config::data_path(ALERT_JOURNAL_FILE);
+        let _ = std::fs::remove_file(&path);
+        journal("2026-09-25", &[]);
+        assert!(!path.exists(), "no alerts, no file");
+        journal("2026-09-25", &["  ALERT A  ".to_string(), "ALERT B".to_string()]);
+        journal("2026-09-26", &["ALERT C".to_string()]);
+        let got = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(got, "2026-09-25 ALERT A\n2026-09-25 ALERT B\n2026-09-26 ALERT C\n");
+    }
+
+    /// (#343) A fetched P/E reaches every listing of the SAME fund (exact name, any case), provenance
+    /// included, and never a different fund on the same index.
+    #[test]
+    fn fill_venue_listings_copies_one_funds_pe() {
+        let q = |t: &str, name: &str| Quote::stub(t, "€1.00", "", name);
+        let quotes = vec![
+            q("VUAA.DE", "Vanguard S&P 500 UCITS ETF"),
+            q("VUAA.L", "VANGUARD S&P 500 UCITS ETF"),
+            q("CSPX.L", "iShares Core S&P 500 UCITS ETF"),
+        ];
+        let mut pe: picks::FundPeMap = HashMap::new();
+        pe.insert("VUAA.DE".into(), picks::FundPe { pe: 26.9, from: Some("TWIN.L".into()), as_of: None });
+        fill_venue_listings(&mut pe, &quotes);
+        assert_eq!(pe.get("VUAA.L"), pe.get("VUAA.DE"), "{pe:?}");
+        assert!(!pe.contains_key("CSPX.L"), "same index, different fund: {pe:?}");
+    }
+
+    /// (#343) Discovery is off in both regimes, so the one line `run` prints about the lane says so
+    /// and counts nothing.
+    #[test]
+    fn journal_proxies_reports_discovery_off() {
+        let line = journal_proxies(&[], &config::BuyHeuristic::default());
+        assert!(line.starts_with("history_proxy: 0 new same-series twin(s) found"), "{line}");
+        assert!(line.ends_with("discovery OFF (history_proxy_auto) — suggestions only, nothing spliced"), "{line}");
+    }
+
+    #[test]
     fn fact_alerts_semantics() {
         let m = |rows: &[(&str, Option<f64>, Option<f64>)]| -> HashMap<String, (Option<f64>, Option<f64>)> {
             rows.iter().map(|(t, ter, aum)| (t.to_string(), (*ter, *aum))).collect()
@@ -3745,6 +3785,9 @@ mod tests {
             "ALERT VUAA.DE: TER 0.07% -> 0.15% (fee hike compounds against a hold)".to_string(),
         ]);
         assert!(fact_alerts(&prev, &prev).is_empty()); // no drift -> no alerts
+        // (#343) a zero prior AUM is no baseline, so a zero today is not a collapse from it
+        let zero = m(&[("ZERO.DE", None, Some(0.0))]);
+        assert!(fact_alerts(&zero, &zero).is_empty());
     }
 
     /// (round 54) structural drift: a share-class conversion and a replication flip fire; unchanged
@@ -3794,6 +3837,16 @@ mod tests {
         assert_eq!(lines[0], "  3 picks effectively one bet: A.L B.L C.L (shared top-10: S0 S1 S2 S3 +1)");
         assert!(!lines[0].contains("G.L"));
         assert!(holdings_overlap_lines(&HashMap::new()).is_empty());
+        // (#343) three funds pairwise AT the bar can share only four names as a group: all four print,
+        // with no `+0` tail, and the group reads as overlap rather than one bet
+        let mut h: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        h.insert("P.L".into(), names(&["S0", "S1", "S2", "S3", "P", "Q"]));
+        h.insert("R.L".into(), names(&["S0", "S1", "S2", "S3", "P", "R"]));
+        h.insert("T.L".into(), names(&["S0", "S1", "S2", "S3", "Q", "R"]));
+        assert_eq!(
+            holdings_overlap_lines(&h),
+            vec!["  3 picks heavily overlap: P.L R.L T.L (shared top-10: S0 S1 S2 S3)".to_string()]
+        );
     }
 
     /// (#257) the footer names what it could NOT scan. Absent from the payload entirely (the
@@ -3974,6 +4027,32 @@ mod tests {
         let solo = vec!["VOD.L".to_string()];
         let line = currency_mix_line(&solo, &quotes, &HashMap::new()).unwrap();
         assert!(line.contains("GBP 100%") && !line.contains("look-through covers"), "{line}");
+    }
+
+    /// (#343) The edges the test above walks past: a fund whose top-10 weights were all omitted is
+    /// unknown (never NaN shares) and covers nothing; a STOCK is its own quote currency even when a
+    /// holdings entry exists for it; and a blank quote currency falls back to the listing suffix
+    /// instead of printing an empty key.
+    #[test]
+    fn currency_mix_edges() {
+        let q = |ticker: &str, kind: &str, ccy: &str| {
+            let mut x = Quote::stub(ticker, "€100.00", "", "Some Name");
+            x.instrument_type = kind.into();
+            x.quote_currency = Some(ccy.into());
+            x
+        };
+        let quotes = vec![q("ZERO.DE", "ETF", "EUR"), q("VOD.L", "EQUITY", "GBp"), q("SAP.DE", "EQUITY", "")];
+        let mut holdings: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+        holdings.insert("ZERO.DE".into(), vec![("AAPL".into(), 0.0), ("MSFT".into(), 0.0)]);
+        holdings.insert("VOD.L".into(), vec![("AAPL".into(), 0.5)]);
+        let book: Vec<String> = ["ZERO.DE", "VOD.L", "SAP.DE"].iter().map(|s| (*s).to_string()).collect();
+        let mix: HashMap<String, f64> = currency_mix(&book, &quotes, &holdings).into_iter().collect();
+        assert_eq!(mix.len(), 3, "{mix:?}");
+        for (ccy, why) in [("?", "all-zero weights = no look-through"), ("GBP", "a stock is its own quote currency"), ("EUR", "a blank quote currency falls back to the suffix")] {
+            assert!((mix[ccy] - 1.0 / 3.0).abs() < 1e-9, "{why}: {mix:?}");
+        }
+        let line = currency_mix_line(&["ZERO.DE".to_string()], &quotes, &holdings).unwrap();
+        assert!(!line.contains("look-through covers"), "a zero-weight fund covers nothing: {line}");
     }
 
     /// (r11) vs-SPY premium: longest SHARED leg wins (10Y before 5Y), premium = name CAGR minus
@@ -4248,6 +4327,22 @@ mod tests {
         assert!(floor[3].contains("growth_min_5y_pct` 75"), "the footer names the knob at its LIVE value: {}", floor[3]);
         // floor off -> the gate never fails -> the block self-suppresses (this is the shipped 8Y case)
         assert!(leg_floor_lines(&quotes, &pins, &tuning, "8Y+", "8Y", "growth_min_8y_pct", tuning.growth_min_8y_pct).is_empty());
+
+        // (#343) the "top N of M" note fires PAST each cap, never AT it
+        for (n, cut) in [(15, false), (16, true)] {
+            let threes: Vec<Quote> = (0..n)
+                .map(|i| q(&format!("T{i:02}"), &format!("Three Gate {i:02}"), 75.0, 4.0, &[("1Y", 10.0), ("5Y", 100.0), ("8Y", 71.8)]))
+                .collect();
+            let block = multi_gate_lines(&threes, &[], &tuning, 3, "THREE", None);
+            assert_eq!(block.len(), 17, "blank + header + 15 rows: {block:?}");
+            assert_eq!(block[1].contains(&format!("top 15 of {n}; ")), cut, "{}", block[1]);
+            let amzns: Vec<Quote> = (0..n)
+                .map(|i| q(&format!("A{i:02}"), &format!("Amazon {i:02}"), 75.0, 20.0, &[("1Y", 10.0), ("5Y", 25.0), ("8Y", 214.0)]))
+                .collect();
+            let floor = leg_floor_lines(&amzns, &[], &tuning, "5Y+", "5Y", "growth_min_5y_pct", tuning.growth_min_5y_pct);
+            assert_eq!(floor.len(), 18, "blank + header + 15 rows + footer: {floor:?}");
+            assert_eq!(floor[1].contains(&format!("top 15 of {n}; ")), cut, "{}", floor[1]);
+        }
     }
 
     /// (r14) hedged detection: whole-word only — "UnHedged"/"Hedge" must never flag (the
@@ -4367,6 +4462,17 @@ mod tests {
         assert_eq!(up, vec![("UP".to_string(), 8, 3), ("UP2".to_string(), 9, 2)]);
         // fader; FLAT (deadband) / THIN (<3 appearances) / BELOW (below book) / NEW (absent) excluded
         assert_eq!(down, vec![("DOWN".to_string(), 2, 7)]);
+
+        // (#343) exactly `min_pts` appearances is enough, and each half's mean is a MEAN: an odd run of
+        // one rank is flat, whatever the halves' lengths
+        let edge = vec![
+            snap("2026-06-01", &[("EDGE", 9), ("ODD", 2)]),
+            snap("2026-06-02", &[("EDGE", 1), ("ODD", 2)]),
+            snap("2026-06-03", &[("EDGE", 1), ("ODD", 2)]),
+        ];
+        let (up, down) = rank_trend(&["EDGE".to_string(), "ODD".to_string()], &edge, 3, 1.5);
+        assert_eq!(up, vec![("EDGE".to_string(), 9, 1)]);
+        assert!(down.is_empty(), "{down:?}");
     }
 
     /// (round 30) book stability: averaged top-BOOK name-retention between consecutive screens.
@@ -4505,6 +4611,18 @@ mod tests {
         // a flow needs two points: empty and single-snapshot journals yield nothing
         assert!(fund_flow_lines(&today, &[]).is_empty());
         assert!(fund_flow_lines(&today, &journal[..1]).is_empty());
+
+        // (#343) a zero close or a zero AUM is a missing point, never a denominator
+        let zeros = vec![
+            snap("2026-06-01", &[("ZC", Some(0.0), Some(100.0)), ("ZA", Some(10.0), Some(0.0))]),
+            snap("2026-06-02", &[("ZC", Some(10.0), Some(100.0)), ("ZA", Some(10.0), Some(100.0))]),
+            snap("2026-06-03", &[("ZC", Some(10.0), Some(110.0)), ("ZA", Some(10.0), Some(110.0))]),
+        ];
+        let got = fund_flow_lines(&["ZA".to_string(), "ZC".to_string()], &zeros);
+        assert_eq!(got.len(), 2, "{got:?}");
+        for (t, flow, n) in &got {
+            assert!((flow - 10.0).abs() < 1e-9 && *n == 2, "{t}: {flow} over {n} points");
+        }
     }
 
     /// (#115) STRUCTURAL PIN — and the bug it exists for was real, not hypothetical. `run` used to
@@ -4575,6 +4693,10 @@ mod tests {
         assert_eq!(got[1].0, "FB.L");
         assert!((got[0].1 - 36e6).abs() < 1.0);
         assert!(small_aum_names(&["BIG.L".into(), "NVDA".into()], &quotes).is_empty()); // clean book = silent
+        // (#343) €100M exactly is AT the line, not under it
+        let mut edge = Quote::stub("EDGE.L", "1", "", "Edge Fund");
+        edge.aum_eur = Some(1e8);
+        assert!(small_aum_names(&["EDGE.L".into()], &[edge]).is_empty());
     }
 
     /// (funnel) The tally's four claims: the arithmetic CLOSES (`scanned = refused + failed +
@@ -4644,7 +4766,7 @@ mod tests {
         assert_eq!(cells(&maxdd), ["2/2", "2/1", "1/1"], "the 2-fail fund is COUNTED (ETFs 2) and not BLAMED (sole 1): {maxdd}");
         // class-major ordering, `, ` inside a class and ` · ` between classes — all three at once.
         // A flat alphabetical sort would read "AAA.L, SOL-EUR, YDEEP, ZDEEP" here.
-        assert!(maxdd.ends_with("YDEEP, ZDEEP · AAA.L · SOL-EUR"), "names run stocks · ETFs · crypto, not alphabetically: {maxdd}");
+        assert!(maxdd.ends_with("1 / 1   YDEEP, ZDEEP · AAA.L · SOL-EUR"), "names run stocks · ETFs · crypto, not alphabetically: {maxdd}");
         assert!(!maxdd.contains("BOTH.L"), "a 2-fail name must never be named as sole-blocked: {maxdd}");
         let stretch = row("stretch").expect("stretch row prints");
         assert_eq!(cells(&stretch), ["0/0", "1/0", "0/0"], "same fund, its second gate — a fail with no sole blame: {stretch}");
@@ -4656,6 +4778,20 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("not evidence its knob is inert")), "{lines:#?}");
         assert!(!lines.iter().any(|l| l.contains("LEVX")), "a refusal is not a gate failure: {lines:#?}");
         assert!(funnel_lines(&[], &t).is_empty());
+
+        // (#343) past NAME_CAP the sample counts what it left out, and a scan that refused nobody
+        // prints no empty `refused` line
+        let many: Vec<Quote> = (0..27)
+            .map(|i| {
+                let mut x = q(&format!("S{i:02}"), &format!("Deep {i:02} Corp"), "EQUITY");
+                x.max_drawdown_pct = 95.0;
+                x
+            })
+            .collect();
+        let lines = funnel_lines(&many, &t);
+        let maxdd = lines.iter().find(|l| l.trim_start().starts_with("maxdd")).unwrap();
+        assert!(maxdd.ends_with("S25 +1"), "27 sole-blocked over a 26-name cap: {maxdd}");
+        assert!(!lines.iter().any(|l| l.contains("refused (not assessable)")), "{lines:#?}");
     }
 
     /// (fund valuation) cheapest-first ordering, pe-less funds silent, empty map -> None. The
@@ -4721,6 +4857,17 @@ mod tests {
         assert!(line.contains("CHEAP.L 2026-08-13"), "and dated: {line}");
         assert!(!line.contains("CHEAP.L 4~"), "cached is not borrowed: {line}");
         assert!(line.contains("DEAR.L 25~ "), "a borrowed-but-fresh value keeps only its own mark: {line}");
+
+        // (#343) PEG 1.0 sits between the right bar (yield 50) and an inverted one (yield 200)
+        let mut one: picks::FundPeMap = HashMap::new();
+        one.insert("DEAR.L".into(), 10.0.into());
+        assert_eq!(fund_pe_line(&one, &quotes, &on).unwrap(), "DEAR.L 10 (PEG 1.00)");
+        // ...and a fund exactly ON the bar is not cut, because `lane_split` keeps `p >= bar`
+        one.insert("DEAR.L".into(), 20.0.into());
+        let y = picks::fund_peg_yield(&quotes[0], &on, &one).unwrap();
+        let at = config::BuyHeuristic { growth_max_peg_etf: 100.0 / y, ..off.clone() };
+        assert_eq!(100.0 / at.growth_max_peg_etf, y, "premise: the fund sits exactly on the bar");
+        assert_eq!(fund_pe_line(&one, &quotes, &at).unwrap(), "DEAR.L 20 (PEG 2.00)");
     }
 
     /// (#37 funds) THE GATE ON THE INDEX-TWIN MATCHER. It decides that two differently-named funds hold

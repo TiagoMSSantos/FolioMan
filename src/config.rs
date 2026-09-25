@@ -1251,6 +1251,7 @@ pub fn load() -> Settings {
 /// backtest receipts graded. None when the overlay IS the fixture (CI), names no `buy_heuristic`
 /// knobs, or matches the baseline value-for-value. Deliberate experiments still work — they're just
 /// named. Display-only, never changes behaviour.
+#[mutants::skip] // the answer is the ambient config PATH (None under CI's fixture); `drift_lines` is the graded half
 fn heuristic_drift() -> Option<String> {
     let path = settings_path();
     if path.ends_with("ci-settings.yaml") {
@@ -1297,6 +1298,7 @@ fn drift_lines(base: &serde_yaml::Mapping, over: &serde_yaml::Mapping) -> Vec<St
 /// yields false (the validated raw-close default), so it never panics in unit tests where the
 /// gitignored settings.yaml is absent. `parse_chart` reads this to prefer Yahoo adjclose; flipping it
 /// requires a full `backtest universe` re-validation + gate re-sweep (see `BuyHeuristic`).
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn use_adjusted_close() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1339,6 +1341,7 @@ pub fn flat_run_max_years() -> f64 {
 /// take a `&Quote` / a `&str` and nothing else — `is_broad_index_name` is called from the fund
 /// funnels, the CORE shortlist and the H-flag column, none of which hold a `tuning`, and threading
 /// one through all of them to carry three display knobs would be the larger change.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn hold_name_tokens() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1351,6 +1354,7 @@ pub fn hold_name_tokens() -> bool {
 }
 
 /// (#102) see [`hold_name_tokens`].
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn hold_ucits_or_domicile() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1395,6 +1399,7 @@ pub fn hold_min_aum_eur() -> f64 {
 ///
 /// `0.0` = off, and the caller skips its whole guard block on that, so nothing below the strict
 /// floor is reachable until the knob is turned on -- non-negotiable #1.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn hold_min_aum_eur_new_family() -> f64 {
     use std::sync::OnceLock;
     static FLOOR: OnceLock<f64> = OnceLock::new();
@@ -1452,6 +1457,7 @@ pub fn hold_issuer_share_class_codes() -> bool {
 /// (#202) TER cap for the world small-cap sleeve, in percent. `0.0` means the sleeve is OFF — no
 /// fund can be at or under a 0.0% cap, and `core::geo_tier` short-circuits on it before ever
 /// classifying a small-cap name, so the lane is byte-identical to its seven-sleeve self.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn hold_size_sleeve_ter() -> f64 {
     use std::sync::OnceLock;
     static CAP: OnceLock<f64> = OnceLock::new();
@@ -1469,6 +1475,7 @@ pub fn hold_size_sleeve_ter() -> f64 {
 /// (#207) the all-world sleeve's own row cap; 0 = inherit [`hold_per_tier`]. Free accessor for the
 /// same reason as its twin — `hold_core_list` takes no `tuning`, and the header line quotes this
 /// number too, so one reader is what stops the printed cap and the applied cap drifting apart.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn hold_per_tier_all_world() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
@@ -1688,6 +1695,7 @@ pub fn hold_per_tier_nasdaq() -> usize {
     })
 }
 
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn hold_per_tier() -> usize {
     use std::sync::OnceLock;
     static CAP: OnceLock<usize> = OnceLock::new();
@@ -1789,6 +1797,7 @@ pub fn hold_family_key_benchmark() -> bool {
 /// (#99) free accessor twin — `picks::life_leg_cagr` takes only a `&Quote` on purpose (its doc says a
 /// second config read is how a fill site and a read site end up on different windows), and it has two
 /// call sites that must stay the same expression.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn gate_on_tr_cagr() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1802,6 +1811,7 @@ pub fn gate_on_tr_cagr() -> bool {
 
 /// (#97) free accessor twin — `core::backtest_quote` fills `volatility_pct` and has no `tuning` handle,
 /// and the LIVE path reaches the same line, so the flag must resolve identically at both.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn vol_daily_equivalent() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1831,6 +1841,7 @@ pub fn underwater_monthly() -> bool {
 
 /// (#95) free accessor twin of `splice_trim_point_in_time` — `stamp_asset_class` has three production
 /// call sites inside the walk and no `tuning` handle at any of them.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn backtest_drop_lookahead_sector() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1845,6 +1856,7 @@ pub fn backtest_drop_lookahead_sector() -> bool {
 /// (#94) free accessor twin of `splice_max_weekly_rate`, read at the same two sites the rate is —
 /// `parse_chart` (whether to drain at all) and `core::backtest_quote` (the per-cutoff trim). Neither
 /// has a `tuning` handle, and the two MUST agree or the series would be trimmed twice or not at all.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn splice_trim_point_in_time() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1859,6 +1871,7 @@ pub fn splice_trim_point_in_time() -> bool {
 /// (#93) free accessor twin of `use_adjusted_close` — `demean` is called from 18 sites inside
 /// `backtest.rs`, most of them slices of a local `Vec<Sample>` with no `tuning` in scope, and threading
 /// a bool through all of them would be a wide edit for a knob that ships off.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn demean_by_market() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1872,6 +1885,7 @@ pub fn demean_by_market() -> bool {
 
 /// (#3l) free accessor twin of `splice_max_weekly_rate` — `core::backtest_quote` and the fetch
 /// enrich have no `tuning` handle, and the value must be identical for live + backtest (train==serve).
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn life_cagr_max_years() -> f64 {
     use std::sync::OnceLock;
     static YEARS: OnceLock<f64> = OnceLock::new();
@@ -1920,6 +1934,7 @@ pub fn history_proxy() -> &'static BTreeMap<String, String> {
 
 /// (#327) Is twin DISCOVERY on? Separate read from the map itself so the map stays a plain merge and
 /// this stays a plain bool. SOFT, like every accessor here: no config -> off.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn history_proxy_auto() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
@@ -1957,6 +1972,7 @@ pub fn auto_proxy_save(map: &BTreeMap<String, String>) {
 /// tests where the gitignored settings.yaml is absent. `fetch_fundamentals_ranked` reads this to route
 /// BOTH the backtest and the live enrich through one source (no train-serve skew); switching to "sec"
 /// is a data-source change that needs a `backtest <set> fund` re-validation (see `BuyHeuristic`).
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
 pub fn fund_source() -> String {
     use std::sync::OnceLock;
     static SRC: OnceLock<String> = OnceLock::new();
@@ -2541,5 +2557,46 @@ mod tests {
         assert!(quality.contains("{ticker}") && quality.contains("{key}"), "{quality}");
         assert!(default_eu_hicp_old().contains("prc_hicp_manr"), "the TERMINATED dataset, not the live one");
         assert!(default_euronext_lisbon_url().contains("mics=XLIS"), "Lisbon MIC scope is the whole point");
+        // (#343) the rest of the fallbacks, same pin: host, then every token its fetcher substitutes.
+        for (url, host, tokens) in [
+            (default_sec_ticker_cik_url(), "https://www.sec.gov/", &[][..]),
+            (default_sec_submissions_url(), "https://data.sec.gov/", &["{cik}"][..]),
+            (default_sec_companyfacts_url(), "https://data.sec.gov/", &["{cik}"][..]),
+            (default_sec_companyconcept_url(), "https://data.sec.gov/", &["{cik}", "{concept}"][..]),
+            (default_euronext_track_url(), "https://live.euronext.com/", &[][..]),
+            (default_six_funds_url(), "https://www.six-group.com/", &[][..]),
+            (default_esma_firds_url(), "https://registers.esma.europa.eu/", &[][..]),
+            (default_fca_firds_url(), "https://api.data.fca.org.uk/", &[][..]),
+            (default_coinmetrics_catalog_url(), "https://community-api.coinmetrics.io/", &[][..]),
+            (default_coinmetrics_mvrv_url(), "https://community-api.coinmetrics.io/", &["{assets}"][..]),
+            (default_fundamentals_history_url(), "https://financialmodelingprep.com/", &["{ticker}", "{key}"][..]),
+            (default_fund_expense_url(), "https://financialmodelingprep.com/", &["{ticker}", "{key}"][..]),
+            (default_bf_etf_search_url(), "https://api.boerse-frankfurt.de/", &[][..]),
+        ] {
+            assert!(url.starts_with(host), "{url}");
+            for t in tokens {
+                assert!(url.contains(t), "{url} lost {t}");
+            }
+        }
+        // SEC refuses an agent with no contact in it, and the salt signs every Börse Frankfurt request
+        assert!(default_sec_user_agent().contains('@'), "{}", default_sec_user_agent());
+        let salt = default_bf_salt();
+        assert!(salt.len() >= 32 && salt.chars().all(|c| c.is_ascii_hexdigit()), "{salt}");
+    }
+
+    /// (#343) The discovered-twin journal round-trips, and anything it cannot parse reads as no pairs.
+    /// Owns `.history_proxy_auto.json` in the scratch root: `history_proxy_auto` is off in both
+    /// regimes, so the only other reader (`history_proxy`) never opens it under test.
+    #[test]
+    fn auto_proxy_journal_round_trips_and_fails_soft() {
+        let path = data_path(AUTO_PROXY_FILE);
+        let _ = std::fs::remove_file(&path);
+        assert!(auto_proxy_load().is_empty(), "no file, no pairs");
+        let map = BTreeMap::from([("YOUNG.DE".to_string(), "OLD.L".to_string())]);
+        auto_proxy_save(&map);
+        assert_eq!(auto_proxy_load(), map);
+        std::fs::write(&path, "not json").unwrap();
+        assert!(auto_proxy_load().is_empty(), "a garbled file splices nothing");
+        let _ = std::fs::remove_file(&path);
     }
 }

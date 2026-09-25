@@ -6488,6 +6488,62 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#343) ROUND 126: A MUTATION CENSUS OF SCREEN, SIZE, REPORT AND CONFIG. 73 SURVIVORS KILLED, 25
+  # SKIPPED AS AMBIENT-CONFIG READS, 1 EQUIVALENT, NO GAPS.
+  #
+  # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" A NINTH TIME.
+  # Asked: a census of the files that print and size the book, never graded before; all four files;
+  # triage by the (#340) rule; re-run as proof.
+  #
+  # THE CENSUS (run 36124096911 on 3c69159, 54m over 16 shards): files `src/commands/screen.rs
+  # src/commands/size.rs src/commands/report.rs src/config.rs`, regex `.`, exclude
+  # `^src/commands/screen\.rs:.*replace last_core -> ` (519 constant swaps of one nested-tuple return that
+  # `last_core_hands_size_the_broadest_row` already pins by value). 1044 in scope: 884 caught, 99 missed,
+  # 0 timeout, 61 unviable. size.rs left no survivor.
+  #
+  # THE RULE, as in (#340): KILL what a unit test reaches through a returned value (an fs shell counts:
+  # the lib-test scratch root makes it readable); GAP when the only effect is stdout; EQUIVALENT when no
+  # input tells it apart. Line numbers below are 3c69159's.
+  # - 73 KILLED.
+  #   screen.rs 26: `journal` 98 (dated, trimmed, appended; no alerts = no file), `journal_proxies`
+  #   3288 x2 (its knob-off line, whole), `holdings_overlap_lines` 425 (three funds sharing exactly four
+  #   names print no `+0`), `currency_mix` 519 x3 + 532 (all-zero top-10 weights are unknown, not NaN
+  #   shares; a stock is its own quote currency even with a holdings entry; a blank quote currency
+  #   falls back to the suffix), `currency_mix_line` 566 (zero coverage prints no note),
+  #   `funnel_lines` 665/672/676 (the first sample name has no separator; `+N` past the 26-name cap; no
+  #   empty `refused` line), `multi_gate_lines` 822 x2 and `leg_floor_lines` 854 x3 ("top 15 of N"
+  #   fires at 16, never at 15), `fill_venue_listings` 951 (same fund any case, P/E and provenance; a
+  #   different fund on the same index gets nothing), `fund_pe_line` 1064/1092 (PEG 1.0 sits between
+  #   the right and the inverted bar; a fund exactly ON the bar is kept, as `lane_split` keeps
+  #   `p >= bar`), `rank_trend` 1288/1292 (exactly `min_pts` points is enough; an odd flat run is flat),
+  #   `fund_flow_lines` 1401/1403 (a zero close or AUM is a missing point), `small_aum_names` 1453
+  #   (EUR 100M is AT the line), `fact_alerts` 1522 (a zero prior AUM is no baseline).
+  #   report.rs 11: `render_annual` 199 (same-filing SHΔ% flips sign; hand-mutated, red at the row's
+  #   last cell), 211 x2 (a full year carries no `*`), 232, 255 x2 and 275 x2 (weight 0 claims no
+  #   contribution), `market_line` 327 (exactly AT the stale gate is not past it), `verdict_line` 411
+  #   (cap 0 is off), `sh_delta` 445:31 (a negative share base is refused).
+  #   config.rs 36: the 15 `default_*` fallbacks x2 (every URL keeps its host and each placeholder its
+  #   fetcher substitutes; the SEC User-Agent keeps its `@`; the BF salt stays 32+ hex), and
+  #   `auto_proxy_load` x5 + `auto_proxy_save` (round trip, missing file, garbled file).
+  # - 25 SKIPPED, 16 fns: `use_adjusted_close`, `hold_name_tokens`, `hold_ucits_or_domicile`,
+  #   `hold_min_aum_eur_new_family`, `hold_size_sleeve_ter`, `hold_per_tier_all_world`, `hold_per_tier`,
+  #   `gate_on_tr_cagr`, `vol_daily_equivalent`, `backtest_drop_lookahead_sector`,
+  #   `splice_trim_point_in_time`, `demean_by_market`, `life_cagr_max_years`, `history_proxy_auto`,
+  #   `fund_source`, `heuristic_drift`. Each returns the process-global config, which the --lib suite
+  #   cannot choose: it runs under ONE ambient config, so a swap to the value that config already holds
+  #   (`-> false` on a knob left off) is invisible to it by construction, and the other 12 swaps in
+  #   these fns were caught only because they flip a knob that config pins the other way. They take the
+  #   same `#[mutants::skip]` the 34 accessors beside them already carry.
+  # - 1 EQUIVALENT: 445:33 `sh_delta` `b > 0.0` -> `>=`: at b = 0, `a / b` is inf or NaN and the
+  #   `abs() <= 40` window refuses both.
+  #
+  # PROOF RULE: a census re-run on this commit with the same three inputs must list 1007 in scope (the
+  # skipped fns' 37 mutants drop out: 25 missed, 12 caught) and exactly the 1 equivalent as missed.
+  #
+  # WHAT SHIPS. Tests, and 16 skip attributes. No knob, no ranking change, no golden moved.
+  #
+  # REVERT: drop the (#343) asserts and tests and the 16 skip attributes.
+  #
   # (#342) ROUND 125: THE BACKTEST STOPS FOLLOWING FETCH LATENCY; THE CORE SORT GETS A LAST WORD.
   #
   # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" AN EIGHTH TIME.

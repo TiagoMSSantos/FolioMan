@@ -506,6 +506,7 @@ mod tests {
         assert!(out.contains("source: FMP"), "{out}");
         assert!(out.contains("+20.0%"), "rev YoY missing: {out}");
         assert!(has_table);
+        assert!(!out.contains("incomplete fiscal year"), "two full years owe no footnote: {out}");
     }
 
     /// (round 69 guard) a zero-revenue older year must render REV-YoY as "-", never "+inf%".
@@ -527,6 +528,9 @@ mod tests {
         assert!(out.contains(" 2025*"), "mark missing: {out}");
         assert!(out.contains("incomplete fiscal year"), "footnote missing: {out}");
         assert!(!out.contains(" 2024*"), "full year must not be marked: {out}");
+        // (#343) and a rollup with NO full year still owes it — the note is about the partial row
+        let (only, _) = render("ACME", "FMP", &rows[4..]);
+        assert!(only.contains("incomplete fiscal year"), "footnote missing: {only}");
     }
 
     /// (round 89 note) no rows to roll up -> the explanatory note prints under the header and the
@@ -546,6 +550,7 @@ mod tests {
         let rows = vec![quarter(2024, 6, Some(100.0), Some(1.0))];
         let (out, _) = render("ACME", "FMP", &rows);
         assert!(out.contains("survival (judgment — measured no-edge as gates): fcf_margin -  interest_cover -  net_cash_rev -  margin_stability -"), "{out}");
+        assert!(!out.contains("quality != roe"), "roe and quality agree (both absent), so no ROA note: {out}");
     }
 
     /// (round 115) valuation/tilt receipt: eps_ttm 2.0 over close 100 -> earnings_yield +2.0%; with
@@ -563,6 +568,11 @@ mod tests {
         let (off, _) = render_annual("ACME", "FMP", &rows, today(), Some(100.0), None, &config::BuyHeuristic::default());
         assert!(off.contains("earnings_yield +2.0%"), "{off}");
         assert!(!off.contains("-> "), "weight-0 must not claim a score contribution: {off}");
+        assert!(out.contains("(info — probe factors, never scored)"), "peg_yield is not the selected factor: {out}");
+        // (#343) the factor selected at weight 0 is still not weighed
+        let zero = config::BuyHeuristic { growth_fund_factor: "earnings_yield".to_string(), ..Default::default() };
+        let (zero, _) = render_annual("ACME", "FMP", &rows, today(), Some(100.0), None, &zero);
+        assert!(!zero.contains("-> "), "weight-0 must not claim a score contribution: {zero}");
     }
 
     /// (N) the `growth_fund_extra` terms print their own arithmetic, and a term filled from `neutral`
@@ -643,6 +653,9 @@ mod tests {
         let lc = verdict_line(&late, &t);
         assert!(lc.contains("growth_score ") && lc.contains("late-cycle: price"), "{lc}");
         assert!(lc.contains("brake floored (conviction is the score)"), "{lc}");
+        // (#343) cap 0 = the brake is off, so no price is "late-cycle"
+        let off = config::BuyHeuristic { growth_overext_cap: 0.0, ..t.clone() };
+        assert!(!verdict_line(&late, &off).contains("late-cycle"), "{}", verdict_line(&late, &off));
 
         // range-only miss (range 75 < 80, everything else clears) -> near miss on that one gate
         let mut miss = scoring();
@@ -707,6 +720,12 @@ mod tests {
             render_annual("ACME", "SEC", &rows, today(), Some(100.0), Some(15.0), &peg_tilt);
         assert!(tilted.contains("peg_yield +30.0 -> +0.5 pts in growth_score (weight 0.018, cap 300)"), "{tilted}");
         assert!(!tilted.contains("never scored"), "selected tilt must not read as unscored: {tilted}");
+        // (#343) ...and only the peg cell claims it: the valuation line is not the selected factor
+        let val = tilted.lines().find(|l| l.contains("valuation:")).unwrap();
+        assert!(!val.contains("->"), "{val}");
+        let zero = config::BuyHeuristic { growth_fund_weight: 0.0, ..peg_tilt.clone() };
+        let (zero, _) = render_annual("ACME", "SEC", &rows, today(), Some(100.0), Some(15.0), &zero);
+        assert!(zero.contains("peg_yield +30.0 (info — probe factors, never scored)"), "weight 0 is not weighed: {zero}");
 
         // FMP free-tier rows carry no EV/EBITDA levels -> both cells dash despite a live close
         let bare = vec![quarter(2024, 6, Some(100.0), Some(2.0))];
@@ -724,6 +743,7 @@ mod tests {
         assert_eq!(sh_delta(Some(30.0), Some(100.0)), None);       // -70% swing -> split/M&A guard
         assert_eq!(sh_delta(Some(90.0), None), None);
         assert_eq!(sh_delta(None, Some(100.0)), None);
+        assert_eq!(sh_delta(Some(-9.0), Some(-10.0)), None, "a non-positive prior count is not a share count");
 
         let rows = vec![quarter_sh(2024, 6, Some(100.0), Some(100.0)), quarter_sh(2025, 6, Some(100.0), Some(90.0))];
         let (out, _) = render("ACME", "FMP", &rows);
@@ -738,7 +758,9 @@ mod tests {
             core::FundRow { prior_shares: Some(100.0), ..quarter_sh(2025, 6, Some(100.0), Some(90.0)) },
         ];
         let (out, _) = render("ACME", "FMP", &restated);
-        assert!(out.contains("+10.0%"), "same-filing SHΔ% must flip sign like sh_delta: {out}");
+        // on the ROW: the grower profile's buyback_yield prints +10.0% too, whatever this column says
+        let row = out.lines().find(|l| l.trim_start().starts_with("2025")).unwrap();
+        assert!(row.ends_with("+10.0%"), "same-filing SHΔ% must flip sign like sh_delta: {out}");
     }
 
     /// (data round) market line: a populated quote renders every cell in screen-column semantics
@@ -774,6 +796,8 @@ mod tests {
         q.history_proxied = true;
         let marked = market_line(&q, today, 5);
         assert!(marked.contains("market: €42.84 (stale 47d)  cagr ~+25.0% (11y)"), "{marked}");
+        let at_gate = market_line(&q, today, 47); // exactly AT the gate is not past it
+        assert!(!at_gate.contains("stale"), "{at_gate}");
         let gate_off = market_line(&q, today, 0); // stale_days 0 = off, same as screen
         assert!(!gate_off.contains("stale"), "{gate_off}");
 
