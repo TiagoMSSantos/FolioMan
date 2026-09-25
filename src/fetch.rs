@@ -4170,57 +4170,74 @@ pub async fn fetch_euronext_lisbon(client: &Client, urls: &Urls) -> Vec<String> 
 /// whatever pages arrived (or empty, with a diagnostic) — the BF leg still builds the universe.
 /// Hard stop at 10 pages (~10k rows): the list is ~3.3k, so a runaway server cannot loop us.
 /// `#[mutants::skip]`: network-bound, and no offline test reaches it.
+///
+/// (#348) The pages go out `BATCH` at a time, concurrently, and are read back in page order under
+/// the same rules, so the list is the one the sequential walk built. Each page costs ~13-18s
+/// server-side and the server answers them in parallel: one at a time, today's 3401 rows (4 pages)
+/// took 50.7s, which was the whole venue-list phase of `screen` and of every backtest `universe`
+/// run; one batch of 4 took 15.9s. 4 is today's page count; a longer list pays one more batch.
 #[mutants::skip]
 pub async fn fetch_euronext_etf_isins(client: &Client, urls: &Urls) -> Vec<String> {
     const PAGE: usize = 1000;
+    const BATCH: usize = 4;
     let mut isins: Vec<String> = Vec::new();
-    let mut last_status = String::from("no response");
-    'pages: for page in 0..10 {
-        let start = page * PAGE;
-        // raw body (not `.form()`) so the `args[...]` key keeps its literal brackets; WITHOUT
-        // `display_datapoints` the server returns the right count but empty cells (Lisbon lesson).
-        let body = format!(
-            "args[display_datapoints]=name,isin,symbol,market&draw=1&start={start}&length={PAGE}&iDisplayLength={PAGE}&iDisplayStart={start}"
-        );
-        for attempt in 0..2 {
-            let resp = client
-                .post(&urls.euronext_track)
-                // a 1000-row page takes ~18s server-side — the client's 15s default timed the
-                // whole leg out; per-request override, scoped here so quote fetches stay snappy
-                .timeout(StdDuration::from_secs(60))
-                .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                .header("X-Requested-With", "XMLHttpRequest")
-                .body(body.clone())
-                .send()
-                .await;
-            if let Ok(r) = resp {
-                last_status = r.status().to_string();
-                if let Ok(v) = r.json::<Value>().await {
-                    // page length judged on RAW aaData rows (not parsed ISINs): a malformed row must
-                    // not make a full page look short and truncate the walk.
-                    let rows_n = v.get("aaData").and_then(|d| d.as_array()).map_or(0, |a| a.len());
-                    if rows_n > 0 {
-                        isins.extend(core::euronext_track_isins(&v));
-                        if rows_n < PAGE {
-                            break 'pages; // short page = end of list
-                        }
-                        continue 'pages;
-                    }
+    'pages: for first in (0..10).step_by(BATCH) {
+        let batch = (first..(first + BATCH).min(10)).map(|page| euronext_track_page(client, urls, page * PAGE, PAGE));
+        for (page, (rows, last_status)) in (first..).zip(futures::future::join_all(batch).await) {
+            // both attempts empty: on page 0 the leg failed; on a later page it's just the end of the list
+            let Some(v) = rows else {
+                if page == 0 {
+                    eprintln!("fetch: Euronext ETF list failed after 2 attempts (last status: {last_status}) — Euronext-only ETFs absent from the screen");
                 }
-            }
-            if attempt == 0 {
-                tokio::time::sleep(StdDuration::from_millis(400)).await;
+                break 'pages;
+            };
+            isins.extend(core::euronext_track_isins(&v));
+            // page length judged on RAW aaData rows (not parsed ISINs): a malformed row must
+            // not make a full page look short and truncate the walk.
+            if v.get("aaData").and_then(|d| d.as_array()).map_or(0, |a| a.len()) < PAGE {
+                break 'pages; // short page = end of list
             }
         }
-        // both attempts empty: on page 0 the leg failed; on a later page it's just the end of the list
-        if start == 0 {
-            eprintln!("fetch: Euronext ETF list failed after 2 attempts (last status: {last_status}) — Euronext-only ETFs absent from the screen");
-        }
-        break;
     }
     isins.sort();
     isins.dedup(); // cross-listed funds repeat per venue row
     isins
+}
+
+/// One `fetch_euronext_etf_isins` page of `len` rows from row `start`, 2 attempts: `Some` only when
+/// it carries rows, with the last HTTP status seen for that function's failure diagnostic.
+#[mutants::skip]
+async fn euronext_track_page(client: &Client, urls: &Urls, start: usize, len: usize) -> (Option<Value>, String) {
+    // raw body (not `.form()`) so the `args[...]` key keeps its literal brackets; WITHOUT
+    // `display_datapoints` the server returns the right count but empty cells (Lisbon lesson).
+    let body = format!(
+        "args[display_datapoints]=name,isin,symbol,market&draw=1&start={start}&length={len}&iDisplayLength={len}&iDisplayStart={start}"
+    );
+    let mut last_status = String::from("no response");
+    for attempt in 0..2 {
+        let resp = client
+            .post(&urls.euronext_track)
+            // a 1000-row page takes ~18s server-side — the client's 15s default timed the
+            // whole leg out; per-request override, scoped here so quote fetches stay snappy
+            .timeout(StdDuration::from_secs(60))
+            .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+            .header("X-Requested-With", "XMLHttpRequest")
+            .body(body.clone())
+            .send()
+            .await;
+        if let Ok(r) = resp {
+            last_status = r.status().to_string();
+            if let Ok(v) = r.json::<Value>().await {
+                if v.get("aaData").and_then(|d| d.as_array()).is_some_and(|a| !a.is_empty()) {
+                    return (Some(v), last_status);
+                }
+            }
+        }
+        if attempt == 0 {
+            tokio::time::sleep(StdDuration::from_millis(400)).await;
+        }
+    }
+    (None, last_status)
 }
 
 /// SIX Swiss Exchange fund list -> ETF/UCITS-named ISINs for the ETF universe (third venue source;
