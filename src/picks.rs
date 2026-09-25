@@ -8349,8 +8349,10 @@ mod tests {
         // (#250) a real CORE fund, so "the key is there" cannot pass on an empty list. It carries NO
         // perf legs, so it scores None and never reaches `picks` — the ETF-lane assertion below still
         // measures the empty lane it was written for, and this row can only arrive via the CORE seam.
-        let quotes = vec![pin, btc, eth, core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22)];
-        let pinned = vec!["AAPL".to_string()];
+        // (#344) plus a pinned name whose quote FAILED: pinned, but not usable, so no sentinel either
+        let dead = Quote::stub("MSFT", "err", "", "Microsoft");
+        let quotes = vec![pin, btc, eth, core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22), dead];
+        let pinned = vec!["AAPL".to_string(), "MSFT".to_string()];
         let owned = Owned { stocks: ["aapl".to_string()].into(), ..Default::default() };
 
         // euphoric NUPL (>euphoria band) -> nupl_factor damps the crypto rows (the >1 branch).
@@ -8445,6 +8447,11 @@ mod tests {
                 assert!((get(&t) - get(&d) * f).abs() < 1e-12, "{name} at u={u}: {} vs {} x {f}", get(&t), get(&d));
             }
         }
+        // clean_name: a " - " tail that is a share class, not a fund name, is kept whole
+        let mut sc = Quote::stub("XDWD.DE", "€1.00", "", "Xtrackers MSCI World - 1C");
+        sc.instrument_type = "ETF".into();
+        assert_eq!(clean_name(&sc), "Xtrackers MSCI World - 1C");
+
         // render's churn cache: the wide universe and the watch set never share a file
         assert_eq!(turnover_cache(0), ".folioman_turnover_watch.txt");
         assert_eq!(turnover_cache(200), ".folioman_turnover_watch.txt", "200 is still the watch set");

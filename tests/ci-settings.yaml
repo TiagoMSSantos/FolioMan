@@ -6560,6 +6560,14 @@ buy_heuristic:
   # `pit_splice_trim`, +5 `turnover_cache`, +1 `jittered`) and exactly the 6 gaps and 17 equivalents
   # above as missed, matched by fn and operator (render's lines move by the `turnover_cache` lift).
   #
+  # PROOF, run 36172539508 on dfa8608: 2363 in scope, 2219 caught, 117 unviable, 27 missed. That is the 23
+  # above plus FOUR kills this round claimed that had not landed, now asserted (each hand-mutated red):
+  # core 4033:44 `convert_price` `>` -> `>=` (a zero SOURCE rate is None too), core 4796:24
+  # `dividend_yields` `/` -> `*` (only 1Y was graded, where dividing by 1.0 year and multiplying agree;
+  # the 5Y leg now is), picks 3496:32 `clean_name` guard -> true (an ETF whose " - " tail is a share
+  # class keeps it), picks 5187:47 `render` `&&` -> `||` (a pinned name whose quote FAILED is not a
+  # usable pin). The opt-level-0 re-run 36174288986 wrote byte-identical verdict files; see (#345).
+  #
   # WHAT SHIPS. Tests, three lifted helpers (`pit_splice_trim`, `jittered`, `turnover_cache`) and one
   # shared PRNG step. No knob, no ranking change, no golden moved. In-diff mutants: 85, all return swaps
   # the census already graded or ops on the lifted lines; the 4 PRNG-scaling ops were hand-run, all red.

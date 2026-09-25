@@ -6016,6 +6016,7 @@ mod tests {
         assert_eq!(insider_net_buys(&[buy(10), buy(5)], cutoff, 90), Some(2.0));
         assert_eq!(convert_price(100.0, "USD", "EUR", Some(0.9), Some(0.0)), None, "a zero rate is an unknown rate");
         assert!(convert_price(100.0, "USD", "GBP", Some(0.9), Some(1.2)).is_some_and(|p| (p - 75.0).abs() < 1e-9));
+        assert_eq!(convert_price(100.0, "USD", "EUR", Some(0.0), Some(1.0)), None, "so is a zero SOURCE rate");
         assert_eq!(quality_return(Some(20.0), Some(0.0), None), Some(20.0), "a zero ROA judges nothing");
         assert_eq!(peg_yield(Some(0.0), Some(10.0), 100.0), None, "zero earnings is not cheap");
         assert_eq!(peg_yield_from_pe(0.0, Some(10.0)), None);
@@ -6035,6 +6036,9 @@ mod tests {
         assert_eq!(dividends_in_window(&[(d(2020, 6, 1), 1.5)], &span, 366), Some(1.5), "a window covered to the day is covered");
         assert_eq!(dividend_yields(&[Some(1.0)], Some(0.0))[0], None, "no price, no yield");
         assert_eq!(dividend_yields(&[Some(2.0)], Some(100.0))[0], Some(2.0));
+        // 1Y divides by exactly 1.0 year, where `/` and `*` agree; 5Y is where the annualising shows
+        let y5 = dividend_yields(&[None, Some(5.0)], Some(100.0))[1];
+        assert!(y5.is_some_and(|y| (y - 1.0).abs() < 1e-12), "5.0 paid over 5 years on 100 is 1%/yr: {y5:?}");
         assert_eq!(pct_cell(Some(&(String::new(), 1500.0))), "+1500%");
         // the lifted splice-trim gate: knob AND not-a-coin
         assert!(pit_splice_trim(true, "AAPL"));
