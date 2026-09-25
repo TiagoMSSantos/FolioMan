@@ -1117,14 +1117,11 @@ pub async fn run(args: Vec<String>) {
     // FETCH FIRST, WALK SECOND. The two halves want opposite things: the fetch is network-bound and
     // `buffer_unordered` is exactly right for it, the walk is pure CPU — and a `buffer_unordered`
     // stream is polled by ONE task, so until this split the whole walk ran on one thread of eight.
-    // ORDER IS PRESERVED, which is the part that matters: `fetched` comes out in completion order
-    // exactly as `per_ticker` used to, and rayon's `collect` keeps its input order, so the flatten
-    // below sees the same sequence — the `sort_by_key(date)` after it is STABLE and inherits this
-    // order for same-date ties, which `bootstrap_edge_ci`'s pools then depend on. (Live, completion
-    // order now turns on fetch latency alone instead of fetch+walk; both are network-dependent and
-    // neither is pinned. The pinned offline path resolves every future without yielding, so
-    // completion order there is input order, before and after.)
-    let fetched: Vec<_> = stream::iter(tickers.iter())
+    // ORDER IS PINNED, which is the part that matters: `fetched` comes out in completion order, so it
+    // is sorted by ticker below; rayon's `collect` keeps its input order, so the flatten sees that
+    // sequence, and the STABLE `sort_by_key(date)` after it inherits it for same-date ties, which
+    // `bootstrap_edge_ci`'s pools and every probe `edge` then depend on.
+    let mut fetched: Vec<_> = stream::iter(tickers.iter())
         .map(|tk| {
             let client = &client;
             let urls = &settings.urls;
@@ -1171,6 +1168,10 @@ pub async fn run(args: Vec<String>) {
         .buffer_unordered(fetch::fetch_concurrency())
         .collect()
         .await;
+    // (#342) Live, completion order is fetch latency, and one config printed two edges (-231.2, then
+    // -237.2). Offline it is input order. Either way the walk now sees A-Z; `tests/backtest_fixture.rs`
+    // runs a Z-A pool against the same goldens.
+    fetched.sort_by_key(|f| f.as_ref().map(|x| x.0));
     // every network read this command makes is done by here, so one flush covers all three remaining
     // exits below. The monthly payloads are the expensive part of a wide run and `screen` shares the
     // same file, so whichever ran first pays and the other reads free for a week.

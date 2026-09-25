@@ -139,7 +139,7 @@
 //! Regenerating the frozen cache from a warm real one (rare — only to add tickers or refresh history):
 //!     cargo test --release --test backtest_fixture -- --ignored regen
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The frozen universe: 200 tickers, chosen to span every branch the backtest can take rather than
 /// sampled at random. THE LIST ITSELF LIVES IN `tests/fixture/config/settings.yaml` and is read from
@@ -242,12 +242,13 @@ fn normalize(raw: &str) -> String {
 /// slowest single run (~3.5s / ~47s). Peak RSS is 38 MB per run, so six at once is ~230 MB — this
 /// repo's OOM history is the linker, not test processes.
 fn pin(args: &[&str], golden_name: &str) {
-    pin_at(args, golden_name, None);
+    pin_at(&fixture_dir().join("config/settings.yaml"), args, golden_name, None);
 }
 
 /// `pin` with rayon's pool forced to `threads` workers. `backtest::run` builds no pool at the default
-/// `compute_threads: 0`, so `RAYON_NUM_THREADS` is what sizes it.
-fn pin_at(args: &[&str], golden_name: &str, threads: Option<&str>) {
+/// `compute_threads: 0`, so `RAYON_NUM_THREADS` is what sizes it. (#342) `cfg` picks the config, and
+/// with it the data root; the golden is always read from `fixture_dir()`.
+fn pin_at(cfg: &Path, args: &[&str], golden_name: &str, threads: Option<&str>) {
     let cache = fixture_dir().join(".long_history_cache.json");
     assert!(
         cache.is_file(),
@@ -259,7 +260,7 @@ fn pin_at(args: &[&str], golden_name: &str, threads: Option<&str>) {
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_folioman"));
     cmd.arg("backtest")
         .args(args)
-        .env("FOLIOMAN_CONFIG", fixture_dir().join("config/settings.yaml"))
+        .env("FOLIOMAN_CONFIG", cfg)
         .env("FOLIOMAN_OFFLINE", "1"); // no socket may be opened; a fixture miss must not become a live fetch
     if let Some(n) = threads {
         cmd.env("RAYON_NUM_THREADS", n);
@@ -316,13 +317,50 @@ fn backtest_report_is_pinned_on_frozen_data() {
 /// serial order; it must print the SAME golden, so nothing here is ever blessed. ~0.7s serial.
 #[test]
 fn backtest_report_is_bit_identical_on_one_thread() {
-    pin_at(&["12"], "backtest-12.golden", Some("1"));
+    pin_at(&fixture_dir().join("config/settings.yaml"), &["12"], "backtest-12.golden", Some("1"));
 }
 
 /// (#341) The same claim for `tune`'s 500 draws, the other parallel stage with a seeded stream. ~1.1s.
 #[test]
 fn backtest_tune_report_is_bit_identical_on_one_thread() {
-    pin_at(&["12", "tune"], "backtest-12-tune.golden", Some("1"));
+    pin_at(&fixture_dir().join("config/settings.yaml"), &["12", "tune"], "backtest-12-tune.golden", Some("1"));
+}
+
+/// (#342) A copy of the fixture whose `tickers:` list runs Z-A. Offline, the fetch completes in input
+/// order, so this is what a live run's latency does to the pool: same names, another order. Text
+/// splice, not a serde round-trip, so nothing but the order can change. One dir per test: the harness
+/// runs them concurrently and a half-copied cache would be a flake.
+fn reversed_fixture(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    std::fs::create_dir_all(dir.join("config")).expect("mkdir");
+    for f in [".long_history_cache.json", ".sp500_history.json"] {
+        std::fs::copy(fixture_dir().join(f), dir.join(f)).expect("copy frozen cache");
+    }
+    let raw = std::fs::read_to_string(fixture_dir().join("config/settings.yaml")).expect("read settings");
+    let lines: Vec<&str> = raw.lines().collect();
+    let start = lines.iter().position(|l| *l == "tickers:").expect("a `tickers:` block") + 1;
+    let end = start + lines[start..].iter().take_while(|l| l.starts_with("  - ")).count();
+    let mut out = lines.clone();
+    out[start..end].reverse();
+    assert_eq!(end - start, 200, "the whole list moved");
+    assert!(out[start] > out[end - 1], "and it now runs Z-A");
+    std::fs::write(dir.join("config/settings.yaml"), out.join("\n") + "\n").expect("write settings");
+    dir.join("config/settings.yaml")
+}
+
+/// (#342) THE POOL-ORDER INVARIANT. Same-date samples reach the stable date sort in fetch order, and
+/// `bootstrap_edge_ci`'s pools and every probe `edge` read that order. Live, the fetch is
+/// `buffer_unordered`, so the order was whatever the network returned first, and one config printed two
+/// edges (-231.2, then -237.2). A Z-A pool must print the A-Z golden.
+#[test]
+fn backtest_report_ignores_pool_order() {
+    pin_at(&reversed_fixture("reversed-12"), &["12"], "backtest-12.golden", None);
+}
+
+/// (#342) The same for `tune`'s 500 draws.
+#[test]
+fn backtest_tune_report_ignores_pool_order() {
+    pin_at(&reversed_fixture("reversed-12-tune"), &["12", "tune"], "backtest-12-tune.golden", None);
 }
 
 /// 20y is the horizon SHIP RULE v2 leads on and the screen footer quotes. Longest forward window ->

@@ -6488,6 +6488,42 @@ buy_heuristic:
   # sector_floors, stamp_sector_floors}`, the `min_cagr_floor` stock branch (restore the two-arm ETF test),
   # `backtest::{bench_leg_cagr, stamp_sector_cohorts, sector_books, report_sector_books}` with their two
   # call sites, and the `screen::run` stamp; re-bless.
+  # (#342) ROUND 125: THE BACKTEST STOPS FOLLOWING FETCH LATENCY; THE CORE SORT GETS A LAST WORD.
+  #
+  # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" AN EIGHTH TIME.
+  # Asked: the tie-order pin and its fix first; on the CORE sort, a ticker tie-break plus a test.
+  #
+  # BACK. The fetch is `buffer_unordered`, so `fetched` came out in completion order, and the STABLE
+  # `sort_by_key(date)` hands that order to every same-date tie: every ticker at every cutoff.
+  # `bootstrap_edge_ci`'s pools, `tune`'s rhos and every probe `edge` read it. Live, the order was
+  # network latency: one config printed `consistency_5y edge -231.2`, then -237.2. Offline it was
+  # config order, which the fixture happens to keep A-Z, so no golden could see it.
+  # TESTS: `backtest_report_ignores_pool_order` and `backtest_tune_report_ignores_pool_order` in
+  # tests/backtest_fixture.rs copy the fixture with its 200 tickers Z-A and diff against the SAME
+  # goldens (`12`, `12 tune`); `pin_at` now takes the config path. RED before the fix: `12` line 17,
+  # late rho -0.12 -> -0.13; `12 tune` line 5, the search winner's TRAIN rho +0.19 -> +0.15, on pool
+  # order alone. FIX: `fetched.sort_by_key(ticker)` right after the fetch. All 8 goldens held,
+  # nothing blessed. Fixture suite 14 tests, 3.3s.
+  # LIVE PAIR: `backtest 5 universe fund pit` twice on the fixed binary (FOLIOMAN_CONFIG =
+  # tests/ci-settings.yaml, 260s and 246s): 4702 tickers resolved and 825 windows scored in both, and
+  # every report line matches, `consistency_5y n=24 rho -0.22 edge -122.5` included. Only the fetch
+  # log differed (run b lost the Yahoo crumb and filled fund facts from justETF). No pre-fix live pair
+  # was run: the flicker was intermittent, and the Z-A test is the controlled proof. This fixes ORDER,
+  # not membership: a pond that drifts between runs still moves the numbers.
+  #
+  # FORWARD. `screen` was already deterministic (sorted universe, ordered `.buffered` quote fetch), but
+  # `hold_core_cmp` had no last tie-break: twin listings of one fund tie on every key, and `retain` by
+  # name kept whichever arrived first. `.then(ticker)` closes it, byte-identical on screen's A-Z input.
+  # TEST: `hold_core_list_ignores_input_order` (twins VUAA.DE/VUAA.L, an exact distinct-name tie, one
+  # other tier; every rotation and its reverse). RED before the `.then`: reversed input printed
+  # [VWCE.DE, VUAA.L, SPYL.DE] against [VWCE.DE, SPYL.DE, VUAA.DE]. Green in both config regimes.
+  #
+  # WHAT SHIPS. One sort line in `backtest::run`, one `.then` in `hold_core_cmp`, three tests. No knob:
+  # a correction, and neither change moves an off-default lane. In-diff mutants: 1,
+  # `hold_core_cmp -> Default::default()`, unviable (`Ordering` has no `Default`).
+  #
+  # REVERT: drop the sort line and the `.then`; the three tests red.
+  #
   # (#341) ROUND 124: THE BACKTEST'S THREAD-COUNT PROMISE AND THE CHAINED RECORD'S HISTORY GET TESTS.
   #
   # THE ROUND WAS OPENED AS "WHAT USEFUL BACK AND FORWARD AND UNIT TESTS CAN WE ADD" A SEVENTH TIME,

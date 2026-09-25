@@ -4632,6 +4632,9 @@ fn hold_core_cmp(a: &Quote, ta: u8, b: &Quote, tb: u8, swap_credit: f64, dom_pen
         .then((core::net_ter(a.ter_shown(), ta, a.replication, swap_credit) + dom_cost(a, ta, dom_pen))
             .total_cmp(&(core::net_ter(b.ter_shown(), tb, b.replication, swap_credit) + dom_cost(b, tb, dom_pen))))
         .then(b.aum_shown().unwrap_or(0.0).total_cmp(&a.aum_shown().unwrap_or(0.0)))
+        // (#342) the last word, so a tie on every key above (twin listings of one fund) never falls
+        // to arrival order. Byte-identical on `screen`'s A-Z input.
+        .then(a.ticker.cmp(&b.ticker))
 }
 
 /// Buy-and-hold CORE shortlist — the one-fund-forever holds the momentum SCORE buries at 0.0 (the
@@ -8799,6 +8802,29 @@ mod tests {
         // and the guard is real: with the term absent, the later tiebreaks would have inverted this.
         assert!(dom_rank(&unknown, 0) < dom_rank(&big, 0), "IE beats DE — the term this one jumps ahead of");
         assert!(unknown.ter_shown() < big.ter_shown(), "and it is cheaper — the next term too");
+    }
+
+    /// (#342) The CORE list must not depend on the order its quotes arrive in. `screen` hands it an A-Z
+    /// universe fetched in order, so it held, but only by that luck: a twin listing tied on every key
+    /// (same fund, TER, AUM) was kept by whichever came first, and a `buffer_unordered` fetch (the
+    /// backtest's, for speed) would have made the printed and journalled ticker follow the network.
+    #[test]
+    fn hold_core_list_ignores_input_order() {
+        let quotes = vec![
+            core_etf("VWCE.DE", "Vanguard FTSE All-World UCITS ETF", 20e9, 0.22), // another tier
+            core_etf("SPYL.DE", "SPDR S&P 500 UCITS ETF", 10e9, 0.07),           // distinct name, exact tie
+            core_etf("VUAA.DE", "Vanguard S&P 500 UCITS ETF", 10e9, 0.07),
+            core_etf("VUAA.L", "Vanguard S&P 500 UCITS ETF", 10e9, 0.07),        // twin listing, exact tie
+        ];
+        let want = tickers(&hold_core_list(&quotes));
+        assert!(want.contains(&"VWCE.DE") && !want.contains(&"VUAA.L"), "one row per fund, the A-Z first kept: {want:?}");
+        for k in 0..quotes.len() {
+            let mut q = quotes.clone();
+            q.rotate_left(k);
+            assert_eq!(tickers(&hold_core_list(&q)), want, "rotation {k}");
+            q.reverse();
+            assert_eq!(tickers(&hold_core_list(&q)), want, "reversed rotation {k}");
+        }
     }
 
     /// (#231) The tier-3 row cap AS `hold_core_list` COMPUTES IT, for the two tests below that assert
