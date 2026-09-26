@@ -1108,6 +1108,17 @@ pub fn sp500_member_at(spans: &[(NaiveDate, Option<NaiveDate>)], on: NaiveDate) 
     spans.iter().any(|(start, end)| *start <= on && end.is_none_or(|e| on < e))
 }
 
+/// (#372) One constituents pond's rows, whichever shape it came in: a Wikipedia constituents page
+/// (the URL's host picks) or a CSV (Symbol first, sector col 3, header skipped). Shared by
+/// `fetch::constituent_ponds` and its live drift net, so the net judges the universe's own parse.
+pub fn pond_rows(url: &str, text: &str, sectors: &[String]) -> Vec<(String, String)> {
+    if url.contains("wikipedia.org") {
+        wiki_constituents(text, sectors)
+    } else {
+        text.lines().skip(1).filter_map(|l| sector_symbol(l, sectors)).collect()
+    }
+}
+
 /// (Item 32) Extract (Yahoo symbol, GICS sector) rows from a Wikipedia "List of S&P N companies"
 /// page (the maintained source for the MidCap 400 — no living CSV exists). Anchors on the
 /// `id="constituents"` table; per row, cell 0's text = ticker, cell 2's = sector. The tag-strip is

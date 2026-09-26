@@ -4370,18 +4370,18 @@ pub async fn fetch_regulatory_etf_isins(client: &Client, urls: &Urls) -> Vec<Str
 /// a commodity name explain UNDAMPED (22.25) while the full screen ranked it damped (17.84) — the one
 /// place the `c` flag most needs to reconcile. These are small documents, so paying for them on a
 /// one-name query is cheap; the heavy CoinGecko/ETF/Lisbon legs stay skipped.
+///
+/// (#372) An EMPTY pond warns like an unreachable one. `get_text` never reads the status, so a 404 or
+/// 429 page, or a reshaped CSV, arrived here as text, parsed to 0 rows and dropped ~500 stocks in silence.
 pub async fn constituent_ponds(client: &Client, urls: &Urls, sectors: &[String]) -> Vec<Vec<(String, String)>> {
     let mut ponds: Vec<Vec<(String, String)>> = Vec::new();
     for url in std::iter::once(&urls.sp500_csv).chain(urls.constituents_csv.iter()) {
-        let Some(text) = get_text(client, url).await else {
-            eprintln!("fetch: constituents CSV {url} unavailable — its stocks absent from the screen");
+        let pond = get_text(client, url).await.map(|t| core::pond_rows(url, &t, sectors)).unwrap_or_default();
+        if pond.is_empty() {
+            eprintln!("fetch: constituents CSV {url} unavailable or 0 rows parsed — its stocks absent from the screen");
             continue;
-        };
-        ponds.push(if url.contains("wikipedia.org") {
-            core::wiki_constituents(&text, sectors)
-        } else {
-            text.lines().skip(1).filter_map(|l| core::sector_symbol(l, sectors)).collect()
-        });
+        }
+        ponds.push(pond);
     }
     ponds
 }

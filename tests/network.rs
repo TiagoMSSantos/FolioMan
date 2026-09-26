@@ -350,6 +350,23 @@ async fn inflation_us_parses() {
     assert_live_inflation(&core::parse_bls_cpi(&d), "BLS CPI-U");
 }
 
+/// (#372) Constituents drift net. The equity universe IS these ponds, and `constituent_ponds` drops
+/// an empty one with a stderr line, so a moved dataset or a reshaped CSV quietly empties the stock
+/// lane on every run. Parses the probed body with the universe's own `core::pond_rows` (no cache on
+/// this path, no second GET). A 404 parses to 0 rows and fails: that is a moved source, i.e. drift.
+/// S&P 500 is 503 rows live; each extra pond only has to be non-empty.
+#[tokio::test]
+async fn constituent_ponds_parse() {
+    let settings = config::load();
+    let urls = &settings.urls;
+    for url in std::iter::once(&urls.sp500_csv).chain(&urls.constituents_csv) {
+        let Some(resp) = probe(fetch::client().get(url), url).await else { continue };
+        let rows = core::pond_rows(url, &resp.text().await.unwrap_or_default(), &[]);
+        let floor = if url == &urls.sp500_csv { 480 } else { 1 };
+        assert!(rows.len() >= floor, "API DRIFT [{url}]: healthy reply parsed to {} rows, want >= {floor}", rows.len());
+    }
+}
+
 /// (round 79) NUPL drift net. `fetch_nupl` feeds the crypto damp/boost in screen and size, and its
 /// None path is silent BY DESIGN (the factor just stays neutral) — so a bitcoin-data.com payload
 /// reshape would quietly disable the euphoria brake forever. Healthy endpoint + None parse = red.
