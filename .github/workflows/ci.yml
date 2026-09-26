@@ -481,10 +481,10 @@ jobs:
           # Work per mutant is 13.6s across 2 workers = 6.8s of wall clock, and the two cold builds run
           # in parallel, so the slower one plus its test covers the first mutant in each tree:
           #   mutants(T) = 2 + (T - 73) / 6.8
-          # Sized to finish in backtest-gate's shadow, NOT to fill the 17-minute wrapper: this job waits
-          # for integration-tests (~82s) and backtest-gate, the longest job, ran 275s before (#349) cut
-          # ~60s of LTO from it, so T is ~115s — an estimate until a post-(#349) run is read:
-          #   73 + 6 * 6.8 = 114s          8 mutants
+          # Sized to finish in backtest-gate's shadow, NOT to fill the 17-minute wrapper. Read off run
+          # 36219367047 (warm, after (#349)): this job started at +83s behind integration-tests and paid
+          # ~14s of setup, and backtest-gate, the longest job, ended at +200s, so T is ~103s:
+          #   73 + 4 * 6.8 = 100s          6 mutants: the opt-level-2 budget, in ~1/9 of its 888s
           #
           # SUPERSEDED, opt-level 2, run 31946331154: 417/556s cold per tree and 166s per mutant build
           # (98.3% of the run was compiler), so BUDGET was 6 at 556 + 4 * 83 = 888s — on any push that
@@ -495,7 +495,7 @@ jobs:
           # An ARRAY, not a string: an unquoted "$SHARD" would need word-splitting to become three
           # arguments, and quoting it would pass one empty argument in the common case where no shard
           # is wanted. `"${SHARD[@]}"` expands to nothing at all when empty, and needs no splitting.
-          BUDGET=8
+          BUDGET=6
           SHARD=()
           if [ "${n}" -gt "${BUDGET}" ]; then
             shards=$(( (n + BUDGET - 1) / BUDGET ))
