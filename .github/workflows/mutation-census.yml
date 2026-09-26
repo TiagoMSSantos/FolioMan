@@ -50,6 +50,8 @@ on:
 # and CANCELS it when a third dispatch arrives; `queue: max` holds up to 100, first in first out.
 # Running two at once instead buys ~1 min: a census takes 16 of the free plan's 20 runners, so a
 # second one's shards wait for the first's anyway, and push CI loses the 4 runners it keeps now.
+# PROVEN on abefd27: three dispatches 7s apart (runs 36223497823, 36223502919, 36223507964) ran back to
+# back, each starting 2-3s after the last ended; the old default would have cancelled the middle one.
 concurrency:
   group: mutation-census
   cancel-in-progress: false
