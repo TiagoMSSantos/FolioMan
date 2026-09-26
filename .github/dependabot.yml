@@ -10,3 +10,16 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  # (#375) Cargo.lock only: semver-compatible bumps inside Cargo.toml's ranges, one grouped PR a
+  # month, so it always compiles and needs no API work. Most direct deps are 0.x, where Dependabot
+  # files a breaking 0.12 -> 0.13 as "minor", so a minor+patch group would still let API breaks in;
+  # crossing a range stays a hand edit. CI runs on the PR. Replaces the dead renovate.json, whose
+  # lockFileMaintenance never ran (Renovate was never installed on the repo).
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    versioning-strategy: lockfile-only
+    groups:
+      cargo:
+        patterns: ["*"]
