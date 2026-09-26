@@ -6612,6 +6612,10 @@ buy_heuristic:
   # 561:20 came up missed after two polluted runs. Its earlier logs showed the tree: the frozen-cache test
   # failed beside the goldens, 208 names cached for 200 configured. Three more were polluted in every run:
   # `quote_one` 754:34 and `eur_rate_series` 489:75 (killed above), `bf_aum` 3515:64 (a gap).
+  # PROOF HELD: run 36246216369 on 4a8b8ff listed 1284: 1178 caught, 61 missed, 1 timeout, 44 unviable.
+  # The missed list is exactly the 6 equivalents and 55 gaps above, and the frozen-cache test failed in
+  # no shard. The 5 caught by the fixture alone are code the backtest reads through: both `offline`
+  # mutants, `parse_chart` 358:50, `fetch_history_long -> None` and `long_cache_load`.
   #
   # WHAT SHIPS. Tests and the harness they need: `routed_stub` (route by the request line, 404 otherwise,
   # every request recorded), `routed_stub_bytes` behind it, `recording_stub`, `chart_body`, and
