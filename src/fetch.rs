@@ -2356,6 +2356,12 @@ pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) 
     Some(rows)
 }
 
+/// (#382) Mapped CIK -> the predecessor filer's CIK, fetched ONLY when the mapped one parses zero rows.
+/// SEC's map moved XOM to ExxonMobil Holdings Corp, a 2026 holdco with no 10-K yet, while every annual
+/// report sits under Exxon Mobil Corp. The holdco's first 10-K yields rows and the pair goes dead on
+/// its own; an override would instead freeze XOM at FY2025, the (#379) trap.
+const SEC_PREDECESSOR_CIK: &[(&str, &str)] = &[("0002115436", "0000034088")];
+
 /// Annual `FundRow`s for a US ticker from SEC XBRL company-facts. DISK-CACHED as compact parsed rows
 /// (`.sec_cache/{ticker}_facts.json`) — NOT the multi-MB raw payload — append-only history, so the
 /// BACKTEST reuses it forever (its as-of quarters cannot go stale). (#84) The LIVE path no longer
@@ -2420,11 +2426,18 @@ async fn fetch_sec_facts_rows(client: &Client, urls: &Urls, ticker: &str) -> Opt
         return (!rows.is_empty()).then_some(rows); // cache hit -> no network, no budget spend
     }
     let cik = sec_cik(client, urls, ticker).await?; // non-US / unknown -> None
-    if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) >= SEC_FETCH_BUDGET {
-        return None;
+    let old = SEC_PREDECESSOR_CIK.iter().find(|(new, _)| *new == cik).map(|(_, old)| *old);
+    let mut rows = Vec::new();
+    for cik in std::iter::once(cik.as_str()).chain(old) {
+        if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) >= SEC_FETCH_BUDGET {
+            return None;
+        }
+        let v = sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", cik), &urls.sec_user_agent).await?;
+        rows = parse_sec_facts(&v);
+        if !rows.is_empty() {
+            break;
+        }
     }
-    let v = sec_get_json(client, &urls.sec_companyfacts.replace("{cik}", &cik), &urls.sec_user_agent).await?;
-    let rows = parse_sec_facts(&v);
     if !rows.is_empty() {
         let serial: Vec<SecCacheRow> = rows
             .iter()
@@ -7077,7 +7090,7 @@ pub(crate) mod tests {
             std::fs::create_dir_all(&dir).expect("scratch .sec_cache");
             std::fs::write(
                 dir.join("_tickers.json"),
-                r#"{"0":{"ticker":"AAPL","cik_str":320193},"1":{"ticker":"GOOGL","cik_str":1652044}}"#,
+                r#"{"0":{"ticker":"AAPL","cik_str":320193},"1":{"ticker":"GOOGL","cik_str":1652044},"2":{"ticker":"XOM","cik_str":2115436}}"#,
             )
             .expect("seed cik map");
         });
@@ -7630,6 +7643,26 @@ pub(crate) mod tests {
         assert_eq!(got[0].revenue, Some(1000.0));
         let written = std::fs::read_to_string(sec_cache_path("AAPL_facts12")).expect("cache written");
         assert!(written.contains("2021-09-30"), "the parse must be cached, not just returned: {written}");
+    }
+
+    /// (#382) XOM's mapped holdco CIK parses nothing, so its predecessor's rows are served AND cached.
+    #[tokio::test]
+    async fn sec_facts_rows_fall_back_to_the_predecessor_cik() {
+        seed_cik_map();
+        let _ = std::fs::remove_file(sec_cache_path("XOM_facts12"));
+        let (base, client, asked) = routed_stub(vec![
+            ("CIK0002115436", r#"{"facts": {"dei": {}}}"#),
+            ("CIK0000034088", r#"{"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+                {"start": "2025-01-01", "end": "2025-12-31", "val": 100.0, "form": "10-K", "filed": "2026-02-18"}
+            ]}}}}}"#),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.sec_companyfacts = format!("{base}CIK{{cik}}.json");
+        let got = fetch_sec_facts_rows(&client, &urls, "XOM").await.expect("predecessor rows");
+        assert_eq!(got[0].revenue, Some(100.0));
+        assert_eq!(asked.try_iter().count(), 2, "holdco first, then the predecessor");
+        let written = std::fs::read_to_string(sec_cache_path("XOM_facts12")).expect("cache written");
+        assert!(written.contains("2025-12-31"), "{written}");
     }
 
     /// `yahoo_fund_facts_fill`'s CACHE lane — the whole function bar the fetch itself, and the lane a
