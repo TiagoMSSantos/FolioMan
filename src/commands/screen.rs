@@ -3170,7 +3170,9 @@ pub async fn run(args: Vec<String>) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    if let Some(nag) = net_nag(stamp.as_deref(), now_secs) {
+    // (#381) never on a CI runner: its disk is fresh every run, so the nag fired on every Pages publish
+    // and nobody there can act on it. The nets themselves run in CI's integration job on each push.
+    if let Some(nag) = net_nag(stamp.as_deref(), now_secs).filter(|_| std::env::var_os("GITHUB_ACTIONS").is_none()) {
         eprintln!("{nag}");
     }
 }
