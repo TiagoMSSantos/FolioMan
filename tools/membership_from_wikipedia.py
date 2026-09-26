@@ -32,7 +32,8 @@ def _api(params, cache_dir, tries=9):
     key = hashlib.sha1(urllib.parse.urlencode(params).encode()).hexdigest()
     path = os.path.join(cache_dir, key + ".json")
     if os.path.exists(path):
-        return json.load(open(path))
+        with open(path) as fh:
+            return json.load(fh)
     for attempt in range(tries):
         gap = PACE - (time.time() - _last[0])
         if gap > 0:
@@ -41,7 +42,8 @@ def _api(params, cache_dir, tries=9):
         try:
             req = urllib.request.Request(API + "?" + urllib.parse.urlencode(params), headers={"User-Agent": UA})
             body = json.load(urllib.request.urlopen(req, timeout=90))
-            json.dump(body, open(path, "w"))
+            with open(path, "w") as fh:
+                json.dump(body, fh)
             return body
         except urllib.error.HTTPError as e:
             if e.code in (429, 503):
@@ -188,7 +190,8 @@ def selftest():
 def main():
     ap = argparse.ArgumentParser()
     if "--selftest" in sys.argv:
-        return selftest()
+        selftest()
+        return
     ap.add_argument("--selftest", action="store_true", help="run the offline parser checks and exit")
     ap.add_argument("--title", required=True, help='e.g. "List of S&P 400 companies"')
     ap.add_argument("--start", required=True, help="first epoch, YYYY-MM")
