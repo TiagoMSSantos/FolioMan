@@ -29,8 +29,9 @@
 #![allow(clippy::doc_lazy_continuation)]
 
 use folioman::commands::backtest::markers;
-use folioman::{config, fetch};
+use folioman::{config, core, fetch};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// (tests round 4) Stamp the pull so `screen` can nag when the nets go stale — a net nobody runs
 /// catches nothing. Once per process; a run that ends in SKIPPED lines still counts (the family
@@ -263,13 +264,19 @@ async fn yahoo_fund_facts_parse() {
 /// SKIP; anything else is left to the real parser — a healthy endpoint plus a None parse is the
 /// drift verdict. (probe_yahoo stays separate: it also checks the chart contract + error envelope.)
 async fn probe_url(url: &str, ctx: &str) -> bool {
+    probe(fetch::client().get(url), ctx).await.is_some()
+}
+
+/// `probe_url`'s classifier for any request (the BLS net POSTs), handing back the classified
+/// response so the net parses the very body it judged healthy.
+async fn probe(req: reqwest::RequestBuilder, ctx: &str) -> Option<reqwest::Response> {
     stamp_run();
     fetch::throttle().await; // paced like every other outbound call in the project
-    let resp = match fetch::client().get(url).send().await {
+    let resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
             eprintln!("network smoke [{ctx}] SKIPPED — transport error: {e}");
-            return false;
+            return None;
         }
     };
     let status = resp.status();
@@ -279,9 +286,68 @@ async fn probe_url(url: &str, ctx: &str) -> bool {
         || status == reqwest::StatusCode::FORBIDDEN
     {
         eprintln!("network smoke [{ctx}] SKIPPED — throttled/unavailable: HTTP {status}");
-        return false;
+        return None;
     }
-    true
+    Some(resp)
+}
+
+/// (#371) Inflation drift nets: shape AND freshness. They parse the RAW body, never go through
+/// `fetch_*_inflation`: `cached_macro` answers from a day-fresh `.fmp_cache` copy and falls back to
+/// a stale one when the live parse is empty, so a net on the wrapper passes on a drifted feed.
+/// Freshness is `core::infl_series_stale`, the screen's own frozen-feed test (the current year
+/// must be there from March on): Eurostat once froze `prc_hicp_manr` behind a live-looking
+/// update stamp, and a shape check alone reads that as healthy. A retired dataset's 404 or a
+/// non-JSON 200 parses empty and fails too — both are drift.
+fn assert_live_inflation(series: &BTreeMap<i32, f64>, ctx: &str) {
+    assert!(!series.is_empty(), "API DRIFT [{ctx}]: healthy reply parsed to no annual rates");
+    assert!(series.values().all(|r| (-20.0..50.0).contains(r)), "implausible {ctx} rate: {series:?}");
+    let stale = core::infl_series_stale(series, chrono::Local::now().date_naive());
+    assert_eq!(stale, None, "API DRIFT [{ctx}]: frozen, newest year is {stale:?}");
+}
+
+async fn live_json(req: reqwest::RequestBuilder, ctx: &str) -> Option<Value> {
+    Some(probe(req, ctx).await?.json::<Value>().await.unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn inflation_eu_parses() {
+    let settings = config::load();
+    let Some(d) = live_json(fetch::client().get(&settings.urls.eu_hicp), "Eurostat HICP").await else {
+        return;
+    };
+    assert_live_inflation(&core::parse_eurostat_hicp(&d), "Eurostat HICP");
+}
+
+#[tokio::test]
+async fn inflation_pt_parses() {
+    let settings = config::load();
+    let Some(d) = live_json(fetch::client().get(&settings.urls.pt_cpi), "BPstat PT CPI").await else {
+        return;
+    };
+    assert_live_inflation(&core::parse_pt_series(&d), "BPstat PT CPI");
+}
+
+/// Keyless, the fresh 10-year window `fetch_us_inflation` POSTs daily. BLS answers its daily cap
+/// with HTTP 200 and `status: REQUEST_NOT_PROCESSED`; that one status skips. Anything else goes to
+/// the parser, so a reply that loses `status` altogether fails instead of skipping forever.
+#[tokio::test]
+async fn inflation_us_parses() {
+    use chrono::Datelike;
+    let settings = config::load();
+    let now = chrono::Utc::now().year();
+    let body = serde_json::json!({
+        "seriesid": ["CUUR0000SA0"],
+        "startyear": (now - 9).to_string(),
+        "endyear": now.to_string(),
+    });
+    let Some(d) = live_json(fetch::client().post(&settings.urls.us_cpi).json(&body), "BLS CPI-U").await else {
+        return;
+    };
+    if d["status"] == "REQUEST_NOT_PROCESSED" {
+        eprintln!("network smoke [BLS CPI-U] SKIPPED — daily cap: {}", d["message"]);
+        return;
+    }
+    assert_live_inflation(&core::parse_bls_cpi(&d), "BLS CPI-U");
 }
 
 /// (round 79) NUPL drift net. `fetch_nupl` feeds the crypto damp/boost in screen and size, and its
