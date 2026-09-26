@@ -37,9 +37,16 @@ permissions:
   contents: read
 
 # note: ubuntu-latest ships a stable Rust toolchain, so no install step needed.
-# rust-cache with a shared key: all jobs restore ONE common warm cache from prior runs
+# rust-cache with a shared key: the test jobs restore ONE common warm cache from prior runs
 # (deps compiled once, not N×). Parallel jobs can't share THIS run's cache — GitHub saves it
 # at job end — so cross-run reuse is the win; within-run hand-off would require `needs: build`.
+# (#353) ONE writer per key. rust-cache saves a key once, from whichever job finishes first, and
+# never re-saves on an exact hit. When every job wrote `folioman-ci`, that job was lint, whose
+# clippy leaves check metadata only, so build, unit-tests, unit-tests-configless and
+# integration-tests each recompiled all 132 crates on every push (run 36228243075: 18.6-26.6s of
+# dependency compile per job) while their logs said "full match". The gate hit the same trap in
+# (#349). Now integration-tests alone writes `folioman-test` (no [dev-dependencies] exist, so its
+# deps are every test job's deps) and lint keeps its check output under `folioman-lint`.
 # timeout-minutes on every job (round 63): without one, a wedged cargo fetch or a hung live API
 # read burns the 6-hour default runner ceiling. Values are ~3-4x the warm-cache norm so only a
 # genuine hang trips them, never a slow day.
@@ -67,7 +74,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
+          shared-key: folioman-test
+          save-if: false   # (#353) integration-tests is the key's only writer
       - run: cargo build --locked --verbose
 
   # lint gate. clippy -D warnings turns every lint into an error (needless clone, dead code,
@@ -82,7 +90,7 @@ jobs:
       - run: rustup component add clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # one warm cache shared across all jobs
+          shared-key: folioman-lint   # (#353) clippy's check output is not a build's; lint's alone
       - run: cargo clippy --locked --all-targets -- -D warnings
 
   # RustSec advisory gate: a networked CLI whose whole job is fetching remote payloads should not
@@ -114,7 +122,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
+          shared-key: folioman-test
+          save-if: false   # (#353) integration-tests is the key's only writer
       - run: FOLIOMAN_CONFIG=tests/ci-settings.yaml cargo test --locked --lib   # in-module #[cfg(test)] unit tests
 
   # (#171) THE FRESH-CLONE CHECK. It used to be a side effect of unit-tests being config-less; pinning
@@ -140,7 +149,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
+          shared-key: folioman-test
+          save-if: false   # (#353) integration-tests is the key's only writer
         # a path that does not exist => merged_config() returns None, exactly as when discovery finds
         # nothing. `FOLIOMAN_CONFIG=` empty is IGNORED and falls through to discovery, so that spelling
         # reproduces nothing — on a runner it finds no file either, but it would not on a dev box.
@@ -199,7 +209,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-coverage   # instrumented build — kept apart from folioman-ci
+          shared-key: folioman-coverage   # instrumented build — kept apart from folioman-test
       - name: coverage — lib + integration + binary dispatch (floor-gated)
         run: |
           # collect + HTML + the floor gate in one shot; --fail-under-lines is the LAST check, so the
@@ -251,7 +261,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # one warm cache shared across all jobs (across runs)
+          shared-key: folioman-test   # (#353) the ONLY writer: it builds every dependency a test job needs
       - name: integration + live API drift nets (skip-on-throttle, fail-on-drift)
         # `--test '*'` also picks up backtest_edge_holds, which no longer carries #[ignore]. It
         # green-skips HERE — debug profile, and a runner has no persisted .long_history_cache.json —
@@ -284,7 +294,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
-          # (#349) its OWN key, not folioman-ci. This is the only job that builds `--release`, and a
+          # (#349) its OWN key, not the test jobs'. This is the only job that builds `--release`, and a
           # shared key is written by whichever job finishes FIRST after a Cargo.toml/Cargo.lock change —
           # while this one finishes last. As sole writer, what it restores is always its own release deps.
           shared-key: folioman-gate
@@ -408,7 +418,8 @@ jobs:
       - uses: taiki-e/install-action@cargo-mutants
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci   # same warm cache as the other jobs
+          shared-key: folioman-test   # same warm cache as the test jobs
+          save-if: false   # (#353) integration-tests is the key's only writer
       - name: mutation gate — changed code must be covered by the suite
         env:
           # push: the commit before this one. PR: the merge base. Both can be all-zeros or empty on a

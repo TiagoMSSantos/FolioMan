@@ -86,7 +86,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-mutants
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: folioman-ci
+          shared-key: folioman-test   # (#353) ci.yml's integration-tests writes it
           save-if: false   # sixteen writers of one key would only churn the cache the gate reads
       - name: grade one shard
         env:
