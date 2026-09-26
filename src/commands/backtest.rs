@@ -2438,9 +2438,16 @@ fn sweep_fund_factor(samples: &[Sample], default: &BuyHeuristic, years: i64) {
     // and the book still did not move; the edge alone cannot tell those apart, and six rows tie the
     // baseline at 12y. Kept parallel rather than widened into the tuple: `pick_sweep_winner` and its
     // test build that shape by hand, and (#167) is the receipt for what widening a tuple costs.
-    let mut weights: Vec<f64> = Vec::with_capacity(FUND_FACTORS.len());
-    let results: Vec<(&str, f64, Option<f64>, Option<f64>)> =
-        FUND_FACTORS.iter().map(|&n| { let (e, a, b, w) = eval(Some(n)); weights.push(w); (n, e, a, b) }).collect();
+    // (#364) In parallel: `eval` re-seeds its own RNG per call, and an indexed collect keeps FUND_FACTORS
+    // order, so the report is the same at any thread count (backtest-12-fund.golden pins it). Serial it
+    // was 25 x 200 draws in a row, 90s of the fixture under CI's `dev` profile.
+    let (results, weights): (Vec<(&str, f64, Option<f64>, Option<f64>)>, Vec<f64>) = FUND_FACTORS
+        .par_iter()
+        .map(|&n| {
+            let (e, a, b, w) = eval(Some(n));
+            ((n, e, a, b), w)
+        })
+        .unzip();
 
     let fmt = |r: Option<f64>| r.map_or("n/a".to_string(), |v| format!("{v:+.2}"));
     println!("\n── FUND FACTOR SWEEP (growth_fund_weight searched per factor, held-out TEST) ──");

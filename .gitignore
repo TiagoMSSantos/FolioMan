@@ -30,6 +30,9 @@ config/settings.yaml
 .folioman_turnover_*.txt
 .folioman_net_stamp
 .sec_cache
+# ...except the fixture's frozen SEC rows (#364): without them `backtest 12 fund` has no offline pin, and
+# the shipped growth_fund_weight tilt is graded by nothing. Same no-leading-slash trap as the caches below.
+!tests/fixture/.sec_cache
 
 # screen run-to-run gate state (EXIT-review footer)
 .screen_state.json

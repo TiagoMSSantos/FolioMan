@@ -343,6 +343,12 @@ fn fixture_copy(name: &str, reverse: bool) -> PathBuf {
     for f in [".long_history_cache.json", ".sp500_history.json"] {
         std::fs::copy(fixture_dir().join(f), dir.join(f)).expect("copy frozen cache");
     }
+    // (#364) the frozen SEC rows `fund` reads. Copied for every run: without `fund` nothing opens them.
+    std::fs::create_dir_all(dir.join(".sec_cache")).expect("mkdir");
+    for e in std::fs::read_dir(fixture_dir().join(".sec_cache")).expect("frozen SEC rows in tests/fixture/.sec_cache") {
+        let p = e.expect("dir entry").path();
+        std::fs::copy(&p, dir.join(".sec_cache").join(p.file_name().expect("a file"))).expect("copy SEC row");
+    }
     let raw = std::fs::read_to_string(fixture_dir().join("config/settings.yaml")).expect("read settings");
     let mut out: Vec<&str> = raw.lines().collect();
     if reverse {
@@ -433,6 +439,17 @@ fn backtest_pit_report_is_pinned() {
         spans.display()
     );
     pin(&["12", "pit"], "backtest-12-pit.golden");
+}
+
+/// (#364) The fundamental lane, the ONLY pin on the shipped `growth_fund_weight` tilt. Every other
+/// golden runs without `fund`, so each sample's fund factor is None and the tilt adds nothing: their
+/// ablation row reads Δ+0.0 for it. Here 47 names carry frozen SEC `_facts12` rows, so the as-of join,
+/// the factor pick and the tilted growth score all reach the book, and the factor tables, the held-out
+/// factor sweep and the two-style book print. No CI job ran any of them before: backtest-gate runs
+/// `12 universe`, without `fund`.
+#[test]
+fn backtest_fund_report_is_pinned() {
+    pin(&["12", "fund"], "backtest-12-fund.golden");
 }
 
 /// THE MARKER CONTRACT, as an assertion rather than a claim.
@@ -546,4 +563,17 @@ fn regen_backtest_fixture() {
     let body = serde_json::to_string(&out).expect("serialize fixture");
     std::fs::write(&dst, &body).expect("write fixture");
     eprintln!("wrote {} — {} tickers, {:.2} MB", dst.display(), out.len(), body.len() as f64 / 1e6);
+
+    // (#364) the SEC rows `backtest 12 fund` reads, for the same names. Coins and ETFs have none.
+    let sec = fixture_dir().join(".sec_cache");
+    let _ = std::fs::remove_dir_all(&sec);
+    std::fs::create_dir_all(&sec).expect("mkdir fixture SEC rows");
+    let copied = out
+        .keys()
+        .filter(|t| {
+            let f = format!("{t}_facts12.json");
+            std::fs::copy(repo().join(".sec_cache").join(&f), sec.join(&f)).is_ok()
+        })
+        .count();
+    eprintln!("wrote {} — {copied} SEC fact files", sec.display());
 }
