@@ -59,8 +59,9 @@ mod tests {
     /// (#249) The page's inflation rows, asserted as EXACT STRINGS. `web/index.html` re-formats
     /// nothing — it prints these cells verbatim — so a shifted horizon, a renamed header or a
     /// swapped region lands straight in the published table with no other check between here and
-    /// the site. (#366) The horizons are [`INFL_YEARS`], the region set is all three, and a series
-    /// too short for a horizon prints n/a there rather than a shorter span passed off as the full one.
+    /// the site. (#366) The horizons are [`INFL_YEARS`] (plus the EU's span, #367), the region set
+    /// is all three, and a series too short for a horizon prints n/a there rather than a shorter
+    /// span passed off as the full one.
     #[test]
     fn inflation_web_rows_publish_all_three_regions_out_to_40y() {
         use std::collections::BTreeMap;
@@ -73,26 +74,27 @@ mod tests {
         assert_eq!(rows.len(), 3, "(#366) Portugal is published too");
         assert_eq!(
             rows[0].iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(),
-            ["REGION", "LATEST", "2Y", "5Y", "10Y", "20Y", "30Y", "40Y", "AS OF"],
-            "the horizons, in order"
+            ["REGION", "LATEST", "2Y", "5Y", "10Y", "20Y", "26Y", "30Y", "40Y", "AS OF"],
+            "the horizons, in order — (#367) with the EU's whole span (26 rates here) sorted in"
         );
         // USA first even though `inflation_all` returns Portugal, USA, EU — published order is this
         // function's, not the fetch's. Cells are compounded, not multiplied: 2%/yr for 40y is +120.8%.
         assert_eq!(
             rows[0].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
-            ["USA", "2.0%", "4.0%", "10.4%", "21.9%", "48.6%", "81.1%", "120.8%", "2026"]
+            ["USA", "2.0%", "4.0%", "10.4%", "21.9%", "48.6%", "67.3%", "81.1%", "120.8%", "2026"]
         );
         assert_eq!(
             rows[1].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
-            ["EU", "3.0%", "6.1%", "15.9%", "34.4%", "80.6%", "n/a", "n/a", "2025 ⚠ STALE"],
+            ["EU", "3.0%", "6.1%", "15.9%", "34.4%", "80.6%", "115.7%", "n/a", "n/a", "2025 ⚠ STALE"],
             "a frozen feed still prints its numbers and says where they stop; 26 years is n/a at 30Y/40Y"
         );
         assert_eq!(
             rows[2].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
-            ["Portugal", "1.0%", "2.0%", "5.1%", "10.5%", "22.0%", "34.8%", "48.9%", "2026"]
+            ["Portugal", "1.0%", "2.0%", "5.1%", "10.5%", "22.0%", "29.5%", "34.8%", "48.9%", "2026"]
         );
 
-        // dead feed: every cell n/a, and AS OF says so rather than leaving the row to read as measured
+        // dead feed: every cell n/a, and AS OF says so rather than leaving the row to read as measured.
+        // The EU here spans 40 rates, which dedups into 40Y: no extra column.
         let dead = inflation_web_rows(&[("USA", BTreeMap::new()), ("EU", steady.clone())], today);
         assert_eq!(
             dead[0].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
@@ -103,6 +105,22 @@ mod tests {
         // a region the fetch never returned is simply absent — never an empty row, never a panic
         assert_eq!(inflation_web_rows(&[("EU", steady)], today).len(), 1);
         assert!(inflation_web_rows(&[], today).is_empty());
+    }
+
+    /// (#367) The EU-span column's two decisions, off the `println!` sink where nothing could see them:
+    /// which row sets the span (the EU's, by label — Portugal is longer, so a wrong match shows), and
+    /// where it lands among the fixed horizons (sorted in; a span equal to one of them adds nothing).
+    #[test]
+    fn the_eu_span_joins_the_horizons_sorted_and_deduped() {
+        use std::collections::BTreeMap;
+        let series = |n: i32| (2027 - n..=2026).map(|y| (y, 2.0)).collect::<BTreeMap<i32, f64>>();
+        assert_eq!(eu_span(&[("Portugal", series(78)), ("USA", series(39)), ("EU", series(27))]), Some(27));
+        assert_eq!(eu_span(&[("Portugal", series(78)), ("EU", BTreeMap::new())]), None, "a dead EU feed adds no column");
+        assert_eq!(eu_span(&[("Portugal", series(78))]), None);
+        assert_eq!(infl_years(None), INFL_YEARS);
+        assert_eq!(infl_years(Some(27)), [2, 5, 10, 20, 27, 30, 40]);
+        assert_eq!(infl_years(Some(30)), INFL_YEARS, "2029: the span meets 30Y and is not printed twice");
+        assert_eq!(infl_years(Some(1)), [1, 2, 5, 10, 20, 30, 40]);
     }
 
     /// (round 61) truncate counts CHARS not bytes (fund names carry €/é/ü — a byte slice would
@@ -179,7 +197,25 @@ mod tests {
 /// cannot drift. 2Y/5Y/20Y line up with the ranked tables' growth columns; 10Y/30Y/40Y are the long
 /// view a 20+ year hold is judged against. A region too short for a horizon prints n/a there (EU HICP
 /// starts in 2000, so its 30Y/40Y are n/a by design — no older basket is spliced under it).
+/// (#367) At run time [`eu_span`] joins these through [`infl_years`], so every region is also read
+/// over EU27's whole history — the longest span the EU row can be compared on.
 const INFL_YEARS: [usize; 6] = [2, 5, 10, 20, 30, 40];
+
+/// (#367) EU27's full HICP history in years — its annual-rate count, 27 in 2026 (2000..=2026). None
+/// when the feed returned no EU row, or an empty one: a dead feed adds no column.
+fn eu_span(inflations: &[(&'static str, std::collections::BTreeMap<i32, f64>)]) -> Option<usize> {
+    inflations.iter().find(|(label, _)| *label == "EU").map(|(_, s)| s.len()).filter(|&n| n > 0)
+}
+
+/// (#367) The table's horizons: [`INFL_YEARS`] plus the EU span, sorted in and deduped — the span
+/// grows a year each January and meets 30Y in 2029, when it stops adding a column of its own.
+fn infl_years(eu: Option<usize>) -> Vec<usize> {
+    let mut ys = INFL_YEARS.to_vec();
+    ys.extend(eu);
+    ys.sort_unstable();
+    ys.dedup();
+    ys
+}
 
 /// (#249) The Pages site's copy of the inflation table `print_macro_footer` prints below, emitted as
 /// rows instead of printed.
@@ -207,6 +243,7 @@ pub(crate) fn inflation_web_rows(
     // Published order, not the fetch order: `inflation_all` returns Portugal first, and the page
     // wants the deflator it applied (EU) read against the dollar context (USA).
     const PUBLISHED: [&str; 3] = ["USA", "EU", "Portugal"];
+    let ys = infl_years(eu_span(inflations));
     PUBLISHED
         .iter()
         .filter_map(|want| inflations.iter().find(|(label, _)| label == want))
@@ -222,7 +259,7 @@ pub(crate) fn inflation_web_rows(
                 (None, None) => "⚠ no data".to_string(),
             };
             let mut row = vec![("REGION".to_string(), (*label).to_string()), ("LATEST".to_string(), pct(latest))];
-            row.extend(INFL_YEARS.iter().map(|&y| (format!("{y}Y"), cum(y))));
+            row.extend(ys.iter().map(|&y| (format!("{y}Y"), cum(y))));
             row.push(("AS OF".to_string(), as_of));
             row
         })
@@ -283,13 +320,16 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
         }
     }
 
-    println!("\nInflation — latest annual % + cumulative price rise (compounded) over last N years:");
-    let heads: String = INFL_YEARS.iter().map(|y| format!(" {:>9}", format!("{y}Y"))).collect();
+    let eu = eu_span(&inflations);
+    let ys = infl_years(eu);
+    let span = eu.map(|n| format!(" ({n}Y = EU27's whole HICP history)")).unwrap_or_default();
+    println!("\nInflation — latest annual % + cumulative price rise (compounded) over last N years{span}:");
+    let heads: String = ys.iter().map(|y| format!(" {:>9}", format!("{y}Y"))).collect();
     println!("  {:<9} {:>9}{heads}", "", "latest");
     for (label, series) in &inflations {
         let (ly, lv, _, _) = core::inflation_summary(series);
         let cums: String =
-            INFL_YEARS.iter().map(|&y| format!(" {:>9}", pct(core::inflation_compounded(series, y)))).collect();
+            ys.iter().map(|&y| format!(" {:>9}", pct(core::inflation_compounded(series, y)))).collect();
         let note = if series.is_empty() {
             "  (⚠ ERROR — live fetch failed, no data)".to_string()
         } else if let Some(y) = core::infl_series_stale(series, chrono::Local::now().date_naive()) {
