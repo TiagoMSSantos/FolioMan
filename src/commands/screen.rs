@@ -3175,7 +3175,9 @@ pub async fn run(args: Vec<String>) {
 const NET_STAMP_STALE_DAYS: u64 = 30;
 
 fn net_nag(stamp: Option<&str>, now_secs: u64) -> Option<String> {
-    const CMD: &str = "FOLIOMAN_NET_TESTS=1 cargo test --test network -- --ignored";
+    // (#369) Was `FOLIOMAN_NET_TESTS=1 … -- --ignored`: that gate is gone and nothing there is `#[ignore]`,
+    // so the advice ran 0 tests, never stamped, and the nag never cleared. `--nocapture` shows the skips.
+    const CMD: &str = "cargo test --test network -- --nocapture";
     match stamp.and_then(|s| s.trim().parse::<u64>().ok()) {
         None => Some(format!(
             "screen: drift nets have never run on this machine — feed drift would be invisible; run {CMD}"
@@ -3485,7 +3487,7 @@ mod tests {
         for bad in [None, Some(""), Some("not-a-number")] {
             let msg = net_nag(bad, now).expect("missing/corrupt stamp must nag");
             assert!(msg.contains("never run"), "wrong never-ran wording: {msg}");
-            assert!(msg.contains("FOLIOMAN_NET_TESTS=1"), "nag must carry the run command: {msg}");
+            assert!(msg.contains("cargo test --test network -- --nocapture"), "nag must carry the run command: {msg}");
         }
         let stale = (now - 45 * 86_400).to_string();
         let msg = net_nag(Some(&stale), now).expect("45d-old stamp must nag at a 30d threshold");
