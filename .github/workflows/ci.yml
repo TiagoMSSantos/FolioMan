@@ -658,6 +658,12 @@ jobs:
   # (a queued dispatch superseded by a newer one, or one stopped by hand) holds no verdict. A completed
   # one is evidence: receipts in tests/ci-settings.yaml cite census runs by ID, and each run's step
   # summary is the missed list a PROOF RULE is checked against. Never add census to the completed pass.
+  #
+  # (#355) Only the NEWEST completed census of a slice (same files, regex and exclude) is the evidence
+  # the next round is checked against. An older run of the same slice is superseded: once a round has
+  # recorded its proof, delete it BY HAND (the receipt keeps its numbers; only the link dies). Still
+  # never swept from here: a run's dispatch inputs are not in the runs API, so a sweep cannot tell one
+  # slice from another. Pruned 2026-09-26, 14 runs -> 5, one per slice.
   cleanup-runs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
