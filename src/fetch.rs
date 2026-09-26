@@ -2304,7 +2304,9 @@ async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> s
                 let newest = recent
                     .and_then(|r| r.get("form"))
                     .and_then(|f| f.as_array())
-                    .and_then(|forms| forms.iter().position(|f| f.as_str().is_some_and(is_annual_form)));
+                    // (#384) an amendment is skipped: USBC's newest was a 4.8KB Part-III-only 10-K/A with no
+                    // financials, so the instance parsed nothing and `[]` was cached with no TTL.
+                    .and_then(|forms| forms.iter().position(|f| f.as_str().is_some_and(|f| is_annual_form(f) && !is_amendment(f))));
                 answered = recent.is_some() && newest.is_none(); // no 10-K/20-F on file -> a real negative
                 if let Some(i) = newest.filter(|_| SEC_FETCHES.fetch_add(1, Ordering::Relaxed) < SEC_FETCH_BUDGET) {
                     if let (Some(acc), Some(doc)) = (get("accessionNumber", i), get("primaryDocument", i)) {
