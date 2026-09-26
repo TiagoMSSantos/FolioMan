@@ -6567,6 +6567,8 @@ buy_heuristic:
   # the 5Y leg now is), picks 3496:32 `clean_name` guard -> true (an ETF whose " - " tail is a share
   # class keeps it), picks 5187:47 `render` `&&` -> `||` (a pinned name whose quote FAILED is not a
   # usable pin). The opt-level-0 re-run 36174288986 wrote byte-identical verdict files; see (#345).
+  # PROOF HELD, run 36221750549 on b38a3bc: 2363 in scope, 2223 caught, 117 unviable, and exactly the 6
+  # gaps and 17 equivalents above missed. The four landed kills are the whole diff.
   #
   # WHAT SHIPS. Tests, three lifted helpers (`pit_splice_trim`, `jittered`, `turnover_cache`) and one
   # shared PRNG step. No knob, no ranking change, no golden moved. In-diff mutants: 85, all return swaps
