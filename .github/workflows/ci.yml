@@ -47,6 +47,10 @@ permissions:
 # dependency compile per job) while their logs said "full match". The gate hit the same trap in
 # (#349). Now integration-tests alone writes `folioman-test` (no [dev-dependencies] exist, so its
 # deps are every test job's deps) and lint keeps its check output under `folioman-lint`.
+# PROVEN on 51ce484 (run 36229693691, attempt 2 warm): all four compile 1 crate, not 132. Compile
+# time against run 36228243075: build 32.8s -> 15.2s, unit-tests 33.6 -> 20.2, unit-tests-configless
+# 47.2 -> 23.5, integration-tests 35.2 -> 22.4. CI's wall clock does not move, because the gate is
+# the tail; runner minutes do, and so does the mutants gate's start (it `needs` integration-tests).
 # (#354) Third-party actions are pinned to a commit SHA, the tag it was cut from in the trailing
 # comment, and .github/dependabot.yml bumps them in one grouped PR a month. A moving tag runs
 # whatever its owner pushes next, and pages.yml runs rust-cache beside `pages: write` and
@@ -431,7 +435,8 @@ jobs:
       # (#354) cargo-mutants pinned by VERSION, not left to the action's manifest: a release can rename
       # or add mutants, which moves the census's byte-compared verdict files and can red this gate on a
       # push that changed nothing it grades. Bump it on purpose, here and in mutation-census.yml
-      # together, and re-prove with a census dispatch.
+      # together, and re-prove with a census dispatch. PROVEN on 51ce484: census run 36229966422
+      # (src/core.rs, convert_price) installed 27.1.0 and graded 18 caught, 0 missed, as before.
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: cargo-mutants@27.1.0
