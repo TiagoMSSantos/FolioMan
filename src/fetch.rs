@@ -1381,7 +1381,7 @@ fn sec_cache_ttl(ticker: &str) -> StdDuration {
 /// files, because a ticker SEC cannot resolve to a CIK has no cache to expire in the first place.
 fn evict_stale_sec_caches(ticker: &str) {
     let ttl = sec_cache_ttl(ticker);
-    // NOT `_inst2`: it caches a per-filing XBRL instance that can run to 13.5MB, its content is fixed
+    // NOT `_inst3`: it caches a per-filing XBRL instance that can run to 13.5MB, its content is fixed
     // once the filing exists, and it is only read when `_facts12` yields no EPS at all — so expiring it
     // would buy nothing and cost the largest fetch in this file.
     evict_if_stale(&sec_cache_path(&format!("{ticker}_facts12")), ttl);
@@ -2260,14 +2260,15 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
 }
 
 /// The newest annual filing's dimensioned EPS/shares for a US ticker, by fiscal year end. DISK-CACHED
-/// (`.sec_cache/{ticker}_inst2.json`) INCLUDING THE EMPTY RESULT: BRK-B's instance is 13.5MB and KKR's
-/// 19.8MB, so re-downloading those to re-learn nothing is exactly the cost worth caching away.
+/// (`.sec_cache/{ticker}_inst3.json`) INCLUDING THE EMPTY RESULT, once SEC answered: BRK-B's instance is
+/// 13.5MB and KKR's 19.8MB, so re-downloading those to re-learn nothing is exactly the cost worth caching away.
 /// Budget-capped like every other SEC call. ceiling: ONE filing, so ~3 fiscal years of coverage; older
 /// as-of rows keep the None they already had. Walking more 10-Ks is the upgrade, at 2.4-19.8MB each.
 ///
 /// The key carries a VERSION DIGIT because this cache has no TTL: a parse that was wrong when it was
 /// written stays wrong forever. `inst1` -> `inst2` retires the class picker that shipped BRK-B at EPS
 /// 46,563 (Class A) — see `parse_sec_instance`. Bump it again on any change to what that parser picks.
+/// (#377) `inst2` -> `inst3` retires the `[]` a spent budget wrote for every US name that needs this.
 ///
 /// The instance read is the EXTRACTED one beside the inline-XBRL 10-K: same folder, primary document
 /// name with ".htm" swapped for "_htm.xml". That URL is hardcoded like the `yahoo_crumb` endpoints —
@@ -2276,7 +2277,7 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
 #[mutants::skip]
 async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> std::collections::BTreeMap<NaiveDate, (f64, Option<f64>)> {
     use std::sync::atomic::Ordering;
-    let cache = sec_cache_path(&format!("{ticker}_inst2"));
+    let cache = sec_cache_path(&format!("{ticker}_inst3"));
     if let Some(c) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<(String, f64, Option<f64>)>>(&s).ok()) {
         return c
             .into_iter()
@@ -2284,8 +2285,11 @@ async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> s
             .collect(); // cache hit (empty included) -> no network, no budget spend
     }
     let mut found = std::collections::BTreeMap::new();
-    // a network failure below leaves `found` empty and STILL writes the negative cache — deliberate: the
-    // caller is the 1.6% tail, and a transient miss costs one blank column until the cache file is removed.
+    // (#377) only an ANSWER is cached: the instance read, or a filer with no annual form on file. A spent
+    // budget or a failed GET writes nothing, so the next run retries. This used to write `[]` regardless,
+    // calling the miss transient — but the budget is per RUN, so one wide run spent it and left all 10 US
+    // names that need this fallback (BRK-B, V, HSY, ...) with no EPS and no P/E, for good.
+    let mut answered = false;
     if let Some(cik) = sec_cik(client, urls, ticker).await {
         if SEC_FETCHES.fetch_add(1, Ordering::Relaxed) < SEC_FETCH_BUDGET {
             if let Some(v) = sec_get_json(client, &urls.sec_submissions.replace("{cik}", &cik), &urls.sec_user_agent).await {
@@ -2295,6 +2299,7 @@ async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> s
                     .and_then(|r| r.get("form"))
                     .and_then(|f| f.as_array())
                     .and_then(|forms| forms.iter().position(|f| f.as_str().is_some_and(is_annual_form)));
+                answered = recent.is_some() && newest.is_none(); // no 10-K/20-F on file -> a real negative
                 if let Some(i) = newest.filter(|_| SEC_FETCHES.fetch_add(1, Ordering::Relaxed) < SEC_FETCH_BUDGET) {
                     if let (Some(acc), Some(doc)) = (get("accessionNumber", i), get("primaryDocument", i)) {
                         let url = format!(
@@ -2304,6 +2309,7 @@ async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> s
                             doc.trim_end_matches(".htm")
                         );
                         if let Some(xml) = sec_get_text(client, &url, &urls.sec_user_agent).await {
+                            answered = true;
                             found = parse_sec_instance(&xml, &US_GAAP_TAGS);
                             if found.is_empty() {
                                 found = parse_sec_instance(&xml, &IFRS_TAGS); // unmeasured: no 20-F filer is in today's cohort
@@ -2314,11 +2320,13 @@ async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> s
             }
         }
     }
-    let serial: Vec<(String, f64, Option<f64>)> = found.iter().map(|(d, (e, s))| (d.format("%Y-%m-%d").to_string(), *e, *s)).collect();
-    if let Some(dir) = cache.parent() {
-        let _ = std::fs::create_dir_all(dir);
+    if answered {
+        let serial: Vec<(String, f64, Option<f64>)> = found.iter().map(|(d, (e, s))| (d.format("%Y-%m-%d").to_string(), *e, *s)).collect();
+        if let Some(dir) = cache.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&cache, serde_json::to_string(&serial).unwrap_or_default());
     }
-    let _ = std::fs::write(&cache, serde_json::to_string(&serial).unwrap_or_default());
     found
 }
 
@@ -6005,10 +6013,10 @@ pub(crate) mod tests {
         };
         let facts = aged("_facts12", 60);
         let ttmeps = aged("_ttmeps3", 60);
-        // `_inst2` is deliberately exempt: it caches a per-filing XBRL instance up to 13.5MB whose
+        // `_inst3` is deliberately exempt: it caches a per-filing XBRL instance up to 13.5MB whose
         // content is fixed once the filing exists. Expiring it would buy nothing and cost the largest
         // fetch in this file — so an eviction that swept "every SEC file" would be a real regression.
-        let inst = aged("_inst2", 60);
+        let inst = aged("_inst3", 60);
         evict_stale_sec_caches("SECEVICT");
         assert!(!facts.exists(), "60 days is past every staggered TTL — the newest fiscal year must refresh");
         assert!(!ttmeps.exists(), "a TTM roll 60 days old has missed a quarter by construction");
