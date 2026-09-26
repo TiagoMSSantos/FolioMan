@@ -30,6 +30,12 @@ name: Mutation census
 # drop_bottom_book, corr_cap_book, report_entry_state): ~27h per shard. Excluding just those swaps
 # grades the rest of backtest.rs (their body operators included) plus track.rs and sim.rs in one
 # 3,053-mutant dispatch, ~4.4h.
+#
+# (#357) `tests` is the test-target args after cargo-mutants' `--`. The default is what every census
+# before it ran, so old slices and their receipts are unchanged. `--test cli` is the one to add for
+# code only an end-to-end run reaches: `commands/*` entry points and `broker::tr` are called from
+# tests/cli.rs and nothing else. ci.yml's diff gate still leaves cli out (see its comments); a
+# census can afford it because it runs by hand.
 on:
   workflow_dispatch:
     inputs:
@@ -42,6 +48,9 @@ on:
       exclude:
         description: "cargo mutants -E filter: mutant names to drop (empty = none)"
         default: ''
+      tests:
+        description: "test-target args after cargo mutants' --"
+        default: '--lib --test backtest_fixture'
 
 # Its own group and NEVER cancelled: in ci.yml's group, the daily journal commit would cancel a
 # multi-hour census the moment the Pages cron pushed it.
@@ -101,6 +110,7 @@ jobs:
           FILES: ${{ inputs.files }}
           RE: ${{ inputs.regex }}
           EX: ${{ inputs.exclude }}
+          TESTS: ${{ inputs.tests }}
           SHARD: ${{ matrix.shard }}
         # The baseline stays ON, unlike the gate's `--baseline skip`: no unit-tests job runs before this
         # one, and a suite that is red here would grade every mutant CAUGHT.
@@ -119,10 +129,11 @@ jobs:
           files=()
           for f in "${names[@]}"; do files+=(--file "$f"); done
           ex=(); [ -n "${EX}" ] && ex=(-E "${EX}")
+          read -ra targs <<< "${TESTS}"
           timeout --signal=INT --kill-after=60s 330m \
             cargo mutants "${files[@]}" -F "${RE}" "${ex[@]}" --shard "${SHARD}/16" --sharding round-robin \
               -j 2 --copy-target=false --timeout 90 --profile mutants \
-              -- --lib --test backtest_fixture || echo "cargo mutants exit $? (the files are the verdict)"
+              -- "${targs[@]}" || echo "cargo mutants exit $? (the files are the verdict)"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -149,6 +160,7 @@ jobs:
           FILES: ${{ inputs.files }}
           RE: ${{ inputs.regex }}
           EX: ${{ inputs.exclude }}
+          TESTS: ${{ inputs.tests }}
         run: |
           set -uo pipefail
           read -ra names <<< "${FILES}"
@@ -162,6 +174,7 @@ jobs:
           done
           graded=$(cat out/*.txt | wc -l)
           {
+            echo "tests: ${TESTS}"
             echo "listed ${listed}, graded ${graded} (ungraded $((listed - graded)))"
             for k in caught missed timeout unviable; do echo "- ${k}: $(wc -l < "out/$k.txt")"; done
             for k in missed timeout unviable; do
