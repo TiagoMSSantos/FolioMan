@@ -3233,8 +3233,7 @@ pub fn inflation_compounded(series: &BTreeMap<i32, f64>, years: usize) -> Option
 /// Parse a Eurostat JSON-stat monthly annual-rate payload into {year -> annual %}: the sparse
 /// `value` map is keyed by the `time` index POSITION, positions sorted so the last month of a
 /// year wins (a partial current year resolves to its newest month YoY — same stance as the
-/// BLS/PT parses). Junk shapes parse to empty. Works for both the COICOP-2018 successor
-/// (prc_hicp_minr) and the terminated pre-2026 dataset it archives (prc_hicp_manr).
+/// BLS/PT parses). Junk shapes parse to empty. Reads the COICOP-2018 series (prc_hicp_minr).
 pub fn parse_eurostat_hicp(d: &Value) -> BTreeMap<i32, f64> {
     let mut out = BTreeMap::new();
     let idx = d.pointer("/dimension/time/category/index").and_then(|v| v.as_object());
@@ -3253,22 +3252,6 @@ pub fn parse_eurostat_hicp(d: &Value) -> BTreeMap<i32, f64> {
         }
     }
     out
-}
-
-/// Merge the TERMINATED pre-2026 HICP archive under the live successor series: the successor
-/// wins every overlapping year (recomputed under COICOP-2018), the archive contributes only
-/// its earlier tail (1997-1999). An EMPTY live series returns empty — the archive extends a
-/// LIVE feed, it must never mask a dead one (screen's degraded-feeds line keys off empty).
-pub fn merge_infl_archive(
-    old: BTreeMap<i32, f64>,
-    new: BTreeMap<i32, f64>,
-) -> BTreeMap<i32, f64> {
-    if new.is_empty() {
-        return new;
-    }
-    let mut merged = old;
-    merged.extend(new);
-    merged
 }
 
 /// Detect a frozen-but-non-empty inflation feed: every parser inserts the current year once
@@ -8626,18 +8609,6 @@ mod tests {
     });
     assert_eq!(parse_eurostat_hicp(&eu_hole).get(&2026), None); // sparse hole skipped, not zeroed
     assert!(parse_eurostat_hicp(&Value::Null).is_empty());
-
-    // (r17) archive merge: the successor wins overlapping years, the archive contributes only
-    // its earlier tail, and an EMPTY live series stays empty — an outage must reach the
-    // degraded-feeds line, the frozen archive must never mask a dead feed.
-    let old: BTreeMap<i32, f64> = [(1997, 1.7), (2000, 2.9), (2025, 9.9)].into();
-    let new: BTreeMap<i32, f64> = [(2000, 2.5), (2025, 2.3), (2026, 2.9)].into();
-    let merged = merge_infl_archive(old.clone(), new.clone());
-    assert_eq!(merged.get(&1997), Some(&1.7)); // tail from the archive
-    assert_eq!(merged.get(&2025), Some(&2.3)); // successor wins the overlap
-    assert_eq!(merged.get(&2026), Some(&2.9));
-    assert!(merge_infl_archive(old, BTreeMap::new()).is_empty()); // outage guard
-    assert_eq!(merge_infl_archive(BTreeMap::new(), new.clone()), new); // no archive = passthrough
 
     // (r18) staleness tripwire: frozen-not-empty feed self-reports from March of the next
     // year; healthy feed silent; Jan/Feb grace (prior-year max still legitimate); empty

@@ -1168,8 +1168,8 @@ inflation_adjust:
                       #   which builds its quotes through `core::backtest_quote` and passes `infl: None`
                       #   — nominal, always, at every horizon. The live `screen` runs with `enabled:
                       #   true`. So a nominal bar is being applied to real numbers. Measured off the
-                      #   cached EU HICP feed (.fmp_cache/eu_hicp_old + eu_hicp2, 2000-2026, the same
-                      #   merge `fetch_eu_inflation` does), compounded exactly as
+                      #   cached EU HICP feed (.fmp_cache/eu_hicp2, 2000-2026, the series
+                      #   `fetch_eu_inflation` returns), compounded exactly as
                       #   `core::inflation_compounded` compounds it:
                       #        1Y cum  +2.9%    5Y cum +23.4%    8Y cum +32.3%
                       #       10Y cum +36.3%   12Y cum +38.1%   20Y cum +60.0%
@@ -19282,8 +19282,6 @@ urls:
   # COICOP-2018 successor (Feb 2026): prc_hicp_manr was TERMINATED at 2025-12; minr carries the
   # same annual-rate series (unit=RCH_A, all-items now coicop18=TOTAL) but only back to 2000.
   eu_hicp: "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_minr?format=JSON&lang=EN&unit=RCH_A&coicop18=TOTAL&geo=EU27_2020"
-  # the frozen pre-2026 dataset, still served: merged UNDER the live series for the 1997-1999 tail
-  eu_hicp_old: "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_manr?format=JSON&lang=EN&coicop=CP00&geo=EU27_2020"
   # {n} = top-N crypto by market cap; `screen` maps each .symbol to SYMBOL-USD (Yahoo form)
   coingecko_markets: "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page={n}&page=1"
   # S&P 500 constituents CSV (first column = Symbol); `screen` maps '.'->'-' for Yahoo

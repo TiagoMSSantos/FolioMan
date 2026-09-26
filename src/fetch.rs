@@ -7338,10 +7338,10 @@ pub(crate) mod tests {
         // Every URL field, so a test can NEVER reach a real endpoint. Adding a field to `Urls` without
         // adding it here is how a unit test starts silently hitting the live internet — `justetf_profile`
         // is defaulted to justETF's real host, and `yahoo_fund_facts_fill`'s test drives that path.
-        const FIELDS: [&str; 34] = [
+        const FIELDS: [&str; 33] = [
             "openfigi_mapping",
             "yahoo_chart", "yahoo_intraday", "yahoo_search", "yahoo_quote", "euribor", "us_cpi",
-            "pt_cpi", "eu_hicp", "eu_hicp_old", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
+            "pt_cpi", "eu_hicp", "coingecko_markets", "sp500_csv", "sp500_history", "nupl",
             "coinmetrics_catalog", "coinmetrics_mvrv", "ntfy", "fundamentals", "fundamentals_quality",
             "fundamentals_history", "fund_expense", "bf_etf_search", "bf_salt", "euronext_lisbon",
             "euronext_track", "six_funds", "esma_firds", "fca_firds", "sec_ticker_cik",
@@ -8195,7 +8195,7 @@ pub(crate) mod tests {
     }
 
     /// (#358) The three inflation feeds end to end. ONE test because every phase owns the same cache
-    /// files (`pt_cpi`, `us_cpi`, `us_cpi_old`/`old2`/`old3`, `eu_hicp2`, `eu_hicp_old`), and as
+    /// files (`pt_cpi`, `us_cpi`, `us_cpi_old`/`old2`/`old3`, `eu_hicp2`), and as
     /// separate tests the phases would race. The footer test in `commands::mod` reads them too but never writes: its
     /// stub body is not JSON.
     ///
@@ -8236,7 +8236,6 @@ pub(crate) mod tests {
             serde_json::json!({"dimension": {"time": {"category": {"index": {month: 0}}}}, "value": {"0": rate}})
         };
         macro_cache_write("pt_cpi", &pt);
-        macro_cache_write("eu_hicp_old", &hicp("1999-12", 1.7));
         macro_cache_write("eu_hicp2", &hicp("2025-12", 2.1));
         macro_cache_write("us_cpi_old3", &bls(now - 40..=now - 30, 1.03));
         macro_cache_write("us_cpi_old2", &bls(now - 30..=now - 20, 1.03));
@@ -8246,7 +8245,7 @@ pub(crate) mod tests {
         let labels: Vec<&str> = all.iter().map(|(label, _)| *label).collect();
         assert_eq!(labels, ["Portugal", "USA", "EU"]);
         assert_eq!(all[0].1, BTreeMap::from([(2024, 2.4), (2025, 2.2)]));
-        assert_eq!(all[2].1, BTreeMap::from([(1999, 1.7), (2025, 2.1)]), "the archive's tail under the live series");
+        assert_eq!(all[2].1, BTreeMap::from([(2025, 2.1)]));
         let us = &all[1].1;
         assert_eq!(us.keys().copied().collect::<Vec<_>>(), (now - 39..=now).collect::<Vec<_>>(), "all three old decades merged in");
         assert!(us.values().all(|r| (r - 3.0).abs() < 1e-9), "the CACHED 3%, not the stub's 5%: {us:?}");
@@ -8999,15 +8998,12 @@ pub async fn fetch_pt_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f
 /// Eurostat TERMINATED prc_hicp_manr at 2025-12 (COICOP-2018 migration, Feb 2026) — the old
 /// endpoint keeps serving a frozen series with a live-looking update stamp, which silently
 /// pinned "latest EU inflation" to 2025. The successor prc_hicp_minr (same JSON-stat shape;
-/// all-items now coicop18=TOTAL, rate unit=RCH_A) carries 2000→now, and the frozen dataset is
-/// merged UNDER it for the 1997-1999 tail so the 30y average keeps its full window. Cache key
-/// bumped eu_hicp -> eu_hicp2 so a pre-switch day-fresh cache can't mask the heal.
+/// all-items now coicop18=TOTAL, rate unit=RCH_A) carries 2000→now. Cache key bumped
+/// eu_hicp -> eu_hicp2 so a pre-switch day-fresh cache can't mask the heal.
+/// (#370) The frozen dataset is no longer merged under it: for EU27_2020 it covers 2000-2025, every
+/// year of which minr also carries and won, so it added no year and cost a second Eurostat GET.
 pub async fn fetch_eu_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
-    let (old, new) = tokio::join!(
-        cached_macro(client, &urls.eu_hicp_old, "eu_hicp_old", core::parse_eurostat_hicp),
-        cached_macro(client, &urls.eu_hicp, "eu_hicp2", core::parse_eurostat_hicp),
-    );
-    core::merge_infl_archive(old, new)
+    cached_macro(client, &urls.eu_hicp, "eu_hicp2", core::parse_eurostat_hicp).await
 }
 
 /// (label, series) — Portugal (BPstat), USA (BLS CPI-U), EU (Eurostat). Async fetched.

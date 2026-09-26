@@ -750,11 +750,6 @@ pub struct Urls {
     pub us_cpi: String, // BLS CPI-U base /data/ URL (v1); seriesID + year window POSTed by fetch_us_inflation — keyless it POSTs the fresh 10y window daily plus three PERMANENT old-decade windows once (merged, fills 20Y/30Y/40Y); swaps to /v2/ when BLS_API_KEY env is set (20y/call vs v1's 10y, 500 vs 25 req/day)
     pub pt_cpi: String,
     pub eu_hicp: String, // Eurostat HICP annual-rate series (COICOP-2018 successor prc_hicp_minr since Feb 2026)
-    // The TERMINATED pre-2026 dataset (prc_hicp_manr, frozen at 2025-12, still served): merged
-    // under the live series for its 1997-1999 tail so the 30y average keeps its full window.
-    // Defaulted so an older settings.yaml without it still loads.
-    #[serde(default = "default_eu_hicp_old")]
-    pub eu_hicp_old: String,
     pub coingecko_markets: String, // {n} = top-N crypto by market cap -> screen universe
     pub sp500_csv: String,         // S&P 500 constituents CSV -> screen stock/ETF universe (the base equity pond)
     // (Item 18) EXTRA equity constituent CSVs in the SAME column layout (Symbol, _, GICS Sector, …) —
@@ -948,15 +943,10 @@ fn default_fca_firds_url() -> String {
     "https://api.data.fca.org.uk/fca_data_firds_files?q=FULINS_C&from=0&size=100".to_string()
 }
 
-/// Default archive URL for the terminated pre-2026 Eurostat HICP dataset (see `Urls.eu_hicp_old`).
 /// (PIT) Default point-in-time S&P 500 membership source. Ordinary raw-file GET, no key, no rate limit,
 /// cached to `.sp500_history.json` after the first read.
 fn default_sp500_history() -> String {
     "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv".to_string()
-}
-
-fn default_eu_hicp_old() -> String {
-    "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/prc_hicp_manr?format=JSON&lang=EN&coicop=CP00&geo=EU27_2020".to_string()
 }
 
 /// Default (E) fundamentals endpoint: FMP's free `stable/quote` (carries `pe`). The old v3
@@ -2555,7 +2545,6 @@ mod tests {
         let quality = default_fundamentals_quality_url();
         assert!(quality.starts_with("https://financialmodelingprep.com/"), "{quality}");
         assert!(quality.contains("{ticker}") && quality.contains("{key}"), "{quality}");
-        assert!(default_eu_hicp_old().contains("prc_hicp_manr"), "the TERMINATED dataset, not the live one");
         assert!(default_euronext_lisbon_url().contains("mics=XLIS"), "Lisbon MIC scope is the whole point");
         // (#343) the rest of the fallbacks, same pin: host, then every token its fetcher substitutes.
         for (url, host, tokens) in [
