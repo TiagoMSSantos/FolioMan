@@ -1519,6 +1519,15 @@ static SEC_FETCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 const SEC_FETCH_BUDGET: usize = 600; // per-run cap so one wide backtest can't hammer SEC's ~10 req/s
 const SEC_FORM4_CAP: usize = 40; // per ticker: only the N newest Form 4 XML docs (older cutoffs may miss)
 static CIK_MAP: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
+/// (#373) SEC republishes `company_tickers.json` daily; a map kept forever (Pages carries `.sec_cache`
+/// run to run) gave a new or renamed constituent no CIK, so no fundamentals and a price-only rank.
+const CIK_MAP_TTL: StdDuration = StdDuration::from_secs(24 * 3600);
+
+/// (#373) Written within `ttl`? Absent/unreadable -> false. Rides `is_stale`, so a future mtime reads
+/// fresh. Not `evict_if_stale`: that deletes first, and a failed refetch would then leave no map at all.
+fn fresh_on_disk(path: &std::path::Path, ttl: StdDuration) -> bool {
+    std::fs::metadata(path).and_then(|m| m.modified()).is_ok_and(|t| !is_stale(t, SystemTime::now(), ttl))
+}
 
 fn sec_cache_path(ticker: &str) -> std::path::PathBuf {
     crate::config::data_path(".sec_cache").join(format!("{}.json", ticker.replace(['/', '\\'], "_")))
@@ -1591,8 +1600,9 @@ fn parse_form4_txns(xml: &str) -> Vec<core::InsiderTx> {
         .collect()
 }
 
-/// (Item 4) ticker -> 10-digit zero-padded CIK from SEC's `company_tickers.json` (fetched once, disk-
-/// cached, then parsed into a process-wide map). A non-US ticker (".DE", "-USD") never appears -> None ->
+/// (Item 4) ticker -> 10-digit zero-padded CIK from SEC's `company_tickers.json` (disk-cached, refetched
+/// once a day since (#373) — a failed or malformed refetch keeps the old copy — then parsed into a
+/// process-wide map). A non-US ticker (".DE", "-USD") never appears -> None ->
 /// the insider factor simply skips it. An unreachable map caches empty for the run (degrades to no
 /// coverage, never panics).
 ///
@@ -1607,7 +1617,7 @@ fn parse_form4_txns(xml: &str) -> Vec<core::InsiderTx> {
 /// this fn when the swap actually ran, so a US-only run cannot hit one. No `prefer_eu_listing` plumbing.
 async fn sec_cik(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
     let path = sec_cache_path("_tickers");
-    if !path.exists() {
+    if !fresh_on_disk(&path, CIK_MAP_TTL) {
         if let Some(txt) = sec_get_text(client, &urls.sec_ticker_cik, &urls.sec_user_agent).await {
             if txt.contains("cik_str") {
                 if let Some(dir) = path.parent() {
@@ -6646,7 +6656,8 @@ pub(crate) mod tests {
         assert_eq!((got, banked.as_deref()), (Some(6.5), Some("6.5")));
     }
 
-    /// (#358) The ticker map is fetched only when it is NOT on disk; a seeded one is read, never
+    /// (#358) The ticker map is fetched only when it is NOT on disk or, since (#373), a day old; a
+    /// seeded one (`seed_cik_map` rewrites it every process, so it is always fresh) is read, never
     /// refetched.
     #[tokio::test]
     async fn sec_cik_reads_the_map_on_disk_without_refetching_it() {
@@ -6654,6 +6665,28 @@ pub(crate) mod tests {
         let (base, client, requests) = recording_stub("{}");
         assert_eq!(sec_cik(&client, &stub_urls(&base), "AAPL").await.as_deref(), Some("0000320193"));
         assert!(requests.try_recv().is_err(), "the map is on disk: no request");
+    }
+
+    /// (#373) The CIK map's refetch clock, on a private file: `_tickers.json` itself is shared with
+    /// every `sec_cik` test through `CIK_MAP`, so ageing it here would race them.
+    #[test]
+    fn fresh_on_disk_ages_out() {
+        let p = crate::config::data_path(".fresh_on_disk_probe");
+        let _ = std::fs::create_dir_all(p.parent().expect("scratch root"));
+        let _ = std::fs::remove_file(&p);
+        assert!(!fresh_on_disk(&p, CIK_MAP_TTL), "absent -> fetch");
+        std::fs::write(&p, "x").expect("probe file");
+        assert!(fresh_on_disk(&p, CIK_MAP_TTL), "just written -> keep");
+        // Fixed ages, not multiples of the TTL: they pin the TTL itself to a day.
+        let age = |hours: u64| {
+            let t = SystemTime::now() - StdDuration::from_secs(hours * 3600);
+            std::fs::File::options().write(true).open(&p).and_then(|f| f.set_modified(t)).expect("age it");
+        };
+        age(12);
+        assert!(fresh_on_disk(&p, CIK_MAP_TTL), "12h old -> still today's map");
+        age(25);
+        assert!(!fresh_on_disk(&p, CIK_MAP_TTL), "25h old -> refetch");
+        let _ = std::fs::remove_file(&p);
     }
 
     /// (#358) The RANKING feed follows `fund_source`: "sec" (the census config) reads the SEC rows,
