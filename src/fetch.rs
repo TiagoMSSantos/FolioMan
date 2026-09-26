@@ -5218,6 +5218,37 @@ pub(crate) mod tests {
         assert!((loose["dot"] - 0.52).abs() < 1e-9);
     }
 
+    /// (#358) The staleness guard's two edges: a row dated ON the cutoff day is kept (`<`, not `<=`),
+    /// and a bare 10-character date is a whole date. A time too short to hold one is skipped before
+    /// it is sliced, never panicked on.
+    #[test]
+    fn mvrv_rows_keeps_the_cutoff_day_and_skips_a_short_time() {
+        let body = serde_json::json!({"data": [
+            {"asset": "edge", "time": "2026-07-22T00:00:00.000000000Z", "CapMVRVCur": "1.1"},
+            {"asset": "bare", "time": "2026-08-01", "CapMVRVCur": "1.2"},
+            {"asset": "short", "time": "2026", "CapMVRVCur": "1.3"}
+        ]});
+        let mut kept: Vec<&str> = mvrv_rows(&body, "2026-07-22").into_keys().collect();
+        kept.sort_unstable();
+        assert_eq!(kept, ["bare", "edge"]);
+    }
+
+    /// (#358) The whole CoinMetrics round trip. The stub serves one reply to every connection, so one
+    /// body answers both requests: `data[0]` carries the catalog's `frequencies` AND the timeseries
+    /// row. `btc` is in the 1d catalog and dated today, so `BTC-EUR` gets its value back; `AAPL` is
+    /// not currency-quoted and is never asked for.
+    #[tokio::test]
+    async fn fetch_mvrv_maps_a_covered_coin_back_to_its_ticker() {
+        let today = chrono::Utc::now().date_naive();
+        let body = serde_json::json!({"data": [{
+            "asset": "btc", "time": format!("{today}T00:00:00.000000000Z"), "CapMVRVCur": "1.5",
+            "frequencies": [{"frequency": "1d", "assets": ["btc"]}]
+        }]});
+        let (url, client) = stub_server(Box::leak(body.to_string().into_boxed_str()));
+        let got = fetch_mvrv(&client, &stub_urls(&url), &["BTC-EUR".into(), "AAPL".into()]).await;
+        assert_eq!(got, HashMap::from([("BTC-EUR".to_string(), 1.5)]));
+    }
+
     /// Signing + concurrency + throttle asserts (no live calls). White-box via `use super::*`.
     #[test]
     fn bf_ter_parse() {
@@ -5364,6 +5395,7 @@ pub(crate) mod tests {
         // 2 share classes, DIFFERENT TER (0.15 unhedged vs 0.28 hedged) -> undecidable, still n/a
         assert_eq!(bf_by_name(&BF_TER_NAMES, "Amundi S&P 500 Swap UCITS ETF EUR"), None);
         assert_eq!(bf_by_name(&BF_TER_NAMES, "vaneck"), None); // too short
+        assert_eq!(bf_by_name(&BF_TER_NAMES, "VanEck Sem"), Some(0.35)); // exactly the 10-byte floor
         assert_eq!(bf_by_name(&BF_TER_NAMES, "iShares Physical Gold ETC"), None); // not in list
     }
 
@@ -5379,6 +5411,7 @@ pub(crate) mod tests {
             "amundi stoxx europe 600 banks ucits etf dist".into(), // ...one prefix -> ambiguous
             "xtrackers msci world ucits etf 1c".into(),
             "gold bullion securities".into(),
+            "lyxor core stoxx europe 600 dr ucits etf acc".into(),
         ]);
         let _ = BF_META_NAMES.set(vec![
             (
@@ -5390,6 +5423,9 @@ pub(crate) mod tests {
             // `!= default` would call this "BF answered" and hide the other three causes — the exact
             // bug the first live run exposed, so this row is the regression pin.
             ("xtrackers msci world ucits etf 1c".into(), BfMeta { dom: Some("LU".into()), ..Default::default() }),
+            // (#358) a share class and nothing else: still "BF answered". The VanEck row carries a
+            // benchmark too, so either `||` of the fact test could go and it would not notice.
+            ("lyxor core stoxx europe 600 dr ucits etf acc".into(), BfMeta { use_of: Some("Acc"), ..Default::default() }),
         ]);
         let miss = |name: &str| bf_meta_miss("X.DE", name);
         // BF answered (share class parsed) but shipped no replicationMethod — upstream omission
@@ -5403,6 +5439,8 @@ pub(crate) mod tests {
         // under bf_by_name's 10-byte floor: the row IS there, the lookup declines -> same bucket as
         // ambiguity, NOT NotOnBf, which would misreport recoverable data as absent
         assert!(miss("gold") == BfMetaMiss::AmbiguousName);
+        assert!(miss("Lyxor Core STOXX Europe 600 DR UCITS ETF") == BfMetaMiss::NoReplField);
+        assert!(miss("gold bulli") == BfMetaMiss::EmptyKeyData, "exactly at the floor is long enough");
 
         let etf = |t: &str, n: &str| {
             let mut q = crate::core::Quote::stub(t, "", "", n);
@@ -5415,6 +5453,15 @@ pub(crate) mod tests {
         let report = bf_meta_miss_report(&[done, etf("XB.ST", "XACT Bull 2 ETF")]).unwrap();
         assert!(report.contains("1/2 ETFs"), "counts misses over ETFs, not over the miss list: {report}");
         assert!(report.contains("not on BF") && report.contains("XB.ST"), "names the cause + a sample: {report}");
+        // the sample list: capped with the overflow counted, exactly-at-cap unmarked, empty buckets unprinted
+        let mut many: Vec<_> = (1..=4).map(|i| etf(&format!("XB{i}.ST"), "XACT Bull 2 ETF")).collect();
+        many.extend((1..=3).map(|i| etf(&format!("VE{i}.DE"), "VanEck Semiconductor UCITS ETF")));
+        assert_eq!(
+            bf_meta_miss_report(&many).unwrap(),
+            "fetch: BF meta missing for 7/7 ETFs — USE n/a 7, REPL n/a 7\n  \
+             not on BF (venue/regulatory extra — factless by design): 4 (XB1.ST, XB2.ST, XB3.ST, +1 more)\n  \
+             BF row, no replicationMethod (upstream omission): 3 (VE1.DE, VE2.DE, VE3.DE)"
+        );
         // a stock is not an ETF row and must not be tallied
         assert_eq!(bf_meta_miss_report(&[crate::core::Quote::stub("AAPL", "", "", "Apple Inc.")]), None);
     }
@@ -5879,6 +5926,7 @@ pub(crate) mod tests {
         let ttl = StdDuration::from_secs(100);
         assert!(is_stale(now - StdDuration::from_secs(200), now, ttl)); // 200s old > 100s ttl
         assert!(!is_stale(now - StdDuration::from_secs(50), now, ttl)); // 50s old < ttl
+        assert!(!is_stale(now - ttl, now, ttl)); // exactly ttl old is not yet stale
         assert!(!is_stale(now + StdDuration::from_secs(50), now, ttl)); // future mtime -> skew-safe, not stale
     }
 
@@ -6429,6 +6477,242 @@ pub(crate) mod tests {
         assert!(!dimensioned.is_empty() && dimensioned.iter().all(|r| r.eps.is_none()), "…and this shape must");
     }
 
+    /// (#358) The three zero-denominator guards in `parse_sec_facts`. A zero revenue has no margin,
+    /// zero total assets no ROA, a zero interest expense no cover. Each guard read as `true` or as
+    /// `>= 0.0` divides by zero and hands a gate an infinity.
+    #[test]
+    fn sec_facts_zero_denominators_have_no_ratio() {
+        use serde_json::json;
+        let ann = |val: f64| json!({"start": "2025-01-01", "end": "2025-12-31", "val": val, "form": "10-K", "filed": "2026-02-01"});
+        let inst = |val: f64| json!({"end": "2025-12-31", "val": val, "form": "10-K", "filed": "2026-02-01"});
+        let rows = parse_sec_facts(&json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [ann(0.0)]}},
+            "NetIncomeLoss": {"units": {"USD": [ann(10.0)]}},
+            "OperatingIncomeLoss": {"units": {"USD": [ann(20.0)]}},
+            "InterestExpense": {"units": {"USD": [ann(0.0)]}},
+            "Assets": {"units": {"USD": [inst(0.0)]}},
+        }}}));
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].net_margin, rows[0].roa, rows[0].interest_cover), (None, None, None));
+    }
+
+    /// (#358) The class pick's two fallbacks, which the Visa/BRK fixtures above never separate. The
+    /// 10% band is RELATIVE: n + 0.10 would call a class 500 off a 1000 net income reconciled. The
+    /// closest product is measured as |shares x eps - net income|, and the wrong class is listed FIRST
+    /// so a pick that stops measuring falls through to it. With no net income, the biggest class.
+    #[test]
+    fn sec_instance_falls_back_to_the_closest_product_then_the_biggest_class() {
+        let ctx = |id: &str, member: Option<&str>| {
+            let seg = member.map_or(String::new(), |m| {
+                format!(r#"<segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">{m}</xbrldi:explicitMember></segment>"#)
+            });
+            format!("<context id=\"{id}\"><entity>{seg}</entity><period><startDate>2025-01-01</startDate><endDate>2025-12-31</endDate></period></context>")
+        };
+        let fact = |tag: &str, cref: &str, val: &str| format!("<us-gaap:{tag} contextRef=\"{cref}\" decimals=\"2\">{val}</us-gaap:{tag}>");
+        let pick = |ni: Option<&str>, a: (&str, &str), b: (&str, &str)| {
+            let mut doc = vec![
+                ctx("c-1", None),
+                ctx("c-a", Some("us-gaap:CommonClassAMember")),
+                ctx("c-b", Some("us-gaap:CommonClassBMember")),
+                fact("EarningsPerShareDiluted", "c-a", a.0),
+                fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-a", a.1),
+                fact("EarningsPerShareDiluted", "c-b", b.0),
+                fact("WeightedAverageNumberOfDilutedSharesOutstanding", "c-b", b.1),
+            ];
+            doc.extend(ni.map(|n| fact("NetIncomeLoss", "c-1", n)));
+            parse_sec_instance(&doc.join("\n"), &US_GAAP_TAGS).values().next().copied()
+        };
+        // A is 500 off, B 300 off: neither inside 10% of 1000, and B the closer
+        assert_eq!(pick(Some("1000"), ("0.1", "5000"), ("7.0", "100")), Some((7.0, Some(100.0))), "a 10% band, not 10 cents");
+        // A 600 (400 off), B 1300 (300 off): only |s*e - n| ranks B first
+        assert_eq!(pick(Some("1000"), ("2.0", "300"), ("0.5", "2600")), Some((0.5, Some(2600.0))), "the closest product");
+        assert_eq!(pick(None, ("1.0", "500"), ("1.0", "10000")), Some((1.0, Some(10000.0))), "no net income: the biggest class");
+    }
+
+    /// (#358) The prior-year YTD must match the current one's LENGTH (within 20 days) before it is
+    /// subtracted: a 90-day quarter is not the comparative of a 181-day half. Without one the roll
+    /// cannot de-cumulate and the annual EPS stands.
+    #[test]
+    fn ttm_eps_refuses_a_prior_ytd_of_another_length() {
+        use serde_json::json;
+        let f = |start: &str, end: &str, val: f64| json!({"start": start, "end": end, "val": val, "filed": end, "form": "10-Q"});
+        let j = json!({"units": {"USD/shares": [
+            f("2024-07-01", "2025-06-30", 1.0), // FY
+            f("2025-07-01", "2025-12-29", 0.8), // current 181-day YTD
+            f("2024-10-01", "2024-12-30", 0.3), // a year earlier, but 90 days long
+        ]}});
+        assert_eq!(ttm_eps_from_concept(&j, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()), Some(1.0));
+    }
+
+    /// (#358) `fetch_ratios` off a seeded `ratios` cache: P/E as served, ROE a fraction x100. A P/E of
+    /// 0 is not a valuation, so the `> 0.0` half of the guard keeps it out of the column.
+    #[tokio::test]
+    async fn fetch_ratios_reads_the_cached_ratios_payload() {
+        pin_throttle();
+        let dir = crate::config::data_path(".fmp_cache");
+        std::fs::create_dir_all(&dir).expect("scratch .fmp_cache");
+        let seed = |t: &str, body: &str| {
+            let p = dir.join(format!("live_ratios_{t}.json"));
+            std::fs::write(&p, body).expect("seed ratios cache");
+            p
+        };
+        let good = seed("ZZRATIOS", r#"[{"priceToEarningsRatioTTM": 12.5, "returnOnEquityTTM": 0.5}]"#);
+        // three days old: inside the week-long TTL, so still served
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&good)
+            .expect("reopen to age")
+            .set_modified(SystemTime::now() - StdDuration::from_secs(3 * 24 * 3600))
+            .expect("backdate mtime");
+        let zero = seed("ZZRATIOS0", r#"[{"priceToEarningsRatioTTM": 0.0}]"#);
+        let urls = stub_urls("http://127.0.0.1:1/"); // port 1 is unbound: any stray fetch refuses at once
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let got = (fetch_ratios(&client, &urls, "ZZRATIOS").await, fetch_ratios(&client, &urls, "ZZRATIOS0").await);
+        let _ = (std::fs::remove_file(good), std::fs::remove_file(zero));
+        assert_eq!(got, ((Some(12.5), Some(50.0)), (None, None)));
+    }
+
+    /// (#358) `fetch_ratios_sec` off seeded SEC caches: the P/E divides the close by the TTM roll (4.0,
+    /// not the annual row's 3.0), a zero EPS has none, and the quality level is the row's own through
+    /// `core::quality_return`. A USD close against USD books fetches no rate.
+    #[tokio::test]
+    async fn fetch_ratios_sec_divides_the_close_by_the_trailing_eps() {
+        pin_throttle();
+        seed_cik_map();
+        let row = r#"[{"filed":"2026-02-01","period_end":"2025-12-31","eps":3.0,"roe":20.0,"roa":5.0,"net_margin":10.0,"currency":"USD"}]"#;
+        let mut seeded = Vec::new();
+        for (t, ttm) in [("ZZSECPE", "4.0"), ("ZZSECPE0", "0.0")] {
+            for (sidecar, body) in [("facts12", row), ("ttmeps3", ttm)] {
+                let p = sec_cache_path(&format!("{t}_{sidecar}"));
+                std::fs::write(&p, body).expect("seed sec cache");
+                seeded.push(p);
+            }
+        }
+        let urls = stub_urls("http://127.0.0.1:1/");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let got = (
+            fetch_ratios_sec(&client, &urls, &fx_cache(), "ZZSECPE", 100.0, "USD").await,
+            fetch_ratios_sec(&client, &urls, &fx_cache(), "ZZSECPE0", 100.0, "USD").await,
+        );
+        for p in seeded {
+            let _ = std::fs::remove_file(p);
+        }
+        let quality = core::quality_return(Some(20.0), Some(5.0), Some(10.0));
+        assert!(quality.is_some());
+        assert_eq!(got, ((Some(25.0), quality), (None, quality)));
+    }
+
+    /// (#358) A live `companyconcept` fetch: the roll is returned AND banked as a bare float, so the
+    /// next run reads it for free. AAPL because the seeded CIK map is where a CIK comes from.
+    #[tokio::test]
+    async fn sec_ttm_eps_rolls_a_fetched_concept_and_banks_it() {
+        seed_cik_map();
+        let cache = sec_cache_path("AAPL_ttmeps3");
+        let _ = std::fs::remove_file(&cache);
+        let end = chrono::Utc::now().date_naive() - chrono::Duration::days(100);
+        let fy = serde_json::json!({"start": (end - chrono::Duration::days(364)).to_string(), "end": end.to_string(), "val": 6.5, "filed": end.to_string(), "form": "10-K"});
+        let (base, client) = stub_server(Box::leak(serde_json::json!({"units": {"USD/shares": [fy]}}).to_string().into_boxed_str()));
+        let got = sec_ttm_eps(&client, &stub_urls(&base), "AAPL").await;
+        let banked = std::fs::read_to_string(&cache).ok();
+        let _ = std::fs::remove_file(&cache);
+        assert_eq!((got, banked.as_deref()), (Some(6.5), Some("6.5")));
+    }
+
+    /// (#358) The ticker map is fetched only when it is NOT on disk; a seeded one is read, never
+    /// refetched.
+    #[tokio::test]
+    async fn sec_cik_reads_the_map_on_disk_without_refetching_it() {
+        seed_cik_map();
+        let (base, client, requests) = recording_stub("{}");
+        assert_eq!(sec_cik(&client, &stub_urls(&base), "AAPL").await.as_deref(), Some("0000320193"));
+        assert!(requests.try_recv().is_err(), "the map is on disk: no request");
+    }
+
+    /// (#358) The RANKING feed follows `fund_source`: "sec" (the census config) reads the SEC rows,
+    /// anything else (the bare default, "fmp") the FMP cache, which is empty for this ticker.
+    #[tokio::test]
+    async fn fetch_fundamentals_ranked_reads_the_configured_source() {
+        pin_throttle();
+        seed_cik_map();
+        let p = sec_cache_path("ZZRANKED_facts12");
+        std::fs::write(&p, r#"[{"filed":"2026-02-01","period_end":"2025-12-31","eps":3.0}]"#).expect("seed sec cache");
+        let urls = stub_urls("http://127.0.0.1:1/");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let got = fetch_fundamentals_ranked(&client, &urls, "ZZRANKED").await;
+        let _ = std::fs::remove_file(&p);
+        let sec = crate::config::fund_source().as_str() == "sec";
+        assert_eq!(got.map(|rows| rows[0].eps), sec.then_some(Some(3.0)), "fund_source {}", crate::config::fund_source());
+    }
+
+    /// (#358) The insider cache is served as-is, and a filer whose submissions list no Form 4 banks
+    /// NOTHING: an empty file would read as "no insider activity, ever" until the cache was deleted.
+    #[tokio::test]
+    async fn insider_history_serves_its_cache_and_banks_no_empty_one() {
+        pin_throttle();
+        seed_cik_map();
+        let cached = sec_cache_path("ZZINSIDER");
+        std::fs::write(&cached, r#"[["2025-03-04", true]]"#).expect("seed insider cache");
+        let aapl = sec_cache_path("AAPL");
+        let _ = std::fs::remove_file(&aapl);
+        let (base, client) = stub_server(r#"{"filings": {"recent": {"form": ["10-K"], "accessionNumber": [], "primaryDocument": []}}}"#);
+        let urls = stub_urls(&base);
+        let hit = fetch_insider_history(&client, &urls, "ZZINSIDER").await;
+        let _ = std::fs::remove_file(&cached);
+        let miss = fetch_insider_history(&client, &urls, "AAPL").await;
+        let banked = aapl.exists();
+        let _ = std::fs::remove_file(&aapl);
+        let d = NaiveDate::from_ymd_opt(2025, 3, 4).unwrap();
+        assert_eq!(hit.map(|t| t.iter().map(|x| (x.date, x.buy)).collect::<Vec<_>>()), Some(vec![(d, true)]));
+        assert!(miss.is_none() && !banked, "no Form 4 -> None, and no empty cache");
+    }
+
+    /// (#358) `fetch_stats` reads the live counters: two paced calls move the first by at least two
+    /// (other tests pace calls too, so never by exactly two).
+    #[tokio::test]
+    async fn fetch_stats_counts_every_paced_call() {
+        pin_throttle();
+        let before = fetch_stats().0;
+        throttle().await;
+        throttle().await;
+        assert!(fetch_stats().0 >= before + 2);
+    }
+
+    /// (#358) `enrich_income_stmt` fills equity TARGETS only: not a name outside `targets`, not a fund.
+    /// The caches are three days old, so this is also `LIVE_TTL`'s week: every mutant of its
+    /// `7 * 24 * 3600` shortens it below three days, evicts the file, and leaves the row unfilled
+    /// (the SEC fallback has no rows for these tickers, and port 1 refuses any refetch).
+    #[tokio::test]
+    async fn enrich_income_stmt_fills_equity_targets_off_a_three_day_old_cache() {
+        pin_throttle();
+        seed_cik_map();
+        std::fs::create_dir_all(crate::config::data_path(".fmp_cache")).expect("scratch .fmp_cache");
+        let rows = r#"[{"filingDate":"2025-02-01","date":"2024-12-31","revenue":1000.0,"netIncome":100.0,"eps":2.0},{"filingDate":"2026-02-01","date":"2025-12-31","revenue":1200.0,"netIncome":150.0,"eps":3.0}]"#;
+        let tickers = ["ZZINC", "ZZINCOFF", "ZZINCETF"];
+        for t in tickers {
+            let p = fund_cache_path(t);
+            std::fs::write(&p, rows).expect("seed fmp cache");
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&p)
+                .expect("reopen to age")
+                .set_modified(SystemTime::now() - StdDuration::from_secs(3 * 24 * 3600))
+                .expect("backdate mtime");
+        }
+        let urls = stub_urls("http://127.0.0.1:1/");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let mut quotes: Vec<core::Quote> = tickers.iter().map(|t| core::Quote::stub(t, "1.00", "", t)).collect();
+        quotes[2].instrument_type = "ETF".into();
+        let targets: HashSet<String> = ["ZZINC", "ZZINCETF"].iter().map(|t| t.to_string()).collect();
+        enrich_income_stmt(&client, &urls, &mut quotes, &targets).await;
+        for t in tickers {
+            let _ = std::fs::remove_file(fund_cache_path(t));
+        }
+        let brief = quotes[0].annual_brief.as_deref();
+        assert!(brief.is_some_and(|b| b.ends_with("  [FMP]")), "two FMP years make a brief: {brief:?}");
+        assert_eq!(quotes[1].annual_brief, None, "not a target");
+        assert_eq!(quotes[2].annual_brief, None, "a fund has no income statement");
+    }
+
     /// (IFRS) The other half of the foreign world files `ifrs-full`, whose concept names share almost
     /// nothing with us-gaap (`Revenue` not `Revenues`, `ProfitLoss` not `NetIncomeLoss`). Reading only
     /// `/facts/us-gaap` returned zero rows for every one of them.
@@ -6635,6 +6919,9 @@ pub(crate) mod tests {
         assert_eq!(ter, None);
         assert_eq!(aum, Some(5.0e8));
         // empty result / malformed -> (None, None), never panics
+        // a zero AUM is Yahoo's blank too, not a fund with nothing in it
+        let zero_aum = json!({"quoteSummary": {"result": [{"summaryDetail": {"totalAssets": {"raw": 0.0}}}]}});
+        assert_eq!(parse_yahoo_fund_facts(&zero_aum), (None, None));
         assert_eq!(parse_yahoo_fund_facts(&json!({})), (None, None));
         assert_eq!(parse_yahoo_fund_facts(&json!({"quoteSummary": {"result": []}})), (None, None));
     }
@@ -6722,9 +7009,36 @@ pub(crate) mod tests {
     /// `no_proxy` because `reqwest` reads `HTTP_PROXY` from the environment and a proxy set on a dev
     /// box would otherwise swallow the loopback request.
     pub(crate) fn stub_server(body: &'static str) -> (String, Client) {
+        let (url, client, _requests) = recording_stub(body);
+        (url, client)
+    }
+
+    /// (#358) `stub_server` that also hands back every request it served, raw: request line, headers,
+    /// body. A stub that ignores the request pins only what came BACK, and some mutants live in what
+    /// was ASKED: the BLS year window is in a POST body, where `now - 19` and `now + 19` fetch the
+    /// same canned reply. Dropping the receiver is fine; the send just fails.
+    pub(crate) fn recording_stub(body: &'static str) -> (String, Client, std::sync::mpsc::Receiver<String>) {
+        routed_stub(vec![("", body)])
+    }
+
+    /// (#358) The same server, answering by what was asked: the first route whose needle is in the
+    /// request LINE wins, and no match is a 404. For the calls that make two requests needing two
+    /// answers (`quote_one`'s 10y daily and max monthly legs, `eur_rate`'s two FX pairs). Their URLs
+    /// only differ once `yahoo_chart` carries `{ticker}` and `{range}`, which `stub_urls` drops.
+    pub(crate) fn routed_stub(
+        routes: Vec<(&'static str, &'static str)>,
+    ) -> (String, Client, std::sync::mpsc::Receiver<String>) {
+        routed_stub_bytes(routes.into_iter().map(|(needle, body)| (needle, body.as_bytes())).collect())
+    }
+
+    /// (#358) The same server for a body that is not text: a FIRDS registry links a zip.
+    fn routed_stub_bytes(
+        routes: Vec<(&'static str, &'static [u8])>,
+    ) -> (String, Client, std::sync::mpsc::Receiver<String>) {
         pin_throttle();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().expect("local addr");
+        let (tx, requests) = std::sync::mpsc::channel();
         // Serves the same body to EVERY connection, not just the first. Most callers here make one
         // request and cannot tell the difference; `justetf_fund_facts_fill` fans out over a symbol list,
         // and against a single-accept server the second symbol onward hit a closed port — a "justETF
@@ -6745,14 +7059,59 @@ pub(crate) mod tests {
         std::thread::spawn(move || {
             for sock in listener.incoming() {
                 let Ok(mut sock) = sock else { continue };
-                let _ = std::io::Read::read(&mut sock, &mut [0u8; 2048]); // drain the request line+headers
-                let resp =
-                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
-                let _ = std::io::Write::write_all(&mut sock, resp.as_bytes());
+                // Read to the end of the header block AND Content-Length bytes past it: a POST body can
+                // arrive in its own segment, after one read has already returned the headers.
+                let mut req = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = std::io::Read::read(&mut sock, &mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    req.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&req);
+                    let Some(end) = text.find("\r\n\r\n") else { continue };
+                    let len: usize = text[..end]
+                        .lines()
+                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:")?.trim().parse().ok())
+                        .unwrap_or(0);
+                    if req.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+                let req = String::from_utf8_lossy(&req).into_owned();
+                let line = req.lines().next().unwrap_or("");
+                let resp = match routes.iter().find(|(needle, _)| line.contains(needle)) {
+                    Some((_, body)) => {
+                        let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                        [head.as_bytes(), *body].concat()
+                    }
+                    None => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+                };
+                let _ = tx.send(req);
+                let _ = std::io::Write::write_all(&mut sock, &resp);
             }
         });
         let client = Client::builder().no_proxy().build().expect("test client");
-        (format!("http://{addr}/"), client)
+        (format!("http://{addr}/"), client, requests)
+    }
+
+    /// (#358) A Yahoo chart payload from dated closes, every volume 1000, leaked to `&'static` for
+    /// the stubs.
+    fn chart_body(bars: &[(NaiveDate, f64)], divs: &[(NaiveDate, f64)], currency: &str) -> &'static str {
+        let ts = |d: &NaiveDate| d.and_hms_opt(0, 0, 0).expect("midnight").and_utc().timestamp();
+        let dividends: serde_json::Map<String, Value> =
+            divs.iter().map(|(d, a)| (ts(d).to_string(), serde_json::json!({"amount": a, "date": ts(d)}))).collect();
+        let body = serde_json::json!({"chart": {"result": [{
+            "timestamp": bars.iter().map(|(d, _)| ts(d)).collect::<Vec<_>>(),
+            "indicators": {"quote": [{
+                "close": bars.iter().map(|(_, c)| *c).collect::<Vec<_>>(),
+                "volume": vec![1000; bars.len()]
+            }]},
+            "meta": {"currency": currency},
+            "events": {"dividends": dividends}
+        }]}});
+        Box::leak(body.to_string().into_boxed_str())
     }
 
     /// `sec_get_text` hands back the body verbatim — the Form-4 XML `between()` then scans. Not
@@ -7012,10 +7371,47 @@ pub(crate) mod tests {
         //    silently shrink the universe: that reads as a working screen with names missing from it,
         //    which nobody notices, unlike a screen that errors.
         let old = today - chrono::Duration::days(30);
-        std::fs::write(&path, format!(r#"{{"fetched":"{old}","isins":["IE00B4L5Y983"]}}"#))
+        std::fs::write(&path, format!(r#"{{"fetched":"{old}","isins":["LU0378437502","IE00B4L5Y983"]}}"#))
             .expect("seed stale cache");
         let got = fetch_regulatory_etf_isins(&client, &urls).await;
-        assert_eq!(got, ["IE00B4L5Y983"], "a failed refresh must keep the last-good list");
+        assert_eq!(got, ["IE00B4L5Y983", "LU0378437502"], "a failed refresh must keep the last-good list");
+
+        // 3. exactly seven days old is stale: refreshed (and failed), so it comes back sorted
+        let week = today - chrono::Duration::days(7);
+        std::fs::write(&path, format!(r#"{{"fetched":"{week}","isins":["LU0378437502","IE00B4L5Y983"]}}"#))
+            .expect("seed week-old cache");
+        let got = fetch_regulatory_etf_isins(&client, &urls).await;
+        assert_eq!(got, ["IE00B4L5Y983", "LU0378437502"], "a week-old cache is refreshed, not served");
+
+        // 4./5. A registry that answers links a zip holding one ETF. One registry answering merges over
+        //    the last-good copy without replacing it; both answering replaces it.
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        w.start_file("FULINS_C.xml", zip::write::SimpleFileOptions::default()).expect("zip entry");
+        std::io::Write::write_all(
+            &mut w,
+            b"<FinInstrmGnlAttrbts><Id>IE00BK5BQT80</Id><FullNm>Vanguard FTSE All-World UCITS ETF</FullNm>\
+              <ClssfctnTp>CEOGMS</ClssfctnTp>",
+        )
+        .expect("zip body");
+        let zipped: &'static [u8] = w.finish().expect("zip").into_inner().leak();
+        let (zip_base, _, _) = routed_stub_bytes(vec![("", zipped)]);
+        let registry: &'static str = serde_json::json!({"response": {"docs": [
+            {"file_name": "FULINS_C_20260101_01of01.zip", "download_link": format!("{zip_base}FULINS_C.zip")}
+        ]}})
+        .to_string()
+        .leak();
+        let (reg_base, client, _) = routed_stub(vec![("GET /esma ", registry)]);
+        let mut urls = stub_urls("http://127.0.0.1:1/");
+        urls.esma_firds = format!("{reg_base}esma");
+        let stale = format!(r#"{{"fetched":"{old}","isins":["LU0378437502"]}}"#);
+        std::fs::write(&path, &stale).expect("seed stale cache");
+        let got = fetch_regulatory_etf_isins(&client, &urls).await;
+        assert_eq!(got, ["IE00BK5BQT80", "LU0378437502"], "one registry is a partial list, merged over the last good");
+        assert_eq!(std::fs::read_to_string(&path).expect("cache"), stale, "and never written as the whole");
+        urls.fca_firds = urls.esma_firds.clone();
+        let got = fetch_regulatory_etf_isins(&client, &urls).await;
+        assert_eq!(got, ["IE00BK5BQT80"], "both registries are the whole list");
+        assert!(std::fs::read_to_string(&path).expect("cache").contains(&today.to_string()), "and it is banked");
     }
 
     /// (EU listing) `sec_cik` itself — the one seam every SEC read in this file funnels through, and
@@ -7204,6 +7600,12 @@ pub(crate) mod tests {
             serde_json::from_str(&std::fs::read_to_string(&neg).expect("negative cache written")).expect("json");
         assert_eq!(dead.get("LU00DEAD"), Some(&chrono::Utc::now().date_naive().to_string()), "dated, so it can expire");
         assert!(!pos.exists(), "no fresh resolution — the positive cache must not be rewritten");
+
+        // 3. A Stuttgart-only line is no resolution: neither returned nor remembered as the symbol.
+        let (urls, client) = stub_at(r#"{"quotes":[{"symbol":"STU.SG"}]}"#);
+        let tickers = fetch_xetra_etfs(&client, &urls, 10, vec!["LU00STU".into()], vec![]).await;
+        assert!(tickers.is_empty(), "a .SG line is unusable: {tickers:?}");
+        assert!(!pos.exists(), "and must not be cached as the fund's symbol");
     }
 
     /// Seeding `YQ_AUTH` is a HERMETICITY guard, not a shortcut. `yahoo_crumb` hardcodes
@@ -7370,6 +7772,11 @@ pub(crate) mod tests {
         // stays ABSENT. A missing AUM defaulting to 0 would read as a fund below every size gate.
         assert_eq!(ter.get("TERONLY.DE"), Some(&0.15));
         assert!(!aum.contains_key("TERONLY.DE"), "a missing AUM must stay missing, never 0");
+
+        // and what justETF answered is banked, so tomorrow's run is served from disk
+        let banked: HashMap<String, (String, Option<f64>, Option<f64>)> =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("cache written back")).expect("json");
+        assert_eq!(banked.get("STALE.DE"), Some(&(today.to_string(), Some(0.20), Some(1.6988e10))));
     }
 
     /// (TER/AUM) `justetf_fund_facts_fill` on its own, for the two things its caller structurally
@@ -7662,7 +8069,8 @@ pub(crate) mod tests {
     /// Note for whoever adds the next test in this binary: `fetch_xetra_etfs` runs as part of this
     /// call and its five trailing `OnceLock`s (`BF_TER`, `BF_AUM`, `BF_META`, `YH_TER`, `YH_AUM`) are
     /// set UNCONDITIONALLY, so after this test they hold empty maps for the rest of the process. No
-    /// committed test reads them today. The name-keyed lists are safe: those `.set()`s sit inside the
+    /// test asserts on them but `fund_fact_lookups_answer_only_for_what_their_map_holds`, which asks
+    /// for a symbol no map holds. The name-keyed lists are safe: those `.set()`s sit inside the
     /// POST-success branch, which a dead venue never reaches, so `bf_ter_name_lookup` and
     /// `bf_meta_miss_buckets` keep ownership of theirs.
     #[tokio::test]
@@ -7699,6 +8107,16 @@ pub(crate) mod tests {
         urls.coingecko_markets = base;
         let (universe, _, _) = fetch_universe(&client, &urls, 10, true, false, &[]).await;
         assert_eq!(universe, ["BTC-EUR", "ETH-EUR"], "the one answering leg must reach the caller");
+
+        // 3. A venue answering with a CHANGED list replaces its own entry, and only its own.
+        let (base, client) = stub_server(r#"{"rowData":[["IE00BK5BQT80","Vanguard FTSE All-World UCITS ETF"]]}"#);
+        let mut urls = stub_urls("http://127.0.0.1:1/");
+        urls.six_funds = base;
+        fetch_universe(&client, &urls, 10, true, false, &[]).await;
+        let stored: HashMap<String, Vec<String>> =
+            serde_json::from_str(&std::fs::read_to_string(&store).expect("store")).expect("json");
+        assert_eq!(stored["six"], ["IE00BK5BQT80"], "SIX answered with a new list, so it is stored");
+        assert_eq!(stored["euronext"], ["LU0378437502", "IE00B4L5Y983"], "the last-good Euronext list is untouched");
     }
 
     /// The macro series cache trio (CPI/HICP), untested until the scratch root existed. A same-day
@@ -7712,8 +8130,116 @@ pub(crate) mod tests {
         macro_cache_write("test_macro_trio", &v);
         assert_eq!(macro_cache_read("test_macro_trio"), Some(v));
         assert!(macro_cache_fresh("test_macro_trio"), "just written, so inside the TTL");
+        macro_cache_write("test_macro_aged", &serde_json::json!([]));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(macro_cache_path("test_macro_aged"))
+            .expect("reopen to age")
+            .set_modified(SystemTime::now() - StdDuration::from_secs(2 * 3600))
+            .expect("backdate mtime");
+        assert!(macro_cache_fresh("test_macro_aged"), "two hours old is inside the day");
         assert!(!macro_cache_fresh("test_macro_absent"), "a missing file is not fresh");
         assert_eq!(macro_cache_read("test_macro_absent"), None);
+    }
+
+    /// (#358) `cached_macro`'s two answering branches, on a cache name of its own. The seeded day-fresh
+    /// copy says 1 and the stub says 2, so the number names the branch that answered. Seeded and
+    /// deleted HERE, never inherited: the scratch root outlives the process, so a census runs each
+    /// mutant against whatever the unmutated run left on disk. That is how `macro_cache_write -> ()`
+    /// survived the round-trip test above: the file it asserts on was already there.
+    #[tokio::test]
+    async fn cached_macro_prefers_a_fresh_copy_and_banks_a_live_answer() {
+        let (url, client) = stub_server(r#"{"v": 2}"#);
+        let parse = |d: &Value| d["v"].as_f64().map(|v| BTreeMap::from([(2020, v)])).unwrap_or_default();
+        macro_cache_write("test_cached_macro", &serde_json::json!({"v": 1}));
+        assert_eq!(
+            cached_macro(&client, &url, "test_cached_macro", parse).await,
+            BTreeMap::from([(2020, 1.0)]),
+            "a day-fresh copy answers, and the live 2 is never asked for"
+        );
+        let _ = std::fs::remove_file(macro_cache_path("test_cached_macro"));
+        assert_eq!(cached_macro(&client, &url, "test_cached_macro", parse).await, BTreeMap::from([(2020, 2.0)]));
+        assert_eq!(
+            macro_cache_read("test_cached_macro"),
+            Some(serde_json::json!({"v": 2})),
+            "a live answer is banked for the rest of the day"
+        );
+    }
+
+    /// (#358) The three inflation feeds end to end. ONE test because every phase owns the same cache
+    /// files (`pt_cpi`, `us_cpi`, `us_cpi_old`, `eu_hicp2`, `eu_hicp_old`), and as separate tests the
+    /// phases would race. The footer test in `commands::mod` reads them too but never writes: its
+    /// stub body is not JSON.
+    ///
+    /// Phase 1, every cache seeded day-fresh: the answer is the seeded series and NOTHING is asked,
+    /// though a live stub is right there serving 5% where the cache says 3%. A skipped freshness
+    /// check, or an old window refetched while a valid copy sits on disk, shows up as a request and
+    /// as the wrong rate or a short series.
+    ///
+    /// Phase 2, the US caches cold: the old decade is asked for FIRST, with its years in the POST body
+    /// (the stub answers any year window alike, so only the recorded request can pin them), and it is
+    /// banked. Then the fresh window answers. Keyless only: with `BLS_API_KEY` exported, the v2 path
+    /// never asks for the old decade, so phase 2 is skipped rather than failed. The keyed path is a
+    /// receipted gap for that reason, since setting the variable here would race every env read in
+    /// the binary.
+    #[tokio::test]
+    async fn inflation_feeds_answer_from_the_day_cache_and_bls_asks_for_the_right_years() {
+        use chrono::Datelike;
+        let now = chrono::Utc::now().year();
+        // December CPI-U levels compounding at `g`, so every parsed rate is (g - 1) * 100
+        let bls = |years: std::ops::RangeInclusive<i32>, g: f64| {
+            let data: Vec<Value> = years
+                .map(|y| {
+                    let level = 100.0 * g.powi(y - 2000);
+                    serde_json::json!({"year": y.to_string(), "period": "M12", "value": level.to_string()})
+                })
+                .collect();
+            serde_json::json!({"Results": {"series": [{"data": data}]}})
+        };
+        let served: &'static str = Box::leak(bls(now - 10..=now, 1.05).to_string().into_boxed_str());
+        let (url, client, requests) = recording_stub(served);
+        let urls = stub_urls(&url);
+
+        let pt = serde_json::json!({
+            "dimension": {"reference_date": {"category": {"index": ["2024-12-31", "2025-12-31"]}}},
+            "value": [2.4, 2.2]
+        });
+        let hicp = |month: &str, rate: f64| {
+            serde_json::json!({"dimension": {"time": {"category": {"index": {month: 0}}}}, "value": {"0": rate}})
+        };
+        macro_cache_write("pt_cpi", &pt);
+        macro_cache_write("eu_hicp_old", &hicp("1999-12", 1.7));
+        macro_cache_write("eu_hicp2", &hicp("2025-12", 2.1));
+        macro_cache_write("us_cpi_old", &bls(now - 20..=now - 10, 1.03));
+        macro_cache_write("us_cpi", &bls(now - 10..=now, 1.03));
+        let all = inflation_all(&client, &urls).await;
+        let labels: Vec<&str> = all.iter().map(|(label, _)| *label).collect();
+        assert_eq!(labels, ["Portugal", "USA", "EU"]);
+        assert_eq!(all[0].1, BTreeMap::from([(2024, 2.4), (2025, 2.2)]));
+        assert_eq!(all[2].1, BTreeMap::from([(1999, 1.7), (2025, 2.1)]), "the archive's tail under the live series");
+        let us = &all[1].1;
+        assert_eq!(us.keys().copied().collect::<Vec<_>>(), (now - 19..=now).collect::<Vec<_>>(), "the old decade merged in");
+        assert!(us.values().all(|r| (r - 3.0).abs() < 1e-9), "the CACHED 3%, not the stub's 5%: {us:?}");
+        assert!(requests.try_recv().is_err(), "a day-fresh cache asks for nothing");
+
+        if std::env::var_os("BLS_API_KEY").is_some() {
+            return;
+        }
+        for name in ["us_cpi", "us_cpi_old"] {
+            let _ = std::fs::remove_file(macro_cache_path(name));
+        }
+        let us = fetch_us_inflation(&client, &urls).await;
+        let old_window = requests.try_recv().expect("the old decade is asked for first");
+        for field in [format!(r#""startyear":"{}""#, now - 19), format!(r#""endyear":"{}""#, now - 10)] {
+            assert!(old_window.contains(&field), "{field} missing from {old_window}");
+        }
+        let fresh_window = requests.try_recv().expect("then the fresh window");
+        for field in [format!(r#""startyear":"{}""#, now - 9), format!(r#""endyear":"{now}""#)] {
+            assert!(fresh_window.contains(&field), "{field} missing from {fresh_window}"); // keyless v1: 10y/call
+        }
+        assert_eq!(macro_cache_read("us_cpi_old"), serde_json::from_str(served).ok(), "banked, with no TTL");
+        assert_eq!(us.keys().copied().collect::<Vec<_>>(), (now - 9..=now).collect::<Vec<_>>());
+        assert!(us.values().all(|r| (r - 5.0).abs() < 1e-9), "the live answer: {us:?}");
     }
 
     /// Both cache paths fold `/` and `\` into the FILENAME. Without that a ticker is a path: the cache
@@ -7802,6 +8328,107 @@ pub(crate) mod tests {
         assert_eq!(eur_rate(&client, &urls, "USD", &fx_cache()).await, Some(0.5), "and a known one still fetches");
     }
 
+    /// (#358) The pence scale on both of `eur_rate`'s answers. The cache holds the plain POUND rate and
+    /// GBp divides it by 100 on the way out, never on the way in. Phase 2 prices the inverted pair:
+    /// `GBPEUR=X` answers 404 here, so the rate comes from `EURGBP=X` as 1 / 0.8.
+    #[tokio::test]
+    async fn eur_rate_scales_pence_on_a_cache_hit_and_on_an_inverted_fetch() {
+        let d = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+        let (base, client, _) = routed_stub(vec![("EURGBP", chart_body(&[(d, 0.8)], &[], "GBP"))]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        let close = |got: Option<f64>, want: f64| got.is_some_and(|g| (g - want).abs() < 1e-12);
+
+        let cached = fx_cache();
+        cached.lock().await.insert("GBP".into(), Some(1.2));
+        let got = eur_rate(&client, &urls, "GBp", &cached).await;
+        assert!(close(got, 0.012), "1.2 EUR/GBP is 0.012 EUR/GBp: {got:?}");
+
+        let cold = fx_cache();
+        let got = eur_rate(&client, &urls, "GBp", &cold).await;
+        assert!(close(got, 0.0125), "1 / 0.8 = 1.25 EUR/GBP, 0.0125 EUR/GBp: {got:?}");
+        let banked = cold.lock().await.get("GBP").copied().flatten();
+        assert!(close(banked, 1.25), "the POUND rate is banked, unscaled: {banked:?}");
+    }
+
+    /// (#358) `eur_rate_series`' two short answers. EUR is the identity and asks for nothing, even with
+    /// a stub that would answer; and the inverted pair divides, `EURUSD=X` at 0.8 being 1.25 EUR/USD.
+    #[tokio::test]
+    async fn eur_rate_series_is_none_for_eur_and_inverts_the_eur_first_pair() {
+        let d = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+        let (base, client, _) = routed_stub(vec![("EURUSD", chart_body(&[(d, 0.8)], &[], "USD"))]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        let (any, answering, _) = routed_stub(vec![("", chart_body(&[(d, 0.8)], &[], "EUR"))]);
+        assert_eq!(eur_rate_series(&answering, &stub_urls(&any), "EUR", false).await, None);
+        let got = eur_rate_series(&client, &urls, "USD", false).await.expect("series");
+        assert!((got[&d] - 1.25).abs() < 1e-12, "{got:?}");
+    }
+
+    /// (#358) All three shapes of `fx_factor_series`, off one stub that prices every pair at 1.25:
+    /// X -> EUR is the rate, EUR -> X its inverse, and X -> Y hops through EUR, so two legs at the same
+    /// 1.25 cancel to exactly 1.
+    #[tokio::test]
+    async fn fx_factor_series_prices_to_from_and_through_eur() {
+        let d = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+        let (base, client) = stub_server(chart_body(&[(d, 1.25)], &[], "USD"));
+        let urls = stub_urls(&base);
+        for (from, to, want) in [("USD", "EUR", 1.25), ("EUR", "USD", 0.8), ("USD", "GBP", 1.0)] {
+            let got = fx_factor_series(&client, &urls, from, to, false).await;
+            assert_eq!(got.len(), 1, "{from}->{to}: {got:?}");
+            assert!((got[&d] - want).abs() < 1e-12, "{from}->{to}: {got:?}");
+        }
+    }
+
+    /// (#358) The reporting currency off the XBRL unit keys: share counts and `CUR/shares` EPS keys are
+    /// not money, USD wins whenever it is tagged, and otherwise the lexicographic minimum across ALL
+    /// tags. The last case puts JPY in the revenue tag and CNY in net income, so a first-seen pick and
+    /// the minimum disagree.
+    #[test]
+    fn money_unit_skips_share_keys_prefers_usd_and_takes_the_minimum() {
+        let rev = US_GAAP_TAGS.rev[0];
+        let ni = US_GAAP_TAGS.ni[0];
+        let unit = |g: Value| money_unit(&g, &US_GAAP_TAGS);
+        let units = |keys: &[&str]| serde_json::json!({"units": keys.iter().map(|k| (k.to_string(), serde_json::json!([]))).collect::<serde_json::Map<_, _>>()});
+        assert_eq!(unit(serde_json::json!({rev: units(&["AUD/shares", "JPY", "shares"])})).as_deref(), Some("JPY"));
+        assert_eq!(unit(serde_json::json!({rev: units(&["EUR", "USD"])})).as_deref(), Some("USD"));
+        assert_eq!(unit(serde_json::json!({rev: units(&["JPY"]), ni: units(&["CNY"])})).as_deref(), Some("CNY"));
+    }
+
+    /// (#358) Three `parse_chart` edges. A split whose numerator is 0 is dropped: it is only ever a
+    /// divisor. A dividend dated before the first bar is kept when nothing is trimmed. And when a
+    /// ×100 redenomination IS trimmed (census config only: the trim is off at the 0.0 default), the
+    /// dividends and splits before the cut go with the bars they belong to.
+    #[test]
+    fn parse_chart_drops_a_zero_split_and_cuts_events_with_a_splice() {
+        let day = |n: i64| NaiveDate::from_ymd_opt(2025, 1, 6).unwrap() + chrono::Duration::days(n);
+        let ts = |n: i64| day(n).and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+        let split = |n: i64, num: f64| serde_json::json!({"date": ts(n), "numerator": num, "denominator": 1.0});
+        let body = |closes: [f64; 5]| {
+            serde_json::json!({"chart": {"result": [{
+                "timestamp": (0..5).map(|i| ts(7 * i)).collect::<Vec<_>>(),
+                "indicators": {"quote": [{"close": closes}]},
+                "meta": {"currency": "EUR"},
+                "events": {
+                    "dividends": {"a": {"amount": 0.5, "date": ts(-3)}, "b": {"amount": 0.01, "date": ts(21)}},
+                    "splits": {"a": split(0, 2.0), "b": split(21, 3.0), "c": split(14, 0.0)}
+                }
+            }]}})
+        };
+        let clean = parse_chart(&body([1.0, 1.01, 1.02, 1.03, 1.04]), "ZZEVENTS").expect("chart");
+        assert_eq!(clean.divs, [(day(-3), 0.5), (day(21), 0.01)], "untrimmed: the early dividend stays");
+        assert_eq!(clean.splits, [(day(0), 2.0), (day(21), 3.0)], "the 0:1 split is gone");
+
+        let spliced = parse_chart(&body([100.0, 101.0, 1.0, 1.01, 1.02]), "ZZEVENTS").expect("chart");
+        if crate::config::splice_max_weekly_rate() > 1.0 {
+            assert_eq!(spliced.dates.first(), Some(&day(14)), "cut at the first post-splice bar");
+            assert_eq!(spliced.divs, [(day(21), 0.01)]);
+            assert_eq!(spliced.splits, [(day(21), 3.0)]);
+        } else {
+            assert_eq!(spliced.divs, clean.divs, "no trim configured, nothing cut");
+        }
+    }
+
     /// (#81) The whole live quote assembly, which had no test at all, pinned at the one seam this
     /// change moves: every EUR-denominated field on a `Quote` is the native number times ONE rate, and
     /// a row whose rate is unknown must carry no EUR number rather than a native one wearing a € sign.
@@ -7863,6 +8490,167 @@ pub(crate) mod tests {
         assert_eq!(q.avg_turnover_eur, None, "no rate -> no EUR turnover for the gate to believe");
         assert_eq!(q.close_native, Some(0.5), "the native close is still known and still reported");
         assert!(q.price.ends_with('?'), "the price string says it is unconverted: {}", q.price);
+    }
+
+    /// (#358) `quote_one`'s merge arithmetic, one scenario per ticker off a single routed stub, plus the
+    /// dead-list pass in `quotes`. Tickers carry the pid because `.long_history_skip.json` outlives the
+    /// binary in the scratch root: a young ticker an earlier run recorded there would skip the very
+    /// monthly fetch asserted on here. `quotes` goes FIRST, since its `long_skip_save` drains
+    /// `LONG_SKIP_NEW`, the static the young scenario reads. The seam scenario is census config only:
+    /// the bare config's splice trim is off, so there the ×100 monthly head is simply kept.
+    #[tokio::test]
+    async fn quote_one_merges_the_monthly_head_and_measures_the_daily_tail() {
+        pin_fetch_concurrency();
+        // only `quotes` writes the skip list, and only this test calls it: the file now is what
+        // `long_skip_load` read
+        let skip_path = crate::config::data_path(LONG_SKIP_FILE);
+        let read_skips = || -> HashMap<String, String> {
+            std::fs::read_to_string(&skip_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+        };
+        let loaded = read_skips();
+        let last = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+        let ago = |n: i64| last - chrono::Duration::days(n);
+        let pid = std::process::id();
+        let tk = |name: &str| format!("ZZ{name}{pid}");
+        let route = |name: &str, range: &str| -> &'static str { Box::leak(format!("{}/{range}", tk(name)).into_boxed_str()) };
+        // d1 sits exactly 2920 days (8 years) before the last bar; the monthly head ends before d0
+        let (d0, d1, d2, d3) = (ago(3000), ago(2920), ago(400), ago(30));
+        let (m0, m1) = (ago(3400), ago(3200));
+        // SEAM: a ×100 monthly head a week before a daily tail, so only the MERGED series shows the step
+        let (s0, s1) = (ago(400), ago(200));
+        let (base, client, _) = routed_stub(vec![
+            ("USDEUR", chart_body(&[(last, 0.9)], &[], "EUR")),
+            (route("8Y", "10y"), chart_body(&[(d0, 1.2), (d1, 2.0), (d2, 1.5), (d3, 2.0), (last, 2.5)], &[(d2, 0.4)], "EUR")),
+            (route("8Y", "max"), chart_body(&[(m0, 0.9), (m1, 1.0)], &[(ago(3410), 0.05), (m0, 0.1), (d0, 0.2)], "EUR")),
+            (route("SEAM", "10y"), chart_body(&[(s0, 1.0), (s1, 1.1), (last, 1.2)], &[(s1, 0.05)], "EUR")),
+            (route("SEAM", "max"), chart_body(&[(ago(437), 100.0), (ago(407), 101.0)], &[(ago(437), 5.0)], "EUR")),
+            (route("YOUNG", "10y"), chart_body(&[(ago(400), 1.0), (ago(200), 1.2), (last, 1.1)], &[], "EUR")),
+            (route("YOUNG", "max"), chart_body(&[(ago(400), 0.8)], &[], "EUR")),
+            (route("ZERO", "10y"), chart_body(&[(ago(60), 1.0), (ago(30), 0.0), (last, 1.0)], &[], "EUR")),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+        let fx = fx_cache();
+        let w = BTreeMap::from([("1Y".to_string(), 365)]);
+        let infl = BTreeMap::new();
+
+        let dead = quotes(&client, &urls, &fx, &[tk("DEAD")], 30, 0, false, false, &w, None, false).await;
+        assert_eq!(dead.len(), 1);
+        assert_eq!(dead[0].price, "err", "a 404 on both charts is a dead symbol");
+
+        let q = quote_one(&client, &urls, &fx, &tk("8Y"), 30, 0, false, false, &w, Some(&infl), false).await;
+        let (dates, closes) = ([m0, m1, d0, d1, d2, d3, last], [0.9, 1.0, 1.2, 2.0, 1.5, 2.0, 2.5]);
+        assert_eq!(q.age_years, core::age_years(&dates), "the monthly bars predating the daily window lead");
+        assert_eq!(q.life_cagr, core::life_cagr(&dates, &closes));
+        assert_eq!(
+            q.tr_cagr,
+            core::tr_life_cagr(&dates, &closes, 0.05 + 0.1 + 0.4),
+            "one before the first bar counts (nothing was trimmed); one AT the seam is the daily payload's"
+        );
+        let s8 = q.stats_8y.as_ref().expect("a bar predates the 8y cutoff");
+        assert_eq!(s8.max_drawdown_pct, core::max_drawdown_pct(&[2.0, 1.5, 2.0, 2.5]), "the 8y slice starts AT the cutoff bar");
+        assert_eq!(q.mom_pct, Some(25.0), "2.0 a month back, 2.5 now");
+        assert!(q.perf_nominal.is_empty() && !q.perf.is_empty(), "no nominal twin unless the score asks for it");
+        assert!(!LONG_SKIP_NEW.lock().unwrap().contains(&tk("8Y")), "a monthly head that contributed is not a skip");
+
+        let q = quote_one(&client, &urls, &fx, &tk("YOUNG"), 30, 0, false, false, &w, None, false).await;
+        let (dates, closes) = ([ago(400), ago(200), last], [1.0, 1.2, 1.1]);
+        assert_eq!(q.life_cagr, core::life_cagr(&dates, &closes), "a monthly bar ON the first daily date is not a head");
+        assert!(q.stats_8y.is_none(), "the whole record is inside 8 years");
+        assert!(LONG_SKIP_NEW.lock().unwrap().contains(&tk("YOUNG")), "recorded, so the next run skips the useless fetch");
+
+        let q = quote_one(&client, &urls, &fx, &tk("ZERO"), 30, 0, false, false, &w, None, false).await;
+        assert_eq!(q.mom_pct, None, "a zero close a month back has no percentage change");
+
+        let q = quote_one(&client, &urls, &fx, &tk("SEAM"), 30, 0, false, false, &w, None, false).await;
+        if crate::config::splice_max_weekly_rate() > 1.0 {
+            let (dates, closes) = ([s0, s1, last], [1.0, 1.1, 1.2]);
+            assert_eq!(q.age_years, core::age_years(&dates), "the head before the step is cut");
+            assert_eq!(q.tr_cagr, core::tr_life_cagr(&dates, &closes, 0.05), "and its dividend with it");
+        } else {
+            assert_eq!(q.age_years, core::age_years(&[ago(437), last]), "no trim configured, the head stays");
+        }
+
+        // the two savers `quotes` ends with: this run's findings reach the disk, and an earlier run's
+        // still-fresh skips keep their ORIGINAL date (on a cold scratch root there are none to keep)
+        long_skip_save();
+        let saved = read_skips();
+        assert!(saved.contains_key(&tk("YOUNG")), "the young ticker's skip is written");
+        let today = chrono::Local::now().date_naive();
+        for (t, d) in loaded.iter().filter(|(_, d)| long_skip_fresh(d.parse().ok().as_ref(), today)) {
+            assert_eq!(saved.get(t), Some(d), "a fresh skip survives the rewrite: {t}");
+        }
+        long_cache_save();
+        let banked = std::fs::read_to_string(crate::config::data_path(LONG_CACHE_FILE)).expect("long cache written");
+        assert!(banked.contains(&format!("\"{}\"", tk("8Y"))), "the monthly series fetched here is banked");
+    }
+
+    /// (#358) Both clients are built, not defaulted: `Client::default()` sends no user agent, which
+    /// Yahoo and the brokers refuse.
+    #[tokio::test]
+    async fn both_clients_send_the_browser_user_agent() {
+        for c in [client(), client_long()] {
+            let (base, _, requests) = recording_stub("ok");
+            c.get(&base).send().await.expect("loopback answers");
+            let req = requests.recv().expect("one request").to_ascii_lowercase();
+            assert!(req.contains("user-agent: mozilla/5.0"), "{req}");
+        }
+    }
+
+    /// (#358) The fund-fact lookups answer only for what their map holds. `BF_AUM_NAMES` is this test's
+    /// alone (only a live Börse Frankfurt POST writes it); `BF_AUM`, `YH_TER` and `YH_AUM` hold empty
+    /// maps once any `fetch_xetra_etfs` caller here has run, so a symbol no map holds is the one answer
+    /// every test order agrees on.
+    #[test]
+    fn fund_fact_lookups_answer_only_for_what_their_map_holds() {
+        let _ = BF_AUM_NAMES.set(vec![("zz lookup test global equity ucits etf".into(), 5.0e9)]);
+        assert_eq!(bf_aum("ZZLOOKUP.XX", "ZZ Lookup Test Global Equity UCITS ETF"), Some(5.0e9));
+        assert_eq!(bf_aum("ZZLOOKUP.XX", "no fund by this name at all"), None);
+        assert_eq!(bf_aum_exact("ZZLOOKUP.XX"), None);
+        assert_eq!(yh_ter_exact("ZZLOOKUP.XX"), None);
+        assert_eq!(yh_aum_exact("ZZLOOKUP.XX"), None);
+    }
+
+    /// (#358) The Lisbon leg returns what the venue lists.
+    #[tokio::test]
+    async fn euronext_lisbon_returns_the_listed_symbols() {
+        let (base, client) = stub_server(r#"{"aaData":[["EDP","PTEDP0AM0009","EDP","Euronext Lisbon"]]}"#);
+        assert_eq!(fetch_euronext_lisbon(&client, &stub_urls(&base)).await, ["EDP.LS"]);
+    }
+
+    /// (#358) `push` reports what ntfy did with the POST: a 2xx is delivered, a 404 is not.
+    #[tokio::test]
+    async fn push_reports_whether_ntfy_accepted_it() {
+        let (base, client, _) = routed_stub(vec![("POST /up ", "ok")]);
+        let mut urls = stub_urls(&base);
+        urls.ntfy = format!("{base}{{topic}}");
+        assert!(push(&client, &urls, "up", "Dip", "VWCE -5%").await);
+        assert!(!push(&client, &urls, "down", "Dip", "VWCE -5%").await);
+    }
+
+    /// (#358) The `history_proxy` splice, census config only: `VUAA.DE -> SXR8.DE` lives in
+    /// tests/ci-settings.yaml and the bare config has no proxies. A same-currency donor lends its older
+    /// bars, so the age reads from the donor's first bar, but no liquidity: the borrowed bars carry zero
+    /// volume and the turnover is the listing's own three. A donor in another currency lends nothing.
+    #[tokio::test]
+    async fn quote_one_borrows_a_same_currency_twins_bars_but_not_its_volume() {
+        if crate::config::history_proxy().get("VUAA.DE").map(String::as_str) != Some("SXR8.DE") {
+            return;
+        }
+        let last = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+        let ago = |n: i64| last - chrono::Duration::days(n);
+        let listing = chart_body(&[(ago(100), 1.0), (ago(50), 1.1), (last, 1.2)], &[], "EUR");
+        let w = BTreeMap::new();
+        for (donor_cur, first) in [("EUR", ago(700)), ("USD", ago(100))] {
+            let donor = chart_body(&[(ago(700), 0.8), (ago(400), 0.9), (ago(100), 1.0), (last, 1.2)], &[], donor_cur);
+            let (base, client, _) = routed_stub(vec![("VUAA.DE/10y", listing), ("SXR8.DE/10y", donor)]);
+            let mut urls = stub_urls(&base);
+            urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
+            let q = quote_one(&client, &urls, &fx_cache(), "VUAA.DE", 30, 0, false, false, &w, None, false).await;
+            assert_eq!(q.age_years, core::age_years(&[first, last]), "{donor_cur} donor");
+            let turnover = q.avg_turnover_eur.expect("EUR listing, rate 1");
+            assert!((turnover - 1100.0).abs() < 1e-9, "{donor_cur} donor: {turnover}");
+        }
     }
 
     /// One CSV pond, header skipped, sector filter applied. `constituents_csv` is emptied so the
