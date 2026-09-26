@@ -242,7 +242,7 @@ fn normalize(raw: &str) -> String {
 /// slowest single run (~3.5s / ~47s). Peak RSS is 38 MB per run, so six at once is ~230 MB — this
 /// repo's OOM history is the linker, not test processes.
 fn pin(args: &[&str], golden_name: &str) {
-    pin_at(&fixture_dir().join("config/settings.yaml"), args, golden_name, None);
+    pin_at(&fixture_copy(golden_name, false), args, golden_name, None);
 }
 
 /// `pin` with rayon's pool forced to `threads` workers. `backtest::run` builds no pool at the default
@@ -317,33 +317,41 @@ fn backtest_report_is_pinned_on_frozen_data() {
 /// serial order; it must print the SAME golden, so nothing here is ever blessed. ~0.7s serial.
 #[test]
 fn backtest_report_is_bit_identical_on_one_thread() {
-    pin_at(&fixture_dir().join("config/settings.yaml"), &["12"], "backtest-12.golden", Some("1"));
+    pin_at(&fixture_copy("one-thread-12", false), &["12"], "backtest-12.golden", Some("1"));
 }
 
 /// (#341) The same claim for `tune`'s 500 draws, the other parallel stage with a seeded stream. ~1.1s.
 #[test]
 fn backtest_tune_report_is_bit_identical_on_one_thread() {
-    pin_at(&fixture_dir().join("config/settings.yaml"), &["12", "tune"], "backtest-12-tune.golden", Some("1"));
+    pin_at(&fixture_copy("one-thread-12-tune", false), &["12", "tune"], "backtest-12-tune.golden", Some("1"));
 }
 
-/// (#342) A copy of the fixture whose `tickers:` list runs Z-A. Offline, the fetch completes in input
-/// order, so this is what a live run's latency does to the pool: same names, another order. Text
-/// splice, not a serde round-trip, so nothing but the order can change. One dir per test: the harness
-/// runs them concurrently and a half-copied cache would be a flake.
-fn reversed_fixture(name: &str) -> PathBuf {
+/// (#342) A copy of the fixture in a dir of its own, its `tickers:` list run Z-A when `reverse`.
+/// Offline, the fetch completes in input order, so a Z-A copy is what a live run's latency does to the
+/// pool: same names, another order. Text splice, not a serde round-trip, so nothing but the order can
+/// change. One dir per test: the harness runs them concurrently and a half-copied cache would be a flake.
+///
+/// (#358) EVERY pinned run gets one, wiped first, because a run's data root is its config's. A mutant
+/// that turns `offline()` off makes the binary fetch live and rewrite the cache it read, and pointed at
+/// `tests/fixture/` that write landed in the committed fixture. cargo-mutants reuses one copied tree
+/// per job, so every later mutant in that tree failed the goldens and was scored CAUGHT: 4 survivors
+/// hid from three census runs that way, and it read as a flaky golden.
+fn fixture_copy(name: &str, reverse: bool) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir); // what an earlier run banked here must not be read
     std::fs::create_dir_all(dir.join("config")).expect("mkdir");
     for f in [".long_history_cache.json", ".sp500_history.json"] {
         std::fs::copy(fixture_dir().join(f), dir.join(f)).expect("copy frozen cache");
     }
     let raw = std::fs::read_to_string(fixture_dir().join("config/settings.yaml")).expect("read settings");
-    let lines: Vec<&str> = raw.lines().collect();
-    let start = lines.iter().position(|l| *l == "tickers:").expect("a `tickers:` block") + 1;
-    let end = start + lines[start..].iter().take_while(|l| l.starts_with("  - ")).count();
-    let mut out = lines.clone();
-    out[start..end].reverse();
-    assert_eq!(end - start, 200, "the whole list moved");
-    assert!(out[start] > out[end - 1], "and it now runs Z-A");
+    let mut out: Vec<&str> = raw.lines().collect();
+    if reverse {
+        let start = out.iter().position(|l| *l == "tickers:").expect("a `tickers:` block") + 1;
+        let end = start + out[start..].iter().take_while(|l| l.starts_with("  - ")).count();
+        out[start..end].reverse();
+        assert_eq!(end - start, 200, "the whole list moved");
+        assert!(out[start] > out[end - 1], "and it now runs Z-A");
+    }
     std::fs::write(dir.join("config/settings.yaml"), out.join("\n") + "\n").expect("write settings");
     dir.join("config/settings.yaml")
 }
@@ -354,13 +362,13 @@ fn reversed_fixture(name: &str) -> PathBuf {
 /// edges (-231.2, then -237.2). A Z-A pool must print the A-Z golden.
 #[test]
 fn backtest_report_ignores_pool_order() {
-    pin_at(&reversed_fixture("reversed-12"), &["12"], "backtest-12.golden", None);
+    pin_at(&fixture_copy("reversed-12", true), &["12"], "backtest-12.golden", None);
 }
 
 /// (#342) The same for `tune`'s 500 draws.
 #[test]
 fn backtest_tune_report_ignores_pool_order() {
-    pin_at(&reversed_fixture("reversed-12-tune"), &["12", "tune"], "backtest-12-tune.golden", None);
+    pin_at(&fixture_copy("reversed-12-tune", true), &["12", "tune"], "backtest-12-tune.golden", None);
 }
 
 /// 20y is the horizon SHIP RULE v2 leads on and the screen footer quotes. Longest forward window ->

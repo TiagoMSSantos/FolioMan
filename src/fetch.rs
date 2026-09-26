@@ -8320,6 +8320,9 @@ pub(crate) mod tests {
         let got = eur_rate_series(&client, &stub_urls(&base), "USD", false).await.expect("series");
         assert_eq!(got.len(), 1, "a 0.0 close is dropped — inverted it would be +inf: {got:?}");
         assert_eq!(got[&NaiveDate::from_ymd_opt(2020, 1, 1).unwrap()], 0.9);
+        // (#358) a direct pair carries the pence scale by multiplying: 0.9 EUR/GBP is 0.009 EUR/GBp
+        let pence = eur_rate_series(&client, &stub_urls(&base), "GBp", false).await.expect("series");
+        assert_eq!(pence[&NaiveDate::from_ymd_opt(2020, 1, 1).unwrap()], 0.9 * 0.01);
     }
 
     /// USD 10.00 at 0.5 EUR/USD is EUR 5.00. One stubbed response covers it because the EUR leg
@@ -8547,6 +8550,7 @@ pub(crate) mod tests {
             (route("YOUNG", "10y"), chart_body(&[(ago(400), 1.0), (ago(200), 1.2), (last, 1.1)], &[], "EUR")),
             (route("YOUNG", "max"), chart_body(&[(ago(400), 0.8)], &[], "EUR")),
             (route("ZERO", "10y"), chart_body(&[(ago(60), 1.0), (ago(30), 0.0), (last, 1.0)], &[], "EUR")),
+            (route("EMPTY", "10y"), chart_body(&[], &[], "EUR")),
         ]);
         let mut urls = stub_urls(&base);
         urls.yahoo_chart = format!("{base}{{ticker}}/{{range}}");
@@ -8578,9 +8582,15 @@ pub(crate) mod tests {
         assert_eq!(q.life_cagr, core::life_cagr(&dates, &closes), "a monthly bar ON the first daily date is not a head");
         assert!(q.stats_8y.is_none(), "the whole record is inside 8 years");
         assert!(LONG_SKIP_NEW.lock().unwrap().contains(&tk("YOUNG")), "recorded, so the next run skips the useless fetch");
+        // (#358) `high_days` 0 anchors the drawdown on the all-time high, 1.2, not on the last bar
+        assert_eq!(q.drawdown_pct, core::pct_from_high(&closes));
 
         let q = quote_one(&client, &urls, &fx, &tk("ZERO"), 30, 0, false, false, &w, None, false).await;
         assert_eq!(q.mom_pct, None, "a zero close a month back has no percentage change");
+
+        // (#358) a chart that answers with no bars is "no data", never a quote built on nothing
+        let q = quote_one(&client, &urls, &fx, &tk("EMPTY"), 30, 0, false, false, &w, None, false).await;
+        assert_eq!(q.price, "no data");
 
         let q = quote_one(&client, &urls, &fx, &tk("SEAM"), 30, 0, false, false, &w, None, false).await;
         if crate::config::splice_max_weekly_rate() > 1.0 {
