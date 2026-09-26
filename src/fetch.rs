@@ -1809,11 +1809,14 @@ struct FactTags {
 // ExcludingAssessedTax listed before Including: when a filer reports both for a period (values differ by
 // the assessed taxes) the first-inserted wins on a filed-date tie, and Excluding is the cleaner revenue
 // line. ServicesNet/GoodsNet = the pre-2018 (pre-ASC-606) era of service/goods filers (e.g. ODFL) whose
-// whole history was invisible without them.
+// whole history was invisible without them. (#379) The last two are banks (MS from 2015, WFC from 2020)
+// and utilities (XEL, DTE from 2019): rows are keyed on revenue, so their history froze at the last year
+// they tagged `Revenues` — a 2014 10-K scored as today's. Appended LAST, so a tie keeps the tags above.
 const US_GAAP_TAGS: FactTags = FactTags {
     rev: &["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
            "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet",
-           "SalesRevenueServicesNet", "SalesRevenueGoodsNet"],
+           "SalesRevenueServicesNet", "SalesRevenueGoodsNet",
+           "RevenuesNetOfInterestExpense", "RegulatedAndUnregulatedOperatingRevenue"],
     gp: &["GrossProfit"],
     op: &["OperatingIncomeLoss"],
     dna: &["DepreciationDepletionAndAmortization", "DepreciationAndAmortization",
@@ -6507,6 +6510,21 @@ pub(crate) mod tests {
             "NetIncomeLoss": {"units": {"USD": [ann("2024-10-01", "2025-09-30", 20_058_000_000.0)]}},
         }}}));
         assert!(!dimensioned.is_empty() && dimensioned.iter().all(|r| r.eps.is_none()), "…and this shape must");
+    }
+
+    /// (#379) A bank's or a utility's revenue tag keys a row on its own: without them MS's newest row was
+    /// its FY2014 10-K and XEL's its FY2018 one, so the fund tilt found no recent EPS and ranked them on
+    /// price alone.
+    #[test]
+    fn bank_and_utility_revenue_tags_key_a_row() {
+        use serde_json::json;
+        for tag in ["RevenuesNetOfInterestExpense", "RegulatedAndUnregulatedOperatingRevenue"] {
+            let rows = parse_sec_facts(&json!({"facts": {"us-gaap": {
+                tag: {"units": {"USD": [{"start": "2025-01-01", "end": "2025-12-31", "val": 100.0, "form": "10-K", "filed": "2026-02-01"}]}},
+            }}}));
+            assert_eq!(rows.len(), 1, "{tag}");
+            assert_eq!(rows[0].revenue, Some(100.0), "{tag}");
+        }
     }
 
     /// (#358) The three zero-denominator guards in `parse_sec_facts`. A zero revenue has no margin,
