@@ -292,7 +292,7 @@ jobs:
       # only writer). The path list MUST stay identical to pages.yml's "Restore fetch caches": the
       # cache version hashes it, and any difference silently misses. 2.75 MiB. Cold, the universe
       # fetch was ~167s and resolved ~170 fewer names than the warm ~80s one that Pages ships.
-      # `.long_history_cache.json` stays live, on purpose.
+      # `.long_history_cache.json` is NOT Pages' (screen never reads it); the step after this one owns it.
       - name: Restore Pages' fetch caches
         uses: actions/cache/restore@v6
         with:
@@ -306,6 +306,23 @@ jobs:
             .eu_listing_cache.json
           key: folioman-fetch-${{ github.run_id }}
           restore-keys: folioman-fetch-
+      # (#352) The monthly history, cached HERE and written by this job only. Live, it was ~90s of the
+      # 20y horizon's 143s: ~4700 series at the 60 rps pacer (local: 94s cold vs 5.6s warm). A cache
+      # hit is the raw Yahoo payload taking the same parse as a fetch, under the tool's own 7-day
+      # per-series TTL, so the gate grades bars at most a week old and refetches the rest. A/B, a
+      # 1-day-old cache vs live on 20y: every number the gate votes on identical (edge +742.3, OOS
+      # +0.27|+0.18, top-10 excess +5.9); side stats moved <= 0.3 pts. Only successful fetches enter
+      # the file, so a throttled run cannot poison it. Yahoo's chart API stays probed live on every
+      # push by integration-tests (tests/network.rs). A DAILY key: the first push of a day restores
+      # the newest older key and saves once; later pushes hit it exactly and skip the ~150 MB upload.
+      - name: Day key for the history cache
+        id: day
+        run: echo "d=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: .long_history_cache.json
+          key: folioman-longhist-${{ steps.day.outputs.d }}
+          restore-keys: folioman-longhist-
       - name: walk-forward edge gate (skip-on-throttle, fail-on-collapse)
         # no `--ignored`: with #[ignore] gone that filter selects NOTHING and the job becomes a silent
         # no-op — the same trap that killed network-smoke.

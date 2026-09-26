@@ -341,8 +341,9 @@ async fn euribor_parses() {
 ///   monthly payloads off disk; cold, it would fetch every one of them. A fresh clone must not
 ///   discover that by doing it.
 ///
-/// CI has no persisted cache, so the second guard is why the force flag exists: without it the nightly
-/// `backtest-gate` job would skip too and the gate would quietly stop gating.
+/// CI restores its own copy since (#352), but a restored key can be older than the TTL, so the second
+/// guard is still why the force flag exists: without it the `backtest-gate` job could skip too and the
+/// gate would quietly stop gating.
 #[test]
 fn backtest_edge_holds() {
     let forced = std::env::var("FOLIOMAN_BACKTEST_GATE").is_ok();
