@@ -19997,11 +19997,10 @@ urls:
   euronext_lisbon: "https://live.euronext.com/en/pd_es/data/stocks?mics=XLIS"
   # latest Bitcoin NUPL (net unrealized profit/loss), free on-chain sentiment gauge; `screen` prints it after the crypto table
   nupl: "https://bitcoin-data.com/v1/nupl/last"
-  # (E) trailing-P/E source for the valuation tilt. {ticker} + {key} (key from FMP_API_KEY env, NOT
-  # here). Equities only, and only when the env key is set — free tiers are rate-limited, so use it
-  # for `check` (~55 tickers), not the ~750-ticker `screen` (where P/E stays None -> neutral tilt).
-  fundamentals: "https://financialmodelingprep.com/stable/quote?symbol={ticker}&apikey={key}"
-  # (F) ROE/quality source for the profitability tilt — FMP stable ratios-ttm (carries returnOnEquityTTM).
-  # Same FMP_API_KEY opt-in / `check`-scale profile as `fundamentals` above. (v3 legacy died 2025-08-31.)
+  # (E/F) trailing-P/E AND ROE source for the valuation/profitability tilts — FMP stable ratios-ttm
+  # (carries priceToEarningsRatioTTM + returnOnEquityTTM; one call serves both). {ticker} + {key} (key
+  # from FMP_API_KEY env, NOT here). Equities only, and only when the env key is set — free tiers are
+  # rate-limited, so use it for `check` (~55 tickers), not the ~750-ticker `screen`. (v3 legacy died
+  # 2025-08-31.) (#376) the old (E) `fundamentals` stable/quote key was read by nothing and is gone.
   fundamentals_quality: "https://financialmodelingprep.com/stable/ratios-ttm?symbol={ticker}&apikey={key}"
   ntfy: "https://ntfy.sh/{topic}"

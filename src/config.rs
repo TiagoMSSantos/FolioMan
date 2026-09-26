@@ -801,13 +801,11 @@ pub struct Urls {
     #[serde(default = "default_coinmetrics_mvrv_url")]
     pub coinmetrics_mvrv: String, // {assets} = comma-separated CoinMetrics asset ids (lowercase symbols)
     pub ntfy: String,          // {topic}
-    // (E) trailing P/E source for the valuation tilt. {ticker} + {key} (from FMP_API_KEY env, kept
-    // out of config). Defaulted so an older settings.yaml without it still loads; only hit for
-    // equities when the env key is set (free tiers are rate-limited -> `check`-scale, not `screen`).
-    #[serde(default = "default_fundamentals_url")]
-    pub fundamentals: String,
-    // (F) ROE/quality source for the profitability tilt. {ticker} + {key}; same opt-in/rate-limit
-    // profile as `fundamentals` above. Defaulted so an older settings.yaml without it still loads.
+    // (E/F) trailing P/E AND ROE source for the valuation/profitability tilts — one call serves both
+    // (`fetch_ratios`). {ticker} + {key} (from FMP_API_KEY env, kept out of config); only hit for
+    // equities when the key is set (free tiers are rate-limited -> `check`-scale, not `screen`).
+    // Defaulted so an older settings.yaml without it still loads. (#376) The old (E) `fundamentals`
+    // field (FMP `stable/quote`, which never carried `pe`) was read by nothing and is gone.
     #[serde(default = "default_fundamentals_quality_url")]
     pub fundamentals_quality: String,
     // (G) HISTORICAL date-stamped income statements for the backtest's as-of fundamentals lane. FMP
@@ -817,7 +815,7 @@ pub struct Urls {
     #[serde(default = "default_fundamentals_history_url")]
     pub fundamentals_history: String,
     // (TER) ETF expense-ratio source for the `ter` column. {ticker} + {key}; same opt-in/rate-limit
-    // profile as `fundamentals` (FMP key only, populates at `check` scale). Stocks/crypto return no
+    // profile as `fundamentals_quality` (FMP key only, populates at `check` scale). Stocks/crypto return no
     // expenseRatio -> column stays n/a. Defaulted so an older settings.yaml without it still loads.
     #[serde(default = "default_fund_expense_url")]
     pub fund_expense: String,
@@ -947,12 +945,6 @@ fn default_fca_firds_url() -> String {
 /// cached to `.sp500_history.json` after the first read.
 fn default_sp500_history() -> String {
     "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv".to_string()
-}
-
-/// Default (E) fundamentals endpoint: FMP's free `stable/quote` (carries `pe`). The old v3
-/// `/api/v3/quote/` legacy endpoint died 2025-08-31 for new keys; `stable` is the replacement.
-fn default_fundamentals_url() -> String {
-    "https://financialmodelingprep.com/stable/quote?symbol={ticker}&apikey={key}".to_string()
 }
 
 /// (#45) Which assets the FREE tier serves `CapMVRVCur` for (125 of them). Queried before the values
@@ -2196,7 +2188,7 @@ mod tests {
         // omitted fields still fall back to serde defaults (stale_days is not set in the fixture)
         assert_eq!(s.stale_days, default_stale_days());
         assert!(s.sectors.is_empty());
-        assert!(s.urls.fundamentals.contains("financialmodelingprep")); // defaulted Urls subfield
+        assert!(s.urls.fundamentals_quality.contains("financialmodelingprep")); // defaulted Urls subfield
     }
 
     /// (PIT) The default membership source, pinned by SHAPE rather than by host. Nothing else in the
@@ -2539,9 +2531,6 @@ mod tests {
     /// same page for every symbol, which reads as data rather than as an error.
     #[test]
     fn defaulted_urls_keep_their_host_and_placeholders() {
-        let fundamentals = default_fundamentals_url();
-        assert!(fundamentals.starts_with("https://financialmodelingprep.com/"), "{fundamentals}");
-        assert!(fundamentals.contains("{ticker}") && fundamentals.contains("{key}"), "{fundamentals}");
         let quality = default_fundamentals_quality_url();
         assert!(quality.starts_with("https://financialmodelingprep.com/"), "{quality}");
         assert!(quality.contains("{ticker}") && quality.contains("{key}"), "{quality}");
