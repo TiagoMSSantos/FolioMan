@@ -319,7 +319,8 @@ jobs:
       # only writer). The path list MUST stay identical to pages.yml's "Restore fetch caches": the
       # cache version hashes it, and any difference silently misses. 2.75 MiB. Cold, the universe
       # fetch was ~167s and resolved ~170 fewer names than the warm ~80s one that Pages ships.
-      # `.long_history_cache.json` is NOT Pages' (screen never reads it); the step after this one owns it.
+      # `.long_history_cache.json` is NOT Pages': the step after this one is its only writer, and
+      # (#361) Pages restores it read-only, because `screen` reads it too.
       - name: Restore Pages' fetch caches
         uses: actions/cache/restore@v6
         with:
