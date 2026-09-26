@@ -1815,6 +1815,9 @@ pub async fn run(args: Vec<String>) {
     if coins > 0 {
         println!("Crypto valuation: {mvrv_hits} of {coins} coins carry an MVRV (the rest pass the ceiling free)");
     }
+    // (#374) Thin is normal (live runs carry ~20 of 100); NONE is the catalog or value call down, and
+    // then `crypto_max_mvrv` passes every coin. Joins the DEGRADED line at the end of the run.
+    let mvrv_uncovered = coins > 0 && mvrv_hits == 0;
 
     // (round 110/111) owned-position overlay: what you already hold at the brokers, so the tables
     // can mark covered rows with `o`. Stocks/ETFs from Trading212, crypto from Binance; each broker
@@ -3152,6 +3155,9 @@ pub async fn run(args: Vec<String>) {
     if fund_tilt_uncovered {
         degraded
             .push("fund tilt feed down (0 stocks carry the factor; stock ranks are price-only)".to_string());
+    }
+    if mvrv_uncovered {
+        degraded.push("MVRV feed down (crypto_max_mvrv ceiling off; every coin passes it)".to_string());
     }
     if !degraded.is_empty() {
         eprintln!("screen: DEGRADED — {}", degraded.join("; "));
