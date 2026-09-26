@@ -1,0 +1,12 @@
+# (#354) Keeps the SHA-pinned third-party actions (and actions/*'s major tags) current: one grouped
+# PR a month, so a bump is one review instead of one per action. cargo-mutants' explicit version in
+# ci.yml and mutation-census.yml is NOT touched by this; it is bumped by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

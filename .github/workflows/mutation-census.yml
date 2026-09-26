@@ -83,8 +83,10 @@ jobs:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - uses: actions/checkout@v7
-      - uses: taiki-e/install-action@cargo-mutants
-      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: cargo-mutants@27.1.0   # (#354) the SAME version as ci.yml's gate; see the comment there
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: folioman-test   # (#353) ci.yml's integration-tests writes it
           save-if: false   # sixteen writers of one key would only churn the cache the gate reads
@@ -135,7 +137,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: taiki-e/install-action@cargo-mutants
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: cargo-mutants@27.1.0   # (#354) the SAME version as ci.yml's gate; see the comment there
       - uses: actions/download-artifact@v4
         with:
           pattern: census-*

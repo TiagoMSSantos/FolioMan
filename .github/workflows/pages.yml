@@ -74,7 +74,7 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       # The fetch caches, restored from the previous run. This is not a nicety: `resolve_eu_listings`
       # alone is documented at ~4 minutes cold, and the SEC facts cache is append-only history that
