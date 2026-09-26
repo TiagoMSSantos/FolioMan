@@ -261,7 +261,8 @@ fn pin_at(cfg: &Path, args: &[&str], golden_name: &str, threads: Option<&str>) {
     cmd.arg("backtest")
         .args(args)
         .env("FOLIOMAN_CONFIG", cfg)
-        .env("FOLIOMAN_OFFLINE", "1"); // no socket may be opened; a fixture miss must not become a live fetch
+        .env("FOLIOMAN_OFFLINE", "1") // no socket may be opened; a fixture miss must not become a live fetch
+        .env_remove("FMP_API_KEY"); // (#364) CI has none, so a developer's key must not reach the golden either
     if let Some(n) = threads {
         cmd.env("RAYON_NUM_THREADS", n);
     }

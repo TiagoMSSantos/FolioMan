@@ -964,6 +964,13 @@ fn fund_lane_on(fund: bool, insider: bool) -> bool {
     fund || insider
 }
 
+/// (#364) Whether `fund` must warn that the FMP key is missing. Only the FMP source needs it: the
+/// shipped `sec` source reads SEC EDGAR keyless, and warning "the fundamental lane will be empty"
+/// there was false (the fund golden prints 19 filled factors with no key).
+fn fmp_key_missing(fund: bool, source: &str, key: Option<String>) -> bool {
+    fund && source != "sec" && key.filter(|k| !k.is_empty()).is_none()
+}
+
 /// Which currency pair, if any, this ticker's closes must be converted through. `None` = same books,
 /// or one side unknown; leave the close alone.
 ///
@@ -1016,12 +1023,9 @@ pub async fn run(args: Vec<String>) {
         if tuning.backtest_anchor_windows { settings.anchor_windows.clone() } else { BTreeMap::new() };
 
     let Args { years, wide, long, fund, tune, insider, halflife, stress, pit, mut tickers } = parse_args(&args);
-    // DELIBERATELY UNPINNED (mutation audit, round 3): both halves of this `&&` survive. It guards an
-    // eprintln and nothing else — no branch below reads the result — so the worst a wrong spelling does
-    // is print, or fail to print, one advisory line. Killing it means mutating the process environment
-    // from a test, which is global state shared with every other test in this binary; `config.rs` has
-    // the one such test and documents itself as the only one for that reason. Not worth a racy suite.
-    if fund && std::env::var("FMP_API_KEY").ok().filter(|k| !k.is_empty()).is_none() {
+    // (#364) the condition is `fmp_key_missing`, unit-tested with the key passed in, so no test has to
+    // mutate the process environment.
+    if fmp_key_missing(fund, &crate::config::fund_source(), std::env::var("FMP_API_KEY").ok()) {
         eprintln!("backtest: `fund` set but FMP_API_KEY is empty — the fundamental lane will be empty (price lanes still run).");
     }
     // Daily 10y history caps the forward window at ~5y (the 3y warmup eats the rest of the 10y), so a
@@ -7121,6 +7125,13 @@ mod tests {
         assert!(fund_lane_on(false, true));
         assert!(fund_lane_on(true, true));
         assert!(!fund_lane_on(false, false));
+
+        // (#364) the FMP-key warning: only `fund` on the FMP source with no usable key
+        assert!(fmp_key_missing(true, "fmp", None));
+        assert!(fmp_key_missing(true, "fmp", Some(String::new())), "an empty key is no key");
+        assert!(!fmp_key_missing(true, "fmp", Some("k".into())));
+        assert!(!fmp_key_missing(true, "sec", None), "SEC is keyless");
+        assert!(!fmp_key_missing(false, "fmp", None));
     }
 
     /// The cross-currency path, which no frozen-data golden reaches: every fixture ticker quotes and
