@@ -140,7 +140,7 @@ jobs:
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: cargo-mutants@27.1.0   # (#354) the SAME version as ci.yml's gate; see the comment there
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: census-*
           path: census
