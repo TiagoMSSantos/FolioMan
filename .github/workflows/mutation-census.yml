@@ -18,6 +18,10 @@ name: Mutation census
 # leaves alive. PROVEN by A/B on the same 2363 mutants: run 36174288986 at 0 against 36172539508 at 2,
 # sorted caught/missed/timeout/unviable files byte-identical (2219/27/0/117). Build per mutant 73.1s ->
 # 5.5s median, test 3.1s -> 7.0s, wall clock 1h54m -> 21m. ci.yml's mutants gate runs at 0 since then.
+# (#350) That test half is mostly DEPENDENCY code. Measured locally, dependencies at opt 2 with folioman
+# still at 0: lib suite 6.7s -> 2.8s, lib+fixture 29.5s -> 18.6s, per-mutant rebuild unchanged (4.3s),
+# cold tree 66s -> 181s. Paid twice per shard against ~149 mutants, that is ~3.6 min off each shard;
+# against the gate's 6 mutants it is a loss, so ci.yml stays at plain 0.
 #
 # (#340) `exclude` is a -E filter on the same names. backtest.rs lists 18,801 mutants, and 16,772 of
 # them are return-value swaps of five fns returning wide tuples (proxy_books, book_stats,
@@ -91,8 +95,14 @@ jobs:
         #
         # `--timeout 90`, up from 20 at opt-level 2: at 0 the fixture alone runs ~25s on a runner
         # (CI's integration-tests), and two workers share its four cores.
+        #
+        # (#350) Dependencies at opt-level 2, folioman itself still at 0 (the env above), so a mutant
+        # still rebuilds in ~5s but its tests stop paying for unoptimised library code. A config file,
+        # because Cargo has no env spelling for `package."*"`; it merges over Cargo.toml's profile.
+        # Census only: see COST for why the gate's 6 mutants cannot repay the slower cold tree.
         run: |
           set -uo pipefail
+          printf '[profile.mutants.package."*"]\nopt-level = 2\n' >> "${CARGO_HOME:-$HOME/.cargo}/config.toml"
           read -ra names <<< "${FILES}"
           files=()
           for f in "${names[@]}"; do files+=(--file "$f"); done
