@@ -34,7 +34,7 @@ on:
   schedule:
     - cron: "*/5 * * * *" # every 5 min
   # Republish whenever main moves, so a heuristic change is visible on the page immediately instead of
-  # at 05:30 the next weekday. NO `paths` filter, deliberately: the rows are a live universe fetch, so
+  # at the next cron tick: GitHub throttles `*/5` to ~2-4 runs an hour (36 deploys on 2026-09-26). NO `paths` filter, deliberately: the rows are a live universe fetch, so
   # what the page shows depends on the market as much as on the diff, and a docs-only push simply
   # refreshes it. Runner minutes are free on a public repo and the FMP key is optional, so the cost of
   # a wasted run is a wasted run. An allowlist would be the thing that silently stopped rebuilding the
