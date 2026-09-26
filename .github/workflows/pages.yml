@@ -97,6 +97,18 @@ jobs:
           key: folioman-fetch-${{ github.run_id }}
           restore-keys: folioman-fetch-
 
+      # (#366) The three PERMANENT BLS decades behind the USA 20Y/30Y/40Y inflation cells. `.fmp_cache`
+      # is otherwise cold on every run, so each run would re-ask BLS for all three plus the fresh
+      # window: 4 keyless calls per run against a 25/day per-IP cap. With this it is 1. Its own step,
+      # so adding it did not re-version the fetch cache above. A new calendar year invalidates each
+      # decade by content (`old_window_covers`), not by key, and the run refetches it.
+      - name: Restore the BLS old decades
+        uses: actions/cache@v6
+        with:
+          path: .fmp_cache/us_cpi_old*.json
+          key: folioman-bls-${{ github.run_id }}
+          restore-keys: folioman-bls-
+
       # (#361) The monthly history backtest-gate saves once a day (#352), READ-ONLY here so that job
       # stays its only writer. `screen` reads it (`quote_one` -> `chart_json_long`, 7-day per-series
       # TTL); an older comment here called it backtest-only, and without it every run fetched each

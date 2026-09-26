@@ -747,7 +747,7 @@ pub struct Urls {
     #[serde(default = "default_openfigi_mapping")]
     pub openfigi_mapping: String,
     pub euribor: String,
-    pub us_cpi: String, // BLS CPI-U base /data/ URL (v1); seriesID + year window POSTed by fetch_us_inflation — keyless it POSTs the fresh 10y window daily plus a PERMANENT old-decade window once (merged, fills 20Y); swaps to /v2/ when BLS_API_KEY env is set (20y/call vs v1's 10y, 500 vs 25 req/day)
+    pub us_cpi: String, // BLS CPI-U base /data/ URL (v1); seriesID + year window POSTed by fetch_us_inflation — keyless it POSTs the fresh 10y window daily plus three PERMANENT old-decade windows once (merged, fills 20Y/30Y/40Y); swaps to /v2/ when BLS_API_KEY env is set (20y/call vs v1's 10y, 500 vs 25 req/day)
     pub pt_cpi: String,
     pub eu_hicp: String, // Eurostat HICP annual-rate series (COICOP-2018 successor prc_hicp_minr since Feb 2026)
     // The TERMINATED pre-2026 dataset (prc_hicp_manr, frozen at 2025-12, still served): merged

@@ -5739,6 +5739,14 @@ pub(crate) mod tests {
         assert_eq!(merge_bls_payloads(Some(&serde_json::json!({})), &new), new);
     }
 
+    /// (#366) The key read `fetch_us_inflation` does: blank is no key, a real one passes through.
+    #[test]
+    fn a_blank_bls_key_is_no_key() {
+        assert_eq!(nonempty_key(Some("k".into())).as_deref(), Some("k"));
+        assert_eq!(nonempty_key(Some(String::new())), None);
+        assert_eq!(nonempty_key(None), None);
+    }
+
     /// (us 20Y) Year-hole guard: the permanent old-window cache is valid only while it still
     /// yields the rate for now-10, the year adjacent to the fresh window. Same cache, one
     /// calendar year later -> stale -> refetch (silent short "20Y" compounds never happen).
@@ -8187,8 +8195,8 @@ pub(crate) mod tests {
     }
 
     /// (#358) The three inflation feeds end to end. ONE test because every phase owns the same cache
-    /// files (`pt_cpi`, `us_cpi`, `us_cpi_old`, `eu_hicp2`, `eu_hicp_old`), and as separate tests the
-    /// phases would race. The footer test in `commands::mod` reads them too but never writes: its
+    /// files (`pt_cpi`, `us_cpi`, `us_cpi_old`/`old2`/`old3`, `eu_hicp2`, `eu_hicp_old`), and as
+    /// separate tests the phases would race. The footer test in `commands::mod` reads them too but never writes: its
     /// stub body is not JSON.
     ///
     /// Phase 1, every cache seeded day-fresh: the answer is the seeded series and NOTHING is asked,
@@ -8196,12 +8204,12 @@ pub(crate) mod tests {
     /// check, or an old window refetched while a valid copy sits on disk, shows up as a request and
     /// as the wrong rate or a short series.
     ///
-    /// Phase 2, the US caches cold: the old decade is asked for FIRST, with its years in the POST body
-    /// (the stub answers any year window alike, so only the recorded request can pin them), and it is
-    /// banked. Then the fresh window answers. Keyless only: with `BLS_API_KEY` exported, the v2 path
-    /// never asks for the old decade, so phase 2 is skipped rather than failed. The keyed path is a
-    /// receipted gap for that reason, since setting the variable here would race every env read in
-    /// the binary.
+    /// Phase 2, the US caches cold: (#366) the three old decades are asked for FIRST, youngest to
+    /// oldest, with their years in the POST body (the stub answers any year window alike, so only the
+    /// recorded request can pin them), and each is banked. Then the fresh window answers. Keyless
+    /// only: with `BLS_API_KEY` exported the fresh window goes to v2 with 20 years, so phase 2 is
+    /// skipped rather than failed. The keyed path is a receipted gap for that reason, since setting
+    /// the variable here would race every env read in the binary.
     #[tokio::test]
     async fn inflation_feeds_answer_from_the_day_cache_and_bls_asks_for_the_right_years() {
         use chrono::Datelike;
@@ -8230,6 +8238,8 @@ pub(crate) mod tests {
         macro_cache_write("pt_cpi", &pt);
         macro_cache_write("eu_hicp_old", &hicp("1999-12", 1.7));
         macro_cache_write("eu_hicp2", &hicp("2025-12", 2.1));
+        macro_cache_write("us_cpi_old3", &bls(now - 40..=now - 30, 1.03));
+        macro_cache_write("us_cpi_old2", &bls(now - 30..=now - 20, 1.03));
         macro_cache_write("us_cpi_old", &bls(now - 20..=now - 10, 1.03));
         macro_cache_write("us_cpi", &bls(now - 10..=now, 1.03));
         let all = inflation_all(&client, &urls).await;
@@ -8238,26 +8248,29 @@ pub(crate) mod tests {
         assert_eq!(all[0].1, BTreeMap::from([(2024, 2.4), (2025, 2.2)]));
         assert_eq!(all[2].1, BTreeMap::from([(1999, 1.7), (2025, 2.1)]), "the archive's tail under the live series");
         let us = &all[1].1;
-        assert_eq!(us.keys().copied().collect::<Vec<_>>(), (now - 19..=now).collect::<Vec<_>>(), "the old decade merged in");
+        assert_eq!(us.keys().copied().collect::<Vec<_>>(), (now - 39..=now).collect::<Vec<_>>(), "all three old decades merged in");
         assert!(us.values().all(|r| (r - 3.0).abs() < 1e-9), "the CACHED 3%, not the stub's 5%: {us:?}");
         assert!(requests.try_recv().is_err(), "a day-fresh cache asks for nothing");
 
         if std::env::var_os("BLS_API_KEY").is_some() {
             return;
         }
-        for name in ["us_cpi", "us_cpi_old"] {
+        let decades = ["us_cpi_old", "us_cpi_old2", "us_cpi_old3"];
+        for name in decades.iter().chain(&["us_cpi"]) {
             let _ = std::fs::remove_file(macro_cache_path(name));
         }
         let us = fetch_us_inflation(&client, &urls).await;
-        let old_window = requests.try_recv().expect("the old decade is asked for first");
-        for field in [format!(r#""startyear":"{}""#, now - 19), format!(r#""endyear":"{}""#, now - 10)] {
-            assert!(old_window.contains(&field), "{field} missing from {old_window}");
+        for (k, name) in (1..).zip(decades) {
+            let old_window = requests.try_recv().unwrap_or_else(|_| panic!("decade {k} is asked for, before the fresh window"));
+            for field in [format!(r#""startyear":"{}""#, now - 10 * k - 9), format!(r#""endyear":"{}""#, now - 10 * k)] {
+                assert!(old_window.contains(&field), "decade {k}: {field} missing from {old_window}");
+            }
+            assert_eq!(macro_cache_read(name), serde_json::from_str(served).ok(), "{name} banked, with no TTL");
         }
         let fresh_window = requests.try_recv().expect("then the fresh window");
         for field in [format!(r#""startyear":"{}""#, now - 9), format!(r#""endyear":"{now}""#)] {
             assert!(fresh_window.contains(&field), "{field} missing from {fresh_window}"); // keyless v1: 10y/call
         }
-        assert_eq!(macro_cache_read("us_cpi_old"), serde_json::from_str(served).ok(), "banked, with no TTL");
         assert_eq!(us.keys().copied().collect::<Vec<_>>(), (now - 9..=now).collect::<Vec<_>>());
         assert!(us.values().all(|r| (r - 5.0).abs() < 1e-9), "the live answer: {us:?}");
     }
@@ -8890,38 +8903,59 @@ fn merge_bls_payloads(old: Option<&Value>, new: &Value) -> Value {
 /// for year now-10, the year ADJACENT to the fresh (now-9..now) window. As the calendar rolls,
 /// an aging cache would leave a missing level year in between and the merged map would silently
 /// compound a too-short "20Y" — an UNDERSTATED number, worse than n/a. False → refetch the old
-/// window (one extra call per calendar YEAR).
+/// window (one extra call per calendar YEAR). (#366) The deeper decades pass `now` shifted back by
+/// 10 per decade, so each is checked against the year adjacent to the decade younger than it.
 fn old_window_covers(old: &Value, now: i32) -> bool {
     core::parse_bls_cpi(old).contains_key(&(now - 10))
+}
+
+/// An exported-but-EMPTY key counts as no key, so a blank `BLS_API_KEY=` stays on the keyless v1
+/// path instead of sending an empty registrationkey to v2. Pure, so the rule is tested without
+/// setting an env var (which would race every env read in the binary).
+fn nonempty_key(v: Option<String>) -> Option<String> {
+    v.filter(|k| !k.is_empty())
 }
 
 pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f64> {
     use chrono::Datelike;
     // POST-based (year window in the body), so it drives the macro cache by hand instead of cached_macro.
     let now = chrono::Utc::now().year();
-    let key = std::env::var("BLS_API_KEY").ok().filter(|k| !k.is_empty());
-    // (us 20Y) Second, PERMANENT old-decade window (now-19..now-10): the keyless v1 API caps at
-    // 10 years/call, so the fresh window alone yields ~9 annual rates and the 20Y column starved
-    // at n/a. Unadjusted CPI-U (CUUR0000SA0) history never changes, so this window is fetched
-    // once and cached with NO TTL — presence + old_window_covers = valid; steady state stays ONE
-    // call/day (the retired 3-call keyless design re-paid its whole budget daily and exhausted
-    // the shared-IP 25/day cap). A cold cache or a new calendar year costs one extra call; a
-    // failed old fetch just leaves today's behavior (20Y n/a) until a later run heals it. The
-    // keyed v2 path (20y/call) never fetches it but still merges a present copy.
-    let mut old = macro_cache_read("us_cpi_old").filter(|d| old_window_covers(d, now));
-    if old.is_none() && key.is_none() {
-        let mut b = serde_json::Map::new();
-        b.insert("seriesid".into(), serde_json::json!(["CUUR0000SA0"]));
-        b.insert("startyear".into(), (now - 19).to_string().into());
-        b.insert("endyear".into(), (now - 10).to_string().into()); // 10 years inclusive: at the v1 cap
-        if let Some(d) = post_json(client, &urls.us_cpi, &serde_json::Value::Object(b)).await {
-            if !core::parse_bls_cpi(&d).is_empty() {
-                macro_cache_write("us_cpi_old", &d);
-                old = Some(d);
+    let key = nonempty_key(std::env::var("BLS_API_KEY").ok());
+    // (us 20Y, #366 40Y) PERMANENT old decades behind the fresh window: k=1 is now-19..now-10, k=2
+    // now-29..now-20, k=3 now-39..now-30. The keyless v1 API caps at 10 years/call, so the fresh
+    // window alone yields ~9 annual rates. Unadjusted CPI-U (CUUR0000SA0) history never changes, so
+    // each decade is fetched once and cached with NO TTL — presence + old_window_covers = valid;
+    // steady state stays ONE call/day (the retired 3-call keyless design re-paid its whole budget
+    // daily and exhausted the shared-IP 25/day cap). A cold cache costs three extra calls, and so
+    // does each new calendar year.
+    //
+    // CHAINED: the first decade still missing after its fetch ends the merge, because a hole between
+    // two decades would compound a short span as the full 30Y/40Y — an UNDERSTATED number, worse
+    // than n/a. That is also why the keyed path fetches them too (always v1, 10y): v2's 20y fresh
+    // window overlaps decade 1, but skipping decade 1 would break the chain at 30Y.
+    let mut olds = Vec::new();
+    for (k, name) in (1..).zip(["us_cpi_old", "us_cpi_old2", "us_cpi_old3"]) {
+        let mut old = macro_cache_read(name).filter(|d| old_window_covers(d, now - 10 * (k - 1)));
+        if old.is_none() {
+            let mut b = serde_json::Map::new();
+            b.insert("seriesid".into(), serde_json::json!(["CUUR0000SA0"]));
+            b.insert("startyear".into(), (now - 10 * k - 9).to_string().into());
+            b.insert("endyear".into(), (now - 10 * k).to_string().into()); // 10 years inclusive: at the v1 cap
+            if let Some(d) = post_json(client, &urls.us_cpi, &serde_json::Value::Object(b)).await {
+                if !core::parse_bls_cpi(&d).is_empty() {
+                    macro_cache_write(name, &d);
+                    old = Some(d);
+                }
             }
         }
+        match old {
+            Some(d) => olds.push(d),
+            None => break,
+        }
     }
-    let finish = |new_payload: &Value| core::parse_bls_cpi(&merge_bls_payloads(old.as_ref(), new_payload));
+    let finish = |new_payload: &Value| {
+        core::parse_bls_cpi(&olds.iter().fold(new_payload.clone(), |acc, old| merge_bls_payloads(Some(old), &acc)))
+    };
     if macro_cache_fresh("us_cpi") {
         if let Some(m) = macro_cache_read("us_cpi").map(|d| finish(&d)).filter(|m| !m.is_empty()) {
             return m;
@@ -8929,7 +8963,7 @@ pub async fn fetch_us_inflation(client: &Client, urls: &Urls) -> BTreeMap<i32, f
     }
     // BLS year windows are honored only via POST (seriesid in the body, base /data/ URL). Keyless
     // v1: 25 requests/DAY (shared per-IP), 10 years/call — the fresh window covers 5Y/10Y and,
-    // merged with the old-decade cache, the 20Y. Set BLS_API_KEY (free, instant signup at
+    // merged with the old-decade caches, the 20Y/30Y/40Y. Set BLS_API_KEY (free, instant signup at
     // data.bls.gov/registrationEngine) to use v2: 500 req/day and 20y/call in one request.
     let (url, start, mut body) = match &key {
         Some(k) => {

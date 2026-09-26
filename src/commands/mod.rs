@@ -59,44 +59,46 @@ mod tests {
     /// (#249) The page's inflation rows, asserted as EXACT STRINGS. `web/index.html` re-formats
     /// nothing — it prints these cells verbatim — so a shifted horizon, a renamed header or a
     /// swapped region lands straight in the published table with no other check between here and
-    /// the site. The horizons are `2Y 5Y 8Y 20Y` because the three ranked tables carry exactly
-    /// those columns; that is the only reason the table is worth publishing, so it is pinned here.
+    /// the site. (#366) The horizons are [`INFL_YEARS`], the region set is all three, and a series
+    /// too short for a horizon prints n/a there rather than a shorter span passed off as the full one.
     #[test]
-    fn inflation_web_rows_publish_usa_and_eu_at_the_growth_tables_horizons() {
+    fn inflation_web_rows_publish_all_three_regions_out_to_40y() {
         use std::collections::BTreeMap;
-        let steady: BTreeMap<i32, f64> = (2007..=2026).map(|y| (y, 2.0)).collect(); // healthy: carries the current year
-        let frozen: BTreeMap<i32, f64> = (2007..=2025).map(|y| (y, 3.0)).collect(); // terminated feed, last print 2025
+        let steady: BTreeMap<i32, f64> = (1987..=2026).map(|y| (y, 2.0)).collect(); // healthy: 40 rates, carries the current year
+        let pt: BTreeMap<i32, f64> = (1987..=2026).map(|y| (y, 1.0)).collect();
+        let frozen: BTreeMap<i32, f64> = (2000..=2025).map(|y| (y, 3.0)).collect(); // EU HICP's depth, feed terminated at 2025
         let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 6).expect("a real date");
 
-        let rows = inflation_web_rows(
-            &[("Portugal", steady.clone()), ("USA", steady.clone()), ("EU", frozen.clone())],
-            today,
-        );
-        assert_eq!(rows.len(), 2, "Portugal is printed by the footer and NOT published to the page");
+        let rows = inflation_web_rows(&[("Portugal", pt), ("USA", steady.clone()), ("EU", frozen.clone())], today);
+        assert_eq!(rows.len(), 3, "(#366) Portugal is published too");
         assert_eq!(
             rows[0].iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>(),
-            ["REGION", "LATEST", "2Y", "5Y", "8Y", "20Y", "AS OF"],
-            "the horizons must match the ranked tables' columns, in order"
+            ["REGION", "LATEST", "2Y", "5Y", "10Y", "20Y", "30Y", "40Y", "AS OF"],
+            "the horizons, in order"
         );
         // USA first even though `inflation_all` returns Portugal, USA, EU — published order is this
-        // function's, not the fetch's. Cells are compounded, not multiplied: 2%/yr for 20y is +48.6%.
+        // function's, not the fetch's. Cells are compounded, not multiplied: 2%/yr for 40y is +120.8%.
         assert_eq!(
             rows[0].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
-            ["USA", "2.0%", "4.0%", "10.4%", "17.2%", "48.6%", "2026"]
+            ["USA", "2.0%", "4.0%", "10.4%", "21.9%", "48.6%", "81.1%", "120.8%", "2026"]
         );
         assert_eq!(
             rows[1].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
-            ["EU", "3.0%", "6.1%", "15.9%", "26.7%", "75.4%", "2025 ⚠ STALE"],
-            "a frozen feed still prints its numbers, and says which year they stop at"
+            ["EU", "3.0%", "6.1%", "15.9%", "34.4%", "80.6%", "n/a", "n/a", "2025 ⚠ STALE"],
+            "a frozen feed still prints its numbers and says where they stop; 26 years is n/a at 30Y/40Y"
+        );
+        assert_eq!(
+            rows[2].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+            ["Portugal", "1.0%", "2.0%", "5.1%", "10.5%", "22.0%", "34.8%", "48.9%", "2026"]
         );
 
         // dead feed: every cell n/a, and AS OF says so rather than leaving the row to read as measured
         let dead = inflation_web_rows(&[("USA", BTreeMap::new()), ("EU", steady.clone())], today);
         assert_eq!(
             dead[0].iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
-            ["USA", "n/a", "n/a", "n/a", "n/a", "n/a", "⚠ no data"]
+            ["USA", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "⚠ no data"]
         );
-        assert_eq!(dead[1][6].1, "2026", "the healthy row is unaffected by its neighbour's dead feed");
+        assert_eq!(dead[1][8].1, "2026", "the healthy row is unaffected by its neighbour's dead feed");
 
         // a region the fetch never returned is simply absent — never an empty row, never a panic
         assert_eq!(inflation_web_rows(&[("EU", steady)], today).len(), 1);
@@ -173,18 +175,22 @@ mod tests {
     }
 }
 
-/// (#249) The Pages site's copy of the inflation table `print_macro_footer` prints below, cut to the
-/// two regions the page publishes and emitted as rows instead of printed.
+/// (#366) The inflation table's cumulative horizons, shared by the footer and the page so the two
+/// cannot drift. 2Y/5Y/20Y line up with the ranked tables' growth columns; 10Y/30Y/40Y are the long
+/// view a 20+ year hold is judged against. A region too short for a horizon prints n/a there (EU HICP
+/// starts in 2000, so its 30Y/40Y are n/a by design — no older basket is spliced under it).
+const INFL_YEARS: [usize; 6] = [2, 5, 10, 20, 30, 40];
+
+/// (#249) The Pages site's copy of the inflation table `print_macro_footer` prints below, emitted as
+/// rows instead of printed.
 ///
 /// WHY IT IS ON THE PAGE AT ALL: the three ranked tables carry `2Y 5Y 8Y 20Y` columns and this table
-/// is cumulative at exactly those horizons, so a row reads straight across a growth column with no
-/// arithmetic in the reader's head. That alignment is the whole feature — it is not a coincidence to
-/// rely on silently, so if `core::HORIZONS` or the footer's columns ever move, these move with them.
+/// is cumulative at [`INFL_YEARS`], so a row reads straight across the 2Y/5Y/20Y growth columns with no
+/// arithmetic in the reader's head.
 ///
-/// PORTUGAL IS DROPPED HERE AND ONLY HERE — the terminal footer still prints all three. The page's
-/// growth columns are deflated by EU HICP and nothing else, so the EU row is the deflator that was
-/// actually applied and the USA row is context for dollar-earning names. A third national basket that
-/// deflates nothing on the page is a number with no use but to be misapplied.
+/// (#366) ALL THREE REGIONS, as the footer prints them. (#249) had dropped Portugal because the page's
+/// growth columns are deflated by EU HICP alone — that still holds: the EU row is the deflator that
+/// was applied, USA and Portugal are context, and none of them is applied to a row by the reader.
 ///
 /// Rows are `(header, cell)` pairs — the SAME shape the three lanes use — so `web/index.html` renders
 /// this with the table builder it already has and no cell is formatted in two places.
@@ -200,7 +206,7 @@ pub(crate) fn inflation_web_rows(
 ) -> Vec<Vec<(String, String)>> {
     // Published order, not the fetch order: `inflation_all` returns Portugal first, and the page
     // wants the deflator it applied (EU) read against the dollar context (USA).
-    const PUBLISHED: [&str; 2] = ["USA", "EU"];
+    const PUBLISHED: [&str; 3] = ["USA", "EU", "Portugal"];
     PUBLISHED
         .iter()
         .filter_map(|want| inflations.iter().find(|(label, _)| label == want))
@@ -215,15 +221,10 @@ pub(crate) fn inflation_web_rows(
                 (None, Some(y)) => y.to_string(),
                 (None, None) => "⚠ no data".to_string(),
             };
-            vec![
-                ("REGION".to_string(), (*label).to_string()),
-                ("LATEST".to_string(), pct(latest)),
-                ("2Y".to_string(), cum(2)),
-                ("5Y".to_string(), cum(5)),
-                ("8Y".to_string(), cum(8)),
-                ("20Y".to_string(), cum(20)),
-                ("AS OF".to_string(), as_of),
-            ]
+            let mut row = vec![("REGION".to_string(), (*label).to_string()), ("LATEST".to_string(), pct(latest))];
+            row.extend(INFL_YEARS.iter().map(|&y| (format!("{y}Y"), cum(y))));
+            row.push(("AS OF".to_string(), as_of));
+            row
         })
         .collect()
 }
@@ -283,10 +284,12 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
     }
 
     println!("\nInflation — latest annual % + cumulative price rise (compounded) over last N years:");
-    println!("  {:<9} {:>9} {:>9} {:>9} {:>9} {:>9}", "", "latest", "2Y", "5Y", "8Y", "20Y");
+    let heads: String = INFL_YEARS.iter().map(|y| format!(" {:>9}", format!("{y}Y"))).collect();
+    println!("  {:<9} {:>9}{heads}", "", "latest");
     for (label, series) in &inflations {
         let (ly, lv, _, _) = core::inflation_summary(series);
-        let cum = |y| pct(core::inflation_compounded(series, y));
+        let cums: String =
+            INFL_YEARS.iter().map(|&y| format!(" {:>9}", pct(core::inflation_compounded(series, y)))).collect();
         let note = if series.is_empty() {
             "  (⚠ ERROR — live fetch failed, no data)".to_string()
         } else if let Some(y) = core::infl_series_stale(series, chrono::Local::now().date_naive()) {
@@ -299,15 +302,7 @@ pub async fn print_macro_footer(client: &reqwest::Client, urls: &crate::config::
                 None => String::new(),
             }
         };
-        println!(
-            "  {:<9} {:>9} {:>9} {:>9} {:>9} {:>9}{note}",
-            label,
-            pct(lv),
-            cum(2),
-            cum(5),
-            cum(8),
-            cum(20)
-        );
+        println!("  {:<9} {:>9}{cums}{note}", label, pct(lv));
     }
     euribor
 }
