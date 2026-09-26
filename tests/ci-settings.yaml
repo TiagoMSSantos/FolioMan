@@ -1072,8 +1072,10 @@ widths:
     - cagr        # whole-life CAGR (%/yr since listing) — display only; the growth rank scores `leg`, not this
     # - leg         # the CAGR the growth rank DOES score: the 20/8/5Y ladder rung, capped at long_trend_cap
     - yrs         # real listing age in years — also picks the rung above (≥20y→20Y, ≥8y→8Y, else 5Y)
-    - 1h          # intraday % (1 hour)
-    - 6h          # intraday % (6 hours)
+    # (#362) the three intraday columns stay hidden: showing ANY of them makes `wants_intraday` spend
+    # one extra Yahoo request per screened name (~5.5k a run, ~90s at the pacer) on a display-only cell.
+    # - 1h          # intraday % (1 hour)
+    # - 6h          # intraday % (6 hours)
     # - 12h         # intraday % (12 hours)
     - 1d          # % vs 1 day ago
     - 1w          # % vs 1 week ago
