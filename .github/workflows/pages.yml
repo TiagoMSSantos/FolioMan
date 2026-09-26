@@ -102,12 +102,20 @@ jobs:
       # window: 4 keyless calls per run against a 25/day per-IP cap. With this it is 1. Its own step,
       # so adding it did not re-version the fetch cache above. A new calendar year invalidates each
       # decade by content (`old_window_covers`), not by key, and the run refetches it.
-      - name: Restore the BLS old decades
+      # (#368) And the day-fresh feeds, the EU ones above all. Run 36257549768's two Eurostat GETs came
+      # back empty inside the 3s connect timeout, with no copy on disk to fall back on, so the page
+      # published EU as "no data" and dropped the 27Y column that EU's span sets. Kept here, a copy under
+      # a day old answers without a request, and a failed fetch serves the last good one. tar keeps each
+      # file's mtime, which is what that day is measured from.
+      - name: Restore the inflation feeds
         uses: actions/cache@v6
         with:
-          path: .fmp_cache/us_cpi_old*.json
-          key: folioman-bls-${{ github.run_id }}
-          restore-keys: folioman-bls-
+          path: |
+            .fmp_cache/us_cpi*.json
+            .fmp_cache/pt_cpi.json
+            .fmp_cache/eu_hicp*.json
+          key: folioman-macro-${{ github.run_id }}
+          restore-keys: folioman-macro-
 
       # (#361) The monthly history backtest-gate saves once a day (#352), READ-ONLY here so that job
       # stays its only writer. `screen` reads it (`quote_one` -> `chart_json_long`, 7-day per-series
