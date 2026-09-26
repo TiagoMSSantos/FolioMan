@@ -134,6 +134,8 @@ pub async fn run(args: Vec<String>) {
         // (#249) …and therefore no inflation table either: it is published beside the screen's rows,
         // as the deflator already applied to them, not beside a watchlist reading.
         web_inflation: &[],
+        // (#378) and no DEGRADED banner: `check` computes none of the feeds that line names
+        web_degraded: &[],
         // `check` inspects named watchlist tickers and fetches no fund holdings, so there is no
         // look-through P/E here and the ETF PEG trim is a no-op. Deliberate: check reports on the
         // names you asked about, it does not cut them from a table.

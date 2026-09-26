@@ -1946,6 +1946,32 @@ pub async fn run(args: Vec<String>) {
     let borrowed = borrow_index_twins(&client, &bench, &fund_pe, &quotes).await;
     fund_pe.extend(borrowed);
     fill_venue_listings(&mut fund_pe, &quotes);
+    // optional feeds fail SILENTLY into a weaker run (NUPL None = crypto euphoria damping off;
+    // empty HICP map = inflation adjustment off despite being enabled) — name them so a degraded
+    // run is distinguishable from a normal one. Display-only; the score paths already handle both.
+    // (#378) built HERE, ahead of the page render, so the payload carries it too; the stderr line
+    // stays at the end of the run, next to the timing it has always sat beside.
+    let mut degraded: Vec<String> = Vec::new();
+    if nupl.is_none() {
+        degraded.push("NUPL feed down (crypto euphoria damping off)".to_string());
+    }
+    if eu_infl.as_ref().is_some_and(|m| m.is_empty()) {
+        degraded.push("EU HICP feed down (inflation adjustment off)".to_string());
+    } else if let Some(y) = eu_infl
+        .as_ref()
+        .and_then(|m| core::infl_series_stale(m, chrono::Local::now().date_naive()))
+    {
+        // frozen-not-empty feed (e.g. a terminated Eurostat dataset): adjustment still runs
+        // but deflates with rates that stop at an old year
+        degraded.push(format!("EU HICP feed stale (latest {y} — inflation adjustment using old rates)"));
+    }
+    if fund_tilt_uncovered {
+        degraded
+            .push("fund tilt feed down (0 stocks carry the factor; stock ranks are price-only)".to_string());
+    }
+    if mvrv_uncovered {
+        degraded.push("MVRV feed down (crypto_max_mvrv ceiling off; every coin passes it)".to_string());
+    }
     // (#79) the web payload's home: the same gitignored data dir `.screen_state.json` uses, written
     // on every run rather than behind a flag — it is one small file, and a knob nobody sets is a knob
     // not worth having. The Pages workflow copies it next to `web/index.html` and deploys.
@@ -1961,6 +1987,7 @@ pub async fn run(args: Vec<String>) {
         fund_pe: &fund_pe,
         web_out: Some(&web_out),
         web_inflation: &infl_rows,
+        web_degraded: &degraded,
     });
 
     // (round 114) live track record: journal today's ranked slice + the S&P close so `track` can
@@ -3135,30 +3162,6 @@ pub async fn run(args: Vec<String>) {
         secs / 60,
         secs % 60
     );
-    // optional feeds fail SILENTLY into a weaker run (NUPL None = crypto euphoria damping off;
-    // empty HICP map = inflation adjustment off despite being enabled) — name them so a degraded
-    // run is distinguishable from a normal one. Display-only; the score paths already handle both.
-    let mut degraded: Vec<String> = Vec::new();
-    if nupl.is_none() {
-        degraded.push("NUPL feed down (crypto euphoria damping off)".to_string());
-    }
-    if eu_infl.as_ref().is_some_and(|m| m.is_empty()) {
-        degraded.push("EU HICP feed down (inflation adjustment off)".to_string());
-    } else if let Some(y) = eu_infl
-        .as_ref()
-        .and_then(|m| core::infl_series_stale(m, chrono::Local::now().date_naive()))
-    {
-        // frozen-not-empty feed (e.g. a terminated Eurostat dataset): adjustment still runs
-        // but deflates with rates that stop at an old year
-        degraded.push(format!("EU HICP feed stale (latest {y} — inflation adjustment using old rates)"));
-    }
-    if fund_tilt_uncovered {
-        degraded
-            .push("fund tilt feed down (0 stocks carry the factor; stock ranks are price-only)".to_string());
-    }
-    if mvrv_uncovered {
-        degraded.push("MVRV feed down (crypto_max_mvrv ceiling off; every coin passes it)".to_string());
-    }
     if !degraded.is_empty() {
         eprintln!("screen: DEGRADED — {}", degraded.join("; "));
     }

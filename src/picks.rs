@@ -4309,6 +4309,9 @@ pub struct WebTop {
     /// work, and the page never saw it. Same `(header, cell)` row shape as the lanes above. Empty when
     /// the caller does not carry cores (`check`, and the stock/crypto-only screen filters).
     pub core: Vec<Vec<(String, String)>>,
+    /// (#378) the feeds this run went without (`screen`'s DEGRADED line). Empty on a healthy run and
+    /// off the page's own path; the site shows a banner only when it is not.
+    pub degraded: Vec<String>,
 }
 
 /// (#79) Build the page payload from the SAME ranked picks [`print_lane`] is about to print: same
@@ -4347,6 +4350,7 @@ pub fn web_top(picks: Vec<(&Quote, f64)>, n: usize, w: &Widths, sectors: &[Strin
         crypto: top(&crypto, w, HIDE_CRYPTO),
         inflation: inflation.to_vec(),
         core: core.to_vec(),
+        degraded: Vec::new(), // `render` fills it from its ctx
     }
 }
 
@@ -5154,6 +5158,9 @@ pub struct RenderCtx<'a> {
     /// Built by the caller and not here: `screen` fetches the series long before `render` runs, and
     /// re-deriving them at the payload write would be a second definition of the same table.
     pub web_inflation: &'a [Vec<(String, String)>],
+    /// (#378) `screen`'s DEGRADED list, published so the page can say which feeds this run went
+    /// without, or `&[]` for a caller with no page.
+    pub web_degraded: &'a [String],
 }
 
 /// (#344) Which churn cache a `render` over `n_quotes` names reads and rewrites: the wide `screen`
@@ -5225,7 +5232,8 @@ pub fn render(quotes: &[Quote], n: usize, tuning: &BuyHeuristic, w: &Widths, ctx
     let cores = if ctx.show_hold_core { hold_core_list(quotes) } else { Vec::new() };
     let core_rows = hold_core_web_rows(&cores, ctx.owned);
     if let Some(path) = ctx.web_out {
-        let top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe, ctx.web_inflation, &core_rows);
+        let mut top = web_top(picks.clone(), n, w, ctx.sectors, tuning, &pinned_set, ctx.owned, ctx.fund_pe, ctx.web_inflation, &core_rows);
+        top.degraded = ctx.web_degraded.to_vec();
         if let Ok(json) = serde_json::to_string_pretty(&top) {
             let _ = std::fs::write(path, json);
         }
@@ -8366,10 +8374,12 @@ mod tests {
             &[("EU", (2007..=2026).map(|y| (y, 2.0)).collect())],
             chrono::NaiveDate::from_ymd_opt(2026, 9, 6).expect("a real date"),
         );
+        // (#378) a DEGRADED entry rides it as well
+        let degraded = ["EU HICP feed down (inflation adjustment off)".to_string()];
         let (_text, tickers) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: Some(0.9), sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: None, show_hold_core: true, fund_pe: &HashMap::new(),
-            web_out: Some(&web), web_inflation: &infl,
+            web_out: Some(&web), web_inflation: &infl, web_degraded: &degraded,
         });
         assert!(tickers.iter().any(|t| t == "AAPL"), "pinned gated name must still surface in the ranking");
         assert!(tickers.len() <= 5);
@@ -8397,6 +8407,8 @@ mod tests {
         assert_eq!(cores[0][1][0], "NAME", "the page's header row is the printer's");
         assert_eq!(cores[0][1][1], "Vanguard FTSE All-World UCITS ETF");
         assert_eq!(cores[0][0][1], "", "the broker overlay holds no fund here, and nothing else may fill that cell");
+        // (#378) …and the DEGRADED line, verbatim, so the page names the feed this run went without
+        assert_eq!(payload["degraded"], serde_json::json!(["EU HICP feed down (inflation adjustment off)"]));
         let _ = std::fs::remove_file(&web);
 
         // (#250) the CORE block is caller-gated, and the page follows that gate: a lane that prints no
@@ -8405,11 +8417,12 @@ mod tests {
         let (_no_core, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: None, show_hold_core: false, fund_pe: &HashMap::new(),
-            web_out: Some(&web), web_inflation: &infl,
+            web_out: Some(&web), web_inflation: &infl, web_degraded: &[],
         });
         let payload: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&web).expect("payload")).expect("valid JSON");
         assert!(payload["core"].as_array().expect("the key stays, so the page prints its own empty line").is_empty());
+        assert!(payload["degraded"].as_array().expect("the key stays on a healthy run").is_empty());
         assert!(!payload["stocks"].as_array().expect("stocks lane").is_empty(), "only the CORE table is gated off");
         let _ = std::fs::remove_file(&web);
 
@@ -8418,7 +8431,7 @@ mod tests {
         let (miss, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: Some("ZZZZ"), show_hold_core: false, fund_pe: &HashMap::new(),
-            web_out: None, web_inflation: &[],
+            web_out: None, web_inflation: &[], web_degraded: &[],
         });
         assert!(miss.is_some_and(|m| m.contains("wasn't scanned")));
         assert!(!web.exists(), "web_out: None must not write a payload");
@@ -8426,7 +8439,7 @@ mod tests {
         let (blank, _) = render(&quotes, 5, &tuning, &w, RenderCtx {
             nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
             owned: &owned, explain: Some(""), show_hold_core: false, fund_pe: &HashMap::new(),
-            web_out: None, web_inflation: &[],
+            web_out: None, web_inflation: &[], web_degraded: &[],
         });
         assert!(blank.is_none(), "{blank:?}");
 
@@ -8885,7 +8898,7 @@ mod tests {
             render(&quotes, n, &tuning, &w, RenderCtx {
                 nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
                 owned: &owned, explain: Some(t), show_hold_core: false, fund_pe: &HashMap::new(),
-                web_out: None, web_inflation: &[],
+                web_out: None, web_inflation: &[], web_degraded: &[],
             })
             .0
             .unwrap_or_default()
@@ -8937,7 +8950,7 @@ mod tests {
             let (_, mut t) = render(&quotes, n, &tuning, &w, RenderCtx {
                 nupl: None, sectors: &sectors, sector_of: &sector_of, pinned: &pinned,
                 owned: &owned, explain: None, show_hold_core: false, fund_pe: &HashMap::new(),
-                web_out: None, web_inflation: &[],
+                web_out: None, web_inflation: &[], web_degraded: &[],
             });
             t.sort();
             t

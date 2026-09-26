@@ -88,6 +88,7 @@
   <h1>FolioMan — top picks per class</h1>
   <p class="sub" id="generated">loading…</p>
   <p class="stale" id="stale" hidden></p>
+  <p class="stale" id="degraded" hidden></p>
   <!-- (#143) One control for all three lanes. Its options are built from the payload, never
        hardcoded, so it can never offer an N with no rows behind it and it follows `top_picks`
        automatically. Hidden entirely when there is nothing to choose. -->
@@ -241,6 +242,13 @@ function render(data) {
       "Stale: this is " + Math.floor(ageHours / 24) + "d " + Math.floor(ageHours % 24) +
       "h old. The last refresh did not complete, so these are not today's numbers.";
     banner.hidden = false;
+  }
+  // (#378) screen's DEGRADED line: feeds this run went without. Today's numbers, just thinner.
+  // `?.` because a payload written before the field existed has no key at all.
+  if (data.degraded?.length) {
+    const d = document.getElementById("degraded");
+    d.textContent = "Degraded run: " + data.degraded.join("; ") + ".";
+    d.hidden = false;
   }
   for (const lane of LANES) {
     document.getElementById(lane).replaceChildren(table(data[lane]));
