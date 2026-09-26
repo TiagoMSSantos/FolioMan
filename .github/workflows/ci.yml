@@ -315,6 +315,9 @@ jobs:
       # the file, so a throttled run cannot poison it. Yahoo's chart API stays probed live on every
       # push by integration-tests (tests/network.rs). A DAILY key: the first push of a day restores
       # the newest older key and saves once; later pushes hit it exactly and skip the ~150 MB upload.
+      # PROVEN on 03c1b16, run 36227840863: cold, the job took 205s and saved 28 MB in under 2s; a
+      # gate-only re-run hit the key: job 205s -> 122s, test 148s -> 59s, 20y 143.5s -> 54.7s, and every
+      # gate line identical (20y +742.3/+5.9, 12y +229.1/+6.5, 8y +66.0/+7.0).
       - name: Day key for the history cache
         id: day
         run: echo "d=$(date -u +%F)" >> "$GITHUB_OUTPUT"
@@ -504,6 +507,9 @@ jobs:
           # 36219367047 (warm, after (#349)): this job started at +83s behind integration-tests and paid
           # ~14s of setup, and backtest-gate, the longest job, ended at +200s, so T is ~103s:
           #   73 + 4 * 6.8 = 100s          6 mutants: the opt-level-2 budget, in ~1/9 of its 888s
+          # (#352) The history cache moved backtest-gate's end to ~+124s, so on a code push THIS job is
+          # the tail (~+185s). BUDGET stays 6 anyway: a smaller one grades only shard 1 of a diff, and CI
+          # still ends before the ~207s it did.
           #
           # SUPERSEDED, opt-level 2, run 31946331154: 417/556s cold per tree and 166s per mutant build
           # (98.3% of the run was compiler), so BUDGET was 6 at 556 + 4 * 83 = 888s — on any push that
