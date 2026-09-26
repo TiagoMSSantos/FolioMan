@@ -1381,8 +1381,8 @@ fn sec_cache_ttl(ticker: &str) -> StdDuration {
 /// files, because a ticker SEC cannot resolve to a CIK has no cache to expire in the first place.
 fn evict_stale_sec_caches(ticker: &str) {
     let ttl = sec_cache_ttl(ticker);
-    // NOT `_inst3`: it caches a per-filing XBRL instance that can run to 13.5MB, its content is fixed
-    // once the filing exists, and it is only read when `_facts12` yields no EPS at all — so expiring it
+    // NOT `_inst4`: it caches a per-filing XBRL instance that can run to 13.5MB, its content is fixed
+    // once the filing exists, and it is only read when `_facts12`'s newest row has no EPS — so expiring it
     // would buy nothing and cost the largest fetch in this file.
     evict_if_stale(&sec_cache_path(&format!("{ticker}_facts12")), ttl);
     evict_if_stale(&sec_cache_path(&format!("{ticker}_ttmeps3")), ttl);
@@ -1843,8 +1843,10 @@ const US_GAAP_TAGS: FactTags = FactTags {
     // spin-off filer (EXC/Constellation) it is not the headline EPS — it is the cleaner recurring one;
     // and `EarningsPerShareBasic` is basic, ~0.4% above diluted on AAPL-shaped dilution, which is
     // exactly why it is last. It is here for LEN, whose FY2025 has basic but no diluted.
+    // (#383) LAST, so it never outranks a share EPS: partnership-shaped filers tag per-unit EPS only. SUN
+    // (undimensioned, reaches companyfacts) and ARES (split by share class since 2020, instance-only).
     eps: &["EarningsPerShareDiluted", "IncomeLossFromContinuingOperationsPerDilutedShare",
-           "EarningsPerShareBasic"],
+           "EarningsPerShareBasic", "NetIncomeLossNetOfTaxPerOutstandingLimitedPartnershipUnitDiluted"],
     shares: &["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"],
     eq: &["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
     // total assets — the ROE fallback denominator. Unlike equity it CANNOT go negative, which is the
@@ -2263,7 +2265,7 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
 }
 
 /// The newest annual filing's dimensioned EPS/shares for a US ticker, by fiscal year end. DISK-CACHED
-/// (`.sec_cache/{ticker}_inst3.json`) INCLUDING THE EMPTY RESULT, once SEC answered: BRK-B's instance is
+/// (`.sec_cache/{ticker}_inst4.json`) INCLUDING THE EMPTY RESULT, once SEC answered: BRK-B's instance is
 /// 13.5MB and KKR's 19.8MB, so re-downloading those to re-learn nothing is exactly the cost worth caching away.
 /// Budget-capped like every other SEC call. ceiling: ONE filing, so ~3 fiscal years of coverage; older
 /// as-of rows keep the None they already had. Walking more 10-Ks is the upgrade, at 2.4-19.8MB each.
@@ -2272,6 +2274,7 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
 /// written stays wrong forever. `inst1` -> `inst2` retires the class picker that shipped BRK-B at EPS
 /// 46,563 (Class A) — see `parse_sec_instance`. Bump it again on any change to what that parser picks.
 /// (#377) `inst2` -> `inst3` retires the `[]` a spent budget wrote for every US name that needs this.
+/// (#383) `inst3` -> `inst4` retires ARES's and SUN's `[]`, written before the per-unit EPS tag.
 ///
 /// The instance read is the EXTRACTED one beside the inline-XBRL 10-K: same folder, primary document
 /// name with ".htm" swapped for "_htm.xml". That URL is hardcoded like the `yahoo_crumb` endpoints —
@@ -2280,7 +2283,7 @@ fn parse_sec_instance(xml: &str, tags: &FactTags) -> std::collections::BTreeMap<
 #[mutants::skip]
 async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> std::collections::BTreeMap<NaiveDate, (f64, Option<f64>)> {
     use std::sync::atomic::Ordering;
-    let cache = sec_cache_path(&format!("{ticker}_inst3"));
+    let cache = sec_cache_path(&format!("{ticker}_inst4"));
     if let Some(c) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Vec<(String, f64, Option<f64>)>>(&s).ok()) {
         return c
             .into_iter()
@@ -2334,13 +2337,15 @@ async fn fetch_sec_instance_eps(client: &Client, urls: &Urls, ticker: &str) -> s
 }
 
 /// Annual `FundRow`s for a US ticker from SEC XBRL company-facts, with the per-share lines the API drops
-/// filled back in from the filing itself. The fallback runs ONLY when the whole series has no EPS, so the
-/// 501 healthy filers pay nothing for it; the 8 that need it are all multi-class or partnership-structured.
+/// filled back in from the filing itself. The fallback runs ONLY when the NEWEST row has no EPS, so the
+/// healthy filers pay nothing for it; the ones that need it are all multi-class or partnership-structured.
+/// (#383) newest, not every row: ARES has undimensioned EPS through 2019 and class-split EPS since, and
+/// "all rows" read those old years as "EPS present" and never looked. Only EPS-less rows are filled.
 pub async fn fetch_fundamentals_sec(client: &Client, urls: &Urls, ticker: &str) -> Option<Vec<core::FundRow>> {
     let mut rows = fetch_sec_facts_rows(client, urls, ticker).await?;
-    if rows.iter().all(|r| r.eps.is_none()) {
+    if rows.last().is_some_and(|r| r.eps.is_none()) {
         let inst = fetch_sec_instance_eps(client, urls, ticker).await;
-        for r in rows.iter_mut() {
+        for r in rows.iter_mut().filter(|r| r.eps.is_none()) {
             if let Some(&(eps, shares)) = inst.get(&r.period_end) {
                 r.eps = Some(eps);
                 r.shares = shares;
@@ -6029,10 +6034,10 @@ pub(crate) mod tests {
         };
         let facts = aged("_facts12", 60);
         let ttmeps = aged("_ttmeps3", 60);
-        // `_inst3` is deliberately exempt: it caches a per-filing XBRL instance up to 13.5MB whose
+        // `_inst4` is deliberately exempt: it caches a per-filing XBRL instance up to 13.5MB whose
         // content is fixed once the filing exists. Expiring it would buy nothing and cost the largest
         // fetch in this file — so an eviction that swept "every SEC file" would be a real regression.
-        let inst = aged("_inst3", 60);
+        let inst = aged("_inst4", 60);
         evict_stale_sec_caches("SECEVICT");
         assert!(!facts.exists(), "60 days is past every staggered TTL — the newest fiscal year must refresh");
         assert!(!ttmeps.exists(), "a TTM roll 60 days old has missed a quarter by construction");
@@ -6538,6 +6543,39 @@ pub(crate) mod tests {
             assert_eq!(rows.len(), 1, "{tag}");
             assert_eq!(rows[0].revenue, Some(100.0), "{tag}");
         }
+    }
+
+    /// (#383) SUN tags its EPS per LP unit and nothing else, so without the tag every row read None.
+    #[test]
+    fn per_unit_eps_tag_fills_a_row() {
+        use serde_json::json;
+        let rows = parse_sec_facts(&json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [{"start": "2025-01-01", "end": "2025-12-31", "val": 100.0, "form": "10-K", "filed": "2026-02-19"}]}},
+            "NetIncomeLossNetOfTaxPerOutstandingLimitedPartnershipUnitDiluted": {"units": {"USD/shares": [
+                {"start": "2025-01-01", "end": "2025-12-31", "val": 2.28, "form": "10-K", "filed": "2026-02-19"}]}},
+        }}}));
+        assert_eq!(rows[0].eps, Some(2.28));
+    }
+
+    /// (#383) ARES's shape: EPS on an old row, none on the newest. The instance fills the newest row
+    /// (and its prior year) and leaves the old row's own EPS alone. Both caches seeded -> no socket.
+    #[tokio::test]
+    async fn instance_eps_fills_an_eps_less_newest_row() {
+        seed_cik_map();
+        std::fs::create_dir_all(crate::config::data_path(".sec_cache")).expect("scratch .sec_cache");
+        std::fs::write(
+            sec_cache_path("NEWESTGAP_facts12"),
+            r#"[{"filed": "2020-02-01", "period_end": "2019-12-31", "eps": 1.06},
+                {"filed": "2026-02-25", "period_end": "2025-12-31", "revenue": 100.0}]"#,
+        )
+        .expect("seed facts");
+        std::fs::write(sec_cache_path("NEWESTGAP_inst4"), r#"[["2019-12-31", 9.0, null], ["2024-12-31", 2.04, 90.0], ["2025-12-31", 2.42, 100.0]]"#)
+            .expect("seed inst");
+        let client = Client::builder().no_proxy().build().expect("test client");
+        let rows = fetch_fundamentals_sec(&client, &stub_urls("http://127.0.0.1:1/"), "NEWESTGAP").await.expect("rows");
+        assert_eq!(rows[0].eps, Some(1.06), "an EPS the facts already hold is not overwritten");
+        assert_eq!(rows[1].eps, Some(2.42));
+        assert_eq!(rows[1].prior_eps, Some(2.04));
     }
 
     /// (#358) The three zero-denominator guards in `parse_sec_facts`. A zero revenue has no margin,
